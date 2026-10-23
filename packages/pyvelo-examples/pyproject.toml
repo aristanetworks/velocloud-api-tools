@@ -1,0 +1,24 @@
+[project]
+name = "pyvelo-examples"
+version = "0.1.0"
+description = "Read-only examples for the pyvelo SDK"
+readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+requires-python = ">=3.14"
+dependencies = [
+    "pyvelo>=0.2.0",
+    "python-dotenv>=1.2.2",
+    "polars>=1.0",
+    "matplotlib>=3.8",
+    "pydantic>=2.12.5",
+    "pydantic-core>=2.41.5",
+    "rich>=13.7",
+]
+
+[tool.uv.sources]
+pyvelo = { workspace = true }
+
+[build-system]
+requires = ["uv_build>=0.9.22,<0.12"]
+build-backend = "uv_build"

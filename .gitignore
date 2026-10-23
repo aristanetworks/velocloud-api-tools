@@ -5,4 +5,7 @@ build/
 dist/
 .venv/
 .env
+.credentials/
 vco_dump/
+analytics_report.html
+.ruff_cache/

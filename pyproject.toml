@@ -1,5 +1,5 @@
 [tool.uv.workspace]
-members = ["packages/pyvelo"]
+members = ["packages/pyvelo", "packages/pyvelo-examples"]
 
 [dependency-groups]
 dev = [
