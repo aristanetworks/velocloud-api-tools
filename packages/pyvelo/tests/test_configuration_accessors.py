@@ -28,6 +28,7 @@ from pyvelo.client.models.configuration.qos.segment import (
 )
 from pyvelo.client.models.configuration.wan.root import WanData
 from pyvelo.client.schemas.configuration import (
+    AnyConfigurationModule,
     DeviceSettingsConfigurationModule,
     EdgeConfiguration,
     EnterpriseConfigurationProfile,
@@ -39,7 +40,7 @@ from pyvelo.client.schemas.configuration import (
 _NOW = datetime.datetime.now(tz=datetime.UTC)
 
 
-def _make_ds_module(**kwargs) -> DeviceSettingsConfigurationModule:
+def _make_ds_module() -> DeviceSettingsConfigurationModule:
     seg = DeviceSegment(
         segment=DsSegmentMetadata(
             segment_id=0, name="Global Segment", type_=NetworkSegmentType.REGULAR
@@ -60,11 +61,10 @@ def _make_ds_module(**kwargs) -> DeviceSettingsConfigurationModule:
             lan=LanSettings(interfaces=[], networks=[]),
             segments=[seg],
         ),
-        **kwargs,
     )
 
 
-def _make_qos_module(**kwargs) -> QosConfigurationModule:
+def _make_qos_module() -> QosConfigurationModule:
     seg = QosSegment(
         segment=QosSegmentMetadata(
             segment_id=0,
@@ -85,7 +85,6 @@ def _make_qos_module(**kwargs) -> QosConfigurationModule:
         version="1.0",
         metadata=None,
         data=QosData(segments=[seg]),
-        **kwargs,
     )
 
 
@@ -121,7 +120,9 @@ def _make_wan_module() -> WanConfigurationModule:
     )
 
 
-def _make_edge_config(modules=None) -> EdgeConfiguration:
+def _make_edge_config(
+    modules: list[AnyConfigurationModule] | None = None,
+) -> EdgeConfiguration:
     return EdgeConfiguration(
         name="Edge Specific Profile",
         modules=modules if modules is not None else MISSING,
@@ -166,12 +167,12 @@ class TestModuleAccessors:
     def test_missing_module_raises(self):
         config = _make_edge_config([_make_ds_module()])
         with pytest.raises(ValueError, match="Module 'QOS' not found"):
-            config.qos
+            _ = config.qos
 
     def test_missing_modules_raises(self):
         config = _make_edge_config()
         with pytest.raises(ValueError, match="Configuration has no modules"):
-            config.device_settings
+            _ = config.device_settings
 
     def test_works_on_enterprise_profile(self):
         ds = _make_ds_module()

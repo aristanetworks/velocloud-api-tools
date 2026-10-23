@@ -10,7 +10,7 @@ from __future__ import annotations
 import logging
 import time
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 from uuid import UUID
 
 from pydantic import MISSING
@@ -87,10 +87,10 @@ class VcoTestContext:
         return self.gateways[0]
 
 
-def _enum_str(val: Any) -> str | None:
+def _enum_str(val: object) -> str | None:
     if val is None or val is MISSING:
         return None
-    return val.value if hasattr(val, "value") else str(val)
+    return str(val)
 
 
 async def _resolve_sdwan_peers(
@@ -277,14 +277,13 @@ async def discover(client: VcoClient, enterprise_id: int) -> VcoTestContext:
             GetEnterpriseNetworkSegments(enterprise_id=enterprise_id)
         )
         for s in raw_segments:
-            if s.data is not None:
-                segments.append(
-                    SegmentInfo(
-                        segment_id=s.data.segment_id,
-                        logical_id=str(s.logical_id),
-                        name=s.name,
-                    )
+            segments.append(
+                SegmentInfo(
+                    segment_id=s.data.segment_id,
+                    logical_id=str(s.logical_id),
+                    name=s.name,
                 )
+            )
     except Exception:
         log.debug("Segment discovery failed", exc_info=True)
 

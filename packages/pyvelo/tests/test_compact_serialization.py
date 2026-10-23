@@ -1,10 +1,12 @@
 """Tests for compact serialization via model_dump(context={"compact": True})."""
 
 import warnings
-from typing import Annotated, Any
+from typing import Annotated, cast
 
 from pydantic import MISSING, Field
 from pyvelo.core import Alias, Normalizer, VcoModel
+
+from ._type_support import JsonObject
 
 # ---------------------------------------------------------------------------
 # Helper
@@ -13,8 +15,12 @@ from pyvelo.core import Alias, Normalizer, VcoModel
 _COMPACT = {"compact": True}
 
 
-def _compact(model: VcoModel) -> dict[str, Any]:
-    return model.model_dump(by_alias=False, context=_COMPACT)
+def _compact(model: VcoModel) -> JsonObject:
+    return cast(JsonObject, model.model_dump(by_alias=False, context=_COMPACT))
+
+
+def _normalize_port(value: object) -> object:
+    return -1 if value == 0 else value
 
 
 # ---------------------------------------------------------------------------
@@ -239,7 +245,7 @@ class TestRoundTrip:
 
 
 class NormalizedPort(VcoModel):
-    port: Annotated[int, Normalizer(lambda v: -1 if v == 0 else v)] = -1
+    port: Annotated[int, Normalizer(_normalize_port)] = -1
 
 
 class TestNormalize:
@@ -261,7 +267,7 @@ class TestDeprecationWarning:
         m = Outer()
         with warnings.catch_warnings(record=True) as w:
             warnings.simplefilter("always")
-            m.compact_dump()
+            _ = m.compact_dump()  # pyright: ignore[reportDeprecated] -- exercising the deprecated compatibility API
             assert len(w) == 1
             assert issubclass(w[0].category, DeprecationWarning)
             assert "compact_dump" in str(w[0].message)
@@ -270,6 +276,6 @@ class TestDeprecationWarning:
         m = Outer(source_ip="10.0.0.1")
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", DeprecationWarning)
-            d = m.compact_dump()
+            d = m.compact_dump()  # pyright: ignore[reportDeprecated] -- exercising the deprecated compatibility API
         assert d["source_ip"] == "10.0.0.1"
         assert "hostname" not in d

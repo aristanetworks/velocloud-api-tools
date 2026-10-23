@@ -11,9 +11,8 @@ from __future__ import annotations
 
 import os
 import time
-from collections.abc import Generator
+from collections.abc import AsyncGenerator, Generator
 from contextlib import contextmanager
-from typing import Any
 
 import httpx
 import pytest
@@ -34,13 +33,6 @@ def _env(name: str, required: bool = False) -> str | None:
     return val
 
 
-def _env_int(name: str) -> int | None:
-    val = _env(name)
-    if not val:
-        return None
-    return int(val)
-
-
 @pytest.fixture(scope="session")
 def interval() -> ApiInterval:
     now_ms = int(time.time() * 1000)
@@ -50,7 +42,7 @@ def interval() -> ApiInterval:
 
 
 @pytest_asyncio.fixture(scope="session", loop_scope="session")
-async def vco_client():
+async def vco_client() -> AsyncGenerator[VcoClient]:
     host = _env("VCO_HOST", required=True)
     token = _env("VCO_API_TOKEN", required=True)
     assert host is not None
@@ -88,7 +80,7 @@ def assert_frame_valid(frame: MetricFrame, *, check_other: bool = True) -> None:
         )
 
 
-def skip_unless(condition: Any, reason: str):
+def skip_unless(condition: bool, reason: str) -> pytest.MarkDecorator:
     return pytest.mark.skipif(not condition, reason=reason)
 
 

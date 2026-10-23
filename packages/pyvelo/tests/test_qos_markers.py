@@ -49,7 +49,7 @@ class TestQosMerge:
         )
         data = QosData(segments=[seg])
 
-        data.merge_patch(
+        _ = data.merge_patch(
             {
                 "segments": {
                     "Global Segment": {

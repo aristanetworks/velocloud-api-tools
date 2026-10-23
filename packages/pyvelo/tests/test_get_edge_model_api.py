@@ -52,7 +52,7 @@ class TestGetEdgeRequestApiShape:
 
     def test_rejects_non_get_edge_with_value(self):
         with pytest.raises(ValidationError):
-            GetEdge.model_validate({"id": 1, "with": ["licenses"]})
+            _ = GetEdge.model_validate({"id": 1, "with": ["licenses"]})
 
 
 class TestGetEdgeResultApiShape:

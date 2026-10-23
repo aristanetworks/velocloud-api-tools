@@ -42,7 +42,7 @@ class TestGetEnterprise:
         assert request.with_ == [GetEnterpriseWith.ENTERPRISE_PROXY]
 
         with pytest.raises(ValidationError):
-            GetEnterprise.model_validate({"with": ["edges"]})
+            _ = GetEnterprise.model_validate({"with": ["edges"]})
 
     def test_retains_expanded_enterprise_proxy(self):
         result = EnterpriseResult.model_validate(
@@ -99,7 +99,7 @@ class TestGetEnterpriseProxy:
         assert request.with_ == [GetEnterpriseProxyWith.GATEWAY_POOL_IDS]
 
         with pytest.raises(ValidationError):
-            GetEnterpriseProxy.model_validate({"with": ["enterprises"]})
+            _ = GetEnterpriseProxy.model_validate({"with": ["enterprises"]})
 
     def test_retains_gateway_pool_expansions(self):
         result = EnterpriseProxyResult.model_validate(

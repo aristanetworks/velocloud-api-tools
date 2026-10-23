@@ -6,7 +6,7 @@ raising a ValidationError.  It also records audit entries when validation
 context contains an "audit" list.
 """
 
-from typing import Annotated, Any
+from typing import Annotated
 
 from pydantic import MISSING, Field
 from pyvelo.core import Alias, DefaultingModel, VcoModel
@@ -54,7 +54,7 @@ class WithOptional(VcoModel):
     )
 
 
-def _validate_device_config(**data: Any) -> DeviceConfig:
+def _validate_device_config(**data: object) -> DeviceConfig:
     """Validate raw inputs through Pydantic, including intentionally invalid values."""
     return DeviceConfig.model_validate(data)
 
@@ -176,8 +176,8 @@ class TestAlias:
 
 class TestAudit:
     def test_audit_entry_recorded_on_failure(self):
-        audit: list[dict[str, Any]] = []
-        DeviceConfig.model_validate(
+        audit: list[dict[str, object]] = []
+        _ = DeviceConfig.model_validate(
             {"link": "invalid", "multicast": {}},
             context={"audit": audit},
         )
@@ -186,19 +186,21 @@ class TestAudit:
         assert entry["field"] == "link"
         assert entry["bad_value"] == "invalid"
         assert entry["action"] == "set_to_default"
-        assert "failed model validation" in entry["reason"]
+        reason = entry["reason"]
+        assert isinstance(reason, str)
+        assert "failed model validation" in reason
 
     def test_no_audit_entry_on_valid_data(self):
-        audit: list[dict[str, Any]] = []
-        DeviceConfig.model_validate(
+        audit: list[dict[str, object]] = []
+        _ = DeviceConfig.model_validate(
             {"link": {"mtu": 9000}, "multicast": {}},
             context={"audit": audit},
         )
         assert len(audit) == 0
 
     def test_multiple_failures_produce_multiple_entries(self):
-        audit: list[dict[str, Any]] = []
-        DeviceConfig.model_validate(
+        audit: list[dict[str, object]] = []
+        _ = DeviceConfig.model_validate(
             {"link": None, "multicast": None},
             context={"audit": audit},
         )

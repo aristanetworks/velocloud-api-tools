@@ -36,21 +36,21 @@ class NestedKeyContainer(VcoModel):
 class TestKeyFieldMergeUpsert:
     def test_update_existing_item(self):
         m = Container(rules=[Rule(name="r1", priority=1), Rule(name="r2", priority=2)])
-        m.merge_patch({"rules": {"r1": {"priority": 10}}})
+        _ = m.merge_patch({"rules": {"r1": {"priority": 10}}})
         assert m.rules[0].name == "r1"
         assert m.rules[0].priority == 10
         assert m.rules[1].priority == 2  # unchanged
 
     def test_add_new_item(self):
         m = Container(rules=[Rule(name="r1")])
-        m.merge_patch({"rules": {"r2": {"name": "r2", "priority": 5}}})
+        _ = m.merge_patch({"rules": {"r2": {"name": "r2", "priority": 5}}})
         assert len(m.rules) == 2
         assert m.rules[1].name == "r2"
         assert m.rules[1].priority == 5
 
     def test_unmentioned_items_unchanged(self):
         m = Container(rules=[Rule(name="a"), Rule(name="b"), Rule(name="c")])
-        m.merge_patch({"rules": {"b": {"priority": 99}}})
+        _ = m.merge_patch({"rules": {"b": {"priority": 99}}})
         assert len(m.rules) == 3
         assert m.rules[0].name == "a"
         assert m.rules[1].priority == 99
@@ -60,14 +60,14 @@ class TestKeyFieldMergeUpsert:
 class TestKeyFieldMergeDelete:
     def test_null_deletes_item(self):
         m = Container(rules=[Rule(name="r1"), Rule(name="r2"), Rule(name="r3")])
-        m.merge_patch({"rules": {"r2": None}})
+        _ = m.merge_patch({"rules": {"r2": None}})
         assert len(m.rules) == 2
         names = [r.name for r in m.rules]
         assert "r2" not in names
 
     def test_delete_nonexistent_is_noop(self):
         m = Container(rules=[Rule(name="r1")])
-        m.merge_patch({"rules": {"nonexistent": None}})
+        _ = m.merge_patch({"rules": {"nonexistent": None}})
         assert len(m.rules) == 1
 
 
@@ -79,7 +79,7 @@ class TestKeyFieldNestedKeyPath:
                 Segment(meta=SegmentMeta(name="PCI"), value=2),
             ]
         )
-        m.merge_patch({"segments": {"Global": {"value": 99}}})
+        _ = m.merge_patch({"segments": {"Global": {"value": 99}}})
         assert m.segments[0].value == 99
         assert m.segments[1].value == 2  # unchanged
 
@@ -87,24 +87,26 @@ class TestKeyFieldNestedKeyPath:
 class TestKeyFieldMergePosition:
     def test_position_numeric(self):
         m = Container(rules=[Rule(name="a"), Rule(name="b")])
-        m.merge_patch({"rules": {"c": {"name": "c", "priority": 1, "_position": 0}}})
+        _ = m.merge_patch(
+            {"rules": {"c": {"name": "c", "priority": 1, "_position": 0}}}
+        )
         assert m.rules[0].name == "c"
         assert m.rules[1].name == "a"
         assert m.rules[2].name == "b"
 
     def test_position_before(self):
         m = Container(rules=[Rule(name="a"), Rule(name="b")])
-        m.merge_patch({"rules": {"c": {"name": "c", "_position": "before:b"}}})
+        _ = m.merge_patch({"rules": {"c": {"name": "c", "_position": "before:b"}}})
         assert [r.name for r in m.rules] == ["a", "c", "b"]
 
     def test_position_after(self):
         m = Container(rules=[Rule(name="a"), Rule(name="b")])
-        m.merge_patch({"rules": {"c": {"name": "c", "_position": "after:a"}}})
+        _ = m.merge_patch({"rules": {"c": {"name": "c", "_position": "after:a"}}})
         assert [r.name for r in m.rules] == ["a", "c", "b"]
 
     def test_position_moves_existing(self):
         m = Container(rules=[Rule(name="a"), Rule(name="b"), Rule(name="c")])
-        m.merge_patch({"rules": {"c": {"_position": 0}}})
+        _ = m.merge_patch({"rules": {"c": {"_position": 0}}})
         assert [r.name for r in m.rules] == ["c", "a", "b"]
 
 
@@ -133,19 +135,19 @@ class TestKeyFieldMissingPreservation:
 
     def test_no_context_preserves_missing(self):
         m = _CtxContainer()
-        m.merge_patch({"items": {"a": {"name": "a"}}})
+        _ = m.merge_patch({"items": {"a": {"name": "a"}}})
         assert m.items[0].plain is MISSING
         assert m.items[0].profile_only is MISSING
 
     def test_edge_context_preserves_missing(self):
         m = _CtxContainer().for_context(ConfigContext.EDGE)
-        m.merge_patch({"items": {"a": {"name": "a"}}})
+        _ = m.merge_patch({"items": {"a": {"name": "a"}}})
         assert m.items[0].plain is MISSING
         assert m.items[0].profile_only is MISSING
 
     def test_profile_context_fills_only_declared_defaults(self):
         m = _CtxContainer().for_context(ConfigContext.PROFILE)
-        m.merge_patch({"items": {"a": {"name": "a"}}})
+        _ = m.merge_patch({"items": {"a": {"name": "a"}}})
         # plain has no ContextDefault -> stays MISSING
         assert m.items[0].plain is MISSING
         # profile_only declares profile=_SubB -> filled

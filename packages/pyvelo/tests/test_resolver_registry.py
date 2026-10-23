@@ -2,7 +2,7 @@
 
 import uuid
 from dataclasses import dataclass
-from typing import Any, cast, override
+from typing import ClassVar, cast, override
 
 import pytest
 from pyvelo.config.resolver import Resolver, ResolverContext, ResolverRegistry
@@ -31,18 +31,19 @@ class BarIdentity:
 
 
 class MockFooResolver:
-    identity_type = FooIdentity
+    identity_type: type[FooIdentity] = FooIdentity
 
     def __init__(self) -> None:
         self._data: dict[str, FooIdentity] = {}
-        self.load_count = 0
+        self.load_count: int = 0
 
     async def resolve(self, name: str) -> FooIdentity:
         if name not in self._data:
             raise KeyError(f"Unknown Foo: {name!r}")
         return self._data[name]
 
-    async def resolve_key(self, key: Any) -> FooIdentity:
+    async def resolve_key(self, key: object) -> FooIdentity:
+        _ = key
         raise NotImplementedError
 
     async def reverse_by(self, id_attr: str, value: int | str | uuid.UUID) -> str:
@@ -52,6 +53,7 @@ class MockFooResolver:
         raise KeyError(f"No Foo with {id_attr}={value}")
 
     async def load(self, context: ResolverContext) -> None:
+        _ = context
         self.load_count += 1
         self._data = {
             "alpha": FooIdentity(name="alpha", id=1, logical_id=uuid.UUID(int=1)),
@@ -60,7 +62,7 @@ class MockFooResolver:
 
 
 class MockBarResolver:
-    identity_type = BarIdentity
+    identity_type: type[BarIdentity] = BarIdentity
 
     def __init__(self) -> None:
         self._data: dict[str, BarIdentity] = {}
@@ -70,7 +72,8 @@ class MockBarResolver:
             raise KeyError(f"Unknown Bar: {name!r}")
         return self._data[name]
 
-    async def resolve_key(self, key: Any) -> BarIdentity:
+    async def resolve_key(self, key: object) -> BarIdentity:
+        _ = key
         raise NotImplementedError
 
     async def reverse_by(self, id_attr: str, value: int | str | uuid.UUID) -> str:
@@ -80,6 +83,7 @@ class MockBarResolver:
         raise KeyError(f"No Bar with {id_attr}={value}")
 
     async def load(self, context: ResolverContext) -> None:
+        _ = context
         self._data = {
             "first": BarIdentity(name="first", id=10),
             "second": BarIdentity(name="second", id=20),
@@ -143,7 +147,7 @@ class TestResolverRegistry:
 
     async def test_resolve_unknown_identity_type(self, registry: ResolverRegistry):
         with pytest.raises(LookupError, match="No resolver registered"):
-            await registry.resolve(FooIdentity, "anything")
+            _ = await registry.resolve(FooIdentity, "anything")
 
     async def test_resolve_unknown_name(
         self, registry: ResolverRegistry, foo_resolver: MockFooResolver
@@ -151,7 +155,7 @@ class TestResolverRegistry:
         registry.register(foo_resolver)
         await foo_resolver.load(ResolverContext())
         with pytest.raises(KeyError, match="Unknown Foo"):
-            await registry.resolve(FooIdentity, "nonexistent")
+            _ = await registry.resolve(FooIdentity, "nonexistent")
 
     async def test_reverse(
         self, registry: ResolverRegistry, foo_resolver: MockFooResolver
@@ -163,7 +167,7 @@ class TestResolverRegistry:
 
     async def test_reverse_unknown_identity_type(self, registry: ResolverRegistry):
         with pytest.raises(LookupError, match="No resolver registered"):
-            await registry.reverse(FooIdentity, "id", 1)
+            _ = await registry.reverse(FooIdentity, "id", 1)
 
     async def test_reverse_by_logical_id(
         self, registry: ResolverRegistry, foo_resolver: MockFooResolver
@@ -220,12 +224,12 @@ class TestResolverRegistry:
         from pyvelo.client.protocol import VcoClientProtocol
         from pyvelo.config.resolver import BaseResolver
 
-        class CountedResolver(BaseResolver[Any, FooIdentity]):
-            identity_type = FooIdentity
+        class CountedResolver(BaseResolver[object, FooIdentity]):
+            identity_type: ClassVar[type[FooIdentity]] = FooIdentity
 
             def __init__(self) -> None:
                 super().__init__(client=cast(VcoClientProtocol, cast(object, None)))
-                self.cleared = 0
+                self.cleared: int = 0
 
             @override
             def _clear(self) -> None:
@@ -234,6 +238,7 @@ class TestResolverRegistry:
 
             @override
             async def load(self, context: ResolverContext) -> None:
+                _ = context
                 self._register(
                     "alpha",
                     FooIdentity(name="alpha", id=1, logical_id=uuid.UUID(int=1)),
@@ -241,9 +246,10 @@ class TestResolverRegistry:
                 )
 
         resolver = CountedResolver()
-        registry.register(resolver)
+        registry.register(cast(Resolver[object, FooIdentity], cast(object, resolver)))
         await resolver.load(ResolverContext())
-        assert resolver._by_name  # has data
+        assert await resolver.resolve("alpha")
         with registry.context(ResolverContext(enterprise_id=99)):
             assert resolver.cleared == 1
-            assert not resolver._by_name  # caches were cleared on entry
+            with pytest.raises(KeyError, match="Unknown foo"):
+                _ = await resolver.resolve("alpha")

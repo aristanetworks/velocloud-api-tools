@@ -2,11 +2,12 @@
 
 import builtins
 import copy
-import json
 import pickle
 
 from pydantic import MISSING
 from pyvelo.core import VcoModel
+
+from ._type_support import parse_json_object
 
 
 class SampleModel(VcoModel):
@@ -27,7 +28,7 @@ class TestMissingSentinel:
         """MISSING fields should not appear in JSON output."""
         obj = SampleModel(name="test")
         raw = obj.model_dump_json(by_alias=True, exclude_unset=True)
-        parsed = json.loads(raw)
+        parsed = parse_json_object(raw)
         assert "optionalField" not in parsed
 
     def test_none_preserved_in_serialization(self):

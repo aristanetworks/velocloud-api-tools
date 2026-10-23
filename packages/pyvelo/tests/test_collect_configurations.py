@@ -1,13 +1,12 @@
 from __future__ import annotations
 
-from typing import Any
-from unittest.mock import MagicMock
-
 import pytest
 from pydantic import MISSING
 from pyvelo.analytics.analytics import Analytics
 from pyvelo.client.schemas.configuration import EnterpriseConfigurationProfile
 from pyvelo.client.schemas.profiles import GetEnterpriseConfigurations
+
+from ._type_support import MockListClient
 
 
 def _make_profile(
@@ -24,43 +23,36 @@ def _make_profile(
     )
 
 
-def _make_client(profiles: list[EnterpriseConfigurationProfile]) -> Any:
-    client = MagicMock()
-    captured_requests: list[GetEnterpriseConfigurations] = []
-
-    async def _portal_list(method, request, item_type, **kwargs):
-        captured_requests.append(request)
-        return profiles
-
-    client.portal_list = _portal_list
-    client._captured_requests = captured_requests
-    return client
+def _make_client(
+    profiles: list[EnterpriseConfigurationProfile],
+) -> MockListClient[GetEnterpriseConfigurations, EnterpriseConfigurationProfile]:
+    return MockListClient(profiles)
 
 
 class TestCollectConfigurationsRequest:
     @pytest.mark.anyio
     async def test_includes_edge_count_by_default(self):
         client = _make_client([_make_profile()])
-        analytics = Analytics(client, enterprise_id=1)
-        await analytics.collect_configurations()
-        req = client._captured_requests[0]
+        analytics = Analytics(client.protocol, enterprise_id=1)
+        _ = await analytics.collect_configurations()
+        req = client.captured_requests[0]
         assert req.with_ is not MISSING
         assert "edgeCount" in req.with_
 
     @pytest.mark.anyio
     async def test_without_edge_count(self):
         client = _make_client([_make_profile()])
-        analytics = Analytics(client, enterprise_id=1)
-        await analytics.collect_configurations(with_edge_count=False)
-        req = client._captured_requests[0]
+        analytics = Analytics(client.protocol, enterprise_id=1)
+        _ = await analytics.collect_configurations(with_edge_count=False)
+        req = client.captured_requests[0]
         assert req.with_ is MISSING
 
     @pytest.mark.anyio
     async def test_enterprise_id_passed(self):
         client = _make_client([_make_profile()])
-        analytics = Analytics(client, enterprise_id=42)
-        await analytics.collect_configurations()
-        req = client._captured_requests[0]
+        analytics = Analytics(client.protocol, enterprise_id=42)
+        _ = await analytics.collect_configurations()
+        req = client.captured_requests[0]
         assert req.enterprise_id == 42
 
 
@@ -68,7 +60,7 @@ class TestCollectConfigurationsOutput:
     @pytest.mark.anyio
     async def test_returns_metric_frame_with_expected_columns(self):
         client = _make_client([_make_profile()])
-        analytics = Analytics(client, enterprise_id=1)
+        analytics = Analytics(client.protocol, enterprise_id=1)
         result = await analytics.collect_configurations()
         expected = [
             "id",
@@ -90,7 +82,7 @@ class TestCollectConfigurationsOutput:
     @pytest.mark.anyio
     async def test_enum_values_are_strings(self):
         client = _make_client([_make_profile()])
-        analytics = Analytics(client, enterprise_id=1)
+        analytics = Analytics(client.protocol, enterprise_id=1)
         result = await analytics.collect_configurations()
         row = result.rows[0]
         assert row["configuration_type"] == "SEGMENT_BASED"
@@ -99,7 +91,7 @@ class TestCollectConfigurationsOutput:
     @pytest.mark.anyio
     async def test_id_column_mapped(self):
         client = _make_client([_make_profile(id_=99)])
-        analytics = Analytics(client, enterprise_id=1)
+        analytics = Analytics(client.protocol, enterprise_id=1)
         result = await analytics.collect_configurations()
         assert result.rows[0]["id"] == 99
 
@@ -107,14 +99,14 @@ class TestCollectConfigurationsOutput:
     async def test_max_items_limits_results(self):
         profiles = [_make_profile(id_=i, name=f"p{i}") for i in range(5)]
         client = _make_client(profiles)
-        analytics = Analytics(client, enterprise_id=1)
+        analytics = Analytics(client.protocol, enterprise_id=1)
         result = await analytics.collect_configurations(max_items=2)
         assert len(result) == 2
 
     @pytest.mark.anyio
     async def test_empty_result(self):
         client = _make_client([])
-        analytics = Analytics(client, enterprise_id=1)
+        analytics = Analytics(client.protocol, enterprise_id=1)
         result = await analytics.collect_configurations()
         assert len(result) == 0
         expected = [
@@ -142,7 +134,7 @@ class TestCollectConfigurationsOutput:
             _make_profile(id_=3, name="Default", edge_count=3),
         ]
         client = _make_client(profiles)
-        analytics = Analytics(client, enterprise_id=1)
+        analytics = Analytics(client.protocol, enterprise_id=1)
         result = await analytics.collect_configurations()
         grouped = result.group_by("name").agg(count="n")
         assert len(grouped) == 2

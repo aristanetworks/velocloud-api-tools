@@ -18,6 +18,8 @@ from pyvelo.core.identity import (
     SegmentIdentity,
 )
 
+from ._type_support import SegmentResolverFactory
+
 # ---------------------------------------------------------------------------
 # Shared model hierarchy — 4 levels deep with all annotation types
 # ---------------------------------------------------------------------------
@@ -103,7 +105,7 @@ VOICE_UUID = uuid.UUID("11111111-2222-3333-4444-555555555555")
 
 
 @pytest.fixture
-async def registry(make_segment_resolver) -> ResolverRegistry:
+async def registry(make_segment_resolver: SegmentResolverFactory) -> ResolverRegistry:
     resolver = await make_segment_resolver(
         [
             {
@@ -187,26 +189,26 @@ class TestNoOpMerge:
         m = make_deep_config()
         original_tag = m.tag
         original_vlan = m.segments[0].vlan_id
-        m.merge_patch({})
+        _ = m.merge_patch({})
         assert m.tag == original_tag
         assert m.segments[0].vlan_id == original_vlan
 
     def test_patch_with_only_unknown_keys(self):
         m = make_deep_config()
         original_tag = m.tag
-        m.merge_patch({"nonexistent_field": 42, "another_unknown": "x"})
+        _ = m.merge_patch({"nonexistent_field": 42, "another_unknown": "x"})
         assert m.tag == original_tag
 
     def test_patch_with_only_directives(self):
         m = make_deep_config()
         original_tag = m.tag
-        m.merge_patch({"_position": 0, "_custom": "ignored"})
+        _ = m.merge_patch({"_position": 0, "_custom": "ignored"})
         assert m.tag == original_tag
 
     def test_empty_patch_does_not_trigger_override(self):
         m = make_deep_config()
         assert m.override is False
-        m.merge_patch({})
+        _ = m.merge_patch({})
         assert m.override is False
 
     def test_same_value_patch_does_not_trigger_override(self):
@@ -216,7 +218,7 @@ class TestNoOpMerge:
             segment=SegmentMeta(name="test"),
             vlan_id=100,
         )
-        seg.merge_patch({"vlan_id": 100})
+        _ = seg.merge_patch({"vlan_id": 100})
         # Implementation uses != comparison for change detection,
         # so same value should NOT trigger override
         assert seg.override is False
@@ -230,26 +232,26 @@ class TestNoOpMerge:
 class TestScalarAndMissingCombinations:
     def test_null_on_missing_typed_field(self):
         m = Config(tag="present")
-        m.merge_patch({"tag": None})
+        _ = m.merge_patch({"tag": None})
         assert m.tag is MISSING
 
     def test_null_on_non_missing_field(self):
         m = Config(enabled=True)
-        m.merge_patch({"enabled": None})
+        _ = m.merge_patch({"enabled": None})
         assert m.enabled is None
 
     def test_set_missing_field_to_value(self):
         m = Config()
         assert m.tag is MISSING
-        m.merge_patch({"tag": "new-value"})
+        _ = m.merge_patch({"tag": "new-value"})
         assert m.tag == "new-value"
 
     def test_roundtrip_missing_to_value_and_back(self):
         m = Config()
         assert m.tag is MISSING
-        m.merge_patch({"tag": "set"})
+        _ = m.merge_patch({"tag": "set"})
         assert m.tag == "set"
-        m.merge_patch({"tag": None})
+        _ = m.merge_patch({"tag": None})
         assert m.tag is MISSING
 
     def test_null_on_nested_missing_field(self):
@@ -258,7 +260,7 @@ class TestScalarAndMissingCombinations:
             name="test",
             match=MatchCriteria(src_port=80),
         )
-        rule.merge_patch({"match": {"src_port": None}})
+        _ = rule.merge_patch({"match": {"src_port": None}})
         assert rule.match.src_port is MISSING
 
     def test_null_on_nested_missing_field_preserves_sibling(self):
@@ -266,7 +268,7 @@ class TestScalarAndMissingCombinations:
             name="test",
             match=MatchCriteria(src_port=80, dst_port=443),
         )
-        rule.merge_patch({"match": {"src_port": None}})
+        _ = rule.merge_patch({"match": {"src_port": None}})
         assert rule.match.src_port is MISSING
         assert rule.match.dst_port == 443
 
@@ -277,7 +279,7 @@ class TestScalarAndMissingCombinations:
             description="desc",
         )
         m.segments.append(seg)
-        m.merge_patch({"tag": None, "segments": {"test": {"description": None}}})
+        _ = m.merge_patch({"tag": None, "segments": {"test": {"description": None}}})
         assert m.tag is MISSING
         assert m.segments[0].description is MISSING
 
@@ -290,22 +292,22 @@ class TestScalarAndMissingCombinations:
 class TestAliasKeyResolution:
     def test_snake_case_key(self):
         m = WithAlias()
-        m.merge_patch({"display_name": "snake"})
+        _ = m.merge_patch({"display_name": "snake"})
         assert m.display_name == "snake"
 
     def test_camel_case_key(self):
         m = WithAlias()
-        m.merge_patch({"displayName": "camel"})
+        _ = m.merge_patch({"displayName": "camel"})
         assert m.display_name == "camel"
 
     def test_explicit_alias_key(self):
         m = WithAlias()
-        m.merge_patch({"VLANTag": 42})
+        _ = m.merge_patch({"VLANTag": 42})
         assert m.vlan_tag == 42
 
     def test_mixed_alias_forms_in_one_patch(self):
         m = WithAlias()
-        m.merge_patch(
+        _ = m.merge_patch(
             {
                 "display_name": "snake",
                 "VLANTag": 10,
@@ -319,7 +321,7 @@ class TestAliasKeyResolution:
     def test_camelcase_generated_alias(self):
         """vlan_tag -> vlanTag should also work."""
         m = WithAlias()
-        m.merge_patch({"vlanTag": 99})
+        _ = m.merge_patch({"vlanTag": 99})
         assert m.vlan_tag == 99
 
 
@@ -337,7 +339,7 @@ class TestSubModelMerge:
         original_rule0 = m.segments[0].rules[0]
         original_match = m.segments[0].rules[0].match
 
-        m.merge_patch(
+        _ = m.merge_patch(
             {
                 "dns": {"primary": "9.9.9.9"},
                 "segments": {
@@ -363,7 +365,7 @@ class TestSubModelMerge:
     def test_four_level_deep_merge(self):
         """Config -> Segment -> Rule -> MatchCriteria."""
         m = make_deep_config()
-        m.merge_patch(
+        _ = m.merge_patch(
             {
                 "segments": {
                     "Global": {
@@ -389,7 +391,7 @@ class TestSubModelMerge:
         pci_vlan_before = m.segments[1].vlan_id
         voice_vlan_before = m.segments[2].vlan_id
 
-        m.merge_patch(
+        _ = m.merge_patch(
             {
                 "segments": {
                     "Global": {"vlan_id": 999},
@@ -403,7 +405,7 @@ class TestSubModelMerge:
 
     def test_merge_multiple_segments_in_one_patch(self):
         m = make_deep_config()
-        m.merge_patch(
+        _ = m.merge_patch(
             {
                 "segments": {
                     "Global": {"vlan_id": 111},
@@ -425,7 +427,7 @@ class TestSubModelMerge:
 class TestKeyFieldAdvancedPosition:
     def test_position_end_explicit(self):
         m = make_deep_config()
-        m.merge_patch(
+        _ = m.merge_patch(
             {
                 "segments": {
                     "Global": {
@@ -447,7 +449,7 @@ class TestKeyFieldAdvancedPosition:
         global_seg = m.segments[0]
         original_count = len(global_seg.rules)
 
-        m.merge_patch(
+        _ = m.merge_patch(
             {
                 "segments": {
                     "Global": {
@@ -470,7 +472,7 @@ class TestKeyFieldAdvancedPosition:
         global_seg = m.segments[0]
         original_count = len(global_seg.rules)
 
-        m.merge_patch(
+        _ = m.merge_patch(
             {
                 "segments": {
                     "Global": {
@@ -494,7 +496,7 @@ class TestKeyFieldAdvancedPosition:
         assert [r.name for r in global_seg.rules] == ["allow-all", "block-ssh"]
 
         # Move block-ssh before allow-all
-        m.merge_patch(
+        _ = m.merge_patch(
             {
                 "segments": {
                     "Global": {
@@ -512,7 +514,7 @@ class TestKeyFieldAdvancedPosition:
         m = make_deep_config()
         global_seg = m.segments[0]
         # Add a third rule first
-        m.merge_patch(
+        _ = m.merge_patch(
             {
                 "segments": {
                     "Global": {
@@ -530,7 +532,7 @@ class TestKeyFieldAdvancedPosition:
         ]
 
         # Move allow-all after mid-rule
-        m.merge_patch(
+        _ = m.merge_patch(
             {
                 "segments": {
                     "Global": {
@@ -553,7 +555,7 @@ class TestKeyFieldAdvancedPosition:
         count = len(global_seg.rules)
 
         # Position beyond list length
-        m.merge_patch(
+        _ = m.merge_patch(
             {
                 "segments": {
                     "Global": {
@@ -571,7 +573,7 @@ class TestKeyFieldAdvancedPosition:
         m = make_deep_config()
         global_seg = m.segments[0]
 
-        m.merge_patch(
+        _ = m.merge_patch(
             {
                 "segments": {
                     "Global": {
@@ -591,7 +593,7 @@ class TestKeyFieldMultiOp:
         global_seg = m.segments[0]
         assert len(global_seg.rules) == 2
 
-        m.merge_patch(
+        _ = m.merge_patch(
             {
                 "segments": {
                     "Global": {
@@ -625,7 +627,7 @@ class TestKeyFieldMultiOp:
         m = make_deep_config()
         global_seg = m.segments[0]
 
-        m.merge_patch(
+        _ = m.merge_patch(
             {
                 "segments": {
                     "Global": {
@@ -644,7 +646,7 @@ class TestKeyFieldMultiOp:
         voice_seg = m.segments[2]
         assert voice_seg.rules == []
 
-        m.merge_patch(
+        _ = m.merge_patch(
             {
                 "segments": {
                     "Voice": {
@@ -663,7 +665,7 @@ class TestKeyFieldMultiOp:
         global_seg = m.segments[0]
         original_count = len(global_seg.rules)
 
-        m.merge_patch(
+        _ = m.merge_patch(
             {
                 "segments": {
                     "Global": {
@@ -687,7 +689,7 @@ class TestNestedKeyFieldLists:
         allow_rule = m.segments[0].rules[0]
         assert len(allow_rule.acl) == 2
 
-        m.merge_patch(
+        _ = m.merge_patch(
             {
                 "segments": {
                     "Global": {
@@ -713,7 +715,7 @@ class TestNestedKeyFieldLists:
 
     def test_update_acl_entry(self):
         m = make_deep_config()
-        m.merge_patch(
+        _ = m.merge_patch(
             {
                 "segments": {
                     "Global": {
@@ -738,7 +740,7 @@ class TestNestedKeyFieldLists:
         allow_rule = m.segments[0].rules[0]
         assert len(allow_rule.acl) == 2
 
-        m.merge_patch(
+        _ = m.merge_patch(
             {
                 "segments": {
                     "Global": {
@@ -758,7 +760,7 @@ class TestNestedKeyFieldLists:
 
     def test_acl_add_with_position(self):
         m = make_deep_config()
-        m.merge_patch(
+        _ = m.merge_patch(
             {
                 "segments": {
                     "Global": {
@@ -782,7 +784,7 @@ class TestNestedKeyFieldLists:
         """Operate on ACLs in two different rules simultaneously."""
         m = make_deep_config()
         # Add ACL to block-ssh, delete from allow-all
-        m.merge_patch(
+        _ = m.merge_patch(
             {
                 "segments": {
                     "Global": {
@@ -822,7 +824,7 @@ class TestOverrideFlagDeepScenarios:
         m = make_deep_config()
         assert m.segments[0].override is False
 
-        m.merge_patch(
+        _ = m.merge_patch(
             {
                 "segments": {
                     "Global": {
@@ -840,7 +842,7 @@ class TestOverrideFlagDeepScenarios:
         m = make_deep_config()
         assert m.segments[0].override is False
 
-        m.merge_patch(
+        _ = m.merge_patch(
             {
                 "segments": {
                     "Global": {
@@ -859,7 +861,7 @@ class TestOverrideFlagDeepScenarios:
 
     def test_edge_local_change_does_not_trigger_segment_override(self):
         m = make_deep_config()
-        m.merge_patch(
+        _ = m.merge_patch(
             {
                 "segments": {
                     "Global": {"cidr_ip": "10.0.0.1"},
@@ -870,7 +872,7 @@ class TestOverrideFlagDeepScenarios:
 
     def test_both_edge_local_and_normal_triggers_override(self):
         m = make_deep_config()
-        m.merge_patch(
+        _ = m.merge_patch(
             {
                 "segments": {
                     "Global": {
@@ -895,7 +897,7 @@ class TestOverrideFlagDeepScenarios:
         assert m.segments[0].override is False
 
         # Change a segment's rule
-        m.merge_patch(
+        _ = m.merge_patch(
             {
                 "segments": {
                     "Global": {
@@ -913,18 +915,18 @@ class TestOverrideFlagDeepScenarios:
         m = make_deep_config()
         assert m.override is False
 
-        m.merge_patch({"dns": {"primary": "9.9.9.9"}})
+        _ = m.merge_patch({"dns": {"primary": "9.9.9.9"}})
         assert m.override is True
 
     def test_top_level_override_triggered_by_enabled_change(self):
         m = make_deep_config()
-        m.merge_patch({"enabled": False})
+        _ = m.merge_patch({"enabled": False})
         assert m.override is True
 
     def test_override_not_triggered_when_patching_only_override_field(self):
         """Patching only the OverrideFlag itself should not trigger re-set."""
         seg = Segment(segment=SegmentMeta(name="test"), override=False)
-        seg.merge_patch({"override": True})
+        _ = seg.merge_patch({"override": True})
         # The override flag is excluded from change detection, so it should
         # remain at whatever value was set
         assert seg.override is True
@@ -933,7 +935,7 @@ class TestOverrideFlagDeepScenarios:
         m = make_deep_config()
 
         # Change Global rules + PCI vlan_id
-        m.merge_patch(
+        _ = m.merge_patch(
             {
                 "segments": {
                     "Global": {"rules": {"allow-all": {"priority": 0}}},
@@ -950,7 +952,7 @@ class TestOverrideFlagDeepScenarios:
         m = make_deep_config()
         assert m.segments[2].override is False  # Voice
 
-        m.merge_patch(
+        _ = m.merge_patch(
             {
                 "segments": {
                     "Voice": {
@@ -967,7 +969,7 @@ class TestOverrideFlagDeepScenarios:
         m = make_deep_config()
         assert m.segments[0].override is False
 
-        m.merge_patch(
+        _ = m.merge_patch(
             {
                 "segments": {
                     "Global": {"rules": {"block-ssh": None}},
@@ -978,7 +980,7 @@ class TestOverrideFlagDeepScenarios:
 
     def test_only_edge_local_fields_in_multiple_no_trigger(self):
         m = make_deep_config()
-        m.merge_patch(
+        _ = m.merge_patch(
             {
                 "segments": {
                     "Global": {"cidr_ip": "10.0.0.5", "cidr_prefix": 16},
@@ -996,15 +998,15 @@ class TestOverrideFlagDeepScenarios:
 class TestSequentialPatches:
     def test_multiple_patches_accumulate(self):
         m = make_deep_config()
-        m.merge_patch({"dns": {"primary": "1.0.0.1"}})
-        m.merge_patch({"dns": {"secondary": "1.0.0.2"}})
+        _ = m.merge_patch({"dns": {"primary": "1.0.0.1"}})
+        _ = m.merge_patch({"dns": {"secondary": "1.0.0.2"}})
         assert m.dns.primary == "1.0.0.1"
         assert m.dns.secondary == "1.0.0.2"
 
     def test_later_patch_overwrites_earlier(self):
         m = make_deep_config()
-        m.merge_patch({"dns": {"primary": "1.0.0.1"}})
-        m.merge_patch({"dns": {"primary": "9.9.9.9"}})
+        _ = m.merge_patch({"dns": {"primary": "1.0.0.1"}})
+        _ = m.merge_patch({"dns": {"primary": "9.9.9.9"}})
         assert m.dns.primary == "9.9.9.9"
 
     def test_sequential_keyfield_operations(self):
@@ -1012,7 +1014,7 @@ class TestSequentialPatches:
         global_seg = m.segments[0]
 
         # Patch 1: add a rule
-        m.merge_patch(
+        _ = m.merge_patch(
             {
                 "segments": {
                     "Global": {
@@ -1024,7 +1026,7 @@ class TestSequentialPatches:
         assert len(global_seg.rules) == 3
 
         # Patch 2: delete original, update new
-        m.merge_patch(
+        _ = m.merge_patch(
             {
                 "segments": {
                     "Global": {
@@ -1061,7 +1063,7 @@ class TestSequentialPatches:
 class TestResolvableDeepMerge:
     def test_resolve_segment_id_in_keyed_segment(self, registry: ResolverRegistry):
         m = make_deep_config()
-        m.merge_patch(
+        _ = m.merge_patch(
             {
                 "segments": {
                     "Global": {
@@ -1075,7 +1077,7 @@ class TestResolvableDeepMerge:
 
     def test_resolve_logical_id_in_keyed_segment(self, registry: ResolverRegistry):
         m = make_deep_config()
-        m.merge_patch(
+        _ = m.merge_patch(
             {
                 "segments": {
                     "Global": {
@@ -1089,7 +1091,7 @@ class TestResolvableDeepMerge:
 
     def test_resolve_multiple_fields_in_one_sub_model(self, registry: ResolverRegistry):
         m = make_deep_config()
-        m.merge_patch(
+        _ = m.merge_patch(
             {
                 "segments": {
                     "Global": {
@@ -1107,7 +1109,7 @@ class TestResolvableDeepMerge:
 
     def test_raw_id_bypasses_resolution(self, registry: ResolverRegistry):
         m = make_deep_config()
-        m.merge_patch(
+        _ = m.merge_patch(
             {
                 "segments": {
                     "Global": {
@@ -1121,7 +1123,7 @@ class TestResolvableDeepMerge:
 
     def test_no_resolvers_string_assigned_raw(self):
         m = make_deep_config()
-        m.merge_patch(
+        _ = m.merge_patch(
             {
                 "segments": {
                     "Global": {
@@ -1136,7 +1138,7 @@ class TestResolvableDeepMerge:
         self, registry: ResolverRegistry
     ):
         m = make_deep_config()
-        m.merge_patch(
+        _ = m.merge_patch(
             {
                 "segments": {
                     "Global": {
@@ -1166,7 +1168,7 @@ class TestComplexIntegration:
         m = make_deep_config()
         original_count = len(m.segments)
 
-        m.merge_patch(
+        _ = m.merge_patch(
             {
                 "segments": {
                     "NewSeg": {
@@ -1198,7 +1200,7 @@ class TestComplexIntegration:
         """Modify, add, and delete across different segments in one patch."""
         m = make_deep_config()
 
-        m.merge_patch(
+        _ = m.merge_patch(
             {
                 "segments": {
                     # Update Global
@@ -1246,7 +1248,7 @@ class TestComplexIntegration:
         """EdgeLocal changes + non-EdgeLocal in one patch."""
         m = make_deep_config()
 
-        m.merge_patch(
+        _ = m.merge_patch(
             {
                 "segments": {
                     "Global": {
@@ -1268,7 +1270,7 @@ class TestComplexIntegration:
     def test_missing_null_and_value_in_one_patch(self):
         """Mix of MISSING-null, regular null, and value assignment."""
         m = make_deep_config()
-        m.merge_patch(
+        _ = m.merge_patch(
             {
                 "tag": None,  # MISSING-typed -> MISSING
                 "enabled": None,  # non-MISSING -> None
@@ -1283,7 +1285,7 @@ class TestComplexIntegration:
         """Add a rule with position + resolve segment ID — all in one."""
         m = make_deep_config()
 
-        m.merge_patch(
+        _ = m.merge_patch(
             {
                 "segments": {
                     "Global": {
@@ -1318,7 +1320,7 @@ class TestEdgeCases:
     def test_empty_string_key_in_patch_skipped(self):
         """An empty string key should be silently ignored."""
         m = Config()
-        m.merge_patch({"": "value"})
+        _ = m.merge_patch({"": "value"})
         # Should not raise
 
     def test_patch_same_keyed_item_twice(self):
@@ -1328,14 +1330,14 @@ class TestEdgeCases:
         that sequential patches to the same item compose correctly.
         """
         m = make_deep_config()
-        m.merge_patch(
+        _ = m.merge_patch(
             {
                 "segments": {
                     "Global": {"rules": {"allow-all": {"priority": 50}}},
                 }
             }
         )
-        m.merge_patch(
+        _ = m.merge_patch(
             {
                 "segments": {
                     "Global": {"rules": {"allow-all": {"priority": 100}}},
@@ -1350,14 +1352,14 @@ class TestEdgeCases:
         m = make_deep_config()
         original_match = m.segments[0].rules[1].match
 
-        m.merge_patch(
+        _ = m.merge_patch(
             {
                 "segments": {
                     "Global": {"rules": {"block-ssh": {"match": {"protocol": "udp"}}}}
                 }
             }
         )
-        m.merge_patch(
+        _ = m.merge_patch(
             {
                 "segments": {
                     "Global": {"rules": {"block-ssh": {"match": {"dst_port": 53}}}}
@@ -1382,7 +1384,7 @@ class TestEdgeCases:
         m = BigList(items=[Item(name=f"item-{i}", value=i) for i in range(50)])
 
         # Update item-25, delete item-0, add new-item
-        m.merge_patch(
+        _ = m.merge_patch(
             {
                 "items": {
                     "item-25": {"value": 9999},
@@ -1420,13 +1422,13 @@ class TestEdgeCases:
         )
 
         # Patch key is a string "1" matching numeric id=1
-        m.merge_patch({"items": {"1": {"label": "updated"}}})
+        _ = m.merge_patch({"items": {"1": {"label": "updated"}}})
         assert m.items[0].label == "updated"
 
     def test_underscore_directives_stripped_from_item_patch(self):
         """All _-prefixed keys in item patches are stripped."""
         m = make_deep_config()
-        m.merge_patch(
+        _ = m.merge_patch(
             {
                 "segments": {
                     "Global": {
@@ -1448,7 +1450,7 @@ class TestEdgeCases:
     def test_camel_case_keys_in_nested_sub_model(self):
         """camelCase keys work at every nesting level."""
         m = make_deep_config()
-        m.merge_patch(
+        _ = m.merge_patch(
             {
                 "segments": {
                     "Global": {

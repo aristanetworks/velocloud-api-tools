@@ -1,12 +1,29 @@
 """Tests for metrics schema models and field typing."""
 
+from typing import cast
+
 from pyvelo.client.enums.edge import SortDirection
 from pyvelo.client.enums.metrics import FlowVisibilityMetric, FlowVisibilitySortMetric
 from pyvelo.client.schemas.metrics import (
     GetEdgeFlowVisibilityMetrics,
 )
 
-from ._type_support import require_present
+from ._type_support import JsonObject, require_present
+
+
+def _schema_object(value: object) -> JsonObject:
+    if not isinstance(value, dict):
+        raise TypeError("expected a JSON object")
+    return cast(JsonObject, value)
+
+
+def _property_description(schema: JsonObject, field: str) -> str:
+    properties = _schema_object(schema["properties"])
+    definition = _schema_object(properties[field])
+    description = definition.get("description", "")
+    if not isinstance(description, str):
+        raise TypeError(f"{field} description was not a string")
+    return description
 
 
 class TestFlowVisibilitySortOrder:
@@ -27,13 +44,13 @@ class TestFlowVisibilitySortOrder:
         assert obj.sort_order == SortDirection.DESC
 
     def test_sort_description_mentions_sort_order(self):
-        schema = GetEdgeFlowVisibilityMetrics.model_json_schema()
-        desc = schema["properties"]["sort"].get("description", "")
+        schema = cast(JsonObject, GetEdgeFlowVisibilityMetrics.model_json_schema())
+        desc = _property_description(schema, "sort")
         assert "sortOrder" in desc
 
     def test_sort_by_description_guides_to_sort(self):
-        schema = GetEdgeFlowVisibilityMetrics.model_json_schema()
-        desc = schema["properties"]["sortBy"].get("description", "")
+        schema = cast(JsonObject, GetEdgeFlowVisibilityMetrics.model_json_schema())
+        desc = _property_description(schema, "sortBy")
         assert "attribute" in desc
         assert "sort" in desc.lower()
 

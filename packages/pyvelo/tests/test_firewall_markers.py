@@ -68,7 +68,7 @@ class TestMergeWithMarkers:
         seg.outbound.append(_make_rule("existing-rule"))
 
         fw = FirewallData(segments=[seg])
-        fw.merge_patch(
+        _ = fw.merge_patch(
             {
                 "segments": {
                     "Global Segment": {
@@ -97,7 +97,7 @@ class TestMergeWithMarkers:
         seg.outbound.append(_make_rule("keep-me"))
 
         fw = FirewallData(segments=[seg])
-        fw.merge_patch(
+        _ = fw.merge_patch(
             {
                 "segments": {
                     "Global Segment": {
@@ -118,7 +118,7 @@ class TestMergeWithMarkers:
         seg = _make_segment()
         assert seg.outbound_override is False
 
-        seg.merge_patch(
+        _ = seg.merge_patch(
             {
                 "outbound": {
                     "block-ssh": {

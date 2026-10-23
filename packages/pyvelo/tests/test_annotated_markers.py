@@ -1,6 +1,6 @@
 """Tests for composable Annotated markers (Alias, EdgeOnly, ProfileOnly, Normalizer, ContextDefault)."""
 
-from typing import Annotated
+from typing import Annotated, cast
 
 from pydantic import MISSING, Field
 from pyvelo.core import (
@@ -14,6 +14,8 @@ from pyvelo.core import (
     VcoModel,
 )
 
+from ._type_support import JsonObject
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -21,14 +23,17 @@ from pyvelo.core import (
 _COMPACT = {"compact": True}
 
 
-def _compact(model, **extra_ctx):
-    ctx = {**_COMPACT, **extra_ctx}
-    return model.model_dump(by_alias=False, context=ctx)
+def _normalize_area(value: object) -> object:
+    return [0] if value in ("", "0", 0, [], [0]) else value
 
 
-def _compact_alias(model, **extra_ctx):
-    ctx = {**_COMPACT, **extra_ctx}
-    return model.model_dump(context=ctx)
+def _normalize_ssm(value: str) -> str:
+    return "255.255.255.255" if value == "any" else value
+
+
+def _compact(model: VcoModel, **extra_ctx: object) -> JsonObject:
+    ctx: dict[str, object] = {**_COMPACT, **extra_ctx}
+    return cast(JsonObject, model.model_dump(by_alias=False, context=ctx))
 
 
 # ---------------------------------------------------------------------------
@@ -53,9 +58,9 @@ class ProfileOnlyModel(VcoModel):
 
 
 class NormModel(VcoModel):
-    area: Annotated[
-        list[int], Normalizer(lambda v: [0] if v in ("", "0", 0, [], [0]) else v)
-    ] = Field(default_factory=lambda: [0])
+    area: Annotated[list[int], Normalizer(_normalize_area)] = Field(
+        default_factory=lambda: [0]
+    )
 
 
 class CtxDefaultModel(VcoModel):
@@ -74,9 +79,7 @@ class AliasEdgeOnly(VcoModel):
 
 
 class AliasNormalizer(VcoModel):
-    ssm: Annotated[
-        str, Alias("ssm"), Normalizer(lambda v: "255.255.255.255" if v == "any" else v)
-    ] = "255.255.255.255"
+    ssm: Annotated[str, Alias("ssm"), Normalizer(_normalize_ssm)] = "255.255.255.255"
 
 
 # ---------------------------------------------------------------------------

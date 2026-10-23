@@ -1,4 +1,3 @@
-import json
 from unittest.mock import AsyncMock
 
 import httpx
@@ -12,11 +11,13 @@ from pyvelo.client.schemas.enterprise import (
     GetEnterpriseEdges,
 )
 
+from ._type_support import JsonValue, MockVcoClientFactory, parse_json_object
+
 
 class TestEnterpriseEdgeWithEnums:
     def test_get_enterprise_edges_rejects_edge_list_only_with_values(self):
         with pytest.raises(ValidationError):
-            GetEnterpriseEdges.model_validate({"with": ["analyticsMode"]})
+            _ = GetEnterpriseEdges.model_validate({"with": ["analyticsMode"]})
 
     def test_get_enterprise_edges_accepts_public_with_values(self):
         req = GetEnterpriseEdges.model_validate({"with": ["cloudServiceSiteStatus"]})
@@ -42,14 +43,16 @@ class TestEnterpriseEdgeWithEnums:
 
     def test_get_enterprise_edge_list_rejects_public_only_with_values(self):
         with pytest.raises(ValidationError):
-            GetEnterpriseEdgeList.model_validate({"with": ["cloudServiceSiteStatus"]})
+            _ = GetEnterpriseEdgeList.model_validate(
+                {"with": ["cloudServiceSiteStatus"]}
+            )
 
     def test_get_enterprise_edge_list_requires_positive_enterprise_id(self):
         schema = GetEnterpriseEdgeList.model_json_schema(by_alias=True)
 
         assert schema["properties"]["enterpriseId"]["minimum"] == 1
         with pytest.raises(ValidationError):
-            GetEnterpriseEdgeList(enterprise_id=0)
+            _ = GetEnterpriseEdgeList(enterprise_id=0)
 
     def test_edge_list_request_serializes_documented_helper_fields(self):
         req = GetEnterpriseEdgeList(
@@ -88,29 +91,47 @@ class TestGetEnterpriseEdgeListOperation:
             GetEnterpriseEdgeListItem,
         )
 
-    async def test_single_page_request_records_continuation(self, mock_vco_client):
-        sent = []
+    async def test_pagination_uses_recorded_continuation(
+        self, mock_vco_client: MockVcoClientFactory
+    ):
+        sent: list[JsonValue] = []
+        pages = iter(
+            [
+                httpx.Response(
+                    200,
+                    json={
+                        "result": {
+                            "data": [{"id": 1, "name": "Edge 1"}],
+                            "metaData": {
+                                "more": True,
+                                "nextPageLink": "edge-cursor",
+                            },
+                        }
+                    },
+                ),
+                httpx.Response(
+                    200,
+                    json={
+                        "result": {
+                            "data": [{"id": 2, "name": "Edge 2"}],
+                            "metaData": {"more": False},
+                        }
+                    },
+                ),
+            ]
+        )
 
-        def handler(http_request):
-            params = json.loads(http_request.content)["params"]
+        def handler(http_request: httpx.Request) -> httpx.Response:
+            params = parse_json_object(http_request.content).get("params")
+            if not isinstance(params, dict):
+                raise TypeError("JSON-RPC request did not include params")
             sent.append(params.get("nextPageLink"))
-            return httpx.Response(
-                200,
-                json={
-                    "result": {
-                        "data": [{"id": 1, "name": "Edge 1"}],
-                        "metaData": {"more": True, "nextPageLink": "edge-cursor"},
-                    }
-                },
-            )
+            return next(pages)
 
         client = await mock_vco_client(handler)
         request = GetEnterpriseEdgeList(enterprise_id=1, limit=1)
-        request._max_pages = 1
 
         result = await client.get_enterprise_edge_list(request)
 
-        assert [edge.name for edge in result] == ["Edge 1"]
-        assert sent == [None]
-        assert request._page_has_more is True
-        assert request._page_next_link == "edge-cursor"
+        assert [edge.name for edge in result] == ["Edge 1", "Edge 2"]
+        assert sent == [None, "edge-cursor"]

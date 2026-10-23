@@ -1,5 +1,7 @@
 """Tests for typed recursive enterprise-event filters."""
 
+from typing import cast
+
 import pytest
 from pydantic import ValidationError
 from pyvelo.client.schemas.event import (
@@ -10,6 +12,24 @@ from pyvelo.client.schemas.event import (
     EnterpriseEventTypeFilter,
     GetEnterpriseEvents,
 )
+
+from ._type_support import JsonObject
+
+
+def _json_object(value: object) -> JsonObject:
+    if not isinstance(value, dict):
+        raise TypeError("expected a JSON object")
+    return cast(JsonObject, value)
+
+
+def _string_list(value: object) -> list[str]:
+    if not isinstance(value, list):
+        raise TypeError("expected an array of strings")
+    items = cast(list[object], value)
+    strings = [item for item in items if isinstance(item, str)]
+    if len(strings) != len(items):
+        raise TypeError("expected an array of strings")
+    return strings
 
 
 def test_recursive_event_filters_validate_and_serialize():
@@ -67,12 +87,12 @@ def test_recursive_event_filters_validate_and_serialize():
 
 def test_recursive_event_filter_groups_must_not_be_empty():
     with pytest.raises(ValidationError):
-        GetEnterpriseEvents.model_validate({"filters": {"and_": [{"or_": []}]}})
+        _ = GetEnterpriseEvents.model_validate({"filters": {"and_": [{"or_": []}]}})
 
 
 def test_enterprise_event_filters_require_and_at_root():
     with pytest.raises(ValidationError):
-        GetEnterpriseEvents.model_validate(
+        _ = GetEnterpriseEvents.model_validate(
             {
                 "filters": {
                     "or_": [
@@ -102,9 +122,9 @@ def test_enterprise_event_filters_require_and_at_root():
         ("in", []),
     ],
 )
-def test_event_filter_operator_value_cardinality(operator, value):
+def test_event_filter_operator_value_cardinality(operator: str, value: object):
     with pytest.raises(ValidationError):
-        GetEnterpriseEvents.model_validate(
+        _ = GetEnterpriseEvents.model_validate(
             {
                 "filters": {
                     "and": [{"field": "event", "operator": operator, "value": value}]
@@ -140,9 +160,10 @@ def test_string_filter_supports_in_with_multiple_values():
 
 
 def test_json_schema_exposes_operator_value_cardinality():
-    schema = GetEnterpriseEvents.model_json_schema(by_alias=True)
+    schema = cast(JsonObject, GetEnterpriseEvents.model_json_schema(by_alias=True))
 
-    event_filter = schema["$defs"]["EnterpriseEventTypeFilter"]
+    defs = _json_object(schema["$defs"])
+    event_filter = _json_object(defs["EnterpriseEventTypeFilter"])
     assert event_filter["oneOf"] == [
         {
             "properties": {
@@ -160,8 +181,13 @@ def test_json_schema_exposes_operator_value_cardinality():
         },
     ]
 
-    string_filter = schema["$defs"]["EnterpriseEventStringValueFilter"]
-    scalar_operators = string_filter["oneOf"][0]["properties"]["operator"]["enum"]
+    string_filter = _json_object(defs["EnterpriseEventStringValueFilter"])
+    string_variants = string_filter["oneOf"]
+    assert isinstance(string_variants, list)
+    scalar_variant = _json_object(string_variants[0])
+    scalar_properties = _json_object(scalar_variant["properties"])
+    operator_property = _json_object(scalar_properties["operator"])
+    scalar_operators = _string_list(operator_property["enum"])
     assert set(scalar_operators) == {
         "is",
         "isNot",
@@ -172,7 +198,9 @@ def test_json_schema_exposes_operator_value_cardinality():
         "endsWith",
         "notEndsWith",
     }
-    assert string_filter["oneOf"][1]["properties"] == {
+    array_variant = _json_object(string_variants[1])
+    array_properties = _json_object(array_variant["properties"])
+    assert array_properties == {
         "operator": {"enum": ["in", "notIn"]},
         "value": {"minItems": 1, "type": "array"},
     }

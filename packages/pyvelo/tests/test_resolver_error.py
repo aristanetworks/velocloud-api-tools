@@ -157,13 +157,13 @@ class TestResolveName:
         from pyvelo.config.resolver import resolve_name
 
         with pytest.raises(KeyError, match="Did you mean"):
-            resolve_name("Branch", {"Branch-NYC": 1, "Branch-LAX": 2}, "edge")
+            _ = resolve_name("Branch", {"Branch-NYC": 1, "Branch-LAX": 2}, "edge")
 
     def test_no_match_raises(self):
         from pyvelo.config.resolver import resolve_name
 
         with pytest.raises(KeyError, match="Unknown edge"):
-            resolve_name("zzz-nothing", {"Branch-NYC": 1, "Branch-LAX": 2}, "edge")
+            _ = resolve_name("zzz-nothing", {"Branch-NYC": 1, "Branch-LAX": 2}, "edge")
 
     def test_exact_match_preferred_over_case_insensitive(self):
         from pyvelo.config.resolver import resolve_name

@@ -4,7 +4,8 @@ from uuid import UUID
 
 import pytest
 from pyvelo.client.enums.enterprise import NetworkSegmentType
-from pyvelo.client.models.configuration.common import _find_segment
+from pyvelo.client.models.configuration.device_settings.lan import LanSettings
+from pyvelo.client.models.configuration.device_settings.root import DeviceSettingsData
 from pyvelo.client.models.configuration.device_settings.segment import (
     DeviceSegment,
     SegmentMetadata,
@@ -40,6 +41,12 @@ def _make_device_segments() -> list[DeviceSegment]:
     ]
 
 
+def _make_device_data() -> DeviceSettingsData:
+    return DeviceSettingsData(
+        lan=LanSettings(interfaces=[], networks=[]), segments=_make_device_segments()
+    )
+
+
 def _make_qos_segments() -> list[QosSegment]:
     return [
         QosSegment(
@@ -71,26 +78,25 @@ def _make_fw_segments() -> list[FirewallSegment]:
     ]
 
 
-class TestFindSegmentHelper:
-    def test_find_by_name(self):
-        segs = _make_device_segments()
-        result = _find_segment(segs, name="Engineering")
-        assert result.segment.segment_id == 1
+class TestDeviceSettingsDataGetSegment:
+    def test_lookup_by_name_and_id(self):
+        data = _make_device_data()
 
-    def test_find_by_id(self):
-        segs = _make_device_segments()
-        result = _find_segment(segs, segment_id=0)
-        assert result.segment.name == "Global Segment"
+        by_name = data.get_segment(name="Engineering")
+        by_id = data.get_segment(segment_id=0)
 
-    def test_not_found_raises(self):
-        segs = _make_device_segments()
-        with pytest.raises(ValueError, match="Segment not found"):
-            _find_segment(segs, name="Nonexistent")
+        assert by_name.segment.segment_id == 1
+        assert by_id.segment.name == "Global Segment"
 
-    def test_no_criteria_raises(self):
-        segs = _make_device_segments()
+    def test_requires_name_or_segment_id(self):
+        data = _make_device_data()
         with pytest.raises(ValueError, match="Provide name or segment_id"):
-            _find_segment(segs)
+            _ = data.get_segment()
+
+    def test_not_found(self):
+        data = _make_device_data()
+        with pytest.raises(ValueError, match="Segment not found"):
+            _ = data.get_segment(name="Missing")
 
 
 class TestQosDataGetSegment:
@@ -107,7 +113,12 @@ class TestQosDataGetSegment:
     def test_not_found(self):
         data = QosData(segments=_make_qos_segments())
         with pytest.raises(ValueError, match="Segment not found"):
-            data.get_segment(name="Missing")
+            _ = data.get_segment(name="Missing")
+
+    def test_requires_name_or_segment_id(self):
+        data = QosData(segments=_make_qos_segments())
+        with pytest.raises(ValueError, match="Provide name or segment_id"):
+            _ = data.get_segment()
 
 
 class TestFirewallDataGetSegment:
@@ -119,4 +130,4 @@ class TestFirewallDataGetSegment:
     def test_not_found(self):
         data = FirewallData(segments=_make_fw_segments())
         with pytest.raises(ValueError, match="Segment not found"):
-            data.get_segment(name="Missing")
+            _ = data.get_segment(name="Missing")

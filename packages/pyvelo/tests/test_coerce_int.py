@@ -33,10 +33,10 @@ class TestCoerceInt:
     def test_non_numeric_string_raises(self):
         # Pass-through lets pydantic surface a clean int-parse error.
         with pytest.raises(ValidationError):
-            _Sample.model_validate({"count": "not a number"})
+            _ = _Sample.model_validate({"count": "not a number"})
 
     def test_whitespace_only_string_falls_through(self):
         # Whitespace-only strings are not coerced (defensive: never int(''),
         # never int('  ')); pydantic then rejects them.
         with pytest.raises(ValidationError):
-            _Sample.model_validate({"count": "   "})
+            _ = _Sample.model_validate({"count": "   "})

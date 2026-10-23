@@ -1,11 +1,12 @@
 """Tests for Alias marker field validation and serialization behavior."""
 
-import json
 from typing import Annotated
 
 from pydantic import MISSING
 from pyvelo.client.schemas.license import GetEnterpriseEdgeLicenses
 from pyvelo.core import Alias, VcoModel
+
+from ._type_support import parse_json_object
 
 
 class ModelWithAlias(VcoModel):
@@ -41,7 +42,7 @@ class TestAliasMarkerValidation:
     def test_json_serializes_to_vco_key(self):
         """JSON serialization should produce VCO API keys."""
         obj = ModelWithAlias(dh_group=14)
-        raw = json.loads(obj.model_dump_json(by_alias=True))
+        raw = parse_json_object(obj.model_dump_json(by_alias=True))
         assert "DHGroup" in raw
 
     def test_alias_missing_default(self):

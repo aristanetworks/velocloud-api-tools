@@ -1,5 +1,7 @@
 """Tests for edge schema models and field typing."""
 
+from typing import ClassVar, cast
+
 import pytest
 from pydantic import MISSING
 from pyvelo.client.enums.configuration import ConfigurationModuleType
@@ -29,7 +31,7 @@ from pyvelo.client.schemas.edge import (
 )
 from pyvelo.core import PaginatedVcoModel, VcoModel
 
-from ._type_support import require_present
+from ._type_support import JsonObject, require_present
 
 
 class TestGetEdgeSdwanPeersNotPaginated:
@@ -43,7 +45,7 @@ class TestGetEdgeSdwanPeersNotPaginated:
 
 
 class TestGetHaInterfacesRole:
-    _EDGE_UUID = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+    _EDGE_UUID: ClassVar[str] = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
 
     def test_role_accepts_enum_value(self):
         obj = GetHaInterfaces.model_validate(
@@ -53,15 +55,21 @@ class TestGetHaInterfacesRole:
 
     def test_role_rejects_invalid_value(self):
         with pytest.raises(Exception):
-            GetHaInterfaces.model_validate(
+            _ = GetHaInterfaces.model_validate(
                 {"edgeLogicalId": self._EDGE_UUID, "role": "INVALID"}
             )
 
     def test_schema_exposes_enum_values(self):
-        schema = GetHaInterfaces.model_json_schema()
-        defs = schema.get("$defs", {})
-        ha_role = defs.get("HaRole", {})
-        assert set(ha_role.get("enum", [])) == {"ACTIVE", "STANDBY"}
+        schema = cast(JsonObject, GetHaInterfaces.model_json_schema())
+        defs = schema.get("$defs")
+        assert isinstance(defs, dict)
+        ha_role = defs.get("HaRole")
+        assert isinstance(ha_role, dict)
+        enum_values = ha_role.get("enum")
+        assert isinstance(enum_values, list)
+        names = [value for value in enum_values if isinstance(value, str)]
+        assert len(names) == len(enum_values)
+        assert set(names) == {"ACTIVE", "STANDBY"}
 
 
 # ---------------------------------------------------------------------------
@@ -84,7 +92,7 @@ class TestGetEdgeConfigurationModulesRequest:
 
     def test_rejects_missing_both_identifiers(self):
         with pytest.raises(Exception, match="edgeId or edgeLogicalId"):
-            GetEdgeConfigurationModules()
+            _ = GetEdgeConfigurationModules()
 
     def test_accepts_enterprise_logical_id(self):
         req = GetEdgeConfigurationModules.model_validate(
@@ -112,77 +120,83 @@ _FIRMWARE_DATA = {
     "devicefamily": ["EDGE5X0"],
 }
 
-_COMPOSITE_RESPONSE = {
-    "deviceSettings": {
-        "version": "1718888888000",
-        "schemaVersion": "3.0.0",
-        "type": "ENTERPRISE",
-        "data": {
-            "lan": {"management": {"cidrIp": "192.168.2.1", "cidrPrefix": 24}},
-            "segments": [],
+_COMPOSITE_RESPONSE: JsonObject = cast(
+    JsonObject,
+    {
+        "deviceSettings": {
+            "version": "1718888888000",
+            "schemaVersion": "3.0.0",
+            "type": "ENTERPRISE",
+            "data": {
+                "lan": {"management": {"cidrIp": "192.168.2.1", "cidrPrefix": 24}},
+                "segments": [],
+            },
+        },
+        "firewall": {
+            "version": "1718888888000",
+            "schemaVersion": "3.0.0",
+            "type": "ENTERPRISE",
+            "data": {},
+        },
+        "QOS": {
+            "version": "1718888888000",
+            "schemaVersion": "3.0.0",
+            "type": "ENTERPRISE",
+            "data": {},
+        },
+        "WAN": {
+            "version": "1718888888000",
+            "schemaVersion": "3.0.0",
+            "type": "ENTERPRISE",
+            "data": {},
+        },
+        "controlPlane": {
+            "version": "1718888888000",
+            "schemaVersion": "3.0.0",
+            "type": "ENTERPRISE",
+            "data": {
+                "gatewaySelection": {
+                    "primary": "auto",
+                    "secondary": "auto",
+                    "mode": "dynamic",
+                }
+            },
+        },
+        "managementPlane": {
+            "version": "1718888888000",
+            "schemaVersion": "3.0.0",
+            "type": "ENTERPRISE",
+            "data": {
+                "heartBeatSeconds": 30,
+                "managementPlaneProxy": {
+                    "primary": "vco1.example.com",
+                    "secondary": None,
+                },
+                "statsUploadSeconds": 300,
+                "timeSliceSeconds": 60,
+            },
+        },
+        "imageUpdate": {
+            "version": "1718888888000",
+            "schemaVersion": "3.0.0",
+            "type": "ENTERPRISE",
+            "data": {
+                "buildNumber": "R550-20240101-GA",
+                "profileDeviceFamily": "EDGE5X0",
+                "profileVersion": "4.5.0",
+                "softwarePackageId": 100,
+                "softwarePackageName": "edge550-4.5.0",
+                "version": "4.5.0",
+                "windowDurationMins": 120,
+                "windowed": False,
+                "devicefamily": ["EDGE5X0"],
+                "modemFirmware": _FIRMWARE_DATA,
+                "platformFirmware": _FIRMWARE_DATA,
+                "factoryFirmware": _FIRMWARE_DATA,
+            },
         },
     },
-    "firewall": {
-        "version": "1718888888000",
-        "schemaVersion": "3.0.0",
-        "type": "ENTERPRISE",
-        "data": {},
-    },
-    "QOS": {
-        "version": "1718888888000",
-        "schemaVersion": "3.0.0",
-        "type": "ENTERPRISE",
-        "data": {},
-    },
-    "WAN": {
-        "version": "1718888888000",
-        "schemaVersion": "3.0.0",
-        "type": "ENTERPRISE",
-        "data": {},
-    },
-    "controlPlane": {
-        "version": "1718888888000",
-        "schemaVersion": "3.0.0",
-        "type": "ENTERPRISE",
-        "data": {
-            "gatewaySelection": {
-                "primary": "auto",
-                "secondary": "auto",
-                "mode": "dynamic",
-            }
-        },
-    },
-    "managementPlane": {
-        "version": "1718888888000",
-        "schemaVersion": "3.0.0",
-        "type": "ENTERPRISE",
-        "data": {
-            "heartBeatSeconds": 30,
-            "managementPlaneProxy": {"primary": "vco1.example.com", "secondary": None},
-            "statsUploadSeconds": 300,
-            "timeSliceSeconds": 60,
-        },
-    },
-    "imageUpdate": {
-        "version": "1718888888000",
-        "schemaVersion": "3.0.0",
-        "type": "ENTERPRISE",
-        "data": {
-            "buildNumber": "R550-20240101-GA",
-            "profileDeviceFamily": "EDGE5X0",
-            "profileVersion": "4.5.0",
-            "softwarePackageId": 100,
-            "softwarePackageName": "edge550-4.5.0",
-            "version": "4.5.0",
-            "windowDurationMins": 120,
-            "windowed": False,
-            "devicefamily": ["EDGE5X0"],
-            "modemFirmware": _FIRMWARE_DATA,
-            "platformFirmware": _FIRMWARE_DATA,
-            "factoryFirmware": _FIRMWARE_DATA,
-        },
-    },
-}
+)
 
 
 class TestEdgeConfigurationModulesResult:
@@ -239,14 +253,17 @@ class TestEdgeConfigurationModulesResult:
         assert iu.windowed is False
 
     def test_partial_response_only_firewall(self):
-        partial = {
-            "firewall": {
-                "version": "1718888888000",
-                "schemaVersion": "3.0.0",
-                "type": "ENTERPRISE",
-                "data": {},
-            }
-        }
+        partial: JsonObject = cast(
+            JsonObject,
+            {
+                "firewall": {
+                    "version": "1718888888000",
+                    "schemaVersion": "3.0.0",
+                    "type": "ENTERPRISE",
+                    "data": {},
+                }
+            },
+        )
         result = EdgeConfigurationModulesResult.model_validate(partial)
         assert isinstance(result.firewall, CompositeFirewallModule)
         assert result.device_settings is MISSING
@@ -357,10 +374,13 @@ class TestEdgeConfigurationModulesResult:
 
         private_providers = require_present(dns.private_providers)
         assert isinstance(private_providers, list)
-        names = []
+        names: list[str] = []
         for provider in private_providers:
             assert provider.model_extra is not None
-            names.append(provider.model_extra["name"])
+            extra = cast(dict[str, object], provider.model_extra)
+            name = extra["name"]
+            assert isinstance(name, str)
+            names.append(name)
         assert names == [
             "Private DNS A",
             "Private DNS B",

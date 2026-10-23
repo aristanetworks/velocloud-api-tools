@@ -12,6 +12,8 @@ from pyvelo.core.identity import (
     SegmentIdentity,
 )
 
+from ._type_support import SegmentResolverFactory
+
 # ---------------------------------------------------------------------------
 # Test segment data
 # ---------------------------------------------------------------------------
@@ -81,7 +83,7 @@ class FirewallConfig(VcoModel):
 
 
 @pytest.fixture
-async def registry(make_segment_resolver) -> ResolverRegistry:
+async def registry(make_segment_resolver: SegmentResolverFactory) -> ResolverRegistry:
     resolver = await make_segment_resolver(SEGMENT_DATA)
     reg = ResolverRegistry()
     reg.register(resolver)
@@ -123,7 +125,7 @@ class TestResolverMergeIntegration:
     def test_resolve_segment_id_in_nested_merge(self, registry: ResolverRegistry):
         """Resolve segment name to ID during nested merge patch."""
         config = _make_config()
-        config.merge_patch(
+        _ = config.merge_patch(
             {"segments": {"PCI": {"segment": {"segment_id": "PCI"}}}},
             resolvers=registry,
         )
@@ -133,7 +135,7 @@ class TestResolverMergeIntegration:
     def test_resolve_logical_id_in_merge(self, registry: ResolverRegistry):
         """Resolve segment name to logical_id during merge."""
         config = _make_config()
-        config.merge_patch(
+        _ = config.merge_patch(
             {"segments": {"Global Segment": {"segment": {"logical_id": "DMZ"}}}},
             resolvers=registry,
         )
@@ -143,7 +145,7 @@ class TestResolverMergeIntegration:
     def test_resolve_plus_rules_merge(self, registry: ResolverRegistry):
         """Combine resolvable field + keyed list merge + override flags."""
         config = _make_config()
-        config.merge_patch(
+        _ = config.merge_patch(
             {
                 "segments": {
                     "Global Segment": {
@@ -173,7 +175,7 @@ class TestResolverMergeIntegration:
     def test_raw_ids_still_work_with_resolvers(self, registry: ResolverRegistry):
         """Passing raw int IDs should work even when resolvers are provided."""
         config = _make_config()
-        config.merge_patch(
+        _ = config.merge_patch(
             {"segments": {"PCI": {"segment": {"segment_id": 99}}}},
             resolvers=registry,
         )
@@ -182,7 +184,7 @@ class TestResolverMergeIntegration:
     def test_edge_local_with_resolve_no_override(self, registry: ResolverRegistry):
         """EdgeLocal changes + resolve should not trigger override."""
         config = _make_config()
-        config.merge_patch(
+        _ = config.merge_patch(
             {
                 "segments": {
                     "Global Segment": {
@@ -205,7 +207,7 @@ class TestResolverMergeIntegration:
         """Resolution failure produces a clear error message."""
         config = _make_config()
         with pytest.raises(KeyError, match="Unknown segment.*Nonexistent"):
-            config.merge_patch(
+            _ = config.merge_patch(
                 {
                     "segments": {
                         "Global Segment": {"segment": {"segment_id": "Nonexistent"}}
@@ -219,13 +221,15 @@ class TestResolverMergeIntegration:
         config = _make_config()
         # Passing a string to a Resolvable field without resolvers
         # should just assign the string (no crash)
-        config.merge_patch({"segments": {"PCI": {"segment": {"name": "Renamed PCI"}}}})
+        _ = config.merge_patch(
+            {"segments": {"PCI": {"segment": {"name": "Renamed PCI"}}}}
+        )
         assert config.segments[1].segment.name == "Renamed PCI"
 
     def test_pci_untouched_when_only_global_patched(self, registry: ResolverRegistry):
         """Unmentioned segments are not affected."""
         config = _make_config()
-        config.merge_patch(
+        _ = config.merge_patch(
             {
                 "segments": {
                     "Global Segment": {

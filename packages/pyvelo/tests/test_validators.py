@@ -1,6 +1,7 @@
 """Tests for custom validators: check_time_is_never, check_int_zero, check_string_empty."""
 
 import datetime
+from typing import cast
 
 from pydantic import MISSING
 from pyvelo.client.schemas.event import check_int_zero, check_string_empty
@@ -10,7 +11,9 @@ from pyvelo.core import check_time_is_never
 class TestCheckTimeIsNever:
     def test_zero_timestamp_string(self):
         """'0000-00-00 00:00:00' should be converted to epoch start."""
-        result = check_time_is_never("0000-00-00 00:00:00")
+        result = cast(
+            datetime.datetime | str | None, check_time_is_never("0000-00-00 00:00:00")
+        )
         assert isinstance(result, datetime.datetime)
         assert result == datetime.datetime.fromtimestamp(0, datetime.UTC)
 
@@ -30,8 +33,12 @@ class TestCheckTimeIsNever:
 
     def test_repeated_calls_return_equal_epoch(self):
         """Repeated calls should return equal epoch datetime objects."""
-        r1 = check_time_is_never("0000-00-00 00:00:00")
-        r2 = check_time_is_never("0000-00-00 00:00:00")
+        r1 = cast(
+            datetime.datetime | str | None, check_time_is_never("0000-00-00 00:00:00")
+        )
+        r2 = cast(
+            datetime.datetime | str | None, check_time_is_never("0000-00-00 00:00:00")
+        )
         assert r1 == r2
 
 

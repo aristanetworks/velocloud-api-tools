@@ -1,7 +1,6 @@
 from __future__ import annotations
 
-from typing import Any
-from unittest.mock import MagicMock
+from collections.abc import Callable
 
 import pytest
 from pydantic import MISSING
@@ -10,7 +9,15 @@ from pyvelo.client.enums.edge import (
     ActivationState,
     EdgeState,
 )
+from pyvelo.client.schemas.edge_filters import (
+    EdgeActivationStateFilter,
+    EdgeFiltersAnd,
+    EdgeStateFilter,
+    EdgeStringValueFilter,
+)
 from pyvelo.client.schemas.enterprise import GetEnterpriseEdges, GetEnterpriseEdgesItem
+
+from ._type_support import MockPaginatedClient
 
 
 def _make_edge(
@@ -41,41 +48,37 @@ def _make_edge(
     )
 
 
-def _make_client(pages: list[list[GetEnterpriseEdgesItem]]) -> Any:
-    client = MagicMock()
-    captured_requests: list[GetEnterpriseEdges] = []
-
-    async def _portal_paginated(method, request, item_type):
-        captured_requests.append(request)
-        for page in pages:
-            yield page
-
-    client.portal_paginated = _portal_paginated
-    client._captured_requests = captured_requests
-    return client
+def _make_client(
+    pages: list[list[GetEnterpriseEdgesItem]],
+    *,
+    on_page: Callable[[int], None] | None = None,
+) -> MockPaginatedClient[GetEnterpriseEdges, GetEnterpriseEdgesItem]:
+    return MockPaginatedClient(pages, on_page=on_page)
 
 
 class TestCollectEdgesFilterPushdown:
     @pytest.mark.anyio
     async def test_no_filters(self):
         client = _make_client([[_make_edge()]])
-        analytics = Analytics(client, enterprise_id=1)
+        analytics = Analytics(client.protocol, enterprise_id=1)
         result = await analytics.collect_edges()
         assert len(result) == 1
-        req = client._captured_requests[0]
+        req = client.captured_requests[0]
         assert req.filters is MISSING
 
     @pytest.mark.anyio
     async def test_edge_state_filter(self):
         client = _make_client([[_make_edge()]])
-        analytics = Analytics(client, enterprise_id=1)
-        await analytics.collect_edges(
+        analytics = Analytics(client.protocol, enterprise_id=1)
+        _ = await analytics.collect_edges(
             edge_state=[EdgeState.CONNECTED, EdgeState.DEGRADED]
         )
-        req = client._captured_requests[0]
+        req = client.captured_requests[0]
         assert req.filters is not MISSING
+        assert isinstance(req.filters, EdgeFiltersAnd)
         filters = req.filters.and_
         f = filters[0]
+        assert isinstance(f, EdgeStateFilter)
         assert f.field == "edgeState"
         assert f.operator == "in"
         assert "CONNECTED" in f.value
@@ -84,31 +87,37 @@ class TestCollectEdgesFilterPushdown:
     @pytest.mark.anyio
     async def test_activation_state_filter(self):
         client = _make_client([[_make_edge()]])
-        analytics = Analytics(client, enterprise_id=1)
-        await analytics.collect_edges(activation_state=[ActivationState.ACTIVATED])
-        req = client._captured_requests[0]
+        analytics = Analytics(client.protocol, enterprise_id=1)
+        _ = await analytics.collect_edges(activation_state=[ActivationState.ACTIVATED])
+        req = client.captured_requests[0]
+        assert isinstance(req.filters, EdgeFiltersAnd)
         filters = req.filters.and_
         f = filters[0]
+        assert isinstance(f, EdgeActivationStateFilter)
         assert f.field == "activationState"
         assert f.operator == "in"
 
     @pytest.mark.anyio
     async def test_model_number_filter(self):
         client = _make_client([[_make_edge()]])
-        analytics = Analytics(client, enterprise_id=1)
-        await analytics.collect_edges(model_number=["edge840", "edge3800"])
-        req = client._captured_requests[0]
+        analytics = Analytics(client.protocol, enterprise_id=1)
+        _ = await analytics.collect_edges(model_number=["edge840", "edge3800"])
+        req = client.captured_requests[0]
+        assert isinstance(req.filters, EdgeFiltersAnd)
         filters = req.filters.and_
+        assert isinstance(filters[0], EdgeStringValueFilter)
         assert filters[0].field == "modelNumber"
         assert "edge840" in filters[0].value
 
     @pytest.mark.anyio
     async def test_name_filter(self):
         client = _make_client([[_make_edge()]])
-        analytics = Analytics(client, enterprise_id=1)
-        await analytics.collect_edges(name="my-edge")
-        req = client._captured_requests[0]
+        analytics = Analytics(client.protocol, enterprise_id=1)
+        _ = await analytics.collect_edges(name="my-edge")
+        req = client.captured_requests[0]
+        assert isinstance(req.filters, EdgeFiltersAnd)
         filters = req.filters.and_
+        assert isinstance(filters[0], EdgeStringValueFilter)
         assert filters[0].field == "name"
         assert filters[0].operator == "is"
         assert filters[0].value == "my-edge"
@@ -116,22 +125,23 @@ class TestCollectEdgesFilterPushdown:
     @pytest.mark.anyio
     async def test_edge_ids_filter(self):
         client = _make_client([[_make_edge()]])
-        analytics = Analytics(client, enterprise_id=1)
-        await analytics.collect_edges(edge_ids=[100, 200])
-        req = client._captured_requests[0]
+        analytics = Analytics(client.protocol, enterprise_id=1)
+        _ = await analytics.collect_edges(edge_ids=[100, 200])
+        req = client.captured_requests[0]
         assert req.edge_ids == [100, 200]
 
     @pytest.mark.anyio
     async def test_combined_filters(self):
         client = _make_client([[_make_edge()]])
-        analytics = Analytics(client, enterprise_id=1)
-        await analytics.collect_edges(
+        analytics = Analytics(client.protocol, enterprise_id=1)
+        _ = await analytics.collect_edges(
             edge_state=[EdgeState.CONNECTED],
             activation_state=[ActivationState.ACTIVATED],
             edge_ids=[100],
         )
-        req = client._captured_requests[0]
+        req = client.captured_requests[0]
         assert req.edge_ids == [100]
+        assert isinstance(req.filters, EdgeFiltersAnd)
         filters = req.filters.and_
         assert len(filters) == 2
 
@@ -143,18 +153,10 @@ class TestCollectEdgesEarlyTermination:
         page2 = [_make_edge(id_=i, name=f"e{i}") for i in range(5, 10)]
         page3 = [_make_edge(id_=i, name=f"e{i}") for i in range(10, 15)]
 
-        pages_yielded = []
-        client = MagicMock()
-        client._captured_requests = []
+        pages_yielded: list[int] = []
+        client = _make_client([page1, page2, page3], on_page=pages_yielded.append)
 
-        async def _tracking_paginated(method, request, item_type):
-            for i, page in enumerate([page1, page2, page3]):
-                pages_yielded.append(i)
-                yield page
-
-        client.portal_paginated = _tracking_paginated
-
-        analytics = Analytics(client, enterprise_id=1)
+        analytics = Analytics(client.protocol, enterprise_id=1)
         result = await analytics.collect_edges(max_items=7)
 
         assert len(result) == 7
@@ -164,7 +166,7 @@ class TestCollectEdgesEarlyTermination:
     async def test_exact_max_items(self):
         page = [_make_edge(id_=i) for i in range(5)]
         client = _make_client([page])
-        analytics = Analytics(client, enterprise_id=1)
+        analytics = Analytics(client.protocol, enterprise_id=1)
         result = await analytics.collect_edges(max_items=5)
         assert len(result) == 5
 
@@ -172,7 +174,7 @@ class TestCollectEdgesEarlyTermination:
     async def test_fewer_than_max(self):
         page = [_make_edge(id_=i) for i in range(3)]
         client = _make_client([page])
-        analytics = Analytics(client, enterprise_id=1)
+        analytics = Analytics(client.protocol, enterprise_id=1)
         result = await analytics.collect_edges(max_items=100)
         assert len(result) == 3
 
@@ -181,7 +183,7 @@ class TestCollectEdgesOutput:
     @pytest.mark.anyio
     async def test_returns_metric_frame_with_expected_columns(self):
         client = _make_client([[_make_edge()]])
-        analytics = Analytics(client, enterprise_id=1)
+        analytics = Analytics(client.protocol, enterprise_id=1)
         result = await analytics.collect_edges()
         expected = [
             "id",
@@ -216,7 +218,7 @@ class TestCollectEdgesOutput:
                 ]
             ]
         )
-        analytics = Analytics(client, enterprise_id=1)
+        analytics = Analytics(client.protocol, enterprise_id=1)
         result = await analytics.collect_edges()
         row = result.rows[0]
         assert row["edge_state"] == "CONNECTED"
@@ -228,7 +230,7 @@ class TestCollectEdgesOutput:
     @pytest.mark.anyio
     async def test_id_column_mapped(self):
         client = _make_client([[_make_edge(id_=42)]])
-        analytics = Analytics(client, enterprise_id=1)
+        analytics = Analytics(client.protocol, enterprise_id=1)
         result = await analytics.collect_edges()
         assert result.rows[0]["id"] == 42
 
@@ -240,7 +242,7 @@ class TestCollectEdgesOutput:
             _make_edge(id_=3, edge_state="CONNECTED"),
         ]
         client = _make_client([edges])
-        analytics = Analytics(client, enterprise_id=1)
+        analytics = Analytics(client.protocol, enterprise_id=1)
         result = await analytics.collect_edges()
         grouped = result.group_by("edge_state").agg(count="n")
         assert len(grouped) == 2

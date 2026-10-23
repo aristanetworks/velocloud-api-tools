@@ -3,7 +3,7 @@
 from typing import Annotated
 
 from pyvelo.core import VcoModel
-from pyvelo.core.fields import OverrideFlag, _ProcessedOverrideFlag
+from pyvelo.core.fields import OverrideFlag, has_override_flag
 
 
 class HasOverride(VcoModel):
@@ -19,13 +19,11 @@ class NoOverride(VcoModel):
 class TestOverrideFlagMarker:
     def test_processed_marker_in_metadata(self):
         fi = HasOverride.model_fields["override"]
-        processed = [m for m in fi.metadata if isinstance(m, _ProcessedOverrideFlag)]
-        assert len(processed) == 1
+        assert has_override_flag(fi)
 
     def test_non_override_field_has_no_marker(self):
         fi = HasOverride.model_fields["name"]
-        processed = [m for m in fi.metadata if isinstance(m, _ProcessedOverrideFlag)]
-        assert len(processed) == 0
+        assert not has_override_flag(fi)
 
     def test_model_validates_normally(self):
         m = HasOverride(override=True, name="test", value=42)

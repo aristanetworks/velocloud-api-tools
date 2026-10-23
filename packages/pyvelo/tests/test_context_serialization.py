@@ -1,8 +1,10 @@
 """Tests for context-aware serialization and ContextView introspection."""
 
-from typing import Annotated, Any, cast
+from collections.abc import Callable
+from typing import Annotated, ClassVar, cast
 
 from pydantic import MISSING, ConfigDict, Field
+from pydantic.fields import FieldInfo
 from pyvelo.core import (
     Alias,
     ConfigContext,
@@ -11,7 +13,15 @@ from pyvelo.core import (
     ProfileOnly,
     VcoModel,
 )
-from pyvelo.core.fields import _get_context_defaults
+from pyvelo.core import fields as core_fields
+from pyvelo.core.fields import ContextDefaults
+
+from ._type_support import JsonObject
+
+_get_context_defaults = cast(
+    Callable[[FieldInfo], ContextDefaults | None],
+    getattr(core_fields, "_get_context_defaults"),
+)
 
 # ---------------------------------------------------------------------------
 # Test models
@@ -61,7 +71,7 @@ class NestedOuter(VcoModel):
 
 
 class FlexModel(VcoModel):
-    model_config = ConfigDict(**cast(Any, {**VcoModel.model_config, "extra": "allow"}))
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="allow")
     name: str = "default"
 
 
@@ -70,14 +80,18 @@ class FlexModel(VcoModel):
 # ---------------------------------------------------------------------------
 
 
-def _compact(model, **extra_ctx):
-    ctx = {"compact": True, **extra_ctx}
-    return model.model_dump(by_alias=False, context=ctx)
+def _compact(model: VcoModel, **extra_ctx: object) -> JsonObject:
+    ctx: dict[str, object] = {"compact": True, **extra_ctx}
+    return cast(JsonObject, model.model_dump(by_alias=False, context=ctx))
 
 
-def _compact_alias(model, **extra_ctx):
-    ctx = {"compact": True, **extra_ctx}
-    return model.model_dump(by_alias=True, context=ctx)
+def _compact_alias(model: VcoModel, **extra_ctx: object) -> JsonObject:
+    ctx: dict[str, object] = {"compact": True, **extra_ctx}
+    return cast(JsonObject, model.model_dump(by_alias=True, context=ctx))
+
+
+def _config_context(model: VcoModel) -> ConfigContext | None:
+    return cast(ConfigContext | None, getattr(model, "_config_context"))
 
 
 # ---------------------------------------------------------------------------
@@ -158,7 +172,7 @@ class TestContextDefaultsStorage:
         fi = EdgeProfileModel.model_fields["override"]
         cd = _get_context_defaults(fi)
         assert cd is not None
-        assert cd.profile is MISSING
+        assert cast(object, cd.profile) is MISSING
 
     def test_alias_ctx_default_stores_context_defaults(self):
         fi = AliasedContextModel.model_fields["source_ip"]
@@ -169,7 +183,7 @@ class TestContextDefaultsStorage:
         fi = BothMetadata.model_fields["port"]
         cd = _get_context_defaults(fi)
         assert cd is not None
-        assert cd.profile is MISSING
+        assert cast(object, cd.profile) is MISSING
 
 
 # ---------------------------------------------------------------------------
@@ -246,15 +260,19 @@ class TestNestedPropagation:
         child = EdgeProfileModel(override=True, enabled=True)
         m = NestedOuter(child=child, extra="hello")
         d = _compact(m, config_level=ConfigContext.PROFILE)
-        assert "override" not in d["child"]
-        assert d["child"]["enabled"] is True
+        nested = d["child"]
+        assert isinstance(nested, dict)
+        assert "override" not in nested
+        assert nested["enabled"] is True
         assert d["extra"] == "hello"
 
     def test_context_flows_to_nested_at_edge(self):
         child = EdgeProfileModel(override=False, enabled=True)
         m = NestedOuter(child=child, extra="hello")
         d = _compact(m, config_level=ConfigContext.EDGE)
-        assert d["child"]["override"] is False
+        nested = d["child"]
+        assert isinstance(nested, dict)
+        assert nested["override"] is False
 
 
 # ---------------------------------------------------------------------------
@@ -284,13 +302,13 @@ class TestContextView:
         view = EdgeProfileModel.context(ConfigContext.EDGE)
         info = view.override
         assert info.is_present is True
-        assert info.default is True
+        assert cast(object, info.default) is True
 
     def test_edge_field_absent_at_profile(self):
         view = EdgeProfileModel.context(ConfigContext.PROFILE)
         info = view.override
         assert info.is_present is False
-        assert info.default is MISSING
+        assert cast(object, info.default) is MISSING
 
     def test_regular_field_present_at_both(self):
         edge = EdgeProfileModel.context(ConfigContext.EDGE)
@@ -389,9 +407,9 @@ class TestDefaultAndContext:
 class TestForContext:
     def test_for_context_sets_instance_context(self):
         m = EdgeProfileModel(name="test", override=True, enabled=True)
-        assert m._config_context is None
-        m.for_edge()
-        assert m._config_context is ConfigContext.EDGE
+        assert _config_context(m) is None
+        _ = m.for_edge()
+        assert _config_context(m) is ConfigContext.EDGE
 
     def test_for_context_returns_self(self):
         m = EdgeProfileModel(name="test")
@@ -401,7 +419,7 @@ class TestForContext:
     def test_compact_uses_instance_context(self):
         """Compact serialization reads _config_context when no explicit config_level."""
         m = EdgeProfileModel(name="test", override=True, enabled=True)
-        m.for_edge()
+        _ = m.for_edge()
         d = _compact(m)
         # override=True is the edge default, so it should be omitted
         assert d == {"name": "test", "enabled": True}
@@ -409,7 +427,7 @@ class TestForContext:
     def test_compact_uses_instance_context_profile(self):
         """Profile context omits edge-only fields."""
         m = EdgeProfileModel(name="test", override=True, enabled=True)
-        m.for_profile()
+        _ = m.for_profile()
         d = _compact(m)
         # override has context_defaults=ContextDefaults(profile=MISSING) -> omitted
         assert "override" not in d
@@ -418,7 +436,7 @@ class TestForContext:
     def test_explicit_config_level_overrides_instance(self):
         """Explicit config_level in context dict takes precedence."""
         m = EdgeProfileModel(name="test", override=True, enabled=True)
-        m.for_edge()
+        _ = m.for_edge()
         # Explicitly pass profile context -> should override instance
         d = _compact(m, config_level=ConfigContext.PROFILE)
         assert "override" not in d
@@ -429,9 +447,9 @@ class TestForContext:
             child=EdgeProfileModel(name="inner", override=True, enabled=True),
             extra="val",
         )
-        outer.for_profile()
-        assert outer._config_context is ConfigContext.PROFILE
-        assert outer.child._config_context is ConfigContext.PROFILE
+        _ = outer.for_profile()
+        assert _config_context(outer) is ConfigContext.PROFILE
+        assert _config_context(outer.child) is ConfigContext.PROFILE
 
     def test_nested_compact_uses_propagated_context(self):
         """Nested models use propagated context during compact serialization."""
@@ -439,10 +457,12 @@ class TestForContext:
             child=EdgeProfileModel(name="inner", override=True, enabled=True),
             extra="val",
         )
-        outer.for_profile()
+        _ = outer.for_profile()
         d = _compact(outer)
         # override should be omitted in nested child (profile=MISSING)
-        assert "override" not in d["child"]
+        nested = d["child"]
+        assert isinstance(nested, dict)
+        assert "override" not in nested
 
     def test_for_context_propagates_through_list(self):
         """Context propagates through list fields containing VcoModels."""
@@ -456,9 +476,9 @@ class TestForContext:
                 EdgeProfileModel(name="b", override=False),
             ]
         )
-        container.for_profile()
-        assert container.items[0]._config_context is ConfigContext.PROFILE
-        assert container.items[1]._config_context is ConfigContext.PROFILE
+        _ = container.for_profile()
+        assert _config_context(container.items[0]) is ConfigContext.PROFILE
+        assert _config_context(container.items[1]) is ConfigContext.PROFILE
 
     def test_chaining_for_context(self):
         """for_context can be chained with construction."""
@@ -471,7 +491,7 @@ class TestForContext:
         outer = NestedOuter(
             child=EdgeProfileModel(name="inner", override=True, enabled=True),
         )
-        outer.for_profile()
+        _ = outer.for_profile()
         # Extract the child and serialize independently
         child = outer.child
         d = _compact(child)
@@ -509,7 +529,7 @@ class TestModelValidateContext:
             {"name": "test", "override": True},
             context={"config_level": ConfigContext.EDGE},
         )
-        assert m._config_context is ConfigContext.EDGE
+        assert _config_context(m) is ConfigContext.EDGE
 
     def test_model_validate_propagates_to_nested(self):
         """Validation context propagates to nested VcoModel instances."""
@@ -517,8 +537,8 @@ class TestModelValidateContext:
             {"child": {"name": "inner", "override": True}, "extra": "val"},
             context={"config_level": ConfigContext.PROFILE},
         )
-        assert m._config_context is ConfigContext.PROFILE
-        assert m.child._config_context is ConfigContext.PROFILE
+        assert _config_context(m) is ConfigContext.PROFILE
+        assert _config_context(m.child) is ConfigContext.PROFILE
 
     def test_model_validate_compact_without_explicit_level(self):
         """After model_validate with context, compact serialization uses it."""
@@ -543,7 +563,7 @@ class TestModelValidateContext:
     def test_model_validate_without_context_leaves_none(self):
         """model_validate without context leaves _config_context as None."""
         m = EdgeProfileModel.model_validate({"name": "test"})
-        assert m._config_context is None
+        assert _config_context(m) is None
 
     def test_model_validate_json_sets_context(self):
         """model_validate_json also propagates context."""
@@ -551,7 +571,7 @@ class TestModelValidateContext:
             '{"name": "test", "override": true}',
             context={"config_level": ConfigContext.EDGE},
         )
-        assert m._config_context is ConfigContext.EDGE
+        assert _config_context(m) is ConfigContext.EDGE
 
 
 # ---------------------------------------------------------------------------
@@ -675,9 +695,9 @@ class VcoFormatModel(VcoModel):
     )
 
 
-def _vco_dump(model):
+def _vco_dump(model: VcoModel) -> JsonObject:
     """VCO-format: by_alias=True, no compact omission, context exclusion only."""
-    return model.model_dump(by_alias=True)
+    return cast(JsonObject, model.model_dump(by_alias=True))
 
 
 class TestVcoFormatSerialization:

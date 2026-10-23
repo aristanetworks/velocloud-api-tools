@@ -75,7 +75,7 @@ class TestDeviceSettingsSegmentMerge:
 
     def test_address_segment_by_name(self):
         ds = self._make_device_settings()
-        ds.merge_patch(
+        _ = ds.merge_patch(
             {
                 "segments": {
                     "Global Segment": {
@@ -98,12 +98,12 @@ class TestDeviceSettingsSegmentMerge:
         dns = require_present(ds.segments[0].dns)
         assert dns is not None
         assert dns.override is False
-        dns.merge_patch({"source_interface": "GE3"})
+        _ = dns.merge_patch({"source_interface": "GE3"})
         assert dns.override is True
 
     def test_unmentioned_segments_untouched(self):
         ds = self._make_device_settings()
-        ds.merge_patch(
+        _ = ds.merge_patch(
             {
                 "segments": {
                     "Global Segment": {"dns": {"source_interface": "GE1"}},
@@ -137,7 +137,7 @@ class TestLanNetworkMerge:
 
     def test_update_network_by_vlan_id(self):
         lan = self._make_lan_settings()
-        lan.merge_patch(
+        _ = lan.merge_patch(
             {
                 "networks": {
                     "100": {"cidr_ip": "10.0.0.2"},
@@ -148,22 +148,22 @@ class TestLanNetworkMerge:
 
     def test_edge_local_change_no_override(self):
         lan = self._make_lan_settings()
-        lan.networks[0].merge_patch({"cidr_ip": "10.0.0.2"})
+        _ = lan.networks[0].merge_patch({"cidr_ip": "10.0.0.2"})
         assert lan.networks[0].override is False
 
     def test_edge_local_cidr_prefix_no_override(self):
         lan = self._make_lan_settings()
-        lan.networks[0].merge_patch({"cidr_prefix": 16})
+        _ = lan.networks[0].merge_patch({"cidr_prefix": 16})
         assert lan.networks[0].override is False
 
     def test_non_edge_local_triggers_override(self):
         lan = self._make_lan_settings()
-        lan.networks[0].merge_patch({"advertise": False})
+        _ = lan.networks[0].merge_patch({"advertise": False})
         assert lan.networks[0].override is True
 
     def test_mixed_edge_local_and_normal(self):
         lan = self._make_lan_settings()
-        lan.networks[0].merge_patch(
+        _ = lan.networks[0].merge_patch(
             {
                 "cidr_ip": "10.0.0.2",
                 "advertise": False,
@@ -188,23 +188,23 @@ class TestRoutedInterfaceMerge:
 
     def test_addressing_cidr_ip_no_override(self):
         ri = self._make_routed_interface()
-        ri.merge_patch({"addressing": {"cidr_ip": "192.168.1.2"}})
+        _ = ri.merge_patch({"addressing": {"cidr_ip": "192.168.1.2"}})
         assert ri.override is False
 
     def test_addressing_gateway_no_override(self):
         ri = self._make_routed_interface()
-        ri.merge_patch({"addressing": {"gateway": "192.168.1.1"}})
+        _ = ri.merge_patch({"addressing": {"gateway": "192.168.1.1"}})
         assert ri.override is False
 
     def test_addressing_type_triggers_override(self):
         ri = self._make_routed_interface()
-        ri.merge_patch({"addressing": {"type": "DHCP"}})
+        _ = ri.merge_patch({"addressing": {"type": "DHCP"}})
         assert ri.override is True
 
     def test_dhcp_server_change_no_override(self):
         """DHCP server is EdgeLocal — changes don't trigger override."""
         ri = self._make_routed_interface()
-        ri.merge_patch({"description": "Updated WAN interface"})
+        _ = ri.merge_patch({"description": "Updated WAN interface"})
         assert ri.override is False
 
 
@@ -239,7 +239,7 @@ class TestFirewallMerge:
 
     def test_address_segment_by_name(self):
         fw = self._make_firewall()
-        fw.merge_patch(
+        _ = fw.merge_patch(
             {
                 "segments": {
                     "Global Segment": {
@@ -255,7 +255,7 @@ class TestFirewallMerge:
 
     def test_add_rule_to_segment(self):
         fw = self._make_firewall()
-        fw.merge_patch(
+        _ = fw.merge_patch(
             {
                 "segments": {
                     "Global Segment": {
@@ -279,7 +279,7 @@ class TestFirewallMerge:
 
     def test_delete_rule(self):
         fw = self._make_firewall()
-        fw.merge_patch(
+        _ = fw.merge_patch(
             {
                 "segments": {
                     "Global Segment": {
@@ -320,7 +320,7 @@ class TestQosMerge:
 
     def test_update_rule_by_name(self):
         qos = self._make_qos()
-        qos.merge_patch(
+        _ = qos.merge_patch(
             {
                 "segments": {
                     "Global Segment": {

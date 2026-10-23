@@ -1,9 +1,12 @@
 """Tests for SegmentResolver."""
 
 import uuid
-from unittest.mock import AsyncMock
+from collections.abc import Sequence
+from typing import cast
 
 import pytest
+from pyvelo.client.protocol import VcoClientProtocol
+from pyvelo.client.schemas.enterprise import GetEnterpriseNetworkSegments
 from pyvelo.config.resolver import ResolverContext
 from pyvelo.config.resolvers.segment import SegmentResolver
 from pyvelo.core.identity import (
@@ -24,16 +27,30 @@ def _fake_segments() -> list[FakeSegment]:
     ]
 
 
+class FakeSegmentClient:
+    def __init__(self, segments: Sequence[FakeSegment]) -> None:
+        self.segments: list[FakeSegment] = list(segments)
+        self.requests: list[GetEnterpriseNetworkSegments] = []
+
+    async def get_enterprise_network_segments(
+        self, request: GetEnterpriseNetworkSegments
+    ) -> Sequence[FakeSegment]:
+        self.requests.append(request)
+        return self.segments
+
+
+def _client_protocol(client: FakeSegmentClient) -> VcoClientProtocol:
+    return cast(VcoClientProtocol, cast(object, client))
+
+
 class TestSegmentResolver:
     @pytest.fixture
-    def mock_client(self) -> AsyncMock:
-        client = AsyncMock()
-        client.get_enterprise_network_segments.return_value = _fake_segments()
-        return client
+    def mock_client(self) -> FakeSegmentClient:
+        return FakeSegmentClient(_fake_segments())
 
     @pytest.fixture
-    async def resolver(self, mock_client: AsyncMock) -> SegmentResolver:
-        r = SegmentResolver(mock_client)
+    async def resolver(self, mock_client: FakeSegmentClient) -> SegmentResolver:
+        r = SegmentResolver(_client_protocol(mock_client))
         await r.load(ResolverContext(enterprise_id=42))
         return r
 
@@ -52,7 +69,7 @@ class TestSegmentResolver:
 
     async def test_resolve_unknown_name(self, resolver: SegmentResolver):
         with pytest.raises(KeyError, match="Unknown segment.*nonexistent"):
-            await resolver.resolve("nonexistent")
+            _ = await resolver.resolve("nonexistent")
 
     async def test_reverse_by_segment_id(self, resolver: SegmentResolver):
         name = await resolver.reverse_by("segment_id", 0)
@@ -68,24 +85,26 @@ class TestSegmentResolver:
 
     async def test_reverse_unknown_id(self, resolver: SegmentResolver):
         with pytest.raises(KeyError, match="No segment with"):
-            await resolver.reverse_by("segment_id", 999)
+            _ = await resolver.reverse_by("segment_id", 999)
 
     async def test_reverse_unknown_attr(self, resolver: SegmentResolver):
         with pytest.raises(KeyError, match="No reverse index"):
-            await resolver.reverse_by("bad_attr", 0)
+            _ = await resolver.reverse_by("bad_attr", 0)
 
-    def test_identity_type(self, mock_client: AsyncMock):
-        assert SegmentResolver(mock_client).identity_type is SegmentIdentity
+    def test_identity_type(self, mock_client: FakeSegmentClient):
+        assert (
+            SegmentResolver(_client_protocol(mock_client)).identity_type
+            is SegmentIdentity
+        )
 
-    async def test_load_passes_enterprise_id(self, mock_client: AsyncMock):
-        r = SegmentResolver(mock_client)
+    async def test_load_passes_enterprise_id(self, mock_client: FakeSegmentClient):
+        r = SegmentResolver(_client_protocol(mock_client))
         await r.load(ResolverContext(enterprise_id=99))
-        call_args = mock_client.get_enterprise_network_segments.call_args
-        request = call_args[0][0]
+        request = mock_client.requests[0]
         assert request.enterprise_id == 99
 
-    async def test_load_without_enterprise_id(self, mock_client: AsyncMock):
-        r = SegmentResolver(mock_client)
+    async def test_load_without_enterprise_id(self, mock_client: FakeSegmentClient):
+        r = SegmentResolver(_client_protocol(mock_client))
         await r.load(ResolverContext())
         result = await r.resolve("Global Segment")
         assert result.segment_id == 0

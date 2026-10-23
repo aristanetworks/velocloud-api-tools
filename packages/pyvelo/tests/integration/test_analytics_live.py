@@ -44,7 +44,8 @@ from pyvelo.client.schemas.metrics import (
 )
 from pyvelo.core import ApiInterval
 
-from .conftest import VcoTestContext, assert_frame_valid, skip_on_vco_limitation
+from ._discovery import VcoTestContext
+from .conftest import assert_frame_valid, skip_on_vco_limitation
 
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio(loop_scope="session")]
 
@@ -55,7 +56,9 @@ pytestmark = [pytest.mark.integration, pytest.mark.asyncio(loop_scope="session")
 
 
 class TestEdgeFlowMetrics:
-    @pytest.mark.parametrize("group_by", list(FlowGroupBy), ids=lambda g: g.value)
+    @pytest.mark.parametrize(
+        "group_by", list(FlowGroupBy), ids=[group.name for group in FlowGroupBy]
+    )
     async def test_group_by(
         self,
         analytics: Analytics,
@@ -135,7 +138,9 @@ class TestEdgeFlowMetrics:
 class TestEdgeFlowMetricsNameDtype:
     """Small limits provoke mixed-type name columns (int | str); verify polars handles it."""
 
-    @pytest.mark.parametrize("group_by", list(FlowGroupBy), ids=lambda g: g.value)
+    @pytest.mark.parametrize(
+        "group_by", list(FlowGroupBy), ids=[group.name for group in FlowGroupBy]
+    )
     @pytest.mark.parametrize("limit", [1, 3, 5])
     async def test_name_column_dtype(
         self,
@@ -172,7 +177,9 @@ class TestEdgeFlowMetricsNameDtype:
 
 class TestEdgeFlowSeries:
     @pytest.mark.parametrize(
-        "group_by", [FlowGroupBy.APP, FlowGroupBy.DEST_FQDN], ids=lambda g: g.value
+        "group_by",
+        [FlowGroupBy.APP, FlowGroupBy.DEST_FQDN],
+        ids=[FlowGroupBy.APP.name, FlowGroupBy.DEST_FQDN.name],
     )
     async def test_group_by(
         self,
@@ -205,7 +212,11 @@ class TestEdgeFlowSeries:
 
 
 class TestEnterpriseFlowMetrics:
-    @pytest.mark.parametrize("view_by", list(BasicMetricViewBy), ids=lambda v: v.value)
+    @pytest.mark.parametrize(
+        "view_by",
+        list(BasicMetricViewBy),
+        ids=[view.name for view in BasicMetricViewBy],
+    )
     async def test_view_by(
         self, analytics: Analytics, interval: ApiInterval, view_by: BasicMetricViewBy
     ):
@@ -486,7 +497,9 @@ _FW_VIEW_BY: dict[FirewallType, str] = {
 
 
 class TestEdgeFirewallMetrics:
-    @pytest.mark.parametrize("fw_type", list(FirewallType), ids=lambda t: t.value)
+    @pytest.mark.parametrize(
+        "fw_type", list(FirewallType), ids=[fw_type.name for fw_type in FirewallType]
+    )
     async def test_types(
         self,
         analytics: Analytics,
@@ -528,7 +541,9 @@ class TestEdgeFirewallSeries:
 
 class TestEnterpriseFirewallMetrics:
     @pytest.mark.parametrize(
-        "ent_type", list(EnterpriseFirewallType), ids=lambda t: t.value
+        "ent_type",
+        list(EnterpriseFirewallType),
+        ids=[ent_type.name for ent_type in EnterpriseFirewallType],
     )
     async def test_types(
         self,

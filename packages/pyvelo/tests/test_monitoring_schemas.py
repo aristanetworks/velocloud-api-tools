@@ -1,10 +1,10 @@
 """Tests for monitoring schema typed models and enums."""
 
 from datetime import UTC, datetime
-from typing import Any, ClassVar
+from typing import ClassVar, Literal, cast
 
 import pytest
-from pydantic import MISSING, ValidationError
+from pydantic import MISSING, BaseModel, ValidationError
 from pyvelo.client.enums.event import EventType
 from pyvelo.client.enums.monitoring import (
     BfdPeerState,
@@ -51,7 +51,7 @@ from pyvelo.client.schemas.monitoring import (
     TunnelStateCounts,
 )
 
-from ._type_support import require_present
+from ._type_support import JsonObject, JsonValue, require_present
 
 _INTERVAL = {"start": "2026-08-01T00:00:00Z", "end": "2026-08-02T00:00:00Z"}
 
@@ -94,9 +94,9 @@ class TestGetNetworkGatewayStatusRequest:
             -1,
         ],
     )
-    def test_rejects_duration_and_interval(self, time):
+    def test_rejects_duration_and_interval(self, time: JsonValue):
         with pytest.raises(ValidationError):
-            GetNetworkGatewayStatus.model_validate({"networkId": 1, "time": time})
+            _ = GetNetworkGatewayStatus.model_validate({"networkId": 1, "time": time})
 
 
 class TestGetVpnSiteStatusResult:
@@ -199,8 +199,8 @@ class TestEnumStringIdentity:
             EventType.LINK_STATE_TRANSITION,
         ],
     )
-    def test_link_insights_event_types(self, event_type):
-        assert EventType(event_type.value) is event_type
+    def test_link_insights_event_types(self, event_type: EventType):
+        assert EventType(cast(str, event_type.value)) is event_type
 
 
 # --- MetricSummary ---
@@ -330,7 +330,7 @@ class TestBackwardsCompatibility:
 class TestEdgeBgpPeerStatus:
     """Tests for the event-based BGP peer status response from VCO."""
 
-    SAMPLE_EVENT: ClassVar[dict[str, Any]] = {
+    SAMPLE_EVENT: ClassVar[JsonObject] = {
         "id": 1,
         "timestamp": "2025-01-02T03:04:05.000Z",
         "enterpriseId": 1,
@@ -392,7 +392,7 @@ class TestEdgeBgpPeerStatus:
         int_event = {
             **self.SAMPLE_EVENT,
             "data": {
-                **self.SAMPLE_EVENT["data"],
+                **cast(JsonObject, self.SAMPLE_EVENT["data"]),
                 "msgRcvd": 12,
                 "msgSent": 8,
                 "pfxRcvd": 3,
@@ -522,7 +522,7 @@ class TestGatewayHealthStats:
 
 
 class TestEnterpriseBgpPeerStatus:
-    SAMPLE_RECORD: ClassVar[dict[str, Any]] = {
+    SAMPLE_RECORD: ClassVar[JsonObject] = {
         "id": 3,
         "enterpriseId": 1,
         "gatewayName": "Example-Gateway",
@@ -574,7 +574,7 @@ class TestEnterpriseBgpPeerStatus:
 
 
 class TestEnterpriseBfdPeerStatus:
-    SAMPLE_RECORD: ClassVar[dict[str, Any]] = {
+    SAMPLE_RECORD: ClassVar[JsonObject] = {
         "id": 4,
         "enterpriseId": 1,
         "gatewayName": "Example-Gateway",
@@ -652,7 +652,7 @@ class TestEnterpriseBfdPeerStatus:
 
 
 class TestClusterStatus:
-    SAMPLE_RESPONSE: ClassVar[list[dict[str, Any]]] = [
+    SAMPLE_RESPONSE: ClassVar[list[JsonObject]] = [
         {
             "clusterName": "Clone-Cluster-A",
             "clusterId": 70079,
@@ -777,7 +777,7 @@ class TestClusterStatus:
 
 
 class TestLinkInsightsOverview:
-    SAMPLE: ClassVar[dict[str, Any]] = {
+    SAMPLE: ClassVar[JsonObject] = {
         "totalLinks": 42,
         "totalEdges": 12,
         "totalIsps": 5,
@@ -841,7 +841,7 @@ class TestLinkInsightsOverview:
 
 
 class TestLinkFlapSummary:
-    SAMPLE_LINK_VIEW: ClassVar[dict[str, Any]] = {
+    SAMPLE_LINK_VIEW: ClassVar[JsonObject] = {
         "data": [
             {
                 "linkLogicalId": "abc-123",
@@ -859,7 +859,7 @@ class TestLinkFlapSummary:
         ]
     }
 
-    SAMPLE_ISP_VIEW: ClassVar[dict[str, Any]] = {
+    SAMPLE_ISP_VIEW: ClassVar[JsonObject] = {
         "data": [
             {
                 "isp": "AT&T",
@@ -913,7 +913,7 @@ class TestLinkFlapSummary:
 
 
 class TestLinkDegradationSummary:
-    SAMPLE: ClassVar[dict[str, Any]] = {
+    SAMPLE: ClassVar[JsonObject] = {
         "data": [
             {
                 "linkLogicalId": "abc-123",
@@ -967,7 +967,7 @@ class TestLinkDegradationSummary:
 
 
 class TestLinkDegradationDetails:
-    SAMPLE: ClassVar[dict[str, Any]] = {
+    SAMPLE: ClassVar[JsonObject] = {
         "data": [
             {
                 "linkLogicalId": "abc-123",
@@ -1086,7 +1086,7 @@ class TestLinkDegradationDetails:
         GetLinkDegradationDetailsResult,
     ],
 )
-def test_link_insights_filter_spec_response(result_type):
+def test_link_insights_filter_spec_response(result_type: type[BaseModel]):
     result = result_type.model_validate(
         {
             "pagination": {"supported": False},
@@ -1098,9 +1098,14 @@ def test_link_insights_filter_spec_response(result_type):
             },
         }
     )
+    response = cast(JsonObject, result.model_dump())
 
-    assert result.filtering["attributes"]["isp"]["operators"] == ["is"]
-    assert result.pagination["supported"] is False
+    filtering = cast(JsonObject, response["filtering"])
+    attributes = cast(JsonObject, filtering["attributes"])
+    isp = cast(JsonObject, attributes["isp"])
+    assert isp["operators"] == ["is"]
+    pagination = cast(JsonObject, response["pagination"])
+    assert pagination["supported"] is False
 
 
 # --- Request validation ---
@@ -1122,12 +1127,14 @@ class TestLinkInsightsRequestAliases:
             (GetLinkDegradationDetails, {"interval": _INTERVAL}),
         ],
     )
-    def test_filter_spec_safe_name_and_wire_alias(self, request_type, params):
+    def test_filter_spec_safe_name_and_wire_alias(
+        self, request_type: type[BaseModel], params: JsonObject
+    ):
         request = request_type.model_validate({**params, "filter_spec": True})
 
-        dumped = request.model_dump(by_alias=True, exclude_unset=True)
+        dumped = cast(JsonObject, request.model_dump(by_alias=True, exclude_unset=True))
 
-        assert request.filter_spec is True
+        assert getattr(request, "filter_spec") is True
         assert dumped["_filterSpec"] is True
         assert "filter_spec" not in dumped
 
@@ -1159,9 +1166,11 @@ class TestLinkInsightsRequestAliases:
             (GetLinkDegradationDetails, {}),
         ],
     )
-    def test_link_insights_interval_requires_end(self, request_type, params):
+    def test_link_insights_interval_requires_end(
+        self, request_type: type[BaseModel], params: JsonObject
+    ):
         with pytest.raises(ValidationError):
-            request_type.model_validate(
+            _ = request_type.model_validate(
                 {
                     **params,
                     "interval": {"start": _INTERVAL["start"]},
@@ -1185,19 +1194,19 @@ class TestFlapSummaryLimitValidation:
 
     def test_limit_zero_rejected(self):
         with pytest.raises(ValidationError):
-            GetLinkFlapSummary.model_validate(
+            _ = GetLinkFlapSummary.model_validate(
                 {"interval": _INTERVAL, "viewBy": "link", "limit": 0}
             )
 
     def test_limit_over_max_rejected(self):
         with pytest.raises(ValidationError):
-            GetLinkFlapSummary.model_validate(
+            _ = GetLinkFlapSummary.model_validate(
                 {"interval": _INTERVAL, "viewBy": "link", "limit": 101}
             )
 
     def test_limit_negative_rejected(self):
         with pytest.raises(ValidationError):
-            GetLinkFlapSummary.model_validate(
+            _ = GetLinkFlapSummary.model_validate(
                 {"interval": _INTERVAL, "viewBy": "link", "limit": -5}
             )
 
@@ -1218,13 +1227,13 @@ class TestDegradationSummaryWithValidation:
 
     def test_duplicate_with_value_rejected(self):
         with pytest.raises(ValidationError, match="unique"):
-            GetLinkDegradationSummary.model_validate(
+            _ = GetLinkDegradationSummary.model_validate(
                 {"interval": _INTERVAL, "viewBy": "link", "with": ["before", "before"]}
             )
 
     def test_more_than_two_with_values_rejected(self):
         with pytest.raises(ValidationError):
-            GetLinkDegradationSummary.model_validate(
+            _ = GetLinkDegradationSummary.model_validate(
                 {
                     "interval": _INTERVAL,
                     "viewBy": "link",
@@ -1234,13 +1243,13 @@ class TestDegradationSummaryWithValidation:
 
     def test_invalid_with_value_rejected(self):
         with pytest.raises(ValidationError):
-            GetLinkDegradationSummary.model_validate(
+            _ = GetLinkDegradationSummary.model_validate(
                 {"interval": _INTERVAL, "viewBy": "link", "with": ["garbage"]}
             )
 
     def test_limit_over_max_rejected(self):
         with pytest.raises(ValidationError):
-            GetLinkDegradationSummary.model_validate(
+            _ = GetLinkDegradationSummary.model_validate(
                 {"interval": _INTERVAL, "viewBy": "link", "limit": 101}
             )
 
@@ -1259,7 +1268,7 @@ class TestDegradationDetailsValidation:
 
     def test_invalid_sort_attribute_rejected(self):
         with pytest.raises(ValidationError):
-            GetLinkDegradationDetails.model_validate(
+            _ = GetLinkDegradationDetails.model_validate(
                 {
                     "interval": _INTERVAL,
                     "sortBy": [{"attribute": "nonexistent", "type": "ASC"}],
@@ -1287,7 +1296,7 @@ class TestDegradationDetailsValidation:
         "attribute",
         ["uptimePct", "secondsUp", "secondsDown", "secondsUnknown", "totalFlaps"],
     )
-    def test_uptime_and_flap_sort_attributes(self, attribute):
+    def test_uptime_and_flap_sort_attributes(self, attribute: str):
         req = GetLinkDegradationDetails.model_validate(
             {
                 "interval": _INTERVAL,
@@ -1299,7 +1308,7 @@ class TestDegradationDetailsValidation:
 
     def test_sort_direction_required(self):
         with pytest.raises(ValidationError):
-            GetLinkDegradationDetails.model_validate(
+            _ = GetLinkDegradationDetails.model_validate(
                 {"interval": _INTERVAL, "sortBy": [{"attribute": "lastUpdated"}]}
             )
 
@@ -1312,7 +1321,7 @@ class TestDegradationDetailsValidation:
 
     def test_limit_over_2048_rejected(self):
         with pytest.raises(ValidationError):
-            GetLinkDegradationDetails.model_validate(
+            _ = GetLinkDegradationDetails.model_validate(
                 {"interval": _INTERVAL, "limit": 2049}
             )
 
@@ -1324,12 +1333,14 @@ class TestDegradationDetailsValidation:
 
     def test_quick_search_over_255_rejected(self):
         with pytest.raises(ValidationError):
-            GetLinkDegradationDetails.model_validate(
+            _ = GetLinkDegradationDetails.model_validate(
                 {"interval": _INTERVAL, "quickSearch": "x" * 256}
             )
 
     @pytest.mark.parametrize("token_field", ["nextPageLink", "prevPageLink"])
-    def test_token_pagination_without_interval(self, token_field):
+    def test_token_pagination_without_interval(
+        self, token_field: Literal["nextPageLink", "prevPageLink"]
+    ):
         req = GetLinkDegradationDetails.model_validate(
             {token_field: "eyJwYWdlIjogMn0="}
         )
@@ -1344,30 +1355,38 @@ class TestDegradationDetailsValidation:
 
     def test_empty_request_rejected(self):
         with pytest.raises(ValidationError, match="provide exactly one"):
-            GetLinkDegradationDetails.model_validate({})
+            _ = GetLinkDegradationDetails.model_validate({})
 
     def test_both_pagination_tokens_rejected(self):
         with pytest.raises(ValidationError, match="provide at most one"):
-            GetLinkDegradationDetails.model_validate(
+            _ = GetLinkDegradationDetails.model_validate(
                 {"nextPageLink": "next-token", "prevPageLink": "prev-token"}
             )
 
     @pytest.mark.parametrize("token_field", ["nextPageLink", "prevPageLink"])
-    def test_interval_with_pagination_token_rejected(self, token_field):
+    def test_interval_with_pagination_token_rejected(
+        self, token_field: Literal["nextPageLink", "prevPageLink"]
+    ):
         with pytest.raises(ValidationError, match="provide exactly one"):
-            GetLinkDegradationDetails.model_validate(
+            _ = GetLinkDegradationDetails.model_validate(
                 {"interval": _INTERVAL, token_field: "page-token"}
             )
 
     @pytest.mark.parametrize("token_field", ["nextPageLink", "prevPageLink"])
-    def test_empty_pagination_token_rejected(self, token_field):
+    def test_empty_pagination_token_rejected(
+        self, token_field: Literal["nextPageLink", "prevPageLink"]
+    ):
         with pytest.raises(ValidationError):
-            GetLinkDegradationDetails.model_validate({token_field: ""})
+            _ = GetLinkDegradationDetails.model_validate({token_field: ""})
 
     def test_json_schema_exposes_interval_or_page_token_contract(self):
-        schema = GetLinkDegradationDetails.model_json_schema()
+        schema = cast(JsonObject, GetLinkDegradationDetails.model_json_schema())
+        one_of = cast(list[JsonObject], schema["oneOf"])
 
-        assert {tuple(option["required"]) for option in schema["oneOf"]} == {
+        required_fields = {
+            tuple(cast(list[str], option["required"])) for option in one_of
+        }
+        assert required_fields == {
             ("interval",),
             ("nextPageLink",),
             ("prevPageLink",),
@@ -1402,7 +1421,12 @@ class TestLinkInsightsFilterValidation:
         ],
     )
     def test_supported_filter_round_trip(
-        self, request_type, params, field, operator, value
+        self,
+        request_type: type[BaseModel],
+        params: JsonObject,
+        field: str,
+        operator: str,
+        value: JsonValue,
     ):
         request = request_type.model_validate(
             {
@@ -1413,12 +1437,14 @@ class TestLinkInsightsFilterValidation:
             }
         )
 
-        dumped = request.model_dump(by_alias=True, exclude_unset=True)
-        assert dumped["filters"]["and"][0]["field"] == field
+        dumped = cast(JsonObject, request.model_dump(by_alias=True, exclude_unset=True))
+        filters = cast(JsonObject, dumped["filters"])
+        conjunction = cast(list[JsonObject], filters["and"])
+        assert conjunction[0]["field"] == field
 
     def test_flap_summary_rejects_traffic_type_filter(self):
         with pytest.raises(ValidationError, match="trafficType"):
-            GetLinkFlapSummary.model_validate(
+            _ = GetLinkFlapSummary.model_validate(
                 {
                     "interval": _INTERVAL,
                     "viewBy": "link",
@@ -1441,14 +1467,14 @@ class TestLinkInsightsFilterValidation:
             {"interval": _INTERVAL, "viewBy": "link"},
         ],
     )
-    def test_summary_requests_reject_detail_only_filter(self, request_data):
+    def test_summary_requests_reject_detail_only_filter(self, request_data: JsonObject):
         request_type = (
             GetLinkInsightsOverview
             if "viewBy" not in request_data
             else GetLinkDegradationSummary
         )
         with pytest.raises(ValidationError, match="uptimePct"):
-            request_type.model_validate(
+            _ = request_type.model_validate(
                 {
                     **request_data,
                     "filters": {

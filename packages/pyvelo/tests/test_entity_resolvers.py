@@ -1,10 +1,15 @@
 """Tests for ProfileResolver, ApplicationResolver, AddressGroupResolver, ServiceGroupResolver, LicenseResolver."""
 
 import uuid
-from typing import Any
-from unittest.mock import AsyncMock
+from collections.abc import Sequence
+from typing import cast, final
 
 import pytest
+from pyvelo.client.protocol import VcoClientProtocol
+from pyvelo.client.schemas.configuration import GetRoutableApplications
+from pyvelo.client.schemas.enterprise import GetObjectGroups
+from pyvelo.client.schemas.license import GetEnterpriseEdgeLicenses
+from pyvelo.client.schemas.profiles import GetEnterpriseConfigurations
 from pyvelo.config.resolver import ResolverContext
 from pyvelo.config.resolvers.address_group import AddressGroupResolver
 from pyvelo.config.resolvers.application import ApplicationResolver
@@ -32,34 +37,89 @@ SG_UUID1 = uuid.UUID("cccccccc-cccc-cccc-cccc-cccccccccccc")
 # ---------------------------------------------------------------------------
 
 
+@final
 class FakeProfile:
     def __init__(self, id_: int, name: str):
-        self.id_ = id_
-        self.name = name
+        self.id_: int = id_
+        self.name: str = name
 
 
+@final
 class FakeApp:
     def __init__(self, id_: int, name: str, display_name: str | None = None):
-        self.id_ = id_
-        self.name = name
-        self.display_name = display_name
+        self.id_: int = id_
+        self.name: str = name
+        self.display_name: str | None = display_name
 
 
+@final
 class FakeAppResult:
-    def __init__(self, applications: list[Any]):
-        self.applications = applications
+    def __init__(self, applications: list[FakeApp]):
+        self.applications: list[FakeApp] = applications
 
 
+@final
 class FakeAllAppsResult:
-    def __init__(self, applications: list[Any]):
-        self.all = FakeAppResult(applications)
+    def __init__(self, applications: list[FakeApp]):
+        self.all: FakeAppResult = FakeAppResult(applications)
 
 
+@final
 class FakeObjectGroup:
     def __init__(self, id_: int, name: str, logical_id: uuid.UUID):
-        self.id_ = id_
-        self.name = name
-        self.logical_id = logical_id
+        self.id_: int = id_
+        self.name: str = name
+        self.logical_id: uuid.UUID = logical_id
+
+
+@final
+class FakeLicense:
+    def __init__(self, id_: int, license_id: int, name: str, sku: str):
+        self.id_: int = id_
+        self.license_id: int = license_id
+        self.name: str = name
+        self.sku: str = sku
+
+
+@final
+class FakeResolverClient:
+    def __init__(self) -> None:
+        self.profiles: list[FakeProfile] = []
+        self.applications: FakeAllAppsResult = FakeAllAppsResult([])
+        self.object_groups: list[FakeObjectGroup] = []
+        self.licenses: list[FakeLicense] = []
+        self.profile_requests: list[GetEnterpriseConfigurations] = []
+        self.application_requests: list[GetRoutableApplications] = []
+        self.object_group_requests: list[GetObjectGroups] = []
+        self.license_requests: list[GetEnterpriseEdgeLicenses] = []
+
+    @property
+    def protocol(self) -> VcoClientProtocol:
+        return cast(VcoClientProtocol, cast(object, self))
+
+    async def get_enterprise_configurations(
+        self, request: GetEnterpriseConfigurations
+    ) -> Sequence[FakeProfile]:
+        self.profile_requests.append(request)
+        return self.profiles
+
+    async def get_applications(
+        self, request: GetRoutableApplications
+    ) -> FakeAllAppsResult:
+        self.application_requests.append(request)
+        return self.applications
+
+    async def get_object_groups(
+        self, request: GetObjectGroups
+    ) -> Sequence[FakeObjectGroup]:
+        self.object_group_requests.append(request)
+        return self.object_groups
+
+    async def get_enterprise_edge_licenses(
+        self, request: GetEnterpriseEdgeLicenses
+    ) -> Sequence[FakeLicense]:
+        self.license_requests.append(request)
+        return self.licenses
 
 
 # ---------------------------------------------------------------------------
@@ -69,17 +129,17 @@ class FakeObjectGroup:
 
 class TestProfileResolver:
     @pytest.fixture
-    def mock_client(self) -> AsyncMock:
-        client = AsyncMock()
-        client.get_enterprise_configurations.return_value = [
+    def mock_client(self) -> FakeResolverClient:
+        client = FakeResolverClient()
+        client.profiles = [
             FakeProfile(id_=10, name="Default Profile"),
             FakeProfile(id_=20, name="Branch Profile"),
         ]
         return client
 
     @pytest.fixture
-    async def resolver(self, mock_client: AsyncMock) -> ProfileResolver:
-        r = ProfileResolver(mock_client)
+    async def resolver(self, mock_client: FakeResolverClient) -> ProfileResolver:
+        r = ProfileResolver(mock_client.protocol)
         await r.load(ResolverContext(enterprise_id=1))
         return r
 
@@ -95,7 +155,7 @@ class TestProfileResolver:
 
     async def test_resolve_unknown(self, resolver: ProfileResolver):
         with pytest.raises(KeyError, match="Unknown profile"):
-            await resolver.resolve("nonexistent")
+            _ = await resolver.resolve("nonexistent")
 
     async def test_reverse_by_id(self, resolver: ProfileResolver):
         name = await resolver.reverse_by("id", 10)
@@ -103,15 +163,15 @@ class TestProfileResolver:
 
     async def test_reverse_unknown(self, resolver: ProfileResolver):
         with pytest.raises(KeyError, match="No profile"):
-            await resolver.reverse_by("id", 999)
+            _ = await resolver.reverse_by("id", 999)
 
-    def test_identity_type(self, mock_client: AsyncMock):
-        assert ProfileResolver(mock_client).identity_type is ProfileIdentity
+    def test_identity_type(self, mock_client: FakeResolverClient):
+        assert ProfileResolver(mock_client.protocol).identity_type is ProfileIdentity
 
-    async def test_load_passes_enterprise_id(self, mock_client: AsyncMock):
-        r = ProfileResolver(mock_client)
+    async def test_load_passes_enterprise_id(self, mock_client: FakeResolverClient):
+        r = ProfileResolver(mock_client.protocol)
         await r.load(ResolverContext(enterprise_id=42))
-        request = mock_client.get_enterprise_configurations.call_args[0][0]
+        request = mock_client.profile_requests[0]
         assert request.enterprise_id == 42
 
 
@@ -122,9 +182,9 @@ class TestProfileResolver:
 
 class TestApplicationResolver:
     @pytest.fixture
-    def mock_client(self) -> AsyncMock:
-        client = AsyncMock()
-        client.get_applications.return_value = FakeAllAppsResult(
+    def mock_client(self) -> FakeResolverClient:
+        client = FakeResolverClient()
+        client.applications = FakeAllAppsResult(
             applications=[
                 FakeApp(id_=100, name="office365", display_name="Office 365"),
                 FakeApp(id_=200, name="zoom", display_name="Zoom"),
@@ -134,8 +194,8 @@ class TestApplicationResolver:
         return client
 
     @pytest.fixture
-    async def resolver(self, mock_client: AsyncMock) -> ApplicationResolver:
-        r = ApplicationResolver(mock_client)
+    async def resolver(self, mock_client: FakeResolverClient) -> ApplicationResolver:
+        r = ApplicationResolver(mock_client.protocol)
         await r.load(ResolverContext(enterprise_id=1))
         return r
 
@@ -150,14 +210,17 @@ class TestApplicationResolver:
 
     async def test_resolve_unknown(self, resolver: ApplicationResolver):
         with pytest.raises(KeyError, match="Unknown application"):
-            await resolver.resolve("nonexistent")
+            _ = await resolver.resolve("nonexistent")
 
     async def test_reverse_by_id(self, resolver: ApplicationResolver):
         name = await resolver.reverse_by("id", 200)
         assert name == "Zoom"
 
-    def test_identity_type(self, mock_client: AsyncMock):
-        assert ApplicationResolver(mock_client).identity_type is ApplicationIdentity
+    def test_identity_type(self, mock_client: FakeResolverClient):
+        assert (
+            ApplicationResolver(mock_client.protocol).identity_type
+            is ApplicationIdentity
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -167,17 +230,17 @@ class TestApplicationResolver:
 
 class TestAddressGroupResolver:
     @pytest.fixture
-    def mock_client(self) -> AsyncMock:
-        client = AsyncMock()
-        client.get_object_groups.return_value = [
+    def mock_client(self) -> FakeResolverClient:
+        client = FakeResolverClient()
+        client.object_groups = [
             FakeObjectGroup(id_=50, name="RFC1918", logical_id=AG_UUID1),
             FakeObjectGroup(id_=51, name="Branch Subnets", logical_id=AG_UUID2),
         ]
         return client
 
     @pytest.fixture
-    async def resolver(self, mock_client: AsyncMock) -> AddressGroupResolver:
-        r = AddressGroupResolver(mock_client)
+    async def resolver(self, mock_client: FakeResolverClient) -> AddressGroupResolver:
+        r = AddressGroupResolver(mock_client.protocol)
         await r.load(ResolverContext(enterprise_id=1))
         return r
 
@@ -189,7 +252,7 @@ class TestAddressGroupResolver:
 
     async def test_resolve_unknown(self, resolver: AddressGroupResolver):
         with pytest.raises(KeyError, match="Unknown address group"):
-            await resolver.resolve("nonexistent")
+            _ = await resolver.resolve("nonexistent")
 
     async def test_reverse_by_id(self, resolver: AddressGroupResolver):
         name = await resolver.reverse_by("id", 51)
@@ -199,13 +262,16 @@ class TestAddressGroupResolver:
         name = await resolver.reverse_by("logical_id", AG_UUID1)
         assert name == "RFC1918"
 
-    def test_identity_type(self, mock_client: AsyncMock):
-        assert AddressGroupResolver(mock_client).identity_type is AddressGroupIdentity
+    def test_identity_type(self, mock_client: FakeResolverClient):
+        assert (
+            AddressGroupResolver(mock_client.protocol).identity_type
+            is AddressGroupIdentity
+        )
 
-    async def test_load_uses_address_group_type(self, mock_client: AsyncMock):
-        r = AddressGroupResolver(mock_client)
+    async def test_load_uses_address_group_type(self, mock_client: FakeResolverClient):
+        r = AddressGroupResolver(mock_client.protocol)
         await r.load(ResolverContext(enterprise_id=1))
-        request = mock_client.get_object_groups.call_args[0][0]
+        request = mock_client.object_group_requests[0]
         assert request.type_ == "address_group"
 
 
@@ -216,16 +282,16 @@ class TestAddressGroupResolver:
 
 class TestServiceGroupResolver:
     @pytest.fixture
-    def mock_client(self) -> AsyncMock:
-        client = AsyncMock()
-        client.get_object_groups.return_value = [
+    def mock_client(self) -> FakeResolverClient:
+        client = FakeResolverClient()
+        client.object_groups = [
             FakeObjectGroup(id_=60, name="Web Ports", logical_id=SG_UUID1),
         ]
         return client
 
     @pytest.fixture
-    async def resolver(self, mock_client: AsyncMock) -> ServiceGroupResolver:
-        r = ServiceGroupResolver(mock_client)
+    async def resolver(self, mock_client: FakeResolverClient) -> ServiceGroupResolver:
+        r = ServiceGroupResolver(mock_client.protocol)
         await r.load(ResolverContext(enterprise_id=1))
         return r
 
@@ -237,19 +303,22 @@ class TestServiceGroupResolver:
 
     async def test_resolve_unknown(self, resolver: ServiceGroupResolver):
         with pytest.raises(KeyError, match="Unknown service group"):
-            await resolver.resolve("nonexistent")
+            _ = await resolver.resolve("nonexistent")
 
     async def test_reverse_by_id(self, resolver: ServiceGroupResolver):
         name = await resolver.reverse_by("id", 60)
         assert name == "Web Ports"
 
-    def test_identity_type(self, mock_client: AsyncMock):
-        assert ServiceGroupResolver(mock_client).identity_type is ServiceGroupIdentity
+    def test_identity_type(self, mock_client: FakeResolverClient):
+        assert (
+            ServiceGroupResolver(mock_client.protocol).identity_type
+            is ServiceGroupIdentity
+        )
 
-    async def test_load_uses_port_group_type(self, mock_client: AsyncMock):
-        r = ServiceGroupResolver(mock_client)
+    async def test_load_uses_port_group_type(self, mock_client: FakeResolverClient):
+        r = ServiceGroupResolver(mock_client.protocol)
         await r.load(ResolverContext(enterprise_id=1))
-        request = mock_client.get_object_groups.call_args[0][0]
+        request = mock_client.object_group_requests[0]
         assert request.type_ == "port_group"
 
 
@@ -258,29 +327,19 @@ class TestServiceGroupResolver:
 # ---------------------------------------------------------------------------
 
 
-class FakeLicense:
-    def __init__(self, id_: int, license_id: int, name: str, sku: str):
-        self.id_ = id_
-        self.license_id = license_id
-        self.name = name
-        self.sku = sku
-
-
 class TestLicenseResolver:
     @pytest.fixture
-    def mock_client(self):
-        client = AsyncMock()
-        client.get_enterprise_edge_licenses = AsyncMock(
-            return_value=[
-                FakeLicense(100, 200, "Enterprise 1G", "ENT-BWR-1G"),
-                FakeLicense(101, 201, "Premium 2G", "PRM-BWR-2G"),
-            ]
-        )
+    def mock_client(self) -> FakeResolverClient:
+        client = FakeResolverClient()
+        client.licenses = [
+            FakeLicense(100, 200, "Enterprise 1G", "ENT-BWR-1G"),
+            FakeLicense(101, 201, "Premium 2G", "PRM-BWR-2G"),
+        ]
         return client
 
     @pytest.fixture
-    async def resolver(self, mock_client):
-        r = LicenseResolver(mock_client)
+    async def resolver(self, mock_client: FakeResolverClient) -> LicenseResolver:
+        r = LicenseResolver(mock_client.protocol)
         await r.load(ResolverContext(enterprise_id=1))
         return r
 
@@ -293,7 +352,7 @@ class TestLicenseResolver:
 
     async def test_resolve_unknown(self, resolver: LicenseResolver):
         with pytest.raises(KeyError, match="Unknown license"):
-            await resolver.resolve("nonexistent")
+            _ = await resolver.resolve("nonexistent")
 
     async def test_resolve_key_name(self, resolver: LicenseResolver):
         identity = await resolver.resolve_key(LicenseName("Premium 2G"))
@@ -319,5 +378,5 @@ class TestLicenseResolver:
         name = await resolver.reverse_by("license_id", 200)
         assert name == "Enterprise 1G"
 
-    def test_identity_type(self, mock_client: AsyncMock):
-        assert LicenseResolver(mock_client).identity_type is LicenseIdentity
+    def test_identity_type(self, mock_client: FakeResolverClient):
+        assert LicenseResolver(mock_client.protocol).identity_type is LicenseIdentity

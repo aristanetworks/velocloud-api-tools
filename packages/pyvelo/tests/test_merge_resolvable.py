@@ -11,6 +11,8 @@ from pyvelo.core.identity import (
     SegmentIdentity,
 )
 
+from ._type_support import SegmentResolverFactory
+
 GLOBAL_UUID = uuid.UUID("12345678-1234-1234-1234-123456789abc")
 PCI_UUID = uuid.UUID("abcdef01-abcd-abcd-abcd-abcdef012345")
 
@@ -29,7 +31,7 @@ class Config(VcoModel):
 
 
 @pytest.fixture
-async def registry(make_segment_resolver) -> ResolverRegistry:
+async def registry(make_segment_resolver: SegmentResolverFactory) -> ResolverRegistry:
     resolver = await make_segment_resolver(
         [
             {
@@ -54,7 +56,7 @@ async def registry(make_segment_resolver) -> ResolverRegistry:
 class TestMergeResolvable:
     def test_string_resolves_to_segment_id(self, registry: ResolverRegistry):
         m = Config()
-        m.merge_patch(
+        _ = m.merge_patch(
             {"segment": {"segment_id": "PCI"}},
             resolvers=registry,
         )
@@ -62,7 +64,7 @@ class TestMergeResolvable:
 
     def test_string_resolves_to_logical_id(self, registry: ResolverRegistry):
         m = Config()
-        m.merge_patch(
+        _ = m.merge_patch(
             {"segment": {"logical_id": "Global Segment"}},
             resolvers=registry,
         )
@@ -71,7 +73,7 @@ class TestMergeResolvable:
     def test_numeric_value_passes_through(self, registry: ResolverRegistry):
         """Raw IDs should still work without resolution."""
         m = Config()
-        m.merge_patch(
+        _ = m.merge_patch(
             {"segment": {"segment_id": 42}},
             resolvers=registry,
         )
@@ -81,13 +83,13 @@ class TestMergeResolvable:
         """Without resolvers, string values are assigned directly (may fail validation)."""
         m = Config()
         # No resolvers -> string value assigned as-is
-        m.merge_patch({"segment": {"name": "test"}})
+        _ = m.merge_patch({"segment": {"name": "test"}})
         assert m.segment.name == "test"
 
     def test_unknown_name_raises(self, registry: ResolverRegistry):
         m = Config()
         with pytest.raises(KeyError, match="Unknown segment.*nonexistent"):
-            m.merge_patch(
+            _ = m.merge_patch(
                 {"segment": {"segment_id": "nonexistent"}},
                 resolvers=registry,
             )
@@ -95,7 +97,7 @@ class TestMergeResolvable:
     def test_non_resolvable_string_field_unaffected(self, registry: ResolverRegistry):
         """String fields without Resolvable marker aren't resolved."""
         m = Config()
-        m.merge_patch(
+        _ = m.merge_patch(
             {"segment": {"name": "PCI"}},
             resolvers=registry,
         )
@@ -105,7 +107,7 @@ class TestMergeResolvable:
     def test_multiple_resolvable_fields(self, registry: ResolverRegistry):
         """Multiple Resolvable fields can be resolved in one merge."""
         m = Config()
-        m.merge_patch(
+        _ = m.merge_patch(
             {
                 "segment": {
                     "segment_id": "Global Segment",

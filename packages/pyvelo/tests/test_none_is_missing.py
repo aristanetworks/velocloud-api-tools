@@ -1,11 +1,12 @@
 """Tests for NoneIsMissing validator."""
 
-import json
 from typing import Annotated
 
 from pydantic import MISSING
 from pyvelo.client.schemas.edge import GetEdgeConfigurationStack
 from pyvelo.core import NoneIsMissing, VcoModel
+
+from ._type_support import parse_json_object
 
 
 class _SampleRequest(VcoModel):
@@ -39,7 +40,7 @@ class TestNoneIsMissing:
     def test_json_excludes_none_converted(self):
         obj = _SampleRequest.model_validate({"enterprise_id": None})
         raw = obj.model_dump_json(by_alias=True, exclude_unset=True)
-        parsed = json.loads(raw)
+        parsed = parse_json_object(raw)
         assert "enterpriseId" not in parsed
 
     def test_applied_to_real_schemas(self):

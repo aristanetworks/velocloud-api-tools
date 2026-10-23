@@ -5,7 +5,7 @@ from typing import Annotated
 
 import pytest
 from pyvelo.core import VcoModel
-from pyvelo.core.fields import Alias, Resolvable, _ProcessedResolvable
+from pyvelo.core.fields import Alias, Resolvable, get_resolvable
 from pyvelo.core.identity import (
     ApplicationIdentity,
     SegmentIdentity,
@@ -23,28 +23,31 @@ class HasResolvable(VcoModel):
 class TestResolvableMarker:
     def test_processed_marker_in_metadata(self):
         fi = HasResolvable.model_fields["segment_id"]
-        processed = [m for m in fi.metadata if isinstance(m, _ProcessedResolvable)]
-        assert len(processed) == 1
-        assert processed[0].identity_type is SegmentIdentity
-        assert processed[0].id_attr == "segment_id"
+        processed = get_resolvable(fi)
+        assert processed is not None
+        assert processed.identity_type is SegmentIdentity
+        assert processed.id_attr == "segment_id"
 
     def test_different_id_attr_for_same_identity(self):
         fi = HasResolvable.model_fields["segment_logical_id"]
-        processed = [m for m in fi.metadata if isinstance(m, _ProcessedResolvable)]
-        assert len(processed) == 1
-        assert processed[0].id_attr == "logical_id"
+        processed = get_resolvable(fi)
+        assert processed is not None
+        assert processed.id_attr == "logical_id"
 
     def test_different_identity_type(self):
         fi = HasResolvable.model_fields["app_id"]
-        processed = [m for m in fi.metadata if isinstance(m, _ProcessedResolvable)]
-        assert processed[0].identity_type is ApplicationIdentity
-        assert processed[0].id_attr == "id"
+        processed = get_resolvable(fi)
+        assert processed is not None
+        assert processed.identity_type is ApplicationIdentity
+        assert processed.id_attr == "id"
 
     def test_invalid_id_attr_raises(self):
         with pytest.raises(TypeError, match="has no field"):
 
             class Bad(VcoModel):
                 x: Annotated[int, Resolvable(SegmentIdentity, "nonexistent")] = 0
+
+            _ = Bad
 
     def test_model_validates_normally(self):
         m = HasResolvable(segment_id=42)
@@ -66,8 +69,8 @@ class TestAliasWithResolvableOnSubclass:
         fi = Child.model_fields["app_id"]
         assert fi.validation_alias == "appid"
         assert fi.serialization_alias == "appid"
-        processed = [m for m in fi.metadata if isinstance(m, _ProcessedResolvable)]
-        assert len(processed) == 1
+        processed = get_resolvable(fi)
+        assert processed is not None
 
     def test_alias_roundtrip_on_subclass(self):
         class Parent(VcoModel):

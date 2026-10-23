@@ -53,7 +53,7 @@ class TestFullMergeScenario:
     def test_nested_keyed_merge(self):
         """Merge a rule update into a specific segment by name."""
         m = self._make_config()
-        m.merge_patch(
+        _ = m.merge_patch(
             {"segments": {"Global": {"rules": {"block-ssh": {"priority": 0}}}}}
         )
         global_seg = m.segments[0]
@@ -65,7 +65,7 @@ class TestFullMergeScenario:
     def test_add_rule_to_segment(self):
         """Add a new rule to an existing segment."""
         m = self._make_config()
-        m.merge_patch(
+        _ = m.merge_patch(
             {
                 "segments": {
                     "Global": {
@@ -87,7 +87,7 @@ class TestFullMergeScenario:
     def test_delete_rule_from_segment(self):
         """Delete a rule from a segment."""
         m = self._make_config()
-        m.merge_patch({"segments": {"Global": {"rules": {"block-ssh": None}}}})
+        _ = m.merge_patch({"segments": {"Global": {"rules": {"block-ssh": None}}}})
         global_seg = m.segments[0]
         assert len(global_seg.rules) == 1
         assert global_seg.rules[0].name == "allow-all"
@@ -95,13 +95,13 @@ class TestFullMergeScenario:
     def test_edge_local_change_no_override(self):
         """EdgeLocal field change doesn't trigger override."""
         m = self._make_config()
-        m.merge_patch({"segments": {"Global": {"cidr_ip": "10.0.0.1"}}})
+        _ = m.merge_patch({"segments": {"Global": {"cidr_ip": "10.0.0.1"}}})
         assert m.segments[0].override is False
 
     def test_mixed_edge_local_and_normal_triggers_override(self):
         """Mixed EdgeLocal + normal change triggers override."""
         m = self._make_config()
-        m.merge_patch(
+        _ = m.merge_patch(
             {
                 "segments": {
                     "Global": {"cidr_ip": "10.0.0.1", "rules": {"new": {"name": "new"}}}
@@ -113,7 +113,7 @@ class TestFullMergeScenario:
     def test_pci_segment_unchanged(self):
         """Unmentioned segments are untouched."""
         m = self._make_config()
-        m.merge_patch(
+        _ = m.merge_patch(
             {"segments": {"Global": {"rules": {"block-ssh": {"priority": 0}}}}}
         )
         pci = m.segments[1]

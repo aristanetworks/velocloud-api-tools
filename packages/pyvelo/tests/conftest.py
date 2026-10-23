@@ -1,5 +1,7 @@
 """Shared SDK test fixtures: JSON-RPC response builders, mock VCO client, segment resolver factory."""
 
+from typing import cast
+
 import pytest
 from pyvelo.testing import (
     FakeEdge,
@@ -11,6 +13,12 @@ from pyvelo.testing import (
 )
 from pyvelo.testing import make_segment_resolver as _make_segment_resolver
 
+from ._type_support import (
+    JsonRpcResponseFactory,
+    MockVcoClientFactory,
+    SegmentResolverFactory,
+)
+
 __all__ = [
     "FakeEdge",
     "FakeSegment",
@@ -21,18 +29,18 @@ __all__ = [
 
 
 @pytest.fixture
-def json_rpc_response():
+def json_rpc_response() -> JsonRpcResponseFactory:
     """Factory fixture for JSON-RPC responses."""
-    return make_jsonrpc_response
+    return cast(JsonRpcResponseFactory, make_jsonrpc_response)
 
 
 @pytest.fixture
-def make_segment_resolver():
+def make_segment_resolver() -> SegmentResolverFactory:
     """Factory fixture for building SegmentResolver from fake segment dicts."""
-    return _make_segment_resolver
+    return cast(SegmentResolverFactory, _make_segment_resolver)
 
 
 @pytest.fixture
-async def mock_vco_client():
+async def mock_vco_client() -> MockVcoClientFactory:
     """Factory that creates a VcoClient backed by a MockTransport."""
-    return mock_vco_client_factory()
+    return cast(MockVcoClientFactory, mock_vco_client_factory())

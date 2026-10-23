@@ -1,14 +1,21 @@
 from __future__ import annotations
 
+from collections.abc import Callable, Sequence
 from datetime import UTC, datetime
+from typing import cast
 
 import polars as pl
 import pytest
-from pyvelo.analytics._flow import _items_to_frame
+from pyvelo.analytics import _flow
 from pyvelo.analytics._helpers import is_other_bucket
 from pyvelo.analytics._series import denormalize_timeseries
 from pyvelo.analytics.frame import MetricFrame
 from pyvelo.client.schemas.metrics import EdgeAppMetricsItem
+
+_items_to_frame = cast(
+    Callable[[Sequence[EdgeAppMetricsItem]], MetricFrame],
+    getattr(_flow, "_items_to_frame"),
+)
 
 
 class TestMetricFrameBackwardCompat:
@@ -69,7 +76,7 @@ class TestMetricFrameBackwardCompat:
 
 class TestMetricFrameFilter:
     @pytest.fixture
-    def frame(self):
+    def frame(self) -> MetricFrame:
         return MetricFrame(
             columns=["name", "count", "status"],
             rows=[
@@ -80,30 +87,30 @@ class TestMetricFrameFilter:
             ],
         )
 
-    def test_filter_eq(self, frame):
+    def test_filter_eq(self, frame: MetricFrame):
         result = frame.filter("status", "==", "up")
         assert len(result) == 2
         assert all(r["status"] == "up" for r in result)
 
-    def test_filter_ne(self, frame):
+    def test_filter_ne(self, frame: MetricFrame):
         result = frame.filter("status", "!=", "up")
         assert len(result) == 2
 
-    def test_filter_gt(self, frame):
+    def test_filter_gt(self, frame: MetricFrame):
         result = frame.filter("count", ">", 10)
         assert len(result) == 2
 
-    def test_filter_in(self, frame):
+    def test_filter_in(self, frame: MetricFrame):
         result = frame.filter("name", "in", ["alpha", "delta"])
         assert len(result) == 2
         names = {r["name"] for r in result}
         assert names == {"alpha", "delta"}
 
-    def test_filter_not_in(self, frame):
+    def test_filter_not_in(self, frame: MetricFrame):
         result = frame.filter("name", "not_in", ["alpha"])
         assert len(result) == 3
 
-    def test_filter_contains(self, frame):
+    def test_filter_contains(self, frame: MetricFrame):
         result = frame.filter("name", "contains", "lph")
         assert len(result) == 1  # alpha
 
@@ -112,11 +119,11 @@ class TestMetricFrameFilter:
         assert len(f.filter("a", "is_null", None)) == 1
         assert len(f.filter("a", "is_not_null", None)) == 1
 
-    def test_filter_unknown_operator(self, frame):
+    def test_filter_unknown_operator(self, frame: MetricFrame):
         with pytest.raises(ValueError, match="Unknown operator"):
-            frame.filter("count", "~", 5)
+            _ = frame.filter("count", "~", 5)
 
-    def test_filter_returns_new_frame(self, frame):
+    def test_filter_returns_new_frame(self, frame: MetricFrame):
         result = frame.filter("count", "==", 10)
         assert len(frame) == 4
         assert len(result) == 1
@@ -238,11 +245,11 @@ class TestMetricFrameExport:
 
     def test_to_dict(self):
         f = MetricFrame(columns=["a"], rows=[{"a": i} for i in range(100)])
-        d = f.to_dict(max_rows=10)
+        d = cast(dict[str, object], f.to_dict(max_rows=10))
         assert d["total_rows"] == 100
         assert d["truncated"] is True
         assert d["showing"] == 10
-        assert len(d["rows"]) == 10
+        assert len(cast(list[object], d["rows"])) == 10
         assert "schema" in d
 
     def test_to_dict_no_truncation(self):
@@ -266,11 +273,11 @@ class TestMetricFrameImmutability:
 
 class TestOtherBucketFiltering:
     @pytest.mark.parametrize("value", ["other", "Other", "OTHER"])
-    def test_is_other_bucket_true(self, value):
+    def test_is_other_bucket_true(self, value: str):
         assert is_other_bucket(value) is True
 
     @pytest.mark.parametrize("value", [0, 123, "myapp", "another"])
-    def test_is_other_bucket_false(self, value):
+    def test_is_other_bucket_false(self, value: str | int):
         assert is_other_bucket(value) is False
 
     def test_items_to_frame_drops_other(self):
