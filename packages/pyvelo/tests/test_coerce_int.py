@@ -3,8 +3,7 @@
 from typing import Annotated
 
 import pytest
-from pydantic import ValidationError
-from pydantic_core import MISSING
+from pydantic import MISSING, ValidationError
 from pyvelo.core import CoerceInt, VcoModel
 
 

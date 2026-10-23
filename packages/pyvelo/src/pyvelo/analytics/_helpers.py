@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Any
 
-from pydantic_core import MISSING
+from pydantic import MISSING
 
 from pyvelo.analytics.frame import MetricFrame
 from pyvelo.core.base import VcoModel

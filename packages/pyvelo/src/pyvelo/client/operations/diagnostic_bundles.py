@@ -4,7 +4,7 @@ import datetime as _dt
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, Protocol
 
-from pydantic_core import MISSING
+from pydantic import MISSING
 
 from pyvelo.client.operations._tagging import EDGE, domain_tag
 from pyvelo.client.schemas.diagnostic_bundles import (

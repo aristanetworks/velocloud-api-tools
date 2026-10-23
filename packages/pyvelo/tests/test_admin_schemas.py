@@ -3,8 +3,7 @@
 import uuid
 
 import pytest
-from pydantic import ValidationError
-from pydantic_core import MISSING
+from pydantic import MISSING, ValidationError
 from pyvelo.client.enums.enterprise import GetEnterpriseWith
 from pyvelo.client.enums.enterprise_proxy import (
     GetEnterpriseProxyEnterprisesWith,

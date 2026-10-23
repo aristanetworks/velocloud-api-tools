@@ -1,8 +1,7 @@
 import uuid
 from typing import Annotated, Any, Literal
 
-from pydantic import Field, field_validator
-from pydantic_core import MISSING
+from pydantic import MISSING, Field, field_validator
 
 from pyvelo.core import Alias, VcoModel
 
@@ -112,7 +111,6 @@ class WanLink(VcoModel):
     @field_validator("last_active", mode="before")
     @classmethod
     def handle_empty_last_active(cls, v):
-        """"""
         if v == "":
             return None
         return v

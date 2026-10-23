@@ -2,8 +2,7 @@
 
 from typing import Annotated, Any, cast
 
-from pydantic import ConfigDict, Field
-from pydantic_core import MISSING
+from pydantic import MISSING, ConfigDict, Field
 from pyvelo.core import (
     Alias,
     ConfigContext,

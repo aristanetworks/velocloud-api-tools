@@ -1,8 +1,7 @@
 import uuid
 from typing import Annotated, Any
 
-from pydantic import Field
-from pydantic_core import MISSING
+from pydantic import MISSING, Field
 
 from pyvelo.client.enums.network import (
     GetNetworkConfigurationsWith,

@@ -1,6 +1,6 @@
 from typing import Annotated, Any
 
-from pydantic_core import MISSING
+from pydantic import MISSING
 
 from pyvelo.client.enums.monitoring import GetReplicationStatusWith
 from pyvelo.core import Alias, VcoModel

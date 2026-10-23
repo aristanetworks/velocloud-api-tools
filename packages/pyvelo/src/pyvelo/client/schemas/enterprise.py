@@ -2,8 +2,7 @@ import uuid
 from typing import Annotated, Any, Literal
 
 from annotated_types import Ge, Le
-from pydantic import ConfigDict, Discriminator, Field, model_validator
-from pydantic_core import MISSING
+from pydantic import MISSING, ConfigDict, Discriminator, Field, model_validator
 
 from pyvelo.client.enums.edge import (
     EdgeField,
@@ -690,7 +689,6 @@ class CustomApp(VcoModel):
 
 
 class GetEnterprise(VcoModel):
-    """"""
 
     id_: Annotated[
         int | MISSING,
@@ -722,7 +720,6 @@ class GetEnterprise(VcoModel):
 
 
 class EnterpriseResult(VcoModel):
-    """"""
 
     id_: Annotated[int, Alias("id")]
     created: VcoTimestamp
@@ -755,7 +752,6 @@ class EnterpriseResult(VcoModel):
 
 
 class GetEnterpriseUsers(VcoModel):
-    """"""
 
     enterprise_id: Annotated[
         int | MISSING,
@@ -774,7 +770,6 @@ class GetEnterpriseUsers(VcoModel):
 
 
 class EnterpriseUser(VcoModel):
-    """"""
 
     id_: Annotated[int, Alias("id")]
     created: VcoTimestamp
@@ -799,13 +794,11 @@ class EnterpriseUser(VcoModel):
 
 
 class GetEnterpriseGatewayHandoff(VcoModel):
-    """"""
 
     enterprise_id: int | MISSING = MISSING
 
 
 class EnterpriseGatewayHandoffResult(VcoModel):
-    """"""
 
     type_: Annotated[str | None | MISSING, Alias("type")] = MISSING
     data: dict[str, Any] | None | MISSING = MISSING
@@ -818,13 +811,11 @@ class EnterpriseGatewayHandoffResult(VcoModel):
 
 
 class GetEnterpriseServiceLicense(VcoModel):
-    """"""
 
     enterprise_id: int | MISSING = MISSING
 
 
 class EnterpriseServiceLicenseResult(VcoModel):
-    """"""
 
     id_: Annotated[int | None | MISSING, Alias("id")] = MISSING
     created: VcoTimestamp | None | MISSING = MISSING

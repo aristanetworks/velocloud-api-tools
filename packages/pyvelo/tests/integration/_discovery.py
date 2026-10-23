@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
-from pydantic_core import MISSING
+from pydantic import MISSING
 
 if TYPE_CHECKING:
     from pyvelo.client import VcoClient

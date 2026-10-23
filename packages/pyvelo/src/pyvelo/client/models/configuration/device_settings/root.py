@@ -1,8 +1,7 @@
 import uuid
 from typing import Annotated, Any, Literal, get_args
 
-from pydantic import BeforeValidator, Field, SerializeAsAny
-from pydantic_core import MISSING
+from pydantic import MISSING, BeforeValidator, Field, SerializeAsAny
 
 from pyvelo.core import (
     Alias,
@@ -345,5 +344,4 @@ class DeviceSettingsData(VcoModel):
     def get_segment(
         self, *, name: str | None = None, segment_id: int | None = None
     ) -> DeviceSegment:
-        """"""
         return _find_segment(self.segments, name=name, segment_id=segment_id)

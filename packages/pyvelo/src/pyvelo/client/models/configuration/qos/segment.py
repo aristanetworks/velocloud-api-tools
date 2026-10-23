@@ -1,7 +1,6 @@
 from typing import Annotated, Any
 
-from pydantic import Field
-from pydantic_core import MISSING
+from pydantic import MISSING, Field
 
 from pyvelo.core import ProfileOnly, VcoModel
 from pyvelo.core.fields import KeyField, OverrideFlag

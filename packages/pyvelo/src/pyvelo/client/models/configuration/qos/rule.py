@@ -1,8 +1,7 @@
 import uuid
 from typing import Annotated, Any, Literal
 
-from pydantic import Field
-from pydantic_core import MISSING
+from pydantic import MISSING, Field
 
 from pyvelo.core import Alias, Normalizer, VcoModel
 from pyvelo.core.fields import Resolvable

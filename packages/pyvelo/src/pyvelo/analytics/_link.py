@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from pydantic_core import MISSING
+from pydantic import MISSING
 
 from pyvelo.analytics._helpers import get_field
 from pyvelo.analytics.frame import MetricFrame

@@ -6,7 +6,7 @@ from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
-from pydantic_core import MISSING
+from pydantic import MISSING
 from pyvelo.analytics.analytics import Analytics
 from pyvelo.client.enums.event import EventSeverity, EventType
 from pyvelo.client.schemas.event import (

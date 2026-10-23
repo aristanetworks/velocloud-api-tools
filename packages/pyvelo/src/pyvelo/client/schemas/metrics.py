@@ -2,6 +2,7 @@ import uuid
 from typing import Annotated, Any
 
 from pydantic import (
+    MISSING,
     AliasChoices,
     ConfigDict,
     Discriminator,
@@ -10,7 +11,6 @@ from pydantic import (
     field_validator,
     model_validator,
 )
-from pydantic_core import MISSING
 
 from pyvelo.client.enums.edge import (
     EdgeState,
@@ -208,7 +208,6 @@ class EnterpriseAppOtherMetrics(VcoModel):
 
 
 class EnterpriseFlowMetricsItem(VcoModel):
-    """"""
 
     application: int | MISSING = MISSING
     name: int | str

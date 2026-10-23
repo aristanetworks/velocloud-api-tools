@@ -1,6 +1,6 @@
 from typing import Annotated, Any
 
-from pydantic_core import MISSING
+from pydantic import MISSING
 
 from pyvelo.core import (
     Alias,
@@ -22,14 +22,12 @@ __all__ = [
 
 
 class GetEnterpriseUser(VcoModel):
-    """"""
 
     id_: Annotated[int, Alias("id")]
     username: str | MISSING = MISSING
 
 
 class EnterpriseUserResult(VcoModel):
-    """"""
 
     id_: Annotated[int, Alias("id")]
     created: VcoTimestamp | None | MISSING = MISSING
@@ -54,13 +52,11 @@ class EnterpriseUserResult(VcoModel):
 
 
 class GetEnterpriseUserApiTokens(VcoModel):
-    """"""
 
     id_: Annotated[int, Alias("id")]
 
 
 class EnterpriseUserApiTokenItem(VcoModel):
-    """"""
 
     id_: Annotated[int | None | MISSING, Alias("id")] = MISSING
     name: str | None | MISSING = MISSING
@@ -74,12 +70,10 @@ class EnterpriseUserApiTokenItem(VcoModel):
 
 
 class GetEnterpriseUsersStatus(VcoModel):
-    """"""
 
     user_ids: list[int]
 
 
 class EnterpriseUsersStatusResult(VcoModel):
-    """"""
 
     data: dict[str, Any] | None | MISSING = MISSING

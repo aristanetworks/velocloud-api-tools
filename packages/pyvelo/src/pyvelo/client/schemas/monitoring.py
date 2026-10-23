@@ -1,8 +1,7 @@
 import uuid
 from typing import Annotated, Any, ClassVar, Self
 
-from pydantic import ConfigDict, Field, field_validator, model_validator
-from pydantic_core import MISSING
+from pydantic import MISSING, ConfigDict, Field, field_validator, model_validator
 
 from pyvelo.client.enums.edge import (
     ActivationState,

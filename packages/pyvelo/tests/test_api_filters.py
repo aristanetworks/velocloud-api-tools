@@ -6,7 +6,7 @@ EdgeGroupFilters auto-wraps bare filters via a BeforeValidator so callers
 can stay concise without leaking the backend's wire requirement.
 """
 
-from pydantic_core import MISSING
+from pydantic import MISSING
 from pyvelo.client.schemas.edge_filters import (
     EdgeActivationStateFilter,
     EdgeFiltersAnd,

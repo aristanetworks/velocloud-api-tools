@@ -7,7 +7,7 @@ deeply-nested configuration data models.
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from pydantic_core import MISSING
+from pydantic import MISSING
 from pyvelo.client import VcoClient
 from pyvelo.client.exceptions import VcoOperationError
 from pyvelo.client.models.configuration.device_settings.root import DeviceSettingsData

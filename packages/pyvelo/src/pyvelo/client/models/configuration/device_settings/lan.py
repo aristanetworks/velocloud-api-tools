@@ -1,8 +1,7 @@
 import uuid
 from typing import Annotated, Any, Literal
 
-from pydantic import BeforeValidator, Discriminator, Field, SerializeAsAny, Tag
-from pydantic_core import MISSING
+from pydantic import MISSING, BeforeValidator, Discriminator, Field, SerializeAsAny, Tag
 
 from pyvelo.core import Alias, EdgeOnly, NoneIsFalse, ProfileOnly, VcoModel
 from pyvelo.core.fields import (

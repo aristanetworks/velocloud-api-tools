@@ -2,7 +2,7 @@ import uuid
 from collections.abc import Sequence
 from typing import Annotated, Literal, Protocol
 
-from pydantic_core import MISSING
+from pydantic import MISSING
 
 from pyvelo.client.enums.enterprise import NetworkSegmentType
 from pyvelo.core import Alias, VcoModel

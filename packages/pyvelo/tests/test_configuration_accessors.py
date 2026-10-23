@@ -4,7 +4,7 @@ import datetime
 from uuid import UUID
 
 import pytest
-from pydantic_core import MISSING
+from pydantic import MISSING
 from pyvelo.client.enums.configuration import (
     ConfigurationModuleName,
     ConfigurationModuleType,

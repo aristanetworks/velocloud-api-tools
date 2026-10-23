@@ -17,7 +17,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Literal, cast
 
-from pydantic_core import MISSING
+from pydantic import MISSING
 from pyvelo.client import VcoClient
 from pyvelo.client.schemas.edge import GetEdgeConfigurationStack
 from pyvelo.client.schemas.enterprise import GetEnterpriseEdges, GetEnterpriseEdgesItem

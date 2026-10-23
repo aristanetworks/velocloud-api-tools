@@ -8,8 +8,7 @@ context contains an "audit" list.
 
 from typing import Annotated, Any
 
-from pydantic import Field
-from pydantic_core import MISSING
+from pydantic import MISSING, Field
 from pyvelo.core import Alias, DefaultingModel, VcoModel
 
 _COMPACT = {"compact": True}

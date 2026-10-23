@@ -1,8 +1,7 @@
 import uuid
 from typing import Annotated, Any, Self
 
-from pydantic import ConfigDict, RootModel, model_validator
-from pydantic_core import MISSING
+from pydantic import MISSING, ConfigDict, RootModel, model_validator
 
 from pyvelo.client.enums.firewall import GetFirewallLogsWith
 from pyvelo.core import Alias, VcoModel, VcoTimestamp

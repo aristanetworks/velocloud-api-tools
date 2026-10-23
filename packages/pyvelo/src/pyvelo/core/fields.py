@@ -19,13 +19,13 @@ from types import UnionType
 from typing import Any, cast
 
 from pydantic import (
+    MISSING,
     BeforeValidator,
     TypeAdapter,
     ValidationError,
     ValidationInfo,
 )
 from pydantic.fields import FieldInfo
-from pydantic_core import MISSING
 
 _CONTEXT_NOT_SET = object()  # sentinel for "use field's own default"
 

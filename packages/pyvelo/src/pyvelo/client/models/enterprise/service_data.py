@@ -2,8 +2,7 @@ import uuid
 from collections.abc import Generator
 from typing import Annotated, Any, Literal
 
-from pydantic import ConfigDict, Discriminator, Field
-from pydantic_core import MISSING
+from pydantic import MISSING, ConfigDict, Discriminator, Field
 
 from pyvelo.core import Alias, VcoModel
 

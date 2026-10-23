@@ -4,8 +4,7 @@ from datetime import UTC, datetime
 from typing import Any, ClassVar
 
 import pytest
-from pydantic import ValidationError
-from pydantic_core import MISSING
+from pydantic import MISSING, ValidationError
 from pyvelo.client.enums.event import EventType
 from pyvelo.client.enums.monitoring import (
     BfdPeerState,

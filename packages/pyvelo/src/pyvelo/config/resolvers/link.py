@@ -2,7 +2,7 @@
 
 from typing import override
 
-from pydantic_core import MISSING
+from pydantic import MISSING
 
 from pyvelo.client.enums.edge import GetEdgeWith
 from pyvelo.client.schemas.edge import GetEdge

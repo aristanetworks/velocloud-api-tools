@@ -2,7 +2,7 @@
 
 import datetime
 
-from pydantic_core import MISSING
+from pydantic import MISSING
 from pyvelo.client.schemas.event import check_int_zero, check_string_empty
 from pyvelo.core import check_time_is_never
 

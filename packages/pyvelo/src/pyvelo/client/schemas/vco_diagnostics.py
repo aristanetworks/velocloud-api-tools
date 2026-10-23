@@ -1,7 +1,6 @@
 from typing import Any
 
-from pydantic import ConfigDict
-from pydantic_core import MISSING
+from pydantic import MISSING, ConfigDict
 
 from pyvelo.core import VcoModel
 

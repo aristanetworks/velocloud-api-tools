@@ -10,8 +10,7 @@ import uuid
 from typing import Annotated
 
 import pytest
-from pydantic import Field
-from pydantic_core import MISSING
+from pydantic import MISSING, Field
 from pyvelo.config.resolver import ResolverRegistry
 from pyvelo.core import Alias, VcoModel
 from pyvelo.core.fields import EdgeLocal, KeyField, OverrideFlag, Resolvable

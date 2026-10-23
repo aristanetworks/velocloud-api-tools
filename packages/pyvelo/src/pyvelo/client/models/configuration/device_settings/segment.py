@@ -2,6 +2,7 @@ import uuid
 from typing import Annotated, Any, Literal, Self
 
 from pydantic import (
+    MISSING,
     BeforeValidator,
     ConfigDict,
     Discriminator,
@@ -11,7 +12,6 @@ from pydantic import (
     field_validator,
     model_validator,
 )
-from pydantic_core import MISSING
 
 from pyvelo.core import (
     Alias,
@@ -539,7 +539,6 @@ class NatRule(VcoModel):
     @field_validator("dest_cidr_prefix", "src_cidr_prefix", mode="before")
     @classmethod
     def empty_str_to_none(cls, v):
-        """"""
         return None if v == "" else v
 
 

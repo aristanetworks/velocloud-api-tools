@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any, Protocol
 
-from pydantic_core import MISSING
+from pydantic import MISSING
 
 from pyvelo.client.exceptions import VcoOperationError
 from pyvelo.client.models.configuration.device_settings.root import DeviceSettingsData

@@ -4,8 +4,7 @@ import copy
 import uuid
 from typing import Annotated, Any, Literal, overload
 
-from pydantic import Discriminator, Field, PrivateAttr, RootModel
-from pydantic_core import MISSING
+from pydantic import MISSING, Discriminator, Field, PrivateAttr, RootModel
 
 from pyvelo.client.enums.configuration import (
     ConfigurationBastionState,
@@ -88,7 +87,6 @@ class ConfigurationBase(VcoModel):
     def get_module(self, name: ConfigurationModuleName) -> AnyConfigurationModule: ...
 
     def get_module(self, name: ConfigurationModuleName) -> AnyConfigurationModule:
-        """"""
         return self._get_module(name)
 
     def has_module(self, name: ConfigurationModuleName) -> bool:
@@ -153,7 +151,6 @@ class ControlPlaneConfigurationModule(ConfigurationModuleBase):
     data: ControlPlaneData
 
     def mutable_data(self) -> ControlPlaneData:
-        """"""
         return copy.deepcopy(self.data)
 
 
@@ -163,7 +160,6 @@ class DeviceSettingsConfigurationModule(ConfigurationModuleBase):
     refs: DeviceSettingsRefs | MISSING = MISSING
 
     def mutable_data(self) -> DeviceSettingsData:
-        """"""
         return copy.deepcopy(self.data)
 
 
@@ -172,7 +168,6 @@ class WanConfigurationModule(ConfigurationModuleBase):
     data: WanData
 
     def mutable_data(self) -> WanData:
-        """"""
         return copy.deepcopy(self.data)
 
 
@@ -182,7 +177,6 @@ class QosConfigurationModule(ConfigurationModuleBase):
     refs: dict[str, Any] | MISSING = MISSING
 
     def mutable_data(self) -> QosData:
-        """"""
         return copy.deepcopy(self.data)
 
 
@@ -191,7 +185,6 @@ class FirewallConfigurationModule(ConfigurationModuleBase):
     data: FirewallData
 
     def mutable_data(self) -> FirewallData:
-        """"""
         return copy.deepcopy(self.data)
 
 

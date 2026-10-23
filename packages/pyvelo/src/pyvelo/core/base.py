@@ -28,6 +28,7 @@ from warnings import deprecated
 
 import annotated_types
 from pydantic import (
+    MISSING,
     AliasChoices,
     AwareDatetime,
     BaseModel,
@@ -44,7 +45,7 @@ from pydantic import (
 )
 from pydantic.alias_generators import to_camel
 from pydantic.fields import FieldInfo
-from pydantic_core import MISSING, PydanticUndefined
+from pydantic_core import PydanticUndefined
 
 from .fields import (
     _CONTEXT_NOT_SET,
@@ -55,35 +56,6 @@ from .fields import (
     _get_normalizer,
     _resolve_ctx_default,
 )
-
-# MISSING is a singleton sentinel from pydantic_core (Rust) that doesn't support
-# Python's pickle protocol. Register it as an atomic type so copy.deepcopy()
-# returns the same singleton, just like None/True/False/int/str.
-# WARNING: _atomic_types is a CPython private API. This may break on future
-# CPython versions. The alternative (custom __deepcopy__ on every VcoModel)
-# would be far more invasive and fragile. Monitor on Python upgrades.
-missing_type = type(MISSING)
-
-# === Python 3.14+ Approach ===
-if hasattr(copy, "_atomic_types"):
-    # Use bitwise OR because frozensets lack .add().
-    setattr(copy, "_atomic_types", getattr(copy, "_atomic_types") | {missing_type})
-
-if hasattr(copy, "_copy_atomic_types"):
-    setattr(
-        copy, "_copy_atomic_types", getattr(copy, "_copy_atomic_types") | {missing_type}
-    )
-
-
-# === Python 3.13 and Earlier Approach ===
-if hasattr(copy, "_deepcopy_dispatch") and hasattr(copy, "_deepcopy_atomic"):
-    getattr(copy, "_deepcopy_dispatch")[missing_type] = getattr(
-        copy, "_deepcopy_atomic"
-    )
-
-if hasattr(copy, "_copy_dispatch") and hasattr(copy, "_copy_immutable"):
-    getattr(copy, "_copy_dispatch")[missing_type] = getattr(copy, "_copy_immutable")
-
 
 # ---------------------------------------------------------------------------
 # Serialization helpers

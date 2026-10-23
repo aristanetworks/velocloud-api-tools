@@ -4,6 +4,7 @@ from typing import Annotated, Any, Literal, Self
 
 import annotated_types
 from pydantic import (
+    MISSING,
     AfterValidator,
     AliasChoices,
     ConfigDict,
@@ -14,7 +15,6 @@ from pydantic import (
     model_validator,
 )
 from pydantic.functional_validators import PlainValidator
-from pydantic_core import MISSING
 
 from pyvelo.client.enums.event import (
     EventCategory,

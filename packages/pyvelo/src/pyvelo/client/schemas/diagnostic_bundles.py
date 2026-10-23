@@ -3,8 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Annotated, Any, Literal
 
-from pydantic import Field
-from pydantic_core import MISSING
+from pydantic import MISSING, Field
 
 from pyvelo.client.enums.common import PendingActionStatus
 from pyvelo.client.enums.diagnostic_bundles import DiagnosticBundleType

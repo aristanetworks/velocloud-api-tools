@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from pydantic_core import MISSING
+from pydantic import MISSING
 
 
 def require_present[T](value: T | MISSING) -> T:

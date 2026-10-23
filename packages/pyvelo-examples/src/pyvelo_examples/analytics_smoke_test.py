@@ -19,8 +19,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 
-from pydantic import ValidationError
-from pydantic_core import MISSING
+from pydantic import MISSING, ValidationError
 from pyvelo.analytics import Analytics, FlowGroupBy, FlowMetric
 from pyvelo.analytics.enums import EnterpriseFirewallType, FirewallType
 from pyvelo.analytics.frame import MetricFrame

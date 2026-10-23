@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from pydantic_core import MISSING
+from pydantic import MISSING
 
 from pyvelo.core import VcoModel
 

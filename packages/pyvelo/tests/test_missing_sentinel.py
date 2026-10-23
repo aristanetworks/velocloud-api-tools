@@ -1,9 +1,11 @@
 """Tests for the MISSING sentinel behavior."""
 
+import builtins
 import copy
 import json
+import pickle
 
-from pydantic_core import MISSING
+from pydantic import MISSING
 from pyvelo.core import VcoModel
 
 
@@ -54,6 +56,13 @@ class TestMissingSentinel:
         obj = SampleModel(name="test")
         copied = copy.deepcopy(obj)
         assert copied.optional_field is MISSING
+
+    def test_native_missing_sentinel_copy_pickle_identity(self):
+        """Pydantic's MISSING uses Python's native identity-preserving sentinel."""
+        assert isinstance(MISSING, builtins.sentinel)
+        assert copy.copy(MISSING) is MISSING
+        assert copy.deepcopy(MISSING) is MISSING
+        assert pickle.loads(pickle.dumps(MISSING)) is MISSING
 
     def test_model_copy_preserves_missing(self):
         """Pydantic model_copy should preserve MISSING."""

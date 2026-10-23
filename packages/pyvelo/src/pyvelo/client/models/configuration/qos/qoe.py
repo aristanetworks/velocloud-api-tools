@@ -1,7 +1,6 @@
 from typing import Annotated
 
-from pydantic import Field
-from pydantic_core import MISSING
+from pydantic import MISSING, Field
 
 from pyvelo.core import Alias, VcoModel
 

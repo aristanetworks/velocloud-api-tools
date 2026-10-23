@@ -3,7 +3,7 @@
 import json
 from typing import Annotated
 
-from pydantic_core import MISSING
+from pydantic import MISSING
 from pyvelo.client.schemas.edge import GetEdgeConfigurationStack
 from pyvelo.core import NoneIsMissing, VcoModel
 

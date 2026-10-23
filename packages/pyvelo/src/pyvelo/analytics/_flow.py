@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Any
 
-from pydantic_core import MISSING
+from pydantic import MISSING
 
 from pyvelo.analytics._helpers import is_other_bucket
 from pyvelo.analytics._series import denormalize_timeseries

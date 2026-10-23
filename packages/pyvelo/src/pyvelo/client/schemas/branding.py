@@ -1,7 +1,6 @@
 from typing import Annotated, Any
 
-from pydantic import model_validator
-from pydantic_core import MISSING
+from pydantic import MISSING, model_validator
 
 from pyvelo.core import Alias, VcoModel, VcoTimestamp
 

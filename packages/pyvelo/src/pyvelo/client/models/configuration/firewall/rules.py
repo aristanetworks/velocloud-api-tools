@@ -1,7 +1,7 @@
 import uuid
 from typing import Any
 
-from pydantic_core import MISSING
+from pydantic import MISSING
 
 from pyvelo.core import VcoModel
 

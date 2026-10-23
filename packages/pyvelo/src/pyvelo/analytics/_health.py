@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic_core import MISSING
+from pydantic import MISSING
 
 from pyvelo.analytics._series import denormalize_flat_series
 from pyvelo.analytics.frame import MetricFrame

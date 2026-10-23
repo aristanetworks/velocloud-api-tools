@@ -1,6 +1,6 @@
 """Tests for missing_or utility function."""
 
-from pydantic_core import MISSING
+from pydantic import MISSING
 from pyvelo.core import VcoModel, missing_or
 
 

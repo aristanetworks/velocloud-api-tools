@@ -1,7 +1,6 @@
 from typing import Annotated
 
-from pydantic import AwareDatetime, Field
-from pydantic_core import MISSING
+from pydantic import MISSING, AwareDatetime, Field
 
 from pyvelo.core import Alias, VcoModel, VcoTimestamp
 

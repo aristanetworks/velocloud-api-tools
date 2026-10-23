@@ -1,7 +1,7 @@
 """Tests for edge schema models and field typing."""
 
 import pytest
-from pydantic_core import MISSING
+from pydantic import MISSING
 from pyvelo.client.enums.configuration import ConfigurationModuleType
 from pyvelo.client.enums.edge import HaRole
 from pyvelo.client.models.configuration import (

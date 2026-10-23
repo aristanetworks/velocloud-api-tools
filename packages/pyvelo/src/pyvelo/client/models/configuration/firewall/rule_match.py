@@ -1,6 +1,6 @@
 from typing import Annotated, Any, override
 
-from pydantic_core import MISSING
+from pydantic import MISSING
 
 from pyvelo.core import Alias, VcoModel
 from pyvelo.core.fields import Normalizer, Resolvable

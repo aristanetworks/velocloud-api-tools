@@ -5,7 +5,7 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any
 
-from pydantic_core import MISSING
+from pydantic import MISSING
 
 from pyvelo.analytics._collect import collect_pages
 from pyvelo.analytics._firewall import (

@@ -1,7 +1,6 @@
 from typing import Annotated, Any
 
-from pydantic import Field
-from pydantic_core import MISSING
+from pydantic import MISSING, Field
 
 from pyvelo.core import VcoModel
 from pyvelo.core.fields import KeyField
@@ -34,5 +33,4 @@ class QosData(VcoModel):
     def get_segment(
         self, *, name: str | None = None, segment_id: int | None = None
     ) -> QosSegment:
-        """"""
         return _find_segment(self.segments, name=name, segment_id=segment_id)

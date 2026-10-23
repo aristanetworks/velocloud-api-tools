@@ -5,7 +5,7 @@ from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
-from pydantic_core import MISSING
+from pydantic import MISSING
 from pyvelo.analytics.analytics import Analytics
 from pyvelo.core import ApiInterval
 

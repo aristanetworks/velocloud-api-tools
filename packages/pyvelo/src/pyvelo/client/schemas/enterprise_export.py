@@ -1,6 +1,6 @@
 from typing import Any
 
-from pydantic_core import MISSING
+from pydantic import MISSING
 
 from pyvelo.core import (
     VcoModel,
@@ -19,14 +19,12 @@ __all__ = [
 
 
 class GetExportMetadata(VcoModel):
-    """"""
 
     job_id: int
     enterprise_id: int | MISSING = MISSING
 
 
 class ExportMetadataResult(VcoModel):
-    """"""
 
     job_id: int | None | MISSING = MISSING
     enterprise_id: int | None | MISSING = MISSING
@@ -42,13 +40,11 @@ class ExportMetadataResult(VcoModel):
 
 
 class GetImportResult(VcoModel):
-    """"""
 
     job_id: int
 
 
 class ImportResultResult(VcoModel):
-    """"""
 
     job_id: int | None | MISSING = MISSING
     status: str | None | MISSING = MISSING

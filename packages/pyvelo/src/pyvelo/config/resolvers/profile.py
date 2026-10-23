@@ -2,7 +2,7 @@
 
 from typing import override
 
-from pydantic_core import MISSING
+from pydantic import MISSING
 
 from pyvelo.client.schemas.profiles import GetEnterpriseConfigurations
 from pyvelo.config.resolver import BaseResolver, ResolverContext
