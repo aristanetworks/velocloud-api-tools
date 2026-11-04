@@ -1,0 +1,23 @@
+[project]
+name = "pyvelo-intent"
+version = "0.1.0"
+description = "Helper library for VeloCloud Orchestrator configuration APIs"
+readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+requires-python = ">=3.15"
+dependencies = [
+    "pyvelo>=0.2.0",
+    "pyyaml>=6.0.3",
+    "python-dotenv>=1.2.2",
+]
+
+[project.urls]
+Repository = "https://github.com/aristanetworks/velocloud-api-tools"
+
+[tool.uv.sources]
+pyvelo = { workspace = true }
+
+[build-system]
+requires = ["uv_build>=0.9.22,<0.13"]
+build-backend = "uv_build"
