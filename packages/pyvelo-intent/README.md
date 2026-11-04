@@ -6,7 +6,7 @@ Configuration intent layer for VeloCloud, built on top of
 configuration projections, a generic intent diff engine, validators, and
 helpers for scripting against the VCO configuration API.
 
-Requires Python **3.15 or newer** and `pyvelo` **0.2.0 or newer**.
+Requires Python **3.14 or newer** and `pyvelo` **0.2.0 or newer**.
 Licensed under Apache-2.0.
 
 ## Install
