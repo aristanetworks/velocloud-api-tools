@@ -1,5 +1,5 @@
 [tool.uv.workspace]
-members = ["packages/pyvelo", "packages/pyvelo-examples"]
+members = ["packages/pyvelo", "packages/pyvelo-intent", "packages/pyvelo-examples"]
 
 [dependency-groups]
 dev = [
@@ -13,20 +13,20 @@ dev = [
 ]
 
 [tool.ruff]
-target-version = "py315"
+target-version = "py314"
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 addopts = ["-ra", "-q", "-m", "not integration"]
-testpaths = ["packages/pyvelo/tests"]
+testpaths = ["packages/pyvelo/tests", "packages/pyvelo-intent/tests"]
 markers = ["integration: live VCO integration tests (require VCO_HOST + VCO_API_TOKEN)"]
 
 [tool.basedpyright]
 enableExperimentalFeatures = true
-include = ["packages/pyvelo"]
+include = ["packages/pyvelo", "packages/pyvelo-intent"]
 defineConstant = { DEBUG = true }
 reportMissingImports = "error"
 reportMissingTypeStubs = false
-pythonVersion = "3.15"
+pythonVersion = "3.14"
 venvPath = "."
 venv = ".venv"
