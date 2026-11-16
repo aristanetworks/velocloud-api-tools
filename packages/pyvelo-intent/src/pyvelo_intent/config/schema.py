@@ -48,7 +48,7 @@ def resolve_model_at_path(
 
 def _unwrap_annotation(annotation: Any) -> Any:
     """Unwrap Union, Optional, and list types to find the core model type."""
-    # Python 3.15 uses this origin for both typing.Union and PEP 604 unions.
+    # Python 3.14+ uses this origin for both typing.Union and PEP 604 unions.
     origin = get_origin(annotation)
     if origin is types.UnionType:
         for arg in get_args(annotation):
