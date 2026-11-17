@@ -57,6 +57,26 @@ from .fields import (
     _resolve_ctx_default,
 )
 
+
+def _iter_alias_strings(alias: Any) -> list[str]:
+    """Flatten a Pydantic validation alias into plain strings.
+
+    ``AliasChoices`` (and nested choices) are expanded so ``merge_patch`` can
+    accept every documented wire name, not just the serialization alias.
+    """
+    if alias is None:
+        return []
+    if isinstance(alias, str):
+        return [alias]
+    choices = getattr(alias, "choices", None)
+    if choices:
+        result: list[str] = []
+        for choice in choices:
+            result.extend(_iter_alias_strings(choice))
+        return result
+    return []
+
+
 # ---------------------------------------------------------------------------
 # Serialization helpers
 # ---------------------------------------------------------------------------
@@ -83,7 +103,9 @@ def _matches_field_default(value: Any, field_info: FieldInfo) -> bool:
             return False
     if field_info.default_factory is not None:
         try:
-            default = field_info.default_factory()  # pyright: ignore[reportCallIssue]  # ty: ignore[missing-argument]
+            default = (
+                field_info.default_factory()
+            )  # pyright: ignore[reportCallIssue]  # ty: ignore[missing-argument]
             v = norm(value, None) if norm else value
             d = norm(default, None) if norm else default
             if v == d:
@@ -363,8 +385,8 @@ class VcoModel(BaseModel):
             alias_map[python_name] = python_name
             if fi.serialization_alias:
                 alias_map[fi.serialization_alias] = python_name
-            if fi.validation_alias and isinstance(fi.validation_alias, str):
-                alias_map[fi.validation_alias] = python_name
+            for alias in _iter_alias_strings(fi.validation_alias):
+                alias_map[alias] = python_name
             alias_map[to_camel(python_name)] = python_name
         return alias_map
 
@@ -709,9 +731,10 @@ def _pre_resolve(
 
     resolved = dict(patch)
     for field_name, fi in item_type.model_fields.items():
-        alias = fi.validation_alias or fi.alias or field_name
-        for key in (field_name, alias):
-            str_key = str(key)
+        keys = [field_name, *_iter_alias_strings(fi.validation_alias)]
+        if isinstance(fi.alias, str):
+            keys.append(fi.alias)
+        for str_key in keys:
             if str_key not in resolved:
                 continue
             value = resolved[str_key]
@@ -761,8 +784,10 @@ def _pre_resolve(
         string_values = [v for v in resolved.values() if isinstance(v, str)]
         if string_values:
             for field_name, fi in item_type.model_fields.items():
-                alias = fi.validation_alias or fi.alias or field_name
-                if field_name in resolved or alias in resolved:
+                alias_keys = _iter_alias_strings(fi.validation_alias)
+                if isinstance(fi.alias, str):
+                    alias_keys.append(fi.alias)
+                if field_name in resolved or any(a in resolved for a in alias_keys):
                     continue
                 for sv in string_values:
                     result = _try_resolve(fi, sv, resolvers, suppress_errors=True)
@@ -989,7 +1014,9 @@ class ContextView:
 
 
 class PaginatedVcoModel(VcoModel):
-    next_page_link: str | MISSING = Field(default=MISSING)  # ty: ignore[invalid-type-form]
+    next_page_link: str | MISSING = Field(
+        default=MISSING
+    )  # ty: ignore[invalid-type-form]
 
     _max_pages: int = PrivateAttr(default=0)
     _page_has_more: bool = PrivateAttr(default=False)

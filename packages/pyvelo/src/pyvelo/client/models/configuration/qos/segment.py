@@ -2,7 +2,7 @@ from typing import Annotated, Any
 
 from pydantic import MISSING, Field
 
-from pyvelo.core import ProfileOnly, VcoModel
+from pyvelo.core import EdgeOnly, VcoModel
 from pyvelo.core.fields import KeyField, OverrideFlag
 
 from ..common import SegmentMetadata
@@ -63,10 +63,22 @@ class QosSegment(VcoModel):
     segment: SegmentMetadata
     rules: Annotated[list[QosRule], KeyField("name")] = Field(default_factory=list)
 
-    defaults: Annotated[list[QosRule] | MISSING, ProfileOnly, KeyField("name")] = (
+    # Present on both profile QOS and the edge overlay insert (empty list on
+    # overlay). Not ProfileOnly: the UI sends defaults=[] when creating the
+    # edge module.
+    defaults: Annotated[list[QosRule] | MISSING, KeyField("name")] = MISSING
+    cos_mapping: CosMapping | MISSING = MISSING
+
+    # Edge overlay insert: profile catalog lives here, not in ``rules``.
+    inherited_rules: Annotated[list[QosRule] | MISSING, EdgeOnly, KeyField("name")] = (
         MISSING
     )
-    cos_mapping: Annotated[CosMapping | MISSING, ProfileOnly] = MISSING
+    inherited_defaults: Annotated[
+        list[QosRule] | MISSING, EdgeOnly, KeyField("name")
+    ] = MISSING
+    # Sibling of cosMapping in the UI insert payload. Not OverrideFlag: adding
+    # a business-policy rule must not flip this to True.
+    cos_mapping_override: Annotated[bool, EdgeOnly] = False
 
     name: str | None = None
     web_proxy: WebProxy = Field(default_factory=WebProxy)

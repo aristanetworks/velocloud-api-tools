@@ -49,6 +49,30 @@ from pyvelo_intent.config.module_names import (
 from pyvelo_intent.config.state import ConfigState, SaveResult, ValidationWarning
 
 
+def _overlay_qos_from_profile(
+    template_mod: QosConfigurationModule,
+) -> QosConfigurationModule:
+    """Build an edge QOS overlay the way the VCO UI does.
+
+    Profile catalog rules become ``inheritedRules`` / ``inheritedDefaults``.
+    Edge ``rules`` start empty so later patches add overrides instead of
+    cloning the catalog onto the overlay.
+    """
+    new_mod = copy.deepcopy(template_mod)
+    for segment in new_mod.data.segments:
+        inherited_defaults = (
+            copy.deepcopy(segment.defaults)
+            if segment.defaults is not MISSING and segment.defaults is not None
+            else []
+        )
+        segment.inherited_rules = copy.deepcopy(segment.rules)
+        segment.inherited_defaults = inherited_defaults
+        segment.rules = []
+        segment.defaults = []
+        segment.cos_mapping_override = False
+    return new_mod
+
+
 class ConfigPipeline:
     """Manages configuration load, merge, resolve, validate, save."""
 
@@ -301,9 +325,7 @@ class ConfigPipeline:
                     _ = mod.data.for_edge()
 
             if is_insert:
-                await self._insert_module(
-                    mod, target_config, state.resolver_context.enterprise_id
-                )
+                await self._insert_module(mod, target_config, state)
                 result.modules_inserted.append(module_name)
             else:
                 await self._update_module(mod, state.resolver_context.enterprise_id)
@@ -482,7 +504,14 @@ class ConfigPipeline:
         # Module doesn't exist on the target - create it from the profile template
         if state.target_type == "edge" and state.profile_config.has_module(module_name):
             template_mod = state.profile_config.get_module(module_name)
-            new_mod = copy.deepcopy(template_mod)
+            if module_name == ConfigurationModuleName.QOS and isinstance(
+                template_mod, QosConfigurationModule
+            ):
+                new_mod = _overlay_qos_from_profile(template_mod)
+            else:
+                new_mod = copy.deepcopy(template_mod)
+            if config.id_ is not MISSING and config.id_ is not None:
+                new_mod.configuration_id = config.id_
             if config.modules is MISSING:
                 config.modules = []
             config.modules.append(new_mod)
@@ -526,31 +555,56 @@ class ConfigPipeline:
         self,
         mod: AnyConfigurationModule,
         config: ConfigurationBase,
-        enterprise_id: int | None,
+        state: ConfigState,
     ) -> None:
         """Send insert_configuration_module API call."""
         config_id = config.id_
         if config_id is MISSING or config_id is None:
             raise ValueError("Cannot insert module: configuration has no ID")
 
+        enterprise_id = state.resolver_context.enterprise_id
+        enterprise_arg = enterprise_id if enterprise_id is not None else MISSING
+
         if isinstance(mod, FirewallConfigurationModule):
             request = InsertFirewallConfigurationModule(
                 configuration_id=config_id,
                 data=mod.data,
-                enterprise_id=enterprise_id if enterprise_id is not None else MISSING,
+                enterprise_id=enterprise_arg,
             )
         elif isinstance(mod, QosConfigurationModule):
-            refs = mod.refs if mod.refs is not MISSING else None
+            refs = mod.refs if mod.refs is not MISSING else MISSING
+            profile_data = MISSING
+            profile_configuration_id = MISSING
+            profile_module_id = MISSING
+            if state.target_type == "edge" and state.profile_config.has_module(
+                ConfigurationModuleName.QOS
+            ):
+                profile_mod = state.profile_config.get_module(
+                    ConfigurationModuleName.QOS
+                )
+                assert isinstance(profile_mod, QosConfigurationModule)
+                profile_payload = copy.deepcopy(profile_mod.data).for_profile()
+                profile_data = profile_payload
+                if (
+                    state.profile_config.id_ is not MISSING
+                    and state.profile_config.id_ is not None
+                ):
+                    profile_configuration_id = state.profile_config.id_
+                profile_module_id = profile_mod.id_
             request = InsertQosConfigurationModule(
                 configuration_id=config_id,
                 data=mod.data,
                 refs=refs,
-                enterprise_id=enterprise_id if enterprise_id is not None else MISSING,
+                enterprise_id=enterprise_arg,
+                profile_data=profile_data,
+                profile_configuration_id=profile_configuration_id,
+                profile_module_id=profile_module_id,
             )
         else:
             raise TypeError(f"Cannot insert module type: {type(mod).__name__}")
 
-        _ = await self.client.insert_configuration_module(request)
+        result = await self.client.insert_configuration_module(request)
+        mod.id_ = result.id_
 
 
 def build_default_pipeline(client: VcoClientProtocol) -> ConfigPipeline:

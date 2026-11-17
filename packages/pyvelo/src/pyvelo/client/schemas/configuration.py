@@ -298,7 +298,11 @@ class InsertConfigurationModuleBase(VcoModel):
 class InsertQosConfigurationModule(InsertConfigurationModuleBase):
     name: Literal["QOS"] = "QOS"
     data: QosData
-    refs: dict[str, Any] | None = None
+    refs: dict[str, Any] | None | MISSING = MISSING
+    # Edge overlay insert: UI always links the new module back to profile QOS.
+    profile_data: QosData | MISSING = MISSING
+    profile_configuration_id: int | MISSING = MISSING
+    profile_module_id: int | MISSING = MISSING
 
 
 class InsertFirewallConfigurationModule(InsertConfigurationModuleBase):

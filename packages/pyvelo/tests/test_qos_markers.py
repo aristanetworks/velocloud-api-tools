@@ -25,6 +25,10 @@ class TestQosKeyFields:
         key = get_key_field(QosSegment.model_fields["rules"])
         assert key == "name"
 
+    def test_inherited_rules_keyed_by_name(self):
+        key = get_key_field(QosSegment.model_fields["inherited_rules"])
+        assert key == "name"
+
 
 class TestQosOverrideFlag:
     def test_cos_mapping_override(self):

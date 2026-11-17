@@ -2,7 +2,7 @@ from typing import Annotated, Any
 
 from pydantic import MISSING, Field
 
-from pyvelo.core import VcoModel
+from pyvelo.core import Alias, EdgeOnly, VcoModel
 from pyvelo.core.fields import KeyField
 
 from ..common import _find_segment
@@ -29,6 +29,12 @@ class QosData(VcoModel):
     service_rate_limit: ServiceRateLimit | MISSING = MISSING
     qoe: QoeSettings | MISSING = MISSING
     qos_client_connector: QosClientConnector | MISSING = MISSING
+    # Edge overlay flags. Not OverrideFlag: adding a rule must not flip them.
+    service_rate_limit_override: Annotated[bool, EdgeOnly] = False
+    qos_client_connector_override: Annotated[bool, EdgeOnly] = False
+    customizable_qoe_override: Annotated[
+        bool, EdgeOnly, Alias("customizableQOEOverride")
+    ] = False
 
     def get_segment(
         self, *, name: str | None = None, segment_id: int | None = None

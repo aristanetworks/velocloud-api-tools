@@ -1,7 +1,7 @@
 import uuid
 from typing import Annotated, Any, Literal
 
-from pydantic import MISSING, Field
+from pydantic import MISSING, AliasChoices, Field
 
 from pyvelo.core import Alias, Normalizer, VcoModel
 from pyvelo.core.fields import Resolvable
@@ -117,7 +117,7 @@ class RouteAction(VcoModel):
     wan_link: Annotated[str, Alias("wanlink")] = "auto"
     wan_link_name: str = ""
     link_cos_logical_id: uuid.UUID | None = None
-    link_outer_dscp_tag: str | None = None
+    link_outer_dscp_tag: str | None = "CS0"
     link_inner_dscp_tag: str | None = None
     icmp_logical_id: uuid.UUID | None = None
 
@@ -125,7 +125,14 @@ class RouteAction(VcoModel):
 class SlaSettings(VcoModel):
     latency_ms: str = "0"
     jitter_ms: str = "0"
-    loss_percent: Annotated[str, Alias("loss_pct")] = "0.0"
+    # VCO UI serializes this as lossPct; also accept the collection's loss_pct.
+    loss_percent: str = Field(
+        default="0.0",
+        serialization_alias="lossPct",
+        validation_alias=AliasChoices(
+            "lossPct", "loss_pct", "lossPercent", "loss_percent"
+        ),
+    )
 
 
 class QosNatSettings(VcoModel):
@@ -167,4 +174,5 @@ class QosRule(VcoModel):
     name: str
     match: QosRuleMatch
     action: QosRuleAction
-    rule_logical_id: uuid.UUID = Field(default_factory=uuid.uuid4)
+    # UI sends null on create and lets VCO assign the id.
+    rule_logical_id: uuid.UUID | None = None

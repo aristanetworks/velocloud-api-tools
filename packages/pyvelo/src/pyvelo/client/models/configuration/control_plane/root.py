@@ -7,7 +7,7 @@ GatewayMode = Literal["dynamic", "static"]
 
 class GatewaySelection(VcoModel):
     primary: str
-    secondary: str
+    secondary: str | None = None
     mode: GatewayMode
 
 
