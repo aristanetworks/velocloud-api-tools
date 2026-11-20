@@ -23,8 +23,7 @@ from pyvelo.client import VcoClient
 from pyvelo.client.enums import EdgeState
 from pyvelo.client.schemas.enterprise import GetEnterprise, GetEnterpriseEdges
 from pyvelo.core import ApiInterval
-
-from pyvelo_examples.common import get_vco_credentials
+from pyvelo_intent import get_vco_credentials
 
 logger = logging.getLogger(__name__)
 

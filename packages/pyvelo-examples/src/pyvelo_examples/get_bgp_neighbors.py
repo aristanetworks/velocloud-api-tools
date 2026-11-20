@@ -21,11 +21,10 @@ from pydantic import MISSING
 from pyvelo.client import VcoClient
 from pyvelo.client.schemas.edge import GetEdgeConfigurationStack
 from pyvelo.client.schemas.enterprise import GetEnterpriseEdges, GetEnterpriseEdgesItem
+from pyvelo_intent import get_vco_credentials
 from rich.console import Console
 from rich.table import Table
 from rich.text import Text
-
-from pyvelo_examples.common import get_vco_credentials
 
 logger = logging.getLogger(__name__)
 

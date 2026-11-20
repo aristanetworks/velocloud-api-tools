@@ -40,8 +40,7 @@ from pyvelo.client.schemas.enterprise import (
 )
 from pyvelo.client.schemas.metrics import LinkPair
 from pyvelo.core import ApiInterval
-
-from pyvelo_examples.common import get_vco_credentials
+from pyvelo_intent import get_vco_credentials
 
 logger = logging.getLogger(__name__)
 

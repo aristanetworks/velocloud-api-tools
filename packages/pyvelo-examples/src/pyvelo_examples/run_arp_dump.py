@@ -22,11 +22,10 @@ from pyvelo.client.schemas.enterprise import (
     GetEnterpriseEdges,
     GetEnterpriseEdgesItem,
 )
+from pyvelo_intent import get_vco_credentials
 from rich.console import Console
 from rich.table import Table
 from rich.text import Text
-
-from .common import get_vco_credentials
 
 logger = logging.getLogger(__name__)
 
