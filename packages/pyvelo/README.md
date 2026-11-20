@@ -19,7 +19,7 @@ As a git dependency:
 dependencies = ["pyvelo"]
 
 [tool.uv.sources]
-pyvelo = { git = "ssh://git@github.com/aristanetworks/velocloud-api-tools.git", subdirectory = "packages/pyvelo" }
+pyvelo = { git = "https://github.com/aristanetworks/velocloud-api-tools.git", subdirectory = "packages/pyvelo" }
 ```
 
 ## Surface

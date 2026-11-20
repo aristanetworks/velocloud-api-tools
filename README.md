@@ -2,7 +2,7 @@
 
 Python SDK for the VeloCloud Orchestrator (VCO) API, a configuration intent library, and a small set of read-only examples.
 
-Requires Python **3.14 or newer**.
+Requires Python **3.12 or newer**.
 
 ## Development
 
