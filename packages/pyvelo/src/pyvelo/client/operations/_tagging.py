@@ -8,7 +8,7 @@ Tags are stored as a ``set[str]`` on the function attribute
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Any, TypeVar
+from typing import Protocol, cast
 
 # ---------------------------------------------------------------------------
 # Domain tag constants
@@ -24,10 +24,12 @@ PM_HEALTH: str = "pm_health"
 SECURITY: str = "security"
 SYSTEM: str = "system"
 
-_F = TypeVar("_F", bound=Callable[..., Any])
+
+class _Tagged(Protocol):
+    __pyvelo_domain_tags__: set[str]
 
 
-def domain_tag(*tags: str) -> Callable[[_F], _F]:
+def domain_tag[F: Callable[..., object]](*tags: str) -> Callable[[F], F]:
     """Mark a method with one or more domain tags.
 
     Usage::
@@ -41,13 +43,13 @@ def domain_tag(*tags: str) -> Callable[[_F], _F]:
             ...
     """
 
-    def decorator(fn: _F) -> _F:
-        fn.__pyvelo_domain_tags__ = set(tags)
+    def decorator(fn: F) -> F:
+        cast(_Tagged, fn).__pyvelo_domain_tags__ = set(tags)
         return fn
 
     return decorator
 
 
-def get_domain_tags(fn: Callable[..., Any]) -> set[str] | None:
+def get_domain_tags(fn: Callable[..., object]) -> set[str] | None:
     """Read domain tags from a decorated function, or None if untagged."""
-    return getattr(fn, "__pyvelo_domain_tags__", None)
+    return cast(set[str] | None, getattr(fn, "__pyvelo_domain_tags__", None))

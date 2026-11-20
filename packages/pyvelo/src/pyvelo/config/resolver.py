@@ -168,7 +168,7 @@ class ResolverRegistry:
         self._context = context
 
     @contextlib.contextmanager
-    def context(self, ctx: ResolverContext) -> Generator[ResolverContext, None, None]:
+    def context(self, ctx: ResolverContext) -> Generator[ResolverContext]:
         """Scope the registry to a specific :class:`ResolverContext`.
 
         Caches on each registered resolver that share state across contexts

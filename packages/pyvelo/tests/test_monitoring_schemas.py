@@ -1134,7 +1134,7 @@ class TestLinkInsightsRequestAliases:
 
         dumped = cast(JsonObject, request.model_dump(by_alias=True, exclude_unset=True))
 
-        assert request.filter_spec is True
+        assert request.filter_spec is True  # pyright: ignore[reportAttributeAccessIssue]
         assert dumped["_filterSpec"] is True
         assert "filter_spec" not in dumped
 
