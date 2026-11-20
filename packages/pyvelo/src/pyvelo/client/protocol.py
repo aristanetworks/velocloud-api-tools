@@ -1,11 +1,12 @@
 import asyncio
 import json
+import re
 from collections.abc import AsyncGenerator, Callable, Sequence
 from contextlib import aclosing
 from dataclasses import dataclass
 from pathlib import Path
 from types import TracebackType
-from typing import Any, Literal, Protocol, Self
+from typing import Any, Literal, Protocol, Self, cast
 
 import httpx
 from pydantic import BaseModel, SecretStr, ValidationError
@@ -71,6 +72,8 @@ class Exchange:
 ExchangeHook = Callable[[Exchange], None]
 """Callback invoked after every HTTP exchange."""
 
+_UNSAFE = re.compile(r"[^\w.-]+")
+
 
 def make_file_dump_hook(dump_dir: Path) -> ExchangeHook:
     """Return an :data:`ExchangeHook` that writes JSON files to *dump_dir*.
@@ -79,21 +82,28 @@ def make_file_dump_hook(dump_dir: Path) -> ExchangeHook:
     ``<index>_<method>_resp.json``.
     """
 
-    def _write(exchange: Exchange) -> None:
-        safe_method = exchange.method.replace("/", "_")
-        req_path = dump_dir / f"{exchange.index:04d}_{safe_method}_req.json"
-        resp_path = dump_dir / f"{exchange.index:04d}_{safe_method}_resp.json"
+    def _write_request(path: Path, body: object) -> None:
+        if body is None:
+            return
+        if isinstance(body, (dict, list)):
+            _ = path.write_text(json.dumps(body, indent=2), encoding="utf-8")
+        elif isinstance(body, bytes):
+            _ = path.write_bytes(body)
+        else:
+            _ = path.write_text(str(body), encoding="utf-8")
 
-        if isinstance(exchange.request_body, (dict, list)):
-            req_path.write_text(json.dumps(exchange.request_body, indent=2))
-        elif exchange.request_body:
-            req_path.write_text(str(exchange.request_body))
-
+    def _write_response(path: Path, response: httpx.Response) -> None:
         try:
-            resp_body = exchange.response.json()
-            resp_path.write_text(json.dumps(resp_body, indent=2))
-        except Exception:
-            resp_path.write_bytes(exchange.response.content)
+            body = cast(object, response.json())
+        except ValueError:
+            _ = path.write_bytes(response.content)
+        else:
+            _ = path.write_text(json.dumps(body, indent=2), encoding="utf-8")
+
+    def _write(exchange: Exchange) -> None:
+        stem = f"{exchange.index:04d}_{_UNSAFE.sub('_', exchange.method)}"
+        _write_request(dump_dir / f"{stem}_req.json", exchange.request_body)
+        _write_response(dump_dir / f"{stem}_resp.json", exchange.response)
 
     return _write
 
@@ -217,7 +227,7 @@ class VcoClientProtocol(
         try:
             req_body = json.loads(content)
             method = req_body.get("method", method)
-        except json.JSONDecodeError, AttributeError:
+        except (json.JSONDecodeError, AttributeError):
             req_body = content
 
         idx = self._request_index

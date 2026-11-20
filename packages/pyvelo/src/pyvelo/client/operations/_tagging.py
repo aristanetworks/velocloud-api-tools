@@ -42,7 +42,7 @@ def domain_tag(*tags: str) -> Callable[[_F], _F]:
     """
 
     def decorator(fn: _F) -> _F:
-        setattr(fn, "__pyvelo_domain_tags__", set(tags))
+        fn.__pyvelo_domain_tags__ = set(tags)
         return fn
 
     return decorator

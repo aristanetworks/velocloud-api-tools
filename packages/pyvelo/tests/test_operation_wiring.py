@@ -5,7 +5,6 @@ and verifies they follow expected signature patterns. These tests expand
 automatically as new operations are added — no manual test registration needed.
 """
 
-import annotationlib
 import ast
 import inspect
 from collections.abc import Callable
@@ -42,7 +41,9 @@ _ALL_OPERATIONS = _discover_operations()
 
 
 def _operation_signature(method: Callable[..., object]) -> inspect.Signature:
-    return inspect.signature(method, annotation_format=annotationlib.Format.FORWARDREF)
+    # Don't evaluate annotations: operation modules use postponed (string)
+    # annotations with TYPE_CHECKING-only imports, and we only need presence.
+    return inspect.signature(method)
 
 
 # ---------------------------------------------------------------------------

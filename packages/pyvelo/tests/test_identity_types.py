@@ -41,7 +41,7 @@ class TestKeyTypes:
         sid = SegmentId(42)
         assert sid.value == 42
         with pytest.raises(AttributeError):
-            setattr(sid, "value", 99)
+            sid.value = 99
 
     def test_segment_id_not_int(self):
         sid = SegmentId(42)
@@ -233,4 +233,4 @@ class TestIdentityDataclasses:
             logical_id=uuid.uuid4(),
         )
         with pytest.raises(AttributeError):
-            setattr(si, "segment_id", 1)
+            si.segment_id = 1

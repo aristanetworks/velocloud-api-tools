@@ -3,7 +3,7 @@
 from typing import ClassVar, cast
 
 import pytest
-from pydantic import MISSING
+from pydantic import MISSING, ValidationError
 from pyvelo.client.enums.configuration import ConfigurationModuleType
 from pyvelo.client.enums.edge import HaRole
 from pyvelo.client.models.configuration import (
@@ -54,7 +54,7 @@ class TestGetHaInterfacesRole:
         assert obj.role == HaRole.ACTIVE
 
     def test_role_rejects_invalid_value(self):
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             _ = GetHaInterfaces.model_validate(
                 {"edgeLogicalId": self._EDGE_UUID, "role": "INVALID"}
             )

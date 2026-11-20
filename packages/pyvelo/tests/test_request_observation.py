@@ -52,7 +52,7 @@ async def observed_client(
     async with httpx.AsyncClient(
         base_url="https://example.test", transport=httpx.MockTransport(handler)
     ) as http:
-        setattr(client, "_http", http)
+        client._http = http
         yield client
 
 
@@ -208,13 +208,15 @@ async def test_observer_preparation_failure_preserves_source_error(
     records: list[RequestObservation] = []
     failure = httpx.InvalidURL("original transport error")
     async with observed_client(lambda _: httpx.Response(200), records.append) as client:
-        with patch.object(VcoClientProtocol, "_send_request", side_effect=failure):
-            with pytest.raises(httpx.InvalidURL) as error:
-                send_request = cast(
-                    Callable[[str, str], Awaitable[httpx.Response]],
-                    getattr(client, "_send_request"),
-                )
-                _ = await send_request("POST", "https://[invalid")
+        with (
+            patch.object(VcoClientProtocol, "_send_request", side_effect=failure),
+            pytest.raises(httpx.InvalidURL) as error,
+        ):
+            send_request = cast(
+                Callable[[str, str], Awaitable[httpx.Response]],
+                client._send_request,
+            )
+            _ = await send_request("POST", "https://[invalid")
     assert error.value is failure
     assert records == []
     assert "observer failed" in caplog.text
@@ -233,7 +235,7 @@ async def test_observation_strips_host_query_and_payload():
     async with observed_client(lambda _: httpx.Response(200), records.append) as client:
         send_request = cast(
             Callable[[str, str], Awaitable[httpx.Response]],
-            getattr(client, "_send_request"),
+            client._send_request,
         )
         _ = await send_request(
             "GET", "https://example.test/rest/test?token=private-query"

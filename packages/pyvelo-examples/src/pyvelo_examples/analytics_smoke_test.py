@@ -135,9 +135,7 @@ def _log_validation_detail(name: str, exc: ValidationError) -> None:
     )
 
 
-async def run_test(
-    name: str, fn: Callable[[], Awaitable[MetricFrame]]
-) -> TestResult:
+async def run_test(name: str, fn: Callable[[], Awaitable[MetricFrame]]) -> TestResult:
     try:
         frame: MetricFrame = await fn()
         if len(frame) > 0:
@@ -191,9 +189,7 @@ async def discover_context(
         return ctx
     ctx.edge_id = best.id_
     ctx.edge_name = (
-        best.name
-        if isinstance(best.name, str) and best.name
-        else f"edge-{ctx.edge_id}"
+        best.name if isinstance(best.name, str) and best.name else f"edge-{ctx.edge_id}"
     )
     ver = best.software_version
     ctx.edge_version = ver if ver and ver is not MISSING else "unknown"

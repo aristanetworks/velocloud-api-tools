@@ -76,7 +76,9 @@ def parse_args(argv: Sequence[str] | None = None) -> BgpNeighborArgs:
         default=3,
         help="Max concurrent API requests (default: 3)",
     )
-    _ = parser.add_argument("--verbose", "-v", action="store_true", help="Debug logging")
+    _ = parser.add_argument(
+        "--verbose", "-v", action="store_true", help="Debug logging"
+    )
     return parser.parse_args(argv, namespace=BgpNeighborArgs())
 
 

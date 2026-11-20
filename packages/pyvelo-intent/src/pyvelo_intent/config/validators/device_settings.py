@@ -24,7 +24,7 @@ def _parse_network(
         return None
     try:
         return ipaddress.IPv4Network(f"{cidr_ip}/{cidr_prefix}", strict=False)
-    except ValueError, TypeError:
+    except (ValueError, TypeError):
         return None
 
 

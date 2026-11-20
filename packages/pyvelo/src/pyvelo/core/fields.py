@@ -64,7 +64,7 @@ def _wrap_normalizer(
     try:
         sig = inspect.signature(fn)
         nparams = len(sig.parameters)
-    except ValueError, TypeError:
+    except (ValueError, TypeError):
         nparams = 1
     if nparams >= 2:
         return fn
