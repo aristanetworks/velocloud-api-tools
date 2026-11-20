@@ -5,7 +5,7 @@ description = "Helper library for VeloCloud Orchestrator configuration APIs"
 readme = "README.md"
 license = "Apache-2.0"
 license-files = ["LICENSE"]
-requires-python = ">=3.12"
+requires-python = ">=3.13"
 dependencies = [
     "pyvelo>=0.2.0",
     "pyyaml>=6.0.3",

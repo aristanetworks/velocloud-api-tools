@@ -4,7 +4,7 @@
 
 **A typed, async Python toolkit for the VeloCloud Orchestrator (VCO) API**
 
-[![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
+[![Python 3.13+](https://img.shields.io/badge/python-3.13%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 [![uv](https://img.shields.io/badge/built%20with-uv-DE5FE9)](https://docs.astral.sh/uv/)
 
@@ -131,9 +131,11 @@ Built-in aspects include `firewall_rules`, `business_policy`, `wan_links`, `vlan
 
 ```bash
 uv sync --all-packages
-uv run pytest                 # pyvelo + pyvelo-intent tests, no live VCO needed
-uv run basedpyright
-uv run ruff check
+scripts/check.sh              # everything CI runs: lint, types, test
+scripts/check.sh test         # or pick steps: lint | types | test
+scripts/check.sh fix          # ruff check --fix + ruff format
 ```
+
+Tests cover pyvelo and pyvelo-intent and don't need a live VCO. CI (`.github/workflows/ci.yml`) runs the same script on every pull request.
 
 Licensed under [Apache-2.0](LICENSE).

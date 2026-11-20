@@ -2,6 +2,7 @@
 
 import asyncio
 from collections.abc import Awaitable, Callable
+from types import CoroutineType
 from typing import cast
 from unittest.mock import patch
 
@@ -703,7 +704,7 @@ class TestConcurrencySemaphore:
 
         def wrap_post[**P](
             post: Callable[P, Awaitable[httpx.Response]],
-        ) -> Callable[P, Awaitable[httpx.Response]]:
+        ) -> Callable[P, CoroutineType[object, object, httpx.Response]]:
             async def counting_post(
                 *args: P.args, **kwargs: P.kwargs
             ) -> httpx.Response:
