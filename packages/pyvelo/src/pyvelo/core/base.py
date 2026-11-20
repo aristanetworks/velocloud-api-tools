@@ -20,11 +20,12 @@ from typing import (
     Any,
     Literal,
     Self,
+    Union,  # pyright: ignore[reportDeprecated]
+    cast,
     get_args,
     get_origin,
     override,
 )
-from warnings import deprecated
 
 import annotated_types
 from pydantic import (
@@ -57,6 +58,8 @@ from .fields import (
     _resolve_ctx_default,
 )
 
+_UNION_ORIGINS = (Union, types.UnionType)  # pyright: ignore[reportDeprecated]
+
 # ---------------------------------------------------------------------------
 # Serialization helpers
 # ---------------------------------------------------------------------------
@@ -71,7 +74,7 @@ def _matches_field_default(value: Any, field_info: FieldInfo) -> bool:
 
     For VcoModel instances, raw equality may fail when fields hold different
     representations of the same state. In that case we fall back to comparing
-    compact_dump() outputs which normalise away variants.
+    compact serializations, which normalise away variants.
     """
     norm = _get_normalizer(field_info)
     if field_info.default is not PydanticUndefined:
@@ -79,7 +82,7 @@ def _matches_field_default(value: Any, field_info: FieldInfo) -> bool:
             v = norm(value, None) if norm else value
             d = norm(field_info.default, None) if norm else field_info.default
             return v == d
-        except TypeError, ValueError:
+        except (TypeError, ValueError):
             return False
     if field_info.default_factory is not None:
         try:
@@ -94,7 +97,7 @@ def _matches_field_default(value: Any, field_info: FieldInfo) -> bool:
                     by_alias=False, context=ctx
                 ) == default._compact_serialize(by_alias=False, context=ctx)
             return False
-        except TypeError, ValueError:
+        except (TypeError, ValueError):
             return False
     return False
 
@@ -202,7 +205,7 @@ def _should_omit_field(
                     return True
             elif value == resolved_default:
                 return True
-        except TypeError, ValueError:
+        except (TypeError, ValueError):
             pass
     else:
         if _matches_field_default(value, field_info):
@@ -255,7 +258,7 @@ class VcoModel(BaseModel):
     _config_context: ConfigContext | None = PrivateAttr(default=None)
 
     @override
-    def model_post_init(self, __context: Any) -> None:
+    def model_post_init(self, __context: Any, /) -> None:
         if isinstance(__context, dict):
             config_level = __context.get("config_level")
             if config_level is not None:
@@ -337,12 +340,6 @@ class VcoModel(BaseModel):
                 result.pop(key, None)
 
         return result
-
-    @deprecated(
-        "compact_dump() is deprecated. Use model_dump(by_alias=False, context={'compact': True}) instead."
-    )
-    def compact_dump(self) -> dict[str, Any]:
-        return self._compact_serialize(by_alias=False, context={"compact": True})
 
     @classmethod
     def compact_load(cls, data: dict[str, Any]) -> Self:
@@ -501,9 +498,12 @@ class VcoModel(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-def _iter_union_args(annotation: Any) -> tuple[Any, ...]:
+def _iter_union_args(annotation: object) -> tuple[object, ...]:
     """Extract type args from a Union/UnionType annotation, or return (annotation,)."""
-    if get_origin(annotation) is types.UnionType:
+    # On Python < 3.14, ``typing.Union[...]`` and PEP 604 ``X | Y`` have
+    # distinct origins. ``T | MISSING`` produces a ``typing.Union`` because
+    # MISSING is a sentinel instance rather than a class.
+    if get_origin(annotation) in _UNION_ORIGINS:
         return get_args(annotation)
     return (annotation,)
 
@@ -521,11 +521,12 @@ def _get_field_vcomodel_type(fi: FieldInfo) -> type[VcoModel] | None:
     return None
 
 
-def _resolve_key_path(obj: Any, key_path: str) -> Any:
+def _resolve_key_path(obj: object, key_path: str) -> object:
     """Navigate a dotted path on an object (e.g. 'segment.name')."""
+    current: object = obj
     for part in key_path.split("."):
-        obj = getattr(obj, part)
-    return obj
+        current = cast(object, getattr(current, part))
+    return current
 
 
 def _merge_keyed_list(

@@ -1,15 +1,139 @@
+<div align="center">
+
 # pyvelo
 
-Python SDK for the VeloCloud Orchestrator (VCO) API, a configuration intent library, and a small set of read-only examples.
+**A typed, async Python toolkit for the VeloCloud Orchestrator (VCO) API**
 
-Requires Python **3.14 or newer**.
+[![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
+[![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
+[![uv](https://img.shields.io/badge/built%20with-uv-DE5FE9)](https://docs.astral.sh/uv/)
+
+</div>
+
+| Package | What it does |
+|---|---|
+| [**`pyvelo`**](packages/pyvelo/) | Async JSON-RPC client with Pydantic models for every request, response, and configuration module. It handles pagination, rate limiting, and retries. Analytics come back as Polars frames. |
+| [**`pyvelo-intent`**](packages/pyvelo-intent/) | A load → patch → diff → save pipeline for edge and profile configuration, with named aspects, keyed merge patches, and validators. |
+| [**`pyvelo-examples`**](packages/pyvelo-examples/) | Read-only CLI scripts for BGP neighbors, ARP dumps, and analytics reports. |
+
+## Install
+
+Add the packages to your project as Git dependencies:
+
+```toml
+[project]
+dependencies = ["pyvelo[analytics,dotenv]", "pyvelo-intent"]
+
+[tool.uv.sources]
+pyvelo = { git = "https://github.com/aristanetworks/velocloud-api-tools.git", subdirectory = "packages/pyvelo" }
+pyvelo-intent = { git = "https://github.com/aristanetworks/velocloud-api-tools.git", subdirectory = "packages/pyvelo-intent" }
+```
+
+## pyvelo: talk to the API
+
+**Find edges that aren't connected**
+
+```python
+import asyncio
+
+from pyvelo.client import VcoClient, get_vco_credentials
+from pyvelo.client.enums import EdgeState
+from pyvelo.client.schemas.enterprise import GetEnterpriseEdges
+
+
+async def main() -> None:
+    host, token = get_vco_credentials()
+    async with VcoClient(host, token) as client:
+        edges = await client.get_enterprise_edges(GetEnterpriseEdges(enterprise_id=1))
+        for edge in edges:
+            if edge.edge_state != EdgeState.CONNECTED:
+                print(f"{edge.name}: {edge.edge_state}")
+
+
+asyncio.run(main())
+```
+
+**Top applications on an edge over the last 24 hours** (requires `pyvelo[analytics]`)
+
+```python
+import asyncio
+from datetime import UTC, datetime, timedelta
+
+from pyvelo.analytics import Analytics, FlowGroupBy, FlowMetric
+from pyvelo.client import VcoClient, get_vco_credentials
+from pyvelo.core import ApiInterval
+
+
+async def main() -> None:
+    host, token = get_vco_credentials()
+    async with VcoClient(host, token) as client:
+        analytics = Analytics(client, enterprise_id=1)
+        frame = await analytics.get_edge_flow_metrics(
+            42,
+            ApiInterval(start=datetime.now(UTC) - timedelta(hours=24)),
+            FlowGroupBy.APP,
+            limit=5,
+            sort=FlowMetric.TOTAL_BYTES,
+        )
+        print(frame.to_dataframe())  # a polars.DataFrame
+
+
+asyncio.run(main())
+```
+
+## pyvelo-intent: change configuration safely
+
+This example loads an edge by name, adds a firewall rule, reviews the field-level diff, and previews the save:
+
+```python
+import asyncio
+
+from pyvelo.client import VcoClient, get_vco_credentials
+from pyvelo_intent import build_default_pipeline
+
+
+async def main() -> None:
+    host, token = get_vco_credentials()
+    async with VcoClient(host, token) as client:
+        pipeline = build_default_pipeline(client)
+        state = await pipeline.load("branch-nyc", enterprise_id=1)
+
+        # Aspects are named slices of config. List entries are merged by key.
+        state = await pipeline.apply_aspect(
+            state,
+            "firewall_rules",
+            {
+                "block-ssh": {
+                    "name": "block-ssh",
+                    "action": {"allow_or_deny": "deny"},
+                    "match": {"proto": 6, "dport_low": 22, "dport_high": 22},
+                }
+            },
+            segment="Global Segment",
+        )
+
+        for change in state.get_field_changes():
+            print(change.module, change.path)
+        # firewall segments[Global Segment].outbound_override
+        # firewall segments[Global Segment].outbound[block-ssh]
+
+        result = await pipeline.save(state, dry_run=True)  # drop dry_run to write
+        result.raise_for_errors()
+        print("Would update:", result.modules_updated)
+
+
+asyncio.run(main())
+```
+
+Built-in aspects include `firewall_rules`, `business_policy`, `wan_links`, `vlans`, `interfaces`, `routes`, `bgp`, `ntp`, `syslog`, and more. Run `pipeline.list_aspects()` for the full list. The [pyvelo-intent README](packages/pyvelo-intent/README.md) covers validators, resolvers, and the limits of the save path.
 
 ## Development
 
-    uv sync
-    uv run --package pyvelo pytest packages/pyvelo/tests
-    uv run --package pyvelo-intent pytest packages/pyvelo-intent/tests
-    uv run basedpyright
-    uv run --package pyvelo-examples python -m pyvelo_examples.get_bgp_neighbors --help
+```bash
+uv sync --all-packages
+uv run pytest                 # pyvelo + pyvelo-intent tests, no live VCO needed
+uv run basedpyright
+uv run ruff check
+```
 
-For SDK usage, see [packages/pyvelo/README.md](packages/pyvelo/README.md). For configuration loading, patching, validation, and saving, see [packages/pyvelo-intent/README.md](packages/pyvelo-intent/README.md). For the included examples and their VCO data handling, see [packages/pyvelo-examples/README.md](packages/pyvelo-examples/README.md).
+Licensed under [Apache-2.0](LICENSE).

@@ -19,13 +19,11 @@ __all__ = [
 
 
 class GetExportMetadata(VcoModel):
-
     job_id: int
     enterprise_id: int | MISSING = MISSING
 
 
 class ExportMetadataResult(VcoModel):
-
     job_id: int | None | MISSING = MISSING
     enterprise_id: int | None | MISSING = MISSING
     status: str | None | MISSING = MISSING
@@ -40,12 +38,10 @@ class ExportMetadataResult(VcoModel):
 
 
 class GetImportResult(VcoModel):
-
     job_id: int
 
 
 class ImportResultResult(VcoModel):
-
     job_id: int | None | MISSING = MISSING
     status: str | None | MISSING = MISSING
     enterprise_id: int | None | MISSING = MISSING

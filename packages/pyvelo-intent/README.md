@@ -6,7 +6,7 @@ Configuration intent layer for VeloCloud, built on top of
 configuration projections, a generic intent diff engine, validators, and
 helpers for scripting against the VCO configuration API.
 
-Requires Python **3.14 or newer** and `pyvelo` **0.2.0 or newer**.
+Requires Python **3.12 or newer** and `pyvelo` **0.2.0 or newer**.
 Licensed under Apache-2.0.
 
 ## Install
@@ -34,15 +34,14 @@ using `rev = "<commit-sha>"`. This installation route does not require a PyPI re
 ## Preview a configuration change
 
 Set `VCO_HOST` to your Orchestrator hostname and `VCO_TOKEN` to an API token
-with the appropriate enterprise permissions. This helper uses `VCO_TOKEN`;
-the separate read-only examples use `VCO_API_TOKEN`.
+with the appropriate enterprise permissions. 
 
 ```python
 import asyncio
 
-from pyvelo.client.vco_client import VcoClient
+from pyvelo.client import VcoClient, get_vco_credentials
 from pyvelo.config.validation import ValidatorRegistry
-from pyvelo_intent import ConfigPipeline, get_vco_credentials
+from pyvelo_intent import ConfigPipeline
 from pyvelo_intent.config.validators import key_uniqueness, required_fields
 
 
@@ -104,18 +103,18 @@ automatically. For other resolver types, register and load them explicitly with
 
 | Module | What it provides |
 |---|---|
-| `pyvelo_intent` | Re-exports the public surface: `ConfigPipeline`, `ConfigState`, `SaveResult`, `AspectRegistry`, `Aspect`, diff types (`DiffResult`, `Added`, `Removed`, `Modified`, `Unchanged`, `FieldChange`), error types, helpers (`build_default_pipeline`, `confirm_save`, `get_vco_credentials`, `load_config`, `generate_patch_schema`) |
+| `pyvelo_intent` | Re-exports the public surface: `ConfigPipeline`, `ConfigState`, `SaveResult`, `AspectRegistry`, `Aspect`, diff types (`DiffResult`, `Added`, `Removed`, `Modified`, `Unchanged`, `FieldChange`), error types, helpers (`build_default_pipeline`, `confirm_save`, `load_config`, `generate_patch_schema`) |
 | `pyvelo_intent.config.pipeline` | `ConfigPipeline` (load/load_profile → apply/apply_aspect → save), `build_default_pipeline` |
 | `pyvelo_intent.config.state` | `ConfigState`, `SaveResult`, `ConfigFieldChange`, `ValidationWarning` |
 | `pyvelo_intent.config.aspect` | `Aspect`, `AspectSummary`, `AspectRegistry` (register, list, search, get, patch/read schema generation) |
 | `pyvelo_intent.config.aspect_query` | Navigation helpers: `navigate_to_base`, `get_aspect_data`, `get_aspect_parent` |
 | `pyvelo_intent.config.aspects.*` | Predefined aspects for firewall, device settings, QoS, WAN, and control plane modules |
 | `pyvelo_intent.config.schema` | `generate_patch_schema`, `resolve_model_at_path` — JSON Schema generation with patch transforms |
-| `pyvelo_intent.config.helpers` | `get_vco_credentials`, `load_config`, `confirm_save` |
+| `pyvelo_intent.config.helpers` | `load_config`, `confirm_save` |
 | `pyvelo_intent.config.validators.*` | Structural built-ins (`key_uniqueness`, `override_consistency`, `required_fields`) + domain validators (firewall, device settings) |
 | `pyvelo_intent.config.(firewall\|device_settings\|qos\|wan\|control_plane)` | Per-module configuration helpers |
 | `pyvelo_intent.diff` | Generic keyed-list diff engine: `diff_intents`, `DiffResult`, `Added`, `Removed`, `Modified`, `Unchanged`, `FieldChange` |
-| `pyvelo_intent.errors` | `IntentError`, `ConfigInputError`, `MissingEnvVarError`, `SaveValidationError`, `UnknownRegistryEntryError` |
+| `pyvelo_intent.errors` | `IntentError`, `ConfigInputError`, `SaveValidationError`, `UnknownRegistryEntryError` |
 | `pyvelo_intent.testing` | Test fixtures: `MockVcoClient`, `make_firewall_module`, `make_firewall_segment` |
 
 ## Tests

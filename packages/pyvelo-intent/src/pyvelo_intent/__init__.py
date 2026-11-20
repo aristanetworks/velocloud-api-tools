@@ -11,7 +11,6 @@ from pyvelo_intent.config import (
     build_default_pipeline,
     confirm_save,
     generate_patch_schema,
-    get_vco_credentials,
     load_config,
 )
 from pyvelo_intent.diff import (
@@ -27,7 +26,6 @@ from pyvelo_intent.diff import (
 from pyvelo_intent.errors import (
     ConfigInputError,
     IntentError,
-    MissingEnvVarError,
     SaveValidationError,
     UnknownRegistryEntryError,
 )
@@ -44,7 +42,6 @@ __all__ = [
     "DiffResult",
     "FieldChange",
     "IntentError",
-    "MissingEnvVarError",
     "Modified",
     "Removed",
     "SaveResult",
@@ -56,6 +53,5 @@ __all__ = [
     "confirm_save",
     "diff_intents",
     "generate_patch_schema",
-    "get_vco_credentials",
     "load_config",
 ]

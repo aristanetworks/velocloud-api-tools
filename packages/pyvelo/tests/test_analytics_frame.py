@@ -14,7 +14,7 @@ from pyvelo.client.schemas.metrics import EdgeAppMetricsItem
 
 _items_to_frame = cast(
     Callable[[Sequence[EdgeAppMetricsItem]], MetricFrame],
-    getattr(_flow, "_items_to_frame"),
+    _flow._items_to_frame,
 )
 
 

@@ -19,14 +19,13 @@ from datetime import UTC, datetime, timedelta
 import polars as pl
 from pyvelo.analytics import Analytics, FlowGroupBy, FlowMetric
 from pyvelo.analytics.enums import FirewallType
-from pyvelo.client import VcoClient
+from pyvelo.client import VcoClient, get_vco_credentials
 from pyvelo.client.enums import EdgeState
 from pyvelo.client.schemas.enterprise import GetEnterprise, GetEnterpriseEdges
 from pyvelo.core import ApiInterval
 
-from pyvelo_examples.common import get_vco_credentials
-
 logger = logging.getLogger(__name__)
+
 
 @dataclass
 class AnalyticsOverviewArgs:
@@ -57,7 +56,9 @@ def parse_args(argv: Sequence[str] | None = None) -> AnalyticsOverviewArgs:
         type=str,
         help="Filter to edges matching this substring",
     )
-    _ = parser.add_argument("--verbose", "-v", action="store_true", help="Debug logging")
+    _ = parser.add_argument(
+        "--verbose", "-v", action="store_true", help="Debug logging"
+    )
     return parser.parse_args(argv, namespace=AnalyticsOverviewArgs())
 
 

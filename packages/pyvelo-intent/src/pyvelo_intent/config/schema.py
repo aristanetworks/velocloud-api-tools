@@ -9,7 +9,7 @@ Generates JSON Schema from VcoModel subtrees with transformations:
 
 import copy
 import types
-from typing import Any, get_args, get_origin
+from typing import Any, Union, get_args, get_origin
 
 from pydantic import MISSING, BaseModel
 from pyvelo.core.base import VcoModel
@@ -48,9 +48,10 @@ def resolve_model_at_path(
 
 def _unwrap_annotation(annotation: Any) -> Any:
     """Unwrap Union, Optional, and list types to find the core model type."""
-    # Python 3.14+ uses this origin for both typing.Union and PEP 604 unions.
+    # On Python < 3.14, typing.Union and PEP 604 unions have distinct origins;
+    # ``T | MISSING`` produces a typing.Union since MISSING is not a class.
     origin = get_origin(annotation)
-    if origin is types.UnionType:
+    if origin in (Union, types.UnionType):
         for arg in get_args(annotation):
             if isinstance(arg, type) and issubclass(arg, BaseModel):
                 return arg

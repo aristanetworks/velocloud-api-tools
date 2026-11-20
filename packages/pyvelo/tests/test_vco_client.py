@@ -307,8 +307,8 @@ class TestPortalPaginated:
             "test/listStuff", request, SampleResult
         ):
             assert [item.value for item in page] == [1]
-            assert cast(bool, getattr(request, "_page_has_more")) is True
-            assert cast(str | None, getattr(request, "_page_next_link")) == "page2"
+            assert cast(bool, request._page_has_more) is True
+            assert cast(str | None, request._page_next_link) == "page2"
             break
 
         assert sent == [None]
@@ -332,8 +332,8 @@ class TestPortalPaginated:
 
         assert len(pages) == 2
         assert sent == [None, "page2"]
-        assert cast(bool, getattr(request, "_page_has_more")) is False
-        assert cast(str | None, getattr(request, "_page_next_link")) is None
+        assert cast(bool, request._page_has_more) is False
+        assert cast(str | None, request._page_next_link) is None
 
     async def test_more_without_cursor_raises(
         self,
@@ -376,8 +376,8 @@ class TestPortalPaginatedList:
 
         assert [item.value for item in items] == [1, 2, 3]
         assert sent == [None, "page2", "page3"]
-        assert cast(bool, getattr(request, "_page_has_more")) is False
-        assert cast(str | None, getattr(request, "_page_next_link")) is None
+        assert cast(bool, request._page_has_more) is False
+        assert cast(str | None, request._page_next_link) is None
 
     @pytest.mark.parametrize("max_pages", [1, 2])
     async def test_max_pages_stops_and_keeps_resume_cursor(
@@ -389,7 +389,7 @@ class TestPortalPaginatedList:
         sent: list[str | None] = []
         client = await mock_vco_client(paged_handler(json_rpc_response, 3, sent))
         request = SamplePaginatedRequest(enterprise_id=1)
-        setattr(request, "_max_pages", max_pages)
+        request._max_pages = max_pages
 
         items = await client.portal_paginated_list(
             "test/listStuff", request, SampleResult
@@ -397,10 +397,8 @@ class TestPortalPaginatedList:
 
         assert [item.value for item in items] == list(range(1, max_pages + 1))
         assert len(sent) == max_pages
-        assert cast(bool, getattr(request, "_page_has_more")) is True
-        assert cast(str | None, getattr(request, "_page_next_link")) == (
-            f"page{max_pages + 1}"
-        )
+        assert cast(bool, request._page_has_more) is True
+        assert cast(str | None, request._page_next_link) == (f"page{max_pages + 1}")
 
     async def test_max_pages_reaching_last_page_reports_complete(
         self,
@@ -410,15 +408,15 @@ class TestPortalPaginatedList:
         sent: list[str | None] = []
         client = await mock_vco_client(paged_handler(json_rpc_response, 2, sent))
         request = SamplePaginatedRequest(enterprise_id=1)
-        setattr(request, "_max_pages", 2)
+        request._max_pages = 2
 
         items = await client.portal_paginated_list(
             "test/listStuff", request, SampleResult
         )
 
         assert len(items) == 2
-        assert cast(bool, getattr(request, "_page_has_more")) is False
-        assert cast(str | None, getattr(request, "_page_next_link")) is None
+        assert cast(bool, request._page_has_more) is False
+        assert cast(str | None, request._page_next_link) is None
 
     async def test_resumes_from_recorded_cursor(
         self,
@@ -428,20 +426,20 @@ class TestPortalPaginatedList:
         sent: list[str | None] = []
         client = await mock_vco_client(paged_handler(json_rpc_response, 3, sent))
         request = SamplePaginatedRequest(enterprise_id=1)
-        setattr(request, "_max_pages", 1)
+        request._max_pages = 1
         _ = await client.portal_paginated_list("test/listStuff", request, SampleResult)
 
-        next_page_link = cast(str | None, getattr(request, "_page_next_link"))
+        next_page_link = cast(str | None, request._page_next_link)
         assert next_page_link is not None
         resumed = SamplePaginatedRequest(enterprise_id=1, next_page_link=next_page_link)
-        setattr(resumed, "_max_pages", 1)
+        resumed._max_pages = 1
         items = await client.portal_paginated_list(
             "test/listStuff", resumed, SampleResult
         )
 
         assert [item.value for item in items] == [2]
         assert sent == [None, "page2"]
-        assert cast(str | None, getattr(resumed, "_page_next_link")) == "page3"
+        assert cast(str | None, resumed._page_next_link) == "page3"
 
 
 class TestPortalList:
@@ -699,7 +697,7 @@ class TestConcurrencySemaphore:
 
         http_client = cast(
             httpx.AsyncClient,
-            cast(Callable[[], object], getattr(client, "_http_client"))(),
+            cast(Callable[[], object], client._http_client)(),
         )
         original_http_post = http_client.post
 
@@ -721,7 +719,7 @@ class TestConcurrencySemaphore:
 
             return counting_post
 
-        setattr(http_client, "post", wrap_post(original_http_post))
+        http_client.post = wrap_post(original_http_post)
 
         tasks = [
             asyncio.create_task(
@@ -833,14 +831,10 @@ class TestVcoAuth:
             )
 
         client = VcoClient("test.velocloud.net", "Token already-prefixed")
-        setattr(
-            client,
-            "_http",
-            httpx.AsyncClient(
-                auth=VcoAuth("Token already-prefixed"),
-                transport=make_transport(handler),
-                base_url="https://test.velocloud.net",
-            ),
+        client._http = httpx.AsyncClient(
+            auth=VcoAuth("Token already-prefixed"),
+            transport=make_transport(handler),
+            base_url="https://test.velocloud.net",
         )
         _ = await client.portal(
             "test/getStuff", SampleRequest(enterprise_id=1), SampleResult
@@ -862,14 +856,10 @@ class TestVcoAuth:
             )
 
         client = VcoClient("test.velocloud.net", "RandomPrefix my-jwt")
-        setattr(
-            client,
-            "_http",
-            httpx.AsyncClient(
-                auth=VcoAuth("RandomPrefix my-jwt"),
-                transport=make_transport(handler),
-                base_url="https://test.velocloud.net",
-            ),
+        client._http = httpx.AsyncClient(
+            auth=VcoAuth("RandomPrefix my-jwt"),
+            transport=make_transport(handler),
+            base_url="https://test.velocloud.net",
         )
         _ = await client.portal(
             "test/getStuff", SampleRequest(enterprise_id=1), SampleResult

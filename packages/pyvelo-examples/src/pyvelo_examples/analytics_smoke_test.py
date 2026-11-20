@@ -23,7 +23,7 @@ from pydantic import MISSING, ValidationError
 from pyvelo.analytics import Analytics, FlowGroupBy, FlowMetric
 from pyvelo.analytics.enums import EnterpriseFirewallType, FirewallType
 from pyvelo.analytics.frame import MetricFrame
-from pyvelo.client import VcoClient
+from pyvelo.client import VcoClient, get_vco_credentials
 from pyvelo.client.enums import EdgeState
 from pyvelo.client.enums.edge import GetEdgeWith, SdwanPeerType
 from pyvelo.client.enums.metrics import BasicMetricViewBy
@@ -40,8 +40,6 @@ from pyvelo.client.schemas.enterprise import (
 )
 from pyvelo.client.schemas.metrics import LinkPair
 from pyvelo.core import ApiInterval
-
-from pyvelo_examples.common import get_vco_credentials
 
 logger = logging.getLogger(__name__)
 
@@ -135,9 +133,7 @@ def _log_validation_detail(name: str, exc: ValidationError) -> None:
     )
 
 
-async def run_test(
-    name: str, fn: Callable[[], Awaitable[MetricFrame]]
-) -> TestResult:
+async def run_test(name: str, fn: Callable[[], Awaitable[MetricFrame]]) -> TestResult:
     try:
         frame: MetricFrame = await fn()
         if len(frame) > 0:
@@ -191,9 +187,7 @@ async def discover_context(
         return ctx
     ctx.edge_id = best.id_
     ctx.edge_name = (
-        best.name
-        if isinstance(best.name, str) and best.name
-        else f"edge-{ctx.edge_id}"
+        best.name if isinstance(best.name, str) and best.name else f"edge-{ctx.edge_id}"
     )
     ver = best.software_version
     ctx.edge_version = ver if ver and ver is not MISSING else "unknown"

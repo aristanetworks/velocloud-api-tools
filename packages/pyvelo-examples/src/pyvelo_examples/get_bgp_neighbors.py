@@ -18,14 +18,12 @@ from dataclasses import dataclass, field
 from typing import Literal, cast
 
 from pydantic import MISSING
-from pyvelo.client import VcoClient
+from pyvelo.client import VcoClient, get_vco_credentials
 from pyvelo.client.schemas.edge import GetEdgeConfigurationStack
 from pyvelo.client.schemas.enterprise import GetEnterpriseEdges, GetEnterpriseEdgesItem
 from rich.console import Console
 from rich.table import Table
 from rich.text import Text
-
-from pyvelo_examples.common import get_vco_credentials
 
 logger = logging.getLogger(__name__)
 
@@ -76,7 +74,9 @@ def parse_args(argv: Sequence[str] | None = None) -> BgpNeighborArgs:
         default=3,
         help="Max concurrent API requests (default: 3)",
     )
-    _ = parser.add_argument("--verbose", "-v", action="store_true", help="Debug logging")
+    _ = parser.add_argument(
+        "--verbose", "-v", action="store_true", help="Debug logging"
+    )
     return parser.parse_args(argv, namespace=BgpNeighborArgs())
 
 

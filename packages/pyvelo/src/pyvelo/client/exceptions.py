@@ -146,3 +146,7 @@ class VcoUserTypeUnknownError(VcoError):
 
     def __init__(self) -> None:
         super().__init__("Unable to determine user type: all probes failed")
+
+
+class VcoCredentialsError(VcoError):
+    """Raised when VCO credentials cannot be loaded from the environment."""

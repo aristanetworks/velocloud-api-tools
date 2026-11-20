@@ -33,12 +33,10 @@ from matplotlib.dates import DateFormatter
 from matplotlib.figure import Figure
 from matplotlib.ticker import FuncFormatter
 from pyvelo.analytics import Analytics, FlowGroupBy, FlowMetric
-from pyvelo.client import VcoClient
+from pyvelo.client import VcoClient, get_vco_credentials
 from pyvelo.client.enums import EdgeState
 from pyvelo.client.schemas.enterprise import GetEnterprise, GetEnterpriseEdges
 from pyvelo.core import ApiInterval
-
-from pyvelo_examples.common import get_vco_credentials
 
 logger = logging.getLogger(__name__)
 
@@ -78,7 +76,9 @@ def parse_args(argv: Sequence[str] | None = None) -> AnalyticsReportArgs:
         type=str,
         help="Output HTML file path (default: analytics_report.html)",
     )
-    _ = parser.add_argument("--verbose", "-v", action="store_true", help="Debug logging")
+    _ = parser.add_argument(
+        "--verbose", "-v", action="store_true", help="Debug logging"
+    )
     return parser.parse_args(argv, namespace=AnalyticsReportArgs())
 
 
@@ -175,7 +175,9 @@ def plot_health_series(df: pl.DataFrame) -> Figure:
         _ = ax1.plot(df["timestamp"], df["cpu_pct"], label="CPU %", color="tab:red")  # pyright: ignore[reportUnknownMemberType]  # Matplotlib exposes flexible style kwargs.
         has_pct = True
     if "memory_pct" in df.columns and df["memory_pct"].is_not_null().any():
-        _ = ax1.plot(df["timestamp"], df["memory_pct"], label="Memory %", color="tab:blue")  # pyright: ignore[reportUnknownMemberType]  # Matplotlib exposes flexible style kwargs.
+        _ = ax1.plot(
+            df["timestamp"], df["memory_pct"], label="Memory %", color="tab:blue"
+        )  # pyright: ignore[reportUnknownMemberType]  # Matplotlib exposes flexible style kwargs.
         has_pct = True
 
     if has_pct:

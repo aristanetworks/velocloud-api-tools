@@ -214,9 +214,11 @@ class TestResolverRegistry:
         registry.register(foo_resolver)
         outer = ResolverContext(enterprise_id=1)
         registry.set_context(outer)
-        with pytest.raises(RuntimeError):
-            with registry.context(ResolverContext(enterprise_id=2)):
-                raise RuntimeError("boom")
+        with (
+            pytest.raises(RuntimeError),
+            registry.context(ResolverContext(enterprise_id=2)),
+        ):
+            raise RuntimeError("boom")
         assert registry.current_context is outer
 
     async def test_context_manager_clears_caches(self, registry: ResolverRegistry):

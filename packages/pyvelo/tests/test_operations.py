@@ -106,13 +106,8 @@ class TestGetConfiguration:
         client.portal = AsyncMock(return_value=result)
 
         config = await client.get_configuration(AsyncMock())
-        assert (
-            cast(ConfigContext | None, getattr(config, "_config_context")) is not None
-        )
-        assert (
-            cast(ConfigContext | None, getattr(config, "_config_context"))
-            == ConfigContext.EDGE
-        )
+        assert cast(ConfigContext | None, config._config_context) is not None
+        assert cast(ConfigContext | None, config._config_context) == ConfigContext.EDGE
 
     async def test_profile_name_calls_for_profile(self):
         """get_configuration should call for_profile() for non-edge profiles."""
@@ -122,12 +117,9 @@ class TestGetConfiguration:
         client.portal = AsyncMock(return_value=result)
 
         config = await client.get_configuration(AsyncMock())
+        assert cast(ConfigContext | None, config._config_context) is not None
         assert (
-            cast(ConfigContext | None, getattr(config, "_config_context")) is not None
-        )
-        assert (
-            cast(ConfigContext | None, getattr(config, "_config_context"))
-            == ConfigContext.PROFILE
+            cast(ConfigContext | None, config._config_context) == ConfigContext.PROFILE
         )
 
     async def test_returns_same_instance(self):

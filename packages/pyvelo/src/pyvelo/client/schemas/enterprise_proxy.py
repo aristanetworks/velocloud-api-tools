@@ -59,7 +59,6 @@ __all__ = [
 
 
 class GetEnterpriseProxy(VcoModel):
-
     id_: Annotated[
         int | MISSING,
         Alias("id"),
@@ -105,7 +104,6 @@ class EnterpriseProxyGatewayPoolItem(VcoModel):
 
 
 class EnterpriseProxyResult(VcoModel):
-
     id_: Annotated[int, Alias("id")]
     created: VcoTimestamp | None | MISSING = MISSING
     name: str | None | MISSING = MISSING
@@ -147,12 +145,10 @@ class EnterpriseProxyItem(VcoModel):
 
 
 class GetEnterpriseProxyEdges(VcoModel):
-
     enterprise_proxy_id: int
 
 
 class EnterpriseProxyEdgeItem(VcoModel):
-
     id_: Annotated[int | None | MISSING, Alias("id")] = MISSING
     name: str | None | MISSING = MISSING
     edge_state: str | None | MISSING = MISSING
@@ -168,7 +164,6 @@ class EnterpriseProxyEdgeItem(VcoModel):
 
 
 class GetEnterpriseProxyEnterprises(VcoModel):
-
     enterprise_proxy_id: Annotated[
         int | MISSING,
         Field(
@@ -191,7 +186,6 @@ class GetEnterpriseProxyEnterprises(VcoModel):
 
 
 class EnterpriseProxyEnterpriseItem(VcoModel):
-
     id_: Annotated[int, Alias("id")]
     created: VcoTimestamp | None | MISSING = MISSING
     name: str | None | MISSING = MISSING
@@ -210,7 +204,6 @@ class EnterpriseProxyEnterpriseItem(VcoModel):
 
 
 class GetEnterpriseProxyGatewayPools(VcoModel):
-
     enterprise_proxy_id: int
     id_: Annotated[int | MISSING, Alias("id")] = MISSING
     with_: Annotated[
@@ -222,7 +215,6 @@ class GetEnterpriseProxyGatewayPools(VcoModel):
 
 
 class GetEnterpriseProxyGateways(VcoModel):
-
     enterprise_proxy_id: int
     with_: Annotated[list[GetEnterpriseProxyGatewaysWith] | MISSING, Alias("with")] = (
         MISSING
@@ -230,7 +222,6 @@ class GetEnterpriseProxyGateways(VcoModel):
 
 
 class EnterpriseProxyGatewayItem(VcoModel):
-
     id_: Annotated[int, Alias("id")]
     name: str | None | MISSING = MISSING
     logical_id: str | None | MISSING = MISSING
@@ -247,7 +238,6 @@ class EnterpriseProxyGatewayItem(VcoModel):
 
 
 class GetEnterpriseProxyOperatorProfiles(VcoModel):
-
     enterprise_proxy_id: int
     with_: Annotated[
         list[GetEnterpriseProxyOperatorProfilesWith] | MISSING, Alias("with")
@@ -255,7 +245,6 @@ class GetEnterpriseProxyOperatorProfiles(VcoModel):
 
 
 class EnterpriseProxyOperatorProfileItem(VcoModel):
-
     id_: Annotated[int, Alias("id")]
     name: str
     description: str | None | MISSING = MISSING
@@ -273,14 +262,12 @@ class EnterpriseProxyOperatorProfileItem(VcoModel):
 
 
 class GetEnterpriseProxyProperty(VcoModel):
-
     enterprise_id: int | MISSING = MISSING
     name: str
     id_: Annotated[int | MISSING, Alias("id")] = MISSING
 
 
 class EnterpriseProxyPropertyResult(VcoModel):
-
     id_: Annotated[int | None | MISSING, Alias("id")] = MISSING
     name: str | None | MISSING = MISSING
     value: str | None | MISSING = MISSING
@@ -294,14 +281,12 @@ class EnterpriseProxyPropertyResult(VcoModel):
 
 
 class GetEnterpriseProxyUser(VcoModel):
-
     enterprise_proxy_id: int
     id_: Annotated[int, Alias("id")]
     username: str | MISSING = MISSING
 
 
 class EnterpriseProxyUserResult(VcoModel):
-
     id_: Annotated[int, Alias("id")]
     created: VcoTimestamp | None | MISSING = MISSING
     enterprise_proxy_id: int | None | MISSING = MISSING
@@ -321,13 +306,11 @@ class EnterpriseProxyUserResult(VcoModel):
 
 
 class GetEnterpriseProxyUsers(VcoModel):
-
     enterprise_proxy_id: int
     id_: Annotated[int | MISSING, Alias("id")] = MISSING
 
 
 class EnterpriseProxyUserItem(VcoModel):
-
     id_: Annotated[int, Alias("id")]
     created: VcoTimestamp | None | MISSING = MISSING
     enterprise_proxy_id: int | None | MISSING = MISSING
@@ -347,12 +330,10 @@ class EnterpriseProxyUserItem(VcoModel):
 
 
 class GetEnterpriseProxyConfigurations(VcoModel):
-
     enterprise_proxy_id: int
 
 
 class EnterpriseProxyConfigurationItem(VcoModel):
-
     id_: Annotated[int, Alias("id")]
     name: str | None | MISSING = MISSING
     description: str | None | MISSING = MISSING
@@ -367,12 +348,10 @@ class EnterpriseProxyConfigurationItem(VcoModel):
 
 
 class GetEnterpriseProxyEdgeInventory(VcoModel):
-
     enterprise_proxy_id: int
 
 
 class EnterpriseProxyEdgeInventoryItem(VcoModel):
-
     id_: Annotated[int | None | MISSING, Alias("id")] = MISSING
     name: str | None | MISSING = MISSING
     edges: list[dict[str, Any]] | None | MISSING = MISSING
@@ -383,12 +362,10 @@ class EnterpriseProxyEdgeInventoryItem(VcoModel):
 
 
 class GetEnterpriseProxyRateLimits(VcoModel):
-
     enterprise_proxy_id: int
 
 
 class EnterpriseProxyRateLimitsResult(VcoModel):
-
     concurrency_limit: int | None | MISSING = MISSING
     rate_limit: int | None | MISSING = MISSING
     rate_limit_duration: int | None | MISSING = MISSING
@@ -399,12 +376,10 @@ class EnterpriseProxyRateLimitsResult(VcoModel):
 
 
 class GetEnterpriseProxyServices(VcoModel):
-
     enterprise_proxy_id: int
 
 
 class EnterpriseProxyServiceItem(VcoModel):
-
     id_: Annotated[int, Alias("id")]
     name: str | None | MISSING = MISSING
     type_: Annotated[str | None | MISSING, Alias("type")] = MISSING
@@ -418,12 +393,10 @@ class EnterpriseProxyServiceItem(VcoModel):
 
 
 class GetEnterpriseProxyCapabilities(VcoModel):
-
     enterprise_proxy_id: int
 
 
 class EnterpriseProxyCapabilitiesResult(VcoModel):
-
     data: dict[str, Any] | None | MISSING = MISSING
 
 
@@ -431,12 +404,10 @@ class EnterpriseProxyCapabilitiesResult(VcoModel):
 
 
 class GetEnterpriseProxyCloneableEnterprises(VcoModel):
-
     enterprise_proxy_id: int
 
 
 class EnterpriseProxyCloneableEnterpriseItem(VcoModel):
-
     id_: Annotated[int, Alias("id")]
     name: str | None | MISSING = MISSING
     logical_id: uuid.UUID | None | MISSING = MISSING
@@ -449,7 +420,6 @@ class EnterpriseProxyCloneableEnterpriseItem(VcoModel):
 
 
 class GetEnterpriseProxyEnterprisesWithProperty(VcoModel):
-
     enterprise_proxy_id: int
     name: str
     value: str
@@ -457,7 +427,6 @@ class GetEnterpriseProxyEnterprisesWithProperty(VcoModel):
 
 
 class EnterpriseProxyEnterprisesWithPropertyItem(VcoModel):
-
     id_: Annotated[int, Alias("id")]
     name: str | None | MISSING = MISSING
     logical_id: uuid.UUID | None | MISSING = MISSING

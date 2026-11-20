@@ -1,9 +1,11 @@
 """VeloCloud API client."""
 
 from pyvelo.client.auth import VcoAuth
+from pyvelo.client.credentials import get_vco_credentials
 from pyvelo.client.exceptions import (
     VcoApiError,
     VcoClientNotInitializedError,
+    VcoCredentialsError,
     VcoEmptyResultError,
     VcoError,
     VcoHttpError,
@@ -36,6 +38,7 @@ __all__ = [
     "VcoClient",
     "VcoClientNotInitializedError",
     "VcoClientProtocol",
+    "VcoCredentialsError",
     "VcoEmptyResultError",
     "VcoError",
     "VcoHttpError",
@@ -47,5 +50,6 @@ __all__ = [
     "VcoWebSocketError",
     "VcoWebSocketTimeoutError",
     "VcoWebSocketValidationError",
+    "get_vco_credentials",
     "make_file_dump_hook",
 ]

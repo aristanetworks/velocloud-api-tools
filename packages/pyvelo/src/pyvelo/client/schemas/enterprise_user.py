@@ -22,13 +22,11 @@ __all__ = [
 
 
 class GetEnterpriseUser(VcoModel):
-
     id_: Annotated[int, Alias("id")]
     username: str | MISSING = MISSING
 
 
 class EnterpriseUserResult(VcoModel):
-
     id_: Annotated[int, Alias("id")]
     created: VcoTimestamp | None | MISSING = MISSING
     enterprise_id: int | None | MISSING = MISSING
@@ -52,12 +50,10 @@ class EnterpriseUserResult(VcoModel):
 
 
 class GetEnterpriseUserApiTokens(VcoModel):
-
     id_: Annotated[int, Alias("id")]
 
 
 class EnterpriseUserApiTokenItem(VcoModel):
-
     id_: Annotated[int | None | MISSING, Alias("id")] = MISSING
     name: str | None | MISSING = MISSING
     created: VcoTimestamp | None | MISSING = MISSING
@@ -70,10 +66,8 @@ class EnterpriseUserApiTokenItem(VcoModel):
 
 
 class GetEnterpriseUsersStatus(VcoModel):
-
     user_ids: list[int]
 
 
 class EnterpriseUsersStatusResult(VcoModel):
-
     data: dict[str, Any] | None | MISSING = MISSING
