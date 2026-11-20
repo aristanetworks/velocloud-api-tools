@@ -19,11 +19,10 @@ from datetime import UTC, datetime, timedelta
 import polars as pl
 from pyvelo.analytics import Analytics, FlowGroupBy, FlowMetric
 from pyvelo.analytics.enums import FirewallType
-from pyvelo.client import VcoClient
+from pyvelo.client import VcoClient, get_vco_credentials
 from pyvelo.client.enums import EdgeState
 from pyvelo.client.schemas.enterprise import GetEnterprise, GetEnterpriseEdges
 from pyvelo.core import ApiInterval
-from pyvelo_intent import get_vco_credentials
 
 logger = logging.getLogger(__name__)
 

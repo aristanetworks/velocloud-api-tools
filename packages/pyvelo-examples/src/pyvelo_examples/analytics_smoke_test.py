@@ -23,7 +23,7 @@ from pydantic import MISSING, ValidationError
 from pyvelo.analytics import Analytics, FlowGroupBy, FlowMetric
 from pyvelo.analytics.enums import EnterpriseFirewallType, FirewallType
 from pyvelo.analytics.frame import MetricFrame
-from pyvelo.client import VcoClient
+from pyvelo.client import VcoClient, get_vco_credentials
 from pyvelo.client.enums import EdgeState
 from pyvelo.client.enums.edge import GetEdgeWith, SdwanPeerType
 from pyvelo.client.enums.metrics import BasicMetricViewBy
@@ -40,7 +40,6 @@ from pyvelo.client.schemas.enterprise import (
 )
 from pyvelo.client.schemas.metrics import LinkPair
 from pyvelo.core import ApiInterval
-from pyvelo_intent import get_vco_credentials
 
 logger = logging.getLogger(__name__)
 

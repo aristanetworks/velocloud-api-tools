@@ -11,12 +11,8 @@ class IntentError(Exception):
     """Base class for intent-layer errors."""
 
 
-class MissingEnvVarError(IntentError):
-    """Required environment variable is missing or empty."""
-
-
 class ConfigInputError(IntentError):
-    """User-supplied config (CLI args, YAML, env file path) is invalid."""
+    """User-supplied config (CLI args, YAML) is invalid."""
 
 
 class UnknownRegistryEntryError(LookupError):
