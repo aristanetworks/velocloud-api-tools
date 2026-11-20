@@ -5,10 +5,10 @@ parameter combinations per method. Session-scoped fixtures handle
 connection setup and infrastructure discovery so individual tests are
 concurrency-safe and independent.
 
-Requires env vars:  VCO_HOST, VCO_API_TOKEN, VCO_ENTERPRISE_ID
+Requires env vars:  VCO_HOST, VCO_TOKEN, VCO_ENTERPRISE_ID
 
 Run:
-    VCO_HOST=... VCO_API_TOKEN=... VCO_ENTERPRISE_ID=... uv run pytest tests/integration/ -v
+    VCO_HOST=... VCO_TOKEN=... VCO_ENTERPRISE_ID=... uv run pytest tests/integration/ -v
 """
 
 from __future__ import annotations

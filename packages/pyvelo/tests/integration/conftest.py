@@ -3,7 +3,7 @@
 All connection details are injected via environment variables:
 
     VCO_HOST            required — VCO FQDN (e.g. vco123.velocloud.net)
-    VCO_API_TOKEN       required — API token
+    VCO_TOKEN           required — API token
     VCO_ENTERPRISE_ID   required — enterprise ID
 """
 
@@ -44,7 +44,7 @@ def interval() -> ApiInterval:
 @pytest_asyncio.fixture(scope="session", loop_scope="session")
 async def vco_client() -> AsyncGenerator[VcoClient]:
     host = _env("VCO_HOST", required=True)
-    token = _env("VCO_API_TOKEN", required=True)
+    token = _env("VCO_TOKEN", required=True)
     assert host is not None
     assert token is not None
     async with VcoClient(vco_fqdn=host, token=token) as client:

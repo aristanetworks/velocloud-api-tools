@@ -34,8 +34,7 @@ using `rev = "<commit-sha>"`. This installation route does not require a PyPI re
 ## Preview a configuration change
 
 Set `VCO_HOST` to your Orchestrator hostname and `VCO_TOKEN` to an API token
-with the appropriate enterprise permissions. This helper uses `VCO_TOKEN`;
-the separate read-only examples use `VCO_API_TOKEN`.
+with the appropriate enterprise permissions. 
 
 ```python
 import asyncio
