@@ -14,14 +14,17 @@ from pyvelo.client.models.configuration.device_settings.segment import (
     StaticRoute,
 )
 from pyvelo.client.models.configuration.firewall.root import FirewallData
+from pyvelo.client.models.configuration.wan.root import WanData
 from pyvelo.client.schemas.configuration import (
     AnyConfigurationModule,
     DeviceSettingsConfigurationModule,
     EdgeConfiguration,
     EnterpriseConfigurationProfile,
     FirewallConfigurationModule,
+    WanConfigurationModule,
 )
 from pyvelo.config.resolver import ResolverContext
+from pyvelo.core import at
 from pyvelo_intent.config.state import ConfigState, SaveResult, ValidationWarning
 
 
@@ -291,6 +294,58 @@ def test_field_changes_address_a_composite_key():
             0,
             5,
         )
+    ]
+
+
+def _wan_state(links: list[dict[str, object]]) -> tuple[ConfigState, WanData]:
+    data = WanData.model_validate({"links": links})
+    module = WanConfigurationModule(
+        data=data,
+        created=datetime(2024, 1, 1, tzinfo=UTC),
+        modified=datetime(2024, 1, 1, tzinfo=UTC),
+        id_=3,
+        type_=ConfigurationModuleType.ENTERPRISE,
+        description=None,
+        configuration_id=100,
+        enterprise_logical_id=None,
+        schema_version=None,
+        version=None,
+        metadata=None,
+    )
+    state = ConfigState(
+        edge_config=None,
+        profile_config=EnterpriseConfigurationProfile(name="P", modules=[module]),
+        target_type="profile",
+        resolver_context=ResolverContext(),
+    )
+    state.take_snapshot()
+    return state, data
+
+
+def test_field_changes_show_an_edit_to_a_keyless_item():
+    # Neither link has an internalId, so neither has a key.
+    state, data = _wan_state(
+        [{"name": "A", "type": "WIRED"}, {"name": "B", "type": "WIRED"}]
+    )
+    _ = data.merge_patch({"links": {at(0): {"isp": "x"}}})
+    changes = state.get_field_changes(module_name="WAN")
+    assert [(c.path, c.before, c.after) for c in changes] == [
+        ("links[0].isp", None, "x")
+    ]
+
+
+def test_field_changes_show_an_edit_among_repeated_keys():
+    link_id = "00000000-0000-0000-0000-000000000001"
+    state, data = _wan_state(
+        [
+            {"internalId": link_id, "name": "A", "type": "WIRED"},
+            {"internalId": link_id, "name": "B", "type": "WIRED"},
+        ]
+    )
+    _ = data.merge_patch({"links": {at(0): {"isp": "x"}}})
+    changes = state.get_field_changes(module_name="WAN")
+    assert [(c.path, c.before, c.after) for c in changes] == [
+        ("links[0].isp", None, "x")
     ]
 
 

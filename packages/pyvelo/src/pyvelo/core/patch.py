@@ -9,6 +9,7 @@ import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Literal, cast, override
+from uuid import UUID
 
 from .rebase import Path
 
@@ -31,8 +32,8 @@ class PatchError(ValueError):
         return f"{self.path}: {self.message}" if self.path.parts else self.message
 
 
-type Selector = str | int | tuple[object, ...]
-"""A key or value, ``at(n)``, or the tuple of the parts of a composite key."""
+type Selector = str | int | UUID | tuple[object, ...]
+"""A key or value (a ``UUID`` key too), ``at(n)``, or the tuple of the parts of a composite key."""
 
 _POSITION_WORDS = ("first", "last")
 _POSITION_ANCHORS = ("before", "after")
@@ -48,11 +49,16 @@ def at(n: int) -> str:
     return f"#{n}"
 
 
-def _anchor(selector: Selector) -> str | int | list[str | int | float]:
-    """*selector* as JSON: the parts of a tuple as a list, each part that is not a number or a string (a ``UUID``) in string form."""
+def _anchor(selector: Selector) -> str | int | float | list[str | int | float]:
+    """*selector* as JSON: the parts of a tuple as a list; a selector or part that is not a number or a string (a ``UUID``) in string form."""
     if not isinstance(selector, tuple):
-        return selector
-    return [p if isinstance(p, (str, int, float)) else str(p) for p in selector]
+        return _json_part(selector)
+    return [_json_part(p) for p in selector]
+
+
+def _json_part(value: object) -> str | int | float:
+    """*value* as it is when a number (``bool`` included) or a string, else in string form."""
+    return value if isinstance(value, (str, int, float)) else str(value)
 
 
 def _place(

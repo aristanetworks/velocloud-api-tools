@@ -447,7 +447,14 @@ def _same_key(raw_key: KeyValue, parsed_key: KeyValue) -> bool:
     """Whether a key read from raw JSON is the key the parse produced from it.
 
     Tolerates coercion by the parse: raw ``"0"`` or ``0.0`` is parsed key
-    ``0``. A composite key is compared part by part.
+    ``0``, and a raw key in another letter case is the same key (an
+    upper-case UUID string is parsed as a ``UUID``, which is lower case). A
+    composite key is compared part by part.
+
+    This compares a raw item with its own parse at the same position, so a
+    difference of case can only be the parse's. It is not how keys of
+    different items are compared: selectors and ``pair_items`` compare keys
+    exactly, in string form.
     """
     if isinstance(raw_key, tuple) or isinstance(parsed_key, tuple):
         return (
@@ -456,7 +463,10 @@ def _same_key(raw_key: KeyValue, parsed_key: KeyValue) -> bool:
             and len(raw_key) == len(parsed_key)
             and all(_same_key(r, p) for r, p in zip(raw_key, parsed_key, strict=True))
         )
-    return raw_key == parsed_key or str(raw_key) == str(parsed_key)
+    if raw_key == parsed_key:
+        return True
+    raw_text, parsed_text = str(raw_key), str(parsed_key)
+    return raw_text == parsed_text or raw_text.casefold() == parsed_text.casefold()
 
 
 def _keys(items: list[object], node: _KeyedList) -> list[KeyValue | None]:
@@ -643,7 +653,8 @@ def _rebase_object(
 def _alt_agrees(raw_alt: KeyScalar | None, before_alt: KeyScalar | None) -> bool:
     """Whether an alt key of *before* is the one the raw item has, so it was read.
 
-    A raw item without one had it made up by the parse.
+    A raw item without one had it made up by the parse. Compared as
+    ``_same_key`` compares, so letter case does not count.
     """
     return (
         raw_alt is not None

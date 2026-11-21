@@ -22,8 +22,9 @@ from .patch_models import Root
 
 ROOTS = (FirewallData, QosData, DeviceSettingsData, WanData, ControlPlaneData)
 
-# Lists of models with neither a KeyField nor Positional(): a patch replaces
-# them whole. Declaring one (or adding a new list) means changing this set.
+# Lists of models with neither a KeyField nor Positional(): a patch names their
+# items by position, at(n), and adds under "+". Declaring one (or adding a new
+# list) means changing this set.
 UNDECLARED: frozenset[str] = frozenset(
     {
         "EdgeToEdgeDetail.vpn_hubs",

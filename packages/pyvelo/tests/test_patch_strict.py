@@ -260,6 +260,23 @@ def test_directives_raise_outside_a_list_item(patch: dict[str, object], path: st
     _ = raises_at(Root(), patch, path)
 
 
+@pytest.mark.parametrize(
+    ("patch", "path"),
+    [
+        ({"rules": {"a": {"rule_id": "x", "ruleId": "y"}}}, "rules[a].rule_id"),
+        ({"rules": {"b": add({"rule_id": "x", "ruleId": "y"})}}, "rules[b].rule_id"),
+        ({"need": {"name": "n", "rule_id": "x", "ruleId": "y"}}, "need.rule_id"),
+    ],
+    ids=["merged", "built-item", "built-sub-model"],
+)
+def test_one_field_named_twice_raises(patch: dict[str, object], path: str):
+    root = Root(rules=[Rule(name="a")])
+    dump = copy.deepcopy(root.model_dump())
+    error = raises_at(root, patch, path)
+    assert "'rule_id'" in error.message and "'ruleId'" in error.message
+    assert root.model_dump() == dump
+
+
 def test_failed_patch_changes_nothing():
     root = Root(rules=[Rule(name="a")])
     dump = copy.deepcopy(root.model_dump())

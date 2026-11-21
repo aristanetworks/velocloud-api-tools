@@ -343,6 +343,26 @@ def test_raw_key_the_baseline_lacks_replaces_the_list():
     assert rebase(raw, before, after, Rs) == after
 
 
+def test_raw_key_in_another_case_than_its_parse_still_rebases_item_by_item():
+    # The parse coerced the raw key (an upper-case UUID read as a lower-case one).
+    raw = {"rules": [item("RULE-A", x=1), item("RULE-B", x=2)]}
+    before = {"rules": [item("rule-a", port=0), item("rule-b", port=0)]}
+    after = {"rules": [item("rule-a", port=5), item("rule-b", port=0)]}
+    assert rebase(raw, before, after, Rs) == {
+        "rules": [item("RULE-A", x=1, port=5), item("RULE-B", x=2)]
+    }
+
+
+def test_raw_alt_key_in_another_case_is_trusted():
+    raw = {"rules": [item("a", "ABC", x=1), item("b", "DEF", x=2)]}
+    before = {"rules": [item("a", "abc", port=0), item("b", "def", port=0)]}
+    after = {"rules": [item("c", "abc", port=0), item("b", "def", port=0)]}
+    # The rename pairs by the alt key: one item, its unknown raw key kept.
+    assert rebase(raw, before, after, Rs) == {
+        "rules": [item("c", "ABC", x=1), item("b", "DEF", x=2)]
+    }
+
+
 def test_removed_item_with_a_unique_key_is_removed():
     raw = {"rules": [item("a", x=1), item("b", x=2), item("c", x=3)]}
     before = {"rules": [item("a", port=0), item("b", port=0), item("c", port=0)]}

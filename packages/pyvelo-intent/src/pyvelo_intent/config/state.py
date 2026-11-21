@@ -307,8 +307,9 @@ class ConfigState:
         If ``module_name`` is None, returns changes across all changed
         modules. KeyField-annotated lists are diffed by key (additions,
         removals, per-key recursive diff), so reordering does not appear as
-        a change. The path format describes the field a user would patch via
-        a ``merge_patch`` dict.
+        a change; one with an item without a key, or a key repeated, is
+        diffed by position. The path format describes the field a user would
+        patch via a ``merge_patch`` dict.
 
         MISSING is preserved as the sentinel rather than rendered as None.
         """
@@ -518,13 +519,25 @@ def _diff_keyed_list(
     path names an item by ``item_key_text``: the value of a one-part key, a
     composite key as ``key_text`` writes it
     (``static["10.0.0.0",24,"192.168.1.1",GE3]``), as the item before had it.
+
+    When an item on either side has no key, or a key is repeated on either
+    side, items cannot be matched by key: the lists are diffed by position,
+    as a list without a ``KeyField`` is (``_diff_value``).
     """
-    by_key_before: dict[KeyForm | None, object] = {
-        key_form(item_key(item, key_paths)): item for item in before
-    }
-    by_key_after: dict[KeyForm | None, object] = {
-        key_form(item_key(item, key_paths)): item for item in after
-    }
+    keys_before = [key_form(item_key(item, key_paths)) for item in before]
+    keys_after = [key_form(item_key(item, key_paths)) for item in after]
+    if any(
+        None in keys or len(set(keys)) != len(keys)
+        for keys in (keys_before, keys_after)
+    ):
+        _diff_value(module=module, path=path, before=before, after=after, out=out)
+        return
+    by_key_before: dict[KeyForm | None, object] = dict(
+        zip(keys_before, before, strict=True)
+    )
+    by_key_after: dict[KeyForm | None, object] = dict(
+        zip(keys_after, after, strict=True)
+    )
     all_keys: list[KeyForm | None] = list(by_key_before.keys()) + [
         k for k in by_key_after if k not in by_key_before
     ]

@@ -33,7 +33,6 @@ from __future__ import annotations
 import datetime
 import functools
 import types
-import warnings
 from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import dataclass
 from enum import Enum, IntEnum, auto
@@ -410,12 +409,7 @@ class VcoModel(BaseModel):
                 inherited_level=context_level,
             )
 
-        # merge_patch sets fields without validation, so a field can hold a
-        # value of an unexpected type. Hide pydantic's
-        # PydanticSerializationUnexpectedValue warnings for those.
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore", UserWarning)
-            dumped: JsonObject = handler(self)
+        dumped: JsonObject = handler(self)
 
         # Full dump: drop fields that are absent at the active level, but keep
         # every other value, defaults included. Unlike compact mode, nested
@@ -479,12 +473,19 @@ class VcoModel(BaseModel):
         field when it parses a response: the same coercions and constraints,
         the field's validators and the model's config. The one difference:
         a ``DefaultingScalar`` or ``DefaultingModel`` field does not fall back
-        to its default, so a bad value raises. A key that names no field
-        raises, at every depth, items and sub-models built from the patch
-        included. Keys that start with ``_`` are directives: only ``_op`` and
-        ``_position``, and only on a list item's value. ``OverrideFlag``
-        fields are set to True when a sibling that is not ``EdgeLocal``
-        changes. A ``Resolvable`` field given a name resolves it to an ID
+        to its default, so a bad value raises. These are the field
+        validators of what the patch assigns: the model validators
+        (``@model_validator``) of a model that already exists do not run when
+        a patch changes it. An item or sub-model built whole from the patch
+        is validated whole, its model validators included. So a patch that
+        deletes every netflow collector while ``enabled`` stays true is
+        accepted, though parsing that state would refuse it. A key that
+        names no field raises, at every depth, items and sub-models built
+        from the patch included, and so do two keys that name one field
+        (``rule_id`` and ``ruleId``). Keys that start with ``_`` are
+        directives: only ``_op`` and ``_position``, and only on a list item's
+        value. ``OverrideFlag`` fields are set to True when a sibling that is
+        not ``EdgeLocal`` changes. A ``Resolvable`` field given a name resolves it to an ID
         with *resolvers*.
 
         **Lists.** Each list field has a kind (``list_kind``):
@@ -504,8 +505,11 @@ class VcoModel(BaseModel):
           anything else is a plain value.
 
         A list value replaces the list, its items validated; a keyed list's
-        items must have distinct keys. An object is item operations, keyed
-        by selector.
+        items must have distinct keys. In a list keyed by a ``NameOf`` field,
+        an item given as an object is treated as an ``add`` under its name:
+        it takes the resolver's name and IDs, and one that gets its IDs from
+        neither a resolver nor its own fields raises ``LookupError``.
+        An object is item operations, keyed by selector.
 
         **Selectors.** In a keyed list, tried in this order:
 

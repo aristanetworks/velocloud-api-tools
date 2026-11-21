@@ -104,8 +104,14 @@ A patch is strict and all or nothing:
 - Every value is validated as the field is when a response is parsed. Fields
   that tolerate a bad value from the VCO (turning it into the default) do not
   in a patch: it raises.
-- A key that names no field raises, at every depth. Keys that start with `_`
-  are directives: `_op` and `_position`, on a list item only.
+- A patch runs the field validators of what it assigns. The model-level
+  validators (`@model_validator`) of a model that already exists do not run
+  when a patch changes it; an item or sub-model built whole from a patch is
+  validated whole. So a patch that deletes every netflow collector while
+  `enabled` stays true is accepted, though parsing that state would refuse it.
+- A key that names no field raises, at every depth, and so do two keys that
+  name one field (`rule_id` and `ruleId`). Keys that start with `_` are
+  directives: `_op` and `_position`, on a list item only.
 - A patch that cannot be applied raises `PatchError` (a `ValueError`), whose
   `path` is where in the patch it failed. Resolver errors keep their types
   (`ResolutionError` for an unknown name). Either way the state, and
@@ -240,10 +246,14 @@ firewall: update
   adding a segment with another one's IDs.
 - Renaming an item that was read with an alt key (a firewall or QoS rule's
   logical ID, a segment's `segmentId`) is one change of its name: keys the
-  models do not know on that item are kept. In a list without one, a rename
-  is the old item removed and a new one added, and those keys are not kept.
-- A change that reorders the items of a keyed list (a `move`) is planned as
-  one change of the whole list; the items' unknown keys are still kept.
+  models do not know on that item are kept. A change of the key in a list
+  without an alt key is the old item removed and a new one added, and those
+  keys are not kept. A WAN link's name is a label, not its key, so renaming a
+  link read with its `internalId` is a plain change. An item read without its ID (for example a QoS rule
+  the VCO returned with no `ruleLogicalId`) that is then renamed is also saved
+  as a removal plus an addition.
+- A patch that moves items (a `move`) shows in `plan()` as one change at the
+  list; in a keyed list the items' unknown keys are still kept.
 - A cache of loaded modules must keep the JSON rows or `module.raw_data`. A
   `model_validate(module.model_dump())` round trip loses the raw snapshot, and
   with it the "as read" guarantee above.

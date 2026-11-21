@@ -1,6 +1,7 @@
 """The patch helpers add, delete, move, at and the parsing of item operations."""
 
 import json
+import uuid
 
 import pytest
 from pyvelo.core import PatchError
@@ -74,6 +75,12 @@ def test_helpers_return_json():
     ]
     for v in values:
         assert json.loads(json.dumps(v)) == v
+
+
+def test_scalar_anchor_is_written_as_json():
+    value = move(before=uuid.UUID(int=1))
+    assert value == {"_position": {"before": "00000000-0000-0000-0000-000000000001"}}
+    assert json.loads(json.dumps(value)) == value
 
 
 def test_parse_change():

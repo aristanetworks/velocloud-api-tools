@@ -10,6 +10,7 @@ from pydantic import MISSING, Field
 from pyvelo.client.models.configuration.device_settings.root import (
     DeviceSettingsData,
 )
+from pyvelo.client.models.configuration.firewall.root import FirewallData
 from pyvelo.config.resolver import ResolutionError
 from pyvelo.core import PatchError, VcoModel, add, at, delete, move
 from pyvelo.core.fields import KeyField
@@ -612,6 +613,47 @@ def test_add_by_name_without_a_resolver_does_not_take_another_segments_ids(
     dump = copy.deepcopy(fw.model_dump())
     with pytest.raises(LookupError, match="'Guest'.*segment_id") as exc:
         _ = fw.merge_patch({"segments": op})
+    assert not isinstance(exc.value, ResolutionError)
+    assert fw.model_dump() == dump
+
+
+def global_and(fw: FirewallData, new: dict[str, object]) -> dict[str, object]:
+    """A list value for ``segments``: the Global Segment as dumped, then *new*."""
+    return {"segments": [fw.segments[0].model_dump(by_alias=True), new]}
+
+
+def test_list_value_item_by_name_takes_the_resolvers_ids():
+    fw = fresh()
+    _ = fw.merge_patch(
+        global_and(fw, {"segment": {"name": "guest"}, "outbound": []}),
+        resolvers=Fake(),
+    )
+    meta = fw.segments[1].segment
+    assert (meta.name, meta.segment_id, meta.segment_logical_id) == (
+        "Guest",
+        2,
+        uuid.UUID(int=3),
+    )
+
+
+def test_list_value_item_of_an_unknown_name_raises():
+    fw = fresh()
+    dump = copy.deepcopy(fw.model_dump())
+    with pytest.raises(ResolutionError) as exc:
+        _ = fw.merge_patch(
+            global_and(fw, {"segment": {"name": "gest"}, "outbound": []}),
+            resolvers=Fake(),
+        )
+    assert exc.value.candidates == ["Guest"]
+    assert fw.model_dump() == dump
+
+
+def test_list_value_cannot_give_a_new_segment_another_segments_ids():
+    # Without a resolver, Guest would get segmentId 0: Global Segment's.
+    fw = fresh()
+    dump = copy.deepcopy(fw.model_dump())
+    with pytest.raises(LookupError, match="'Guest'.*segment_id") as exc:
+        _ = fw.merge_patch(global_and(fw, {"segment": {"name": "Guest"}}))
     assert not isinstance(exc.value, ResolutionError)
     assert fw.model_dump() == dump
 

@@ -179,8 +179,9 @@ def _merge_model(
 ) -> None:
     """Merge *patch* into *model*, in place. *path* is where *model* is in the patch.
 
-    Every key must name a field of the model; a directive (a key that starts
-    with ``_``) is not one. Either raises ``PatchError``.
+    Every key must name a field of the model, and no two keys one field; a
+    directive (a key that starts with ``_``) is not one. Each raises
+    ``PatchError`` (``_patch_fields``).
     """
     model_cls = type(model)
     fields = model_cls.model_fields
@@ -188,8 +189,8 @@ def _merge_model(
 
     # (python_name, value) for each patch key.
     updates = [
-        (_field_name(names, model_cls.__name__, key, path), value)
-        for key, value in patch.items()
+        (name, value)
+        for _, name, value in _patch_fields(names, model_cls.__name__, patch, path)
     ]
     # Copy the touched fields first so OverrideFlag logic can see what changed.
     before: JsonObject = {
@@ -211,8 +212,8 @@ def _field_name(names: Mapping[str, str], owner: str, key: object, path: Path) -
     *names* maps each accepted key to a python name (``_field_names_by_key``).
     *owner* is the name of the model class, for the message. A directive or a
     key that names no field raises ``PatchError`` at ``path.child(key)``. Both
-    ``_merge_model`` and ``_build_input`` check keys here, so their messages
-    are the same.
+    ``_merge_model`` and ``_build_input`` check keys here (``_patch_fields``),
+    so their messages are the same.
     """
     text = key if isinstance(key, str) else str(key)
     if isinstance(key, str) and key in names:
@@ -233,6 +234,28 @@ def _field_name(names: Mapping[str, str], owner: str, key: object, path: Path) -
     if close:
         message += f"; did you mean {', '.join(close)}?"
     raise PatchError(message, where)
+
+
+def _patch_fields(
+    names: Mapping[str, str], owner: str, patch: Mapping[object, object], path: Path
+) -> list[tuple[object, str, object]]:
+    """``(key, python name, value)`` for each key of *patch*, each checked by ``_field_name``.
+
+    Two keys that name one field (``rule_id`` and ``ruleId``) raise
+    ``PatchError`` at the field's path, naming both.
+    """
+    fields: list[tuple[object, str, object]] = []
+    seen: dict[str, object] = {}
+    for key, value in patch.items():
+        name = _field_name(names, owner, key, path)
+        if name in seen:
+            raise PatchError(
+                f"{seen[name]!r} and {key!r} both name the field {name}: give it once",
+                path.child(name),
+            )
+        seen[name] = key
+        fields.append((key, name, value))
+    return fields
 
 
 def _merge_field(
@@ -582,16 +605,20 @@ def _new_keyed_item(
     """Build a new keyed-list item from the body of an ``add``, with *key* written in.
 
     Each part of *key* (one, or the tuple of a composite key) is written at
-    its path as given, so ``24`` stays an ``int``. ``_check_add`` has refused
-    a body that gives another key. Raises ``LookupError`` (not
-    ``ResolutionError``) if the key is a name (``NameOf``) and the IDs that go
-    with it were neither in the patch nor found by a resolver: the item would
-    carry the model's defaults, which are another item's IDs. See
+    its path as given, so ``24`` stays an ``int``, unless the body gives that
+    part already, under any name of its field, in the same string form.
+    ``_check_add`` has refused a body that gives another key. Raises
+    ``LookupError`` (not ``ResolutionError``) if the key is a name
+    (``NameOf``) and the IDs that go with it were neither in the patch nor
+    found by a resolver: the item would carry the model's defaults, which are
+    another item's IDs. See
     ``_new_item``.
     """
     parts = key if isinstance(key, tuple) else (key,)
     for key_path, part in zip(spec.key_paths, parts, strict=True):
-        body = _inject_key_path(body, key_path, part)
+        given = _patch_value(item_type.fields, body, key_path)
+        if given is None or str(given) != str(part):
+            body = _inject_key_path(body, key_path, part)
     item = _new_item(item_type, body, resolvers, path, context)
     if spec.name_identity is not None:
         _require_ids_for_name(item, spec.name_identity, spec.key_paths[0], str(key))
@@ -672,7 +699,8 @@ def _build_input(
     with `` | ``), and *path* is where *patch* is in the patch. This function
     walks *patch* against *fields* and:
 
-    - raises ``PatchError`` for a key that names no field and for a directive
+    - raises ``PatchError`` for a key that names no field, for a directive
+      and for two keys that name one field (``_patch_fields``)
     - writes a key that pydantic does not read (the camelCase form of a field
       with another alias) as the python name
     - resolves string values on Resolvable fields the way ``merge_patch``
@@ -693,8 +721,7 @@ def _build_input(
     names = _field_names_by_key(fields)
     built: JsonObject = {}
 
-    for key, value in patch.items():
-        field_name = _field_name(names, owner, key, path)
+    for key, field_name, value in _patch_fields(names, owner, patch, path):
         fi = fields[field_name]
         child = path.child(field_name)
         if isinstance(value, str):
@@ -1130,7 +1157,11 @@ def _list_value_input(
     """*value*, a list value for a list of models, with each item object checked by ``_build_input``.
 
     An item's path is ``path[key]`` in a keyed list when the item gives its
-    key, ``path[#n]`` otherwise. Any other value is returned as it is.
+    key, ``path[#n]`` otherwise. In a list whose key is a name (``NameOf``),
+    an item that gives one takes the resolver's name for it, as an add under
+    that name does (an unknown name raises ``ResolutionError``); the IDs of
+    the name are then filled by ``_build_input`` and checked by
+    ``_check_list_value``. Any other value is returned as it is.
     """
     item_type = spec.item_type
     if item_type is None or not _is_list(value):
@@ -1139,6 +1170,14 @@ def _list_value_input(
     for index, item in enumerate(value):
         if _is_dict(item):
             key = _patch_key(item_type.fields, item, spec.key_paths)
+            if (
+                key is not None
+                and spec.name_identity is not None
+                and resolvers is not None
+            ):
+                name = _canonical_name(spec.name_identity, str(key), resolvers)
+                if name != key:
+                    item, key = _inject_key_path(item, spec.key_paths[0], name), name
             part: PathPart = index if key is None else _key_path_part(key)
             item = _build_input(
                 item_type.fields,
@@ -1160,7 +1199,10 @@ def _check_list_value(
     """Check *built*, a list validated from the list value *data*, for what validation lets by.
 
     Each item built from an object refuses keys it has no field for
-    (``_refuse_unread_keys``). A keyed list whose items repeat a key raises
+    (``_refuse_unread_keys``). In a list whose key is a name (``NameOf``),
+    such an item that has a name and lacks the IDs of it raises
+    ``LookupError``, as an add under that name does
+    (``_require_ids_for_name``). A keyed list whose items repeat a key raises
     ``PatchError`` at *path*.
     """
     if len(data) == len(built):
@@ -1169,6 +1211,11 @@ def _check_list_value(
                 _refuse_unread_keys(
                     item, item_data, path.child(_item_part(spec, item, index))
                 )
+                key = item_key(item, spec.key_paths)
+                if spec.name_identity is not None and key is not None:
+                    _require_ids_for_name(
+                        item, spec.name_identity, spec.key_paths[0], str(key)
+                    )
     seen: dict[KeyForm, int] = {}
     for index, item in enumerate(built):
         key = item_key(item, spec.key_paths)

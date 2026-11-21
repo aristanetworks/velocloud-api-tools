@@ -369,6 +369,30 @@ def test_non_scalar_key_part_names_an_anchor_and_an_added_key():
     assert [x.internal_id for x in data_links(data)] == [U3, U1]
 
 
+def test_add_body_may_give_the_selectors_key_under_another_name():
+    data = wan(U1)
+    body = {"internalId": str(U3), "name": "New", "type": "WIRED"}
+    _ = data.merge_patch({"links": {(U3, "IPv4"): add(body)}})
+    assert [x.internal_id for x in data_links(data)] == [U1, U3]
+
+
+class Collector(VcoModel):
+    logical_id: uuid.UUID
+    host: str = ""
+
+
+class Collectors(VcoModel):
+    collectors: Annotated[list[Collector], KeyField("logical_id")] = Field(
+        default_factory=list
+    )
+
+
+def test_one_part_uuid_key_names_an_anchor_given_as_a_uuid():
+    model = Collectors(collectors=[Collector(logical_id=U1), Collector(logical_id=U2)])
+    _ = model.merge_patch({"collectors": {str(U2): move(before=U1)}})
+    assert [c.logical_id for c in model.collectors] == [U2, U1]
+
+
 def data_links(data: WanData) -> list[WanLink]:
     assert data.links is not MISSING
     return data.links
