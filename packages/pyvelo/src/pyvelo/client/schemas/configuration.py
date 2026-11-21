@@ -374,38 +374,18 @@ class Configuration(VcoModel):
     enterprise: EnterpriseConfiguration | None | MISSING = MISSING
 
 
-class DeviceSettingsModuleUpdate(VcoModel):
-    data: DeviceSettingsData
-    refs: DeviceSettingsRefs | MISSING = MISSING
+class ConfigurationModuleUpdate(VcoModel):
+    """The ``_update`` payload: raw module data, and refs when they are replaced."""
 
-
-class WanModuleUpdate(VcoModel):
-    data: WanData
-
-
-class QosModuleUpdate(VcoModel):
-    data: QosData
+    data: dict[str, Any]
     refs: dict[str, Any] | MISSING = MISSING
-
-
-class FirewallModuleUpdate(VcoModel):
-    data: FirewallData
-
-
-ConfigurationModuleUpdate = (
-    DeviceSettingsModuleUpdate
-    | WanModuleUpdate
-    | QosModuleUpdate
-    | FirewallModuleUpdate
-)
 
 
 class UpdateConfigurationModule(VcoModel):
     configuration_module_id: Annotated[int, Alias("id")]
     enterprise_id: Annotated[int | MISSING, NoneIsMissing] = MISSING
-    # Typed as Any to avoid Pydantic serialization warnings for the undiscriminated
-    # ConfigurationModuleUpdate union; callers always pass a concrete subtype.
-    update: Annotated[Any, Alias("_update")]
+    version: Annotated[str | MISSING, NoneIsMissing] = MISSING
+    update: Annotated[ConfigurationModuleUpdate, Alias("_update")]
 
 
 class InsertConfigurationModuleResult(VcoModel):
@@ -423,13 +403,13 @@ class InsertConfigurationModuleBase(VcoModel):
 
 class InsertQosConfigurationModule(InsertConfigurationModuleBase):
     name: Literal["QOS"] = "QOS"
-    data: QosData
+    data: dict[str, Any]
     refs: dict[str, Any] | None = None
 
 
 class InsertFirewallConfigurationModule(InsertConfigurationModuleBase):
     name: Literal["firewall"] = "firewall"
-    data: FirewallData
+    data: dict[str, Any]
 
 
 type InsertConfigurationModule = Annotated[
@@ -535,12 +515,10 @@ __all__ = [
     "ControlPlaneConfigurationModule",
     "DeleteConfiguration",
     "DeviceSettingsConfigurationModule",
-    "DeviceSettingsModuleUpdate",
     "EdgeConfiguration",
     "EnterpriseConfigurationModule",
     "EnterpriseConfigurationProfile",
     "FirewallConfigurationModule",
-    "FirewallModuleUpdate",
     "GetAnalyticsConfiguration",
     "GetAnalyticsConfigurationResult",
     "GetApplicationsResult",
@@ -553,9 +531,7 @@ __all__ = [
     "OperatorConfiguration",
     "OperatorConfigurationModule",
     "QosConfigurationModule",
-    "QosModuleUpdate",
     "UpdateConfigurationModule",
     "WanConfigurationModule",
-    "WanModuleUpdate",
     "new_edge_module",
 ]

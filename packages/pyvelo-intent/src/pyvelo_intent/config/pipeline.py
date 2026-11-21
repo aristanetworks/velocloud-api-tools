@@ -6,24 +6,22 @@ from typing import Any, cast
 from pydantic import MISSING
 from pyvelo.client.enums.configuration import ConfigurationModuleName
 from pyvelo.client.enums.profiles import GetConfigurationWith
+from pyvelo.client.module_write import ModulePlan, plan_module
 from pyvelo.client.protocol import VcoClientProtocol
 from pyvelo.client.schemas.configuration import (
     AnyConfigurationModule,
     ConfigurationBase,
+    ConfigurationModuleUpdate,
     DeviceSettingsConfigurationModule,
-    DeviceSettingsModuleUpdate,
     EdgeConfiguration,
     EnterpriseConfigurationProfile,
     FirewallConfigurationModule,
-    FirewallModuleUpdate,
     GetConfiguration,
     InsertFirewallConfigurationModule,
     InsertQosConfigurationModule,
     QosConfigurationModule,
-    QosModuleUpdate,
     UpdateConfigurationModule,
     WanConfigurationModule,
-    WanModuleUpdate,
 )
 from pyvelo.client.schemas.edge import GetEdgeConfigurationStack
 from pyvelo.config.resolver import ResolverContext, ResolverRegistry
@@ -33,6 +31,7 @@ from pyvelo.config.resolvers.profile import ProfileResolver
 from pyvelo.config.resolvers.segment import SegmentResolver
 from pyvelo.config.validation import ValidationError as ValidatorError
 from pyvelo.config.validation import ValidationResult, ValidatorRegistry
+from pyvelo.core import ConfigContext
 from pyvelo.core.base import VcoModel
 from pyvelo.core.identity import EdgeName, ProfileName
 
@@ -284,6 +283,11 @@ class ConfigPipeline:
             target_config = state.profile_config
 
         snapshot_config = state.snapshot_for_target()
+        level = (
+            ConfigContext.PROFILE
+            if state.target_type == "profile"
+            else ConfigContext.EDGE
+        )
 
         for module_name in changed_modules:
             mod = target_config.get_module(module_name)
@@ -300,13 +304,25 @@ class ConfigPipeline:
                 else:
                     _ = mod.data.for_edge()
 
+            profile_mod = (
+                state.profile_config.get_module(module_name)
+                if level is ConfigContext.EDGE
+                and state.profile_config.has_module(module_name)
+                else None
+            )
+            plan = plan_module(mod, level=level, profile=profile_mod)
+            if plan.operation == "none":
+                continue
+
             if is_insert:
                 await self._insert_module(
-                    mod, target_config, state.resolver_context.enterprise_id
+                    mod, target_config, state.resolver_context.enterprise_id, plan
                 )
                 result.modules_inserted.append(module_name)
             else:
-                await self._update_module(mod, state.resolver_context.enterprise_id)
+                await self._update_module(
+                    mod, state.resolver_context.enterprise_id, plan
+                )
                 result.modules_updated.append(module_name)
 
         return result
@@ -496,29 +512,26 @@ class ConfigPipeline:
         self,
         mod: AnyConfigurationModule,
         enterprise_id: int | None,
+        plan: ModulePlan,
     ) -> None:
         """Send update_configuration_module API call."""
-        if isinstance(mod, DeviceSettingsConfigurationModule):
-            update = DeviceSettingsModuleUpdate(
-                data=mod.data,
-                refs=getattr(mod, "refs", MISSING),
-            )
-        elif isinstance(mod, QosConfigurationModule):
-            update = QosModuleUpdate(
-                data=mod.data,
-                refs=getattr(mod, "refs", MISSING),
-            )
-        elif isinstance(mod, WanConfigurationModule):
-            update = WanModuleUpdate(data=mod.data)
-        elif isinstance(mod, FirewallConfigurationModule):
-            update = FirewallModuleUpdate(data=mod.data)
-        else:
+        if not isinstance(
+            mod,
+            DeviceSettingsConfigurationModule
+            | QosConfigurationModule
+            | WanConfigurationModule
+            | FirewallConfigurationModule,
+        ):
             raise TypeError(f"Cannot update module type: {type(mod).__name__}")
 
         request = UpdateConfigurationModule(
             configuration_module_id=mod.id_,
             enterprise_id=enterprise_id if enterprise_id is not None else MISSING,
-            update=update,
+            version=mod.version or MISSING,
+            update=ConfigurationModuleUpdate(
+                data=plan.data,
+                refs=plan.refs if plan.refs is not None else MISSING,
+            ),
         )
         await self.client.update_configuration_module(request)
 
@@ -527,6 +540,7 @@ class ConfigPipeline:
         mod: AnyConfigurationModule,
         config: ConfigurationBase,
         enterprise_id: int | None,
+        plan: ModulePlan,
     ) -> None:
         """Send insert_configuration_module API call."""
         config_id = config.id_
@@ -536,15 +550,14 @@ class ConfigPipeline:
         if isinstance(mod, FirewallConfigurationModule):
             request = InsertFirewallConfigurationModule(
                 configuration_id=config_id,
-                data=mod.data,
+                data=plan.data,
                 enterprise_id=enterprise_id if enterprise_id is not None else MISSING,
             )
         elif isinstance(mod, QosConfigurationModule):
-            refs = mod.refs if mod.refs is not MISSING else None
             request = InsertQosConfigurationModule(
                 configuration_id=config_id,
-                data=mod.data,
-                refs=refs,
+                data=plan.data,
+                refs=plan.refs,
                 enterprise_id=enterprise_id if enterprise_id is not None else MISSING,
             )
         else:

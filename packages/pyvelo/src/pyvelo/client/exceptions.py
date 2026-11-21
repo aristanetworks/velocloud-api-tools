@@ -1,3 +1,4 @@
+import re
 from collections.abc import Sequence
 from typing import Any
 
@@ -171,3 +172,34 @@ class LossyFieldError(VcoError):
             f"{module}: assignment cannot be expressed on save for: "
             f"{', '.join(self.fields)}"
         )
+
+
+class ConfigConflictError(VcoError):
+    """Raised when a module write is rejected because its version is stale.
+
+    The module changed on the VCO after it was read. Nothing was written; read
+    the module again, re-apply the change, and save.
+    """
+
+    def __init__(self, module_id: int, version: str, detail: str) -> None:
+        self.module_id = module_id
+        self.version = version
+        self.detail = detail
+        super().__init__(
+            f"Configuration module {module_id} changed since it was read "
+            f"(version {version}): {detail}"
+        )
+
+
+_VERSION_CONFLICT = re.compile(r"\bversion\b|conflict", re.IGNORECASE)
+
+
+def is_version_conflict(*, error: str | None, rows: int | None) -> bool:
+    """Whether an update response means the module's version was stale.
+
+    Provisional: the server's response to a stale version has not been observed.
+    This is the one place to correct.
+    """
+    if error:
+        return _VERSION_CONFLICT.search(error) is not None
+    return rows == 0
