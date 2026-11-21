@@ -1,11 +1,15 @@
-from typing import Annotated
+from typing import Annotated, Any
 
-from pydantic import MISSING, Field
+from pydantic import MISSING, Field, PrivateAttr
 
 from pyvelo.core import Alias, ContextDefaults, VcoModel
 from pyvelo.core.fields import DefaultingScalar, KeyField
 
-from ..common import find_segment
+from ..common import (
+    copy_profile_segments,
+    find_segment,
+    get_or_create_segment,
+)
 from .rules import FirewallInboundRule, FirewallInboundRuleV6
 from .security_features import NetworkProtectionSettings, SecurityFeatureSettings
 from .segment import FirewallSegment
@@ -55,6 +59,33 @@ class FirewallData(VcoModel):
 
     stateful_firewall_settings: StatefulFirewallSettings | MISSING = MISSING
     stateful_firewall_settings_v6: StatefulFirewallSettings | MISSING = MISSING
+
+    _profile_segments: list[dict[str, Any]] | None = PrivateAttr(default=None)
+
+    def bind_profile(self, profile_data: object) -> None:
+        """Remember the segments of the profile module this layer inherits from.
+
+        *profile_data* is that module's raw ``data``. It is what :meth:`segment`
+        copies a missing segment's descriptor from.
+        """
+        self._profile_segments = copy_profile_segments(profile_data)
+
+    def segment(self, name: str) -> FirewallSegment:
+        """The segment called *name*; a layer that lacks it gets an empty entry.
+
+        The new entry has the profile segment's descriptor and inherits all of
+        its content. Raises ``UnboundError`` if the data is not bound to a
+        profile (see :meth:`bind_profile`) and ``ValueError`` if the profile has
+        no such segment. Use :meth:`get_segment` to look up without creating.
+        """
+        return get_or_create_segment(
+            self.segments,
+            name,
+            self._profile_segments,
+            "firewall",
+            FirewallSegment.model_validate,
+            self.config_context,
+        )
 
     def get_segment(
         self, *, name: str | None = None, segment_id: int | None = None

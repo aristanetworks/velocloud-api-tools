@@ -191,6 +191,14 @@ class ConfigConflictError(VcoError):
         )
 
 
+class UnboundError(VcoError):
+    """Raised when a segment a layer lacks is asked for, with no profile to copy it from.
+
+    The layer data has not been bound to a profile (see ``bind_profile``), which
+    happens when it is built outside ``ConfigState``.
+    """
+
+
 _VERSION_CONFLICT = re.compile(r"\bversion\b|conflict", re.IGNORECASE)
 
 

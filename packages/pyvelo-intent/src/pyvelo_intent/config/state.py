@@ -2,7 +2,7 @@
 
 import copy
 from dataclasses import dataclass, field
-from typing import Literal, cast
+from typing import Literal, Protocol, cast, runtime_checkable
 
 from pydantic import MISSING, BaseModel
 from pyvelo.client.enums.configuration import ConfigurationModuleName
@@ -76,22 +76,37 @@ class LayerView:
     """Read-only access to the data of one config layer's modules.
 
     Each property is the module's ``data``, ready to read or edit in place.
+    *profile* is the profile layer an edge layer inherits from; a module this
+    view creates is bound to it.
     """
 
-    def __init__(self, config: ConfigurationBase) -> None:
+    def __init__(
+        self, config: ConfigurationBase, profile: ConfigurationBase | None = None
+    ) -> None:
         self._config: ConfigurationBase = config
+        self._profile: ConfigurationBase | None = profile
 
     @property
     def firewall(self) -> FirewallData:
         """The firewall data; an edge layer that has none starts it empty."""
-        module = _module_of(self._config, ConfigurationModuleName.FIREWALL, create=True)
+        module = _module_of(
+            self._config,
+            ConfigurationModuleName.FIREWALL,
+            create=True,
+            profile=self._profile,
+        )
         assert isinstance(module, FirewallConfigurationModule)
         return module.data
 
     @property
     def qos(self) -> QosData:
         """The QoS data; an edge layer that has none starts it empty."""
-        module = _module_of(self._config, ConfigurationModuleName.QOS, create=True)
+        module = _module_of(
+            self._config,
+            ConfigurationModuleName.QOS,
+            create=True,
+            profile=self._profile,
+        )
         assert isinstance(module, QosConfigurationModule)
         return module.data
 
@@ -120,6 +135,10 @@ class ConfigState:
 
     A state that has written to the VCO is *spent*: its raw data no longer
     matches the VCO, so it must not be applied to or saved again.
+
+    The edge layer's module data is bound to the profile layer (see
+    ``bind_profile`` on the module data), so a segment the edge layer lacks can
+    be added to it as an empty entry that inherits from the profile's.
     """
 
     edge_config: EdgeConfiguration | None
@@ -131,6 +150,12 @@ class ConfigState:
     )
     load_warnings: list[ValidationWarning] = field(default_factory=list)
     _spent: bool = field(default=False, repr=False)
+
+    def __post_init__(self) -> None:
+        if self.edge_config is None or self.edge_config.modules is MISSING:
+            return
+        for mod in self.edge_config.modules:
+            _bind_to_profile(mod, self.profile_config)
 
     def take_snapshot(self) -> None:
         """Deep-copy current configs for later diff detection."""
@@ -169,14 +194,19 @@ class ConfigState:
         from the profile. Raises ``ValueError`` if there is no such module and
         none can be created.
         """
-        return _module_of(self.target_config, resolve_module_name(name), create=create)
+        return _module_of(
+            self.target_config,
+            resolve_module_name(name),
+            create=create,
+            profile=self.profile_config,
+        )
 
     @property
     def edge(self) -> LayerView:
         """The edge layer's module data. Raises ``ValueError`` without an edge layer."""
         if self.target_type != "edge" or self.edge_config is None:
             raise ValueError("this state has no edge layer")
-        return LayerView(self.edge_config)
+        return LayerView(self.edge_config, self.profile_config)
 
     @property
     def profile(self) -> LayerView:
@@ -307,10 +337,33 @@ def _find_module(config: ConfigurationBase, name: str) -> AnyConfigurationModule
     return next((m for m in config.modules if m.name == name), None)
 
 
+@runtime_checkable
+class _ProfileBindable(Protocol):
+    def bind_profile(self, profile_data: object) -> None: ...
+
+
+def _bind_to_profile(
+    module: AnyConfigurationModule, profile_config: ConfigurationBase
+) -> None:
+    """Bind *module*'s data to the raw data of the profile module of the same name."""
+    data: object = module.data
+    if not isinstance(data, _ProfileBindable):
+        return
+    profile_module = _find_module(profile_config, module.name)
+    data.bind_profile(profile_module.raw_data if profile_module else MISSING)
+
+
 def _module_of(
-    config: ConfigurationBase, name: ConfigurationModuleName, *, create: bool
+    config: ConfigurationBase,
+    name: ConfigurationModuleName,
+    *,
+    create: bool,
+    profile: ConfigurationBase | None = None,
 ) -> AnyConfigurationModule:
-    """*config*'s module *name*; with *create*, an empty edge one if it has none."""
+    """*config*'s module *name*; with *create*, an empty edge one if it has none.
+
+    A module that is created is bound to *profile* (see :func:`_bind_to_profile`).
+    """
     existing = _find_module(config, name)
     if existing is not None:
         return existing
@@ -318,6 +371,8 @@ def _module_of(
         if config.id_ is MISSING or config.id_ is None:
             raise ValueError(f"Cannot create module '{name}': configuration has no ID")
         new = new_edge_module(name, config.id_).for_edge()
+        if profile is not None:
+            _bind_to_profile(new, profile)
         if config.modules is MISSING:
             config.modules = []
         config.modules.append(new)

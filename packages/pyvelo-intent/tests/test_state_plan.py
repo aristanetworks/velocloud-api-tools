@@ -12,6 +12,7 @@ from pyvelo.client.schemas.configuration import (
 )
 from pyvelo.config.resolver import ResolverContext
 from pyvelo.testing import make_module_json
+from pyvelo_intent.config.aspect import Aspect, AspectRegistry
 from pyvelo_intent.config.pipeline import ConfigPipeline
 from pyvelo_intent.config.state import ConfigState
 from pyvelo_intent.errors import StateSpentError
@@ -206,3 +207,63 @@ async def test_load_profile_keeps_raw_snapshots():
     assert isinstance(state.profile_config, EnterpriseConfigurationProfile)
     assert state.profile_config.firewall.raw_data == PROFILE_FW
     assert state.plan().changed == ()
+
+
+def test_state_binds_edge_layers_and_untouched_placeholder_is_no_change():
+    state = make_state()
+    guest = state.edge.firewall.segment("Guest")
+    assert guest.outbound == []
+    assert state.plan().changed == ()
+
+
+async def test_rule_added_in_a_reconciled_segment():
+    client, state = MockVcoClient(), make_state()
+    await ConfigPipeline(client).apply(
+        state,
+        module="firewall",
+        patch={
+            "segments": {
+                "Global Segment": {
+                    "outbound": {
+                        "block-ssh": {"action": {"allow_or_deny": "deny"}, "match": {}}
+                    }
+                }
+            }
+        },
+    )
+    state.edge.firewall.segment("Guest")
+    await ConfigPipeline(client).save(state)
+    segs = client.update_requests[0].update.data["segments"]
+    # no profile rule copied in
+    assert [r["name"] for r in segs[0]["outbound"]] == ["block-ssh"]
+    assert segs[1] == {"segment": desc(2, "Guest"), "outbound": []}
+
+
+def test_new_empty_module_is_bound():
+    state = make_state()
+    assert state.edge.qos.segment("Global Segment").rules == []
+
+
+async def test_segment_scoped_aspect_creates_the_edge_entry_on_write_only():
+    reg = AspectRegistry()
+    reg.register(
+        Aspect(
+            name="firewall_rules",
+            module=ConfigurationModuleName.FIREWALL,
+            path="outbound",
+            description="rules",
+            tags=[],
+            segment_scoped=True,
+        )
+    )
+    pipeline = ConfigPipeline(MockVcoClient(), aspect_registry=reg)
+    with pytest.raises(ValueError):
+        pipeline.read_aspect(make_state(), "firewall_rules", segment="Guest")
+    state = make_state()
+    await pipeline.apply_aspect(
+        state,
+        "firewall_rules",
+        {"block": {"action": {"allow_or_deny": "deny"}, "match": {}}},
+        segment="Guest",
+    )
+    assert [r.name for r in state.edge.firewall.segment("Guest").outbound] == ["block"]

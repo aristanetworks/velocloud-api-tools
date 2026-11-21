@@ -1,13 +1,17 @@
 import copy
 import uuid
 from collections.abc import Mapping, Sequence
-from typing import Annotated, Any, Final, Literal, Protocol
+from typing import Annotated, Any, Final, Literal, Protocol, cast
 
 from pydantic import MISSING
 
 from pyvelo.client.enums.enterprise import NetworkSegmentType
-from pyvelo.core import Alias, VcoModel
-from pyvelo.core.base import _is_dict  # pyright: ignore[reportPrivateUsage]
+from pyvelo.client.exceptions import UnboundError
+from pyvelo.core import Alias, ConfigContext, VcoModel
+from pyvelo.core.base import (
+    _is_dict,  # pyright: ignore[reportPrivateUsage]
+    _is_list,  # pyright: ignore[reportPrivateUsage]
+)
 from pyvelo.core.fields import Resolvable
 from pyvelo.core.identity import (
     AddressGroupIdentity,
@@ -77,9 +81,60 @@ def placeholder_segment(
     }
 
 
+def profile_placeholder(
+    profile_segments: Sequence[Mapping[str, object]] | None,
+    name: str,
+    module_name: str,
+) -> dict[str, Any]:
+    """The empty segment entry for the profile segment called *name*.
+
+    Raises ``UnboundError`` if *profile_segments* is None (the data is not bound
+    to a profile) and ``ValueError`` if the profile has no segment of that name.
+    """
+    if profile_segments is None:
+        raise UnboundError(
+            f"segment {name!r} is not in this layer, and this object is not bound to a profile; load it through ConfigPipeline"
+        )
+    available: list[str] = []
+    for entry in profile_segments:
+        descriptor = entry.get("segment")
+        if not _is_dict(descriptor):
+            continue
+        if descriptor.get("name") == name:
+            return placeholder_segment(entry, module_name)
+        available.append(str(descriptor.get("name")))
+    raise ValueError(
+        f"Segment {name!r} not found. Profile segments: {', '.join(available)}"
+    )
+
+
+def copy_profile_segments(profile_data: object) -> list[dict[str, Any]]:
+    """A deep copy of the segment entries of a profile module's raw *profile_data*.
+
+    An empty list if *profile_data* is not an object or has no ``segments`` list;
+    entries that are not objects are dropped.
+    """
+    if not _is_dict(profile_data):
+        return []
+    segments = profile_data.get("segments")
+    if not _is_list(segments):
+        return []
+    return [
+        cast(dict[str, Any], copy.deepcopy(entry))
+        for entry in segments
+        if _is_dict(entry)
+    ]
+
+
 class _HasSegment(Protocol):
     @property
     def segment(self) -> SegmentMetadata: ...
+
+
+class _Validate[S](Protocol):
+    def __call__(
+        self, obj: object, /, *, context: dict[str, ConfigContext] | None = None
+    ) -> S: ...
 
 
 def find_segment[S: _HasSegment](
@@ -99,3 +154,34 @@ def find_segment[S: _HasSegment](
 
     available = [f"{s.segment.name} (id={s.segment.segment_id})" for s in segments]
     raise ValueError(f"Segment not found. Available: {', '.join(available)}")
+
+
+def get_or_create_segment[S: _HasSegment](
+    segments: list[S],
+    name: str,
+    profile_segments: Sequence[Mapping[str, object]] | None,
+    module_name: str,
+    validate: _Validate[S],
+    level: ConfigContext | None,
+) -> S:
+    """The entry of *segments* called *name*, adding an empty one if the layer lacks it.
+
+    An entry under another name but with the profile segment's ``segmentId`` is
+    that segment, renamed, and is returned as it is. Otherwise a placeholder
+    (see :func:`profile_placeholder`) is validated by *validate* at config level
+    *level* and appended.
+    """
+    for seg in segments:
+        if seg.segment.name == name:
+            return seg
+    placeholder = profile_placeholder(profile_segments, name, module_name)
+    segment_id = segment_id_of(placeholder)
+    if segment_id is not None:
+        for seg in segments:
+            if seg.segment.segment_id == segment_id:
+                return seg
+    created = validate(
+        placeholder, context={"config_level": level} if level is not None else None
+    )
+    segments.append(created)
+    return created

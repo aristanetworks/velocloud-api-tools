@@ -1,7 +1,7 @@
 import uuid
 from typing import Annotated, Any, Literal, get_args
 
-from pydantic import MISSING, BeforeValidator, Field, SerializeAsAny
+from pydantic import MISSING, BeforeValidator, Field, PrivateAttr, SerializeAsAny
 
 from pyvelo.core import (
     Alias,
@@ -14,7 +14,11 @@ from pyvelo.core import (
 )
 from pyvelo.core.fields import KeyField, OverrideFlag
 
-from ..common import find_segment
+from ..common import (
+    copy_profile_segments,
+    find_segment,
+    get_or_create_segment,
+)
 from .common import (
     DeviceSettingsRef,
     RadioBand,
@@ -340,6 +344,33 @@ class DeviceSettingsData(VcoModel):
         EdgeWirelessLinkManagement | MISSING,
         ContextDefault(edge=MISSING, profile=EdgeWirelessLinkManagement),
     ] = MISSING
+
+    _profile_segments: list[dict[str, Any]] | None = PrivateAttr(default=None)
+
+    def bind_profile(self, profile_data: object) -> None:
+        """Remember the segments of the profile module this layer inherits from.
+
+        *profile_data* is that module's raw ``data``. It is what :meth:`segment`
+        copies a missing segment's descriptor from.
+        """
+        self._profile_segments = copy_profile_segments(profile_data)
+
+    def segment(self, name: str) -> DeviceSegment:
+        """The segment called *name*; a layer that lacks it gets an empty entry.
+
+        The new entry has the profile segment's descriptor and inherits all of
+        its content. Raises ``UnboundError`` if the data is not bound to a
+        profile (see :meth:`bind_profile`) and ``ValueError`` if the profile has
+        no such segment. Use :meth:`get_segment` to look up without creating.
+        """
+        return get_or_create_segment(
+            self.segments,
+            name,
+            self._profile_segments,
+            "deviceSettings",
+            DeviceSegment.model_validate,
+            self.config_context,
+        )
 
     def get_segment(
         self, *, name: str | None = None, segment_id: int | None = None
