@@ -1,11 +1,13 @@
+import copy
 import uuid
-from collections.abc import Sequence
-from typing import Annotated, Literal, Protocol
+from collections.abc import Mapping, Sequence
+from typing import Annotated, Any, Final, Literal, Protocol
 
 from pydantic import MISSING
 
 from pyvelo.client.enums.enterprise import NetworkSegmentType
 from pyvelo.core import Alias, VcoModel
+from pyvelo.core.base import _is_dict  # pyright: ignore[reportPrivateUsage]
 from pyvelo.core.fields import Resolvable
 from pyvelo.core.identity import (
     AddressGroupIdentity,
@@ -41,6 +43,38 @@ class SegmentMetadata(VcoModel):
     segment_logical_id: Annotated[
         uuid.UUID | None, Resolvable(SegmentIdentity, "logical_id")
     ] = None
+
+
+SEGMENT_LISTS: Final[dict[str, tuple[str, ...]]] = {
+    "firewall": ("outbound",),
+    "QOS": ("rules",),
+    "deviceSettings": (),
+}
+"""Per module, the lists inside a segment entry that belong to one layer.
+
+A segment entry a layer does not have yet is written with these lists empty,
+so it carries no rules of the profile it was copied from.
+"""
+
+
+def segment_id_of(raw_segment: object) -> object | None:
+    """``raw_segment["segment"]["segmentId"]``, or None if any step is missing."""
+    if not _is_dict(raw_segment):
+        return None
+    descriptor = raw_segment.get("segment")
+    if not _is_dict(descriptor):
+        return None
+    return descriptor.get("segmentId")
+
+
+def placeholder_segment(
+    profile_segment: Mapping[str, object], module_name: str
+) -> dict[str, Any]:
+    """An empty segment entry for *module_name* with the profile's descriptor."""
+    return {
+        "segment": copy.deepcopy(profile_segment["segment"]),
+        **{key: [] for key in SEGMENT_LISTS[module_name]},
+    }
 
 
 class _HasSegment(Protocol):

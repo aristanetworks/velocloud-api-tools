@@ -1,4 +1,7 @@
+from collections.abc import Sequence
 from typing import Any
+
+from pyvelo.core.rebase import Path
 
 
 class VcoError(Exception):
@@ -150,3 +153,21 @@ class VcoUserTypeUnknownError(VcoError):
 
 class VcoCredentialsError(VcoError):
     """Raised when VCO credentials cannot be loaded from the environment."""
+
+
+class LossyFieldError(VcoError):
+    """Raised when assignments to a module cannot be expressed on save.
+
+    The model parses a document lossily (a key absent from the document reads as
+    its default), so assigning that default changes nothing in what is written.
+    ``paths`` locates each such assignment; ``fields`` is the same, as text.
+    """
+
+    def __init__(self, module: str, paths: Sequence[Path]) -> None:
+        self.module = module
+        self.paths = list(paths)
+        self.fields = [str(path) for path in self.paths]
+        super().__init__(
+            f"{module}: assignment cannot be expressed on save for: "
+            f"{', '.join(self.fields)}"
+        )
