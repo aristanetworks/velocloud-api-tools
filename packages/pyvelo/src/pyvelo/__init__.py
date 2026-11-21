@@ -15,6 +15,9 @@ For configuration helpers (pipeline, aspects, state), see the ``pyvelo-intent`` 
 """
 
 from pyvelo.client import (
+    ConfigConflictError,
+    LossyFieldError,
+    UnboundError,
     VcoApiError,
     VcoAuth,
     VcoClient,
@@ -55,9 +58,11 @@ __all__ = [
     "ApplicationResolver",
     # Resolver framework
     "BaseResolver",
+    "ConfigConflictError",
     "EdgeResolver",
     "LicenseResolver",
     "LinkResolver",
+    "LossyFieldError",
     "ProfileResolver",
     "ResolutionError",
     "Resolver",
@@ -66,6 +71,7 @@ __all__ = [
     "SegmentResolver",
     "ServiceGroupResolver",
     # Client
+    "UnboundError",
     "VcoApiError",
     "VcoAuth",
     "VcoClient",

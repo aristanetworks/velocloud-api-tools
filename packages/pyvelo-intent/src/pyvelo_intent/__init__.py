@@ -27,6 +27,7 @@ from pyvelo_intent.errors import (
     ConfigInputError,
     IntentError,
     SaveValidationError,
+    StateSpentError,
     UnknownRegistryEntryError,
 )
 
@@ -46,6 +47,7 @@ __all__ = [
     "Removed",
     "SaveResult",
     "SaveValidationError",
+    "StateSpentError",
     "Unchanged",
     "UnknownRegistryEntryError",
     "ValidationWarning",

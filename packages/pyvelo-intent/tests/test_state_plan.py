@@ -136,6 +136,13 @@ async def test_state_is_spent_after_a_write_and_not_after_dry_run():
         await pipeline.apply(state, module="firewall", patch={"firewall_enabled": True})
 
 
+def test_state_spent_error_is_exported_from_the_package():
+    import pyvelo_intent
+
+    assert pyvelo_intent.StateSpentError is StateSpentError
+    assert "StateSpentError" in pyvelo_intent.__all__
+
+
 async def test_no_edit_save_does_not_spend_or_call():
     client, state = MockVcoClient(), make_state()
     result = await ConfigPipeline(client).save(state)
