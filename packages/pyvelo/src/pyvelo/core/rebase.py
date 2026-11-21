@@ -5,7 +5,8 @@ of the model parsed from it, and ``after`` the wire dump of that model now.
 ``rebase`` carries only the difference between ``before`` and ``after`` over to
 ``raw``, so what parsing lost (unknown keys, coerced values, defaults the dump
 added) never reaches the result. ``raw_changes`` lists the differences between
-two JSON documents, with the same addressing.
+two JSON documents, with the same addressing. ``find_lossy_assignments`` lists
+the assignments to a model that ``rebase`` cannot carry over.
 
 The optional *model* is the ``VcoModel`` class whose wire dump ``before`` and
 ``after`` are. It supplies two things that JSON alone cannot:
@@ -19,6 +20,7 @@ The optional *model* is the ``VcoModel`` class whose wire dump ``before`` and
 The result of ``rebase`` may share sub-objects with its inputs. Callers copy.
 """
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 
 from pydantic import MISSING
@@ -28,8 +30,10 @@ from .base import (
     VcoModel,
     _field_alias,  # pyright: ignore[reportPrivateUsage]
     _field_model_type,  # pyright: ignore[reportPrivateUsage]
+    _field_value,  # pyright: ignore[reportPrivateUsage]
     _is_dict,  # pyright: ignore[reportPrivateUsage]
     _is_list,  # pyright: ignore[reportPrivateUsage]
+    _is_mapping,  # pyright: ignore[reportPrivateUsage]
     _list_item_type,  # pyright: ignore[reportPrivateUsage]
 )
 from .fields import get_key_field
@@ -338,3 +342,133 @@ def _collect_keyed_changes(
         for key, new_item in new_by_key.items()
         if key not in old_by_key
     )
+
+
+# ---------------------------------------------------------------------------
+# find_lossy_assignments
+# ---------------------------------------------------------------------------
+
+
+def find_lossy_assignments(
+    baseline: VcoModel,
+    current: VcoModel,
+    before: Mapping[str, object],
+    after: Mapping[str, object],
+) -> list[str]:
+    """The assignments to *current* that ``rebase`` would drop, as python-name paths.
+
+    *before* and *after* are the wire dumps of *baseline* and *current*.
+    ``rebase`` writes only what differs between them. A field the caller assigned
+    (in ``current.model_fields_set``) that was not in the document as read (not
+    in ``baseline.model_fields_set``) and whose dump is unchanged therefore never
+    reaches the document: the caller assigned the default of an absent key.
+    ``MISSING`` and ``None`` are not assignments of a value and do not count.
+
+    The walk pairs *baseline* and *current* by field. A list is paired by key if
+    it has a ``KeyField`` whose values are present and distinct in both dumps
+    (items in only one are not paired), otherwise by position if the lists have
+    the same length. The dumps are read at the same positions, so a dump whose
+    lists do not line up with the model's is not walked. A field that is not in
+    *baseline* and whose dump changed is written whole, so nothing inside it is
+    lost.
+
+    Paths come in field order: ``segments[A].rules[r1].port``.
+    """
+    out: list[str] = []
+    _lossy_in_value(out, "", baseline, current, before, after, None)
+    return out
+
+
+def _dump_get(dump: object, key: str) -> object:
+    """``dump[key]``, or ``MISSING`` when *dump* is not an object or has no *key*."""
+    return dump[key] if _is_mapping(dump) and key in dump else MISSING
+
+
+def _lossy_in_value(
+    out: list[str],
+    path: str,
+    baseline: object,
+    current: object,
+    before: object,
+    after: object,
+    node: _Node,
+) -> None:
+    if isinstance(baseline, VcoModel):
+        if isinstance(current, VcoModel) and type(current) is type(baseline):
+            _lossy_in_model(out, path, baseline, current, before, after)
+    elif _is_list(baseline) and _is_list(current):
+        _lossy_in_list(out, path, baseline, current, before, after, node)
+
+
+def _lossy_in_model(
+    out: list[str],
+    path: str,
+    baseline: VcoModel,
+    current: VcoModel,
+    before: object,
+    after: object,
+) -> None:
+    for name, field_info in type(current).model_fields.items():
+        dump_key = _field_alias(field_info, name)
+        before_value = _dump_get(before, dump_key)
+        after_value = _dump_get(after, dump_key)
+        value = _field_value(current, name)
+        field_path = _join(path, name)
+        if name not in baseline.model_fields_set:
+            if before_value != after_value:
+                continue  # rebase writes the field whole
+            if (
+                name in current.model_fields_set
+                and value is not MISSING
+                and value is not None
+            ):
+                out.append(field_path)
+                continue
+        _lossy_in_value(
+            out,
+            field_path,
+            _field_value(baseline, name),
+            value,
+            before_value,
+            after_value,
+            _child(type(current), dump_key),
+        )
+
+
+def _lossy_in_list(
+    out: list[str],
+    path: str,
+    baseline: list[object],
+    current: list[object],
+    before: object,
+    after: object,
+    node: _Node,
+) -> None:
+    if not (_is_list(before) and _is_list(after)):
+        return
+    if len(before) != len(baseline) or len(after) != len(current):
+        return  # the dump's positions are not the model's
+    pairs: list[tuple[str, int, int]] = []  # item path, baseline index, current index
+    if isinstance(node, _KeyedList):
+        before_keys = _list_keys(before, node)
+        after_keys = _list_keys(after, node)
+        if before_keys is None or after_keys is None:
+            return
+        position = {key: i for i, key in enumerate(before_keys)}
+        pairs = [
+            (f"{path}[{key}]", position[key], i)
+            for i, key in enumerate(after_keys)
+            if key in position
+        ]
+    elif len(baseline) == len(current):
+        pairs = [(f"{path}[{i}]", i, i) for i in range(len(baseline))]
+    for item_path, base_index, cur_index in pairs:
+        _lossy_in_value(
+            out,
+            item_path,
+            baseline[base_index],
+            current[cur_index],
+            before[base_index],
+            after[cur_index],
+            None,
+        )
