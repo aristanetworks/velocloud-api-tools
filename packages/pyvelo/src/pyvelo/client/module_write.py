@@ -66,6 +66,9 @@ LEGACY_SEGMENT_KEYS: Final[dict[str, tuple[str, ...]]] = {
 A write drops them (``drop_legacy_keys``); a plan reports them either way.
 """
 
+_LEGACY_MODELS: Final[dict[str, type[VcoModel]]] = {"firewall": FirewallData}
+"""The model of each module in ``LEGACY_SEGMENT_KEYS``, to address a path by its keys."""
+
 
 def wire_dump(model: VcoModel, level: ConfigContext | None) -> dict[str, Any]:
     """The JSON a model is written as, at config level *level*."""
@@ -186,11 +189,12 @@ def drop_legacy_keys(data: object, module_name: str) -> None:
 
 def legacy_key_paths(data: object, module_name: str) -> tuple[Path, ...]:
     """Where *data* has keys that ``drop_legacy_keys`` would remove."""
-    if module_name not in LEGACY_SEGMENT_KEYS:
+    model = _LEGACY_MODELS.get(module_name)
+    if model is None:
         return ()
     stripped = copy.deepcopy(data)
     drop_legacy_keys(stripped, module_name)
-    return tuple(c.path for c in raw_changes(data, stripped, FirewallData))
+    return tuple(c.path for c in raw_changes(data, stripped, model))
 
 
 def _json(value: object) -> str:

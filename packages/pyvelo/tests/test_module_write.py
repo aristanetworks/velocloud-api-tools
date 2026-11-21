@@ -932,3 +932,23 @@ def test_only_a_firewall_module_has_legacy_keys():
     plan = plan_module(mod, level=EDGE)
     assert plan.legacy_keys == ()
     assert plan.data["segments"][0]["outboundOverride"] is True
+
+
+def test_a_refs_only_change_to_a_firewall_module_also_drops_a_stray_override_key():
+    """A firewall module written for any reason is written without the key."""
+    refs: dict[str, Any] = {"firewall:securityServiceGroup": {"id": 1}}
+    mod = FirewallConfigurationModule.model_validate(
+        make_module_json("firewall", copy.deepcopy(STRAY_RAW), refs=refs)
+    )
+    changed = {"firewall:securityServiceGroup": {"id": 2}}
+
+    unchanged = plan_module(mod, level=EDGE, refs=refs)
+    assert (unchanged.operation, unchanged.refs) == ("none", None)
+
+    plan = plan_module(mod, level=EDGE, refs=changed)
+    assert plan.operation == "update"
+    assert plan.refs == changed
+    assert not _has_key(plan.data, "outboundOverride")
+    assert [str(c.path) for c in plan.changes] == [STRAY_PATH]
+    assert f"  - {STRAY_PATH}" in plan.render().splitlines()
+    assert [str(k) for k in plan.legacy_keys] == [STRAY_PATH]

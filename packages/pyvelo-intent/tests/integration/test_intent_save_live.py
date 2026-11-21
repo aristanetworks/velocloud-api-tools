@@ -42,7 +42,6 @@ from typing import Any, cast
 
 import pytest
 from _intent_live_support import (  # pyright: ignore[reportImplicitRelativeImport]
-    OVERRIDE_KEY,
     SEGMENT_DRIFT_KEY,
     EdgeLayout,
     Lab,
@@ -1002,66 +1001,3 @@ async def test_segment_named_in_another_case_is_edited_in_place_not_duplicated(
             rules_before == rules_after,
             "the effective outbound rules of the edge changed with a logging flag",
         )
-
-
-# ---------------------------------------------------------------------------
-# A key an older version of the library wrote into a firewall segment entry
-# ---------------------------------------------------------------------------
-
-
-def _firewall_with_a_segment(module: AnyConfigurationModule) -> bool:
-    return isinstance(module, FirewallConfigurationModule) and bool(
-        module.data.segments
-    )
-
-
-async def test_a_stray_override_key_is_reported_by_a_plan_and_dropped_by_a_write(
-    lab: Lab, pipeline: ConfigPipeline, writes: Writes
-) -> None:
-    layout = await lab.pick_writable_edge(
-        Name.FIREWALL, _firewall_with_a_segment, "with a segment"
-    )
-    site = lab.edge_site(layout, Name.FIREWALL)
-    async with restoring(site) as original:
-        assert original is not None
-        # What an older version wrote: the key in a segment entry, put there by a
-        # raw write (not by the library) and undone by the restore.
-        planted = _json_object(original.data)
-        entry = planted["segments"][0]
-        name = entry["segment"]["name"]
-        entry[OVERRIDE_KEY] = True
-        await write_data(site, await site.read_present(), planted)
-        if not has_key((await site.read_present()).raw_data, OVERRIDE_KEY):
-            pytest.skip("the Orchestrator does not keep the key, so nothing is stray")
-        writes.updates.clear()
-        stray = Path(("segments", Key(name), OVERRIDE_KEY))
-
-        # No edit: the plan reports the key, and nothing is written to strip it.
-        state = await pipeline.load(layout.edge_id, enterprise_id=lab.enterprise_id)
-        plan = _planned(state, Name.FIREWALL)
-        check(plan.operation == "none", f"planned {plan.operation}, expected none")
-        check(
-            [str(key) for key in plan.legacy_keys] == [str(stray)],
-            f"the plan reports {len(plan.legacy_keys)} legacy key(s), expected the one",
-        )
-        _ = await pipeline.save(state)
-        check(not writes.updates, "a save with no edit wrote to strip the key")
-
-        # An edit: the write carries it and drops the key, and the plan says so.
-        state = await pipeline.load(layout.edge_id, enterprise_id=lab.enterprise_id)
-        current = entry.get("firewall_logging_enabled")
-        flag = not current if isinstance(current, bool) else True
-        _ = await pipeline.apply(
-            state,
-            module="firewall",
-            patch={"segments": {name: {"firewall_logging_enabled": flag}}},
-        )
-        plan = _planned(state, Name.FIREWALL)
-        edit = Path(("segments", Key(name), "firewall_logging_enabled"))
-        _check_paths("stray key", "the plan", plan.changes, [edit, stray])
-        _ = await pipeline.save(state)
-
-        after = await site.read_present()
-        stored = raw_changes(planted, after.raw_data, FirewallData)
-        _check_paths("stray key", "the module read back", stored, [edit, stray])
-        check_no_override_flag("stray key", planted, plan.data, after.raw_data)
