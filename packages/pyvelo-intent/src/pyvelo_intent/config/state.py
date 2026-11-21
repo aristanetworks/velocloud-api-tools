@@ -25,7 +25,7 @@ from pyvelo.client.schemas.configuration import (
 from pyvelo.config.resolver import ResolverContext
 from pyvelo.config.validation import ValidationError
 from pyvelo.core import ConfigContext
-from pyvelo.core.fields import get_key_field
+from pyvelo.core.fields import get_key_spec
 
 from pyvelo_intent.config.module_names import resolve_module_name
 
@@ -419,7 +419,10 @@ def _diff_value(
             child_path = f"{path}.{field_name}" if path else field_name
             before_val = cast(object, getattr(before, field_name, MISSING))
             after_val = cast(object, getattr(after, field_name, MISSING))
-            key_attr = get_key_field(field_info)
+            spec = get_key_spec(field_info)
+            key_attr = (
+                spec.paths[0] if spec is not None and len(spec.paths) == 1 else None
+            )
             if (
                 key_attr is not None
                 and isinstance(before_val, list)

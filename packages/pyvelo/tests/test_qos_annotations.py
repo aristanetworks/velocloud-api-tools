@@ -3,18 +3,25 @@
 from pyvelo.client.models.configuration.qos.root import QosData
 from pyvelo.client.models.configuration.qos.rule import QosRuleMatch
 from pyvelo.client.models.configuration.qos.segment import QosSegment
-from pyvelo.core.fields import get_key_field, get_resolvable
+from pyvelo.core import KeySpec
+from pyvelo.core.fields import get_key_spec, get_resolvable
 
 
 class TestQosKeyFields:
     def test_segments_keyed(self):
-        assert get_key_field(QosData.model_fields["segments"]) == "segment.name"
+        assert get_key_spec(QosData.model_fields["segments"]) == KeySpec(
+            ("segment.name",), alt="segment.segment_id"
+        )
 
     def test_rules_keyed(self):
-        assert get_key_field(QosSegment.model_fields["rules"]) == "name"
+        assert get_key_spec(QosSegment.model_fields["rules"]) == KeySpec(
+            ("name",), alt="rule_logical_id"
+        )
 
     def test_defaults_keyed(self):
-        assert get_key_field(QosSegment.model_fields["defaults"]) == "name"
+        assert get_key_spec(QosSegment.model_fields["defaults"]) == KeySpec(
+            ("name",), alt="rule_logical_id"
+        )
 
 
 class TestQosResolvable:

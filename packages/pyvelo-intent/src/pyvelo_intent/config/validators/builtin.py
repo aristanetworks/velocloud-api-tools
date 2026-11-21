@@ -11,7 +11,7 @@ from pyvelo.config.validation import (
     ValidationResult,
     validator,
 )
-from pyvelo.core.fields import get_key_field
+from pyvelo.core.fields import get_key_spec
 
 
 def _get_target_config(
@@ -67,7 +67,8 @@ def _walk_model_for_keys(
 ) -> None:
     """Check that KeyField lists have unique keys."""
     for field_name, field_info in type(model).model_fields.items():
-        key_path = get_key_field(field_info)
+        spec = get_key_spec(field_info)
+        key_path = spec.paths[0] if spec is not None and len(spec.paths) == 1 else None
         val = getattr(model, field_name)
 
         if key_path is not None and isinstance(val, list):

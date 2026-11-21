@@ -44,7 +44,7 @@ from .base import (
     _is_mapping,  # pyright: ignore[reportPrivateUsage]
     _list_item_type,  # pyright: ignore[reportPrivateUsage]
 )
-from .fields import ConfigContext, get_key_field, has_override_flag
+from .fields import ConfigContext, KeySpec, get_key_spec, has_override_flag
 
 
 @dataclass(frozen=True, slots=True)
@@ -232,9 +232,14 @@ class RawChange:
 class _KeyedList:
     """A list whose items are matched by the value at ``key_path``."""
 
-    key_path: str
-    """Dotted path of python field names, as in ``KeyField``."""
+    spec: KeySpec
+    """The list's ``KeyField``; its key has one part."""
     item: type[VcoModel]
+
+    @property
+    def key_path(self) -> str:
+        """Dotted path of python field names to the key, as in ``KeyField``."""
+        return self.spec.paths[0]
 
 
 type _Node = type[VcoModel] | _KeyedList | None
@@ -266,17 +271,18 @@ def _dump_key(node: _Node, key: object) -> object:
 def _child(node: _Node, key: object) -> _Node:
     """What the value under *key* is known to be.
 
-    A keyed list for a ``KeyField`` list of models (of the first variant, for a
-    discriminated union), a model class for a model field, else None.
+    A keyed list for a ``KeyField`` list of models whose key has one part (of
+    the first variant, for a discriminated union), a model class for a model
+    field, else None.
     """
     found = _model_field(node, key)
     if found is None:
         return None
     field_info = found[1]
-    key_path = get_key_field(field_info)
+    spec = get_key_spec(field_info)
     item_type = _list_item_type(field_info)
-    if key_path is not None and item_type is not None:
-        return _KeyedList(key_path, item_type.variants[0])
+    if spec is not None and len(spec.paths) == 1 and item_type is not None:
+        return _KeyedList(spec, item_type.variants[0])
     return _field_model_type(field_info)
 
 

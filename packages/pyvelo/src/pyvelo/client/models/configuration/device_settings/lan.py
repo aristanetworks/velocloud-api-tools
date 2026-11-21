@@ -61,7 +61,9 @@ class AllowedMac(VcoModel):
 
 class MacAllowList(VcoModel):
     enabled: bool = False
-    allowed_macs: list[AllowedMac] = Field(default_factory=list)
+    allowed_macs: Annotated[list[AllowedMac], KeyField("mac_address")] = Field(
+        default_factory=list
+    )
     enable_mac_filtering_for_ap_probes: Annotated[
         bool, Alias("enableMACFilteringForAPProbes")
     ] = False
@@ -181,7 +183,9 @@ class LanDhcpServerV6(VcoModel):
     base_dhcp_address: Annotated[int, Alias("baseDhcpAddr")] = 1
     dhcp_relay: LanDhcpRelayV6 = Field(default_factory=LanDhcpRelayV6)
     enabled: bool = True
-    fixed_ip: Annotated[list[LanFixedIP], EdgeLocal] = Field(default_factory=list)
+    fixed_ip: Annotated[
+        list[LanFixedIP], EdgeLocal, KeyField("mac_address", alt="lan_ip")
+    ] = Field(default_factory=list)
     lease_time_seconds: int = 86400
     dhcp_address_count: Annotated[int, Alias("numDhcpAddr")] = 10
     options: Annotated[list[DhcpServerOption], Positional()] = Field(
@@ -234,9 +238,12 @@ class LanNetwork(VcoModel):
     disable_ipv4: Annotated[bool, Alias("disableV4")] = False
     disable_ipv6: Annotated[bool, Alias("disableV6")] = True
     dns_proxy: bool = True
-    fixed_ips: Annotated[list[LanFixedIP], Alias("fixedIp"), EdgeLocal] = Field(
-        default_factory=list
-    )
+    fixed_ips: Annotated[
+        list[LanFixedIP],
+        Alias("fixedIp"),
+        EdgeLocal,
+        KeyField("mac_address", alt="lan_ip"),
+    ] = Field(default_factory=list)
     interface_address: Annotated[str | None, EdgeLocal] = None
     interfaces: list[str] = Field(default_factory=list)
     multicast: Annotated[

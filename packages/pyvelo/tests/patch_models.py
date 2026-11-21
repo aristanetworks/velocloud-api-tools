@@ -56,7 +56,9 @@ class Root(VcoModel):
     hops_safe: Annotated[
         list[Hop], DefaultingModel(list[Hop], default_factory=list)
     ] = Field(default_factory=list)
-    rules: Annotated[list[Rule], KeyField("name")] = Field(default_factory=list)
+    rules: Annotated[list[Rule], KeyField("name", alt="rule_id")] = Field(
+        default_factory=list
+    )
     ports: list[int] = Field(default_factory=list)
     names: list[str] = Field(default_factory=list)
     hops: list[Hop] = Field(default_factory=list)

@@ -1,15 +1,19 @@
 """Tests for WAN data model annotations."""
 
 from pyvelo.client.models.configuration.wan.root import WanData
-from pyvelo.core.fields import get_key_field, is_edge_local
+from pyvelo.core.fields import get_key_spec, is_edge_local
 
 
 class TestWanKeyFields:
     def test_links_keyed_by_name(self):
-        assert get_key_field(WanData.model_fields["links"]) == "name"
+        spec = get_key_spec(WanData.model_fields["links"])
+        assert spec is not None
+        assert spec.paths == ("name",)
 
     def test_networks_keyed_by_name(self):
-        assert get_key_field(WanData.model_fields["networks"]) == "name"
+        spec = get_key_spec(WanData.model_fields["networks"])
+        assert spec is not None
+        assert spec.paths == ("name",)
 
 
 class TestWanEdgeLocal:

@@ -231,7 +231,9 @@ class EdgeZscaler(VcoModel):
         cloud: str = ""
         provider: Provider | MISSING = Field(default_factory=Provider)
         location: Location | MISSING = Field(default_factory=Location)
-        sub_locations: list[SubLocation] = Field(default_factory=list)
+        sub_locations: Annotated[
+            list[SubLocation], KeyField("name", alt="internal_id")
+        ] = Field(default_factory=list)
 
     config_: Annotated[ZscalerConfig, Alias("config")] = Field(
         default_factory=ZscalerConfig
@@ -329,7 +331,9 @@ class DeviceSettingsData(VcoModel):
     models: Annotated[dict[EdgeModelClass, ModelInterfaces], ProfileOnly] = Field(
         default_factory=dict
     )
-    segments: Annotated[list[DeviceSegment], KeyField("segment.name")]
+    segments: Annotated[
+        list[DeviceSegment], KeyField("segment.name", alt="segment.segment_id")
+    ]
     snmp: Annotated[
         EdgeSnmp | MISSING, ContextDefault(edge=MISSING, profile=EdgeSnmp)
     ] = MISSING

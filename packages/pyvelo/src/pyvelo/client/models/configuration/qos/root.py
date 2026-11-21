@@ -27,9 +27,9 @@ class QosClientConnector(VcoModel):
 
 
 class QosData(VcoModel):
-    segments: Annotated[list[QosSegment], KeyField("segment.name")] = Field(
-        default_factory=list
-    )
+    segments: Annotated[
+        list[QosSegment], KeyField("segment.name", alt="segment.segment_id")
+    ] = Field(default_factory=list)
     service_rate_limit: ServiceRateLimit | MISSING = MISSING
     qoe: QoeSettings | MISSING = MISSING
     qos_client_connector: QosClientConnector | MISSING = MISSING

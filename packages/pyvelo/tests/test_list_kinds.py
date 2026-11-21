@@ -14,8 +14,9 @@ from pyvelo.client.models.configuration.device_settings.root import DeviceSettin
 from pyvelo.client.models.configuration.firewall.root import FirewallData
 from pyvelo.client.models.configuration.qos.root import QosData
 from pyvelo.client.models.configuration.wan.root import WanData
-from pyvelo.core import VcoModel
+from pyvelo.core import KeySpec, VcoModel
 from pyvelo.core.base import ListKind, list_kind
+from pyvelo.core.fields import get_key_spec
 
 from .patch_models import Root
 
@@ -28,42 +29,28 @@ UNDECLARED: frozenset[str] = frozenset(
         "BgpBase.aggregation",
         "EdgeToEdgeDetail.vpn_hubs",
         "EdgeToEdgeHub.vpn_hubs",
-        "LanDhcpServerV6.fixed_ip",
-        "LanNetwork.fixed_ips",
         "LanNetwork.secondary_ips",
         "LanPrefixDelegation.pd_list",
-        "MacAllowList.allowed_macs",
         "ModelInterfaces.routed_interfaces",
         "ModelLanInterfaces.interfaces",
-        "NetflowCollector.filter_list",
         "NtpServer.keys",
         "PrefixDelegation.pd_list",
         "RadiusAuthentication.mac_bypass",
-        "RouteConfig.backhaul_edges",
         "RoutedInterfaceCell.subinterfaces",
         "RoutedInterfaceGe.subinterfaces",
-        "RoutedInterfaceLag.slave_interfaces",
         "RoutedInterfaceLag.subinterfaces",
         "RoutedInterfaceSfpDsl.subinterfaces",
         "RoutedInterfaceSfpGpon.subinterfaces",
         "RoutedInterfaceSfpStandard.subinterfaces",
         "RoutedInterfaceUsb.subinterfaces",
-        "SegmentBfd.rules",
-        "SegmentBfd.rules_v6",
         "SegmentBgp.aggregation",
         "SegmentCss.sites",
         "SegmentDns.backup_provider",
-        "SegmentDns.local_dns",
         "SegmentDns.primary_provider",
         "SegmentDns.private_providers",
         "SegmentEdgeDirect.providers",
-        "SegmentHandoffGateways.gateway_list",
-        "SegmentHandoffGateways.gateways",
-        "SegmentNetflow.collectors",
         "SegmentOspf.aggregation",
-        "SegmentOspf.areas",
         "SegmentOspfBase.aggregation",
-        "SegmentOspfBase.areas",
         "SegmentRoutes.nsd",
         "SegmentRoutes.nsd_v6",
         "SegmentRoutes.static",
@@ -71,7 +58,6 @@ UNDECLARED: frozenset[str] = frozenset(
         "SegmentSyslog.collectors",
         "SegmentVpn.backhaul_edges",
         "WanLinkCos.classes_of_service",
-        "ZscalerConfig.sub_locations",
     }
 )
 
@@ -109,6 +95,39 @@ def undeclared(roots: tuple[type[VcoModel], ...]) -> frozenset[str]:
     return frozenset(name for name, kind in walk(roots).items() if kind == "undeclared")
 
 
+def keyed_fields(
+    roots: tuple[type[VcoModel], ...],
+) -> Iterator[tuple[str, KeySpec, type[VcoModel]]]:
+    """Each keyed field reachable from *roots*: its name, its ``KeySpec`` and an item class.
+
+    A list of a union of models yields once per variant.
+    """
+    seen: set[type[VcoModel]] = set()
+    todo = list(roots)
+    while todo:
+        cls = todo.pop()
+        if cls in seen:
+            continue
+        seen.add(cls)
+        for name, fi in cls.model_fields.items():
+            if (spec := get_key_spec(fi)) is not None:
+                for item in dict.fromkeys(_models_in(fi.annotation)):
+                    yield f"{cls.__name__}.{name}", spec, item
+            todo.extend(_models_in(fi.annotation))
+
+
+def resolves(model: type[VcoModel], path: str) -> bool:
+    """Whether the dotted *path* of python field names names a field of *model*."""
+    *parents, leaf = path.split(".")
+    for part in parents:
+        fi = model.model_fields.get(part)
+        sub = None if fi is None else next(_models_in(fi.annotation), None)
+        if sub is None:
+            return False
+        model = sub
+    return leaf in model.model_fields
+
+
 def test_kind_of_each_synthetic_field():
     kinds = {name: list_kind(fi) for name, fi in Root.model_fields.items()}
     assert kinds["rules"] == "keyed"
@@ -125,12 +144,19 @@ def test_undeclared_lists_are_the_recorded_set():
     assert undeclared(ROOTS) == UNDECLARED
 
 
+def test_every_key_path_names_a_field():
+    for name, spec, item in keyed_fields(ROOTS):
+        for path in (*spec.paths, spec.alt, spec.label):
+            if path is not None:
+                assert resolves(item, path), f"{name}: {path}"
+
+
 def test_list_counts():
     assert Counter(walk(ROOTS).values()) == {
-        "keyed": 20,
+        "keyed": 35,
         "value": 19,
         "positional": 24,
-        "undeclared": 47,
+        "undeclared": 32,
         "untyped": 6,
         "map": 2,
     }

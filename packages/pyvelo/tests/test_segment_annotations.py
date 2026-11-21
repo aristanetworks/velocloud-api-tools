@@ -15,7 +15,8 @@ from pyvelo.client.models.configuration.device_settings.segment import (
     SegmentRoutes,
     SegmentSyslog,
 )
-from pyvelo.core.fields import get_key_field, has_override_flag
+from pyvelo.core import KeySpec
+from pyvelo.core.fields import get_key_spec, has_override_flag
 
 
 class TestSegmentOverrideFlags:
@@ -59,13 +60,21 @@ class TestSegmentOverrideFlags:
 
 class TestSegmentKeyFields:
     def test_bgp_neighbors(self):
-        assert get_key_field(BgpBase.model_fields["neighbors"]) == "neighbor_ip"
+        assert get_key_spec(BgpBase.model_fields["neighbors"]) == KeySpec(
+            ("neighbor_ip",), alt="id_"
+        )
 
     def test_bgp_filters(self):
-        assert get_key_field(BgpBase.model_fields["filters"]) == "name"
+        assert get_key_spec(BgpBase.model_fields["filters"]) == KeySpec(
+            ("name",), alt="id_"
+        )
 
     def test_icmp_probes(self):
-        assert get_key_field(SegmentRoutes.model_fields["icmp_probes"]) == "name"
+        assert get_key_spec(SegmentRoutes.model_fields["icmp_probes"]) == KeySpec(
+            ("name",), alt="logical_id"
+        )
 
     def test_icmp_responders(self):
-        assert get_key_field(SegmentRoutes.model_fields["icmp_responders"]) == "name"
+        assert get_key_spec(SegmentRoutes.model_fields["icmp_responders"]) == KeySpec(
+            ("name",), alt="logical_id"
+        )

@@ -12,6 +12,6 @@ from .rules import FirewallOutboundRule
 class FirewallSegment(VcoModel):
     segment: SegmentMetadata
     firewall_logging_enabled: bool | None = None
-    outbound: Annotated[list[FirewallOutboundRule], KeyField("name")] = Field(
-        default_factory=list
-    )
+    outbound: Annotated[
+        list[FirewallOutboundRule], KeyField("name", alt="rule_logical_id")
+    ] = Field(default_factory=list)

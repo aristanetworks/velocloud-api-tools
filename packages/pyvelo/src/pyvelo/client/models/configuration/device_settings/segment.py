@@ -58,8 +58,12 @@ class BfdRuleNsd(BfdRuleBase):
 class SegmentBfd(VcoModel):
     enabled: bool = False
     override: Annotated[bool, OverrideFlag] = True
-    rules: list[BfdRuleBase] = Field(default_factory=list)
-    rules_v6: list[BfdRuleBase] = Field(default_factory=list)
+    rules: Annotated[list[BfdRuleBase], KeyField("peer_address")] = Field(
+        default_factory=list
+    )
+    rules_v6: Annotated[list[BfdRuleBase], KeyField("peer_address")] = Field(
+        default_factory=list
+    )
 
 
 class SegmentEdgeDirectProviderConfig(VcoModel):
@@ -92,9 +96,13 @@ class GatewayListItem(VcoModel):
 
 class SegmentHandoffGateways(VcoModel):
     auto_select: bool = False
-    gateway_list: list[GatewayListItem] = Field(default_factory=list)
+    gateway_list: Annotated[list[GatewayListItem], KeyField("logical_id")] = Field(
+        default_factory=list
+    )
     override: Annotated[bool, OverrideFlag] = True
-    gateways: list[GatewayListItem] = Field(default_factory=list)
+    gateways: Annotated[list[GatewayListItem], KeyField("logical_id")] = Field(
+        default_factory=list
+    )
 
 
 SegmentVrrp = RootModel[dict[str, Any] | None]
@@ -209,7 +217,9 @@ class SegmentOspfArea(VcoModel):
 class SegmentOspfBase(VcoModel):
     aggregation: list[OspfAggregation] = Field(default_factory=list)
     enabled: bool = False
-    areas: list[SegmentOspfArea] = Field(default_factory=list)
+    areas: Annotated[list[SegmentOspfArea], KeyField("id_")] = Field(
+        default_factory=list
+    )
     default_routes: AdvertiseDefaultRoutes = "NONE"
     default_prefixes: bool = False
     bgp: OspfBgpConfig = Field(default_factory=OspfBgpConfig)
@@ -340,10 +350,12 @@ class BgpBase(VcoModel):
     default_route: Annotated[
         BgpDefaultRoute, BeforeValidator(_none_to_empty_object)
     ] = Field(default_factory=BgpDefaultRoute)
-    neighbors: Annotated[list[BgpNeighbor], KeyField("neighbor_ip")] = Field(
+    neighbors: Annotated[list[BgpNeighbor], KeyField("neighbor_ip", alt="id_")] = Field(
         default_factory=list
     )
-    filters: Annotated[list[BgpFilter], KeyField("name")] = Field(default_factory=list)
+    filters: Annotated[list[BgpFilter], KeyField("name", alt="id_")] = Field(
+        default_factory=list
+    )
     networks: Annotated[
         list[BgpNetwork],
         DefaultingModel(list[BgpNetwork], default_factory=list),
@@ -503,12 +515,12 @@ NsdRoute = Annotated[
 class SegmentRoutes(VcoModel):
     model_config = ConfigDict(extra="allow")
 
-    icmp_probes: Annotated[list[ICMPProbe], KeyField("name")] = Field(
+    icmp_probes: Annotated[list[ICMPProbe], KeyField("name", alt="logical_id")] = Field(
         default_factory=list
     )
-    icmp_responders: Annotated[list[ICMPResponder], KeyField("name")] = Field(
-        default_factory=list
-    )
+    icmp_responders: Annotated[
+        list[ICMPResponder], KeyField("name", alt="logical_id")
+    ] = Field(default_factory=list)
     static: list[StaticRoute] = Field(default_factory=list)
     static_v6: Annotated[list[StaticRoute], Alias("staticV6")] = Field(
         default_factory=list
@@ -579,7 +591,9 @@ class NetflowCollectorFilter(VcoModel):
 
 class NetflowCollector(VcoModel):
     allow_all_segment: bool = False
-    filter_list: list[NetflowCollectorFilter] = Field(default_factory=list)
+    filter_list: Annotated[list[NetflowCollectorFilter], KeyField("logical_id")] = (
+        Field(default_factory=list)
+    )
     logical_id: uuid.UUID
     name: str
     source_interface: str = ""
@@ -603,7 +617,9 @@ class SegmentNetflow(VcoModel):
     enabled: bool
     override: Annotated[bool, OverrideFlag] = True
     version: int = 10
-    collectors: list[NetflowCollector] = Field(default_factory=list)
+    collectors: Annotated[list[NetflowCollector], KeyField("logical_id")] = Field(
+        default_factory=list
+    )
     intervals: SegmentNetflowIntervals = Field(default_factory=SegmentNetflowIntervals)
 
     @model_validator(mode="after")
@@ -669,8 +685,8 @@ class SegmentDns(VcoModel):
     private_providers: DnsProvider | list[DnsProvider]
     source_interface: str = ""
     override: Annotated[bool, OverrideFlag] = True
-    local_dns: Annotated[list[LocalDomainItem], Alias("localDNS")] = Field(
-        default_factory=list
+    local_dns: Annotated[list[LocalDomainItem], Alias("localDNS"), KeyField("fqdn")] = (
+        Field(default_factory=list)
     )
 
 

@@ -110,11 +110,11 @@ def get_context_defaults(field_info: FieldInfo) -> ContextDefaults | None:
     return None
 
 
-def get_key_field(field_info: FieldInfo) -> str | None:
-    """Extract KeyField key_path from FieldInfo.metadata, or None."""
+def get_key_spec(field_info: FieldInfo) -> KeySpec | None:
+    """The ``KeySpec`` of a field marked ``KeyField``, or None."""
     for m in field_info.metadata:
-        if isinstance(m, _ProcessedKeyField):
-            return m.key_path
+        if isinstance(m, KeySpec):
+            return m
     return None
 
 
@@ -315,25 +315,43 @@ class ContextDefault:
 
 
 class KeyField:
-    """Annotated marker: treat a list field as dict-like, keyed by a sub-field path.
+    """Annotated marker: the items of a list field are named by a key.
 
-    Usage: segments: Annotated[list[Segment], KeyField("segment.name")] = ...
+    Usage: ``segments: Annotated[list[Segment], KeyField("segment.name",
+    alt="segment.segment_id")]``
 
-    The merge engine will address list items by the value at the key path
-    instead of by index.
+    Each path is a dotted path of python field names. The key is the value at
+    the one path, or the tuple of the values at several (a composite key).
+    *alt* names a second field that identifies an item on its own (a stable
+    ID): a selector that is no item's key is tried as it. *label* names a
+    field people use for the item that is not kept unique. Stored as a
+    ``KeySpec`` (``get_key_spec``).
     """
 
-    __slots__ = ("key_path",)
+    __slots__ = ("alt", "key_paths", "label")
 
-    def __init__(self, key_path: str):
-        self.key_path = key_path
+    def __init__(
+        self, *key_paths: str, alt: str | None = None, label: str | None = None
+    ) -> None:
+        if not key_paths:
+            raise TypeError("KeyField needs at least one key path")
+        self.key_paths: tuple[str, ...] = key_paths
+        self.alt: str | None = alt
+        self.label: str | None = label
 
 
 @dataclass(frozen=True, slots=True)
-class _ProcessedKeyField:
-    """Stored in FieldInfo.metadata by _apply_vco_markers."""
+class KeySpec:
+    """How the items of a ``KeyField`` list are named (``get_key_spec``).
 
-    key_path: str
+    Stored in FieldInfo.metadata by _apply_vco_markers. *paths* are the key's
+    paths, one per part; *alt* is the alt key's path and *label* the label's,
+    if the list has them. See ``KeyField``.
+    """
+
+    paths: tuple[str, ...]
+    alt: str | None = None
+    label: str | None = None
 
 
 class OverrideFlag:
@@ -435,7 +453,7 @@ def apply_vco_markers(cls: type[BaseModel]) -> None:
     _processed_types = (
         _ProcessedNorm,
         _ProcessedCtxDefaults,
-        _ProcessedKeyField,
+        KeySpec,
         _ProcessedOverrideFlag,
         _ProcessedEdgeLocal,
         _ProcessedResolvable,
@@ -469,9 +487,9 @@ def apply_vco_markers(cls: type[BaseModel]) -> None:
                     )
                 )
                 already.add(_ProcessedCtxDefaults)
-            elif isinstance(m, KeyField) and _ProcessedKeyField not in already:
-                fi.metadata.append(_ProcessedKeyField(key_path=m.key_path))
-                already.add(_ProcessedKeyField)
+            elif isinstance(m, KeyField) and KeySpec not in already:
+                fi.metadata.append(KeySpec(m.key_paths, alt=m.alt, label=m.label))
+                already.add(KeySpec)
             elif (
                 isinstance(m, OverrideFlag)
                 or (isinstance(m, type) and issubclass(m, OverrideFlag))

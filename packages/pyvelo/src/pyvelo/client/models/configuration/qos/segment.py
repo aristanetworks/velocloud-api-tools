@@ -55,9 +55,11 @@ class WebProxy(VcoModel):
 
 class QosSegment(VcoModel):
     segment: SegmentMetadata
-    rules: Annotated[list[QosRule], KeyField("name")] = Field(default_factory=list)
-    defaults: Annotated[list[QosRule] | MISSING, ProfileOnly, KeyField("name")] = (
-        MISSING
+    rules: Annotated[list[QosRule], KeyField("name", alt="rule_logical_id")] = Field(
+        default_factory=list
     )
+    defaults: Annotated[
+        list[QosRule] | MISSING, ProfileOnly, KeyField("name", alt="rule_logical_id")
+    ] = MISSING
     cos_mapping: CosMapping | MISSING = MISSING
     web_proxy: WebProxy | MISSING = MISSING

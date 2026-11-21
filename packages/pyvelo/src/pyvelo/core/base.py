@@ -78,7 +78,7 @@ from .fields import (
     NormalizerFn,
     apply_vco_markers,
     get_context_defaults,
-    get_key_field,
+    get_key_spec,
     get_normalizer,
     is_positional,
     resolve_ctx_default,
@@ -698,7 +698,7 @@ def list_kind(field_info: FieldInfo) -> ListKind | None:
         return "map"
     if not is_list:
         return None
-    if get_key_field(field_info) is not None:
+    if get_key_spec(field_info) is not None:
         return "keyed"
     if is_positional(field_info):
         return "positional"

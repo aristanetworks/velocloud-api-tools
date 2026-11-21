@@ -8,8 +8,8 @@ from pyvelo.client.models.configuration.firewall.rule_action import OutboundRule
 from pyvelo.client.models.configuration.firewall.rule_match import OutboundRuleMatch
 from pyvelo.client.models.configuration.firewall.rules import FirewallOutboundRule
 from pyvelo.client.models.configuration.firewall.segment import FirewallSegment
-from pyvelo.core import ConfigContext, add, delete
-from pyvelo.core.fields import get_key_field, has_override_flag
+from pyvelo.core import ConfigContext, KeySpec, add, delete
+from pyvelo.core.fields import get_key_spec, has_override_flag
 
 
 def _make_segment(name: str = "Global Segment", segment_id: int = 0) -> FirewallSegment:
@@ -33,22 +33,19 @@ def _make_rule(name: str = "test-rule") -> FirewallOutboundRule:
 
 class TestKeyFieldMarkers:
     def test_firewall_data_segments_has_key_field(self):
-        """FirewallData.segments should have KeyField('segment.name')."""
+        """FirewallData.segments should be keyed by segment.name, alt key segment.segment_id."""
         fi = FirewallData.model_fields["segments"]
-        key = get_key_field(fi)
-        assert key == "segment.name"
+        assert get_key_spec(fi) == KeySpec(("segment.name",), alt="segment.segment_id")
 
     def test_firewall_segment_outbound_has_key_field(self):
-        """FirewallSegment.outbound should have KeyField('name')."""
+        """FirewallSegment.outbound should be keyed by name, alt key rule_logical_id."""
         fi = FirewallSegment.model_fields["outbound"]
-        key = get_key_field(fi)
-        assert key == "name"
+        assert get_key_spec(fi) == KeySpec(("name",), alt="rule_logical_id")
 
     def test_firewall_data_inbound_has_key_field(self):
-        """FirewallData.inbound should have KeyField('name')."""
+        """FirewallData.inbound should be keyed by name, alt key rule_logical_id."""
         fi = FirewallData.model_fields["inbound"]
-        key = get_key_field(fi)
-        assert key == "name"
+        assert get_key_spec(fi) == KeySpec(("name",), alt="rule_logical_id")
 
 
 class TestNoOverrideFlag:

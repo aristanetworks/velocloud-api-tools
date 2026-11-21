@@ -9,7 +9,7 @@ from pyvelo.core.fields import (
     KeyField,
     OverrideFlag,
     Resolvable,
-    get_key_field,
+    get_key_spec,
     get_resolvable,
     has_override_flag,
     is_edge_local,
@@ -29,14 +29,16 @@ class TestModel(VcoModel):
     plain: str = ""
 
 
-class TestGetKeyField:
+class TestGetKeySpec:
     def test_returns_key_path_for_keyfield(self):
         fi = TestModel.model_fields["items"]
-        assert get_key_field(fi) == "name"
+        spec = get_key_spec(fi)
+        assert spec is not None
+        assert spec.paths == ("name",)
 
     def test_returns_none_for_non_keyfield(self):
         fi = TestModel.model_fields["plain"]
-        assert get_key_field(fi) is None
+        assert get_key_spec(fi) is None
 
 
 class TestHasOverrideFlag:

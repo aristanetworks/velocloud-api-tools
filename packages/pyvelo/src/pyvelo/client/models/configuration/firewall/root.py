@@ -22,18 +22,18 @@ class FirewallData(VcoModel):
     firewall_enabled: Annotated[bool, Alias("firewall_enabled")] = True
     inbound: Annotated[
         list[FirewallInboundRule],
-        KeyField("name"),
+        KeyField("name", alt="rule_logical_id"),
         ContextDefaults(profile=lambda: list),
     ] = Field(default_factory=list)
     inbound_v6: Annotated[
         list[FirewallInboundRuleV6],
         Alias("inboundV6"),
-        KeyField("name"),
+        KeyField("name", alt="rule_logical_id"),
         ContextDefaults(profile=lambda: list),
     ] = Field(default_factory=list)
-    segments: Annotated[list[FirewallSegment], KeyField("segment.name")] = Field(
-        default_factory=list
-    )
+    segments: Annotated[
+        list[FirewallSegment], KeyField("segment.name", alt="segment.segment_id")
+    ] = Field(default_factory=list)
     syslog_forwarding: Annotated[
         bool, Alias("syslog_forwarding"), DefaultingScalar(bool, default=False)
     ] = False

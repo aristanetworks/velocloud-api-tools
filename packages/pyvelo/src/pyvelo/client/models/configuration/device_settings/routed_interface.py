@@ -15,6 +15,7 @@ from pyvelo.core import (
     ContextDefault,
     EdgeLocal,
     EdgeOnly,
+    KeyField,
     NoneIsFalse,
     NoneIsZero,
     Normalizer,
@@ -367,7 +368,9 @@ class RoutedInterfaceCell(RoutedInterfaceCommon):
 
 class RoutedInterfaceLag(RoutedInterfaceCommon):
     lacp: Lacp = Field(default_factory=Lacp)
-    slave_interfaces: list[SlaveInterface] = Field(default_factory=list)
+    slave_interfaces: Annotated[list[SlaveInterface], KeyField("name")] = Field(
+        default_factory=list
+    )
     evdsl_modem_attached: Annotated[bool, NoneIsFalse] = False
 
 

@@ -55,7 +55,7 @@ from .base import (
 )
 from .fields import (
     ConfigContext,
-    get_key_field,
+    get_key_spec,
     get_name_of,
     get_resolvable,
     has_override_flag,
@@ -685,6 +685,8 @@ class _ListSpec:
     kind: ListKind
     key_path: str | None
     """The ``KeyField`` path of a keyed list."""
+    alt_path: str | None
+    """The ``KeyField`` alt key path of a keyed list that has one."""
     item_type: _ListItemType | None
     """The model type of the items of a list of models."""
     element: TypeAdapter[object] | None
@@ -703,7 +705,12 @@ def _list_spec(field_info: FieldInfo) -> _ListSpec | None:
     kind = list_kind(field_info)
     if kind is None:
         return None
-    key_path = get_key_field(field_info) if kind == "keyed" else None
+    key_spec = get_key_spec(field_info) if kind == "keyed" else None
+    # A composite key is not read here yet: such a list has no key path.
+    if key_spec is not None and len(key_spec.paths) != 1:
+        key_spec = None
+    key_path = None if key_spec is None else key_spec.paths[0]
+    alt_path = None if key_spec is None else key_spec.alt
     item_type = _list_item_type(field_info)
     element: TypeAdapter[object] | None = None
     map_type: type[VcoModel] | None = None
@@ -718,6 +725,7 @@ def _list_spec(field_info: FieldInfo) -> _ListSpec | None:
     return _ListSpec(
         kind,
         key_path,
+        alt_path,
         item_type,
         element,
         map_type,
@@ -789,6 +797,8 @@ class _Selection:
     """In a keyed or value list, the key or value it stands for: as written, or the resolver's name."""
     position: int | None
     """The ``n`` of a ``"#n"`` selector that was taken as a position."""
+    alt: bool = False
+    """Whether it names the items by their alt key."""
 
 
 def _select(
@@ -801,10 +811,11 @@ def _select(
 
     Tried in order: in a keyed list, an item whose key equals the selector in
     string form; in a value list, an entry equal to it in string form; then
-    ``"#n"``, the item at position ``n``; then, in a keyed list whose key is a
-    ``NameOf`` field and with *resolvers*, the name the resolver has for the
-    selector, as the key once more. An unknown name raises
-    ``ResolutionError``. In any other list only ``"#n"`` names an item.
+    ``"#n"``, the item at position ``n``; then, in a keyed list with an alt
+    key, an item whose alt key equals the selector in string form; then, in a
+    keyed list whose key is a ``NameOf`` field and with *resolvers*, the name
+    the resolver has for the selector, as the key once more. An unknown name
+    raises ``ResolutionError``. In any other list only ``"#n"`` names an item.
     """
     text = str(selector)
     by_value = spec.kind in ("keyed", "value")
@@ -813,6 +824,11 @@ def _select(
     n = position_of(selector)
     if n is not None:
         return _Selection([n] if n < len(items) else [], None, n)
+    if spec.alt_path is not None:
+        alt_path = spec.alt_path
+        found = [i for i, item in enumerate(items) if _item_key(item, alt_path) == text]
+        if found:
+            return _Selection(found, text, None, alt=True)
     if spec.name_identity is not None and resolvers is not None:
         text = _canonical_name(spec.name_identity, text, resolvers)
         return _Selection(_matching(items, spec, text), text, None)
@@ -837,9 +853,10 @@ def select_items(
 
     Empty if it names none. A selector is read as in a patch (spec 5.10.3):
     the key of an item of a keyed list, an entry of a value list, ``at(n)``,
-    and in a keyed list whose key is a ``NameOf`` field, the resolver's name
-    for it. An unknown name raises ``ResolutionError``. Raises ``TypeError``
-    if the field is not a list.
+    the alt key of an item of a keyed list that has one, and in a keyed list
+    whose key is a ``NameOf`` field, the resolver's name for it. An unknown
+    name raises ``ResolutionError``. Raises ``TypeError`` if the field is not
+    a list.
     """
     model_cls = type(model)
     spec = _list_spec(model_cls.model_fields[field_name])
@@ -1193,7 +1210,8 @@ def _check_add(
             where,
         )
     if selection.positions:
-        raise PatchError(f"{selection.key!r} is already in the list", where)
+        where_in = " as an alt key" if selection.alt else ""
+        raise PatchError(f"{selection.key!r} is already in the list{where_in}", where)
     if spec.kind == "keyed":
         if spec.item_type is None or spec.key_path is None:
             raise PatchError("this list has no item type to build from", where)
@@ -1257,7 +1275,12 @@ def _named_item(
             + f"named by at(n){hint}",
             where,
         )
-    what = "key" if spec.kind == "keyed" else "entry"
+    if spec.kind != "keyed":
+        what = "entry"
+    elif spec.alt_path is not None:
+        what = "key or alt key"
+    else:
+        what = "key"
     message = f"no item has the {what} {selection.key!r}"
     if op.kind == "change":
         message += "; to add one, write add(...)"
@@ -1269,13 +1292,17 @@ def _names_several(
 ) -> str:
     """The message for *subject*, a selector or anchor that names the items at *positions*.
 
-    It lists each match with its position and its key or value.
+    It lists each match with its position and its key or value, and its alt
+    key if it has one.
     """
     shown: list[str] = []
     for index in positions:
         item = items[index]
         key = str(item) if spec.key_path is None else _item_key(item, spec.key_path)
-        shown.append(f"#{index} ({key})")
+        alt = None if spec.alt_path is None else _item_key(item, spec.alt_path)
+        shown.append(
+            f"#{index} ({key})" if alt is None else f"#{index} ({key}, alt key {alt})"
+        )
     return (
         f"{subject} names {len(positions)} items: {', '.join(shown)}; "
         + "select one of them"
