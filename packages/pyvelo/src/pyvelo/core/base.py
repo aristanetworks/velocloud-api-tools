@@ -79,12 +79,14 @@ from .fields import (
     apply_vco_markers,
     get_context_defaults,
     get_key_field,
+    get_name_of,
     get_normalizer,
     get_resolvable,
     has_override_flag,
     is_edge_local,
     resolve_ctx_default,
 )
+from .identity import ResolutionError
 
 type JsonObject = dict[str, object]
 """A JSON object: a merge patch, a compact dump, a pydantic context, ..."""
@@ -97,6 +99,10 @@ class IdentityResolver(Protocol):
     """
 
     def resolve_sync[T](self, key: type[T], name: str, /) -> T: ...
+
+    def has_id_sync(
+        self, identity_type: type[object], id_attr: str, value: object, /
+    ) -> bool: ...
 
 
 # ---------------------------------------------------------------------------
@@ -576,15 +582,35 @@ def _new_model_from_patch(
 def _resolve_name(
     field_info: FieldInfo, name: str, resolvers: IdentityResolver
 ) -> object:
-    """Resolve *name* to an ID through the field's Resolvable marker.
+    """Turn the string *name* on a Resolvable field into the field's ID.
 
-    Returns *name* unchanged if the field is not Resolvable. Raises
-    ``LookupError`` if the resolver doesn't know the name.
+    Returns *name* unchanged if the field is not Resolvable. Otherwise, in order:
+
+    1. If the field's ID type is not ``str`` and *name* parses as it (a UUID
+       string on a UUID field), that value is the ID.
+    2. An exact or case-insensitive name match gives the identity's ``id_attr``.
+    3. If the ID type is ``str`` and *name* equals a known ID, *name* is the ID.
+    4. Otherwise the ``ResolutionError`` propagates.
+
+    A missing resolver raises a ``LookupError`` that is not a ``ResolutionError``.
     """
     resolvable = get_resolvable(field_info)
     if resolvable is None:
         return name
-    identity = resolvers.resolve_sync(resolvable.identity_type, name)
+    id_type = _id_type(field_info)
+    if id_type is not None and id_type is not str:
+        try:
+            return _id_adapter(id_type).validate_strings(name)
+        except ValidationError:
+            pass
+    try:
+        identity = resolvers.resolve_sync(resolvable.identity_type, name)
+    except ResolutionError:
+        if id_type is str and resolvers.has_id_sync(
+            resolvable.identity_type, resolvable.id_attr, name
+        ):
+            return name
+        raise
     return _field_value(identity, resolvable.id_attr)
 
 
@@ -787,12 +813,16 @@ def _pre_resolve(
     raw strings. This function walks *patch* against *fields* (the target
     model's fields) and:
 
-    - resolves string values on Resolvable fields (unknown names are left as is)
+    - resolves string values on Resolvable fields the way ``merge_patch``
+      does (see ``_resolve_name``): an unknown name raises ``ResolutionError``
+      and a missing resolver leaves the value for pydantic
     - turns KeyField dict patches into ordered item lists
     - recurses into list items and sub-model dicts
-    - fills Resolvable fields that are missing, using the patch's own string
-      values as names to look up (e.g. a key ``name`` written in by
-      ``_inject_key_path`` gives ``segment_id`` / ``segment_logical_id``)
+    - fills Resolvable fields that are missing, but only from a sibling field
+      marked ``NameOf`` for the same identity type that holds a string (a key
+      ``segment.name`` written in by ``_inject_key_path`` gives
+      ``segment_id`` / ``segment_logical_id``). An unknown name raises
+      ``ResolutionError`` and a missing resolver skips the fill.
     """
     resolved: JsonObject = dict(patch)
 
@@ -804,8 +834,10 @@ def _pre_resolve(
             if isinstance(value, str):
                 try:
                     resolved[key] = _resolve_name(fi, value, resolvers)
+                except ResolutionError:
+                    raise
                 except LookupError:
-                    pass  # leave it for pydantic to accept or reject
+                    pass  # no resolver: leave it for pydantic to accept or reject
             elif _is_json_object(value) and (key_path := get_key_field(fi)):
                 resolved[key] = _keyed_patch_to_list(
                     value, key_path, _list_item_type(fi), resolvers
@@ -821,22 +853,41 @@ def _pre_resolve(
             elif _is_json_object(value) and (sub_type := _field_model_type(fi)):
                 resolved[key] = _pre_resolve(sub_type.model_fields, value, resolvers)
 
-    candidate_names = [v for v in resolved.values() if isinstance(v, str)]
-    if not candidate_names:
-        return resolved
-    for field_name, fi in fields.items():
-        if get_resolvable(fi) is None:
-            continue
-        if any(key in resolved for key in _input_keys(fi, field_name)):
-            continue
-        for candidate in candidate_names:
-            try:
-                resolved[field_name] = _resolve_name(fi, candidate, resolvers)
-            except LookupError:
-                continue
-            break
-
+    _fill_from_names(fields, resolved, resolvers)
     return resolved
+
+
+def _fill_from_names(
+    fields: Mapping[str, FieldInfo], resolved: JsonObject, resolvers: IdentityResolver
+) -> None:
+    """Fill, in *resolved*, the Resolvable fields it lacks from a ``NameOf`` sibling it has."""
+    for field_name, fi in fields.items():
+        identity_type: type[object] | None = get_name_of(fi)
+        if identity_type is None:
+            continue
+        name = next(
+            (resolved[key] for key in _input_keys(fi, field_name) if key in resolved),
+            None,
+        )
+        if not isinstance(name, str):
+            continue
+        targets = [
+            (target_name, resolvable)
+            for target_name, target_fi in fields.items()
+            if (resolvable := get_resolvable(target_fi)) is not None
+            and resolvable.identity_type is identity_type
+            and not any(key in resolved for key in _input_keys(target_fi, target_name))
+        ]
+        if not targets:
+            continue
+        try:
+            identity = resolvers.resolve_sync(identity_type, name)
+        except ResolutionError:
+            raise
+        except LookupError:
+            continue  # no resolver: nothing to fill from
+        for target_name, resolvable in targets:
+            resolved[target_name] = _field_value(identity, resolvable.id_attr)
 
 
 def _keyed_patch_to_list(
@@ -929,6 +980,23 @@ def _unwrap_annotated(tp: object) -> object:
 def _field_accepts_missing(fi: FieldInfo) -> bool:
     """Check if a field's type annotation includes MISSING."""
     return MISSING in _union_members(fi.annotation)
+
+
+def _id_type(fi: FieldInfo) -> object | None:
+    """The ID type of a Resolvable field: its annotation without ``MISSING``, ``None`` and ``Annotated``.
+
+    None unless exactly one type is left.
+    """
+    members = (
+        _unwrap_annotated(m) for m in _union_members(_unwrap_annotated(fi.annotation))
+    )
+    kept = [m for m in members if m is not MISSING and m is not type(None)]
+    return kept[0] if len(kept) == 1 else None
+
+
+@functools.cache
+def _id_adapter(id_type: object) -> TypeAdapter[object]:
+    return TypeAdapter[object](id_type)  # pyright: ignore[reportArgumentType]
 
 
 def _field_model_type(fi: FieldInfo) -> type[VcoModel] | None:

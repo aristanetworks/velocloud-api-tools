@@ -12,7 +12,7 @@ from pyvelo.core.base import (
     _is_dict,  # pyright: ignore[reportPrivateUsage]
     _is_list,  # pyright: ignore[reportPrivateUsage]
 )
-from pyvelo.core.fields import Resolvable
+from pyvelo.core.fields import NameOf, Resolvable
 from pyvelo.core.identity import (
     AddressGroupIdentity,
     SegmentIdentity,
@@ -40,7 +40,7 @@ ServiceGroupRef = Annotated[
 
 class SegmentMetadata(VcoModel):
     segment_id: Annotated[int, Resolvable(SegmentIdentity, "segment_id")] = 0
-    name: str
+    name: Annotated[str, NameOf(SegmentIdentity)]
     type_: Annotated[
         NetworkSegmentType, Alias("type"), Resolvable(SegmentIdentity, "type_")
     ] = NetworkSegmentType.REGULAR

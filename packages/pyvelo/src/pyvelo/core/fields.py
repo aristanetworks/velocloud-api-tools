@@ -136,6 +136,14 @@ def get_resolvable(field_info: FieldInfo) -> _ProcessedResolvable | None:
     return None
 
 
+def get_name_of(field_info: FieldInfo) -> type | None:
+    """The identity type a field is marked ``NameOf`` for, or None."""
+    for m in field_info.metadata:
+        if isinstance(m, NameOf):
+            return m.identity_type
+    return None
+
+
 # ---------------------------------------------------------------------------
 # Annotated validators
 # ---------------------------------------------------------------------------
@@ -365,6 +373,20 @@ class Resolvable:
                 )
         self.identity_type = identity_type
         self.id_attr = id_attr
+
+
+@dataclass(frozen=True, slots=True)
+class NameOf:
+    """Annotated marker: this string field holds the name of an identity.
+
+    ``merge_patch`` fills the sibling ``Resolvable(identity_type, ...)`` fields
+    that a new item's patch leaves out from this field's value. No other
+    string in a patch is tried as a name.
+
+    Usage: ``name: Annotated[str, NameOf(SegmentIdentity)]``
+    """
+
+    identity_type: type
 
 
 @dataclass(frozen=True, slots=True)

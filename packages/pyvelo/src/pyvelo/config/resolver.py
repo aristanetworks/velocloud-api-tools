@@ -3,43 +3,14 @@
 import contextlib
 import difflib
 import uuid
-from collections.abc import Generator, Iterable
+from collections.abc import Callable, Collection, Generator, Iterable
 from dataclasses import dataclass
-from typing import Any, ClassVar, Protocol, overload, runtime_checkable
+from typing import Any, ClassVar, Protocol, cast, overload, runtime_checkable
 
 from pyvelo.client.protocol import VcoClientProtocol
 
-
-class ResolutionError(KeyError):
-    """Raised when a resolver cannot find a name.
-
-    Inherits from ``KeyError`` for backwards compatibility with consumers that
-    catch the historical exception type.
-    """
-
-    def __init__(
-        self,
-        *,
-        name: str,
-        identity_type: type | str,
-        candidates: list[str],
-        message: str | None = None,
-    ) -> None:
-        self.name = name
-        self.identity_type = identity_type
-        self.candidates = candidates
-        super().__init__(message or self._default_message())
-
-    def _default_message(self) -> str:
-        label = (
-            self.identity_type
-            if isinstance(self.identity_type, str)
-            else self.identity_type.__name__
-        )
-        if self.candidates:
-            cands = "\n".join(f"  - {c}" for c in self.candidates)
-            return f"Unknown {label}: {self.name!r}.\nDid you mean:\n{cands}"
-        return f"Unknown {label}: {self.name!r}."
+# ResolutionError lives in pyvelo.core.identity; re-exported so this import path keeps working.
+from pyvelo.core.identity import ResolutionError as ResolutionError  # noqa: PLC0414
 
 
 @dataclass
@@ -113,6 +84,10 @@ class BaseResolver[KeyT, IdentityT]:
 
     async def load(self, context: ResolverContext) -> None:
         raise NotImplementedError
+
+    def identities(self) -> Collection[IdentityT]:
+        """The identities loaded so far."""
+        return self._by_name.values()
 
     def _register(
         self, name: str, identity: IdentityT, **reverse_keys: int | str | uuid.UUID
@@ -263,6 +238,20 @@ class ResolverRegistry:
             f"Resolver for {type_name} suspended unexpectedly "
             f"(resolve() must not await)"
         )
+
+    def has_id_sync(self, identity_type: type, id_attr: str, value: object) -> bool:
+        """True if a loaded identity of *identity_type* has ``id_attr == value``.
+
+        False when no resolver is registered for the type or it does not
+        expose ``identities()``.
+        """
+        identities = cast(
+            Callable[[], Iterable[object]] | None,
+            getattr(self._resolvers.get(identity_type), "identities", None),
+        )
+        if identities is None:
+            return False
+        return any(getattr(i, id_attr) == value for i in identities())
 
     async def reverse(
         self, identity_type: type, id_attr: str, value: int | str | uuid.UUID
