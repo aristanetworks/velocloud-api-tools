@@ -9,6 +9,7 @@ from ..common import (
     copy_profile_segments,
     find_segment,
     get_or_create_segment,
+    profile_segment_id,
     profile_segment_name,
 )
 from .rules import FirewallInboundRule, FirewallInboundRuleV6
@@ -95,6 +96,14 @@ class FirewallData(VcoModel):
         Raises ``UnboundError`` if the data is not bound to a profile.
         """
         return profile_segment_name(self._profile_segments, selector)
+
+    def profile_segment_id(self, selector: object) -> object | None:
+        """The ``segmentId`` of the bound profile's segment *selector* names, or None.
+
+        See :func:`~pyvelo.client.models.configuration.common.profile_segment_id`.
+        Raises ``UnboundError`` if the data is not bound to a profile.
+        """
+        return profile_segment_id(self._profile_segments, selector)
 
     def get_segment(
         self, *, name: str | None = None, segment_id: int | None = None

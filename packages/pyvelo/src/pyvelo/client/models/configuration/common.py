@@ -125,23 +125,42 @@ def profile_segment_name(
     in string form. Raises ``UnboundError`` if *profile_segments* is None (the
     data is not bound to a profile).
     """
+    entry = _profile_segment_entry(profile_segments, selector)
+    return None if entry is None else _segment_name(entry)
+
+
+def profile_segment_id(
+    profile_segments: Sequence[Mapping[str, object]] | None, selector: object
+) -> object | None:
+    """The ``segmentId`` of the profile segment *selector* names, or None.
+
+    The segment is found as :func:`profile_segment_name` finds it, and the
+    same ``UnboundError`` is raised.
+    """
+    entry = _profile_segment_entry(profile_segments, selector)
+    return None if entry is None else segment_id_of(entry)
+
+
+def _profile_segment_entry(
+    profile_segments: Sequence[Mapping[str, object]] | None, selector: object
+) -> Mapping[str, object] | None:
+    """The profile segment entry *selector* names (``profile_segment_name``), or None."""
     if profile_segments is None:
         raise UnboundError(
             f"segment {selector!r}: this object is not bound to a profile; load it through ConfigPipeline"
         )
     text = str(selector)
     entry = _profile_segment_called(profile_segments, text)
-    if entry is None:
-        entry = next(
-            (
-                e
-                for e in profile_segments
-                if (segment_id := segment_id_of(e)) is not None
-                and str(segment_id) == text
-            ),
-            None,
-        )
-    return None if entry is None else _segment_name(entry)
+    if entry is not None:
+        return entry
+    return next(
+        (
+            e
+            for e in profile_segments
+            if (segment_id := segment_id_of(e)) is not None and str(segment_id) == text
+        ),
+        None,
+    )
 
 
 def _segment_name(entry: Mapping[str, object]) -> str | None:

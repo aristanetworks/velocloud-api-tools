@@ -33,11 +33,7 @@ from pyvelo.config.validation import ValidationResult, ValidatorRegistry
 from pyvelo.core import PatchError
 from pyvelo.core.base import IdentityResolver, VcoModel
 from pyvelo.core.identity import EdgeName, ProfileName, ResolutionError
-from pyvelo.core.merge import (
-    _list_spec,  # pyright: ignore[reportPrivateUsage]
-    _patch_key,  # pyright: ignore[reportPrivateUsage]
-    select_items,
-)
+from pyvelo.core.merge import select_items
 from pyvelo.core.patch import ItemOp, is_new, parse_item_op, position_of
 from pyvelo.core.rebase import Key, Path
 
@@ -436,6 +432,8 @@ class _SegmentLayer(Protocol):
 
     def profile_segment_name(self, selector: object) -> str | None: ...
 
+    def profile_segment_id(self, selector: object) -> object | None: ...
+
 
 _SEGMENTS = Path(("segments",))
 
@@ -489,7 +487,11 @@ def _prepare_segments(
 
     - a selector that names an entry of the layer (``select_items``) is left
       as it is;
-    - one that names a segment only the profile has (``profile_segment_name``):
+    - one that names a profile segment (``profile_segment_name``) the layer
+      has under another name (another case, or by the profile segment's
+      ``segmentId``, a name of its own) names that entry, and is keyed under
+      the entry's name for any operation;
+    - one that names a segment only the profile has:
       a change or a ``move`` first adds the placeholder entry
       (``segment(name)``), which carries the profile's descriptor and IDs, and
       is keyed under the profile's name; an ``add`` or a ``delete`` raises
@@ -498,7 +500,8 @@ def _prepare_segments(
       bound to a profile, is left to ``merge_patch``.
 
     Under ``"+"`` or ``"+tag"``, an ``add`` whose body gives the segment's
-    name is read as an ``add`` under that name. Raises ``PatchError`` if two
+    name is read as an ``add`` under that name; one for a segment the layer
+    has under another name raises ``PatchError``. Raises ``PatchError`` if two
     selectors name one segment.
     """
     segments = patch.get("segments")
@@ -539,7 +542,7 @@ def _prepare_segment(
     new = is_new(selector)
     lookup: object = selector
     if new:
-        given = _added_segment_name(data, op) if op.kind == "add" else None
+        given = _added_segment_name(op) if op.kind == "add" else None
         if given is None:
             return selector, None
         lookup = given
@@ -552,9 +555,20 @@ def _prepare_segment(
         return selector, None
     if name is None:
         return selector, None
-    if _layer_segment_name(data, name, None) is not None:
-        # The layer has it under the profile's name: the selector differs in case.
-        return (selector, None) if new else (name, name)
+    entry = _layer_segment_name(data, name, None)
+    if entry is None:
+        # The layer may have the profile's segment under another name.
+        segment_id = data.profile_segment_id(lookup)
+        if segment_id is not None:
+            entry = _layer_segment_name(data, str(segment_id), None)
+    if entry is not None:
+        # The layer has it, under a name the selector does not give (another
+        # case, or a name of its own): the patch is for that entry.
+        if not new:
+            return entry, entry
+        raise PatchError(
+            f"segment {name!r} is already in the edge layer, as {entry!r}", where
+        )
     if op.kind == "add":
         raise PatchError(
             f"the edge has segment {name!r} by inheritance from its profile: "
@@ -589,12 +603,15 @@ def _layer_segment_name(
     return data.segments[positions[0]].segment.name
 
 
-def _added_segment_name(data: VcoModel, op: ItemOp) -> str | None:
-    """The segment name the body of an ``add`` gives, read as ``merge_patch`` reads it."""
-    spec = _list_spec(type(data).model_fields["segments"])
-    if spec is None or spec.item_type is None:
-        return None
-    name = _patch_key(spec.item_type.fields, op.body, spec.key_paths)
+def _added_segment_name(op: ItemOp) -> str | None:
+    """The segment name the body of an ``add`` gives at ``segment.name``, or None.
+
+    That is the key path of every ``segments`` list, and neither ``segment``
+    nor ``name`` has an alias or a camelCase form of its own, so these are
+    the only keys ``merge_patch`` reads the name under.
+    """
+    descriptor = op.body.get("segment")
+    name = descriptor.get("name") if _is_object(descriptor) else None
     return None if name is None else str(name)
 
 

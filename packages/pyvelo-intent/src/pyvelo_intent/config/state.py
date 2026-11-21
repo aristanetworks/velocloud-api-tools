@@ -151,6 +151,11 @@ class ConfigState:
     )
     load_warnings: list[ValidationWarning] = field(default_factory=list)
     _spent: bool = field(default=False, repr=False)
+    _made_into_unset: list[tuple[AnyConfigurationModule, bool]] = field(
+        default_factory=list, repr=False
+    )
+    """Each module ``module(create=True)`` made where ``modules`` was unset, and
+    whether ``modules`` was in the config's ``model_fields_set`` then."""
 
     def __post_init__(self) -> None:
         if self.edge_config is None or self.edge_config.modules is MISSING:
@@ -195,12 +200,18 @@ class ConfigState:
         from the profile. Raises ``ValueError`` if there is no such module and
         none can be created.
         """
-        return _module_of(
-            self.target_config,
+        config = self.target_config
+        unset = config.modules is MISSING
+        was_set = "modules" in config.model_fields_set
+        module = _module_of(
+            config,
             resolve_module_name(name),
             create=create,
             profile=self.profile_config,
         )
+        if unset and module.is_new:
+            self._made_into_unset.append((module, was_set))
+        return module
 
     def find_module(
         self, name: ConfigurationModuleName | str
@@ -211,16 +222,28 @@ class ConfigState:
     def drop_module(self, module: AnyConfigurationModule) -> None:
         """Remove *module*, one that ``module(create=True)`` made, from the target config.
 
-        Raises ``ValueError`` for a module that is not new (``is_new``): one
-        read from the VCO is never dropped.
+        A ``modules`` list that the creation set, where it was unset, is unset
+        again once it is empty. Raises ``ValueError`` for a module that is not
+        new (``is_new``): one read from the VCO is never dropped.
         """
         if not module.is_new:
             raise ValueError(
                 f"module {module.name!r} was read from the VCO; only a new one is dropped"
             )
-        modules = self.target_config.modules
-        if modules is not MISSING:
-            modules[:] = [m for m in modules if m is not module]
+        config = self.target_config
+        if config.modules is MISSING:
+            return
+        config.modules[:] = [m for m in config.modules if m is not module]
+        made = next(
+            (entry for entry in self._made_into_unset if entry[0] is module), None
+        )
+        if made is None:
+            return
+        self._made_into_unset.remove(made)
+        if not config.modules:
+            config.modules = MISSING
+            if not made[1]:
+                config.model_fields_set.discard("modules")
 
     @property
     def edge(self) -> LayerView:

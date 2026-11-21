@@ -7,6 +7,7 @@ from pyvelo.client.models.configuration import (
 )
 from pyvelo.client.models.configuration.common import (
     profile_placeholder,
+    profile_segment_id,
     profile_segment_name,
 )
 from pyvelo.core import ConfigContext
@@ -104,6 +105,11 @@ def test_profile_segment_name():
     assert profile_segment_name(segments, "2") == "Guest"
     assert profile_segment_name(segments, 2) == "Guest"
     assert profile_segment_name(segments, "Nope") is None
+    assert [profile_segment_id(segments, s) for s in ("guest", "2", "Nope")] == [
+        2,
+        2,
+        None,
+    ]
     with pytest.raises(UnboundError):
         _ = profile_segment_name(None, "Guest")
     fw, qos = edge_fw(), QosData.model_validate({"segments": []})
@@ -116,9 +122,12 @@ def test_profile_segment_name():
         fw.profile_segment_name("guest"),
         qos.profile_segment_name(0),
         ds.profile_segment_name("Nope"),
-    ] == ["Guest", "Global Segment", None]
+        qos.profile_segment_id("Guest"),
+    ] == ["Guest", "Global Segment", None, 2]
     with pytest.raises(UnboundError):
         _ = edge_fw().profile_segment_name("Guest")
+    with pytest.raises(UnboundError):
+        _ = edge_fw().profile_segment_id("Guest")
 
 
 def test_qos_placeholder_has_empty_rules():

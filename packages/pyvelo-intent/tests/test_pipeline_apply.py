@@ -3,6 +3,7 @@
 from datetime import UTC, datetime
 
 import pytest
+from pydantic import MISSING
 from pyvelo.client.enums.configuration import (
     ConfigurationModuleName,
     ConfigurationModuleType,
@@ -557,6 +558,85 @@ async def test_good_apply_on_an_edge_with_no_firewall_row_plans_an_insert():
     assert [(m.name, m.operation) for m in state.plan().modules] == [
         ("firewall", "insert")
     ]
+
+
+@pytest.mark.asyncio
+async def test_failed_apply_restores_an_unset_modules_list():
+    state = ConfigState(
+        edge_config=EdgeConfiguration(name="Edge Specific Profile", id_=10),
+        profile_config=make_raw_state().profile_config,
+        target_type="edge",
+        resolver_context=ResolverContext(),
+    )
+    edge_config = state.edge_config
+    assert edge_config is not None
+    fields_set, dump = set(edge_config.model_fields_set), edge_config.model_dump()
+    with pytest.raises(PatchError, match="no_such_key"):
+        _ = await ConfigPipeline(client=None).apply(
+            state, module="firewall", patch={"no_such_key": 1}
+        )
+    assert edge_config.modules is MISSING
+    assert edge_config.model_fields_set == fields_set
+    assert edge_config.model_dump() == dump
+
+
+def test_drop_module_refuses_a_module_that_is_not_new():
+    state = make_raw_state()
+    firewall = state.find_module("firewall")
+    assert firewall is not None
+    with pytest.raises(ValueError, match="firewall"):
+        state.drop_module(firewall)
+    assert state.find_module("firewall") is firewall
+
+
+@pytest.mark.asyncio
+async def test_selector_in_another_case_names_the_edge_entry():
+    state = make_raw_state()
+    _ = await ConfigPipeline(client=None).apply(
+        state, module="firewall", patch={"segments": {"global segment": delete()}}
+    )
+    assert _edge_segment_names(state) == []
+
+
+def _renamed_guest_state() -> ConfigState:
+    """The edge layer has the profile's Guest (segmentId 2) as ``Guest-old``."""
+    raw = {
+        "segments": [
+            {"segment": desc(0, "Global Segment"), "outbound": []},
+            {"segment": desc(2, "Guest-old"), "outbound": []},
+        ]
+    }
+    row = make_module_json("firewall", raw, module_id=1, configuration_id=10)
+    return make_raw_state(edge_modules=[row])
+
+
+@pytest.mark.asyncio
+async def test_edge_entry_under_another_name_is_the_profiles_segment():
+    pipeline = ConfigPipeline(client=None)
+    state = _renamed_guest_state()
+    _ = await pipeline.apply(state, module="firewall", patch=_guest_rule_patch())
+    assert _edge_segment_names(state) == ["Global Segment", "Guest-old"]
+    renamed = state.edge.firewall.get_segment(name="Guest-old")
+    assert [r.name for r in renamed.outbound] == ["block"]
+
+    state = _renamed_guest_state()
+    _ = await pipeline.apply(
+        state, module="firewall", patch={"segments": {"Guest": delete()}}
+    )
+    assert _edge_segment_names(state) == ["Global Segment"]
+
+    adds: list[dict[str, object]] = [
+        {"segments": {"Guest": add({})}},
+        {"segments": {"+": add({"segment": {"name": "Guest"}})}},
+    ]
+    for patch in adds:
+        state = _renamed_guest_state()
+        with pytest.raises(PatchError) as exc:
+            _ = await pipeline.apply(state, module="firewall", patch=patch)
+        assert "Guest-old" in str(exc.value)
+        assert "no entry" not in str(exc.value)
+        assert "inheritance" not in str(exc.value)
+        assert _edge_segment_names(state) == ["Global Segment", "Guest-old"]
 
 
 # --- segments on a profile target ---------------------------------------------
