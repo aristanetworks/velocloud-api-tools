@@ -14,7 +14,7 @@ from pyvelo.config.validation import (
     validator,
 )
 from pyvelo.core.fields import get_key_spec
-from pyvelo.core.rebase import KeyScalar, key_text
+from pyvelo.core.rebase import KeyForm, item_key, item_key_text, key_form
 
 
 def _get_target_config(
@@ -63,25 +63,6 @@ def override_consistency(state: ConfigStateLike) -> ValidationResult:
     return result
 
 
-def _key_text(item: object, key_paths: tuple[str, ...]) -> str | None:
-    """The key of *item* at *key_paths* in string form; None if a part is None or MISSING.
-
-    A one-part key is its value in string form; a composite key is its parts
-    joined by ``key_text``, so two keys are one when every part is.
-    """
-    parts: list[KeyScalar] = []
-    for key_path in key_paths:
-        val: object = item
-        for part in key_path.split("."):
-            val = cast(object, getattr(val, part, None))
-            if val is None or val is MISSING:
-                return None
-        parts.append(val if isinstance(val, (str, int, float)) else str(val))
-    if len(parts) == 1:
-        return str(parts[0])
-    return key_text(tuple(parts))
-
-
 def _walk_model_for_keys(
     model: BaseModel,
     path: str,
@@ -93,20 +74,22 @@ def _walk_model_for_keys(
         val = getattr(model, field_name)
 
         if spec is not None and isinstance(val, list):
-            seen_keys: dict[str, int] = {}
-            for i, item in enumerate(val):
-                key_str = _key_text(item, spec.paths)
-                if key_str is not None:
-                    if key_str in seen_keys:
+            # Keys compare in string form, part by part (24 and "24" are one).
+            seen_keys: dict[KeyForm, int] = {}
+            for i, item in enumerate(cast(list[object], val)):
+                form = key_form(item_key(item, spec.paths))
+                if form is not None:
+                    if form in seen_keys:
+                        key_str = item_key_text(item, spec.paths)
                         errors.append(
                             ValidationError(
                                 path=f"{path}.{field_name}[{i}]",
-                                message=f"Duplicate key {key_str!r} (first at index {seen_keys[key_str]})",
+                                message=f"Duplicate key {key_str!r} (first at index {seen_keys[form]})",
                                 code="key_uniqueness",
                             )
                         )
                     else:
-                        seen_keys[key_str] = i
+                        seen_keys[form] = i
 
             # Recurse into list items
             for i, item in enumerate(val):

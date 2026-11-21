@@ -1,9 +1,12 @@
 """Keys in a patch (spec 5.10.3 "Keys", "Duplicate keys"): alt keys, composite keys, labels and ``KeySpec``."""
 
+import uuid
 from typing import Annotated
 
 import pytest
 from pydantic import MISSING, Field
+from pyvelo.client.models.configuration.wan.link import WanLink
+from pyvelo.client.models.configuration.wan.root import WanData
 from pyvelo.core import (
     KeyField,
     KeySpec,
@@ -267,9 +270,108 @@ def test_plus_adds_an_item_whose_label_is_taken():
 
 def test_plus_with_a_key_already_there_raises():
     root = links()
-    with pytest.raises(PatchError):
+    with pytest.raises(PatchError) as exc:
         _ = root.merge_patch({"links": {"+": add({"name": "x", "internal_id": "u1"})}})
+    assert exc.value.path == Path.parse('links["+"]')
+    assert "'u1,IPv4'" in exc.value.message
+    assert "already in the list" in exc.value.message
     assert len(root.links) == 3
+
+
+def test_two_adds_of_one_key_raise():
+    root = routes()
+    with pytest.raises(PatchError) as exc:
+        _ = root.merge_patch(
+            {
+                "routes": {
+                    ("10.2.0.0", 24, "192.168.1.1", "GE4"): add(),
+                    '"10.2.0.0",24,"192.168.1.1",GE4': add(),
+                }
+            }
+        )
+    assert "adds this key too" in exc.value.message
+    assert len(root.routes) == 2
+
+    root = links()
+    with pytest.raises(PatchError) as exc:
+        _ = root.merge_patch(
+            {
+                "links": {
+                    "+a": add({"name": "x", "internal_id": "u9"}),
+                    "+b": add({"name": "y", "internal_id": "u9"}),
+                }
+            }
+        )
+    assert exc.value.path == Path.parse('links["+b"]')
+    assert "adds this key too" in exc.value.message
+    assert len(root.links) == 3
+
+
+def test_a_composite_key_in_a_message_shows_its_parts_as_written():
+    root = routes()
+    with pytest.raises(PatchError) as exc:
+        _ = root.merge_patch({"routes": {R1_KEY: add()}})
+    assert '\'"10.0.0.0",24,"192.168.1.1",GE3\' is already' in exc.value.message
+
+    # The add's key comes into the list by a rename in the same patch.
+    root = routes()
+    with pytest.raises(PatchError) as exc:
+        _ = root.merge_patch(
+            {
+                "routes": {
+                    R2_KEY: {"dest": "10.2.0.0"},
+                    ("10.2.0.0", 16, "192.168.1.1", ""): add(),
+                }
+            }
+        )
+    assert '\'"10.2.0.0",16,"192.168.1.1",""\' is already' in exc.value.message
+
+
+U1, U2, U3 = uuid.UUID(int=1), uuid.UUID(int=2), uuid.UUID(int=3)
+
+
+def wan(*ids: uuid.UUID) -> WanData:
+    return WanData.model_validate(
+        {
+            "links": [
+                {"internalId": str(u), "name": "Internet", "type": "WIRED"} for u in ids
+            ]
+        }
+    )
+
+
+def test_non_scalar_key_part_selects_in_string_form():
+    data = wan(U1)
+    link = data_links(data)[0]
+    _ = data.merge_patch(
+        {"links": {(link.internal_id, link.addressing_version): {"name": "Renamed"}}}
+    )
+    assert [x.name for x in data_links(data)] == ["Renamed"]
+
+    data = wan(U1)
+    _ = data.merge_patch({"links": {(U1, "IPv4"): delete()}})
+    assert data_links(data) == []
+
+
+def test_non_scalar_key_part_names_an_anchor_and_an_added_key():
+    data = wan(U1, U2)
+    _ = data.merge_patch({"links": {(U2, "IPv4"): move(before=(U1, "IPv4"))}})
+    assert [x.internal_id for x in data_links(data)] == [U2, U1]
+
+    data = wan(U1)
+    _ = data.merge_patch(
+        {
+            "links": {
+                (U3, "IPv4"): add({"name": "New", "type": "WIRED"}, before=(U1, "IPv4"))
+            }
+        }
+    )
+    assert [x.internal_id for x in data_links(data)] == [U3, U1]
+
+
+def data_links(data: WanData) -> list[WanLink]:
+    assert data.links is not MISSING
+    return data.links
 
 
 def test_keyless_item_is_named_by_position_or_label():

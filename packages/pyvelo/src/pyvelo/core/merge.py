@@ -65,12 +65,14 @@ from .identity import ResolutionError
 from .patch import ItemOp, PatchError, Place, is_new, parse_item_op, position_of
 from .rebase import (
     Key,
+    KeyForm,
     KeyScalar,
     KeyValue,
     Path,
     PathPart,
-    _key_form,  # pyright: ignore[reportPrivateUsage]
-    _KeyForm,  # pyright: ignore[reportPrivateUsage]
+    item_key,
+    key_form,
+    key_part,
     key_text,
     parse_key_text,
 )
@@ -755,44 +757,9 @@ def _members_of(annotation: object) -> list[object]:
     return [_unwrap_annotated(m) for m in _union_members(_unwrap_annotated(annotation))]
 
 
-def _path_value(item: object, path: str) -> object:
-    """The value at dotted *path* of a model item; None if it, or a step to it, is null or MISSING."""
-    value = item
-    for part in path.split("."):
-        if value is None or value is MISSING:
-            return None
-        value = _field_value(value, part)
-    return None if value is MISSING else value
-
-
-def _key_part(value: object) -> KeyScalar:
-    """One part of a key as ``Path`` writes it: a scalar as it is, anything else (a UUID) in string form."""
-    return value if isinstance(value, (str, int, float)) else str(value)
-
-
-def _key_of(parts: Sequence[KeyScalar]) -> KeyValue:
-    """The key with these parts: the one part, or the tuple of several."""
-    return parts[0] if len(parts) == 1 else tuple(parts)
-
-
-def _item_key_value(item: object, paths: tuple[str, ...]) -> KeyValue | None:
-    """The key of a keyed-list item, at *paths*; None if any part is null or MISSING.
-
-    The value at the one path, or the tuple of the values at several (a
-    composite key). ``""`` is a part.
-    """
-    parts: list[KeyScalar] = []
-    for path in paths:
-        value = _path_value(item, path)
-        if value is None:
-            return None
-        parts.append(_key_part(value))
-    return _key_of(parts) if parts else None
-
-
-def _item_key(item: object, paths: tuple[str, ...]) -> _KeyForm | None:
-    """The key of a keyed-list item at *paths*, in string form; None if it has none."""
-    return _key_form(_item_key_value(item, paths))
+def _item_key(item: object, paths: tuple[str, ...]) -> KeyForm | None:
+    """The key of a keyed-list item at *paths* (``item_key``), in string form; None if it has none."""
+    return key_form(item_key(item, paths))
 
 
 def _show_key(key: KeyValue) -> str:
@@ -804,7 +771,7 @@ def _show_selector(selector: object) -> str:
     """A selector for a message: a tuple or list of key parts as ``key_text`` writes it, quoted."""
     if isinstance(selector, (tuple, list)):
         parts = cast("tuple[object, ...] | list[object]", selector)
-        return _show_key(tuple(_key_part(p) for p in parts))
+        return _show_key(tuple(key_part(p) for p in parts))
     return repr(str(selector))
 
 
@@ -827,8 +794,10 @@ def _patch_key(
         value = _patch_value(fields, data, path)
         if value is None:
             return None
-        parts.append(_key_part(value))
-    return _key_of(parts) if parts else None
+        parts.append(key_part(value))
+    if not parts:
+        return None
+    return parts[0] if len(parts) == 1 else tuple(parts)
 
 
 def _patch_value(
@@ -887,8 +856,9 @@ def _selector_key(spec: _ListSpec, selector: object) -> KeyValue | None:
     """The key *selector* stands for in a keyed list, as written; None if it is not one.
 
     For a one-part key, any selector is one, in string form: it is never
-    parsed for commas. For a key of n parts, a tuple or list of n scalars, or
-    a string that ``parse_key_text`` reads as n parts.
+    parsed for commas. For a key of n parts, a tuple or list of n parts, each
+    as ``key_part`` gives it (a ``UUID`` in string form, as an item's part
+    is), or a string that ``parse_key_text`` reads as n parts.
     """
     if len(spec.key_paths) == 1:
         return str(selector)
@@ -899,10 +869,8 @@ def _selector_key(spec: _ListSpec, selector: object) -> KeyValue | None:
         except ValueError:
             return None
     elif isinstance(selector, (tuple, list)):
-        values = tuple(cast("tuple[object, ...] | list[object]", selector))
-        if not all(isinstance(v, (str, int, float)) for v in values):
-            return None
-        parts = cast("tuple[KeyScalar, ...]", values)
+        values = cast("tuple[object, ...] | list[object]", selector)
+        parts = tuple(key_part(v) for v in values)
     else:
         return None
     return parts if len(parts) == len(spec.key_paths) else None
@@ -955,7 +923,7 @@ def _select(
 
 def _with_key(items: Sequence[object], spec: _ListSpec, key: KeyValue) -> list[int]:
     """The positions of the items of a keyed list whose key is *key*, in string form."""
-    form = _key_form(key)
+    form = key_form(key)
     return [
         i for i, item in enumerate(items) if _item_key(item, spec.key_paths) == form
     ]
@@ -1127,10 +1095,10 @@ def _check_list_value(
                 _refuse_unread_keys(
                     item, item_data, path.child(_item_part(spec, item, index))
                 )
-    seen: dict[_KeyForm, int] = {}
+    seen: dict[KeyForm, int] = {}
     for index, item in enumerate(built):
-        key = _item_key_value(item, spec.key_paths)
-        form = _key_form(key)
+        key = item_key(item, spec.key_paths)
+        form = key_form(key)
         if key is None or form is None:
             continue
         if form in seen:
@@ -1144,7 +1112,7 @@ def _check_list_value(
 
 def _item_part(spec: _ListSpec, item: object, index: int) -> PathPart:
     """The path part of a list item: its key in a keyed list, else its position."""
-    key = _item_key_value(item, spec.key_paths)
+    key = item_key(item, spec.key_paths)
     return index if key is None else _key_path_part(key)
 
 
@@ -1213,8 +1181,8 @@ def _merge_items(
             renamed.append(entry)
     for entry in renamed:
         assert entry.slot is not None
-        key = _item_key_value(entry.slot.value, paths)
-        form = _key_form(key)
+        key = item_key(entry.slot.value, paths)
+        form = key_form(key)
         if key is not None and any(
             s is not entry.slot and _item_key(s.value, paths) == form for s in slots
         ):
@@ -1257,7 +1225,7 @@ def _resolve_items(
     items = [s.value for s in slots]
     entries: list[_ItemEntry] = []
     named: dict[int, Path] = {}
-    added: dict[_KeyForm, Path] = {}
+    added: dict[KeyForm, Path] = {}
     for selector, value in ops.items():
         selection = _select(items, spec, selector, resolvers)
         where = path.child(_selector_part(selector, selection))
@@ -1327,11 +1295,11 @@ def _selector_part(selector: object, selection: _Selection) -> PathPart:
         return Key(selection.key)
     if isinstance(selector, (tuple, list)):
         parts = cast("tuple[object, ...] | list[object]", selector)
-        return Key(tuple(_key_part(p) for p in parts))
+        return Key(tuple(key_part(p) for p in parts))
     return Key(str(selector))
 
 
-def _added_form(spec: _ListSpec, new: object) -> _KeyForm | None:
+def _added_form(spec: _ListSpec, new: object) -> KeyForm | None:
     """The key (keyed list) or value (value list) in string form of what an add adds, or None."""
     if spec.kind == "value":
         return str(new)
@@ -1405,13 +1373,31 @@ def _check_keyed_add(
     where: Path,
     context: ConfigContext | None,
 ) -> VcoModel:
-    """The item an ``add`` in a keyed list adds, built; ``PatchError`` if the list does not take it (``_check_add``)."""
+    """The item an ``add`` in a keyed list adds, built; ``PatchError`` if the list does not take it (``_check_add``).
+
+    Under ``"+"`` in a list whose key is a name (``NameOf``), a name in the
+    body is taken as an add under that name: the same resolver lookup and the
+    same refusals, ``LookupError`` included when the IDs of the name are not
+    found (``_new_keyed_item``).
+    """
     item_type = spec.item_type
     if item_type is None:
         raise PatchError("this list has no item type to build from", where)
+    from_body = False
+    if selection.new and spec.name_identity is not None:
+        name = _patch_key(item_type.fields, op.body, spec.key_paths)
+        if name is not None:
+            text = str(name)
+            named = _select(items, spec, text, resolvers)
+            selection = (
+                named
+                if named.key is not None
+                else _Selection(_with_key(items, spec, text), text, None)
+            )
+            from_body = True
     if selection.new:
         item = _new_item(item_type, _body(op), resolvers, where, context)
-        key = _item_key_value(item, spec.key_paths)
+        key = item_key(item, spec.key_paths)
         if key is not None and _with_key(items, spec, key):
             raise PatchError(
                 f"the body gives the key {_show_key(key)}, which is already in the list",
@@ -1433,7 +1419,8 @@ def _check_keyed_add(
     parts = key if isinstance(key, tuple) else (key,)
     for key_path, part in zip(spec.key_paths, parts, strict=True):
         given = _patch_value(item_type.fields, op.body, key_path)
-        if given is not None and str(given) != str(part):
+        # Under "+" the body gave the name; the key is the resolver's for it.
+        if not from_body and given is not None and str(given) != str(part):
             raise PatchError(
                 f"the body gives {key_path} {str(given)!r}, and the selector "
                 + f"{_show_key(key)}: add() takes the key from its selector",
@@ -1528,7 +1515,7 @@ def _names_several(
         if spec.kind != "keyed":
             key = str(item)
         else:
-            value = _item_key_value(item, spec.key_paths)
+            value = item_key(item, spec.key_paths)
             if value is None:
                 key = "no key"
             else:
@@ -1584,7 +1571,11 @@ def _new_list_item(
     else:
         taken = any(_item_key(s.value, spec.key_paths) == form for s in slots)
     if taken:
-        raise PatchError(f"{_show_key(form)} is already in the list", entry.path)
+        shown = item_key(new, spec.key_paths) if spec.kind == "keyed" else None
+        raise PatchError(
+            f"{_show_key(form if shown is None else shown)} is already in the list",
+            entry.path,
+        )
     return new
 
 

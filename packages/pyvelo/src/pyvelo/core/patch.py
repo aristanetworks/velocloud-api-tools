@@ -31,7 +31,8 @@ class PatchError(ValueError):
         return f"{self.path}: {self.message}" if self.path.parts else self.message
 
 
-type Selector = str | int | tuple[str | int, ...]
+type Selector = str | int | tuple[object, ...]
+"""A key or value, ``at(n)``, or the tuple of the parts of a composite key."""
 
 _POSITION_WORDS = ("first", "last")
 _POSITION_ANCHORS = ("before", "after")
@@ -47,8 +48,11 @@ def at(n: int) -> str:
     return f"#{n}"
 
 
-def _anchor(selector: Selector) -> str | int | list[str | int]:
-    return list(selector) if isinstance(selector, tuple) else selector
+def _anchor(selector: Selector) -> str | int | list[str | int | float]:
+    """*selector* as JSON: the parts of a tuple as a list, each part that is not a number or a string (a ``UUID``) in string form."""
+    if not isinstance(selector, tuple):
+        return selector
+    return [p if isinstance(p, (str, int, float)) else str(p) for p in selector]
 
 
 def _place(
@@ -147,8 +151,8 @@ def _selector(value: object, path: Path) -> Selector:
         return value
     if isinstance(value, list) and value:
         parts = cast("list[object]", value)
-        if all(isinstance(p, (str, int)) and not isinstance(p, bool) for p in parts):
-            return tuple(cast("list[str | int]", parts))
+        if all(isinstance(p, (str, int, float)) for p in parts):
+            return tuple(parts)
     raise PatchError(
         f"{value!r} is not a selector: write a key, a value, at(n) "
         "or a list of key parts",

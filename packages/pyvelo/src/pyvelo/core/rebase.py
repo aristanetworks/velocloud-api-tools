@@ -106,6 +106,61 @@ def key_text(value: KeyValue) -> str:
     return _render_key(value)
 
 
+type KeyForm = str | tuple[str, ...]
+"""A key in string form: how keys are compared (``"10"`` is the key ``10``)."""
+
+
+def key_form(key: KeyValue | None) -> KeyForm | None:
+    """*key* in string form, part by part for a composite key; None for no key."""
+    if key is None:
+        return None
+    if isinstance(key, tuple):
+        return tuple(str(part) for part in key)
+    return str(key)
+
+
+def key_part(value: object) -> KeyScalar:
+    """One part of a key: a scalar as it is, anything else (a ``UUID``) in string form."""
+    return value if isinstance(value, (str, int, float)) else str(value)
+
+
+def item_key(item: object, paths: tuple[str, ...]) -> KeyValue | None:
+    """The key of *item*, a model item of a keyed list, at the ``KeyField`` *paths*.
+
+    The value at the one dotted path, or the tuple of the values at several (a
+    composite key), each part as ``key_part`` gives it. ``""`` is a part. None
+    when there are no paths, or a part, or a step to it, is absent, null or
+    ``MISSING``: the item has no key.
+    """
+    parts: list[KeyScalar] = []
+    for path in paths:
+        value: object = item
+        for name in path.split("."):
+            if value is None or value is MISSING:
+                return None
+            value = getattr(value, name, None)
+        if value is None or value is MISSING:
+            return None
+        parts.append(key_part(value))
+    if not parts:
+        return None
+    return parts[0] if len(parts) == 1 else tuple(parts)
+
+
+def item_key_text(item: object, paths: tuple[str, ...]) -> str | None:
+    """The key of a model item (``item_key``) as text; None when it has none.
+
+    A one-part key in string form (``Global Segment``); a composite key as
+    ``key_text`` writes it (``"10.0.0.0",24,"192.168.1.1",GE3``). This is for
+    showing a key; keys are compared with ``key_form`` (``24`` and ``"24"``
+    are one part, though their texts differ).
+    """
+    key = item_key(item, paths)
+    if key is None:
+        return None
+    return key_text(key) if isinstance(key, tuple) else str(key)
+
+
 def _render(parts: tuple[PathPart, ...]) -> str:
     out: list[str] = []
     for part in parts:
@@ -370,14 +425,14 @@ def _read_path(item: object, model: type[VcoModel], path: str) -> KeyScalar | No
     return current if isinstance(current, (str, int, float)) else None
 
 
-def _item_key(
+def _json_item_key(
     item: object, model: type[VcoModel], paths: tuple[str, ...]
 ) -> KeyValue | None:
     """The key of a JSON *item* of *model*, or None if it has none.
 
     The value at the one path of *paths*, or the tuple of the values at
     several (a composite key). None unless every part can be read
-    (``_read_path``).
+    (``_read_path``). ``item_key`` is the same for a model item.
     """
     parts: list[KeyScalar] = []
     for path in paths:
@@ -386,19 +441,6 @@ def _item_key(
             return None
         parts.append(part)
     return parts[0] if len(parts) == 1 else tuple(parts)
-
-
-type _KeyForm = str | tuple[str, ...]
-"""A key in string form: how keys are compared (``"10"`` is the key ``10``)."""
-
-
-def _key_form(key: KeyValue | None) -> _KeyForm | None:
-    """*key* in string form, part by part for a composite key; None for no key."""
-    if key is None:
-        return None
-    if isinstance(key, tuple):
-        return tuple(str(part) for part in key)
-    return str(key)
 
 
 def _same_key(raw_key: KeyValue, parsed_key: KeyValue) -> bool:
@@ -419,15 +461,15 @@ def _same_key(raw_key: KeyValue, parsed_key: KeyValue) -> bool:
 
 def _keys(items: list[object], node: _KeyedList) -> list[KeyValue | None]:
     """The key of each item, None for an item without one."""
-    return [_item_key(item, node.item, node.spec.paths) for item in items]
+    return [_json_item_key(item, node.item, node.spec.paths) for item in items]
 
 
-def _key_forms(items: list[object], node: _KeyedList) -> list[_KeyForm | None]:
+def _key_forms(items: list[object], node: _KeyedList) -> list[KeyForm | None]:
     """The key of each item in string form, None for an item without one."""
-    return [_key_form(key) for key in _keys(items, node)]
+    return [key_form(key) for key in _keys(items, node)]
 
 
-def _unique(keys: list[_KeyForm | None]) -> set[_KeyForm]:
+def _unique(keys: list[KeyForm | None]) -> set[KeyForm]:
     """The keys that occur exactly once in *keys*."""
     counts = Counter(key for key in keys if key is not None)
     return {key for key, count in counts.items() if count == 1}
@@ -446,8 +488,8 @@ class Pairing:
 
 
 def _pair_unique(
-    old_values: list[_KeyForm | None],
-    new_values: list[_KeyForm | None],
+    old_values: list[KeyForm | None],
+    new_values: list[KeyForm | None],
     old_left: list[int],
     new_left: list[int],
     pairs: dict[int, int],
@@ -495,12 +537,12 @@ def pair_items(
     if alt is not None:
         _pair_unique(
             [
-                _key_form(_read_path(item, node.item, alt))
+                key_form(_read_path(item, node.item, alt))
                 if old_alt_read is None or old_alt_read[i]
                 else None
                 for i, item in enumerate(old)
             ],
-            [_key_form(_read_path(item, node.item, alt)) for item in new],
+            [key_form(_read_path(item, node.item, alt)) for item in new],
             old_left,
             new_left,
             pairs,
@@ -624,7 +666,7 @@ def _rebase_keyed_list(
     if len(raw) != len(before):
         return None
     for raw_item, before_key in zip(raw, _keys(before, node), strict=True):
-        raw_key = _item_key(raw_item, node.item, node.spec.paths)
+        raw_key = _json_item_key(raw_item, node.item, node.spec.paths)
         if raw_key is not None and (
             before_key is None or not _same_key(raw_key, before_key)
         ):
@@ -713,9 +755,9 @@ def _collect_changes(
 def _item_parts(items: list[object], node: _KeyedList) -> list[PathPart]:
     """The path part of each item: its key, or its position where that is not unique."""
     keys = _keys(items, node)
-    unique = _unique([_key_form(key) for key in keys])
+    unique = _unique([key_form(key) for key in keys])
     return [
-        Key(key) if key is not None and _key_form(key) in unique else i
+        Key(key) if key is not None and key_form(key) in unique else i
         for i, key in enumerate(keys)
     ]
 

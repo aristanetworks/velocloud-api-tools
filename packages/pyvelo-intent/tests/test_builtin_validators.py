@@ -213,6 +213,17 @@ def test_key_uniqueness_reads_composite_keys():
     assert result.is_valid
 
 
+def test_key_uniqueness_compares_key_parts_in_string_form():
+    as_text = _static_route("192.168.1.1")
+    as_text.cidr_prefix = "24"
+    result = key_uniqueness.validate(
+        _routes_state(_static_route("192.168.1.1"), as_text)
+    )
+    assert [e.path for e in result.errors] == [
+        "deviceSettings.segments[0].routes.static[1]"
+    ]
+
+
 class TestOverrideConsistency:
     def test_no_errors_on_valid_config(self):
         """Override consistency should not error on well-formed config."""

@@ -573,6 +573,49 @@ def test_add_by_name_adds_the_resolvers_name():
     )
 
 
+def test_plus_add_by_name_adds_the_resolvers_name():
+    fw = fresh()
+    _ = fw.merge_patch(
+        {"segments": {"+": add({"segment": {"name": "guest"}, "outbound": []})}},
+        resolvers=Fake(),
+    )
+    meta = fw.segments[1].segment
+    assert (meta.name, meta.segment_id, meta.segment_logical_id) == (
+        "Guest",
+        2,
+        uuid.UUID(int=3),
+    )
+
+
+def test_plus_add_of_an_unknown_name_raises():
+    fw = fresh()
+    dump = copy.deepcopy(fw.model_dump())
+    with pytest.raises(ResolutionError) as exc:
+        _ = fw.merge_patch(
+            {"segments": {"+": add({"segment": {"name": "gest"}, "outbound": []})}},
+            resolvers=Fake(),
+        )
+    assert exc.value.candidates == ["Guest"]
+    assert fw.model_dump() == dump
+
+
+@pytest.mark.parametrize(
+    "op",
+    [{"Guest": add()}, {"+": add({"segment": {"name": "Guest"}})}],
+    ids=["by-key", "by-plus"],
+)
+def test_add_by_name_without_a_resolver_does_not_take_another_segments_ids(
+    op: dict[str, object],
+):
+    # FirewallData's SegmentMetadata defaults segmentId to 0: Global Segment's.
+    fw = fresh()
+    dump = copy.deepcopy(fw.model_dump())
+    with pytest.raises(LookupError, match="'Guest'.*segment_id") as exc:
+        _ = fw.merge_patch({"segments": op})
+    assert not isinstance(exc.value, ResolutionError)
+    assert fw.model_dump() == dump
+
+
 @pytest.mark.parametrize("op", [{"outbound": []}, add()])
 def test_unknown_name_raises_resolution_error(op: dict[str, object]):
     fw = fresh()
