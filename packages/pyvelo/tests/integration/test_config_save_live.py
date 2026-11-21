@@ -37,7 +37,7 @@ from typing import Any
 
 import pytest
 from pydantic import MISSING
-from pyvelo.client import ConfigConflictError, VcoOperationError
+from pyvelo.client import ConfigConflictError
 from pyvelo.client.enums.configuration import ConfigurationModuleName as Name
 from pyvelo.client.models.configuration import (
     DeviceSettingsData,
@@ -536,14 +536,6 @@ async def test_keys_the_model_does_not_carry_survive_an_edit(
         )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=VcoOperationError,
-    reason=(
-        "a QoS rule's match writes its IPv6 fields for an IPv4 rule, which the "
-        "Orchestrator rejects (a firewall rule's match drops them)"
-    ),
-)
 async def test_a_qos_rule_copied_from_an_ipv4_rule_saves(lab: Lab) -> None:
     layout = await lab.pick_writable_edge(
         Name.QOS,

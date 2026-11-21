@@ -1,5 +1,5 @@
 import uuid
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, override
 
 from pydantic import MISSING, Field
 
@@ -32,14 +32,45 @@ def _subnet_mask_normalizer(v: Any) -> Any:
 class QosRuleMatch(VcoModel):
     # IP addressing
     ip_version: AddressType = "IPv4v6"
-    source_ip: Annotated[str, Alias("sip")] = "any"
-    source_ip_pre_nat_enabled: Annotated[int, Alias("sip_prenat_enabled")] = 0
-    source_ip_v6: Annotated[str, Alias("sipV6")] = "any"
-    source_ip_v6_pre_nat_enabled: Annotated[int, Alias("sip_prenat_enabledV6")] = 0
-    destination_ip: Annotated[str, Alias("dip")] = "any"
-    destination_ip_pre_nat_enabled: Annotated[int, Alias("dip_prenat_enabled")] = 0
-    destination_ip_v6: Annotated[str, Alias("dipV6")] = "any"
-    destination_ip_v6_pre_nat_enabled: Annotated[int, Alias("dip_prenat_enabledV6")] = 0
+    source_ip: Annotated[str | MISSING, Alias("sip")] = "any"
+    source_ip_pre_nat_enabled: Annotated[int | MISSING, Alias("sip_prenat_enabled")] = 0
+    source_ip_v6: Annotated[str | MISSING, Alias("sipV6")] = "any"
+    source_ip_v6_pre_nat_enabled: Annotated[
+        int | MISSING, Alias("sip_prenat_enabledV6")
+    ] = 0
+    destination_ip: Annotated[str | MISSING, Alias("dip")] = "any"
+    destination_ip_pre_nat_enabled: Annotated[
+        int | MISSING, Alias("dip_prenat_enabled")
+    ] = 0
+    destination_ip_v6: Annotated[str | MISSING, Alias("dipV6")] = "any"
+    destination_ip_v6_pre_nat_enabled: Annotated[
+        int | MISSING, Alias("dip_prenat_enabledV6")
+    ] = 0
+
+    @override
+    def model_post_init(self, __context: Any, /) -> None:
+        """Strip the address fields of the family that *ip_version* leaves out.
+
+        The Orchestrator refuses a rule that has them (FW00000023):
+        - IPv4: the IPv6 addresses and their pre-NAT flags must be absent
+        - IPv6: the IPv4 addresses and their pre-NAT flags must be absent
+        - IPv4v6: all of them are present
+
+        Like the firewall's ``OutboundRuleMatch``, this happens when the match is
+        validated; a rule read from the Orchestrator keeps the keys it had (the
+        write starts from the raw data, which is not changed here).
+        """
+        super().model_post_init(__context)
+        if self.ip_version == "IPv4":
+            self.source_ip_v6 = MISSING
+            self.source_ip_v6_pre_nat_enabled = MISSING
+            self.destination_ip_v6 = MISSING
+            self.destination_ip_v6_pre_nat_enabled = MISSING
+        elif self.ip_version == "IPv6":
+            self.source_ip = MISSING
+            self.source_ip_pre_nat_enabled = MISSING
+            self.destination_ip = MISSING
+            self.destination_ip_pre_nat_enabled = MISSING
 
     # Subnet masks
     source_subnet_mask: Annotated[

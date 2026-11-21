@@ -84,10 +84,20 @@ def maybe_id(rng: random.Random, key: str) -> dict[str, object]:
     return {key: uuid_text(rng)} if rng.random() < 0.5 else {}
 
 
+QOS_MATCHES: list[dict[str, object]] = [
+    {},
+    {"ipVersion": "IPv4", "sip": "any", "dip": "any", "sip_prenat_enabled": 0},
+    {"ipVersion": "IPv4", "sip": "any", "sipV6": "any", "sip_prenat_enabledV6": 0},
+    {"ipVersion": "IPv6", "sipV6": "any", "dipV6": "any"},
+    {"ipVersion": "IPv6", "sip": "any", "sipV6": "any"},
+    {"ipVersion": "IPv4v6", "sip": "any", "sipV6": "any"},
+]
+
+
 def qos_rule(rng: random.Random, name: str) -> dict[str, object]:
     return {
         "name": name,
-        "match": {},
+        "match": dict(rng.choice(QOS_MATCHES)),
         "action": {
             "edge2EdgeRouteAction": {},
             "edge2DataCenterRouteAction": {},
