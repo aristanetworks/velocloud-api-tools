@@ -7,7 +7,6 @@ from pydantic import MISSING
 
 from pyvelo.client.exceptions import (
     ConfigConflictError,
-    VcoApiError,
     VcoOperationError,
     is_version_conflict,
 )
@@ -120,35 +119,21 @@ class ConfigurationMixin(Protocol):
         """Update an existing configuration module's data and, optionally, refs.
 
         Raises ``ConfigConflictError`` if the request carries a ``version`` and
-        the response says that version is stale.
+        the VCO answers that no rows were modified, which is how it reports a
+        version other than the module's current one. A request without a
+        version is not checked.
         """
+        result = await self.portal(
+            "configuration/updateConfigurationModule",
+            request,
+            RowsModifiedConfirmation,
+        )
         version = request.version
-        try:
-            result = await self.portal(
-                "configuration/updateConfigurationModule",
-                request,
-                RowsModifiedConfirmation,
-            )
-        except (VcoApiError, VcoOperationError) as exc:
-            # ``portal`` reports a JSON-RPC error as a VcoOperationError raised
-            # from the VcoApiError.
-            api_error = exc if isinstance(exc, VcoApiError) else exc.__cause__
-            if (
-                version is not MISSING
-                and isinstance(api_error, VcoApiError)
-                and is_version_conflict(error=api_error.message, rows=None)
-            ):
-                raise ConfigConflictError(
-                    request.configuration_module_id, version, api_error.message
-                ) from exc
-            raise
         if version is not MISSING and is_version_conflict(
             error=result.error, rows=result.rows
         ):
             raise ConfigConflictError(
-                request.configuration_module_id,
-                version,
-                result.error or "no rows were modified",
+                request.configuration_module_id, version, "no rows were modified"
             )
         if result.error:
             raise VcoOperationError("update configuration module", result.error)

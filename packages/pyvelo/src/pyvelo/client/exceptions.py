@@ -1,4 +1,3 @@
-import re
 from collections.abc import Sequence
 from typing import Any
 
@@ -215,17 +214,17 @@ class UnboundError(VcoError):
     """
 
 
-_VERSION_CONFLICT = re.compile(r"\bversion\b", re.IGNORECASE)
-
-
 def is_version_conflict(*, error: str | None, rows: int | None) -> bool:
-    """Whether an update response means the module's version was stale.
+    """Whether an update result means the module's version was stale.
 
-    Provisional: the server's response to a stale version has not been observed.
-    This is the one place to correct. An error counts only if it mentions the
-    version; a bare "conflict" does not (a network conflict is not a stale
-    version). The message will be narrowed after a live check.
+    Observed against a live Orchestrator: an update that carries a version other
+    than the module's current one (an older one, one never issued, one that is
+    not a number) is answered with an ordinary result, ``{"rows": 0}``, with no
+    error text, and nothing is written. The current version answers
+    ``{"rows": 1}``, also when the data is unchanged, so zero rows never means
+    "nothing to change". A request without a version is never checked and writes
+    unconditionally. A JSON-RPC error is never a stale version: an unknown
+    module is a ``validationError``. So a conflict is zero rows with no error
+    text, and nothing else.
     """
-    if error:
-        return _VERSION_CONFLICT.search(error) is not None
-    return rows == 0
+    return not error and rows == 0
