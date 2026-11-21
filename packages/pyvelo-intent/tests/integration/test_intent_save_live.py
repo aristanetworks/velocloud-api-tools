@@ -84,7 +84,7 @@ from pyvelo.client.schemas.configuration import (
 )
 from pyvelo.core import VcoModel
 from pyvelo.core.rebase import Key, Path, RawChange, raw_changes
-from pyvelo_intent import ConfigPipeline, ConfigState, StateSpentError
+from pyvelo_intent import ConfigPipeline, ConfigState, StateSpentError, add
 
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio(loop_scope="session")]
 
@@ -295,7 +295,7 @@ async def test_profile_rule_added_through_apply_reads_back_as_that_rule_only(
         _ = await pipeline.apply(
             state,
             module="firewall",
-            patch={"segments": {segment: {"outbound": {name: added}}}},
+            patch={"segments": {segment: {"outbound": {name: add(added)}}}},
         )
 
         expected = [Path(("segments", Key(segment), "outbound", Key(name)))]

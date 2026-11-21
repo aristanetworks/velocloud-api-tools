@@ -462,14 +462,17 @@ class VcoModel(BaseModel):
         """Recursively merge a partial dict into this model instance.
 
         - Dict values merge recursively into sub-models, or build one that is unset.
-        - KeyField arrays merge by key (add/update). null values delete.
+        - A list value replaces a list. An object on a list or a map of
+          models is item operations by selector: a plain object changes the
+          item, ``add()``, ``delete()`` and ``move()`` (``pyvelo.core.patch``)
+          add, remove and reorder; ``at(n)`` names an item by position.
         - null unsets a field: MISSING if its type takes it, else None if it
           takes that, else ``PatchError``.
         - Every value assigned is validated as on parse; a bad one raises
           ``PatchError``.
         - A key that names no field raises ``PatchError``, at every depth.
-        - Keys prefixed with '_' are directives: ``_position`` on a KeyField
-          item. Any other raises ``PatchError``.
+        - Keys prefixed with '_' are directives: ``_op`` and ``_position`` on
+          a list item. Any other raises ``PatchError``.
         - OverrideFlag fields auto-set to True when siblings change.
         - Resolvable fields resolve names to IDs via resolvers.
         - Absent keys are left unchanged.

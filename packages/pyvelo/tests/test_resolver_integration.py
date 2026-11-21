@@ -6,7 +6,7 @@ from typing import Annotated
 import pytest
 from pydantic import Field
 from pyvelo.config.resolver import ResolverRegistry
-from pyvelo.core import VcoModel
+from pyvelo.core import VcoModel, add
 from pyvelo.core.fields import EdgeLocal, KeyField, OverrideFlag, Resolvable
 from pyvelo.core.identity import (
     SegmentIdentity,
@@ -152,7 +152,7 @@ class TestResolverMergeIntegration:
                         "segment": {"segment_id": "Global Segment"},
                         "rules": {
                             "block-ssh": {"priority": 0},
-                            "new-rule": {"name": "new-rule", "priority": 5},
+                            "new-rule": add({"name": "new-rule", "priority": 5}),
                         },
                     }
                 }

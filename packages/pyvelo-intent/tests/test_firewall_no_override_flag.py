@@ -23,6 +23,7 @@ from pyvelo.client.schemas.configuration import (
 )
 from pyvelo.config.resolver import ResolverContext
 from pyvelo.testing import make_module_json
+from pyvelo_intent import add, delete
 from pyvelo_intent.config.pipeline import ConfigPipeline
 from pyvelo_intent.config.state import ConfigState
 from pyvelo_intent.testing import MockVcoClient
@@ -114,7 +115,7 @@ async def profile_state() -> ConfigState:
 
 EDITS = [
     pytest.param(
-        {"new": {"action": {"allow_or_deny": "deny"}, "match": {}}},
+        {"new": add({"action": {"allow_or_deny": "deny"}, "match": {}})},
         f"{OUTBOUND}[new]",
         id="add",
     ),
@@ -123,7 +124,7 @@ EDITS = [
         f"{OUTBOUND}[mine].action.allow_or_deny",
         id="edit",
     ),
-    pytest.param({"mine": None}, f"{OUTBOUND}[mine]", id="delete"),
+    pytest.param({"mine": delete()}, f"{OUTBOUND}[mine]", id="delete"),
 ]
 
 
@@ -183,7 +184,7 @@ async def test_a_stray_override_key_is_dropped_when_the_module_is_written():
     _ = await pipeline.apply(
         state,
         module="firewall",
-        patch={"segments": {"Global Segment": {"outbound": {"mine": None}}}},
+        patch={"segments": {"Global Segment": {"outbound": {"mine": delete()}}}},
     )
 
     (plan,) = state.plan().changed

@@ -12,7 +12,7 @@ from typing import Annotated
 import pytest
 from pydantic import MISSING, Field
 from pyvelo.config.resolver import ResolverRegistry
-from pyvelo.core import Alias, PatchError, VcoModel
+from pyvelo.core import Alias, PatchError, VcoModel, add, delete, move
 from pyvelo.core.fields import EdgeLocal, KeyField, OverrideFlag, Resolvable
 from pyvelo.core.identity import (
     SegmentIdentity,
@@ -438,12 +438,7 @@ class TestKeyFieldAdvancedPosition:
             {
                 "segments": {
                     "Global": {
-                        "rules": {
-                            "new-rule": {
-                                "name": "new-rule",
-                                "_position": "end",
-                            }
-                        }
+                        "rules": {"new-rule": add({"name": "new-rule"}, last=True)}
                     }
                 }
             }
@@ -451,53 +446,43 @@ class TestKeyFieldAdvancedPosition:
         global_seg = m.segments[0]
         assert global_seg.rules[-1].name == "new-rule"
 
-    def test_position_before_nonexistent_falls_back_to_append(self):
+    def test_position_before_nonexistent_raises(self):
         m = make_deep_config()
         global_seg = m.segments[0]
         original_count = len(global_seg.rules)
 
-        _ = m.merge_patch(
-            {
-                "segments": {
-                    "Global": {
-                        "rules": {
-                            "new": {
-                                "name": "new",
-                                "_position": "before:nonexistent",
-                            }
+        with pytest.raises(PatchError) as exc:
+            _ = m.merge_patch(
+                {
+                    "segments": {
+                        "Global": {
+                            "rules": {"new": add({"name": "new"}, before="nonexistent")}
                         }
                     }
                 }
-            }
-        )
-        # Falls back to append
-        assert global_seg.rules[-1].name == "new"
-        assert len(global_seg.rules) == original_count + 1
+            )
+        assert exc.value.path == Path.parse("segments[Global].rules[new]")
+        assert len(global_seg.rules) == original_count
 
-    def test_position_after_nonexistent_falls_back_to_append(self):
+    def test_position_after_nonexistent_raises(self):
         m = make_deep_config()
         global_seg = m.segments[0]
         original_count = len(global_seg.rules)
 
-        _ = m.merge_patch(
-            {
-                "segments": {
-                    "Global": {
-                        "rules": {
-                            "new": {
-                                "name": "new",
-                                "_position": "after:nonexistent",
-                            }
+        with pytest.raises(PatchError):
+            _ = m.merge_patch(
+                {
+                    "segments": {
+                        "Global": {
+                            "rules": {"new": add({"name": "new"}, after="nonexistent")}
                         }
                     }
                 }
-            }
-        )
-        assert global_seg.rules[-1].name == "new"
-        assert len(global_seg.rules) == original_count + 1
+            )
+        assert len(global_seg.rules) == original_count
 
     def test_position_before_on_existing_item_reorders(self):
-        """Move an existing item before another using before: directive."""
+        """Move an existing item before another with move(before=...)."""
         m = make_deep_config()
         global_seg = m.segments[0]
         assert [r.name for r in global_seg.rules] == ["allow-all", "block-ssh"]
@@ -508,7 +493,7 @@ class TestKeyFieldAdvancedPosition:
                 "segments": {
                     "Global": {
                         "rules": {
-                            "block-ssh": {"_position": "before:allow-all"},
+                            "block-ssh": move(before="allow-all"),
                         }
                     }
                 }
@@ -526,7 +511,7 @@ class TestKeyFieldAdvancedPosition:
                 "segments": {
                     "Global": {
                         "rules": {
-                            "mid-rule": {"name": "mid-rule", "priority": 50},
+                            "mid-rule": add({"name": "mid-rule", "priority": 50}),
                         }
                     }
                 }
@@ -544,7 +529,7 @@ class TestKeyFieldAdvancedPosition:
                 "segments": {
                     "Global": {
                         "rules": {
-                            "allow-all": {"_position": "after:mid-rule"},
+                            "allow-all": move(after="mid-rule"),
                         }
                     }
                 }
@@ -556,18 +541,17 @@ class TestKeyFieldAdvancedPosition:
             "allow-all",
         ]
 
-    def test_position_numeric_clamped_to_bounds(self):
+    def test_position_last_appends(self):
         m = make_deep_config()
         global_seg = m.segments[0]
         count = len(global_seg.rules)
 
-        # Position beyond list length
         _ = m.merge_patch(
             {
                 "segments": {
                     "Global": {
                         "rules": {
-                            "far": {"name": "far", "_position": 9999},
+                            "far": add({"name": "far"}, last=True),
                         }
                     }
                 }
@@ -576,7 +560,7 @@ class TestKeyFieldAdvancedPosition:
         assert global_seg.rules[-1].name == "far"
         assert len(global_seg.rules) == count + 1
 
-    def test_position_negative_clamped_to_zero(self):
+    def test_position_first_inserts_at_the_start(self):
         m = make_deep_config()
         global_seg = m.segments[0]
 
@@ -585,7 +569,7 @@ class TestKeyFieldAdvancedPosition:
                 "segments": {
                     "Global": {
                         "rules": {
-                            "first": {"name": "first", "_position": -10},
+                            "first": add({"name": "first"}, first=True),
                         }
                     }
                 }
@@ -608,9 +592,9 @@ class TestKeyFieldMultiOp:
                             # Update existing
                             "allow-all": {"priority": 500},
                             # Delete existing
-                            "block-ssh": None,
+                            "block-ssh": delete(),
                             # Add new
-                            "new-rule": {"name": "new-rule", "priority": 42},
+                            "new-rule": add({"name": "new-rule", "priority": 42}),
                         }
                     }
                 }
@@ -639,8 +623,8 @@ class TestKeyFieldMultiOp:
                 "segments": {
                     "Global": {
                         "rules": {
-                            "allow-all": None,
-                            "block-ssh": None,
+                            "allow-all": delete(),
+                            "block-ssh": delete(),
                         }
                     }
                 }
@@ -658,7 +642,7 @@ class TestKeyFieldMultiOp:
                 "segments": {
                     "Voice": {
                         "rules": {
-                            "first-rule": {"name": "first-rule", "priority": 1},
+                            "first-rule": add({"name": "first-rule", "priority": 1}),
                         }
                     }
                 }
@@ -667,23 +651,24 @@ class TestKeyFieldMultiOp:
         assert len(voice_seg.rules) == 1
         assert voice_seg.rules[0].name == "first-rule"
 
-    def test_non_dict_item_patch_silently_skipped(self):
+    def test_non_dict_item_patch_raises(self):
         m = make_deep_config()
         global_seg = m.segments[0]
         original_count = len(global_seg.rules)
 
-        _ = m.merge_patch(
-            {
-                "segments": {
-                    "Global": {
-                        "rules": {
-                            "allow-all": "not-a-dict",
+        with pytest.raises(PatchError) as exc:
+            _ = m.merge_patch(
+                {
+                    "segments": {
+                        "Global": {
+                            "rules": {
+                                "allow-all": "not-a-dict",
+                            }
                         }
                     }
                 }
-            }
-        )
-        # Non-dict value is silently skipped
+            )
+        assert exc.value.path == Path.parse("segments[Global].rules[allow-all]")
         assert len(global_seg.rules) == original_count
         assert global_seg.rules[0].priority == 999  # unchanged
 
@@ -703,11 +688,13 @@ class TestNestedKeyFieldLists:
                         "rules": {
                             "allow-all": {
                                 "acl": {
-                                    "172.16.0.0": {
-                                        "ip": "172.16.0.0",
-                                        "mask": "255.240.0.0",
-                                        "action": "deny",
-                                    }
+                                    "172.16.0.0": add(
+                                        {
+                                            "ip": "172.16.0.0",
+                                            "mask": "255.240.0.0",
+                                            "action": "deny",
+                                        }
+                                    )
                                 }
                             }
                         }
@@ -754,7 +741,7 @@ class TestNestedKeyFieldLists:
                         "rules": {
                             "allow-all": {
                                 "acl": {
-                                    "10.0.0.0": None,
+                                    "10.0.0.0": delete(),
                                 }
                             }
                         }
@@ -774,10 +761,7 @@ class TestNestedKeyFieldLists:
                         "rules": {
                             "allow-all": {
                                 "acl": {
-                                    "172.16.0.0": {
-                                        "ip": "172.16.0.0",
-                                        "_position": 0,
-                                    }
+                                    "172.16.0.0": add({"ip": "172.16.0.0"}, first=True)
                                 }
                             }
                         }
@@ -797,15 +781,17 @@ class TestNestedKeyFieldLists:
                     "Global": {
                         "rules": {
                             "allow-all": {
-                                "acl": {"10.0.0.0": None},
+                                "acl": {"10.0.0.0": delete()},
                             },
                             "block-ssh": {
                                 "acl": {
-                                    "0.0.0.0": {
-                                        "ip": "0.0.0.0",
-                                        "mask": "0.0.0.0",
-                                        "action": "deny",
-                                    }
+                                    "0.0.0.0": add(
+                                        {
+                                            "ip": "0.0.0.0",
+                                            "mask": "0.0.0.0",
+                                            "action": "deny",
+                                        }
+                                    )
                                 },
                             },
                         }
@@ -964,7 +950,7 @@ class TestOverrideFlagDeepScenarios:
                 "segments": {
                     "Voice": {
                         "rules": {
-                            "new": {"name": "new", "priority": 1},
+                            "new": add({"name": "new", "priority": 1}),
                         }
                     }
                 }
@@ -979,7 +965,7 @@ class TestOverrideFlagDeepScenarios:
         _ = m.merge_patch(
             {
                 "segments": {
-                    "Global": {"rules": {"block-ssh": None}},
+                    "Global": {"rules": {"block-ssh": delete()}},
                 }
             }
         )
@@ -1025,7 +1011,7 @@ class TestSequentialPatches:
             {
                 "segments": {
                     "Global": {
-                        "rules": {"new": {"name": "new", "priority": 50}},
+                        "rules": {"new": add({"name": "new", "priority": 50})},
                     }
                 }
             }
@@ -1038,7 +1024,7 @@ class TestSequentialPatches:
                 "segments": {
                     "Global": {
                         "rules": {
-                            "block-ssh": None,
+                            "block-ssh": delete(),
                             "new": {"priority": 100},
                         },
                     }
@@ -1149,14 +1135,14 @@ class TestResolvableDeepMerge:
             {
                 "segments": {
                     "Global": {
-                        "segment": {"name": "PCI"},
+                        "segment": {"name": "Global Segment"},
                     }
                 }
             },
             resolvers=registry,
         )
-        # name is str, not Resolvable — should be "PCI" literally
-        assert m.segments[0].segment.name == "PCI"
+        # name is str, not Resolvable — should be "Global Segment" literally
+        assert m.segments[0].segment.name == "Global Segment"
 
 
 # ===================================================================
@@ -1168,9 +1154,8 @@ class TestComplexIntegration:
     def test_full_scenario_add_segment_with_raw_ids(self, registry: ResolverRegistry):
         """Add a brand new segment with raw IDs and a rules list.
 
-        Note: new items created via KeyField insertion use model_validate,
-        not merge_patch. Resolvable strings and nested KeyField dicts don't
-        work for brand-new items — use raw IDs and list values instead.
+        A new item is validated whole from its add() body: raw IDs here,
+        and a list value for its rules.
         """
         m = make_deep_config()
         original_count = len(m.segments)
@@ -1178,18 +1163,20 @@ class TestComplexIntegration:
         _ = m.merge_patch(
             {
                 "segments": {
-                    "NewSeg": {
-                        "segment": {
-                            "name": "NewSeg",
-                            "segment_id": 1,
-                            "logical_id": str(PCI_UUID),
-                        },
-                        "vlan_id": 400,
-                        "rules": [
-                            {"name": "r1", "priority": 10},
-                            {"name": "r2", "priority": 20},
-                        ],
-                    }
+                    "NewSeg": add(
+                        {
+                            "segment": {
+                                "name": "NewSeg",
+                                "segment_id": 1,
+                                "logical_id": str(PCI_UUID),
+                            },
+                            "vlan_id": 400,
+                            "rules": [
+                                {"name": "r1", "priority": 10},
+                                {"name": "r2", "priority": 20},
+                            ],
+                        }
+                    )
                 }
             },
             resolvers=registry,
@@ -1215,19 +1202,21 @@ class TestComplexIntegration:
                         "vlan_id": 111,
                         "rules": {
                             "allow-all": {"priority": 0},
-                            "block-ssh": None,
+                            "block-ssh": delete(),
                         },
                     },
                     # Delete PCI
-                    "PCI": None,
+                    "PCI": delete(),
                     # Add new to Voice
                     "Voice": {
                         "rules": {
-                            "voip-allow": {
-                                "name": "voip-allow",
-                                "priority": 10,
-                                "match": {"protocol": "udp", "dst_port": 5060},
-                            }
+                            "voip-allow": add(
+                                {
+                                    "name": "voip-allow",
+                                    "priority": 10,
+                                    "match": {"protocol": "udp", "dst_port": 5060},
+                                }
+                            )
                         }
                     },
                 }
@@ -1304,12 +1293,14 @@ class TestComplexIntegration:
                     "Global": {
                         "segment": {"segment_id": "Voice"},
                         "rules": {
-                            "new-first": {
-                                "name": "new-first",
-                                "priority": -1,
-                                "_position": 0,
-                                "match": {"protocol": "icmp"},
-                            },
+                            "new-first": add(
+                                {
+                                    "name": "new-first",
+                                    "priority": -1,
+                                    "match": {"protocol": "icmp"},
+                                },
+                                first=True,
+                            ),
                         },
                     }
                 }
@@ -1402,8 +1393,8 @@ class TestEdgeCases:
             {
                 "items": {
                     "item-25": {"value": 9999},
-                    "item-0": None,
-                    "new-item": {"name": "new-item", "value": -1},
+                    "item-0": delete(),
+                    "new-item": add({"name": "new-item", "value": -1}),
                 }
             }
         )

@@ -89,7 +89,7 @@ This example loads an edge by name, adds a firewall rule, reviews the field-leve
 import asyncio
 
 from pyvelo.client import VcoClient, get_vco_credentials
-from pyvelo_intent import build_default_pipeline
+from pyvelo_intent import add, build_default_pipeline
 
 
 async def main() -> None:
@@ -98,7 +98,8 @@ async def main() -> None:
         pipeline = build_default_pipeline(client)
         state = await pipeline.load("branch-nyc", enterprise_id=1)
 
-        # A patch is nested like the module's data. List entries are merged by key.
+        # A patch is nested like the module's data. List items are named by
+        # key; add() makes a new one, delete() and move() remove and reorder.
         state = await pipeline.apply(
             state,
             module="firewall",
@@ -106,15 +107,16 @@ async def main() -> None:
                 "segments": {
                     "Global Segment": {
                         "outbound": {
-                            "block-ssh": {
-                                "name": "block-ssh",
-                                "action": {"allow_or_deny": "deny"},
-                                "match": {
-                                    "proto": 6,
-                                    "dport_low": 22,
-                                    "dport_high": 22,
-                                },
-                            }
+                            "block-ssh": add(
+                                {
+                                    "action": {"allow_or_deny": "deny"},
+                                    "match": {
+                                        "proto": 6,
+                                        "dport_low": 22,
+                                        "dport_high": 22,
+                                    },
+                                }
+                            )
                         }
                     }
                 }

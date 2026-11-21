@@ -8,7 +8,7 @@ import pytest
 from pydantic import MISSING, Discriminator, Field, ValidationError, field_validator
 from pyvelo.client.models.configuration.device_settings import NatRule
 from pyvelo.config.resolver import ResolutionError
-from pyvelo.core import Alias, PatchError, VcoModel
+from pyvelo.core import Alias, PatchError, VcoModel, add
 from pyvelo.core.fields import KeyField, Resolvable
 from pyvelo.core.identity import SegmentIdentity
 from pyvelo.core.rebase import Path
@@ -80,7 +80,7 @@ def test_value_replaces_and_is_coerced():
         ({"sub": 3}, "sub"),
         ({"count": "abc"}, "count"),
         ({"title": {"a": 1}}, "title"),
-        ({"rules": {"z": {"priority": "abc"}}}, "rules[z]"),
+        ({"rules": {"z": add({"priority": "abc"})}}, "rules[z]"),
     ],
 )
 def test_wrong_type_raises(patch: dict[str, object], path: str):
@@ -166,7 +166,7 @@ def test_defaulting_markers_still_default_on_parse():
         ({"nope": 1}, "nope"),
         ({"sub": {"nope": 1}}, "sub.nope"),
         ({"rules": {"a": {"nope": 1}}}, "rules[a].nope"),
-        ({"rules": {"z": {"nope": 1}}}, "rules[z].nope"),
+        ({"rules": {"z": add({"nope": 1})}}, "rules[z].nope"),
         ({"maybe": {"nope": 1}}, "maybe.nope"),
     ],
 )
@@ -183,7 +183,7 @@ def test_unknown_key_message_suggests_close_names():
 def test_unknown_key_in_a_built_item_names_its_class():
     error = raises_at(
         Root(rules=[Rule(name="a")]),
-        {"rules": {"z": {"priority": 1, "nope": 1}}},
+        {"rules": {"z": add({"priority": 1, "nope": 1})}},
         "rules[z].nope",
     )
     assert "Rule" in str(error)
@@ -220,9 +220,9 @@ class Holder(VcoModel):
 @pytest.mark.parametrize(
     ("patch", "path"),
     [
-        ({"items": {"x": {"kind": "a", "only_b": 5}}}, "items[x].only_b"),
+        ({"items": {"x": add({"kind": "a", "only_b": 5})}}, "items[x].only_b"),
         (
-            {"wraps": {"w": {"inner": {"kind": "a", "name": "i", "only_b": 5}}}},
+            {"wraps": {"w": add({"inner": {"kind": "a", "name": "i", "only_b": 5}})}},
             "wraps[w].inner.only_b",
         ),
         ({"one": {"kind": "a", "name": "n", "only_b": 5}}, "one.only_b"),
@@ -301,7 +301,7 @@ def test_patch_is_not_mutated():
     patch: dict[str, object] = {
         "sub": {"v": 1},
         "maybe": {"v": 2},
-        "rules": {"a": {"priority": 3}, "z": {"tags": ["t"], "_position": 0}},
+        "rules": {"a": {"priority": 3}, "z": add({"tags": ["t"]}, first=True)},
         "hops": [{"ip": "10.0.0.0"}],
         "ports": [80, 443],
     }

@@ -5,6 +5,7 @@ from pyvelo.client.models.configuration.common import SegmentMetadata
 from pyvelo.client.models.configuration.qos.root import QosData
 from pyvelo.client.models.configuration.qos.rule import QosRuleMatch
 from pyvelo.client.models.configuration.qos.segment import CosMapping, QosSegment
+from pyvelo.core import add
 from pyvelo.core.fields import get_key_field, get_resolvable, has_override_flag
 
 
@@ -54,17 +55,21 @@ class TestQosMerge:
                 "segments": {
                     "Global Segment": {
                         "rules": {
-                            "new-rule": {
-                                "name": "new-rule",
-                                "match": {},
-                                "action": {
-                                    "route_type": "edge2Any",
-                                    "edge2EdgeRouteAction": {"interface": "auto"},
-                                    "edge2DataCenterRouteAction": {"interface": "auto"},
-                                    "edge2CloudRouteAction": {"interface": "auto"},
-                                    "QoS": {"type": "transactional"},
-                                },
-                            }
+                            "new-rule": add(
+                                {
+                                    "name": "new-rule",
+                                    "match": {},
+                                    "action": {
+                                        "route_type": "edge2Any",
+                                        "edge2EdgeRouteAction": {"interface": "auto"},
+                                        "edge2DataCenterRouteAction": {
+                                            "interface": "auto"
+                                        },
+                                        "edge2CloudRouteAction": {"interface": "auto"},
+                                        "QoS": {"type": "transactional"},
+                                    },
+                                }
+                            )
                         }
                     }
                 }

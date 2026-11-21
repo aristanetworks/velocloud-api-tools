@@ -32,6 +32,7 @@ from pyvelo.client.schemas.configuration import (
     QosConfigurationModule,
 )
 from pyvelo.config.resolver import ResolverContext
+from pyvelo_intent import add
 from pyvelo_intent.config.pipeline import ConfigPipeline
 from pyvelo_intent.config.state import ConfigState
 from pyvelo_intent.testing import (
@@ -188,11 +189,17 @@ async def test_apply_keyed_list_merge():
             "segments": {
                 "Global Segment": {
                     "outbound": {
-                        "block-ssh": {
-                            "name": "block-ssh",
-                            "action": {"allow_or_deny": "deny"},
-                            "match": {"proto": 6, "dport_low": 22, "dport_high": 22},
-                        }
+                        "block-ssh": add(
+                            {
+                                "name": "block-ssh",
+                                "action": {"allow_or_deny": "deny"},
+                                "match": {
+                                    "proto": 6,
+                                    "dport_low": 22,
+                                    "dport_high": 22,
+                                },
+                            }
+                        )
                     }
                 }
             }
@@ -279,7 +286,9 @@ _BLOCK_SSH: dict[str, object] = {
 
 
 def _block_ssh_patch() -> dict[str, object]:
-    return {"segments": {"Global Segment": {"outbound": {"block-ssh": _BLOCK_SSH}}}}
+    return {
+        "segments": {"Global Segment": {"outbound": {"block-ssh": add(_BLOCK_SSH)}}}
+    }
 
 
 @pytest.mark.asyncio
@@ -316,7 +325,7 @@ async def test_apply_to_a_segment_the_profile_lacks_changes_nothing():
         _ = await ConfigPipeline(client=None).apply(
             state,
             module="firewall",
-            patch={"segments": {"Guest": {"outbound": {}}}},
+            patch={"segments": {"Guest": add({"outbound": {}})}},
         )
     assert [s.segment.name for s in state.profile.firewall.segments] == [
         "Global Segment"

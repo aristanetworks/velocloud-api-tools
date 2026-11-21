@@ -8,7 +8,7 @@ import pytest
 from pydantic import MISSING, Field
 from pyvelo.client.models.configuration import FirewallData
 from pyvelo.config.resolver import ResolutionError, ResolverRegistry, resolve_name
-from pyvelo.core import VcoModel
+from pyvelo.core import VcoModel, add, delete
 from pyvelo.core.fields import KeyField, NameOf, Resolvable
 from pyvelo.core.identity import (
     AddressGroupIdentity,
@@ -79,7 +79,7 @@ def add_rule(fw: FirewallData, match: dict[str, object]) -> None:
             "segments": {
                 "Global Segment": {
                     "outbound": {
-                        "r1": {"action": {"allow_or_deny": "deny"}, "match": match}
+                        "r1": add({"action": {"allow_or_deny": "deny"}, "match": match})
                     }
                 }
             }
@@ -111,7 +111,7 @@ def test_segment_key_in_another_case_edits_the_existing_segment():
             "segments": {
                 "global segment": {
                     "outbound": {
-                        "r1": {"action": {"allow_or_deny": "deny"}, "match": {}}
+                        "r1": add({"action": {"allow_or_deny": "deny"}, "match": {}})
                     }
                 }
             }
@@ -124,13 +124,13 @@ def test_segment_key_in_another_case_edits_the_existing_segment():
 
 def test_segment_key_in_another_case_deletes_the_existing_segment():
     fw = fresh()
-    _ = fw.merge_patch({"segments": {"GLOBAL SEGMENT": None}}, resolvers=Fake())
+    _ = fw.merge_patch({"segments": {"GLOBAL SEGMENT": delete()}}, resolvers=Fake())
     assert fw.segments == []
 
 
 def test_new_segment_by_a_key_in_another_case_gets_the_canonical_name():
     fw = fresh()
-    _ = fw.merge_patch({"segments": {"guest": {"outbound": {}}}}, resolvers=Fake())
+    _ = fw.merge_patch({"segments": {"guest": add({"outbound": {}})}}, resolvers=Fake())
     meta = fw.segments[1].segment
     assert (meta.name, meta.segment_id, meta.segment_logical_id) == (
         "Guest",
@@ -149,14 +149,14 @@ def test_a_near_miss_segment_key_in_another_case_still_raises():
 
 def test_a_key_the_marked_field_does_not_name_is_not_resolved():
     lan = Lan()
-    _ = lan.merge_patch({"networks": {"corp": {}}}, resolvers=Fake())
-    _ = lan.merge_patch({"networks": {"CORP": {}}}, resolvers=Fake())
+    _ = lan.merge_patch({"networks": {"corp": add()}}, resolvers=Fake())
+    _ = lan.merge_patch({"networks": {"CORP": add()}}, resolvers=Fake())
     assert [n.name for n in lan.networks] == ["corp", "CORP"]
 
 
 def test_segment_name_fills_its_ids():
     fw = fresh()
-    _ = fw.merge_patch({"segments": {"Guest": {"outbound": {}}}}, resolvers=Fake())
+    _ = fw.merge_patch({"segments": {"Guest": add({"outbound": {}})}}, resolvers=Fake())
     meta = fw.segments[1].segment
     assert (meta.name, meta.segment_id, meta.segment_logical_id) == (
         "Guest",
@@ -227,10 +227,10 @@ class Lan(VcoModel):
 def test_only_the_marked_field_fills_ids():
     lan = Lan()
     # "Guest" here is a network's name. It is not marked, so it is not tried as a segment.
-    _ = lan.merge_patch({"networks": {"Guest": {}}}, resolvers=Fake())
+    _ = lan.merge_patch({"networks": {"Guest": add()}}, resolvers=Fake())
     assert lan.networks[0].segment_id == 0
     _ = lan.merge_patch(
-        {"networks": {"corp": {"segment_name": "guest"}}}, resolvers=Fake()
+        {"networks": {"corp": add({"segment_name": "guest"})}}, resolvers=Fake()
     )
     assert lan.networks[1].segment_id == 2
 
@@ -262,7 +262,7 @@ def test_missing_resolver_is_not_a_resolution_error():
     fw = fresh()
     with pytest.raises(LookupError) as exc:
         _ = fw.merge_patch(
-            {"segments": {"NewSeg": {"outbound": {}}}}, resolvers=NoTables()
+            {"segments": {"NewSeg": add({"outbound": {}})}}, resolvers=NoTables()
         )
     assert not isinstance(exc.value, ResolutionError)
 
@@ -271,7 +271,7 @@ def test_a_new_segment_no_resolver_can_give_ids_to_is_refused_by_name():
     for resolvers in (NoTables(), None):
         fw = fresh()
         with pytest.raises(LookupError, match="'NewSeg'.*segment_id") as exc:
-            _ = fw.merge_patch({"segments": {"NewSeg": {}}}, resolvers=resolvers)
+            _ = fw.merge_patch({"segments": {"NewSeg": add()}}, resolvers=resolvers)
         assert "segment_logical_id" in str(exc.value)
         assert [s.segment.name for s in fw.segments] == ["Global Segment"]
 
@@ -284,7 +284,7 @@ def test_a_new_segment_with_its_ids_given_needs_no_resolver():
         "segmentLogicalId": str(uuid.UUID(int=7)),
     }
     _ = fw.merge_patch(
-        {"segments": {"NewSeg": {"segment": segment, "outbound": {}}}},
+        {"segments": {"NewSeg": add({"segment": segment, "outbound": {}})}},
         resolvers=NoTables(),
     )
     meta = fw.segments[1].segment
@@ -297,7 +297,7 @@ def test_a_new_segment_with_its_ids_given_needs_no_resolver():
 
 def test_a_new_item_whose_key_is_not_a_name_needs_no_ids():
     lan = Lan()
-    _ = lan.merge_patch({"networks": {"corp": {}}}, resolvers=NoTables())
+    _ = lan.merge_patch({"networks": {"corp": add()}}, resolvers=NoTables())
     assert lan.networks[0].segment_id == 0
 
 

@@ -17,7 +17,7 @@ from pyvelo.client.schemas.configuration import (
     QosConfigurationModule,
     new_edge_module,
 )
-from pyvelo.core import ConfigContext, VcoModel
+from pyvelo.core import ConfigContext, VcoModel, add, delete
 from pyvelo.core.rebase import Key
 from pyvelo.testing import make_module_json
 
@@ -525,7 +525,7 @@ def test_profile_outbound_patch_is_saved_as_the_rule_alone():
             "segments": {
                 "Global Segment": {
                     "outbound": {
-                        "block": {"action": {"allow_or_deny": "deny"}, "match": {}}
+                        "block": add({"action": {"allow_or_deny": "deny"}, "match": {}})
                     }
                 }
             }
@@ -800,7 +800,7 @@ GLOBAL_OUTBOUND = 'segments["Global Segment"].outbound'
     ("rule_patch", "path"),
     [
         pytest.param(
-            {"new": {"action": {"allow_or_deny": "deny"}, "match": {}}},
+            {"new": add({"action": {"allow_or_deny": "deny"}, "match": {}})},
             f"{GLOBAL_OUTBOUND}[new]",
             id="add",
         ),
@@ -809,7 +809,7 @@ GLOBAL_OUTBOUND = 'segments["Global Segment"].outbound'
             f"{GLOBAL_OUTBOUND}[mine].action.allow_or_deny",
             id="edit",
         ),
-        pytest.param({"mine": None}, f"{GLOBAL_OUTBOUND}[mine]", id="delete"),
+        pytest.param({"mine": delete()}, f"{GLOBAL_OUTBOUND}[mine]", id="delete"),
     ],
 )
 def test_an_outbound_rule_patch_writes_the_rule_and_no_override_flag(
@@ -835,7 +835,7 @@ def test_a_firewall_segment_dumps_no_override_key_even_when_new():
         mod.data.model_dump(mode="json", by_alias=True), "outboundOverride"
     )
     _ = mod.data.merge_patch(
-        {"segments": {"Global Segment": {"outbound": {"new": _fw_rule("new")}}}}
+        {"segments": {"Global Segment": {"outbound": {"new": add(_fw_rule("new"))}}}}
     )
     assert not _has_key(plan_module(mod, level=EDGE).data, "outboundOverride")
 

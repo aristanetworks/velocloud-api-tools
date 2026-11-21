@@ -12,6 +12,7 @@ from pyvelo.client.schemas.configuration import (
 )
 from pyvelo.config.resolver import ResolverContext
 from pyvelo.testing import make_module_json
+from pyvelo_intent import add
 from pyvelo_intent.config.pipeline import ConfigPipeline
 from pyvelo_intent.config.state import ConfigState
 from pyvelo_intent.errors import StateSpentError
@@ -239,7 +240,9 @@ async def test_rule_added_in_a_reconciled_segment():
             "segments": {
                 "Global Segment": {
                     "outbound": {
-                        "block-ssh": {"action": {"allow_or_deny": "deny"}, "match": {}}
+                        "block-ssh": add(
+                            {"action": {"allow_or_deny": "deny"}, "match": {}}
+                        )
                     }
                 }
             }
@@ -270,7 +273,7 @@ async def test_apply_creates_the_edge_segment_entry_on_write_only():
             "segments": {
                 "Guest": {
                     "outbound": {
-                        "block": {"action": {"allow_or_deny": "deny"}, "match": {}}
+                        "block": add({"action": {"allow_or_deny": "deny"}, "match": {}})
                     }
                 }
             }

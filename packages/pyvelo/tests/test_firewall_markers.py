@@ -8,7 +8,7 @@ from pyvelo.client.models.configuration.firewall.rule_action import OutboundRule
 from pyvelo.client.models.configuration.firewall.rule_match import OutboundRuleMatch
 from pyvelo.client.models.configuration.firewall.rules import FirewallOutboundRule
 from pyvelo.client.models.configuration.firewall.segment import FirewallSegment
-from pyvelo.core import ConfigContext
+from pyvelo.core import ConfigContext, add, delete
 from pyvelo.core.fields import get_key_field, has_override_flag
 
 
@@ -80,11 +80,13 @@ class TestMergeWithMarkers:
                 "segments": {
                     "Global Segment": {
                         "outbound": {
-                            "new-rule": {
-                                "name": "new-rule",
-                                "action": {"allow_or_deny": "allow"},
-                                "match": {"proto": 17},
-                            }
+                            "new-rule": add(
+                                {
+                                    "name": "new-rule",
+                                    "action": {"allow_or_deny": "allow"},
+                                    "match": {"proto": 17},
+                                }
+                            )
                         }
                     }
                 }
@@ -98,7 +100,7 @@ class TestMergeWithMarkers:
         assert "new-rule" in names
 
     def test_keyed_merge_deletes_rule(self):
-        """Setting a key to None should delete the rule."""
+        """delete() under a key should delete the rule."""
         seg = _make_segment()
         seg.outbound.append(_make_rule("delete-me"))
         seg.outbound.append(_make_rule("keep-me"))
@@ -109,7 +111,7 @@ class TestMergeWithMarkers:
                 "segments": {
                     "Global Segment": {
                         "outbound": {
-                            "delete-me": None,
+                            "delete-me": delete(),
                         }
                     }
                 }
@@ -128,11 +130,13 @@ class TestMergeWithMarkers:
         _ = seg.merge_patch(
             {
                 "outbound": {
-                    "block-ssh": {
-                        "name": "block-ssh",
-                        "action": {"allow_or_deny": "deny"},
-                        "match": {"proto": 6, "dport_low": 22},
-                    }
+                    "block-ssh": add(
+                        {
+                            "name": "block-ssh",
+                            "action": {"allow_or_deny": "deny"},
+                            "match": {"proto": 6, "dport_low": 22},
+                        }
+                    )
                 }
             }
         )
