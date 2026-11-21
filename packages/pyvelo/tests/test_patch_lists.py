@@ -2,14 +2,21 @@
 
 import copy
 import uuid
-from typing import Annotated
+from collections.abc import Callable
+from typing import Annotated, Literal
 
 import pytest
 from pydantic import MISSING, Field
+from pyvelo.client.models.configuration.device_settings.root import (
+    DeviceSettingsData,
+)
 from pyvelo.config.resolver import ResolutionError
 from pyvelo.core import PatchError, VcoModel, add, at, delete, move
 from pyvelo.core.fields import KeyField
-from pyvelo.core.merge import select_items
+from pyvelo.core.merge import (
+    _merge_model,  # pyright: ignore[reportPrivateUsage]
+    select_items,
+)
 from pyvelo.core.rebase import Path
 
 from .patch_models import Hop, Root, Rule, Sub
@@ -94,6 +101,26 @@ def test_add_with_each_place(op: dict[str, object], expected: str):
 )
 def test_add_refusals(patch: dict[str, object], path: str):
     _ = raises_at(abc(), {"rules": patch}, path)
+
+
+@pytest.mark.parametrize(
+    ("field", "start", "ops", "path"),
+    [
+        ("rules", abc, {"a": {"priority": 9}, "z": add({"name": "y"})}, "rules[z]"),
+        ("m", lambda: SubOrHop(m={"x": Sub()}), {"x": {"v": 9}, "y": add()}, "m[y]"),
+    ],
+)
+def test_refusals_come_before_any_change(
+    field: str, start: Callable[[], VcoModel], ops: dict[str, object], path: str
+):
+    # _merge_model has no trial copy: a refusal raised after the change to the
+    # first entry would leave that change behind.
+    model = start()
+    dump = model.model_dump()
+    with pytest.raises(PatchError) as exc:
+        _merge_model(model, {field: ops}, None, Path(()))
+    assert exc.value.path == Path.parse(path)
+    assert model.model_dump() == dump
 
 
 def test_delete():
@@ -433,6 +460,57 @@ def test_plain_dict_is_replaced():
     root = Root(labels={"x": "y"})
     _ = root.merge_patch({"labels": {"a": "b"}})
     assert root.labels == {"a": "b"}
+
+
+class ByModel(VcoModel):
+    m: dict[Literal["e510", "e610"], Sub] = Field(default_factory=dict)
+
+
+class ById(VcoModel):
+    m: dict[int, Sub] = Field(default_factory=dict)
+
+
+class SubOrHop(VcoModel):
+    """A map whose values are one of two models: add has no one type to build."""
+
+    m: dict[str, Sub | Hop] = Field(default_factory=dict)
+
+
+def test_map_add_validates_the_key():
+    model = ByModel(m={"e510": Sub()})
+    _ = raises_at(model, {"m": {"bogus": add()}}, "m[bogus]")
+    assert list(model.m) == ["e510"]
+    _ = model.merge_patch({"m": {"e610": add()}})
+    assert list(model.m) == ["e510", "e610"]
+
+
+def test_map_key_keeps_its_type():
+    model = ById(m={1: Sub()})
+    one = model.m[1]
+    _ = model.merge_patch({"m": {"2": add()}})
+    assert list(model.m) == [1, 2]
+    assert all(type(key) is int for key in model.m)
+    _ = model.merge_patch({"m": {"1": {"v": 5}}})
+    assert model.m[1] is one and one.v == 5
+    _ = model.merge_patch({"m": {1: {"v": 6}}})
+    assert one.v == 6
+    _ = model.merge_patch({"m": {"1": delete()}})
+    assert list(model.m) == [2]
+
+
+def test_a_device_settings_map_refuses_an_unknown_model_class():
+    data = DeviceSettingsData.model_validate(
+        {
+            "lan": {"networks": [], "interfaces": []},
+            "segments": [{"segment": {"segmentId": 0, "name": "Global Segment"}}],
+            "models": {},
+        }
+    )
+    body: dict[str, object] = {"routed_interfaces": [], "lan": {"interfaces": []}}
+    _ = raises_at(data, {"models": {"edge999": add(body)}}, "models[edge999]")
+    assert data.models == {}
+    _ = data.merge_patch({"models": {"edge510": add(body)}})
+    assert list(data.models) == ["edge510"]
 
 
 def test_list_inside_a_new_item_as_add_entries():

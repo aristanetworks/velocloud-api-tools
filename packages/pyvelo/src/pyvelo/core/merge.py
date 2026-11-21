@@ -11,7 +11,7 @@ import difflib
 import functools
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Annotated, Literal, get_args, get_origin
+from typing import Annotated, Literal, cast, get_args, get_origin
 
 from pydantic import (
     MISSING,
@@ -495,20 +495,13 @@ def _new_keyed_item(
 ) -> VcoModel:
     """Build a new keyed-list item from the body of an ``add``, with *key* written in.
 
-    A body that gives another key raises ``PatchError``. Raises
+    ``_check_add`` has refused a body that gives another key. Raises
     ``LookupError`` (not ``ResolutionError``) if the key is a name
     (``NameOf``) and the IDs that go with it were neither in the patch nor
     found by a resolver: the item would carry the model's defaults, which are
     another item's IDs. See ``_new_item``.
     """
     assert spec.key_path is not None  # a keyed list
-    given = _patch_key(item_type.fields, body, spec.key_path)
-    if given is not None and given != key:
-        raise PatchError(
-            f"the body gives the key {given!r}, and the selector {key!r}: "
-            + "add() takes the key from its selector",
-            path,
-        )
     item = _new_item(
         item_type,
         _inject_key_path(body, spec.key_path, key),
@@ -698,6 +691,8 @@ class _ListSpec:
     """Validates one entry of a list that is not of models."""
     map_type: type[VcoModel] | None
     """The model type of the values of a map, when it has one."""
+    map_key: TypeAdapter[object] | None
+    """Validates the key of a new entry of a map."""
     name_identity: type[object] | None
     """What the key of a keyed list is the ``NameOf``, if it is one."""
 
@@ -712,13 +707,12 @@ def _list_spec(field_info: FieldInfo) -> _ListSpec | None:
     item_type = _list_item_type(field_info)
     element: TypeAdapter[object] | None = None
     map_type: type[VcoModel] | None = None
+    map_key: TypeAdapter[object] | None = None
     if kind == "map":
-        value_types = [
-            m
-            for m in _members_of(_type_args(field_info, dict)[1])
-            if _is_vco_model_type(m)
-        ]
+        key_type, value_type = _type_args(field_info, dict)
+        value_types = [m for m in _members_of(value_type) if _is_vco_model_type(m)]
         map_type = value_types[0] if len(value_types) == 1 else None
+        map_key = TypeAdapter[object](key_type)  # pyright: ignore[reportArgumentType]
     elif item_type is None:
         element = TypeAdapter[object](_type_args(field_info, list)[0])  # pyright: ignore[reportArgumentType]
     return _ListSpec(
@@ -727,6 +721,7 @@ def _list_spec(field_info: FieldInfo) -> _ListSpec | None:
         item_type,
         element,
         map_type,
+        map_key,
         None if key_path is None else _key_name_of(item_type, key_path),
     )
 
@@ -755,7 +750,9 @@ def _item_key(item: object, key_path: str) -> str | None:
 
 
 def _patch_key(
-    fields: Mapping[str, FieldInfo], data: Mapping[object, object], key_path: str
+    fields: Mapping[str, FieldInfo],
+    data: Mapping[str, object] | Mapping[object, object],
+    key_path: str,
 ) -> str | None:
     """The key that *data*, a patch for a new item with *fields*, gives at *key_path*, in string form.
 
@@ -1069,10 +1066,7 @@ def _merge_items(
         if entry.kind != "change" or entry.slot is None:
             continue
         item = entry.slot.value
-        if not isinstance(item, VcoModel):
-            raise PatchError(
-                f"the item is {type(item).__name__}, not a model", entry.path
-            )
+        assert isinstance(item, VcoModel)  # _resolve_items checked it
         before = None if spec.key_path is None else _item_key(item, spec.key_path)
         _merge_model(item, entry.body, resolvers, entry.path)
         if spec.key_path is not None and _item_key(item, spec.key_path) != before:
@@ -1149,6 +1143,10 @@ def _resolve_items(
                 )
             named[index] = where
             slot = slots[index]
+            if op.kind == "change" and not isinstance(slot.value, VcoModel):
+                raise PatchError(
+                    f"the item is {type(slot.value).__name__}, not a model", where
+                )
         anchor: _Slot | None = None
         if op.place is not None and op.place.kind in ("before", "after"):
             anchor = slots[
@@ -1156,8 +1154,9 @@ def _resolve_items(
                     items, spec, op.place.anchor, slot, slots, resolvers, where
                 )
             ]
-        body = dict[object, object](op.body.items())  # a copy: the patch is not changed
-        entries.append(_ItemEntry(op.kind, body, op.place, where, slot, new, anchor))
+        entries.append(
+            _ItemEntry(op.kind, _body(op), op.place, where, slot, new, anchor)
+        )
     deleted = {id(e.slot) for e in entries if e.kind == "delete"}
     for entry in entries:
         if entry.anchor is not None and id(entry.anchor) in deleted:
@@ -1196,6 +1195,15 @@ def _check_add(
     if selection.positions:
         raise PatchError(f"{selection.key!r} is already in the list", where)
     if spec.kind == "keyed":
+        if spec.item_type is None or spec.key_path is None:
+            raise PatchError("this list has no item type to build from", where)
+        given = _patch_key(spec.item_type.fields, op.body, spec.key_path)
+        if given is not None and given != selection.key:
+            raise PatchError(
+                f"the body gives the key {given!r}, and the selector "
+                + f"{selection.key!r}: add() takes the key from its selector",
+                where,
+            )
         return selection.key
     # A value list: the selector is the value.
     if op.body:
@@ -1233,9 +1241,7 @@ def _named_item(
         return selection.positions[0]
     if selection.positions:
         raise PatchError(
-            f"{str(selector)!r} names {len(selection.positions)} items: "
-            + _listing(spec, items, selection.positions)
-            + "; select one of them",
+            _names_several(repr(str(selector)), spec, items, selection.positions),
             where,
         )
     if selection.position is not None:
@@ -1258,14 +1264,22 @@ def _named_item(
     raise PatchError(message, where)
 
 
-def _listing(spec: _ListSpec, items: Sequence[object], positions: Sequence[int]) -> str:
-    """Each item at *positions*, as its position and its key or value."""
+def _names_several(
+    subject: str, spec: _ListSpec, items: Sequence[object], positions: Sequence[int]
+) -> str:
+    """The message for *subject*, a selector or anchor that names the items at *positions*.
+
+    It lists each match with its position and its key or value.
+    """
     shown: list[str] = []
     for index in positions:
         item = items[index]
         key = str(item) if spec.key_path is None else _item_key(item, spec.key_path)
         shown.append(f"#{index} ({key})")
-    return ", ".join(shown)
+    return (
+        f"{subject} names {len(positions)} items: {', '.join(shown)}; "
+        + "select one of them"
+    )
 
 
 def _anchor_position(
@@ -1283,9 +1297,7 @@ def _anchor_position(
         raise PatchError(f"the anchor {anchor!r} names no item", where)
     if len(selection.positions) > 1:
         raise PatchError(
-            f"the anchor {anchor!r} names {len(selection.positions)} items: "
-            + _listing(spec, items, selection.positions)
-            + "; select one of them",
+            _names_several(f"the anchor {anchor!r}", spec, items, selection.positions),
             where,
         )
     index = selection.positions[0]
@@ -1305,15 +1317,14 @@ def _new_list_item(
     item_type = spec.item_type
     if spec.kind == "value":
         new = entry.new
-    elif item_type is None:
-        raise PatchError("this list has no item type to build from", entry.path)
-    elif spec.kind == "keyed":
+    else:
+        assert item_type is not None  # _check_add refused an add without one
+        if spec.kind != "keyed":
+            return _new_item(item_type, entry.body, resolvers, entry.path, context)
         assert isinstance(entry.new, str)
         new = _new_keyed_item(
             spec, item_type, entry.body, entry.new, resolvers, entry.path, context
         )
-    else:
-        return _new_item(item_type, entry.body, resolvers, entry.path, context)
     # The key or value may have come into the list since step 1, by a rename.
     if _matching([s.value for s in slots], spec, str(entry.new)):
         raise PatchError(f"{str(entry.new)!r} is already in the list", entry.path)
@@ -1343,23 +1354,27 @@ def _merge_map(
 ) -> None:
     """Apply the item operations *ops* to *entries*, a map of models, in place.
 
-    A selector is a map key, compared in string form. Change, ``add`` and
-    ``delete`` only: a map has no order, so ``move``, a ``_position`` and a
-    position selector raise ``PatchError``. Every entry is checked first;
-    then changes, deletes and adds, in that order. *new_only* is for a map the
-    patch builds: every entry must be an add.
+    A selector names an existing entry by its key in string form. The key of
+    an ``add`` is validated as the map's key type, in string form as JSON
+    writes it, and stored as validated (``"2"`` is the key ``2`` of a
+    ``dict[int, ...]``). Change, ``add`` and ``delete`` only: a map has no
+    order, so ``move``, a ``_position`` and a position selector raise
+    ``PatchError``. Every entry is checked first; then changes, deletes and
+    adds, in that order. *new_only* is for a map the patch builds: every
+    entry must be an add.
     """
     keys = {str(key): key for key in entries}
-    resolved: list[tuple[ItemOp, str, Path]] = []
+    resolved: list[tuple[ItemOp, object, Path]] = []
+    named: set[str] = set()
     for selector, value in ops.items():
         text = str(selector)
         where = path.child(Key(text))
         op = parse_item_op(value, where)
         if op.place is not None:
             raise PatchError("a map has no order: no move() and no _position", where)
-        if any(text == other for _, other, _ in resolved):
-            raise PatchError("another selector names this entry: one per entry", where)
         if op.kind == "add":
+            key = _new_map_key(spec, text, where)
+            text = str(key)
             if text in keys:
                 raise PatchError(f"{text!r} is already in the map", where)
         elif new_only:
@@ -1376,28 +1391,56 @@ def _merge_map(
                 + ("; to add one, write add(...)" if op.kind == "change" else ""),
                 where,
             )
-        resolved.append((op, text, where))
-
-    for op, text, where in resolved:
-        if op.kind == "change":
-            current = entries[keys[text]]
-            if not isinstance(current, VcoModel):
+        else:
+            key = keys[text]
+            current = entries[key]
+            if op.kind == "change" and not isinstance(current, VcoModel):
                 raise PatchError(
                     f"the entry is {type(current).__name__}, not a model", where
                 )
-            _merge_model(
-                current, dict[object, object](op.body.items()), resolvers, where
-            )
-    for op, text, _ in resolved:
+        if text in named:
+            raise PatchError("another selector names this entry: one per entry", where)
+        named.add(text)
+        resolved.append((op, key, where))
+
+    for op, key, where in resolved:
+        if op.kind == "change":
+            current = entries[key]
+            assert isinstance(current, VcoModel)  # checked above
+            _merge_model(current, _body(op), resolvers, where)
+    for op, key, _ in resolved:
         if op.kind == "delete":
-            del entries[keys[text]]
-    for op, text, where in resolved:
+            del entries[key]
+    for op, key, where in resolved:
         if op.kind == "add":
-            if spec.map_type is None:
-                raise PatchError("this map has no one model type to build from", where)
-            entries[text] = _new_model_from_patch(
-                spec.map_type, dict[object, object](op.body.items()), resolvers, where
+            assert spec.map_type is not None  # _new_map_key checked it
+            entries[key] = _new_model_from_patch(
+                spec.map_type, _body(op), resolvers, where
             )
+
+
+def _new_map_key(spec: _ListSpec, text: str, where: Path) -> object:
+    """The key an ``add`` in a map writes: *text* validated as the map's key type.
+
+    Raises ``PatchError`` if it is not one, or if the map's values are not of
+    one model type, so there is nothing to build the entry as.
+    """
+    if spec.map_type is None:
+        raise PatchError("this map has no one model type to build from", where)
+    assert spec.map_key is not None  # a map
+    try:
+        return spec.map_key.validate_python(text, context={"patch": True})
+    except ValidationError as exc:
+        raise PatchError(_validation_message(exc), where) from exc
+
+
+def _body(op: ItemOp) -> dict[object, object]:
+    """The body of a parsed item operation, typed as the engine's patches are.
+
+    No copy: ``parse_item_op`` builds the body fresh, so it is not the
+    patch's own object.
+    """
+    return cast("dict[object, object]", op.body)
 
 
 def _auto_set_override_flags(model: VcoModel, before: Mapping[str, object]) -> None:
