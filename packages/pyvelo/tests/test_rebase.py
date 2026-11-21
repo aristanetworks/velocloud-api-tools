@@ -9,6 +9,8 @@ from pyvelo.core import VcoModel
 from pyvelo.core.fields import KeyField
 from pyvelo.core.rebase import RawChange, raw_changes, rebase
 
+from .patch_models import Route
+
 
 class Meta(VcoModel):
     segment_id: int = 0
@@ -346,3 +348,79 @@ def test_removed_item_with_a_unique_key_is_removed():
     before = {"rules": [item("a", port=0), item("b", port=0), item("c", port=0)]}
     after = {"rules": [item("a", port=0), item("c", port=0)]}
     assert rebase(raw, before, after, Rs) == {"rules": [item("a", x=1), item("c", x=3)]}
+
+
+# --- composite keys ------------------------------------------------------------
+
+
+class Routes(VcoModel):
+    routes: Annotated[list[Route], KeyField("dest", "prefix", "gw", "intf")] = Field(
+        default_factory=list
+    )
+
+
+def route(dest: str, prefix: object, **rest: object) -> dict[str, object]:
+    """A route as JSON, through gateway ``192.168.1.1``."""
+    return {"dest": dest, "prefix": prefix, "gw": "192.168.1.1", **rest}
+
+
+def test_composite_keyed_list_keeps_unknown_raw_keys_on_untouched_items():
+    raw = {
+        "routes": [
+            route("10.0.0.0", 24, intf="GE3", x=1),
+            route("10.1.0.0", 16, intf="GE3", x=2),
+        ]
+    }
+    before = {
+        "routes": [
+            route("10.0.0.0", 24, intf="GE3", cost=0),
+            route("10.1.0.0", 16, intf="GE3", cost=0),
+        ]
+    }
+    after = {
+        "routes": [
+            route("10.0.0.0", 24, intf="GE3", cost=0),
+            route("10.1.0.0", 16, intf="GE3", cost=5),
+        ]
+    }
+    out = cast(dict[str, list[object]], rebase(raw, before, after, Routes))
+    assert out == {
+        "routes": [
+            route("10.0.0.0", 24, intf="GE3", x=1),
+            route("10.1.0.0", 16, intf="GE3", x=2, cost=5),
+        ]
+    }
+    assert out["routes"][0] is raw["routes"][0]
+    assert raw_changes(raw, out, Routes) == [
+        RawChange('routes["10.1.0.0",16,"192.168.1.1",GE3].cost', MISSING, 5)
+    ]
+
+
+def test_raw_item_without_every_key_part_pairs_by_position():
+    # The raw items have no "intf"; the dumps carry the model default "".
+    raw = {"routes": [route("10.0.0.0", 24, x=1), route("10.1.0.0", 16, x=2)]}
+    before = {
+        "routes": [
+            route("10.0.0.0", 24, intf="", cost=0),
+            route("10.1.0.0", 16, intf="", cost=0),
+        ]
+    }
+    after = {
+        "routes": [
+            route("10.0.0.0", 24, intf="", cost=0),
+            route("10.1.0.0", 16, intf="", cost=5),
+        ]
+    }
+    assert rebase(raw, before, after, Routes) == {
+        "routes": [route("10.0.0.0", 24, x=1), route("10.1.0.0", 16, x=2, cost=5)]
+    }
+
+
+def test_key_parts_pair_in_string_form():
+    # One side as read ("24"), the other as dumped (24): the same item.
+    old = {"routes": [route("10.0.0.0", "24", intf="GE3", cost=0)]}
+    new = {"routes": [route("10.0.0.0", 24, intf="GE3", cost=5)]}
+    assert raw_changes(old, new, Routes) == [
+        RawChange('routes["10.0.0.0","24","192.168.1.1",GE3].prefix', "24", 24),
+        RawChange('routes["10.0.0.0","24","192.168.1.1",GE3].cost', 0, 5),
+    ]

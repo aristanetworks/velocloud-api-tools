@@ -26,6 +26,7 @@ from pyvelo.config.resolver import ResolverContext
 from pyvelo.config.validation import ValidationError
 from pyvelo.core import ConfigContext
 from pyvelo.core.fields import get_key_spec
+from pyvelo.core.rebase import KeyScalar, key_text
 
 from pyvelo_intent.config.module_names import resolve_module_name
 
@@ -420,18 +421,15 @@ def _diff_value(
             before_val = cast(object, getattr(before, field_name, MISSING))
             after_val = cast(object, getattr(after, field_name, MISSING))
             spec = get_key_spec(field_info)
-            key_attr = (
-                spec.paths[0] if spec is not None and len(spec.paths) == 1 else None
-            )
             if (
-                key_attr is not None
+                spec is not None
                 and isinstance(before_val, list)
                 and isinstance(after_val, list)
             ):
                 _diff_keyed_list(
                     module=module,
                     path=child_path,
-                    key_attr=key_attr,
+                    key_paths=spec.paths,
                     before=cast(list[object], before_val),
                     after=cast(list[object], after_val),
                     out=out,
@@ -466,31 +464,46 @@ def _diff_keyed_list(
     *,
     module: str,
     path: str,
-    key_attr: str,
+    key_paths: tuple[str, ...],
     before: list[object],
     after: list[object],
     out: list[ConfigFieldChange],
 ) -> None:
-    """Diff two lists of BaseModel items by their KeyField key value."""
+    """Diff two lists of BaseModel items by their KeyField key value.
 
-    def _resolve_key(item: object) -> object | None:
-        val: object | None = item
-        for part in key_attr.split("."):
-            val = cast(object | None, getattr(val, part, None))
-            if val is None:
-                return None
-        return val
-
-    by_key_before: dict[object | None, object] = {
-        _resolve_key(item): item for item in before
+    The key is the value at the one path of *key_paths*, written as it is, or
+    the tuple of the values at several (a composite key), written with
+    ``key_text``: ``static["10.0.0.0",24,"192.168.1.1",GE3]``.
+    """
+    by_key_before: dict[str | None, object] = {
+        _key_text(item, key_paths): item for item in before
     }
-    by_key_after: dict[object | None, object] = {
-        _resolve_key(item): item for item in after
+    by_key_after: dict[str | None, object] = {
+        _key_text(item, key_paths): item for item in after
     }
-    all_keys: list[object | None] = list(by_key_before.keys()) + [
+    all_keys: list[str | None] = list(by_key_before.keys()) + [
         k for k in by_key_after if k not in by_key_before
     ]
     for key in all_keys:
         b = by_key_before.get(key, MISSING)
         a = by_key_after.get(key, MISSING)
         _diff_value(module=module, path=f"{path}[{key}]", before=b, after=a, out=out)
+
+
+def _key_text(item: object, key_paths: tuple[str, ...]) -> str | None:
+    """The key of *item* at *key_paths* as a path writes it; None if a part is None or MISSING.
+
+    A one-part key is its value in string form; a composite key is its parts
+    joined by ``key_text``.
+    """
+    parts: list[KeyScalar] = []
+    for key_path in key_paths:
+        val: object = item
+        for part in key_path.split("."):
+            val = cast(object, getattr(val, part, None))
+            if val is None or val is MISSING:
+                return None
+        parts.append(val if isinstance(val, (str, int, float)) else str(val))
+    if len(parts) == 1:
+        return str(parts[0])
+    return key_text(tuple(parts))

@@ -2,10 +2,21 @@
 
 from datetime import UTC, datetime
 
+from pydantic import MISSING
 from pyvelo.client.enums.configuration import ConfigurationModuleType
+from pyvelo.client.enums.enterprise import NetworkSegmentType
+from pyvelo.client.models.configuration.common import SegmentMetadata
+from pyvelo.client.models.configuration.device_settings.lan import LanSettings
+from pyvelo.client.models.configuration.device_settings.root import DeviceSettingsData
+from pyvelo.client.models.configuration.device_settings.segment import (
+    DeviceSegment,
+    SegmentRoutes,
+    StaticRoute,
+)
 from pyvelo.client.models.configuration.firewall.root import FirewallData
 from pyvelo.client.schemas.configuration import (
     AnyConfigurationModule,
+    DeviceSettingsConfigurationModule,
     EdgeConfiguration,
     EnterpriseConfigurationProfile,
     FirewallConfigurationModule,
@@ -226,6 +237,61 @@ class TestGetFieldChanges:
         assert all("segments" not in c.path for c in changes), (
             f"reordering produced spurious change: {changes}"
         )
+
+
+def test_field_changes_address_a_composite_key():
+    route = StaticRoute(
+        destination="10.0.0.0",
+        netmask="255.255.255.0",
+        gateway="192.168.1.1",
+        cidr_prefix=24,
+        wan_interface="GE3",
+    )
+    module = DeviceSettingsConfigurationModule(
+        name="deviceSettings",
+        data=DeviceSettingsData(
+            lan=LanSettings(),
+            segments=[
+                DeviceSegment(
+                    segment=SegmentMetadata(
+                        name="Global Segment",
+                        segment_id=0,
+                        type_=NetworkSegmentType.REGULAR,
+                    ),
+                    routes=SegmentRoutes(static=[route]),
+                )
+            ],
+        ),
+        created=datetime(2024, 1, 1, tzinfo=UTC),
+        modified=datetime(2024, 1, 1, tzinfo=UTC),
+        id_=2,
+        type_=ConfigurationModuleType.ENTERPRISE,
+        description=None,
+        configuration_id=100,
+        enterprise_logical_id=None,
+        schema_version=None,
+        version=None,
+        metadata=None,
+    )
+    profile_config = EnterpriseConfigurationProfile(name="P", modules=[module])
+    state = ConfigState(
+        edge_config=None,
+        profile_config=profile_config,
+        target_type="profile",
+        resolver_context=ResolverContext(),
+    )
+    state.take_snapshot()
+    segment = profile_config.device_settings.data.segments[0]
+    assert segment.routes is not MISSING
+    segment.routes.static[0].cost = 5
+    changes = state.get_field_changes(module_name="deviceSettings")
+    assert [(c.path, c.before, c.after) for c in changes] == [
+        (
+            'segments[Global Segment].routes.static["10.0.0.0",24,"192.168.1.1",GE3].cost',
+            0,
+            5,
+        )
+    ]
 
 
 class TestSaveResult:

@@ -10,7 +10,11 @@ from pyvelo.client.models.configuration.device_settings.lan import (
     LanSettings,
 )
 from pyvelo.client.models.configuration.device_settings.root import DeviceSettingsData
-from pyvelo.client.models.configuration.device_settings.segment import DeviceSegment
+from pyvelo.client.models.configuration.device_settings.segment import (
+    DeviceSegment,
+    SegmentRoutes,
+    StaticRoute,
+)
 from pyvelo.client.models.configuration.firewall.root import FirewallData
 from pyvelo.client.models.configuration.firewall.rules import FirewallOutboundRule
 from pyvelo.client.models.configuration.firewall.segment import FirewallSegment
@@ -165,6 +169,48 @@ class TestKeyUniqueness:
         state = _make_state([])
         result = key_uniqueness.validate(state)
         assert result.is_valid
+
+
+def _static_route(gateway: str) -> StaticRoute:
+    return StaticRoute(
+        destination="10.0.0.0",
+        netmask="255.255.255.0",
+        gateway=gateway,
+        cidr_prefix=24,
+        wan_interface="GE3",
+    )
+
+
+def _routes_state(*routes: StaticRoute) -> ConfigState:
+    ds_mod = DeviceSettingsConfigurationModule(
+        name="deviceSettings",
+        data=DeviceSettingsData(
+            lan=LanSettings(),
+            segments=[
+                DeviceSegment(
+                    segment=_seg_meta(), routes=SegmentRoutes(static=list(routes))
+                )
+            ],
+        ),
+        id_=2,
+        **_mod_kwargs(),
+    )
+    return _make_state([ds_mod])
+
+
+def test_key_uniqueness_reads_composite_keys():
+    result = key_uniqueness.validate(
+        _routes_state(_static_route("192.168.1.1"), _static_route("192.168.1.1"))
+    )
+    assert [(e.path, e.code) for e in result.errors] == [
+        ("deviceSettings.segments[0].routes.static[1]", "key_uniqueness")
+    ]
+    assert '"10.0.0.0",24,"192.168.1.1",GE3' in result.errors[0].message
+
+    result = key_uniqueness.validate(
+        _routes_state(_static_route("192.168.1.1"), _static_route("192.168.1.2"))
+    )
+    assert result.is_valid
 
 
 class TestOverrideConsistency:

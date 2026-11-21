@@ -392,17 +392,25 @@ def _lan_steps(data: DeviceSettingsData) -> list[Step]:
 
 
 def _wan_usable(module: AnyConfigurationModule) -> bool:
-    return isinstance(module, WanConfigurationModule) and bool(module.data.links)
+    """Whether *module* is a WAN module whose first link has a key (an internal ID)."""
+    if not isinstance(module, WanConfigurationModule):
+        return False
+    links = module.data.links
+    return links is not MISSING and bool(links) and links[0].internal_id is not MISSING
 
 
 def _wan_steps(data: WanData) -> list[Step]:
-    link_name = expect(data.links, list, "the WAN links")[0].name
+    first = expect(data.links, list, "the WAN links")[0]
+    # The WAN key: internal ID and address family (link names repeat).
+    key = (first.internal_id, first.addressing_version)
     description = synthetic_name()
 
     def apply(d: WanData) -> list[Path]:
         links = expect(d.links, list, "the WAN links")
-        next(link for link in links if link.name == link_name).description = description
-        return [Path(("links", Key(link_name), "description"))]
+        next(
+            link for link in links if (link.internal_id, link.addressing_version) == key
+        ).description = description
+        return [Path(("links", Key((str(key[0]), key[1])), "description"))]
 
     return [Step("describe a link", apply)]
 

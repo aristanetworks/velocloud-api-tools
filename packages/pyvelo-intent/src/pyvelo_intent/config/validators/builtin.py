@@ -1,5 +1,7 @@
 """Built-in structural validators: override_consistency, key_uniqueness, required_fields."""
 
+from typing import cast
+
 from pydantic import MISSING, BaseModel
 from pyvelo.client.schemas.configuration import (
     EdgeConfiguration,
@@ -12,6 +14,7 @@ from pyvelo.config.validation import (
     validator,
 )
 from pyvelo.core.fields import get_key_spec
+from pyvelo.core.rebase import KeyScalar, key_text
 
 
 def _get_target_config(
@@ -60,29 +63,40 @@ def override_consistency(state: ConfigStateLike) -> ValidationResult:
     return result
 
 
+def _key_text(item: object, key_paths: tuple[str, ...]) -> str | None:
+    """The key of *item* at *key_paths* in string form; None if a part is None or MISSING.
+
+    A one-part key is its value in string form; a composite key is its parts
+    joined by ``key_text``, so two keys are one when every part is.
+    """
+    parts: list[KeyScalar] = []
+    for key_path in key_paths:
+        val: object = item
+        for part in key_path.split("."):
+            val = cast(object, getattr(val, part, None))
+            if val is None or val is MISSING:
+                return None
+        parts.append(val if isinstance(val, (str, int, float)) else str(val))
+    if len(parts) == 1:
+        return str(parts[0])
+    return key_text(tuple(parts))
+
+
 def _walk_model_for_keys(
     model: BaseModel,
     path: str,
     errors: list[ValidationError],
 ) -> None:
-    """Check that KeyField lists have unique keys."""
+    """Check that KeyField lists have unique keys (every part, for a composite key)."""
     for field_name, field_info in type(model).model_fields.items():
         spec = get_key_spec(field_info)
-        key_path = spec.paths[0] if spec is not None and len(spec.paths) == 1 else None
         val = getattr(model, field_name)
 
-        if key_path is not None and isinstance(val, list):
+        if spec is not None and isinstance(val, list):
             seen_keys: dict[str, int] = {}
             for i, item in enumerate(val):
-                # Resolve the key value from the dotted path
-                key_val = item
-                for part in key_path.split("."):
-                    key_val = getattr(key_val, part, None)
-                    if key_val is None:
-                        break
-
-                if key_val is not None:
-                    key_str = str(key_val)
+                key_str = _key_text(item, spec.paths)
+                if key_str is not None:
                     if key_str in seen_keys:
                         errors.append(
                             ValidationError(

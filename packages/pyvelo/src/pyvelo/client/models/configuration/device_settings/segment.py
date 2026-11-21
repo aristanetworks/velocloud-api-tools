@@ -337,7 +337,9 @@ def _none_to_empty_object(value: Any) -> Any:
 
 
 class BgpBase(VcoModel):
-    aggregation: list[BgpAggregation] = Field(default_factory=list)
+    aggregation: Annotated[
+        list[BgpAggregation], KeyField("prefix", "prefix_length")
+    ] = Field(default_factory=list)
     propagate_uplink: Annotated[bool, NoneIsFalse] = False
     overlay_prefix: Annotated[bool, NoneIsTrue] = True
     connected_routes: Annotated[bool, NoneIsTrue] = True
@@ -521,10 +523,15 @@ class SegmentRoutes(VcoModel):
     icmp_responders: Annotated[
         list[ICMPResponder], KeyField("name", alt="logical_id")
     ] = Field(default_factory=list)
-    static: list[StaticRoute] = Field(default_factory=list)
-    static_v6: Annotated[list[StaticRoute], Alias("staticV6")] = Field(
-        default_factory=list
-    )
+    static: Annotated[
+        list[StaticRoute],
+        KeyField("destination", "cidr_prefix", "gateway", "wan_interface"),
+    ] = Field(default_factory=list)
+    static_v6: Annotated[
+        list[StaticRoute],
+        Alias("staticV6"),
+        KeyField("destination", "cidr_prefix", "gateway", "wan_interface"),
+    ] = Field(default_factory=list)
     nsd: list[NsdRoute] = Field(default_factory=list)
     nsd_v6: Annotated[list[NsdRoute], Alias("nsdV6")] = Field(default_factory=list)
 
@@ -661,7 +668,9 @@ class SyslogCollector(VcoModel):
 class SegmentSyslog(VcoModel):
     facility_code: str = "local0"
     enabled: bool = False
-    collectors: list[SyslogCollector] = Field(default_factory=list)
+    collectors: Annotated[
+        list[SyslogCollector], KeyField("host", "protocol", "port")
+    ] = Field(default_factory=list)
     override: Annotated[bool, OverrideFlag] = True
 
 

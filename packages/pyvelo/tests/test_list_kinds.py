@@ -26,7 +26,6 @@ ROOTS = (FirewallData, QosData, DeviceSettingsData, WanData, ControlPlaneData)
 # them whole. Declaring one (or adding a new list) means changing this set.
 UNDECLARED: frozenset[str] = frozenset(
     {
-        "BgpBase.aggregation",
         "EdgeToEdgeDetail.vpn_hubs",
         "EdgeToEdgeHub.vpn_hubs",
         "LanNetwork.secondary_ips",
@@ -43,7 +42,6 @@ UNDECLARED: frozenset[str] = frozenset(
         "RoutedInterfaceSfpGpon.subinterfaces",
         "RoutedInterfaceSfpStandard.subinterfaces",
         "RoutedInterfaceUsb.subinterfaces",
-        "SegmentBgp.aggregation",
         "SegmentCss.sites",
         "SegmentDns.backup_provider",
         "SegmentDns.primary_provider",
@@ -53,9 +51,6 @@ UNDECLARED: frozenset[str] = frozenset(
         "SegmentOspfBase.aggregation",
         "SegmentRoutes.nsd",
         "SegmentRoutes.nsd_v6",
-        "SegmentRoutes.static",
-        "SegmentRoutes.static_v6",
-        "SegmentSyslog.collectors",
         "SegmentVpn.backhaul_edges",
         "WanLinkCos.classes_of_service",
     }
@@ -153,10 +148,10 @@ def test_every_key_path_names_a_field():
 
 def test_list_counts():
     assert Counter(walk(ROOTS).values()) == {
-        "keyed": 35,
+        "keyed": 40,
         "value": 19,
         "positional": 24,
-        "undeclared": 32,
+        "undeclared": 27,
         "untyped": 6,
         "map": 2,
     }

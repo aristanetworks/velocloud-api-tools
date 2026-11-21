@@ -66,3 +66,9 @@ class Root(VcoModel):
     by_name: dict[str, Sub] = Field(default_factory=dict)
     labels: dict[str, str] = Field(default_factory=dict)
     seq: Annotated[list[str], Positional()] = Field(default_factory=list)
+    routes: Annotated[list[Route], KeyField("dest", "prefix", "gw", "intf")] = Field(
+        default_factory=list
+    )
+    links: Annotated[list[Link], KeyField("internal_id", "family", label="name")] = (
+        Field(default_factory=list)
+    )

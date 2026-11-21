@@ -12,6 +12,8 @@ from pyvelo.core.rebase import (
     PathPart,
     RawChange,
     find_lossy_assignments,
+    key_text,
+    parse_key_text,
     raw_changes,
     rebase,
 )
@@ -66,6 +68,13 @@ EXAMPLES: list[tuple[tuple[PathPart, ...], str]] = [
     (("rules", Key(1e-07)), "rules[1e-07]"),
     (("rules", Key("1e-07")), 'rules["1e-07"]'),
     (("rules", Key("1.5")), 'rules["1.5"]'),
+    (
+        ("routes", Key(("10.0.0.0", 24, "192.168.1.1", "GE3")), "cost"),
+        'routes["10.0.0.0",24,"192.168.1.1",GE3].cost',
+    ),
+    (("links", Key(("u1", "IPv4"))), "links[u1,IPv4]"),
+    (("links", Key(("a,b", "]", ""))), 'links["a,b","]",""]'),
+    (("links", Key((True, 1.5, "true"))), 'links[true,1.5,"true"]'),
 ]
 
 
@@ -122,15 +131,20 @@ def _random_parts(rng: random.Random) -> tuple[PathPart, ...]:
     def text() -> str:
         return "".join(rng.choice(alphabet) for _ in range(rng.randint(0, 6)))
 
+    def key_part() -> str | int | float | bool:
+        return text() if rng.randrange(2) else rng.choice(scalars)
+
     parts: list[PathPart] = []
     for _ in range(rng.randint(0, 6)):
-        match rng.randrange(4):
+        match rng.randrange(5):
             case 0:
                 parts.append(text())
             case 1:
                 parts.append(Key(text()))
             case 2:
                 parts.append(Key(rng.choice(scalars)))
+            case 3:
+                parts.append(Key(tuple(key_part() for _ in range(rng.randint(2, 4)))))
             case _:
                 parts.append(rng.randrange(0, 50))
     return tuple(parts)
@@ -184,11 +198,44 @@ def test_distinct_parts_render_distinctly():
         'a."x"y',
         "[",
         "]",
+        "a[x,]",
+        "a[,x]",
+        "a[x,,y]",
+        'a["x"y]',
+        'a["x",]',
+        "a[#1,x]",
+        "a[x,#1]",
     ],
 )
 def test_parse_rejects_malformed_text(text: str):
     with pytest.raises(ValueError):
         _ = Path.parse(text)
+
+
+def test_composite_key_renders_and_parses_back():
+    path = Path(("routes", Key(("10.0.0.0", 24, "192.168.1.1", "GE3")), "cost"))
+    assert path == 'routes["10.0.0.0",24,"192.168.1.1",GE3].cost'
+    assert Path.parse(str(path)).parts == path.parts
+
+
+@pytest.mark.parametrize("value", [("a", 1), ("a,b", "1"), ("", True)])
+def test_key_text_round_trips(value: tuple[str | int | bool, ...]):
+    assert parse_key_text(key_text(value)) == value
+
+
+def test_key_text_of_a_composite_key():
+    assert (
+        key_text(("10.0.0.0", 24, "192.168.1.1", "GE3"))
+        == '"10.0.0.0",24,"192.168.1.1",GE3'
+    )
+    assert key_text("Global Segment") == '"Global Segment"'
+    assert key_text("a") == "a"
+
+
+@pytest.mark.parametrize("text", ["", "a,", ",a", "a b", '"a', "#1", "a]"])
+def test_parse_key_text_rejects_what_key_text_does_not_write(text: str):
+    with pytest.raises(ValueError):
+        _ = parse_key_text(text)
 
 
 def test_a_path_is_its_text_for_comparison_and_hashing():

@@ -63,7 +63,17 @@ from .fields import (
 )
 from .identity import ResolutionError
 from .patch import ItemOp, PatchError, Place, is_new, parse_item_op, position_of
-from .rebase import Key, Path, PathPart
+from .rebase import (
+    Key,
+    KeyScalar,
+    KeyValue,
+    Path,
+    PathPart,
+    _key_form,  # pyright: ignore[reportPrivateUsage]
+    _KeyForm,  # pyright: ignore[reportPrivateUsage]
+    key_text,
+    parse_key_text,
+)
 
 
 def apply_patch(
@@ -488,28 +498,27 @@ def _new_keyed_item(
     spec: _ListSpec,
     item_type: _ListItemType,
     body: Mapping[object, object],
-    key: str,
+    key: KeyValue,
     resolvers: IdentityResolver | None,
     path: Path,
     context: ConfigContext | None,
 ) -> VcoModel:
     """Build a new keyed-list item from the body of an ``add``, with *key* written in.
 
-    ``_check_add`` has refused a body that gives another key. Raises
-    ``LookupError`` (not ``ResolutionError``) if the key is a name
-    (``NameOf``) and the IDs that go with it were neither in the patch nor
-    found by a resolver: the item would carry the model's defaults, which are
-    another item's IDs. See ``_new_item``.
+    Each part of *key* (one, or the tuple of a composite key) is written at
+    its path as given, so ``24`` stays an ``int``. ``_check_add`` has refused
+    a body that gives another key. Raises ``LookupError`` (not
+    ``ResolutionError``) if the key is a name (``NameOf``) and the IDs that go
+    with it were neither in the patch nor found by a resolver: the item would
+    carry the model's defaults, which are another item's IDs. See
+    ``_new_item``.
     """
-    assert spec.key_path is not None  # a keyed list
-    item = _new_item(
-        item_type,
-        _inject_key_path(body, spec.key_path, key),
-        resolvers,
-        path,
-        context,
-    )
-    _require_ids_for_name(item, spec.name_identity, spec.key_path, key)
+    parts = key if isinstance(key, tuple) else (key,)
+    for key_path, part in zip(spec.key_paths, parts, strict=True):
+        body = _inject_key_path(body, key_path, part)
+    item = _new_item(item_type, body, resolvers, path, context)
+    if spec.name_identity is not None:
+        _require_ids_for_name(item, spec.name_identity, spec.key_paths[0], str(key))
     return item
 
 
@@ -538,7 +547,7 @@ def _fill_context_defaults(item: VcoModel) -> None:
 
 
 def _inject_key_path(
-    patch: Mapping[object, object], key_path: str, key_value: str
+    patch: Mapping[object, object], key_path: str, key_value: KeyScalar
 ) -> dict[object, object]:
     """Return a copy of *patch* with *key_value* set at the dotted *key_path*.
 
@@ -683,10 +692,12 @@ class _ListSpec:
     """How the items of a list field, or the values of a map field, are named and built."""
 
     kind: ListKind
-    key_path: str | None
-    """The ``KeyField`` path of a keyed list."""
+    key_paths: tuple[str, ...]
+    """The ``KeyField`` paths of a keyed list, one per part of its key; empty for any other list."""
     alt_path: str | None
     """The ``KeyField`` alt key path of a keyed list that has one."""
+    label_path: str | None
+    """The ``KeyField`` label path of a keyed list that has one."""
     item_type: _ListItemType | None
     """The model type of the items of a list of models."""
     element: TypeAdapter[object] | None
@@ -696,7 +707,7 @@ class _ListSpec:
     map_key: TypeAdapter[object] | None
     """Validates the key of a new entry of a map."""
     name_identity: type[object] | None
-    """What the key of a keyed list is the ``NameOf``, if it is one."""
+    """What the one-part key of a keyed list is the ``NameOf``, if it is one."""
 
 
 @functools.cache
@@ -706,11 +717,7 @@ def _list_spec(field_info: FieldInfo) -> _ListSpec | None:
     if kind is None:
         return None
     key_spec = get_key_spec(field_info) if kind == "keyed" else None
-    # A composite key is not read here yet: such a list has no key path.
-    if key_spec is not None and len(key_spec.paths) != 1:
-        key_spec = None
-    key_path = None if key_spec is None else key_spec.paths[0]
-    alt_path = None if key_spec is None else key_spec.alt
+    key_paths = () if key_spec is None else key_spec.paths
     item_type = _list_item_type(field_info)
     element: TypeAdapter[object] | None = None
     map_type: type[VcoModel] | None = None
@@ -724,13 +731,14 @@ def _list_spec(field_info: FieldInfo) -> _ListSpec | None:
         element = TypeAdapter[object](_type_args(field_info, list)[0])  # pyright: ignore[reportArgumentType]
     return _ListSpec(
         kind,
-        key_path,
-        alt_path,
+        key_paths,
+        None if key_spec is None else key_spec.alt,
+        None if key_spec is None else key_spec.label,
         item_type,
         element,
         map_type,
         map_key,
-        None if key_path is None else _key_name_of(item_type, key_path),
+        _key_name_of(item_type, key_paths[0]) if len(key_paths) == 1 else None,
     )
 
 
@@ -747,29 +755,95 @@ def _members_of(annotation: object) -> list[object]:
     return [_unwrap_annotated(m) for m in _union_members(_unwrap_annotated(annotation))]
 
 
-def _item_key(item: object, key_path: str) -> str | None:
-    """The key of a keyed-list item, in string form; None if it has none (null or MISSING)."""
+def _path_value(item: object, path: str) -> object:
+    """The value at dotted *path* of a model item; None if it, or a step to it, is null or MISSING."""
     value = item
-    for part in key_path.split("."):
+    for part in path.split("."):
         if value is None or value is MISSING:
             return None
         value = _field_value(value, part)
-    return None if value is None or value is MISSING else str(value)
+    return None if value is MISSING else value
+
+
+def _key_part(value: object) -> KeyScalar:
+    """One part of a key as ``Path`` writes it: a scalar as it is, anything else (a UUID) in string form."""
+    return value if isinstance(value, (str, int, float)) else str(value)
+
+
+def _key_of(parts: Sequence[KeyScalar]) -> KeyValue:
+    """The key with these parts: the one part, or the tuple of several."""
+    return parts[0] if len(parts) == 1 else tuple(parts)
+
+
+def _item_key_value(item: object, paths: tuple[str, ...]) -> KeyValue | None:
+    """The key of a keyed-list item, at *paths*; None if any part is null or MISSING.
+
+    The value at the one path, or the tuple of the values at several (a
+    composite key). ``""`` is a part.
+    """
+    parts: list[KeyScalar] = []
+    for path in paths:
+        value = _path_value(item, path)
+        if value is None:
+            return None
+        parts.append(_key_part(value))
+    return _key_of(parts) if parts else None
+
+
+def _item_key(item: object, paths: tuple[str, ...]) -> _KeyForm | None:
+    """The key of a keyed-list item at *paths*, in string form; None if it has none."""
+    return _key_form(_item_key_value(item, paths))
+
+
+def _show_key(key: KeyValue) -> str:
+    """A key for a message: a composite key as ``key_text`` writes it, quoted."""
+    return repr(key_text(key) if isinstance(key, tuple) else str(key))
+
+
+def _show_selector(selector: object) -> str:
+    """A selector for a message: a tuple or list of key parts as ``key_text`` writes it, quoted."""
+    if isinstance(selector, (tuple, list)):
+        parts = cast("tuple[object, ...] | list[object]", selector)
+        return _show_key(tuple(_key_part(p) for p in parts))
+    return repr(str(selector))
+
+
+def _key_path_part(key: KeyValue) -> Key:
+    """The path part that names an item by *key*: a one-part key in string form, a composite key part by part."""
+    return Key(key if isinstance(key, tuple) else str(key))
 
 
 def _patch_key(
     fields: Mapping[str, FieldInfo],
     data: Mapping[str, object] | Mapping[object, object],
-    key_path: str,
-) -> str | None:
-    """The key that *data*, a patch for a new item with *fields*, gives at *key_path*, in string form.
+    paths: tuple[str, ...],
+) -> KeyValue | None:
+    """The key that *data*, a patch for a new item with *fields*, gives at *paths*.
 
-    None if it gives none. Keys of *data* are read as ``_build_input`` reads
-    them (python name, alias or camelCase).
+    None unless it gives every part (``_patch_value``).
+    """
+    parts: list[KeyScalar] = []
+    for path in paths:
+        value = _patch_value(fields, data, path)
+        if value is None:
+            return None
+        parts.append(_key_part(value))
+    return _key_of(parts) if parts else None
+
+
+def _patch_value(
+    fields: Mapping[str, FieldInfo],
+    data: Mapping[str, object] | Mapping[object, object],
+    path: str,
+) -> object:
+    """The value that *data*, a patch for a new item with *fields*, gives at dotted *path*.
+
+    None if it gives none (or null, or MISSING). Keys of *data* are read as
+    ``_build_input`` reads them (python name, alias or camelCase).
     """
     value: object = data
     current: Mapping[str, FieldInfo] | None = fields
-    for part in key_path.split("."):
+    for part in path.split("."):
         if current is None or not _is_dict(value):
             return None
         names = _field_names_by_key(current)
@@ -784,7 +858,7 @@ def _patch_key(
         field_info = current.get(part)
         sub_type = None if field_info is None else _field_model_type(field_info)
         current = None if sub_type is None else sub_type.model_fields
-    return None if value is None or value is MISSING else str(value)
+    return None if value is MISSING else value
 
 
 @dataclass(frozen=True)
@@ -793,12 +867,45 @@ class _Selection:
 
     positions: list[int]
     """The positions of the items it names, in the list as it was."""
-    key: str | None
-    """In a keyed or value list, the key or value it stands for: as written, or the resolver's name."""
+    key: KeyValue | None
+    """The key (keyed list) or value (value list) it stands for: as written, or the resolver's name.
+
+    None where it is none: a selector of a composite key that is not one of
+    its parts, ``"#n"``, ``"+"``, any selector of another list.
+    """
     position: int | None
     """The ``n`` of a ``"#n"`` selector that was taken as a position."""
     alt: bool = False
     """Whether it names the items by their alt key."""
+    label: bool = False
+    """Whether it names the items by their label."""
+    new: bool = False
+    """Whether it is ``"+"`` or ``"+tag"`` in a keyed list: a new item."""
+
+
+def _selector_key(spec: _ListSpec, selector: object) -> KeyValue | None:
+    """The key *selector* stands for in a keyed list, as written; None if it is not one.
+
+    For a one-part key, any selector is one, in string form: it is never
+    parsed for commas. For a key of n parts, a tuple or list of n scalars, or
+    a string that ``parse_key_text`` reads as n parts.
+    """
+    if len(spec.key_paths) == 1:
+        return str(selector)
+    parts: tuple[KeyScalar, ...]
+    if isinstance(selector, str):
+        try:
+            parts = parse_key_text(selector)
+        except ValueError:
+            return None
+    elif isinstance(selector, (tuple, list)):
+        values = tuple(cast("tuple[object, ...] | list[object]", selector))
+        if not all(isinstance(v, (str, int, float)) for v in values):
+            return None
+        parts = cast("tuple[KeyScalar, ...]", values)
+    else:
+        return None
+    return parts if len(parts) == len(spec.key_paths) else None
 
 
 def _select(
@@ -809,38 +916,54 @@ def _select(
 ) -> _Selection:
     """Resolve *selector* against *items*; the one place a selector is read.
 
-    Tried in order: in a keyed list, an item whose key equals the selector in
-    string form; in a value list, an entry equal to it in string form; then
-    ``"#n"``, the item at position ``n``; then, in a keyed list with an alt
-    key, an item whose alt key equals the selector in string form; then, in a
-    keyed list whose key is a ``NameOf`` field and with *resolvers*, the name
-    the resolver has for the selector, as the key once more. An unknown name
-    raises ``ResolutionError``. In any other list only ``"#n"`` names an item.
+    In a keyed list, tried in order (spec 5.10.3): an item whose key is the
+    one the selector stands for (``_selector_key``), compared in string form
+    part by part; ``"#n"``, the item at position ``n``; ``"+"`` or ``"+tag"``,
+    a new item; an item whose alt key equals the selector in string form;
+    an item whose label does; and, where the key is a ``NameOf`` field and
+    with *resolvers*, the name the resolver has for the selector, as the key
+    once more. An unknown name raises ``ResolutionError``. In a value list, an
+    entry equal to the selector in string form, then ``"#n"``. In any other
+    list only ``"#n"`` names an item.
     """
-    text = str(selector)
-    by_value = spec.kind in ("keyed", "value")
-    if by_value and (found := _matching(items, spec, text)):
-        return _Selection(found, text, None)
+    if spec.kind == "value":
+        text = str(selector)
+        if found := [i for i, item in enumerate(items) if str(item) == text]:
+            return _Selection(found, text, None)
+    key = _selector_key(spec, selector) if spec.kind == "keyed" else None
+    if key is not None and (found := _with_key(items, spec, key)):
+        return _Selection(found, key, None)
     n = position_of(selector)
     if n is not None:
         return _Selection([n] if n < len(items) else [], None, n)
-    if spec.alt_path is not None:
-        alt_path = spec.alt_path
-        found = [i for i, item in enumerate(items) if _item_key(item, alt_path) == text]
-        if found:
-            return _Selection(found, text, None, alt=True)
+    if spec.kind != "keyed":
+        return _Selection([], str(selector) if spec.kind == "value" else None, None)
+    if is_new(selector):
+        return _Selection([], None, None, new=True)
+    text = str(selector)
+    if spec.alt_path is not None and (found := _with_part(items, spec.alt_path, text)):
+        return _Selection(found, key, None, alt=True)
+    if spec.label_path is not None and (
+        found := _with_part(items, spec.label_path, text)
+    ):
+        return _Selection(found, key, None, label=True)
     if spec.name_identity is not None and resolvers is not None:
-        text = _canonical_name(spec.name_identity, text, resolvers)
-        return _Selection(_matching(items, spec, text), text, None)
-    return _Selection([], text if by_value else None, None)
+        name = _canonical_name(spec.name_identity, text, resolvers)
+        return _Selection(_with_key(items, spec, name), name, None)
+    return _Selection([], key, None)
 
 
-def _matching(items: Sequence[object], spec: _ListSpec, text: str) -> list[int]:
-    """The positions of the items whose key (keyed list) or value (value list) is *text*."""
-    if spec.key_path is not None:
-        key_path = spec.key_path
-        return [i for i, item in enumerate(items) if _item_key(item, key_path) == text]
-    return [i for i, item in enumerate(items) if str(item) == text]
+def _with_key(items: Sequence[object], spec: _ListSpec, key: KeyValue) -> list[int]:
+    """The positions of the items of a keyed list whose key is *key*, in string form."""
+    form = _key_form(key)
+    return [
+        i for i, item in enumerate(items) if _item_key(item, spec.key_paths) == form
+    ]
+
+
+def _with_part(items: Sequence[object], path: str, text: str) -> list[int]:
+    """The positions of the items whose value at *path* (an alt key, a label) is *text* in string form."""
+    return [i for i, item in enumerate(items) if _item_key(item, (path,)) == text]
 
 
 def select_items(
@@ -851,12 +974,13 @@ def select_items(
 ) -> list[int]:
     """The positions of the items of the list field *field_name* that *selector* names.
 
-    Empty if it names none. A selector is read as in a patch (spec 5.10.3):
-    the key of an item of a keyed list, an entry of a value list, ``at(n)``,
-    the alt key of an item of a keyed list that has one, and in a keyed list
-    whose key is a ``NameOf`` field, the resolver's name for it. An unknown
-    name raises ``ResolutionError``. Raises ``TypeError`` if the field is not
-    a list.
+    Empty if it names none. A selector is read as in a patch (spec 5.10.3,
+    ``_select``): the key of an item of a keyed list (for a composite key, a
+    tuple of its parts or their string form), an entry of a value list,
+    ``at(n)``, the alt key or the label of an item of a keyed list that has
+    one, and in a keyed list whose key is a ``NameOf`` field, the resolver's
+    name for it. An unknown name raises ``ResolutionError``. Raises
+    ``TypeError`` if the field is not a list.
     """
     model_cls = type(model)
     spec = _list_spec(model_cls.model_fields[field_name])
@@ -972,12 +1096,8 @@ def _list_value_input(
     built: list[object] = []
     for index, item in enumerate(value):
         if _is_dict(item):
-            key = (
-                None
-                if spec.key_path is None
-                else _patch_key(item_type.fields, item, spec.key_path)
-            )
-            part: PathPart = index if key is None else Key(key)
+            key = _patch_key(item_type.fields, item, spec.key_paths)
+            part: PathPart = index if key is None else _key_path_part(key)
             item = _build_input(
                 item_type.fields,
                 item,
@@ -1007,26 +1127,25 @@ def _check_list_value(
                 _refuse_unread_keys(
                     item, item_data, path.child(_item_part(spec, item, index))
                 )
-    if spec.key_path is None:
-        return
-    seen: dict[str, int] = {}
+    seen: dict[_KeyForm, int] = {}
     for index, item in enumerate(built):
-        key = _item_key(item, spec.key_path)
-        if key is None:
+        key = _item_key_value(item, spec.key_paths)
+        form = _key_form(key)
+        if key is None or form is None:
             continue
-        if key in seen:
+        if form in seen:
             raise PatchError(
-                f"items #{seen[key]} and #{index} have one key, {key!r}: "
+                f"items #{seen[form]} and #{index} have one key, {_show_key(key)}: "
                 + "the items of a keyed list have distinct keys",
                 path,
             )
-        seen[key] = index
+        seen[form] = index
 
 
 def _item_part(spec: _ListSpec, item: object, index: int) -> PathPart:
     """The path part of a list item: its key in a keyed list, else its position."""
-    key = None if spec.key_path is None else _item_key(item, spec.key_path)
-    return index if key is None else Key(key)
+    key = _item_key_value(item, spec.key_paths)
+    return index if key is None else _key_path_part(key)
 
 
 @dataclass(eq=False, slots=True)
@@ -1047,7 +1166,7 @@ class _ItemEntry:
     slot: _Slot | None
     """The item a change, delete or move names."""
     new: object
-    """For an add: the key (keyed list) or the validated value (value list) it writes."""
+    """For an add: what it adds, built in step 1: the item (list of models) or the validated value (value list)."""
     anchor: _Slot | None
     """The item a ``before`` or ``after`` place names."""
 
@@ -1064,8 +1183,9 @@ def _merge_items(
 ) -> None:
     """Apply the item operations *ops* to *items*, a list that is not a map, in place.
 
-    1. Every selector and anchor is resolved against the list as it was
-       (``_resolve_items``); any error raises here, before anything changes.
+    1. Every selector and anchor is resolved against the list as it was, and
+       every item an add adds is built (``_resolve_items``); any error raises
+       here, before anything changes.
     2. Changes, in the order written. Afterwards a renamed item whose key
        another item has raises.
     3. Deletes.
@@ -1076,33 +1196,36 @@ def _merge_items(
     *new_only* is for a list the patch builds: every entry must be an add.
     """
     slots = [_Slot(item) for item in items]
-    entries = _resolve_items(slots, spec, ops, resolvers, path, new_only=new_only)
+    entries = _resolve_items(
+        slots, spec, ops, resolvers, path, context, new_only=new_only
+    )
 
+    paths = spec.key_paths
     renamed: list[_ItemEntry] = []
     for entry in entries:
         if entry.kind != "change" or entry.slot is None:
             continue
         item = entry.slot.value
         assert isinstance(item, VcoModel)  # _resolve_items checked it
-        before = None if spec.key_path is None else _item_key(item, spec.key_path)
+        before = _item_key(item, paths)
         _merge_model(item, entry.body, resolvers, entry.path)
-        if spec.key_path is not None and _item_key(item, spec.key_path) != before:
+        if _item_key(item, paths) != before:
             renamed.append(entry)
     for entry in renamed:
-        assert entry.slot is not None and spec.key_path is not None
-        key = _item_key(entry.slot.value, spec.key_path)
+        assert entry.slot is not None
+        key = _item_key_value(entry.slot.value, paths)
+        form = _key_form(key)
         if key is not None and any(
-            s is not entry.slot and _item_key(s.value, spec.key_path) == key
-            for s in slots
+            s is not entry.slot and _item_key(s.value, paths) == form for s in slots
         ):
-            raise PatchError(f"another item has the key {key!r}", entry.path)
+            raise PatchError(f"another item has the key {_show_key(key)}", entry.path)
 
     deleted = {id(e.slot) for e in entries if e.kind == "delete"}
     slots = [s for s in slots if id(s) not in deleted]
 
     for entry in entries:
         if entry.kind == "add":
-            slot = _Slot(_new_list_item(spec, entry, slots, resolvers, context))
+            slot = _Slot(_new_list_item(spec, entry, slots))
         elif entry.place is not None and entry.slot is not None:
             slot = entry.slot
             slots.remove(slot)
@@ -1119,30 +1242,41 @@ def _resolve_items(
     ops: Mapping[object, object],
     resolvers: IdentityResolver | None,
     path: Path,
+    context: ConfigContext | None,
     *,
     new_only: bool,
 ) -> list[_ItemEntry]:
-    """Parse every entry of *ops* and resolve its selector and anchor (step 1 of ``_merge_items``).
+    """Parse every entry of *ops*, resolve its selector and anchor, and build what an add adds.
 
-    Raises ``PatchError`` for an operation the list does not take, a selector
-    that names no item or several, two selectors for one item, and an anchor
-    that names no item, several, the item itself or an item the patch
-    deletes. Changes nothing.
+    Step 1 of ``_merge_items``. Raises ``PatchError`` for an operation the
+    list does not take, a selector that names no item or several, two
+    selectors for one item, two adds of one key or value, an item an add
+    cannot build, and an anchor that names no item, several, the item itself
+    or an item the patch deletes. Changes nothing.
     """
     items = [s.value for s in slots]
     entries: list[_ItemEntry] = []
     named: dict[int, Path] = {}
+    added: dict[_KeyForm, Path] = {}
     for selector, value in ops.items():
         selection = _select(items, spec, selector, resolvers)
-        part: PathPart = (
-            selection.position if selection.position is not None else Key(str(selector))
-        )
-        where = path.child(part)
+        where = path.child(_selector_part(selector, selection))
         op = parse_item_op(value, where)
         slot: _Slot | None = None
         new: object = None
         if op.kind == "add":
-            new = _check_add(spec, selector, selection, op, items, where)
+            new = _check_add(
+                spec, selector, selection, op, items, resolvers, where, context
+            )
+            form = _added_form(spec, new)
+            if form is not None:
+                if form in added:
+                    what = "value" if spec.kind == "value" else "key"
+                    raise PatchError(
+                        f"{added[form]} adds this {what} too: one add per {what}",
+                        where,
+                    )
+                added[form] = where
         elif new_only:
             raise PatchError(
                 f"{op.kind} in a list the patch builds: nothing exists yet to "
@@ -1181,15 +1315,48 @@ def _resolve_items(
     return entries
 
 
+def _selector_part(selector: object, selection: _Selection) -> PathPart:
+    """Where the entry under *selector* is in the patch, within its list.
+
+    A position for ``"#n"``; the key as written for a composite key; else the
+    selector in string form.
+    """
+    if selection.position is not None:
+        return selection.position
+    if isinstance(selection.key, tuple):
+        return Key(selection.key)
+    if isinstance(selector, (tuple, list)):
+        parts = cast("tuple[object, ...] | list[object]", selector)
+        return Key(tuple(_key_part(p) for p in parts))
+    return Key(str(selector))
+
+
+def _added_form(spec: _ListSpec, new: object) -> _KeyForm | None:
+    """The key (keyed list) or value (value list) in string form of what an add adds, or None."""
+    if spec.kind == "value":
+        return str(new)
+    if spec.kind == "keyed":
+        return _item_key(new, spec.key_paths)
+    return None
+
+
 def _check_add(
     spec: _ListSpec,
     selector: object,
     selection: _Selection,
     op: ItemOp,
     items: Sequence[object],
+    resolvers: IdentityResolver | None,
     where: Path,
+    context: ConfigContext | None,
 ) -> object:
-    """Refuse an ``add`` the list does not take; return what it writes (``_ItemEntry.new``)."""
+    """Refuse an ``add`` the list does not take; return what it adds (``_ItemEntry.new``).
+
+    In a list of models, the item, built here; in a value list, the value,
+    validated. Under a plain selector a keyed list takes the key only: a key
+    of as many parts as the list's, not an alt key or a label. Under ``"+"``
+    the key is whatever the item built from the body has, if any.
+    """
     if spec.kind in ("positional", "undeclared"):
         if spec.item_type is None:
             raise PatchError(
@@ -1202,27 +1369,19 @@ def _check_add(
                 'add() in a list named by position takes "+" or "+tag" as its selector',
                 where,
             )
-        return None
+        return _new_item(spec.item_type, _body(op), resolvers, where, context)
     if selection.position is not None:
         raise PatchError(
             "at(n) names an item that exists: add() takes a "
             + ("key" if spec.kind == "keyed" else "value"),
             where,
         )
-    if selection.positions:
-        where_in = " as an alt key" if selection.alt else ""
-        raise PatchError(f"{selection.key!r} is already in the list{where_in}", where)
     if spec.kind == "keyed":
-        if spec.item_type is None or spec.key_path is None:
-            raise PatchError("this list has no item type to build from", where)
-        given = _patch_key(spec.item_type.fields, op.body, spec.key_path)
-        if given is not None and given != selection.key:
-            raise PatchError(
-                f"the body gives the key {given!r}, and the selector "
-                + f"{selection.key!r}: add() takes the key from its selector",
-                where,
-            )
-        return selection.key
+        return _check_keyed_add(
+            spec, selector, selection, op, items, resolvers, where, context
+        )
+    if selection.positions:
+        raise PatchError(f"{selection.key!r} is already in the list", where)
     # A value list: the selector is the value.
     if op.body:
         raise PatchError("add() in a list of values takes no body", where)
@@ -1234,6 +1393,53 @@ def _check_add(
     if any(str(item) == str(new) for item in items):
         raise PatchError(f"{new!r} is already in the list", where)
     return new
+
+
+def _check_keyed_add(
+    spec: _ListSpec,
+    selector: object,
+    selection: _Selection,
+    op: ItemOp,
+    items: Sequence[object],
+    resolvers: IdentityResolver | None,
+    where: Path,
+    context: ConfigContext | None,
+) -> VcoModel:
+    """The item an ``add`` in a keyed list adds, built; ``PatchError`` if the list does not take it (``_check_add``)."""
+    item_type = spec.item_type
+    if item_type is None:
+        raise PatchError("this list has no item type to build from", where)
+    if selection.new:
+        item = _new_item(item_type, _body(op), resolvers, where, context)
+        key = _item_key_value(item, spec.key_paths)
+        if key is not None and _with_key(items, spec, key):
+            raise PatchError(
+                f"the body gives the key {_show_key(key)}, which is already in the list",
+                where,
+            )
+        return item
+    key = selection.key
+    if key is None:
+        raise PatchError(
+            f"{_show_selector(selector)} is not a key of this list, which has "
+            + f"{len(spec.key_paths)} parts ({', '.join(spec.key_paths)}): add() "
+            + 'takes the key as its selector, or "+" with the fields in the body, '
+            + 'as in "+": add({...})',
+            where,
+        )
+    if selection.positions and not selection.label:
+        where_in = " as an alt key" if selection.alt else ""
+        raise PatchError(f"{_show_key(key)} is already in the list{where_in}", where)
+    parts = key if isinstance(key, tuple) else (key,)
+    for key_path, part in zip(spec.key_paths, parts, strict=True):
+        given = _patch_value(item_type.fields, op.body, key_path)
+        if given is not None and str(given) != str(part):
+            raise PatchError(
+                f"the body gives {key_path} {str(given)!r}, and the selector "
+                + f"{_show_key(key)}: add() takes the key from its selector",
+                where,
+            )
+    return _new_keyed_item(spec, item_type, _body(op), key, resolvers, where, context)
 
 
 def _check_change(spec: _ListSpec, where: Path) -> None:
@@ -1259,7 +1465,7 @@ def _named_item(
         return selection.positions[0]
     if selection.positions:
         raise PatchError(
-            _names_several(repr(str(selector)), spec, items, selection.positions),
+            _names_several(_show_selector(selector), spec, items, selection.positions),
             where,
         )
     if selection.position is not None:
@@ -1275,13 +1481,34 @@ def _named_item(
             + f"named by at(n){hint}",
             where,
         )
+    if selection.new:
+        raise PatchError(
+            f"{str(selector)!r} names a new item: only add() takes it", where
+        )
     if spec.kind != "keyed":
-        what = "entry"
-    elif spec.alt_path is not None:
-        what = "key or alt key"
+        message = f"no item has the entry {selection.key!r}"
     else:
-        what = "key"
-    message = f"no item has the {what} {selection.key!r}"
+        names = ["key"]
+        if spec.alt_path is not None:
+            names.append("alt key")
+        if spec.label_path is not None:
+            names.append("label")
+        what = (
+            names[0] if len(names) == 1 else f"{', '.join(names[:-1])} or {names[-1]}"
+        )
+        shown = (
+            _show_selector(selector)
+            if selection.key is None
+            else _show_key(selection.key)
+        )
+        message = f"no item has the {what} {shown}"
+        if selection.key is None:
+            message += f"; the key has {len(spec.key_paths)} parts: " + ", ".join(
+                spec.key_paths
+            )
+            if op.kind == "change":
+                message += '; to add one, write "+": add({...}) with its fields'
+            raise PatchError(message, where)
     if op.kind == "change":
         message += "; to add one, write add(...)"
     raise PatchError(message, where)
@@ -1292,14 +1519,21 @@ def _names_several(
 ) -> str:
     """The message for *subject*, a selector or anchor that names the items at *positions*.
 
-    It lists each match with its position and its key or value, and its alt
-    key if it has one.
+    It lists each match with its position and its key (a composite key as
+    ``key_text`` writes it) or value, and its alt key if it has one.
     """
     shown: list[str] = []
     for index in positions:
         item = items[index]
-        key = str(item) if spec.key_path is None else _item_key(item, spec.key_path)
-        alt = None if spec.alt_path is None else _item_key(item, spec.alt_path)
+        if spec.kind != "keyed":
+            key = str(item)
+        else:
+            value = _item_key_value(item, spec.key_paths)
+            if value is None:
+                key = "no key"
+            else:
+                key = key_text(value) if isinstance(value, tuple) else str(value)
+        alt = None if spec.alt_path is None else _item_key(item, (spec.alt_path,))
         shown.append(
             f"#{index} ({key})" if alt is None else f"#{index} ({key}, alt key {alt})"
         )
@@ -1334,27 +1568,23 @@ def _anchor_position(
 
 
 def _new_list_item(
-    spec: _ListSpec,
-    entry: _ItemEntry,
-    slots: Sequence[_Slot],
-    resolvers: IdentityResolver | None,
-    context: ConfigContext | None,
+    spec: _ListSpec, entry: _ItemEntry, slots: Sequence[_Slot]
 ) -> object:
-    """Build the item an ``add`` entry adds to the list now in *slots*."""
-    item_type = spec.item_type
+    """What an ``add`` entry adds (built in step 1), checked against the list now in *slots*.
+
+    Its key or value may have come into the list since step 1, by a rename:
+    that raises ``PatchError``.
+    """
+    new = entry.new
+    form = _added_form(spec, new)
+    if form is None:
+        return new
     if spec.kind == "value":
-        new = entry.new
+        taken = any(str(s.value) == form for s in slots)
     else:
-        assert item_type is not None  # _check_add refused an add without one
-        if spec.kind != "keyed":
-            return _new_item(item_type, entry.body, resolvers, entry.path, context)
-        assert isinstance(entry.new, str)
-        new = _new_keyed_item(
-            spec, item_type, entry.body, entry.new, resolvers, entry.path, context
-        )
-    # The key or value may have come into the list since step 1, by a rename.
-    if _matching([s.value for s in slots], spec, str(entry.new)):
-        raise PatchError(f"{str(entry.new)!r} is already in the list", entry.path)
+        taken = any(_item_key(s.value, spec.key_paths) == form for s in slots)
+    if taken:
+        raise PatchError(f"{_show_key(form)} is already in the list", entry.path)
     return new
 
 

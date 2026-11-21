@@ -846,20 +846,28 @@ async def test_edge_firewall_deleted_and_inserted_again_reads_back_as_sent(
 
 
 def _wan_link(module: AnyConfigurationModule) -> bool:
-    return isinstance(module, WanConfigurationModule) and bool(module.data.links)
+    """Whether *module* is a WAN module whose first link has a key (an internal ID)."""
+    if not isinstance(module, WanConfigurationModule):
+        return False
+    links = module.data.links
+    return links is not MISSING and bool(links) and links[0].internal_id is not MISSING
 
 
 async def test_second_save_from_an_older_state_is_refused_and_spends_the_state(
     lab: Lab, pipeline: ConfigPipeline
 ) -> None:
-    layout = await lab.pick_writable_edge(Name.WAN, _wan_link, "with a link")
+    layout = await lab.pick_writable_edge(
+        Name.WAN, _wan_link, "with a link that has an internal ID"
+    )
     site = lab.edge_site(layout, Name.WAN)
     async with restoring(site) as original:
         assert original is not None
         newer = await pipeline.load(layout.edge_id, enterprise_id=lab.enterprise_id)
         older = await pipeline.load(layout.edge_id, enterprise_id=lab.enterprise_id)
         wan = expect(newer.module("WAN"), WanConfigurationModule, "the WAN module")
-        link = expect(wan.data.links, list, "the WAN links")[0].name
+        first = expect(wan.data.links, list, "the WAN links")[0]
+        # The WAN key: internal ID and address family (link names repeat).
+        link = (str(first.internal_id), first.addressing_version)
         kept, refused = synthetic_name(), synthetic_name()
         for state, text in ((newer, kept), (older, refused)):
             _ = await pipeline.apply(

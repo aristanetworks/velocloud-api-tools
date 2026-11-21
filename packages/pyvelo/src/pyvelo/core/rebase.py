@@ -48,12 +48,17 @@ from .base import (
 )
 from .fields import ConfigContext, KeySpec, get_key_spec, has_override_flag
 
+type KeyScalar = str | int | float | bool
+"""One part of a key."""
+type KeyValue = KeyScalar | tuple[KeyScalar, ...]
+"""A key: one part, or the tuple of the parts of a composite key."""
+
 
 @dataclass(frozen=True, slots=True)
 class Key:
-    """A keyed-list item, identified by its ``KeyField`` value."""
+    """A keyed-list item, identified by its ``KeyField`` value (a tuple for a composite key)."""
 
-    value: str | int | float | bool
+    value: KeyValue
 
 
 type PathPart = str | Key | int
@@ -66,6 +71,7 @@ _JSON_SCALAR = re.compile(
 )
 _INTEGER = re.compile(r"-?[0-9]+")
 _POSITION = re.compile(r"[0-9]+")
+_UNQUOTED_PART = re.compile(r'[^,\]"]+')
 
 
 def _is_bare_key(value: str) -> bool:
@@ -82,17 +88,29 @@ def _is_bare_key(value: str) -> bool:
     )
 
 
-def _render_key(value: str | float | bool) -> str:
+def _render_key(value: KeyScalar) -> str:
     if isinstance(value, str) and _is_bare_key(value):
         return value
     return json.dumps(value)
+
+
+def key_text(value: KeyValue) -> str:
+    """A key as ``Path`` writes it inside the brackets.
+
+    One part is bare when it can be, JSON otherwise; the parts of a composite
+    key are each so written, joined by commas:
+    ``"10.0.0.0",24,"192.168.1.1",GE3``. ``parse_key_text`` reads it back.
+    """
+    if isinstance(value, tuple):
+        return ",".join(_render_key(part) for part in value)
+    return _render_key(value)
 
 
 def _render(parts: tuple[PathPart, ...]) -> str:
     out: list[str] = []
     for part in parts:
         if isinstance(part, Key):
-            out.append(f"[{_render_key(part.value)}]")
+            out.append(f"[{key_text(part.value)}]")
         elif isinstance(part, str):
             name = part if _BARE_NAME.fullmatch(part) else json.dumps(part)
             out.append(f".{name}" if out else name)
@@ -103,16 +121,16 @@ def _render(parts: tuple[PathPart, ...]) -> str:
     return "".join(out)
 
 
-def _malformed(text: str, index: int, why: str) -> ValueError:
-    return ValueError(f"malformed path {text!r} at {index}: {why}")
+def _malformed(text: str, index: int, why: str, what: str = "path") -> ValueError:
+    return ValueError(f"malformed {what} {text!r} at {index}: {why}")
 
 
-def _decode_string(text: str, index: int) -> tuple[str, int]:
+def _decode_string(text: str, index: int, what: str = "path") -> tuple[str, int]:
     """The JSON string literal that starts at *index*, and where it ends."""
     try:
         decoded: tuple[object, int] = json.JSONDecoder().raw_decode(text, index)
     except ValueError:
-        raise _malformed(text, index, "bad quoted string") from None
+        raise _malformed(text, index, "bad quoted string", what) from None
     value, end = decoded
     assert isinstance(value, str)  # it starts with a double quote
     return value, end
@@ -136,27 +154,60 @@ def _parse_name(text: str, index: int) -> tuple[str, int]:
     return found.group(), found.end()
 
 
+def _parse_key_part(text: str, index: int, what: str) -> tuple[KeyScalar, int]:
+    """The one key part that starts at *index*, and where it ends."""
+    if text.startswith('"', index):
+        return _decode_string(text, index, what)
+    found = _UNQUOTED_PART.match(text, index)
+    content = "" if found is None else found.group()
+    value: KeyScalar
+    if _JSON_SCALAR.fullmatch(content):
+        value = _scalar(content)
+    elif _BARE_KEY.fullmatch(content) and not content.isdigit():
+        value = content
+    else:
+        raise _malformed(text, index, "bad key", what)
+    return value, index + len(content)
+
+
+def _parse_key_parts(
+    text: str, index: int, what: str
+) -> tuple[tuple[KeyScalar, ...], int]:
+    """The comma-separated key parts that start at *index*, and where they end."""
+    parts: list[KeyScalar] = []
+    while True:
+        part, index = _parse_key_part(text, index, what)
+        parts.append(part)
+        if not text.startswith(",", index):
+            return tuple(parts), index
+        index += 1
+
+
+def parse_key_text(text: str) -> tuple[KeyScalar, ...]:
+    """The parts of the key that ``key_text`` writes as *text*; one part for a single key.
+
+    Raises ``ValueError`` if *text* is not what ``key_text`` writes.
+    """
+    parts, end = _parse_key_parts(text, 0, "key")
+    if end != len(text):
+        raise _malformed(text, end, "expected ',' or the end", "key")
+    return parts
+
+
 def _parse_bracket(text: str, index: int) -> tuple[PathPart, int]:
     """The part in the brackets that open at *index*, and where it ends."""
     start = index + 1
-    if text.startswith('"', start):
-        value, end = _decode_string(text, start)
-        part: PathPart = Key(value)
-    else:
+    part: PathPart
+    if text.startswith("#", start):
         end = text.find("]", start)
         if end < 0:
             raise _malformed(text, index, "unclosed '['")
-        content = text[start:end]
-        if content.startswith("#"):
-            if _POSITION.fullmatch(content, 1) is None:
-                raise _malformed(text, start, "bad list position")
-            part = int(content[1:])
-        elif _JSON_SCALAR.fullmatch(content):
-            part = Key(_scalar(content))
-        elif _BARE_KEY.fullmatch(content) and not content.isdigit():
-            part = Key(content)
-        else:
-            raise _malformed(text, start, "bad key")
+        if _POSITION.fullmatch(text, start + 1, end) is None:
+            raise _malformed(text, start, "bad list position")
+        part = int(text[start + 1 : end])
+    else:
+        parts, end = _parse_key_parts(text, start, "path")
+        part = Key(parts[0] if len(parts) == 1 else parts)
     if not text.startswith("]", end):
         raise _malformed(text, end, "expected ']'")
     return part, end + 1
@@ -166,8 +217,10 @@ class Path(str):
     """A change location. Compares and hashes as its rendered text.
 
     ``.parts`` is the structure. Names are bare when they are identifiers and
-    JSON strings otherwise, joined with ``.``; keyed items are ``[key]`` and
-    list positions ``[#0]``: ``segments["Corp.Guest v2"].rules[r1].port``.
+    JSON strings otherwise, joined with ``.``; keyed items are ``[key]`` (the
+    key as ``key_text`` writes it, so a composite key is
+    ``["10.0.0.0",24,"192.168.1.1",GE3]``) and list positions ``[#0]``:
+    ``segments["Corp.Guest v2"].rules[r1].port``.
     """
 
     parts: tuple[PathPart, ...]
@@ -232,16 +285,11 @@ class RawChange:
 
 @dataclass(frozen=True, slots=True)
 class _KeyedList:
-    """A list whose items are paired by alt key, then by the value at ``key_path``."""
+    """A list whose items are paired by alt key, then by key (``pair_items``)."""
 
     spec: KeySpec
-    """The list's ``KeyField``; its key has one part."""
+    """The list's ``KeyField``: the key's paths, one per part, and its alt key."""
     item: type[VcoModel]
-
-    @property
-    def key_path(self) -> str:
-        """Dotted path of python field names to the key, as in ``KeyField``."""
-        return self.spec.paths[0]
 
 
 type _Node = type[VcoModel] | _KeyedList | None
@@ -273,9 +321,8 @@ def _dump_key(node: _Node, key: object) -> object:
 def _child(node: _Node, key: object) -> _Node:
     """What the value under *key* is known to be.
 
-    A keyed list for a ``KeyField`` list of models whose key has one part (of
-    the first variant, for a discriminated union), a model class for a model
-    field, else None.
+    A keyed list for a ``KeyField`` list of models (of the first variant, for
+    a discriminated union), a model class for a model field, else None.
     """
     found = _model_field(node, key)
     if found is None:
@@ -283,7 +330,7 @@ def _child(node: _Node, key: object) -> _Node:
     field_info = found[1]
     spec = get_key_spec(field_info)
     item_type = _list_item_type(field_info)
-    if spec is not None and len(spec.paths) == 1 and item_type is not None:
+    if spec is not None and item_type is not None:
         return _KeyedList(spec, item_type.variants[0])
     return _field_model_type(field_info)
 
@@ -302,17 +349,15 @@ def _wire_keys(model: type[VcoModel], name: str) -> list[str]:
     return [dump_key, *others]
 
 
-def _item_key(
-    item: object, model: type[VcoModel], key_path: str
-) -> str | int | float | None:
-    """The key of a JSON *item* of *model* at *key_path*, or None if it has none.
+def _read_path(item: object, model: type[VcoModel], path: str) -> KeyScalar | None:
+    """The scalar at dotted *path* of a JSON *item* of *model*, or None if it has none.
 
     The path names python fields. Each step is read from any key the field is
-    read from. A key that is absent, null or not a scalar is None.
+    read from. A value that is absent, null or not a scalar is None.
     """
     current = item
     step_model: type[VcoModel] | None = model
-    for part in key_path.split("."):
+    for part in path.split("."):
         if not _is_dict(current):
             return None
         candidates = [part] if step_model is None else _wire_keys(step_model, part)
@@ -325,20 +370,64 @@ def _item_key(
     return current if isinstance(current, (str, int, float)) else None
 
 
-def _same_key(raw_key: object, parsed_key: object) -> bool:
+def _item_key(
+    item: object, model: type[VcoModel], paths: tuple[str, ...]
+) -> KeyValue | None:
+    """The key of a JSON *item* of *model*, or None if it has none.
+
+    The value at the one path of *paths*, or the tuple of the values at
+    several (a composite key). None unless every part can be read
+    (``_read_path``).
+    """
+    parts: list[KeyScalar] = []
+    for path in paths:
+        part = _read_path(item, model, path)
+        if part is None:
+            return None
+        parts.append(part)
+    return parts[0] if len(parts) == 1 else tuple(parts)
+
+
+type _KeyForm = str | tuple[str, ...]
+"""A key in string form: how keys are compared (``"10"`` is the key ``10``)."""
+
+
+def _key_form(key: KeyValue | None) -> _KeyForm | None:
+    """*key* in string form, part by part for a composite key; None for no key."""
+    if key is None:
+        return None
+    if isinstance(key, tuple):
+        return tuple(str(part) for part in key)
+    return str(key)
+
+
+def _same_key(raw_key: KeyValue, parsed_key: KeyValue) -> bool:
     """Whether a key read from raw JSON is the key the parse produced from it.
 
-    Tolerates coercion by the parse: raw ``"0"`` or ``0.0`` is parsed key ``0``.
+    Tolerates coercion by the parse: raw ``"0"`` or ``0.0`` is parsed key
+    ``0``. A composite key is compared part by part.
     """
+    if isinstance(raw_key, tuple) or isinstance(parsed_key, tuple):
+        return (
+            isinstance(raw_key, tuple)
+            and isinstance(parsed_key, tuple)
+            and len(raw_key) == len(parsed_key)
+            and all(_same_key(r, p) for r, p in zip(raw_key, parsed_key, strict=True))
+        )
     return raw_key == parsed_key or str(raw_key) == str(parsed_key)
 
 
-def _keys(items: list[object], node: _KeyedList) -> list[str | int | float | None]:
+def _keys(items: list[object], node: _KeyedList) -> list[KeyValue | None]:
     """The key of each item, None for an item without one."""
-    return [_item_key(item, node.item, node.key_path) for item in items]
+    return [_item_key(item, node.item, node.spec.paths) for item in items]
 
 
-def _unique(keys: list[str | int | float | None]) -> set[str | int | float]:
+def _key_forms(items: list[object], node: _KeyedList) -> list[_KeyForm | None]:
+    """The key of each item in string form, None for an item without one."""
+    return [_key_form(key) for key in _keys(items, node)]
+
+
+def _unique(keys: list[_KeyForm | None]) -> set[_KeyForm]:
     """The keys that occur exactly once in *keys*."""
     counts = Counter(key for key in keys if key is not None)
     return {key for key, count in counts.items() if count == 1}
@@ -357,15 +446,16 @@ class Pairing:
 
 
 def _pair_unique(
-    old_values: list[str | int | float | None],
-    new_values: list[str | int | float | None],
+    old_values: list[_KeyForm | None],
+    new_values: list[_KeyForm | None],
     old_left: list[int],
     new_left: list[int],
     pairs: dict[int, int],
 ) -> None:
     """Pair the items left whose value occurs once among them on each side.
 
-    The pairs go into *pairs*, as index in new to index in old. None is no value.
+    The values are in string form. The pairs go into *pairs*, as index in new
+    to index in old. None is no value.
     """
     old_unique = _unique([old_values[i] for i in old_left])
     new_unique = _unique([new_values[j] for j in new_left])
@@ -387,28 +477,30 @@ def pair_items(
 
     First by alt key, for each alt-key value that occurs once on each side;
     then the items left by key, for each key that occurs once on each side
-    among them. Items of *new* left over are added, and items of *old* left
-    over removed. But when one of those has no key, or has the key of another
-    item of *old*, what became of it cannot be told: the result is None.
+    among them. Keys and alt keys are compared in string form, part by part
+    for a composite key, so ``24`` as dumped and ``"24"`` as read are one.
+    Items of *new* left over are added, and items of *old* left over removed.
+    But when one of those has no key, or has the key of another item of
+    *old*, what became of it cannot be told: the result is None.
 
     *old_alt_read*, one flag per item of *old*, says whose alt key was read
     from the document; the others are taken to have none. An alt key the parse
     made up (a generated default) names nothing, though it may have been copied
     to *new* (``carry_unset_defaults``). Default: every alt key was read.
     """
-    old_keys, new_keys = _keys(old, node), _keys(new, node)
+    old_keys, new_keys = _key_forms(old, node), _key_forms(new, node)
     pairs: dict[int, int] = {}  # index in new -> index in old
     old_left, new_left = list(range(len(old))), list(range(len(new)))
     alt = node.spec.alt
     if alt is not None:
         _pair_unique(
             [
-                _item_key(item, node.item, alt)
+                _key_form(_read_path(item, node.item, alt))
                 if old_alt_read is None or old_alt_read[i]
                 else None
                 for i, item in enumerate(old)
             ],
-            [_item_key(item, node.item, alt) for item in new],
+            [_key_form(_read_path(item, node.item, alt)) for item in new],
             old_left,
             new_left,
             pairs,
@@ -506,7 +598,7 @@ def _rebase_object(
     return out
 
 
-def _alt_agrees(raw_alt: object, before_alt: object) -> bool:
+def _alt_agrees(raw_alt: KeyScalar | None, before_alt: KeyScalar | None) -> bool:
     """Whether an alt key of *before* is the one the raw item has, so it was read.
 
     A raw item without one had it made up by the parse.
@@ -532,7 +624,7 @@ def _rebase_keyed_list(
     if len(raw) != len(before):
         return None
     for raw_item, before_key in zip(raw, _keys(before, node), strict=True):
-        raw_key = _item_key(raw_item, node.item, node.key_path)
+        raw_key = _item_key(raw_item, node.item, node.spec.paths)
         if raw_key is not None and (
             before_key is None or not _same_key(raw_key, before_key)
         ):
@@ -543,8 +635,8 @@ def _rebase_keyed_list(
         if alt is None
         else [
             _alt_agrees(
-                _item_key(raw_item, node.item, alt),
-                _item_key(before_item, node.item, alt),
+                _read_path(raw_item, node.item, alt),
+                _read_path(before_item, node.item, alt),
             )
             for raw_item, before_item in zip(raw, before, strict=True)
         ]
@@ -621,9 +713,9 @@ def _collect_changes(
 def _item_parts(items: list[object], node: _KeyedList) -> list[PathPart]:
     """The path part of each item: its key, or its position where that is not unique."""
     keys = _keys(items, node)
-    unique = _unique(keys)
+    unique = _unique([_key_form(key) for key in keys])
     return [
-        Key(key) if key is not None and key in unique else i
+        Key(key) if key is not None and _key_form(key) in unique else i
         for i, key in enumerate(keys)
     ]
 
