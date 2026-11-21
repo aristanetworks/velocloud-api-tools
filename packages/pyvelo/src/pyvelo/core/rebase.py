@@ -607,10 +607,28 @@ def _lossy_in_value(
         _lossy_in_list(out, path, baseline, current, before, after, node, level)
 
 
+def _is_container(value: object) -> bool:
+    return isinstance(value, VcoModel) or _is_list(value) or _is_dict(value)
+
+
+def _is_unset_scalar(a: VcoModel, b: VcoModel, name: str) -> bool:
+    """Whether neither model has field *name* set and it holds a scalar.
+
+    Such a value is a default, and a default may be generated per parse
+    (``default_factory=uuid.uuid4``), so two parses of the same document differ.
+    """
+    return (
+        name not in a.model_fields_set
+        and name not in b.model_fields_set
+        and not _is_container(_field_value(b, name))
+    )
+
+
 def _same_value(a: object, b: object) -> bool:
     """Whether two model values hold the same data, whatever config level they carry.
 
-    ``==`` on models also compares private state, which includes the level.
+    ``==`` on models also compares private state, which includes the level. A
+    scalar that neither model has set is not compared (see ``_is_unset_scalar``).
     """
     if isinstance(a, VcoModel) and isinstance(b, VcoModel):
         return (
@@ -619,6 +637,7 @@ def _same_value(a: object, b: object) -> bool:
             and all(
                 _same_value(_field_value(a, name), _field_value(b, name))
                 for name in type(a).model_fields
+                if not _is_unset_scalar(a, b, name)
             )
         )
     if _is_list(a) and _is_list(b):
@@ -711,7 +730,7 @@ def _lossy_in_list(
     if len(before) != len(baseline) or len(after) != len(current):
         return  # the dump's positions are not the model's
     # (item path, baseline index, current index)
-    pairs: list[tuple[Path, int, int]] | None = None
+    pairs: list[tuple[Path, int, int]]
     keyed = _keyed_pairs(before, after, node)
     if keyed is not None:
         pairs = [(path.child(key), base, cur) for key, base, cur in keyed]
@@ -782,18 +801,12 @@ def _carry_in_model(
         dump_key = _field_alias(field_info, name)
         if dump_key not in before or dump_key not in after:
             continue
-        value = _field_value(current, name)
-        unset = (
-            name not in baseline.model_fields_set
-            and name not in current.model_fields_set
-        )
-        container = isinstance(value, VcoModel) or _is_list(value) or _is_dict(value)
-        if unset and not container:
+        if _is_unset_scalar(baseline, current, name):
             after[dump_key] = before[dump_key]
             continue
         _carry_in_value(
             _field_value(baseline, name),
-            value,
+            _field_value(current, name),
             before[dump_key],
             after[dump_key],
             _child(type(current), dump_key),

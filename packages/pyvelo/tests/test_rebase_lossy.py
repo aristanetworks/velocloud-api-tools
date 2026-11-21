@@ -1,3 +1,4 @@
+import uuid
 from typing import Annotated
 
 from pydantic import MISSING, Field
@@ -294,3 +295,17 @@ def test_is_override_flag_follows_keyed_lists_only():
     assert is_override_flag(Holder, Path.parse("items[#0].override"))
     assert not is_override_flag(Holder, Path.parse("plain[#0].override"))
     assert not is_override_flag(Holder, Path.parse("nothing.override"))
+
+
+class Tagged(VcoModel):
+    tag: uuid.UUID = Field(default_factory=uuid.uuid4)  # made anew by each parse
+
+
+class Tagging(VcoModel):
+    mine: Annotated[Tagged, EdgeOnly] = Field(default_factory=Tagged)
+
+
+def test_a_default_generated_per_parse_in_a_field_the_level_omits_is_not_a_change():
+    base, cur = Tagging.model_validate({}), Tagging.model_validate({})
+    assert base.mine.tag != cur.mine.tag
+    assert lossy_at(PROFILE, base, cur) == []
