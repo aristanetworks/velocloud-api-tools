@@ -1,4 +1,4 @@
-"""Tests for firewall module markers (KeyField, OverrideFlag)."""
+"""Tests for firewall module markers (KeyField) and the absence of an override flag."""
 
 import pytest
 from pyvelo.client.enums.enterprise import NetworkSegmentType
@@ -51,16 +51,21 @@ class TestKeyFieldMarkers:
         assert key == "name"
 
 
-class TestOverrideFlagMarkers:
-    def test_firewall_segment_has_override_flag(self):
-        """FirewallSegment should have an OverrideFlag field."""
-        fi = FirewallSegment.model_fields["outbound_override"]
-        assert has_override_flag(fi)
+class TestNoOverrideFlag:
+    """A firewall segment has no outbound override flag: the VCO has none."""
 
-    def test_override_flag_default_false(self):
-        """OverrideFlag fields should default to False."""
-        seg = _make_segment()
-        assert seg.outbound_override is False
+    def test_firewall_segment_declares_no_override_flag(self):
+        flagged = [
+            name
+            for name, fi in FirewallSegment.model_fields.items()
+            if has_override_flag(fi)
+        ]
+        assert flagged == []
+
+    def test_firewall_segment_has_no_outbound_override_field(self):
+        assert "outbound_override" not in FirewallSegment.model_fields
+        assert "outbound_override" not in _make_segment().model_dump()
+        assert "outboundOverride" not in _make_segment().model_dump(by_alias=True)
 
 
 class TestMergeWithMarkers:
@@ -115,10 +120,10 @@ class TestMergeWithMarkers:
         assert len(segment.outbound) == 1
         assert segment.outbound[0].name == "keep-me"
 
-    def test_override_flag_auto_set_on_outbound_change(self):
-        """Modifying outbound rules should auto-set the override flag."""
+    def test_outbound_change_sets_no_override_flag(self):
+        """Modifying outbound rules changes the rules and nothing else."""
         seg = _make_segment()
-        assert seg.outbound_override is False
+        before = seg.model_dump(mode="json", by_alias=True)
 
         _ = seg.merge_patch(
             {
@@ -132,7 +137,9 @@ class TestMergeWithMarkers:
             }
         )
 
-        assert seg.outbound_override is True
+        after = seg.model_dump(mode="json", by_alias=True)
+        assert {k for k in after if after[k] != before.get(k)} == {"outbound"}
+        assert "outboundOverride" not in after
 
 
 class TestOutboundRuleMatchKeepsItsConfigLevel:

@@ -517,7 +517,7 @@ DS_RAW: dict[str, Any] = {
 }
 
 
-def test_profile_patch_that_sets_an_override_flag_is_saved():
+def test_profile_outbound_patch_is_saved_as_the_rule_alone():
     mod = fw(PROFILE_RAW, module_id=2)
     _ = mod.data.for_profile()
     _ = mod.data.merge_patch(
@@ -531,7 +531,7 @@ def test_profile_patch_that_sets_an_override_flag_is_saved():
             }
         }
     )
-    plan = plan_module(mod, level=PROFILE)  # merge_patch set outbound_override
+    plan = plan_module(mod, level=PROFILE)
     assert plan.operation == "update"
     assert [c.path for c in plan.changes] == [
         'segments["Global Segment"].outbound[block]'
@@ -761,3 +761,77 @@ def test_a_device_settings_segment_in_a_profile_without_routes_still_gets_static
     mod.data.lan.networks[0].cost += 1
     written = plan_module(mod, level=EDGE, profile=profile).data["segments"][1]
     assert written == DS_PLACEHOLDER
+
+
+# A firewall segment has no outbound override flag: the VCO and the edge have no
+# such key, so a rule edit must write the rule and nothing else, at either level.
+
+
+def _has_key(value: object, key: str) -> bool:
+    if isinstance(value, dict):
+        return key in value or any(_has_key(v, key) for v in value.values())  # pyright: ignore[reportUnknownVariableType, reportUnknownArgumentType]
+    if isinstance(value, list):
+        return any(_has_key(v, key) for v in value)  # pyright: ignore[reportUnknownVariableType, reportUnknownArgumentType]
+    return False
+
+
+def _fw_rule(name: str, verdict: str = "allow") -> dict[str, Any]:
+    return {"name": name, "action": {"allow_or_deny": verdict}, "match": {}}
+
+
+FW_OUTBOUND_RAW: dict[str, Any] = {
+    "segments": [
+        {
+            "segment": desc(0, "Global Segment"),
+            "outbound": [_fw_rule("keep"), _fw_rule("mine")],
+        }
+    ]
+}
+GLOBAL_OUTBOUND = 'segments["Global Segment"].outbound'
+
+
+@pytest.mark.parametrize(
+    "level", [EDGE, ConfigContext.PROFILE], ids=["edge", "profile"]
+)
+@pytest.mark.parametrize(
+    ("rule_patch", "path"),
+    [
+        pytest.param(
+            {"new": {"action": {"allow_or_deny": "deny"}, "match": {}}},
+            f"{GLOBAL_OUTBOUND}[new]",
+            id="add",
+        ),
+        pytest.param(
+            {"mine": {"action": {"allow_or_deny": "deny"}}},
+            f"{GLOBAL_OUTBOUND}[mine].action.allow_or_deny",
+            id="edit",
+        ),
+        pytest.param({"mine": None}, f"{GLOBAL_OUTBOUND}[mine]", id="delete"),
+    ],
+)
+def test_an_outbound_rule_patch_writes_the_rule_and_no_override_flag(
+    level: ConfigContext, rule_patch: dict[str, Any], path: str
+):
+    mod = fw(FW_OUTBOUND_RAW)
+    _ = mod.data.for_context(level)
+    _ = mod.data.merge_patch({"segments": {"Global Segment": {"outbound": rule_patch}}})
+    plan = plan_module(mod, level=level)
+    assert plan.operation == "update"
+    assert [c.path for c in plan.changes] == [path]
+    assert not _has_key(plan.data, "outboundOverride")
+    assert not _has_key(plan.data, "outbound_override")
+    assert (
+        plan.data["segments"][0]["segment"] == FW_OUTBOUND_RAW["segments"][0]["segment"]
+    )
+
+
+def test_a_firewall_segment_dumps_no_override_key_even_when_new():
+    raw = copy.deepcopy(FW_OUTBOUND_RAW)
+    mod = fw(raw)
+    assert not _has_key(
+        mod.data.model_dump(mode="json", by_alias=True), "outboundOverride"
+    )
+    _ = mod.data.merge_patch(
+        {"segments": {"Global Segment": {"outbound": {"new": _fw_rule("new")}}}}
+    )
+    assert not _has_key(plan_module(mod, level=EDGE).data, "outboundOverride")
