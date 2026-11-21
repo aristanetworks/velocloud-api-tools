@@ -21,15 +21,18 @@ def navigate_to_base(
 ) -> object:
     """Return the module data (or segment subtree) the aspect lives under.
 
-    With *create_segment*, a segment the layer lacks is added to it as an empty
-    entry that inherits from the profile's, if the data can do that.
+    With *create_segment*, a segment the edge layer lacks is added to it as an
+    empty entry that inherits from the profile's, if the data can do that. A
+    profile layer has nothing to inherit from, so it never creates a segment.
     """
     internal_name = resolve_module_name(aspect.module)
 
     if state.target_type == "edge" and state.edge_config is not None:
         target_config = state.edge_config
+        on_edge = True
     else:
         target_config = state.profile_config
+        on_edge = False
 
     if not target_config.has_module(internal_name):
         raise ValueError(f"Module {aspect.module!r} not found on config")
@@ -42,7 +45,9 @@ def navigate_to_base(
             raise ValueError(
                 f"Aspect {aspect.name!r} is segment-scoped; 'segment' parameter is required"
             )
-        get_or_create = getattr(data, "segment", None) if create_segment else None
+        get_or_create = (
+            getattr(data, "segment", None) if create_segment and on_edge else None
+        )
         if callable(get_or_create):
             data = get_or_create(segment)
         else:

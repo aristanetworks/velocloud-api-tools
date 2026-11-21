@@ -217,6 +217,19 @@ class TestApplyAspect:
         assert len(result) == 1
         assert result[0]["name"] == "block-ssh"
 
+    @pytest.mark.anyio
+    async def test_apply_segment_scoped_unknown_segment_on_profile(self):
+        seg = FirewallSegment(segment=_seg_meta(), outbound=[])
+        state = _make_state([_make_fw_module(segments=[seg])])
+        pipeline = ConfigPipeline(client=None, aspect_registry=_make_aspect_registry())
+        with pytest.raises(ValueError, match="Segment not found"):
+            _ = await pipeline.apply_aspect(
+                state, "firewall_rules", {}, segment="Guest"
+            )
+        assert [s.segment.name for s in state.profile.firewall.segments] == [
+            "Global Segment"
+        ]
+
 
 class TestApplyAspects:
     @pytest.mark.anyio
