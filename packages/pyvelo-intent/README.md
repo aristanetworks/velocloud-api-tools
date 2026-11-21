@@ -106,6 +106,11 @@ firewall: update
   it in the write, as for a segment the edge never had.
 - A missing edge firewall or QoS module starts empty; nothing is copied from
   the profile.
+- A firewall segment has no `outboundOverride` key in the VCO or on the edge. If
+  an older version of this library wrote one into a module, writing that module
+  drops it from every segment entry and the plan lists each removal (`-
+  segments[...].outboundOverride`). A module with nothing else to write stays
+  `none`: the plan reports the key under "legacy keys" and the save leaves it.
 - Setting a field to its default where the edge inherits it raises
   `LossyFieldError` until that section is converted (planned), because the
   written data cannot express it. So does an edit to a section the edge layer

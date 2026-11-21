@@ -13,13 +13,19 @@ Orchestrator requires), so the edge layer has a place to hold the segment. It
 never writes only to reconcile: with no change from the caller the plan is
 ``none``. A segment the caller deletes from the edge layer that the profile has
 comes back as that empty entry: the edge cannot drop what it inherits.
+
+Legacy keys: a firewall segment entry has no ``outboundOverride`` (the VCO and the
+edge do not know it), but an older version of this library may have written one.
+A write of a firewall module drops it from every segment entry, and the plan lists
+each removal as a change. A plan with nothing else to write stays ``none``: the key
+is reported (``legacy_keys``) and left, never written just to strip it.
 """
 
 import copy
 import json
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any, Literal, cast
+from typing import Any, Final, Literal, cast
 
 from pydantic import MISSING
 
@@ -29,6 +35,7 @@ from pyvelo.client.models.configuration.common import (
     placeholder_segment,
     segment_id_of,
 )
+from pyvelo.client.models.configuration.firewall.root import FirewallData
 from pyvelo.client.schemas.configuration import (
     ConfigurationModuleBase,
     ConfigurationModuleUpdate,
@@ -40,6 +47,7 @@ from pyvelo.core.base import (
     _is_list,  # pyright: ignore[reportPrivateUsage]
 )
 from pyvelo.core.rebase import (
+    Path,
     RawChange,
     carry_unset_defaults,
     find_lossy_assignments,
@@ -49,6 +57,14 @@ from pyvelo.core.rebase import (
 )
 
 type _Operation = Literal["none", "update", "insert"]
+
+LEGACY_SEGMENT_KEYS: Final[dict[str, tuple[str, ...]]] = {
+    "firewall": ("outboundOverride",),
+}
+"""Per module, the keys of a segment entry that the VCO and the edge do not have.
+
+A write drops them (``drop_legacy_keys``); a plan reports them either way.
+"""
 
 
 def wire_dump(model: VcoModel, level: ConfigContext | None) -> dict[str, Any]:
@@ -108,6 +124,12 @@ class ModulePlan:
     """The caller's changes, relative to the raw data with the reconciled segments."""
     reconciled_segments: tuple[str, ...]
     """The profile's segments that the edge module, as read or as edited, does not have."""
+    legacy_keys: tuple[Path, ...] = ()
+    """Where the raw data has keys that the VCO does not know and a write drops.
+
+    Always listed; a write also lists each as a ``-`` change. A plan that would
+    write nothing else is ``none`` and leaves them.
+    """
 
     def render(self) -> str:
         lines = [f"{self.name}: {self.operation}"]
@@ -125,6 +147,11 @@ class ModulePlan:
         if self.reconciled_segments:
             label = "missing" if self.operation == "none" else "reconciled"
             lines.append(f"  {label} segments: {', '.join(self.reconciled_segments)}")
+        if self.legacy_keys and self.operation == "none":
+            lines.append(
+                "  legacy keys (dropped when the module is written): "
+                + ", ".join(self.legacy_keys)
+            )
         return "\n".join(lines)
 
 
@@ -141,6 +168,29 @@ def update_request(
             refs=plan.refs if plan.refs is not None else MISSING,
         ),
     )
+
+
+def drop_legacy_keys(data: object, module_name: str) -> None:
+    """Remove from *data*'s segment entries the keys that *module_name* does not have."""
+    keys = LEGACY_SEGMENT_KEYS.get(module_name)
+    if not (keys and _is_dict(data)):
+        return
+    segments = data.get("segments")
+    if not _is_list(segments):
+        return
+    for entry in segments:
+        if _is_dict(entry):
+            for key in keys:
+                _ = entry.pop(key, None)
+
+
+def legacy_key_paths(data: object, module_name: str) -> tuple[Path, ...]:
+    """Where *data* has keys that ``drop_legacy_keys`` would remove."""
+    if module_name not in LEGACY_SEGMENT_KEYS:
+        return ()
+    stripped = copy.deepcopy(data)
+    drop_legacy_keys(stripped, module_name)
+    return tuple(c.path for c in raw_changes(data, stripped, FirewallData))
 
 
 def _json(value: object) -> str:
@@ -270,6 +320,7 @@ def plan_module(
             else copy.deepcopy(dict(cast(Mapping[str, Any], current)))
         )
         model_type = type(current) if isinstance(current, VcoModel) else None
+        drop_legacy_keys(payload, name)
         return ModulePlan(
             name=name,
             operation="update",
@@ -326,6 +377,9 @@ def plan_module(
     operation: _Operation = (
         "none" if not changed else "insert" if module.is_new else "update"
     )
+    legacy = legacy_key_paths(reconciled, name)
+    if changed:  # never a write just to strip them
+        drop_legacy_keys(payload, name)
     return ModulePlan(
         name=name,
         operation=operation,
@@ -335,4 +389,5 @@ def plan_module(
         reconciled_segments=tuple(
             _segment_name(entry) for entry in [*extra, *restored]
         ),
+        legacy_keys=legacy,
     )

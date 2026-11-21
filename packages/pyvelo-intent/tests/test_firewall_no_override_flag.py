@@ -2,6 +2,13 @@
 
 The VCO and the edge have no ``outboundOverride`` key in a firewall module, so a
 save must never send one, whatever the level and whatever the edit.
+
+The regression guard is the absence of the model field (``FirewallSegment`` has no
+override flag, see ``test_firewall_markers.py``): without it these tests fail at
+the edge level. At the profile level override flags were never written, so the
+profile cases are behaviour checks that pin the same payload at both levels. A key
+that an older version wrote into the raw data is dropped when the module is
+written, and reported (never written just to strip it).
 """
 
 import copy
@@ -16,7 +23,7 @@ from pyvelo.client.schemas.configuration import (
 )
 from pyvelo.config.resolver import ResolverContext
 from pyvelo.testing import make_module_json
-from pyvelo_intent.config.pipeline import ConfigPipeline
+from pyvelo_intent.config.pipeline import ConfigPipeline, build_default_pipeline
 from pyvelo_intent.config.state import ConfigState
 from pyvelo_intent.testing import MockVcoClient
 
@@ -50,7 +57,7 @@ def has_key(value: object, key: str) -> bool:
     return False
 
 
-def edge_state() -> ConfigState:
+def edge_state(raw: dict[str, Any] = RAW) -> ConfigState:
     edge = EdgeConfiguration.model_validate(
         {
             "name": "Edge Specific Profile",
@@ -58,7 +65,7 @@ def edge_state() -> ConfigState:
             "modules": [
                 make_module_json(
                     "firewall",
-                    copy.deepcopy(RAW),
+                    copy.deepcopy(raw),
                     module_id=1,
                     configuration_id=10,
                     version="e1",
@@ -147,22 +154,9 @@ async def test_apply_of_an_outbound_rule_writes_the_rule_only(
 
 @pytest.mark.parametrize("level", ["edge", "profile"])
 async def test_apply_aspect_of_an_outbound_rule_writes_the_rule_only(level: str):
-    from pyvelo.client.enums.configuration import ConfigurationModuleName
-    from pyvelo_intent.config.aspect import Aspect, AspectRegistry
-
-    aspects = AspectRegistry()
-    aspects.register(
-        Aspect(
-            name="firewall_rules",
-            module=ConfigurationModuleName.FIREWALL,
-            path="outbound",
-            description="outbound rules",
-            segment_scoped=True,
-        )
-    )
     state = edge_state() if level == "edge" else await profile_state()
     client = MockVcoClient()
-    pipeline = ConfigPipeline(client, aspect_registry=aspects)
+    pipeline = build_default_pipeline(client)  # with the built-in aspects
     _ = await pipeline.apply_aspect(
         state,
         "firewall_rules",
@@ -173,3 +167,54 @@ async def test_apply_aspect_of_an_outbound_rule_writes_the_rule_only(level: str)
     (plan,) = state.plan().changed
     assert [str(c.path) for c in plan.changes] == [f"{OUTBOUND}[new]"]
     assert not has_key(plan.data, "outboundOverride")
+
+    _ = await pipeline.save(state)
+    (request,) = client.update_requests
+    assert not has_key(request.update.data, "outboundOverride")
+    assert request.update.data["segments"][0]["segment"] == desc(0, "Global Segment")
+
+
+# --- a key an older version wrote into the raw data -------------------------
+
+STRAY: dict[str, Any] = {
+    "segments": [
+        {
+            "segment": desc(0, "Global Segment"),
+            "outboundOverride": True,
+            "outbound": [rule("keep"), rule("mine")],
+        }
+    ]
+}
+STRAY_PATH = 'segments["Global Segment"].outboundOverride'
+
+
+async def test_a_stray_override_key_with_no_edit_is_reported_and_not_written():
+    state, client = edge_state(STRAY), MockVcoClient()
+    plan = state.plan()
+    assert plan.changed == ()
+    assert [str(k) for k in plan.modules[0].legacy_keys] == [STRAY_PATH]
+    assert STRAY_PATH in plan.render()
+
+    result = await ConfigPipeline(client).save(state)
+    assert result.modules_updated == [] and client.update_requests == []
+
+
+async def test_a_stray_override_key_is_dropped_when_the_module_is_written():
+    state, client = edge_state(STRAY), MockVcoClient()
+    pipeline = ConfigPipeline(client)
+    _ = await pipeline.apply(
+        state,
+        module="firewall",
+        patch={"segments": {"Global Segment": {"outbound": {"mine": None}}}},
+    )
+
+    (plan,) = state.plan().changed
+    assert {str(c.path) for c in plan.changes} == {f"{OUTBOUND}[mine]", STRAY_PATH}
+    assert f"- {STRAY_PATH}" in plan.render()
+
+    _ = await pipeline.save(state)
+    (request,) = client.update_requests
+    assert not has_key(request.update.data, "outboundOverride")
+    assert [r["name"] for r in request.update.data["segments"][0]["outbound"]] == [
+        "keep"
+    ]

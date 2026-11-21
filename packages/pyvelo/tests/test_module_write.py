@@ -765,6 +765,9 @@ def test_a_device_settings_segment_in_a_profile_without_routes_still_gets_static
 
 # A firewall segment has no outbound override flag: the VCO and the edge have no
 # such key, so a rule edit must write the rule and nothing else, at either level.
+# The regression guard is that FirewallSegment declares no such field (see
+# test_firewall_markers.py); the profile-level cases are behaviour checks, as no
+# override flag was ever written at the profile level.
 
 
 def _has_key(value: object, key: str) -> bool:
@@ -835,3 +838,97 @@ def test_a_firewall_segment_dumps_no_override_key_even_when_new():
         {"segments": {"Global Segment": {"outbound": {"new": _fw_rule("new")}}}}
     )
     assert not _has_key(plan_module(mod, level=EDGE).data, "outboundOverride")
+
+
+# --- a key an older version wrote into the raw data -------------------------
+# A write drops it from every segment entry and lists each removal as a change;
+# a plan with nothing else to write stays "none" and reports it (legacy_keys),
+# like the segments a module lacks.
+
+STRAY_PATH = 'segments["Global Segment"].outboundOverride'
+STRAY_RAW: dict[str, Any] = {
+    "segments": [
+        {
+            "segment": desc(0, "Global Segment"),
+            "outboundOverride": True,
+            "outbound": [_fw_rule("keep"), _fw_rule("mine")],
+        },
+        {"segment": desc(2, "Guest"), "outbound": []},
+    ]
+}
+
+
+@pytest.mark.parametrize(
+    "level", [EDGE, ConfigContext.PROFILE], ids=["edge", "profile"]
+)
+def test_a_stray_override_key_with_no_edit_is_reported_and_not_written(
+    level: ConfigContext,
+):
+    mod = fw(STRAY_RAW)
+    plan = plan_module(mod, level=level)
+    assert (plan.operation, plan.changes) == ("none", ())
+    assert plan.data == STRAY_RAW  # the raw data as read
+    assert [str(k) for k in plan.legacy_keys] == [STRAY_PATH]
+    assert plan.render() == (
+        "firewall: none\n"
+        f"  legacy keys (dropped when the module is written): {STRAY_PATH}"
+    )
+
+
+@pytest.mark.parametrize(
+    "level", [EDGE, ConfigContext.PROFILE], ids=["edge", "profile"]
+)
+def test_a_stray_override_key_is_dropped_and_listed_when_a_rule_is_edited(
+    level: ConfigContext,
+):
+    mod = fw(STRAY_RAW)
+    _ = mod.data.for_context(level)
+    _ = mod.data.merge_patch(
+        {
+            "segments": {
+                "Global Segment": {
+                    "outbound": {"mine": {"action": {"allow_or_deny": "deny"}}}
+                }
+            }
+        }
+    )
+    plan = plan_module(mod, level=level)
+    assert plan.operation == "update"
+    assert {str(c.path) for c in plan.changes} == {
+        STRAY_PATH,
+        f"{GLOBAL_OUTBOUND}[mine].action.allow_or_deny",
+    }
+    assert f"  - {STRAY_PATH}" in plan.render().splitlines()
+    assert not _has_key(plan.data, "outboundOverride")
+    assert [str(k) for k in plan.legacy_keys] == [STRAY_PATH]
+    assert plan.data["segments"][1] == STRAY_RAW["segments"][1]
+
+
+def test_a_stray_override_key_is_dropped_from_every_segment_entry():
+    raw = copy.deepcopy(STRAY_RAW)
+    raw["segments"][1]["outboundOverride"] = False
+    mod = fw(raw)
+    mod.data.segments[1].firewall_logging_enabled = True
+    plan = plan_module(mod, level=EDGE)
+    assert not _has_key(plan.data, "outboundOverride")
+    assert len(plan.legacy_keys) == 2
+
+
+def test_a_stray_override_key_is_dropped_from_an_insert_too():
+    mod = fw(STRAY_RAW)
+    mod._is_new = True  # pyright: ignore[reportPrivateUsage]
+    mod.data.segments[0].outbound[0].name = "other"
+    plan = plan_module(mod, level=EDGE)
+    assert plan.operation == "insert"
+    assert not _has_key(plan.data, "outboundOverride")
+    assert f"- {STRAY_PATH}" in plan.render()
+
+
+def test_only_a_firewall_module_has_legacy_keys():
+    raw = copy.deepcopy(DS_EDGE_RAW)
+    raw["segments"][0]["outboundOverride"] = True
+    mod = ds(raw)
+    mod.data.lan.networks[0].cost += 1
+    plan = plan_module(mod, level=EDGE)
+    assert plan.legacy_keys == ()
+    assert plan.data["segments"][0]["outboundOverride"] is True
