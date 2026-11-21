@@ -1,10 +1,22 @@
 from __future__ import annotations
 
 import copy
+import datetime
 import uuid
-from typing import Annotated, Any, Literal, overload
+from collections.abc import Mapping
+from typing import Annotated, Any, Literal, Self, TypeIs, overload
 
-from pydantic import MISSING, Discriminator, Field, PrivateAttr, RootModel
+from pydantic import (
+    MISSING,
+    BaseModel,
+    Discriminator,
+    Field,
+    ModelWrapValidatorHandler,
+    PrivateAttr,
+    RootModel,
+    ValidationInfo,
+    model_validator,
+)
 
 from pyvelo.client.enums.configuration import (
     ConfigurationBastionState,
@@ -133,6 +145,25 @@ class EnterpriseConfigurationProfile(ConfigurationBase):
     _config_context: ConfigContext | None = PrivateAttr(default=ConfigContext.PROFILE)
 
 
+def _is_mapping(value: object) -> TypeIs[Mapping[object, object]]:
+    return isinstance(value, Mapping)
+
+
+def _capture(source: Mapping[object, object], key: str) -> object:
+    """Snapshot ``source[key]`` exactly as it was handed to validation.
+
+    ``MISSING`` if the key is absent. A model is dumped to JSON-like form by
+    alias; anything else is deep-copied, so later edits to the caller's
+    objects cannot change what was captured.
+    """
+    if key not in source:
+        return MISSING
+    value = source[key]
+    if isinstance(value, BaseModel):
+        return value.model_dump(mode="json", by_alias=True)
+    return copy.deepcopy(value)
+
+
 class ConfigurationModuleBase(VcoModel):
     created: VcoTimestamp
     modified: VcoTimestamp
@@ -144,6 +175,47 @@ class ConfigurationModuleBase(VcoModel):
     schema_version: str | None
     version: str | None
     metadata: dict[str, Any] | None
+
+    _raw_data: object = PrivateAttr(default=MISSING)
+    _raw_refs: object = PrivateAttr(default=MISSING)
+    _raw_mode: Literal["python", "json"] = PrivateAttr(default="python")
+    _is_new: bool = PrivateAttr(default=False)
+
+    @model_validator(mode="wrap")
+    @classmethod
+    def _capture_raw(
+        cls,
+        value: object,
+        handler: ModelWrapValidatorHandler[Self],
+        info: ValidationInfo,
+    ) -> Self:
+        module = handler(value)
+        # An existing instance keeps the snapshot it already has.
+        if _is_mapping(value):
+            module._raw_data = _capture(value, "data")
+            module._raw_refs = _capture(value, "refs")
+            module._raw_mode = info.mode
+        return module
+
+    @property
+    def raw_data(self) -> object:
+        """``data`` exactly as validated; ``MISSING`` if the input had none."""
+        return self._raw_data
+
+    @property
+    def raw_refs(self) -> object:
+        """``refs`` exactly as validated; ``MISSING`` if the input had none."""
+        return self._raw_refs
+
+    @property
+    def raw_mode(self) -> Literal["python", "json"]:
+        """How the module was first validated."""
+        return self._raw_mode
+
+    @property
+    def is_new(self) -> bool:
+        """True only for modules made by :func:`new_edge_module`."""
+        return self._is_new
 
 
 class ControlPlaneConfigurationModule(ConfigurationModuleBase):
@@ -204,6 +276,44 @@ type AnyConfigurationModule = Annotated[
 ]
 
 ConfigurationModuleList = RootModel[list[AnyConfigurationModule]]
+
+EMPTY_EDGE_MODULE_DATA: dict[ConfigurationModuleName, dict[str, Any]] = {
+    ConfigurationModuleName.FIREWALL: {"segments": []},
+    ConfigurationModuleName.QOS: {"segments": []},
+}
+
+
+def new_edge_module(
+    name: ConfigurationModuleName, configuration_id: int
+) -> FirewallConfigurationModule | QosConfigurationModule:
+    """Build an empty edge-layer module that does not exist on the VCO yet."""
+    if name not in EMPTY_EDGE_MODULE_DATA:
+        raise ValueError(
+            f"Module {name.value!r} cannot be inserted as an empty edge layer"
+        )
+    now = datetime.datetime.now(datetime.UTC)
+    row: dict[str, Any] = {
+        "id": 0,
+        "type": "ENTERPRISE",
+        "created": now,
+        "modified": now,
+        "description": None,
+        "configurationId": configuration_id,
+        "enterpriseLogicalId": None,
+        "schemaVersion": None,
+        "version": None,
+        "metadata": None,
+        "name": name.value,
+        "data": copy.deepcopy(EMPTY_EDGE_MODULE_DATA[name]),
+    }
+    module = (
+        FirewallConfigurationModule
+        if name is ConfigurationModuleName.FIREWALL
+        else QosConfigurationModule
+    ).model_validate(row)
+    module._is_new = True  # pyright: ignore[reportPrivateUsage]
+    return module
+
 
 # Rebuild models that forward-reference AnyConfigurationModule.  These classes
 # are defined above before AnyConfigurationModule exists; Pydantic cannot
@@ -400,6 +510,7 @@ class DeleteConfiguration(VcoModel):
 
 
 __all__ = [
+    "EMPTY_EDGE_MODULE_DATA",
     "AnyConfigurationModule",
     "Configuration",
     "ConfigurationBase",
@@ -430,4 +541,5 @@ __all__ = [
     "UpdateConfigurationModule",
     "WanConfigurationModule",
     "WanModuleUpdate",
+    "new_edge_module",
 ]

@@ -1,4 +1,5 @@
 from pyvelo.client.schemas.configuration import (
+    EMPTY_EDGE_MODULE_DATA,
     AnyConfigurationModule,
     Configuration,
     ConfigurationBase,
@@ -22,6 +23,7 @@ from pyvelo.client.schemas.configuration import (
     UpdateConfigurationModule,
     WanConfigurationModule,
     WanModuleUpdate,
+    new_edge_module,
 )
 from pyvelo.client.schemas.edge import (
     CreateEdge,
@@ -157,6 +159,7 @@ from pyvelo.client.schemas.profiles import (
 )
 
 __all__ = [
+    "EMPTY_EDGE_MODULE_DATA",
     "AddressObjectGroup",
     "AnyConfigurationModule",
     "AnyEnterpriseService",
@@ -296,4 +299,5 @@ __all__ = [
     "WssIntegrationService",
     "check_int_zero",
     "check_string_empty",
+    "new_edge_module",
 ]
