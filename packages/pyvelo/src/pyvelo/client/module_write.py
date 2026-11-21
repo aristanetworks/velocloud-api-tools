@@ -146,10 +146,14 @@ def _with_baseline_segments(
 ) -> dict[str, Any]:
     """*current*, plus the baseline's version of each reconciled segment it lacks.
 
-    The caller's model has no entry for a segment that only reconciliation adds.
-    Without one the rebase would take that for the caller deleting it.
+    The caller's data has no entry for a segment that only reconciliation adds.
+    Without one it would read as the caller deleting it (typed data, in the
+    rebase) or as a change to ``segments`` (a plain dict, which is the payload).
+    An absent or null ``segments`` in *current* is an empty list.
     """
-    current_segments = current.get("segments")
+    current_segments: object = current.get("segments")
+    if current_segments is None:
+        current_segments = []
     baseline_segments = baseline.get("segments")
     if not (_is_list(current_segments) and _is_list(baseline_segments)):
         return current
@@ -267,7 +271,12 @@ def plan_module(
             raise LossyFieldError(name, lossy)
     else:
         model_type = None
-        payload = copy.deepcopy(dict(cast(Mapping[str, Any], current)))
+        topped_up = dict(cast(Mapping[str, Any], current))
+        if extra:  # only for an object, so *reconciled* is one
+            topped_up = _with_baseline_segments(
+                topped_up, cast(dict[str, Any], reconciled), extra
+            )
+        payload = copy.deepcopy(topped_up)
 
     changed = payload != reconciled or refs_out is not None
     operation: _Operation = (

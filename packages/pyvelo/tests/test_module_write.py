@@ -413,3 +413,57 @@ def test_plan_data_does_not_alias_the_module_snapshot():
     plan = plan_module(mod, level=EDGE)
     plan.data["segments"].clear()
     assert mod.raw_data == EDGE_RAW
+
+
+# --- reconciliation with a plain dict as the data --------------------------
+
+
+def test_dict_data_with_no_edit_does_not_write_just_to_reconcile():
+    mod, profile = fw(EDGE_RAW), fw(PROFILE_RAW, module_id=2)
+    plan = plan_module(mod, copy.deepcopy(EDGE_RAW), level=EDGE, profile=profile)
+    assert (plan.operation, plan.data, plan.changes) == ("none", EDGE_RAW, ())
+    assert plan.reconciled_segments == ("Guest",)
+
+
+def test_dict_data_edit_carries_the_reconciled_segments_along():
+    mod, profile = fw(EDGE_RAW), fw(PROFILE_RAW, module_id=2)
+    data = copy.deepcopy(EDGE_RAW)
+    data["firewall_enabled"] = False
+    plan = plan_module(mod, data, level=EDGE, profile=profile)
+    assert plan.operation == "update"
+    assert plan.data == {
+        **EDGE_RAW,
+        "firewall_enabled": False,
+        "segments": [
+            EDGE_RAW["segments"][0],
+            {"segment": desc(2, "Guest", vendorKey="x"), "outbound": []},
+        ],
+    }
+    assert [c.path for c in plan.changes] == ["firewall_enabled"]
+    assert plan.reconciled_segments == ("Guest",)
+    assert plan.render().splitlines() == [
+        "firewall: update",
+        "  + firewall_enabled: false",
+        "  reconciled segments: Guest",
+    ]
+
+
+def test_dict_data_without_a_segments_list_gets_the_reconciled_segments():
+    mod, profile = fw({}), fw(PROFILE_RAW, module_id=2)
+    assert plan_module(mod, {}, level=EDGE, profile=profile).operation == "none"
+    plan = plan_module(mod, {"firewall_enabled": False}, level=EDGE, profile=profile)
+    assert [s["segment"]["name"] for s in plan.data["segments"]] == [
+        "Global Segment",
+        "Guest",
+    ]
+    assert [c.path for c in plan.changes] == ["firewall_enabled"]
+
+
+def test_dict_data_keeps_its_own_version_of_a_reconciled_segment():
+    mod, profile = fw(EDGE_RAW), fw(PROFILE_RAW, module_id=2)
+    data = copy.deepcopy(EDGE_RAW)
+    guest = {"segment": desc(2, "Guest", vendorKey="x"), "outbound": [{"name": "b"}]}
+    data["segments"].append(guest)
+    plan = plan_module(mod, data, level=EDGE, profile=profile)
+    assert plan.data["segments"][1] == guest
+    assert len(plan.data["segments"]) == 2
