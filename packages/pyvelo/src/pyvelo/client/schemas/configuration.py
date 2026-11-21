@@ -154,15 +154,16 @@ def _capture(
 ) -> object:
     """Snapshot ``source[key]`` as pure JSON, before validation touches it.
 
-    ``MISSING`` if the key is absent. JSON-mode input is already pure JSON and
-    is deep-copied. Python-mode input may hold models at any depth, so it is
-    converted with ``to_jsonable_python`` (models dumped by alias). Either way
-    the snapshot shares no containers with the caller's objects, so later
-    edits to those cannot change what was captured.
+    ``MISSING`` if the key is absent or explicitly ``MISSING`` (``refs`` is
+    declared ``... | MISSING``, and ``dict(module)`` carries it). JSON-mode
+    input is already pure JSON and is deep-copied. Python-mode input may hold
+    models at any depth, so it is converted with ``to_jsonable_python`` (models
+    dumped by alias). Either way the snapshot shares no containers with the
+    caller's objects, so later edits to those cannot change what was captured.
     """
-    if key not in source:
+    value = source.get(key, MISSING)
+    if value is MISSING:
         return MISSING
-    value = source[key]
     if mode == "json":
         return copy.deepcopy(value)
     return to_jsonable_python(value, by_alias=True)
@@ -201,7 +202,9 @@ class ConfigurationModuleBase(VcoModel):
             raw_refs = _capture(value, "refs", info.mode)
         except PydanticSerializationError:
             # Input that cannot become JSON is usually input that does not
-            # validate: let validation report that before anything else.
+            # validate. Let validation report that field-level error first; if
+            # it passes, re-raise (pydantic surfaces it as a model-level
+            # ``value_error``, since PydanticSerializationError is a ValueError).
             _ = handler(value)
             raise
         module = handler(value)

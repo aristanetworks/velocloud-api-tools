@@ -77,11 +77,31 @@ def test_models_nested_in_plain_containers_are_dumped_to_json():
     assert mod.data.segments[0].segment.name == "Global Segment"
 
 
-def test_unserializable_input_still_reports_a_validation_error():
-    with pytest.raises(ValidationError):
+def test_unserializable_input_still_reports_the_field_error():
+    with pytest.raises(ValidationError) as exc:
         FirewallConfigurationModule.model_validate(
             make_module_json("firewall", {"segments": [object()]})
         )
+    (error,) = exc.value.errors()
+    assert error["type"] == "model_type"
+    assert error["loc"] == ("data", "segments", 0)
+
+
+def test_explicit_missing_refs_is_captured_as_missing():
+    row = {**make_module_json("QOS", {"segments": []}), "refs": MISSING}
+    mod = QosConfigurationModule.model_validate(row)
+    assert mod.raw_refs is MISSING
+    assert mod.raw_data == {"segments": []}
+
+
+def test_round_trip_through_dict_of_a_module_keeps_raw_data():
+    mod = QosConfigurationModule.model_validate(
+        make_module_json("QOS", {"segments": []})
+    )
+    again = type(mod).model_validate(dict(mod))
+    assert again.raw_data == {"segments": []}
+    assert again.raw_refs is MISSING
+    assert again.raw_mode == "python"
 
 
 def test_existing_instance_keeps_its_snapshot():
