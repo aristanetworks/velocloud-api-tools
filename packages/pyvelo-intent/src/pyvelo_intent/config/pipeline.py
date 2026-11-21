@@ -1,6 +1,6 @@
 """ConfigPipeline: orchestration layer for load → apply → save configuration workflow."""
 
-from typing import Any, Protocol, cast, runtime_checkable
+from typing import Protocol, cast, runtime_checkable
 
 from pydantic import MISSING
 from pyvelo.client.enums.configuration import ConfigurationModuleName
@@ -32,13 +32,6 @@ from pyvelo.config.validation import ValidationResult, ValidatorRegistry
 from pyvelo.core.base import VcoModel
 from pyvelo.core.identity import EdgeName, ProfileName
 
-from pyvelo_intent.config.aspect import Aspect, AspectRegistry, AspectSummary
-from pyvelo_intent.config.aspect_query import (
-    get_aspect_data,
-    get_aspect_parent,
-    navigate_to_base,
-)
-from pyvelo_intent.config.aspects import register_default_aspects
 from pyvelo_intent.config.module_names import (
     resolve_module_name as _resolve_module_name,
 )
@@ -53,12 +46,10 @@ class ConfigPipeline:
         self,
         client: VcoClientProtocol | None,
         resolvers: ResolverRegistry | None = None,
-        aspect_registry: AspectRegistry | None = None,
         validator_registry: ValidatorRegistry | None = None,
     ) -> None:
         self._client: VcoClientProtocol | None = client
         self._resolvers: ResolverRegistry = resolvers or ResolverRegistry()
-        self._aspect_registry: AspectRegistry = aspect_registry or AspectRegistry()
         self._validators: ValidatorRegistry = validator_registry or ValidatorRegistry()
 
     @property
@@ -220,8 +211,7 @@ class ConfigPipeline:
 
         MISSING fields on the patch target are preserved as MISSING so callers
         downstream (reconciler, YAML export) can distinguish "unset" from
-        "explicitly set". Use ``apply_aspect`` if you need template-fill
-        semantics.
+        "explicitly set".
 
         Raises :class:`StateSpentError` if the state has already written.
         """
@@ -304,140 +294,6 @@ class ConfigPipeline:
         """Run all write-time validators without saving (dry-run validation)."""
         return self._validators.run(state, phase="write")
 
-    # ------------------------------------------------------------------
-    # Aspect operations
-    # ------------------------------------------------------------------
-
-    def read_aspect(
-        self,
-        state: ConfigState,
-        name: str,
-        segment: str | None = None,
-    ) -> object:
-        """Extract the subtree for a named aspect, serialized compactly.
-
-        For segment-scoped aspects, the segment parameter is required and
-        specifies which segment to read from.
-        """
-        aspect = self._aspect_registry.get(name)
-        data = cast(object, self._get_aspect_data(state, aspect, segment))
-        if isinstance(data, VcoModel):
-            return data.model_dump(by_alias=False, context={"compact": True})
-        if isinstance(data, list):
-            items = cast(list[object], data)
-            return [
-                (
-                    item.model_dump(by_alias=False, context={"compact": True})
-                    if isinstance(item, VcoModel)
-                    else item
-                )
-                for item in items
-            ]
-        return data
-
-    async def apply_aspect(
-        self,
-        state: ConfigState,
-        name: str,
-        patch: dict[str, Any],
-        segment: str | None = None,
-    ) -> ConfigState:
-        """Apply a patch dict to the subtree of a named aspect.
-
-        For segment-scoped aspects, the segment parameter is required.
-        Navigates to the parent model and applies the patch at the
-        aspect's final path component.
-
-        Raises :class:`StateSpentError` if the state has already written.
-        """
-        _require_unspent(state)
-        aspect = self._aspect_registry.get(name)
-        parent, field_name = self._get_aspect_parent(state, aspect, segment)
-        _ = parent.merge_patch({field_name: patch}, resolvers=self._resolvers)
-        return state
-
-    async def apply_aspects(
-        self,
-        state: ConfigState,
-        aspects: dict[str, dict[str, Any]],
-    ) -> ConfigState:
-        """Apply patches to multiple aspects sequentially.
-
-        Patches are applied in mapping iteration order. If a later patch fails,
-        changes from earlier patches remain in ``state``. This method does not
-        save the state or run the pipeline validators.
-        The dict maps aspect names to patch dicts. For segment-scoped aspects,
-        use the format {"aspect_name": {"segment_name": patch_dict}}.
-
-        Raises :class:`StateSpentError` if the state has already written.
-        """
-        _require_unspent(state)
-        for name, patch in aspects.items():
-            aspect = self._aspect_registry.get(name)
-            if aspect.segment_scoped:
-                # For segment-scoped: patch is {segment_name: segment_patch}
-                for seg_name, seg_patch in patch.items():
-                    _ = await self.apply_aspect(
-                        state, name, seg_patch, segment=seg_name
-                    )
-            else:
-                _ = await self.apply_aspect(state, name, patch)
-        return state
-
-    def list_aspects(self) -> list[AspectSummary]:
-        """List all registered aspects."""
-        return self._aspect_registry.list_aspects()
-
-    def search_aspects(self, query: str) -> list[AspectSummary]:
-        """Search aspects by keyword."""
-        return self._aspect_registry.search(query)
-
-    def inspect_aspect(
-        self,
-        name: str,
-        module_models: dict[ConfigurationModuleName, type[VcoModel]] | None = None,
-    ) -> dict[str, Any]:
-        """Return the aspect definition and its patch schema."""
-        aspect = self._aspect_registry.get(name)
-        result: dict[str, Any] = {
-            "name": aspect.name,
-            "module": aspect.module,
-            "path": aspect.path,
-            "description": aspect.description,
-            "tags": aspect.tags,
-            "segment_scoped": aspect.segment_scoped,
-            "examples": aspect.examples,
-        }
-        if module_models:
-            result["patch_schema"] = self._aspect_registry.get_patch_schema(
-                name, module_models=module_models
-            )
-        return result
-
-    def _navigate_to_base(
-        self,
-        state: ConfigState,
-        aspect: Aspect,
-        segment: str | None,
-    ) -> Any:
-        return navigate_to_base(state, aspect, segment)
-
-    def _get_aspect_data(
-        self,
-        state: ConfigState,
-        aspect: Aspect,
-        segment: str | None,
-    ) -> Any:
-        return get_aspect_data(state, aspect, segment)
-
-    def _get_aspect_parent(
-        self,
-        state: ConfigState,
-        aspect: Aspect,
-        segment: str | None,
-    ) -> tuple[VcoModel, str]:
-        return get_aspect_parent(state, aspect, segment)
-
     async def load_resolvers(self, context: ResolverContext) -> None:
         """Ensure segment and application resolvers are loaded for the given context.
 
@@ -516,19 +372,16 @@ class ConfigPipeline:
 
 
 def build_default_pipeline(client: VcoClientProtocol) -> ConfigPipeline:
-    """Build a ConfigPipeline with default resolvers and aspects.
+    """Build a ConfigPipeline with the default resolvers.
 
     This is the standard bootstrap for intent operations: registers
-    EdgeResolver, ProfileResolver, and all default aspects.
+    EdgeResolver and ProfileResolver.
     """
     resolvers = ResolverRegistry()
     resolvers.register(EdgeResolver(client))
     resolvers.register(ProfileResolver(client))
 
-    aspects = AspectRegistry()
-    register_default_aspects(aspects)
-
-    return ConfigPipeline(client, resolvers=resolvers, aspect_registry=aspects)
+    return ConfigPipeline(client, resolvers=resolvers)
 
 
 class _SegmentMetadata(Protocol):

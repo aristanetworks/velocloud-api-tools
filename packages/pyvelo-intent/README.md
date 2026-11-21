@@ -2,9 +2,8 @@
 
 Configuration intent layer for VeloCloud, built on top of
 [`pyvelo`](../pyvelo/). Provides the `ConfigPipeline`
-(load → snapshot → apply → diff → save), an aspect registry for focused
-configuration projections, a generic intent diff engine, validators, and
-helpers for scripting against the VCO configuration API.
+(load → snapshot → apply → diff → save), a generic intent diff engine,
+validators, and helpers for scripting against the VCO configuration API.
 
 Requires Python **3.13 or newer** and `pyvelo` **0.2.0 or newer**.
 Licensed under Apache-2.0.
@@ -69,7 +68,7 @@ asyncio.run(main())
 `dry_run=True` skips write API calls; loading still reads live configuration.
 Calling `save(state)` sends configuration writes. Check `SaveResult` with
 `raise_for_errors()` to surface validation failures. `build_default_pipeline`
-registers edge/profile name resolvers and aspects; loading also initializes the
+registers edge/profile name resolvers; loading also initializes the
 segment resolver. Validators must be registered explicitly.
 
 Application, address-group, and service-group name resolution require additional
@@ -132,16 +131,15 @@ firewall: update
 
 - Updates support firewall, device settings, QoS, and WAN modules. A missing
   edge firewall or QoS module can be created; it starts empty and is inserted
-  on save. Control plane helpers and aspects support inspection and in-memory
-  patches, but the save path does not support writing control plane modules.
-- Batch aspect patches and saves run sequentially. A failure can leave earlier
+  on save. Control plane helpers support inspection and in-memory patches, but the save path does not support writing control plane modules.
+- Multiple patches and saves run sequentially. A failure can leave earlier
   in-memory patches or remote writes applied; there is no transaction or rollback.
   Reload configuration after a successful save before starting another change;
   save does not refresh the snapshot.
 - The `override_consistency` validator is a traversal placeholder and currently
   reports no violations. Other registered validators cover specific structural
   or domain checks; they do not guarantee that every patch is valid for a live VCO.
-- `ConfigState`, field diffs, aspect reads, and validation messages can contain
+- `ConfigState`, field diffs, and validation messages can contain
   complete configuration values, including addresses and configuration secrets.
   Redact them before logging, sharing, or committing exports. This library does
   not persist configuration automatically or redact returned values.
@@ -152,13 +150,9 @@ firewall: update
 
 | Module | What it provides |
 |---|---|
-| `pyvelo_intent` | Re-exports the public surface: `ConfigPipeline`, `ConfigState`, `SaveResult`, `AspectRegistry`, `Aspect`, diff types (`DiffResult`, `Added`, `Removed`, `Modified`, `Unchanged`, `FieldChange`), error types, helpers (`build_default_pipeline`, `confirm_save`, `load_config`, `generate_patch_schema`) |
-| `pyvelo_intent.config.pipeline` | `ConfigPipeline` (load/load_profile → apply/apply_aspect → save), `build_default_pipeline` |
+| `pyvelo_intent` | Re-exports the public surface: `ConfigPipeline`, `ConfigState`, `SaveResult`, diff types (`DiffResult`, `Added`, `Removed`, `Modified`, `Unchanged`, `FieldChange`), error types, helpers (`build_default_pipeline`, `confirm_save`, `load_config`) |
+| `pyvelo_intent.config.pipeline` | `ConfigPipeline` (load/load_profile → apply → save), `build_default_pipeline` |
 | `pyvelo_intent.config.state` | `ConfigState`, `SaveResult`, `ConfigFieldChange`, `ValidationWarning` |
-| `pyvelo_intent.config.aspect` | `Aspect`, `AspectSummary`, `AspectRegistry` (register, list, search, get, patch/read schema generation) |
-| `pyvelo_intent.config.aspect_query` | Navigation helpers: `navigate_to_base`, `get_aspect_data`, `get_aspect_parent` |
-| `pyvelo_intent.config.aspects.*` | Predefined aspects for firewall, device settings, QoS, WAN, and control plane modules |
-| `pyvelo_intent.config.schema` | `generate_patch_schema`, `resolve_model_at_path` — JSON Schema generation with patch transforms |
 | `pyvelo_intent.config.helpers` | `load_config`, `confirm_save` |
 | `pyvelo_intent.config.validators.*` | Structural built-ins (`key_uniqueness`, `override_consistency`, `required_fields`) + domain validators (firewall, device settings) |
 | `pyvelo_intent.config.(firewall\|device_settings\|qos\|wan\|control_plane)` | Per-module configuration helpers |

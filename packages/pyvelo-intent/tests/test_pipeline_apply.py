@@ -7,9 +7,20 @@ from pyvelo.client.enums.configuration import (
     ConfigurationModuleName,
     ConfigurationModuleType,
 )
-from pyvelo.client.models.configuration.device_settings.lan import LanSettings
+from pyvelo.client.enums.enterprise import NetworkSegmentType
+from pyvelo.client.models.configuration.common import SegmentMetadata
+from pyvelo.client.models.configuration.device_settings.lan import (
+    LanNetwork,
+    LanSettings,
+)
 from pyvelo.client.models.configuration.device_settings.root import (
     DeviceSettingsData,
+    Ntp,
+)
+from pyvelo.client.models.configuration.device_settings.segment import (
+    DeviceSegment,
+    DnsProvider,
+    SegmentDns,
 )
 from pyvelo.client.models.configuration.firewall.segment import FirewallSegment
 from pyvelo.client.models.configuration.qos.root import QosData
@@ -225,3 +236,141 @@ async def test_apply_camel_case_module_name():
     )
 
     assert ConfigurationModuleName.DEVICE_SETTINGS in state.get_changed_modules()
+
+
+# --- single-module patches on a profile target ------------------------------
+
+
+def _profile_state(*modules: AnyConfigurationModule) -> ConfigState:
+    return ConfigState(
+        edge_config=None,
+        profile_config=EnterpriseConfigurationProfile(
+            name="Default Profile", id_=20, modules=list(modules)
+        ),
+        target_type="profile",
+        resolver_context=ResolverContext(),
+    )
+
+
+def _global_segment() -> SegmentMetadata:
+    return SegmentMetadata(
+        name="Global Segment", segment_id=0, type_=NetworkSegmentType.REGULAR
+    )
+
+
+def _ds_module(
+    *,
+    ntp: Ntp | None = None,
+    lan: LanSettings | None = None,
+    segments: list[DeviceSegment] | None = None,
+) -> DeviceSettingsConfigurationModule:
+    module = _make_device_settings_module(mod_id=2, config_id=20)
+    module.data = DeviceSettingsData(
+        lan=lan or LanSettings(), segments=segments or [], ntp=ntp or Ntp()
+    )
+    return module
+
+
+_BLOCK_SSH: dict[str, object] = {
+    "name": "block-ssh",
+    "match": {},
+    "action": {"allow_or_deny": "deny"},
+}
+
+
+def _block_ssh_patch() -> dict[str, object]:
+    return {"segments": {"Global Segment": {"outbound": {"block-ssh": _BLOCK_SSH}}}}
+
+
+@pytest.mark.asyncio
+async def test_apply_ntp_enabled():
+    state = _profile_state(_ds_module(ntp=Ntp(enabled=False)))
+    state = await ConfigPipeline(client=None).apply(
+        state, module="device_settings", patch={"ntp": {"enabled": True}}
+    )
+    ntp = state.profile.device_settings.ntp
+    assert isinstance(ntp, Ntp)
+    assert ntp.enabled is True
+
+
+@pytest.mark.asyncio
+async def test_apply_adds_a_firewall_rule_to_a_segment():
+    segment = make_firewall_segment("Global Segment", 0)
+    state = _profile_state(
+        make_firewall_module(mod_id=1, config_id=20, segments=[segment])
+    )
+    state = await ConfigPipeline(client=None).apply(
+        state, module="firewall", patch=_block_ssh_patch()
+    )
+    outbound = state.profile.firewall.segment("Global Segment").outbound
+    assert [rule.name for rule in outbound] == ["block-ssh"]
+
+
+@pytest.mark.asyncio
+async def test_apply_to_a_segment_the_profile_lacks_changes_nothing():
+    segment = make_firewall_segment("Global Segment", 0)
+    state = _profile_state(
+        make_firewall_module(mod_id=1, config_id=20, segments=[segment])
+    )
+    with pytest.raises(LookupError, match="Cannot add .Guest. by name"):
+        _ = await ConfigPipeline(client=None).apply(
+            state,
+            module="firewall",
+            patch={"segments": {"Guest": {"outbound": {}}}},
+        )
+    assert [s.segment.name for s in state.profile.firewall.segments] == [
+        "Global Segment"
+    ]
+
+
+@pytest.mark.asyncio
+async def test_two_applies_in_a_row():
+    segment = make_firewall_segment("Global Segment", 0)
+    state = _profile_state(
+        _ds_module(ntp=Ntp(enabled=False)),
+        make_firewall_module(mod_id=1, config_id=20, segments=[segment]),
+    )
+    pipeline = ConfigPipeline(client=None)
+    state = await pipeline.apply(
+        state, module="device_settings", patch={"ntp": {"enabled": True}}
+    )
+    state = await pipeline.apply(state, module="firewall", patch=_block_ssh_patch())
+
+    ntp = state.profile.device_settings.ntp
+    assert isinstance(ntp, Ntp)
+    assert ntp.enabled is True
+    outbound = state.profile.firewall.segment("Global Segment").outbound
+    assert len(outbound) == 1
+
+
+@pytest.mark.asyncio
+async def test_apply_dns():
+    dns = SegmentDns(
+        primary_provider=DnsProvider(ref="deviceSettings:dns:primaryProvider"),
+        backup_provider=DnsProvider(ref="deviceSettings:dns:backupProvider"),
+        private_providers=DnsProvider(ref="deviceSettings:dns:privateProviders"),
+    )
+    state = _profile_state(
+        _ds_module(segments=[DeviceSegment(segment=_global_segment(), dns=dns)])
+    )
+    state = await ConfigPipeline(client=None).apply(
+        state,
+        module="device_settings",
+        patch={"segments": {"Global Segment": {"dns": {"source_interface": "GE1"}}}},
+    )
+    segment = state.profile.device_settings.segment("Global Segment")
+    assert isinstance(segment.dns, SegmentDns)
+    assert segment.dns.source_interface == "GE1"
+
+
+@pytest.mark.asyncio
+async def test_apply_updates_a_vlan():
+    network = LanNetwork(name="Corp", vlan_id=100, cidr_ip="10.0.1.0")
+    state = _profile_state(_ds_module(lan=LanSettings(networks=[network])))
+    state = await ConfigPipeline(client=None).apply(
+        state,
+        module="device_settings",
+        patch={"lan": {"networks": {"100": {"advertise": False}}}},
+    )
+    (updated,) = state.profile.device_settings.lan.networks
+    assert updated.advertise is False

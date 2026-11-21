@@ -1,6 +1,6 @@
 """Configuration framework: name->ID resolvers and validation framework.
 
-Workflow-shaped pieces (pipeline, state, aspects) live in the
+Workflow-shaped pieces (pipeline, state) live in the
 ``pyvelo_intent.config`` package.
 """
 

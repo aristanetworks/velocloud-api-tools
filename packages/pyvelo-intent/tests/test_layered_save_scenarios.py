@@ -8,7 +8,7 @@ from pyvelo.client.exceptions import LossyFieldError
 from pyvelo.client.schemas.configuration import ConfigurationBase, GetConfiguration
 from pyvelo.config.resolver import ResolverRegistry
 from pyvelo.testing import make_module_json, make_segment_resolver
-from pyvelo_intent.config.pipeline import ConfigPipeline, build_default_pipeline
+from pyvelo_intent.config.pipeline import ConfigPipeline
 from pyvelo_intent.config.state import ConfigState
 from pyvelo_intent.testing import MockVcoClient
 from test_state_plan import (  # pyright: ignore[reportImplicitRelativeImport]
@@ -305,34 +305,17 @@ async def test_profile_target_apply_adds_a_rule():
         module="firewall",
         patch={"segments": {"Global Segment": {"outbound": {"block": rule("block")}}}},
     )
+    result = await pipeline.save(state, dry_run=True)
+    assert result.plan is not None
+    assert result.plan.render().startswith(
+        'firewall: update\n  + segments["Global Segment"].outbound[block]: '
+    )
     await pipeline.save(state)
     (req,) = client.update_requests
     first = req.update.data["segments"][0]
     assert [r["name"] for r in first["outbound"]] == ["allow-all", "block"]
     assert set(first) == {"segment", "outbound"}  # no override flag at profile level
     assert req.update.data["segments"][1] == PROFILE_FW["segments"][1]
-
-
-async def test_profile_target_apply_aspect_adds_a_rule():
-    client = profile_client()
-    pipeline = build_default_pipeline(client)
-    state = await pipeline.load_profile(20)
-    await pipeline.apply_aspect(
-        state,
-        "firewall_rules",
-        {"block-ssh": rule("block-ssh")},
-        segment="Global Segment",
-    )
-    result = await pipeline.save(state, dry_run=True)
-    assert result.plan is not None
-    assert result.plan.render().startswith(
-        'firewall: update\n  + segments["Global Segment"].outbound[block-ssh]: '
-    )
-    await pipeline.save(state)
-    (req,) = client.update_requests
-    first = req.update.data["segments"][0]
-    assert [r["name"] for r in first["outbound"]] == ["allow-all", "block-ssh"]
-    assert set(first) == {"segment", "outbound"}
 
 
 async def test_dry_run_reports_the_plan():

@@ -61,7 +61,6 @@ class Validator(Protocol):
 
     phases: list[str]
     modules: list[ConfigurationModuleName]
-    aspect: str | None
 
     def validate(self, state: ConfigStateLike) -> ValidationResult: ...
 
@@ -104,7 +103,6 @@ class _DecoratedValidator:
 
     phases: list[str]
     modules: list[ConfigurationModuleName]
-    aspect: str | None
     _fn: Callable[[ConfigStateLike], ValidationResult]
 
     def validate(self, state: ConfigStateLike) -> ValidationResult:
@@ -116,7 +114,6 @@ def validator(
     module: ConfigurationModuleName | None = None,
     modules: list[ConfigurationModuleName] | None = None,
     phases: list[str],
-    aspect: str | None = None,
     registry: ValidatorRegistry | None = None,
 ) -> Callable[[Callable[[ConfigStateLike], ValidationResult]], _DecoratedValidator]:
     """Decorator to create and optionally register a validator from a function.
@@ -138,7 +135,6 @@ def validator(
         v = _DecoratedValidator(
             phases=phases,
             modules=resolved_modules,
-            aspect=aspect,
             _fn=fn,
         )
         if registry is not None:

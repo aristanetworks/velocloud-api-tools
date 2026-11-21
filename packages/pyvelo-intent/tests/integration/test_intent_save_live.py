@@ -260,7 +260,7 @@ async def test_no_edit_plans_nothing_and_sends_nothing(
 
 
 # ---------------------------------------------------------------------------
-# 4. Profile level: load_profile, apply / apply_aspect, save
+# 4. Profile level: load_profile, apply, save
 # ---------------------------------------------------------------------------
 
 
@@ -270,7 +270,7 @@ def _profile_rule_source(module: AnyConfigurationModule) -> bool:
     )
 
 
-async def test_profile_rule_added_through_an_aspect_reads_back_as_that_rule_only(
+async def test_profile_rule_added_through_apply_reads_back_as_that_rule_only(
     lab: Lab, pipeline: ConfigPipeline
 ) -> None:
     profile_id = await lab.pick_writable_profile(
@@ -284,23 +284,24 @@ async def test_profile_rule_added_through_an_aspect_reads_back_as_that_rule_only
             state.module("firewall"), FirewallConfigurationModule, "the firewall module"
         )
         segment = next(s.segment.name for s in module.data.segments if s.outbound)
-        rules = expect(
-            pipeline.read_aspect(state, "firewall_rules", segment=segment),
-            list,
-            "the firewall_rules aspect",
-        )
+        rules = [
+            rule.model_dump(by_alias=False, context={"compact": True})
+            for rule in state.profile.firewall.segment(segment).outbound
+        ]
         name = synthetic_name()
         # A copy of the last rule, after it: the rule it copies matches first.
         added: dict[str, Any] = {**expect(rules[-1], dict, "a rule"), "name": name}
         added.pop("rule_logical_id", None)
-        _ = await pipeline.apply_aspect(
-            state, "firewall_rules", {name: added}, segment=segment
+        _ = await pipeline.apply(
+            state,
+            module="firewall",
+            patch={"segments": {segment: {"outbound": {name: added}}}},
         )
 
         expected = [Path(("segments", Key(segment), "outbound", Key(name)))]
         plan = _planned(state, Name.FIREWALL)
         check(plan.operation == "update", f"planned {plan.operation}, expected update")
-        _check_paths("aspect edit", "the plan", plan.changes, expected)
+        _check_paths("rule edit", "the plan", plan.changes, expected)
 
         result = await pipeline.save(state)
         check(
@@ -313,9 +314,9 @@ async def test_profile_rule_added_through_an_aspect_reads_back_as_that_rule_only
         stored = changes_between(
             Name.FIREWALL, original.data, after.raw_data, FirewallData
         )
-        _check_paths("aspect edit", "the profile read back", stored, expected)
-        _check_stored_as_sent("aspect edit", stored, plan)
-        check_no_override_flag("aspect edit", original.data, plan.data, after.raw_data)
+        _check_paths("rule edit", "the profile read back", stored, expected)
+        _check_stored_as_sent("rule edit", stored, plan)
+        check_no_override_flag("rule edit", original.data, plan.data, after.raw_data)
 
 
 def _profile_has_qoe(module: AnyConfigurationModule) -> bool:

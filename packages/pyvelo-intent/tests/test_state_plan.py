@@ -12,7 +12,6 @@ from pyvelo.client.schemas.configuration import (
 )
 from pyvelo.config.resolver import ResolverContext
 from pyvelo.testing import make_module_json
-from pyvelo_intent.config.aspect import Aspect, AspectRegistry
 from pyvelo_intent.config.pipeline import ConfigPipeline
 from pyvelo_intent.config.state import ConfigState
 from pyvelo_intent.errors import StateSpentError
@@ -251,26 +250,22 @@ def test_new_empty_module_is_bound():
     assert state.edge.qos.segment("Global Segment").rules == []
 
 
-async def test_segment_scoped_aspect_creates_the_edge_entry_on_write_only():
-    reg = AspectRegistry()
-    reg.register(
-        Aspect(
-            name="firewall_rules",
-            module=ConfigurationModuleName.FIREWALL,
-            path="outbound",
-            description="rules",
-            tags=[],
-            segment_scoped=True,
-        )
-    )
-    pipeline = ConfigPipeline(MockVcoClient(), aspect_registry=reg)
+async def test_apply_creates_the_edge_segment_entry_on_write_only():
+    pipeline = ConfigPipeline(MockVcoClient())
     with pytest.raises(ValueError):
-        pipeline.read_aspect(make_state(), "firewall_rules", segment="Guest")
+        make_state().edge.firewall.get_segment(name="Guest")
     state = make_state()
-    await pipeline.apply_aspect(
+    await pipeline.apply(
         state,
-        "firewall_rules",
-        {"block": {"action": {"allow_or_deny": "deny"}, "match": {}}},
-        segment="Guest",
+        module="firewall",
+        patch={
+            "segments": {
+                "Guest": {
+                    "outbound": {
+                        "block": {"action": {"allow_or_deny": "deny"}, "match": {}}
+                    }
+                }
+            }
+        },
     )
     assert [r.name for r in state.edge.firewall.segment("Guest").outbound] == ["block"]

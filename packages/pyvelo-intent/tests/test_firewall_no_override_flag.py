@@ -23,7 +23,7 @@ from pyvelo.client.schemas.configuration import (
 )
 from pyvelo.config.resolver import ResolverContext
 from pyvelo.testing import make_module_json
-from pyvelo_intent.config.pipeline import ConfigPipeline, build_default_pipeline
+from pyvelo_intent.config.pipeline import ConfigPipeline
 from pyvelo_intent.config.state import ConfigState
 from pyvelo_intent.testing import MockVcoClient
 
@@ -144,28 +144,6 @@ async def test_apply_of_an_outbound_rule_writes_the_rule_only(
     (plan,) = state.plan().changed
     assert plan.operation == "update"
     assert [str(c.path) for c in plan.changes] == [path]
-    assert not has_key(plan.data, "outboundOverride")
-
-    _ = await pipeline.save(state)
-    (request,) = client.update_requests
-    assert not has_key(request.update.data, "outboundOverride")
-    assert request.update.data["segments"][0]["segment"] == desc(0, "Global Segment")
-
-
-@pytest.mark.parametrize("level", ["edge", "profile"])
-async def test_apply_aspect_of_an_outbound_rule_writes_the_rule_only(level: str):
-    state = edge_state() if level == "edge" else await profile_state()
-    client = MockVcoClient()
-    pipeline = build_default_pipeline(client)  # with the built-in aspects
-    _ = await pipeline.apply_aspect(
-        state,
-        "firewall_rules",
-        {"new": {"action": {"allow_or_deny": "deny"}, "match": {}}},
-        segment="Global Segment",
-    )
-
-    (plan,) = state.plan().changed
-    assert [str(c.path) for c in plan.changes] == [f"{OUTBOUND}[new]"]
     assert not has_key(plan.data, "outboundOverride")
 
     _ = await pipeline.save(state)

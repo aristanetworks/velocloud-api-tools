@@ -16,7 +16,7 @@ class ConfigInputError(IntentError):
 
 
 class UnknownRegistryEntryError(LookupError):
-    """A registry lookup failed (intent module, object handler, or aspect)."""
+    """A registry lookup failed (intent module or object handler)."""
 
 
 class SaveValidationError(IntentError):

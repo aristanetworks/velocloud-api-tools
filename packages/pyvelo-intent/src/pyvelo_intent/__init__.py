@@ -1,16 +1,12 @@
 """Helper library for VeloCloud Orchestrator configuration APIs."""
 
 from pyvelo_intent.config import (
-    Aspect,
-    AspectRegistry,
-    AspectSummary,
     ConfigPipeline,
     ConfigState,
     SaveResult,
     ValidationWarning,
     build_default_pipeline,
     confirm_save,
-    generate_patch_schema,
     load_config,
 )
 from pyvelo_intent.diff import (
@@ -33,9 +29,6 @@ from pyvelo_intent.errors import (
 
 __all__ = [
     "Added",
-    "Aspect",
-    "AspectRegistry",
-    "AspectSummary",
     "Change",
     "ConfigInputError",
     "ConfigPipeline",
@@ -54,6 +47,5 @@ __all__ = [
     "build_default_pipeline",
     "confirm_save",
     "diff_intents",
-    "generate_patch_schema",
     "load_config",
 ]

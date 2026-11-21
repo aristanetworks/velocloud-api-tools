@@ -53,5 +53,5 @@ async def lab(vco_client: VcoClient, config_enterprise_id: int | None) -> Lab:
 
 @pytest.fixture
 def pipeline(vco_client: VcoClient) -> ConfigPipeline:
-    """A pipeline with the default resolvers and aspects; one per test."""
+    """A pipeline with the default resolvers; one per test."""
     return build_default_pipeline(vco_client)
