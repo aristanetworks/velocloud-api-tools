@@ -139,7 +139,9 @@ async def test_apply_of_an_outbound_rule_writes_the_rule_only(
     _ = await pipeline.apply(
         state,
         module="firewall",
-        patch={"segments": {"Global Segment": {"outbound": rules}}},
+        segment="Global Segment",
+        path="outbound",
+        patch=rules,
     )
 
     (plan,) = state.plan().changed

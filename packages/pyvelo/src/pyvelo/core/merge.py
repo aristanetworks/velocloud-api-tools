@@ -92,6 +92,80 @@ def apply_patch(
     return model
 
 
+def nest_patch(
+    model: type[VcoModel],
+    patch: object,
+    *,
+    segment: str | None = None,
+    path: str | None = None,
+) -> dict[str, object]:
+    """The patch for *model* that an addressed call stands for (spec 5.10.1).
+
+    Without *segment* and *path*, *patch* itself, which must be a mapping
+    (``TypeError`` otherwise). Otherwise *patch* is any JSON value and is
+    nested under the address: ``path="a.b"`` gives ``{"a": {"b": patch}}``,
+    ``segment="S"`` gives ``{"segments": {"S": patch}}``, and both give
+    ``{"segments": {"S": {"a": {"b": patch}}}}``.
+
+    A part of *path* names a field by any name ``merge_patch`` accepts; the
+    nested patch uses the python name. With *segment* the parts start at the
+    item class of the ``segments`` field, without at *model*. Every part but
+    the last must be a field that holds a single sub-model. Only the classes
+    are consulted, never an instance.
+
+    A bad address raises ``PatchError`` at the path of the part that failed,
+    in python names, under ``segments[S]`` when there is a *segment*: a part
+    that names no field (the message gives the class, the part and the field
+    names), a part before the last that is not a single sub-model, an empty
+    *path* or part, and *segment* for a class with no ``segments`` field.
+    """
+    if segment is None and path is None:
+        if not isinstance(patch, Mapping):
+            raise TypeError(
+                f"a patch with no address must be a mapping, not {type(patch).__name__}"
+            )
+        return dict(cast("Mapping[str, object]", patch))
+    cls = model
+    walked = Path(())
+    if segment is not None:
+        walked = walked.child("segments")
+        field = cls.model_fields.get("segments")
+        if field is None:
+            raise PatchError(f"{cls.__name__} has no segments field", walked)
+        item_type = _list_item_type(field)
+        if item_type is None:
+            raise PatchError(f"{cls.__name__}.segments is not a list of models", walked)
+        cls, walked = item_type.variants[0], walked.child(Key(segment))
+    names: list[str] = []
+    parts = path.split(".") if path is not None else []
+    for index, part in enumerate(parts):
+        where = walked.child(part)
+        if not part:
+            raise PatchError(f"the path {path!r} has an empty part", where)
+        try:
+            name = _field_name(cls._alias_map(), cls.__name__, part, walked)  # pyright: ignore[reportPrivateUsage]
+        except PatchError as exc:
+            fields = ", ".join(cls.model_fields)
+            raise PatchError(f"{exc.message}; its fields are {fields}", where) from exc
+        names.append(name)
+        if index < len(parts) - 1:
+            sub = _field_model_type(cls.model_fields[name])
+            if sub is None:
+                raise PatchError(
+                    f"{cls.__name__}.{name} does not hold a single sub-model, "
+                    + "so the path cannot continue past it",
+                    where,
+                )
+            cls = sub
+        walked = where
+    nested: object = patch
+    for name in reversed(names):
+        nested = {name: nested}
+    if segment is None:
+        return cast("dict[str, object]", nested)
+    return {"segments": {segment: nested}}
+
+
 # ---------------------------------------------------------------------------
 # merge_patch internals
 # ---------------------------------------------------------------------------

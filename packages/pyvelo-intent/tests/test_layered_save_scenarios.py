@@ -305,9 +305,9 @@ async def test_profile_target_apply_adds_a_rule():
     await pipeline.apply(
         state,
         module="firewall",
-        patch={
-            "segments": {"Global Segment": {"outbound": {"block": add(rule("block"))}}}
-        },
+        segment="Global Segment",
+        path="outbound",
+        patch={"block": add(rule("block"))},
     )
     result = await pipeline.save(state, dry_run=True)
     assert result.plan is not None

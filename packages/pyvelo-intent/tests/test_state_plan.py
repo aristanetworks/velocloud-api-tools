@@ -269,14 +269,8 @@ async def test_apply_creates_the_edge_segment_entry_on_write_only():
     await pipeline.apply(
         state,
         module="firewall",
-        patch={
-            "segments": {
-                "Guest": {
-                    "outbound": {
-                        "block": add({"action": {"allow_or_deny": "deny"}, "match": {}})
-                    }
-                }
-            }
-        },
+        segment="Guest",
+        path="outbound",
+        patch={"block": add({"action": {"allow_or_deny": "deny"}, "match": {}})},
     )
     assert [r.name for r in state.edge.firewall.segment("Guest").outbound] == ["block"]

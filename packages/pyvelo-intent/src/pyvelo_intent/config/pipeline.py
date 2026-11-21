@@ -33,7 +33,7 @@ from pyvelo.config.validation import ValidationResult, ValidatorRegistry
 from pyvelo.core import PatchError
 from pyvelo.core.base import IdentityResolver, VcoModel
 from pyvelo.core.identity import EdgeName, ProfileName, ResolutionError
-from pyvelo.core.merge import select_items
+from pyvelo.core.merge import nest_patch, select_items
 from pyvelo.core.patch import ItemOp, is_new, parse_item_op, position_of
 from pyvelo.core.rebase import Key, Path
 
@@ -202,9 +202,19 @@ class ConfigPipeline:
         state: ConfigState,
         *,
         module: str,
-        patch: dict[str, object],
+        patch: object,
+        segment: str | None = None,
+        path: str | None = None,
     ) -> ConfigState:
-        """Apply a patch dict to a module.
+        """Apply a patch to a module, at an address if one is given.
+
+        With neither *segment* nor *path*, *patch* is a mapping (``TypeError``
+        otherwise). With either, *patch* is any JSON value and is the same as
+        a mapping that nests it under the address: ``path="a.b"`` is
+        ``{"a": {"b": patch}}``, ``segment="S"`` is ``{"segments": {"S":
+        patch}}``, both are ``{"segments": {"S": {"a": {"b": patch}}}}``. The
+        address is checked against the model classes (``nest_patch``) and a
+        bad one raises ``PatchError``.
 
         1. Locate the module on the target config. A ``firewall`` or ``QOS``
            module that an edge lacks starts as an empty layer (nothing is
@@ -241,12 +251,13 @@ class ConfigPipeline:
                 raise TypeError(
                     f"Module '{internal_name}' has unstructured data; merge_patch requires a typed module"
                 )
-            segments = patch.get("segments")
+            nested = nest_patch(type(data), patch, segment=segment, path=path)
+            segments = nested.get("segments")
             if not edge and _is_object(segments) and isinstance(data, _SegmentLayer):
                 _profile_segment_ops(segments, _SEGMENTS)
             trial = data.model_copy(deep=True)
             _ = trial.merge_patch(
-                _prepare_segments(trial, patch, self._resolvers) if edge else patch,
+                _prepare_segments(trial, nested, self._resolvers) if edge else nested,
                 resolvers=self._resolvers,
             )
         except BaseException:
@@ -254,7 +265,7 @@ class ConfigPipeline:
                 state.drop_module(mod)
             raise
         _ = data.merge_patch(
-            _prepare_segments(data, patch, self._resolvers) if edge else patch,
+            _prepare_segments(data, nested, self._resolvers) if edge else nested,
             resolvers=self._resolvers,
         )
         return state

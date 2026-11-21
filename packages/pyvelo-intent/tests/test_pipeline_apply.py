@@ -296,16 +296,14 @@ _BLOCK_SSH: dict[str, object] = {
 
 
 def _block_ssh_patch() -> dict[str, object]:
-    return {
-        "segments": {"Global Segment": {"outbound": {"block-ssh": add(_BLOCK_SSH)}}}
-    }
+    return {"block-ssh": add(_BLOCK_SSH)}
 
 
 @pytest.mark.asyncio
 async def test_apply_ntp_enabled():
     state = _profile_state(_ds_module(ntp=Ntp(enabled=False)))
     state = await ConfigPipeline(client=None).apply(
-        state, module="device_settings", patch={"ntp": {"enabled": True}}
+        state, module="device_settings", path="ntp", patch={"enabled": True}
     )
     ntp = state.profile.device_settings.ntp
     assert isinstance(ntp, Ntp)
@@ -319,7 +317,11 @@ async def test_apply_adds_a_firewall_rule_to_a_segment():
         make_firewall_module(mod_id=1, config_id=20, segments=[segment])
     )
     state = await ConfigPipeline(client=None).apply(
-        state, module="firewall", patch=_block_ssh_patch()
+        state,
+        module="firewall",
+        segment="Global Segment",
+        path="outbound",
+        patch=_block_ssh_patch(),
     )
     outbound = state.profile.firewall.segment("Global Segment").outbound
     assert [rule.name for rule in outbound] == ["block-ssh"]
@@ -335,7 +337,8 @@ async def test_apply_to_a_segment_the_profile_lacks_changes_nothing():
         _ = await ConfigPipeline(client=None).apply(
             state,
             module="firewall",
-            patch={"segments": {"Guest": add({"outbound": {}})}},
+            segment="Guest",
+            patch=add({"outbound": {}}),
         )
     assert exc.value.path == Path.parse("segments[Guest]")
     assert [s.segment.name for s in state.profile.firewall.segments] == [
@@ -352,9 +355,15 @@ async def test_two_applies_in_a_row():
     )
     pipeline = ConfigPipeline(client=None)
     state = await pipeline.apply(
-        state, module="device_settings", patch={"ntp": {"enabled": True}}
+        state, module="device_settings", path="ntp", patch={"enabled": True}
     )
-    state = await pipeline.apply(state, module="firewall", patch=_block_ssh_patch())
+    state = await pipeline.apply(
+        state,
+        module="firewall",
+        segment="Global Segment",
+        path="outbound",
+        patch=_block_ssh_patch(),
+    )
 
     ntp = state.profile.device_settings.ntp
     assert isinstance(ntp, Ntp)
@@ -376,7 +385,9 @@ async def test_apply_dns():
     state = await ConfigPipeline(client=None).apply(
         state,
         module="device_settings",
-        patch={"segments": {"Global Segment": {"dns": {"source_interface": "GE1"}}}},
+        segment="Global Segment",
+        path="dns",
+        patch={"source_interface": "GE1"},
     )
     segment = state.profile.device_settings.segment("Global Segment")
     assert isinstance(segment.dns, SegmentDns)
@@ -390,7 +401,8 @@ async def test_apply_updates_a_vlan():
     state = await ConfigPipeline(client=None).apply(
         state,
         module="device_settings",
-        patch={"lan": {"networks": {"100": {"advertise": False}}}},
+        path="lan.networks",
+        patch={"100": {"advertise": False}},
     )
     (updated,) = state.profile.device_settings.lan.networks
     assert updated.advertise is False
@@ -727,3 +739,147 @@ async def test_profile_target_changes_and_moves_a_segment():
     assert [s.segment.name for s in firewall.segments] == ["Guest", "Global Segment"]
     blocked = firewall.get_segment(name="Global Segment").outbound
     assert [r.name for r in blocked] == ["block"]
+
+
+# --- the address (spec 5.10.1) -------------------------------------------------
+
+_BLOCK: dict[str, object] = {"block": add(_DENY)}
+
+# (id, call keywords, the same call nested, whether the call changes the plan)
+_ADDRESSED: list[tuple[str, dict[str, object], dict[str, object], bool]] = [
+    (
+        "path-only",
+        {"path": "firewall_enabled", "patch": False},
+        {"firewall_enabled": False},
+        True,
+    ),
+    (
+        "segment-only",
+        {"segment": "Guest", "patch": {"outbound": _BLOCK}},
+        {"segments": {"Guest": {"outbound": _BLOCK}}},
+        True,
+    ),
+    (
+        "both",
+        {"segment": "Guest", "path": "outbound", "patch": _BLOCK},
+        {"segments": {"Guest": {"outbound": _BLOCK}}},
+        True,
+    ),
+    (
+        "path-through-a-sub-model-that-is-unset",
+        {"path": "stateful_firewall_settings.udp_flow_timeout", "patch": 100},
+        {"stateful_firewall_settings": {"udp_flow_timeout": 100}},
+        True,
+    ),
+    (
+        "parts-given-by-alias",
+        {"path": "statefulFirewallSettings.udpFlowTimeout", "patch": 100},
+        {"stateful_firewall_settings": {"udp_flow_timeout": 100}},
+        True,
+    ),
+    (
+        "none",
+        {"path": "network_protection_settings", "patch": None},
+        {"network_protection_settings": None},
+        False,
+    ),
+    (
+        "scalar",
+        {
+            "segment": "Global Segment",
+            "path": "firewall_logging_enabled",
+            "patch": True,
+        },
+        {"segments": {"Global Segment": {"firewall_logging_enabled": True}}},
+        True,
+    ),
+]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("addressed", "nested", "changes"),
+    [pytest.param(a, n, c, id=i) for i, a, n, c in _ADDRESSED],
+)
+async def test_addressed_call_equals_its_nested_form(
+    addressed: dict[str, object], nested: dict[str, object], changes: bool
+):
+    pipeline = ConfigPipeline(client=None)
+    by_address, by_patch = make_raw_state(), make_raw_state()
+    _ = await pipeline.apply(by_address, module="firewall", **addressed)  # pyright: ignore[reportArgumentType]
+    _ = await pipeline.apply(by_patch, module="firewall", patch=nested)
+    assert by_address.plan().render() == by_patch.plan().render()
+    assert bool(by_address.plan().changed) is changes
+
+
+@pytest.mark.asyncio
+async def test_addressed_apply_on_an_edge_with_no_firewall_row_plans_an_insert():
+    state = make_raw_state(edge_modules=[])
+    _ = await ConfigPipeline(client=None).apply(
+        state,
+        module="firewall",
+        segment="Global Segment",
+        path="outbound",
+        patch=_BLOCK,
+    )
+    assert [(m.name, m.operation) for m in state.plan().modules] == [
+        ("firewall", "insert")
+    ]
+
+
+@pytest.mark.asyncio
+async def test_addressed_apply_adds_the_placeholder():
+    state = make_raw_state()
+    _ = await ConfigPipeline(client=None).apply(
+        state, module="firewall", segment="Guest", path="outbound", patch=_BLOCK
+    )
+    assert _edge_segment_names(state) == ["Global Segment", "Guest"]
+
+
+@pytest.mark.asyncio
+async def test_bad_address_raises_and_changes_nothing():
+    state = make_raw_state()
+    before = state.plan().render()
+    pipeline = ConfigPipeline(client=None)
+    with pytest.raises(PatchError, match="no field 'nope'") as exc:
+        _ = await pipeline.apply(state, module="firewall", path="nope", patch=1)
+    assert exc.value.path == Path.parse("nope")
+    assert state.plan().render() == before
+    assert _edge_segment_names(state) == ["Global Segment"]
+
+
+@pytest.mark.asyncio
+async def test_segment_for_a_module_with_no_segments_raises():
+    wan = make_module_json("WAN", {}, module_id=7, configuration_id=20)
+    state = ConfigState(
+        edge_config=None,
+        profile_config=EnterpriseConfigurationProfile.model_validate(
+            {"name": "P", "id": 20, "modules": [wan]}
+        ),
+        target_type="profile",
+        resolver_context=ResolverContext(),
+    )
+    with pytest.raises(PatchError, match="WanData has no segments field") as exc:
+        _ = await ConfigPipeline(client=None).apply(
+            state, module="wan", segment="Global Segment", patch={}
+        )
+    assert exc.value.path == Path(("segments",))
+
+
+@pytest.mark.asyncio
+async def test_bad_address_removes_the_module_it_created():
+    state = make_raw_state(edge_modules=[])
+    before = state.plan().render()
+    with pytest.raises(PatchError, match="no field 'nope'"):
+        _ = await ConfigPipeline(client=None).apply(
+            state, module="firewall", path="nope", patch=1
+        )
+    assert state.find_module("firewall") is None
+    assert state.plan().render() == before
+
+
+@pytest.mark.asyncio
+async def test_non_mapping_patch_without_an_address_raises_type_error():
+    state = make_raw_state()
+    with pytest.raises(TypeError):
+        _ = await ConfigPipeline(client=None).apply(state, module="firewall", patch=3)
