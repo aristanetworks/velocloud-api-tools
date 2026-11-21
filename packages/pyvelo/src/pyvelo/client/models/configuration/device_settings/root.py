@@ -9,6 +9,7 @@ from pyvelo.core import (
     EdgeOnly,
     NoneIsFalse,
     NoneIsMissing,
+    Positional,
     ProfileOnly,
     VcoModel,
 )
@@ -43,7 +44,7 @@ class EdgeHaSettings(VcoModel):
     interface: Annotated[str, EdgeOnly] = "GE1"
     unique_lan_macs: Annotated[bool, Alias("vmacoverride"), EdgeOnly] = False
     unique_wan_macs: Annotated[bool, Alias("wanmacoverride"), EdgeOnly] = False
-    nodes: Annotated[list[EdgeHaNode] | MISSING, EdgeOnly] = MISSING
+    nodes: Annotated[list[EdgeHaNode] | MISSING, EdgeOnly, Positional()] = MISSING
     ha_graceful_switchover: Annotated[bool, EdgeOnly] = False
     ha_failover_count: Annotated[float, EdgeOnly] = 7
     preempt_switchover: Annotated[bool, Alias("preEmptSwitchover"), EdgeOnly] = False
@@ -127,7 +128,9 @@ class RadioSettingsItem(VcoModel):
 
 class RadioSettings(VcoModel):
     country: str
-    radios: list[RadioSettingsItem] = Field(default_factory=list)
+    radios: Annotated[list[RadioSettingsItem], Positional()] = Field(
+        default_factory=list
+    )
 
 
 class Layer2Settings(VcoModel):
@@ -165,7 +168,7 @@ class GlobalIpv6Settings(VcoModel):
 class EdgeSnmpV2c(VcoModel):
     enabled: bool = False
     community: str = ""
-    community_list: list[str] = Field(default_factory=list)
+    community_list: Annotated[list[str], Positional()] = Field(default_factory=list)
     allowed_ips: list[str] = Field(default_factory=list)
 
 
@@ -186,7 +189,7 @@ class SnmpV3User(VcoModel):
 
 class EdgeSnmpV3(VcoModel):
     enabled: bool = False
-    users: list[SnmpV3User] = Field(default_factory=list)
+    users: Annotated[list[SnmpV3User], Positional()] = Field(default_factory=list)
 
 
 class EdgeSnmp(VcoModel):

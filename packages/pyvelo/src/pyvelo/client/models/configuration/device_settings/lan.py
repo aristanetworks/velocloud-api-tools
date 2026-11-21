@@ -3,7 +3,7 @@ from typing import Annotated, Any, Literal
 
 from pydantic import MISSING, BeforeValidator, Discriminator, Field, SerializeAsAny, Tag
 
-from pyvelo.core import Alias, EdgeOnly, NoneIsFalse, ProfileOnly, VcoModel
+from pyvelo.core import Alias, EdgeOnly, NoneIsFalse, Positional, ProfileOnly, VcoModel
 from pyvelo.core.fields import (
     DefaultingScalar,
     EdgeLocal,
@@ -120,7 +120,9 @@ class EdgeLanDhcp(VcoModel):
     lease_time_seconds: Annotated[int, BeforeValidator(_none_to_default_lease_time)] = (
         86400
     )
-    options: list[DhcpServerOption] = Field(default_factory=list)
+    options: Annotated[list[DhcpServerOption], Positional()] = Field(
+        default_factory=list
+    )
     override: Annotated[bool, OverrideFlag] = True
 
 
@@ -182,7 +184,9 @@ class LanDhcpServerV6(VcoModel):
     fixed_ip: Annotated[list[LanFixedIP], EdgeLocal] = Field(default_factory=list)
     lease_time_seconds: int = 86400
     dhcp_address_count: Annotated[int, Alias("numDhcpAddr")] = 10
-    options: list[DhcpServerOption] = Field(default_factory=list)
+    options: Annotated[list[DhcpServerOption], Positional()] = Field(
+        default_factory=list
+    )
     prefix_delegation: LanPrefixDelegation = Field(default_factory=LanPrefixDelegation)
     static_reserved: int = 10
 

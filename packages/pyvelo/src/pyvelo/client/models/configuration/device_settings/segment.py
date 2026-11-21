@@ -18,6 +18,7 @@ from pyvelo.core import (
     EdgeOnly,
     GatewayLogicalId,
     NoneIsFalse,
+    Positional,
     VcoModel,
 )
 from pyvelo.core.fields import (
@@ -157,7 +158,9 @@ class SegmentStaticGroup(VcoModel):
 
 class MulticastRp(VcoModel):
     type_: Annotated[Literal["STATIC"], Alias("type")] = "STATIC"
-    static_groups: list[SegmentStaticGroup] = Field(default_factory=list)
+    static_groups: Annotated[list[SegmentStaticGroup], Positional()] = Field(
+        default_factory=list
+    )
 
 
 class PimOnWanOverlay(VcoModel):
@@ -250,7 +253,9 @@ class BgpFilterActionValue(VcoModel):
 
 class BgpFilterAction(VcoModel):
     type_: Annotated[BgpFilterActionType, Alias("type")] = "DENY"
-    values: list[BgpFilterActionValue] = Field(default_factory=list)
+    values: Annotated[list[BgpFilterActionValue], Positional()] = Field(
+        default_factory=list
+    )
 
 
 class BgpFilterRule(VcoModel):
@@ -262,7 +267,7 @@ class BgpFilter(VcoModel):
     id_: Annotated[uuid.UUID, Alias("id")] = Field(default_factory=uuid.uuid4)
     name: str
     is_locked_by_profile: Annotated[bool, ProfileOnly] = False
-    rules: list[BgpFilterRule] = Field(default_factory=list)
+    rules: Annotated[list[BgpFilterRule], Positional()] = Field(default_factory=list)
     version: str | MISSING = MISSING
 
 
@@ -340,7 +345,9 @@ class BgpBase(VcoModel):
     )
     filters: Annotated[list[BgpFilter], KeyField("name")] = Field(default_factory=list)
     networks: Annotated[
-        list[BgpNetwork], DefaultingModel(list[BgpNetwork], default_factory=list)
+        list[BgpNetwork],
+        DefaultingModel(list[BgpNetwork], default_factory=list),
+        Positional(),
     ] = Field(default_factory=list)
 
 
@@ -472,7 +479,7 @@ class NsdEdgeRoute(NsdRouteBase):
 
 class NsdVcgRoute(NsdRouteBase):
     nsd_type: Literal["dataCenter"] = "dataCenter"
-    next_hop: list[str] = Field(default_factory=list)
+    next_hop: Annotated[list[str], Positional()] = Field(default_factory=list)
     gateway_logical_id: GatewayLogicalId | None = None
     gateway_name: str | MISSING = MISSING
 
@@ -560,8 +567,8 @@ class NatDualRule(VcoModel):
 
 class SegmentNat(VcoModel):
     override: Annotated[bool, OverrideFlag] = True
-    rules: list[NatRule] = Field(default_factory=list)
-    dual_rules: list[NatDualRule] = Field(default_factory=list)
+    rules: Annotated[list[NatRule], Positional()] = Field(default_factory=list)
+    dual_rules: Annotated[list[NatDualRule], Positional()] = Field(default_factory=list)
 
 
 class NetflowCollectorFilter(VcoModel):
@@ -625,7 +632,9 @@ SyslogRole = Literal["EDGE EVENT", "FIREWALL EVENT", "EDGE AND FIREWALL EVENT"]
 class SyslogCollector(VcoModel):
     host: str
     port: int = 514
-    roles: list[str] = Field(default_factory=lambda: ["EDGE AND FIREWALL EVENT"])
+    roles: Annotated[list[str], Positional()] = Field(
+        default_factory=lambda: ["EDGE AND FIREWALL EVENT"]
+    )
     all_segments: bool = True
     source_interface: str = ""
     protocol: Literal["UDP", "TCP"] = "UDP"
@@ -720,7 +729,7 @@ CssConfigIpsec = CssConfigZscalerIpsec | CssConfigGenericIpsec
 class CssGreProp(VcoModel):
     keepalive_interval_secs: int = 5
     keepalive_retries: int = 3
-    links: list[str] = Field(default_factory=list)
+    links: Annotated[list[str], Positional()] = Field(default_factory=list)
 
 
 class CssConfigGre(CssConfigBase):

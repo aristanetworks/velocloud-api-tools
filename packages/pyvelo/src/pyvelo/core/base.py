@@ -78,7 +78,9 @@ from .fields import (
     NormalizerFn,
     apply_vco_markers,
     get_context_defaults,
+    get_key_field,
     get_normalizer,
+    is_positional,
     resolve_ctx_default,
 )
 
@@ -643,6 +645,63 @@ def _list_item_type(fi: FieldInfo) -> _ListItemType | None:
         if len(variants) == 1:
             return _ListItemType(variants[0], variants)
     return None
+
+
+type ListKind = Literal["keyed", "value", "positional", "undeclared", "untyped", "map"]
+
+
+def _is_model_members(members: Iterable[object]) -> bool:
+    """True if *members* is non-empty and every one is a VcoModel class."""
+    kept = list(members)
+    return bool(kept) and all(_is_vco_model_type(m) for m in kept)
+
+
+def _members_without_missing_and_none(annotation: object) -> list[object]:
+    """The union members of *annotation* as written, without ``MISSING`` and ``None``."""
+    return [
+        inner
+        for member in _union_members(_unwrap_annotated(annotation))
+        for inner in [_unwrap_annotated(member)]
+        if inner is not MISSING and inner is not type(None)
+    ]
+
+
+def list_kind(field_info: FieldInfo) -> ListKind | None:
+    """How a list field's items are told apart, or None if it is not a list.
+
+    A ``dict`` of models is ``"map"``. Of lists: ``"keyed"`` has a
+    ``KeyField``, ``"positional"`` has ``Positional()``, ``"undeclared"`` is a
+    list of models with neither, ``"value"`` is a list of ``str`` or ``int``,
+    ``"untyped"`` is any other list. ``MISSING`` and ``None`` in a union are
+    set aside.
+    """
+    is_dict_of_models = False
+    is_list = False
+    element_kind: Literal["model", "value", "other"] = "other"
+    for member in _members_without_missing_and_none(field_info.annotation):
+        origin = get_origin(member)
+        args = get_args(member)
+        if origin is dict and len(args) == 2:
+            value_members = _members_without_missing_and_none(args[1])
+            is_dict_of_models = is_dict_of_models or _is_model_members(value_members)
+        elif member is list or origin is list:
+            is_list = True
+            element_members = _members_without_missing_and_none(args[0]) if args else []
+            if _is_model_members(element_members):
+                element_kind = "model"
+            elif element_members and all(m in (str, int) for m in element_members):
+                element_kind = "value"
+    if is_dict_of_models and not is_list:
+        return "map"
+    if not is_list:
+        return None
+    if get_key_field(field_info) is not None:
+        return "keyed"
+    if is_positional(field_info):
+        return "positional"
+    if element_kind == "model":
+        return "undeclared"
+    return "value" if element_kind == "value" else "untyped"
 
 
 # ---------------------------------------------------------------------------

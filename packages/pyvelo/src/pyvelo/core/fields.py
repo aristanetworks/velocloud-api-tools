@@ -136,6 +136,11 @@ def get_resolvable(field_info: FieldInfo) -> _ProcessedResolvable | None:
     return None
 
 
+def is_positional(field_info: FieldInfo) -> bool:
+    """Check if a field is marked with ``Positional``."""
+    return any(isinstance(m, Positional) for m in field_info.metadata)
+
+
 def get_name_of(field_info: FieldInfo) -> type | None:
     """The identity type a field is marked ``NameOf`` for, or None."""
     for m in field_info.metadata:
@@ -403,6 +408,17 @@ class NameOf:
     """
 
     identity_type: type
+
+
+@dataclass(frozen=True, slots=True)
+class Positional:
+    """Annotated marker: order is the only identity of this list's items.
+
+    Its items are selected by position (``at(n)``) or the list is replaced
+    whole; no field of an item names it.
+
+    Usage: ``nodes: Annotated[list[Node], Positional()]``
+    """
 
 
 @dataclass(frozen=True, slots=True)

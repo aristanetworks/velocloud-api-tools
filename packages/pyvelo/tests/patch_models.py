@@ -3,7 +3,13 @@
 from typing import Annotated, Any
 
 from pydantic import MISSING, Field
-from pyvelo.core import DefaultingModel, DefaultingScalar, KeyField, VcoModel
+from pyvelo.core import (
+    DefaultingModel,
+    DefaultingScalar,
+    KeyField,
+    Positional,
+    VcoModel,
+)
 
 
 class Sub(VcoModel):
@@ -57,3 +63,4 @@ class Root(VcoModel):
     blobs: list[dict[str, Any]] = Field(default_factory=list)
     by_name: dict[str, Sub] = Field(default_factory=dict)
     labels: dict[str, str] = Field(default_factory=dict)
+    seq: Annotated[list[str], Positional()] = Field(default_factory=list)
