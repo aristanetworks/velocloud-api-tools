@@ -98,7 +98,7 @@ from .identity import (
     ServiceGroupLogicalId,
     ServiceGroupName,
 )
-from .patch import PatchError
+from .patch import PatchError, add, at, delete, move
 
 __all__ = [
     "AddressGroupId",
@@ -178,12 +178,16 @@ __all__ = [
     "Tinyint",
     "VcoModel",
     "VcoTimestamp",
+    "add",
+    "at",
     "check_time_is_never",
+    "delete",
     "get_key_field",
     "get_normalizer",
     "get_resolvable",
     "has_override_flag",
     "is_edge_local",
     "missing_or",
+    "move",
     "value_or",
 ]
