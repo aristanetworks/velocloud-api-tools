@@ -1,13 +1,15 @@
 """Strict patches (spec 5.10.2): fields, validation, unknown keys, all or nothing."""
 
 import copy
-from typing import Annotated
+from enum import IntEnum
+from typing import Annotated, Literal
 
 import pytest
-from pydantic import MISSING, ValidationError
+from pydantic import MISSING, Discriminator, Field, ValidationError, field_validator
+from pyvelo.client.models.configuration.device_settings import NatRule
 from pyvelo.config.resolver import ResolutionError
 from pyvelo.core import Alias, PatchError, VcoModel
-from pyvelo.core.fields import Resolvable
+from pyvelo.core.fields import KeyField, Resolvable
 from pyvelo.core.identity import SegmentIdentity
 from pyvelo.core.rebase import Path
 
@@ -99,6 +101,61 @@ def test_defaulting_markers_do_not_default_in_a_patch(
     _ = raises_at(Root(), patch, path)
 
 
+class Validated(VcoModel):
+    prefix: int | None = None
+    label: str = ""
+
+    @field_validator("prefix", mode="before")
+    @classmethod
+    def _empty_to_none(cls, v: object) -> object:
+        return None if v == "" else v
+
+    @field_validator("label")
+    @classmethod
+    def _upper(cls, v: str) -> str:
+        return v.upper()
+
+
+def test_field_validators_apply_in_a_patch():
+    patch: dict[str, object] = {"prefix": "", "label": "x"}
+    model = Validated(prefix=24)
+    _ = model.merge_patch(patch)
+    parsed = Validated.model_validate(patch)
+    assert (model.prefix, model.label) == (parsed.prefix, parsed.label) == (None, "X")
+
+    rule = NatRule.model_validate(
+        {
+            "type": "source",
+            "destCidrPrefix": 24,
+            "insideCidrIp": "10.0.0.1",
+            "insideCidrPrefix": 32,
+            "insideNetmask": "255.255.255.255",
+            "outsideCidrIp": "192.0.2.1",
+            "outsideCidrPrefix": 32,
+            "outsideNetmask": "255.255.255.255",
+        }
+    )
+    _ = rule.merge_patch({"dest_cidr_prefix": ""})
+    assert rule.dest_cidr_prefix is None
+
+
+class Level(IntEnum):
+    LOW = 0
+    HIGH = 1
+
+
+class WithEnum(VcoModel):
+    level: Level = Level.LOW
+
+
+def test_enum_field_holds_the_same_type_after_a_patch_as_after_parse():
+    parsed = WithEnum.model_validate({"level": 1})
+    patched = WithEnum()
+    _ = patched.merge_patch({"level": 1})
+    assert patched.level == parsed.level
+    assert type(patched.level) is type(parsed.level)
+
+
 def test_defaulting_markers_still_default_on_parse():
     assert Root.model_validate({"safe": "abc"}).safe is False
 
@@ -135,6 +192,49 @@ def test_unknown_key_in_a_built_item_names_its_class():
     assert "priority" in str(error)
 
 
+class VariantA(VcoModel):
+    kind: Literal["a"] = "a"
+    name: str
+
+
+class VariantB(VcoModel):
+    kind: Literal["b"] = "b"
+    name: str
+    only_b: int = 0
+
+
+Variant = Annotated[VariantA | VariantB, Discriminator("kind")]
+
+
+class Wrapper(VcoModel):
+    name: str
+    inner: Variant | None = None
+
+
+class Holder(VcoModel):
+    items: Annotated[list[Variant], KeyField("name")] = Field(default_factory=list)
+    wraps: Annotated[list[Wrapper], KeyField("name")] = Field(default_factory=list)
+    one: Variant | None = None
+
+
+@pytest.mark.parametrize(
+    ("patch", "path"),
+    [
+        ({"items": {"x": {"kind": "a", "only_b": 5}}}, "items[x].only_b"),
+        (
+            {"wraps": {"w": {"inner": {"kind": "a", "name": "i", "only_b": 5}}}},
+            "wraps[w].inner.only_b",
+        ),
+        ({"one": {"kind": "a", "name": "n", "only_b": 5}}, "one.only_b"),
+    ],
+)
+def test_key_of_another_union_variant_raises_in_a_built_item(
+    patch: dict[str, object], path: str
+):
+    error = raises_at(Holder(), patch, path)
+    assert "VariantA" in str(error)
+
+
 class WithAlias(VcoModel):
     dh_group: Annotated[int, Alias("DHGroup")] = 0
 
@@ -166,6 +266,16 @@ def test_failed_patch_changes_nothing():
     fields_set = set(root.model_fields_set)
     with pytest.raises(PatchError):
         _ = root.merge_patch({"count": 5, "rules": {"a": {"priority": 9}}, "nope": 1})
+    assert root.model_dump() == dump
+    assert root.model_fields_set == fields_set
+
+
+def test_failure_deep_in_a_patch_changes_nothing():
+    root = Root(rules=[Rule(name="a")])
+    dump = copy.deepcopy(root.model_dump())
+    fields_set = set(root.model_fields_set)
+    with pytest.raises(PatchError):
+        _ = root.merge_patch({"count": 5, "rules": {"a": {"priority": 9, "nope": 1}}})
     assert root.model_dump() == dump
     assert root.model_fields_set == fields_set
 

@@ -13,7 +13,17 @@ import math
 from collections.abc import Mapping, Sequence
 from typing import Annotated
 
-from pydantic import MISSING, Discriminator, TypeAdapter, ValidationError
+from pydantic import (
+    MISSING,
+    AfterValidator,
+    BeforeValidator,
+    Discriminator,
+    PlainValidator,
+    PydanticUserError,
+    TypeAdapter,
+    ValidationError,
+    WrapValidator,
+)
 from pydantic.fields import FieldInfo
 from pydantic_core import PydanticUndefined
 
@@ -26,6 +36,7 @@ from .base import (
     _field_accepts_missing,  # pyright: ignore[reportPrivateUsage]
     _field_accepts_none,  # pyright: ignore[reportPrivateUsage]
     _field_model_type,  # pyright: ignore[reportPrivateUsage]
+    _field_model_types,  # pyright: ignore[reportPrivateUsage]
     _field_names_by_key,  # pyright: ignore[reportPrivateUsage]
     _field_value,  # pyright: ignore[reportPrivateUsage]
     _id_adapter,  # pyright: ignore[reportPrivateUsage]
@@ -34,6 +45,8 @@ from .base import (
     _is_list,  # pyright: ignore[reportPrivateUsage]
     _list_item_type,  # pyright: ignore[reportPrivateUsage]
     _ListItemType,  # pyright: ignore[reportPrivateUsage]
+    _merged_fields,  # pyright: ignore[reportPrivateUsage]
+    _variant_names,  # pyright: ignore[reportPrivateUsage]
 )
 from .fields import (
     get_key_field,
@@ -166,9 +179,12 @@ def _merge_field(
             return
 
         # Sub-model that is unset: build a new one from the patch.
-        model_type = _field_model_type(field_info)
-        if model_type is not None and (current is MISSING or current is None):
-            built = _new_model_from_patch(model_type, value, resolvers, path)
+        model_types = _field_model_types(field_info)
+        if model_types and (current is MISSING or current is None):
+            if len(model_types) == 1:
+                built = _new_model_from_patch(model_types[0], value, resolvers, path)
+            else:
+                built = _new_variant_from_patch(model_cls, name, value, resolvers, path)
             setattr(model, name, _validate_field(model_cls, name, built, path))
             return
 
@@ -189,19 +205,44 @@ def _merge_field(
     setattr(model, name, _validate_field(model_cls, name, value, path))
 
 
+_FIELD_VALIDATOR_MARKERS = {
+    "before": BeforeValidator,
+    "after": AfterValidator,
+    "wrap": WrapValidator,
+    "plain": PlainValidator,
+}
+
+
 @functools.cache
 def _field_adapter(model_cls: type[VcoModel], name: str) -> TypeAdapter[object]:
-    """A validator for field *name* of *model_cls*, as pydantic validates it on parse."""
+    """A validator for field *name* of *model_cls*, as pydantic validates it on parse.
+
+    The field's annotation and metadata, its discriminator, the class's
+    ``@field_validator``s for the field (``"*"`` ones too), applied after the
+    metadata in the order defined, as pydantic does, and the class's config
+    (``use_enum_values`` and the rest). Model validators are not field
+    validation and do not run.
+    """
     fi = model_cls.model_fields[name]
     metadata: list[object] = list(fi.metadata)
     if isinstance(fi.discriminator, str):
         metadata.append(Discriminator(fi.discriminator))
     elif fi.discriminator is not None:
         metadata.append(fi.discriminator)
+    for decorator in model_cls.__pydantic_decorators__.field_validators.values():
+        info = decorator.info
+        if name in info.fields or "*" in info.fields:
+            metadata.append(_FIELD_VALIDATOR_MARKERS[info.mode](decorator.func))
     annotation: object = (
         Annotated[fi.annotation, *metadata] if metadata else fi.annotation
     )
-    return TypeAdapter[object](annotation)  # pyright: ignore[reportArgumentType]
+    try:
+        return TypeAdapter[object](annotation, config=model_cls.model_config)  # pyright: ignore[reportArgumentType]
+    except PydanticUserError as exc:
+        # A model type has its own config, and TypeAdapter refuses another.
+        if exc.code != "type-adapter-config-unused":
+            raise
+        return TypeAdapter[object](annotation)  # pyright: ignore[reportArgumentType]
 
 
 def _validate_field(
@@ -250,11 +291,68 @@ def _new_model_from_patch(
             model_type.model_fields, patch, resolvers, path, owner=model_type.__name__
         )
         try:
-            return model_type.model_validate(data, context={"patch": True})
+            built = model_type.model_validate(data, context={"patch": True})
         except ValidationError as exc:
             raise PatchError(_validation_message(exc), path) from exc
+        _refuse_unread_keys(built, data, path)
+        return built
     _merge_model(instance, patch, resolvers, path)
     return instance
+
+
+def _new_variant_from_patch(
+    model_cls: type[VcoModel],
+    name: str,
+    patch: Mapping[object, object],
+    resolvers: IdentityResolver | None,
+    path: Path,
+) -> object:
+    """Build the value of field *name*, a union of models, from a patch.
+
+    The field's validator (its discriminator) picks the variant. A key that
+    only another variant has raises, as it would on an item of that variant.
+    """
+    variants = _field_model_types(model_cls.model_fields[name])
+    data = _build_input(
+        _merged_fields(variants), patch, resolvers, path, owner=_variant_names(variants)
+    )
+    built = _validate_field(model_cls, name, data, path)
+    if isinstance(built, VcoModel):
+        _refuse_unread_keys(built, data, path)
+    return built
+
+
+def _refuse_unread_keys(
+    model: VcoModel,
+    data: Mapping[str, object] | Mapping[object, object],
+    path: Path,
+) -> None:
+    """Raise ``PatchError`` for a key of *data* that *model*, validated from it, has no field for.
+
+    ``_build_input`` checks a key against every variant of a union, and
+    pydantic then drops the keys that only another variant has. This walks
+    *data* beside the model built from it, into sub-models and list items, and
+    refuses those keys as ``_merge_model`` would on an existing item.
+    """
+    model_cls = type(model)
+    names = model_cls._alias_map()  # pyright: ignore[reportPrivateUsage]
+    for key, value in data.items():
+        name = _field_name(names, model_cls.__name__, key, path)
+        child = path.child(name)
+        current = _field_value(model, name)
+        if _is_dict(value) and isinstance(current, VcoModel):
+            _refuse_unread_keys(current, value, child)
+        elif _is_list(value) and _is_list(current) and len(value) == len(current):
+            key_path = get_key_field(model_cls.model_fields[name])
+            for index, (item_data, item) in enumerate(zip(value, current)):
+                if not (_is_dict(item_data) and isinstance(item, VcoModel)):
+                    continue
+                part = (
+                    index
+                    if key_path is None
+                    else Key(str(_resolve_key_path(item, key_path)))
+                )
+                _refuse_unread_keys(item, item_data, child.child(part))
 
 
 def _resolve_name(
@@ -506,6 +604,7 @@ def _new_keyed_item(
         item = item_type.validate(item_input, context={"patch": True})
     except ValidationError as exc:
         raise PatchError(_validation_message(exc), path) from exc
+    _refuse_unread_keys(item, item_input, path)
     _require_ids_for_name(item, _key_name_of(item_type, key_path), key_path, key)
     # Give the item the parent's config level so context defaults resolve
     # for the right level (EDGE vs PROFILE).
@@ -638,9 +737,13 @@ def _build_input(
                     else item
                     for i, item in enumerate(value)
                 ]
-        elif _is_dict(value) and (sub_type := _field_model_type(fi)):
+        elif _is_dict(value) and (sub_types := _field_model_types(fi)):
             value = _build_input(
-                sub_type.model_fields, value, resolvers, child, owner=sub_type.__name__
+                _merged_fields(sub_types),
+                value,
+                resolvers,
+                child,
+                owner=_variant_names(sub_types),
             )
         input_key = key if key in _input_keys(fi, field_name) else field_name
         built[str(input_key)] = value  # a str: _field_name refuses other keys

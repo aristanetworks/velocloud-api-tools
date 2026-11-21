@@ -34,7 +34,7 @@ import datetime
 import functools
 import types
 import warnings
-from collections.abc import Iterator, Mapping
+from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import dataclass
 from enum import Enum, IntEnum, auto
 from typing import (
@@ -556,6 +556,35 @@ def _field_model_type(fi: FieldInfo) -> type[VcoModel] | None:
     )
 
 
+def _field_model_types(fi: FieldInfo) -> tuple[type[VcoModel], ...]:
+    """Every VcoModel class a field's value can be, in the order written.
+
+    Handles ``T | MISSING | None`` and (discriminated) unions of models, also
+    inside ``Annotated``: ``Annotated[A | B, Discriminator(...)] | None``.
+    """
+    found: list[type[VcoModel]] = []
+    for member in _union_members(fi.annotation):
+        for inner in _union_members(_unwrap_annotated(member)):
+            model = _unwrap_annotated(inner)
+            if _is_vco_model_type(model) and model not in found:
+                found.append(model)
+    return tuple(found)
+
+
+def _merged_fields(variants: Iterable[type[VcoModel]]) -> dict[str, FieldInfo]:
+    """The fields of every one of *variants*; for a name two have, the first's."""
+    fields: dict[str, FieldInfo] = {}
+    for variant in variants:
+        for name, fi in variant.model_fields.items():
+            _ = fields.setdefault(name, fi)
+    return fields
+
+
+def _variant_names(variants: Iterable[type[VcoModel]]) -> str:
+    """The class names of *variants*, joined with `` | ``."""
+    return " | ".join(variant.__name__ for variant in variants)
+
+
 @dataclass(frozen=True)
 class _ListItemType:
     """The VcoModel element type of a ``list[...]`` field.
@@ -583,15 +612,11 @@ class _ListItemType:
     @property
     def name(self) -> str:
         """The class name, or for a union the variants' names joined with `` | ``."""
-        return " | ".join(variant.__name__ for variant in self.variants)
+        return _variant_names(self.variants)
 
     @functools.cached_property
     def fields(self) -> dict[str, FieldInfo]:
-        fields: dict[str, FieldInfo] = {}
-        for variant in self.variants:
-            for name, fi in variant.model_fields.items():
-                _ = fields.setdefault(name, fi)
-        return fields
+        return _merged_fields(self.variants)
 
 
 def _list_item_type(fi: FieldInfo) -> _ListItemType | None:
