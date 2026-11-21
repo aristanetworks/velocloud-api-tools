@@ -102,13 +102,26 @@ firewall: update
 - When the profile has segments the edge module lacks, a write to that module
   adds them as entries that inherit everything. The plan lists them under
   "reconciled segments".
+- Deleting an edge segment that the profile also has leaves an empty entry for
+  it in the write, as for a segment the edge never had.
 - A missing edge firewall or QoS module starts empty; nothing is copied from
   the profile.
 - Setting a field to its default where the edge inherits it raises
   `LossyFieldError` until that section is converted (planned), because the
-  written data cannot express it.
+  written data cannot express it. So does an edit to a section the edge layer
+  does not write at all. `LossyFieldError` is importable from
+  `pyvelo.client.exceptions` (also from `pyvelo.client` and `pyvelo`), and
+  `get_changed_modules()` and `plan()` raise it as well as `save()`.
 - Names resolve on an exact or case-insensitive match; a near miss raises with
-  suggestions.
+  suggestions. A segment key such as `guest` edits or adds the segment `Guest`.
+  A segment the edge lacks takes its descriptor from the profile; a name that
+  neither the profile nor a loaded resolver has raises instead of adding a
+  segment with another one's IDs.
+- Renaming a keyed item (a rule, a segment) rewrites it whole: keys the models
+  do not know on that item are not kept.
+- A cache of loaded modules must keep the JSON rows or `module.raw_data`. A
+  `model_validate(module.model_dump())` round trip loses the raw snapshot, and
+  with it the "as read" guarantee above.
 
 ## Scope and data handling
 

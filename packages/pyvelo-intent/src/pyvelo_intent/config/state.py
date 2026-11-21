@@ -248,7 +248,10 @@ class ConfigState:
         return ConfigPlan(modules=tuple(plans))
 
     def get_changed_modules(self) -> list[ConfigurationModuleName]:
-        """Names of the modules that a save would write."""
+        """Names of the modules that a save would write.
+
+        Raises ``LossyFieldError`` as :meth:`plan` does.
+        """
         return [ConfigurationModuleName(m.name) for m in self.plan().changed]
 
     def get_field_changes(
