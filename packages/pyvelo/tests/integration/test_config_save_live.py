@@ -240,7 +240,7 @@ async def apply_steps(
         stored = changes_between(site.name, before, after.raw_data, model)
         _check_paths(step.label, "the module as read back", stored, expected)
         if site.name is Name.FIREWALL:
-            check_no_override_flag(step.label, plan.data, after.raw_data)
+            check_no_override_flag(step.label, before, plan.data, after.raw_data)
         sent = {str(c.path): c for c in plan.changes}
         for change in stored:
             planned = sent[str(change.path)]

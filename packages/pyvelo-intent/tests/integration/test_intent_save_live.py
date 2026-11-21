@@ -38,10 +38,12 @@ from __future__ import annotations
 import copy
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from _intent_live_support import (  # pyright: ignore[reportImplicitRelativeImport]
+    OVERRIDE_KEY,
+    SEGMENT_DRIFT_KEY,
     EdgeLayout,
     Lab,
     changes_between,
@@ -53,6 +55,7 @@ from _intent_live_support import (  # pyright: ignore[reportImplicitRelativeImpo
     expect,
     has_key,
     redact,
+    ref_names,
     refusal_codes,
     restoring,
     settle,
@@ -248,8 +251,10 @@ async def test_no_edit_plans_nothing_and_sends_nothing(
         await _save_nothing(f"profile #{position}", pipeline, state, failures)
     if not checked:
         pytest.skip("the Orchestrator has no edge or profile configuration")
+    if refused_writes:
+        failures.append(f"{len(refused_writes)} write attempt(s) were refused")
     check(
-        not failures and not refused_writes,
+        not failures,
         f"{len(failures)} problem(s) across {checked} modules with no edit:\n"
         + "\n".join(failures),
     )
@@ -311,7 +316,7 @@ async def test_profile_rule_added_through_an_aspect_reads_back_as_that_rule_only
         )
         _check_paths("aspect edit", "the profile read back", stored, expected)
         _check_stored_as_sent("aspect edit", stored, plan)
-        check_no_override_flag("aspect edit", plan.data, after.raw_data)
+        check_no_override_flag("aspect edit", original.data, plan.data, after.raw_data)
 
 
 def _profile_has_qoe(module: AnyConfigurationModule) -> bool:
@@ -529,7 +534,9 @@ async def _reconcile(
             "the profile's module changed with an edge write",
         )
         if case.name is Name.FIREWALL:
-            check_no_override_flag("reconciliation", plan.data, written.raw_data)
+            check_no_override_flag(
+                "reconciliation", before, plan.data, written.raw_data
+            )
 
         # What the edge inherits: only the edit may show, never the placeholders.
         _check_inherited(
@@ -558,13 +565,37 @@ def _has_lan_network(raw: dict[str, Any]) -> bool:
     return isinstance(lan, dict) and bool(lan.get("networks"))  # pyright: ignore[reportUnknownMemberType]
 
 
-def _shared_segments(edge: dict[str, Any], profile: dict[str, Any]) -> list[object]:
-    """The IDs of the segments, other than the Global one, that both layers have."""
+def _is_empty_entry(entry: object) -> bool:
+    """A segment entry that holds nothing: its descriptor and routes with only empty lists.
+
+    That is what a placeholder is (``routeMapsVersion``, which the Orchestrator
+    adds on a write, does not count). Taking such an entry out of a module and
+    putting it back loses no routing, BGP, OSPF, NAT or any other content.
+    """
+    if not isinstance(entry, dict):
+        return False
+    fields = cast(dict[str, object], entry)
+    if set(fields) - {SEGMENT_DRIFT_KEY} != {"segment", "routes"}:
+        return False
+    routes = fields["routes"]
+    return isinstance(routes, dict) and all(
+        isinstance(value, list) and not value
+        for value in cast(dict[str, object], routes).values()
+    )
+
+
+def _empty_shared_segments(
+    edge: dict[str, Any], profile: dict[str, Any]
+) -> list[object]:
+    """The IDs of the segments, other than the Global one, that both layers have and
+    whose entry on the edge is empty (``_is_empty_entry``)."""
     in_profile = [_segment_id(s) for s in profile.get("segments") or []]
     return [
         found
-        for found in (_segment_id(s) for s in edge.get("segments") or [])
-        if found != GLOBAL_SEGMENT_ID and found in in_profile
+        for entry in edge.get("segments") or []
+        if (found := _segment_id(entry)) != GLOBAL_SEGMENT_ID
+        and found in in_profile
+        and _is_empty_entry(entry)
     ]
 
 
@@ -596,31 +627,39 @@ async def test_missing_device_settings_segment_is_added_as_a_placeholder_the_orc
             continue
         if _lacking(edge, profile):
             lacking.append(layout)
-        elif _shared_segments(edge, profile):
+        elif _empty_shared_segments(edge, profile):
             sharing.append(layout)
 
     # An edge that already lacks a segment its profile has; a module that
     # refuses its own unchanged data is no target (it would refuse anything).
     target = await lab.first_writable(lacking, case.name)
     if target is not None:
+        own = lab.edge_site(target, case.name)
+        refs_own = ref_names((await own.read_present()).raw_refs)
         await _reconcile_unrefused(lab, pipeline, case, target)
+        check(
+            ref_names((await own.read_present()).raw_refs) == refs_own,
+            "the module has other refs than before the test",
+        )
         return
 
-    # Else make an edge lack one: take a non-Global segment entry out of a
-    # module that takes a write, and put it back afterwards.
+    # Else make an edge lack one: take out a non-Global segment entry that is
+    # already empty (nothing in it is lost) from a module that takes a write,
+    # and put it back afterwards.
     target = await lab.first_writable(sharing, case.name)
     if target is None:
         pytest.skip(
-            "no edge deviceSettings module that takes a write lacks, or has, a "
-            "segment entry of its profile's besides the Global one"
+            "no edge deviceSettings module that takes a write lacks a segment "
+            "entry of its profile's, or has an empty one besides the Global one"
         )
     site = lab.edge_site(target, case.name)
     profile_site = lab.profile_site(target.profile_id, case.name)
+    refs_before = ref_names((await site.read_present()).raw_refs)
     async with restoring(site):
         module = await site.read_present()
         data = _raw(module)
         profile = _raw(await profile_site.read_present())
-        removed = _shared_segments(data, profile)[0]
+        removed = _empty_shared_segments(data, profile)[0]
         data["segments"] = [s for s in data["segments"] if _segment_id(s) != removed]
         refused: str | None = None
         try:
@@ -636,6 +675,12 @@ async def test_missing_device_settings_segment_is_added_as_a_placeholder_the_orc
             "the edge does not lack the segment entry that was taken out",
         )
         await _reconcile_unrefused(lab, pipeline, case, target)
+    # The restore compares data; the Orchestrator re-derives a deviceSettings
+    # module's refs from it, so the refs are compared here, by name.
+    check(
+        ref_names((await site.read_present()).raw_refs) == refs_before,
+        "the module has other refs than before the test",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -705,8 +750,9 @@ async def test_missing_edge_qos_is_inserted_from_an_empty_layer_and_reads_back_a
             Name.QOS,
             # The Orchestrator also fills in the default QoE thresholds in the
             # effective QoS of an edge that has a QoS module of its own (seen on
-            # a lab; they are the values an edge uses without one).
-            [("serviceRateLimit",), ("qoe",)],
+            # a lab; they are the values an edge uses without one). Allowed only
+            # where there were none before.
+            [("serviceRateLimit",)] + ([] if "qoe" in effective_before else [("qoe",)]),
         )
 
         await delete_module(site, stored.id_)
@@ -778,7 +824,7 @@ async def test_edge_firewall_deleted_and_inserted_again_reads_back_as_sent(
             "the inserted module's segments are not one empty placeholder per "
             "profile segment",
         )
-        check_no_override_flag("insert", plan.data, stored.raw_data)
+        check_no_override_flag("insert", original.data, plan.data, stored.raw_data)
         _check_inherited(
             "insert",
             effective_before,
@@ -942,7 +988,9 @@ async def test_segment_named_in_another_case_is_edited_in_place_not_duplicated(
             len(after["segments"]) == len(before["segments"]),
             "a segment was added: the other-case key did not find the existing one",
         )
-        check_no_override_flag("edit by another case", plan.data, written.raw_data)
+        check_no_override_flag(
+            "edit by another case", before, plan.data, written.raw_data
+        )
 
         # No inherited rule changed: only a logging flag of the segment did.
         effective_after = await effective_data(
@@ -954,3 +1002,66 @@ async def test_segment_named_in_another_case_is_edited_in_place_not_duplicated(
             rules_before == rules_after,
             "the effective outbound rules of the edge changed with a logging flag",
         )
+
+
+# ---------------------------------------------------------------------------
+# A key an older version of the library wrote into a firewall segment entry
+# ---------------------------------------------------------------------------
+
+
+def _firewall_with_a_segment(module: AnyConfigurationModule) -> bool:
+    return isinstance(module, FirewallConfigurationModule) and bool(
+        module.data.segments
+    )
+
+
+async def test_a_stray_override_key_is_reported_by_a_plan_and_dropped_by_a_write(
+    lab: Lab, pipeline: ConfigPipeline, writes: Writes
+) -> None:
+    layout = await lab.pick_writable_edge(
+        Name.FIREWALL, _firewall_with_a_segment, "with a segment"
+    )
+    site = lab.edge_site(layout, Name.FIREWALL)
+    async with restoring(site) as original:
+        assert original is not None
+        # What an older version wrote: the key in a segment entry, put there by a
+        # raw write (not by the library) and undone by the restore.
+        planted = _json_object(original.data)
+        entry = planted["segments"][0]
+        name = entry["segment"]["name"]
+        entry[OVERRIDE_KEY] = True
+        await write_data(site, await site.read_present(), planted)
+        if not has_key((await site.read_present()).raw_data, OVERRIDE_KEY):
+            pytest.skip("the Orchestrator does not keep the key, so nothing is stray")
+        writes.updates.clear()
+        stray = Path(("segments", Key(name), OVERRIDE_KEY))
+
+        # No edit: the plan reports the key, and nothing is written to strip it.
+        state = await pipeline.load(layout.edge_id, enterprise_id=lab.enterprise_id)
+        plan = _planned(state, Name.FIREWALL)
+        check(plan.operation == "none", f"planned {plan.operation}, expected none")
+        check(
+            [str(key) for key in plan.legacy_keys] == [str(stray)],
+            f"the plan reports {len(plan.legacy_keys)} legacy key(s), expected the one",
+        )
+        _ = await pipeline.save(state)
+        check(not writes.updates, "a save with no edit wrote to strip the key")
+
+        # An edit: the write carries it and drops the key, and the plan says so.
+        state = await pipeline.load(layout.edge_id, enterprise_id=lab.enterprise_id)
+        current = entry.get("firewall_logging_enabled")
+        flag = not current if isinstance(current, bool) else True
+        _ = await pipeline.apply(
+            state,
+            module="firewall",
+            patch={"segments": {name: {"firewall_logging_enabled": flag}}},
+        )
+        plan = _planned(state, Name.FIREWALL)
+        edit = Path(("segments", Key(name), "firewall_logging_enabled"))
+        _check_paths("stray key", "the plan", plan.changes, [edit, stray])
+        _ = await pipeline.save(state)
+
+        after = await site.read_present()
+        stored = raw_changes(planted, after.raw_data, FirewallData)
+        _check_paths("stray key", "the module read back", stored, [edit, stray])
+        check_no_override_flag("stray key", planted, plan.data, after.raw_data)

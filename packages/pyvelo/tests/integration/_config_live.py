@@ -9,8 +9,9 @@ pyvelo-intent's live tests use the same file, copied to
 must stay identical (``cp`` one over the other).
 
 ``restoring`` is the one way a test writes: it records a module's raw data first
-(in a private file under ``$PYVELO_IT_BACKUP_DIR``, else a new temp directory,
-which it removes once the module is back) and, however the test ends, puts it back and checks that it is back. A
+(in a private file under ``$PYVELO_IT_BACKUP_DIR``, which must be outside the
+repository, else a new temp directory; it holds no refs but a QoS module's, and
+never a client-connector ref; it is removed once the module is back) and, however the test ends, puts it back and checks that it is back. A
 module that did not exist is deleted; one that was deleted is inserted again.
 If the restore fails, the message names the file; it never prints the data.
 
@@ -314,6 +315,10 @@ class Lab:
         pytest.skip(f"no profile has a {name.value} module {what or 'to use'}")
 
 
+def _redacted(exc: VcoOperationError) -> VcoOperationError:
+    return VcoOperationError(exc.operation, refusal_codes(exc), code=exc.code)
+
+
 def refusal_codes(exc: VcoOperationError) -> str:
     """The error codes and fields of a refusal; the rest of its text names lab entities."""
     found = re.findall(r"\[([A-Z][A-Z0-9_]*)\]\s*([\w.\[\]]*)", str(exc))
@@ -336,20 +341,17 @@ def redact_refusals(client: VcoClient) -> None:
     update = client.update_configuration_module
     insert = client.insert_configuration_module
 
-    def redacted(exc: VcoOperationError) -> VcoOperationError:
-        return VcoOperationError(exc.operation, refusal_codes(exc), code=exc.code)
-
     async def redacted_update(request: UpdateConfigurationModule) -> None:
         try:
             await update(request)
         except VcoOperationError as exc:
-            raise redacted(exc) from None
+            raise _redacted(exc) from None
 
     async def redacted_insert(request: InsertConfigurationModule) -> Any:
         try:
             return await insert(request)
         except VcoOperationError as exc:
-            raise redacted(exc) from None
+            raise _redacted(exc) from None
 
     # Instance attributes, which shadow the methods: a spy a test puts over them
     # (``monkeypatch.setattr``) wraps these.
@@ -439,7 +441,12 @@ async def effective_data(
     request = GetEdgeConfigurationModules(edge_id=edge_id, modules=[name])
     if enterprise_id is not None:
         request.enterprise_id = enterprise_id
-    result = await client.portal("edge/getEdgeConfigurationModules", request, RawJson)
+    try:
+        result = await client.portal(
+            "edge/getEdgeConfigurationModules", request, RawJson
+        )
+    except VcoOperationError as exc:
+        raise _redacted(exc) from None
     module = expect(result.root[name.value], dict, f"the effective {name.value} module")
     return expect(module["data"], dict, f"the effective {name.value} data")
 
@@ -460,9 +467,12 @@ async def delete_module(site: Site, module_id: int) -> None:
     request = DeleteConfigurationModule(id_=module_id)
     if site.enterprise_id is not None:
         request.enterprise_id = site.enterprise_id
-    result = await site.client.portal(
-        "configuration/deleteConfigurationModule", request, RowsModifiedConfirmation
-    )
+    try:
+        result = await site.client.portal(
+            "configuration/deleteConfigurationModule", request, RowsModifiedConfirmation
+        )
+    except VcoOperationError as exc:
+        raise _redacted(exc) from None
     check(not result.error, f"deleting the {site.name.value} module was refused")
 
 
@@ -563,14 +573,29 @@ OVERRIDE_KEY = "outboundOverride"
 """Not a key of the VCO or the edge: no firewall module may be sent or read with it."""
 
 
-def check_no_override_flag(label: str, payload: object, read_back: object) -> None:
+def check_no_override_flag(
+    label: str, before: object, payload: object, read_back: object
+) -> None:
+    """No firewall payload and no read-back carries the key; say whose it is if one does.
+
+    *before* is the module as it was read before the write (None if there was
+    none). A key it already had is a stray of the lab's data (an older library
+    wrote it): a write drops it, so the payload and the read-back must not have
+    it either way, but the message tells which case it is.
+    """
+    had = before is not None and has_key(before, OVERRIDE_KEY)
+    origin = (
+        "the module already had it before the write (it was not dropped)"
+        if had
+        else "the module did not have it before the write (the write added it)"
+    )
     check(
         not has_key(payload, OVERRIDE_KEY),
-        f"{label}: the firewall payload carries {OVERRIDE_KEY}",
+        f"{label}: the firewall payload carries {OVERRIDE_KEY}; {origin}",
     )
     check(
         not has_key(read_back, OVERRIDE_KEY),
-        f"{label}: the firewall as read back carries {OVERRIDE_KEY}",
+        f"{label}: the firewall as read back carries {OVERRIDE_KEY}; {origin}",
     )
 
 
@@ -580,13 +605,28 @@ BACKUP_DIR_ENV = "PYVELO_IT_BACKUP_DIR"
 _backup_dir: pathlib.Path | None = None
 
 
+def _repository_root() -> pathlib.Path | None:
+    for parent in pathlib.Path(__file__).resolve().parents:
+        if (parent / ".git").exists():
+            return parent
+    return None
+
+
 def _backups() -> pathlib.Path:
-    """A private directory for backups: ``$PYVELO_IT_BACKUP_DIR`` or a new temp one."""
+    """A private directory for backups: ``$PYVELO_IT_BACKUP_DIR`` or a new temp one.
+
+    A backup holds lab configuration, so the directory must be outside the
+    repository: one inside it is refused.
+    """
     global _backup_dir
     if _backup_dir is None:
         root = os.environ.get(BACKUP_DIR_ENV)
         if root:
-            _backup_dir = pathlib.Path(root)
+            chosen = pathlib.Path(root).resolve()
+            repository = _repository_root()
+            if repository is not None and chosen.is_relative_to(repository):
+                raise RuntimeError(f"{BACKUP_DIR_ENV} must be outside the repository")
+            _backup_dir = chosen
             _backup_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
         else:
             _backup_dir = pathlib.Path(tempfile.mkdtemp(prefix="pyvelo-it-backups-"))
@@ -601,6 +641,20 @@ def _backups() -> pathlib.Path:
     return _backup_dir
 
 
+def _backup_refs(name: ConfigurationModuleName, refs: object) -> object:
+    """The refs a restore may need: only a QoS insert takes any, and none is a client connector's.
+
+    The client-connector ref carries a login token, so it is never stored.
+    """
+    if name is not ConfigurationModuleName.QOS or not isinstance(refs, dict):
+        return None
+    return {
+        key: value
+        for key, value in cast(dict[str, object], refs).items()
+        if "clientConnector" not in key
+    }
+
+
 def save_backup(site: Site, original: Original) -> pathlib.Path:
     """Write *original* to a private file, so that a restore that fails is not the end of it."""
     path = _backups() / f"{uuid.uuid4().hex}-{site.name.value}.json"
@@ -609,7 +663,7 @@ def save_backup(site: Site, original: Original) -> pathlib.Path:
         "configuration_id": site.configuration_id,
         "module_id": original.module_id,
         "data": original.data,
-        "refs": None if original.refs is MISSING else original.refs,
+        "refs": _backup_refs(site.name, original.refs),
     }
     descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     with os.fdopen(descriptor, "w") as handle:

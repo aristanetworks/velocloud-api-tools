@@ -8,7 +8,7 @@ checked here with no lab.
 import json
 import pathlib
 import re
-from typing import Any
+from typing import Any, ClassVar
 
 import pytest
 from pydantic import BaseModel, ValidationError
@@ -87,19 +87,24 @@ def test_an_unreadable_edge_is_reported_by_error_type_alone():
 
 class TestBackup:
     def original(self) -> live.Original:
-        return live.Original(module_id=7, data={"k": [1]}, refs={"r": {"id": 1}})
+        return live.Original(
+            module_id=7,
+            data={"k": [1]},
+            refs={"r": {"id": 1}, "deviceSettings:clientConnector:config": {"t": "x"}},
+        )
 
-    def site(self) -> live.Site:
+    def site(self, name: Name = Name.FIREWALL) -> live.Site:
         async def layer() -> list[Any]:
             return []
 
-        return live.Site(None, None, 11, Name.FIREWALL, layer)  # pyright: ignore[reportArgumentType]
+        return live.Site(None, None, 11, name, layer)  # pyright: ignore[reportArgumentType]
 
-    def test_a_backup_is_a_private_file_with_the_data_and_refs(
-        self, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
-    ):
+    @pytest.fixture(autouse=True)
+    def backups(self, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch):
         monkeypatch.setenv(live.BACKUP_DIR_ENV, str(tmp_path))
         monkeypatch.setattr(live, "_backup_dir", None)
+
+    def test_a_backup_is_a_private_file_with_the_data(self, tmp_path: pathlib.Path):
         path = live.save_backup(self.site(), self.original())
         assert path.parent == tmp_path
         assert path.stat().st_mode & 0o777 == 0o600
@@ -108,16 +113,28 @@ class TestBackup:
             "configuration_id": 11,
             "module_id": 7,
             "data": {"k": [1]},
-            "refs": {"r": {"id": 1}},
+            "refs": None,  # a firewall insert takes no refs
         }
 
-    def test_the_file_name_holds_no_lab_identifier(
-        self, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
-    ):
-        monkeypatch.setenv(live.BACKUP_DIR_ENV, str(tmp_path))
-        monkeypatch.setattr(live, "_backup_dir", None)
+    def test_only_a_qos_backup_holds_refs_and_never_a_client_connector_one(self):
+        qos = live.save_backup(self.site(Name.QOS), self.original())
+        assert json.loads(qos.read_text())["refs"] == {"r": {"id": 1}}
+        ds = live.save_backup(self.site(Name.DEVICE_SETTINGS), self.original())
+        assert json.loads(ds.read_text())["refs"] is None
+
+    def test_the_file_name_holds_no_lab_identifier(self):
         path = live.save_backup(self.site(), self.original())
         assert re.fullmatch(r"[0-9a-f]{32}-firewall\.json", path.name)
+
+    def test_a_backup_directory_inside_the_repository_is_refused(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        repository = live._repository_root()  # pyright: ignore[reportPrivateUsage]
+        assert repository is not None
+        monkeypatch.setenv(live.BACKUP_DIR_ENV, str(repository / "packages" / "x"))
+        monkeypatch.setattr(live, "_backup_dir", None)
+        with pytest.raises(RuntimeError, match="outside the repository"):
+            _ = live.save_backup(self.site(), self.original())
 
 
 class FakeClient:
@@ -199,6 +216,50 @@ async def test_a_restore_that_fails_names_the_backup_and_never_the_data(
     assert str(backup) in message
     assert "secret-lab-name" not in message
     assert json.loads(backup.read_text())["data"] == original
+
+
+class TestNoOverrideFlagCheck:
+    CLEAN: ClassVar[dict[str, Any]] = {"segments": [segment(0)]}
+    STRAY: ClassVar[dict[str, Any]] = {"segments": [segment(0, outboundOverride=True)]}
+
+    def test_clean_data_passes(self):
+        live.check_no_override_flag("x", self.CLEAN, self.CLEAN, self.CLEAN)
+        live.check_no_override_flag("x", None, self.CLEAN, self.CLEAN)
+
+    def test_a_key_the_module_did_not_have_is_reported_as_added_by_the_write(self):
+        with pytest.raises(pytest.fail.Exception) as caught:
+            live.check_no_override_flag("x", self.CLEAN, self.CLEAN, self.STRAY)
+        message = str(caught.value)
+        assert "read back carries" in message and "write added it" in message
+
+    def test_a_key_the_module_already_had_is_reported_as_pre_existing(self):
+        with pytest.raises(pytest.fail.Exception) as caught:
+            live.check_no_override_flag("x", self.STRAY, self.CLEAN, self.STRAY)
+        message = str(caught.value)
+        assert "already had it before the write" in message
+        assert "write added it" not in message
+
+
+class PortalClient:
+    async def portal(self, *args: object, **kwargs: object) -> None:
+        raise VcoOperationError(
+            "portal",
+            "validationError",
+            data={
+                "error": [{"code": "E1", "path": "p", "message": "for secret-lab-name"}]
+            },
+        )
+
+
+async def test_a_refused_delete_and_a_refused_effective_read_carry_codes_alone():
+    site = live.Site(PortalClient(), None, 1, Name.FIREWALL, None)  # pyright: ignore[reportArgumentType]
+    with pytest.raises(VcoOperationError) as delete:
+        await live.delete_module(site, 5)
+    with pytest.raises(VcoOperationError) as effective:
+        _ = await live.effective_data(PortalClient(), 1, Name.FIREWALL, None)  # pyright: ignore[reportArgumentType]
+    for caught in (delete, effective):
+        assert "secret-lab-name" not in str(caught.value)
+        assert "E1" in str(caught.value)
 
 
 def test_the_two_copies_of_the_live_support_are_identical():
