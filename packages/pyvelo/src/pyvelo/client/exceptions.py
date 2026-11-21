@@ -1,4 +1,7 @@
+from collections.abc import Sequence
 from typing import Any
+
+from pyvelo.core.rebase import Path
 
 
 class VcoError(Exception):
@@ -150,3 +153,78 @@ class VcoUserTypeUnknownError(VcoError):
 
 class VcoCredentialsError(VcoError):
     """Raised when VCO credentials cannot be loaded from the environment."""
+
+
+class LossyFieldError(VcoError):
+    """Raised when assignments to a module cannot be expressed on save.
+
+    The model parses a document lossily (a key absent from the document reads as
+    its default), so assigning that default changes nothing in what is written.
+    ``paths`` locates each such assignment; ``fields`` is the same, as text.
+    ``override_flags`` are those paths that are override flags: an edit to a
+    sibling sets the flag, but the document as read has no key for it and it
+    already reads as on, so there is nothing to write.
+    """
+
+    def __init__(
+        self,
+        module: str,
+        paths: Sequence[Path],
+        override_flags: Sequence[Path] = (),
+    ) -> None:
+        self.module = module
+        self.paths = list(paths)
+        self.fields = [str(path) for path in self.paths]
+        self.override_flags = list(override_flags)
+        message = (
+            f"{module}: assignment cannot be expressed on save for: "
+            f"{', '.join(self.fields)}"
+        )
+        if self.override_flags:
+            flags = ", ".join(str(path) for path in self.override_flags)
+            message += (
+                f" (override flags: {flags}; set by an edit to a sibling, but the "
+                "document as read has no key for them and they already read as on)"
+            )
+        super().__init__(message)
+
+
+class ConfigConflictError(VcoError):
+    """Raised when a module write is rejected because its version is stale.
+
+    The module changed on the VCO after it was read. Nothing was written; read
+    the module again, re-apply the change, and save.
+    """
+
+    def __init__(self, module_id: int, version: str, detail: str) -> None:
+        self.module_id = module_id
+        self.version = version
+        self.detail = detail
+        super().__init__(
+            f"Configuration module {module_id} changed since it was read "
+            f"(version {version}): {detail}"
+        )
+
+
+class UnboundError(VcoError):
+    """Raised when a segment a layer lacks is asked for, with no profile to copy it from.
+
+    The layer data has not been bound to a profile (see ``bind_profile``), which
+    happens when it is built outside ``ConfigState``.
+    """
+
+
+def is_version_conflict(*, error: str | None, rows: int | None) -> bool:
+    """Whether an update result means the module's version was stale.
+
+    Observed against a live Orchestrator: an update that carries a version other
+    than the module's current one (an older one, one never issued, one that is
+    not a number) is answered with an ordinary result, ``{"rows": 0}``, with no
+    error text, and nothing is written. The current version answers
+    ``{"rows": 1}``, also when the data is unchanged, so zero rows never means
+    "nothing to change". A request without a version is never checked and writes
+    unconditionally. A JSON-RPC error is never a stale version: an unknown
+    module is a ``validationError``. So a conflict is zero rows with no error
+    text, and nothing else.
+    """
+    return not error and rows == 0

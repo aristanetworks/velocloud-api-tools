@@ -16,6 +16,39 @@ from pydantic import BeforeValidator, PlainSerializer
 
 from pyvelo.core.enums import ModelNumber, NetworkSegmentType
 
+
+class ResolutionError(KeyError):
+    """Raised when a resolver cannot find a name.
+
+    Inherits from ``KeyError`` for backwards compatibility with consumers that
+    catch the historical exception type.
+    """
+
+    def __init__(
+        self,
+        *,
+        name: str,
+        identity_type: type | str,
+        candidates: list[str],
+        message: str | None = None,
+    ) -> None:
+        self.name = name
+        self.identity_type = identity_type
+        self.candidates = candidates
+        super().__init__(message or self._default_message())
+
+    def _default_message(self) -> str:
+        label = (
+            self.identity_type
+            if isinstance(self.identity_type, str)
+            else self.identity_type.__name__
+        )
+        if self.candidates:
+            cands = "\n".join(f"  - {c}" for c in self.candidates)
+            return f"Unknown {label}: {self.name!r}.\nDid you mean:\n{cands}"
+        return f"Unknown {label}: {self.name!r}."
+
+
 # ---------------------------------------------------------------------------
 # Segment
 # ---------------------------------------------------------------------------

@@ -1,10 +1,22 @@
 from __future__ import annotations
 
 import copy
+import datetime
 import uuid
-from typing import Annotated, Any, Literal, overload
+from collections.abc import Mapping
+from typing import Annotated, Any, Literal, Self, TypeIs, overload
 
-from pydantic import MISSING, Discriminator, Field, PrivateAttr, RootModel
+from pydantic import (
+    MISSING,
+    Discriminator,
+    Field,
+    ModelWrapValidatorHandler,
+    PrivateAttr,
+    RootModel,
+    ValidationInfo,
+    model_validator,
+)
+from pydantic_core import PydanticSerializationError, to_jsonable_python
 
 from pyvelo.client.enums.configuration import (
     ConfigurationBastionState,
@@ -133,6 +145,30 @@ class EnterpriseConfigurationProfile(ConfigurationBase):
     _config_context: ConfigContext | None = PrivateAttr(default=ConfigContext.PROFILE)
 
 
+def _is_mapping(value: object) -> TypeIs[Mapping[object, object]]:
+    return isinstance(value, Mapping)
+
+
+def _capture(
+    source: Mapping[object, object], key: str, mode: Literal["python", "json"]
+) -> object:
+    """Snapshot ``source[key]`` as pure JSON, before validation touches it.
+
+    ``MISSING`` if the key is absent or explicitly ``MISSING`` (``refs`` is
+    declared ``... | MISSING``, and ``dict(module)`` carries it). JSON-mode
+    input is already pure JSON and is deep-copied. Python-mode input may hold
+    models at any depth, so it is converted with ``to_jsonable_python`` (models
+    dumped by alias). Either way the snapshot shares no containers with the
+    caller's objects, so later edits to those cannot change what was captured.
+    """
+    value = source.get(key, MISSING)
+    if value is MISSING:
+        return MISSING
+    if mode == "json":
+        return copy.deepcopy(value)
+    return to_jsonable_python(value, by_alias=True)
+
+
 class ConfigurationModuleBase(VcoModel):
     created: VcoTimestamp
     modified: VcoTimestamp
@@ -144,6 +180,58 @@ class ConfigurationModuleBase(VcoModel):
     schema_version: str | None
     version: str | None
     metadata: dict[str, Any] | None
+
+    _raw_data: object = PrivateAttr(default=MISSING)
+    _raw_refs: object = PrivateAttr(default=MISSING)
+    _raw_mode: Literal["python", "json"] = PrivateAttr(default="python")
+    _is_new: bool = PrivateAttr(default=False)
+
+    @model_validator(mode="wrap")
+    @classmethod
+    def _capture_raw(
+        cls,
+        value: object,
+        handler: ModelWrapValidatorHandler[Self],
+        info: ValidationInfo,
+    ) -> Self:
+        if not _is_mapping(value):
+            # An existing instance keeps the snapshot it already has.
+            return handler(value)
+        try:
+            raw_data = _capture(value, "data", info.mode)
+            raw_refs = _capture(value, "refs", info.mode)
+        except PydanticSerializationError:
+            # Input that cannot become JSON is usually input that does not
+            # validate. Let validation report that field-level error first; if
+            # it passes, re-raise (pydantic surfaces it as a model-level
+            # ``value_error``, since PydanticSerializationError is a ValueError).
+            _ = handler(value)
+            raise
+        module = handler(value)
+        module._raw_data = raw_data
+        module._raw_refs = raw_refs
+        module._raw_mode = info.mode
+        return module
+
+    @property
+    def raw_data(self) -> object:
+        """``data`` exactly as validated; ``MISSING`` if the input had none."""
+        return self._raw_data
+
+    @property
+    def raw_refs(self) -> object:
+        """``refs`` exactly as validated; ``MISSING`` if the input had none."""
+        return self._raw_refs
+
+    @property
+    def raw_mode(self) -> Literal["python", "json"]:
+        """How the module was first validated."""
+        return self._raw_mode
+
+    @property
+    def is_new(self) -> bool:
+        """True only for modules made by :func:`new_edge_module`."""
+        return self._is_new
 
 
 class ControlPlaneConfigurationModule(ConfigurationModuleBase):
@@ -205,6 +293,44 @@ type AnyConfigurationModule = Annotated[
 
 ConfigurationModuleList = RootModel[list[AnyConfigurationModule]]
 
+EMPTY_EDGE_MODULE_DATA: dict[ConfigurationModuleName, dict[str, Any]] = {
+    ConfigurationModuleName.FIREWALL: {"segments": []},
+    ConfigurationModuleName.QOS: {"segments": []},
+}
+
+
+def new_edge_module(
+    name: ConfigurationModuleName, configuration_id: int
+) -> FirewallConfigurationModule | QosConfigurationModule:
+    """Build an empty edge-layer module that does not exist on the VCO yet."""
+    if name not in EMPTY_EDGE_MODULE_DATA:
+        raise ValueError(
+            f"Module {name.value!r} cannot be inserted as an empty edge layer"
+        )
+    now = datetime.datetime.now(datetime.UTC)
+    row: dict[str, Any] = {
+        "id": 0,
+        "type": "ENTERPRISE",
+        "created": now,
+        "modified": now,
+        "description": None,
+        "configurationId": configuration_id,
+        "enterpriseLogicalId": None,
+        "schemaVersion": None,
+        "version": None,
+        "metadata": None,
+        "name": name.value,
+        "data": copy.deepcopy(EMPTY_EDGE_MODULE_DATA[name]),
+    }
+    module = (
+        FirewallConfigurationModule
+        if name is ConfigurationModuleName.FIREWALL
+        else QosConfigurationModule
+    ).model_validate(row)
+    module._is_new = True  # pyright: ignore[reportPrivateUsage]
+    return module
+
+
 # Rebuild models that forward-reference AnyConfigurationModule.  These classes
 # are defined above before AnyConfigurationModule exists; Pydantic cannot
 # resolve the forward reference at class-creation time, leaving a MockValSer
@@ -248,38 +374,18 @@ class Configuration(VcoModel):
     enterprise: EnterpriseConfiguration | None | MISSING = MISSING
 
 
-class DeviceSettingsModuleUpdate(VcoModel):
-    data: DeviceSettingsData
-    refs: DeviceSettingsRefs | MISSING = MISSING
+class ConfigurationModuleUpdate(VcoModel):
+    """The ``_update`` payload: raw module data, and refs when they are replaced."""
 
-
-class WanModuleUpdate(VcoModel):
-    data: WanData
-
-
-class QosModuleUpdate(VcoModel):
-    data: QosData
+    data: dict[str, Any]
     refs: dict[str, Any] | MISSING = MISSING
-
-
-class FirewallModuleUpdate(VcoModel):
-    data: FirewallData
-
-
-ConfigurationModuleUpdate = (
-    DeviceSettingsModuleUpdate
-    | WanModuleUpdate
-    | QosModuleUpdate
-    | FirewallModuleUpdate
-)
 
 
 class UpdateConfigurationModule(VcoModel):
     configuration_module_id: Annotated[int, Alias("id")]
     enterprise_id: Annotated[int | MISSING, NoneIsMissing] = MISSING
-    # Typed as Any to avoid Pydantic serialization warnings for the undiscriminated
-    # ConfigurationModuleUpdate union; callers always pass a concrete subtype.
-    update: Annotated[Any, Alias("_update")]
+    version: Annotated[str | MISSING, NoneIsMissing] = MISSING
+    update: Annotated[ConfigurationModuleUpdate, Alias("_update")]
 
 
 class InsertConfigurationModuleResult(VcoModel):
@@ -297,13 +403,13 @@ class InsertConfigurationModuleBase(VcoModel):
 
 class InsertQosConfigurationModule(InsertConfigurationModuleBase):
     name: Literal["QOS"] = "QOS"
-    data: QosData
+    data: dict[str, Any]
     refs: dict[str, Any] | None = None
 
 
 class InsertFirewallConfigurationModule(InsertConfigurationModuleBase):
     name: Literal["firewall"] = "firewall"
-    data: FirewallData
+    data: dict[str, Any]
 
 
 type InsertConfigurationModule = Annotated[
@@ -400,6 +506,7 @@ class DeleteConfiguration(VcoModel):
 
 
 __all__ = [
+    "EMPTY_EDGE_MODULE_DATA",
     "AnyConfigurationModule",
     "Configuration",
     "ConfigurationBase",
@@ -408,12 +515,10 @@ __all__ = [
     "ControlPlaneConfigurationModule",
     "DeleteConfiguration",
     "DeviceSettingsConfigurationModule",
-    "DeviceSettingsModuleUpdate",
     "EdgeConfiguration",
     "EnterpriseConfigurationModule",
     "EnterpriseConfigurationProfile",
     "FirewallConfigurationModule",
-    "FirewallModuleUpdate",
     "GetAnalyticsConfiguration",
     "GetAnalyticsConfigurationResult",
     "GetApplicationsResult",
@@ -426,8 +531,7 @@ __all__ = [
     "OperatorConfiguration",
     "OperatorConfigurationModule",
     "QosConfigurationModule",
-    "QosModuleUpdate",
     "UpdateConfigurationModule",
     "WanConfigurationModule",
-    "WanModuleUpdate",
+    "new_edge_module",
 ]

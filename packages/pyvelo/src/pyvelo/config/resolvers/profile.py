@@ -15,7 +15,7 @@ class ProfileResolver(BaseResolver[ProfileKey, ProfileIdentity]):
     """Resolves a profile identifier to a :class:`ProfileIdentity`.
 
     Accepts:
-        - :class:`ProfileName`: human-readable profile name (case-insensitive, fuzzy).
+        - :class:`ProfileName`: human-readable profile name (exact or case-insensitive).
         - :class:`ProfileId`: numeric VCO configuration ID.
 
     Loads via ``enterprise/getEnterpriseConfigurations``.

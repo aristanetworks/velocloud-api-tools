@@ -6,6 +6,22 @@ from pyvelo_intent.config.aspect import Aspect
 
 DEVICE_SETTINGS_ASPECTS: list[Aspect] = [
     Aspect(
+        name="bgp",
+        module=ConfigurationModuleName.DEVICE_SETTINGS,
+        path="bgp",
+        description="BGP routing configuration (per-segment)",
+        tags=["bgp", "routing", "as", "neighbor", "peering"],
+        segment_scoped=True,
+    ),
+    Aspect(
+        name="ospf",
+        module=ConfigurationModuleName.DEVICE_SETTINGS,
+        path="ospf",
+        description="OSPF routing configuration (per-segment)",
+        tags=["ospf", "routing", "area", "cost"],
+        segment_scoped=True,
+    ),
+    Aspect(
         name="dns",
         module=ConfigurationModuleName.DEVICE_SETTINGS,
         path="dns",

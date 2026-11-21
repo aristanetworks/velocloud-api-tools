@@ -20,7 +20,7 @@ from ._type_support import JsonObject
 
 _get_context_defaults = cast(
     Callable[[FieldInfo], ContextDefaults | None],
-    core_fields._get_context_defaults,
+    core_fields.get_context_defaults,
 )
 
 # ---------------------------------------------------------------------------

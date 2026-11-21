@@ -36,6 +36,7 @@ class OutboundRuleMatch(VcoModel):
         - IPv6: sip/dip must be undefined (absent)
         - IPv4v6: all four must be present as "any"
         """
+        super().model_post_init(__context)
         if self.ip_version == "IPv4":
             self.source_ip_v6 = MISSING
             self.destination_ip_v6 = MISSING

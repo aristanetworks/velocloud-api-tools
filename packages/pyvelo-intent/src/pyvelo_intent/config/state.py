@@ -2,18 +2,32 @@
 
 import copy
 from dataclasses import dataclass, field
-from typing import Literal, cast
+from typing import Literal, Protocol, cast, runtime_checkable
 
 from pydantic import MISSING, BaseModel
 from pyvelo.client.enums.configuration import ConfigurationModuleName
+from pyvelo.client.models.configuration.device_settings.root import DeviceSettingsData
+from pyvelo.client.models.configuration.firewall.root import FirewallData
+from pyvelo.client.models.configuration.qos.root import QosData
+from pyvelo.client.models.configuration.wan.root import WanData
+from pyvelo.client.module_write import ModulePlan, plan_module
 from pyvelo.client.schemas.configuration import (
     AnyConfigurationModule,
+    ConfigurationBase,
+    DeviceSettingsConfigurationModule,
     EdgeConfiguration,
     EnterpriseConfigurationProfile,
+    FirewallConfigurationModule,
+    QosConfigurationModule,
+    WanConfigurationModule,
+    new_edge_module,
 )
 from pyvelo.config.resolver import ResolverContext
 from pyvelo.config.validation import ValidationError
+from pyvelo.core import ConfigContext
 from pyvelo.core.fields import get_key_field
+
+from pyvelo_intent.config.module_names import resolve_module_name
 
 
 @dataclass
@@ -43,12 +57,88 @@ class ConfigFieldChange:
     after: object
 
 
+@dataclass(frozen=True)
+class ConfigPlan:
+    """What a save of a whole :class:`ConfigState` writes: one plan per module."""
+
+    modules: tuple[ModulePlan, ...]
+
+    @property
+    def changed(self) -> tuple[ModulePlan, ...]:
+        """The plans that write something."""
+        return tuple(m for m in self.modules if m.operation != "none")
+
+    def render(self) -> str:
+        return "\n".join(m.render() for m in self.modules)
+
+
+class LayerView:
+    """Read-only access to the data of one config layer's modules.
+
+    Each property is the module's ``data``, ready to read or edit in place.
+    *profile* is the profile layer an edge layer inherits from; a module this
+    view creates is bound to it.
+    """
+
+    def __init__(
+        self, config: ConfigurationBase, profile: ConfigurationBase | None = None
+    ) -> None:
+        self._config: ConfigurationBase = config
+        self._profile: ConfigurationBase | None = profile
+
+    @property
+    def firewall(self) -> FirewallData:
+        """The firewall data; an edge layer that has none starts it empty."""
+        module = _module_of(
+            self._config,
+            ConfigurationModuleName.FIREWALL,
+            create=True,
+            profile=self._profile,
+        )
+        assert isinstance(module, FirewallConfigurationModule)
+        return module.data
+
+    @property
+    def qos(self) -> QosData:
+        """The QoS data; an edge layer that has none starts it empty."""
+        module = _module_of(
+            self._config,
+            ConfigurationModuleName.QOS,
+            create=True,
+            profile=self._profile,
+        )
+        assert isinstance(module, QosConfigurationModule)
+        return module.data
+
+    @property
+    def device_settings(self) -> DeviceSettingsData:
+        module = _module_of(
+            self._config, ConfigurationModuleName.DEVICE_SETTINGS, create=False
+        )
+        assert isinstance(module, DeviceSettingsConfigurationModule)
+        return module.data
+
+    @property
+    def wan(self) -> WanData:
+        module = _module_of(self._config, ConfigurationModuleName.WAN, create=False)
+        assert isinstance(module, WanConfigurationModule)
+        return module.data
+
+
 @dataclass
 class ConfigState:
     """Holds the loaded configuration state with snapshot for diff detection.
 
-    After load, a snapshot is taken. On save, the current state is compared
-    against the snapshot to determine which modules changed.
+    After load, a snapshot is taken for the per-field diff. A save is planned
+    from each module's raw data as read (see :meth:`plan`), which is what
+    decides which modules changed.
+
+    A state that has written to the VCO is *spent*: its raw data no longer
+    matches the VCO, so it must not be applied to or saved again.
+
+    The edge layer's module data is bound to the profile layer (see
+    ``bind_profile`` on the module data), so a segment the edge layer lacks can
+    be added to it as an empty entry that inherits from the profile's.
     """
 
     edge_config: EdgeConfiguration | None
@@ -59,6 +149,13 @@ class ConfigState:
         default_factory=dict, repr=False
     )
     load_warnings: list[ValidationWarning] = field(default_factory=list)
+    _spent: bool = field(default=False, repr=False)
+
+    def __post_init__(self) -> None:
+        if self.edge_config is None or self.edge_config.modules is MISSING:
+            return
+        for mod in self.edge_config.modules:
+            _bind_to_profile(mod, self.profile_config)
 
     def take_snapshot(self) -> None:
         """Deep-copy current configs for later diff detection."""
@@ -80,52 +177,82 @@ class ConfigState:
             return self._snapshot.get("edge")
         return self._snapshot.get("profile")
 
-    def get_changed_modules(self) -> list[ConfigurationModuleName]:
-        """Compare current state against snapshot, return names of changed modules.
-
-        Compares module data by serializing to dicts and checking equality.
-        """
-        changed: list[ConfigurationModuleName] = []
-
-        # Determine which config to diff (edge for edge targets, profile for profile targets)
+    @property
+    def target_config(self) -> EdgeConfiguration | EnterpriseConfigurationProfile:
+        """The config that edits apply to: the edge's, else the profile's."""
         if self.target_type == "edge" and self.edge_config is not None:
-            current_config = self.edge_config
-        else:
-            current_config = self.profile_config
-        snapshot_config = self.snapshot_for_target()
+            return self.edge_config
+        return self.profile_config
 
-        if snapshot_config is None or current_config.modules is MISSING:
-            return changed
+    def module(
+        self, name: ConfigurationModuleName | str, *, create: bool = False
+    ) -> AnyConfigurationModule:
+        """The target config's module called *name* (an intent-level name works).
 
-        # Build a map of snapshot modules by name
-        snapshot_modules: dict[str, AnyConfigurationModule] = {}
-        if snapshot_config.modules is not MISSING:
-            for mod in snapshot_config.modules:
-                snapshot_modules[mod.name] = mod
+        With ``create=True``, an edge target that has no ``firewall`` or ``QOS``
+        module gets an empty one, which saves as an insert. Nothing is copied
+        from the profile. Raises ``ValueError`` if there is no such module and
+        none can be created.
+        """
+        return _module_of(
+            self.target_config,
+            resolve_module_name(name),
+            create=create,
+            profile=self.profile_config,
+        )
 
-        for mod in current_config.modules:
-            snap_mod = snapshot_modules.get(mod.name)
-            if snap_mod is None:
-                # New module not in snapshot
-                changed.append(ConfigurationModuleName(mod.name))
-                continue
+    @property
+    def edge(self) -> LayerView:
+        """The edge layer's module data. Raises ``ValueError`` without an edge layer."""
+        if self.target_type != "edge" or self.edge_config is None:
+            raise ValueError("this state has no edge layer")
+        return LayerView(self.edge_config, self.profile_config)
 
-            # Compare data dicts
-            current_data = mod.data
-            snapshot_data = snap_mod.data
+    @property
+    def profile(self) -> LayerView:
+        """The profile layer's module data."""
+        return LayerView(self.profile_config)
 
-            if isinstance(current_data, dict) and isinstance(snapshot_data, dict):
-                if current_data != snapshot_data:
-                    changed.append(ConfigurationModuleName(mod.name))
-            elif isinstance(current_data, BaseModel) and isinstance(
-                snapshot_data, BaseModel
-            ):
-                if current_data.model_dump() != snapshot_data.model_dump():
-                    changed.append(ConfigurationModuleName(mod.name))
-            elif current_data != snapshot_data:
-                changed.append(ConfigurationModuleName(mod.name))
+    @property
+    def spent(self) -> bool:
+        """True once this state has written to the VCO."""
+        return self._spent
 
-        return changed
+    def mark_spent(self) -> None:
+        """Record that this state has written to the VCO."""
+        self._spent = True
+
+    def plan(self) -> ConfigPlan:
+        """Plan the write of every module of the target config, in order.
+
+        Each module is planned relative to the raw data it was read from. An
+        edge module also reconciles its segments with the profile's module of
+        the same name. Raises ``LossyFieldError`` if an edit cannot be written.
+        """
+        config = self.target_config
+        if config.modules is MISSING:
+            return ConfigPlan(modules=())
+        level = (
+            ConfigContext.PROFILE
+            if self.target_type == "profile"
+            else ConfigContext.EDGE
+        )
+        plans: list[ModulePlan] = []
+        for mod in config.modules:
+            profile_mod = (
+                _find_module(self.profile_config, mod.name)
+                if level is ConfigContext.EDGE
+                else None
+            )
+            plans.append(plan_module(mod, level=level, profile=profile_mod))
+        return ConfigPlan(modules=tuple(plans))
+
+    def get_changed_modules(self) -> list[ConfigurationModuleName]:
+        """Names of the modules that a save would write.
+
+        Raises ``LossyFieldError`` as :meth:`plan` does.
+        """
+        return [ConfigurationModuleName(m.name) for m in self.plan().changed]
 
     def get_field_changes(
         self,
@@ -183,6 +310,7 @@ class SaveResult:
 
     modules_updated: list[ConfigurationModuleName] = field(default_factory=list)
     modules_inserted: list[ConfigurationModuleName] = field(default_factory=list)
+    plan: ConfigPlan | None = None
     warnings: list[ValidationWarning] = field(default_factory=list)
     validation_errors: list[ValidationError] = field(default_factory=list)
     # Optional count for downstream integrations managing enterprise objects.
@@ -199,6 +327,61 @@ class SaveResult:
             from pyvelo_intent.errors import SaveValidationError
 
             raise SaveValidationError(self.validation_errors)
+
+
+# ---------------------------------------------------------------------------
+# Module lookup
+# ---------------------------------------------------------------------------
+
+
+def _find_module(config: ConfigurationBase, name: str) -> AnyConfigurationModule | None:
+    if config.modules is MISSING:
+        return None
+    return next((m for m in config.modules if m.name == name), None)
+
+
+@runtime_checkable
+class _ProfileBindable(Protocol):
+    def bind_profile(self, profile_data: object) -> None: ...
+
+
+def _bind_to_profile(
+    module: AnyConfigurationModule, profile_config: ConfigurationBase
+) -> None:
+    """Bind *module*'s data to the raw data of the profile module of the same name."""
+    data: object = module.data
+    if not isinstance(data, _ProfileBindable):
+        return
+    profile_module = _find_module(profile_config, module.name)
+    data.bind_profile(profile_module.raw_data if profile_module else MISSING)
+
+
+def _module_of(
+    config: ConfigurationBase,
+    name: ConfigurationModuleName,
+    *,
+    create: bool,
+    profile: ConfigurationBase | None = None,
+) -> AnyConfigurationModule:
+    """*config*'s module *name*; with *create*, an empty edge one if it has none.
+
+    A module that is created is bound to *profile* (see :func:`_bind_to_profile`).
+    """
+    existing = _find_module(config, name)
+    if existing is not None:
+        return existing
+    if create and isinstance(config, EdgeConfiguration):
+        if config.id_ is MISSING or config.id_ is None:
+            raise ValueError(f"Cannot create module '{name}': configuration has no ID")
+        new = new_edge_module(name, config.id_).for_edge()
+        if profile is not None:
+            _bind_to_profile(new, profile)
+        if config.modules is MISSING:
+            config.modules = []
+        config.modules.append(new)
+        return new
+    # Raises ValueError, the same as for any module the config does not have.
+    return config.get_module(name)
 
 
 # ---------------------------------------------------------------------------

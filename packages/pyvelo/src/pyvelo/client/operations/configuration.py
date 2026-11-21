@@ -5,11 +5,16 @@ from typing import TYPE_CHECKING, Any, Protocol
 
 from pydantic import MISSING
 
-from pyvelo.client.exceptions import VcoOperationError
+from pyvelo.client.exceptions import (
+    ConfigConflictError,
+    VcoOperationError,
+    is_version_conflict,
+)
 from pyvelo.client.models.configuration.device_settings.root import DeviceSettingsData
 from pyvelo.client.models.configuration.firewall.root import FirewallData
 from pyvelo.client.models.configuration.qos.root import QosData
 from pyvelo.client.models.configuration.wan.root import WanData
+from pyvelo.client.module_write import plan_module, update_request
 from pyvelo.client.operations._tagging import CONFIG, PM_FLOW, domain_tag
 from pyvelo.client.schemas.configuration import (
     AnyConfigurationModule,
@@ -17,9 +22,7 @@ from pyvelo.client.schemas.configuration import (
     ConfigurationModuleBase,
     ConfigurationModuleList,
     DeleteConfiguration,
-    DeviceSettingsModuleUpdate,
     DeviceSettingsRefs,
-    FirewallModuleUpdate,
     GetAllApplicationsResult,
     GetApplicationsResult,
     GetConfiguration,
@@ -28,9 +31,7 @@ from pyvelo.client.schemas.configuration import (
     GetRoutableApplications,
     InsertConfigurationModule,
     InsertConfigurationModuleResult,
-    QosModuleUpdate,
     UpdateConfigurationModule,
-    WanModuleUpdate,
 )
 from pyvelo.client.schemas.profiles import (
     CreateProfile,
@@ -115,12 +116,25 @@ class ConfigurationMixin(Protocol):
     async def update_configuration_module(
         self: VcoClientBaseProtocol, request: UpdateConfigurationModule
     ) -> None:
-        """Update an existing configuration module's data and, optionally, refs."""
+        """Update an existing configuration module's data and, optionally, refs.
+
+        Raises ``ConfigConflictError`` if the request carries a ``version`` and
+        the VCO answers that no rows were modified, which is how it reports a
+        version other than the module's current one. A request without a
+        version is not checked.
+        """
         result = await self.portal(
             "configuration/updateConfigurationModule",
             request,
             RowsModifiedConfirmation,
         )
+        version = request.version
+        if version is not MISSING and is_version_conflict(
+            error=result.error, rows=result.rows
+        ):
+            raise ConfigConflictError(
+                request.configuration_module_id, version, "no rows were modified"
+            )
         if result.error:
             raise VcoOperationError("update configuration module", result.error)
 
@@ -132,28 +146,25 @@ class ConfigurationMixin(Protocol):
         *,
         enterprise_id: int | None = None,
         refs: DeviceSettingsRefs | dict[str, Any] | None = None,
+        profile: ConfigurationModuleBase | None = None,
     ) -> None:
-        if isinstance(data, DeviceSettingsData):
-            refs_value = (
-                DeviceSettingsRefs.model_validate(refs) if refs is not None else MISSING
-            )
-            update = DeviceSettingsModuleUpdate(data=data, refs=refs_value)
-        elif isinstance(data, QosData):
-            qos_refs = refs if isinstance(refs, dict) else MISSING
-            update = QosModuleUpdate(data=data, refs=qos_refs)
-        elif isinstance(data, WanData):
-            update = WanModuleUpdate(data=data)
-        elif isinstance(data, FirewallData):
-            update = FirewallModuleUpdate(data=data)
-        else:
-            raise TypeError(f"Unsupported data type: {type(data).__name__}")
+        """Write *data* to *module*: its raw data as read, plus the caller's changes.
 
-        await self.update_configuration_module(
-            UpdateConfigurationModule(
-                configuration_module_id=module.id_,
-                enterprise_id=enterprise_id if enterprise_id is not None else MISSING,
-                update=update,
+        Sends nothing if *data* (and *refs*) change nothing. Give the *profile*'s
+        module of the same name to reconcile the segments an edge module lacks.
+        Raises ``ConfigConflictError`` if the module changed since it was read.
+        """
+        if not isinstance(data, DeviceSettingsData | WanData | QosData | FirewallData):
+            raise TypeError(f"Unsupported data type: {type(data).__name__}")
+        if module.is_new:
+            raise ValueError(
+                "module has not been inserted yet; insert it instead of updating"
             )
+        plan = plan_module(module, data, refs=refs, profile=profile)
+        if plan.operation == "none":
+            return
+        await self.update_configuration_module(
+            update_request(module, plan, enterprise_id)
         )
 
     @domain_tag(CONFIG)

@@ -22,7 +22,7 @@ class EdgeResolver(BaseResolver[EdgeKey, EdgeIdentity]):
     """Resolves an edge identifier to an :class:`EdgeIdentity`.
 
     Accepts:
-        - :class:`EdgeName`: human-readable edge name (case-insensitive, fuzzy).
+        - :class:`EdgeName`: human-readable edge name (exact or case-insensitive).
         - :class:`EdgeId`: numeric VCO edge ID.
         - :class:`EdgeLogicalId`: UUID logical ID.
 

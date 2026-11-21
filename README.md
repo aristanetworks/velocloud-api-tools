@@ -114,7 +114,6 @@ async def main() -> None:
 
         for change in state.get_field_changes():
             print(change.module, change.path)
-        # firewall segments[Global Segment].outbound_override
         # firewall segments[Global Segment].outbound[block-ssh]
 
         result = await pipeline.save(state, dry_run=True)  # drop dry_run to write

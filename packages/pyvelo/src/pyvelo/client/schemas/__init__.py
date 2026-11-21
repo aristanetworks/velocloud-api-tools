@@ -1,4 +1,5 @@
 from pyvelo.client.schemas.configuration import (
+    EMPTY_EDGE_MODULE_DATA,
     AnyConfigurationModule,
     Configuration,
     ConfigurationBase,
@@ -6,22 +7,19 @@ from pyvelo.client.schemas.configuration import (
     ConfigurationModuleUpdate,
     ControlPlaneConfigurationModule,
     DeviceSettingsConfigurationModule,
-    DeviceSettingsModuleUpdate,
     EdgeConfiguration,
     EnterpriseConfiguration,
     EnterpriseConfigurationModule,
     EnterpriseConfigurationProfile,
     FirewallConfigurationModule,
-    FirewallModuleUpdate,
     InsertConfigurationModule,
     InsertConfigurationModuleResult,
     OperatorConfiguration,
     OperatorConfigurationModule,
     QosConfigurationModule,
-    QosModuleUpdate,
     UpdateConfigurationModule,
     WanConfigurationModule,
-    WanModuleUpdate,
+    new_edge_module,
 )
 from pyvelo.client.schemas.edge import (
     CreateEdge,
@@ -157,6 +155,7 @@ from pyvelo.client.schemas.profiles import (
 )
 
 __all__ = [
+    "EMPTY_EDGE_MODULE_DATA",
     "AddressObjectGroup",
     "AnyConfigurationModule",
     "AnyEnterpriseService",
@@ -180,7 +179,6 @@ __all__ = [
     "DataCenterService",
     "DatacenterNsdConfig",
     "DeviceSettingsConfigurationModule",
-    "DeviceSettingsModuleUpdate",
     "DisableClusterBackHaul",
     "DisableClusterHub",
     "DisableClusterToEdgeBridge",
@@ -227,7 +225,6 @@ __all__ = [
     "EnterpriseServiceBase",
     "EventSorting",
     "FirewallConfigurationModule",
-    "FirewallModuleUpdate",
     "GeneratedCertificate",
     "GenericService",
     "GetConfiguration",
@@ -284,7 +281,6 @@ __all__ = [
     "PrivateNetwork",
     "PrivateNetworkData",
     "QosConfigurationModule",
-    "QosModuleUpdate",
     "SdwanEdgePeerPathLink",
     "SdwanEdgePeerPathMetricsItem",
     "SdwanEdgePeerPathPair",
@@ -292,8 +288,8 @@ __all__ = [
     "Site",
     "UpdateConfigurationModule",
     "WanConfigurationModule",
-    "WanModuleUpdate",
     "WssIntegrationService",
     "check_int_zero",
     "check_string_empty",
+    "new_edge_module",
 ]

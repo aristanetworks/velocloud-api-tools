@@ -54,7 +54,7 @@ class DeviceSettingsClientConnectorConfigRef(ConfigurationRef):
     ref: Literal["deviceSettings:clientConnector:config"] | MISSING = MISSING
     object_: Annotated[Literal["CLIENT_CONNECTOR"] | MISSING, Alias("object")] = MISSING
     status: str | None | MISSING = MISSING
-    data: dict[str, Any] | MISSING = MISSING
+    data: dict[str, Any] | None | MISSING = MISSING
 
 
 # Cloud Security Service (CSS) Refs

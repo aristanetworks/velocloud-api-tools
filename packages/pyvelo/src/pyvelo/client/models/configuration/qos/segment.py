@@ -49,24 +49,15 @@ class CosMapping(VcoModel):
     override: Annotated[bool, OverrideFlag] = False
 
 
-# Web Proxy Models
-
-
 class WebProxy(VcoModel):
     providers: list[Any] = Field(default_factory=list)
-
-
-# Complete Segment Model
 
 
 class QosSegment(VcoModel):
     segment: SegmentMetadata
     rules: Annotated[list[QosRule], KeyField("name")] = Field(default_factory=list)
-
     defaults: Annotated[list[QosRule] | MISSING, ProfileOnly, KeyField("name")] = (
         MISSING
     )
-    cos_mapping: Annotated[CosMapping | MISSING, ProfileOnly] = MISSING
-
-    name: str | None = None
-    web_proxy: WebProxy = Field(default_factory=WebProxy)
+    cos_mapping: CosMapping | MISSING = MISSING
+    web_proxy: WebProxy | MISSING = MISSING

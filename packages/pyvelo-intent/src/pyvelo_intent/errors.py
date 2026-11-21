@@ -32,3 +32,17 @@ class SaveValidationError(IntentError):
         super().__init__(
             f"save blocked by {len(self.errors)} validator error(s): {summary}"
         )
+
+
+class StateSpentError(IntentError):
+    """A ``ConfigState`` was used after it wrote to the VCO.
+
+    A write (even one that failed part-way) leaves the state's raw snapshots out
+    of date, so a further apply or save from it could overwrite what was just
+    written. Load a new state instead.
+    """
+
+    def __init__(self) -> None:
+        super().__init__(
+            "this ConfigState has already written to the VCO; load a new one"
+        )

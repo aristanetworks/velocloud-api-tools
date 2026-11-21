@@ -144,14 +144,24 @@ class TestResolveName:
         assert name == "Branch-LAX"
         assert val == 2
 
-    def test_fuzzy_single_match_auto_resolves(self):
+    def test_near_miss_raises_with_the_candidate(self):
+        from pyvelo.config.resolver import ResolutionError, resolve_name
+
+        with pytest.raises(ResolutionError) as exc:
+            _ = resolve_name(
+                "Example-Edg",
+                {"Example-Edge": 1, "Branch-LAX": 2, "DC-Primary": 3},
+                "edge",
+            )
+        assert exc.value.candidates == ["Example-Edge"]
+
+    def test_fuzzy_is_opt_in(self):
         from pyvelo.config.resolver import resolve_name
 
         name, val = resolve_name(
-            "Example-Edg", {"Example-Edge": 1, "Branch-LAX": 2, "DC-Primary": 3}, "edge"
+            "Example-Edg", {"Example-Edge": 1, "Branch-LAX": 2}, "edge", fuzzy=True
         )
-        assert name == "Example-Edge"
-        assert val == 1
+        assert (name, val) == ("Example-Edge", 1)
 
     def test_fuzzy_ambiguous_raises(self):
         from pyvelo.config.resolver import resolve_name
