@@ -1,10 +1,11 @@
 """ConfigPipeline: orchestration layer for load → apply → save configuration workflow."""
 
-from typing import Any, cast
+from typing import Any, Protocol, cast, runtime_checkable
 
 from pydantic import MISSING
 from pyvelo.client.enums.configuration import ConfigurationModuleName
 from pyvelo.client.enums.profiles import GetConfigurationWith
+from pyvelo.client.exceptions import UnboundError
 from pyvelo.client.module_write import ModulePlan, update_request
 from pyvelo.client.protocol import VcoClientProtocol
 from pyvelo.client.schemas.configuration import (
@@ -212,8 +213,10 @@ class ConfigPipeline:
         1. Locate the module on the target config. A ``firewall`` or ``QOS``
            module that an edge lacks starts as an empty layer (nothing is
            copied from the profile) and is inserted on save.
-        2. Call ``merge_patch()`` on the module's typed data.
-        3. Return the updated :class:`ConfigState`.
+        2. On an edge target, add from the profile each segment the patch
+           names that the edge lacks, so it carries the profile's descriptor.
+        3. Call ``merge_patch()`` on the module's typed data.
+        4. Return the updated :class:`ConfigState`.
 
         MISSING fields on the patch target are preserved as MISSING so callers
         downstream (reconciler, YAML export) can distinguish "unset" from
@@ -231,6 +234,8 @@ class ConfigPipeline:
             raise TypeError(
                 f"Module '{internal_name}' has unstructured data; merge_patch requires a typed module"
             )
+        if state.target_type == "edge":
+            patch = _name_patched_segments(mod.data, patch)
         _ = mod.data.merge_patch(patch, resolvers=self._resolvers)
 
         return state
@@ -524,6 +529,50 @@ def build_default_pipeline(client: VcoClientProtocol) -> ConfigPipeline:
     register_default_aspects(aspects)
 
     return ConfigPipeline(client, resolvers=resolvers, aspect_registry=aspects)
+
+
+class _SegmentMetadata(Protocol):
+    @property
+    def name(self) -> str: ...
+
+
+class _SegmentEntry(Protocol):
+    @property
+    def segment(self) -> _SegmentMetadata: ...
+
+
+@runtime_checkable
+class _SegmentLayer(Protocol):
+    def segment(self, name: str) -> _SegmentEntry: ...
+
+
+def _name_patched_segments(
+    data: VcoModel, patch: dict[str, object]
+) -> dict[str, object]:
+    """*patch*, with each segment it edits keyed by the name the layer has it under.
+
+    A segment the edge layer lacks is first added to it, from the profile
+    (``segment(name)``): it takes the profile's descriptor and IDs, so it does
+    not depend on a segment resolver having been loaded. A name that differs
+    from the profile's only in case finds it. A segment the profile does not
+    have is left to ``merge_patch``, which resolves or refuses it; so is a
+    deletion. Raises ``ValueError`` if two keys name the same segment.
+    """
+    segments = patch.get("segments")
+    if not isinstance(data, _SegmentLayer) or not isinstance(segments, dict):
+        return patch
+    named: dict[str, object] = {}
+    for key, segment_patch in cast(dict[str, object], segments).items():
+        name = key
+        if isinstance(segment_patch, dict):
+            try:
+                name = data.segment(key).segment.name
+            except (ValueError, UnboundError):
+                pass  # not a profile segment, or no profile: merge_patch decides
+        if name in named:
+            raise ValueError(f"the patch names segment {name!r} twice")
+        named[name] = segment_patch
+    return {**patch, "segments": named}
 
 
 def _require_unspent(state: ConfigState) -> None:

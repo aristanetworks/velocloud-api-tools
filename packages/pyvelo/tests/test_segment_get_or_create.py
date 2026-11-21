@@ -68,6 +68,29 @@ def test_same_id_under_another_name_is_reused():
     assert len(fw.segments) == 1
 
 
+def test_profile_segment_is_found_ignoring_case():
+    fw = edge_fw()
+    fw.bind_profile(PROFILE)
+    guest = fw.segment("guest")
+    assert (guest.segment.name, guest.segment.segment_id) == ("Guest", 2)
+    assert fw.segment("GUEST") is guest and len(fw.segments) == 2
+
+
+def test_an_exact_profile_name_wins_over_one_that_differs_in_case():
+    fw = edge_fw()
+    fw.bind_profile(
+        {"segments": [PROFILE["segments"][1], {"segment": desc(3, "guest")}]}
+    )
+    assert fw.segment("guest").segment.segment_id == 3
+
+
+def test_a_name_the_profile_lacks_in_any_case_still_raises():
+    fw = edge_fw()
+    fw.bind_profile(PROFILE)
+    with pytest.raises(ValueError, match="Profile segments: Global Segment, Guest"):
+        fw.segment("Gest")
+
+
 def test_qos_placeholder_has_empty_rules():
     qos = QosData.model_validate({"segments": []})
     qos.bind_profile(PROFILE)

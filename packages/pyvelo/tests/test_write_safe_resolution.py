@@ -254,13 +254,51 @@ def test_string_ids_name_first_then_known_id_then_error():
         _ = h.merge_patch({"uplink": {"logical_id": "ff:ff:ff"}}, resolvers=Fake())
 
 
-def test_missing_resolver_is_not_a_resolution_error():
-    class NoTables(Fake):
-        tables: ClassVar[dict[type, Mapping[str, object]]] = {}
+class NoTables(Fake):
+    tables: ClassVar[dict[type, Mapping[str, object]]] = {}
 
+
+def test_missing_resolver_is_not_a_resolution_error():
     fw = fresh()
-    _ = fw.merge_patch({"segments": {"NewSeg": {"outbound": {}}}}, resolvers=NoTables())
-    assert fw.segments[1].segment.name == "NewSeg"
+    with pytest.raises(LookupError) as exc:
+        _ = fw.merge_patch(
+            {"segments": {"NewSeg": {"outbound": {}}}}, resolvers=NoTables()
+        )
+    assert not isinstance(exc.value, ResolutionError)
+
+
+def test_a_new_segment_no_resolver_can_give_ids_to_is_refused_by_name():
+    for resolvers in (NoTables(), None):
+        fw = fresh()
+        with pytest.raises(LookupError, match="'NewSeg'.*segment_id") as exc:
+            _ = fw.merge_patch({"segments": {"NewSeg": {}}}, resolvers=resolvers)
+        assert "segment_logical_id" in str(exc.value)
+        assert [s.segment.name for s in fw.segments] == ["Global Segment"]
+
+
+def test_a_new_segment_with_its_ids_given_needs_no_resolver():
+    fw = fresh()
+    segment = {
+        "segmentId": 7,
+        "type": "REGULAR",
+        "segmentLogicalId": str(uuid.UUID(int=7)),
+    }
+    _ = fw.merge_patch(
+        {"segments": {"NewSeg": {"segment": segment, "outbound": {}}}},
+        resolvers=NoTables(),
+    )
+    meta = fw.segments[1].segment
+    assert (meta.name, meta.segment_id, meta.segment_logical_id) == (
+        "NewSeg",
+        7,
+        uuid.UUID(int=7),
+    )
+
+
+def test_a_new_item_whose_key_is_not_a_name_needs_no_ids():
+    lan = Lan()
+    _ = lan.merge_patch({"networks": {"corp": {}}}, resolvers=NoTables())
+    assert lan.networks[0].segment_id == 0
 
 
 def test_resolution_error_is_one_class_on_both_import_paths():

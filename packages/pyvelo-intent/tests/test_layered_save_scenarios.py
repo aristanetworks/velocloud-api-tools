@@ -148,6 +148,8 @@ async def test_missing_module_insert_has_only_local_content():
     (req,) = client.insert_requests
     assert client.update_requests == []
     segments = req.data["segments"]
+    assert [s["segment"]["name"] for s in segments] == ["Global Segment", "Guest"]
+    assert segments[0]["segment"] == desc(0, "Global Segment")
     assert [r["name"] for r in segments[0]["outbound"]] == ["block-ssh"]
     assert segments[1] == {"segment": desc(2, "Guest"), "outbound": []}
     assert "allow-all" not in str(req.data)
@@ -168,6 +170,50 @@ async def test_segment_key_in_another_case_edits_the_segment_it_names():
         desc(2, "Guest"),  # reconciled from the profile, not added twice
     ]
     assert [r["name"] for r in segments[0]["outbound"]] == ["x"]
+
+
+@pytest.mark.parametrize("key", ["Guest", "guest"])
+@pytest.mark.parametrize("with_resolver", [False, True])
+async def test_new_segment_by_name_takes_the_profiles_descriptor(
+    key: str, with_resolver: bool
+):
+    client, state = MockVcoClient(), make_state()
+    resolvers = await segment_resolvers() if with_resolver else None
+    pipeline = ConfigPipeline(client, resolvers=resolvers)
+    await pipeline.apply(
+        state,
+        module="firewall",
+        patch={"segments": {key: {"outbound": {"x": rule("x")}}}},
+    )
+    await pipeline.save(state)
+    segments = client.update_requests[0].update.data["segments"]
+    assert [s["segment"] for s in segments] == [
+        desc(0, "Global Segment"),
+        desc(2, "Guest"),
+    ]
+    assert [r["name"] for r in segments[1]["outbound"]] == ["x"]
+
+
+async def test_segment_the_profile_lacks_is_refused_without_a_resolver():
+    client, state = MockVcoClient(), make_state()
+    pipeline = ConfigPipeline(client)
+    with pytest.raises(LookupError, match="Nowhere"):
+        await pipeline.apply(
+            state,
+            module="firewall",
+            patch={"segments": {"Nowhere": {"outbound": {"x": rule("x")}}}},
+        )
+    assert client.calls == []
+
+
+async def test_a_patch_that_names_one_segment_twice_is_refused():
+    state = make_state()
+    with pytest.raises(ValueError, match="Guest"):
+        await ConfigPipeline(MockVcoClient()).apply(
+            state,
+            module="firewall",
+            patch={"segments": {"Guest": {}, "guest": {}}},
+        )
 
 
 async def test_setting_a_default_on_an_inherited_key_is_refused():

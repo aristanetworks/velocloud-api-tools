@@ -769,6 +769,37 @@ def _canonical_name(
     return canonical if isinstance(canonical, str) else name
 
 
+def _require_ids_for_name(
+    item: VcoModel, identity_type: type[object] | None, key_path: str, key: str
+) -> None:
+    """Refuse *item*, named *key*, if the IDs of that name were not set on it.
+
+    *identity_type* is what the field at *key_path* is the ``NameOf``. The IDs
+    are the ``Resolvable`` fields for that type next to it. One that was neither
+    in the patch nor filled from the name is still at its default.
+    """
+    if identity_type is None:
+        return
+    owner: object = item
+    for part in key_path.split(".")[:-1]:
+        owner = _field_value(owner, part)
+    if not isinstance(owner, VcoModel):
+        return
+    unset = [
+        name
+        for name, fi in type(owner).model_fields.items()
+        if (resolvable := get_resolvable(fi)) is not None
+        and resolvable.identity_type is identity_type
+        and name not in owner.model_fields_set
+    ]
+    if unset:
+        raise LookupError(
+            f"Cannot add {key!r} by name: no loaded {identity_type.__name__} "
+            + "resolver or profile entry has it, and the patch does not give "
+            + f"{', '.join(unset)}"
+        )
+
+
 def _new_keyed_item(
     parent: VcoModel,
     item_type: _ListItemType,
@@ -777,11 +808,18 @@ def _new_keyed_item(
     key: str,
     resolvers: IdentityResolver | None,
 ) -> VcoModel:
-    """Build a new KeyField list item from its patch, with the key value written in."""
+    """Build a new KeyField list item from its patch, with the key value written in.
+
+    Raises ``LookupError`` (not ``ResolutionError``) if the key is a name
+    (``NameOf``) and the IDs that go with it were neither in the patch nor found
+    by a resolver: the item would carry the model's defaults, which are another
+    item's IDs.
+    """
     item_patch = _inject_key_path(patch, key_path, key)
     if resolvers is not None:
         item_patch = _pre_resolve(item_type.fields, item_patch, resolvers)
     item = item_type.validate(item_patch)
+    _require_ids_for_name(item, _key_name_of(item_type, key_path), key_path, key)
     # Give the item the parent's config level so context defaults resolve
     # for the right level (EDGE vs PROFILE).
     if parent.config_context is not None:

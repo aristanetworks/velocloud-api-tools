@@ -88,6 +88,9 @@ def profile_placeholder(
 ) -> dict[str, Any]:
     """The empty segment entry for the profile segment called *name*.
 
+    An exact match wins; failing that, the first one that differs only in case
+    (the resolvers match names the same way).
+
     Raises ``UnboundError`` if *profile_segments* is None (the data is not bound
     to a profile) and ``ValueError`` if the profile has no segment of that name.
     """
@@ -96,13 +99,23 @@ def profile_placeholder(
             f"segment {name!r} is not in this layer, and this object is not bound to a profile; load it through ConfigPipeline"
         )
     available: list[str] = []
+    case_insensitive: Mapping[str, object] | None = None
     for entry in profile_segments:
         descriptor = entry.get("segment")
         if not _is_dict(descriptor):
             continue
-        if descriptor.get("name") == name:
+        profile_name = descriptor.get("name")
+        if profile_name == name:
             return placeholder_segment(entry, module_name)
-        available.append(str(descriptor.get("name")))
+        if (
+            case_insensitive is None
+            and isinstance(profile_name, str)
+            and profile_name.lower() == name.lower()
+        ):
+            case_insensitive = entry
+        available.append(str(profile_name))
+    if case_insensitive is not None:
+        return placeholder_segment(case_insensitive, module_name)
     raise ValueError(
         f"Segment {name!r} not found. Profile segments: {', '.join(available)}"
     )
