@@ -1,5 +1,6 @@
 """Tests for firewall module markers (KeyField, OverrideFlag)."""
 
+import pytest
 from pyvelo.client.enums.enterprise import NetworkSegmentType
 from pyvelo.client.models.configuration.common import SegmentMetadata
 from pyvelo.client.models.configuration.firewall.root import FirewallData
@@ -7,6 +8,7 @@ from pyvelo.client.models.configuration.firewall.rule_action import OutboundRule
 from pyvelo.client.models.configuration.firewall.rule_match import OutboundRuleMatch
 from pyvelo.client.models.configuration.firewall.rules import FirewallOutboundRule
 from pyvelo.client.models.configuration.firewall.segment import FirewallSegment
+from pyvelo.core import ConfigContext
 from pyvelo.core.fields import get_key_field, has_override_flag
 
 
@@ -131,3 +133,20 @@ class TestMergeWithMarkers:
         )
 
         assert seg.outbound_override is True
+
+
+class TestOutboundRuleMatchKeepsItsConfigLevel:
+    """``OutboundRuleMatch.model_post_init`` calls up, so the level is not dropped."""
+
+    @pytest.mark.parametrize("version", ["IPv4", "IPv6", "IPv4v6"])
+    @pytest.mark.parametrize("level", [ConfigContext.EDGE, ConfigContext.PROFILE])
+    def test_a_match_keeps_the_config_level_it_was_validated_at(
+        self, version: str, level: ConfigContext
+    ):
+        match = OutboundRuleMatch.model_validate(
+            {"ipVersion": version}, context={"config_level": level}
+        )
+        assert match.config_context is level
+
+    def test_a_match_validated_without_a_level_has_none(self):
+        assert OutboundRuleMatch.model_validate({}).config_context is None
