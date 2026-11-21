@@ -136,6 +136,14 @@ def _item_key(
     return current if isinstance(current, (str, int, float)) else None
 
 
+def _same_key(raw_key: object, parsed_key: object) -> bool:
+    """Whether a key read from raw JSON is the key the parse produced from it.
+
+    Tolerates coercion by the parse: raw ``"0"`` or ``0.0`` is parsed key ``0``.
+    """
+    return raw_key == parsed_key or str(raw_key) == str(parsed_key)
+
+
 def _list_keys(items: list[object], node: _KeyedList) -> list[str | int | float] | None:
     """The key of every item, or None unless every item has one and they are distinct."""
     keys = [_item_key(item, node.item, node.key_path) for item in items]
@@ -226,7 +234,9 @@ def _rebase_keyed_list(
     """Rebase a keyed list item by item, or None when the items cannot be matched.
 
     *raw* and *before* are paired by position, which is only sound while they
-    have the same length. *before* and *after* are paired by key.
+    have the same length and the parse kept the order. A raw item whose own key
+    is readable must therefore agree with the key of the *before* item at its
+    position. *before* and *after* are paired by key.
     """
     if len(raw) != len(before):
         return None
@@ -234,6 +244,10 @@ def _rebase_keyed_list(
     after_keys = _list_keys(after, node)
     if before_keys is None or after_keys is None:
         return None
+    for raw_item, before_key in zip(raw, before_keys, strict=True):
+        raw_key = _item_key(raw_item, node.item, node.key_path)
+        if raw_key is not None and not _same_key(raw_key, before_key):
+            return None
     position = {key: i for i, key in enumerate(before_keys)}
     return [
         _rebase(raw[position[key]], before[position[key]], item, node.item)

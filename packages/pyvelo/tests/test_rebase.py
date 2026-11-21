@@ -208,3 +208,43 @@ def test_raw_changes_untyped_lists_are_whole_changes():
     assert raw_changes({"l": [{"name": "a"}]}, {"l": [{"name": "b"}]}) == [
         RawChange("l", [{"name": "a"}], [{"name": "b"}])
     ]
+
+
+class Vlan(VcoModel):
+    vlan_id: int
+    label: str = ""
+
+
+class Vlans(VcoModel):
+    vlans: Annotated[list[Vlan], KeyField("vlan_id")] = Field(default_factory=list)
+
+
+def test_reordered_raw_list_is_replaced_whole_not_edited_in_the_wrong_item():
+    # Parsing put the items in a different order than raw has them, so pairing
+    # raw to before by position would give b's raw item a's edit.
+    raw = {
+        "pols": [
+            {"ruleName": "b", "x": "B"},
+            {"ruleName": "a", "x": "A"},
+        ]
+    }
+    before = {"pols": [{"ruleName": "a", "hits": 1}, {"ruleName": "b", "hits": 2}]}
+    after = {"pols": [{"ruleName": "a", "hits": 9}, {"ruleName": "b", "hits": 2}]}
+    assert rebase(raw, before, before, Pols) == raw
+    assert rebase(raw, before, after, Pols) == after
+
+
+def test_coerced_key_still_pairs_and_keeps_unknown_keys():
+    raw = {"vlans": [{"vlanId": "0", "label": "x", "future": 1}]}
+    before = {"vlans": [{"vlanId": 0, "label": "x"}]}
+    after = {"vlans": [{"vlanId": 0, "label": "y"}]}
+    assert rebase(raw, before, after, Vlans) == {
+        "vlans": [{"vlanId": "0", "label": "y", "future": 1}]
+    }
+
+
+def test_unreadable_raw_key_keeps_positional_pairing():
+    raw = {"pols": [{"hits": 1, "x": 1}]}  # no key in raw; the parse supplied one
+    before = {"pols": [{"ruleName": "a", "hits": 1}]}
+    after = {"pols": [{"ruleName": "a", "hits": 2}]}
+    assert rebase(raw, before, after, Pols) == {"pols": [{"hits": 2, "x": 1}]}
