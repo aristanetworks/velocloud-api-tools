@@ -279,18 +279,20 @@ def resolve_name[T](
     by_name: dict[str, T],
     entity_label: str,
     *,
+    fuzzy: bool = False,
     n: int = 5,
     cutoff: float = 0.6,
 ) -> tuple[str, T]:
-    """Resolve a name with case-insensitive and fuzzy matching.
+    """Resolve a name on an exact or case-insensitive match.
 
     Returns ``(canonical_name, value)`` on success.
 
     Resolution order:
     1. Exact match
     2. Case-insensitive match
-    3. Fuzzy match — auto-resolves if exactly one candidate,
-       otherwise raises with the list of candidates.
+    3. Anything else raises ``ResolutionError`` whose ``candidates`` hold the
+       close matches. With ``fuzzy=True`` a single close match is accepted
+       instead of raising.
     """
     # 1. Exact match
     if name in by_name:
@@ -302,17 +304,16 @@ def resolve_name[T](
     if canonical is not None:
         return canonical, by_name[canonical]
 
-    # 3. Fuzzy match
-    suggestions = difflib.get_close_matches(
-        name.lower(), lower_map.keys(), n=n, cutoff=cutoff
-    )
-    original_suggestions = [lower_map[s] for s in suggestions]
+    # 3. Opt-in fuzzy match: accept only a single close candidate
+    if fuzzy:
+        suggestions = difflib.get_close_matches(
+            name.lower(), lower_map.keys(), n=n, cutoff=cutoff
+        )
+        if len(suggestions) == 1:
+            matched = lower_map[suggestions[0]]
+            return matched, by_name[matched]
 
-    if len(original_suggestions) == 1:
-        matched = original_suggestions[0]
-        return matched, by_name[matched]
-
-    # No match or ambiguous — raise
+    # No match, or a near miss that was not opted into: raise with candidates
     raise resolution_error(entity_label, name, by_name.keys(), n=n, cutoff=cutoff)
 
 

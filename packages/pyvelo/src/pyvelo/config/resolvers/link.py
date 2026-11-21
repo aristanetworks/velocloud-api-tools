@@ -22,7 +22,7 @@ class LinkResolver(BaseResolver[LinkKey, LinkIdentity]):
     """Resolves a link identifier to a :class:`LinkIdentity`.
 
     Accepts:
-        - :class:`LinkName`: human-readable link name (case-insensitive, fuzzy).
+        - :class:`LinkName`: human-readable link name (exact or case-insensitive).
         - :class:`LinkId`: numeric VCO link ID.
         - :class:`LinkLogicalId`: string logical ID.
         - :class:`LinkInternalId`: UUID internal ID (used by path-stats APIs).
