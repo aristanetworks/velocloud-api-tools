@@ -106,27 +106,64 @@ def profile_placeholder(
         raise UnboundError(
             f"segment {name!r} is not in this layer, and this object is not bound to a profile; load it through ConfigPipeline"
         )
-    available: list[str] = []
-    case_insensitive: Mapping[str, object] | None = None
-    for entry in profile_segments:
-        descriptor = entry.get("segment")
-        if not _is_dict(descriptor):
-            continue
-        profile_name = descriptor.get("name")
-        if profile_name == name:
-            return placeholder_segment(entry, module_name)
-        if (
-            case_insensitive is None
-            and isinstance(profile_name, str)
-            and profile_name.lower() == name.lower()
-        ):
-            case_insensitive = entry
-        available.append(str(profile_name))
-    if case_insensitive is not None:
-        return placeholder_segment(case_insensitive, module_name)
+    entry = _profile_segment_called(profile_segments, name)
+    if entry is not None:
+        return placeholder_segment(entry, module_name)
+    available = [n for e in profile_segments if (n := _segment_name(e)) is not None]
     raise ValueError(
         f"Segment {name!r} not found. Profile segments: {', '.join(available)}"
     )
+
+
+def profile_segment_name(
+    profile_segments: Sequence[Mapping[str, object]] | None, selector: object
+) -> str | None:
+    """The profile's name for the segment *selector* names, or None if it has none.
+
+    *selector* names a segment by its name exactly, else by its name ignoring
+    case (as :func:`profile_placeholder` finds it), else by its ``segmentId``
+    in string form. Raises ``UnboundError`` if *profile_segments* is None (the
+    data is not bound to a profile).
+    """
+    if profile_segments is None:
+        raise UnboundError(
+            f"segment {selector!r}: this object is not bound to a profile; load it through ConfigPipeline"
+        )
+    text = str(selector)
+    entry = _profile_segment_called(profile_segments, text)
+    if entry is None:
+        entry = next(
+            (
+                e
+                for e in profile_segments
+                if (segment_id := segment_id_of(e)) is not None
+                and str(segment_id) == text
+            ),
+            None,
+        )
+    return None if entry is None else _segment_name(entry)
+
+
+def _segment_name(entry: Mapping[str, object]) -> str | None:
+    """``entry["segment"]["name"]``, or None if any step is missing or it is not a string."""
+    descriptor = entry.get("segment")
+    name = descriptor.get("name") if _is_dict(descriptor) else None
+    return name if isinstance(name, str) else None
+
+
+def _profile_segment_called(
+    profile_segments: Sequence[Mapping[str, object]], name: str
+) -> Mapping[str, object] | None:
+    """The profile segment entry called *name*, or None.
+
+    An exact match wins; failing that, the first one that differs only in case
+    (the resolvers match names the same way).
+    """
+    named = [(e, n) for e in profile_segments if (n := _segment_name(e)) is not None]
+    exact = next((e for e, n in named if n == name), None)
+    if exact is not None:
+        return exact
+    return next((e for e, n in named if n.lower() == name.lower()), None)
 
 
 def copy_profile_segments(profile_data: object) -> list[dict[str, Any]]:

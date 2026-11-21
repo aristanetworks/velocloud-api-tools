@@ -19,6 +19,7 @@ from ..common import (
     copy_profile_segments,
     find_segment,
     get_or_create_segment,
+    profile_segment_name,
 )
 from .common import (
     DeviceSettingsRef,
@@ -378,6 +379,14 @@ class DeviceSettingsData(VcoModel):
             DeviceSegment.model_validate,
             self.config_context,
         )
+
+    def profile_segment_name(self, selector: object) -> str | None:
+        """The bound profile's name for the segment *selector* names, or None.
+
+        See :func:`~pyvelo.client.models.configuration.common.profile_segment_name`.
+        Raises ``UnboundError`` if the data is not bound to a profile.
+        """
+        return profile_segment_name(self._profile_segments, selector)
 
     def get_segment(
         self, *, name: str | None = None, segment_id: int | None = None

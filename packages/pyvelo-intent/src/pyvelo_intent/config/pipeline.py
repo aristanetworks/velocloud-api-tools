@@ -1,6 +1,7 @@
 """ConfigPipeline: orchestration layer for load → apply → save configuration workflow."""
 
-from typing import Protocol, cast, runtime_checkable
+from collections.abc import Mapping, Sequence
+from typing import Protocol, TypeIs, runtime_checkable
 
 from pydantic import MISSING
 from pyvelo.client.enums.configuration import ConfigurationModuleName
@@ -29,8 +30,16 @@ from pyvelo.config.resolvers.profile import ProfileResolver
 from pyvelo.config.resolvers.segment import SegmentResolver
 from pyvelo.config.validation import ValidationError as ValidatorError
 from pyvelo.config.validation import ValidationResult, ValidatorRegistry
-from pyvelo.core.base import VcoModel
-from pyvelo.core.identity import EdgeName, ProfileName
+from pyvelo.core import PatchError
+from pyvelo.core.base import IdentityResolver, VcoModel
+from pyvelo.core.identity import EdgeName, ProfileName, ResolutionError
+from pyvelo.core.merge import (
+    _list_spec,  # pyright: ignore[reportPrivateUsage]
+    _patch_key,  # pyright: ignore[reportPrivateUsage]
+    select_items,
+)
+from pyvelo.core.patch import ItemOp, is_new, parse_item_op, position_of
+from pyvelo.core.rebase import Key, Path
 
 from pyvelo_intent.config.module_names import (
     resolve_module_name as _resolve_module_name,
@@ -204,10 +213,16 @@ class ConfigPipeline:
         1. Locate the module on the target config. A ``firewall`` or ``QOS``
            module that an edge lacks starts as an empty layer (nothing is
            copied from the profile) and is inserted on save.
-        2. On an edge target, add from the profile each segment the patch
-           names that the edge lacks, so it carries the profile's descriptor.
-        3. Call ``merge_patch()`` on the module's typed data.
+        2. On a profile target, refuse ``add`` and ``delete`` of a segment
+           (``_profile_segment_ops``).
+        3. Merge the patch into a copy of the module's typed data, then into
+           the data itself. On an edge target each merge is preceded by the
+           segment rules (``_prepare_segments``): a segment the edge inherits
+           gets an entry that carries the profile's descriptor.
         4. Return the updated :class:`ConfigState`.
+
+        All or nothing: a patch that raises leaves the state as it was, and
+        removes a module this call created.
 
         MISSING fields on the patch target are preserved as MISSING so callers
         downstream (reconciler, YAML export) can distinguish "unset" from
@@ -217,17 +232,35 @@ class ConfigPipeline:
         """
         _require_unspent(state)
         internal_name = _resolve_module_name(module)
-        mod = state.module(internal_name, create=True)
-
-        # Apply merge_patch to the module's typed data
-        if not isinstance(mod.data, VcoModel):
-            raise TypeError(
-                f"Module '{internal_name}' has unstructured data; merge_patch requires a typed module"
+        existing = state.find_module(internal_name)
+        mod = (
+            existing
+            if existing is not None
+            else state.module(internal_name, create=True)
+        )
+        edge = state.target_type == "edge"
+        try:
+            data = mod.data
+            if not isinstance(data, VcoModel):
+                raise TypeError(
+                    f"Module '{internal_name}' has unstructured data; merge_patch requires a typed module"
+                )
+            segments = patch.get("segments")
+            if not edge and _is_object(segments) and isinstance(data, _SegmentLayer):
+                _profile_segment_ops(segments, _SEGMENTS)
+            trial = data.model_copy(deep=True)
+            _ = trial.merge_patch(
+                _prepare_segments(trial, patch, self._resolvers) if edge else patch,
+                resolvers=self._resolvers,
             )
-        if state.target_type == "edge":
-            patch = _name_patched_segments(mod.data, patch)
-        _ = mod.data.merge_patch(patch, resolvers=self._resolvers)
-
+        except BaseException:
+            if existing is None:
+                state.drop_module(mod)
+            raise
+        _ = data.merge_patch(
+            _prepare_segments(data, patch, self._resolvers) if edge else patch,
+            resolvers=self._resolvers,
+        )
         return state
 
     async def save(
@@ -396,36 +429,173 @@ class _SegmentEntry(Protocol):
 
 @runtime_checkable
 class _SegmentLayer(Protocol):
+    @property
+    def segments(self) -> Sequence[_SegmentEntry]: ...
+
     def segment(self, name: str) -> _SegmentEntry: ...
 
+    def profile_segment_name(self, selector: object) -> str | None: ...
 
-def _name_patched_segments(
-    data: VcoModel, patch: dict[str, object]
+
+_SEGMENTS = Path(("segments",))
+
+
+def _is_object(value: object) -> TypeIs[dict[object, object]]:
+    return isinstance(value, dict)
+
+
+def _entry_path(path: Path, selector: object) -> Path:
+    """Where the entry under *selector* of a ``segments`` object is in the patch.
+
+    The place ``merge_patch`` reports it at: a position for ``"#n"``, else the
+    selector in string form.
+    """
+    n = position_of(selector)
+    return path.child(n if n is not None else Key(str(selector)))
+
+
+def _profile_segment_ops(segments: Mapping[object, object], path: Path) -> None:
+    """Refuse an ``add`` or a ``delete`` of a segment of a profile through a patch.
+
+    *segments* is the ``segments`` object of a patch for one profile module
+    and *path* where it is. A segment is a profile's in all three of device
+    settings, QoS and firewall, and a patch reaches one, so neither is
+    supported yet; whatever the selector, ``"+"`` included. A change and a
+    ``move`` are left as they are. Raises ``PatchError``; changes nothing.
+    """
+    for selector, value in segments.items():
+        if not _is_object(value):
+            continue
+        where = _entry_path(path, selector)
+        op = parse_item_op(value, where)
+        if op.kind == "add":
+            raise PatchError(
+                "adding a segment to a profile through a patch is not supported yet",
+                where,
+            )
+        if op.kind == "delete":
+            raise PatchError(
+                "removing a segment from a profile is not supported", where
+            )
+
+
+def _prepare_segments(
+    data: VcoModel, patch: Mapping[str, object], resolvers: IdentityResolver | None
 ) -> dict[str, object]:
-    """*patch*, with each segment it edits keyed by the name the layer has it under.
+    """*patch* for edge-layer *data*, with the segment rules of an edge target applied.
 
-    A segment the edge layer lacks is first added to it, from the profile
-    (``segment(name)``): it takes the profile's descriptor and IDs, so it does
-    not depend on a segment resolver having been loaded. A name that differs
-    from the profile's only in case finds it. A segment the profile does not
-    have is left to ``merge_patch``, which resolves or refuses it; so is a
-    deletion. Raises ``ValueError`` if two keys name the same segment.
+    An edge inherits each segment of its profile, and its layer has an entry
+    only for some (spec 5.10.3). For each object under ``segments``:
+
+    - a selector that names an entry of the layer (``select_items``) is left
+      as it is;
+    - one that names a segment only the profile has (``profile_segment_name``):
+      a change or a ``move`` first adds the placeholder entry
+      (``segment(name)``), which carries the profile's descriptor and IDs, and
+      is keyed under the profile's name; an ``add`` or a ``delete`` raises
+      ``PatchError``, and adds nothing;
+    - one that names a segment neither layer has, or any on data that is not
+      bound to a profile, is left to ``merge_patch``.
+
+    Under ``"+"`` or ``"+tag"``, an ``add`` whose body gives the segment's
+    name is read as an ``add`` under that name. Raises ``PatchError`` if two
+    selectors name one segment.
     """
     segments = patch.get("segments")
-    if not isinstance(data, _SegmentLayer) or not isinstance(segments, dict):
-        return patch
-    named: dict[str, object] = {}
-    for key, segment_patch in cast(dict[str, object], segments).items():
-        name = key
-        if isinstance(segment_patch, dict):
-            try:
-                name = data.segment(key).segment.name
-            except (ValueError, UnboundError):
-                pass  # not a profile segment, or no profile: merge_patch decides
-        if name in named:
-            raise ValueError(f"the patch names segment {name!r} twice")
-        named[name] = segment_patch
-    return {**patch, "segments": named}
+    if not isinstance(data, _SegmentLayer) or not _is_object(segments):
+        return dict(patch)
+    prepared: dict[object, object] = {}
+    named: dict[str, Path] = {}
+    for selector, value in segments.items():
+        key: object = selector
+        if _is_object(value):
+            where = _entry_path(_SEGMENTS, selector)
+            op = parse_item_op(value, where)
+            key, name = _prepare_segment(data, selector, op, where, resolvers)
+            if name is not None:
+                if name in named:
+                    raise PatchError(
+                        f"{named[name]} names segment {name!r} too: one selector per segment",
+                        where,
+                    )
+                named[name] = where
+        prepared[key] = value
+    return {**patch, "segments": prepared}
+
+
+def _prepare_segment(
+    data: VcoModel,
+    selector: object,
+    op: ItemOp,
+    where: Path,
+    resolvers: IdentityResolver | None,
+) -> tuple[object, str | None]:
+    """The selector to merge one segment entry under, and the segment it names (``_prepare_segments``).
+
+    The segment is None where the entry is left to ``merge_patch`` without
+    naming one, and for ``"+"``.
+    """
+    assert isinstance(data, _SegmentLayer)  # _prepare_segments checked
+    new = is_new(selector)
+    lookup: object = selector
+    if new:
+        given = _added_segment_name(data, op) if op.kind == "add" else None
+        if given is None:
+            return selector, None
+        lookup = given
+    name = _layer_segment_name(data, lookup, resolvers)
+    if name is not None:
+        return selector, None if new else name
+    try:
+        name = data.profile_segment_name(lookup)
+    except UnboundError:
+        return selector, None
+    if name is None:
+        return selector, None
+    if _layer_segment_name(data, name, None) is not None:
+        # The layer has it under the profile's name: the selector differs in case.
+        return (selector, None) if new else (name, name)
+    if op.kind == "add":
+        raise PatchError(
+            f"the edge has segment {name!r} by inheritance from its profile: "
+            + "write a plain object to change it, not add()",
+            where,
+        )
+    if op.kind == "delete":
+        raise PatchError(
+            f"the edge layer has no entry to delete for segment {name!r}, which "
+            + "it inherits from its profile",
+            where,
+        )
+    _ = data.segment(name)
+    return name, name
+
+
+def _layer_segment_name(
+    data: VcoModel, selector: object, resolvers: IdentityResolver | None
+) -> str | None:
+    """The name of the entry of the layer's ``segments`` that *selector* names, or None.
+
+    A name a resolver does not know names no entry here: ``merge_patch``
+    raises for it, if the profile does not have it either.
+    """
+    try:
+        positions = select_items(data, "segments", selector, resolvers)
+    except ResolutionError:
+        return None
+    if not positions:
+        return None
+    assert isinstance(data, _SegmentLayer)
+    return data.segments[positions[0]].segment.name
+
+
+def _added_segment_name(data: VcoModel, op: ItemOp) -> str | None:
+    """The segment name the body of an ``add`` gives, read as ``merge_patch`` reads it."""
+    spec = _list_spec(type(data).model_fields["segments"])
+    if spec is None or spec.item_type is None:
+        return None
+    name = _patch_key(spec.item_type.fields, op.body, spec.key_paths)
+    return None if name is None else str(name)
 
 
 def _require_unspent(state: ConfigState) -> None:

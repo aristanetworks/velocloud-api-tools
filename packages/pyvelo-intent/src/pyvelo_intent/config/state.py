@@ -202,6 +202,26 @@ class ConfigState:
             profile=self.profile_config,
         )
 
+    def find_module(
+        self, name: ConfigurationModuleName | str
+    ) -> AnyConfigurationModule | None:
+        """The target config's module called *name* (an intent-level name works), or None."""
+        return _find_module(self.target_config, resolve_module_name(name))
+
+    def drop_module(self, module: AnyConfigurationModule) -> None:
+        """Remove *module*, one that ``module(create=True)`` made, from the target config.
+
+        Raises ``ValueError`` for a module that is not new (``is_new``): one
+        read from the VCO is never dropped.
+        """
+        if not module.is_new:
+            raise ValueError(
+                f"module {module.name!r} was read from the VCO; only a new one is dropped"
+            )
+        modules = self.target_config.modules
+        if modules is not MISSING:
+            modules[:] = [m for m in modules if m is not module]
+
     @property
     def edge(self) -> LayerView:
         """The edge layer's module data. Raises ``ValueError`` without an edge layer."""

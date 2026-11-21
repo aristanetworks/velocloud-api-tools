@@ -31,13 +31,22 @@ from pyvelo.client.schemas.configuration import (
     EnterpriseConfigurationProfile,
     QosConfigurationModule,
 )
-from pyvelo.config.resolver import ResolverContext
-from pyvelo_intent import add
+from pyvelo.config.resolver import ResolverContext, ResolverRegistry
+from pyvelo.core.identity import ResolutionError
+from pyvelo.core.rebase import Key, Path
+from pyvelo.testing import make_module_json, make_segment_resolver
+from pyvelo_intent import PatchError, add, delete, move
 from pyvelo_intent.config.pipeline import ConfigPipeline
 from pyvelo_intent.config.state import ConfigState
 from pyvelo_intent.testing import (
     make_firewall_module,
     make_firewall_segment,
+)
+from test_state_plan import (  # pyright: ignore[reportImplicitRelativeImport]
+    desc,
+)
+from test_state_plan import (  # pyright: ignore[reportImplicitRelativeImport]
+    make_state as make_raw_state,
 )
 
 _TS = datetime(2024, 1, 1, tzinfo=UTC)
@@ -321,12 +330,13 @@ async def test_apply_to_a_segment_the_profile_lacks_changes_nothing():
     state = _profile_state(
         make_firewall_module(mod_id=1, config_id=20, segments=[segment])
     )
-    with pytest.raises(LookupError, match="Cannot add .Guest. by name"):
+    with pytest.raises(PatchError, match="not supported yet") as exc:
         _ = await ConfigPipeline(client=None).apply(
             state,
             module="firewall",
             patch={"segments": {"Guest": add({"outbound": {}})}},
         )
+    assert exc.value.path == Path.parse("segments[Guest]")
     assert [s.segment.name for s in state.profile.firewall.segments] == [
         "Global Segment"
     ]
@@ -383,3 +393,257 @@ async def test_apply_updates_a_vlan():
     )
     (updated,) = state.profile.device_settings.lan.networks
     assert updated.advertise is False
+
+
+# --- segments on an edge target (spec 5.10.3) --------------------------------
+#
+# The edge layer has Global Segment only; its profile has Global Segment and
+# Guest (segmentId 2).
+
+_DENY: dict[str, object] = {"action": {"allow_or_deny": "deny"}, "match": {}}
+
+
+def _guest_rule_patch(selector: str = "Guest") -> dict[str, object]:
+    return {"segments": {selector: {"outbound": {"block": add(_DENY)}}}}
+
+
+def _edge_segment_names(state: ConfigState) -> list[str]:
+    return [s.segment.name for s in state.edge.firewall.segments]
+
+
+async def _segment_resolvers() -> ResolverRegistry:
+    registry = ResolverRegistry()
+    registry.register(
+        await make_segment_resolver(
+            [
+                {"name": "Global Segment", "segment_id": 0},
+                {"name": "Guest", "segment_id": 2},
+            ]
+        )
+    )
+    return registry
+
+
+@pytest.mark.asyncio
+async def test_change_of_an_inherited_segment_adds_the_placeholder():
+    state = make_raw_state()
+    _ = await ConfigPipeline(client=None).apply(
+        state, module="firewall", patch=_guest_rule_patch()
+    )
+    guest = state.edge.firewall.get_segment(name="Guest")
+    assert [r.name for r in guest.outbound] == ["block"]
+    (firewall,) = state.plan().modules
+    assert (firewall.operation, firewall.reconciled_segments) == ("update", ("Guest",))
+
+
+@pytest.mark.asyncio
+async def test_inherited_segment_by_another_case_and_by_id():
+    for selector in ("guest", "2"):
+        state = make_raw_state()
+        _ = await ConfigPipeline(client=None).apply(
+            state, module="firewall", patch=_guest_rule_patch(selector)
+        )
+        assert _edge_segment_names(state) == ["Global Segment", "Guest"]
+        guest = state.edge.firewall.get_segment(name="Guest")
+        assert guest.segment.segment_id == 2
+        assert [r.name for r in guest.outbound] == ["block"]
+
+
+@pytest.mark.asyncio
+async def test_move_of_an_inherited_segment_adds_the_placeholder():
+    state = make_raw_state()
+    _ = await ConfigPipeline(client=None).apply(
+        state, module="firewall", patch={"segments": {"Guest": move(first=True)}}
+    )
+    assert _edge_segment_names(state) == ["Guest", "Global Segment"]
+
+
+@pytest.mark.asyncio
+async def test_add_of_an_inherited_segment_raises():
+    state = make_raw_state()
+    with pytest.raises(PatchError, match="plain object") as exc:
+        _ = await ConfigPipeline(client=None).apply(
+            state, module="firewall", patch={"segments": {"Guest": add({})}}
+        )
+    assert exc.value.path == Path.parse("segments[Guest]")
+    assert _edge_segment_names(state) == ["Global Segment"]
+
+
+@pytest.mark.asyncio
+async def test_plus_add_of_an_inherited_segment_raises():
+    state = make_raw_state()
+    patch: dict[str, object] = {"segments": {"+": add({"segment": {"name": "Guest"}})}}
+    with pytest.raises(PatchError, match="plain object") as exc:
+        _ = await ConfigPipeline(client=None).apply(
+            state, module="firewall", patch=patch
+        )
+    assert exc.value.path == Path(("segments", Key("+")))
+    assert _edge_segment_names(state) == ["Global Segment"]
+
+
+@pytest.mark.asyncio
+async def test_delete_of_an_inherited_segment_raises_and_makes_no_placeholder():
+    state = make_raw_state()
+    with pytest.raises(PatchError, match="no entry to delete") as exc:
+        _ = await ConfigPipeline(client=None).apply(
+            state, module="firewall", patch={"segments": {"Guest": delete()}}
+        )
+    assert exc.value.path == Path.parse("segments[Guest]")
+    assert _edge_segment_names(state) == ["Global Segment"]
+
+
+@pytest.mark.asyncio
+async def test_segment_named_twice_raises():
+    state = make_raw_state()
+    patch: dict[str, object] = {
+        "segments": {"Guest": {"outbound": {}}, "guest": {"outbound": {}}}
+    }
+    with pytest.raises(PatchError, match="Guest"):
+        _ = await ConfigPipeline(client=None).apply(
+            state, module="firewall", patch=patch
+        )
+    assert _edge_segment_names(state) == ["Global Segment"]
+
+
+@pytest.mark.asyncio
+async def test_segment_neither_layer_has_is_left_to_merge_patch():
+    patch: dict[str, object] = {"segments": {"Nope": {"outbound": {}}}}
+    state = make_raw_state()
+    with pytest.raises(PatchError, match="no item has the key") as exc:
+        _ = await ConfigPipeline(client=None).apply(
+            state, module="firewall", patch=patch
+        )
+    assert exc.value.path == Path.parse("segments[Nope]")
+    assert _edge_segment_names(state) == ["Global Segment"]
+    pipeline = ConfigPipeline(client=None, resolvers=await _segment_resolvers())
+    with pytest.raises(ResolutionError, match="Nope"):
+        _ = await pipeline.apply(state, module="firewall", patch=patch)
+    assert _edge_segment_names(state) == ["Global Segment"]
+
+
+@pytest.mark.asyncio
+async def test_failed_apply_leaves_the_plan_as_it_was():
+    state = make_raw_state()
+    before = state.plan().render()
+    patch: dict[str, object] = {
+        "segments": {"Guest": {"outbound": {"block": add(_DENY)}, "no_such_key": 1}}
+    }
+    with pytest.raises(PatchError, match="no_such_key"):
+        _ = await ConfigPipeline(client=None).apply(
+            state, module="firewall", patch=patch
+        )
+    assert state.plan().render() == before
+    assert _edge_segment_names(state) == ["Global Segment"]
+
+
+@pytest.mark.asyncio
+async def test_failed_apply_removes_the_module_it_created():
+    state = make_raw_state(edge_modules=[])
+    before = state.plan().render()
+    with pytest.raises(PatchError, match="no_such_key"):
+        _ = await ConfigPipeline(client=None).apply(
+            state, module="firewall", patch={"no_such_key": 1}
+        )
+    assert state.find_module("firewall") is None
+    assert state.plan().render() == before
+
+
+@pytest.mark.asyncio
+async def test_good_apply_on_an_edge_with_no_firewall_row_plans_an_insert():
+    state = make_raw_state(edge_modules=[])
+    _ = await ConfigPipeline(client=None).apply(
+        state, module="firewall", patch={"firewall_enabled": False}
+    )
+    assert [(m.name, m.operation) for m in state.plan().modules] == [
+        ("firewall", "insert")
+    ]
+
+
+# --- segments on a profile target ---------------------------------------------
+
+
+def _segment_profile_state(*names: str) -> ConfigState:
+    """A profile whose firewall, QoS and device settings each have segments *names*."""
+    descriptors = [desc(2 * i, name) for i, name in enumerate(names)]
+    rows = [
+        make_module_json(
+            "firewall",
+            {"segments": [{"segment": d, "outbound": []} for d in descriptors]},
+            module_id=1,
+            configuration_id=20,
+        ),
+        make_module_json(
+            "QOS",
+            {"segments": [{"segment": d, "rules": []} for d in descriptors]},
+            module_id=2,
+            configuration_id=20,
+        ),
+        make_module_json(
+            "deviceSettings",
+            {
+                "lan": {"networks": [], "interfaces": []},
+                "segments": [{"segment": d} for d in descriptors],
+            },
+            module_id=3,
+            configuration_id=20,
+        ),
+    ]
+    return ConfigState(
+        edge_config=None,
+        profile_config=EnterpriseConfigurationProfile.model_validate(
+            {"name": "P", "id": 20, "modules": rows}
+        ),
+        target_type="profile",
+        resolver_context=ResolverContext(),
+    )
+
+
+def _profile_segment_names(state: ConfigState) -> list[list[str]]:
+    profile = state.profile
+    return [
+        [s.segment.name for s in profile.firewall.segments],
+        [s.segment.name for s in profile.qos.segments],
+        [s.segment.name for s in profile.device_settings.segments],
+    ]
+
+
+@pytest.mark.asyncio
+async def test_profile_target_refuses_segment_add_and_delete():
+    state = _segment_profile_state("Global Segment")
+    refused: list[tuple[dict[str, object], Path, str]] = [
+        ({"Guest": add({})}, Path.parse("segments[Guest]"), "not supported yet"),
+        (
+            {"+": add({"segment": {"name": "Guest"}})},
+            Path(("segments", Key("+"))),
+            "not supported yet",
+        ),
+        (
+            {"Global Segment": delete()},
+            Path(("segments", Key("Global Segment"))),
+            "not supported",
+        ),
+    ]
+    for module in ("firewall", "qos", "device_settings"):
+        for segments, where, message in refused:
+            with pytest.raises(PatchError, match=message) as exc:
+                _ = await ConfigPipeline(client=None).apply(
+                    state, module=module, patch={"segments": segments}
+                )
+            assert exc.value.path == where
+    assert _profile_segment_names(state) == [["Global Segment"]] * 3
+
+
+@pytest.mark.asyncio
+async def test_profile_target_changes_and_moves_a_segment():
+    state = _segment_profile_state("Global Segment", "Guest")
+    patch: dict[str, object] = {
+        "segments": {
+            "Global Segment": {"outbound": {"block": add(_DENY)}},
+            "Guest": move(first=True),
+        }
+    }
+    _ = await ConfigPipeline(client=None).apply(state, module="firewall", patch=patch)
+    firewall = state.profile.firewall
+    assert [s.segment.name for s in firewall.segments] == ["Guest", "Global Segment"]
+    blocked = firewall.get_segment(name="Global Segment").outbound
+    assert [r.name for r in blocked] == ["block"]

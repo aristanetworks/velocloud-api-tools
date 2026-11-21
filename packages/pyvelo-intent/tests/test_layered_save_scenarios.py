@@ -8,7 +8,7 @@ from pyvelo.client.exceptions import LossyFieldError
 from pyvelo.client.schemas.configuration import ConfigurationBase, GetConfiguration
 from pyvelo.config.resolver import ResolverRegistry
 from pyvelo.testing import make_module_json, make_segment_resolver
-from pyvelo_intent import add, delete
+from pyvelo_intent import PatchError, add, delete
 from pyvelo_intent.config.pipeline import ConfigPipeline
 from pyvelo_intent.config.state import ConfigState
 from pyvelo_intent.testing import MockVcoClient
@@ -210,7 +210,7 @@ async def test_segment_the_profile_lacks_is_refused_without_a_resolver():
 
 async def test_a_patch_that_names_one_segment_twice_is_refused():
     state = make_state()
-    with pytest.raises(ValueError, match="Guest"):
+    with pytest.raises(PatchError, match="Guest"):
         await ConfigPipeline(MockVcoClient()).apply(
             state,
             module="firewall",
