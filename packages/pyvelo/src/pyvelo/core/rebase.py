@@ -8,6 +8,10 @@ added) never reaches the result. ``raw_changes`` lists the differences between
 two JSON documents, with the same addressing. ``find_lossy_assignments`` lists
 the assignments to a model that ``rebase`` cannot carry over.
 
+Locations are ``Path`` values: text for people, ``.parts`` for programs. A key
+with spaces, dots or quotes in it is quoted, so a rendered path is never
+ambiguous and ``Path.parse`` reads it back.
+
 The optional *model* is the ``VcoModel`` class whose wire dump ``before`` and
 ``after`` are. It supplies two things that JSON alone cannot:
 
@@ -20,8 +24,11 @@ The optional *model* is the ``VcoModel`` class whose wire dump ``before`` and
 The result of ``rebase`` may share sub-objects with its inputs. Callers copy.
 """
 
-from collections.abc import Mapping
+import json
+import re
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
+from typing import Self, override
 
 from pydantic import MISSING
 from pydantic.fields import FieldInfo
@@ -40,15 +47,184 @@ from .fields import get_key_field
 
 
 @dataclass(frozen=True, slots=True)
+class Key:
+    """A keyed-list item, identified by its ``KeyField`` value."""
+
+    value: str | int | float | bool
+
+
+type PathPart = str | Key | int
+"""``str`` is a field or object key, ``Key`` a keyed item, ``int`` a list position."""
+
+_BARE_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+_BARE_KEY = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_-]*")
+_JSON_SCALAR = re.compile(
+    r"-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][-+]?[0-9]+)?|true|false|NaN|-?Infinity"
+)
+_INTEGER = re.compile(r"-?[0-9]+")
+_POSITION = re.compile(r"[0-9]+")
+
+
+def _is_bare_key(value: str) -> bool:
+    """Whether a ``str`` key is written without quotes.
+
+    Not when it would read as another JSON value: ``123`` (an ``int`` key),
+    ``true``, ``1e-07`` and the like are quoted, so ``Key("true")`` and
+    ``Key(True)`` render differently.
+    """
+    return (
+        _BARE_KEY.fullmatch(value) is not None
+        and not value.isdigit()
+        and _JSON_SCALAR.fullmatch(value) is None
+    )
+
+
+def _render_key(value: str | float | bool) -> str:
+    if isinstance(value, str) and _is_bare_key(value):
+        return value
+    return json.dumps(value)
+
+
+def _render(parts: tuple[PathPart, ...]) -> str:
+    out: list[str] = []
+    for part in parts:
+        if isinstance(part, Key):
+            out.append(f"[{_render_key(part.value)}]")
+        elif isinstance(part, str):
+            name = part if _BARE_NAME.fullmatch(part) else json.dumps(part)
+            out.append(f".{name}" if out else name)
+        elif part < 0:
+            raise ValueError(f"list position cannot be negative: {part}")
+        else:
+            out.append(f"[#{part}]")
+    return "".join(out)
+
+
+def _malformed(text: str, index: int, why: str) -> ValueError:
+    return ValueError(f"malformed path {text!r} at {index}: {why}")
+
+
+def _decode_string(text: str, index: int) -> tuple[str, int]:
+    """The JSON string literal that starts at *index*, and where it ends."""
+    try:
+        decoded: tuple[object, int] = json.JSONDecoder().raw_decode(text, index)
+    except ValueError:
+        raise _malformed(text, index, "bad quoted string") from None
+    value, end = decoded
+    assert isinstance(value, str)  # it starts with a double quote
+    return value, end
+
+
+def _scalar(content: str) -> bool | int | float:
+    """The value of text that ``_JSON_SCALAR`` matched."""
+    if content in ("true", "false"):
+        return content == "true"
+    if _INTEGER.fullmatch(content):
+        return int(content)
+    return float(content)  # also NaN, Infinity
+
+
+def _parse_name(text: str, index: int) -> tuple[str, int]:
+    if text.startswith('"', index):
+        return _decode_string(text, index)
+    found = _BARE_NAME.match(text, index)
+    if found is None:
+        raise _malformed(text, index, "expected a name")
+    return found.group(), found.end()
+
+
+def _parse_bracket(text: str, index: int) -> tuple[PathPart, int]:
+    """The part in the brackets that open at *index*, and where it ends."""
+    start = index + 1
+    if text.startswith('"', start):
+        value, end = _decode_string(text, start)
+        part: PathPart = Key(value)
+    else:
+        end = text.find("]", start)
+        if end < 0:
+            raise _malformed(text, index, "unclosed '['")
+        content = text[start:end]
+        if content.startswith("#"):
+            if _POSITION.fullmatch(content, 1) is None:
+                raise _malformed(text, start, "bad list position")
+            part = int(content[1:])
+        elif _JSON_SCALAR.fullmatch(content):
+            part = Key(_scalar(content))
+        elif _BARE_KEY.fullmatch(content) and not content.isdigit():
+            part = Key(content)
+        else:
+            raise _malformed(text, start, "bad key")
+    if not text.startswith("]", end):
+        raise _malformed(text, end, "expected ']'")
+    return part, end + 1
+
+
+class Path(str):
+    """A change location. Compares and hashes as its rendered text.
+
+    ``.parts`` is the structure. Names are bare when they are identifiers and
+    JSON strings otherwise, joined with ``.``; keyed items are ``[key]`` and
+    list positions ``[#0]``: ``segments["Corp.Guest v2"].rules[r1].port``.
+    """
+
+    parts: tuple[PathPart, ...]
+
+    def __new__(cls, parts: Iterable[PathPart]) -> Self:
+        if isinstance(parts, str):
+            raise TypeError("Path takes parts; use Path.parse() for text")
+        parts = tuple(parts)
+        self = super().__new__(cls, _render(parts))
+        self.parts = parts
+        return self
+
+    @override
+    def __getnewargs__(self) -> tuple[tuple[PathPart, ...]]:  # pyright: ignore[reportIncompatibleMethodOverride]
+        return (self.parts,)
+
+    @classmethod
+    def parse(cls, text: str) -> Self:
+        """The path that renders as *text*. Raises ``ValueError`` if there is none."""
+        parts: list[PathPart] = []
+        index = 0
+        while index < len(text):
+            if text[index] == "[":
+                part, index = _parse_bracket(text, index)
+            else:
+                if parts:
+                    if text[index] != ".":
+                        raise _malformed(text, index, "expected '.' or '['")
+                    index += 1
+                part, index = _parse_name(text, index)
+            parts.append(part)
+        return cls(parts)
+
+    def child(self, part: PathPart) -> Self:
+        return type(self)((*self.parts, part))
+
+
+def _name(key: object) -> str:
+    """An object key as a path name. JSON object keys are strings already."""
+    return key if isinstance(key, str) else str(key)
+
+
+@dataclass(frozen=True, slots=True, init=False)
 class RawChange:
     """One difference between two JSON documents.
 
-    ``MISSING`` stands for the side that has no value at ``path``.
+    ``MISSING`` stands for the side that has no value at ``path``. A *path* given
+    as text is parsed.
     """
 
-    path: str
+    path: Path
     before: object
     after: object
+
+    def __init__(self, path: str, before: object, after: object) -> None:
+        object.__setattr__(
+            self, "path", path if isinstance(path, Path) else Path.parse(path)
+        )
+        object.__setattr__(self, "before", before)
+        object.__setattr__(self, "after", after)
 
 
 @dataclass(frozen=True, slots=True)
@@ -278,16 +454,12 @@ def raw_changes(
     whose common items changed order, is one change at its own path.
     """
     changes: list[RawChange] = []
-    _collect_changes(changes, "", old, new, model)
+    _collect_changes(changes, Path(()), old, new, model)
     return changes
 
 
-def _join(path: str, key: object) -> str:
-    return f"{path}.{key}" if path else str(key)
-
-
 def _collect_changes(
-    out: list[RawChange], path: str, old: object, new: object, node: _Node
+    out: list[RawChange], path: Path, old: object, new: object, node: _Node
 ) -> None:
     if old == new:
         return
@@ -295,12 +467,16 @@ def _collect_changes(
         for key, old_value in old.items():
             if key in new:
                 _collect_changes(
-                    out, _join(path, key), old_value, new[key], _child(node, key)
+                    out,
+                    path.child(_name(key)),
+                    old_value,
+                    new[key],
+                    _child(node, key),
                 )
             else:
-                out.append(RawChange(_join(path, key), old_value, MISSING))
+                out.append(RawChange(path.child(_name(key)), old_value, MISSING))
         out.extend(
-            RawChange(_join(path, key), MISSING, new_value)
+            RawChange(path.child(_name(key)), MISSING, new_value)
             for key, new_value in new.items()
             if key not in old
         )
@@ -316,7 +492,7 @@ def _collect_changes(
 
 def _collect_keyed_changes(
     out: list[RawChange],
-    path: str,
+    path: Path,
     old: list[object],
     old_keys: list[str | int | float],
     new: list[object],
@@ -333,12 +509,12 @@ def _collect_keyed_changes(
     for key, old_item in old_by_key.items():
         if key in new_by_key:
             _collect_changes(
-                out, f"{path}[{key}]", old_item, new_by_key[key], node.item
+                out, path.child(Key(key)), old_item, new_by_key[key], node.item
             )
         else:
-            out.append(RawChange(f"{path}[{key}]", old_item, MISSING))
+            out.append(RawChange(path.child(Key(key)), old_item, MISSING))
     out.extend(
-        RawChange(f"{path}[{key}]", MISSING, new_item)
+        RawChange(path.child(Key(key)), MISSING, new_item)
         for key, new_item in new_by_key.items()
         if key not in old_by_key
     )
@@ -354,7 +530,7 @@ def find_lossy_assignments(
     current: VcoModel,
     before: Mapping[str, object],
     after: Mapping[str, object],
-) -> list[str]:
+) -> list[Path]:
     """The assignments to *current* that ``rebase`` would drop, as python-name paths.
 
     *before* and *after* are the wire dumps of *baseline* and *current*.
@@ -375,10 +551,11 @@ def find_lossy_assignments(
     is not walked. A field that is not in *baseline* and whose dump changed is
     written whole, so nothing inside it is lost.
 
-    Paths come in field order: ``segments[A].rules[r1].port``.
+    Paths come in field order: ``segments[A].rules[r1].port``. Items of a list
+    that is walked by position are ``rules[#0]``.
     """
-    out: list[str] = []
-    _lossy_in_value(out, "", baseline, current, before, after, None)
+    out: list[Path] = []
+    _lossy_in_value(out, Path(()), baseline, current, before, after, None)
     return out
 
 
@@ -388,8 +565,8 @@ def _dump_get(dump: object, key: str) -> object:
 
 
 def _lossy_in_value(
-    out: list[str],
-    path: str,
+    out: list[Path],
+    path: Path,
     baseline: object,
     current: object,
     before: object,
@@ -404,8 +581,8 @@ def _lossy_in_value(
 
 
 def _lossy_in_model(
-    out: list[str],
-    path: str,
+    out: list[Path],
+    path: Path,
     baseline: VcoModel,
     current: VcoModel,
     before: object,
@@ -416,7 +593,7 @@ def _lossy_in_model(
         before_value = _dump_get(before, dump_key)
         after_value = _dump_get(after, dump_key)
         value = _field_value(current, name)
-        field_path = _join(path, name)
+        field_path = path.child(name)
         if name not in baseline.model_fields_set:
             if before_value != after_value:
                 continue  # rebase writes the field whole
@@ -439,8 +616,8 @@ def _lossy_in_model(
 
 
 def _lossy_in_list(
-    out: list[str],
-    path: str,
+    out: list[Path],
+    path: Path,
     baseline: list[object],
     current: list[object],
     before: object,
@@ -452,14 +629,14 @@ def _lossy_in_list(
     if len(before) != len(baseline) or len(after) != len(current):
         return  # the dump's positions are not the model's
     # (item path, baseline index, current index)
-    pairs: list[tuple[str, int, int]] | None = None
+    pairs: list[tuple[Path, int, int]] | None = None
     if isinstance(node, _KeyedList):
         before_keys = _list_keys(before, node)
         after_keys = _list_keys(after, node)
         if before_keys is not None and after_keys is not None:
             position = {key: i for i, key in enumerate(before_keys)}
             pairs = [
-                (f"{path}[{key}]", position[key], i)
+                (path.child(Key(key)), position[key], i)
                 for i, key in enumerate(after_keys)
                 if key in position
             ]
@@ -467,7 +644,7 @@ def _lossy_in_list(
         # Items cannot be matched by key. A changed list is written whole.
         if before != after or len(baseline) != len(current):
             return
-        pairs = [(f"{path}[{i}]", i, i) for i in range(len(baseline))]
+        pairs = [(path.child(i), i, i) for i in range(len(baseline))]
     for item_path, base_index, cur_index in pairs:
         _lossy_in_value(
             out,

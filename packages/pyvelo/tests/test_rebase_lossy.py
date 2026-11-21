@@ -3,7 +3,7 @@ from typing import Annotated
 from pydantic import MISSING, Field
 from pyvelo.core import VcoModel
 from pyvelo.core.fields import KeyField
-from pyvelo.core.rebase import find_lossy_assignments
+from pyvelo.core.rebase import Path, find_lossy_assignments
 
 from .test_rebase import Root
 
@@ -17,7 +17,7 @@ def dump(m: VcoModel) -> dict[str, object]:
     return m.model_dump(mode="json", by_alias=True)
 
 
-def lossy(base: VcoModel, cur: VcoModel) -> list[str]:
+def lossy(base: VcoModel, cur: VcoModel) -> list[Path]:
     return find_lossy_assignments(base, cur, dump(base), dump(cur))
 
 
@@ -102,7 +102,7 @@ def test_unkeyed_list_pairs_by_position_when_lengths_match():
     base, cur = Outer.model_validate(raw), Outer.model_validate(raw)
     cur.items[0].x = 0
     cur.items[1].y = 0
-    assert lossy(base, cur) == ["items[0].x", "items[1].y"]
+    assert lossy(base, cur) == ["items[#0].x", "items[#1].y"]
 
 
 def test_unkeyed_list_of_other_length_is_not_walked():
@@ -138,7 +138,7 @@ def test_keyed_list_with_repeated_keys_is_walked_by_position_when_unchanged():
     }
     base, cur = Root.model_validate(raw), Root.model_validate(raw)
     cur.segments[0].rules[0].port = 0
-    assert lossy(base, cur) == ["segments[A].rules[0].port"]
+    assert lossy(base, cur) == ["segments[A].rules[#0].port"]
 
 
 def test_keyed_list_with_repeated_keys_changed_elsewhere_is_not_walked():
@@ -170,7 +170,7 @@ def test_keyed_list_with_a_missing_key_is_walked_by_position_when_unchanged():
     raw = {"rules": [{"name": "r1"}, {"port": 1}]}
     base, cur = Opt2s.model_validate(raw), Opt2s.model_validate(raw)
     cur.rules[0].port = 0
-    assert lossy(base, cur) == ["rules[0].port"]
+    assert lossy(base, cur) == ["rules[#0].port"]
 
 
 def test_keyed_list_with_a_missing_key_changed_elsewhere_is_not_walked():
@@ -194,7 +194,7 @@ def test_unkeyed_list_unchanged_is_walked_by_position():
     raw = {"items": [{"y": 1}]}
     base, cur = Outer.model_validate(raw), Outer.model_validate(raw)
     cur.items[0].x = 0
-    assert lossy(base, cur) == ["items[0].x"]
+    assert lossy(base, cur) == ["items[#0].x"]
 
 
 def test_item_whose_key_changed_is_not_paired():
