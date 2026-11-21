@@ -223,7 +223,10 @@ def test_placeholders_per_module():
             {
                 "segment": desc(2, "Guest"),
                 "rules": [{"name": "p"}],
-                "routes": {"static": []},
+                "routes": {
+                    "static": [{"destination": "192.0.2.0"}],
+                    "staticV6": [{"destination": "2001:db8::"}],
+                },
             }
         ]
     }
@@ -231,7 +234,7 @@ def test_placeholders_per_module():
         {"segment": desc(2, "Guest"), "rules": []}
     ]
     assert missing_segments({"segments": []}, prof, "deviceSettings") == [
-        {"segment": desc(2, "Guest")}
+        {"segment": desc(2, "Guest"), "routes": {"static": []}}
     ]
     assert missing_segments({"segments": []}, prof, "WAN") == []
 
@@ -668,3 +671,93 @@ def test_a_new_item_keeps_the_id_it_is_given():
     plan = plan_module(mod, level=EDGE)
     r1, r2 = plan.data["segments"][0]["rules"]
     assert "ruleLogicalId" not in r1 and "ruleLogicalId" in r2
+
+
+# --- a deviceSettings segment the edge lacks -------------------------------
+
+
+def static_route(destination: str) -> dict[str, Any]:
+    return {
+        "destination": destination,
+        "netmask": "255.255.255.0",
+        "gateway": "192.0.2.1",
+        "cidrPrefix": 24,
+    }
+
+
+DS_PROFILE_RAW: dict[str, Any] = {
+    "lan": {"networks": [], "interfaces": []},
+    "segments": [
+        {"segment": desc(0, "Global Segment"), "routes": {"static": []}},
+        {
+            "segment": desc(2, "Guest"),
+            "routes": {
+                "static": [static_route("192.0.2.0")],
+                "staticV6": [],
+                "icmpProbes": [],
+            },
+            "bgp": {"enabled": True, "ASN": "65000"},
+        },
+    ],
+}
+DS_EDGE_RAW: dict[str, Any] = {
+    "lan": {
+        "networks": [{"vlanId": 1, "name": "n", "cost": 10, "override": False}],
+        "interfaces": [],
+    },
+    "segments": [{"segment": desc(0, "Global Segment"), "routes": {"static": []}}],
+}
+DS_PLACEHOLDER: dict[str, Any] = {
+    "segment": desc(2, "Guest"),
+    "routes": {"static": []},
+}
+
+
+def test_an_unrelated_edit_adds_a_device_settings_segment_with_empty_static_routes():
+    mod, profile = ds(DS_EDGE_RAW), ds(DS_PROFILE_RAW, module_id=2)
+    assert plan_module(mod, level=EDGE, profile=profile).operation == "none"
+    mod.data.lan.networks[0].cost += 1
+    plan = plan_module(mod, level=EDGE, profile=profile)
+    assert plan.operation == "update"
+    assert plan.data["segments"] == [DS_EDGE_RAW["segments"][0], DS_PLACEHOLDER]
+    assert plan.reconciled_segments == ("Guest",)
+    assert [str(c.path) for c in plan.changes] == ["lan.networks[1].cost"]
+
+
+def test_the_device_settings_placeholder_copies_nothing_of_the_profile_segment():
+    mod, profile = ds(DS_EDGE_RAW), ds(DS_PROFILE_RAW, module_id=2)
+    mod.data.lan.networks[0].cost += 1
+    written = plan_module(mod, level=EDGE, profile=profile).data["segments"][1]
+    assert set(written) == {"segment", "routes"}
+    assert written["routes"] == {"static": []}
+    assert DS_PROFILE_RAW["segments"][1]["routes"]["static"]  # the profile is untouched
+
+
+def test_a_device_settings_segment_the_edge_drops_comes_back_with_empty_static_routes():
+    raw = copy.deepcopy(DS_EDGE_RAW)
+    raw["segments"].append(
+        {
+            "segment": desc(2, "Guest"),
+            "routes": {"static": [static_route("198.51.100.0")]},
+        }
+    )
+    mod, profile = ds(raw), ds(DS_PROFILE_RAW, module_id=2)
+    del mod.data.segments[1]
+    plan = plan_module(mod, level=EDGE, profile=profile)
+    assert plan.operation == "update"
+    assert plan.data["segments"] == [raw["segments"][0], DS_PLACEHOLDER]
+    assert plan.reconciled_segments == ("Guest",)
+
+
+def test_a_device_settings_segment_in_a_profile_without_routes_still_gets_static():
+    profile_raw = {
+        **DS_PROFILE_RAW,
+        "segments": [
+            DS_PROFILE_RAW["segments"][0],
+            {"segment": desc(2, "Guest")},
+        ],
+    }
+    mod, profile = ds(DS_EDGE_RAW), ds(profile_raw, module_id=2)
+    mod.data.lan.networks[0].cost += 1
+    written = plan_module(mod, level=EDGE, profile=profile).data["segments"][1]
+    assert written == DS_PLACEHOLDER

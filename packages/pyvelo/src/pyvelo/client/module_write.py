@@ -8,10 +8,11 @@ raw JSON and the model as it is now) is applied to it.
 
 Segment reconciliation: an edge module may lack a segment entry that its profile
 has. The write then carries an empty entry for it (the profile's descriptor and
-no rules), so the edge layer has a place to hold the segment. It never writes
-only to reconcile: with no change from the caller the plan is ``none``. A
-segment the caller deletes from the edge layer that the profile has comes back
-as that empty entry: the edge cannot drop what it inherits.
+no rules; a deviceSettings entry also has an empty ``routes.static``, which the
+Orchestrator requires), so the edge layer has a place to hold the segment. It
+never writes only to reconcile: with no change from the caller the plan is
+``none``. A segment the caller deletes from the edge layer that the profile has
+comes back as that empty entry: the edge cannot drop what it inherits.
 """
 
 import copy

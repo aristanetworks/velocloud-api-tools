@@ -52,12 +52,16 @@ class SegmentMetadata(VcoModel):
 SEGMENT_LISTS: Final[dict[str, tuple[str, ...]]] = {
     "firewall": ("outbound",),
     "QOS": ("rules",),
-    "deviceSettings": (),
+    "deviceSettings": ("routes.static",),
 }
 """Per module, the lists inside a segment entry that belong to one layer.
 
+Each is a dotted path to a list; the objects on the way to it are created.
+
 A segment entry a layer does not have yet is written with these lists empty,
-so it carries no rules of the profile it was copied from.
+so it carries no rules of the profile it was copied from. A deviceSettings entry
+needs ``routes.static`` to be there: the Orchestrator refuses an entry without
+it ("static route is missing"), and accepts it empty.
 """
 
 
@@ -75,10 +79,14 @@ def placeholder_segment(
     profile_segment: Mapping[str, object], module_name: str
 ) -> dict[str, Any]:
     """An empty segment entry for *module_name* with the profile's descriptor."""
-    return {
-        "segment": copy.deepcopy(profile_segment["segment"]),
-        **{key: [] for key in SEGMENT_LISTS[module_name]},
-    }
+    entry: dict[str, Any] = {"segment": copy.deepcopy(profile_segment["segment"])}
+    for path in SEGMENT_LISTS[module_name]:
+        *parents, name = path.split(".")
+        container = entry
+        for key in parents:
+            container = container.setdefault(key, {})
+        container[name] = []
+    return entry
 
 
 def profile_placeholder(

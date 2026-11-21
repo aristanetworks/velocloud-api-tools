@@ -5,7 +5,10 @@ from pyvelo.client.models.configuration import (
     FirewallData,
     QosData,
 )
+from pyvelo.client.models.configuration.common import profile_placeholder
 from pyvelo.core import ConfigContext
+
+from ._type_support import require_present
 
 
 def desc(sid: int, name: str, **extra: object) -> dict[str, object]:
@@ -95,6 +98,50 @@ def test_qos_placeholder_has_empty_rules():
     qos = QosData.model_validate({"segments": []})
     qos.bind_profile(PROFILE)
     assert qos.segment("Guest").rules == []
+
+
+def test_device_settings_placeholder_has_empty_static_routes():
+    ds = DeviceSettingsData.model_validate(
+        {"lan": {"networks": [], "interfaces": []}, "segments": []}
+    ).for_edge()
+    ds.bind_profile(
+        {
+            "segments": [
+                {
+                    "segment": desc(2, "Guest"),
+                    "routes": {"static": [{"destination": "192.0.2.0"}]},
+                }
+            ]
+        }
+    )
+    guest = ds.segment("Guest")
+    assert ds.segment("Guest") is guest and ds.segments[-1] is guest
+    assert (guest.segment.segment_id, require_present(guest.routes).static) == (2, [])
+    assert guest.config_context is ConfigContext.EDGE
+
+
+def test_a_placeholder_is_empty_in_each_module_and_has_what_the_orchestrator_needs():
+    profile_segments = [
+        {
+            "segment": desc(2, "Guest"),
+            "outbound": [{"name": "p"}],
+            "rules": [{"name": "p"}],
+            "routes": {"static": [{"destination": "192.0.2.0"}], "staticV6": []},
+        }
+    ]
+    assert profile_placeholder(profile_segments, "Guest", "firewall") == {
+        "segment": desc(2, "Guest"),
+        "outbound": [],
+    }
+    assert profile_placeholder(profile_segments, "Guest", "QOS") == {
+        "segment": desc(2, "Guest"),
+        "rules": [],
+    }
+    # a deviceSettings entry without routes.static is refused as "static route is missing"
+    assert profile_placeholder(profile_segments, "Guest", "deviceSettings") == {
+        "segment": desc(2, "Guest"),
+        "routes": {"static": []},
+    }
 
 
 def test_bind_tolerates_odd_profile_data():

@@ -36,6 +36,7 @@ Run:
 from __future__ import annotations
 
 import copy
+import re
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from typing import Any
@@ -53,6 +54,7 @@ from _intent_live_support import (  # pyright: ignore[reportImplicitRelativeImpo
     redact,
     restoring,
     synthetic_name,
+    write_data,
 )
 from pydantic import MISSING
 from pyvelo.client import ConfigConflictError, VcoClient, VcoOperationError
@@ -336,8 +338,8 @@ class Reconcile:
     id: str
     name: Name
     model: type[VcoModel]
-    lists: tuple[str, ...]
-    """The lists a placeholder segment entry has, empty."""
+    empty: dict[str, Any]
+    """What a placeholder segment entry has besides the segment: lists, empty."""
     edit: Callable[
         [ConfigPipeline, ConfigState, dict[str, Any]],
         Awaitable[tuple[list[Path], tuple[str, ...]]],
@@ -371,10 +373,14 @@ async def _cost_edit(
 
 
 FIREWALL_CASE = Reconcile(
-    "firewall", Name.FIREWALL, FirewallData, ("outbound",), _syslog_edit
+    "firewall", Name.FIREWALL, FirewallData, {"outbound": []}, _syslog_edit
 )
 DEVICE_SETTINGS_CASE = Reconcile(
-    "device-settings", Name.DEVICE_SETTINGS, DeviceSettingsData, (), _cost_edit
+    "device-settings",
+    Name.DEVICE_SETTINGS,
+    DeviceSettingsData,
+    {"routes": {"static": []}},  # the Orchestrator refuses an entry without it
+    _cost_edit,
 )
 
 
@@ -441,7 +447,7 @@ async def _reconcile(
         _check_stored_as_sent("edit", outside, plan)
 
         placeholders = [
-            {"segment": copy.deepcopy(s["segment"]), **{k: [] for k in case.lists}}
+            {"segment": copy.deepcopy(s["segment"]), **copy.deepcopy(case.empty)}
             for s in lacking
         ]
         check(
@@ -480,28 +486,98 @@ async def test_unrelated_edit_adds_the_missing_segments_as_empty_placeholders(
     await _reconcile(lab, pipeline, FIREWALL_CASE, layout)
 
 
-class PlaceholderRejected(AssertionError):
-    """The Orchestrator refused a deviceSettings segment entry that has only a descriptor."""
+GLOBAL_SEGMENT_ID = 0
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=PlaceholderRejected,
-    reason=(
-        "a deviceSettings segment entry with only the segment descriptor is "
-        "refused by the Orchestrator, which wants routes.static in each entry"
-    ),
-)
+def _has_lan_network(raw: dict[str, Any]) -> bool:
+    lan = raw.get("lan")
+    return isinstance(lan, dict) and bool(lan.get("networks"))  # pyright: ignore[reportUnknownMemberType]
+
+
+def _shared_segments(edge: dict[str, Any], profile: dict[str, Any]) -> list[object]:
+    """The IDs of the segments, other than the Global one, that both layers have."""
+    in_profile = [_segment_id(s) for s in profile.get("segments") or []]
+    return [
+        found
+        for found in (_segment_id(s) for s in edge.get("segments") or [])
+        if found != GLOBAL_SEGMENT_ID and found in in_profile
+    ]
+
+
+def _refusals(exc: VcoOperationError) -> str:
+    """The error codes and the fields of a refusal; the rest of it names lab entities."""
+    found = re.findall(r"\[([A-Z]+\d+)\]\s+([\w.\[\]]+):", str(exc))
+    return "; ".join(f"{code} {field}" for code, field in found) or "no error code"
+
+
+async def _reconcile_unrefused(
+    lab: Lab, pipeline: ConfigPipeline, case: Reconcile, layout: EdgeLayout
+) -> None:
+    """``_reconcile``; a refusal by the Orchestrator fails the test, by its codes alone."""
+    refused: str | None = None
+    try:
+        await _reconcile(lab, pipeline, case, layout)
+    except VcoOperationError as exc:
+        refused = _refusals(exc)
+    check(refused is None, f"the Orchestrator refused the write: {refused}")
+
+
 async def test_missing_device_settings_segment_is_added_as_a_placeholder_the_orchestrator_accepts(
     lab: Lab, pipeline: ConfigPipeline
 ) -> None:
-    layout = await _lacking_layout(lab, DEVICE_SETTINGS_CASE, writable=False)
-    try:
-        await _reconcile(lab, pipeline, DEVICE_SETTINGS_CASE, layout)
-    except VcoOperationError as exc:
-        if "static route is missing" in str(exc):
-            raise PlaceholderRejected from exc
-        pytest.skip("the module's data is refused for a reason of its own")
+    case = DEVICE_SETTINGS_CASE
+    lacking: list[EdgeLayout] = []
+    sharing: list[EdgeLayout] = []
+    for layout in lab.layouts:
+        edge_module = await lab.edge_site(layout, case.name).read()
+        profile_module = await lab.profile_site(layout.profile_id, case.name).read()
+        if edge_module is None or profile_module is None:
+            continue
+        edge, profile = _raw(edge_module), _raw(profile_module)
+        if not _has_lan_network(edge):
+            continue
+        if _lacking(edge, profile):
+            lacking.append(layout)
+        elif _shared_segments(edge, profile):
+            sharing.append(layout)
+
+    # An edge that already lacks a segment its profile has; a module that
+    # refuses its own unchanged data is no target (it would refuse anything).
+    target = await lab.first_writable(lacking, case.name)
+    if target is not None:
+        await _reconcile_unrefused(lab, pipeline, case, target)
+        return
+
+    # Else make an edge lack one: take a non-Global segment entry out of a
+    # module that takes a write, and put it back afterwards.
+    target = await lab.first_writable(sharing, case.name)
+    if target is None:
+        pytest.skip(
+            "no edge deviceSettings module that takes a write lacks, or has, a "
+            "segment entry of its profile's besides the Global one"
+        )
+    site = lab.edge_site(target, case.name)
+    profile_site = lab.profile_site(target.profile_id, case.name)
+    async with restoring(site):
+        module = await site.read_present()
+        data = _raw(module)
+        profile = _raw(await profile_site.read_present())
+        removed = _shared_segments(data, profile)[0]
+        data["segments"] = [s for s in data["segments"] if _segment_id(s) != removed]
+        refused: str | None = None
+        try:
+            await write_data(site, module, data)
+        except VcoOperationError as exc:
+            refused = _refusals(exc)
+        if refused is not None:
+            pytest.skip(
+                f"the Orchestrator takes no module without that segment entry: {refused}"
+            )
+        check(
+            len(_lacking(_raw(await site.read_present()), profile)) == 1,
+            "the edge does not lack the segment entry that was taken out",
+        )
+        await _reconcile_unrefused(lab, pipeline, case, target)
 
 
 # ---------------------------------------------------------------------------
