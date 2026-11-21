@@ -1,7 +1,7 @@
 """Field declaration toolkit for VcoModel.
 
 Provides:
-- Constants and sentinels (_CONTEXT_NOT_SET)
+- Constants and sentinels (CONTEXT_NOT_SET)
 - ConfigContext enum and ContextDefaults dataclass
 - Normalizer helpers for compact serialization equivalence
 - Annotated validators (NoneIsFalse, NoneIsTrue, NoneIsZero, NoneIsMissing, CoerceInt)
@@ -20,6 +20,7 @@ from typing import Any, cast
 
 from pydantic import (
     MISSING,
+    BaseModel,
     BeforeValidator,
     TypeAdapter,
     ValidationError,
@@ -27,7 +28,7 @@ from pydantic import (
 )
 from pydantic.fields import FieldInfo
 
-_CONTEXT_NOT_SET = object()  # sentinel for "use field's own default"
+CONTEXT_NOT_SET: object = object()  # sentinel for "use field's own default"
 
 
 class ConfigContext(StrEnum):
@@ -35,27 +36,35 @@ class ConfigContext(StrEnum):
     PROFILE = "profile"
 
 
+type NormalizerFn = Callable[[object, ConfigContext | None], object]
+"""Canonical normalizer signature: ``(value, active_config_level) -> normalized``."""
+
+
 @dataclass(frozen=True)
 class ContextDefaults:
-    edge: Any = _CONTEXT_NOT_SET
-    profile: Any = _CONTEXT_NOT_SET
+    """Per-level default overrides.
 
-    def for_level(self, level: ConfigContext) -> Any:
+    Each entry is one of: ``CONTEXT_NOT_SET`` (use the field's own default),
+    ``MISSING`` (field is absent at that level), a zero-arg factory, or a value.
+    """
+
+    edge: object = CONTEXT_NOT_SET
+    profile: object = CONTEXT_NOT_SET
+
+    def for_level(self, level: ConfigContext) -> object:
         return self.edge if level is ConfigContext.EDGE else self.profile
 
 
-def _resolve_ctx_default(ctx_default: Any) -> Any:
+def resolve_ctx_default(ctx_default: object) -> object:
     """Invoke callable context defaults (factories like list, dict) to produce values."""
-    if ctx_default is _CONTEXT_NOT_SET or ctx_default is MISSING:
+    if ctx_default is CONTEXT_NOT_SET or ctx_default is MISSING:
         return ctx_default
     if callable(ctx_default):
         return ctx_default()
     return ctx_default
 
 
-def _wrap_normalizer(
-    fn: Callable[..., Any],
-) -> Callable[[Any, ConfigContext | None], Any]:
+def _wrap_normalizer(fn: Callable[..., Any]) -> NormalizerFn:
     """Wrap a 1-arg normalizer into the canonical 2-arg (value, ctx) form.
 
     Inspects the callable's parameter count at registration time so there is
@@ -75,7 +84,7 @@ def _wrap_normalizer(
 class _ProcessedNorm:
     """Stored in FieldInfo.metadata by _apply_vco_markers."""
 
-    fn: Callable[[Any, ConfigContext | None], Any]
+    fn: NormalizerFn
 
 
 @dataclass(frozen=True, slots=True)
@@ -85,9 +94,7 @@ class _ProcessedCtxDefaults:
     defaults: ContextDefaults
 
 
-def _get_normalizer(
-    field_info: FieldInfo,
-) -> Callable[[Any, ConfigContext | None], Any] | None:
+def get_normalizer(field_info: FieldInfo) -> NormalizerFn | None:
     """Extract processed normalizer from FieldInfo.metadata."""
     for m in field_info.metadata:
         if isinstance(m, _ProcessedNorm):
@@ -95,11 +102,7 @@ def _get_normalizer(
     return None
 
 
-# Public alias
-get_normalizer = _get_normalizer
-
-
-def _get_context_defaults(field_info: FieldInfo) -> ContextDefaults | None:
+def get_context_defaults(field_info: FieldInfo) -> ContextDefaults | None:
     """Extract processed context defaults from FieldInfo.metadata."""
     for m in field_info.metadata:
         if isinstance(m, _ProcessedCtxDefaults):
@@ -277,9 +280,7 @@ class ContextDefault:
 
     __slots__ = ("edge", "profile")
 
-    def __init__(
-        self, *, edge: Any = _CONTEXT_NOT_SET, profile: Any = _CONTEXT_NOT_SET
-    ):
+    def __init__(self, *, edge: Any = CONTEXT_NOT_SET, profile: Any = CONTEXT_NOT_SET):
         self.edge = edge
         self.profile = profile
 
@@ -370,11 +371,11 @@ class Resolvable:
 class _ProcessedResolvable:
     """Stored in FieldInfo.metadata by _apply_vco_markers."""
 
-    identity_type: type
+    identity_type: type[object]
     id_attr: str
 
 
-def _apply_vco_markers(cls) -> None:
+def apply_vco_markers(cls: type[BaseModel]) -> None:
     """Scan FieldInfo.metadata for VCO markers and store processed results back in metadata."""
     needs_rebuild = False
     _processed_types = (

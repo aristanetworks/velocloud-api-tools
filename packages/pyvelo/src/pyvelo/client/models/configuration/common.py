@@ -48,7 +48,7 @@ class _HasSegment(Protocol):
     def segment(self) -> SegmentMetadata: ...
 
 
-def _find_segment[S: _HasSegment](
+def find_segment[S: _HasSegment](
     segments: Sequence[S],
     *,
     name: str | None = None,

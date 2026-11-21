@@ -5,7 +5,7 @@ from pydantic import MISSING, Field
 from pyvelo.core import Alias, ContextDefaults, VcoModel
 from pyvelo.core.fields import DefaultingScalar, KeyField
 
-from ..common import _find_segment
+from ..common import find_segment
 from .rules import FirewallInboundRule, FirewallInboundRuleV6
 from .security_features import NetworkProtectionSettings, SecurityFeatureSettings
 from .segment import FirewallSegment
@@ -59,4 +59,4 @@ class FirewallData(VcoModel):
     def get_segment(
         self, *, name: str | None = None, segment_id: int | None = None
     ) -> FirewallSegment:
-        return _find_segment(self.segments, name=name, segment_id=segment_id)
+        return find_segment(self.segments, name=name, segment_id=segment_id)
