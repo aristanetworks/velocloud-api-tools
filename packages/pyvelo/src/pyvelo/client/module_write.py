@@ -9,7 +9,9 @@ raw JSON and the model as it is now) is applied to it.
 Segment reconciliation: an edge module may lack a segment entry that its profile
 has. The write then carries an empty entry for it (the profile's descriptor and
 no rules), so the edge layer has a place to hold the segment. It never writes
-only to reconcile: with no change from the caller the plan is ``none``.
+only to reconcile: with no change from the caller the plan is ``none``. A
+segment the caller deletes from the edge layer that the profile has comes back
+as that empty entry: the edge cannot drop what it inherits.
 """
 
 import copy
@@ -104,7 +106,7 @@ class ModulePlan:
     changes: tuple[RawChange, ...]
     """The caller's changes, relative to the raw data with the reconciled segments."""
     reconciled_segments: tuple[str, ...]
-    """The profile's segments that the edge module, as read, does not have."""
+    """The profile's segments that the edge module, as read or as edited, does not have."""
 
     def render(self) -> str:
         lines = [f"{self.name}: {self.operation}"]
@@ -163,6 +165,17 @@ def _segment_name(placeholder: Mapping[str, Any]) -> str:
     descriptor = cast(Mapping[str, object], placeholder["segment"])
     name = descriptor.get("name")
     return name if isinstance(name, str) else str(descriptor.get("segmentId"))
+
+
+def _add_segments(data: object, entries: list[dict[str, Any]]) -> None:
+    """Append *entries* to the ``segments`` of *data*, an absent or null one included."""
+    if not (entries and _is_dict(data)):
+        return
+    segments = data.get("segments")
+    if _is_list(segments):
+        segments.extend(entries)
+    else:  # absent or null
+        data["segments"] = list(entries)
 
 
 def _with_baseline_segments(
@@ -265,16 +278,12 @@ def plan_module(
             reconciled_segments=(),
         )
 
+    inherited = profile if level is not ConfigContext.PROFILE else None
     extra: list[dict[str, Any]] = []
-    if profile is not None and level is not ConfigContext.PROFILE:
-        extra = missing_segments(raw, profile.raw_data, name)
+    if inherited is not None:
+        extra = missing_segments(raw, inherited.raw_data, name)
     reconciled = copy.deepcopy(raw)
-    if extra and _is_dict(reconciled):
-        segments = reconciled.get("segments")
-        if _is_list(segments):
-            segments.extend(extra)
-        else:  # absent or null
-            reconciled["segments"] = list(extra)
+    _add_segments(reconciled, extra)
 
     if isinstance(current, VcoModel):
         model_type = type(current)
@@ -306,6 +315,12 @@ def plan_module(
             )
         payload = copy.deepcopy(topped_up)
 
+    restored: list[dict[str, Any]] = []
+    if inherited is not None:
+        # A segment the caller deleted from the edge layer is the profile's again.
+        restored = missing_segments(payload, inherited.raw_data, name)
+        _add_segments(payload, restored)
+
     changed = payload != reconciled or refs_out is not None
     operation: _Operation = (
         "none" if not changed else "insert" if module.is_new else "update"
@@ -316,5 +331,7 @@ def plan_module(
         data=payload if changed else copy.deepcopy(cast(dict[str, Any], raw)),
         refs=refs_out,
         changes=tuple(raw_changes(reconciled, payload, model_type)),
-        reconciled_segments=tuple(_segment_name(entry) for entry in extra),
+        reconciled_segments=tuple(
+            _segment_name(entry) for entry in [*extra, *restored]
+        ),
     )

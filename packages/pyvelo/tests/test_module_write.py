@@ -159,6 +159,33 @@ def test_edge_only_segment_is_kept_and_profile_level_never_reconciles():
     )
 
 
+def guest_rule() -> dict[str, Any]:
+    return {"name": "g", "match": {}, "action": {"allow_or_deny": "allow"}}
+
+
+def test_deleting_an_edge_segment_the_profile_has_leaves_its_placeholder():
+    raw = copy.deepcopy(EDGE_RAW)
+    raw["segments"].append({"segment": desc(2, "Guest"), "outbound": [guest_rule()]})
+    mod, profile = fw(raw), fw(PROFILE_RAW, module_id=2)
+    del mod.data.segments[1]
+    plan = plan_module(mod, level=EDGE, profile=profile)
+    assert plan.operation == "update"
+    assert plan.data["segments"] == [
+        raw["segments"][0],
+        {"segment": desc(2, "Guest", vendorKey="x"), "outbound": []},
+    ]
+    assert plan.reconciled_segments == ("Guest",)
+
+
+def test_deleting_a_segment_that_is_only_a_placeholder_is_no_change():
+    raw = copy.deepcopy(EDGE_RAW)
+    raw["segments"].append(missing_segments(EDGE_RAW, PROFILE_RAW, "firewall")[0])
+    mod, profile = fw(raw), fw(PROFILE_RAW, module_id=2)
+    del mod.data.segments[1]
+    plan = plan_module(mod, level=EDGE, profile=profile)
+    assert (plan.operation, plan.data) == ("none", raw)
+
+
 def test_edit_inside_a_missing_segment_is_relative_to_its_placeholder():
     mod, profile = fw(EDGE_RAW), fw(PROFILE_RAW, module_id=2)
     guest = type(mod.data.segments[0]).model_validate(

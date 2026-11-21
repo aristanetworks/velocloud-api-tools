@@ -216,6 +216,25 @@ async def test_a_patch_that_names_one_segment_twice_is_refused():
         )
 
 
+async def test_deleting_an_edge_segment_the_profile_has_leaves_an_empty_one():
+    raw: dict[str, Any] = {
+        "segments": [
+            global_segment(),
+            {"segment": desc(2, "Guest"), "outbound": [rule("g")]},
+        ]
+    }
+    client, state = MockVcoClient(), edge_state(raw)
+    await ConfigPipeline(client).apply(
+        state, module="firewall", patch={"segments": {"Guest": None}}
+    )
+    await ConfigPipeline(client).save(state)
+    segments = client.update_requests[0].update.data["segments"]
+    assert segments == [
+        global_segment(),
+        {"segment": desc(2, "Guest"), "outbound": []},
+    ]
+
+
 async def test_setting_a_default_on_an_inherited_key_is_refused():
     raw: dict[str, Any] = {"segments": [global_segment()]}
     client, state = MockVcoClient(), edge_state(raw)
