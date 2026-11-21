@@ -6,7 +6,8 @@ from typing import Any
 import pytest
 from pyvelo.client.exceptions import LossyFieldError
 from pyvelo.client.schemas.configuration import ConfigurationBase, GetConfiguration
-from pyvelo.testing import make_module_json
+from pyvelo.config.resolver import ResolverRegistry
+from pyvelo.testing import make_module_json, make_segment_resolver
 from pyvelo_intent.config.pipeline import ConfigPipeline, build_default_pipeline
 from pyvelo_intent.config.state import ConfigState
 from pyvelo_intent.testing import MockVcoClient
@@ -27,6 +28,28 @@ def edge_state(raw: dict[str, Any]) -> ConfigState:
         "firewall", copy.deepcopy(raw), module_id=1, configuration_id=10, version="e1"
     )
     return make_state(edge_modules=[row])
+
+
+async def segment_resolvers() -> ResolverRegistry:
+    """Resolvers that know the profile's segments, as ``ConfigPipeline.load`` leaves them."""
+    registry = ResolverRegistry()
+    registry.register(
+        await make_segment_resolver(
+            [
+                {
+                    "name": "Global Segment",
+                    "segment_id": 0,
+                    "segment_logical_id": desc(0, "Global Segment")["segmentLogicalId"],
+                },
+                {
+                    "name": "Guest",
+                    "segment_id": 2,
+                    "segment_logical_id": desc(2, "Guest")["segmentLogicalId"],
+                },
+            ]
+        )
+    )
+    return registry
 
 
 def global_segment(*rules: dict[str, Any]) -> dict[str, Any]:
@@ -128,6 +151,23 @@ async def test_missing_module_insert_has_only_local_content():
     assert [r["name"] for r in segments[0]["outbound"]] == ["block-ssh"]
     assert segments[1] == {"segment": desc(2, "Guest"), "outbound": []}
     assert "allow-all" not in str(req.data)
+
+
+async def test_segment_key_in_another_case_edits_the_segment_it_names():
+    client, state = MockVcoClient(), make_state()
+    pipeline = ConfigPipeline(client, resolvers=await segment_resolvers())
+    await pipeline.apply(
+        state,
+        module="firewall",
+        patch={"segments": {"global segment": {"outbound": {"x": rule("x")}}}},
+    )
+    await pipeline.save(state)
+    segments = client.update_requests[0].update.data["segments"]
+    assert [s["segment"] for s in segments] == [
+        desc(0, "Global Segment"),
+        desc(2, "Guest"),  # reconciled from the profile, not added twice
+    ]
+    assert [r["name"] for r in segments[0]["outbound"]] == ["x"]
 
 
 async def test_setting_a_default_on_an_inherited_key_is_refused():

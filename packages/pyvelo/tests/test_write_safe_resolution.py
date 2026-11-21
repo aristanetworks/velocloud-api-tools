@@ -104,6 +104,56 @@ def test_misspelled_segment_key_raises_with_a_suggestion():
     assert [s.segment.name for s in fw.segments] == ["Global Segment"]
 
 
+def test_segment_key_in_another_case_edits_the_existing_segment():
+    fw = fresh()
+    _ = fw.merge_patch(
+        {
+            "segments": {
+                "global segment": {
+                    "outbound": {
+                        "r1": {"action": {"allow_or_deny": "deny"}, "match": {}}
+                    }
+                }
+            }
+        },
+        resolvers=Fake(),
+    )
+    assert [s.segment.name for s in fw.segments] == ["Global Segment"]
+    assert [r.name for r in fw.segments[0].outbound] == ["r1"]
+
+
+def test_segment_key_in_another_case_deletes_the_existing_segment():
+    fw = fresh()
+    _ = fw.merge_patch({"segments": {"GLOBAL SEGMENT": None}}, resolvers=Fake())
+    assert fw.segments == []
+
+
+def test_new_segment_by_a_key_in_another_case_gets_the_canonical_name():
+    fw = fresh()
+    _ = fw.merge_patch({"segments": {"guest": {"outbound": {}}}}, resolvers=Fake())
+    meta = fw.segments[1].segment
+    assert (meta.name, meta.segment_id, meta.segment_logical_id) == (
+        "Guest",
+        2,
+        uuid.UUID(int=3),
+    )
+
+
+def test_a_near_miss_segment_key_in_another_case_still_raises():
+    fw = fresh()
+    with pytest.raises(ResolutionError) as exc:
+        _ = fw.merge_patch({"segments": {"gest": {"outbound": {}}}}, resolvers=Fake())
+    assert exc.value.candidates == ["Guest"]
+    assert [s.segment.name for s in fw.segments] == ["Global Segment"]
+
+
+def test_a_key_the_marked_field_does_not_name_is_not_resolved():
+    lan = Lan()
+    _ = lan.merge_patch({"networks": {"corp": {}}}, resolvers=Fake())
+    _ = lan.merge_patch({"networks": {"CORP": {}}}, resolvers=Fake())
+    assert [n.name for n in lan.networks] == ["corp", "CORP"]
+
+
 def test_segment_name_fills_its_ids():
     fw = fresh()
     _ = fw.merge_patch({"segments": {"Guest": {"outbound": {}}}}, resolvers=Fake())

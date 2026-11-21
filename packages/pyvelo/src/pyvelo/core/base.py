@@ -662,7 +662,11 @@ def _merge_keyed_list(
     """Merge a ``{key: item_patch}`` dict into a KeyField list, changing the list in place.
 
     Each dict key is compared with the value at the field's key path on the
-    existing items.
+    existing items. When the key path ends at a ``NameOf`` field and there is a
+    resolver, a key that matches no item is first resolved, and the name the
+    resolver has for it (it matches ignoring case) takes its place: ``guest``
+    edits the ``Guest`` item, or adds ``Guest``. An unknown name raises
+    ``ResolutionError``.
     - Matched + dict value: recursive merge into matched item.
     - Matched + None: delete item from list.
     - Unmatched + dict value: build a new item and insert it (appended unless
@@ -685,9 +689,14 @@ def _merge_keyed_list(
         )
 
     item_type = _list_item_type(field_info)
+    name_identity = _key_name_of(item_type, key_path)
 
-    for key, item_patch in patch.items():
+    for patch_key, item_patch in patch.items():
+        key = patch_key
         idx = _find_by_key(items, key_path, key)
+        if idx is None and name_identity is not None and resolvers is not None:
+            key = _canonical_name(name_identity, key, resolvers)
+            idx = _find_by_key(items, key_path, key)
 
         if item_patch is None:
             if idx is not None:
@@ -721,6 +730,43 @@ def _merge_keyed_list(
 
     if was_unset and items:
         setattr(model, field_name, items)
+
+
+def _key_name_of(item_type: _ListItemType | None, key_path: str) -> type[object] | None:
+    """The identity type that the field at *key_path* of the list's items names (``NameOf``), or None."""
+    if item_type is None:
+        return None
+    fields: Mapping[str, FieldInfo] = item_type.fields
+    *parents, leaf = key_path.split(".")
+    for part in parents:
+        parent_info = fields.get(part)
+        sub_type = None if parent_info is None else _field_model_type(parent_info)
+        if sub_type is None:
+            return None
+        fields = sub_type.model_fields
+    leaf_info = fields.get(leaf)
+    identity_type: type[object] | None = (
+        None if leaf_info is None else get_name_of(leaf_info)
+    )
+    return identity_type
+
+
+def _canonical_name(
+    identity_type: type[object], name: str, resolvers: IdentityResolver
+) -> str:
+    """The name the resolver has for *name*, or *name* if it cannot say.
+
+    An unknown name raises ``ResolutionError``. No resolver for the type, or an
+    identity with no ``name``, leaves *name* as it is.
+    """
+    try:
+        identity = resolvers.resolve_sync(identity_type, name)
+    except ResolutionError:
+        raise
+    except LookupError:
+        return name
+    canonical: object = getattr(identity, "name", None)
+    return canonical if isinstance(canonical, str) else name
 
 
 def _new_keyed_item(
