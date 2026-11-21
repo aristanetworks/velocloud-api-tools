@@ -1,5 +1,6 @@
 """rebase(raw, before, after): apply the change before->after to raw."""
 
+import copy
 from collections.abc import Sequence
 from typing import Annotated, cast
 
@@ -248,3 +249,77 @@ def test_unreadable_raw_key_keeps_positional_pairing():
     before = {"pols": [{"ruleName": "a", "hits": 1}]}
     after = {"pols": [{"ruleName": "a", "hits": 2}]}
     assert rebase(raw, before, after, Pols) == {"pols": [{"hits": 2, "x": 1}]}
+
+
+# --- items paired by alt key, then by key --------------------------------------
+
+
+class R(VcoModel):
+    name: str | None = None
+    rid: str | MISSING = MISSING
+    port: int = 0
+
+
+class Rs(VcoModel):
+    rules: Annotated[list[R], KeyField("name", alt="rid")] = Field(default_factory=list)
+
+
+def item(name: str | None, rid: str | None = None, **rest: object) -> dict[str, object]:
+    """A rule as JSON; with no *rid* it has no ``rid`` key."""
+    return {"name": name, **({} if rid is None else {"rid": rid}), **rest}
+
+
+def test_rename_keeps_unknown_raw_keys():
+    raw = {"rules": [item("a", "1", x=1)]}
+    before = {"rules": [item("a", "1", port=0)]}
+    after = {"rules": [item("b", "1", port=0)]}
+    assert rebase(raw, before, after, Rs) == {"rules": [item("b", "1", x=1)]}
+
+
+def test_repeated_names_with_distinct_alt_keys_rebase_item_by_item():
+    raw = {"rules": [item("a", "1", x=1), item("a", "2", x=2)]}
+    before = {"rules": [item("a", "1", port=0), item("a", "2", port=0)]}
+    after = {"rules": [item("a", "1", port=0), item("a", "2", port=5)]}
+    assert rebase(raw, before, after, Rs) == {
+        "rules": [item("a", "1", x=1), item("a", "2", x=2, port=5)]
+    }
+
+
+def test_new_item_without_alt_key_is_an_addition():
+    raw = {"rules": [item("a", "1", x=1), item("b", "2", x=2)]}
+    before = {"rules": [item("a", "1", port=0), item("b", "2", port=0)]}
+    new = item("new", port=0)
+    after = {"rules": [*before["rules"], new]}
+    out = rebase(raw, before, after, Rs)
+    assert out == {"rules": [*raw["rules"], new]}
+    assert raw_changes(raw, out, Rs) == [RawChange("rules[new]", MISSING, new)]
+
+
+def test_new_item_without_a_key_is_an_addition():
+    raw = {"rules": [item("a", "1", x=1), item("b", "2", x=2)]}
+    before = {"rules": [item("a", "1", port=0), item("b", "2", port=0)]}
+    new = item(None, port=3)
+    after = {"rules": [*before["rules"], new]}
+    out = rebase(raw, before, after, Rs)
+    assert out == {"rules": [*raw["rules"], new]}
+    assert raw_changes(raw, out, Rs) == [RawChange("rules[#2]", MISSING, new)]
+
+
+def test_repeated_key_without_alt_keys_replaces_the_list():
+    raw = {"rules": [item("a", x=1), item("a", x=2)]}
+    before = {"rules": [item("a", port=0), item("a", port=0)]}
+    after = {"rules": [item("a", port=0), item("a", port=7)]}
+    assert rebase(raw, before, after, Rs) == after
+
+
+def test_repeated_key_without_alt_keys_untouched_when_nothing_changed():
+    raw = {"rules": [item("a", x=1), item("a", x=2)]}
+    before = {"rules": [item("a", port=0), item("a", port=0)]}
+    assert rebase(raw, before, copy.deepcopy(before), Rs) == raw
+
+
+def test_removed_item_with_a_unique_key_is_removed():
+    raw = {"rules": [item("a", x=1), item("b", x=2), item("c", x=3)]}
+    before = {"rules": [item("a", port=0), item("b", port=0), item("c", port=0)]}
+    after = {"rules": [item("a", port=0), item("c", port=0)]}
+    assert rebase(raw, before, after, Rs) == {"rules": [item("a", x=1), item("c", x=3)]}

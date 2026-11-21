@@ -663,6 +663,25 @@ def test_an_edit_elsewhere_does_not_stamp_bgp_ids():
     assert [str(c.path) for c in plan.changes] == ["lan.management"]
 
 
+def test_generated_alt_keys_pair_by_key_and_cause_no_write():
+    # Each parse gives a rule without a ruleLogicalId a new one, so the baseline
+    # and the model disagree on every ID: the rules pair by name instead.
+    second: dict[str, Any] = {**QOS_RULE, "name": "r2"}
+    mod = qos(QOS_RULE, second)
+    assert plan_module(mod, level=EDGE).operation == "none"
+    mod.data.segments[0].rules[1].action.edge_to_edge_encryption = False
+    plan = plan_module(mod, level=EDGE)
+    r1, r2 = plan.data["segments"][0]["rules"]
+    assert r1 == QOS_RULE
+    assert r2 == {
+        **second,
+        "action": {**second["action"], "edgeToEdgeEncryption": False},
+    }
+    assert [str(c.path) for c in plan.changes] == [
+        'segments["Global Segment"].rules[r2].action.edgeToEdgeEncryption'
+    ]
+
+
 def test_a_new_item_keeps_the_id_it_is_given():
     mod = qos(QOS_RULE)
     mod.data.segments[0].rules.append(

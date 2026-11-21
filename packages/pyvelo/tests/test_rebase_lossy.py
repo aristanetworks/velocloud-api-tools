@@ -6,7 +6,7 @@ from pyvelo.core import ConfigContext, EdgeOnly, VcoModel
 from pyvelo.core.fields import KeyField, OverrideFlag
 from pyvelo.core.rebase import Path, find_lossy_assignments, is_override_flag
 
-from .test_rebase import Root
+from .test_rebase import Root, Rs
 
 
 class Opt(VcoModel):
@@ -203,6 +203,14 @@ def test_item_whose_key_changed_is_not_paired():
     cur.segments[0].segment.name = "Z"
     cur.segments[0].rules[0].port = 0
     assert lossy(base, cur) == []
+
+
+def test_lossy_and_carry_pair_by_alt_key():
+    raw = {"rules": [{"name": "a", "rid": "1"}]}
+    base, cur = Rs.model_validate(raw), Rs.model_validate(raw)
+    cur.rules[0].name = "b"
+    cur.rules[0].port = 0  # the default, and the document has no key for it
+    assert lossy(base, cur) == ["rules[a].port"]
 
 
 def test_dumps_that_do_not_line_up_with_the_model_are_not_walked():

@@ -5,6 +5,7 @@ import pickle
 import random
 
 import pytest
+from pydantic import MISSING
 from pyvelo.core.rebase import (
     Key,
     Path,
@@ -12,9 +13,10 @@ from pyvelo.core.rebase import (
     RawChange,
     find_lossy_assignments,
     raw_changes,
+    rebase,
 )
 
-from .test_rebase import Root, seg
+from .test_rebase import Root, Rs, item, seg
 
 EXAMPLES: list[tuple[tuple[PathPart, ...], str]] = [
     ((), ""),
@@ -285,3 +287,19 @@ def test_lossy_assignments_address_a_key_with_special_characters():
         "port",
     )
     assert paths[1].parts == ("segments", Key("0"), "rules", Key("r1"), "port")
+
+
+def test_rename_is_one_change_at_the_old_key():
+    raw = {"rules": [item("a", "1", x=1)]}
+    before = {"rules": [item("a", "1", port=0)]}
+    after = {"rules": [item("b", "1", port=0)]}
+    payload = rebase(raw, before, after, Rs)
+    assert raw_changes(raw, payload, Rs) == [RawChange("rules[a].name", "a", "b")]
+
+
+def test_change_in_a_repeated_name_is_reported_by_position():
+    raw = {"rules": [item("a", "1", x=1), item("a", "2", x=2)]}
+    before = {"rules": [item("a", "1", port=0), item("a", "2", port=0)]}
+    after = {"rules": [item("a", "1", port=0), item("a", "2", port=5)]}
+    payload = rebase(raw, before, after, Rs)
+    assert raw_changes(raw, payload, Rs) == [RawChange("rules[#1].port", MISSING, 5)]

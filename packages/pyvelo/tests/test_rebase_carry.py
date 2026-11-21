@@ -1,7 +1,7 @@
 import uuid
 from typing import Annotated, Any
 
-from pydantic import Field
+from pydantic import MISSING, Field
 from pyvelo.core import VcoModel
 from pyvelo.core.fields import KeyField
 from pyvelo.core.rebase import carry_unset_defaults
@@ -13,11 +13,20 @@ class Tagged(VcoModel):
     note: str = "n"
 
 
+class Ided(VcoModel):
+    name: str
+    rid: str | MISSING = MISSING
+    tag: uuid.UUID = Field(default_factory=uuid.uuid4)
+
+
 class Holder(VcoModel):
     tag: uuid.UUID = Field(default_factory=uuid.uuid4)
     inner: Tagged = Field(default_factory=lambda: Tagged(name="in"))
     items: Annotated[list[Tagged], KeyField("name")] = Field(default_factory=list)
     plain: list[Tagged] = Field(default_factory=list)
+    ided: Annotated[list[Ided], KeyField("name", alt="rid")] = Field(
+        default_factory=list
+    )
 
 
 def dump(m: VcoModel) -> dict[str, Any]:
@@ -121,3 +130,11 @@ def test_dumps_that_do_not_line_up_with_the_models_are_not_walked():
     expected = dump(cur) | {"items": after["items"]}
     carry_unset_defaults(base, cur, before, after)
     assert after["items"] == expected["items"]
+
+
+def test_lossy_and_carry_pair_by_alt_key():
+    base, cur = pair({"ided": [{"name": "a", "rid": "1"}]})
+    cur.ided[0].name = "b"
+    before, after = carried(base, cur)
+    assert after["ided"][0]["name"] == "b"
+    assert after["ided"][0]["tag"] == before["ided"][0]["tag"]
