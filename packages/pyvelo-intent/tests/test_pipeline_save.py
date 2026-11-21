@@ -1,5 +1,7 @@
 """Tests for ConfigPipeline.save()."""
 
+from typing import cast
+
 import pytest
 from pyvelo.client.enums.configuration import ConfigurationModuleName
 from pyvelo.client.schemas.configuration import (
@@ -96,3 +98,17 @@ async def test_save_result_type():
     assert result.modules_updated == [ConfigurationModuleName.FIREWALL]
     assert result.modules_inserted == [ConfigurationModuleName.QOS]
     assert result.warnings == []
+
+
+@pytest.mark.asyncio
+async def test_keyword_built_module_saves_only_the_change():
+    client = MockVcoClient()
+    state = _make_state()
+    assert state.edge_config is not None
+    before = cast(dict[str, object], state.edge_config.firewall.raw_data)
+    state.edge_config.firewall.data.firewall_enabled = False
+    await ConfigPipeline(client).save(state)
+    assert client.update_requests[0].update.data == {
+        **before,
+        "firewall_enabled": False,
+    }

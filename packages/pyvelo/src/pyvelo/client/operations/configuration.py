@@ -15,14 +15,13 @@ from pyvelo.client.models.configuration.device_settings.root import DeviceSettin
 from pyvelo.client.models.configuration.firewall.root import FirewallData
 from pyvelo.client.models.configuration.qos.root import QosData
 from pyvelo.client.models.configuration.wan.root import WanData
-from pyvelo.client.module_write import plan_module
+from pyvelo.client.module_write import plan_module, update_request
 from pyvelo.client.operations._tagging import CONFIG, PM_FLOW, domain_tag
 from pyvelo.client.schemas.configuration import (
     AnyConfigurationModule,
     ConfigurationBase,
     ConfigurationModuleBase,
     ConfigurationModuleList,
-    ConfigurationModuleUpdate,
     DeleteConfiguration,
     DeviceSettingsRefs,
     GetAllApplicationsResult,
@@ -180,15 +179,7 @@ class ConfigurationMixin(Protocol):
         if plan.operation == "none":
             return
         await self.update_configuration_module(
-            UpdateConfigurationModule(
-                configuration_module_id=module.id_,
-                enterprise_id=enterprise_id if enterprise_id is not None else MISSING,
-                version=module.version or MISSING,
-                update=ConfigurationModuleUpdate(
-                    data=plan.data,
-                    refs=plan.refs if plan.refs is not None else MISSING,
-                ),
-            )
+            update_request(module, plan, enterprise_id)
         )
 
     @domain_tag(CONFIG)

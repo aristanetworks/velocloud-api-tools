@@ -26,7 +26,11 @@ from pyvelo.client.models.configuration.common import (
     placeholder_segment,
     segment_id_of,
 )
-from pyvelo.client.schemas.configuration import ConfigurationModuleBase
+from pyvelo.client.schemas.configuration import (
+    ConfigurationModuleBase,
+    ConfigurationModuleUpdate,
+    UpdateConfigurationModule,
+)
 from pyvelo.core import ConfigContext, VcoModel
 from pyvelo.core.base import (
     _is_dict,  # pyright: ignore[reportPrivateUsage]
@@ -112,6 +116,21 @@ class ModulePlan:
             label = "missing" if self.operation == "none" else "reconciled"
             lines.append(f"  {label} segments: {', '.join(self.reconciled_segments)}")
         return "\n".join(lines)
+
+
+def update_request(
+    module: ConfigurationModuleBase, plan: ModulePlan, enterprise_id: int | None
+) -> UpdateConfigurationModule:
+    """The request that writes *plan* to *module*, at the version it was read."""
+    return UpdateConfigurationModule(
+        configuration_module_id=module.id_,
+        enterprise_id=enterprise_id if enterprise_id is not None else MISSING,
+        version=module.version or MISSING,
+        update=ConfigurationModuleUpdate(
+            data=plan.data,
+            refs=plan.refs if plan.refs is not None else MISSING,
+        ),
+    )
 
 
 def _json(value: object) -> str:
