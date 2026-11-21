@@ -28,7 +28,7 @@ The result of ``rebase`` may share sub-objects with its inputs. Callers copy.
 import json
 import re
 from collections import Counter
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Self, override
 
@@ -377,7 +377,11 @@ def _pair_unique(
 
 
 def pair_items(
-    old: list[object], new: list[object], node: _KeyedList
+    old: list[object],
+    new: list[object],
+    node: _KeyedList,
+    *,
+    old_alt_read: Sequence[bool] | None = None,
 ) -> Pairing | None:
     """Pair the items of keyed list *old* with those of *new*, or None to replace it whole.
 
@@ -386,6 +390,11 @@ def pair_items(
     among them. Items of *new* left over are added, and items of *old* left
     over removed. But when one of those has no key, or has the key of another
     item of *old*, what became of it cannot be told: the result is None.
+
+    *old_alt_read*, one flag per item of *old*, says whose alt key was read
+    from the document; the others are taken to have none. An alt key the parse
+    made up (a generated default) names nothing, though it may have been copied
+    to *new* (``carry_unset_defaults``). Default: every alt key was read.
     """
     old_keys, new_keys = _keys(old, node), _keys(new, node)
     pairs: dict[int, int] = {}  # index in new -> index in old
@@ -393,7 +402,12 @@ def pair_items(
     alt = node.spec.alt
     if alt is not None:
         _pair_unique(
-            [_item_key(item, node.item, alt) for item in old],
+            [
+                _item_key(item, node.item, alt)
+                if old_alt_read is None or old_alt_read[i]
+                else None
+                for i, item in enumerate(old)
+            ],
             [_item_key(item, node.item, alt) for item in new],
             old_left,
             new_left,
@@ -492,6 +506,18 @@ def _rebase_object(
     return out
 
 
+def _alt_agrees(raw_alt: object, before_alt: object) -> bool:
+    """Whether an alt key of *before* is the one the raw item has, so it was read.
+
+    A raw item without one had it made up by the parse.
+    """
+    return (
+        raw_alt is not None
+        and before_alt is not None
+        and _same_key(raw_alt, before_alt)
+    )
+
+
 def _rebase_keyed_list(
     raw: list[object], before: list[object], after: list[object], node: _KeyedList
 ) -> list[object] | None:
@@ -500,7 +526,8 @@ def _rebase_keyed_list(
     *raw* and *before* are paired by position, which is only sound while they
     have the same length and the parse kept the order. A raw item whose own key
     is readable must therefore agree with the key of the *before* item at its
-    position. *before* and *after* are paired by ``pair_items``.
+    position. *before* and *after* are paired by ``pair_items``, by the alt
+    keys of *before* that the raw item at the same position has as well.
     """
     if len(raw) != len(before):
         return None
@@ -510,7 +537,19 @@ def _rebase_keyed_list(
             before_key is None or not _same_key(raw_key, before_key)
         ):
             return None
-    pairing = pair_items(before, after, node)
+    alt = node.spec.alt
+    alt_read = (
+        None
+        if alt is None
+        else [
+            _alt_agrees(
+                _item_key(raw_item, node.item, alt),
+                _item_key(before_item, node.item, alt),
+            )
+            for raw_item, before_item in zip(raw, before, strict=True)
+        ]
+    )
+    pairing = pair_items(before, after, node, old_alt_read=alt_read)
     if pairing is None:
         return None
     old_of = {new: old for old, new in pairing.pairs}
@@ -791,18 +830,31 @@ def _lossy_in_model(
         )
 
 
+def _was_read(item: object, path: str) -> bool:
+    """Whether the value at dotted *path* of model *item* was read, not defaulted."""
+    current = item
+    for name in path.split("."):
+        if not isinstance(current, VcoModel) or name not in current.model_fields_set:
+            return False
+        current = _field_value(current, name)
+    return True
+
+
 def _keyed_pairs(
-    before: list[object], after: list[object], node: _Node
+    baseline: list[object], before: list[object], after: list[object], node: _Node
 ) -> list[tuple[PathPart, int, int]] | None:
     """The items a keyed list has on both sides, as (part, index in *before*, index in *after*).
 
     The part is the item's key in *before*, or its position there where that
     key is not unique. None unless *node* is a keyed list that ``pair_items``
-    pairs. Items in only one of the dumps are not paired.
+    pairs, by the alt keys of *baseline*'s items that were read and not
+    defaulted. Items in only one of the dumps are not paired.
     """
     if not isinstance(node, _KeyedList):
         return None
-    pairing = pair_items(before, after, node)
+    alt = node.spec.alt
+    alt_read = None if alt is None else [_was_read(item, alt) for item in baseline]
+    pairing = pair_items(before, after, node, old_alt_read=alt_read)
     if pairing is None:
         return None
     parts = _item_parts(before, node)
@@ -825,7 +877,7 @@ def _lossy_in_list(
         return  # the dump's positions are not the model's
     # (item path, baseline index, current index)
     pairs: list[tuple[Path, int, int]]
-    keyed = _keyed_pairs(before, after, node)
+    keyed = _keyed_pairs(baseline, before, after, node)
     if keyed is not None:
         pairs = [(path.child(part), base, cur) for part, base, cur in keyed]
     else:
@@ -921,7 +973,7 @@ def _carry_in_list(
         return
     if len(before) != len(baseline) or len(after) != len(current):
         return  # the dump's positions are not the model's
-    keyed = _keyed_pairs(before, after, node)
+    keyed = _keyed_pairs(baseline, before, after, node)
     if keyed is not None:
         pairs = [(base, cur) for _, base, cur in keyed]
     elif len(baseline) == len(current):

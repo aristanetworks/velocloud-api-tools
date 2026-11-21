@@ -682,6 +682,34 @@ def test_generated_alt_keys_pair_by_key_and_cause_no_write():
     ]
 
 
+def test_repeated_names_without_ids_are_replaced_whole_not_paired_by_position():
+    # The IDs each parse makes up are carried over by position, but an ID the
+    # document lacks must not pair the rules: the list is replaced whole.
+    first = {**QOS_RULE, "name": "dup", "futureA": 1}
+    second = {**QOS_RULE, "name": "dup", "futureB": 2}
+    second["action"] = {**QOS_RULE["action"], "edgeToEdgeEncryption": False}
+
+    swapped = qos(first, second)
+    swapped.data.segments[0].rules.reverse()
+    rules = plan_module(swapped, level=EDGE).data["segments"][0]["rules"]
+    assert [r["action"].get("edgeToEdgeEncryption", True) for r in rules] == [
+        False,
+        True,
+    ]
+    assert not any("futureA" in r or "futureB" in r for r in rules)
+
+    replaced = qos(first, second)
+    model_rules = replaced.data.segments[0].rules
+    del model_rules[0]
+    model_rules.append(
+        type(model_rules[0]).model_validate({**QOS_RULE, "name": "fresh"})
+    )
+    survivor, fresh = plan_module(replaced, level=EDGE).data["segments"][0]["rules"]
+    assert fresh["name"] == "fresh"
+    assert "futureA" not in fresh and "futureB" not in fresh
+    assert "futureA" not in survivor
+
+
 def test_a_new_item_keeps_the_id_it_is_given():
     mod = qos(QOS_RULE)
     mod.data.segments[0].rules.append(

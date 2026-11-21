@@ -316,6 +316,29 @@ def test_repeated_key_without_alt_keys_untouched_when_nothing_changed():
     raw = {"rules": [item("a", x=1), item("a", x=2)]}
     before = {"rules": [item("a", port=0), item("a", port=0)]}
     assert rebase(raw, before, copy.deepcopy(before), Rs) == raw
+    # A change beside the list: the document is rebased, the list kept as read.
+    raw = {**raw, "other": 1}
+    before = {**before, "other": 1}
+    after = {**copy.deepcopy(before), "other": 2}
+    out = cast(dict[str, object], rebase(raw, before, after, Rs))
+    assert out == {**raw, "other": 2}
+    assert out["rules"] is raw["rules"]
+
+
+def test_removed_item_without_a_key_replaces_the_list():
+    raw = {"rules": [item("a", x=1), item(None, x=2)]}
+    before = {"rules": [item("a", port=0), item(None, port=0)]}
+    after = {"rules": [item("a", port=0)]}
+    assert rebase(raw, before, after, Rs) == after
+
+
+def test_raw_key_the_baseline_lacks_replaces_the_list():
+    # The raw item has a key ("None", a string) where the parse has none, so
+    # raw and before cannot be trusted to line up by position.
+    raw = {"rules": [item("None", "1", x=1)]}
+    before = {"rules": [item(None, "1", port=0)]}
+    after = {"rules": [item(None, "1", port=5)]}
+    assert rebase(raw, before, after, Rs) == after
 
 
 def test_removed_item_with_a_unique_key_is_removed():
