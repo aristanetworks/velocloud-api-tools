@@ -28,6 +28,8 @@ def req(version: str | None) -> UpdateConfigurationModule:
         ("Version conflict", 1, True),
         (None, 1, False),
         ("validation failed: segments", None, False),
+        ("address conflict", None, False),
+        ("overlapping subnets conflict with an existing network", 1, False),
     ],
 )
 def test_is_version_conflict(error: str | None, rows: int | None, expected: bool):

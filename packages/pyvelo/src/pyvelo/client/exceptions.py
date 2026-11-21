@@ -215,14 +215,16 @@ class UnboundError(VcoError):
     """
 
 
-_VERSION_CONFLICT = re.compile(r"\bversion\b|conflict", re.IGNORECASE)
+_VERSION_CONFLICT = re.compile(r"\bversion\b", re.IGNORECASE)
 
 
 def is_version_conflict(*, error: str | None, rows: int | None) -> bool:
     """Whether an update response means the module's version was stale.
 
     Provisional: the server's response to a stale version has not been observed.
-    This is the one place to correct.
+    This is the one place to correct. An error counts only if it mentions the
+    version; a bare "conflict" does not (a network conflict is not a stale
+    version). The message will be narrowed after a live check.
     """
     if error:
         return _VERSION_CONFLICT.search(error) is not None
