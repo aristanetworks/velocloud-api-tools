@@ -206,35 +206,77 @@ class ConfigPipeline:
         segment: str | None = None,
         path: str | None = None,
     ) -> ConfigState:
-        """Apply a patch to a module, at an address if one is given.
+        """Apply *patch* to the data of *module* on the state's target, at an address if one is given.
 
-        With neither *segment* nor *path*, *patch* is a mapping (``TypeError``
-        otherwise). With either, *patch* is any JSON value and is the same as
-        a mapping that nests it under the address: ``path="a.b"`` is
-        ``{"a": {"b": patch}}``, ``segment="S"`` is ``{"segments": {"S":
-        patch}}``, both are ``{"segments": {"S": {"a": {"b": patch}}}}``. The
-        address is checked against the model classes (``nest_patch``) and a
-        bad one raises ``PatchError``.
+        The patch format is ``VcoModel.merge_patch``'s: values validated as
+        on parse, unknown keys refused, list items named by selector and
+        added, changed, deleted and moved by ``add``, a plain object,
+        ``delete`` and ``move``.
+
+        **Address.** An addressed call is the unaddressed call with *patch*
+        nested under the address, and nothing else:
+
+        - ``path="a.b"`` is ``patch={"a": {"b": patch}}``;
+        - ``segment="S"`` is ``patch={"segments": {"S": patch}}``;
+        - both are ``patch={"segments": {"S": {"a": {"b": patch}}}}``.
+
+        With neither, *patch* must be a mapping (``TypeError`` otherwise).
+        With either, it is any JSON value; ``None`` means what ``null`` means
+        at that place. *path* is one or more field names joined by dots, each
+        by any name ``merge_patch`` accepts. Every part but the last must be
+        a field that holds a single sub-model; *path* does not step into list
+        items, which the patch names. With *segment*, *path* starts at the
+        item class of the module's ``segments`` field, else at the module
+        data's class. *segment* is a selector of the ``segments`` list like
+        any other: the segment's name in any case (through the segment
+        resolver) or its ``segmentId``. The address is checked against the
+        model classes, not the instances (``nest_patch``), so an unset
+        intermediate field is fine. A part that names no field, a part before
+        the last that is not a single sub-model, an empty *path* or part, and
+        *segment* for a module with no ``segments`` field (WAN, control
+        plane) raise ``PatchError``.
+
+        **Steps.**
 
         1. Locate the module on the target config. A ``firewall`` or ``QOS``
            module that an edge lacks starts as an empty layer (nothing is
            copied from the profile) and is inserted on save.
-        2. On a profile target, refuse ``add`` and ``delete`` of a segment
-           (``_profile_segment_ops``).
+        2. On a profile target, refuse ``add`` and ``delete`` of a
+           ``segments`` item, whatever the selector, ``"+"`` included
+           (``_profile_segment_ops``): a segment belongs to all three of
+           device settings, QoS and firewall, and adding one to a profile is
+           not supported yet. A change or a ``move`` of a segment is fine.
+           ``merge_patch`` called directly is not restricted.
         3. Merge the patch into a copy of the module's typed data, then into
            the data itself. On an edge target each merge is preceded by the
-           segment rules (``_prepare_segments``): a segment the edge inherits
-           gets an entry that carries the profile's descriptor.
+           segment rules (``_prepare_segments``). The edge layer has an entry
+           for only some of the segments it inherits from its profile:
+
+           - a change or a ``move`` of a segment the edge only inherits first
+             adds its placeholder entry, which carries the profile's
+             descriptor and IDs;
+           - an ``add`` of a segment the edge inherits raises ``PatchError``
+             (write a plain object to change it), and so does an ``add``
+             under ``"+"`` whose body names one;
+           - a ``delete`` of a segment the edge only inherits raises
+             ``PatchError``: the layer has no entry to delete;
+           - an edge entry the profile knows under another name (the same
+             ``segmentId``) is that segment;
+           - a segment neither layer has is left to ``merge_patch``; naming
+             one segment twice raises ``PatchError``.
         4. Return the updated :class:`ConfigState`.
 
-        All or nothing: a patch that raises leaves the state as it was, and
-        removes a module this call created.
+        All or nothing: a patch that raises (``PatchError``, or a resolver's
+        ``ResolutionError`` or ``LookupError``) leaves the state, and
+        ``plan()``, as they were: no placeholder entries, and a module this
+        call created is removed.
 
         MISSING fields on the patch target are preserved as MISSING so callers
         downstream (reconciler, YAML export) can distinguish "unset" from
         "explicitly set".
 
-        Raises :class:`StateSpentError` if the state has already written.
+        Raises :class:`StateSpentError` if the state has already written, and
+        ``ValueError`` for an unknown *module*.
         """
         _require_unspent(state)
         internal_name = _resolve_module_name(module)

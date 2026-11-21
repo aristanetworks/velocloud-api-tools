@@ -164,11 +164,12 @@ def _parse_place(value: object, path: Path) -> Place:
     if isinstance(value, str):
         if value in _POSITION_WORDS:
             return Place(cast("Literal['first', 'last']", value))
-        if value.startswith(("before:", "after:")):
-            raise PatchError(
-                f'the "before:key" form of _position was removed; {_POSITION_FORMS}',
-                path,
-            )
+        for word in _POSITION_ANCHORS:
+            if value.startswith(f"{word}:"):
+                raise PatchError(
+                    f'the "{word}:key" form of _position was removed; {_POSITION_FORMS}',
+                    path,
+                )
     elif isinstance(value, dict):
         anchors = cast("dict[object, object]", value)
         if len(anchors) == 1:
@@ -202,10 +203,11 @@ def parse_item_op(value: object, path: Path) -> ItemOp:
             f"an item operation is an object, not {type(value).__name__}", path
         )
     fields = dict(cast("dict[str, object]", value))
+    has_op = "_op" in fields
     op = fields.pop("_op", None)
     has_position = "_position" in fields
     position = fields.pop("_position", None)
-    if op is not None and op not in ("add", "delete"):
+    if has_op and op not in ("add", "delete"):
         raise PatchError(
             f'_op is "add" or "delete", not {op!r}; write a change as a plain object',
             path,
@@ -227,11 +229,12 @@ def parse_item_op(value: object, path: Path) -> ItemOp:
     return ItemOp("change", fields, place)
 
 
-_POSITION_SELECTOR = re.compile(r"#[0-9]+", re.ASCII)
+# Capped well below Python's limit on int digits: a longer "#n" is no position.
+_POSITION_SELECTOR = re.compile(r"#[0-9]{1,18}", re.ASCII)
 
 
 def position_of(selector: object) -> int | None:
-    """The position ``"#n"`` names, or None when ``selector`` is not that form."""
+    """The position ``"#n"`` names, or None when ``selector`` is not that form (``n`` of at most 18 digits)."""
     if isinstance(selector, str) and _POSITION_SELECTOR.fullmatch(selector):
         return int(selector[1:])
     return None

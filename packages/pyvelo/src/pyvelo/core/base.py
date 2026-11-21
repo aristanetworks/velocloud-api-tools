@@ -459,27 +459,115 @@ class VcoModel(BaseModel):
         *,
         resolvers: IdentityResolver | None = None,
     ) -> Self:
-        """Recursively merge a partial dict into this model instance.
+        """Merge *patch*, a JSON object, into this model in place; return self.
 
-        - Dict values merge recursively into sub-models, or build one that is unset.
-        - A list value replaces a list. An object on a list or a map of
-          models is item operations by selector: a plain object changes the
-          item, ``add()``, ``delete()`` and ``move()`` (``pyvelo.core.patch``)
-          add, remove and reorder; ``at(n)`` names an item by position.
-        - null unsets a field: MISSING if its type takes it, else None if it
-          takes that, else ``PatchError``.
-        - Every value assigned is validated as on parse; a bad one raises
-          ``PatchError``.
-        - A key that names no field raises ``PatchError``, at every depth.
-        - Keys prefixed with '_' are directives: ``_op`` and ``_position`` on
-          a list item. Any other raises ``PatchError``.
-        - OverrideFlag fields auto-set to True when siblings change.
-        - Resolvable fields resolve names to IDs via resolvers.
-        - Absent keys are left unchanged.
+        **Fields.** A key names a field by its python name, an alias or its
+        camelCase form. Absent keys leave their fields as they are. For a key
+        that names a field:
 
-        All or nothing: a patch that raises (``PatchError``, or a resolver's
-        ``ResolutionError`` or ``LookupError``) leaves self as it was.
-        Mutates self in-place and returns self for chaining.
+        - an object, on a field that holds a sub-model: merged into it, or
+          built from the patch when the field is unset;
+        - an object or a list, on a list field: see *Lists*;
+        - an object, on a map of models (``dict[K, Model]``): item
+          operations by map key;
+        - ``null``: unsets the field if its type includes ``MISSING``, sets
+          ``None`` if it includes ``None`` and not ``MISSING``, and raises
+          otherwise;
+        - anything else: replaces the value.
+
+        Every value assigned is first validated as pydantic validates the
+        field when it parses a response: the same coercions and constraints,
+        the field's validators and the model's config. The one difference:
+        a ``DefaultingScalar`` or ``DefaultingModel`` field does not fall back
+        to its default, so a bad value raises. A key that names no field
+        raises, at every depth, items and sub-models built from the patch
+        included. Keys that start with ``_`` are directives: only ``_op`` and
+        ``_position``, and only on a list item's value. ``OverrideFlag``
+        fields are set to True when a sibling that is not ``EdgeLocal``
+        changes. A ``Resolvable`` field given a name resolves it to an ID
+        with *resolvers*.
+
+        **Lists.** Each list field has a kind (``list_kind``):
+
+        - keyed (``KeyField``): items are named by key, alt key, label or
+          position;
+        - value (``list[str]`` or ``list[int]`` without ``Positional()``): by
+          the value or a position;
+        - positional (``Positional()``, or a list of models that declares
+          nothing): by position;
+        - untyped (``list[Any]``, ``list[dict]``): not at all; it takes a
+          list value only;
+        - map (``dict[K, Model]``): by map key. It takes an object only and
+          has no order: no positions, no ``move`` and no ``_position``. An
+          ``add`` validates its key as the map's key type and keeps that type
+          (``"2"`` adds the key ``2`` of a ``dict[int, ...]``). A ``dict`` of
+          anything else is a plain value.
+
+        A list value replaces the list, its items validated; a keyed list's
+        items must have distinct keys. An object is item operations, keyed
+        by selector.
+
+        **Selectors.** In a keyed list, tried in this order:
+
+        1. the key, compared in string form (``"10"`` names VLAN 10). For a
+           composite key (``KeyField`` with several fields), a tuple of the
+           parts or its string form (``rebase.key_text``), the parts compared
+           in string form;
+        2. ``at(n)``, which is ``"#n"``: the item at position ``n``, counted
+           from 0 in the list as it was before the patch (any kind of list);
+        3. ``"+"`` or ``"+tag"``: a new item, for ``add`` only; the tag only
+           keeps two such selectors apart;
+        4. the alt key (``KeyField(alt=...)``), in string form;
+        5. the label (``KeyField(label=...)``);
+        6. where the key is a ``NameOf`` field and *resolvers* are given, the
+           name the resolver has for the selector (matched ignoring case),
+           as the key again. A name it does not know raises
+           ``ResolutionError``.
+
+        In a value list: the value, then ``"#n"``. In a positional list only
+        ``"#n"`` names an item, and ``"+"`` adds one. A selector that names no
+        item, or several, raises; for several, the message lists each match
+        with its position and key. Two selectors that name one item raise. An
+        item whose key, or a part of it, is null or absent has no key.
+
+        **Item operations.** The value under a selector:
+
+        - a plain object: a change, merged into the item. It may change the
+          key (a rename) to one no other item has. A list of values takes
+          none.
+        - ``add(body, **place)``, which is ``{"_op": "add", ...}``: a new
+          item built from *body*, validated whole. In a keyed list the
+          selector is the key and is written into the item; a body that gives
+          another key raises, and so does a key that is already in the list,
+          as a key or as another item's alt key. Under ``"+"`` the key is
+          whatever the body gives; in a list keyed by a ``NameOf`` field a
+          name in the body is an ``add`` under that name. In a value list the
+          selector is the value and ``add`` takes no body. A positional list
+          of models takes ``add`` under ``"+"`` only, one of values none (give
+          a list value), and ``at(n)`` never takes one.
+        - ``delete()``, which is ``{"_op": "delete"}``: the item is removed.
+          It carries nothing else.
+        - ``move(**place)``, which is ``{"_position": P}``: the item moves.
+
+        ``null`` (write ``delete()``), a scalar or a list raises. ``P`` is
+        ``"first"``, ``"last"``, ``{"before": S}`` or ``{"after": S}``, ``S`` a
+        selector of another item of the list (a composite key also as a JSON
+        array of its parts); *place* is one of ``first=True``, ``last=True``,
+        ``before=S``, ``after=S``. A ``_position`` may go with a change or an
+        ``add``; an ``add`` without one goes last. An anchor that names no
+        item, several, the item itself or an item the patch deletes raises.
+        Every selector and anchor is resolved against the list as it was;
+        then come changes, then deletes, then adds and moves in the order
+        written (in a map: changes, deletes, adds). In an item or sub-model
+        the patch builds, a list field takes a list value or an object of
+        ``add`` entries only.
+
+        **Errors.** A patch that cannot be applied raises ``PatchError`` (a
+        ``ValueError``) whose ``path`` is where in the patch it failed; a
+        pydantic ``ValidationError`` behind it is its ``__cause__``. Resolver
+        errors keep their types. All or nothing: a patch that raises,
+        ``PatchError``, ``ResolutionError`` or ``LookupError``, leaves self as
+        it was, the same dump and the same ``model_fields_set``.
         """
         from .merge import apply_patch  # merge.py imports this module
 

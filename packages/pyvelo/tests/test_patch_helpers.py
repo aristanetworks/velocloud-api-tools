@@ -121,6 +121,35 @@ def test_parse_refuses(value: object, text: str):
     assert text in exc.value.message
 
 
+def test_an_explicit_null_op_is_refused():
+    with pytest.raises(PatchError) as exc:
+        parse_item_op({"_op": None, "a": 1}, PATH)
+    assert exc.value.path == PATH
+    assert '"add" or "delete"' in exc.value.message
+
+
+@pytest.mark.parametrize("word", ["before", "after"])
+def test_removed_string_position_names_its_own_form(word: str):
+    with pytest.raises(PatchError) as exc:
+        parse_item_op({"_position": f"{word}:x"}, PATH)
+    assert f'"{word}:key" form' in exc.value.message
+
+
+def test_helpers_do_not_mutate_the_body():
+    body: dict[str, object] = {"a": 1, "sub": {"b": 2}}
+    value = add(body, before="x")
+    assert body == {"a": 1, "sub": {"b": 2}}
+    patch = dict(value)
+    op = parse_item_op(patch, PATH)
+    assert patch == value
+    assert op.body == body
+
+
+def test_a_position_with_too_many_digits_is_no_position():
+    assert position_of("#" + "9" * 18) == 10**18 - 1
+    assert position_of("#" + "1" * 5000) is None
+
+
 def test_selector_syntax():
     assert position_of("#12") == 12
     assert position_of("#x") is None
