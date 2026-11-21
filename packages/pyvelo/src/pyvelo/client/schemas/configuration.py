@@ -8,7 +8,6 @@ from typing import Annotated, Any, Literal, Self, TypeIs, overload
 
 from pydantic import (
     MISSING,
-    BaseModel,
     Discriminator,
     Field,
     ModelWrapValidatorHandler,
@@ -17,6 +16,7 @@ from pydantic import (
     ValidationInfo,
     model_validator,
 )
+from pydantic_core import PydanticSerializationError, to_jsonable_python
 
 from pyvelo.client.enums.configuration import (
     ConfigurationBastionState,
@@ -149,19 +149,23 @@ def _is_mapping(value: object) -> TypeIs[Mapping[object, object]]:
     return isinstance(value, Mapping)
 
 
-def _capture(source: Mapping[object, object], key: str) -> object:
-    """Snapshot ``source[key]`` exactly as it was handed to validation.
+def _capture(
+    source: Mapping[object, object], key: str, mode: Literal["python", "json"]
+) -> object:
+    """Snapshot ``source[key]`` as pure JSON, before validation touches it.
 
-    ``MISSING`` if the key is absent. A model is dumped to JSON-like form by
-    alias; anything else is deep-copied, so later edits to the caller's
-    objects cannot change what was captured.
+    ``MISSING`` if the key is absent. JSON-mode input is already pure JSON and
+    is deep-copied. Python-mode input may hold models at any depth, so it is
+    converted with ``to_jsonable_python`` (models dumped by alias). Either way
+    the snapshot shares no containers with the caller's objects, so later
+    edits to those cannot change what was captured.
     """
     if key not in source:
         return MISSING
     value = source[key]
-    if isinstance(value, BaseModel):
-        return value.model_dump(mode="json", by_alias=True)
-    return copy.deepcopy(value)
+    if mode == "json":
+        return copy.deepcopy(value)
+    return to_jsonable_python(value, by_alias=True)
 
 
 class ConfigurationModuleBase(VcoModel):
@@ -189,12 +193,21 @@ class ConfigurationModuleBase(VcoModel):
         handler: ModelWrapValidatorHandler[Self],
         info: ValidationInfo,
     ) -> Self:
+        if not _is_mapping(value):
+            # An existing instance keeps the snapshot it already has.
+            return handler(value)
+        try:
+            raw_data = _capture(value, "data", info.mode)
+            raw_refs = _capture(value, "refs", info.mode)
+        except PydanticSerializationError:
+            # Input that cannot become JSON is usually input that does not
+            # validate: let validation report that before anything else.
+            _ = handler(value)
+            raise
         module = handler(value)
-        # An existing instance keeps the snapshot it already has.
-        if _is_mapping(value):
-            module._raw_data = _capture(value, "data")
-            module._raw_refs = _capture(value, "refs")
-            module._raw_mode = info.mode
+        module._raw_data = raw_data
+        module._raw_refs = raw_refs
+        module._raw_mode = info.mode
         return module
 
     @property

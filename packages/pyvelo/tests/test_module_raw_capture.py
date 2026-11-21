@@ -2,9 +2,11 @@ import copy
 import json
 
 import pytest
-from pydantic import MISSING
+from pydantic import MISSING, ValidationError
 from pyvelo.client.enums.configuration import ConfigurationModuleName
 from pyvelo.client.models.configuration import FirewallData
+from pyvelo.client.models.configuration.common import SegmentMetadata
+from pyvelo.client.models.configuration.firewall import FirewallSegment
 from pyvelo.client.schemas.configuration import (
     ConfigurationModuleBase,
     ConfigurationModuleList,
@@ -62,6 +64,24 @@ def test_keyword_construction_snapshots_its_own_dump():
     data.firewall_enabled = False
     assert isinstance(mod.raw_data, dict)
     assert mod.raw_data["firewall_enabled"] is True
+
+
+def test_models_nested_in_plain_containers_are_dumped_to_json():
+    segment = FirewallSegment(segment=SegmentMetadata(name="Global Segment"))
+    dumped = segment.model_dump(mode="json", by_alias=True)
+    mod = FirewallConfigurationModule.model_validate(
+        make_module_json("firewall", {"segments": [segment]})
+    )
+    assert mod.raw_data == {"segments": [dumped]}
+    assert type(mod.raw_data["segments"][0]) is dict  # pyright: ignore[reportIndexIssue]
+    assert mod.data.segments[0].segment.name == "Global Segment"
+
+
+def test_unserializable_input_still_reports_a_validation_error():
+    with pytest.raises(ValidationError):
+        FirewallConfigurationModule.model_validate(
+            make_module_json("firewall", {"segments": [object()]})
+        )
 
 
 def test_existing_instance_keeps_its_snapshot():
