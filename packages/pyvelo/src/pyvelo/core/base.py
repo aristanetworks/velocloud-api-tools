@@ -120,11 +120,6 @@ def _is_mapping(value: object) -> TypeIs[Mapping[object, object]]:
     return isinstance(value, Mapping)
 
 
-def _is_json_object(value: object) -> TypeIs[JsonObject]:
-    """True for a dict. Patch dicts come from JSON, so their keys are taken to be ``str``."""
-    return isinstance(value, dict)
-
-
 def _is_vco_model_type(tp: object) -> TypeIs[type[VcoModel]]:
     return isinstance(tp, type) and issubclass(tp, VcoModel)
 
@@ -454,15 +449,7 @@ class VcoModel(BaseModel):
 
         Accepted keys: the python name, its aliases, and its camelCase form.
         """
-        alias_map: dict[str, str] = {}
-        for python_name, fi in cls.model_fields.items():
-            alias_map[python_name] = python_name
-            if fi.serialization_alias:
-                alias_map[fi.serialization_alias] = python_name
-            if isinstance(fi.validation_alias, str):
-                alias_map[fi.validation_alias] = python_name
-            alias_map[to_camel(python_name)] = python_name
-        return alias_map
+        return _field_names_by_key(cls.model_fields)
 
     def merge_patch(
         self,
@@ -472,13 +459,21 @@ class VcoModel(BaseModel):
     ) -> Self:
         """Recursively merge a partial dict into this model instance.
 
-        - Dict values merge recursively into sub-models.
+        - Dict values merge recursively into sub-models, or build one that is unset.
         - KeyField arrays merge by key (add/update). null values delete.
+        - null unsets a field: MISSING if its type takes it, else None if it
+          takes that, else ``PatchError``.
+        - Every value assigned is validated as on parse; a bad one raises
+          ``PatchError``.
+        - A key that names no field raises ``PatchError``, at every depth.
+        - Keys prefixed with '_' are directives: ``_position`` on a KeyField
+          item. Any other raises ``PatchError``.
         - OverrideFlag fields auto-set to True when siblings change.
         - Resolvable fields resolve names to IDs via resolvers.
-        - MISSING / absent keys are left unchanged.
-        - Keys prefixed with '_' are treated as merge directives and stripped.
+        - Absent keys are left unchanged.
 
+        All or nothing: a patch that raises (``PatchError``, or a resolver's
+        ``ResolutionError`` or ``LookupError``) leaves self as it was.
         Mutates self in-place and returns self for chaining.
         """
         from .merge import apply_patch  # merge.py imports this module
@@ -511,9 +506,30 @@ def _unwrap_annotated(tp: object) -> object:
     return tp
 
 
+def _field_names_by_key(fields: Mapping[str, FieldInfo]) -> dict[str, str]:
+    """Map each input key that names one of *fields* to its python name.
+
+    The keys: the python name, its aliases, and its camelCase form.
+    """
+    names: dict[str, str] = {}
+    for python_name, fi in fields.items():
+        names[python_name] = python_name
+        if fi.serialization_alias:
+            names[fi.serialization_alias] = python_name
+        if isinstance(fi.validation_alias, str):
+            names[fi.validation_alias] = python_name
+        names[to_camel(python_name)] = python_name
+    return names
+
+
 def _field_accepts_missing(fi: FieldInfo) -> bool:
     """Check if a field's type annotation includes MISSING."""
     return MISSING in _union_members(fi.annotation)
+
+
+def _field_accepts_none(fi: FieldInfo) -> bool:
+    """Check if a field's type annotation includes None."""
+    return type(None) in _union_members(fi.annotation)
 
 
 def _id_type(fi: FieldInfo) -> object | None:
@@ -546,8 +562,9 @@ class _ListItemType:
 
     It is either a single model class or a discriminated union of them. In
     the union case ``validate`` lets pydantic's discriminator pick the
-    variant. ``fields`` comes from the first variant. Variants are expected to
-    share the Resolvable / KeyField fields that ``_pre_resolve`` looks at.
+    variant. ``fields`` are the fields of every variant; where two variants
+    have a field of one name, the first variant's wins. Variants are expected
+    to share the Resolvable / KeyField fields that ``_build_input`` looks at.
     """
 
     annotation: object
@@ -558,14 +575,18 @@ class _ListItemType:
     def _union_adapter(self) -> TypeAdapter[VcoModel]:
         return TypeAdapter[VcoModel](self.annotation)  # pyright: ignore[reportArgumentType]
 
-    def validate(self, value: object) -> VcoModel:
+    def validate(self, value: object, *, context: JsonObject | None = None) -> VcoModel:
         if len(self.variants) == 1:
-            return self.variants[0].model_validate(value)
-        return self._union_adapter.validate_python(value)
+            return self.variants[0].model_validate(value, context=context)
+        return self._union_adapter.validate_python(value, context=context)
 
-    @property
+    @functools.cached_property
     def fields(self) -> dict[str, FieldInfo]:
-        return self.variants[0].model_fields
+        fields: dict[str, FieldInfo] = {}
+        for variant in self.variants:
+            for name, fi in variant.model_fields.items():
+                _ = fields.setdefault(name, fi)
+        return fields
 
 
 def _list_item_type(fi: FieldInfo) -> _ListItemType | None:

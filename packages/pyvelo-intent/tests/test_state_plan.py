@@ -142,6 +142,14 @@ def test_state_spent_error_is_exported_from_the_package():
     assert "StateSpentError" in pyvelo_intent.__all__
 
 
+def test_patch_error_is_exported_from_the_package():
+    import pyvelo_intent
+    from pyvelo.core import PatchError
+
+    assert pyvelo_intent.PatchError is PatchError
+    assert "PatchError" in pyvelo_intent.__all__
+
+
 async def test_no_edit_save_does_not_spend_or_call():
     client, state = MockVcoClient(), make_state()
     result = await ConfigPipeline(client).save(state)

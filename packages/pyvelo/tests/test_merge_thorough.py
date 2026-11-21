@@ -12,11 +12,12 @@ from typing import Annotated
 import pytest
 from pydantic import MISSING, Field
 from pyvelo.config.resolver import ResolverRegistry
-from pyvelo.core import Alias, VcoModel
+from pyvelo.core import Alias, PatchError, VcoModel
 from pyvelo.core.fields import EdgeLocal, KeyField, OverrideFlag, Resolvable
 from pyvelo.core.identity import (
     SegmentIdentity,
 )
+from pyvelo.core.rebase import Key, Path
 
 from ._type_support import SegmentResolverFactory
 
@@ -196,13 +197,17 @@ class TestNoOpMerge:
     def test_patch_with_only_unknown_keys(self):
         m = make_deep_config()
         original_tag = m.tag
-        _ = m.merge_patch({"nonexistent_field": 42, "another_unknown": "x"})
+        with pytest.raises(PatchError) as exc:
+            _ = m.merge_patch({"nonexistent_field": 42, "another_unknown": "x"})
+        assert exc.value.path == Path(["nonexistent_field"])
         assert m.tag == original_tag
 
     def test_patch_with_only_directives(self):
         m = make_deep_config()
         original_tag = m.tag
-        _ = m.merge_patch({"_position": 0, "_custom": "ignored"})
+        with pytest.raises(PatchError) as exc:
+            _ = m.merge_patch({"_position": 0, "_custom": "ignored"})
+        assert exc.value.path == Path(["_position"])
         assert m.tag == original_tag
 
     def test_empty_patch_does_not_trigger_override(self):
@@ -237,8 +242,10 @@ class TestScalarAndMissingCombinations:
 
     def test_null_on_non_missing_field(self):
         m = Config(enabled=True)
-        _ = m.merge_patch({"enabled": None})
-        assert m.enabled is None
+        with pytest.raises(PatchError) as exc:
+            _ = m.merge_patch({"enabled": None})
+        assert exc.value.path == Path(["enabled"])
+        assert m.enabled is True
 
     def test_set_missing_field_to_value(self):
         m = Config()
@@ -1268,18 +1275,24 @@ class TestComplexIntegration:
         assert global_seg.override is True
 
     def test_missing_null_and_value_in_one_patch(self):
-        """Mix of MISSING-null, regular null, and value assignment."""
+        """Mix of MISSING-null, a null the field cannot take, and a value.
+
+        The null on ``enabled`` (neither MISSING nor None) refuses the whole
+        patch, so the other two changes are not made either.
+        """
         m = make_deep_config()
-        _ = m.merge_patch(
-            {
-                "tag": None,  # MISSING-typed -> MISSING
-                "enabled": None,  # non-MISSING -> None
-                "dns": {"primary": "changed"},
-            }
-        )
-        assert m.tag is MISSING
-        assert m.enabled is None
-        assert m.dns.primary == "changed"
+        with pytest.raises(PatchError) as exc:
+            _ = m.merge_patch(
+                {
+                    "tag": None,  # MISSING-typed -> MISSING
+                    "enabled": None,  # neither MISSING nor None -> raises
+                    "dns": {"primary": "changed"},
+                }
+            )
+        assert exc.value.path == Path(["enabled"])
+        assert m.tag == "production"
+        assert m.enabled is True
+        assert m.dns.primary == "1.1.1.1"
 
     def test_deep_merge_with_position_and_resolution(self, registry: ResolverRegistry):
         """Add a rule with position + resolve segment ID — all in one."""
@@ -1317,11 +1330,12 @@ class TestComplexIntegration:
 
 
 class TestEdgeCases:
-    def test_empty_string_key_in_patch_skipped(self):
-        """An empty string key should be silently ignored."""
+    def test_empty_string_key_in_patch_raises(self):
+        """An empty string key names no field."""
         m = Config()
-        _ = m.merge_patch({"": "value"})
-        # Should not raise
+        with pytest.raises(PatchError) as exc:
+            _ = m.merge_patch({"": "value"})
+        assert exc.value.path == Path([""])
 
     def test_patch_same_keyed_item_twice(self):
         """Dict iteration order: last write wins for the same logical key.
@@ -1425,26 +1439,29 @@ class TestEdgeCases:
         _ = m.merge_patch({"items": {"1": {"label": "updated"}}})
         assert m.items[0].label == "updated"
 
-    def test_underscore_directives_stripped_from_item_patch(self):
-        """All _-prefixed keys in item patches are stripped."""
+    def test_unknown_directives_in_item_patch_raise(self):
+        """A _-prefixed key other than _op and _position in an item patch raises."""
         m = make_deep_config()
-        _ = m.merge_patch(
-            {
-                "segments": {
-                    "Global": {
-                        "rules": {
-                            "allow-all": {
-                                "priority": 123,
-                                "_comment": "this should be stripped",
-                                "_metadata": {"key": "value"},
+        with pytest.raises(PatchError) as exc:
+            _ = m.merge_patch(
+                {
+                    "segments": {
+                        "Global": {
+                            "rules": {
+                                "allow-all": {
+                                    "priority": 123,
+                                    "_comment": "not a directive",
+                                }
                             }
                         }
                     }
                 }
-            }
+            )
+        assert exc.value.path == Path(
+            ["segments", Key("Global"), "rules", Key("allow-all"), "_comment"]
         )
         rule = m.segments[0].rules[0]
-        assert rule.priority == 123
+        assert rule.priority == 999
         assert not hasattr(rule, "_comment")
 
     def test_camel_case_keys_in_nested_sub_model(self):

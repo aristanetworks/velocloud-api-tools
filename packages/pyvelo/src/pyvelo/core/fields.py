@@ -192,6 +192,16 @@ CoerceInt = BeforeValidator(_coerce_int)
 # ---------------------------------------------------------------------------
 
 
+def _in_patch(info: ValidationInfo) -> bool:
+    """Whether this validation is of a value from a patch (context ``{"patch": True}``).
+
+    ``merge_patch`` validates the values it assigns with that context. The
+    defaulting markers do not fall back to a default there: a bad value in a
+    patch is an error, not something to tolerate.
+    """
+    return bool((info.context or {}).get("patch"))
+
+
 def _audit(info: ValidationInfo, v: Any, reason: str):
     ctx = info.context or {}
     audit = ctx.get("audit")
@@ -219,6 +229,8 @@ def DefaultingModel[T](
         default_factory = model_type  # pyright: ignore[reportAssignmentType]  # ty: ignore[invalid-assignment]
 
     def _validator(v: Any, info: ValidationInfo) -> Any:
+        if _in_patch(info):
+            return adapter.validate_python(v, context=info.context)
         try:
             return adapter.validate_python(v)
         except ValidationError as e:
@@ -233,11 +245,15 @@ def DefaultingModel[T](
 def DefaultingScalar(model_type: Any, *, default: Any) -> BeforeValidator:
     """Annotated marker: fall back to *default* when validation fails.
 
+    Not in a patch (see ``_in_patch``): there a failure raises.
+
     Usage: duplex: Annotated[PortDuplex, DefaultingScalar(PortDuplex, default="FULL")] = "FULL"
     """
     adapter = TypeAdapter(model_type)
 
     def _validator(v: Any, info: ValidationInfo) -> Any:
+        if _in_patch(info):
+            return adapter.validate_python(v, context=info.context)
         try:
             return adapter.validate_python(v)
         except ValidationError as e:

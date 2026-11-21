@@ -2,8 +2,9 @@
 
 from typing import Annotated
 
+import pytest
 from pydantic import MISSING, Field
-from pyvelo.core import Alias, VcoModel
+from pyvelo.core import Alias, PatchError, VcoModel
 
 
 class Inner(VcoModel):
@@ -103,9 +104,10 @@ class TestSubModelMerge:
         assert m.mid.tag == "keep"
 
 
-class TestMergeDirectivesStripped:
-    def test_underscore_keys_stripped(self):
+class TestMergeDirectivesRefused:
+    def test_underscore_keys_raise(self):
         m = Outer(name="test")
-        _ = m.merge_patch({"name": "updated", "_position": 0, "_custom": "ignored"})
-        assert m.name == "updated"
+        with pytest.raises(PatchError):
+            _ = m.merge_patch({"name": "updated", "_position": 0, "_custom": "x"})
+        assert m.name == "test"
         assert not hasattr(m, "_position")

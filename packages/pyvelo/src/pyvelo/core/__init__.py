@@ -97,6 +97,7 @@ from .identity import (
     ServiceGroupLogicalId,
     ServiceGroupName,
 )
+from .patch import PatchError
 
 __all__ = [
     "AddressGroupId",
@@ -156,6 +157,7 @@ __all__ = [
     "PaginatedResult",
     "PaginatedVcoModel",
     "PaginationMetadata",
+    "PatchError",
     "ProfileId",
     "ProfileIdentity",
     "ProfileName",

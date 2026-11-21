@@ -1,5 +1,7 @@
 """Helper library for VeloCloud Orchestrator configuration APIs."""
 
+from pyvelo.core import PatchError
+
 from pyvelo_intent.config import (
     ConfigPipeline,
     ConfigState,
@@ -37,6 +39,7 @@ __all__ = [
     "FieldChange",
     "IntentError",
     "Modified",
+    "PatchError",
     "Removed",
     "SaveResult",
     "SaveValidationError",
