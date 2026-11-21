@@ -366,11 +366,14 @@ def find_lossy_assignments(
 
     The walk pairs *baseline* and *current* by field. A list is paired by key if
     it has a ``KeyField`` whose values are present and distinct in both dumps
-    (items in only one are not paired), otherwise by position if the lists have
-    the same length. The dumps are read at the same positions, so a dump whose
-    lists do not line up with the model's is not walked. A field that is not in
-    *baseline* and whose dump changed is written whole, so nothing inside it is
-    lost.
+    (items in only one are not paired). Any other list (unkeyed, or keyed with
+    missing or repeated keys) is paired by position, and only if its dump is
+    unchanged and the model lists have the same length: ``rebase`` keeps such a
+    list as read when it is unchanged, but writes it whole from *after* when it
+    changed, which includes every assignment inside it. The dumps are read at
+    the same positions, so a dump whose lists do not line up with the model's
+    is not walked. A field that is not in *baseline* and whose dump changed is
+    written whole, so nothing inside it is lost.
 
     Paths come in field order: ``segments[A].rules[r1].port``.
     """
@@ -448,19 +451,22 @@ def _lossy_in_list(
         return
     if len(before) != len(baseline) or len(after) != len(current):
         return  # the dump's positions are not the model's
-    pairs: list[tuple[str, int, int]] = []  # item path, baseline index, current index
+    # (item path, baseline index, current index)
+    pairs: list[tuple[str, int, int]] | None = None
     if isinstance(node, _KeyedList):
         before_keys = _list_keys(before, node)
         after_keys = _list_keys(after, node)
-        if before_keys is None or after_keys is None:
+        if before_keys is not None and after_keys is not None:
+            position = {key: i for i, key in enumerate(before_keys)}
+            pairs = [
+                (f"{path}[{key}]", position[key], i)
+                for i, key in enumerate(after_keys)
+                if key in position
+            ]
+    if pairs is None:
+        # Items cannot be matched by key. A changed list is written whole.
+        if before != after or len(baseline) != len(current):
             return
-        position = {key: i for i, key in enumerate(before_keys)}
-        pairs = [
-            (f"{path}[{key}]", position[key], i)
-            for i, key in enumerate(after_keys)
-            if key in position
-        ]
-    elif len(baseline) == len(current):
         pairs = [(f"{path}[{i}]", i, i) for i in range(len(baseline))]
     for item_path, base_index, cur_index in pairs:
         _lossy_in_value(

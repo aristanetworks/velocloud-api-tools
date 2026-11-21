@@ -1,5 +1,8 @@
+from typing import Annotated
+
 from pydantic import MISSING, Field
 from pyvelo.core import VcoModel
+from pyvelo.core.fields import KeyField
 from pyvelo.core.rebase import find_lossy_assignments
 
 from .test_rebase import Root
@@ -123,7 +126,8 @@ def test_keyed_items_are_paired_by_key_not_position():
     assert lossy(base, cur) == ["segments[B].rules[r1].port"]
 
 
-def test_keyed_list_with_repeated_keys_is_not_walked():
+def test_keyed_list_with_repeated_keys_is_walked_by_position_when_unchanged():
+    # rebase keeps raw whole when the list is unchanged, so the assignment is dropped
     raw = {
         "segments": [
             {
@@ -134,7 +138,63 @@ def test_keyed_list_with_repeated_keys_is_not_walked():
     }
     base, cur = Root.model_validate(raw), Root.model_validate(raw)
     cur.segments[0].rules[0].port = 0
+    assert lossy(base, cur) == ["segments[A].rules[0].port"]
+
+
+def test_keyed_list_with_repeated_keys_changed_elsewhere_is_not_walked():
+    # a changed list is written whole from the dump, so the assignment is kept
+    raw = {
+        "segments": [
+            {
+                "segment": {"segmentId": 0, "name": "A"},
+                "rules": [{"name": "r"}, {"name": "r"}],
+            }
+        ]
+    }
+    base, cur = Root.model_validate(raw), Root.model_validate(raw)
+    cur.segments[0].rules[0].port = 0
+    cur.segments[0].rules[1].port = 9
     assert lossy(base, cur) == []
+
+
+class Opt2(VcoModel):
+    name: str | None = None
+    port: int = 0
+
+
+class Opt2s(VcoModel):
+    rules: Annotated[list[Opt2], KeyField("name")] = Field(default_factory=list)
+
+
+def test_keyed_list_with_a_missing_key_is_walked_by_position_when_unchanged():
+    raw = {"rules": [{"name": "r1"}, {"port": 1}]}
+    base, cur = Opt2s.model_validate(raw), Opt2s.model_validate(raw)
+    cur.rules[0].port = 0
+    assert lossy(base, cur) == ["rules[0].port"]
+
+
+def test_keyed_list_with_a_missing_key_changed_elsewhere_is_not_walked():
+    raw = {"rules": [{"name": "r1"}, {"port": 1}]}
+    base, cur = Opt2s.model_validate(raw), Opt2s.model_validate(raw)
+    cur.rules[0].port = 0
+    cur.rules[1].port = 9
+    assert lossy(base, cur) == []
+
+
+def test_unkeyed_list_changed_elsewhere_is_not_walked():
+    # the list is written whole from the dump, which includes the assigned default
+    raw = {"items": [{"y": 1}]}
+    base, cur = Outer.model_validate(raw), Outer.model_validate(raw)
+    cur.items[0].x = 0
+    cur.items[0].y = 7
+    assert lossy(base, cur) == []
+
+
+def test_unkeyed_list_unchanged_is_walked_by_position():
+    raw = {"items": [{"y": 1}]}
+    base, cur = Outer.model_validate(raw), Outer.model_validate(raw)
+    cur.items[0].x = 0
+    assert lossy(base, cur) == ["items[0].x"]
 
 
 def test_item_whose_key_changed_is_not_paired():
