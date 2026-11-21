@@ -246,6 +246,26 @@ def profile_client(raw: dict[str, Any] = PROFILE_FW) -> MockVcoClient:
     return Client()
 
 
+async def test_edit_to_a_section_the_edge_dump_omits_is_refused():
+    raw: dict[str, Any] = {
+        "lan": {"networks": [], "interfaces": []},
+        "segments": [{"segment": desc(0, "Global Segment")}],
+        "ntp": {"override": True, "enabled": False, "servers": []},
+    }
+    row = make_module_json(
+        "deviceSettings", raw, module_id=7, configuration_id=10, version="d1"
+    )
+    client, state = MockVcoClient(), make_state(edge_modules=[row])
+    await ConfigPipeline(client).apply(
+        state, module="device_settings", patch={"ntp": {"enabled": True}}
+    )
+    with pytest.raises(LossyFieldError) as refused:
+        await ConfigPipeline(client).save(state)
+    assert refused.value.fields == ["ntp"]
+    assert client.calls == []
+    assert state.spent is False
+
+
 async def test_profile_target_save():
     client = profile_client()
     state = await ConfigPipeline(client).load_profile(20)
