@@ -100,14 +100,14 @@ def _merge_model(
 _DIRECTIVES = ("_op", "_position")
 
 
-def _field_name(
-    names: Mapping[str, str], owner: str | None, key: object, path: Path
-) -> str:
+def _field_name(names: Mapping[str, str], owner: str, key: object, path: Path) -> str:
     """The python name of the field that the patch key *key* names.
 
     *names* maps each accepted key to a python name (``_field_names_by_key``).
     *owner* is the name of the model class, for the message. A directive or a
-    key that names no field raises ``PatchError`` at ``path.child(key)``.
+    key that names no field raises ``PatchError`` at ``path.child(key)``. Both
+    ``_merge_model`` and ``_build_input`` check keys here, so their messages
+    are the same.
     """
     text = key if isinstance(key, str) else str(key)
     if isinstance(key, str) and key in names:
@@ -121,7 +121,7 @@ def _field_name(
             + f"{' and '.join(_DIRECTIVES)}, on a list item",
             where,
         )
-    message = f"{owner} has no field {text!r}" if owner else f"no field {text!r}"
+    message = f"{owner} has no field {text!r}"
     close = list(
         dict.fromkeys(names[k] for k in difflib.get_close_matches(text, names))
     )
@@ -246,7 +246,9 @@ def _new_model_from_patch(
     try:
         instance = model_type()
     except ValidationError:
-        data = _build_input(model_type.model_fields, patch, resolvers, path)
+        data = _build_input(
+            model_type.model_fields, patch, resolvers, path, owner=model_type.__name__
+        )
         try:
             return model_type.model_validate(data, context={"patch": True})
         except ValidationError as exc:
@@ -497,7 +499,9 @@ def _new_keyed_item(
     carry the model's defaults, which are another item's IDs.
     """
     item_patch = _inject_key_path(patch, key_path, key)
-    item_input = _build_input(item_type.fields, item_patch, resolvers, path)
+    item_input = _build_input(
+        item_type.fields, item_patch, resolvers, path, owner=item_type.name
+    )
     try:
         item = item_type.validate(item_input, context={"patch": True})
     except ValidationError as exc:
@@ -573,14 +577,17 @@ def _build_input(
     patch: Mapping[object, object],
     resolvers: IdentityResolver | None,
     path: Path,
+    *,
+    owner: str,
 ) -> JsonObject:
     """Turn a patch that pydantic will validate whole into its input, checked.
 
     For what the patch builds instead of merging into (a new keyed-list item,
     a sub-model with a required field), so ``model_validate`` sees what
     ``merge_patch`` would have made of it. *fields* are the target model's
-    fields and *path* is where *patch* is in the patch. This function walks
-    *patch* against *fields* and:
+    fields, *owner* its class name (for a union, the variants' names joined
+    with `` | ``), and *path* is where *patch* is in the patch. This function
+    walks *patch* against *fields* and:
 
     - raises ``PatchError`` for a key that names no field and for a directive
     - writes a key that pydantic does not read (the camelCase form of a field
@@ -602,7 +609,7 @@ def _build_input(
     built: JsonObject = {}
 
     for key, value in patch.items():
-        field_name = _field_name(names, None, key, path)
+        field_name = _field_name(names, owner, key, path)
         fi = fields[field_name]
         child = path.child(field_name)
         if isinstance(value, str):
@@ -620,13 +627,21 @@ def _build_input(
         elif _is_list(value):
             if (item_type := _list_item_type(fi)) is not None:
                 value = [
-                    _build_input(item_type.fields, item, resolvers, child.child(i))
+                    _build_input(
+                        item_type.fields,
+                        item,
+                        resolvers,
+                        child.child(i),
+                        owner=item_type.name,
+                    )
                     if _is_dict(item)
                     else item
                     for i, item in enumerate(value)
                 ]
         elif _is_dict(value) and (sub_type := _field_model_type(fi)):
-            value = _build_input(sub_type.model_fields, value, resolvers, child)
+            value = _build_input(
+                sub_type.model_fields, value, resolvers, child, owner=sub_type.__name__
+            )
         input_key = key if key in _input_keys(fi, field_name) else field_name
         built[str(input_key)] = value  # a str: _field_name refuses other keys
 
@@ -690,7 +705,13 @@ def _keyed_patch_to_list(
         built: object = (
             item
             if item_type is None
-            else _build_input(item_type.fields, item, resolvers, path.child(Key(key)))
+            else _build_input(
+                item_type.fields,
+                item,
+                resolvers,
+                path.child(Key(key)),
+                owner=item_type.name,
+            )
         )
         items.append((_sort_position(item_patch.get("_position")), built))
     items.sort(key=lambda entry: entry[0])

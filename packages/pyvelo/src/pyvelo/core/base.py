@@ -580,6 +580,11 @@ class _ListItemType:
             return self.variants[0].model_validate(value, context=context)
         return self._union_adapter.validate_python(value, context=context)
 
+    @property
+    def name(self) -> str:
+        """The class name, or for a union the variants' names joined with `` | ``."""
+        return " | ".join(variant.__name__ for variant in self.variants)
+
     @functools.cached_property
     def fields(self) -> dict[str, FieldInfo]:
         fields: dict[str, FieldInfo] = {}

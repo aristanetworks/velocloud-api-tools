@@ -123,6 +123,18 @@ def test_unknown_key_message_suggests_close_names():
     assert "count" in str(error)
 
 
+def test_unknown_key_in_a_built_item_names_its_class():
+    error = raises_at(
+        Root(rules=[Rule(name="a")]),
+        {"rules": {"z": {"priority": 1, "nope": 1}}},
+        "rules[z].nope",
+    )
+    assert "Rule" in str(error)
+    error = raises_at(Root(), {"need": {"name": "n", "priorty": 1}}, "need.priorty")
+    assert "Rule" in str(error)
+    assert "priority" in str(error)
+
+
 class WithAlias(VcoModel):
     dh_group: Annotated[int, Alias("DHGroup")] = 0
 
