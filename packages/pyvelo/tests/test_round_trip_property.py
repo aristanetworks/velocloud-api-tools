@@ -3,6 +3,7 @@
 import copy
 import json
 import random
+import uuid
 from collections.abc import Callable
 
 import pytest
@@ -74,10 +75,83 @@ def firewall(rng: random.Random) -> dict[str, object]:
     return doc
 
 
+def uuid_text(rng: random.Random) -> str:
+    return str(uuid.UUID(int=rng.getrandbits(128), version=4))
+
+
+def maybe_id(rng: random.Random, key: str) -> dict[str, object]:
+    """An ``{key: uuid}`` or nothing: documents that lack the key get a random default."""
+    return {key: uuid_text(rng)} if rng.random() < 0.5 else {}
+
+
+def qos_rule(rng: random.Random, name: str) -> dict[str, object]:
+    return {
+        "name": name,
+        "match": {},
+        "action": {
+            "edge2EdgeRouteAction": {},
+            "edge2DataCenterRouteAction": {},
+            "edge2CloudRouteAction": {},
+            "QoS": {},
+        },
+        **maybe_id(rng, "ruleLogicalId"),
+    }
+
+
 def qos(rng: random.Random) -> dict[str, object]:
     return {
         "segments": [
-            {"segment": desc(i), "rules": []} for i in range(rng.randint(0, 3))
+            {
+                "segment": desc(i),
+                "rules": [qos_rule(rng, f"r{j}") for j in range(rng.randint(0, 3))],
+            }
+            for i in range(rng.randint(0, 3))
+        ]
+    }
+
+
+def device_settings(rng: random.Random) -> dict[str, object]:
+    def bgp() -> dict[str, object]:
+        return {
+            "enabled": rng.choice([True, False]),
+            "ASN": "65000",
+            "neighbors": [
+                {
+                    "neighborIp": f"10.0.0.{j}",
+                    "neighborAS": "65001",
+                    **maybe_id(rng, "id"),
+                }
+                for j in range(rng.randint(0, 3))
+            ],
+            "filters": [
+                {"name": f"f{j}", "rules": [], **maybe_id(rng, "id")}
+                for j in range(rng.randint(0, 3))
+            ],
+        }
+
+    return {
+        "lan": {"networks": [], "interfaces": []},
+        "segments": [
+            {"segment": desc(i), **({"bgp": bgp()} if rng.random() < 0.7 else {})}
+            for i in range(rng.randint(1, 3))
+        ],
+    }
+
+
+def wan(rng: random.Random) -> dict[str, object]:
+    return {
+        "links": [
+            {
+                "name": f"l{i}",
+                "type": "WIRED",
+                "classesOfService": {
+                    "classesOfService": [
+                        {"dscpTags": ["CS0"], **maybe_id(rng, "id")}
+                        for _ in range(rng.randint(0, 3))
+                    ]
+                },
+            }
+            for i in range(rng.randint(0, 3))
         ]
     }
 
@@ -85,7 +159,12 @@ def qos(rng: random.Random) -> dict[str, object]:
 @pytest.mark.parametrize("seed", range(200))
 @pytest.mark.parametrize(
     ("name", "build"),
-    [("firewall", firewall), ("QOS", qos)],
+    [
+        ("firewall", firewall),
+        ("QOS", qos),
+        ("deviceSettings", device_settings),
+        ("WAN", wan),
+    ],
 )
 @pytest.mark.parametrize("level", [ConfigContext.EDGE, ConfigContext.PROFILE])
 def test_no_edit_round_trip(

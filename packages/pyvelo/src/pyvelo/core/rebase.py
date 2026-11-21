@@ -674,6 +674,28 @@ def _lossy_in_model(
         )
 
 
+def _keyed_pairs(
+    before: list[object], after: list[object], node: _Node
+) -> list[tuple[Key, int, int]] | None:
+    """The items a keyed list has on both sides, as (key, index in *before*, index in *after*).
+
+    None unless *node* is a keyed list whose keys are present and distinct in
+    both dumps. Items in only one of them are not paired.
+    """
+    if not isinstance(node, _KeyedList):
+        return None
+    before_keys = _list_keys(before, node)
+    after_keys = _list_keys(after, node)
+    if before_keys is None or after_keys is None:
+        return None
+    position = {key: i for i, key in enumerate(before_keys)}
+    return [
+        (Key(key), position[key], i)
+        for i, key in enumerate(after_keys)
+        if key in position
+    ]
+
+
 def _lossy_in_list(
     out: list[Path],
     path: Path,
@@ -690,17 +712,10 @@ def _lossy_in_list(
         return  # the dump's positions are not the model's
     # (item path, baseline index, current index)
     pairs: list[tuple[Path, int, int]] | None = None
-    if isinstance(node, _KeyedList):
-        before_keys = _list_keys(before, node)
-        after_keys = _list_keys(after, node)
-        if before_keys is not None and after_keys is not None:
-            position = {key: i for i, key in enumerate(before_keys)}
-            pairs = [
-                (path.child(Key(key)), position[key], i)
-                for i, key in enumerate(after_keys)
-                if key in position
-            ]
-    if pairs is None:
+    keyed = _keyed_pairs(before, after, node)
+    if keyed is not None:
+        pairs = [(path.child(key), base, cur) for key, base, cur in keyed]
+    else:
         # Items cannot be matched by key. A changed list is written whole.
         if before != after or len(baseline) != len(current):
             return
@@ -715,4 +730,99 @@ def _lossy_in_list(
             after[cur_index],
             None,
             level,
+        )
+
+
+# ---------------------------------------------------------------------------
+# carry_unset_defaults
+# ---------------------------------------------------------------------------
+
+
+def carry_unset_defaults(
+    baseline: VcoModel,
+    current: VcoModel,
+    before: Mapping[str, object],
+    after: dict[str, object],
+) -> None:
+    """Make *after* agree with *before* on every scalar that neither model has set.
+
+    Some defaults are made anew on each parse (``default_factory=uuid.uuid4``),
+    so *baseline* and *current* differ in them although nobody assigned them.
+    In the dumps that reads as a change by the caller, and ``rebase`` would write
+    it. Here *after* is edited, in place, so it does not: such a field takes the
+    value it has in *before*. The models are left as they are.
+
+    The walk pairs *baseline* and *current* as ``find_lossy_assignments`` does,
+    except that a list without usable keys is paired by position whether or not
+    its dump changed. Only a pair has a *before* value to carry.
+    """
+    _carry_in_value(baseline, current, before, after, None)
+
+
+def _carry_in_value(
+    baseline: object,
+    current: object,
+    before: object,
+    after: object,
+    node: _Node,
+) -> None:
+    if isinstance(baseline, VcoModel):
+        if isinstance(current, VcoModel) and type(current) is type(baseline):
+            _carry_in_model(baseline, current, before, after)
+    elif _is_list(baseline) and _is_list(current):
+        _carry_in_list(baseline, current, before, after, node)
+
+
+def _carry_in_model(
+    baseline: VcoModel, current: VcoModel, before: object, after: object
+) -> None:
+    if not (_is_dict(before) and _is_dict(after)):
+        return
+    for name, field_info in type(current).model_fields.items():
+        dump_key = _field_alias(field_info, name)
+        if dump_key not in before or dump_key not in after:
+            continue
+        value = _field_value(current, name)
+        unset = (
+            name not in baseline.model_fields_set
+            and name not in current.model_fields_set
+        )
+        container = isinstance(value, VcoModel) or _is_list(value) or _is_dict(value)
+        if unset and not container:
+            after[dump_key] = before[dump_key]
+            continue
+        _carry_in_value(
+            _field_value(baseline, name),
+            value,
+            before[dump_key],
+            after[dump_key],
+            _child(type(current), dump_key),
+        )
+
+
+def _carry_in_list(
+    baseline: list[object],
+    current: list[object],
+    before: object,
+    after: object,
+    node: _Node,
+) -> None:
+    if not (_is_list(before) and _is_list(after)):
+        return
+    if len(before) != len(baseline) or len(after) != len(current):
+        return  # the dump's positions are not the model's
+    keyed = _keyed_pairs(before, after, node)
+    if keyed is not None:
+        pairs = [(base, cur) for _, base, cur in keyed]
+    elif len(baseline) == len(current):
+        pairs = [(i, i) for i in range(len(baseline))]
+    else:
+        return
+    for base_index, cur_index in pairs:
+        _carry_in_value(
+            baseline[base_index],
+            current[cur_index],
+            before[base_index],
+            after[cur_index],
+            None,
         )

@@ -560,3 +560,84 @@ def test_override_flag_the_document_lacks_is_named_as_one():
         plan_module(mod, level=EDGE)
     assert exc.value.fields == ['segments["Global Segment"].bfd.override']
     assert "override flag" in str(exc.value)
+
+
+# --- defaults generated per parse are not the caller's change --------------
+
+QOS_RULE: dict[str, Any] = {
+    "name": "r1",
+    "match": {},
+    "action": {
+        "edge2EdgeRouteAction": {},
+        "edge2DataCenterRouteAction": {},
+        "edge2CloudRouteAction": {},
+        "QoS": {},
+    },
+}
+
+
+def qos(*rules: dict[str, Any]) -> QosConfigurationModule:
+    raw = {"segments": [{"segment": desc(0, "Global Segment"), "rules": list(rules)}]}
+    return QosConfigurationModule.model_validate(
+        make_module_json("QOS", copy.deepcopy(raw))
+    )
+
+
+def bgp_ds() -> DeviceSettingsConfigurationModule:
+    bgp = {
+        "enabled": True,
+        "ASN": "65000",
+        "neighbors": [{"neighborIp": "10.0.0.1", "neighborAS": "65001"}],
+        "filters": [{"name": "f1", "rules": []}],
+    }
+    segment = {"segment": desc(0, "Global Segment"), "bgp": bgp}
+    return ds({**DS_RAW, "segments": [segment]})
+
+
+def test_no_edit_does_not_stamp_a_generated_rule_id():
+    plan = plan_module(qos(QOS_RULE), level=EDGE)
+    assert (plan.operation, plan.changes) == ("none", ())
+    assert plan.data["segments"][0]["rules"] == [QOS_RULE]
+
+
+@pytest.mark.parametrize("level", [EDGE, PROFILE])
+def test_no_edit_does_not_stamp_generated_bgp_ids(level: ConfigContext):
+    mod = bgp_ds()
+    plan = plan_module(mod, level=level)
+    assert (plan.operation, plan.changes) == ("none", ())
+    assert plan.data == mod.raw_data
+
+
+def test_an_edit_in_a_rule_without_an_id_does_not_stamp_one():
+    other = {
+        **QOS_RULE,
+        "name": "r2",
+        "ruleLogicalId": "00000000-0000-0000-0000-0000000000aa",
+    }
+    mod = qos(QOS_RULE, other)
+    mod.data.segments[0].rules[0].match.source_ip = "10.1.1.1"
+    plan = plan_module(mod, level=EDGE)
+    r1, r2 = plan.data["segments"][0]["rules"]
+    assert "ruleLogicalId" not in r1 and r2 == other
+    assert [str(c.path) for c in plan.changes] == [
+        'segments["Global Segment"].rules[r1].match.sip'
+    ]
+
+
+def test_an_edit_elsewhere_does_not_stamp_bgp_ids():
+    mod = bgp_ds()
+    mod.data.lan.management.cidr_prefix = 24
+    plan = plan_module(mod, level=EDGE)
+    bgp = plan.data["segments"][0]["bgp"]
+    assert "id" not in bgp["neighbors"][0] and "id" not in bgp["filters"][0]
+    assert [str(c.path) for c in plan.changes] == ["lan.management"]
+
+
+def test_a_new_item_keeps_the_id_it_is_given():
+    mod = qos(QOS_RULE)
+    mod.data.segments[0].rules.append(
+        type(mod.data.segments[0].rules[0]).model_validate({**QOS_RULE, "name": "r2"})
+    )
+    plan = plan_module(mod, level=EDGE)
+    r1, r2 = plan.data["segments"][0]["rules"]
+    assert "ruleLogicalId" not in r1 and "ruleLogicalId" in r2

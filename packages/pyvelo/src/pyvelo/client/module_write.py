@@ -38,6 +38,7 @@ from pyvelo.core.base import (
 )
 from pyvelo.core.rebase import (
     RawChange,
+    carry_unset_defaults,
     find_lossy_assignments,
     is_override_flag,
     raw_changes,
@@ -280,6 +281,7 @@ def plan_module(
         baseline = _reparse(model_type, reconciled, module.raw_mode)
         before = wire_dump(baseline, level)
         after = wire_dump(current, level)
+        carry_unset_defaults(baseline, current, before, after)
         payload = cast(
             dict[str, Any],
             copy.deepcopy(
