@@ -16,8 +16,8 @@ a QoE threshold, a link description, a LAN network's OSPF cost, a syslog flag.
 Server-managed keys seen in what the Orchestrator stores (the only ones allowed):
 
 * ``ruleLogicalId``: assigned to a rule that was added without one.
-* ``routeMapsVersion``: added to a deviceSettings segment that lacks it (see
-  ``_intent_live_support.SERVER_ADDED_KEYS``).
+* ``routeMapsVersion``: added to a deviceSettings segment entry that lacks it
+  (accepted drift, see ``_intent_live_support.settle``).
 * refs: the Orchestrator re-derives a deviceSettings module's refs from its data
   when the data changes and drops one whose object is gone; a firewall or WAN
   module's refs stay as they were. The tests never write refs and restore data
@@ -36,7 +36,6 @@ Run:
 from __future__ import annotations
 
 import copy
-import re
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from typing import Any
@@ -45,14 +44,18 @@ import pytest
 from _intent_live_support import (  # pyright: ignore[reportImplicitRelativeImport]
     EdgeLayout,
     Lab,
+    changes_between,
     check,
+    check_no_override_flag,
     delete_module,
     describe,
     effective_data,
-    plain,
-    plain_changes,
+    expect,
+    has_key,
     redact,
+    refusal_codes,
     restoring,
+    settle,
     synthetic_name,
     write_data,
 )
@@ -93,6 +96,28 @@ class Writes:
 
     updates: list[UpdateConfigurationModule]
     inserts: list[InsertConfigurationModule]
+
+
+class WriteRefused(AssertionError):
+    """A test that must send nothing tried to write."""
+
+
+@pytest.fixture
+def refused_writes(vco_client: VcoClient, monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """Refuse every write to the client, and list the attempts: nothing is sent."""
+    attempts: list[str] = []
+
+    async def refuse_update(request: UpdateConfigurationModule) -> None:
+        attempts.append("update")
+        raise WriteRefused
+
+    async def refuse_insert(request: InsertConfigurationModule) -> Any:
+        attempts.append("insert")
+        raise WriteRefused
+
+    monkeypatch.setattr(vco_client, "update_configuration_module", refuse_update)
+    monkeypatch.setattr(vco_client, "insert_configuration_module", refuse_insert)
+    return attempts
 
 
 @pytest.fixture
@@ -166,8 +191,7 @@ def _planned(state: ConfigState, name: Name) -> ModulePlan:
 
 def _json_object(value: object) -> dict[str, Any]:
     """A deep copy of a JSON object, for a test to read or change freely."""
-    assert isinstance(value, dict)
-    return copy.deepcopy(value)  # pyright: ignore[reportUnknownArgumentType, reportUnknownVariableType]
+    return copy.deepcopy(expect(value, dict, "the JSON value"))
 
 
 def _raw(module: AnyConfigurationModule) -> dict[str, Any]:
@@ -194,31 +218,38 @@ def _unedited(where: str, state: ConfigState, failures: list[str]) -> int:
     return len(modules)
 
 
-async def test_no_edit_plans_nothing_and_sends_nothing(
-    lab: Lab, pipeline: ConfigPipeline, writes: Writes
+async def _save_nothing(
+    where: str, pipeline: ConfigPipeline, state: ConfigState, failures: list[str]
 ) -> None:
+    """Save a state with no edit: it must return without sending, and stay usable."""
+    try:
+        result = await pipeline.save(state)
+    except WriteRefused:
+        failures.append(f"{where}: save with no edit tried to write")
+        return
+    if result.modules_updated or result.modules_inserted or state.spent:
+        failures.append(f"{where}: save with no edit reports a write")
+
+
+async def test_no_edit_plans_nothing_and_sends_nothing(
+    lab: Lab, pipeline: ConfigPipeline, refused_writes: list[str]
+) -> None:
+    # Every write is refused before it reaches the Orchestrator (``refused_writes``),
+    # so a regression here fails the test and cannot change the lab.
     failures: list[str] = []
     checked = 0
     for layout in lab.layouts:
         state = await pipeline.load(layout.edge_id, enterprise_id=lab.enterprise_id)
         checked += _unedited(f"edge #{layout.index}", state, failures)
-        result = await pipeline.save(state)
-        if result.modules_updated or result.modules_inserted or state.spent:
-            failures.append(f"edge #{layout.index}: save with no edit wrote")
+        await _save_nothing(f"edge #{layout.index}", pipeline, state, failures)
     for position, profile_id in enumerate(lab.profile_ids):
         state = await pipeline.load_profile(profile_id, enterprise_id=lab.enterprise_id)
         checked += _unedited(f"profile #{position}", state, failures)
-        result = await pipeline.save(state)
-        if result.modules_updated or result.modules_inserted or state.spent:
-            failures.append(f"profile #{position}: save with no edit wrote")
+        await _save_nothing(f"profile #{position}", pipeline, state, failures)
     if not checked:
         pytest.skip("the Orchestrator has no edge or profile configuration")
-    if writes.updates or writes.inserts:
-        failures.append(
-            f"{len(writes.updates)} update(s) and {len(writes.inserts)} insert(s) were sent"
-        )
     check(
-        not failures,
+        not failures and not refused_writes,
         f"{len(failures)} problem(s) across {checked} modules with no edit:\n"
         + "\n".join(failures),
     )
@@ -245,14 +276,18 @@ async def test_profile_rule_added_through_an_aspect_reads_back_as_that_rule_only
     async with restoring(site) as original:
         assert original is not None
         state = await pipeline.load_profile(profile_id, enterprise_id=lab.enterprise_id)
-        module = state.module("firewall")
-        assert isinstance(module, FirewallConfigurationModule)
+        module = expect(
+            state.module("firewall"), FirewallConfigurationModule, "the firewall module"
+        )
         segment = next(s.segment.name for s in module.data.segments if s.outbound)
-        rules = pipeline.read_aspect(state, "firewall_rules", segment=segment)
-        assert isinstance(rules, list) and rules
+        rules = expect(
+            pipeline.read_aspect(state, "firewall_rules", segment=segment),
+            list,
+            "the firewall_rules aspect",
+        )
         name = synthetic_name()
         # A copy of the last rule, after it: the rule it copies matches first.
-        added: dict[str, Any] = {**rules[-1], "name": name}
+        added: dict[str, Any] = {**expect(rules[-1], dict, "a rule"), "name": name}
         added.pop("rule_logical_id", None)
         _ = await pipeline.apply_aspect(
             state, "firewall_rules", {name: added}, segment=segment
@@ -271,9 +306,12 @@ async def test_profile_rule_added_through_an_aspect_reads_back_as_that_rule_only
         check(state.spent, "the state is not spent after a save that wrote")
 
         after = await site.read_present()
-        stored = plain_changes(original.data, after.raw_data, FirewallData)
+        stored = changes_between(
+            Name.FIREWALL, original.data, after.raw_data, FirewallData
+        )
         _check_paths("aspect edit", "the profile read back", stored, expected)
         _check_stored_as_sent("aspect edit", stored, plan)
+        check_no_override_flag("aspect edit", plan.data, after.raw_data)
 
 
 def _profile_has_qoe(module: AnyConfigurationModule) -> bool:
@@ -292,10 +330,9 @@ async def test_profile_scalar_edit_through_apply_reads_back_as_that_edit_only(
     async with restoring(site) as original:
         assert original is not None
         state = await pipeline.load_profile(profile_id, enterprise_id=lab.enterprise_id)
-        module = state.module("QOS")
-        assert isinstance(module, QosConfigurationModule)
-        assert isinstance(module.data.qoe, QoeSettings)
-        yellow = module.data.qoe.voice.latency.yellow  # a reporting threshold
+        module = expect(state.module("QOS"), QosConfigurationModule, "the QoS module")
+        qoe = expect(module.data.qoe, QoeSettings, "the QoE settings")
+        yellow = qoe.voice.latency.yellow  # a reporting threshold
         _ = await pipeline.apply(
             state,
             module="QOS",
@@ -309,7 +346,7 @@ async def test_profile_scalar_edit_through_apply_reads_back_as_that_edit_only(
         check(result.modules_updated == [Name.QOS], f"saved {result.modules_updated}")
 
         after = await site.read_present()
-        stored = plain_changes(original.data, after.raw_data, QosData)
+        stored = changes_between(Name.QOS, original.data, after.raw_data, QosData)
         _check_paths("profile edit", "the profile read back", stored, expected)
         _check_stored_as_sent("profile edit", stored, plan)
 
@@ -331,6 +368,36 @@ def _lacking(edge: dict[str, Any], profile: dict[str, Any]) -> list[dict[str, An
     """The profile's segment entries that the edge's data has no entry for."""
     have = [_segment_id(s) for s in edge.get("segments") or []]
     return [s for s in profile.get("segments") or [] if _segment_id(s) not in have]
+
+
+def _check_inherited(
+    label: str,
+    before: dict[str, Any],
+    after: dict[str, Any],
+    name: Name,
+    allowed: Sequence[tuple[str, ...]],
+) -> None:
+    """What an edge inherits, as the Orchestrator composes it, changed only by the edit.
+
+    The segments, which hold the rules, must be the same; anything else may change
+    only at an *allowed* key, where the edit is.
+    """
+    settled = expect(settle(name, before, after), dict, "the effective data")
+    check(
+        settled.get("segments") == before.get("segments"),
+        f"{label}: the effective segments of the edge changed",
+    )
+    moved = [
+        c
+        for c in raw_changes(before, settled)
+        if c.path.parts[0] != "segments"
+        and not any(c.path.parts[: len(key)] == key for key in allowed)
+    ]
+    check(
+        not moved,
+        f"{label}: the effective configuration changed beyond the edit: "
+        f"{describe(moved)}",
+    )
 
 
 @dataclass(frozen=True)
@@ -363,7 +430,10 @@ async def _syslog_edit(
 async def _cost_edit(
     _: ConfigPipeline, state: ConfigState, raw: dict[str, Any]
 ) -> tuple[list[Path], tuple[str, ...]]:
-    vlan = raw["lan"]["networks"][0]["vlanId"]
+    networks = raw.get("lan", {}).get("networks")
+    if not networks:
+        pytest.skip("the module has no LAN network to edit")
+    vlan = networks[0]["vlanId"]
     # Assigned on the typed data, so that no override flag is set along with it.
     network = next(
         n for n in state.edge.device_settings.lan.networks if n.vlan_id == vlan
@@ -384,8 +454,8 @@ DEVICE_SETTINGS_CASE = Reconcile(
 )
 
 
-async def _lacking_layout(lab: Lab, case: Reconcile, *, writable: bool) -> EdgeLayout:
-    """An edge whose *case* module lacks a segment its profile has, or skip."""
+async def _lacking_layout(lab: Lab, case: Reconcile) -> EdgeLayout:
+    """An edge whose *case* module lacks a segment its profile has and takes a write, or skip."""
     candidates: list[EdgeLayout] = []
     for layout in lab.layouts:
         edge_module = await lab.edge_site(layout, case.name).read()
@@ -396,8 +466,6 @@ async def _lacking_layout(lab: Lab, case: Reconcile, *, writable: bool) -> EdgeL
             candidates.append(layout)
     if not candidates:
         pytest.skip(f"no edge {case.name.value} module lacks a segment its profile has")
-    if not writable:
-        return candidates[0]
     layout = await lab.first_writable(candidates, case.name)
     if layout is None:
         pytest.skip(
@@ -419,7 +487,7 @@ async def _reconcile(
     profile_site = lab.profile_site(layout.profile_id, case.name)
     async with restoring(site) as original:
         assert original is not None
-        before = _json_object(plain(original.data))
+        before = _json_object(original.data)
         profile_before = _raw(await profile_site.read_present())
         lacking = _lacking(before, profile_before)
         effective_before = await effective_data(
@@ -438,7 +506,8 @@ async def _reconcile(
         _check_paths("edit", "the plan", plan.changes, expected)
         _ = await pipeline.save(state)
 
-        after = _json_object(plain((await site.read_present()).raw_data))
+        written = await site.read_present()
+        after = _json_object(settle(case.name, before, written.raw_data))
         stored = raw_changes(before, after, case.model)
         outside = [c for c in stored if c.path.parts[0] != "segments"]
         _check_paths(
@@ -459,30 +528,25 @@ async def _reconcile(
             _raw(await profile_site.read_present()) == profile_before,
             "the profile's module changed with an edge write",
         )
+        if case.name is Name.FIREWALL:
+            check_no_override_flag("reconciliation", plan.data, written.raw_data)
 
         # What the edge inherits: only the edit may show, never the placeholders.
-        effective_after = await effective_data(
-            lab.client, layout.edge_id, case.name, lab.enterprise_id
-        )
-        check(
-            effective_after.get("segments") == effective_before.get("segments"),
-            "the placeholders changed the effective segments of the edge",
-        )
-        moved = [
-            c
-            for c in raw_changes(effective_before, effective_after)
-            if c.path.parts[0] != "segments" and c.path.parts[: len(allowed)] != allowed
-        ]
-        check(
-            not moved,
-            f"the effective configuration changed beyond the edit: {describe(moved)}",
+        _check_inherited(
+            "edit",
+            effective_before,
+            await effective_data(
+                lab.client, layout.edge_id, case.name, lab.enterprise_id
+            ),
+            case.name,
+            [allowed],
         )
 
 
 async def test_unrelated_edit_adds_the_missing_segments_as_empty_placeholders(
     lab: Lab, pipeline: ConfigPipeline
 ) -> None:
-    layout = await _lacking_layout(lab, FIREWALL_CASE, writable=True)
+    layout = await _lacking_layout(lab, FIREWALL_CASE)
     await _reconcile(lab, pipeline, FIREWALL_CASE, layout)
 
 
@@ -504,12 +568,6 @@ def _shared_segments(edge: dict[str, Any], profile: dict[str, Any]) -> list[obje
     ]
 
 
-def _refusals(exc: VcoOperationError) -> str:
-    """The error codes and the fields of a refusal; the rest of it names lab entities."""
-    found = re.findall(r"\[([A-Z]+\d+)\]\s+([\w.\[\]]+):", str(exc))
-    return "; ".join(f"{code} {field}" for code, field in found) or "no error code"
-
-
 async def _reconcile_unrefused(
     lab: Lab, pipeline: ConfigPipeline, case: Reconcile, layout: EdgeLayout
 ) -> None:
@@ -518,7 +576,7 @@ async def _reconcile_unrefused(
     try:
         await _reconcile(lab, pipeline, case, layout)
     except VcoOperationError as exc:
-        refused = _refusals(exc)
+        refused = refusal_codes(exc)
     check(refused is None, f"the Orchestrator refused the write: {refused}")
 
 
@@ -568,7 +626,7 @@ async def test_missing_device_settings_segment_is_added_as_a_placeholder_the_orc
         try:
             await write_data(site, module, data)
         except VcoOperationError as exc:
-            refused = _refusals(exc)
+            refused = refusal_codes(exc)
         if refused is not None:
             pytest.skip(
                 f"the Orchestrator takes no module without that segment entry: {refused}"
@@ -600,11 +658,15 @@ async def test_missing_edge_qos_is_inserted_from_an_empty_layer_and_reads_back_a
     layout = next((e for e in lab.layouts if not e.has(Name.QOS)), None)
     if layout is None:
         pytest.skip("every edge already has a QoS module of its own")
+    profile_module = await lab.profile_site(layout.profile_id, Name.QOS).read()
+    if profile_module is None:
+        pytest.skip("the profile of an edge with no QoS module has none either")
     site = lab.edge_site(layout, Name.QOS)
     async with restoring(site) as original:
         assert original is None
-        profile = _raw(
-            await lab.profile_site(layout.profile_id, Name.QOS).read_present()
+        profile = _raw(profile_module)
+        effective_before = await effective_data(
+            lab.client, layout.edge_id, Name.QOS, lab.enterprise_id
         )
         state = await pipeline.load(layout.edge_id, enterprise_id=lab.enterprise_id)
         # A disabled service rate limit: new content that limits nothing.
@@ -634,17 +696,21 @@ async def test_missing_edge_qos_is_inserted_from_an_empty_layer_and_reads_back_a
             "the inserted module's segments are not one empty placeholder per "
             "profile segment",
         )
+        _check_inherited(
+            "insert",
+            effective_before,
+            await effective_data(
+                lab.client, layout.edge_id, Name.QOS, lab.enterprise_id
+            ),
+            Name.QOS,
+            # The Orchestrator also fills in the default QoE thresholds in the
+            # effective QoS of an edge that has a QoS module of its own (seen on
+            # a lab; they are the values an edge uses without one).
+            [("serviceRateLimit",), ("qoe",)],
+        )
 
         await delete_module(site, stored.id_)
         check(await site.read() is None, "the inserted module is still there")
-
-
-def _has_key(value: object, key: str) -> bool:
-    if isinstance(value, dict):
-        return key in value or any(_has_key(v, key) for v in value.values())  # pyright: ignore[reportUnknownVariableType, reportUnknownArgumentType]
-    if isinstance(value, list):
-        return any(_has_key(v, key) for v in value)  # pyright: ignore[reportUnknownVariableType, reportUnknownArgumentType]
-    return False
 
 
 def _firewall_that_comes_back_whole(module: AnyConfigurationModule) -> bool:
@@ -652,11 +718,17 @@ def _firewall_that_comes_back_whole(module: AnyConfigurationModule) -> bool:
 
     An insert takes no refs, and the Orchestrator issues new rule IDs for the
     rules it is given, so a module with either would not be the same module.
+    A module with inbound (port-forward) or NAT content is left alone too: that
+    is the local content an edge's connectivity can depend on.
     """
+    raw = module.raw_data
     return (
         isinstance(module, FirewallConfigurationModule)
         and not (isinstance(module.raw_refs, dict) and module.raw_refs)
-        and not _has_key(module.raw_data, "ruleLogicalId")
+        and not has_key(raw, "ruleLogicalId")
+        and not (isinstance(raw, dict) and (raw.get("inbound") or raw.get("inboundV6")))  # pyright: ignore[reportUnknownMemberType]
+        and not has_key(raw, "nat")
+        and not has_key(raw, "natV6")
     )
 
 
@@ -666,13 +738,17 @@ async def test_edge_firewall_deleted_and_inserted_again_reads_back_as_sent(
     layout = await lab.pick_writable_edge(
         Name.FIREWALL,
         _firewall_that_comes_back_whole,
-        "with no refs and no rule IDs, which an insert would not give back",
+        "with no refs, no rule IDs and no inbound or NAT content, which an insert "
+        "would not give back or which a lab edge may depend on",
     )
     site = lab.edge_site(layout, Name.FIREWALL)
     async with restoring(site) as original:
         assert original is not None
         profile = _raw(
             await lab.profile_site(layout.profile_id, Name.FIREWALL).read_present()
+        )
+        effective_before = await effective_data(
+            lab.client, layout.edge_id, Name.FIREWALL, lab.enterprise_id
         )
         await delete_module(site, (await site.read_present()).id_)
         check(await site.read() is None, "the firewall module was not deleted")
@@ -702,6 +778,16 @@ async def test_edge_firewall_deleted_and_inserted_again_reads_back_as_sent(
             "the inserted module's segments are not one empty placeholder per "
             "profile segment",
         )
+        check_no_override_flag("insert", plan.data, stored.raw_data)
+        _check_inherited(
+            "insert",
+            effective_before,
+            await effective_data(
+                lab.client, layout.edge_id, Name.FIREWALL, lab.enterprise_id
+            ),
+            Name.FIREWALL,
+            [("syslog_forwarding",)],
+        )
 
         await delete_module(site, stored.id_)
         check(await site.read() is None, "the inserted module is still there")
@@ -726,11 +812,8 @@ async def test_second_save_from_an_older_state_is_refused_and_spends_the_state(
         assert original is not None
         newer = await pipeline.load(layout.edge_id, enterprise_id=lab.enterprise_id)
         older = await pipeline.load(layout.edge_id, enterprise_id=lab.enterprise_id)
-        wan = newer.module("WAN")
-        assert isinstance(wan, WanConfigurationModule) and isinstance(
-            wan.data.links, list
-        )
-        link = wan.data.links[0].name
+        wan = expect(newer.module("WAN"), WanConfigurationModule, "the WAN module")
+        link = expect(wan.data.links, list, "the WAN links")[0].name
         kept, refused = synthetic_name(), synthetic_name()
         for state, text in ((newer, kept), (older, refused)):
             _ = await pipeline.apply(
@@ -743,7 +826,7 @@ async def test_second_save_from_an_older_state_is_refused_and_spends_the_state(
             _ = await pipeline.save(older)
 
         after = await site.read_present()
-        stored = plain_changes(original.data, after.raw_data, WanData)
+        stored = changes_between(Name.WAN, original.data, after.raw_data, WanData)
         _check_paths(
             "stale save",
             "the module read back",
@@ -826,13 +909,17 @@ async def test_segment_named_in_another_case_is_edited_in_place_not_duplicated(
     site = lab.edge_site(layout, Name.FIREWALL)
     async with restoring(site) as original:
         assert original is not None
-        before = _json_object(plain(original.data))
+        before = _json_object(original.data)
+        effective_before = await effective_data(
+            lab.client, layout.edge_id, Name.FIREWALL, lab.enterprise_id
+        )
         entry = next(
             s
             for s in before["segments"]
             if s["segment"]["name"].swapcase() != s["segment"]["name"]
         )
         name = entry["segment"]["name"]
+        # A logging flag of the segment: it changes no rule and steers no traffic.
         current = entry.get("firewall_logging_enabled")
         flag = not current if isinstance(current, bool) else True
 
@@ -843,17 +930,27 @@ async def test_segment_named_in_another_case_is_edited_in_place_not_duplicated(
             patch={"segments": {name.swapcase(): {"firewall_logging_enabled": flag}}},
         )
         plan = _planned(state, Name.FIREWALL)
-        segment = Path(("segments", Key(name)))
-        expected = [segment.child("firewall_logging_enabled")]
-        if entry.get("outboundOverride") is not True:  # an edit to a sibling sets it
-            expected.append(segment.child("outboundOverride"))
+        expected = [Path(("segments", Key(name), "firewall_logging_enabled"))]
         _check_paths("edit by another case", "the plan", plan.changes, expected)
         _ = await pipeline.save(state)
 
-        after = _json_object(plain((await site.read_present()).raw_data))
+        written = await site.read_present()
+        after = _json_object(written.raw_data)
         stored = raw_changes(before, after, FirewallData)
         _check_paths("edit by another case", "the module read back", stored, expected)
         check(
             len(after["segments"]) == len(before["segments"]),
             "a segment was added: the other-case key did not find the existing one",
+        )
+        check_no_override_flag("edit by another case", plan.data, written.raw_data)
+
+        # No inherited rule changed: only a logging flag of the segment did.
+        effective_after = await effective_data(
+            lab.client, layout.edge_id, Name.FIREWALL, lab.enterprise_id
+        )
+        rules_before = [e.get("outbound") for e in effective_before["segments"]]
+        rules_after = [e.get("outbound") for e in effective_after["segments"]]
+        check(
+            rules_before == rules_after,
+            "the effective outbound rules of the edge changed with a logging flag",
         )

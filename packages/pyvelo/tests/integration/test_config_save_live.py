@@ -15,8 +15,8 @@ Server-managed keys seen in what the Orchestrator stores (the tests allow
 exactly these and nothing else):
 
 * ``ruleLogicalId``: assigned to a rule that was added without one.
-* ``routeMapsVersion``: added to a deviceSettings segment that lacks it (see
-  ``_config_live.SERVER_ADDED_KEYS``).
+* ``routeMapsVersion``: added to a deviceSettings segment entry that lacks it
+  (accepted drift, see ``_config_live.settle``).
 * refs: the Orchestrator re-derives a deviceSettings module's refs from its data
   when the data changes and drops one whose object is gone; a firewall or WAN
   module's refs stay as they were. The tests never write refs and restore data
@@ -30,6 +30,7 @@ Run:
 
 from __future__ import annotations
 
+import copy
 import uuid
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
@@ -65,12 +66,12 @@ from pyvelo.core.rebase import Key, Path, RawChange, raw_changes
 from ._config_live import (
     Lab,
     Site,
+    changes_between,
     check,
+    check_no_override_flag,
     describe,
+    expect,
     find_module,
-    is_known_load_gap,
-    plain,
-    plain_changes,
     read_profile,
     read_stack,
     redact,
@@ -88,7 +89,8 @@ SERVER_ASSIGNED_KEYS = frozenset({"ruleLogicalId"})
 
 def data_of(module: ConfigurationModuleBase) -> EditableData:
     data: object = getattr(module, "data", None)
-    assert isinstance(data, DeviceSettingsData | WanData | QosData | FirewallData)
+    if not isinstance(data, DeviceSettingsData | WanData | QosData | FirewallData):
+        pytest.fail(f"the data of a module is a {type(data).__name__}", pytrace=False)
     return data
 
 
@@ -151,41 +153,6 @@ async def test_no_edit_plans_nothing_on_every_edge_and_profile(lab: Lab) -> None
         f"{len(failures)} of {checked} modules plan a write with no edit:\n"
         + "\n".join(failures),
     )
-
-
-async def test_edges_that_do_not_load_are_the_known_model_gap(lab: Lab) -> None:
-    """Edges that cannot be read are left out of the tests above, not hidden.
-
-    The known gap is a deviceSettings client-connector ref that arrives as one
-    object with ``data: null``. Any other reason an edge fails to load raises
-    while the lab is discovered, and fails every test.
-    """
-    if lab.unloadable:
-        pytest.xfail(
-            f"{len(lab.unloadable)} edge(s) do not load: a client-connector ref "
-            "with null data does not validate (known model gap)"
-        )
-
-
-async def test_load_gap_classification() -> None:
-    """The gap is recognised by where it is, so that no other failure is taken for it."""
-    from pydantic import BaseModel, ValidationError
-
-    class Ref(BaseModel):
-        data: dict[str, int]
-
-    class Refs(BaseModel):
-        refs: dict[str, Ref]
-
-    with pytest.raises(ValidationError) as gap:
-        _ = Refs.model_validate(
-            {"refs": {"deviceSettings:clientConnector:config": {"data": None}}}
-        )
-    assert is_known_load_gap(gap.value)
-    with pytest.raises(ValidationError) as other:
-        _ = Refs.model_validate({"refs": {"deviceSettings:segment": {"data": None}}})
-    assert not is_known_load_gap(other.value)
-    assert not is_known_load_gap(ValueError("not a validation error"))
 
 
 # ---------------------------------------------------------------------------
@@ -253,7 +220,7 @@ async def apply_steps(
     observed: list[list[RawChange]] = []
     for step in steps:
         module = await site.read_present()
-        before = plain(module.raw_data)
+        before = copy.deepcopy(module.raw_data)
         data = data_of(module)
         expected = step.apply(data)
         plan = plan_module(module)
@@ -270,8 +237,10 @@ async def apply_steps(
             after.version != module.version,
             f"{step.label}: the module version did not change on write",
         )
-        stored = raw_changes(before, plain(after.raw_data), model)
+        stored = changes_between(site.name, before, after.raw_data, model)
         _check_paths(step.label, "the module as read back", stored, expected)
+        if site.name is Name.FIREWALL:
+            check_no_override_flag(step.label, plan.data, after.raw_data)
         sent = {str(c.path): c for c in plan.changes}
         for change in stored:
             planned = sent[str(change.path)]
@@ -351,8 +320,8 @@ def _qoe_usable(module: AnyConfigurationModule) -> bool:
 
 def _qoe_steps(_: QosData) -> list[Step]:
     def apply(d: QosData) -> list[Path]:
-        assert isinstance(d.qoe, QoeSettings)
-        d.qoe.voice.latency.yellow += 1  # a reporting threshold; it steers nothing
+        qoe = expect(d.qoe, QoeSettings, "the QoE settings")
+        qoe.voice.latency.yellow += 1  # a reporting threshold; it steers nothing
         return [Path(("qoe", "voice", "latency", "yellow"))]
 
     return [Step("raise the voice latency threshold", apply)]
@@ -427,15 +396,12 @@ def _wan_usable(module: AnyConfigurationModule) -> bool:
 
 
 def _wan_steps(data: WanData) -> list[Step]:
-    assert isinstance(data.links, list)
-    link_name = data.links[0].name
+    link_name = expect(data.links, list, "the WAN links")[0].name
     description = synthetic_name()
 
     def apply(d: WanData) -> list[Path]:
-        assert isinstance(d.links, list)
-        next(
-            link for link in d.links if link.name == link_name
-        ).description = description
+        links = expect(d.links, list, "the WAN links")
+        next(link for link in links if link.name == link_name).description = description
         return [Path(("links", Key(link_name), "description"))]
 
     return [Step("describe a link", apply)]
@@ -483,7 +449,9 @@ async def test_edit_reads_back_as_only_the_intended_change(
         _ = await apply_steps(lab, site, case.model, steps)
         final = await site.read_present()
         if len(steps) > 1:  # the steps undo each other
-            leftover = plain_changes(original.data, final.raw_data, case.model)
+            leftover = changes_between(
+                site.name, original.data, final.raw_data, case.model
+            )
             check(
                 not leftover,
                 f"after the last step the module still differs from the original: "
@@ -547,8 +515,7 @@ async def test_a_qos_rule_copied_from_an_ipv4_rule_saves(lab: Lab) -> None:
     )
     site = lab.edge_site(layout, Name.QOS)
     async with restoring(site):
-        data = data_of(await site.read_present())
-        assert isinstance(data, QosData)
+        data = expect(data_of(await site.read_present()), QosData, "the QoS data")
         _ = await apply_steps(lab, site, QosData, _qos_rule_steps(data, "IPv4"))
 
 
@@ -566,9 +533,8 @@ async def test_a_module_read_before_another_write_is_refused(lab: Lab) -> None:
         older = await site.read_present()
         written, refused = synthetic_name(), synthetic_name()
         for module, text in ((newer, written), (older, refused)):
-            data = data_of(module)
-            assert isinstance(data, WanData) and isinstance(data.links, list)
-            data.links[0].description = text
+            data = expect(data_of(module), WanData, "the WAN data")
+            expect(data.links, list, "the WAN links")[0].description = text
         await lab.client.update_module(
             newer, data_of(newer), enterprise_id=lab.enterprise_id
         )
@@ -577,7 +543,7 @@ async def test_a_module_read_before_another_write_is_refused(lab: Lab) -> None:
                 older, data_of(older), enterprise_id=lab.enterprise_id
             )
         after = await site.read_present()
-        stored = plain_changes(original.data, after.raw_data, WanData)
+        stored = changes_between(Name.WAN, original.data, after.raw_data, WanData)
         check(
             len(stored) == 1 and stored[0].after == written,
             f"the refused write changed the module: {describe(stored)}",
@@ -593,9 +559,8 @@ async def test_a_request_without_a_version_is_not_checked(lab: Lab) -> None:
         older = await site.read_present()
         first, second = synthetic_name(), synthetic_name()
         for module, text in ((newer, first), (older, second)):
-            data = data_of(module)
-            assert isinstance(data, WanData) and isinstance(data.links, list)
-            data.links[0].description = text
+            data = expect(data_of(module), WanData, "the WAN data")
+            expect(data.links, list, "the WAN links")[0].description = text
         await lab.client.update_module(
             newer, data_of(newer), enterprise_id=lab.enterprise_id
         )
@@ -605,7 +570,7 @@ async def test_a_request_without_a_version_is_not_checked(lab: Lab) -> None:
         stale.version = MISSING
         await lab.client.update_configuration_module(stale)
         after = await site.read_present()
-        stored = plain_changes(original.data, after.raw_data, WanData)
+        stored = changes_between(Name.WAN, original.data, after.raw_data, WanData)
         check(
             len(stored) == 1 and stored[0].after == second,
             "a request without a version did not write unconditionally: "
@@ -640,12 +605,15 @@ async def test_a_data_edit_sends_no_refs(
         await send(request)
 
     async with restoring(site):
-        module = await site.read_present()
-        assert isinstance(module, DeviceSettingsConfigurationModule)
+        module = expect(
+            await site.read_present(),
+            DeviceSettingsConfigurationModule,
+            "the deviceSettings module",
+        )
 
         # Passing the refs as read is no change to them.
-        assert isinstance(module.refs, DeviceSettingsRefs)
-        unchanged = plan_module(module, refs=module.refs)
+        refs = expect(module.refs, DeviceSettingsRefs, "the deviceSettings refs")
+        unchanged = plan_module(module, refs=refs)
         check(
             unchanged.operation == "none" and unchanged.refs is None,
             "refs passed back as read were planned as a change",
@@ -677,8 +645,9 @@ async def test_a_data_edit_leaves_the_refs_of_a_firewall_as_they_were(
     site = lab.edge_site(layout, Name.FIREWALL)
     async with restoring(site) as original:
         assert original is not None
-        data = data_of(await site.read_present())
-        assert isinstance(data, FirewallData)
+        data = expect(
+            data_of(await site.read_present()), FirewallData, "the firewall data"
+        )
         steps = _firewall_steps(data)[:1]
         _ = await apply_steps(lab, site, FirewallData, steps)
         after = await site.read_present()

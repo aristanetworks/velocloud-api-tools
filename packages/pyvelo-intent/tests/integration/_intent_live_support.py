@@ -9,13 +9,17 @@ pyvelo-intent's live tests use the same file, copied to
 must stay identical (``cp`` one over the other).
 
 ``restoring`` is the one way a test writes: it records a module's raw data first
-and, however the test ends, puts it back and checks that it is back. A module
-that did not exist is deleted; one that was deleted is inserted again.
+(in a private file under ``$PYVELO_IT_BACKUP_DIR``, else a new temp directory,
+which it removes once the module is back) and, however the test ends, puts it back and checks that it is back. A
+module that did not exist is deleted; one that was deleted is inserted again.
+If the restore fails, the message names the file; it never prints the data.
 
 What the Orchestrator does to a module as it stores it, seen on a lab:
 
-* It adds ``routeMapsVersion`` to a deviceSettings segment that lacks it
-  (``SERVER_ADDED_KEYS``). A module is compared without such keys.
+* It adds ``routeMapsVersion`` to a deviceSettings segment entry that lacks it
+  on a write (``settle``). A comparison ignores that key where the module as it
+  was before the write lacked it; the key is then accepted drift, and it stays
+  in a module the suite has written.
 * It re-derives the refs of a deviceSettings module from its data when the data
   changes: ref IDs are re-issued, and a ref whose object is gone is dropped (it
   cannot be written back). The refs of a firewall or WAN module are left as they
@@ -29,7 +33,13 @@ What the Orchestrator does to a module as it stores it, seen on a lab:
 
 from __future__ import annotations
 
+import atexit
 import copy
+import json
+import os
+import pathlib
+import re
+import tempfile
 import uuid
 from collections.abc import AsyncGenerator, Awaitable, Callable, Sequence
 from contextlib import asynccontextmanager
@@ -48,6 +58,7 @@ from pyvelo.client.schemas.configuration import (
     EdgeConfiguration,
     EnterpriseConfigurationProfile,
     GetConfiguration,
+    InsertConfigurationModule,
     InsertFirewallConfigurationModule,
     InsertQosConfigurationModule,
     UpdateConfigurationModule,
@@ -112,6 +123,13 @@ def check(condition: bool, message: str) -> None:
         pytest.fail(message, pytrace=False)
 
 
+def expect[T](value: object, kind: type[T], what: str) -> T:
+    """*value* as a *kind*; fail with *what* alone (an ``isinstance`` assert prints the value)."""
+    if not isinstance(value, kind):
+        pytest.fail(f"{what} is a {type(value).__name__}", pytrace=False)
+    return value
+
+
 # ---------------------------------------------------------------------------
 # Reading
 # ---------------------------------------------------------------------------
@@ -161,11 +179,15 @@ async def read_profile(
     return await client.get_configuration(request)
 
 
+LAB_LIMIT = 50
+"""At most this many edges, and this many profiles, are read and swept."""
+
+
 async def list_edge_ids(client: VcoClient, enterprise_id: int | None) -> list[int]:
     edges = await client.get_enterprise_edges(
         GetEnterpriseEdges(enterprise_id=enterprise_id if enterprise_id else MISSING)
     )
-    return [e.id_ for e in edges if isinstance(e.id_, int)]
+    return [e.id_ for e in edges if isinstance(e.id_, int)][:LAB_LIMIT]
 
 
 async def list_profile_ids(client: VcoClient, enterprise_id: int | None) -> list[int]:
@@ -174,42 +196,36 @@ async def list_profile_ids(client: VcoClient, enterprise_id: int | None) -> list
             enterprise_id=enterprise_id if enterprise_id else MISSING
         )
     )
-    return [p.id_ for p in profiles if isinstance(p.id_, int)]
+    return [p.id_ for p in profiles if isinstance(p.id_, int)][:LAB_LIMIT]
 
 
-def is_known_load_gap(exc: BaseException) -> bool:
-    """Whether *exc* is the model gap on a client-connector reference.
+class LabUnreadable(Exception):
+    """An edge of the lab does not load; the message names no entity."""
 
-    A deviceSettings ``clientConnector`` ref that arrives as one object with
-    ``data: null`` does not validate. Every error of such a failure is located
-    inside a ``clientConnector`` key.
-    """
-    if not isinstance(exc, ValidationError):
-        return False
-    errors = exc.errors()
-    return bool(errors) and all(
-        any("clientConnector" in str(part) for part in error["loc"]) for error in errors
+
+def _unreadable(index: int, exc: ValidationError) -> LabUnreadable:
+    """A ``ValidationError`` as the error types alone: its input is lab data."""
+    kinds = sorted({str(error["type"]) for error in exc.errors()})
+    return LabUnreadable(
+        f"edge #{index} does not load: {exc.error_count()} validation error(s) "
+        f"of type {', '.join(kinds)}"
     )
 
 
 async def discover_layouts(
     client: VcoClient, enterprise_id: int | None
-) -> tuple[list[EdgeLayout], list[int]]:
-    """Every edge that loads, and the positions of those that do not.
+) -> list[EdgeLayout]:
+    """Every edge, with its configuration stack as the models read it.
 
-    A failure other than the known load gap is raised: a lab that this suite
+    An edge that does not load raises ``LabUnreadable``: a lab that this suite
     cannot read is not a lab it can test.
     """
     layouts: list[EdgeLayout] = []
-    unloadable: list[int] = []
     for index, edge_id in enumerate(await list_edge_ids(client, enterprise_id)):
         try:
             edge, profile = await read_stack(client, edge_id, enterprise_id)
         except ValidationError as exc:
-            if not is_known_load_gap(exc):
-                raise
-            unloadable.append(index)
-            continue
+            raise _unreadable(index, exc) from None
         if not isinstance(edge.id_, int) or not isinstance(profile.id_, int):
             continue
         layouts.append(
@@ -222,7 +238,7 @@ async def discover_layouts(
                 profile=profile,
             )
         )
-    return layouts, unloadable
+    return layouts
 
 
 @dataclass(frozen=True)
@@ -232,8 +248,6 @@ class Lab:
     client: VcoClient
     enterprise_id: int | None
     layouts: list[EdgeLayout]
-    unloadable: list[int]
-    """Positions of the edges that do not load (the known model gap)."""
     profile_ids: list[int]
 
     def edge_site(self, layout: EdgeLayout, name: ConfigurationModuleName) -> Site:
@@ -254,18 +268,6 @@ class Lab:
             if module is not None and suitable(module):
                 found.append(layout)
         return found
-
-    def pick_edge(
-        self,
-        name: ConfigurationModuleName,
-        suitable: Callable[[AnyConfigurationModule], bool] = lambda _: True,
-        what: str = "",
-    ) -> EdgeLayout:
-        """The first such edge, or skip the test: the lab has no target for it."""
-        found = self.edges_with(name, suitable)
-        if not found:
-            pytest.skip(f"no edge has a {name.value} module {what or 'to use'}")
-        return found[0]
 
     async def first_writable(
         self, layouts: Sequence[EdgeLayout], name: ConfigurationModuleName
@@ -312,13 +314,57 @@ class Lab:
         pytest.skip(f"no profile has a {name.value} module {what or 'to use'}")
 
 
+def refusal_codes(exc: VcoOperationError) -> str:
+    """The error codes and fields of a refusal; the rest of its text names lab entities."""
+    found = re.findall(r"\[([A-Z][A-Z0-9_]*)\]\s*([\w.\[\]]*)", str(exc))
+    return (
+        "; ".join(f"{code} {field}".strip() for code, field in found) or "no error code"
+    )
+
+
+_REDACTED: set[int] = set()
+
+
+def redact_refusals(client: VcoClient) -> None:
+    """Make the client's write refusals carry their codes alone.
+
+    The Orchestrator's validation text quotes the names of what it refuses, and a
+    refused write in a test would put them in the test output.
+    """
+    if id(client) in _REDACTED:
+        return
+    update = client.update_configuration_module
+    insert = client.insert_configuration_module
+
+    def redacted(exc: VcoOperationError) -> VcoOperationError:
+        return VcoOperationError(exc.operation, refusal_codes(exc), code=exc.code)
+
+    async def redacted_update(request: UpdateConfigurationModule) -> None:
+        try:
+            await update(request)
+        except VcoOperationError as exc:
+            raise redacted(exc) from None
+
+    async def redacted_insert(request: InsertConfigurationModule) -> Any:
+        try:
+            return await insert(request)
+        except VcoOperationError as exc:
+            raise redacted(exc) from None
+
+    # Instance attributes, which shadow the methods: a spy a test puts over them
+    # (``monkeypatch.setattr``) wraps these.
+    attributes = vars(client)
+    attributes["update_configuration_module"] = redacted_update
+    attributes["insert_configuration_module"] = redacted_insert
+    _ = _REDACTED.add(id(client))
+
+
 async def discover_lab(client: VcoClient, enterprise_id: int | None) -> Lab:
-    layouts, unloadable = await discover_layouts(client, enterprise_id)
+    redact_refusals(client)
     return Lab(
         client=client,
         enterprise_id=enterprise_id,
-        layouts=layouts,
-        unloadable=unloadable,
+        layouts=await discover_layouts(client, enterprise_id),
         profile_ids=await list_profile_ids(client, enterprise_id),
     )
 
@@ -344,7 +390,8 @@ class Site:
 
     async def read_present(self) -> AnyConfigurationModule:
         module = await self.read()
-        assert module is not None, f"the {self.name} module is gone"
+        check(module is not None, f"the {self.name.value} module is gone")
+        assert module is not None
         return module
 
 
@@ -393,11 +440,8 @@ async def effective_data(
     if enterprise_id is not None:
         request.enterprise_id = enterprise_id
     result = await client.portal("edge/getEdgeConfigurationModules", request, RawJson)
-    module = result.root[name.value]
-    assert isinstance(module, dict)
-    data = cast(dict[str, Any], module)["data"]
-    assert isinstance(data, dict)
-    return cast(dict[str, Any], data)
+    module = expect(result.root[name.value], dict, f"the effective {name.value} module")
+    return expect(module["data"], dict, f"the effective {name.value} data")
 
 
 # ---------------------------------------------------------------------------
@@ -419,18 +463,18 @@ async def delete_module(site: Site, module_id: int) -> None:
     result = await site.client.portal(
         "configuration/deleteConfigurationModule", request, RowsModifiedConfirmation
     )
-    assert not result.error, "deleting a module the test inserted failed"
+    check(not result.error, f"deleting the {site.name.value} module was refused")
 
 
 async def insert_module(site: Site, data: object, refs: object) -> None:
     """Insert a module (firewall or QoS only) with *data* exactly as given."""
-    assert isinstance(data, dict)
+    data = expect(data, dict, "the data to insert")
     enterprise = site.enterprise_id if site.enterprise_id is not None else MISSING
     if site.name is ConfigurationModuleName.FIREWALL:
         _ = await site.client.insert_configuration_module(
             InsertFirewallConfigurationModule(
                 configuration_id=site.configuration_id,
-                data=copy.deepcopy(data),  # pyright: ignore[reportUnknownArgumentType]
+                data=copy.deepcopy(data),
                 enterprise_id=enterprise,
             )
         )
@@ -438,46 +482,139 @@ async def insert_module(site: Site, data: object, refs: object) -> None:
         _ = await site.client.insert_configuration_module(
             InsertQosConfigurationModule(
                 configuration_id=site.configuration_id,
-                data=copy.deepcopy(data),  # pyright: ignore[reportUnknownArgumentType]
+                data=copy.deepcopy(data),
                 refs=copy.deepcopy(refs) if isinstance(refs, dict) else None,  # pyright: ignore[reportUnknownArgumentType]
                 enterprise_id=enterprise,
             )
         )
     else:
-        raise AssertionError(f"a {site.name} module cannot be inserted")
+        raise AssertionError(f"a {site.name.value} module cannot be inserted")
 
 
 @dataclass(frozen=True)
 class Original:
     """A module as the test found it."""
 
+    module_id: int
     data: object
     refs: object
     """Only to insert the module again if a test deleted it."""
 
 
-SERVER_ADDED_KEYS = frozenset({"routeMapsVersion"})
-"""Keys the Orchestrator adds to a module as it stores it (see the module docstring)."""
+SEGMENT_DRIFT_KEY = "routeMapsVersion"
+"""Added by the Orchestrator to a deviceSettings segment entry, on a write."""
 
 
-def plain(value: object) -> object:
-    """A deep copy of *value* without the keys the Orchestrator adds on a write."""
-    if isinstance(value, dict):
-        return {
-            k: plain(v)
-            for k, v in cast(dict[str, object], value).items()
-            if k not in SERVER_ADDED_KEYS
-        }
-    if isinstance(value, list):
-        return [plain(v) for v in cast(list[object], value)]
-    return copy.deepcopy(value)
+def _segment_key(entry: object) -> object:
+    if isinstance(entry, dict):
+        descriptor = cast(dict[str, object], entry).get("segment")
+        if isinstance(descriptor, dict):
+            return cast(dict[str, object], descriptor).get("segmentId")
+    return None
 
 
-def plain_changes(
-    old: object, new: object, model: type[VcoModel] | None = None
+def settle(name: ConfigurationModuleName, before: object, after: object) -> object:
+    """*after*, less the keys the Orchestrator added on a write to what *before* was.
+
+    Only ``routeMapsVersion`` on a deviceSettings segment entry that did not have
+    it (or is new): accepted drift. Anything else, here or elsewhere, stays.
+    """
+    if (
+        name is not ConfigurationModuleName.DEVICE_SETTINGS
+        or not isinstance(before, dict)
+        or not isinstance(after, dict)
+    ):
+        return after
+    settled = copy.deepcopy(cast(dict[str, Any], after))
+    had = {
+        _segment_key(entry): SEGMENT_DRIFT_KEY in cast(dict[str, object], entry)
+        for entry in cast(dict[str, Any], before).get("segments") or []
+        if isinstance(entry, dict)
+    }
+    for entry in settled.get("segments") or []:
+        if isinstance(entry, dict) and not had.get(_segment_key(entry), False):
+            _ = cast(dict[str, object], entry).pop(SEGMENT_DRIFT_KEY, None)
+    return settled
+
+
+def changes_between(
+    name: ConfigurationModuleName,
+    before: object,
+    after: object,
+    model: type[VcoModel] | None = None,
 ) -> list[RawChange]:
-    """``raw_changes`` of two module documents, as if neither had the server-added keys."""
-    return raw_changes(plain(old), plain(new), model)
+    """``raw_changes`` from *before* to *after*, without the accepted drift (``settle``)."""
+    return raw_changes(before, settle(name, before, after), model)
+
+
+def has_key(value: object, key: str) -> bool:
+    """Whether *key* is a key of *value* or of anything inside it."""
+    if isinstance(value, dict):
+        return any(
+            k == key or has_key(v, key)
+            for k, v in cast(dict[str, object], value).items()
+        )
+    if isinstance(value, list):
+        return any(has_key(v, key) for v in cast(list[object], value))
+    return False
+
+
+OVERRIDE_KEY = "outboundOverride"
+"""Not a key of the VCO or the edge: no firewall module may be sent or read with it."""
+
+
+def check_no_override_flag(label: str, payload: object, read_back: object) -> None:
+    check(
+        not has_key(payload, OVERRIDE_KEY),
+        f"{label}: the firewall payload carries {OVERRIDE_KEY}",
+    )
+    check(
+        not has_key(read_back, OVERRIDE_KEY),
+        f"{label}: the firewall as read back carries {OVERRIDE_KEY}",
+    )
+
+
+# -- a copy of the original, outside the repository ---------------------------
+
+BACKUP_DIR_ENV = "PYVELO_IT_BACKUP_DIR"
+_backup_dir: pathlib.Path | None = None
+
+
+def _backups() -> pathlib.Path:
+    """A private directory for backups: ``$PYVELO_IT_BACKUP_DIR`` or a new temp one."""
+    global _backup_dir
+    if _backup_dir is None:
+        root = os.environ.get(BACKUP_DIR_ENV)
+        if root:
+            _backup_dir = pathlib.Path(root)
+            _backup_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+        else:
+            _backup_dir = pathlib.Path(tempfile.mkdtemp(prefix="pyvelo-it-backups-"))
+
+            def remove_if_empty(path: pathlib.Path = _backup_dir) -> None:
+                try:
+                    path.rmdir()
+                except OSError:
+                    pass  # a backup is still there: that is the point of it
+
+            _ = atexit.register(remove_if_empty)
+    return _backup_dir
+
+
+def save_backup(site: Site, original: Original) -> pathlib.Path:
+    """Write *original* to a private file, so that a restore that fails is not the end of it."""
+    path = _backups() / f"{uuid.uuid4().hex}-{site.name.value}.json"
+    document = {
+        "module": site.name.value,
+        "configuration_id": site.configuration_id,
+        "module_id": original.module_id,
+        "data": original.data,
+        "refs": None if original.refs is MISSING else original.refs,
+    }
+    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(descriptor, "w") as handle:
+        json.dump(document, handle)
+    return path
 
 
 async def capture(site: Site) -> Original | None:
@@ -486,13 +623,15 @@ async def capture(site: Site) -> Original | None:
     if module is None:
         return None
     return Original(
-        data=copy.deepcopy(module.raw_data), refs=copy.deepcopy(module.raw_refs)
+        module_id=module.id_,
+        data=copy.deepcopy(module.raw_data),
+        refs=copy.deepcopy(module.raw_refs),
     )
 
 
 async def write_data(site: Site, module: AnyConfigurationModule, data: object) -> None:
     """Send *data* to the module as it stands (its version), with no refs."""
-    assert isinstance(data, dict)
+    document = expect(data, dict, "the data to write")
     await site.client.update_configuration_module(
         UpdateConfigurationModule(
             configuration_module_id=module.id_,
@@ -500,7 +639,7 @@ async def write_data(site: Site, module: AnyConfigurationModule, data: object) -
                 site.enterprise_id if site.enterprise_id is not None else MISSING
             ),
             version=module.version or MISSING,
-            update=ConfigurationModuleUpdate(data=copy.deepcopy(data)),  # pyright: ignore[reportUnknownArgumentType]
+            update=ConfigurationModuleUpdate(data=copy.deepcopy(document)),
         )
     )
 
@@ -517,20 +656,20 @@ async def restore(site: Site, original: Original | None) -> None:
             await delete_module(site, current.id_)
         check(
             await site.read() is None,
-            f"restore: the {site.name} module the test added is still there",
+            f"restore: the {site.name.value} module the test added is still there",
         )
         return
     if current is None:
         await insert_module(site, original.data, original.refs)
-    elif plain(current.raw_data) != plain(original.data):
+    elif changes_between(site.name, original.data, current.raw_data):
         await write_data(site, current, original.data)
     after = await site.read()
-    check(after is not None, f"restore: the {site.name} module is missing")
+    check(after is not None, f"restore: the {site.name.value} module is missing")
     assert after is not None
-    changes = plain_changes(original.data, after.raw_data)
+    changes = changes_between(site.name, original.data, after.raw_data)
     check(
         not changes,
-        f"restore: the {site.name} module differs from the original after "
+        f"restore: the {site.name.value} module differs from the original after "
         f"writing it back: {describe(changes)}",
     )
 
@@ -544,10 +683,27 @@ def ref_names(refs: object) -> list[str]:
 async def restoring(site: Site) -> AsyncGenerator[Original | None]:
     """Run a test's writes to *site*'s module and, however they end, undo them."""
     original = await capture(site)
+    backup = save_backup(site, original) if original is not None else None
     try:
         yield original
     finally:
-        await restore(site, original)
+        try:
+            await restore(site, original)
+        except (Exception, pytest.fail.Exception) as exc:
+            if backup is None:
+                raise
+            what = (
+                str(exc)
+                if isinstance(exc, pytest.fail.Exception)
+                else type(exc).__name__
+            )
+            pytest.fail(
+                f"{what}; the original {site.name.value} module is saved at {backup}",
+                pytrace=False,
+            )
+        else:
+            if backup is not None:
+                backup.unlink(missing_ok=True)
 
 
 async def accepts_a_write(site: Site) -> bool:
@@ -555,6 +711,10 @@ async def accepts_a_write(site: Site) -> bool:
 
     Some modules of a lab are not valid as they stand (an address missing from a
     LAN network, say) and every write to them is refused, whatever it holds.
+
+    The write is not free: the Orchestrator may add ``routeMapsVersion`` to a
+    deviceSettings segment entry of a module it takes (``settle``). That key is
+    accepted drift: it stays, and ``restore`` does not count it.
     """
     async with restoring(site) as original:
         module = await site.read()
