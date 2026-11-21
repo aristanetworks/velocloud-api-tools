@@ -1,9 +1,9 @@
 from typing import Annotated
 
 from pydantic import MISSING, Field
-from pyvelo.core import VcoModel
-from pyvelo.core.fields import KeyField
-from pyvelo.core.rebase import Path, find_lossy_assignments
+from pyvelo.core import ConfigContext, EdgeOnly, VcoModel
+from pyvelo.core.fields import KeyField, OverrideFlag
+from pyvelo.core.rebase import Path, find_lossy_assignments, is_override_flag
 
 from .test_rebase import Root
 
@@ -210,3 +210,87 @@ def test_dumps_that_do_not_line_up_with_the_model_are_not_walked():
     assert find_lossy_assignments(base, cur, {}, {}) == []
     wrong = {"segments": [dump(base)["segments"], "extra"]}
     assert find_lossy_assignments(base, cur, wrong, wrong) == []
+
+
+# --- fields that are absent at the config level ----------------------------
+
+PROFILE = ConfigContext.PROFILE
+EDGE = ConfigContext.EDGE
+
+
+class Section(VcoModel):
+    override: Annotated[bool, OverrideFlag] = True
+    value: int = 0
+    note: Annotated[str, EdgeOnly] = ""
+
+
+class Holder(VcoModel):
+    section: Section | MISSING = MISSING
+    items: Annotated[list[Section], KeyField("note")] = Field(default_factory=list)
+    plain: list[Section] = Field(default_factory=list)
+
+
+def lossy_at(level: ConfigContext, base: VcoModel, cur: VcoModel) -> list[Path]:
+    def at_level(m: VcoModel) -> dict[str, object]:
+        return m.model_dump(mode="json", by_alias=True, context={"config_level": level})
+
+    return find_lossy_assignments(base, cur, at_level(base), at_level(cur), level)
+
+
+def test_an_override_flag_the_level_omits_is_not_the_callers_assignment():
+    base, cur = (
+        Section.model_validate({"value": 1}),
+        Section.model_validate({"value": 1}),
+    )
+    cur.value = 2
+    cur.override = True  # what merge_patch does when a sibling changes
+    assert lossy_at(PROFILE, base, cur) == []
+
+
+def test_an_override_flag_the_level_keeps_is_still_checked():
+    base, cur = (
+        Section.model_validate({"value": 1}),
+        Section.model_validate({"value": 1}),
+    )
+    cur.override = True  # the default, and the document has no key for it
+    assert lossy_at(EDGE, base, cur) == ["override"]
+
+
+def test_a_change_to_a_field_the_level_omits_is_lost_and_reported():
+    base, cur = Section.model_validate({}), Section.model_validate({})
+    cur.note = "x"
+    assert lossy_at(PROFILE, base, cur) == ["note"]
+
+
+def test_a_field_the_level_omits_that_did_not_change_is_not_reported():
+    base, cur = (
+        Section.model_validate({"note": "n"}),
+        Section.model_validate({"note": "n"}),
+    )
+    cur.value = 3
+    assert lossy_at(PROFILE, base, cur) == []
+
+
+def test_a_nested_value_is_compared_by_data_not_by_config_level():
+    raw = {"items": [{"note": "n", "value": 1}]}
+    base, cur = Holder.model_validate(raw), Holder.model_validate(raw)
+    _ = cur.for_edge()  # the baseline has no level; the data are the same
+    cur.items[0].value = 2
+    assert lossy_at(EDGE, base, cur) == []
+
+
+def test_the_level_defaults_to_the_level_of_the_model():
+    base, cur = Section.model_validate({}), Section.model_validate({})
+    _ = cur.for_profile()
+    cur.note = "x"
+    assert find_lossy_assignments(base, cur, dump(base), dump(cur)) == ["note"]
+
+
+def test_is_override_flag_follows_keyed_lists_only():
+    assert is_override_flag(Section, Path.parse("override"))
+    assert not is_override_flag(Section, Path.parse("value"))
+    assert is_override_flag(Holder, Path.parse("section.override"))
+    assert is_override_flag(Holder, Path.parse("items[n].override"))
+    assert is_override_flag(Holder, Path.parse("items[#0].override"))
+    assert not is_override_flag(Holder, Path.parse("plain[#0].override"))
+    assert not is_override_flag(Holder, Path.parse("nothing.override"))

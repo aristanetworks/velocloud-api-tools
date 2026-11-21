@@ -36,7 +36,13 @@ from pyvelo.core.base import (
     _is_dict,  # pyright: ignore[reportPrivateUsage]
     _is_list,  # pyright: ignore[reportPrivateUsage]
 )
-from pyvelo.core.rebase import RawChange, find_lossy_assignments, raw_changes, rebase
+from pyvelo.core.rebase import (
+    RawChange,
+    find_lossy_assignments,
+    is_override_flag,
+    raw_changes,
+    rebase,
+)
 
 type _Operation = Literal["none", "update", "insert"]
 
@@ -285,9 +291,10 @@ def plan_module(
                 )
             ),
         )
-        lossy = find_lossy_assignments(baseline, current, before, after)
+        lossy = find_lossy_assignments(baseline, current, before, after, level)
         if lossy:
-            raise LossyFieldError(name, lossy)
+            flags = [path for path in lossy if is_override_flag(model_type, path)]
+            raise LossyFieldError(name, lossy, flags)
     else:
         model_type = None
         topped_up = dict(cast(Mapping[str, Any], current))

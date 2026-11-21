@@ -35,6 +35,7 @@ from pydantic.fields import FieldInfo
 
 from .base import (
     VcoModel,
+    _context_default_entry,  # pyright: ignore[reportPrivateUsage]
     _field_alias,  # pyright: ignore[reportPrivateUsage]
     _field_model_type,  # pyright: ignore[reportPrivateUsage]
     _field_value,  # pyright: ignore[reportPrivateUsage]
@@ -43,7 +44,7 @@ from .base import (
     _is_mapping,  # pyright: ignore[reportPrivateUsage]
     _list_item_type,  # pyright: ignore[reportPrivateUsage]
 )
-from .fields import get_key_field
+from .fields import ConfigContext, get_key_field, has_override_flag
 
 
 @dataclass(frozen=True, slots=True)
@@ -530,10 +531,12 @@ def find_lossy_assignments(
     current: VcoModel,
     before: Mapping[str, object],
     after: Mapping[str, object],
+    level: ConfigContext | None = None,
 ) -> list[Path]:
     """The assignments to *current* that ``rebase`` would drop, as python-name paths.
 
-    *before* and *after* are the wire dumps of *baseline* and *current*.
+    *before* and *after* are the wire dumps of *baseline* and *current*, at
+    config level *level* (default: the level of each model).
     ``rebase`` writes only what differs between them. A field the caller assigned
     (in ``current.model_fields_set``) that was not in the document as read (not
     in ``baseline.model_fields_set``) and whose dump is unchanged therefore never
@@ -551,12 +554,35 @@ def find_lossy_assignments(
     is not walked. A field that is not in *baseline* and whose dump changed is
     written whole, so nothing inside it is lost.
 
+    A field that is absent at the config level is not in the dumps at all, so
+    ``rebase`` never sees it: a change to it is lost and its path is reported,
+    unless the field is an ``OverrideFlag``. ``merge_patch`` sets those itself,
+    when a sibling changes, so they are never the caller's assignment.
+
     Paths come in field order: ``segments[A].rules[r1].port``. Items of a list
     that is walked by position are ``rules[#0]``.
     """
     out: list[Path] = []
-    _lossy_in_value(out, Path(()), baseline, current, before, after, None)
+    _lossy_in_value(out, Path(()), baseline, current, before, after, None, level)
     return out
+
+
+def is_override_flag(model: type[VcoModel], path: Path) -> bool:
+    """Whether *path*, as ``find_lossy_assignments`` gives it, ends at an ``OverrideFlag`` of *model*.
+
+    A path through an unkeyed list is not followed, so it is never one.
+    """
+    *parents, last = path.parts
+    node: _Node = model
+    for part in parents:
+        if isinstance(part, str):
+            node = _child(node, part)
+        elif isinstance(node, _KeyedList):
+            node = node.item
+        else:
+            return False
+    found = _model_field(node, last)
+    return found is not None and has_override_flag(found[1])
 
 
 def _dump_get(dump: object, key: str) -> object:
@@ -572,12 +598,36 @@ def _lossy_in_value(
     before: object,
     after: object,
     node: _Node,
+    level: ConfigContext | None,
 ) -> None:
     if isinstance(baseline, VcoModel):
         if isinstance(current, VcoModel) and type(current) is type(baseline):
-            _lossy_in_model(out, path, baseline, current, before, after)
+            _lossy_in_model(out, path, baseline, current, before, after, level)
     elif _is_list(baseline) and _is_list(current):
-        _lossy_in_list(out, path, baseline, current, before, after, node)
+        _lossy_in_list(out, path, baseline, current, before, after, node, level)
+
+
+def _same_value(a: object, b: object) -> bool:
+    """Whether two model values hold the same data, whatever config level they carry.
+
+    ``==`` on models also compares private state, which includes the level.
+    """
+    if isinstance(a, VcoModel) and isinstance(b, VcoModel):
+        return (
+            type(a) is type(b)
+            and _same_value(a.model_extra or {}, b.model_extra or {})
+            and all(
+                _same_value(_field_value(a, name), _field_value(b, name))
+                for name in type(a).model_fields
+            )
+        )
+    if _is_list(a) and _is_list(b):
+        return len(a) == len(b) and all(
+            _same_value(x, y) for x, y in zip(a, b, strict=True)
+        )
+    if _is_dict(a) and _is_dict(b):
+        return a.keys() == b.keys() and all(_same_value(a[k], b[k]) for k in a)
+    return a == b
 
 
 def _lossy_in_model(
@@ -587,13 +637,21 @@ def _lossy_in_model(
     current: VcoModel,
     before: object,
     after: object,
+    level: ConfigContext | None,
 ) -> None:
+    field_level = level if level is not None else current.config_context
     for name, field_info in type(current).model_fields.items():
         dump_key = _field_alias(field_info, name)
         before_value = _dump_get(before, dump_key)
         after_value = _dump_get(after, dump_key)
         value = _field_value(current, name)
         field_path = path.child(name)
+        if _context_default_entry(field_info, field_level) is MISSING:
+            if not has_override_flag(field_info) and not _same_value(
+                _field_value(baseline, name), value
+            ):
+                out.append(field_path)  # the dump omits it, so the change is lost
+            continue
         if name not in baseline.model_fields_set:
             if before_value != after_value:
                 continue  # rebase writes the field whole
@@ -612,6 +670,7 @@ def _lossy_in_model(
             before_value,
             after_value,
             _child(type(current), dump_key),
+            level,
         )
 
 
@@ -623,6 +682,7 @@ def _lossy_in_list(
     before: object,
     after: object,
     node: _Node,
+    level: ConfigContext | None,
 ) -> None:
     if not (_is_list(before) and _is_list(after)):
         return
@@ -654,4 +714,5 @@ def _lossy_in_list(
             before[base_index],
             after[cur_index],
             None,
+            level,
         )

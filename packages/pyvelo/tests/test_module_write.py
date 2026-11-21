@@ -11,6 +11,7 @@ from pyvelo.client.models.configuration.firewall.rules import FirewallOutboundRu
 from pyvelo.client.module_write import missing_segments, plan_module
 from pyvelo.client.schemas.configuration import (
     ConfigurationModuleList,
+    DeviceSettingsConfigurationModule,
     FirewallConfigurationModule,
     GenericConfigurationModule,
     QosConfigurationModule,
@@ -467,3 +468,95 @@ def test_dict_data_keeps_its_own_version_of_a_reconciled_segment():
     plan = plan_module(mod, data, level=EDGE, profile=profile)
     assert plan.data["segments"][1] == guest
     assert len(plan.data["segments"]) == 2
+
+
+# --- levels at which a field is not part of the wire form ------------------
+
+PROFILE = ConfigContext.PROFILE
+
+
+def ds(raw: dict[str, Any], *, module_id: int = 1) -> DeviceSettingsConfigurationModule:
+    return DeviceSettingsConfigurationModule.model_validate(
+        make_module_json("deviceSettings", copy.deepcopy(raw), module_id=module_id)
+    )
+
+
+DS_RAW: dict[str, Any] = {
+    "lan": {"networks": [], "interfaces": []},
+    "segments": [{"segment": desc(0, "Global Segment")}],
+}
+
+
+def test_profile_patch_that_sets_an_override_flag_is_saved():
+    mod = fw(PROFILE_RAW, module_id=2)
+    _ = mod.data.for_profile()
+    _ = mod.data.merge_patch(
+        {
+            "segments": {
+                "Global Segment": {
+                    "outbound": {
+                        "block": {"action": {"allow_or_deny": "deny"}, "match": {}}
+                    }
+                }
+            }
+        }
+    )
+    plan = plan_module(mod, level=PROFILE)  # merge_patch set outbound_override
+    assert plan.operation == "update"
+    assert [c.path for c in plan.changes] == [
+        'segments["Global Segment"].outbound[block]'
+    ]
+    assert "outboundOverride" not in plan.data["segments"][0]
+
+
+def test_profile_ntp_patch_is_saved():
+    mod = ds({**DS_RAW, "ntp": {"enabled": False, "servers": []}})
+    _ = mod.data.for_profile()
+    _ = mod.data.merge_patch({"ntp": {"enabled": True}})
+    plan = plan_module(mod, level=PROFILE)  # merge_patch set ntp.override
+    assert [c.path for c in plan.changes] == ["ntp.enabled"]
+    assert "override" not in plan.data["ntp"]
+
+
+def test_edge_edit_to_a_section_the_edge_dump_omits_is_refused():
+    raw = {**DS_RAW, "ntp": {"override": True, "enabled": False, "servers": []}}
+    mod = ds(raw)
+    _ = mod.data.for_edge()
+    _ = mod.data.merge_patch({"ntp": {"enabled": True}})
+    with pytest.raises(LossyFieldError) as exc:
+        plan_module(mod, level=EDGE)
+    assert exc.value.fields == ["ntp"]
+
+
+def test_edge_edit_to_a_section_the_edge_raw_lacks_is_refused():
+    mod = ds(DS_RAW)
+    _ = mod.data.for_edge()
+    _ = mod.data.merge_patch({"ntp": {"enabled": True}})
+    with pytest.raises(LossyFieldError) as exc:
+        plan_module(mod, level=EDGE)
+    assert exc.value.fields == ["ntp"]
+
+
+def test_edge_section_the_dump_omits_does_not_block_an_unrelated_edit():
+    raw = {**DS_RAW, "ntp": {"override": True, "enabled": False, "servers": []}}
+    mod = ds(raw)
+    _ = mod.data.for_edge()
+    mod.data.lan.management.cidr_prefix = 24
+    plan = plan_module(mod, level=EDGE)
+    assert plan.data["ntp"] == raw["ntp"]
+
+
+def test_override_flag_the_document_lacks_is_named_as_one():
+    raw = {
+        **DS_RAW,
+        "segments": [{"segment": desc(0, "Global Segment"), "bfd": {"enabled": False}}],
+    }
+    mod = ds(raw)
+    _ = mod.data.for_edge()
+    _ = mod.data.merge_patch(
+        {"segments": {"Global Segment": {"bfd": {"enabled": True}}}}
+    )
+    with pytest.raises(LossyFieldError) as exc:
+        plan_module(mod, level=EDGE)
+    assert exc.value.fields == ['segments["Global Segment"].bfd.override']
+    assert "override flag" in str(exc.value)

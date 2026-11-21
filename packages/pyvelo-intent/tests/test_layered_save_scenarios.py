@@ -7,7 +7,7 @@ import pytest
 from pyvelo.client.exceptions import LossyFieldError
 from pyvelo.client.schemas.configuration import ConfigurationBase, GetConfiguration
 from pyvelo.testing import make_module_json
-from pyvelo_intent.config.pipeline import ConfigPipeline
+from pyvelo_intent.config.pipeline import ConfigPipeline, build_default_pipeline
 from pyvelo_intent.config.state import ConfigState
 from pyvelo_intent.testing import MockVcoClient
 from test_state_plan import (  # pyright: ignore[reportImplicitRelativeImport]
@@ -143,13 +143,10 @@ async def test_setting_a_default_on_an_inherited_key_is_refused():
     assert state.spent is False
 
 
-async def test_profile_target_save():
+def profile_client(raw: dict[str, Any] = PROFILE_FW) -> MockVcoClient:
+    """A client whose profile 20 has a firewall module with *raw* as its data."""
     row = make_module_json(
-        "firewall",
-        copy.deepcopy(PROFILE_FW),
-        module_id=2,
-        configuration_id=20,
-        version="p1",
+        "firewall", copy.deepcopy(raw), module_id=2, configuration_id=20, version="p1"
     )
 
     class Client(MockVcoClient):
@@ -160,7 +157,11 @@ async def test_profile_target_save():
                 {"name": "P", "id": 20, "modules": [row]}
             ).for_profile()
 
-    client = Client()
+    return Client()
+
+
+async def test_profile_target_save():
+    client = profile_client()
     state = await ConfigPipeline(client).load_profile(20)
     state.profile.firewall.firewall_enabled = False
     await ConfigPipeline(client).save(state)
@@ -168,6 +169,45 @@ async def test_profile_target_save():
     assert (req.configuration_module_id, req.version) == (2, "p1")
     assert req.update.data == {**PROFILE_FW, "firewall_enabled": False}
     assert client.insert_requests == []
+
+
+async def test_profile_target_apply_adds_a_rule():
+    client = profile_client()
+    pipeline = ConfigPipeline(client)
+    state = await pipeline.load_profile(20)
+    await pipeline.apply(
+        state,
+        module="firewall",
+        patch={"segments": {"Global Segment": {"outbound": {"block": rule("block")}}}},
+    )
+    await pipeline.save(state)
+    (req,) = client.update_requests
+    first = req.update.data["segments"][0]
+    assert [r["name"] for r in first["outbound"]] == ["allow-all", "block"]
+    assert set(first) == {"segment", "outbound"}  # no override flag at profile level
+    assert req.update.data["segments"][1] == PROFILE_FW["segments"][1]
+
+
+async def test_profile_target_apply_aspect_adds_a_rule():
+    client = profile_client()
+    pipeline = build_default_pipeline(client)
+    state = await pipeline.load_profile(20)
+    await pipeline.apply_aspect(
+        state,
+        "firewall_rules",
+        {"block-ssh": rule("block-ssh")},
+        segment="Global Segment",
+    )
+    result = await pipeline.save(state, dry_run=True)
+    assert result.plan is not None
+    assert result.plan.render().startswith(
+        'firewall: update\n  + segments["Global Segment"].outbound[block-ssh]: '
+    )
+    await pipeline.save(state)
+    (req,) = client.update_requests
+    first = req.update.data["segments"][0]
+    assert [r["name"] for r in first["outbound"]] == ["allow-all", "block-ssh"]
+    assert set(first) == {"segment", "outbound"}
 
 
 async def test_dry_run_reports_the_plan():
