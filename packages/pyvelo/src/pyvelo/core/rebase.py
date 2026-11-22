@@ -30,7 +30,7 @@ import re
 from collections import Counter
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Self, override
+from typing import Self, get_args, get_origin, override
 
 from pydantic import MISSING
 from pydantic.fields import FieldInfo
@@ -44,7 +44,9 @@ from .base import (
     _is_dict,  # pyright: ignore[reportPrivateUsage]
     _is_list,  # pyright: ignore[reportPrivateUsage]
     _is_mapping,  # pyright: ignore[reportPrivateUsage]
+    _is_vco_model_type,  # pyright: ignore[reportPrivateUsage]
     _list_item_type,  # pyright: ignore[reportPrivateUsage]
+    _members_without_missing_and_none,  # pyright: ignore[reportPrivateUsage]
 )
 from .fields import ConfigContext, KeySpec, get_key_spec, has_override_flag
 
@@ -347,8 +349,15 @@ class _KeyedList:
     item: type[VcoModel]
 
 
-type _Node = type[VcoModel] | _KeyedList | None
-"""What a JSON value is known to be: a model, a keyed list, or nothing (untyped)."""
+@dataclass(frozen=True, slots=True)
+class _ModelMap:
+    """An object whose every value is the model *value* (a ``dict[K, Model]`` field)."""
+
+    value: type[VcoModel]
+
+
+type _Node = type[VcoModel] | _KeyedList | _ModelMap | None
+"""What a JSON value is known to be: a model, a keyed list, a map of models, or nothing (untyped)."""
 
 
 # ---------------------------------------------------------------------------
@@ -373,12 +382,36 @@ def _dump_key(node: _Node, key: object) -> object:
     return key if found is None else _field_alias(found[1], found[0])
 
 
+def _map_value_type(field_info: FieldInfo) -> type[VcoModel] | None:
+    """The model class of the values of a ``dict[K, Model]`` field, or None.
+
+    ``MISSING`` and ``None`` are set aside, as ``list_kind`` sets them aside.
+    None for any other field, and when the values hold no model or more than one.
+    """
+    for member in _members_without_missing_and_none(field_info.annotation):
+        args = get_args(member)
+        if get_origin(member) is not dict or len(args) != 2:
+            continue
+        models = [
+            m
+            for m in _members_without_missing_and_none(args[1])
+            if _is_vco_model_type(m)
+        ]
+        if len(models) == 1:
+            return models[0]
+    return None
+
+
 def _child(node: _Node, key: object) -> _Node:
     """What the value under *key* is known to be.
 
-    A keyed list for a ``KeyField`` list of models (of the first variant, for
-    a discriminated union), a model class for a model field, else None.
+    Whatever the key, the model of a map of models' values. Otherwise a keyed
+    list for a ``KeyField`` list of models (of the first variant, for a
+    discriminated union), a map of models for a ``dict[K, Model]`` field, a
+    model class for a model field, else None.
     """
+    if isinstance(node, _ModelMap):
+        return node.value
     found = _model_field(node, key)
     if found is None:
         return None
@@ -387,6 +420,9 @@ def _child(node: _Node, key: object) -> _Node:
     item_type = _list_item_type(field_info)
     if spec is not None and item_type is not None:
         return _KeyedList(spec, item_type.variants[0])
+    map_value = _map_value_type(field_info)
+    if map_value is not None:
+        return _ModelMap(map_value)
     return _field_model_type(field_info)
 
 
@@ -605,6 +641,9 @@ def rebase(
       from *after*. A list without a key is replaced whole. So is a keyed list
       that ``pair_items`` cannot pair, or whose length in *raw* differs from
       *before* (raw items cannot be paired up with *before*'s).
+    - The values of a map of models (a ``dict[K, Model]`` field) are rebased
+      entry by entry, each as its model, so a change lands on the key as read
+      and a keyed list below the map is paired.
 
     ``rebase(raw, x, x, model) == raw`` for every *raw*.
     """
@@ -842,6 +881,11 @@ def find_lossy_assignments(
     line up with the model's is not walked. A field that is not in *baseline*
     and whose dump changed is written whole, so nothing inside it is lost.
 
+    The values of a map of models (a ``dict[K, Model]`` field) are paired by
+    map key, and each pair is walked as its model. An entry only one side has
+    is not walked: a new entry is written whole. The key is a name in the
+    path: ``loopback_interfaces.LO1.advertise``.
+
     A field that is absent at the config level is not in the dumps at all, so
     ``rebase`` never sees it: a change to it is lost and its path is reported,
     unless the field is an ``OverrideFlag``. ``merge_patch`` sets those itself,
@@ -859,7 +903,8 @@ def find_lossy_assignments(
 def is_override_flag(model: type[VcoModel], path: Path) -> bool:
     """Whether *path*, as ``find_lossy_assignments`` gives it, ends at an ``OverrideFlag`` of *model*.
 
-    A path through an unkeyed list is not followed, so it is never one.
+    A path through an unkeyed list is not followed, so it is never one. A name
+    below a map of models is the map key: ``boxes.b1.ports[p1].override``.
     """
     *parents, last = path.parts
     node: _Node = model
@@ -894,6 +939,25 @@ def _lossy_in_value(
             _lossy_in_model(out, path, baseline, current, before, after, level)
     elif _is_list(baseline) and _is_list(current):
         _lossy_in_list(out, path, baseline, current, before, after, node, level)
+    elif _is_dict(baseline) and _is_dict(current):
+        for key, value in current.items():
+            if key not in baseline:
+                continue  # an entry only *current* has is written whole
+            # A JSON-mode dump writes every map key as a string.
+            before_value = _dump_get(before, str(key))
+            after_value = _dump_get(after, str(key))
+            if before_value is MISSING or after_value is MISSING:
+                continue
+            _lossy_in_value(
+                out,
+                path.child(str(key)),
+                baseline[key],
+                value,
+                before_value,
+                after_value,
+                None,
+                level,
+            )
 
 
 def _is_container(value: object) -> bool:
@@ -1074,7 +1138,9 @@ def carry_unset_defaults(
     whether or not its dump changed. Only a pair has a *before* value to carry.
     An alt key made anew on each parse (``QosRule.rule_logical_id`` read from a
     rule without one) differs between the dumps, so such items pair by key;
-    once carried, the dumps agree on it and ``rebase`` pairs them by it.
+    once carried, the dumps agree on it and ``rebase`` pairs them by it. The
+    values of a map of models are paired by map key, and an entry only one side
+    has is not walked.
     """
     _carry_in_value(baseline, current, before, after, None)
 
@@ -1091,6 +1157,14 @@ def _carry_in_value(
             _carry_in_model(baseline, current, before, after)
     elif _is_list(baseline) and _is_list(current):
         _carry_in_list(baseline, current, before, after, node)
+    elif _is_dict(baseline) and _is_dict(current):
+        if not (_is_dict(before) and _is_dict(after)):
+            return
+        for key, value in current.items():
+            # A JSON-mode dump writes every map key as a string.
+            name = str(key)
+            if key in baseline and name in before and name in after:
+                _carry_in_value(baseline[key], value, before[name], after[name], None)
 
 
 def _carry_in_model(

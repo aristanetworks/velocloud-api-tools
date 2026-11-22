@@ -592,6 +592,36 @@ def test_override_flag_the_document_lacks_is_named_as_one():
     assert "override flag" in str(exc.value)
 
 
+LOOPBACK_RAW: dict[str, Any] = {
+    **DS_RAW,
+    "loopbackInterfaces": {
+        "LO1": {"cidrIp": "10.0.0.1", "cidrPrefix": 32, "ping_response": False}
+    },
+}
+
+
+def test_the_default_of_an_absent_key_below_the_loopback_map_is_refused():
+    mod = ds(LOOPBACK_RAW)
+    _ = mod.data.for_edge()
+    _ = mod.data.merge_patch({"loopback_interfaces": {"LO1": {"advertise": True}}})
+    with pytest.raises(LossyFieldError) as exc:
+        plan_module(mod, level=EDGE)
+    assert exc.value.fields == ["loopback_interfaces.LO1.advertise"]
+
+
+def test_an_edit_below_the_loopback_map_is_written_to_the_key_as_read():
+    mod = ds(LOOPBACK_RAW)
+    _ = mod.data.for_edge()
+    _ = mod.data.merge_patch({"loopback_interfaces": {"LO1": {"ping_response": True}}})
+    plan = plan_module(mod, level=EDGE)
+    assert [(str(c.path), c.before, c.after) for c in plan.changes] == [
+        ("loopbackInterfaces.LO1.ping_response", False, True)
+    ]
+    assert plan.data["loopbackInterfaces"] == {
+        "LO1": {"cidrIp": "10.0.0.1", "cidrPrefix": 32, "ping_response": True}
+    }
+
+
 # --- defaults generated per parse are not the caller's change --------------
 
 QOS_RULE: dict[str, Any] = {
