@@ -20,7 +20,13 @@ class TestSaveErrorReexports:
         import pyvelo.client
         from pyvelo.client import exceptions
 
-        for name in ("ConfigConflictError", "LossyFieldError", "UnboundError"):
+        for name in (
+            "ConfigConflictError",
+            "LossyFieldError",
+            "ModuleWriteError",
+            "UnboundError",
+            "WriteNotAppliedError",
+        ):
             error = getattr(exceptions, name)
             assert getattr(pyvelo.client, name) is error
             assert getattr(pyvelo, name) is error

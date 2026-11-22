@@ -1,7 +1,22 @@
+# ModuleWriteError names ModulePlan, ConfigurationModuleBase and ModuleWrite in
+# annotations only; their modules import this one.
+# pyright: reportImportCycles=false
+
+from __future__ import annotations
+
+import json
 from collections.abc import Mapping, Sequence
-from typing import Any, Final, cast
+from typing import TYPE_CHECKING, Any, Final, cast, override
+
+from pydantic import MISSING
 
 from pyvelo.core.rebase import Path
+from pyvelo.core.response_check import PlannedChange, ServerChange
+
+if TYPE_CHECKING:
+    from pyvelo.client.module_check import ModuleWrite
+    from pyvelo.client.module_write import ModulePlan
+    from pyvelo.client.schemas.configuration import ConfigurationModuleBase
 
 
 class VcoError(Exception):
@@ -189,20 +204,208 @@ class LossyFieldError(VcoError):
         super().__init__(message)
 
 
-class ConfigConflictError(VcoError):
-    """Raised when a module write is rejected because its version is stale.
+_VALUE_WIDTH: Final = 80
+"""How much of a value's JSON a message shows."""
 
-    The module changed on the VCO after it was read. Nothing was written; read
-    the module again, re-apply the change, and save.
+
+def _shown(value: object) -> str:
+    """*value* as a message shows it: its JSON, cut to ``_VALUE_WIDTH``; ``(nothing)`` for ``MISSING``."""
+    if value is MISSING:
+        return "(nothing)"
+    text = json.dumps(value, sort_keys=True)
+    return text if len(text) <= _VALUE_WIDTH else f"{text[:_VALUE_WIDTH]}…"
+
+
+def _where(change: PlannedChange | ServerChange) -> str:
+    """The path of *change*, with ``refs`` before it for a refs entry."""
+    return f"refs {change.path}" if change.part == "refs" else str(change.path)
+
+
+class ModuleWriteError(VcoError):
+    """A module write the VCO answered, whose changes are not all stored.
+
+    ``lost_edits`` are the planned changes that are not stored, to redo;
+    ``applied`` those that are; ``server_changes`` what else differs between
+    the payload and what is stored. ``str(error)`` lists them by path
+    (``render``).
     """
 
-    def __init__(self, module_id: int, version: str, detail: str) -> None:
+    module_id: int
+    module_name: str
+    version: str
+    """The version the write carried; ``""`` for none."""
+    plan: ModulePlan | None
+    module: ConfigurationModuleBase | None
+    """The module as the VCO holds it now; None if it was not read."""
+    lost_edits: tuple[PlannedChange, ...]
+    applied: tuple[PlannedChange, ...]
+    server_changes: tuple[ServerChange, ...]
+    completed: tuple[ModuleWrite[Any], ...]
+    """The earlier writes of the same save, which are stored. Set by the save."""
+
+    def __init__(
+        self,
+        module_id: int,
+        version: str,
+        *,
+        module_name: str = "",
+        plan: ModulePlan | None = None,
+        module: ConfigurationModuleBase | None = None,
+        lost_edits: Sequence[PlannedChange] = (),
+        applied: Sequence[PlannedChange] = (),
+        server_changes: Sequence[ServerChange] = (),
+    ) -> None:
         self.module_id = module_id
+        self.module_name = module_name
         self.version = version
+        self.plan = plan
+        self.module = module
+        self.lost_edits = tuple(lost_edits)
+        self.applied = tuple(applied)
+        self.server_changes = tuple(server_changes)
+        self.completed = ()
+        super().__init__(self._headline())
+
+    def _label(self) -> str:
+        """The module as a message names it: its ID, and its name when it has one."""
+        if self.module_name:
+            return f"{self.module_id} ({self.module_name})"
+        return str(self.module_id)
+
+    def _headline(self) -> str:
+        return (
+            f"Configuration module {self._label()}: the write is not stored as planned"
+        )
+
+    def render(self) -> str:
+        """The message: the headline, then each list by path; a list with no entries is left out."""
+        lines = [self._headline()]
+        if self.lost_edits:
+            lines.append("lost edits (not stored; redo these):")
+            for change in self.lost_edits:
+                line = (
+                    f"  {_where(change)}: read {_shown(change.as_read)}, "
+                    f"meant {_shown(change.intended)}, stored {_shown(change.stored)}"
+                )
+                if change.clash:
+                    line += "  [clash: also changed on the VCO]"
+                lines.append(line)
+        if self.applied:
+            lines.append("already stored:")
+            lines.extend(f"  {_where(change)}" for change in self.applied)
+        if self.server_changes:
+            lines.append("changed on the VCO outside these edits:")
+            lines.extend(
+                f"  {_where(change)}: read {_shown(change.as_read)}, "
+                f"stored {_shown(change.stored)}"
+                for change in self.server_changes
+            )
+        if self.completed:
+            lines.append(
+                "written before this one: "
+                + ", ".join(
+                    f"{write.name} ({write.operation})" for write in self.completed
+                )
+            )
+        return "\n".join(lines)
+
+    @override
+    def __str__(self) -> str:
+        # Computed when asked: ``completed`` is set after the error is built.
+        return self.render()
+
+
+class ConfigConflictError(ModuleWriteError):
+    """Raised when a module write is rejected because its version is stale.
+
+    The module changed on the VCO after it was read, and the write's changes
+    are not all stored. The VCO refused the version (``detail`` says how), or
+    the module as stored holds none of the changes and is as read at each:
+    a stale version refused by a VCO that does not say so. ``lost_edits`` are
+    the edits to redo; ``module``, when it was read, is what to redo them on.
+    """
+
+    detail: str
+
+    def __init__(
+        self,
+        module_id: int,
+        version: str,
+        detail: str,
+        *,
+        module_name: str = "",
+        plan: ModulePlan | None = None,
+        module: ConfigurationModuleBase | None = None,
+        lost_edits: Sequence[PlannedChange] = (),
+        applied: Sequence[PlannedChange] = (),
+        server_changes: Sequence[ServerChange] = (),
+    ) -> None:
         self.detail = detail
         super().__init__(
-            f"Configuration module {module_id} changed since it was read "
-            f"(version {version}): {detail}"
+            module_id,
+            version,
+            module_name=module_name,
+            plan=plan,
+            module=module,
+            lost_edits=lost_edits,
+            applied=applied,
+            server_changes=server_changes,
+        )
+
+    @override
+    def _headline(self) -> str:
+        return (
+            f"Configuration module {self._label()} changed since it was read "
+            f"(version {self.version}): {self.detail}"
+        )
+
+
+class WriteNotAppliedError(ModuleWriteError):
+    """Raised when the VCO stored a module write otherwise than as planned.
+
+    Some planned changes are stored and some are not, or none is and a value
+    at a planned path is not the one read: the VCO stored it in another form,
+    or another writer changed it. ``lost_edits`` are the changes not stored,
+    with the value sent and the value stored.
+    """
+
+    def __init__(
+        self,
+        module_id: int,
+        version: str,
+        *,
+        module_name: str,
+        plan: ModulePlan,
+        module: ConfigurationModuleBase,
+        lost_edits: Sequence[PlannedChange],
+        applied: Sequence[PlannedChange] = (),
+        server_changes: Sequence[ServerChange] = (),
+    ) -> None:
+        super().__init__(
+            module_id,
+            version,
+            module_name=module_name,
+            plan=plan,
+            module=module,
+            lost_edits=lost_edits,
+            applied=applied,
+            server_changes=server_changes,
+        )
+
+    @override
+    def _headline(self) -> str:
+        lost = len(self.lost_edits)
+        headline = (
+            f"Configuration module {self._label()}: {lost} of "
+            f"{lost + len(self.applied)} planned changes are not stored as sent"
+        )
+        # The reason holds when nothing is stored and a value moved. An insert
+        # that stored nothing has nothing there that moved.
+        if self.applied or not any(change.clash for change in self.lost_edits):
+            return headline
+        return (
+            f"{headline}. None is stored, and a value there is not the one read: "
+            "the VCO stored it in another form, or another writer changed it."
         )
 
 

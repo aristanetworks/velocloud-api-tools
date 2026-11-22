@@ -17,6 +17,7 @@ For configuration helpers (pipeline, state), see the ``pyvelo-intent`` package.
 from pyvelo.client import (
     ConfigConflictError,
     LossyFieldError,
+    ModuleWriteError,
     UnboundError,
     VcoApiError,
     VcoAuth,
@@ -33,6 +34,7 @@ from pyvelo.client import (
     VcoWebSocketError,
     VcoWebSocketTimeoutError,
     VcoWebSocketValidationError,
+    WriteNotAppliedError,
     get_vco_credentials,
 )
 from pyvelo.config.resolver import (
@@ -63,6 +65,7 @@ __all__ = [
     "LicenseResolver",
     "LinkResolver",
     "LossyFieldError",
+    "ModuleWriteError",
     "ProfileResolver",
     "ResolutionError",
     "Resolver",
@@ -89,5 +92,6 @@ __all__ = [
     "VcoWebSocketError",
     "VcoWebSocketTimeoutError",
     "VcoWebSocketValidationError",
+    "WriteNotAppliedError",
     "get_vco_credentials",
 ]

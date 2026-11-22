@@ -5,6 +5,7 @@ from pyvelo.client.credentials import get_vco_credentials
 from pyvelo.client.exceptions import (
     ConfigConflictError,
     LossyFieldError,
+    ModuleWriteError,
     UnboundError,
     VcoApiError,
     VcoClientNotInitializedError,
@@ -19,6 +20,7 @@ from pyvelo.client.exceptions import (
     VcoWebSocketError,
     VcoWebSocketTimeoutError,
     VcoWebSocketValidationError,
+    WriteNotAppliedError,
 )
 from pyvelo.client.protocol import (
     Exchange,
@@ -35,6 +37,7 @@ __all__ = [
     "Exchange",
     "ExchangeHook",
     "LossyFieldError",
+    "ModuleWriteError",
     "PendingDiagnostic",
     "RequestObservation",
     "RequestObserver",
@@ -56,6 +59,7 @@ __all__ = [
     "VcoWebSocketError",
     "VcoWebSocketTimeoutError",
     "VcoWebSocketValidationError",
+    "WriteNotAppliedError",
     "get_vco_credentials",
     "make_file_dump_hook",
 ]

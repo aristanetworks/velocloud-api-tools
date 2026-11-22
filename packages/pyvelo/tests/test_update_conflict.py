@@ -162,6 +162,10 @@ async def test_zero_rows_with_version_is_a_conflict(
         _ = await client.update_configuration_module(req("1700"))
     assert (exc.value.module_id, exc.value.version) == (7, "1700")
     assert exc.value.detail == "no rows were modified"
+    assert str(exc.value) == (
+        "Configuration module 7 changed since it was read (version 1700): "
+        "no rows were modified"
+    )
 
 
 async def test_zero_rows_without_version_is_not(
