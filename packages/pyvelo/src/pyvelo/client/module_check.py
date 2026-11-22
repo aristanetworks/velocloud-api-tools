@@ -184,7 +184,7 @@ def check_refs(as_read: object, sent: object | None, stored: object) -> Response
     )
 
 
-def _data_model(module: ConfigurationModuleBase) -> type[VcoModel] | None:
+def data_model(module: ConfigurationModuleBase) -> type[VcoModel] | None:
     """The class of the module's data, when it is a model."""
     data: object = getattr(module, "data", None)
     return type(data) if isinstance(data, VcoModel) else None
@@ -222,7 +222,7 @@ def check_module_write[M: ConfigurationModuleBase](
         {} if as_read is MISSING else as_read,
         plan.data,
         stored.raw_data,
-        _data_model(module),
+        data_model(module),
         rewrites=MODULE_REWRITES.get(plan.name, Rewrites()),
     )
     refs = (

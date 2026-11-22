@@ -7,7 +7,7 @@ configuration 10.
 """
 
 import copy
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from typing import Any
 
 import httpx
@@ -107,6 +107,22 @@ def elsewhere(row: dict[str, Any]) -> None:
     row["data"]["future"] = 2
 
 
+def reading(
+    store: ModuleStore, modules: list[dict[str, Any]]
+) -> Callable[[httpx.Request], httpx.Response]:
+    """A handler that sends each request to *store*, but answers a read of configuration 10 with *modules*."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        method = parse_json_object(request.content)["method"]
+        if method != "configuration/getConfiguration":
+            return store(request)
+        config = copy.deepcopy(store.configurations[10])
+        config["modules"] = copy.deepcopy(modules)
+        return httpx.Response(200, json=make_jsonrpc_response(result=config))
+
+    return handler
+
+
 def stored_module(error: ModuleWriteError) -> FirewallConfigurationModule:
     """The module *error* carries, which must be a firewall module."""
     assert isinstance(error.module, FirewallConfigurationModule)
@@ -136,14 +152,19 @@ async def test_update_asks_for_data_and_returns_the_stored_module(
     assert methods(store) == ["updateConfigurationModule"]
 
 
+@pytest.mark.parametrize("return_data", [True, False])
 async def test_the_stored_module_has_the_level_of_the_one_given(
-    mock_vco_client: MockVcoClientFactory,
+    mock_vco_client: MockVcoClientFactory, return_data: bool
 ):
     module = fw(RAW).for_edge()
     module.data.firewall_enabled = False
-    store = store_of(module)
+    store = store_of(module, return_data=return_data)
+    # Not an edge configuration's name: the read puts the module at profile
+    # level, so a module read back is at edge level only as the one given is.
+    store.configurations[10]["name"] = "Profile 10"
     client = await mock_vco_client(store)
     write = await client.write_module(module, plan_module(module))
+    assert len(store.requests) == (1 if return_data else 2)
     assert write.module.data.config_context is ConfigContext.EDGE
 
 
@@ -215,6 +236,9 @@ async def test_stale_version_with_the_check_on_reads_and_raises_the_same(
     assert methods(store) == ["updateConfigurationModule", "getConfiguration"]
     assert_stale(exc.value, store)
     assert exc.value.detail == "the VCO refused the version"
+    refusal = exc.value.__cause__
+    assert isinstance(refusal, ConfigConflictError)
+    assert isinstance(refusal.__cause__, VcoOperationError)
 
 
 @pytest.mark.parametrize("conditional_check", [True, False])
@@ -297,21 +321,28 @@ async def test_follow_up_read_without_the_module(mock_vco_client: MockVcoClientF
     module = firewall_disabled()
     store = store_of(module, conditional_check=True)
     store.other_writer(1, elsewhere)
-
-    def without_modules(request: httpx.Request) -> httpx.Response:
-        method = parse_json_object(request.content)["method"]
-        if method != "configuration/getConfiguration":
-            return store(request)
-        config = copy.deepcopy(store.configurations[10])
-        config["modules"] = []
-        return httpx.Response(200, json=make_jsonrpc_response(result=config))
-
-    client = await mock_vco_client(without_modules)
+    client = await mock_vco_client(reading(store, []))
     with pytest.raises(ConfigConflictError) as exc:
         _ = await client.write_module(module, plan_module(module))
     assert exc.value.module is None
     (lost,) = exc.value.lost_edits
     assert (lost.path, lost.as_read, lost.intended) == ("firewall_enabled", True, False)
+    assert lost.stored is MISSING
+
+
+async def test_follow_up_read_without_the_module_lists_the_ref_rows(
+    mock_vco_client: MockVcoClientFactory,
+):
+    module = qos({"segments": []}, refs={"a": ROW1})
+    plan = plan_module(module, refs={"a": [ROW1, ROW2]})
+    store = store_of(module, conditional_check=True)
+    store.other_writer(module.id_, elsewhere)
+    client = await mock_vco_client(reading(store, []))
+    with pytest.raises(ConfigConflictError) as exc:
+        _ = await client.write_module(module, plan)
+    assert exc.value.module is None
+    (lost,) = exc.value.lost_edits
+    assert (lost.part, lost.path, lost.intended) == ("refs", "a[6]", ROW2)
     assert lost.stored is MISSING
 
 
@@ -369,6 +400,23 @@ async def test_insert_answered_without_a_row_is_read_back(
     assert methods(store) == ["insertConfigurationModule", "getConfiguration"]
     (stored_id,) = store.rows
     assert (write.module.name, write.module.id_) == ("QOS", stored_id)
+
+
+async def test_insert_is_read_back_by_the_id_answered(
+    mock_vco_client: MockVcoClientFactory,
+):
+    module = new_qos_with_a_segment()
+    store = store_of(module, return_data=False)
+    # The read answers with another writer's module of the same name only.
+    another = make_module_json(
+        "QOS", {"segments": []}, module_id=99, configuration_id=10
+    )
+    client = await mock_vco_client(reading(store, [another]))
+    with pytest.raises(ConfigConflictError) as exc:
+        _ = await client.write_module(module, plan_module(module))
+    (answered,) = store.rows
+    assert exc.value.module_id == answered != 99
+    assert exc.value.module is None
 
 
 async def test_a_module_held_as_another_class_raises(

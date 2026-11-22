@@ -8,6 +8,7 @@ from pydantic import MISSING
 from pyvelo.client.enums.profiles import GetConfigurationWith
 from pyvelo.client.exceptions import (
     ConfigConflictError,
+    ModuleWriteError,
     VcoOperationError,
     is_precondition_failure,
     is_version_conflict,
@@ -16,7 +17,12 @@ from pyvelo.client.models.configuration.device_settings.root import DeviceSettin
 from pyvelo.client.models.configuration.firewall.root import FirewallData
 from pyvelo.client.models.configuration.qos.root import QosData
 from pyvelo.client.models.configuration.wan.root import WanData
-from pyvelo.client.module_check import ModuleWrite, check_module_write
+from pyvelo.client.module_check import (
+    ModuleWrite,
+    check_module_write,
+    check_refs,
+    data_model,
+)
 from pyvelo.client.module_write import (
     ModulePlan,
     insert_request,
@@ -47,7 +53,7 @@ from pyvelo.client.schemas.profiles import (
     CreateProfile,
     CreateProfileResult,
 )
-from pyvelo.core import ConfigContext, RowsModifiedConfirmation, VcoModel
+from pyvelo.core import ConfigContext, RowsModifiedConfirmation
 from pyvelo.core.rebase import raw_changes
 from pyvelo.core.response_check import PlannedChange
 
@@ -67,23 +73,25 @@ async def _read_stored(
     enterprise_id: int | None,
     *,
     refused: bool,
+    module_id: int | None = None,
 ) -> AnyConfigurationModule:
     """*module* as the VCO holds it, read from its configuration after a write that returned no row.
 
-    It is the module with the ID of *module*, or for an insert the one with
-    the plan's name, put at the config level of *module* when it has one.
-    *refused* says the VCO refused the write's version. Raises
-    ``ConfigConflictError`` with no module, and every planned change lost,
-    when *module* has no ``configuration_id`` or its configuration does not
-    hold it.
+    It is the module with *module_id*, by default the ID of *module* (for an
+    insert, the ID the VCO answered), put at the config level of *module*
+    when it has one. *refused* says the VCO refused the write's version.
+    Raises ``ConfigConflictError`` for that ID, with no module and every
+    planned change lost, when *module* has no ``configuration_id`` or its
+    configuration does not hold the module.
     """
+    wanted = module.id_ if module_id is None else module_id
     answer = (
         "the VCO refused the version" if refused else "the VCO returned no module row"
     )
     configuration_id = module.configuration_id
     if configuration_id is None:
         detail = f"{answer}, and the module has no configuration ID to read it by"
-        raise _not_read(module, plan, detail)
+        raise _not_read(module, plan, detail, module_id=wanted)
     config = await client.get_configuration(
         GetConfiguration(
             id_=configuration_id,
@@ -92,40 +100,40 @@ async def _read_stored(
         )
     )
     held = config.modules if config.modules is not MISSING else []
-    if plan.operation == "insert":
-        found = next((m for m in held if m.name == plan.name), None)
-    else:
-        found = next((m for m in held if m.id_ == module.id_), None)
+    found = next((m for m in held if m.id_ == wanted), None)
     if found is None:
-        raise _not_read(
-            module, plan, f"{answer}, and its configuration does not hold the module"
-        )
+        detail = f"{answer}, and its configuration does not hold the module"
+        raise _not_read(module, plan, detail, module_id=wanted)
     level = module.config_context
     return found if level is None else found.for_context(level)
 
 
 def _not_read(
-    module: ConfigurationModuleBase, plan: ModulePlan, detail: str
+    module: ConfigurationModuleBase, plan: ModulePlan, detail: str, *, module_id: int
 ) -> ConfigConflictError:
-    """The error for a write whose module could not be read back: every planned change lost, nothing stored."""
+    """The error for a write whose module could not be read back: every planned change lost, nothing stored.
+
+    The lost edits are each change of the data and, when the plan sends refs,
+    each ref row it adds.
+    """
     as_read = module.raw_data
-    data: object = getattr(module, "data", None)
     changes = raw_changes(
-        {} if as_read is MISSING else as_read,
-        plan.data,
-        type(data) if isinstance(data, VcoModel) else None,
+        {} if as_read is MISSING else as_read, plan.data, data_model(module)
     )
+    lost_edits = [
+        PlannedChange(change.path, change.before, change.after, MISSING)
+        for change in changes
+    ]
+    if plan.refs is not None:
+        lost_edits.extend(check_refs(module.raw_refs, plan.refs, MISSING).not_applied)
     return ConfigConflictError(
-        module.id_,
+        module_id,
         module.version or "",
         detail,
         module_name=plan.name,
         plan=plan,
         module=None,
-        lost_edits=[
-            PlannedChange(change.path, change.before, change.after, MISSING)
-            for change in changes
-        ],
+        lost_edits=lost_edits,
     )
 
 
@@ -284,7 +292,6 @@ class ConfigurationMixin(Protocol):
             )
         return None
 
-    @domain_tag(CONFIG)
     async def write_module[M: ConfigurationModuleBase](
         self: VcoClientBaseProtocol,
         module: M,
@@ -307,45 +314,58 @@ class ConfigurationMixin(Protocol):
         ``WriteNotAppliedError`` (``check_module_write``), with the module as
         stored and the lost edits; a ``ConfigConflictError`` with no module
         when the read does not find it; ``VcoOperationError`` when the VCO
-        holds it as another class of module.
+        holds it as another class of module. After a refusal the error's
+        cause is the VCO's refusal.
         """
         if plan.operation == "none":
             return ModuleWrite(plan.name, "none", module, plan)
         level = module.config_context
-        refused = False
+        refusal: ConfigConflictError | None = None
         stored: ConfigurationModuleBase | None
         if plan.operation == "insert":
             inserted = await self.insert_configuration_module(
                 insert_request(module, plan, enterprise_id), level=level
             )
-            stored = (
-                None
-                if isinstance(inserted, InsertConfigurationModuleResult)
-                else inserted
-            )
+            if isinstance(inserted, InsertConfigurationModuleResult):
+                stored = await _read_stored(
+                    self,
+                    module,
+                    plan,
+                    enterprise_id,
+                    refused=False,
+                    module_id=inserted.id_,
+                )
+            else:
+                stored = inserted
         else:
             request = update_request(module, plan, enterprise_id)
             try:
                 stored = await self.update_configuration_module(request, level=level)
-            except ConfigConflictError:
+            except ConfigConflictError as error:
                 # The VCO stated the refusal (its precondition error, or no rows
                 # modified) and returned no row. Read in this block, so that an
                 # error of the read has the refusal as its context.
-                refused = True
+                refusal = error
                 stored = await _read_stored(
                     self, module, plan, enterprise_id, refused=True
                 )
-        if stored is None:
-            stored = await _read_stored(
-                self, module, plan, enterprise_id, refused=False
-            )
+            if stored is None:
+                stored = await _read_stored(
+                    self, module, plan, enterprise_id, refused=False
+                )
         if not isinstance(stored, type(module)):
             held, sent = type(stored).__name__, type(module).__name__
             raise VcoOperationError(
                 "write configuration module",
                 f"the VCO holds module {stored.id_} as a {held}, not a {sent}",
             )
-        return check_module_write(module, plan, stored, refused=refused)
+        try:
+            return check_module_write(module, plan, stored, refused=refusal is not None)
+        except ModuleWriteError as outcome:
+            if refusal is None:
+                raise
+            # The refusal, and the VCO's own error under it, stay in the chain.
+            raise outcome from refusal
 
     @domain_tag(CONFIG)
     async def update_module[M: ConfigurationModuleBase](
