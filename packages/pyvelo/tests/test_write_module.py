@@ -826,3 +826,48 @@ async def test_a_module_held_as_another_class_is_an_unknown_outcome(
         "the VCO holds module 1 as a QosConfigurationModule, "
         "not a FirewallConfigurationModule"
     )
+
+
+def no_version(row: dict[str, Any]) -> None:
+    row["version"] = None
+
+
+async def test_a_row_returned_without_its_version_is_read_back(
+    mock_vco_client: MockVcoClientFactory,
+):
+    module = firewall_disabled()
+    store = store_of(module)
+    client = await mock_vco_client(returning(store, no_version))
+    write = await client.write_module(module, plan_module(module))
+    assert methods(store) == ["updateConfigurationModule", "getConfiguration"]
+    assert write.module.version == store.rows[1]["version"] != "v1"
+    assert paths(write.applied) == ["firewall_enabled"]
+
+
+async def test_an_inserted_row_returned_without_its_version_is_read_back(
+    mock_vco_client: MockVcoClientFactory,
+):
+    module = new_qos_with_a_segment()
+    store = store_of(module)
+    client = await mock_vco_client(returning(store, no_version))
+    write = await client.write_module(module, plan_module(module))
+    assert methods(store) == ["insertConfigurationModule", "getConfiguration"]
+    (stored_id,) = store.rows
+    assert (write.module.id_, write.module.version) == (
+        stored_id,
+        store.rows[stored_id]["version"],
+    )
+
+
+async def test_a_stale_row_returned_without_its_version_is_still_a_conflict(
+    mock_vco_client: MockVcoClientFactory,
+):
+    module = firewall_disabled()
+    store = store_of(module)
+    store.other_writer(1, elsewhere)
+    client = await mock_vco_client(returning(store, no_version))
+    with pytest.raises(ConfigConflictError) as exc:
+        _ = await client.write_module(module, plan_module(module))
+    assert exc.value.module is not None
+    assert exc.value.module.version == store.rows[1]["version"]
+    assert paths(exc.value.lost_edits) == ["firewall_enabled"]

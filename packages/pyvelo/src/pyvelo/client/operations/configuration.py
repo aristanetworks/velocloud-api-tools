@@ -177,6 +177,26 @@ def _not_this_module(
     return None
 
 
+def _require_this_module(
+    module: ConfigurationModuleBase,
+    plan: ModulePlan,
+    stored: ConfigurationModuleBase,
+    *,
+    answer: WriteAnswer,
+) -> ConfigurationModuleBase:
+    """*stored*, when it is the module *module* was written as; otherwise raises ``WriteOutcomeUnknownError``."""
+    mismatch = _not_this_module(module, plan, stored)
+    if mismatch is not None:
+        raise _unknown_outcome(
+            module,
+            plan,
+            mismatch,
+            answer=answer,
+            module_id=stored.id_ if plan.operation == "insert" else module.id_,
+        )
+    return stored
+
+
 class ConfigurationMixin(Protocol):
     """Operations for configuration/ API endpoints."""
 
@@ -356,21 +376,28 @@ class ConfigurationMixin(Protocol):
         Sends nothing when the plan's operation is ``none``, and returns
         *module* itself.
 
+        A row the VCO answers with that has no version is replaced by the
+        module read from its configuration, so that the module returned
+        makes the next write conditional. When the module read back has no
+        version either, it is returned as it is: the VCO holds none for it.
+
         Returns a ``ModuleWrite`` with the module as stored, of the class of
         *module* and at its config level (at none when it has none), whichever
         way the VCO answered, when every planned change is stored. Otherwise
-        raises, always with the lost edits and the module as stored where they
-        are known:
+        raises one of:
 
         - ``ConfigConflictError`` when the VCO refused the write's version, or
           answered with the module as read, unchanged.
         - ``WriteNotAppliedError`` when the VCO stored the write otherwise than
           as planned.
-        - ``WriteOutcomeUnknownError``, with no module and no lost edits, when
-          the write was sent and the module as stored cannot be read: the
-          answer or the row read back does not parse, the read-back does not
-          find the module, or the module the VCO answered with is not this one
-          (another ID, another configuration or another class of module).
+        - ``WriteOutcomeUnknownError`` when the write was sent and the module
+          as stored cannot be read: the answer or the row read back does not
+          parse, the read-back does not find the module, or the module the VCO
+          answered with is not this one (another ID, another configuration or
+          another class of module).
+
+        The first two always carry the lost edits and the module as stored;
+        ``WriteOutcomeUnknownError`` carries neither.
 
         After a refusal, the refusal is the error's cause (its context, when
         the read-back fails). Raises ``ValueError``, before sending, when *plan*
@@ -441,15 +468,13 @@ class ConfigurationMixin(Protocol):
                 stored = await _read_stored(
                     self, module, plan, enterprise_id, answer=answer
                 )
-        mismatch = _not_this_module(module, plan, stored)
-        if mismatch is not None:
-            raise _unknown_outcome(
-                module,
-                plan,
-                mismatch,
-                answer=answer,
-                module_id=stored.id_ if plan.operation == "insert" else module.id_,
+        stored = _require_this_module(module, plan, stored, answer=answer)
+        if answer == "row" and not stored.version:
+            # The next write of the module is conditional on this version.
+            stored = await _read_stored(
+                self, module, plan, enterprise_id, answer=answer, module_id=stored.id_
             )
+            stored = _require_this_module(module, plan, stored, answer=answer)
         try:
             return check_module_write(module, plan, stored, answer=answer)
         except ModuleWriteError as outcome:
