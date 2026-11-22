@@ -320,3 +320,26 @@ def test_stored_keyed_list_is_gone():
     change = server_change_at(check, "rules")
     assert change.as_read == [rule("a", p=1)]
     assert change.stored is MISSING
+
+
+def test_removal_inside_a_container_the_vco_dropped_is_applied():
+    check = chk({"sub": {"v": 1, "note": "n"}}, {"sub": {"v": 1}}, {})
+    assert_paths(check, applied=["sub.note"], server_changes=["sub"])
+    (removal,) = check.applied
+    assert removal.as_read == "n"
+    assert removal.intended is MISSING
+    assert removal.stored is MISSING
+    change = server_change_at(check, "sub")
+    assert change.as_read == {"v": 1, "note": "n"}
+    assert change.stored is MISSING
+
+
+def test_change_beside_that_removal_is_not_applied():
+    check = chk({"sub": {"v": 1, "note": "n"}}, {"sub": {"v": 2}}, {})
+    assert_paths(
+        check, applied=["sub.note"], not_applied=["sub.v"], server_changes=["sub"]
+    )
+    planned = not_applied_at(check, "sub.v")
+    assert planned.intended == 2
+    assert planned.stored is MISSING
+    assert planned.clash is True

@@ -19,8 +19,9 @@ for a side that has no value there.
    removed is one planned change, and an item only ``D`` has is one server
    change. The order is one more change, at the list, told by the items' keys.
 4. ``R`` and ``P`` are objects, or such a keyed list, and ``D`` is not: every
-   difference between ``R`` and ``P`` is a planned change that was not
-   applied, and what ``D`` has in place of the container is one server change.
+   difference between ``R`` and ``P`` is a planned change with nothing stored
+   at its path, so a removal is applied and any other change is not. What
+   ``D`` has in place of the container is one server change.
 5. Anything else is one planned change: a scalar that was set, an object that
    was set or added, a list replaced whole (a list without a key, or a keyed
    list ``pair_items`` cannot pair), a key or an item that was removed. It is
@@ -210,11 +211,13 @@ def _walk_object(
 def _walk_replaced(
     found: _Found, path: Path, r: object, p: object, d: object, node: _Node
 ) -> None:
-    """Rule 4: *d* is not the container *r* and *p* are, so no change inside it is stored."""
-    found.not_applied.extend(
-        PlannedChange(change.path, change.before, change.after, MISSING)
-        for change in _differences(path, r, p, node)
-    )
+    """Rule 4: *d* is not the container *r* and *p* are, so it stores nothing inside it.
+
+    Each difference between *r* and *p* is a planned change that meets nothing
+    stored. By rule 5's test that applies a removal, and nothing else.
+    """
+    for change in _differences(path, r, p, node):
+        _planned(found, change.path, change.before, change.after, MISSING, None)
     found.server_changes.append(ServerChange(path, r, d))
 
 
