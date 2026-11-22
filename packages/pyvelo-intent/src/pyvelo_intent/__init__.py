@@ -1,5 +1,10 @@
 """Helper library for VeloCloud Orchestrator configuration APIs."""
 
+from pyvelo.client.exceptions import (
+    ConfigConflictError,
+    DetachedObjectError,
+    WriteNotAppliedError,
+)
 from pyvelo.core import PatchError, add, at, delete, move
 
 from pyvelo_intent.config import (
@@ -25,16 +30,17 @@ from pyvelo_intent.errors import (
     ConfigInputError,
     IntentError,
     SaveValidationError,
-    StateSpentError,
     UnknownRegistryEntryError,
 )
 
 __all__ = [
     "Added",
     "Change",
+    "ConfigConflictError",
     "ConfigInputError",
     "ConfigPipeline",
     "ConfigState",
+    "DetachedObjectError",
     "DiffResult",
     "FieldChange",
     "IntentError",
@@ -43,10 +49,10 @@ __all__ = [
     "Removed",
     "SaveResult",
     "SaveValidationError",
-    "StateSpentError",
     "Unchanged",
     "UnknownRegistryEntryError",
     "ValidationWarning",
+    "WriteNotAppliedError",
     "add",
     "at",
     "build_default_pipeline",

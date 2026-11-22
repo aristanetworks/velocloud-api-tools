@@ -241,8 +241,9 @@ class ConfigState:
     from each module's raw data as read (see :meth:`plan`), which is what
     decides which modules changed.
 
-    A state that has written to the VCO is *spent*: its raw data no longer
-    matches the VCO, so it must not be applied to or saved again.
+    A state continues after a save: each module written is replaced by the
+    module the VCO stored (:meth:`replace_module`), so the next plan starts
+    from what the VCO holds and the state takes more edits and saves.
 
     The edge layer's module data is bound to the profile layer (see
     ``bind_profile`` on the module data), so a segment the edge layer lacks can
@@ -257,7 +258,6 @@ class ConfigState:
         default_factory=dict, repr=False
     )
     load_warnings: list[ValidationWarning] = field(default_factory=list)
-    _spent: bool = field(default=False, repr=False)
     _made_into_unset: list[tuple[AnyConfigurationModule, bool]] = field(
         default_factory=list, repr=False
     )
@@ -449,15 +449,6 @@ class ConfigState:
     def profile(self) -> LayerView:
         """The profile layer's module data."""
         return LayerView(self.profile_config)
-
-    @property
-    def spent(self) -> bool:
-        """True once this state has written to the VCO."""
-        return self._spent
-
-    def mark_spent(self) -> None:
-        """Record that this state has written to the VCO."""
-        self._spent = True
 
     def plan(self) -> ConfigPlan:
         """Plan the write of every module of the target config, in order.

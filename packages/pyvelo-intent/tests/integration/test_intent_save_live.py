@@ -84,7 +84,7 @@ from pyvelo.client.schemas.configuration import (
 )
 from pyvelo.core import ConfigContext, VcoModel
 from pyvelo.core.rebase import Key, Path, RawChange, raw_changes
-from pyvelo_intent import ConfigPipeline, ConfigState, StateSpentError, add
+from pyvelo_intent import ConfigPipeline, ConfigState, add
 
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio(loop_scope="session")]
 
@@ -237,7 +237,7 @@ async def _save_nothing(
     except WriteRefused:
         failures.append(f"{where}: save with no edit tried to write")
         return
-    if result.modules_updated or result.modules_inserted or state.spent:
+    if result.modules_updated or result.modules_inserted:
         failures.append(f"{where}: save with no edit reports a write")
 
 
@@ -316,7 +316,6 @@ async def test_profile_rule_added_through_apply_reads_back_as_that_rule_only(
             result.modules_updated == [Name.FIREWALL] and not result.modules_inserted,
             f"saved {result.modules_updated} / inserted {result.modules_inserted}",
         )
-        check(state.spent, "the state is not spent after a save that wrote")
 
         after = await site.read_present()
         stored = changes_between(
@@ -883,7 +882,6 @@ async def test_second_save_from_an_older_state_is_refused_and_spends_the_state(
             )
 
         _ = await pipeline.save(newer)
-        check(newer.spent, "the state that saved is not spent")
         with pytest.raises(ConfigConflictError):
             _ = await pipeline.save(older)
 
@@ -899,14 +897,6 @@ async def test_second_save_from_an_older_state_is_refused_and_spends_the_state(
             stored[0].after == kept,
             "the module holds something other than the first state's edit",
         )
-
-        check(older.spent, "the state whose write was refused is not spent")
-        with pytest.raises(StateSpentError):
-            _ = await pipeline.apply(
-                older, module="WAN", patch={"links": {link: {"description": "x"}}}
-            )
-        with pytest.raises(StateSpentError):
-            _ = await pipeline.save(older)
 
 
 # ---------------------------------------------------------------------------

@@ -256,7 +256,6 @@ async def test_setting_a_default_on_an_inherited_key_is_refused():
         await ConfigPipeline(client).save(state)
     assert refused.value.fields == ["atp_enabled"]
     assert client.calls == []
-    assert state.spent is False
 
 
 def profile_client(raw: dict[str, Any] = PROFILE_FW) -> MockVcoClient:
@@ -287,7 +286,6 @@ async def test_edit_to_a_section_the_edge_dump_omits_is_refused():
         await ConfigPipeline(client).save(state)
     assert refused.value.fields == ["ntp"]
     assert client.calls == []
-    assert state.spent is False
 
 
 async def test_profile_target_save():
