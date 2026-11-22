@@ -92,6 +92,24 @@ def test_server_owned_inside_an_added_item():
     assert change.stored == "s9"
 
 
+def test_owned_key_kept_as_read_is_left_out_with_no_server_change():
+    check = check_response({"stamp": "s1"}, {"stamp": "s2"}, {"stamp": "s1"}, Box)
+    assert_paths(check, left_out=["stamp"])
+    (change,) = check.left_out
+    assert change.stored == "s1"
+
+
+def test_owned_key_missing_from_an_added_item_is_no_server_change():
+    check = check_response(
+        {"items": []},
+        {"items": [{"name": "a", "stamp": "s1"}]},
+        {"items": [{"name": "a"}]},
+        Box,
+    )
+    assert_paths(check, applied=["items[a]"])
+    assert check.server_changes == ()
+
+
 def test_server_owned_inside_an_unkeyed_model_list():
     sent = {"plain": [{"name": "a", "stamp": "s1"}]}
     stored = {"plain": [{"name": "a", "stamp": "s9"}]}

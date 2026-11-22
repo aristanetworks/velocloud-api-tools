@@ -151,7 +151,9 @@ class ResponseCheck:
     """The planned changes that count as neither: a change to a value the VCO
     owns, and the removal of a default it adds back (``Rewrites``)."""
     server_changes: tuple[ServerChange, ...] = ()
-    """What else differs between the payload and what is stored."""
+    """What else differs between the payload and what is stored.
+
+    Each entry's ``as_read`` differs from its ``stored``."""
 
 
 def check_response(
@@ -190,7 +192,11 @@ def check_response(
         applied=tuple(found.applied),
         not_applied=tuple(found.not_applied),
         left_out=tuple(found.left_out),
-        server_changes=tuple(found.server_changes),
+        # A server change is a difference: one that stores the value as read
+        # shows none (the planned change at its path says what was sent).
+        server_changes=tuple(
+            change for change in found.server_changes if change.as_read != change.stored
+        ),
     )
 
 
