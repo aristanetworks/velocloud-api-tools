@@ -257,11 +257,13 @@ class EdgeWirelessLinkManagement(VcoModel):
 
 
 class ModelLanInterfaces(VcoModel):
-    interfaces: list[SerializeAsAny[LanInterface]]
+    interfaces: Annotated[list[SerializeAsAny[LanInterface]], KeyField("name")]
 
 
 class ModelInterfaces(VcoModel):
-    routed_interfaces: list[SerializeAsAny[RoutedInterface]]
+    routed_interfaces: Annotated[
+        list[SerializeAsAny[RoutedInterface]], KeyField("name")
+    ]
     lan: ModelLanInterfaces
 
 

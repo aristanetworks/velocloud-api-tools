@@ -17,7 +17,7 @@ from pyvelo.client.schemas.configuration import (
     QosConfigurationModule,
     new_edge_module,
 )
-from pyvelo.core import ConfigContext, VcoModel, add, delete
+from pyvelo.core import ConfigContext, VcoModel, add, at, delete
 from pyvelo.core.rebase import Key
 from pyvelo.testing import make_module_json
 
@@ -620,6 +620,72 @@ def test_an_edit_below_the_loopback_map_is_written_to_the_key_as_read():
     assert plan.data["loopbackInterfaces"] == {
         "LO1": {"cidrIp": "10.0.0.1", "cidrPrefix": 32, "ping_response": True}
     }
+
+
+def model_interface(name: str) -> dict[str, Any]:
+    """A routed interface of a profile's model entry, with keys and values the models do not keep."""
+    return {
+        "name": name,
+        "disabled": False,
+        "ospf": {"enabled": False, "area": ""},
+        "l2": {"autonegotiation": True, "MTU": 1500, "futureKey": {"enabled": True}},
+    }
+
+
+def model_lan_interface(name: str) -> dict[str, Any]:
+    return {"name": name, "disabled": False, "vendorKey": name.lower()}
+
+
+MODELS_RAW: dict[str, Any] = {
+    **DS_RAW,
+    "models": {
+        "edge510": {
+            "routedInterfaces": [model_interface("GE3"), model_interface("GE4")],
+            "lan": {
+                "interfaces": [model_lan_interface("GE1"), model_lan_interface("GE2")]
+            },
+        },
+        "edge6X0": {
+            "routedInterfaces": [model_interface("GE3")],
+            "lan": {"interfaces": []},
+        },
+    },
+}
+
+
+def test_one_edit_to_a_profile_interface_writes_that_interface_alone():
+    mod = ds(MODELS_RAW)
+    _ = mod.data.for_profile()
+    _ = mod.data.merge_patch(
+        {
+            "models": {
+                "edge510": {
+                    "routed_interfaces": {"GE3": {"disabled": True}},
+                    "lan": {"interfaces": {"GE2": {"disabled": True}}},
+                }
+            }
+        }
+    )
+    plan = plan_module(mod, level=PROFILE)
+    assert [(str(c.path), c.before, c.after) for c in plan.changes] == [
+        ("models.edge510.routedInterfaces[GE3].disabled", False, True),
+        ("models.edge510.lan.interfaces[GE2].disabled", False, True),
+    ]
+    expected = copy.deepcopy(MODELS_RAW)
+    expected["models"]["edge510"]["routedInterfaces"][0]["disabled"] = True
+    expected["models"]["edge510"]["lan"]["interfaces"][1]["disabled"] = True
+    assert plan.data == expected
+
+
+def test_an_edge_only_field_below_the_models_map_is_refused_on_a_profile():
+    mod = ds(MODELS_RAW)
+    _ = mod.data.for_profile()
+    _ = mod.data.merge_patch(
+        {"models": {"edge510": {"routed_interfaces": {at(0): {"description": "up"}}}}}
+    )
+    with pytest.raises(LossyFieldError) as exc:
+        plan_module(mod, level=PROFILE)
+    assert exc.value.fields == ["models.edge510.routed_interfaces[GE3].description"]
 
 
 # --- defaults generated per parse are not the caller's change --------------

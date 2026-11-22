@@ -31,8 +31,6 @@ UNDECLARED: frozenset[str] = frozenset(
         "EdgeToEdgeHub.vpn_hubs",
         "LanNetwork.secondary_ips",
         "LanPrefixDelegation.pd_list",
-        "ModelInterfaces.routed_interfaces",
-        "ModelLanInterfaces.interfaces",
         "NtpServer.keys",
         "PrefixDelegation.pd_list",
         "RadiusAuthentication.mac_bypass",
@@ -149,10 +147,10 @@ def test_every_key_path_names_a_field():
 
 def test_list_counts():
     assert Counter(walk(ROOTS).values()) == {
-        "keyed": 40,
+        "keyed": 42,
         "value": 19,
         "positional": 24,
-        "undeclared": 27,
+        "undeclared": 25,
         "untyped": 6,
         "map": 2,
     }
