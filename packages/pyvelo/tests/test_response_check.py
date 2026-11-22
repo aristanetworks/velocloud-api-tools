@@ -334,6 +334,37 @@ def test_removal_inside_a_container_the_vco_dropped_is_applied():
     assert change.stored is MISSING
 
 
+def test_removed_and_readded_under_one_name_is_applied():
+    check = chk(
+        rules(A, rule("x", i="i1")),
+        rules(A, X, X),
+        rules(A, rule("x", i="i8"), rule("x", i="i9")),
+    )
+    assert_paths(
+        check,
+        applied=["rules[x]", "rules[#1]", "rules[#2]"],
+        server_changes=["rules[#1].ruleId", "rules[#2].ruleId"],
+    )
+    assert check.not_applied == ()
+    assert server_change_at(check, "rules[#1].ruleId").stored == "i8"
+    assert server_change_at(check, "rules[#2].ruleId").stored == "i9"
+
+
+def test_removed_item_found_by_its_alt_key():
+    check = chk(
+        rules(A, rule("x", i="i1")),
+        rules(A),
+        rules(A, rule("x", i="i9"), rule("x", i="i1")),
+    )
+    assert_paths(check, not_applied=["rules[x]"], server_changes=["rules[#1]"])
+    removal = not_applied_at(check, "rules[x]")
+    assert removal.stored == rule("x", i="i1")
+    assert removal.clash is False
+    change = server_change_at(check, "rules[#1]")
+    assert change.as_read is MISSING
+    assert change.stored == rule("x", i="i9")
+
+
 def test_change_beside_that_removal_is_not_applied():
     check = chk({"sub": {"v": 1, "note": "n"}}, {"sub": {"v": 2}}, {})
     assert_paths(

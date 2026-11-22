@@ -282,9 +282,16 @@ def _alt_forms(items: list[object], node: _KeyedList) -> list[KeyForm | None]:
     return [key_form(_read_path(item, node.item, alt)) for item in items]
 
 
-def _is_same(value: KeyForm | None, other: KeyForm | None) -> bool:
-    """Whether two keys in string form are one key. No key is the same as nothing."""
-    return value is not None and value == other
+def _first_with(
+    value: KeyForm | None, values: list[KeyForm | None], left: list[int]
+) -> int | None:
+    """The first index of *left* whose entry of *values* is *value*.
+
+    None when there is none, or *value* is None: no key is the key of nothing.
+    """
+    if value is None:
+        return None
+    return next((index for index in left if values[index] == value), None)
 
 
 def _pair_stored(
@@ -302,9 +309,12 @@ def _pair_stored(
     1. by alt key, and
     2. by key, each for a value that occurs once on each side, as
        ``pair_items`` does it;
-    3. each removed item of *r* takes the first item of *d* that has its key
-       or its alt key: the removal was not applied, and the item is not
-       another writer's, nor the partner of an item the plan added;
+    3. each removed item of *r* takes the first item of *d* that has its alt
+       key. Failing that, it takes the first item of *d* that has its key, but
+       only while *d* has more items left with that key than *p* has: the
+       others are the partners of items the plan added under that key, which
+       pass 4 pairs. An item so taken says the removal was not applied; it is
+       not another writer's item;
     4. the items of *p* and *d* pair in order, first with first, while the two
        keys are equal or the item of *p* has no key. This pairs items whose
        key repeats and whose alt key the VCO revised, and an item sent without
@@ -327,11 +337,16 @@ def _pair_stored(
     r_keys, r_alts = _key_forms(r, node), _alt_forms(r, node)
     d_of_removed: dict[int, int] = {}
     for i in removed:
-        for k in d_left:
-            if _is_same(r_keys[i], d_keys[k]) or _is_same(r_alts[i], d_alts[k]):
-                d_of_removed[i] = k
-                d_left.remove(k)
-                break
+        key = r_keys[i]
+        taken = _first_with(r_alts[i], d_alts, d_left)
+        if taken is None and (
+            sum(d_keys[k] == key for k in d_left)
+            > sum(p_keys[j] == key for j in p_left)
+        ):
+            taken = _first_with(key, d_keys, d_left)
+        if taken is not None:
+            d_of_removed[i] = taken
+            d_left.remove(taken)
 
     for j, k in zip(p_left, d_left, strict=False):
         if p_keys[j] is not None and p_keys[j] != d_keys[k]:
