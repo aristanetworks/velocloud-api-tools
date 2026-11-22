@@ -16,7 +16,7 @@ from pydantic import MISSING
 from pyvelo.client.enums.configuration import ConfigurationModuleName
 from pyvelo.client.exceptions import ConfigConflictError
 from pyvelo.core.response_check import PlannedChange, ServerChange
-from pyvelo_intent import add, move
+from pyvelo_intent import add, delete, move
 from pyvelo_intent.config.pipeline import ConfigPipeline
 from pyvelo_intent.config.state import ConfigState
 from pyvelo_intent.testing import MockVcoClient
@@ -324,6 +324,42 @@ async def test_refused_reorder_and_edit_list_both(conditional_check: bool):
     assert qos_rules(state) == ["a", "b", "c", "d"]
     assert state.plan().changed == ()
     assert_state_is_the_stored_row(state, client, "QOS")
+
+
+@pytest.mark.parametrize("conditional_check", [False, True])
+async def test_refused_delete_of_a_same_named_rule_is_the_one_lost_edit(
+    conditional_check: bool,
+):
+    rules = [
+        fw_rule("web", ruleLogicalId="l1", futureKey=1),
+        fw_rule("web", ruleLogicalId="l2"),
+        fw_rule("ssh", ruleLogicalId="l3", futureKey=3),
+    ]
+    state = make_state({"firewall": firewall(*rules)}, {"firewall": firewall()})
+    client = MockVcoClient.for_state(state, conditional_check=conditional_check)
+    client.store.other_writer(MODULE, other_writer_edit)
+    pipeline = ConfigPipeline(client)
+    _ = await pipeline.apply(
+        state,
+        module="firewall",
+        segment=SEGMENT,
+        path="outbound",
+        patch={"l2": delete()},
+    )
+
+    with pytest.raises(ConfigConflictError) as exc:
+        _ = await pipeline.save(state)
+
+    (lost,) = exc.value.lost_edits
+    assert (str(lost.path), lost.as_read, lost.intended, lost.stored) == (
+        f"{OUTBOUND}[#1]",
+        rules[1],
+        MISSING,
+        rules[1],
+    )
+    assert paths(exc.value.server_changes) == ["futureKey"]
+    assert state.plan().changed == ()
+    assert_state_is_the_stored_row(state, client, "firewall")
 
 
 @pytest.mark.parametrize("conditional_check", [False, True])

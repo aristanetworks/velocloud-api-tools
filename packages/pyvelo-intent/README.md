@@ -255,6 +255,17 @@ firewall: update
   link read with its `internalId` is a plain change. An item read without its ID (for example a QoS rule
   the VCO returned with no `ruleLogicalId`) that is then renamed is also saved
   as a removal plus an addition.
+- A list is written item by item when its items can be told apart, so only the
+  items you changed differ from the data read. That is a keyed list (see "The
+  patch format") in which every item has a key no other item has, or an ID
+  that was read and no other item has (a rule's logical ID, a segment's
+  `segmentId`). Two firewall rules of one name, each read with its
+  `ruleLogicalId`, are two items: deleting one leaves the other as read. Any
+  other list is written whole from the models when something in it changes: a
+  positional or untyped list, and a keyed list that holds an item with no key
+  and no ID (a WAN link read without an `internalId`) or two items of one name
+  read without IDs. Keys the models do not know are then dropped from every
+  item of that list, and the models' defaults are written into them.
 - A patch that moves items (a `move`) shows in `plan()` as one change at the
   list; in a keyed list the items' unknown keys are still kept.
 - A cache of loaded modules must keep the JSON rows or `module.raw_data`. A
@@ -376,9 +387,10 @@ Known limits:
   replace them while the data is not stored, overwriting another writer's
   refs; the save then reports your data changes, if any, as not stored. Reading the version
   before a write that carries refs comes with the next phase.
-- A keyed list read with an item that has no key (a WAN link without an
-  `internalId`) is compared as a whole. A change in it to a field the VCO owns
-  is then part of the list's change, not in `left_out`, and a value stored
+- A keyed list read with an item that cannot be told apart is compared as a
+  whole: an item with no key and no ID (a WAN link without an `internalId`),
+  or two items of one name read without IDs. A change in it to a field the VCO
+  owns is then part of the list's change, not in `left_out`, and a value stored
   there otherwise than sent is a server change with no value read (`as_read`
   is `MISSING`), even when it is the value read.
 - A key the VCO stores in a form the table of rewrites does not cover reads as

@@ -218,6 +218,21 @@ def test_lossy_and_carry_pair_by_alt_key():
     assert lossy(base, cur) == ["rules[a].port"]
 
 
+def test_a_default_assigned_beside_a_removed_same_named_item_is_lossy():
+    raw = {
+        "rules": [
+            {"name": "a", "rid": "1"},
+            {"name": "a", "rid": "2"},
+            {"name": "b", "rid": "3"},
+        ]
+    }
+    base, cur = Rs.model_validate(raw), Rs.model_validate(raw)
+    del cur.rules[1]
+    cur.rules[0].port = 0  # the default, and the document has no key for it
+    cur.rules[1].port = 0
+    assert lossy(base, cur) == ["rules[#0].port", "rules[b].port"]
+
+
 class Gen(VcoModel):
     name: str
     gid: uuid.UUID = Field(default_factory=uuid.uuid4)  # made anew by each parse

@@ -157,6 +157,32 @@ async def test_firewall_rule_add_change_delete_move():
     ]
 
 
+async def test_delete_one_of_two_firewall_rules_of_one_name():
+    rules = [
+        fw_rule("web", ruleLogicalId="l1", futureKey=1),
+        fw_rule("web", ruleLogicalId="l2"),
+        fw_rule("ssh", ruleLogicalId="l3", futureKey=3),
+    ]
+    state = make_state({"firewall": firewall(*rules)}, {"firewall": firewall()})
+    # The two rules share a name, so the second is named by its alt key.
+    _ = await ConfigPipeline(None).apply(
+        state,
+        module="firewall",
+        segment=SEGMENT,
+        path="outbound",
+        patch={"l2": delete()},
+    )
+    (module,) = state.plan().changed
+    (change,) = module.changes
+    assert (str(change.path), change.before, change.after) == (
+        'segments["Global Segment"].outbound[#1]',
+        rules[1],
+        MISSING,
+    )
+    sent = (await payload(state))["segments"][0]["outbound"]
+    assert sent == [rules[0], rules[2]]
+
+
 # --- QoS --------------------------------------------------------------------
 
 QOS_ACTION: dict[str, Any] = {

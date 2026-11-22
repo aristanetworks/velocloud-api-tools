@@ -370,6 +370,76 @@ def test_removed_item_with_a_unique_key_is_removed():
     assert rebase(raw, before, after, Rs) == {"rules": [item("a", x=1), item("c", x=3)]}
 
 
+def test_removed_item_with_a_repeated_key_and_a_unique_alt_key_is_removed():
+    raw = {"rules": [item("a", "1", x=1), item("a", "2", x=2), item("b", "3", x=3)]}
+    before = {
+        "rules": [
+            item("a", "1", port=0),
+            item("a", "2", port=0),
+            item("b", "3", port=0),
+        ]
+    }
+    after = {"rules": [item("a", "1", port=0), item("b", "3", port=0)]}
+    out = rebase(raw, before, after, Rs)
+    assert out == {"rules": [item("a", "1", x=1), item("b", "3", x=3)]}
+    assert raw_changes(raw, out, Rs) == [
+        RawChange("rules[#1]", item("a", "2", x=2), MISSING)
+    ]
+
+
+def test_both_items_of_a_repeated_key_removed_by_their_alt_keys():
+    raw = {"rules": [item("a", "1", x=1), item("a", "2", x=2), item("b", "3", x=3)]}
+    before = {
+        "rules": [
+            item("a", "1", port=0),
+            item("a", "2", port=0),
+            item("b", "3", port=0),
+        ]
+    }
+    after = {"rules": [item("b", "3", port=7)]}
+    out = rebase(raw, before, after, Rs)
+    assert out == {"rules": [item("b", "3", x=3, port=7)]}
+    assert raw_changes(raw, out, Rs) == [
+        RawChange("rules[#0]", item("a", "1", x=1), MISSING),
+        RawChange("rules[#1]", item("a", "2", x=2), MISSING),
+        RawChange("rules[b].port", MISSING, 7),
+    ]
+
+
+def test_removed_item_without_a_key_is_removed_by_its_alt_key():
+    raw = {"rules": [item("a", "1", x=1), item(None, "2", x=2)]}
+    before = {"rules": [item("a", "1", port=0), item(None, "2", port=0)]}
+    after = {"rules": [item("a", "1", port=0)]}
+    assert rebase(raw, before, after, Rs) == {"rules": [item("a", "1", x=1)]}
+
+
+def test_removed_item_with_a_repeated_key_and_a_repeated_alt_key_replaces_the_list():
+    raw = {"rules": [item("a", "1", x=1), item("a", "1", x=2), item("b", "3", x=3)]}
+    before = {
+        "rules": [
+            item("a", "1", port=0),
+            item("a", "1", port=0),
+            item("b", "3", port=0),
+        ]
+    }
+    after = {"rules": [item("a", "1", port=0), item("b", "3", port=0)]}
+    assert rebase(raw, before, after, Rs) == after
+
+
+def test_removed_item_whose_alt_key_the_parse_made_up_replaces_the_list():
+    # The raw items have no "rid"; the dumps carry one the parse generated.
+    raw = {"rules": [item("a", x=1), item("a", x=2), item("b", x=3)]}
+    before = {
+        "rules": [
+            item("a", "g1", port=0),
+            item("a", "g2", port=0),
+            item("b", "g3", port=0),
+        ]
+    }
+    after = {"rules": [item("a", "g1", port=0), item("b", "g3", port=0)]}
+    assert rebase(raw, before, after, Rs) == after
+
+
 # --- composite keys ------------------------------------------------------------
 
 

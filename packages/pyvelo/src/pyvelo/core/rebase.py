@@ -532,8 +532,10 @@ def pair_items(
     among them. Keys and alt keys are compared in string form, part by part
     for a composite key, so ``24`` as dumped and ``"24"`` as read are one.
     Items of *new* left over are added, and items of *old* left over removed.
-    But when one of those has no key, or has the key of another item of
-    *old*, what became of it cannot be told: the result is None.
+    An item of *old* left over is removed when it can be identified: by a key
+    no other item of *old* has, or by an alt key that was read and that no
+    other item of *old* has. When one cannot, what became of it cannot be
+    told, and the result is None.
 
     *old_alt_read*, one flag per item of *old*, says whose alt key was read
     from the document; the others are taken to have none. An alt key the parse
@@ -544,14 +546,16 @@ def pair_items(
     pairs: dict[int, int] = {}  # index in new -> index in old
     old_left, new_left = list(range(len(old))), list(range(len(new)))
     alt = node.spec.alt
+    old_alts: list[KeyForm | None] = [None] * len(old)
     if alt is not None:
+        old_alts = [
+            key_form(_read_path(item, node.item, alt))
+            if old_alt_read is None or old_alt_read[i]
+            else None
+            for i, item in enumerate(old)
+        ]
         _pair_unique(
-            [
-                key_form(_read_path(item, node.item, alt))
-                if old_alt_read is None or old_alt_read[i]
-                else None
-                for i, item in enumerate(old)
-            ],
+            old_alts,
             [key_form(_read_path(item, node.item, alt)) for item in new],
             old_left,
             new_left,
@@ -563,8 +567,11 @@ def pair_items(
     _pair_unique(old_keys, new_keys, old_left, new_left, pairs)
     paired = set(pairs.values())
     removed = tuple(i for i in old_left if i not in paired)
-    unique = _unique(old_keys)
-    if any(old_keys[i] not in unique for i in removed):
+    unique_keys, unique_alts = _unique(old_keys), _unique(old_alts)
+    if any(
+        old_keys[i] not in unique_keys and old_alts[i] not in unique_alts
+        for i in removed
+    ):
         return None
     return Pairing(
         pairs=tuple((pairs[j], j) for j in sorted(pairs)),

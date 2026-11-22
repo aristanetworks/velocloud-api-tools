@@ -138,3 +138,20 @@ def test_lossy_and_carry_pair_by_alt_key():
     before, after = carried(base, cur)
     assert after["ided"][0]["name"] == "b"
     assert after["ided"][0]["tag"] == before["ided"][0]["tag"]
+
+
+def test_items_beside_a_removed_same_named_item_stay_paired():
+    base, cur = pair(
+        {
+            "ided": [
+                {"name": "a", "rid": "1"},
+                {"name": "a", "rid": "2"},
+                {"name": "b", "rid": "3"},
+            ]
+        }
+    )
+    del cur.ided[1]
+    before, after = carried(base, cur)
+    assert [i["rid"] for i in after["ided"]] == ["1", "3"]
+    assert after["ided"][0]["tag"] == before["ided"][0]["tag"]
+    assert after["ided"][1]["tag"] == before["ided"][2]["tag"]
