@@ -9,6 +9,9 @@ raw JSON and the model as it is now) is applied to it.
 After the plan: ``VcoClient.write_module`` sends it as an update or an insert
 (the requests are built here) that asks for the module as stored
 (``returnData``), and reads the module back when the VCO answers without it.
+An update none of whose changes the check can find stored is sent without
+``returnData`` and read back too: the VCO then answers with a row count, which
+says whether it stored the write, and a row cannot.
 ``check_module_write`` (``pyvelo.client.module_check``) then compares what the
 VCO stored with what the plan meant to change. When every planned change is
 stored, the write returns the module as stored, with what else the VCO

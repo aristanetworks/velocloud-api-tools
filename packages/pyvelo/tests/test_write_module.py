@@ -23,6 +23,7 @@ from pyvelo.client.exceptions import (
 from pyvelo.client.models.configuration.qos.segment import QosSegment
 from pyvelo.client.module_write import insert_request, plan_module
 from pyvelo.client.schemas.configuration import (
+    DeviceSettingsConfigurationModule,
     FirewallConfigurationModule,
     QosConfigurationModule,
     WanConfigurationModule,
@@ -518,3 +519,67 @@ async def test_stale_removal_beside_another_edit_is_a_lost_edit_too(
     assert paths(exc.value.lost_edits) == ["future", "items"]
     assert exc.value.applied == ()
     assert "already stored" not in str(exc.value)
+
+
+ECMP: dict[str, Any] = {"maximumPaths": 4, "loadSharing": {"hashParams": {}}}
+ECMP_DEFAULT: dict[str, Any] = {"maximumPaths": 2, "loadSharing": {"hashParams": {}}}
+DS_RAW: dict[str, Any] = {
+    "lan": {"networks": [], "interfaces": []},
+    "segments": [{"segment": GLOBAL_SEGMENT, "ecmp": ECMP}],
+}
+"""Device settings whose global segment has an ``ecmp`` of its own."""
+DS_WITHOUT_ECMP: dict[str, Any] = {**DS_RAW, "segments": [{"segment": GLOBAL_SEGMENT}]}
+ECMP_PATH = 'segments["Global Segment"].ecmp'
+
+
+def ds(
+    raw: dict[str, Any], *, level: ConfigContext | None = None
+) -> DeviceSettingsConfigurationModule:
+    """Device settings module 1 of configuration 10, read with *raw* as its data, at *level*."""
+    return DeviceSettingsConfigurationModule.model_validate(
+        make_module_json("deviceSettings", copy.deepcopy(raw), configuration_id=10),
+        context=None if level is None else {"config_level": level},
+    )
+
+
+def other_key(row: dict[str, Any]) -> None:
+    """Another writer's change to device settings."""
+    row["data"]["otherKey"] = 1
+
+
+def add_the_default_back(new: dict[str, Any], _old: dict[str, Any] | None) -> None:
+    """Store a default ``ecmp`` in each segment sent without one, as the VCO does."""
+    for segment in new["data"]["segments"]:
+        _ = segment.setdefault("ecmp", copy.deepcopy(ECMP_DEFAULT))
+
+
+async def test_a_plan_with_nothing_checkable_asks_for_a_count_and_reads_back(
+    mock_vco_client: MockVcoClientFactory,
+):
+    module = ds(DS_RAW)
+    plan = plan_module(module, DS_WITHOUT_ECMP)
+    store = store_of(module)
+    store.on_store.append(add_the_default_back)
+    client = await mock_vco_client(store)
+    write = await client.write_module(module, plan)
+    assert methods(store) == ["updateConfigurationModule", "getConfiguration"]
+    assert "returnData" not in store.requests[0][1]
+    assert store.requests[0][1]["version"] == "v1"
+    assert paths(write.left_out) == [ECMP_PATH]
+    assert write.applied == ()
+    assert write.module.version == store.rows[1]["version"]
+    assert write.module.raw_data == store.rows[1]["data"]
+
+
+async def test_a_ref_row_changed_inside_asks_for_a_count_too(
+    mock_vco_client: MockVcoClientFactory,
+):
+    module = qos({"segments": []}, refs={"a": [ROW1]})
+    changed = {"a": [{**ROW1, "logicalId": "b5"}]}
+    store = store_of(module)
+    client = await mock_vco_client(store)
+    write = await client.write_module(module, plan_module(module, refs=changed))
+    assert methods(store) == ["updateConfigurationModule", "getConfiguration"]
+    assert "returnData" not in store.requests[0][1]
+    assert store.rows[1]["refs"] == changed
+    assert write.module.raw_refs == changed

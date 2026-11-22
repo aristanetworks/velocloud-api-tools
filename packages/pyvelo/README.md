@@ -43,8 +43,12 @@ the class of `module`. When nothing changed it sends nothing and returns
 
 `VcoClient.write_module(module, plan)` sends a plan as an update or an insert
 that asks for the module as stored (`returnData`), and reads the module back
-when the VCO answers without it. It then compares what the VCO stored with what
-the plan meant to change. When every planned change is stored it returns a
+when the VCO answers without it. An update none of whose changes could be found
+stored (every one is to a value the VCO stores its own way, or inside a ref row
+that keeps its identity) is sent without `returnData`. The VCO then answers with
+a row count, which says whether it stored the write, and the module is read
+back. It then compares what the VCO stored with what the plan meant to change.
+When every planned change is stored it returns a
 `ModuleWrite`: the module as stored, the planned changes `applied`, and the
 `server_changes` (what else the VCO stores otherwise than sent, such as an ID
 it issued). Otherwise it raises, from `pyvelo.client.exceptions`:

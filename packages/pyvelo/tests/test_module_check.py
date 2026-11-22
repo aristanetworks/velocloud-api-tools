@@ -14,9 +14,15 @@ from pyvelo.client.exceptions import (
     WriteNotAppliedError,
 )
 from pyvelo.client.models.configuration.firewall.rules import FirewallInboundRule
-from pyvelo.client.module_check import ModuleWrite, check_module_write, check_refs
-from pyvelo.client.module_write import plan_module
+from pyvelo.client.module_check import (
+    ModuleWrite,
+    check_module_write,
+    check_refs,
+    has_checkable_change,
+)
+from pyvelo.client.module_write import ModulePlan, plan_module
 from pyvelo.client.schemas.configuration import (
+    ConfigurationModuleBase,
     DeviceSettingsConfigurationModule,
     FirewallConfigurationModule,
     QosConfigurationModule,
@@ -164,7 +170,7 @@ def test_refused_with_a_change_missing_is_a_conflict():
     plan = plan_module(module, {**RAW, "future": 2})
     stored = as_stored(module, {**RAW, "future": 3})
     with pytest.raises(ConfigConflictError) as exc:
-        _ = check_module_write(module, plan, stored, refused=True)
+        _ = check_module_write(module, plan, stored, answer="refused")
     assert exc.value.detail == "the VCO refused the version"
     assert exc.value.lost_edits[0].clash
 
@@ -172,7 +178,9 @@ def test_refused_with_a_change_missing_is_a_conflict():
 def test_refused_with_every_change_stored_passes():
     module = firewall_disabled()
     plan = plan_module(module)
-    write = check_module_write(module, plan, as_stored(module, plan.data), refused=True)
+    write = check_module_write(
+        module, plan, as_stored(module, plan.data), answer="refused"
+    )
     assert isinstance(write, ModuleWrite)
     assert paths(write.applied) == ["firewall_enabled"]
 
@@ -433,3 +441,65 @@ def test_ecmp_removed_and_added_back_passes():
     write = check_module_write(module, plan, stored)
     assert paths(write.left_out) == ['segments["Global Segment"].ecmp']
     assert write.applied == ()
+
+
+GLOBAL: dict[str, Any] = {"segment": desc(0, "Global Segment")}
+ECMP: dict[str, Any] = {"maximumPaths": 4, "loadSharing": {"hashParams": {}}}
+ECMP_DEFAULT: dict[str, Any] = {"maximumPaths": 2, "loadSharing": {"hashParams": {}}}
+ECMP_PATH = 'segments["Global Segment"].ecmp'
+FIRST: dict[str, Any] = {"id": 301, "enterpriseObjectId": 7}
+SECOND: dict[str, Any] = {"id": 302, "enterpriseObjectId": 8}
+
+
+def ecmp_removed() -> tuple[ConfigurationModuleBase, ModulePlan]:
+    """Device settings whose only planned change removes a segment's ``ecmp``, a default the VCO adds back."""
+    module = ds({**DS_RAW, "segments": [{**GLOBAL, "ecmp": ECMP}]})
+    return module, plan_module(module, {**DS_RAW, "segments": [GLOBAL]})
+
+
+def owned_id_changed() -> tuple[ConfigurationModuleBase, ModulePlan]:
+    """A firewall module whose only planned change is to a rule's ``ruleLogicalId``, which the VCO owns."""
+    rule = inbound("a", ruleLogicalId="x").model_dump(mode="json")
+    module = fw({**RAW, "inbound": [rule]})
+    return module, plan_module(
+        module, {**RAW, "inbound": [{**rule, "ruleLogicalId": "x2"}]}
+    )
+
+
+def ref_row_changed_inside() -> tuple[ConfigurationModuleBase, ModulePlan]:
+    """A QoS module whose only planned change is inside a ref row that keeps its identity."""
+    module = qos(QOS_RAW, refs={"a": [ROW1]})
+    return module, plan_module(module, refs={"a": [{**ROW1, "logicalId": "b5"}]})
+
+
+def append_only_row_removed() -> tuple[ConfigurationModuleBase, ModulePlan]:
+    """A QoS module whose only planned change removes a row of an append-only ref."""
+    module = qos(QOS_RAW, refs={ADDRESS_GROUP: [FIRST, SECOND]})
+    return module, plan_module(module, refs={ADDRESS_GROUP: [SECOND]})
+
+
+def test_a_change_of_data_is_checkable():
+    module = firewall_disabled()
+    assert has_checkable_change(module, plan_module(module)) is True
+
+
+def test_a_ref_row_added_is_checkable():
+    module = qos(QOS_RAW, refs={"a": [ROW1]})
+    plan = plan_module(module, refs={"a": [ROW1, ROW2]})
+    assert has_checkable_change(module, plan) is True
+
+
+@pytest.mark.parametrize(
+    "case",
+    [ecmp_removed, owned_id_changed, ref_row_changed_inside, append_only_row_removed],
+)
+def test_a_plan_of_changes_the_check_cannot_find_stored_is_not_checkable(case: Any):
+    module, plan = case()
+    assert plan.operation == "update"
+    assert has_checkable_change(module, plan) is False
+
+
+def test_a_removal_of_a_readded_default_beside_another_change_is_checkable():
+    module = ds({**DS_RAW, "segments": [{**GLOBAL, "ecmp": ECMP}]})
+    plan = plan_module(module, {**DS_RAW, "segments": [GLOBAL], "otherKey": 1})
+    assert has_checkable_change(module, plan) is True

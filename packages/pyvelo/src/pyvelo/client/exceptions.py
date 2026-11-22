@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Mapping, Sequence
-from typing import TYPE_CHECKING, Any, Final, cast, override
+from typing import TYPE_CHECKING, Any, Final, Literal, cast, override
 
 from pydantic import MISSING
 
@@ -203,6 +203,15 @@ class LossyFieldError(VcoError):
             )
         super().__init__(message)
 
+
+type WriteAnswer = Literal["row", "counted", "refused"]
+"""What the VCO said of a module write.
+
+``"row"``: it answered with a module row. ``"counted"``: it answered with a
+row count of at least one, or an insert's ID, so it says it stored the write.
+``"refused"``: it refused the write's version (its precondition error, or a
+row count of zero).
+"""
 
 _VALUE_WIDTH: Final = 80
 """How much of a value's JSON a message shows."""

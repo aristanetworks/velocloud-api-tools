@@ -22,7 +22,11 @@ from typing import Any, Final, Literal, cast
 
 from pydantic import MISSING
 
-from pyvelo.client.exceptions import ConfigConflictError, WriteNotAppliedError
+from pyvelo.client.exceptions import (
+    ConfigConflictError,
+    WriteAnswer,
+    WriteNotAppliedError,
+)
 from pyvelo.client.module_write import ModulePlan
 from pyvelo.client.schemas.configuration import ConfigurationModuleBase
 from pyvelo.core import VcoModel
@@ -37,6 +41,7 @@ from pyvelo.core.response_check import (
     Rewrites,
     ServerChange,
     check_response,
+    matches,
 )
 
 
@@ -194,18 +199,53 @@ def data_model(module: ConfigurationModuleBase) -> type[VcoModel] | None:
     return type(data) if isinstance(data, VcoModel) else None
 
 
+def has_checkable_change(module: ConfigurationModuleBase, plan: ModulePlan) -> bool:
+    """Whether *plan* has a change ``check_module_write`` can find stored.
+
+    True when the data has a planned change that is not the removal of a
+    default the VCO adds back (``MODULE_REWRITES``), taking the payload as
+    stored exactly as sent (a change to a value the VCO owns is then left out
+    in the same way as in the check itself), or when an update's refs add or
+    remove a row. A write with none of these cannot tell a stored write from
+    a stale one by the module it gets back.
+    """
+    as_read = module.raw_data
+    rewrites = MODULE_REWRITES.get(plan.name, Rewrites())
+    data = check_response(
+        {} if as_read is MISSING else as_read,
+        plan.data,
+        plan.data,
+        data_model(module),
+        rewrites=rewrites,
+    )
+    if any(
+        not (
+            change.intended is MISSING
+            and any(matches(change.path, pattern) for pattern in rewrites.readded)
+        )
+        for change in data.applied
+    ):
+        return True
+    return (
+        plan.operation == "update"
+        and plan.refs is not None
+        and bool(check_refs(module.raw_refs, plan.refs, plan.refs).applied)
+    )
+
+
 def check_module_write[M: ConfigurationModuleBase](
     module: M,
     plan: ModulePlan,
     stored: ConfigurationModuleBase,
     *,
-    refused: bool = False,
+    answer: WriteAnswer = "row",
 ) -> ModuleWrite[M]:
     """The outcome of writing *plan* to *module*, which the VCO now holds as *stored*.
 
     *stored* is the module the VCO returned for the write, or read after it;
-    it is of the class of *module*. *refused* says the VCO refused the
-    write's ``version``, so *stored* is from the read after the refusal.
+    it is of the class of *module*. *answer* says what the VCO said of the
+    write (``WriteAnswer``); after ``"refused"``, *stored* is from the read
+    after the refusal.
 
     The data is checked against the raw data as read (without reconciled
     segments, so those are planned changes too) and, for an update, the refs
@@ -250,7 +290,7 @@ def check_module_write[M: ConfigurationModuleBase](
         )
 
     version = module.version or ""
-    detail = _conflict(refused, plan, applied, lost_edits)
+    detail = _conflict(answer == "refused", plan, applied, lost_edits)
     if detail is not None:
         raise ConfigConflictError(
             stored.id_,

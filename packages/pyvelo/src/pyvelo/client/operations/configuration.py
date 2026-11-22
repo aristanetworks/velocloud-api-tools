@@ -10,6 +10,7 @@ from pyvelo.client.exceptions import (
     ConfigConflictError,
     ModuleWriteError,
     VcoOperationError,
+    WriteAnswer,
     is_precondition_failure,
     is_version_conflict,
 )
@@ -22,6 +23,7 @@ from pyvelo.client.module_check import (
     check_module_write,
     check_refs,
     data_model,
+    has_checkable_change,
 )
 from pyvelo.client.module_write import (
     ModulePlan,
@@ -316,7 +318,13 @@ class ConfigurationMixin(Protocol):
         *module*, asking for the module row as stored. When the VCO answers
         without one (it refused the version, or it ignores ``returnData``), the
         module is read back from its configuration; an error of that read
-        propagates. Sends nothing when the plan's operation is ``none``, and
+        propagates. An update with no change the check can find stored
+        (``has_checkable_change``: every change is to a value the VCO stores
+        its own way, or inside a ref row that keeps its identity) is sent
+        without ``returnData`` and read back: a VCO with its conditional
+        check off answers a stale update that asks for the row with the row
+        as it is, which then looks like a stored write, but it answers a
+        refusal of one that does not with a row count of zero. Sends nothing when the plan's operation is ``none``, and
         returns *module* itself.
 
         Returns a ``ModuleWrite`` with the module as stored, of the class of
@@ -337,12 +345,14 @@ class ConfigurationMixin(Protocol):
             return ModuleWrite(plan.name, "none", module, plan)
         level = module.config_context
         refusal: ConfigConflictError | None = None
+        answer: WriteAnswer = "row"
         stored: ConfigurationModuleBase | None
         if plan.operation == "insert":
             inserted = await self.insert_configuration_module(
                 insert_request(module, plan, enterprise_id), level=level
             )
             if isinstance(inserted, InsertConfigurationModuleResult):
+                answer = "counted"
                 stored = await _read_stored(
                     self,
                     module,
@@ -354,7 +364,12 @@ class ConfigurationMixin(Protocol):
             else:
                 stored = inserted
         else:
-            request = update_request(module, plan, enterprise_id)
+            request = update_request(
+                module,
+                plan,
+                enterprise_id,
+                return_data=has_checkable_change(module, plan),
+            )
             try:
                 stored = await self.update_configuration_module(request, level=level)
             except ConfigConflictError as error:
@@ -362,10 +377,12 @@ class ConfigurationMixin(Protocol):
                 # modified) and returned no row. Read in this block, so that an
                 # error of the read has the refusal as its context.
                 refusal = error
+                answer = "refused"
                 stored = await _read_stored(
                     self, module, plan, enterprise_id, refused=True
                 )
             if stored is None:
+                answer = "counted"
                 stored = await _read_stored(
                     self, module, plan, enterprise_id, refused=False
                 )
@@ -376,7 +393,7 @@ class ConfigurationMixin(Protocol):
                 f"the VCO holds module {stored.id_} as a {held}, not a {sent}",
             )
         try:
-            return check_module_write(module, plan, stored, refused=refusal is not None)
+            return check_module_write(module, plan, stored, answer=answer)
         except ModuleWriteError as outcome:
             if refusal is None:
                 raise
