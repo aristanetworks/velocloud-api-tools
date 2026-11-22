@@ -14,10 +14,13 @@ from typing import TYPE_CHECKING, Any, Literal, Protocol
 import httpx
 from pydantic import BaseModel
 
-from pyvelo.core import PaginatedVcoModel, VcoModel
+from pyvelo.core import ConfigContext, PaginatedVcoModel, VcoModel
 
 if TYPE_CHECKING:
-    from pyvelo.client.schemas.configuration import UpdateConfigurationModule
+    from pyvelo.client.schemas.configuration import (
+        AnyConfigurationModule,
+        UpdateConfigurationModule,
+    )
 
 
 class VcoClientBaseProtocol(Protocol):
@@ -56,7 +59,10 @@ class VcoClientBaseProtocol(Protocol):
     ) -> Sequence[T]: ...
 
     async def update_configuration_module(
-        self, request: UpdateConfigurationModule
-    ) -> None: ...
+        self,
+        request: UpdateConfigurationModule,
+        *,
+        level: ConfigContext | None = None,
+    ) -> AnyConfigurationModule | None: ...
 
     def _on_stale_websocket_closed(self, task: asyncio.Task[None]) -> None: ...

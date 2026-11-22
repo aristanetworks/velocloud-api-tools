@@ -8,6 +8,7 @@ from pydantic import MISSING
 from pyvelo.client.exceptions import (
     ConfigConflictError,
     VcoOperationError,
+    is_precondition_failure,
     is_version_conflict,
 )
 from pyvelo.client.models.configuration.device_settings.root import DeviceSettingsData
@@ -31,16 +32,23 @@ from pyvelo.client.schemas.configuration import (
     GetRoutableApplications,
     InsertConfigurationModule,
     InsertConfigurationModuleResult,
+    InsertedConfigurationModule,
     UpdateConfigurationModule,
+    UpdateConfigurationModuleResult,
 )
 from pyvelo.client.schemas.profiles import (
     CreateProfile,
     CreateProfileResult,
 )
-from pyvelo.core import RowsModifiedConfirmation
+from pyvelo.core import ConfigContext, RowsModifiedConfirmation
 
 if TYPE_CHECKING:
     from pyvelo.client._client_protocol import VcoClientBaseProtocol
+
+
+def _level_context(level: ConfigContext | None) -> dict[str, ConfigContext] | None:
+    """The validation context that puts a returned module at config level *level*."""
+    return None if level is None else {"config_level": level}
 
 
 class ConfigurationMixin(Protocol):
@@ -100,35 +108,88 @@ class ConfigurationMixin(Protocol):
 
     @domain_tag(CONFIG)
     async def insert_configuration_module(
-        self: VcoClientBaseProtocol, request: InsertConfigurationModule
-    ) -> InsertConfigurationModuleResult:
-        """Insert a new configuration module into a profile or edge-specific configuration."""
-        result = await self.portal(
-            "configuration/insertConfigurationModule",
-            request,
-            InsertConfigurationModuleResult,
-        )
-        if isinstance(result.error, str):
+        self: VcoClientBaseProtocol,
+        request: InsertConfigurationModule,
+        *,
+        level: ConfigContext | None = None,
+    ) -> InsertConfigurationModuleResult | AnyConfigurationModule:
+        """Insert a new configuration module into a profile or edge-specific configuration.
+
+        With ``return_data`` the result is the module row as stored, validated
+        as a module at config level *level*; otherwise, or from a VCO that
+        ignores ``returnData``, it is the new module's ID.
+        """
+        result: InsertConfigurationModuleResult | AnyConfigurationModule
+        if request.return_data is True:
+            answer = await self.portal(
+                "configuration/insertConfigurationModule",
+                request,
+                InsertedConfigurationModule,
+                validation_context=_level_context(level),
+            )
+            result = answer.root
+        else:
+            result = await self.portal(
+                "configuration/insertConfigurationModule",
+                request,
+                InsertConfigurationModuleResult,
+            )
+        if isinstance(result, InsertConfigurationModuleResult) and isinstance(
+            result.error, str
+        ):
             raise VcoOperationError("insert configuration module", result.error)
         return result
 
     @domain_tag(CONFIG)
     async def update_configuration_module(
-        self: VcoClientBaseProtocol, request: UpdateConfigurationModule
-    ) -> None:
+        self: VcoClientBaseProtocol,
+        request: UpdateConfigurationModule,
+        *,
+        level: ConfigContext | None = None,
+    ) -> AnyConfigurationModule | None:
         """Update an existing configuration module's data and, optionally, refs.
 
-        Raises ``ConfigConflictError`` if the request carries a ``version`` and
-        the VCO answers that no rows were modified, which is how it reports a
-        version other than the module's current one. A request without a
-        version is not checked.
+        Raises ``ConfigConflictError`` if the request carries a ``version`` that
+        is not the module's current one and the VCO says so: a VCO with its
+        conditional check on refuses it with a precondition error, also when
+        the request asks for data, and one with the check off answers that no
+        rows were modified. A request without a version is not checked.
+
+        With ``return_data`` the result is the module row as stored, validated
+        as a module at config level *level*, with its raw data and refs
+        captured as on any read. At this level a stale ``version`` cannot be
+        told from a write: a VCO with the check off answers both with a row,
+        the stale one with the current row unchanged. ``write_module`` compares
+        the row with what was sent. Without ``return_data``, or from a VCO that
+        ignores it and answers with a row count, the result is None.
         """
-        result = await self.portal(
-            "configuration/updateConfigurationModule",
-            request,
-            RowsModifiedConfirmation,
-        )
         version = request.version
+        result: AnyConfigurationModule | RowsModifiedConfirmation
+        try:
+            if request.return_data is True:
+                answer = await self.portal(
+                    "configuration/updateConfigurationModule",
+                    request,
+                    UpdateConfigurationModuleResult,
+                    validation_context=_level_context(level),
+                )
+                result = answer.root
+            else:
+                result = await self.portal(
+                    "configuration/updateConfigurationModule",
+                    request,
+                    RowsModifiedConfirmation,
+                )
+        except VcoOperationError as error:
+            if is_precondition_failure(error):
+                raise ConfigConflictError(
+                    request.configuration_module_id,
+                    "" if version is MISSING else version,
+                    "the VCO refused the version",
+                ) from error
+            raise
+        if not isinstance(result, RowsModifiedConfirmation):
+            return result
         if version is not MISSING and is_version_conflict(
             error=result.error, rows=result.rows
         ):
@@ -137,6 +198,12 @@ class ConfigurationMixin(Protocol):
             )
         if result.error:
             raise VcoOperationError("update configuration module", result.error)
+        if result.rows is None:
+            raise VcoOperationError(
+                "update configuration module",
+                "the result is neither a module row nor a row count",
+            )
+        return None
 
     @domain_tag(CONFIG)
     async def update_module(
@@ -163,7 +230,7 @@ class ConfigurationMixin(Protocol):
         plan = plan_module(module, data, refs=refs, profile=profile)
         if plan.operation == "none":
             return
-        await self.update_configuration_module(
+        _ = await self.update_configuration_module(
             update_request(module, plan, enterprise_id)
         )
 

@@ -17,14 +17,13 @@ from typing import Any
 import httpx
 from pydantic import MISSING
 
+from pyvelo.client.exceptions import PRECONDITION_FAILED
 from pyvelo.client.schemas.configuration import (
     ConfigurationBase,
     ConfigurationModuleBase,
 )
 from pyvelo.core import ConfigContext
 from pyvelo.testing.fixtures import make_jsonrpc_response
-
-PRECONDITION_FAILED = "UPDATE_CONFIGURATION_MODULE_PRECONDITION_FAILED"
 
 type StoreHook = Callable[[dict[str, Any], dict[str, Any] | None], None]
 """Called with the row about to be stored and the row it replaces (None for an insert); changes the first in place."""

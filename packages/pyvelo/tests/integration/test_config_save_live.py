@@ -576,7 +576,7 @@ async def test_a_request_without_a_version_is_not_checked(lab: Lab) -> None:
             older, plan_module(older), lab.enterprise_id
         )
         stale.version = MISSING
-        await lab.client.update_configuration_module(stale)
+        _ = await lab.client.update_configuration_module(stale)
         after = await site.read_present()
         stored = changes_between(Name.WAN, original.data, after.raw_data, WanData)
         check(
@@ -608,9 +608,11 @@ async def test_a_data_edit_sends_no_refs(
     sent: list[UpdateConfigurationModule] = []
     send = lab.client.update_configuration_module
 
-    async def spy(request: UpdateConfigurationModule) -> None:
+    async def spy(
+        request: UpdateConfigurationModule, *, level: ConfigContext | None = None
+    ) -> AnyConfigurationModule | None:
         sent.append(request)
-        await send(request)
+        return await send(request, level=level)
 
     async with restoring(site):
         module = expect(

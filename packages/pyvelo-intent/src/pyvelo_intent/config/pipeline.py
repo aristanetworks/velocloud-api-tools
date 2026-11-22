@@ -418,7 +418,7 @@ class ConfigPipeline:
         ):
             raise TypeError(f"Cannot update module type: {type(mod).__name__}")
 
-        await self.client.update_configuration_module(
+        _ = await self.client.update_configuration_module(
             update_request(mod, plan, enterprise_id)
         )
 

@@ -70,7 +70,13 @@ from pyvelo.client.schemas.edge import (
 )
 from pyvelo.client.schemas.enterprise import GetEnterpriseEdges
 from pyvelo.client.schemas.profiles import GetEnterpriseConfigurations
-from pyvelo.core import Alias, NoneIsMissing, RowsModifiedConfirmation, VcoModel
+from pyvelo.core import (
+    Alias,
+    ConfigContext,
+    NoneIsMissing,
+    RowsModifiedConfirmation,
+    VcoModel,
+)
 from pyvelo.core.rebase import Key, Path, RawChange, raw_changes
 
 SYNTHETIC_PREFIX = "pyvelo-it-"
@@ -341,15 +347,19 @@ def redact_refusals(client: VcoClient) -> None:
     update = client.update_configuration_module
     insert = client.insert_configuration_module
 
-    async def redacted_update(request: UpdateConfigurationModule) -> None:
+    async def redacted_update(
+        request: UpdateConfigurationModule, *, level: ConfigContext | None = None
+    ) -> AnyConfigurationModule | None:
         try:
-            await update(request)
+            return await update(request, level=level)
         except VcoOperationError as exc:
             raise _redacted(exc) from None
 
-    async def redacted_insert(request: InsertConfigurationModule) -> Any:
+    async def redacted_insert(
+        request: InsertConfigurationModule, *, level: ConfigContext | None = None
+    ) -> Any:
         try:
-            return await insert(request)
+            return await insert(request, level=level)
         except VcoOperationError as exc:
             raise _redacted(exc) from None
 
@@ -686,7 +696,7 @@ async def capture(site: Site) -> Original | None:
 async def write_data(site: Site, module: AnyConfigurationModule, data: object) -> None:
     """Send *data* to the module as it stands (its version), with no refs."""
     document = expect(data, dict, "the data to write")
-    await site.client.update_configuration_module(
+    _ = await site.client.update_configuration_module(
         UpdateConfigurationModule(
             configuration_module_id=module.id_,
             enterprise_id=(

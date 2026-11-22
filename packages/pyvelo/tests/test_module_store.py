@@ -9,6 +9,7 @@ from typing import Any, cast
 
 import pytest
 from pydantic import MISSING
+from pyvelo.client.exceptions import PRECONDITION_FAILED
 from pyvelo.client.schemas.configuration import (
     ConfigurationModuleUpdate,
     FirewallConfigurationModule,
@@ -18,7 +19,6 @@ from pyvelo.client.schemas.configuration import (
 from pyvelo.core import ConfigContext
 from pyvelo.testing import make_module_json
 from pyvelo.testing.module_store import (
-    PRECONDITION_FAILED,
     ModuleStore,
     RpcError,
     as_stored,

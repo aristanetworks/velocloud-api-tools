@@ -19,6 +19,7 @@ from pyvelo.client.models.configuration.firewall.segment import FirewallSegment
 from pyvelo.client.models.enterprise.network_segment import NetworkSegmentData
 from pyvelo.client.operations.edge import GetEdgeConfigurationStackResult
 from pyvelo.client.schemas.configuration import (
+    AnyConfigurationModule,
     ConfigurationBase,
     EnterpriseConfigurationProfile,
     FirewallConfigurationModule,
@@ -36,6 +37,7 @@ from pyvelo.client.schemas.enterprise import (
 )
 from pyvelo.client.schemas.profiles import GetEnterpriseConfigurations
 from pyvelo.client.vco_client import VcoClient
+from pyvelo.core import ConfigContext
 from pyvelo.testing import (
     ModuleStore,
     configuration_row,
@@ -191,16 +193,22 @@ class MockVcoClient(VcoClient):
 
     @override
     async def update_configuration_module(
-        self, request: UpdateConfigurationModule
-    ) -> None:
+        self,
+        request: UpdateConfigurationModule,
+        *,
+        level: ConfigContext | None = None,
+    ) -> AnyConfigurationModule | None:
         self.calls.append(("update_configuration_module", request))
         self.update_requests.append(request)
-        await super().update_configuration_module(request)
+        return await super().update_configuration_module(request, level=level)
 
     @override
     async def insert_configuration_module(
-        self, request: InsertConfigurationModule
-    ) -> InsertConfigurationModuleResult:
+        self,
+        request: InsertConfigurationModule,
+        *,
+        level: ConfigContext | None = None,
+    ) -> InsertConfigurationModuleResult | AnyConfigurationModule:
         self.calls.append(("insert_configuration_module", request))
         self.insert_requests.append(request)
-        return await super().insert_configuration_module(request)
+        return await super().insert_configuration_module(request, level=level)

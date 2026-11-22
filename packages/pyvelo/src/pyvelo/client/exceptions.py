@@ -1,5 +1,5 @@
-from collections.abc import Sequence
-from typing import Any
+from collections.abc import Mapping, Sequence
+from typing import Any, Final, cast
 
 from pyvelo.core.rebase import Path
 
@@ -214,6 +214,30 @@ class UnboundError(VcoError):
     """
 
 
+PRECONDITION_FAILED: Final = "UPDATE_CONFIGURATION_MODULE_PRECONDITION_FAILED"
+"""The code of the VCO's refusal of a stale module version, in ``error.data.error[]``."""
+
+
+def is_precondition_failure(error: VcoOperationError) -> bool:
+    """Whether *error* is the VCO refusing a stale module version before it writes.
+
+    A VCO with its conditional check on answers an update whose ``version`` is
+    not the module's current one with a ``validationError`` whose data lists an
+    error with the code ``PRECONDITION_FAILED``, and writes nothing.
+    """
+    data = cast(object, error.data)
+    if not isinstance(data, Mapping):
+        return False
+    entries = cast(Mapping[str, object], data).get("error")
+    if not isinstance(entries, list):
+        return False
+    return any(
+        isinstance(entry, Mapping)
+        and cast(Mapping[str, object], entry).get("code") == PRECONDITION_FAILED
+        for entry in cast(list[object], entries)
+    )
+
+
 def is_version_conflict(*, error: str | None, rows: int | None) -> bool:
     """Whether an update result means the module's version was stale.
 
@@ -223,8 +247,10 @@ def is_version_conflict(*, error: str | None, rows: int | None) -> bool:
     error text, and nothing is written. The current version answers
     ``{"rows": 1}``, also when the data is unchanged, so zero rows never means
     "nothing to change". A request without a version is never checked and writes
-    unconditionally. A JSON-RPC error is never a stale version: an unknown
-    module is a ``validationError``. So a conflict is zero rows with no error
-    text, and nothing else.
+    unconditionally. That is a VCO with its conditional check off. With it on,
+    a stale version gets no result: it is refused with the JSON-RPC
+    ``validationError`` ``UPDATE_CONFIGURATION_MODULE_PRECONDITION_FAILED``
+    (:func:`is_precondition_failure`). In a result, a conflict is zero rows with
+    no error text, and nothing else.
     """
     return not error and rows == 0

@@ -40,6 +40,7 @@ from pyvelo.core import (
     Alias,
     ConfigContext,
     NoneIsMissing,
+    RowsModifiedConfirmation,
     Tinyint,
     VcoModel,
     VcoTimestamp,
@@ -386,6 +387,8 @@ class UpdateConfigurationModule(VcoModel):
     enterprise_id: Annotated[int | MISSING, NoneIsMissing] = MISSING
     version: Annotated[str | MISSING, NoneIsMissing] = MISSING
     update: Annotated[ConfigurationModuleUpdate, Alias("_update")]
+    return_data: bool | MISSING = MISSING
+    """``True`` asks for the module row as stored in place of a row count."""
 
 
 class InsertConfigurationModuleResult(VcoModel):
@@ -394,11 +397,36 @@ class InsertConfigurationModuleResult(VcoModel):
     error: str | None | MISSING = MISSING
 
 
+UpdateConfigurationModuleResult = RootModel[
+    Annotated[
+        AnyConfigurationModule | RowsModifiedConfirmation,
+        Field(union_mode="left_to_right"),
+    ]
+]
+"""An update's answer when it asks for data: the module row as stored.
+
+A VCO that ignores ``returnData`` answers with a row count.
+"""
+
+InsertedConfigurationModule = RootModel[
+    Annotated[
+        AnyConfigurationModule | InsertConfigurationModuleResult,
+        Field(union_mode="left_to_right"),
+    ]
+]
+"""An insert's answer when it asks for data: the module row as stored.
+
+A VCO that ignores ``returnData`` answers with the new ID and a row count.
+"""
+
+
 class InsertConfigurationModuleBase(VcoModel):
     description: str | None = ""
     configuration_id: Annotated[int, Resolvable(ProfileIdentity, "id")]
     enterprise_id: Annotated[int | MISSING, NoneIsMissing] = MISSING
     type_: Annotated[ConfigurationScope, Alias("type")] = ConfigurationScope.ENTERPRISE
+    return_data: bool | MISSING = MISSING
+    """``True`` asks for the module row as stored in place of its ID."""
 
 
 class InsertQosConfigurationModule(InsertConfigurationModuleBase):
@@ -528,10 +556,12 @@ __all__ = [
     "GetRoutableApplications",
     "InsertConfigurationModule",
     "InsertConfigurationModuleResult",
+    "InsertedConfigurationModule",
     "OperatorConfiguration",
     "OperatorConfigurationModule",
     "QosConfigurationModule",
     "UpdateConfigurationModule",
+    "UpdateConfigurationModuleResult",
     "WanConfigurationModule",
     "new_edge_module",
 ]

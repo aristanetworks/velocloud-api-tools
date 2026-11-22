@@ -82,7 +82,7 @@ from pyvelo.client.schemas.configuration import (
     UpdateConfigurationModule,
     WanConfigurationModule,
 )
-from pyvelo.core import VcoModel
+from pyvelo.core import ConfigContext, VcoModel
 from pyvelo.core.rebase import Key, Path, RawChange, raw_changes
 from pyvelo_intent import ConfigPipeline, ConfigState, StateSpentError, add
 
@@ -109,11 +109,15 @@ def refused_writes(vco_client: VcoClient, monkeypatch: pytest.MonkeyPatch) -> li
     """Refuse every write to the client, and list the attempts: nothing is sent."""
     attempts: list[str] = []
 
-    async def refuse_update(request: UpdateConfigurationModule) -> None:
+    async def refuse_update(
+        request: UpdateConfigurationModule, *, level: ConfigContext | None = None
+    ) -> None:
         attempts.append("update")
         raise WriteRefused
 
-    async def refuse_insert(request: InsertConfigurationModule) -> Any:
+    async def refuse_insert(
+        request: InsertConfigurationModule, *, level: ConfigContext | None = None
+    ) -> Any:
         attempts.append("insert")
         raise WriteRefused
 
@@ -128,13 +132,17 @@ def writes(vco_client: VcoClient, monkeypatch: pytest.MonkeyPatch) -> Writes:
     update = vco_client.update_configuration_module
     insert = vco_client.insert_configuration_module
 
-    async def spy_update(request: UpdateConfigurationModule) -> None:
+    async def spy_update(
+        request: UpdateConfigurationModule, *, level: ConfigContext | None = None
+    ) -> AnyConfigurationModule | None:
         record.updates.append(request)
-        await update(request)
+        return await update(request, level=level)
 
-    async def spy_insert(request: InsertConfigurationModule) -> Any:
+    async def spy_insert(
+        request: InsertConfigurationModule, *, level: ConfigContext | None = None
+    ) -> Any:
         record.inserts.append(request)
-        return await insert(request)
+        return await insert(request, level=level)
 
     monkeypatch.setattr(vco_client, "update_configuration_module", spy_update)
     monkeypatch.setattr(vco_client, "insert_configuration_module", spy_insert)

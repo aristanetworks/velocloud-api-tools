@@ -17,6 +17,7 @@ from pyvelo.client.models.configuration.firewall.root import FirewallData
 from pyvelo.client.models.configuration.qos.root import QosData
 from pyvelo.client.models.configuration.wan.root import WanData
 from pyvelo.client.schemas.configuration import (
+    AnyConfigurationModule,
     ConfigurationBase,
     ConfigurationModuleBase,
     FirewallConfigurationModule,
@@ -41,7 +42,7 @@ class TestUpdateConfigurationModuleErrors:
         client.portal = AsyncMock(return_value=error_result)
 
         with pytest.raises(VcoOperationError, match="update configuration module"):
-            await client.update_configuration_module(AsyncMock())
+            _ = await client.update_configuration_module(AsyncMock())
 
     async def test_success_returns_none(self):
         """update_configuration_module should return None on success."""
@@ -125,8 +126,11 @@ class TestUpdateModule:
         client = VcoClient("test.velocloud.net", "test-token")
         calls: list[UpdateConfigurationModule] = []
 
-        async def capture(request: UpdateConfigurationModule) -> None:
+        async def capture(
+            request: UpdateConfigurationModule, *, level: ConfigContext | None = None
+        ) -> AnyConfigurationModule | None:
             calls.append(request)
+            return None
 
         client.update_configuration_module = capture  # type: ignore[method-assign]
         return client, calls

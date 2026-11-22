@@ -18,7 +18,6 @@ from pyvelo.testing.fixtures import (
     mock_vco_client_factory,
 )
 from pyvelo.testing.module_store import (
-    PRECONDITION_FAILED,
     ModuleStore,
     RpcError,
     StoreHook,
@@ -29,7 +28,6 @@ from pyvelo.testing.module_store import (
 )
 
 __all__ = [
-    "PRECONDITION_FAILED",
     "FakeEdge",
     "FakeSegment",
     "FakeSegmentData",
