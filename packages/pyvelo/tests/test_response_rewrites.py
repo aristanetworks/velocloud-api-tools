@@ -408,3 +408,22 @@ def test_server_change_below_a_list_compared_whole_has_no_value_read():
     assert_paths(check, applied=["hops"], server_changes=["hops[#0].ip"])
     change = server_change_at(check, "hops[#0].ip")
     assert (change.as_read, change.stored) == (MISSING, "2001:db8::2")
+
+
+def test_changed_value_at_a_readded_path_that_is_not_stored_is_not_applied():
+    check = check_response(
+        {"sub": {"v": 1, "note": "n"}},
+        {"sub": {"v": 1, "note": "m"}},
+        {"sub": {"v": 1, "note": "n"}},
+        Root,
+        rewrites=NOTE_READDED,
+    )
+    assert paths(check.not_applied) == ["sub.note"]
+    assert check.left_out == ()
+    assert check.server_changes == ()
+
+
+def test_owned_key_stored_as_sent_is_no_server_change():
+    check = check_response({"stamp": "s1"}, {"stamp": "s2"}, {"stamp": "s2"}, Box)
+    assert paths(check.left_out) == ["stamp"]
+    assert check.server_changes == ()

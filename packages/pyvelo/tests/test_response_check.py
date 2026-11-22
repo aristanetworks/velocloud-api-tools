@@ -538,3 +538,34 @@ def test_an_item_past_the_end_of_the_list_as_read_may_hold_more():
         {"hops": [{"ip": "10.0.0.1", "cost": 5}, {"ip": "10.0.0.2", "cost": 0}]},
     )
     assert_paths(check, applied=["hops"], server_changes=["hops[#1].cost"])
+
+
+def test_item_pairs_by_its_alt_key_before_its_key():
+    # The write that raised rule a (i1) to priority 2 was not stored. Another
+    # writer renamed that rule to b and made a new rule a (i9) with priority 2.
+    check = chk(
+        rules(rule("a", i="i1", p=1)),
+        rules(rule("a", i="i1", p=2)),
+        rules(rule("a", i="i9", p=2), rule("b", i="i1", p=1)),
+    )
+    assert paths(check.not_applied) == ["rules[a].priority"]
+    assert check.applied == ()
+    assert not_applied_at(check, "rules[a].priority").stored == 1
+
+
+def test_removed_item_without_an_alt_key_does_not_take_another_writers_item():
+    check = chk(rules(A, X), rules(A), rules(A, Z))
+    assert_paths(check, applied=["rules[x]"], server_changes=["rules[z]"])
+
+
+def test_item_taken_for_a_removal_is_not_paired_again():
+    # Nothing was stored: the item the plan removed is still there, and the
+    # item it added without a key is not.
+    two = {"internalId": "u2", "family": "IPv4", "name": "two"}
+    new = {"family": "IPv4", "name": "new"}
+    check = chk({"links": [L1, two]}, {"links": [L1, new]}, {"links": [L1, two]})
+    assert sorted(paths(check.not_applied)) == ["links[#1]", "links[u2,IPv4]"]
+    added = not_applied_at(check, "links[#1]")
+    assert added.stored is MISSING
+    assert added.clash is False
+    assert not_applied_at(check, "links[u2,IPv4]").stored == two
