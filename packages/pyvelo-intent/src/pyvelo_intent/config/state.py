@@ -565,7 +565,10 @@ class SaveResult:
 
     A change to a field it owns, the removal of a default it adds back, and
     the removal of a row of an append-only ref: neither applied nor lost, each
-    with the value read, the value sent and the value stored."""
+    with the value read, the value sent and the value stored. Not in a list
+    compared whole (a keyed list read with an item that has no key): there an
+    owned field is part of the list's change, and a value stored there
+    otherwise than sent is a server change with ``as_read`` ``MISSING``."""
     warnings: list[ValidationWarning] = field(default_factory=list)
     validation_errors: list[ValidationError] = field(default_factory=list)
     # Optional count for downstream integrations managing enterprise objects.

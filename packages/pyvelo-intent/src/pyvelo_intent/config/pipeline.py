@@ -335,7 +335,10 @@ class ConfigPipeline:
            plan, an ID it issued, an IPv6 address in canonical form, the
            value it stored at a left-out change. A value stored as it was
            read is not listed there; a left-out change kept so is in
-           ``left_out``.
+           ``left_out``. In a list compared whole (a keyed list read with an
+           item that has no key) nothing is left out: a value stored at an
+           owned field otherwise than sent is a server change with
+           ``as_read`` ``MISSING``.
 
         A later :meth:`ConfigState.plan` is empty, and the state takes more
         edits and saves. Objects taken from the state before the save belong

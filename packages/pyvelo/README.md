@@ -49,8 +49,13 @@ the plan meant to change. When every planned change is stored it returns a
 `server_changes` (what else the VCO stores otherwise than sent, such as an ID
 it issued). Otherwise it raises, from `pyvelo.client.exceptions`:
 
-- `ConfigConflictError` when the module changed on the VCO since it was read;
+- `ConfigConflictError` when the module changed on the VCO since it was read:
+  the VCO refused the version, or stored none of the changes and holds each
+  value as read;
 - `WriteNotAppliedError` when the VCO stored the write otherwise than as sent.
+  That includes a stale write to a VCO whose conditional version check is off,
+  when another writer changed a value the plan also changes: that edit is
+  marked as a clash.
 
 Each carries `lost_edits` (the planned changes not stored, with the values as
 read, meant and stored), `applied`, `server_changes`, the `plan` and the

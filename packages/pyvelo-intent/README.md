@@ -282,19 +282,28 @@ storing your changes. Neither list is an error.
   redone.
 
 A write whose changes are not all stored raises one of two errors, from
-`pyvelo.client.exceptions` and re-exported by `pyvelo_intent`:
+`pyvelo.client.exceptions` and re-exported by `pyvelo_intent`.
+`ConfigConflictError` says the module changed on the VCO since it was read;
+`WriteNotAppliedError` says the VCO stored the write otherwise than as sent.
+The rows below are tried in order, and the first that fits is raised, so a
+refused version is a `ConfigConflictError` even when some of your changes are
+stored:
 
-| Error | Raised when |
+| When | Raises |
 |---|---|
-| `ConfigConflictError` | the module changed on the VCO since it was read: the VCO refused the version, or none of your changes is stored and each value there is as read |
-| `WriteNotAppliedError` | some of your changes are stored and some are not, or a value you edited is stored as neither the one read nor the one sent; also an insert that is not stored as sent |
+| the VCO refused the version | `ConfigConflictError` |
+| the write is an insert, which carries no version | `WriteNotAppliedError` |
+| none of your changes is stored, and each value there is as read | `ConfigConflictError` |
+| anything else: some of your changes are stored and some are not, or a value you edited is stored as neither the one read nor the one sent | `WriteNotAppliedError` |
 
 Which of the two a stale write raises depends on the VCO's conditional check
 of the version. With it on, the VCO refuses the write, and the save raises
-`ConfigConflictError`. With it off, the VCO stores nothing and answers with the
-module as it is. The save then raises `ConfigConflictError` too, unless
-another writer also changed a value you edited: that raises
-`WriteNotAppliedError`, with the edit marked as a clash.
+`ConfigConflictError`. With it off, the VCO does not store the data and
+answers with the module as it is. The save then raises `ConfigConflictError`
+too, unless another writer also changed a value you edited: that raises
+`WriteNotAppliedError`, with the edit marked as a clash. A write that carries
+refs (an edited `module.refs`, or `refs=` on `update_module`) may still replace
+them, until the next phase reads the version before such a write.
 
 Both errors carry:
 
@@ -358,6 +367,15 @@ Known limits:
   those edits comes with derived refs, the next phase.
 - Until then, device settings and QoS writes send refs only when your refs
   changed, as before.
+- On a VCO with the conditional check off, a stale write that carries refs may
+  replace them while the data is not stored, overwriting another writer's
+  refs; the save then reports your data changes, if any, as not stored. Reading the version
+  before a write that carries refs comes with the next phase.
+- A keyed list read with an item that has no key (a WAN link without an
+  `internalId`) is compared as a whole. A change in it to a field the VCO owns
+  is then part of the list's change, not in `left_out`, and a value stored
+  there otherwise than sent is a server change with no value read (`as_read`
+  is `MISSING`), even when it is the value read.
 - An insert that reached the VCO but whose save failed, for example with a
   transport error, is retried as an insert by the next save. Check the
   configuration before saving again.
