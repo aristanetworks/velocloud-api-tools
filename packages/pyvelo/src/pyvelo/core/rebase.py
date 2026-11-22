@@ -387,6 +387,8 @@ def _map_value_type(field_info: FieldInfo) -> type[VcoModel] | None:
 
     ``MISSING`` and ``None`` are set aside, as ``list_kind`` sets them aside.
     None for any other field, and when the values hold no model or more than one.
+    Of a union with several ``dict[...]`` members the first is taken and the
+    others are not looked at.
     """
     for member in _members_without_missing_and_none(field_info.annotation):
         args = get_args(member)
@@ -881,10 +883,12 @@ def find_lossy_assignments(
     line up with the model's is not walked. A field that is not in *baseline*
     and whose dump changed is written whole, so nothing inside it is lost.
 
-    The values of a map of models (a ``dict[K, Model]`` field) are paired by
-    map key, and each pair is walked as its model. An entry only one side has
-    is not walked: a new entry is written whole. The key is a name in the
-    path: ``loopback_interfaces.LO1.advertise``.
+    The values of any dict held on both sides are paired by key and each pair
+    is walked: as its model for a map of models (a ``dict[K, Model]`` field),
+    untyped for any other dict (a ``dict[str, list[str]]`` field), where it
+    reports nothing. An entry only one side has is not walked: a new entry is
+    written whole. The key is a name in the path:
+    ``loopback_interfaces.LO1.advertise``.
 
     A field that is absent at the config level is not in the dumps at all, so
     ``rebase`` never sees it: a change to it is lost and its path is reported,
@@ -905,8 +909,9 @@ def is_override_flag(model: type[VcoModel], path: Path) -> bool:
 
     A path of ``raw_changes`` is accepted too: its names are keys as written
     (``bgp``, ``loopbackInterfaces``), and each is read through the model's
-    accepted keys. A path through an unkeyed list is not followed, so it is never one. A name
-    below a map of models is the map key: ``boxes.b1.ports[p1].override``.
+    accepted keys. A path through an unkeyed list is not followed, so it is
+    never one. A name below a map of models is the map key:
+    ``boxes.b1.ports[p1].override``.
     """
     *parents, last = path.parts
     node: _Node = model
@@ -1141,8 +1146,9 @@ def carry_unset_defaults(
     An alt key made anew on each parse (``QosRule.rule_logical_id`` read from a
     rule without one) differs between the dumps, so such items pair by key;
     once carried, the dumps agree on it and ``rebase`` pairs them by it. The
-    values of a map of models are paired by map key, and an entry only one side
-    has is not walked.
+    values of any dict held on both sides are paired by key, whether it is a map
+    of models or another dict (walked untyped, so it carries nothing), and an
+    entry only one side has is not walked.
     """
     _carry_in_value(baseline, current, before, after, None)
 

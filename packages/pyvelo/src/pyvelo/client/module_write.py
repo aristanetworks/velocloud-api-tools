@@ -21,9 +21,9 @@ no rules; a deviceSettings entry also has an empty ``routes.static``, which the
 Orchestrator requires), so the edge layer has a place to hold the segment.
 Those entries follow the edge's own, in the profile's order, also when the caller's
 data already holds one, in whatever place (a lookup added its placeholder, which
-the caller may have edited): a lookup never changes what is written. It
-never writes only to reconcile: with no change from the caller the plan is
-``none``. A segment the caller deletes from the edge layer that the profile has
+the caller may have edited): a lookup never changes what is written.
+Reconciliation never writes only to reconcile: with no change from the caller the
+plan is ``none``. A segment the caller deletes from the edge layer that the profile has
 comes back as that empty entry: the edge cannot drop what it inherits.
 
 Legacy keys: a firewall segment entry has no ``outboundOverride`` (the VCO and the
@@ -330,11 +330,11 @@ def _with_reconciled_segments(
     The segments of *extra* are the ones reconciliation adds. *current* may hold
     an entry for one (a lookup added its placeholder, which the caller may have
     edited), in whatever place; it is kept as it is and moved to where the
-    reconciled data has it. One *current* lacks is the baseline's. Without it the
-    segment would read as the caller deleting it (typed data, in the rebase) or
-    as a change to ``segments`` (a plain dict, which is the payload). The entries
-    of the edge's own segments keep the caller's order. An absent or null
-    ``segments`` in *current* is an empty list.
+    reconciled data has it. One *current* lacks is the baseline's. Without the
+    baseline's entry the segment would read as the caller deleting it (typed
+    data, in the rebase) or as a change to ``segments`` (a plain dict, which is
+    the payload). The entries of the edge's own segments keep the caller's
+    order. An absent or null ``segments`` in *current* is an empty list.
     """
     current_segments: object = current.get("segments")
     if current_segments is None:

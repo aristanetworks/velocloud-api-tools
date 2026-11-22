@@ -297,7 +297,10 @@ firewall: update
   positional or untyped list, and a keyed list that holds an item with no key
   and no ID (a WAN link read without an `internalId`) or two items of one name
   read without IDs. Keys the models do not know are then dropped from every
-  item of that list, and the models' defaults are written into them.
+  item of that list, and the models' defaults are written into them. A list
+  inside an interface that is not a plain port (a LAG's `slaveInterfaces`) is
+  also written whole when something in it changes, and keys the models do not
+  know are dropped from its other items.
 - A patch that moves items (a `move`) shows in `plan()` as one change at the
   list; in a keyed list the items' unknown keys are still kept.
 - A cache of loaded modules must keep the JSON rows or `module.raw_data`. A

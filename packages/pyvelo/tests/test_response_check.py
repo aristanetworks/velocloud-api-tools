@@ -1,8 +1,10 @@
 """The response check: which planned changes the VCO stored, and what else differs."""
 
 from collections.abc import Iterable, Sequence
+from typing import Annotated
 
-from pydantic import MISSING
+from pydantic import MISSING, Field
+from pyvelo.core import KeyField, VcoModel
 from pyvelo.core.response_check import (
     PlannedChange,
     ResponseCheck,
@@ -374,3 +376,45 @@ def test_change_beside_that_removal_is_not_applied():
     assert planned.intended == 2
     assert planned.stored is MISSING
     assert planned.clash is True
+
+
+class Port(VcoModel):
+    name: str
+    speed: int = 0
+
+
+class Box(VcoModel):
+    ports: Annotated[list[Port], KeyField("name")] = Field(default_factory=list)
+
+
+class Boxes(VcoModel):
+    boxes: dict[str, Box] = Field(default_factory=dict)
+
+
+def box(*ports: dict[str, object]) -> dict[str, object]:
+    return {"ports": list(ports)}
+
+
+def test_an_edit_below_a_map_entry_is_applied_and_a_sibling_key_is_a_server_change():
+    p1: dict[str, object] = {"name": "p1", "speed": 1}
+    p2: dict[str, object] = {"name": "p2", "speed": 5}
+    read = {"boxes": {"a": box(p1), "b": box(p2)}}
+    sent = {"boxes": {"a": box({**p1, "speed": 2}), "b": box(p2)}}
+    stored = {"boxes": {"a": box({**p1, "speed": 2}), "b": box({**p2, "note": "n"})}}
+    check = check_response(read, sent, stored, Boxes)
+    assert_paths(
+        check,
+        applied=["boxes.a.ports[p1].speed"],
+        server_changes=["boxes.b.ports[p2].note"],
+    )
+    assert server_change_at(check, "boxes.b.ports[p2].note").stored == "n"
+
+
+def test_an_edit_below_a_map_entry_the_stored_data_lacks_is_not_applied():
+    p1: dict[str, object] = {"name": "p1", "speed": 1}
+    p2: dict[str, object] = {"name": "p2", "speed": 5}
+    read = {"boxes": {"a": box(p1), "b": box(p2)}}
+    sent = {"boxes": {"a": box({**p1, "speed": 2}), "b": box(p2)}}
+    check = check_response(read, sent, read, Boxes)
+    assert_paths(check, not_applied=["boxes.a.ports[p1].speed"])
+    assert not_applied_at(check, "boxes.a.ports[p1].speed").stored == 1

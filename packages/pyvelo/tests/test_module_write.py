@@ -806,6 +806,50 @@ def test_an_edge_only_field_below_the_models_map_is_refused_on_a_profile():
     assert exc.value.fields == ["models.edge510.routed_interfaces[GE3].description"]
 
 
+def test_a_list_inside_a_lag_interface_is_written_whole():
+    """Known limit: a list inside an interface that is not a plain port is typed as
+    that of a plain port, so one edit in it is written as the whole list and the
+    keys of its other items that the models do not know are dropped."""
+    raw = {
+        **DS_RAW,
+        "models": {
+            "edge510": {
+                "routedInterfaces": [
+                    {
+                        "name": "LAG1",
+                        "disabled": False,
+                        "slaveInterfaces": [
+                            {"name": "GE5", "portPriority": 1},
+                            {"name": "GE6", "portPriority": 2, "futureSlave": True},
+                        ],
+                    }
+                ],
+                "lan": {"interfaces": []},
+            }
+        },
+    }
+    mod = ds(raw)
+    _ = mod.data.for_profile()
+    _ = mod.data.merge_patch(
+        {
+            "models": {
+                "edge510": {
+                    "routed_interfaces": {
+                        "LAG1": {"slave_interfaces": {"GE5": {"port_priority": 5}}}
+                    }
+                }
+            }
+        }
+    )
+    plan = plan_module(mod, level=PROFILE)
+    assert [str(c.path) for c in plan.changes] == [
+        "models.edge510.routedInterfaces[LAG1].slaveInterfaces"
+    ]
+    slaves = plan.data["models"]["edge510"]["routedInterfaces"][0]["slaveInterfaces"]
+    assert slaves[0]["portPriority"] == 5
+    assert slaves[1] == {"name": "GE6", "portPriority": 2}
+
+
 # --- defaults generated per parse are not the caller's change --------------
 
 QOS_RULE: dict[str, Any] = {
