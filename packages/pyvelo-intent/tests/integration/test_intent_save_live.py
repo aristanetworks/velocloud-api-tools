@@ -19,7 +19,8 @@ own message names lab entities and shows their values.
 
 Server-managed keys seen in what the Orchestrator stores (the only ones allowed;
 ``test_server_changes_hold_only_known_rewrites`` fails on any other, naming its
-path as a candidate for ``MODULE_REWRITES``):
+path, to be added here and to the test's known list, or to ``MODULE_REWRITES``
+for a value stored otherwise at a planned path):
 
 * ``ruleLogicalId``: assigned to a rule that was added without one.
 * ``routeMapsVersion``: added to a deviceSettings segment entry that lacks it
@@ -37,8 +38,10 @@ How the Orchestrator refuses a stale write is recorded by the run, not assumed.
 Each test that makes one prints a ``refused with`` line naming the form: the
 precondition error (its conditional check on), or the module row as stored, or
 a row count of zero (the check off, ``returnData`` honoured or ignored). With
-the check off, a stale save that edits a value the other writer also changed
-raises ``WriteNotAppliedError`` (a clash); with it on, ``ConfigConflictError``.
+the check off and the module row returned, a stale save that edits a value the
+other writer also changed raises ``WriteNotAppliedError`` (a clash); with it
+on, ``ConfigConflictError``. A VCO that ignores ``returnData`` answers
+``rows: 0`` instead, which is a stated refusal (``ConfigConflictError``).
 Seen on the lab: not yet recorded; the first run with write-back prints it.
 
 Requires VCO_HOST and VCO_TOKEN (VCO_ENTERPRISE_ID if the token needs one).
@@ -261,10 +264,12 @@ def _refusal_form(error: ModuleWriteError) -> str:
 
     ``write_module`` raises the outcome from the refusal the client raised:
     a ``ConfigConflictError`` from the precondition error, or one for a row
-    count of zero. An outcome with no such cause was checked against the
+    count of zero. When the module could not be read back after the refusal,
+    the refusal is the outcome's context instead (the outcome was raised
+    while handling it). An outcome with neither was checked against the
     module row the Orchestrator answered with.
     """
-    refusal = error.__cause__
+    refusal = error.__cause__ if error.__cause__ is not None else error.__context__
     if not isinstance(refusal, ConfigConflictError):
         return "the module row as stored"
     reason = refusal.__cause__
@@ -1545,8 +1550,10 @@ async def test_server_changes_hold_only_known_rewrites(
         unknown = [c for c in found if not _known_rewrite(case, c)]
         check(
             not unknown,
-            f"{case.id}: server changes beyond the known rewrites, each a candidate "
-            f"for MODULE_REWRITES: {_where(unknown)}",
+            f"{case.id}: server changes beyond the known rewrites: {_where(unknown)}. "
+            "A key only the Orchestrator adds goes in the known list here "
+            "(Rewrite.known, or SERVER_ASSIGNED_KEYS, and the module header); a "
+            "value it stores otherwise at a planned path goes in MODULE_REWRITES",
         )
         reported = {str(c.path) for c in found}
         missing = [p for p in required if str(p) not in reported]

@@ -101,6 +101,14 @@ def lower_case_ipv6(new: dict[str, Any], _: dict[str, Any] | None) -> None:
         responder["ipAddress"] = responder["ipAddress"].lower()
 
 
+def lower_case_v6_routes(new: dict[str, Any], _: dict[str, Any] | None) -> None:
+    """Store each IPv6 static route's addresses in canonical (lower-case) form, as the VCO does."""
+    for segment in new["data"]["segments"]:
+        for route in segment["routes"]["staticV6"]:
+            route["destination"] = route["destination"].lower()
+            route["gateway"] = route["gateway"].lower()
+
+
 def other_writer_edit(row: dict[str, Any]) -> None:
     """Another writer's change to a key the caller does not edit."""
     row["data"]["futureKey"] = 1
@@ -233,6 +241,49 @@ async def test_ipv6_stored_in_canonical_form_passes():
     routes = state.edge.device_settings.segment(SEGMENT).routes
     assert routes is not MISSING
     assert [r.ip_address for r in routes.icmp_responders] == ["2001:db8::1"]
+    assert state.plan().changed == ()
+    assert_state_is_the_stored_row(state, client, "deviceSettings")
+
+
+async def test_ipv6_keyed_static_route_stored_in_canonical_form_passes():
+    raw: dict[str, Any] = {
+        "lan": {"networks": [], "interfaces": []},
+        "segments": [
+            {
+                "segment": desc(0, SEGMENT),
+                "routes": {"static": [], "staticV6": []},
+            }
+        ],
+    }
+    profile: dict[str, Any] = {"lan": {}, "segments": [{"segment": desc(0, SEGMENT)}]}
+    state = make_state({"deviceSettings": raw}, {"deviceSettings": profile})
+    client = MockVcoClient.for_state(state)
+    client.store.on_store.append(lower_case_v6_routes)
+    pipeline = ConfigPipeline(client)
+    # The address text is part of the route's key.
+    _ = await pipeline.apply(
+        state,
+        module="device_settings",
+        segment=SEGMENT,
+        path="routes.static_v6",
+        patch={("2001:DB8:1::", 64, "FE80::1", "GE3"): add({"netmask": ""})},
+    )
+
+    result = await pipeline.save(state)
+
+    route = (
+        'segments["Global Segment"].routes.staticV6["2001:DB8:1::",64,"FE80::1",GE3]'
+    )
+    changes = result.server_changes[ConfigurationModuleName.DEVICE_SETTINGS]
+    assert paths(changes) == [f"{route}.destination", f"{route}.gateway"]
+    assert [
+        (c.as_read, c.stored) for c in changes if c.path.parts[-1] == "destination"
+    ] == [(MISSING, "2001:db8:1::")]
+    routes = state.edge.device_settings.segment(SEGMENT).routes
+    assert routes is not MISSING
+    assert [(r.destination, r.gateway) for r in routes.static_v6] == [
+        ("2001:db8:1::", "fe80::1")
+    ]
     assert state.plan().changed == ()
     assert_state_is_the_stored_row(state, client, "deviceSettings")
 

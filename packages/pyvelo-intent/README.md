@@ -311,6 +311,7 @@ Both errors carry:
 |---|---|
 | `lost_edits` | the planned changes that are not stored: each with its `path`, the value `as_read`, the value `intended` and the value `stored`; `clash` is true where the stored value is not the one read, because something else changed it too |
 | `applied` | the planned changes that are stored |
+| `left_out` | the planned changes the VCO stores its own way, as in `SaveResult.left_out` |
 | `server_changes` | what else the VCO stores otherwise than sent, as in `SaveResult.server_changes` |
 | `module` | the module as the VCO holds it now; None when it could not be read |
 | `plan` | the module's `ModulePlan` |
@@ -326,7 +327,7 @@ Configuration module 11 (firewall) changed since it was read (version v1): the V
 lost edits (not stored; redo these):
   segments["Global Segment"].outbound[block-ssh]: read (nothing), meant {"action": {"allow_or_deny": "deny"}, "comments": null, "loggingEnabled": false,…, stored (nothing)
   segments["Global Segment"].outbound[allow-web].match.dport_high: read 443, meant 8080, stored 8443  [clash: also changed on the VCO]
-changed on the VCO outside these edits:
+stored otherwise than sent:
   syslog_forwarding: read false, stored true
 ```
 
@@ -341,9 +342,13 @@ ones with your edits, and carries a note that names the modules written before
 it; a second save sends what still differs.
 
 A `WriteNotAppliedError` after a write that did work means the VCO stores that
-value in another form than the one sent. The fix is an entry in the table of
-rewrites, `MODULE_REWRITES` in `pyvelo.client.module_check`, or a `ServerOwned`
-marker on the model's field. Until then every save of that value raises.
+value in another form than the one sent. When the value is part of the key of
+an item you added, the item looks absent instead, and what the VCO stored looks
+like another writer's item: with nothing else changed, that reads as a
+conflict, `ConfigConflictError`, and redoing the `add` stores the item twice.
+The fix is an entry in the table of rewrites, `MODULE_REWRITES` in
+`pyvelo.client.module_check`, or a `ServerOwned` marker on the model's field.
+Until then every save of that value raises.
 
 Objects taken from the state before a save
 (`seg = state.edge.firewall.segment("Global Segment")`) belong to the modules
@@ -376,6 +381,10 @@ Known limits:
   is then part of the list's change, not in `left_out`, and a value stored
   there otherwise than sent is a server change with no value read (`as_read`
   is `MISSING`), even when it is the value read.
+- A key the VCO stores in a form the table of rewrites does not cover reads as
+  your item lost and another item, only the VCO's, in `server_changes`. IPv6
+  addresses in the keys of device settings (a static route's destination and
+  gateway) are covered.
 - An insert that reached the VCO but whose save failed, for example with a
   transport error, is retried as an insert by the next save. Check the
   configuration before saving again.
@@ -403,7 +412,7 @@ Known limits:
 
 | Module | What it provides |
 |---|---|
-| `pyvelo_intent` | Re-exports the public surface: `ConfigPipeline`, `ConfigState`, `SaveResult`, the patch helpers (`add`, `delete`, `move`, `at`) and `PatchError`, diff types (`DiffResult`, `Added`, `Removed`, `Modified`, `Unchanged`, `FieldChange`), the intent error types, the write errors `ConfigConflictError`, `WriteNotAppliedError` and `DetachedObjectError` (from `pyvelo.client.exceptions`), helpers (`build_default_pipeline`, `confirm_save`, `load_config`) |
+| `pyvelo_intent` | Re-exports the public surface: `ConfigPipeline`, `ConfigState`, `SaveResult`, the patch helpers (`add`, `delete`, `move`, `at`) and `PatchError`, diff types (`DiffResult`, `Added`, `Removed`, `Modified`, `Unchanged`, `FieldChange`), the intent error types, the write errors `ModuleWriteError` (the base of the next two), `ConfigConflictError`, `WriteNotAppliedError` and `DetachedObjectError` (from `pyvelo.client.exceptions`), helpers (`build_default_pipeline`, `confirm_save`, `load_config`) |
 | `pyvelo_intent.config.pipeline` | `ConfigPipeline` (load/load_profile → apply → save), `build_default_pipeline` |
 | `pyvelo_intent.config.state` | `ConfigState`, `SaveResult`, `ConfigFieldChange`, `ValidationWarning` |
 | `pyvelo_intent.config.helpers` | `load_config`, `confirm_save` |

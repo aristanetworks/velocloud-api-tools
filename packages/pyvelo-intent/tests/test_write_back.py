@@ -22,6 +22,7 @@ from pyvelo.client.exceptions import (
 from pyvelo.client.models.configuration.firewall.rules import FirewallOutboundRule
 from pyvelo.client.models.configuration.firewall.segment import FirewallSegment
 from pyvelo.client.models.configuration.qos.root import ServiceRateLimit
+from pyvelo.client.schemas.configuration import GenericConfigurationModule
 from pyvelo.core import VcoModel
 from pyvelo.core.rebase import Key, Path, key_text
 from pyvelo.core.response_check import PlannedChange, ServerChange
@@ -254,6 +255,39 @@ async def test_left_out_changes_are_in_the_save_result():
     assert at not in paths(result.server_changes[FIREWALL])
     assert state.edge.firewall.segments[0].outbound[0].rule_logical_id == "l1"
     assert state.plan().changed == ()
+
+
+async def test_a_module_a_save_cannot_write_raises_before_any_request():
+    state = make_state(
+        edge_modules=[
+            make_module_json(
+                "firewall",
+                copy.deepcopy(EDGE_FW),
+                module_id=1,
+                configuration_id=10,
+                version="e1",
+            ),
+            make_module_json(
+                "analyticsSettings",
+                {"enabled": False},
+                module_id=6,
+                configuration_id=10,
+                version="e1",
+            ),
+        ]
+    )
+    client = MockVcoClient.for_state(state)
+    state.edge.firewall.firewall_enabled = False
+    analytics = state.module("analyticsSettings")
+    assert isinstance(analytics, GenericConfigurationModule)
+    analytics.data["enabled"] = True
+    assert changed(state) == ["firewall", "analyticsSettings"]
+
+    with pytest.raises(TypeError, match="GenericConfigurationModule"):
+        _ = await ConfigPipeline(client).save(state)
+
+    assert client.store.requests == []
+    assert changed(state) == ["firewall", "analyticsSettings"]
 
 
 async def test_request_two_of_three_fails():

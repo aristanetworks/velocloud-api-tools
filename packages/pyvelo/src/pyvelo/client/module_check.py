@@ -134,8 +134,12 @@ def check_refs(as_read: object, sent: object | None, stored: object) -> Response
     stored; a row as read that is not in *sent* was removed, and is applied
     when it is not stored, or left out under an ``APPEND_ONLY_REF_NAMES``
     name. Either way a row as read and planned to stay that is not stored,
-    and a stored row that is neither, are server changes.
+    and a stored row that is neither, are server changes. When *as_read* is
+    ``MISSING`` and *sent* None the refs were never read, so a stored row is
+    no change: the result is empty.
     """
+    if as_read is MISSING and sent is None:
+        return ResponseCheck()
     read, kept = ref_rows(as_read), ref_rows(stored)
     planned = read if sent is None else ref_rows(sent)
     applied: list[PlannedChange] = []
@@ -232,6 +236,7 @@ def check_module_write[M: ConfigurationModuleBase](
     )
     applied = (*data.applied, *refs.applied)
     lost_edits = (*data.not_applied, *refs.not_applied)
+    left_out = (*data.left_out, *refs.left_out)
     server_changes = (*data.server_changes, *refs.server_changes)
     if not lost_edits:
         return ModuleWrite(
@@ -240,7 +245,7 @@ def check_module_write[M: ConfigurationModuleBase](
             module=stored,
             plan=plan,
             applied=applied,
-            left_out=(*data.left_out, *refs.left_out),
+            left_out=left_out,
             server_changes=server_changes,
         )
 
@@ -256,6 +261,7 @@ def check_module_write[M: ConfigurationModuleBase](
             module=stored,
             lost_edits=lost_edits,
             applied=applied,
+            left_out=left_out,
             server_changes=server_changes,
         )
     raise WriteNotAppliedError(
@@ -266,6 +272,7 @@ def check_module_write[M: ConfigurationModuleBase](
         module=stored,
         lost_edits=lost_edits,
         applied=applied,
+        left_out=left_out,
         server_changes=server_changes,
     )
 

@@ -14,7 +14,7 @@ from pyvelo.client.exceptions import (
     WriteNotAppliedError,
 )
 from pyvelo.client.models.configuration.firewall.rules import FirewallInboundRule
-from pyvelo.client.module_check import ModuleWrite, check_module_write
+from pyvelo.client.module_check import ModuleWrite, check_module_write, check_refs
 from pyvelo.client.module_write import plan_module
 from pyvelo.client.schemas.configuration import (
     DeviceSettingsConfigurationModule,
@@ -23,7 +23,7 @@ from pyvelo.client.schemas.configuration import (
     WanConfigurationModule,
     new_edge_module,
 )
-from pyvelo.core.response_check import PlannedChange, ServerChange
+from pyvelo.core.response_check import PlannedChange, ResponseCheck, ServerChange
 from pyvelo.testing import as_stored, make_module_json
 
 from .write_helpers import fw
@@ -198,6 +198,8 @@ def test_conflict_lists_what_another_writer_changed():
     assert paths(exc.value.server_changes) == ["future"]
     (change,) = exc.value.server_changes
     assert (change.as_read, change.stored) == (1, 2)
+    lines = str(exc.value).splitlines()
+    assert lines[-2:] == ["stored otherwise than sent:", "  future: read 1, stored 2"]
 
 
 def test_message_names_each_path_and_marks_a_clash():
@@ -331,6 +333,40 @@ def test_a_write_whose_only_changes_are_left_out_passes():
     assert isinstance(write, ModuleWrite)
     assert paths(write.left_out) == ["inbound[a].ruleLogicalId"]
     assert write.applied == ()
+
+
+def test_write_error_lists_what_is_left_out():
+    rule = inbound("a", ruleLogicalId="x").model_dump(mode="json")
+    module = fw({**RAW, "inbound": [rule]})
+    plan = plan_module(
+        module,
+        {
+            **RAW,
+            "inbound": [{**rule, "ruleLogicalId": "x2"}],
+            "firewall_enabled": False,
+            "future": 2,
+        },
+    )
+    # The VCO keeps the rule's ID as read, stores one change and not the other.
+    stored = as_stored(module, {**RAW, "inbound": [rule], "firewall_enabled": False})
+    with pytest.raises(WriteNotAppliedError) as exc:
+        _ = check_module_write(module, plan, stored)
+    assert paths(exc.value.lost_edits) == ["future"]
+    assert paths(exc.value.applied) == ["firewall_enabled"]
+    assert paths(exc.value.left_out) == ["inbound[a].ruleLogicalId"]
+    (change,) = exc.value.left_out
+    assert (change.as_read, change.intended, change.stored) == ("x", "x2", "x")
+
+
+def test_refs_not_read_and_none_sent_are_no_server_changes():
+    module = qos(QOS_RAW)
+    assert module.raw_refs is MISSING
+    plan = plan_module(module, {**QOS_RAW, "future": 1})
+    assert plan.refs is None
+    stored = as_stored(module, plan.data, refs={"a": [ROW1]})
+    write = check_module_write(module, plan, stored)
+    assert write.server_changes == ()
+    assert check_refs(MISSING, None, {"a": [ROW1]}) == ResponseCheck()
 
 
 def test_wan_link_internal_id_issued_passes():

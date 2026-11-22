@@ -388,14 +388,17 @@ class ConfigPipeline:
     ) -> SaveResult:
         """Write each changed module of *plan*, in order, and put the module as stored in *state*.
 
-        A ``ModuleWriteError`` puts the module as stored in *state* too, when
-        it carries one, and gets the writes before it as ``completed``. Any
-        other error gets a note that names them, if there are any.
+        Raises ``TypeError`` before the first request when a changed module is
+        not one a save writes. A ``ModuleWriteError`` puts the module as
+        stored in *state* too, when it carries one, and gets the writes before
+        it as ``completed``. Any other error gets a note that names them, if
+        there are any.
         """
         enterprise_id = state.resolver_context.enterprise_id
+        # Each write replaces only its own module, so these stay the state's.
+        modules = [_require_writable(state.module(p.name)) for p in plan.changed]
         done: list[ModuleWrite[Any]] = []
-        for module_plan in plan.changed:
-            mod = _require_writable(state.module(module_plan.name))
+        for module_plan, mod in zip(plan.changed, modules, strict=True):
             try:
                 write = await self.client.write_module(
                     mod, module_plan, enterprise_id=enterprise_id

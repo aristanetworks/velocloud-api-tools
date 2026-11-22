@@ -56,6 +56,7 @@ ROW1: dict[str, Any] = {
     "logicalId": "a5",
 }
 ROW2: dict[str, Any] = {"id": 102, "enterpriseObjectId": 6, "logicalId": "a6"}
+ROW3: dict[str, Any] = {"id": 103, "enterpriseObjectId": 7, "logicalId": "a7"}
 
 GLOBAL_SEGMENT: dict[str, object] = {
     "segmentId": 0,
@@ -325,6 +326,9 @@ async def test_follow_up_read_without_the_module(mock_vco_client: MockVcoClientF
     with pytest.raises(ConfigConflictError) as exc:
         _ = await client.write_module(module, plan_module(module))
     assert exc.value.module is None
+    assert exc.value.detail == (
+        "the VCO refused the version, and its configuration does not hold the module"
+    )
     (lost,) = exc.value.lost_edits
     assert (lost.path, lost.as_read, lost.intended) == ("firewall_enabled", True, False)
     assert lost.stored is MISSING
@@ -333,7 +337,7 @@ async def test_follow_up_read_without_the_module(mock_vco_client: MockVcoClientF
 async def test_follow_up_read_without_the_module_lists_the_ref_rows(
     mock_vco_client: MockVcoClientFactory,
 ):
-    module = qos({"segments": []}, refs={"a": ROW1})
+    module = qos({"segments": []}, refs={"a": [ROW1, ROW3]})
     plan = plan_module(module, refs={"a": [ROW1, ROW2]})
     store = store_of(module, conditional_check=True)
     store.other_writer(module.id_, elsewhere)
@@ -341,9 +345,13 @@ async def test_follow_up_read_without_the_module_lists_the_ref_rows(
     with pytest.raises(ConfigConflictError) as exc:
         _ = await client.write_module(module, plan)
     assert exc.value.module is None
-    (lost,) = exc.value.lost_edits
-    assert (lost.part, lost.path, lost.intended) == ("refs", "a[6]", ROW2)
-    assert lost.stored is MISSING
+    assert paths(exc.value.lost_edits) == ["a[6]", "a[7]"]
+    added, removed = sorted(exc.value.lost_edits, key=lambda change: str(change.path))
+    assert (added.part, added.intended) == ("refs", ROW2)
+    assert added.stored is MISSING
+    # Nothing was read back, so the refs are taken to be stored as read.
+    assert (removed.part, removed.as_read, removed.stored) == ("refs", ROW3, ROW3)
+    assert removed.intended is MISSING
 
 
 async def test_refs_only_write_refused_raises(mock_vco_client: MockVcoClientFactory):
@@ -417,6 +425,22 @@ async def test_insert_is_read_back_by_the_id_answered(
     (answered,) = store.rows
     assert exc.value.module_id == answered != 99
     assert exc.value.module is None
+    assert exc.value.detail == (
+        "the VCO counted the write, but the module could not be read back"
+        " (its configuration does not hold the module)"
+    )
+
+
+async def test_a_plan_for_another_module_is_refused(
+    mock_vco_client: MockVcoClientFactory,
+):
+    module = firewall_disabled()
+    store = store_of(module)
+    client = await mock_vco_client(store)
+    plan = plan_module(qos({"segments": []}), {"segments": [], "x": 1})
+    with pytest.raises(ValueError, match="the plan is for QOS, not firewall"):
+        _ = await client.write_module(module, plan)
+    assert store.requests == []
 
 
 async def test_a_module_held_as_another_class_raises(

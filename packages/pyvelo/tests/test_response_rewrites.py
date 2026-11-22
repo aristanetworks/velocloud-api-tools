@@ -185,6 +185,130 @@ def test_ipv6_flag_equates_nothing_else(sent: str, stored: str):
     assert_paths(check, not_applied=["addr"])
 
 
+V6_ROUTE: dict[str, object] = {
+    "dest": "2001:DB8:1::",
+    "prefix": 64,
+    "gw": "fe80::1",
+    "intf": "GE3",
+}
+"""An item of ``Root.routes`` whose key holds an IPv6 address the VCO would lower-case."""
+V6_ROUTE_PATH = 'routes["2001:DB8:1::",64,"fe80::1",GE3]'
+
+
+def canonical(item: dict[str, object]) -> dict[str, object]:
+    """*item* with its ``dest`` lower-cased, as the VCO stores an IPv6 address."""
+    return {**item, "dest": str(item["dest"]).lower()}
+
+
+def test_ipv6_key_in_canonical_form_pairs():
+    check = check_response(
+        {"routes": []},
+        {"routes": [V6_ROUTE]},
+        {"routes": [canonical(V6_ROUTE)]},
+        Root,
+        rewrites=IPV6,
+    )
+    assert_paths(
+        check, applied=[V6_ROUTE_PATH], server_changes=[f"{V6_ROUTE_PATH}.dest"]
+    )
+    change = server_change_at(check, f"{V6_ROUTE_PATH}.dest")
+    assert (change.as_read, change.stored) == (MISSING, "2001:db8:1::")
+
+
+def test_ipv6_key_without_the_flag_does_not_pair():
+    check = check_response(
+        {"routes": []},
+        {"routes": [V6_ROUTE]},
+        {"routes": [canonical(V6_ROUTE)]},
+        Root,
+    )
+    assert_paths(
+        check,
+        not_applied=[V6_ROUTE_PATH],
+        server_changes=['routes["2001:db8:1::",64,"fe80::1",GE3]'],
+    )
+
+
+def test_ipv6_keys_pair_by_key_in_canonical_form_in_any_order():
+    other = {**V6_ROUTE, "dest": "2001:DB8:2::"}
+    other_path = 'routes["2001:DB8:2::",64,"fe80::1",GE3]'
+    check = check_response(
+        {"routes": []},
+        {"routes": [V6_ROUTE, other]},
+        {"routes": [canonical(other), canonical(V6_ROUTE)]},
+        Root,
+        rewrites=IPV6,
+    )
+    assert_paths(
+        check,
+        applied=[V6_ROUTE_PATH, other_path],
+        server_changes=[f"{V6_ROUTE_PATH}.dest", f"{other_path}.dest", "routes"],
+    )
+
+
+def test_ipv6_keys_that_repeat_pair_in_order_in_canonical_form():
+    sent = [{**V6_ROUTE, "cost": 1}, {**V6_ROUTE, "cost": 2}]
+    check = check_response(
+        {"routes": []},
+        {"routes": sent},
+        {"routes": [canonical(item) for item in sent]},
+        Root,
+        rewrites=IPV6,
+    )
+    assert_paths(
+        check,
+        applied=["routes[#0]", "routes[#1]"],
+        server_changes=["routes[#0].dest", "routes[#1].dest"],
+    )
+
+
+def test_ipv6_alt_key_in_canonical_form_pairs():
+    # The two rules share a name, so only the alt key tells which is which.
+    sent = [
+        {"name": "a", "ruleId": "2001:DB8::1"},
+        {"name": "a", "ruleId": "2001:DB8::2"},
+    ]
+    stored = [
+        {"name": "a", "ruleId": "2001:db8::2"},
+        {"name": "a", "ruleId": "2001:db8::1"},
+    ]
+    check = check_response(
+        {"rules": []}, {"rules": sent}, {"rules": stored}, Root, rewrites=IPV6
+    )
+    assert_paths(
+        check,
+        applied=["rules[#0]", "rules[#1]"],
+        server_changes=["rules[#0].ruleId", "rules[#1].ruleId"],
+    )
+    assert server_change_at(check, "rules[#0].ruleId").stored == "2001:db8::1"
+
+
+def test_refused_removal_of_an_ipv6_keyed_item_pairs_in_canonical_form():
+    check = check_response(
+        {"routes": [V6_ROUTE]},
+        {"routes": []},
+        {"routes": [canonical(V6_ROUTE)]},
+        Root,
+        rewrites=IPV6,
+    )
+    assert_paths(check, not_applied=[V6_ROUTE_PATH])
+
+
+def test_ipv6_flag_pairs_no_other_key_text():
+    check = check_response(
+        {"routes": []},
+        {"routes": [V6_ROUTE]},
+        {"routes": [{**V6_ROUTE, "intf": "ge3"}]},
+        Root,
+        rewrites=IPV6,
+    )
+    assert_paths(
+        check,
+        not_applied=[V6_ROUTE_PATH],
+        server_changes=['routes["2001:DB8:1::",64,"fe80::1",ge3]'],
+    )
+
+
 def test_removed_key_the_vco_adds_back():
     check = check_response(
         {"sub": {"v": 1, "note": "n"}},

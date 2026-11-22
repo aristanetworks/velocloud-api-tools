@@ -6,6 +6,7 @@ from pyvelo.client.enums.configuration import ConfigurationModuleName
 from pyvelo.client.exceptions import (
     ConfigConflictError,
     DetachedObjectError,
+    ModuleWriteError,
     WriteNotAppliedError,
 )
 from pyvelo.client.schemas.configuration import (
@@ -145,10 +146,12 @@ async def test_state_keeps_working_after_a_write():
 def test_write_errors_are_exported_from_the_package():
     import pyvelo_intent
 
+    assert pyvelo_intent.ModuleWriteError is ModuleWriteError
     assert pyvelo_intent.ConfigConflictError is ConfigConflictError
     assert pyvelo_intent.WriteNotAppliedError is WriteNotAppliedError
     assert pyvelo_intent.DetachedObjectError is DetachedObjectError
     assert {
+        "ModuleWriteError",
         "ConfigConflictError",
         "WriteNotAppliedError",
         "DetachedObjectError",

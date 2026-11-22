@@ -225,9 +225,10 @@ class ModuleWriteError(VcoError):
     """A module write the VCO answered, whose changes are not all stored.
 
     ``lost_edits`` are the planned changes that are not stored, to redo;
-    ``applied`` those that are; ``server_changes`` what else differs between
+    ``applied`` those that are; ``left_out`` those the VCO stores its own way,
+    neither applied nor lost; ``server_changes`` what else differs between
     the payload and what is stored. ``str(error)`` lists them by path
-    (``render``).
+    (``render``), all but ``left_out``.
     """
 
     module_id: int
@@ -239,6 +240,8 @@ class ModuleWriteError(VcoError):
     """The module as the VCO holds it now; None if it was not read."""
     lost_edits: tuple[PlannedChange, ...]
     applied: tuple[PlannedChange, ...]
+    left_out: tuple[PlannedChange, ...]
+    """Planned changes the VCO stores otherwise than as sent (``ResponseCheck.left_out``)."""
     server_changes: tuple[ServerChange, ...]
     completed: tuple[ModuleWrite[Any], ...]
     """The earlier writes of the same save, which are stored. Set by the save."""
@@ -253,6 +256,7 @@ class ModuleWriteError(VcoError):
         module: ConfigurationModuleBase | None = None,
         lost_edits: Sequence[PlannedChange] = (),
         applied: Sequence[PlannedChange] = (),
+        left_out: Sequence[PlannedChange] = (),
         server_changes: Sequence[ServerChange] = (),
     ) -> None:
         self.module_id = module_id
@@ -262,6 +266,7 @@ class ModuleWriteError(VcoError):
         self.module = module
         self.lost_edits = tuple(lost_edits)
         self.applied = tuple(applied)
+        self.left_out = tuple(left_out)
         self.server_changes = tuple(server_changes)
         self.completed = ()
         super().__init__(self._headline())
@@ -294,7 +299,7 @@ class ModuleWriteError(VcoError):
             lines.append("already stored:")
             lines.extend(f"  {_where(change)}" for change in self.applied)
         if self.server_changes:
-            lines.append("changed on the VCO outside these edits:")
+            lines.append("stored otherwise than sent:")
             lines.extend(
                 f"  {_where(change)}: read {_shown(change.as_read)}, "
                 f"stored {_shown(change.stored)}"
@@ -338,6 +343,7 @@ class ConfigConflictError(ModuleWriteError):
         module: ConfigurationModuleBase | None = None,
         lost_edits: Sequence[PlannedChange] = (),
         applied: Sequence[PlannedChange] = (),
+        left_out: Sequence[PlannedChange] = (),
         server_changes: Sequence[ServerChange] = (),
     ) -> None:
         self.detail = detail
@@ -349,6 +355,7 @@ class ConfigConflictError(ModuleWriteError):
             module=module,
             lost_edits=lost_edits,
             applied=applied,
+            left_out=left_out,
             server_changes=server_changes,
         )
 
@@ -379,6 +386,7 @@ class WriteNotAppliedError(ModuleWriteError):
         module: ConfigurationModuleBase,
         lost_edits: Sequence[PlannedChange],
         applied: Sequence[PlannedChange] = (),
+        left_out: Sequence[PlannedChange] = (),
         server_changes: Sequence[ServerChange] = (),
     ) -> None:
         super().__init__(
@@ -389,6 +397,7 @@ class WriteNotAppliedError(ModuleWriteError):
             module=module,
             lost_edits=lost_edits,
             applied=applied,
+            left_out=left_out,
             server_changes=server_changes,
         )
 

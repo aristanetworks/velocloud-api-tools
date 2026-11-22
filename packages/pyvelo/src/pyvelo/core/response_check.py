@@ -27,12 +27,20 @@ for a side that has no value there.
    list ``pair_items`` cannot pair), a key or an item that was removed. It is
    applied when ``D`` holds the payload's value (``_beyond``).
 
+A path names an item of a keyed list by its key, or by its position ``#n``
+where the key repeats or there is none. ``#n`` counts in the payload for an
+item the payload has, in the data as read for a removed item, and in the
+stored data for an item only the VCO has, so two entries share a path only
+when keys repeat; their values tell them apart.
+
 The VCO stores some values otherwise than as sent; ``Rewrites`` says where.
 A key it owns (a field marked ``ServerOwned``, or a path a pattern matches)
 is not compared: a change the plan made there is left out (``left_out``),
 and a value stored there otherwise than sent is a server change. So is the
 removal of a default the VCO adds back. With IPv6 canonical form on, two
-strings that parse as one IPv6 interface are the same value.
+strings that parse as one IPv6 interface are the same value, and so are two
+such parts of a list item's key: the item pairs, and the key text stored
+otherwise is a server change.
 
 The optional *model* is the ``VcoModel`` class the documents are data of. It
 supplies the ``KeyField`` of each list, as it does for ``rebase``, and the
@@ -392,7 +400,7 @@ def _walk_keyed_list(
 ) -> None:
     """Rule 3: the items of a keyed list, each with its partners, and then the order."""
     r_of = {in_p: in_r for in_r, in_p in pairing.pairs}
-    d_of, d_of_removed = _pair_stored(r, p, d, node, pairing.removed)
+    d_of, d_of_removed = _pair_stored(r, p, d, node, pairing.removed, found.rewrites)
     r_parts, p_parts, d_parts = (_item_parts(items, node) for items in (r, p, d))
     for j, item in enumerate(p):
         _walk(
@@ -442,6 +450,35 @@ def _alt_forms(items: list[object], node: _KeyedList) -> list[KeyForm | None]:
     return [key_form(_read_path(item, node.item, alt)) for item in items]
 
 
+def _compared_forms(
+    forms: list[KeyForm | None], rewrites: Rewrites
+) -> list[KeyForm | None]:
+    """*forms* as ``_pair_stored`` compares them.
+
+    With ``rewrites.ipv6``, each part that parses as an ``IPv6Interface`` is
+    in canonical form, so two parts are one when ``_same_ipv6`` says so. Any
+    other part is as it is.
+    """
+    if not rewrites.ipv6:
+        return forms
+    return [_canonical_form(form) for form in forms]
+
+
+def _canonical_form(form: KeyForm | None) -> KeyForm | None:
+    """*form* with each part that parses as an IPv6 interface in canonical form."""
+    if isinstance(form, tuple):
+        return tuple(_canonical_ipv6(part) for part in form)
+    return None if form is None else _canonical_ipv6(form)
+
+
+def _canonical_ipv6(text: str) -> str:
+    """*text* in canonical ``IPv6Interface`` form, or as it is when it does not parse as one."""
+    try:
+        return str(IPv6Interface(text))
+    except ValueError:
+        return text
+
+
 def _first_with(
     value: KeyForm | None, values: list[KeyForm | None], left: list[int]
 ) -> int | None:
@@ -460,6 +497,7 @@ def _pair_stored(
     d: list[object],
     node: _KeyedList,
     removed: tuple[int, ...],
+    rewrites: Rewrites,
 ) -> tuple[dict[int, int], dict[int, int]]:
     """Pair the items of *p*, and the items of *r* the plan removed, with those of *d*.
 
@@ -481,10 +519,18 @@ def _pair_stored(
        a key that the VCO issued one for. The first pair that fails ends the
        pass.
 
-    Keys and alt keys are compared in string form.
+    Keys and alt keys are compared in string form, part by part, and with
+    ``rewrites.ipv6`` a part that parses as an IPv6 interface in canonical
+    form (``_compared_forms``): the VCO may store the address text of a key
+    otherwise than sent. The item so paired is then walked as any other, so
+    the key text it stores otherwise is a server change.
     """
-    p_keys, d_keys = _key_forms(p, node), _key_forms(d, node)
-    p_alts, d_alts = _alt_forms(p, node), _alt_forms(d, node)
+    r_keys, p_keys, d_keys = (
+        _compared_forms(_key_forms(items, node), rewrites) for items in (r, p, d)
+    )
+    r_alts, p_alts, d_alts = (
+        _compared_forms(_alt_forms(items, node), rewrites) for items in (r, p, d)
+    )
     d_of: dict[int, int] = {}
     p_left: list[int] = list(range(len(p)))
     d_left: list[int] = list(range(len(d)))
@@ -494,7 +540,6 @@ def _pair_stored(
         p_left = [j for j in p_left if j not in d_of]
         d_left = [k for k in d_left if k not in paired]
 
-    r_keys, r_alts = _key_forms(r, node), _alt_forms(r, node)
     d_of_removed: dict[int, int] = {}
     for i in removed:
         key = r_keys[i]

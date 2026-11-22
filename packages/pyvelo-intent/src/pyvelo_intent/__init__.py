@@ -3,6 +3,7 @@
 from pyvelo.client.exceptions import (
     ConfigConflictError,
     DetachedObjectError,
+    ModuleWriteError,
     WriteNotAppliedError,
 )
 from pyvelo.core import PatchError, add, at, delete, move
@@ -45,6 +46,7 @@ __all__ = [
     "FieldChange",
     "IntentError",
     "Modified",
+    "ModuleWriteError",
     "PatchError",
     "Removed",
     "SaveResult",

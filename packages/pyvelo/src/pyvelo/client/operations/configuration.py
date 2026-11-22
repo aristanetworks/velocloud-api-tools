@@ -79,18 +79,18 @@ async def _read_stored(
 
     It is the module with *module_id*, by default the ID of *module* (for an
     insert, the ID the VCO answered), put at the config level of *module*
-    when it has one. *refused* says the VCO refused the write's version.
-    Raises ``ConfigConflictError`` for that ID, with no module and every
-    planned change lost, when *module* has no ``configuration_id`` or its
+    when it has one. *refused* says the VCO refused the write's version;
+    otherwise it counted the write (a row count, or an insert's ID). Raises
+    ``ConfigConflictError`` for that ID, with no module and every planned
+    change lost, when *module* has no ``configuration_id`` or its
     configuration does not hold the module.
     """
     wanted = module.id_ if module_id is None else module_id
-    answer = (
-        "the VCO refused the version" if refused else "the VCO returned no module row"
-    )
     configuration_id = module.configuration_id
     if configuration_id is None:
-        detail = f"{answer}, and the module has no configuration ID to read it by"
+        detail = _not_read_detail(
+            refused, "the module has no configuration ID to read it by"
+        )
         raise _not_read(module, plan, detail, module_id=wanted)
     config = await client.get_configuration(
         GetConfiguration(
@@ -102,10 +102,19 @@ async def _read_stored(
     held = config.modules if config.modules is not MISSING else []
     found = next((m for m in held if m.id_ == wanted), None)
     if found is None:
-        detail = f"{answer}, and its configuration does not hold the module"
+        detail = _not_read_detail(refused, "its configuration does not hold the module")
         raise _not_read(module, plan, detail, module_id=wanted)
     level = module.config_context
     return found if level is None else found.for_context(level)
+
+
+def _not_read_detail(refused: bool, reason: str) -> str:
+    """The ``detail`` of the error for a write whose module could not be read back, for *reason*."""
+    if refused:
+        return f"the VCO refused the version, and {reason}"
+    return (
+        f"the VCO counted the write, but the module could not be read back ({reason})"
+    )
 
 
 def _not_read(
@@ -114,7 +123,8 @@ def _not_read(
     """The error for a write whose module could not be read back: every planned change lost, nothing stored.
 
     The lost edits are each change of the data and, when the plan sends refs,
-    each ref row it adds.
+    each ref row it adds or removes: nothing was read, so the refs are taken
+    to be stored as read.
     """
     as_read = module.raw_data
     changes = raw_changes(
@@ -125,7 +135,8 @@ def _not_read(
         for change in changes
     ]
     if plan.refs is not None:
-        lost_edits.extend(check_refs(module.raw_refs, plan.refs, MISSING).not_applied)
+        refs = check_refs(module.raw_refs, plan.refs, module.raw_refs)
+        lost_edits.extend(refs.not_applied)
     return ConfigConflictError(
         module_id,
         module.version or "",
@@ -315,8 +326,13 @@ class ConfigurationMixin(Protocol):
         stored and the lost edits; a ``ConfigConflictError`` with no module
         when the read does not find it; ``VcoOperationError`` when the VCO
         holds it as another class of module. After a refusal the error's
-        cause is the VCO's refusal.
+        cause is the VCO's refusal. Raises ``ValueError``, before sending,
+        when *plan* is for a module of another name.
         """
+        # The name as plan_module takes it: the base class declares none.
+        module_name = str(getattr(module, "name", MISSING))
+        if plan.name != module_name:
+            raise ValueError(f"the plan is for {plan.name}, not {module_name}")
         if plan.operation == "none":
             return ModuleWrite(plan.name, "none", module, plan)
         level = module.config_context
