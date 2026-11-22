@@ -39,6 +39,11 @@ from pyvelo.client.models.configuration.firewall.root import FirewallData
 from pyvelo.client.schemas.configuration import (
     ConfigurationModuleBase,
     ConfigurationModuleUpdate,
+    FirewallConfigurationModule,
+    InsertConfigurationModule,
+    InsertFirewallConfigurationModule,
+    InsertQosConfigurationModule,
+    QosConfigurationModule,
     UpdateConfigurationModule,
 )
 from pyvelo.core import ConfigContext, VcoModel
@@ -159,9 +164,16 @@ class ModulePlan:
 
 
 def update_request(
-    module: ConfigurationModuleBase, plan: ModulePlan, enterprise_id: int | None
+    module: ConfigurationModuleBase,
+    plan: ModulePlan,
+    enterprise_id: int | None,
+    *,
+    return_data: bool = True,
 ) -> UpdateConfigurationModule:
-    """The request that writes *plan* to *module*, at the version it was read."""
+    """The request that writes *plan* to *module*, at the version it was read.
+
+    With *return_data* it asks for the module row as stored.
+    """
     return UpdateConfigurationModule(
         configuration_module_id=module.id_,
         enterprise_id=enterprise_id if enterprise_id is not None else MISSING,
@@ -170,7 +182,39 @@ def update_request(
             data=plan.data,
             refs=plan.refs if plan.refs is not None else MISSING,
         ),
+        return_data=True if return_data else MISSING,
     )
+
+
+def insert_request(
+    module: ConfigurationModuleBase, plan: ModulePlan, enterprise_id: int | None
+) -> InsertConfigurationModule:
+    """The request that inserts *plan* as a new module of *module*'s configuration, asking for its row.
+
+    Only a firewall or QoS module is inserted (``TypeError`` otherwise); a QoS
+    one carries the plan's refs. Raises ``ValueError`` if *module* has no
+    ``configuration_id``.
+    """
+    configuration_id = module.configuration_id
+    if configuration_id is None:
+        raise ValueError("Cannot insert module: it has no configuration ID")
+    enterprise = enterprise_id if enterprise_id is not None else MISSING
+    if isinstance(module, FirewallConfigurationModule):
+        return InsertFirewallConfigurationModule(
+            configuration_id=configuration_id,
+            data=plan.data,
+            enterprise_id=enterprise,
+            return_data=True,
+        )
+    if isinstance(module, QosConfigurationModule):
+        return InsertQosConfigurationModule(
+            configuration_id=configuration_id,
+            data=plan.data,
+            refs=plan.refs,
+            enterprise_id=enterprise,
+            return_data=True,
+        )
+    raise TypeError(f"Cannot insert module type: {type(module).__name__}")
 
 
 def drop_legacy_keys(data: object, module_name: str) -> None:

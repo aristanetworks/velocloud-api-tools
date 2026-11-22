@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 
 from pydantic import MISSING
 
+from pyvelo.client.enums.profiles import GetConfigurationWith
 from pyvelo.client.exceptions import (
     ConfigConflictError,
     VcoOperationError,
@@ -15,7 +16,13 @@ from pyvelo.client.models.configuration.device_settings.root import DeviceSettin
 from pyvelo.client.models.configuration.firewall.root import FirewallData
 from pyvelo.client.models.configuration.qos.root import QosData
 from pyvelo.client.models.configuration.wan.root import WanData
-from pyvelo.client.module_write import plan_module, update_request
+from pyvelo.client.module_check import ModuleWrite, check_module_write
+from pyvelo.client.module_write import (
+    ModulePlan,
+    insert_request,
+    plan_module,
+    update_request,
+)
 from pyvelo.client.operations._tagging import CONFIG, PM_FLOW, domain_tag
 from pyvelo.client.schemas.configuration import (
     AnyConfigurationModule,
@@ -40,7 +47,9 @@ from pyvelo.client.schemas.profiles import (
     CreateProfile,
     CreateProfileResult,
 )
-from pyvelo.core import ConfigContext, RowsModifiedConfirmation
+from pyvelo.core import ConfigContext, RowsModifiedConfirmation, VcoModel
+from pyvelo.core.rebase import raw_changes
+from pyvelo.core.response_check import PlannedChange
 
 if TYPE_CHECKING:
     from pyvelo.client._client_protocol import VcoClientBaseProtocol
@@ -49,6 +58,75 @@ if TYPE_CHECKING:
 def _level_context(level: ConfigContext | None) -> dict[str, ConfigContext] | None:
     """The validation context that puts a returned module at config level *level*."""
     return None if level is None else {"config_level": level}
+
+
+async def _read_stored(
+    client: VcoClientBaseProtocol,
+    module: ConfigurationModuleBase,
+    plan: ModulePlan,
+    enterprise_id: int | None,
+    *,
+    refused: bool,
+) -> AnyConfigurationModule:
+    """*module* as the VCO holds it, read from its configuration after a write that returned no row.
+
+    It is the module with the ID of *module*, or for an insert the one with
+    the plan's name, put at the config level of *module* when it has one.
+    *refused* says the VCO refused the write's version. Raises
+    ``ConfigConflictError`` with no module, and every planned change lost,
+    when *module* has no ``configuration_id`` or its configuration does not
+    hold it.
+    """
+    answer = (
+        "the VCO refused the version" if refused else "the VCO returned no module row"
+    )
+    configuration_id = module.configuration_id
+    if configuration_id is None:
+        detail = f"{answer}, and the module has no configuration ID to read it by"
+        raise _not_read(module, plan, detail)
+    config = await client.get_configuration(
+        GetConfiguration(
+            id_=configuration_id,
+            enterprise_id=enterprise_id if enterprise_id is not None else MISSING,
+            with_=[GetConfigurationWith.MODULES],
+        )
+    )
+    held = config.modules if config.modules is not MISSING else []
+    if plan.operation == "insert":
+        found = next((m for m in held if m.name == plan.name), None)
+    else:
+        found = next((m for m in held if m.id_ == module.id_), None)
+    if found is None:
+        raise _not_read(
+            module, plan, f"{answer}, and its configuration does not hold the module"
+        )
+    level = module.config_context
+    return found if level is None else found.for_context(level)
+
+
+def _not_read(
+    module: ConfigurationModuleBase, plan: ModulePlan, detail: str
+) -> ConfigConflictError:
+    """The error for a write whose module could not be read back: every planned change lost, nothing stored."""
+    as_read = module.raw_data
+    data: object = getattr(module, "data", None)
+    changes = raw_changes(
+        {} if as_read is MISSING else as_read,
+        plan.data,
+        type(data) if isinstance(data, VcoModel) else None,
+    )
+    return ConfigConflictError(
+        module.id_,
+        module.version or "",
+        detail,
+        module_name=plan.name,
+        plan=plan,
+        module=None,
+        lost_edits=[
+            PlannedChange(change.path, change.before, change.after, MISSING)
+            for change in changes
+        ],
+    )
 
 
 class ConfigurationMixin(Protocol):
@@ -207,20 +285,91 @@ class ConfigurationMixin(Protocol):
         return None
 
     @domain_tag(CONFIG)
-    async def update_module(
+    async def write_module[M: ConfigurationModuleBase](
         self: VcoClientBaseProtocol,
-        module: ConfigurationModuleBase,
+        module: M,
+        plan: ModulePlan,
+        *,
+        enterprise_id: int | None = None,
+    ) -> ModuleWrite[M]:
+        """Send *plan*, made by ``plan_module`` for *module*, and check what the VCO stored.
+
+        An update or an insert, as the plan says, at the config level of
+        *module*, asking for the module row as stored. When the VCO answers
+        without one (it refused the version, or it ignores ``returnData``), the
+        module is read back from its configuration; an error of that read
+        propagates. Sends nothing when the plan's operation is ``none``, and
+        returns *module* itself.
+
+        Returns a ``ModuleWrite`` with the module as stored, of the class of
+        *module* and at its config level when it has one, when every planned
+        change is stored. Otherwise raises ``ConfigConflictError`` or
+        ``WriteNotAppliedError`` (``check_module_write``), with the module as
+        stored and the lost edits; a ``ConfigConflictError`` with no module
+        when the read does not find it; ``VcoOperationError`` when the VCO
+        holds it as another class of module.
+        """
+        if plan.operation == "none":
+            return ModuleWrite(plan.name, "none", module, plan)
+        level = module.config_context
+        refused = False
+        stored: ConfigurationModuleBase | None
+        if plan.operation == "insert":
+            inserted = await self.insert_configuration_module(
+                insert_request(module, plan, enterprise_id), level=level
+            )
+            stored = (
+                None
+                if isinstance(inserted, InsertConfigurationModuleResult)
+                else inserted
+            )
+        else:
+            request = update_request(module, plan, enterprise_id)
+            try:
+                stored = await self.update_configuration_module(request, level=level)
+            except ConfigConflictError:
+                # The VCO stated the refusal (its precondition error, or no rows
+                # modified) and returned no row. Read in this block, so that an
+                # error of the read has the refusal as its context.
+                refused = True
+                stored = await _read_stored(
+                    self, module, plan, enterprise_id, refused=True
+                )
+        if stored is None:
+            stored = await _read_stored(
+                self, module, plan, enterprise_id, refused=False
+            )
+        if not isinstance(stored, type(module)):
+            held, sent = type(stored).__name__, type(module).__name__
+            raise VcoOperationError(
+                "write configuration module",
+                f"the VCO holds module {stored.id_} as a {held}, not a {sent}",
+            )
+        return check_module_write(module, plan, stored, refused=refused)
+
+    @domain_tag(CONFIG)
+    async def update_module[M: ConfigurationModuleBase](
+        self: VcoClientBaseProtocol,
+        module: M,
         data: DeviceSettingsData | WanData | QosData | FirewallData,
         *,
         enterprise_id: int | None = None,
         refs: DeviceSettingsRefs | dict[str, Any] | None = None,
         profile: ConfigurationModuleBase | None = None,
-    ) -> None:
+    ) -> M:
         """Write *data* to *module*: its raw data as read, plus the caller's changes.
 
-        Sends nothing if *data* (and *refs*) change nothing. Give the *profile*'s
-        module of the same name to reconcile the segments an edge module lacks.
-        Raises ``ConfigConflictError`` if the module changed since it was read.
+        Returns the module as stored (``write_module``), of the class of
+        *module*; that is *module* itself when *data* (and *refs*) change
+        nothing, and nothing is sent. Give the *profile*'s module of the same
+        name to reconcile the segments an edge module lacks.
+
+        Raises ``ConfigConflictError`` if the module changed since it was
+        read, and ``WriteNotAppliedError`` if the VCO stored the write
+        otherwise than as sent. Each carries the module as stored, when it
+        could be read, and the lost edits to redo on it. The rules that need
+        more than this one module are not run here: they need a state
+        (``ConfigState``, in pyvelo-intent).
         """
         if not isinstance(data, DeviceSettingsData | WanData | QosData | FirewallData):
             raise TypeError(f"Unsupported data type: {type(data).__name__}")
@@ -228,12 +377,12 @@ class ConfigurationMixin(Protocol):
             raise ValueError(
                 "module has not been inserted yet; insert it instead of updating"
             )
-        plan = plan_module(module, data, refs=refs, profile=profile)
-        if plan.operation == "none":
-            return
-        _ = await self.update_configuration_module(
-            update_request(module, plan, enterprise_id)
+        write = await self.write_module(
+            module,
+            plan_module(module, data, refs=refs, profile=profile),
+            enterprise_id=enterprise_id,
         )
+        return write.module
 
     @domain_tag(CONFIG)
     async def get_identifiable_applications(

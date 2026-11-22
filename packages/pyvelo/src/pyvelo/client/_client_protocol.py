@@ -17,8 +17,15 @@ from pydantic import BaseModel
 from pyvelo.core import ConfigContext, PaginatedVcoModel, VcoModel
 
 if TYPE_CHECKING:
+    from pyvelo.client.module_check import ModuleWrite
+    from pyvelo.client.module_write import ModulePlan
     from pyvelo.client.schemas.configuration import (
         AnyConfigurationModule,
+        ConfigurationBase,
+        ConfigurationModuleBase,
+        GetConfiguration,
+        InsertConfigurationModule,
+        InsertConfigurationModuleResult,
         UpdateConfigurationModule,
     )
 
@@ -64,5 +71,24 @@ class VcoClientBaseProtocol(Protocol):
         *,
         level: ConfigContext | None = None,
     ) -> AnyConfigurationModule | None: ...
+
+    async def insert_configuration_module(
+        self,
+        request: InsertConfigurationModule,
+        *,
+        level: ConfigContext | None = None,
+    ) -> InsertConfigurationModuleResult | AnyConfigurationModule: ...
+
+    async def get_configuration(
+        self, request: GetConfiguration
+    ) -> ConfigurationBase: ...
+
+    async def write_module[M: ConfigurationModuleBase](
+        self,
+        module: M,
+        plan: ModulePlan,
+        *,
+        enterprise_id: int | None = None,
+    ) -> ModuleWrite[M]: ...
 
     def _on_stale_websocket_closed(self, task: asyncio.Task[None]) -> None: ...

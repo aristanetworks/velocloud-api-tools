@@ -418,8 +418,10 @@ class ConfigPipeline:
         ):
             raise TypeError(f"Cannot update module type: {type(mod).__name__}")
 
+        # Without returnData: a stale version is then refused or answered with
+        # no rows, and raises, since nothing here checks a returned row.
         _ = await self.client.update_configuration_module(
-            update_request(mod, plan, enterprise_id)
+            update_request(mod, plan, enterprise_id, return_data=False)
         )
 
     async def _insert_module(

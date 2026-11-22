@@ -230,7 +230,9 @@ async def apply_steps(
         )
         _check_paths(step.label, "the plan", plan.changes, expected)
 
-        await lab.client.update_module(module, data, enterprise_id=lab.enterprise_id)
+        _ = await lab.client.update_module(
+            module, data, enterprise_id=lab.enterprise_id
+        )
 
         after = await site.read_present()
         check(
@@ -543,11 +545,11 @@ async def test_a_module_read_before_another_write_is_refused(lab: Lab) -> None:
         for module, text in ((newer, written), (older, refused)):
             data = expect(data_of(module), WanData, "the WAN data")
             expect(data.links, list, "the WAN links")[0].description = text
-        await lab.client.update_module(
+        _ = await lab.client.update_module(
             newer, data_of(newer), enterprise_id=lab.enterprise_id
         )
         with pytest.raises(ConfigConflictError):
-            await lab.client.update_module(
+            _ = await lab.client.update_module(
                 older, data_of(older), enterprise_id=lab.enterprise_id
             )
         after = await site.read_present()
@@ -569,7 +571,7 @@ async def test_a_request_without_a_version_is_not_checked(lab: Lab) -> None:
         for module, text in ((newer, first), (older, second)):
             data = expect(data_of(module), WanData, "the WAN data")
             expect(data.links, list, "the WAN links")[0].description = text
-        await lab.client.update_module(
+        _ = await lab.client.update_module(
             newer, data_of(newer), enterprise_id=lab.enterprise_id
         )
         stale: UpdateConfigurationModule = update_request(
