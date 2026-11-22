@@ -291,9 +291,13 @@ class ModuleWriteError(VcoError):
             f"Configuration module {self._label()}: the write is not stored as planned"
         )
 
+    def _notes(self) -> list[str]:
+        """Lines between the headline and the lists."""
+        return []
+
     def render(self) -> str:
-        """The message: the headline, then each list by path; a list with no entries is left out."""
-        lines = [self._headline()]
+        """The message: the headline, any notes, then each list by path; a list with no entries is left out."""
+        lines = [self._headline(), *self._notes()]
         if self.lost_edits:
             lines.append("lost edits (not stored; redo these):")
             for change in self.lost_edits:
@@ -333,13 +337,17 @@ class ConfigConflictError(ModuleWriteError):
     """Raised when a module write is rejected because its version is stale.
 
     The module changed on the VCO after it was read, and the write's changes
-    are not all stored. The VCO refused the version (``detail`` says how), or
-    the module as stored holds none of the changes and is as read at each:
-    a stale version refused by a VCO that does not say so. ``lost_edits`` are
-    the edits to redo; ``module``, when it was read, is what to redo them on.
+    are not all stored. ``stated`` says how the refusal is known. True: the
+    VCO said it refused the version (``detail`` says how). False: the VCO
+    answered with the module, which holds none of the changes and is as read
+    at each, and the refusal is inferred from that. ``lost_edits`` are the
+    edits to redo, and may be empty after a stated refusal when the check
+    cannot tell what is stored; ``module``, when it was read, is what to redo
+    them on.
     """
 
     detail: str
+    stated: bool
 
     def __init__(
         self,
@@ -347,6 +355,7 @@ class ConfigConflictError(ModuleWriteError):
         version: str,
         detail: str,
         *,
+        stated: bool = True,
         module_name: str = "",
         plan: ModulePlan | None = None,
         module: ConfigurationModuleBase | None = None,
@@ -356,6 +365,7 @@ class ConfigConflictError(ModuleWriteError):
         server_changes: Sequence[ServerChange] = (),
     ) -> None:
         self.detail = detail
+        self.stated = stated
         super().__init__(
             module_id,
             version,
@@ -370,10 +380,27 @@ class ConfigConflictError(ModuleWriteError):
 
     @override
     def _headline(self) -> str:
+        if self.stated:
+            return (
+                f"Configuration module {self._label()} changed since it was read "
+                f"(version {self.version}): {self.detail}"
+            )
         return (
-            f"Configuration module {self._label()} changed since it was read "
-            f"(version {self.version}): {self.detail}"
+            f"Configuration module {self._label()}: {self.detail}. The VCO seems "
+            f"to have refused the write (version {self.version}) without saying "
+            "so, as it does when the module changed since it was read"
         )
+
+    @override
+    def _notes(self) -> list[str]:
+        if self.stated and not self.lost_edits and self.plan is not None:
+            note = (
+                "Nothing is listed as lost: the check cannot tell whether the "
+                "changes of this write are stored. Compare the module as stored "
+                "with what you meant, and make the change again where it is missing."
+            )
+            return [note]
+        return []
 
 
 class WriteNotAppliedError(ModuleWriteError):

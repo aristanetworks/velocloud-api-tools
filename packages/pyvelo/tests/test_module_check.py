@@ -129,14 +129,17 @@ def test_nothing_applied_and_as_read_is_a_conflict():
     error = exc.value
     assert error.module is stored
     assert error.plan is plan
+    assert error.stated is False
     assert paths(error.lost_edits) == ["firewall_enabled"]
     assert error.applied == ()
     assert error.detail == (
         "none of the planned changes is stored, and the values there are as read"
     )
     assert str(error).splitlines()[0] == (
-        "Configuration module 1 (firewall) changed since it was read (version v1): "
-        "none of the planned changes is stored, and the values there are as read"
+        "Configuration module 1 (firewall): none of the planned changes is stored, "
+        "and the values there are as read. The VCO seems to have refused the write "
+        "(version v1) without saying so, as it does when the module changed since "
+        "it was read"
     )
 
 
@@ -292,16 +295,6 @@ def test_refs_only_write_refused_is_a_conflict():
     (lost,) = exc.value.lost_edits
     assert (lost.path, lost.part) == ("a[6]", "refs")
     assert (lost.as_read, lost.intended, lost.stored) == (MISSING, ROW2, MISSING)
-
-
-def test_append_only_ref_removal_is_left_out():
-    first = {"id": 301, "enterpriseObjectId": 7}
-    second = {"id": 302, "enterpriseObjectId": 8}
-    module = qos(QOS_RAW, refs={ADDRESS_GROUP: [first, second]})
-    plan = plan_module(module, refs={ADDRESS_GROUP: [second]})
-    write = check_module_write(module, plan, as_stored(module, QOS_RAW))
-    assert paths(write.left_out) == ['"objectGroup:addressGroup"[7]']
-    assert write.applied == ()
 
 
 def test_refs_the_vco_dropped_on_its_own():
@@ -503,3 +496,130 @@ def test_a_removal_of_a_readded_default_beside_another_change_is_checkable():
     module = ds({**DS_RAW, "segments": [{**GLOBAL, "ecmp": ECMP}]})
     plan = plan_module(module, {**DS_RAW, "segments": [GLOBAL], "otherKey": 1})
     assert has_checkable_change(module, plan) is True
+
+
+def test_refused_and_a_left_out_change_still_as_read_is_a_lost_edit():
+    module, plan = ecmp_removed()
+    stored = as_stored(module, module.raw_data)
+    with pytest.raises(ConfigConflictError) as exc:
+        _ = check_module_write(module, plan, stored, answer="refused")
+    error = exc.value
+    assert error.stated is True
+    assert error.detail == "the VCO refused the version"
+    assert paths(error.lost_edits) == [ECMP_PATH]
+    assert error.lost_edits[0].clash is False
+    assert (error.applied, error.left_out) == ((), ())
+    assert error.module is stored
+
+
+def test_refused_with_a_left_out_change_stored_otherwise_is_a_conflict_too():
+    module, plan = ecmp_removed()
+    stored = as_stored(
+        module, {**DS_RAW, "segments": [{**GLOBAL, "ecmp": ECMP_DEFAULT}]}
+    )
+    with pytest.raises(ConfigConflictError) as exc:
+        _ = check_module_write(module, plan, stored, answer="refused")
+    error = exc.value
+    assert error.lost_edits == ()
+    assert paths(error.left_out) == [ECMP_PATH]
+    lines = str(error).splitlines()
+    assert lines[0] == (
+        "Configuration module 1 (deviceSettings) changed since it was read "
+        "(version v1): the VCO refused the version"
+    )
+    assert lines[1] == (
+        "Nothing is listed as lost: the check cannot tell whether the changes of "
+        "this write are stored. Compare the module as stored with what you meant, "
+        "and make the change again where it is missing."
+    )
+    assert "lost edits" not in str(error)
+
+
+def test_refused_with_no_change_the_check_compares_is_a_conflict():
+    module, plan = ref_row_changed_inside()
+    stored = as_stored(module, QOS_RAW)
+    with pytest.raises(ConfigConflictError) as exc:
+        _ = check_module_write(module, plan, stored, answer="refused")
+    error = exc.value
+    assert (error.lost_edits, error.applied, error.left_out) == ((), (), ())
+    assert error.module is stored
+    assert error.plan is plan
+    assert str(error).splitlines()[1].startswith("Nothing is listed as lost")
+
+
+def test_refused_with_a_change_stored_and_one_left_out_as_read_is_a_conflict():
+    rule = inbound("a", ruleLogicalId="x").model_dump(mode="json")
+    module = fw({**RAW, "inbound": [rule]})
+    plan = plan_module(
+        module,
+        {
+            **RAW,
+            "inbound": [{**rule, "ruleLogicalId": "x2"}],
+            "firewall_enabled": False,
+        },
+    )
+    stored = as_stored(module, {**RAW, "inbound": [rule], "firewall_enabled": False})
+    with pytest.raises(ConfigConflictError) as exc:
+        _ = check_module_write(module, plan, stored, answer="refused")
+    assert paths(exc.value.applied) == ["firewall_enabled"]
+    assert paths(exc.value.lost_edits) == ["inbound[a].ruleLogicalId"]
+    assert exc.value.left_out == ()
+
+
+def test_a_row_with_nothing_stored_makes_a_left_out_change_as_read_a_lost_edit():
+    rule = inbound("a", ruleLogicalId="x").model_dump(mode="json")
+    module = fw({**RAW, "inbound": [rule]})
+    plan = plan_module(
+        module, {**RAW, "inbound": [{**rule, "ruleLogicalId": "x2"}], "future": 2}
+    )
+    stored = as_stored(module, {**RAW, "inbound": [rule]})
+    with pytest.raises(ConfigConflictError) as exc:
+        _ = check_module_write(module, plan, stored)
+    error = exc.value
+    assert error.stated is False
+    assert paths(error.lost_edits) == ["future", "inbound[a].ruleLogicalId"]
+    assert error.left_out == ()
+
+
+def test_a_row_whose_only_change_is_left_out_and_as_read_is_a_conflict():
+    module, plan = append_only_row_removed()
+    with pytest.raises(ConfigConflictError) as exc:
+        _ = check_module_write(module, plan, as_stored(module, QOS_RAW))
+    assert exc.value.stated is False
+    assert paths(exc.value.lost_edits) == ['"objectGroup:addressGroup"[7]']
+    assert exc.value.left_out == ()
+
+
+def test_a_counted_write_keeps_a_left_out_change_as_read_left_out():
+    module, plan = append_only_row_removed()
+    write = check_module_write(
+        module, plan, as_stored(module, QOS_RAW), answer="counted"
+    )
+    assert isinstance(write, ModuleWrite)
+    assert paths(write.left_out) == ['"objectGroup:addressGroup"[7]']
+    assert write.applied == ()
+
+
+def test_a_counted_write_with_nothing_stored_is_not_a_conflict():
+    module = firewall_disabled()
+    plan = plan_module(module)
+    with pytest.raises(WriteNotAppliedError) as exc:
+        _ = check_module_write(module, plan, as_stored(module, RAW), answer="counted")
+    assert not isinstance(exc.value, ConfigConflictError)
+    assert paths(exc.value.lost_edits) == ["firewall_enabled"]
+    assert str(exc.value).splitlines()[0] == (
+        "Configuration module 1 (firewall): 1 of 1 planned changes are not stored as sent"
+    )
+
+
+def test_an_inferred_conflict_does_not_state_that_the_module_changed():
+    module = firewall_disabled()
+    with pytest.raises(ConfigConflictError) as exc:
+        _ = check_module_write(module, plan_module(module), as_stored(module, RAW))
+    assert exc.value.stated is False
+    assert str(exc.value).splitlines()[0] == (
+        "Configuration module 1 (firewall): none of the planned changes is stored, "
+        "and the values there are as read. The VCO seems to have refused the write "
+        "(version v1) without saying so, as it does when the module changed since "
+        "it was read"
+    )

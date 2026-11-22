@@ -2,17 +2,24 @@
 
 ``check_module_write`` runs the response check (``pyvelo.core.response_check``)
 on the data and, for an update, ``check_refs`` on the refs, and turns what they
-find into a ``ModuleWrite`` or an error. The first of these that fits:
+find into a ``ModuleWrite`` or an error, by what the VCO said of the write
+(``WriteAnswer``):
 
-- every planned change is stored: a ``ModuleWrite``;
-- the VCO refused the version: ``ConfigConflictError``;
-- the write is an insert: ``WriteNotAppliedError``;
-- none is stored, and each is as read there: ``ConfigConflictError``;
-- anything else: ``WriteNotAppliedError``.
+- ``"refused"``: a ``ModuleWrite`` only when a change is found stored and none
+  is lost or left out (a write sent twice whose first copy was stored);
+  otherwise ``ConfigConflictError``, which lists no lost edit when the check
+  cannot tell what is stored;
+- ``"row"`` or ``"counted"``: a ``ModuleWrite`` when no change is lost;
+  otherwise, the first that fits: ``WriteNotAppliedError`` for an insert;
+  ``ConfigConflictError`` for a row with none of the changes stored and each
+  value as read; ``WriteNotAppliedError`` for anything else and for every
+  counted write.
 
 A planned change the VCO stores otherwise than as sent is left out of the
 count (``ResponseCheck.left_out``): one to a value it owns, the removal of a
 default it adds back, and the removal of a ref row of an append-only name.
+After a refusal, and when a row holds none of the changes, a left-out change
+that is still as read is a lost edit instead: the write did not reach it.
 ``MODULE_REWRITES`` says where, per module, beside the fields marked
 ``ServerOwned``.
 """
@@ -249,12 +256,18 @@ def check_module_write[M: ConfigurationModuleBase](
 
     The data is checked against the raw data as read (without reconciled
     segments, so those are planned changes too) and, for an update, the refs
-    against the refs as read. Returns a ``ModuleWrite`` with *stored* when
-    every planned change is stored. Otherwise raises ``ConfigConflictError``
-    when the VCO refused the version, or when nothing is stored and the
-    values there are as read (a refused stale version, from a VCO that does
-    not say so), and ``WriteNotAppliedError`` for anything else and for an
-    insert, which carries no version.
+    against the refs as read.
+
+    After ``"refused"``, or ``"row"`` with no change found stored, a left-out
+    change whose stored value is the one read is a lost edit: the write did
+    not reach it. A refused write is returned only when a change is found
+    stored and none is lost or left out. A ``"row"`` or ``"counted"`` write
+    is returned when no change is lost. Otherwise this raises
+    ``ConfigConflictError`` after a refusal (``stated``), for an insert
+    ``WriteNotAppliedError``, ``ConfigConflictError`` (not ``stated``) for a
+    row with none of the changes stored and each value as read, and
+    ``WriteNotAppliedError`` for anything else and for every ``"counted"``
+    write.
     """
     if not isinstance(stored, type(module)):
         raise TypeError(
@@ -278,7 +291,16 @@ def check_module_write[M: ConfigurationModuleBase](
     lost_edits = (*data.not_applied, *refs.not_applied)
     left_out = (*data.left_out, *refs.left_out)
     server_changes = (*data.server_changes, *refs.server_changes)
-    if not lost_edits:
+    if answer == "refused" or (answer == "row" and not applied):
+        # The write did not reach a left-out change that is still as read.
+        lost_edits = (*lost_edits, *(c for c in left_out if not c.clash))
+        left_out = tuple(c for c in left_out if c.clash)
+    stored_whole = (
+        bool(applied) and not lost_edits and not left_out
+        if answer == "refused"
+        else not lost_edits
+    )
+    if stored_whole:
         return ModuleWrite(
             name=plan.name,
             operation=plan.operation,
@@ -290,12 +312,13 @@ def check_module_write[M: ConfigurationModuleBase](
         )
 
     version = module.version or ""
-    detail = _conflict(answer == "refused", plan, applied, lost_edits)
+    detail = _conflict(answer, plan, applied, lost_edits)
     if detail is not None:
         raise ConfigConflictError(
             stored.id_,
             version,
             detail,
+            stated=answer == "refused",
             module_name=plan.name,
             plan=plan,
             module=stored,
@@ -318,15 +341,15 @@ def check_module_write[M: ConfigurationModuleBase](
 
 
 def _conflict(
-    refused: bool,
+    answer: WriteAnswer,
     plan: ModulePlan,
     applied: tuple[PlannedChange, ...],
     lost_edits: tuple[PlannedChange, ...],
 ) -> str | None:
-    """Why a write with *lost_edits* is a conflict, the ``detail``; None when it is not one."""
-    if refused:
+    """Why a write that is not stored whole is a conflict, the ``detail``; None when it is not one."""
+    if answer == "refused":
         return "the VCO refused the version"
-    if plan.operation == "insert":
+    if plan.operation == "insert" or answer == "counted":
         return None
     if not applied and not any(change.clash for change in lost_edits):
         return "none of the planned changes is stored, and the values there are as read"

@@ -47,15 +47,16 @@ when the VCO answers without it. An update none of whose changes could be found
 stored (every one is to a value the VCO stores its own way, or inside a ref row
 that keeps its identity) is sent without `returnData`. The VCO then answers with
 a row count, which says whether it stored the write, and the module is read
-back. It then compares what the VCO stored with what the plan meant to change.
-When every planned change is stored it returns a
-`ModuleWrite`: the module as stored, the planned changes `applied`, and the
-`server_changes` (what else the VCO stores otherwise than sent, such as an ID
-it issued). Otherwise it raises, from `pyvelo.client.exceptions`:
+back. `write_module` then compares what the VCO stored with what the plan
+meant to change. When every planned change is stored it returns a `ModuleWrite`:
+the module as stored, the planned changes `applied`, and the `server_changes`
+(what else the VCO stores otherwise than sent, such as an ID it issued).
+Otherwise it raises, from `pyvelo.client.exceptions`:
 
-- `ConfigConflictError` when the module changed on the VCO since it was read:
-  the VCO refused the version, or stored none of the changes and holds each
-  value as read;
+- `ConfigConflictError` when the VCO refused the version and the module as
+  stored does not already hold every planned change, or when it answered with
+  the module, stored none of the changes and holds each value as read
+  (`error.stated` is then False: the refusal is inferred);
 - `WriteNotAppliedError` when the VCO stored the write otherwise than as sent.
   That includes a stale write to a VCO whose conditional version check is off,
   when another writer changed a value the plan also changes: that edit is
@@ -67,7 +68,12 @@ and the `module` as stored, when it could be read. Where the VCO stores a value
 its own way (a field marked `ServerOwned`, and the rewrites per module in
 `MODULE_REWRITES`, `pyvelo.client.module_check`), a planned change is not a
 lost edit: it is in the write's (or the error's) `left_out`, and a value other
-than the one read is a server change.
+than the one read is a server change. After a refusal, and when the VCO
+answered with a module that holds none of the changes, such a change that is
+still as read is a lost edit. `check_module_write(module, plan, stored,
+answer=...)` takes what the VCO said of the write: `"row"`, `"counted"` or
+`"refused"`. With `"row"` it has only the module to go by, so a write none of
+whose changes is found stored is taken as not stored.
 
 `pyvelo.testing.ModuleStore` is an `httpx` handler that holds module rows as
 JSON and answers module updates, inserts and `getConfiguration` as a VCO does.

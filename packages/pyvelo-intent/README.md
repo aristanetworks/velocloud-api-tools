@@ -325,7 +325,8 @@ storing your changes. Neither list is an error.
   the removal of a row of an append-only ref (an address group, for example). Each
   has the value read (`as_read`), the value sent (`intended`) and the value
   stored. Saving again would not store them either, so they are not to be
-  redone.
+  redone. After a refusal such a change is a lost edit instead, when it is
+  still as read: see below.
 
 A write whose changes are not all stored raises one of two errors, from
 `pyvelo.client.exceptions` and re-exported by `pyvelo_intent`.
@@ -337,10 +338,22 @@ stored:
 
 | When | Raises |
 |---|---|
-| the VCO refused the version | `ConfigConflictError` |
+| the VCO refused the version, and the module as stored does not already hold every one of your changes | `ConfigConflictError` |
 | the write is an insert, which carries no version | `WriteNotAppliedError` |
-| none of your changes is stored, and each value there is as read | `ConfigConflictError` |
-| anything else: some of your changes are stored and some are not, or a value you edited is stored as neither the one read nor the one sent | `WriteNotAppliedError` |
+| the VCO answered with the module, none of your changes is stored in it, and each value there is as read | `ConfigConflictError` |
+| anything else: some of your changes are stored and some are not, a value you edited is stored as neither the one read nor the one sent, or the VCO counted the write and the module read back does not hold it | `WriteNotAppliedError` |
+
+A refused write passes only when the module as stored already holds every one
+of your changes: at least one is found stored, and none is lost or left out.
+That is a write sent twice whose first copy was stored. After a refusal, a
+change that would be left out and is still as read is in `lost_edits`, because
+the refused write did not reach it. So is one beside changes of which none is
+stored, when the VCO answered with the module.
+
+`ConfigConflictError.stated` says how the refusal is known. True: the VCO said
+so, with its precondition error or a row count of zero. False: the VCO answered
+with the module, and the save inferred the refusal from it; the message then
+says "seems to have refused".
 
 Which of the two a stale write raises depends on the VCO's conditional check
 of the version. With it on, the VCO refuses the write, and the save raises
@@ -350,6 +363,20 @@ too, unless another writer also changed a value you edited: that raises
 `WriteNotAppliedError`, with the edit marked as a clash. A write that carries
 refs (an edited `module.refs`, or `refs=` on `update_module`) may still replace
 them, until the next phase reads the version before such a write.
+
+A VCO with the check off says nothing when it answers with the module, so the
+save tells a stale write by what is stored. Where no change of a write can be
+found stored (it changes only fields the VCO owns, removes only defaults the
+VCO adds back or rows of an append-only ref, or changes only the inside of ref
+rows), the save does not ask for the module. The VCO then answers with a row
+count, which is zero for a stale version, and the save reads the module back.
+Such a write costs one more request.
+
+What a save cannot tell, on a VCO with the check off: a stale write whose other
+changes are all stored already, by another writer or by an earlier save of
+yours whose answer was lost, passes. A left-out change beside them is then
+reported in `left_out` although the write that carried it was not stored. Look
+at `left_out` when a save follows one that failed.
 
 Both errors carry:
 
@@ -361,6 +388,7 @@ Both errors carry:
 | `server_changes` | what else the VCO stores otherwise than sent, as in `SaveResult.server_changes` |
 | `module` | the module as the VCO holds it now; None when it could not be read |
 | `plan` | the module's `ModulePlan` |
+| `stated` | on `ConfigConflictError`: whether the VCO said it refused the version, or the save inferred it |
 | `completed` | the writes of the same save before this one, which are stored |
 
 The entries are `PlannedChange` and `ServerChange`, from

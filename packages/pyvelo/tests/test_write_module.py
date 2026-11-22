@@ -583,3 +583,41 @@ async def test_a_ref_row_changed_inside_asks_for_a_count_too(
     assert "returnData" not in store.requests[0][1]
     assert store.rows[1]["refs"] == changed
     assert write.module.raw_refs == changed
+
+
+@pytest.mark.parametrize("conditional_check", [True, False])
+async def test_a_stale_write_with_nothing_checkable_is_a_conflict(
+    mock_vco_client: MockVcoClientFactory, conditional_check: bool
+):
+    module = ds(DS_RAW)
+    plan = plan_module(module, DS_WITHOUT_ECMP)
+    store = store_of(module, conditional_check=conditional_check)
+    store.other_writer(1, other_key)
+    client = await mock_vco_client(store)
+    with pytest.raises(ConfigConflictError) as exc:
+        _ = await client.write_module(module, plan)
+    error = exc.value
+    assert error.stated is True
+    assert paths(error.lost_edits) == [ECMP_PATH]
+    assert error.left_out == ()
+    assert paths(error.server_changes) == ["otherKey"]
+    assert isinstance(error.module, DeviceSettingsConfigurationModule)
+    assert error.module.version == store.rows[1]["version"]
+    assert store.rows[1]["data"]["segments"][0]["ecmp"] == ECMP
+
+
+@pytest.mark.parametrize("conditional_check", [True, False])
+async def test_a_stale_write_of_a_ref_row_changed_inside_is_a_conflict(
+    mock_vco_client: MockVcoClientFactory, conditional_check: bool
+):
+    module = qos({"segments": []}, refs={"a": [ROW1]})
+    plan = plan_module(module, refs={"a": [{**ROW1, "logicalId": "b5"}]})
+    store = store_of(module, conditional_check=conditional_check)
+    store.other_writer(module.id_, elsewhere)
+    client = await mock_vco_client(store)
+    with pytest.raises(ConfigConflictError) as exc:
+        _ = await client.write_module(module, plan)
+    assert exc.value.stated is True
+    assert exc.value.lost_edits == ()
+    assert exc.value.plan is plan
+    assert store.rows[1]["refs"] == {"a": [ROW1]}
