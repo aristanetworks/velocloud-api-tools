@@ -104,7 +104,8 @@ def test_plan_reports_missing_segments_without_changes():
 
 
 async def test_save_sends_raw_payload_version_and_reconciles():
-    client, state = MockVcoClient(), make_state()
+    state = make_state()
+    client = MockVcoClient.for_state(state)
     state.edge.firewall.firewall_enabled = False
     result = await ConfigPipeline(client).save(state)
     (req,) = client.update_requests
@@ -122,7 +123,8 @@ async def test_save_sends_raw_payload_version_and_reconciles():
 
 
 async def test_state_is_spent_after_a_write_and_not_after_dry_run():
-    client, state = MockVcoClient(), make_state()
+    state = make_state()
+    client = MockVcoClient.for_state(state)
     pipeline = ConfigPipeline(client)
     state.edge.firewall.firewall_enabled = False
     dry = await pipeline.save(state, dry_run=True)
@@ -152,13 +154,16 @@ def test_patch_error_is_exported_from_the_package():
 
 
 async def test_no_edit_save_does_not_spend_or_call():
-    client, state = MockVcoClient(), make_state()
+    state = make_state()
+    client = MockVcoClient.for_state(state)
     result = await ConfigPipeline(client).save(state)
     assert (client.calls, state.spent, result.modules_updated) == ([], False, [])
 
 
 async def test_conflict_propagates_and_spends_the_state():
-    client, state = MockVcoClient(conflict=True), make_state()
+    state = make_state()
+    client = MockVcoClient.for_state(state)
+    client.store.other_writer(1, lambda row: row["data"].update(firewall_enabled=True))
     state.edge.firewall.firewall_enabled = False
     with pytest.raises(ConfigConflictError):
         await ConfigPipeline(client).save(state)
@@ -166,7 +171,8 @@ async def test_conflict_propagates_and_spends_the_state():
 
 
 async def test_missing_edge_module_is_inserted_from_an_empty_layer():
-    client, state = MockVcoClient(), make_state()
+    state = make_state()
+    client = MockVcoClient.for_state(state)
     qos = state.edge.qos  # no QOS row on the edge
     assert qos.segments == []
     assert state.plan().changed == ()  # reading it plans nothing
@@ -232,7 +238,8 @@ def test_state_binds_edge_layers_and_untouched_placeholder_is_no_change():
 
 
 async def test_rule_added_in_a_reconciled_segment():
-    client, state = MockVcoClient(), make_state()
+    state = make_state()
+    client = MockVcoClient.for_state(state)
     await ConfigPipeline(client).apply(
         state,
         module="firewall",

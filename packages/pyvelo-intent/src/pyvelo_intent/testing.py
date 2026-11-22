@@ -5,11 +5,13 @@ from __future__ import annotations
 import uuid
 from collections.abc import Sequence
 from datetime import UTC, datetime
-from typing import override
+from typing import Self, override
 
+import httpx
+from pydantic import MISSING
+from pyvelo.client.auth import VcoAuth
 from pyvelo.client.enums.configuration import ConfigurationModuleType
 from pyvelo.client.enums.enterprise import NetworkSegmentType
-from pyvelo.client.exceptions import ConfigConflictError
 from pyvelo.client.models.configuration.common import SegmentMetadata
 from pyvelo.client.models.configuration.firewall.root import FirewallData
 from pyvelo.client.models.configuration.firewall.rules import FirewallOutboundRule
@@ -34,6 +36,16 @@ from pyvelo.client.schemas.enterprise import (
 )
 from pyvelo.client.schemas.profiles import GetEnterpriseConfigurations
 from pyvelo.client.vco_client import VcoClient
+from pyvelo.testing import (
+    ModuleStore,
+    configuration_row,
+    make_transport,
+    module_row,
+)
+
+from pyvelo_intent.config.state import ConfigState
+
+_HOST = "vco.example.invalid"
 
 
 def make_firewall_segment(
@@ -71,16 +83,25 @@ def make_firewall_module(
 
 
 class MockVcoClient(VcoClient):
-    """Mock VCO client that captures all API calls."""
+    """Mock VCO client that records its API calls and serves module writes from a store.
+
+    Module updates, inserts and the configurations the store holds go through
+    the real client code to ``store``, a :class:`~pyvelo.testing.ModuleStore`;
+    seed it with :meth:`seed`, or build the client with :meth:`for_state`. A
+    ``stack`` seeds it with both its configurations. The other calls are
+    answered here.
+    """
+
+    store: ModuleStore
 
     def __init__(
         self,
         stack: GetEdgeConfigurationStackResult | None = None,
         edges: Sequence[GetEnterpriseEdgesItem] | None = None,
         *,
-        conflict: bool = False,
+        conditional_check: bool = False,
     ) -> None:
-        super().__init__("vco.example.invalid", "test-token")
+        super().__init__(_HOST, "test-token")
         self.stack: GetEdgeConfigurationStackResult | None = stack
         self._edges: Sequence[GetEnterpriseEdgesItem] = (
             edges if edges is not None else []
@@ -88,7 +109,37 @@ class MockVcoClient(VcoClient):
         self.calls: list[tuple[str, object]] = []
         self.update_requests: list[UpdateConfigurationModule] = []
         self.insert_requests: list[InsertConfigurationModule] = []
-        self.conflict: bool = conflict
+        self.store = ModuleStore(conditional_check=conditional_check)
+        self._http: httpx.AsyncClient | None = httpx.AsyncClient(
+            auth=VcoAuth("test-token"),
+            transport=make_transport(self.store),
+            base_url=f"https://{_HOST}",
+        )
+        if stack is not None:
+            _ = self.seed(*stack)
+
+    def seed(self, *configs: ConfigurationBase) -> Self:
+        """Put *configs* and their modules in the store, as the VCO holds them.
+
+        A module not inserted yet (``is_new``) is left out.
+        """
+        for config in configs:
+            modules = [] if config.modules is MISSING else config.modules
+            self.store.add_configuration(
+                {
+                    **configuration_row(config),
+                    "modules": [module_row(m) for m in modules if not m.is_new],
+                }
+            )
+        return self
+
+    @classmethod
+    def for_state(cls, state: ConfigState, *, conditional_check: bool = False) -> Self:
+        """A client whose store holds the configurations of *state*: its edge one, if any, and its profile one."""
+        client = cls(conditional_check=conditional_check)
+        if state.edge_config is not None:
+            _ = client.seed(state.edge_config)
+        return client.seed(state.profile_config)
 
     @override
     async def get_edge_configuration_stack(
@@ -101,7 +152,10 @@ class MockVcoClient(VcoClient):
 
     @override
     async def get_configuration(self, request: GetConfiguration) -> ConfigurationBase:
+        """The configuration from the store when it holds it; else the stack's profile."""
         self.calls.append(("get_configuration", request))
+        if request.id_ in self.store.configurations:
+            return await super().get_configuration(request)
         if self.stack is None:
             raise RuntimeError("No configuration stack was provided to the mock client")
         return self.stack[1]
@@ -141,10 +195,7 @@ class MockVcoClient(VcoClient):
     ) -> None:
         self.calls.append(("update_configuration_module", request))
         self.update_requests.append(request)
-        if self.conflict:
-            raise ConfigConflictError(
-                request.configuration_module_id, str(request.version), "simulated"
-            )
+        await super().update_configuration_module(request)
 
     @override
     async def insert_configuration_module(
@@ -152,4 +203,4 @@ class MockVcoClient(VcoClient):
     ) -> InsertConfigurationModuleResult:
         self.calls.append(("insert_configuration_module", request))
         self.insert_requests.append(request)
-        return InsertConfigurationModuleResult(id_=1)
+        return await super().insert_configuration_module(request)

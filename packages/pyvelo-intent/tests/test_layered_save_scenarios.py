@@ -5,7 +5,7 @@ from typing import Any
 
 import pytest
 from pyvelo.client.exceptions import LossyFieldError
-from pyvelo.client.schemas.configuration import ConfigurationBase, GetConfiguration
+from pyvelo.client.schemas.configuration import ConfigurationBase
 from pyvelo.config.resolver import ResolverRegistry
 from pyvelo.testing import make_module_json, make_segment_resolver
 from pyvelo_intent import PatchError, add, delete
@@ -62,7 +62,8 @@ async def test_inherited_section_survives_unrelated_edit():
         "segments": [global_segment()],
         "syslog_forwarding": False,
     }
-    client, state = MockVcoClient(), edge_state(raw)
+    state = edge_state(raw)
+    client = MockVcoClient.for_state(state)
     await ConfigPipeline(client).apply(
         state, module="firewall", patch={"firewall_enabled": False}
     )
@@ -75,7 +76,8 @@ async def test_inherited_section_survives_unrelated_edit():
 
 async def test_explicit_local_false_survives():
     raw: dict[str, Any] = {"segments": [global_segment()], "syslog_forwarding": False}
-    client, state = MockVcoClient(), edge_state(raw)
+    state = edge_state(raw)
+    client = MockVcoClient.for_state(state)
     await ConfigPipeline(client).apply(
         state, module="firewall", patch={"firewall_enabled": False}
     )
@@ -89,7 +91,8 @@ async def test_snake_case_logging_key_is_edited_in_place():
         "segments": [global_segment()],
         "firewall_logging_enabled": False,
     }
-    client, state = MockVcoClient(), edge_state(raw)
+    state = edge_state(raw)
+    client = MockVcoClient.for_state(state)
     await ConfigPipeline(client).apply(
         state, module="firewall", patch={"firewall_logging_enabled": True}
     )
@@ -103,7 +106,8 @@ async def test_edge_rules_add_delete_reorder():
     raw: dict[str, Any] = {
         "segments": [global_segment(rule("a", keep=1), rule("b", keep=2))]
     }
-    client, state = MockVcoClient(), edge_state(raw)
+    state = edge_state(raw)
+    client = MockVcoClient.for_state(state)
     await ConfigPipeline(client).apply(
         state,
         module="firewall",
@@ -130,7 +134,8 @@ async def test_edge_rules_add_delete_reorder():
 
 
 async def test_missing_module_insert_has_only_local_content():
-    client, state = MockVcoClient(), make_state(edge_modules=[])
+    state = make_state(edge_modules=[])
+    client = MockVcoClient.for_state(state)
     await ConfigPipeline(client).apply(
         state,
         module="firewall",
@@ -158,7 +163,8 @@ async def test_missing_module_insert_has_only_local_content():
 
 
 async def test_segment_key_in_another_case_edits_the_segment_it_names():
-    client, state = MockVcoClient(), make_state()
+    state = make_state()
+    client = MockVcoClient.for_state(state)
     pipeline = ConfigPipeline(client, resolvers=await segment_resolvers())
     await pipeline.apply(
         state,
@@ -179,7 +185,8 @@ async def test_segment_key_in_another_case_edits_the_segment_it_names():
 async def test_new_segment_by_name_takes_the_profiles_descriptor(
     key: str, with_resolver: bool
 ):
-    client, state = MockVcoClient(), make_state()
+    state = make_state()
+    client = MockVcoClient.for_state(state)
     resolvers = await segment_resolvers() if with_resolver else None
     pipeline = ConfigPipeline(client, resolvers=resolvers)
     await pipeline.apply(
@@ -225,7 +232,8 @@ async def test_deleting_an_edge_segment_the_profile_has_leaves_an_empty_one():
             {"segment": desc(2, "Guest"), "outbound": [rule("g")]},
         ]
     }
-    client, state = MockVcoClient(), edge_state(raw)
+    state = edge_state(raw)
+    client = MockVcoClient.for_state(state)
     await ConfigPipeline(client).apply(
         state, module="firewall", patch={"segments": {"Guest": delete()}}
     )
@@ -239,7 +247,8 @@ async def test_deleting_an_edge_segment_the_profile_has_leaves_an_empty_one():
 
 async def test_setting_a_default_on_an_inherited_key_is_refused():
     raw: dict[str, Any] = {"segments": [global_segment()]}
-    client, state = MockVcoClient(), edge_state(raw)
+    state = edge_state(raw)
+    client = MockVcoClient.for_state(state)
     await ConfigPipeline(client).apply(
         state, module="firewall", patch={"atp_enabled": False}
     )
@@ -255,16 +264,9 @@ def profile_client(raw: dict[str, Any] = PROFILE_FW) -> MockVcoClient:
     row = make_module_json(
         "firewall", copy.deepcopy(raw), module_id=2, configuration_id=20, version="p1"
     )
-
-    class Client(MockVcoClient):
-        async def get_configuration(
-            self, request: GetConfiguration
-        ) -> ConfigurationBase:
-            return ConfigurationBase.model_validate(
-                {"name": "P", "id": 20, "modules": [row]}
-            ).for_profile()
-
-    return Client()
+    return MockVcoClient().seed(
+        ConfigurationBase.model_validate({"name": "P", "id": 20, "modules": [row]})
+    )
 
 
 async def test_edit_to_a_section_the_edge_dump_omits_is_refused():
@@ -276,7 +278,8 @@ async def test_edit_to_a_section_the_edge_dump_omits_is_refused():
     row = make_module_json(
         "deviceSettings", raw, module_id=7, configuration_id=10, version="d1"
     )
-    client, state = MockVcoClient(), make_state(edge_modules=[row])
+    state = make_state(edge_modules=[row])
+    client = MockVcoClient.for_state(state)
     await ConfigPipeline(client).apply(
         state, module="device_settings", patch={"ntp": {"enabled": True}}
     )

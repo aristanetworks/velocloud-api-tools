@@ -39,9 +39,9 @@ def _make_state() -> ConfigState:
 @pytest.mark.asyncio
 async def test_save_no_changes():
     """Save with no changes should return empty SaveResult."""
-    client = MockVcoClient()
-    pipeline = ConfigPipeline(client)
     state = _make_state()
+    client = MockVcoClient.for_state(state)
+    pipeline = ConfigPipeline(client)
 
     result = await pipeline.save(state)
 
@@ -53,9 +53,9 @@ async def test_save_no_changes():
 @pytest.mark.asyncio
 async def test_save_updates_changed_module():
     """Save should call update_configuration_module for changed modules."""
-    client = MockVcoClient()
-    pipeline = ConfigPipeline(client)
     state = _make_state()
+    client = MockVcoClient.for_state(state)
+    pipeline = ConfigPipeline(client)
 
     # Mutate the firewall module
     assert state.edge_config is not None
@@ -102,8 +102,8 @@ async def test_save_result_type():
 
 @pytest.mark.asyncio
 async def test_keyword_built_module_saves_only_the_change():
-    client = MockVcoClient()
     state = _make_state()
+    client = MockVcoClient.for_state(state)
     assert state.edge_config is not None
     before = cast(dict[str, object], state.edge_config.firewall.raw_data)
     state.edge_config.firewall.data.firewall_enabled = False
@@ -112,3 +112,20 @@ async def test_keyword_built_module_saves_only_the_change():
         **before,
         "firewall_enabled": False,
     }
+
+
+@pytest.mark.asyncio
+async def test_mock_client_seeds_from_a_state_and_records_requests():
+    state = _make_state()
+    client = MockVcoClient.for_state(state)
+    assert set(client.store.rows) == {1, 2}
+    assert set(client.store.configurations) == {10, 20}
+    assert state.edge_config is not None
+    state.edge_config.firewall.data.firewall_enabled = False
+    await ConfigPipeline(client).save(state)
+    (request,) = client.update_requests
+    assert request.configuration_module_id == 1
+    assert client.store.rows[1]["data"] == request.update.data
+    assert [method for method, _ in client.store.requests] == [
+        "configuration/updateConfigurationModule"
+    ]

@@ -134,7 +134,7 @@ async def test_apply_of_an_outbound_rule_writes_the_rule_only(
     level: str, rules: dict[str, Any], path: str
 ):
     state = edge_state() if level == "edge" else await profile_state()
-    client = MockVcoClient()
+    client = MockVcoClient.for_state(state)
     pipeline = ConfigPipeline(client)
     _ = await pipeline.apply(
         state,
@@ -170,7 +170,8 @@ STRAY_PATH = 'segments["Global Segment"].outboundOverride'
 
 
 async def test_a_stray_override_key_with_no_edit_is_reported_and_not_written():
-    state, client = edge_state(STRAY), MockVcoClient()
+    state = edge_state(STRAY)
+    client = MockVcoClient.for_state(state)
     plan = state.plan()
     assert plan.changed == ()
     assert [str(k) for k in plan.modules[0].legacy_keys] == [STRAY_PATH]
@@ -181,7 +182,8 @@ async def test_a_stray_override_key_with_no_edit_is_reported_and_not_written():
 
 
 async def test_a_stray_override_key_is_dropped_when_the_module_is_written():
-    state, client = edge_state(STRAY), MockVcoClient()
+    state = edge_state(STRAY)
+    client = MockVcoClient.for_state(state)
     pipeline = ConfigPipeline(client)
     _ = await pipeline.apply(
         state,
