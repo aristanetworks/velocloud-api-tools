@@ -203,6 +203,32 @@ The `segments` lists have rules of their own:
   belongs to all three of device settings, QoS and firewall, and adding one
   through a patch is not supported yet. Changing or moving one is fine.
 
+Sections and items of an edge that can follow the profile have an `override`
+flag: the BGP of a segment, a VLAN, an interface. While the flag is off, the
+edge takes that section from its profile. A patch that changes a field of
+such a section turns the flag on; a field that is always the edge's own, such
+as an interface's address or `description`, does not. From that save on, the
+edge layer's own section applies, as it is stored there and with your change,
+and the profile's no longer does. Nothing is copied from the profile. So
+adding one BGP neighbour to an edge that inherits BGP leaves that edge with
+the one neighbour and the edge layer's own `enabled` and ASN, not with the
+profile's neighbours plus one. Give every field the section needs in the same
+patch; `state.profile` holds the profile's values. The plan shows the flag as
+a change and names the section in a line of its own:
+
+```text
+deviceSettings: update
+  ~ segments["Global Segment"].bgp.override: false -> true
+  + segments["Global Segment"].bgp.neighbors["10.0.0.2"]: {...}
+  override turned on: segments["Global Segment"].bgp (the edge's own values apply there from now on, and the profile's no longer do)
+```
+
+`ModulePlan.overrides_turned_on` holds the same paths. A flag inside a list
+that is written whole (an interface's `subinterfaces`) is part of that list's
+change and has no line of its own. When the section as read has no `override`
+key, the flag cannot be written: the same patch is refused with
+`LossyFieldError`, which names the flag.
+
 ## What a save writes
 
 A save sends each changed module's `data` as it was read, with only your

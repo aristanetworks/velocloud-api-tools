@@ -1204,3 +1204,106 @@ def test_a_refs_only_change_to_a_firewall_module_also_drops_a_stray_override_key
     assert [str(c.path) for c in plan.changes] == [STRAY_PATH]
     assert f"  - {STRAY_PATH}" in plan.render().splitlines()
     assert [str(k) for k in plan.legacy_keys] == [STRAY_PATH]
+
+
+# --- override flags a write turns on -----------------------------------------
+
+BGP = 'segments["Global Segment"].bgp'
+OVERRIDE_NOTE = (
+    "(the edge's own values apply there from now on, and the profile's no longer do)"
+)
+ADD_NEIGHBOR: dict[str, Any] = {
+    "segments": {
+        "Global Segment": {
+            "bgp": {"neighbors": {"10.0.0.2": add({"neighbor_as": "65002"})}}
+        }
+    }
+}
+
+
+def bgp_module(**flag: bool) -> DeviceSettingsConfigurationModule:
+    """Edge device settings whose one segment has an empty BGP section; *flag* is its ``override`` key, if any."""
+    bgp = {**flag, "enabled": False, "ASN": "", "neighbors": [], "filters": []}
+    segment = {"segment": desc(0, "Global Segment"), "bgp": bgp}
+    mod = ds({**DS_RAW, "segments": [segment]})
+    _ = mod.data.for_edge()
+    return mod
+
+
+def test_a_patch_inside_an_inherited_section_turns_its_override_on_and_the_plan_says_so():
+    mod = bgp_module(override=False)
+    _ = mod.data.merge_patch(ADD_NEIGHBOR)
+    plan = plan_module(mod, level=EDGE)
+    assert [p.parts for p in plan.overrides_turned_on] == [
+        ("segments", Key("Global Segment"), "bgp")
+    ]
+    lines = plan.render().splitlines()
+    assert lines[0] == "deviceSettings: update"
+    assert lines[1] == f"  ~ {BGP}.override: false -> true"
+    assert lines[2].startswith(f'  + {BGP}.neighbors["10.0.0.2"]: ')
+    assert lines[3:] == [f"  override turned on: {BGP} {OVERRIDE_NOTE}"]
+    # The edge layer's own section is sent; nothing of a profile's is in it.
+    sent = plan.data["segments"][0]["bgp"]
+    assert (sent["override"], sent["enabled"], sent["ASN"]) == (True, False, "")
+    assert [n["neighborIp"] for n in sent["neighbors"]] == ["10.0.0.2"]
+
+
+def test_a_flag_that_was_on_is_not_listed():
+    mod = bgp_module(override=True)
+    _ = mod.data.merge_patch(ADD_NEIGHBOR)
+    plan = plan_module(mod, level=EDGE)
+    assert plan.operation == "update"
+    assert plan.overrides_turned_on == ()
+    assert "override turned on" not in plan.render()
+
+
+def test_a_flag_the_patch_sets_alone_is_listed_too():
+    mod = bgp_module(override=False)
+    _ = mod.data.merge_patch(
+        {"segments": {"Global Segment": {"bgp": {"override": True}}}}
+    )
+    plan = plan_module(mod, level=EDGE)
+    assert [str(c.path) for c in plan.changes] == [f"{BGP}.override"]
+    assert [str(p) for p in plan.overrides_turned_on] == [BGP]
+
+
+def test_the_flag_of_a_list_item_is_listed_at_the_item():
+    mod = ds(DS_EDGE_RAW)
+    _ = mod.data.for_edge()
+    _ = mod.data.merge_patch({"lan": {"networks": {"1": {"cost": 11}}}})
+    plan = plan_module(mod, level=EDGE)
+    assert [str(c.path) for c in plan.changes] == [
+        "lan.networks[1].cost",
+        "lan.networks[1].override",
+    ]
+    assert [str(p) for p in plan.overrides_turned_on] == ["lan.networks[1]"]
+    assert (
+        plan.render().splitlines()[-1]
+        == f"  override turned on: lan.networks[1] {OVERRIDE_NOTE}"
+    )
+
+
+def test_a_plan_that_turns_no_flag_on_lists_none():
+    mod = ds(DS_EDGE_RAW)
+    assert plan_module(mod, level=EDGE).overrides_turned_on == ()
+    mod.data.lan.networks[0].cost += 1  # an assignment sets no flag
+    plan = plan_module(mod, level=EDGE)
+    assert (plan.operation, plan.overrides_turned_on) == ("update", ())
+
+
+def test_a_profile_has_no_override_flag_to_turn_on():
+    mod = ds({**DS_RAW, "ntp": {"enabled": False, "servers": []}})
+    _ = mod.data.for_profile()
+    _ = mod.data.merge_patch({"ntp": {"enabled": True}})
+    plan = plan_module(mod, level=PROFILE)
+    assert [str(c.path) for c in plan.changes] == ["ntp.enabled"]
+    assert plan.overrides_turned_on == ()
+
+
+def test_a_section_read_without_its_flag_still_refuses_the_patch():
+    mod = bgp_module()
+    _ = mod.data.merge_patch(ADD_NEIGHBOR)
+    with pytest.raises(LossyFieldError) as exc:
+        plan_module(mod, level=EDGE)
+    assert exc.value.fields == [f"{BGP}.override"]
+    assert [str(p) for p in exc.value.override_flags] == [f"{BGP}.override"]

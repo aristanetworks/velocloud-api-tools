@@ -150,6 +150,13 @@ class ModulePlan:
     Always listed; a write also lists each as a ``-`` change. A plan that would
     write nothing else is ``none`` and leaves them.
     """
+    overrides_turned_on: tuple[Path, ...] = ()
+    """Each section or item whose override flag this write turns on.
+
+    From this write on the edge layer's own values apply there and the
+    profile's no longer do; nothing is copied from the profile. A flag inside a
+    list that is written whole is part of that list's change and is not listed.
+    """
 
     def render(self) -> str:
         lines = [f"{self.name}: {self.operation}"]
@@ -167,6 +174,11 @@ class ModulePlan:
         if self.reconciled_segments:
             label = "missing" if self.operation == "none" else "reconciled"
             lines.append(f"  {label} segments: {', '.join(self.reconciled_segments)}")
+        for path in self.overrides_turned_on:
+            lines.append(
+                f"  override turned on: {path} (the edge's own values apply there "
+                "from now on, and the profile's no longer do)"
+            )
         if self.legacy_keys and self.operation == "none":
             lines.append(
                 "  legacy keys (dropped when the module is written): "
@@ -251,6 +263,25 @@ def legacy_key_paths(data: object, module_name: str) -> tuple[Path, ...]:
     stripped = copy.deepcopy(data)
     drop_legacy_keys(stripped, module_name)
     return tuple(c.path for c in raw_changes(data, stripped, model))
+
+
+def _overrides_turned_on(
+    changes: tuple[RawChange, ...], model_type: type[VcoModel] | None
+) -> tuple[Path, ...]:
+    """The section or item of each change that turns an override flag on.
+
+    A flag turned on is one whose value was ``false`` or absent and is now
+    ``true``. Nothing without a model: a plain dict has no flags to tell.
+    """
+    if model_type is None:
+        return ()
+    return tuple(
+        Path(change.path.parts[:-1])
+        for change in changes
+        if change.after is True
+        and change.before is not True
+        and is_override_flag(model_type, change.path)
+    )
 
 
 def _json(value: object) -> str:
@@ -442,14 +473,16 @@ def plan_module(
     legacy = legacy_key_paths(reconciled, name)
     if changed:  # never a write just to strip them
         drop_legacy_keys(payload, name)
+    changes = tuple(raw_changes(reconciled, payload, model_type))
     return ModulePlan(
         name=name,
         operation=operation,
         data=payload if changed else copy.deepcopy(cast(dict[str, Any], raw)),
         refs=refs_out,
-        changes=tuple(raw_changes(reconciled, payload, model_type)),
+        changes=changes,
         reconciled_segments=tuple(
             _segment_name(entry) for entry in [*extra, *restored]
         ),
         legacy_keys=legacy,
+        overrides_turned_on=_overrides_turned_on(changes, model_type),
     )

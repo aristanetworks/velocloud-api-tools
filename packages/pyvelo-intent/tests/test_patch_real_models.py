@@ -455,3 +455,52 @@ async def test_select_a_segment_by_segment_id():
     assert outbound(state, "Guest") == ["block"]
     assert outbound(state) == ["a"]
     assert change_paths(state) == ["segments[Guest].outbound[block]"]
+
+
+def bgp_settings(bgp: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "lan": {"networks": [], "interfaces": []},
+        "segments": [
+            {"segment": desc(0, SEGMENT), "routes": {"static": []}, "bgp": bgp}
+        ],
+    }
+
+
+async def test_a_patch_inside_inherited_bgp_is_listed_on_the_plan_and_copies_nothing():
+    edge_bgp: dict[str, Any] = {
+        "override": False,
+        "enabled": False,
+        "ASN": "",
+        "neighbors": [],
+        "filters": [],
+    }
+    profile_bgp: dict[str, Any] = {
+        "enabled": True,
+        "ASN": "65000",
+        "filters": [],
+        "neighbors": [{"neighborIp": "10.0.0.1", "neighborAS": "65001"}],
+    }
+    state = make_state(
+        {"deviceSettings": bgp_settings(edge_bgp)},
+        {"deviceSettings": bgp_settings(profile_bgp)},
+    )
+    client = MockVcoClient.for_state(state)
+    pipeline = ConfigPipeline(client)
+    _ = await pipeline.apply(
+        state,
+        module="device_settings",
+        segment=SEGMENT,
+        path="bgp.neighbors",
+        patch={"10.0.0.2": add({"neighbor_as": "65002"})},
+    )
+    preview = await pipeline.save(state, dry_run=True)
+    assert preview.plan is not None
+    assert preview.plan.render().splitlines()[-1] == (
+        '  override turned on: segments["Global Segment"].bgp (the edge\'s own '
+        "values apply there from now on, and the profile's no longer do)"
+    )
+    _ = await pipeline.save(state)
+    (request,) = client.update_requests
+    sent = request.update.data["segments"][0]["bgp"]
+    assert (sent["override"], sent["enabled"], sent["ASN"]) == (True, False, "")
+    assert [n["neighborIp"] for n in sent["neighbors"]] == ["10.0.0.2"]

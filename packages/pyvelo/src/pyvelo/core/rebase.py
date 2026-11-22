@@ -903,7 +903,9 @@ def find_lossy_assignments(
 def is_override_flag(model: type[VcoModel], path: Path) -> bool:
     """Whether *path*, as ``find_lossy_assignments`` gives it, ends at an ``OverrideFlag`` of *model*.
 
-    A path through an unkeyed list is not followed, so it is never one. A name
+    A path of ``raw_changes`` is accepted too: its names are keys as written
+    (``bgp``, ``loopbackInterfaces``), and each is read through the model's
+    accepted keys. A path through an unkeyed list is not followed, so it is never one. A name
     below a map of models is the map key: ``boxes.b1.ports[p1].override``.
     """
     *parents, last = path.parts

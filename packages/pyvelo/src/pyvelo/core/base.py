@@ -562,7 +562,9 @@ class VcoModel(BaseModel):
         (``rule_id`` and ``ruleId``). Keys that start with ``_`` are
         directives: only ``_op`` and ``_position``, and only on a list item's
         value. ``OverrideFlag`` fields are set to True when a sibling that is
-        not ``EdgeLocal`` changes. A ``Resolvable`` field given a name resolves it to an ID
+        not ``EdgeLocal`` changes. On an edge layer the layer's own section
+        then applies in place of the profile's, with nothing copied from the
+        profile. A ``Resolvable`` field given a name resolves it to an ID
         with *resolvers*.
 
         **Lists.** Each list field has a kind (``list_kind``):

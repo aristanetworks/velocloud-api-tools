@@ -1813,7 +1813,12 @@ def _body(op: ItemOp) -> dict[object, object]:
 
 
 def _auto_set_override_flags(model: VcoModel, before: Mapping[str, object]) -> None:
-    """Set OverrideFlag fields to True if a non-EdgeLocal field changed."""
+    """Set OverrideFlag fields to True if a non-EdgeLocal field changed.
+
+    On an edge layer this makes the layer's own section apply in place of the
+    profile's; nothing is copied from the profile. A plan lists each flag so
+    turned on (``ModulePlan.overrides_turned_on``).
+    """
     fields = type(model).model_fields
     flag_names = [name for name, fi in fields.items() if has_override_flag(fi)]
     if flag_names and _has_non_edge_local_changes(model, before):
