@@ -325,12 +325,17 @@ class ConfigPipeline:
         3. Send each changed module, in order, as an update or an insert with
            ``returnData`` (``write_module``), and replace the state's module
            with the one the VCO stored (:meth:`ConfigState.replace_module`).
-           ``SaveResult.server_changes`` holds, per module, everything the
-           VCO stored otherwise than sent that is not a lost edit: what it
-           or another writer changed beside the plan, and planned changes
-           it stores its own way (a ``ServerOwned`` field, an IPv6 address
-           in canonical form, a default it adds back where the plan removed
-           it). A value stored as it was read is not listed.
+           Per module, ``SaveResult.left_out`` holds the planned changes the
+           VCO stores its own way (a field it owns, a default it adds back
+           where the plan removed it, the removal of a row of an append-only
+           ref): neither applied nor lost, each with the value read, the
+           value sent and the value stored. ``SaveResult.server_changes``
+           holds what the VCO stored otherwise than sent, at paths that are
+           not lost edits: what it or another writer changed beside the
+           plan, an ID it issued, an IPv6 address in canonical form, the
+           value it stored at a left-out change. A value stored as it was
+           read is not listed there; a left-out change kept so is in
+           ``left_out``.
 
         A later :meth:`ConfigState.plan` is empty, and the state takes more
         edits and saves. Objects taken from the state before the save belong
@@ -411,6 +416,7 @@ class ConfigPipeline:
             done.append(write)
             name = ConfigurationModuleName(write.name)
             result.server_changes[name] = write.server_changes
+            result.left_out[name] = write.left_out
         return result
 
     def validate(self, state: ConfigState) -> ValidationResult:

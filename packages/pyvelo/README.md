@@ -56,8 +56,9 @@ Each carries `lost_edits` (the planned changes not stored, with the values as
 read, meant and stored), `applied`, `server_changes`, the `plan` and the
 `module` as stored, when it could be read. Where the VCO stores a value its own
 way (a field marked `ServerOwned`, and the rewrites per module in
-`MODULE_REWRITES`, `pyvelo.client.module_check`), what it stores is not a lost
-edit; a value other than the one read is a server change.
+`MODULE_REWRITES`, `pyvelo.client.module_check`), a planned change is not a
+lost edit: it is in the write's `left_out`, and a value other than the one read
+is a server change.
 
 `pyvelo.testing.ModuleStore` is an `httpx` handler that holds module rows as
 JSON and answers module updates, inserts and `getConfiguration` as a VCO does.

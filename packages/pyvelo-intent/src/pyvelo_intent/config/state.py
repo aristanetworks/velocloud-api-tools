@@ -36,7 +36,7 @@ from pyvelo.core.rebase import (
     key_form,
     raw_changes,
 )
-from pyvelo.core.response_check import ServerChange
+from pyvelo.core.response_check import PlannedChange, ServerChange
 
 from pyvelo_intent.config.module_names import resolve_module_name
 
@@ -554,11 +554,18 @@ class SaveResult:
     server_changes: dict[ConfigurationModuleName, tuple[ServerChange, ...]] = field(
         default_factory=dict
     )
-    """For each module written, what the VCO stored otherwise than sent that is not a lost edit.
+    """For each module written, what the VCO stored otherwise than sent, at paths that are not lost edits.
 
-    Changes beside the plan, by the VCO or another writer, and planned changes
-    the VCO stores its own way (``ConfigPipeline.save`` lists them). A value
-    stored as it was read is not listed."""
+    A value stored as it was read is not listed: a planned change kept so is
+    in ``left_out``."""
+    left_out: dict[ConfigurationModuleName, tuple[PlannedChange, ...]] = field(
+        default_factory=dict
+    )
+    """For each module written, the planned changes the VCO stores its own way.
+
+    A change to a field it owns, the removal of a default it adds back, and
+    the removal of a row of an append-only ref: neither applied nor lost, each
+    with the value read, the value sent and the value stored."""
     warnings: list[ValidationWarning] = field(default_factory=list)
     validation_errors: list[ValidationError] = field(default_factory=list)
     # Optional count for downstream integrations managing enterprise objects.

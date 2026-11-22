@@ -226,6 +226,36 @@ async def test_added_keys_are_reported_and_not_planned_again():
     assert raw["added"] == 1
 
 
+async def test_left_out_changes_are_in_the_save_result():
+    web = {"name": "web", "action": {"allow_or_deny": "allow"}, "match": {}}
+    raw = copy.deepcopy(EDGE_FW)
+    raw["segments"][0]["outbound"] = [{**web, "ruleLogicalId": "l1"}]
+    state = make_state(
+        edge_modules=[
+            make_module_json(
+                "firewall", raw, module_id=1, configuration_id=10, version="e1"
+            )
+        ]
+    )
+    client = MockVcoClient.for_state(state)
+
+    def keep_the_id(new: dict[str, Any], _: dict[str, Any] | None) -> None:
+        new["data"]["segments"][0]["outbound"][0]["ruleLogicalId"] = "l1"
+
+    client.store.on_store.append(keep_the_id)
+    state.edge.firewall.segments[0].outbound[0].rule_logical_id = "l2"
+
+    result = await ConfigPipeline(client).save(state)
+
+    at = 'segments["Global Segment"].outbound[web].ruleLogicalId'
+    (change,) = result.left_out[FIREWALL]
+    assert str(change.path) == at
+    assert (change.as_read, change.intended, change.stored) == ("l1", "l2", "l1")
+    assert at not in paths(result.server_changes[FIREWALL])
+    assert state.edge.firewall.segments[0].outbound[0].rule_logical_id == "l1"
+    assert state.plan().changed == ()
+
+
 async def test_request_two_of_three_fails():
     state = three_module_state()
     client = MockVcoClient.for_state(state)

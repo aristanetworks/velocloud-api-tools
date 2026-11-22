@@ -264,12 +264,22 @@ firewall: update
 ## After a save
 
 Each module a save writes is replaced in the state by the module as the VCO
-stored it. `SaveResult.server_changes` holds, per module, what the VCO stored
-beyond what was sent: keys it added, IDs it issued or revised (a firewall
-rule's `ruleLogicalId`, a WAN link's `internalId`), values it keeps in its own
-form (an IPv6 address in canonical form), defaults it added back where you
-removed them, and what another writer changed beside your edits. A value
-stored as it was read is not listed. These are information, not errors.
+stored it. `SaveResult` also reports, per module, what the VCO did beside
+storing your changes. Neither list is an error.
+
+- `server_changes` is what the VCO stored otherwise than sent, at paths that
+  are not lost edits. It lists keys the VCO added, IDs it issued or revised (a
+  firewall rule's `ruleLogicalId`, a WAN link's `internalId`), values it keeps
+  in its own form (an IPv6 address in canonical form), the default it added
+  back where you removed one, and what another writer changed beside your
+  edits. A value stored as it was read is not listed here.
+- `left_out` is the planned changes the VCO stores its own way, which are
+  neither applied nor lost. They are a change to a field the VCO owns (a
+  firewall rule's `ruleLogicalId`), the removal of a default it adds back, and
+  the removal of a row of an append-only ref (an address group, for example). Each
+  has the value read (`as_read`), the value sent (`intended`) and the value
+  stored. Saving again would not store them either, so they are not to be
+  redone.
 
 A write whose changes are not all stored raises one of two errors, from
 `pyvelo.client.exceptions` and re-exported by `pyvelo_intent`:

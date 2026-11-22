@@ -369,3 +369,4 @@ def test_an_inserted_module_is_replaced_and_no_longer_new():
 
 def test_save_result_has_server_changes():
     assert SaveResult().server_changes == {}
+    assert SaveResult().left_out == {}

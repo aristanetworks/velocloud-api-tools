@@ -131,7 +131,11 @@ class PlannedChange:
 
 @dataclass(frozen=True, slots=True)
 class ServerChange:
-    """A difference between the payload and what is stored, outside the plan's changes."""
+    """What the VCO stored otherwise than sent, at a path that is not a lost edit.
+
+    Where the plan changed nothing, and also where the VCO stores a planned
+    value its own way (a left-out change, an IPv6 address in canonical form).
+    """
 
     path: Path
     as_read: object
