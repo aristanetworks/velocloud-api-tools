@@ -17,7 +17,7 @@ from pyvelo.client.schemas.configuration import (
 )
 from pyvelo.config.resolver import ResolverContext
 from pyvelo.testing import make_module_json
-from pyvelo_intent import add
+from pyvelo_intent import add, delete
 from pyvelo_intent.config.pipeline import ConfigPipeline
 from pyvelo_intent.config.state import ConfigState
 from pyvelo_intent.testing import MockVcoClient
@@ -304,3 +304,47 @@ async def test_apply_creates_the_edge_segment_entry_on_write_only():
         patch={"block": add({"action": {"allow_or_deny": "deny"}, "match": {}})},
     )
     assert [r.name for r in state.edge.firewall.segment("Guest").outbound] == ["block"]
+
+
+_DENY: dict[str, object] = {"action": {"allow_or_deny": "deny"}, "match": {}}
+
+
+async def test_first_patch_to_a_module_the_edge_lacks_keeps_the_profiles_segment_order():
+    state = make_state(edge_modules=[])
+    client = MockVcoClient.for_state(state)
+    pipeline = ConfigPipeline(client)
+    _ = await pipeline.apply(
+        state,
+        module="firewall",
+        segment="Guest",
+        path="outbound",
+        patch={"tmp": add(_DENY)},
+    )
+    (module,) = state.plan().changed
+    assert module.operation == "insert"
+    assert [str(c.path) for c in module.changes] == ["segments[Guest].outbound[tmp]"]
+    assert module.reconciled_segments == ("Global Segment", "Guest")
+    result = await pipeline.save(state)
+    assert result.modules_inserted == [ConfigurationModuleName.FIREWALL]
+    (request,) = client.insert_requests
+    assert [s["segment"] for s in request.data["segments"]] == [
+        desc(0, "Global Segment"),
+        desc(2, "Guest"),
+    ]
+    assert [r["name"] for r in request.data["segments"][1]["outbound"]] == ["tmp"]
+
+
+async def test_two_patches_that_cancel_out_leave_no_insert_pending():
+    state = make_state(edge_modules=[])
+    client = MockVcoClient.for_state(state)
+    pipeline = ConfigPipeline(client)
+    for patch in ({"tmp": add(_DENY)}, {"tmp": delete()}):
+        _ = await pipeline.apply(
+            state, module="firewall", segment="Guest", path="outbound", patch=patch
+        )
+    plan = state.plan()
+    assert plan.changed == ()
+    assert plan.render() == "firewall: none\n  missing segments: Global Segment, Guest"
+    result = await pipeline.save(state)
+    assert (result.modules_inserted, result.modules_updated) == ([], [])
+    assert client.calls == []

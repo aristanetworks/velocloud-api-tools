@@ -183,6 +183,22 @@ async def test_delete_one_of_two_firewall_rules_of_one_name():
     assert sent == [rules[0], rules[2]]
 
 
+async def test_reading_a_later_inherited_segment_sends_nothing():
+    profile: dict[str, Any] = {
+        "segments": [
+            {"segment": desc(0, SEGMENT), "outbound": []},
+            {"segment": desc(1, "Guest"), "outbound": []},
+            {"segment": desc(2, "Voice"), "outbound": []},
+        ]
+    }
+    state = make_state({"firewall": firewall()}, {"firewall": profile})
+    client = MockVcoClient.for_state(state)
+    assert state.edge.firewall.segment("Voice").outbound == []  # a read
+    assert state.plan().changed == ()
+    result = await ConfigPipeline(client).save(state)
+    assert (client.calls, result.modules_updated) == ([], [])
+
+
 # --- QoS --------------------------------------------------------------------
 
 QOS_ACTION: dict[str, Any] = {

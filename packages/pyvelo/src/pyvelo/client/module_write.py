@@ -18,7 +18,10 @@ changed (``server_changes``); otherwise it raises ``ConfigConflictError`` or
 Segment reconciliation: an edge module may lack a segment entry that its profile
 has. The write then carries an empty entry for it (the profile's descriptor and
 no rules; a deviceSettings entry also has an empty ``routes.static``, which the
-Orchestrator requires), so the edge layer has a place to hold the segment. It
+Orchestrator requires), so the edge layer has a place to hold the segment.
+Those entries follow the edge's own, in the profile's order, also when the caller's
+data already holds one, in whatever place (a lookup added its placeholder, which
+the caller may have edited): a lookup never changes what is written. It
 never writes only to reconcile: with no change from the caller the plan is
 ``none``. A segment the caller deletes from the edge layer that the profile has
 comes back as that empty entry: the edge cannot drop what it inherits.
@@ -286,38 +289,40 @@ def _add_segments(data: object, entries: list[dict[str, Any]]) -> None:
         data["segments"] = list(entries)
 
 
-def _with_baseline_segments(
+def _with_reconciled_segments(
     current: dict[str, Any],
     baseline: dict[str, Any],
     extra: list[dict[str, Any]],
 ) -> dict[str, Any]:
-    """*current*, plus the baseline's version of each reconciled segment it lacks.
+    """*current* with the reconciled segments after its own, in the profile's order.
 
-    The caller's data has no entry for a segment that only reconciliation adds.
-    Without one it would read as the caller deleting it (typed data, in the
-    rebase) or as a change to ``segments`` (a plain dict, which is the payload).
-    An absent or null ``segments`` in *current* is an empty list.
+    The segments of *extra* are the ones reconciliation adds. *current* may hold
+    an entry for one (a lookup added its placeholder, which the caller may have
+    edited), in whatever place; it is kept as it is and moved to where the
+    reconciled data has it. One *current* lacks is the baseline's. Without it the
+    segment would read as the caller deleting it (typed data, in the rebase) or
+    as a change to ``segments`` (a plain dict, which is the payload). The entries
+    of the edge's own segments keep the caller's order. An absent or null
+    ``segments`` in *current* is an empty list.
     """
     current_segments: object = current.get("segments")
     if current_segments is None:
         current_segments = []
     baseline_segments = baseline.get("segments")
-    if not (_is_list(current_segments) and _is_list(baseline_segments)):
+    if not (extra and _is_list(current_segments) and _is_list(baseline_segments)):
         return current
-    have = [segment_id_of(entry) for entry in current_segments]
-    added: list[object] = []
-    for placeholder in extra:
-        segment_id = segment_id_of(placeholder)
-        if segment_id in have:
-            continue
-        entry = next(
-            (e for e in baseline_segments if segment_id_of(e) == segment_id), None
-        )
-        if entry is not None:
-            added.append(entry)
-    if not added:
-        return current
-    return {**current, "segments": [*current_segments, *added]}
+    ids = [segment_id_of(placeholder) for placeholder in extra]
+    own = [e for e in current_segments if segment_id_of(e) not in ids]
+    reconciled: list[object] = []
+    for segment_id in ids:
+        entries = [e for e in current_segments if segment_id_of(e) == segment_id]
+        if not entries:
+            baseline_entry = next(
+                (e for e in baseline_segments if segment_id_of(e) == segment_id), None
+            )
+            entries = [] if baseline_entry is None else [baseline_entry]
+        reconciled.extend(entries)
+    return {**current, "segments": [*own, *reconciled]}
 
 
 def _plan_refs(
@@ -406,7 +411,7 @@ def plan_module(
                 rebase(
                     reconciled,
                     before,
-                    _with_baseline_segments(after, before, extra),
+                    _with_reconciled_segments(after, before, extra),
                     model_type,
                 )
             ),
@@ -419,7 +424,7 @@ def plan_module(
         model_type = None
         topped_up = dict(cast(Mapping[str, Any], current))
         if extra:  # only for an object, so *reconciled* is one
-            topped_up = _with_baseline_segments(
+            topped_up = _with_reconciled_segments(
                 topped_up, cast(dict[str, Any], reconciled), extra
             )
         payload = copy.deepcopy(topped_up)

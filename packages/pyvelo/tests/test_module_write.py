@@ -500,6 +500,95 @@ def test_dict_data_keeps_its_own_version_of_a_reconciled_segment():
     assert len(plan.data["segments"]) == 2
 
 
+# --- where the reconciled segments are written ------------------------------
+
+THREE_SEGMENTS_RAW: dict[str, Any] = {
+    "segments": [
+        {"segment": desc(0, "Global Segment"), "outbound": []},
+        {"segment": desc(2, "Guest"), "outbound": []},
+        {"segment": desc(3, "Voice"), "outbound": []},
+    ]
+}
+
+
+def bound(
+    raw: dict[str, Any], profile_raw: dict[str, Any]
+) -> tuple[FirewallConfigurationModule, FirewallConfigurationModule]:
+    """An edge module of *raw* bound to a profile module of *profile_raw*, and that one."""
+    mod, profile = fw(raw), fw(profile_raw, module_id=2)
+    mod.data.bind_profile(profile.raw_data)
+    return mod, profile
+
+
+def segment_names(data: dict[str, Any]) -> list[str]:
+    return [s["segment"]["name"] for s in data["segments"]]
+
+
+def test_a_placeholder_for_a_later_profile_segment_plans_nothing():
+    for looked_up in (["Voice"], ["Voice", "Guest"], ["Guest", "Voice"]):
+        mod, profile = bound(EDGE_RAW, THREE_SEGMENTS_RAW)
+        for name in looked_up:
+            assert mod.data.segment(name).outbound == []
+        plan = plan_module(mod, level=EDGE, profile=profile)
+        assert (plan.operation, plan.data, plan.changes) == ("none", EDGE_RAW, ())
+        assert plan.reconciled_segments == ("Guest", "Voice")
+
+
+def test_an_edit_in_a_later_missing_segment_is_planned_at_the_item():
+    mod, profile = bound(EDGE_RAW, THREE_SEGMENTS_RAW)
+    mod.data.segment("Voice").outbound.append(rule("block"))
+    plan = plan_module(mod, level=EDGE, profile=profile)
+    assert plan.operation == "update"
+    assert [str(c.path) for c in plan.changes] == ["segments[Voice].outbound[block]"]
+    assert segment_names(plan.data) == ["Global Segment", "Guest", "Voice"]
+    assert plan.data["segments"][0] == EDGE_RAW["segments"][0]
+    assert plan.data["segments"][1] == THREE_SEGMENTS_RAW["segments"][1]
+
+
+def test_a_created_module_has_its_segments_in_the_profiles_order():
+    mod = new_edge_module(ConfigurationModuleName.FIREWALL, 10)
+    assert isinstance(mod, FirewallConfigurationModule)
+    profile = fw(PROFILE_RAW, module_id=2)
+    mod.data.bind_profile(profile.raw_data)
+    guest = mod.data.segment("Guest")  # the model now holds Guest alone
+    assert plan_module(mod, level=EDGE, profile=profile).operation == "none"
+    guest.outbound.append(rule("tmp"))
+    plan = plan_module(mod, level=EDGE, profile=profile)
+    assert plan.operation == "insert"
+    assert [str(c.path) for c in plan.changes] == ["segments[Guest].outbound[tmp]"]
+    assert segment_names(plan.data) == ["Global Segment", "Guest"]
+    del guest.outbound[0]
+    plan = plan_module(mod, level=EDGE, profile=profile)
+    assert (plan.operation, plan.changes) == ("none", ())
+
+
+def test_the_order_of_the_edges_own_segments_is_the_callers():
+    raw = copy.deepcopy(EDGE_RAW)
+    raw["segments"].append({"segment": desc(9, "Branch"), "outbound": []})
+    mod, profile = bound(raw, THREE_SEGMENTS_RAW)
+    _ = mod.data.segment("Voice")
+    mod.data.segments.reverse()  # Voice, Branch, Global Segment
+    plan = plan_module(mod, level=EDGE, profile=profile)
+    assert plan.operation == "update"
+    assert segment_names(plan.data) == ["Branch", "Global Segment", "Guest", "Voice"]
+
+
+def test_a_reconciled_segment_is_written_after_the_edges_own_wherever_the_model_has_it():
+    mod, profile = bound(EDGE_RAW, PROFILE_RAW)
+    _ = mod.data.segment("Guest")
+    mod.data.segments.reverse()  # Guest, Global Segment
+    plan = plan_module(mod, level=EDGE, profile=profile)
+    assert (plan.operation, plan.data) == ("none", EDGE_RAW)
+
+
+def test_dict_data_with_its_reconciled_segments_in_another_order_plans_nothing():
+    mod, profile = fw(EDGE_RAW), fw(THREE_SEGMENTS_RAW, module_id=2)
+    data = copy.deepcopy(EDGE_RAW)
+    data["segments"].append(copy.deepcopy(THREE_SEGMENTS_RAW["segments"][2]))
+    plan = plan_module(mod, data, level=EDGE, profile=profile)
+    assert (plan.operation, plan.data, plan.changes) == ("none", EDGE_RAW, ())
+
+
 # --- levels at which a field is not part of the wire form ------------------
 
 PROFILE = ConfigContext.PROFILE
@@ -904,6 +993,26 @@ def test_a_device_settings_segment_in_a_profile_without_routes_still_gets_static
     mod.data.lan.networks[0].cost += 1
     written = plan_module(mod, level=EDGE, profile=profile).data["segments"][1]
     assert written == DS_PLACEHOLDER
+
+
+def test_a_device_settings_placeholder_for_a_later_segment_plans_nothing():
+    profile_raw: dict[str, Any] = copy.deepcopy(DS_PROFILE_RAW)
+    profile_raw["segments"].append(
+        {"segment": desc(3, "Voice"), "routes": {"static": []}}
+    )
+    mod, profile = ds(DS_EDGE_RAW), ds(profile_raw, module_id=2)
+    mod.data.bind_profile(profile.raw_data)
+    _ = mod.data.segment("Voice")
+    plan = plan_module(mod, level=EDGE, profile=profile)
+    assert (plan.operation, plan.data, plan.changes) == ("none", DS_EDGE_RAW, ())
+    mod.data.lan.networks[0].cost += 1
+    plan = plan_module(mod, level=EDGE, profile=profile)
+    assert [str(c.path) for c in plan.changes] == ["lan.networks[1].cost"]
+    assert plan.data["segments"] == [
+        DS_EDGE_RAW["segments"][0],
+        DS_PLACEHOLDER,
+        {"segment": desc(3, "Voice"), "routes": {"static": []}},
+    ]
 
 
 # A firewall segment has no outbound override flag: the VCO and the edge have no
