@@ -6,6 +6,15 @@ does not know, values it coerced and defaults it added never reach the VCO. Only
 what the caller changed (the difference between the module as re-parsed from the
 raw JSON and the model as it is now) is applied to it.
 
+After the plan: ``VcoClient.write_module`` sends it as an update or an insert
+(the requests are built here) that asks for the module as stored
+(``returnData``), and reads the module back when the VCO answers without it.
+``check_module_write`` (``pyvelo.client.module_check``) then compares what the
+VCO stored with what the plan meant to change. When every planned change is
+stored, the write returns the module as stored, with what else the VCO
+changed (``server_changes``); otherwise it raises ``ConfigConflictError`` or
+``WriteNotAppliedError``, which list the lost edits.
+
 Segment reconciliation: an edge module may lack a segment entry that its profile
 has. The write then carries an empty entry for it (the profile's descriptor and
 no rules; a deviceSettings entry also has an empty ``routes.static``, which the

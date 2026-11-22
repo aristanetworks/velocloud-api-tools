@@ -243,7 +243,13 @@ class ConfigState:
 
     A state continues after a save: each module written is replaced by the
     module the VCO stored (:meth:`replace_module`), so the next plan starts
-    from what the VCO holds and the state takes more edits and saves.
+    from what the VCO holds and the state takes more edits and saves. So
+    does a save that raised ``ConfigConflictError`` or
+    ``WriteNotAppliedError`` with the module as stored (``error.module``):
+    the edits to that module are gone, and ``error.lost_edits`` lists the
+    ones to redo. Objects taken from the state before a save belong to the
+    modules it replaced, and are detached: an edit through one raises
+    ``DetachedObjectError``, at once or at the next :meth:`plan`.
 
     The edge layer's module data is bound to the profile layer (see
     ``bind_profile`` on the module data), so a segment the edge layer lacks can
@@ -548,7 +554,11 @@ class SaveResult:
     server_changes: dict[ConfigurationModuleName, tuple[ServerChange, ...]] = field(
         default_factory=dict
     )
-    """For each module written, what the VCO stored otherwise than sent, outside the plan's changes."""
+    """For each module written, what the VCO stored otherwise than sent that is not a lost edit.
+
+    Changes beside the plan, by the VCO or another writer, and planned changes
+    the VCO stores its own way (``ConfigPipeline.save`` lists them). A value
+    stored as it was read is not listed."""
     warnings: list[ValidationWarning] = field(default_factory=list)
     validation_errors: list[ValidationError] = field(default_factory=list)
     # Optional count for downstream integrations managing enterprise objects.

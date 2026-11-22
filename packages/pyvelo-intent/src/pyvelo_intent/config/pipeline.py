@@ -325,8 +325,12 @@ class ConfigPipeline:
         3. Send each changed module, in order, as an update or an insert with
            ``returnData`` (``write_module``), and replace the state's module
            with the one the VCO stored (:meth:`ConfigState.replace_module`).
-           ``SaveResult.server_changes`` holds, per module, what the VCO
-           stored otherwise than sent, outside the plan's changes.
+           ``SaveResult.server_changes`` holds, per module, everything the
+           VCO stored otherwise than sent that is not a lost edit: what it
+           or another writer changed beside the plan, and planned changes
+           it stores its own way (a ``ServerOwned`` field, an IPv6 address
+           in canonical form, a default it adds back where the plan removed
+           it). A value stored as it was read is not listed.
 
         A later :meth:`ConfigState.plan` is empty, and the state takes more
         edits and saves. Objects taken from the state before the save belong

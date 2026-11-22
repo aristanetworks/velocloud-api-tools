@@ -31,7 +31,41 @@ pyvelo = { git = "https://github.com/aristanetworks/velocloud-api-tools.git", su
 | `pyvelo.config.resolver` | `Resolver` Protocol, `BaseResolver`, `ResolverRegistry`, `ResolverContext`, `ResolutionError` |
 | `pyvelo.config.resolvers.*` | Concrete resolvers: edge, segment, profile, address_group, application, service_group, license |
 | `pyvelo.config.validation` | `Validator` Protocol, `ValidatorRegistry`, `@validator` decorator, `ConfigStateLike` Protocol, `ValidationError`, `ValidationResult` |
-| `pyvelo.testing` | Test fixtures: `FakeEdge`, `FakeSegment`, `mock_vco_client_factory`, `make_jsonrpc_response`, `make_transport` |
+| `pyvelo.testing` | Test fixtures: `FakeEdge`, `FakeSegment`, `mock_vco_client_factory`, `make_jsonrpc_response`, `make_transport`; `ModuleStore`, a fake VCO that holds configuration module rows and serves their reads and writes (`store_of`, `as_stored`) |
+
+## Writing a configuration module
+
+`VcoClient.update_module(module, data)` writes a module's data as it was read,
+with only the caller's changes applied, and returns the module as stored, of
+the class of `module`. When nothing changed it sends nothing and returns
+`module` itself. It is `plan_module` (`pyvelo.client.module_write`) followed by
+`write_module`.
+
+`VcoClient.write_module(module, plan)` sends a plan as an update or an insert
+that asks for the module as stored (`returnData`), and reads the module back
+when the VCO answers without it. It then compares what the VCO stored with what
+the plan meant to change. When every planned change is stored it returns a
+`ModuleWrite`: the module as stored, the planned changes `applied`, and the
+`server_changes` (what else the VCO stores otherwise than sent, such as an ID
+it issued). Otherwise it raises, from `pyvelo.client.exceptions`:
+
+- `ConfigConflictError` when the module changed on the VCO since it was read;
+- `WriteNotAppliedError` when the VCO stored the write otherwise than as sent.
+
+Each carries `lost_edits` (the planned changes not stored, with the values as
+read, meant and stored), `applied`, `server_changes`, the `plan` and the
+`module` as stored, when it could be read. Where the VCO stores a value its own
+way (a field marked `ServerOwned`, and the rewrites per module in
+`MODULE_REWRITES`, `pyvelo.client.module_check`), what it stores is not a lost
+edit; a value other than the one read is a server change.
+
+`pyvelo.testing.ModuleStore` is an `httpx` handler that holds module rows as
+JSON and answers module updates, inserts and `getConfiguration` as a VCO does.
+Its knobs are the conditional version check, a VCO that ignores `returnData`,
+writes that fail, hooks that change what is stored (`on_store`) and another
+writer's change (`other_writer`). A client built over it
+(`make_transport(store)`) runs its own request building, parsing and error
+mapping in tests.
 
 ## Portal list and pagination methods
 

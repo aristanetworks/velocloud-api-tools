@@ -1,6 +1,7 @@
 """The outcome of one module write: what the VCO stored, against what the plan meant to change."""
 
 import copy
+import uuid
 from collections.abc import Iterable
 from typing import Any
 
@@ -91,6 +92,8 @@ ROW1: dict[str, Any] = {
 }
 ROW2: dict[str, Any] = {"id": 102, "enterpriseObjectId": 6, "logicalId": "a6"}
 ADDRESS_GROUP = "objectGroup:addressGroup"
+U1, U2, U3 = (str(uuid.UUID(int=n)) for n in (1, 2, 3))
+"""WAN link ``internalId`` values."""
 
 
 def firewall_disabled() -> FirewallConfigurationModule:
@@ -184,6 +187,7 @@ def test_insert_not_stored_is_not_applied():
         _ = check_module_write(module, plan, as_stored(module, {"segments": []}))
     assert not isinstance(exc.value, ConfigConflictError)
     assert exc.value.version == ""
+    assert "None is stored" not in str(exc.value)  # nothing there moved
 
 
 def test_conflict_lists_what_another_writer_changed():
@@ -339,6 +343,28 @@ def test_wan_link_internal_id_issued_passes():
     (change,) = write.server_changes
     assert change.path == "links[#0].internalId"
     assert change.stored == issued["internalId"]
+
+
+def test_wan_internal_id_changed_and_stored_otherwise_passes():
+    # A link read without an internalId has no key, so the links are compared
+    # as a list replaced whole, and the first link's ID, a ServerOwned field,
+    # may be stored as another value than the one sent. (A keyed link whose
+    # internalId changes is another item: the ID is part of its key.)
+    first = {
+        "internalId": U1,
+        "name": "l1",
+        "type": "WIRED",
+        "addressingVersion": "IPv4",
+    }
+    keyless = {"name": "l2", "type": "WIRED", "addressingVersion": "IPv4"}
+    module = wan({"links": [first, keyless]})
+    plan = plan_module(module, {"links": [{**first, "internalId": U2}, keyless]})
+    stored = {"links": [{**first, "internalId": U3}, keyless]}
+    write = check_module_write(module, plan, as_stored(module, stored))
+    assert paths(write.applied) == ["links"]
+    (change,) = write.server_changes
+    assert change.path == "links[#0].internalId"
+    assert change.stored == U3
 
 
 def test_ipv6_in_another_form_passes_in_device_settings():

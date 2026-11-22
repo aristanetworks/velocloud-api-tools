@@ -66,7 +66,8 @@ asyncio.run(main())
 ```
 
 `dry_run=True` skips write API calls; loading still reads live configuration.
-Calling `save(state)` sends configuration writes. Check `SaveResult` with
+Calling `save(state)` sends configuration writes, and the state then continues
+from what the VCO stored (see "After a save"). Check `SaveResult` with
 `raise_for_errors()` to surface validation failures. `build_default_pipeline`
 registers edge/profile name resolvers; loading also initializes the
 segment resolver. Validators must be registered explicitly.
@@ -213,10 +214,12 @@ firewall: update
 ```
 
 - The module `version` from the read is sent. If the module changed on the VCO
-  since, the save raises `ConfigConflictError` (from `pyvelo.client.exceptions`).
-- A `ConfigState` can write once. After a save that sent anything, load again;
-  that is also how server-assigned rule IDs are obtained. Applying to or saving
-  a spent state raises `StateSpentError`.
+  since, the save raises an error that lists your lost edits (see "After a
+  save").
+- A save asks the VCO for each module it writes, as stored, and the state
+  continues from it, so no reload is needed. Rule IDs the VCO assigns are in
+  the state after the save, and `state.plan()` right after a save is empty.
+  The state takes more edits and saves.
 - `state.plan().render()` shows each module's changes against the raw data as
   read, as in the example above. `SaveResult.plan` is the same plan, and
   `dry_run=True` reports it without writing.
@@ -258,6 +261,97 @@ firewall: update
   `model_validate(module.model_dump())` round trip loses the raw snapshot, and
   with it the "as read" guarantee above.
 
+## After a save
+
+Each module a save writes is replaced in the state by the module as the VCO
+stored it. `SaveResult.server_changes` holds, per module, what the VCO stored
+beyond what was sent: keys it added, IDs it issued or revised (a firewall
+rule's `ruleLogicalId`, a WAN link's `internalId`), values it keeps in its own
+form (an IPv6 address in canonical form), defaults it added back where you
+removed them, and what another writer changed beside your edits. A value
+stored as it was read is not listed. These are information, not errors.
+
+A write whose changes are not all stored raises one of two errors, from
+`pyvelo.client.exceptions` and re-exported by `pyvelo_intent`:
+
+| Error | Raised when |
+|---|---|
+| `ConfigConflictError` | the module changed on the VCO since it was read: the VCO refused the version, or none of your changes is stored and each value there is as read |
+| `WriteNotAppliedError` | some of your changes are stored and some are not, or a value you edited is stored as neither the one read nor the one sent; also an insert that is not stored as sent |
+
+Which of the two a stale write raises depends on the VCO's conditional check
+of the version. With it on, the VCO refuses the write, and the save raises
+`ConfigConflictError`. With it off, the VCO stores nothing and answers with the
+module as it is. The save then raises `ConfigConflictError` too, unless
+another writer also changed a value you edited: that raises
+`WriteNotAppliedError`, with the edit marked as a clash.
+
+Both errors carry:
+
+| Attribute | Holds |
+|---|---|
+| `lost_edits` | the planned changes that are not stored: each with its `path`, the value `as_read`, the value `intended` and the value `stored`; `clash` is true where the stored value is not the one read, because something else changed it too |
+| `applied` | the planned changes that are stored |
+| `server_changes` | what else the VCO stores otherwise than sent, as in `SaveResult.server_changes` |
+| `module` | the module as the VCO holds it now; None when it could not be read |
+| `plan` | the module's `ModulePlan` |
+| `completed` | the writes of the same save before this one, which are stored |
+
+The entries are `PlannedChange` and `ServerChange`, from
+`pyvelo.core.response_check`. The message lists them by path. Here, a change
+to a rule's port and a new rule are refused, and another writer had changed
+the same port and another key:
+
+```text
+Configuration module 11 (firewall) changed since it was read (version v1): the VCO refused the version
+lost edits (not stored; redo these):
+  segments["Global Segment"].outbound[block-ssh]: read (nothing), meant {"action": {"allow_or_deny": "deny"}, "comments": null, "loggingEnabled": false,…, stored (nothing)
+  segments["Global Segment"].outbound[allow-web].match.dport_high: read 443, meant 8080, stored 8443  [clash: also changed on the VCO]
+changed on the VCO outside these edits:
+  syslog_forwarding: read false, stored true
+```
+
+After either error the state holds the module as stored (when `error.module`
+has it), so your edits to that module are no longer in it. Redo the edits in
+`error.lost_edits` and save again; no reload is needed. Redo only those: an
+`add` of an item that is already stored raises `PatchError`. A clash is where
+the redo overwrites another writer's change. The modules written before the
+failing one are stored and in the state (`error.completed`). Any other error of
+a request (a transport error, for example) leaves that module and the later
+ones with your edits, and carries a note that names the modules written before
+it; a second save sends what still differs.
+
+A `WriteNotAppliedError` after a write that did work means the VCO stores that
+value in another form than the one sent. The fix is an entry in the table of
+rewrites, `MODULE_REWRITES` in `pyvelo.client.module_check`, or a `ServerOwned`
+marker on the model's field. Until then every save of that value raises.
+
+Objects taken from the state before a save
+(`seg = state.edge.firewall.segment("Global Segment")`) belong to the modules
+the save replaced, and are detached. Reading one is fine. An assignment to one
+raises `DetachedObjectError`, and an in-place edit to a list or dict it holds
+(`seg.outbound.insert(0, rule)`) is reported, once, by the next `plan()` or
+save. Take the object from the state again and redo the edit.
+
+Known limits:
+
+- A plain list or dict taken from a module before a save and held on its own,
+  after every model of that module is dropped, is not checked for in-place
+  edits. Hold the model, or take the list from the state again.
+- A lookup through a detached layer that adds a placeholder
+  (`fw.segment("Guest")` on a `fw` taken before the save) is reported by the
+  next `plan()`. Take the layer from the state again.
+- A save that changes a profile's device settings and its QoS (or firewall)
+  together may need a second save, when the device settings change propagates:
+  the later module's write raises with your edits in `lost_edits`, and the
+  state holds that module as stored, so redo them and save again. Rebasing
+  those edits comes with derived refs, the next phase.
+- Until then, device settings and QoS writes send refs only when your refs
+  changed, as before.
+- An insert that reached the VCO but whose save failed, for example with a
+  transport error, is retried as an insert by the next save. Check the
+  configuration before saving again.
+
 ## Scope and data handling
 
 - Updates support firewall, device settings, QoS, and WAN modules. A missing
@@ -267,8 +361,6 @@ firewall: update
 - A failed `apply` changes nothing. Patches and saves run one after another,
   though: a failure leaves earlier patches, and the remote writes of a save
   that stopped part way, applied; there is no transaction or rollback.
-  Reload configuration after a successful save before starting another change;
-  save does not refresh the snapshot.
 - The `override_consistency` validator is a traversal placeholder and currently
   reports no violations. Other registered validators cover specific structural
   or domain checks; they do not guarantee that every patch is valid for a live VCO.
@@ -283,15 +375,15 @@ firewall: update
 
 | Module | What it provides |
 |---|---|
-| `pyvelo_intent` | Re-exports the public surface: `ConfigPipeline`, `ConfigState`, `SaveResult`, the patch helpers (`add`, `delete`, `move`, `at`) and `PatchError`, diff types (`DiffResult`, `Added`, `Removed`, `Modified`, `Unchanged`, `FieldChange`), error types, helpers (`build_default_pipeline`, `confirm_save`, `load_config`) |
+| `pyvelo_intent` | Re-exports the public surface: `ConfigPipeline`, `ConfigState`, `SaveResult`, the patch helpers (`add`, `delete`, `move`, `at`) and `PatchError`, diff types (`DiffResult`, `Added`, `Removed`, `Modified`, `Unchanged`, `FieldChange`), the intent error types, the write errors `ConfigConflictError`, `WriteNotAppliedError` and `DetachedObjectError` (from `pyvelo.client.exceptions`), helpers (`build_default_pipeline`, `confirm_save`, `load_config`) |
 | `pyvelo_intent.config.pipeline` | `ConfigPipeline` (load/load_profile → apply → save), `build_default_pipeline` |
 | `pyvelo_intent.config.state` | `ConfigState`, `SaveResult`, `ConfigFieldChange`, `ValidationWarning` |
 | `pyvelo_intent.config.helpers` | `load_config`, `confirm_save` |
 | `pyvelo_intent.config.validators.*` | Structural built-ins (`key_uniqueness`, `override_consistency`, `required_fields`) + domain validators (firewall, device settings) |
 | `pyvelo_intent.config.(firewall\|device_settings\|qos\|wan\|control_plane)` | Per-module configuration helpers |
 | `pyvelo_intent.diff` | Generic keyed-list diff engine: `diff_intents`, `DiffResult`, `Added`, `Removed`, `Modified`, `Unchanged`, `FieldChange` |
-| `pyvelo_intent.errors` | `IntentError`, `ConfigInputError`, `SaveValidationError`, `StateSpentError`, `UnknownRegistryEntryError` |
-| `pyvelo_intent.testing` | Test fixtures: `MockVcoClient`, `make_firewall_module`, `make_firewall_segment` |
+| `pyvelo_intent.errors` | `IntentError`, `ConfigInputError`, `SaveValidationError`, `UnknownRegistryEntryError` |
+| `pyvelo_intent.testing` | Test fixtures: `MockVcoClient`, which holds a `ModuleStore` (`pyvelo.testing`) as `store` that serves module reads and writes (`MockVcoClient.for_state(state)` seeds it from a state), `make_firewall_module`, `make_firewall_segment` |
 
 ## Tests
 
