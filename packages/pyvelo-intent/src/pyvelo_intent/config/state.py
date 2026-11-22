@@ -1,11 +1,13 @@
 """ConfigState: holds edge/profile configuration with snapshot for diff-on-save."""
 
 import copy
+import weakref
 from dataclasses import dataclass, field
 from typing import Literal, Protocol, cast, runtime_checkable
 
 from pydantic import MISSING, BaseModel
 from pyvelo.client.enums.configuration import ConfigurationModuleName
+from pyvelo.client.exceptions import DetachedObjectError
 from pyvelo.client.models.configuration.device_settings.root import DeviceSettingsData
 from pyvelo.client.models.configuration.firewall.root import FirewallData
 from pyvelo.client.models.configuration.qos.root import QosData
@@ -24,9 +26,17 @@ from pyvelo.client.schemas.configuration import (
 )
 from pyvelo.config.resolver import ResolverContext
 from pyvelo.config.validation import ValidationError
-from pyvelo.core import ConfigContext
+from pyvelo.core import ConfigContext, VcoModel
 from pyvelo.core.fields import get_key_spec
-from pyvelo.core.rebase import KeyForm, item_key, item_key_text, key_form
+from pyvelo.core.rebase import (
+    KeyForm,
+    Path,
+    item_key,
+    item_key_text,
+    key_form,
+    raw_changes,
+)
+from pyvelo.core.response_check import ServerChange
 
 from pyvelo_intent.config.module_names import resolve_module_name
 
@@ -126,6 +136,103 @@ class LayerView:
         return module.data
 
 
+type _Place = tuple[str | int, ...]
+"""Where a model is in its module's dump: dump keys and list positions (``mark_detached``)."""
+
+
+@dataclass
+class _Replaced:
+    """A module ``replace_module`` took out, kept to find in-place edits of its objects.
+
+    ``dump`` is the module's dump when it was replaced, or when an in-place
+    edit was last found; ``nodes`` are the models inside it, held weakly, each
+    with its place in ``dump``. Nothing here keeps the module or its objects
+    alive.
+    """
+
+    name: str
+    model: type[VcoModel]
+    dump: object
+    nodes: list[tuple[_Place, weakref.ref[VcoModel]]]
+
+    def changed_paths(self) -> list[Path]:
+        """Where the objects still alive were changed in place since ``dump``, each once.
+
+        Drops the nodes no longer alive. A node inside another live node is in
+        that one's dump, so only the outermost live nodes are dumped: put at
+        their places in ``dump``, they make the module as it is now, and
+        ``raw_changes`` against ``dump`` gives the paths, from the module, with
+        keyed items named by key. When there are some, that is the new
+        ``dump``, so each change is found once; a node below that the edit
+        moved from its place there is no longer compared.
+        """
+        alive = [
+            (place, ref, node)
+            for place, ref in self.nodes
+            if (node := ref()) is not None
+        ]
+        self.nodes = [(place, ref) for place, ref, _ in alive]
+        if not alive:
+            return []
+        places = {place for place, _, _ in alive}
+        outermost = {
+            place: _dump(node)
+            for place, _, node in alive
+            if not any(place[:i] in places for i in range(len(place)))
+        }
+        now = self.dump
+        for place, value in outermost.items():
+            now = _put(now, place, value)
+        changes = raw_changes(self.dump, now, self.model)
+        if not changes:
+            return []
+        self.dump = now
+        self.nodes = [
+            (place, ref)
+            for place, ref, node in alive
+            if place in outermost or _at(now, place) == _dump(node)
+        ]
+        return list(dict.fromkeys(change.path for change in changes))
+
+
+def _dump(model: VcoModel) -> object:
+    return model.model_dump(mode="json", by_alias=True)
+
+
+def _at(doc: object, place: _Place) -> object:
+    """The value at *place* of the JSON *doc*, or ``MISSING`` where there is none."""
+    for part in place:
+        if isinstance(part, int):
+            if not isinstance(doc, list):
+                return MISSING
+            items = cast(list[object], doc)
+            if part >= len(items):
+                return MISSING
+            doc = items[part]
+        else:
+            if not isinstance(doc, dict):
+                return MISSING
+            entries = cast(dict[str, object], doc)
+            if part not in entries:
+                return MISSING
+            doc = entries[part]
+    return doc
+
+
+def _put(doc: object, place: _Place, value: object) -> object:
+    """The JSON *doc* with *value* at *place*: the containers on the way are copied."""
+    if not place:
+        return value
+    part, rest = place[0], place[1:]
+    if isinstance(part, int):
+        items = list(cast(list[object], doc))
+        items[part] = _put(items[part], rest, value)
+        return items
+    entries = dict(cast(dict[str, object], doc))
+    entries[part] = _put(entries[part], rest, value)
+    return entries
+
+
 @dataclass
 class ConfigState:
     """Holds the loaded configuration state with snapshot for diff detection.
@@ -156,6 +263,8 @@ class ConfigState:
     )
     """Each module ``module(create=True)`` made where ``modules`` was unset, and
     whether ``modules`` was in the config's ``model_fields_set`` then."""
+    _replaced: list[_Replaced] = field(default_factory=list, repr=False)
+    """Each module ``replace_module`` took out whose objects may still be held."""
 
     def __post_init__(self) -> None:
         if self.edge_config is None or self.edge_config.modules is MISSING:
@@ -245,6 +354,79 @@ class ConfigState:
             if not made[1]:
                 config.model_fields_set.discard("modules")
 
+    def replace_module(
+        self, old: AnyConfigurationModule, new: AnyConfigurationModule
+    ) -> None:
+        """Put *new*, the module as the VCO stored it, where *old* is in the target config.
+
+        An edge module is bound to the profile layer. The per-field snapshot
+        takes a copy of *new*, so neither :meth:`plan` nor
+        :meth:`get_field_changes` shows what was written; the other modules
+        keep their edits. *old* and every model inside it are detached: an
+        assignment raises ``DetachedObjectError``, and so does the next
+        :meth:`plan` after an in-place change to a list or dict they hold. The
+        state keeps no strong reference to *old*. Raises ``ValueError`` if
+        *old* is not in the target config.
+        """
+        config = self.target_config
+        modules = [] if config.modules is MISSING else config.modules
+        index = next((i for i, m in enumerate(modules) if m is old), None)
+        if index is None:
+            raise ValueError(f"module {old.name!r} is not in the target config")
+        modules[index] = new
+        if config is self.edge_config:
+            _bind_to_profile(new, self.profile_config)
+        snapshot = self.snapshot_for_target()
+        if snapshot is not None:
+            stored = copy.deepcopy(new)
+            if snapshot.modules is MISSING:
+                snapshot.modules = [stored]
+            else:
+                at = next(
+                    (i for i, m in enumerate(snapshot.modules) if m.name == new.name),
+                    None,
+                )
+                if at is None:
+                    snapshot.modules.append(stored)
+                else:
+                    snapshot.modules[at] = stored
+        self._made_into_unset = [e for e in self._made_into_unset if e[0] is not old]
+        # Last: a copy of a detached object is detached too.
+        nodes = old.mark_detached()
+        self._replaced.append(
+            _Replaced(
+                name=old.name,
+                model=type(old),
+                dump=_dump(old),
+                nodes=[(place, weakref.ref(node)) for place, node in nodes],
+            )
+        )
+
+    def _check_detached(self) -> None:
+        """Raise ``DetachedObjectError`` if objects of a replaced module were changed in place.
+
+        Each change is reported once: the comparison is then taken again from
+        the objects as they are. A replaced module none of whose objects is
+        alive is forgotten.
+        """
+        found: list[tuple[str, list[Path]]] = []
+        for record in self._replaced:
+            paths = record.changed_paths()
+            if paths:
+                found.append((record.name, paths))
+        self._replaced = [record for record in self._replaced if record.nodes]
+        if not found:
+            return
+        raise DetachedObjectError(
+            "\n".join(
+                f"{name}: objects taken from the state before a save were changed "
+                + f"in place at: {', '.join(paths)}. The state holds the module as "
+                + "stored; take the objects from the state again and redo the change"
+                for name, paths in found
+            ),
+            list(dict.fromkeys(path for _, paths in found for path in paths)),
+        )
+
     @property
     def edge(self) -> LayerView:
         """The edge layer's module data. Raises ``ValueError`` without an edge layer."""
@@ -272,7 +454,12 @@ class ConfigState:
         Each module is planned relative to the raw data it was read from. An
         edge module also reconciles its segments with the profile's module of
         the same name. Raises ``LossyFieldError`` if an edit cannot be written.
+
+        First, raises ``DetachedObjectError`` naming the paths if objects of a
+        module :meth:`replace_module` replaced were changed in place; once for
+        those changes, so the next call plans.
         """
+        self._check_detached()
         config = self.target_config
         if config.modules is MISSING:
             return ConfigPlan(modules=())
@@ -356,6 +543,10 @@ class SaveResult:
     modules_updated: list[ConfigurationModuleName] = field(default_factory=list)
     modules_inserted: list[ConfigurationModuleName] = field(default_factory=list)
     plan: ConfigPlan | None = None
+    server_changes: dict[ConfigurationModuleName, tuple[ServerChange, ...]] = field(
+        default_factory=dict
+    )
+    """For each module written, what the VCO stored otherwise than sent, outside the plan's changes."""
     warnings: list[ValidationWarning] = field(default_factory=list)
     validation_errors: list[ValidationError] = field(default_factory=list)
     # Optional count for downstream integrations managing enterprise objects.
