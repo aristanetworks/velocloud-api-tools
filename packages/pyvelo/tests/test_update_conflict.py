@@ -259,16 +259,27 @@ async def test_asked_for_data_and_got_a_row_count(
     assert stale.value.detail == "no rows were modified"
 
 
+@pytest.mark.parametrize(
+    ("return_data", "answer"),
+    [
+        (True, {"name": "imageUpdate", "id": 1}),
+        (True, {"name": [], "id": 1}),  # a name that is not text is no module's
+        (False, {}),
+    ],
+)
 async def test_a_result_that_is_neither_raises(
-    mock_vco_client: MockVcoClientFactory, json_rpc_response: JsonRpcResponseFactory
+    mock_vco_client: MockVcoClientFactory,
+    json_rpc_response: JsonRpcResponseFactory,
+    return_data: bool,
+    answer: JsonObject,
 ):
     client = await mock_vco_client(
-        lambda r: httpx.Response(
-            200, json=json_rpc_response({"name": "imageUpdate", "id": 1})
-        )
+        lambda r: httpx.Response(200, json=json_rpc_response(answer))
     )
     with pytest.raises(VcoOperationError, match="neither"):
-        _ = await client.update_configuration_module(req("1700", return_data=True))
+        _ = await client.update_configuration_module(
+            req("1700", return_data=return_data)
+        )
 
 
 async def send_update(client: VcoClient) -> object:

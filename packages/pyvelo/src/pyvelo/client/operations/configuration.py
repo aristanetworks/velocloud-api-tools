@@ -158,11 +158,11 @@ class ConfigurationMixin(Protocol):
         With ``return_data`` the result is the module row as stored, validated
         as a module at config level *level*, with its raw data and refs
         captured as on any read; a row that does not validate raises as a read
-        does. At this level a stale ``version`` cannot be
-        told from a write: a VCO with the check off answers both with a row,
-        the stale one with the current row unchanged. ``write_module`` compares
-        the row with what was sent. Without ``return_data``, or from a VCO that
-        ignores it and answers with a row count, the result is None.
+        does. At this level a stale ``version`` cannot be told from a write: a
+        VCO with the check off answers both with a row, the stale one with the
+        current row unchanged. ``write_module`` compares the row with what was
+        sent. Without ``return_data``, or from a VCO that ignores it and
+        answers with a row count, the result is None.
         """
         version = request.version
         result: AnyConfigurationModule | RowsModifiedConfirmation

@@ -422,8 +422,10 @@ def _module_or_count(value: object) -> str:
     """
     if isinstance(value, ConfigurationModuleBase):
         return "module"
-    if _is_mapping(value) and value.get("name") in _MODULE_NAMES:
-        return "module"
+    if _is_mapping(value):
+        name = value.get("name")
+        if isinstance(name, str) and name in _MODULE_NAMES:
+            return "module"
     return "count"
 
 
