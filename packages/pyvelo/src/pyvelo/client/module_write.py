@@ -44,6 +44,7 @@ from dataclasses import dataclass
 from typing import Any, Final, Literal, cast
 
 from pydantic import MISSING
+from pydantic_core import to_jsonable_python
 
 from pyvelo.client.exceptions import LossyFieldError
 from pyvelo.client.models.configuration.common import (
@@ -360,6 +361,11 @@ def _with_reconciled_segments(
     return {**current, "segments": [*own, *reconciled]}
 
 
+def _plain_json(value: Mapping[str, object]) -> dict[str, Any]:
+    """A new dict of *value* as the request would write it: plain JSON, sharing nothing with it."""
+    return cast(dict[str, Any], to_jsonable_python(dict(value), by_alias=True))
+
+
 def _plan_refs(
     module: ConfigurationModuleBase,
     refs: VcoModel | Mapping[str, object] | None,
@@ -372,7 +378,7 @@ def _plan_refs(
         after: dict[str, Any] = wire_dump(current, level)
         model_type: type[VcoModel] | None = type(current)
     elif isinstance(current, Mapping):
-        after = copy.deepcopy(dict(cast(Mapping[str, Any], current)))
+        after = _plain_json(current)
         model_type = None
     else:  # MISSING, None: the module has no refs to send
         return None
@@ -402,9 +408,15 @@ def plan_module(
 
     Raises ``LossyFieldError`` if the caller assigned a value that cannot reach
     the written data (the default of a key that was absent when read).
+
+    A mapping given as *data* or *refs* is converted as the request would write
+    it (a ``UUID`` or a ``datetime`` becomes its text), so the plan holds plain
+    JSON that shares nothing with the caller's objects.
     """
     name = str(_attribute(module, "name"))
     current = data if data is not None else _attribute(module, "data")
+    if isinstance(current, Mapping):
+        current = _plain_json(cast(Mapping[str, object], current))
     if level is None and isinstance(current, VcoModel):
         level = current.config_context
     refs_out = _plan_refs(module, refs, level)
@@ -414,7 +426,7 @@ def plan_module(
         payload = (
             wire_dump(current, level)
             if isinstance(current, VcoModel)
-            else copy.deepcopy(dict(cast(Mapping[str, Any], current)))
+            else cast(dict[str, Any], current)
         )
         model_type = type(current) if isinstance(current, VcoModel) else None
         drop_legacy_keys(payload, name)

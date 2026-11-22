@@ -218,10 +218,21 @@ _VALUE_WIDTH: Final = 80
 
 
 def _shown(value: object) -> str:
-    """*value* as a message shows it: its JSON, cut to ``_VALUE_WIDTH``; ``(nothing)`` for ``MISSING``."""
+    """*value* as a message shows it: its JSON, cut to ``_VALUE_WIDTH``; ``(nothing)`` for ``MISSING``.
+
+    A value with no JSON (keys of mixed types, a value whose text cannot be
+    made, a cycle) is shown by its ``repr``, and by its type name when that
+    raises too. Never raises.
+    """
     if value is MISSING:
         return "(nothing)"
-    text = json.dumps(value, sort_keys=True)
+    try:
+        text = json.dumps(value, sort_keys=True, default=str)
+    except Exception:  # noqa: BLE001 - a message must print whatever it holds
+        try:
+            text = repr(value)
+        except Exception:  # noqa: BLE001 - a message must print whatever it holds
+            text = f"<{type(value).__name__}>"
     return text if len(text) <= _VALUE_WIDTH else f"{text[:_VALUE_WIDTH]}…"
 
 
@@ -250,7 +261,9 @@ class ModuleWriteError(VcoError):
     """The version the write carried; ``""`` for none."""
     plan: ModulePlan | None
     module: ConfigurationModuleBase | None
-    """The module as the VCO holds it now; None if it was not read."""
+    """The module as the VCO holds it now. ``write_module`` sets it on every
+    ``ConfigConflictError`` and ``WriteNotAppliedError``; only
+    ``WriteOutcomeUnknownError`` has None."""
     lost_edits: tuple[PlannedChange, ...]
     applied: tuple[PlannedChange, ...]
     left_out: tuple[PlannedChange, ...]
@@ -346,8 +359,8 @@ class ConfigConflictError(ModuleWriteError):
     answered with the module, which holds none of the changes and is as read
     at each, and the refusal is inferred from that. ``lost_edits`` are the
     edits to redo, and may be empty after a stated refusal when the check
-    cannot tell what is stored; ``module``, when it was read, is what to redo
-    them on.
+    cannot tell what is stored; ``module``, as the VCO holds it, is what to
+    redo them on. ``write_module`` always sets it.
     """
 
     detail: str

@@ -1,5 +1,6 @@
 import copy
 import json
+import uuid
 from typing import Any
 
 import pytest
@@ -1380,3 +1381,35 @@ def test_a_section_read_without_its_flag_still_refuses_the_patch():
         plan_module(mod, level=EDGE)
     assert exc.value.fields == [f"{BGP}.override"]
     assert [str(p) for p in exc.value.override_flags] == [f"{BGP}.override"]
+
+
+def test_data_and_refs_given_as_dicts_are_planned_as_plain_json():
+    row1 = {"enterpriseObjectId": 5, "logicalId": "a5"}
+    qos = QosConfigurationModule.model_validate(
+        make_module_json("QOS", {"segments": []}, refs={"a": [row1]})
+    )
+    row2 = {"enterpriseObjectId": 6, "logicalId": uuid.UUID(int=6)}
+    data = {"segments": [], "stamp": uuid.UUID(int=7)}
+    refs = {"a": [row1, row2]}
+
+    plan = plan_module(qos, data, refs=refs)
+
+    assert plan.data == {
+        "segments": [],
+        "stamp": "00000000-0000-0000-0000-000000000007",
+    }
+    assert plan.refs == {
+        "a": [row1, {**row2, "logicalId": "00000000-0000-0000-0000-000000000006"}]
+    }
+    assert json.loads(json.dumps([plan.data, plan.refs])) == [plan.data, plan.refs]
+    # What the caller gave is not changed, and not shared with the plan.
+    assert isinstance(row2["logicalId"], uuid.UUID)
+    assert plan.refs is not None
+    assert plan.refs["a"][0] is not row1
+
+
+def test_a_value_given_in_its_text_form_or_as_an_object_plans_the_same():
+    raw = {"segments": [], "stamp": "00000000-0000-0000-0000-000000000007"}
+    qos = QosConfigurationModule.model_validate(make_module_json("QOS", raw))
+    plan = plan_module(qos, {"segments": [], "stamp": uuid.UUID(int=7)})
+    assert plan.operation == "none"

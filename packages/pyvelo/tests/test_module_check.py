@@ -29,6 +29,7 @@ from pyvelo.client.schemas.configuration import (
     WanConfigurationModule,
     new_edge_module,
 )
+from pyvelo.core.rebase import Path
 from pyvelo.core.response_check import PlannedChange, ResponseCheck, ServerChange
 from pyvelo.testing import as_stored, make_module_json
 
@@ -623,3 +624,31 @@ def test_an_inferred_conflict_does_not_state_that_the_module_changed():
         "(version v1) without saying so, as it does when the module changed since "
         "it was read"
     )
+
+
+def test_str_of_a_write_error_never_raises():
+    class Odd:
+        def __repr__(self) -> str:
+            return "<odd>"
+
+        def __str__(self) -> str:
+            raise RuntimeError("no text")
+
+    values: list[object] = [
+        uuid.UUID(int=6),
+        {1: "a", "b": 2},
+        {"when": {uuid.UUID(int=7)}},
+        Odd(),
+    ]
+    error = ModuleWriteError(
+        1,
+        "v1",
+        lost_edits=[
+            PlannedChange(Path(("x", n)), MISSING, value, value)
+            for n, value in enumerate(values)
+        ],
+    )
+    lines = str(error).splitlines()
+    assert len(lines) == 2 + len(values)
+    assert '"00000000-0000-0000-0000-000000000006"' in lines[2]
+    assert "<odd>" in lines[5]
