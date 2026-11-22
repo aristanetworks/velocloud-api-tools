@@ -146,8 +146,8 @@ class _Replaced:
 
     ``dump`` is the module's dump when it was replaced, or when an in-place
     edit was last found; ``nodes`` are the models inside it, held weakly, each
-    with its place in ``dump``. Nothing here keeps the module or its objects
-    alive.
+    with its place in ``dump``, which ``dump`` always holds. Nothing here keeps
+    the module or its objects alive.
     """
 
     name: str
@@ -364,9 +364,14 @@ class ConfigState:
         :meth:`get_field_changes` shows what was written; the other modules
         keep their edits. *old* and every model inside it are detached: an
         assignment raises ``DetachedObjectError``, and so does the next
-        :meth:`plan` after an in-place change to a list or dict they hold. The
-        state keeps no strong reference to *old*. Raises ``ValueError`` if
-        *old* is not in the target config.
+        :meth:`plan` after an in-place change to a list or dict they hold. So
+        does a lookup through a detached layer that adds a placeholder
+        (``segment("Guest")``), on purpose: it usually comes before an edit
+        that would be lost. A plain list or dict still held after every model
+        of its module is dropped is not compared, because a list cannot be
+        weakly referenced; nor is a model the module's dump leaves out (a
+        field absent at its level). The state keeps no strong reference to
+        *old*. Raises ``ValueError`` if *old* is not in the target config.
         """
         config = self.target_config
         modules = [] if config.modules is MISSING else config.modules
@@ -393,12 +398,18 @@ class ConfigState:
         self._made_into_unset = [e for e in self._made_into_unset if e[0] is not old]
         # Last: a copy of a detached object is detached too.
         nodes = old.mark_detached()
+        dump = _dump(old)
         self._replaced.append(
             _Replaced(
                 name=old.name,
                 model=type(old),
-                dump=_dump(old),
-                nodes=[(place, weakref.ref(node)) for place, node in nodes],
+                dump=dump,
+                # A model the dump leaves out can be neither compared nor put back.
+                nodes=[
+                    (place, weakref.ref(node))
+                    for place, node in nodes
+                    if _at(dump, place) is not MISSING
+                ],
             )
         )
 
@@ -424,7 +435,7 @@ class ConfigState:
                 + "stored; take the objects from the state again and redo the change"
                 for name, paths in found
             ),
-            list(dict.fromkeys(path for _, paths in found for path in paths)),
+            [path for _, paths in found for path in paths],
         )
 
     @property

@@ -12,6 +12,7 @@ from pyvelo.client.models.configuration.firewall.rules import FirewallOutboundRu
 from pyvelo.client.models.configuration.firewall.segment import FirewallSegment
 from pyvelo.client.models.configuration.qos.root import ServiceRateLimit
 from pyvelo.client.schemas.configuration import (
+    DeviceSettingsConfigurationModule,
     EdgeConfiguration,
     EnterpriseConfigurationProfile,
     FirewallConfigurationModule,
@@ -20,7 +21,7 @@ from pyvelo.config.resolver import ResolverContext
 from pyvelo.core import VcoModel
 from pyvelo.core.rebase import Key, Path
 from pyvelo.testing import as_stored, make_module_json
-from pyvelo_intent.config.state import ConfigState, SaveResult
+from pyvelo_intent.config.state import ConfigPlan, ConfigState, SaveResult
 
 
 def desc(sid: int, name: str) -> dict[str, object]:
@@ -40,6 +41,10 @@ EDGE_FW: dict[str, Any] = {
 }
 EDGE_QOS: dict[str, Any] = {
     "segments": [{"segment": desc(0, "Global Segment"), "rules": []}]
+}
+EDGE_DS: dict[str, Any] = {
+    "lan": {},
+    "segments": [{"segment": desc(0, "Global Segment")}],
 }
 PROFILE_FW: dict[str, Any] = {
     "segments": [
@@ -67,6 +72,16 @@ def fw_row() -> dict[str, Any]:
         "firewall",
         copy.deepcopy(EDGE_FW),
         module_id=1,
+        configuration_id=10,
+        version="e1",
+    )
+
+
+def ds_row() -> dict[str, Any]:
+    return make_module_json(
+        "deviceSettings",
+        copy.deepcopy(EDGE_DS),
+        module_id=5,
         configuration_id=10,
         version="e1",
     )
@@ -287,6 +302,7 @@ def test_dropped_objects_cost_nothing():
     _ = gc.collect()
     assert ref() is None
     assert state.plan().changed == ()
+    assert state._replaced == []  # pyright: ignore[reportPrivateUsage]
 
     # An inserted module: module(create=True) holds what it made until it is replaced.
     state = make_state(modules=False)
@@ -297,6 +313,24 @@ def test_dropped_objects_cost_nothing():
     _ = gc.collect()
     assert made_ref() is None
     assert state.plan().changed == ()
+    assert state._replaced == []  # pyright: ignore[reportPrivateUsage]
+
+
+def test_a_held_model_the_dump_leaves_out_does_not_break_plan():
+    state = make_state([ds_row()])
+    old = state.module("deviceSettings")
+    assert isinstance(old, DeviceSettingsConfigurationModule)
+    _ = old.for_edge()
+    vpn = old.data.segments[0].vpn  # ProfileOnly: an edge-level dump leaves it out
+    assert "vpn" not in dump(old.data.segments[0])
+    state.replace_module(old, as_stored(old, copy.deepcopy(EDGE_DS)))
+    del old
+    _ = gc.collect()
+
+    assert isinstance(state.plan(), ConfigPlan)
+    assert isinstance(state.plan(), ConfigPlan)
+    with pytest.raises(DetachedObjectError, match="SegmentVpn.enabled"):
+        vpn.enabled = True
 
 
 def test_replace_of_a_module_that_is_not_in_the_state_raises():

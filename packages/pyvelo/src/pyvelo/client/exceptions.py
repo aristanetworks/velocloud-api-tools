@@ -423,8 +423,9 @@ class DetachedObjectError(VcoError):
     The state holds the module as the VCO stored it; this object belongs to
     the module that was there before. Take the object from the state again.
     ``paths`` are where in the module such edits were found, when they were
-    found by comparison; an assignment or ``merge_patch`` that raises names
-    the object and leaves them empty.
+    found by comparison; they may come from several modules, which the message
+    names, a line each. An assignment or ``merge_patch`` that raises names the
+    object and leaves them empty.
     """
 
     paths: list[Path]
