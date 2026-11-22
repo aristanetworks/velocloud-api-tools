@@ -8,6 +8,7 @@ from pyvelo.client.enums.configuration import ConfigurationModuleName
 from pyvelo.client.exceptions import LossyFieldError
 from pyvelo.client.models.configuration import FirewallData
 from pyvelo.client.models.configuration.firewall.rules import FirewallOutboundRule
+from pyvelo.client.models.configuration.firewall.segment import FirewallSegment
 from pyvelo.client.module_write import missing_segments, plan_module
 from pyvelo.client.schemas.configuration import (
     ConfigurationModuleList,
@@ -95,6 +96,34 @@ def test_edit_is_written_to_the_snake_case_key_as_read():
     plan = plan_module(mod, level=EDGE)
     assert plan.data["firewall_logging_enabled"] is True
     assert "firewallLoggingEnabled" not in plan.data
+
+
+def test_the_logging_flag_is_written_in_snake_case_where_the_key_was_absent():
+    raw: dict[str, Any] = {
+        "firewall_enabled": True,
+        "segments": [{"segment": desc(0, "Global Segment"), "outbound": []}],
+    }
+    mod = fw(raw)
+    mod.data.firewall_logging_enabled = True
+    mod.data.segments[0].firewall_logging_enabled = True
+    plan = plan_module(mod, level=ConfigContext.PROFILE)
+    assert plan.data["firewall_logging_enabled"] is True
+    assert plan.data["segments"][0]["firewall_logging_enabled"] is True
+    assert "firewallLoggingEnabled" not in plan.data
+    assert "firewallLoggingEnabled" not in plan.data["segments"][0]
+    assert sorted(str(c.path) for c in plan.changes) == [
+        "firewall_logging_enabled",
+        'segments["Global Segment"].firewall_logging_enabled',
+    ]
+
+
+def test_the_logging_flag_dumps_in_snake_case():
+    assert "firewall_logging_enabled" in FirewallData().model_dump(by_alias=True)
+    segment = FirewallSegment.model_validate(
+        {"segment": desc(0, "Global Segment"), "firewall_logging_enabled": True}
+    )
+    dumped = segment.model_dump(by_alias=True, mode="json")
+    assert dumped["firewall_logging_enabled"] is True
 
 
 def test_inserted_rules_keep_order_and_unknown_segment_keys():
