@@ -1,4 +1,4 @@
-"""Keys in a patch (spec 5.10.3 "Keys", "Duplicate keys"): alt keys, composite keys, labels and ``KeySpec``."""
+"""Keys in a patch: alt keys, duplicate keys, composite keys, labels and ``KeySpec``."""
 
 import uuid
 from typing import Annotated

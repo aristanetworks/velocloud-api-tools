@@ -1,4 +1,4 @@
-"""Strict patches (spec 5.10.2): fields, validation, unknown keys, all or nothing."""
+"""Strict patches: fields, validation, unknown keys, all or nothing."""
 
 import copy
 from enum import IntEnum

@@ -1,4 +1,4 @@
-"""The three behaviours measured in the design (spec 5.9), under the new rules."""
+"""Three name-resolution behaviours on write, under the strict rules."""
 
 import uuid
 from collections.abc import Mapping

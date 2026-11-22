@@ -408,7 +408,7 @@ async def test_apply_updates_a_vlan():
     assert updated.advertise is False
 
 
-# --- segments on an edge target (spec 5.10.3) --------------------------------
+# --- segments on an edge target ----------------------------------------------
 #
 # The edge layer has Global Segment only; its profile has Global Segment and
 # Guest (segmentId 2).
@@ -741,7 +741,7 @@ async def test_profile_target_changes_and_moves_a_segment():
     assert [r.name for r in blocked] == ["block"]
 
 
-# --- the address (spec 5.10.1) -------------------------------------------------
+# --- the address ---------------------------------------------------------------
 
 _BLOCK: dict[str, object] = {"block": add(_DENY)}
 

@@ -536,7 +536,7 @@ def _prepare_segments(
     """*patch* for edge-layer *data*, with the segment rules of an edge target applied.
 
     An edge inherits each segment of its profile, and its layer has an entry
-    only for some (spec 5.10.3). For each object under ``segments``:
+    only for some. For each object under ``segments``:
 
     - a selector that names an entry of the layer (``select_items``) is left
       as it is;

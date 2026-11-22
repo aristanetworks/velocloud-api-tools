@@ -99,7 +99,7 @@ def nest_patch(
     segment: str | None = None,
     path: str | None = None,
 ) -> dict[str, object]:
-    """The patch for *model* that an addressed call stands for (spec 5.10.1).
+    """The patch for *model* that an addressed call stands for.
 
     Without *segment* and *path*, *patch* itself, which must be a mapping
     (``TypeError`` otherwise). Otherwise *patch* is any JSON value and is
@@ -786,7 +786,7 @@ def _fill_from_names(
 
 
 # ---------------------------------------------------------------------------
-# Lists and maps: list values and item operations (spec 5.10.3)
+# Lists and maps: list values and item operations
 # ---------------------------------------------------------------------------
 
 
@@ -985,7 +985,7 @@ def _select(
 ) -> _Selection:
     """Resolve *selector* against *items*; the one place a selector is read.
 
-    In a keyed list, tried in order (spec 5.10.3): an item whose key is the
+    In a keyed list, tried in order: an item whose key is the
     one the selector stands for (``_selector_key``), compared in string form
     part by part; ``"#n"``, the item at position ``n``; ``"+"`` or ``"+tag"``,
     a new item; an item whose alt key equals the selector in string form;
@@ -1043,8 +1043,8 @@ def select_items(
 ) -> list[int]:
     """The positions of the items of the list field *field_name* that *selector* names.
 
-    Empty if it names none. A selector is read as in a patch (spec 5.10.3,
-    ``_select``): the key of an item of a keyed list (for a composite key, a
+    Empty if it names none. A selector is read as in a patch
+    (``_select``): the key of an item of a keyed list (for a composite key, a
     tuple of its parts or their string form), an entry of a value list,
     ``at(n)``, the alt key or the label of an item of a keyed list that has
     one, and in a keyed list whose key is a ``NameOf`` field, the resolver's

@@ -1,4 +1,4 @@
-"""Tests for nest_patch: the address of an addressed apply (spec 5.10.1)."""
+"""Tests for nest_patch: the address of an addressed apply."""
 
 from typing import Annotated
 

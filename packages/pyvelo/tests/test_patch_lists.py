@@ -1,4 +1,4 @@
-"""Lists in a patch (spec 5.10.3): selectors, item operations, positions, list values, maps."""
+"""Lists in a patch: selectors, item operations, positions, list values, maps."""
 
 import copy
 import uuid
@@ -541,7 +541,7 @@ def test_unset_keyed_list_is_created_by_an_add():
 
 
 # ---------------------------------------------------------------------------
-# Names (spec 5.9): a keyed list whose key is a NameOf field
+# Names: a keyed list whose key is a NameOf field
 # ---------------------------------------------------------------------------
 
 
