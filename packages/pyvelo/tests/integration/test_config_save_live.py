@@ -1,15 +1,18 @@
 """Live tests of the configuration write path (``plan_module`` / ``update_module``).
 
 A save sends a module's raw data as it was read, with only the caller's changes
-applied, under the version it was read at. These tests prove that against a real
-Orchestrator: they edit, save, read the module back and compare it with what was
-there before, then put everything back.
+applied, under the version it was read at, and returns the module as stored.
+These tests prove that against a real Orchestrator: they edit, save, read the
+module back and compare it with what was there before, then put everything
+back.
 
 Every test that writes does so inside ``restoring`` (see ``_config_live``), which
 restores the module and checks that it is restored whether or not the test
 passes. Targets are found at run time; a test that finds none is skipped. The
 edits are synthetic and inert: a copy of a rule appended after the rule it
-copies, a QoE threshold, a link description, a LAN network's OSPF cost.
+copies, a QoE threshold, a link description, a LAN network's OSPF cost. A write
+error is reported by its class and redacted paths (``_outcome``): its own
+message names lab entities and shows their values.
 
 Server-managed keys seen in what the Orchestrator stores (the tests allow
 exactly these and nothing else):
@@ -22,6 +25,14 @@ exactly these and nothing else):
   module's refs stay as they were. The tests never write refs and restore data
   only.
 
+How the Orchestrator refuses a stale write is recorded by the run, not assumed.
+Each test that makes one prints a ``refused with`` line naming the form: the
+precondition error (its conditional check on), or the module row as stored, or
+a row count of zero (the check off, ``returnData`` honoured or ignored). With
+the check off, a stale write that edits a value another write also changed
+raises ``WriteNotAppliedError`` (a clash); with it on, ``ConfigConflictError``.
+Seen on the lab: not yet recorded; the first run with write-back prints it.
+
 Requires VCO_HOST and VCO_TOKEN (VCO_ENTERPRISE_ID if the token needs one).
 
 Run:
@@ -32,14 +43,20 @@ from __future__ import annotations
 
 import copy
 import uuid
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from pydantic import MISSING
-from pyvelo.client import ConfigConflictError
+from pyvelo.client import (
+    ConfigConflictError,
+    ModuleWriteError,
+    VcoOperationError,
+    WriteNotAppliedError,
+)
 from pyvelo.client.enums.configuration import ConfigurationModuleName as Name
+from pyvelo.client.exceptions import is_precondition_failure
 from pyvelo.client.models.configuration import (
     DeviceSettingsData,
     DeviceSettingsRefs,
@@ -50,6 +67,7 @@ from pyvelo.client.models.configuration import (
 from pyvelo.client.models.configuration.firewall.rules import FirewallOutboundRule
 from pyvelo.client.models.configuration.qos.qoe import QoeSettings
 from pyvelo.client.models.configuration.qos.rule import QosRule
+from pyvelo.client.module_check import data_model
 from pyvelo.client.module_write import plan_module, update_request, wire_dump
 from pyvelo.client.schemas.configuration import (
     AnyConfigurationModule,
@@ -62,6 +80,7 @@ from pyvelo.client.schemas.configuration import (
 )
 from pyvelo.core import ConfigContext, VcoModel
 from pyvelo.core.rebase import Key, Path, RawChange, raw_changes
+from pyvelo.core.response_check import PlannedChange, ServerChange
 
 from ._config_live import (
     Lab,
@@ -206,6 +225,125 @@ def _check_paths(
     )
 
 
+def _where(changes: Iterable[PlannedChange | ServerChange]) -> str:
+    """The paths of *changes*, redacted, with ``refs`` before a refs entry."""
+    shown = [
+        f"refs {redact(c.path)}" if c.part == "refs" else redact(c.path)
+        for c in changes
+    ]
+    return ", ".join(shown) or "none"
+
+
+def _stored_otherwise(lost_edits: Iterable[PlannedChange]) -> list[Path]:
+    """Where in each lost edit the value stored is not the value sent, at the deepest path."""
+    return [
+        Path((*change.path.parts, *inner.path.parts))
+        for change in lost_edits
+        for inner in raw_changes(change.intended, change.stored)
+    ]
+
+
+def _outcome(error: ModuleWriteError) -> str:
+    """*error* as its class and its paths, redacted.
+
+    Its own message names segments and rules of the lab and shows their
+    values, so a test reports this in its place. Where a lost edit was
+    stored otherwise than sent is a candidate for ``MODULE_REWRITES``.
+    """
+    kind = type(error).__name__
+    if isinstance(error, ConfigConflictError):
+        kind += f" ({error.detail})"
+    otherwise = ", ".join(redact(p) for p in _stored_otherwise(error.lost_edits))
+    return (
+        f"{kind} on the {error.module_name or 'unnamed'} module: "
+        f"lost edits {_where(error.lost_edits)}; "
+        f"stored otherwise than sent at {otherwise or 'none'}; "
+        f"applied {_where(error.applied)}; "
+        f"server changes {_where(error.server_changes)}"
+    )
+
+
+async def _update[M: ConfigurationModuleBase](
+    lab: Lab, module: M, data: EditableData
+) -> M:
+    """``update_module``; a write error fails the test with ``_outcome`` alone."""
+    try:
+        return await lab.client.update_module(
+            module, data, enterprise_id=lab.enterprise_id
+        )
+    except ModuleWriteError as error:
+        # Failed outside the handler: the error must not be chained to the report.
+        message = _outcome(error)
+    pytest.fail(message, pytrace=False)
+
+
+def _refusal_form(error: ModuleWriteError) -> str:
+    """How the Orchestrator refused the stale write that raised *error*.
+
+    ``write_module`` raises the outcome from the refusal the client raised:
+    a ``ConfigConflictError`` from the precondition error, or one for a row
+    count of zero. An outcome with no such cause was checked against the
+    module row the Orchestrator answered with.
+    """
+    refusal = error.__cause__
+    if not isinstance(refusal, ConfigConflictError):
+        return "the module row as stored"
+    reason = refusal.__cause__
+    if isinstance(reason, VcoOperationError) and is_precondition_failure(reason):
+        return "the precondition error"
+    return "a row count of zero"
+
+
+def _record_refusal(
+    capsys: pytest.CaptureFixture[str], label: str, error: ModuleWriteError
+) -> None:
+    """Print, past the capture, the form of the refusal and the error it made."""
+    with capsys.disabled():
+        print(
+            f"\n{label}: refused with {_refusal_form(error)} ({type(error).__name__})"
+        )
+
+
+def _check_entries(
+    label: str,
+    what: str,
+    changes: Sequence[PlannedChange | ServerChange],
+    expected: Sequence[Path],
+) -> None:
+    got = sorted(str(c.path) for c in changes)
+    want = sorted(str(p) for p in expected)
+    check(
+        got == want,
+        f"{label}: {what} lists {_where(changes)}; expected "
+        f"{', '.join(redact(p) for p in expected) or 'none'}",
+    )
+
+
+def _check_as_read(
+    label: str, held: ConfigurationModuleBase, read: ConfigurationModuleBase
+) -> None:
+    """*held* is the module as a read made right after shows it: its version and raw data."""
+    check(
+        held.version == read.version,
+        f"{label}: the module held has another version than a read made right after",
+    )
+    check(
+        held.raw_data == read.raw_data,
+        f"{label}: the module held differs from a read made right after: "
+        + describe(raw_changes(read.raw_data, held.raw_data, data_model(read))),
+    )
+
+
+def _value_at(document: object, path: Path) -> object:
+    """The value at *path*, a path of names only, in a JSON document; ``MISSING`` if there is none."""
+    value = document
+    for part in path.parts:
+        if not isinstance(value, dict) or not isinstance(part, str):
+            return MISSING
+        value = cast(dict[str, object], value).get(part, MISSING)
+    return value
+
+
 async def apply_steps(
     lab: Lab, site: Site, model: type[VcoModel], steps: Sequence[Step]
 ) -> list[list[RawChange]]:
@@ -230,9 +368,7 @@ async def apply_steps(
         )
         _check_paths(step.label, "the plan", plan.changes, expected)
 
-        _ = await lab.client.update_module(
-            module, data, enterprise_id=lab.enterprise_id
-        )
+        _ = await _update(lab, module, data)
 
         after = await site.read_present()
         check(
@@ -534,7 +670,9 @@ async def test_a_qos_rule_copied_from_an_ipv4_rule_saves(lab: Lab) -> None:
 # ---------------------------------------------------------------------------
 
 
-async def test_a_module_read_before_another_write_is_refused(lab: Lab) -> None:
+async def test_a_module_read_before_another_write_is_refused(
+    lab: Lab, capsys: pytest.CaptureFixture[str]
+) -> None:
     layout = await lab.pick_writable_edge(Name.WAN, _wan_usable, "with a link")
     site = lab.edge_site(layout, Name.WAN)
     async with restoring(site) as original:
@@ -545,18 +683,123 @@ async def test_a_module_read_before_another_write_is_refused(lab: Lab) -> None:
         for module, text in ((newer, written), (older, refused)):
             data = expect(data_of(module), WanData, "the WAN data")
             expect(data.links, list, "the WAN links")[0].description = text
-        _ = await lab.client.update_module(
-            newer, data_of(newer), enterprise_id=lab.enterprise_id
-        )
-        with pytest.raises(ConfigConflictError):
+        _ = await _update(lab, newer, data_of(newer))
+        # Both writes edit one value. A VCO with its conditional check on refuses
+        # the version: ConfigConflictError. One with it off answers with the
+        # module as stored, whose value there is the other write's: a clash,
+        # WriteNotAppliedError.
+        with pytest.raises((ConfigConflictError, WriteNotAppliedError)) as caught:
             _ = await lab.client.update_module(
                 older, data_of(older), enterprise_id=lab.enterprise_id
             )
+        error = caught.value
+        _record_refusal(capsys, "a stale update_module, one value", error)
+
         after = await site.read_present()
         stored = changes_between(Name.WAN, original.data, after.raw_data, WanData)
         check(
             len(stored) == 1 and stored[0].after == written,
             f"the refused write changed the module: {describe(stored)}",
+        )
+        # The error holds the module as stored, with the other write's value,
+        # and the refused edit to redo: in either form, a clash.
+        check(error.module is not None, "the error carries no module")
+        assert error.module is not None
+        _check_as_read("the error's module", error.module, after)
+        _check_entries(
+            "the refused write", "lost_edits", error.lost_edits, [stored[0].path]
+        )
+        (lost,) = error.lost_edits
+        check(
+            lost.intended == refused and lost.stored == written and lost.clash,
+            "the lost edit is not the refused description, a clash with the other "
+            "write's",
+        )
+        _check_entries("the refused write", "server_changes", error.server_changes, [])
+
+
+VOICE_YELLOW = Path(("qoe", "voice", "latency", "yellow"))
+VOICE_RED = Path(("qoe", "voice", "latency", "red"))
+VIDEO_RED = Path(("qoe", "video", "latency", "red"))
+
+
+def _qoe_thresholds_usable(module: AnyConfigurationModule) -> bool:
+    """Whether *module* is a QoS module whose raw data has the QoE thresholds ``_raised`` raises."""
+    return _qoe_usable(module) and all(
+        isinstance(_value_at(module.raw_data, path), int)
+        for path in (VOICE_YELLOW, VOICE_RED, VIDEO_RED)
+    )
+
+
+def _raised(module: AnyConfigurationModule, path: Path) -> QosData:
+    """A copy of the module's QoS data with the QoE threshold at *path* one higher.
+
+    A reporting threshold, which steers nothing; a red one raised stays above
+    its yellow one. The module's own data is left as it was read.
+    """
+    data = expect(data_of(module), QosData, "the QoS data").model_copy(deep=True)
+    value = expect(_value_at(module.raw_data, path), int, "a QoE threshold")
+    patch: dict[str, object] = {str(path.parts[-1]): value + 1}
+    for part in reversed(path.parts[:-1]):
+        patch = {str(part): patch}
+    return data.merge_patch(patch)
+
+
+async def test_update_module_returns_the_module_as_stored(
+    lab: Lab, capsys: pytest.CaptureFixture[str]
+) -> None:
+    layout = await lab.pick_writable_edge(
+        Name.QOS, _qoe_thresholds_usable, "with voice and video QoE thresholds"
+    )
+    site = lab.edge_site(layout, Name.QOS)
+    async with restoring(site):
+        first = await site.read_present()
+        one = await _update(lab, first, _raised(first, VOICE_YELLOW))
+        _check_as_read("the first write", one, await site.read_present())
+
+        # A second write, from the module the first returned.
+        two = await _update(lab, one, _raised(one, VOICE_RED))
+        now = await site.read_present()
+        _check_as_read("the second write", two, now)
+        _check_paths(
+            "two writes",
+            "the module read back",
+            changes_between(Name.QOS, first.raw_data, now.raw_data, QosData),
+            [VOICE_YELLOW, VOICE_RED],
+        )
+
+        # A write from the first module carries a stale version. It edits a
+        # value neither write touched, so nothing at its path moved: a conflict,
+        # whichever form the refusal takes.
+        with pytest.raises(ModuleWriteError) as caught:
+            _ = await lab.client.update_module(
+                first, _raised(first, VIDEO_RED), enterprise_id=lab.enterprise_id
+            )
+        error = caught.value
+        _record_refusal(capsys, "a stale update_module, another value", error)
+        check(
+            isinstance(error, ConfigConflictError),
+            f"the stale write raised {_outcome(error)}",
+        )
+
+        after = await site.read_present()
+        check(
+            after.version == now.version and after.raw_data == now.raw_data,
+            "the refused write changed the module",
+        )
+        check(error.module is not None, "the error carries no module")
+        assert error.module is not None
+        _check_as_read("the error's module", error.module, after)
+        _check_entries("the refused write", "lost_edits", error.lost_edits, [VIDEO_RED])
+        check(
+            not any(change.clash for change in error.lost_edits),
+            "the lost edit is a clash, though nothing moved there",
+        )
+        _check_entries(
+            "the refused write",
+            "server_changes",
+            error.server_changes,
+            [VOICE_YELLOW, VOICE_RED],
         )
 
 
@@ -571,9 +814,7 @@ async def test_a_request_without_a_version_is_not_checked(lab: Lab) -> None:
         for module, text in ((newer, first), (older, second)):
             data = expect(data_of(module), WanData, "the WAN data")
             expect(data.links, list, "the WAN links")[0].description = text
-        _ = await lab.client.update_module(
-            newer, data_of(newer), enterprise_id=lab.enterprise_id
-        )
+        _ = await _update(lab, newer, data_of(newer))
         stale: UpdateConfigurationModule = update_request(
             older, plan_module(older), lab.enterprise_id
         )
