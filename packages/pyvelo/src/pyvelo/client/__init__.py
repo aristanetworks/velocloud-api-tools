@@ -4,6 +4,7 @@ from pyvelo.client.auth import VcoAuth
 from pyvelo.client.credentials import get_vco_credentials
 from pyvelo.client.exceptions import (
     ConfigConflictError,
+    DetachedObjectError,
     LossyFieldError,
     ModuleWriteError,
     UnboundError,
@@ -34,6 +35,7 @@ from pyvelo.client.websocket import PendingDiagnostic, VcoWebSocket
 
 __all__ = [
     "ConfigConflictError",
+    "DetachedObjectError",
     "Exchange",
     "ExchangeHook",
     "LossyFieldError",

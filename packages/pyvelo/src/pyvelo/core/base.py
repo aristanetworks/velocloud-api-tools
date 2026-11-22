@@ -3,6 +3,7 @@
 Provides:
 - VcoModel base class with compact and context-aware serialization
 - ``VcoModel.merge_patch``: recursive merge of a partial dict into a model
+- ``VcoModel.mark_detached``: a model a save replaced refuses edits
 - ContextView / ContextFieldInfo for field metadata introspection
 - JsonRpc request/response/error models
 - Pagination, API filters, and utility types
@@ -26,6 +27,7 @@ patch
 """
 
 # merge_patch imports merge.py inside the method; merge.py imports this module.
+# _raise_detached imports pyvelo.client.exceptions, which imports pyvelo.core.
 # pyright: reportImportCycles=false
 
 from __future__ import annotations
@@ -40,6 +42,7 @@ from typing import (
     Annotated,
     ClassVar,
     Literal,
+    Never,
     Protocol,
     Self,
     TypeIs,
@@ -341,6 +344,44 @@ def _propagate_context(value: object, level: ConfigContext) -> None:
             _propagate_context(item, level)
 
 
+type _Place = tuple[str | int, ...]
+"""Where a model is from another: dump keys (``str``) and list positions (``int``)."""
+
+
+def _models_inside(value: object, place: _Place) -> Iterator[tuple[_Place, VcoModel]]:
+    """Every VcoModel in *value*, at any depth, with its place; *value* is at *place*.
+
+    Walks as ``_propagate_context`` does: fields, extra values, lists and
+    dicts. A model comes before the models inside it. A field is named by its
+    dump key (its alias), a dict entry by its key as text, as in a JSON dump.
+    """
+    if isinstance(value, VcoModel):
+        yield place, value
+        for name, field_info in type(value).model_fields.items():
+            key = _field_alias(field_info, name)
+            yield from _models_inside(_field_value(value, name), (*place, key))
+        extra: Mapping[str, object] = value.model_extra or {}
+        for key, item in extra.items():
+            yield from _models_inside(item, (*place, key))
+    elif _is_list(value):
+        for index, item in enumerate(value):
+            yield from _models_inside(item, (*place, index))
+    elif _is_dict(value):
+        for key, item in value.items():
+            text = key if isinstance(key, str) else str(key)
+            yield from _models_inside(item, (*place, text))
+
+
+def _raise_detached(model: VcoModel, name: str) -> Never:
+    """Raise ``DetachedObjectError`` for an edit of *name* through *model*."""
+    from pyvelo.client.exceptions import DetachedObjectError  # it imports pyvelo.core
+
+    raise DetachedObjectError(
+        f"{type(model).__name__}.{name}: this object was replaced by a save; "
+        + "take it from the state again (state.edge.<module> or state.profile.<module>)"
+    )
+
+
 # ---------------------------------------------------------------------------
 # VcoModel
 # ---------------------------------------------------------------------------
@@ -356,12 +397,48 @@ class VcoModel(BaseModel):
     )
 
     _config_context: ConfigContext | None = PrivateAttr(default=None)
+    _detached: bool = PrivateAttr(default=False)
 
     @override
     def model_post_init(self, validation_context: object, /) -> None:
         level = _level_from_context(validation_context)
         if level is not None:
             self._config_context = level
+
+    @override
+    def __setattr__(self, name: str, value: object) -> None:
+        # Every assignment to every model runs through here, also while it is
+        # built: one read of the private attributes, which may not be set yet.
+        if not name.startswith("_") and self.is_detached:
+            _raise_detached(self, name)
+        super().__setattr__(name, value)
+
+    @property
+    def is_detached(self) -> bool:
+        """Whether a save replaced this object (``mark_detached``); then it takes no edit."""
+        try:
+            private = self.__pydantic_private__
+        except AttributeError:  # not set yet: in __new__, or while unpickling
+            return False
+        return private is not None and private.get("_detached") is True
+
+    def mark_detached(self) -> list[tuple[tuple[str | int, ...], VcoModel]]:
+        """Mark this model and every VcoModel inside it as replaced by a save.
+
+        Returns each of them with where it is from here: the dump key of each
+        field on the way, and the position of each list item.
+
+        A marked model raises ``DetachedObjectError`` on assignment to an
+        attribute whose name does not start with ``_``, and on
+        ``merge_patch``; reading it is fine. A change in place of a plain
+        ``list`` or ``dict`` it holds passes no attribute guard: such changes
+        are found by comparing dumps, at the places returned. A copy of a
+        marked model is marked too.
+        """
+        marked = list(_models_inside(self, ()))
+        for _, model in marked:
+            model._detached = True
+        return marked
 
     @override
     @classmethod
@@ -571,8 +648,12 @@ class VcoModel(BaseModel):
         pydantic ``ValidationError`` behind it is its ``__cause__``. Resolver
         errors keep their types. All or nothing: a patch that raises,
         ``PatchError``, ``ResolutionError`` or ``LookupError``, leaves self as
-        it was, the same dump and the same ``model_fields_set``.
+        it was, the same dump and the same ``model_fields_set``. On an object
+        a save replaced (``is_detached``) it raises ``DetachedObjectError``
+        before anything else.
         """
+        if self.is_detached:
+            _raise_detached(self, "merge_patch")
         from .merge import apply_patch  # merge.py imports this module
 
         _ = apply_patch(self, patch, resolvers)
