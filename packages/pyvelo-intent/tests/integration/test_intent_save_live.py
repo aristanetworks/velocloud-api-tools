@@ -42,7 +42,9 @@ the check off and the module row returned, a stale save that edits a value the
 other writer also changed raises ``WriteNotAppliedError`` (a clash); with it
 on, ``ConfigConflictError``. A VCO that ignores ``returnData`` answers
 ``rows: 0`` instead, which is a stated refusal (``ConfigConflictError``).
-Seen on the lab: not yet recorded; the first run with write-back prints it.
+Seen on the lab (first write-back run, 2026-11-22): the module row as stored,
+so the check is off and ``returnData`` is honoured; a stale save of the same
+value raised ``WriteNotAppliedError``, of another value ``ConfigConflictError``.
 
 Requires VCO_HOST and VCO_TOKEN (VCO_ENTERPRISE_ID if the token needs one).
 
