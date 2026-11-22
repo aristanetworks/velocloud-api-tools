@@ -149,6 +149,11 @@ def get_name_of(field_info: FieldInfo) -> type | None:
     return None
 
 
+def is_server_owned(field_info: FieldInfo) -> bool:
+    """Check if a field is marked with ``ServerOwned``."""
+    return any(isinstance(m, ServerOwned) for m in field_info.metadata)
+
+
 # ---------------------------------------------------------------------------
 # Annotated validators
 # ---------------------------------------------------------------------------
@@ -436,6 +441,17 @@ class Positional:
     whole; no field of an item names it.
 
     Usage: ``nodes: Annotated[list[Node], Positional()]``
+    """
+
+
+@dataclass(frozen=True, slots=True)
+class ServerOwned:
+    """Annotated marker: the VCO may store another value than the one sent.
+
+    The response check leaves the field out: a difference there is reported,
+    and is never a write that was not applied.
+
+    Usage: ``rule_logical_id: Annotated[str | MISSING, ServerOwned()] = MISSING``
     """
 
 

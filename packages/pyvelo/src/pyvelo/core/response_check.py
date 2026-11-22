@@ -27,12 +27,21 @@ for a side that has no value there.
    list ``pair_items`` cannot pair), a key or an item that was removed. It is
    applied when ``D`` holds the payload's value (``_beyond``).
 
+The VCO stores some values otherwise than as sent; ``Rewrites`` says where.
+A key it owns (a field marked ``ServerOwned``, or a path a pattern matches)
+is not compared: a change the plan made there is left out (``left_out``),
+and a value stored there otherwise than sent is a server change. So is the
+removal of a default the VCO adds back. With IPv6 canonical form on, two
+strings that parse as one IPv6 interface are the same value.
+
 The optional *model* is the ``VcoModel`` class the documents are data of. It
-supplies the ``KeyField`` of each list, as it does for ``rebase``. With
-``model=None`` every list is unkeyed, so a changed list is one change.
+supplies the ``KeyField`` of each list, as it does for ``rebase``, and the
+fields marked ``ServerOwned``. With ``model=None`` every list is unkeyed, so
+a changed list is one change.
 """
 
 from dataclasses import dataclass, field
+from ipaddress import IPv6Interface
 from typing import Literal
 
 from pydantic import MISSING
@@ -41,7 +50,9 @@ from .base import (
     VcoModel,
     _is_dict,  # pyright: ignore[reportPrivateUsage]
     _is_list,  # pyright: ignore[reportPrivateUsage]
+    _list_item_type,  # pyright: ignore[reportPrivateUsage]
 )
+from .fields import is_server_owned
 from .rebase import (
     Key,
     KeyForm,
@@ -54,6 +65,7 @@ from .rebase import (
     _item_parts,  # pyright: ignore[reportPrivateUsage]
     _key_forms,  # pyright: ignore[reportPrivateUsage]
     _KeyedList,  # pyright: ignore[reportPrivateUsage]
+    _model_field,  # pyright: ignore[reportPrivateUsage]
     _Node,  # pyright: ignore[reportPrivateUsage]
     _pair_unique,  # pyright: ignore[reportPrivateUsage]
     _read_path,  # pyright: ignore[reportPrivateUsage]
@@ -61,6 +73,44 @@ from .rebase import (
     key_text,
     pair_items,
 )
+
+type PathPattern = tuple[str, ...]
+"""The names of a path, in order. ``*`` is any one part (a name, a keyed item, a position); ``**`` is any number of parts, none included."""
+
+
+@dataclass(frozen=True, slots=True)
+class Rewrites:
+    """How the VCO stores some values of one module otherwise than as sent."""
+
+    server_owned: tuple[PathPattern, ...] = ()
+    """Keys whose value the VCO owns, as a ``ServerOwned`` field is."""
+    readded: tuple[PathPattern, ...] = ()
+    """Keys the VCO adds a default back at when they are removed."""
+    ipv6: bool = False
+    """Two strings that parse as one ``IPv6Interface`` are the same value."""
+
+
+def matches(path: Path, pattern: PathPattern) -> bool:
+    """Whether *path* is one of the paths *pattern* describes.
+
+    A name of the pattern matches a name of the path with the same text. A
+    keyed item or a position matches only ``*`` and ``**``.
+    """
+    return _matches(path.parts, pattern)
+
+
+def _matches(parts: tuple[PathPart, ...], pattern: PathPattern) -> bool:
+    if not pattern:
+        return not parts
+    head, rest = pattern[0], pattern[1:]
+    if head == "**":
+        return any(_matches(parts[n:], rest) for n in range(len(parts) + 1))
+    if not parts:
+        return False
+    part = parts[0]
+    if head != "*" and not (isinstance(part, str) and part == head):
+        return False
+    return _matches(parts[1:], rest)
 
 
 @dataclass(frozen=True, slots=True)
@@ -98,7 +148,8 @@ class ResponseCheck:
     not_applied: tuple[PlannedChange, ...] = ()
     """The planned changes it did not: the old value is there, or another one."""
     left_out: tuple[PlannedChange, ...] = ()
-    """The planned changes that count as neither. Nothing is left out yet."""
+    """The planned changes that count as neither: a change to a value the VCO
+    owns, and the removal of a default it adds back (``Rewrites``)."""
     server_changes: tuple[ServerChange, ...] = ()
     """What else differs between the payload and what is stored."""
 
@@ -108,6 +159,8 @@ def check_response(
     payload: object,
     stored: object,
     model: type[VcoModel] | None = None,
+    *,
+    rewrites: Rewrites = Rewrites(),
 ) -> ResponseCheck:
     """Compare what the VCO stored with what a write meant to change.
 
@@ -125,38 +178,116 @@ def check_response(
     are the items' keys in each document, and an edit inside an item is
     another. Whatever else differs between *payload* and *stored* is a server
     change.
+
+    *rewrites* are what the VCO stores otherwise than as sent. A planned
+    change to a key it owns, or the removal of a default it adds back, is
+    neither applied nor not applied but left out, and what is stored there is
+    a server change.
     """
-    found = _Found()
+    found = _Found(rewrites)
     _walk(found, Path(()), as_read, payload, stored, model)
     return ResponseCheck(
         applied=tuple(found.applied),
         not_applied=tuple(found.not_applied),
+        left_out=tuple(found.left_out),
         server_changes=tuple(found.server_changes),
     )
 
 
 @dataclass(slots=True)
 class _Found:
-    """The changes the walk has found so far."""
+    """The rewrites the walk allows for, and the changes it has found so far."""
 
+    rewrites: Rewrites
     applied: list[PlannedChange] = field(default_factory=list)
     not_applied: list[PlannedChange] = field(default_factory=list)
+    left_out: list[PlannedChange] = field(default_factory=list)
     server_changes: list[ServerChange] = field(default_factory=list)
 
 
-def _differences(path: Path, old: object, new: object, node: _Node) -> list[RawChange]:
+@dataclass(frozen=True, slots=True)
+class _ModelList:
+    """A list of models without a key (undeclared or ``Positional``).
+
+    ``rebase`` knows nothing of its items, so a change inside it is a change
+    of the list. The check still reads the ``ServerOwned`` fields of its items.
+    """
+
+    item: type[VcoModel]
+
+
+type _CheckNode = _Node | _ModelList
+"""What a JSON value is known to be, as ``_Node`` says, or a list of models without a key."""
+
+
+def _rebase_node(node: _CheckNode) -> _Node:
+    """*node* as ``rebase`` knows it: a list of models without a key is untyped."""
+    return None if isinstance(node, _ModelList) else node
+
+
+def _child_node(node: _CheckNode, key: object) -> _CheckNode:
+    """What the value under *key* is known to be.
+
+    As ``_child`` says, and a ``_ModelList`` for a list of models without a
+    ``KeyField`` (of the first variant, for a discriminated union, as
+    ``_child`` does for a keyed list).
+    """
+    parent = _rebase_node(node)
+    child = _child(parent, key)
+    if child is None and (found := _model_field(parent, key)) is not None:
+        item_type = _list_item_type(found[1])
+        if item_type is not None:
+            return _ModelList(item_type.variants[0])
+    return child
+
+
+def _item_node(node: _CheckNode) -> _CheckNode:
+    """What each item of a list of *node* is known to be."""
+    return node.item if isinstance(node, (_KeyedList, _ModelList)) else None
+
+
+def _is_owned(rewrites: Rewrites, node: _CheckNode, key: object, path: Path) -> bool:
+    """Whether the VCO owns the value under *key*, at *path*.
+
+    It does when the field *key* is read as is marked ``ServerOwned``, or
+    *path* matches a pattern of ``rewrites.server_owned``.
+    """
+    found = _model_field(_rebase_node(node), key)
+    return (found is not None and is_server_owned(found[1])) or any(
+        matches(path, pattern) for pattern in rewrites.server_owned
+    )
+
+
+def _is_owned_below(
+    rewrites: Rewrites, path: Path, node: _CheckNode, below: Path
+) -> bool:
+    """Whether *below*, a path under *path* (whose node is *node*), is a key the VCO owns."""
+    parts = below.parts[len(path.parts) :]
+    if not parts or not isinstance(parts[-1], str):
+        return False
+    parent = node
+    for part in parts[:-1]:
+        parent = (
+            _child_node(parent, part) if isinstance(part, str) else _item_node(parent)
+        )
+    return _is_owned(rewrites, parent, parts[-1], below)
+
+
+def _differences(
+    path: Path, old: object, new: object, node: _CheckNode
+) -> list[RawChange]:
     """What ``raw_changes`` lists between *old* and *new*, with *path* before each path.
 
     ``raw_changes`` starts at a model; this starts at any node, a keyed list
     included.
     """
     out: list[RawChange] = []
-    _collect_changes(out, path, old, new, node)
+    _collect_changes(out, path, old, new, _rebase_node(node))
     return out
 
 
 def _walk(
-    found: _Found, path: Path, r: object, p: object, d: object, node: _Node
+    found: _Found, path: Path, r: object, p: object, d: object, node: _CheckNode
 ) -> None:
     if r == p:
         # Rule 1: nothing planned here.
@@ -189,35 +320,54 @@ def _walk_object(
     r: dict[object, object],
     p: dict[object, object],
     d: dict[object, object],
-    node: _Node,
+    node: _CheckNode,
 ) -> None:
-    """Rule 2: walk each key of *r*, then those only *p* has, then those only *d* has."""
+    """Rule 2: walk each key of *r*, then those only *p* has, then those only *d* has.
+
+    A key the VCO owns is not walked (``_owned``).
+    """
     keys = [
         *r,
         *(key for key in p if key not in r),
         *(key for key in d if key not in r and key not in p),
     ]
     for key in keys:
-        _walk(
-            found,
-            path.child(str(key)),
-            r.get(key, MISSING),
-            p.get(key, MISSING),
-            d.get(key, MISSING),
-            _child(node, key),
-        )
+        key_path = path.child(str(key))
+        values = r.get(key, MISSING), p.get(key, MISSING), d.get(key, MISSING)
+        if _is_owned(found.rewrites, node, key, key_path):
+            _owned(found, key_path, *values)
+        else:
+            _walk(found, key_path, *values, _child_node(node, key))
+
+
+def _owned(found: _Found, path: Path, r: object, p: object, d: object) -> None:
+    """A key the VCO owns, which is not walked.
+
+    A change the plan made there is left out, and a value stored there
+    otherwise than sent is a server change.
+    """
+    if r != p:
+        found.left_out.append(PlannedChange(path, r, p, d))
+    if p != d:
+        found.server_changes.append(ServerChange(path, r, d))
 
 
 def _walk_replaced(
-    found: _Found, path: Path, r: object, p: object, d: object, node: _Node
+    found: _Found, path: Path, r: object, p: object, d: object, node: _CheckNode
 ) -> None:
     """Rule 4: *d* is not the container *r* and *p* are, so it stores nothing inside it.
 
     Each difference between *r* and *p* is a planned change that meets nothing
-    stored. By rule 5's test that applies a removal, and nothing else.
+    stored. By rule 5's test that applies a removal, and nothing else. One at
+    a key the VCO owns is left out.
     """
     for change in _differences(path, r, p, node):
-        _planned(found, change.path, change.before, change.after, MISSING, None)
+        if _is_owned_below(found.rewrites, path, node, change.path):
+            found.left_out.append(
+                PlannedChange(change.path, change.before, change.after, MISSING)
+            )
+        else:
+            _planned(found, change.path, change.before, change.after, MISSING, None)
     found.server_changes.append(ServerChange(path, r, d))
 
 
@@ -356,11 +506,23 @@ def _pair_stored(
 
 
 def _planned(
-    found: _Found, path: Path, r: object, p: object, d: object, node: _Node
+    found: _Found, path: Path, r: object, p: object, d: object, node: _CheckNode
 ) -> None:
-    """Rule 5: one planned change at *path*, applied when *d* holds *p*."""
+    """Rule 5: one planned change at *path*, applied when *d* holds *p*.
+
+    The removal of a key the VCO adds a default back at (``Rewrites.readded``)
+    is left out when *d* has a value there, and that value is a server change.
+    """
     change = PlannedChange(path, r, p, d)
-    beyond = _beyond(path, p, d, node)
+    if (
+        p is MISSING
+        and d is not MISSING
+        and any(matches(path, pattern) for pattern in found.rewrites.readded)
+    ):
+        found.left_out.append(change)
+        found.server_changes.append(ServerChange(path, r, d))
+        return
+    beyond = _beyond(found.rewrites, path, r, p, d, node)
     if beyond is None:
         found.not_applied.append(change)
     else:
@@ -368,28 +530,43 @@ def _planned(
         found.server_changes.extend(beyond)
 
 
-def _beyond(path: Path, p: object, d: object, node: _Node) -> list[ServerChange] | None:
+def _beyond(
+    rewrites: Rewrites, path: Path, r: object, p: object, d: object, node: _CheckNode
+) -> list[ServerChange] | None:
     """What *d* has beyond *p*, or None when *d* does not hold *p*.
 
     *d* holds *p* when:
 
     - *p* is ``MISSING`` and so is *d*;
     - *p* is an object and *d* an object that holds ``p[key]`` at every key of
-      *p*. *d* may have more keys;
+      *p*. *d* may have more keys. A key the VCO owns always holds;
     - *p* is a list and *d* a list of the same length whose item at each
       position holds the item of *p* there;
-    - otherwise, the two are equal.
+    - otherwise, the two are equal, or with ``rewrites.ipv6`` two strings
+      that parse as one IPv6 interface.
 
-    Each key only *d* has, at any depth, is a server change at its own path.
-    An item of a list is named by its position.
+    Each key only *d* has, at any depth, is a server change at its own path,
+    and so is a key the VCO owns whose value differs, and a string that holds
+    only as IPv6. An item of a list is named by its position.
+
+    *r* is the value as read at *path*, the ``as_read`` of a server change
+    there. Nothing as read is paired with what lies below *p* (where *p* is an
+    object *r* is not one, and a list here is replaced whole), so a server
+    change below *path* has ``as_read`` ``MISSING``.
     """
     if _is_dict(p):
         if not _is_dict(d):
             return None
         out: list[ServerChange] = []
         for key, value in p.items():
+            key_path = path.child(str(key))
+            stored = d.get(key, MISSING)
+            if _is_owned(rewrites, node, key, key_path):
+                if value != stored:
+                    out.append(ServerChange(key_path, MISSING, stored))
+                continue
             below = _beyond(
-                path.child(str(key)), value, d.get(key, MISSING), _child(node, key)
+                rewrites, key_path, MISSING, value, stored, _child_node(node, key)
             )
             if below is None:
                 return None
@@ -403,12 +580,26 @@ def _beyond(path: Path, p: object, d: object, node: _Node) -> list[ServerChange]
     if _is_list(p):
         if not _is_list(d) or len(d) != len(p):
             return None
-        item_node = node.item if isinstance(node, _KeyedList) else None
+        item_node = _item_node(node)
         out = []
         for n, (p_item, d_item) in enumerate(zip(p, d, strict=True)):
-            below = _beyond(path.child(n), p_item, d_item, item_node)
+            below = _beyond(rewrites, path.child(n), MISSING, p_item, d_item, item_node)
             if below is None:
                 return None
             out.extend(below)
         return out
-    return [] if d == p else None
+    if d == p:
+        return []
+    if rewrites.ipv6 and _same_ipv6(p, d):
+        return [ServerChange(path, r, d)]
+    return None
+
+
+def _same_ipv6(a: object, b: object) -> bool:
+    """Whether *a* and *b* are strings that parse as one ``IPv6Interface``."""
+    if not isinstance(a, str) or not isinstance(b, str):
+        return False
+    try:
+        return IPv6Interface(a) == IPv6Interface(b)
+    except ValueError:
+        return False
