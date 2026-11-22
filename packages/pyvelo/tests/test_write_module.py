@@ -621,3 +621,46 @@ async def test_a_stale_write_of_a_ref_row_changed_inside_is_a_conflict(
     assert exc.value.lost_edits == ()
     assert exc.value.plan is plan
     assert store.rows[1]["refs"] == {"a": [ROW1]}
+
+
+@pytest.mark.parametrize("return_data", [True, False])
+async def test_a_module_with_no_level_comes_back_with_none(
+    mock_vco_client: MockVcoClientFactory, return_data: bool
+):
+    module = firewall_disabled()
+    assert module.config_context is None
+    store = store_of(module, return_data=return_data)
+    client = await mock_vco_client(store)
+    write = await client.write_module(module, plan_module(module))
+    assert write.module.config_context is None
+    assert write.module.data.config_context is None
+
+
+@pytest.mark.parametrize("return_data", [True, False])
+async def test_a_profile_module_comes_back_at_profile_level_at_every_depth(
+    mock_vco_client: MockVcoClientFactory, return_data: bool
+):
+    module = ds(DS_RAW, level=ConfigContext.PROFILE)
+    plan = plan_module(module, {**DS_RAW, "otherKey": 1})
+    store = store_of(module, return_data=return_data)
+    client = await mock_vco_client(store)
+    write = await client.write_module(module, plan)
+    assert write.module.config_context is ConfigContext.PROFILE
+    assert write.module.data.config_context is ConfigContext.PROFILE
+    assert write.module.data.segments[0].config_context is ConfigContext.PROFILE
+    assert write.module.raw_mode == "json"
+    assert plan_module(write.module).operation == "none"
+
+
+async def test_the_read_back_parses_only_the_module_written(
+    mock_vco_client: MockVcoClientFactory,
+):
+    module = firewall_disabled()
+    store = store_of(module, return_data=False)
+    # Another module of the same configuration, which the models do not take.
+    store.rows[2] = make_module_json(
+        "QOS", {"segments": "not a list"}, module_id=2, configuration_id=10
+    )
+    client = await mock_vco_client(store)
+    write = await client.write_module(module, plan_module(module))
+    assert write.module.raw_data == store.rows[1]["data"]

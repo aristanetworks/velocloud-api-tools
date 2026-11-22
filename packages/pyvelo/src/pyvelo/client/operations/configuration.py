@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any, Protocol
 
@@ -55,7 +56,7 @@ from pyvelo.client.schemas.profiles import (
     CreateProfile,
     CreateProfileResult,
 )
-from pyvelo.core import ConfigContext, RowsModifiedConfirmation
+from pyvelo.core import ConfigContext, RowsModifiedConfirmation, VcoModel
 from pyvelo.core.rebase import raw_changes
 from pyvelo.core.response_check import PlannedChange
 
@@ -66,6 +67,12 @@ if TYPE_CHECKING:
 def _level_context(level: ConfigContext | None) -> dict[str, ConfigContext] | None:
     """The validation context that puts a returned module at config level *level*."""
     return None if level is None else {"config_level": level}
+
+
+class _ConfigurationRows(VcoModel):
+    """A configuration read with its modules, each module row left as the JSON object it came as."""
+
+    modules: list[dict[str, Any]] | MISSING = MISSING
 
 
 async def _read_stored(
@@ -80,8 +87,9 @@ async def _read_stored(
     """*module* as the VCO holds it, read from its configuration after a write that returned no row.
 
     It is the module with *module_id*, by default the ID of *module* (for an
-    insert, the ID the VCO answered), put at the config level of *module*
-    when it has one. *refused* says the VCO refused the write's version;
+    insert, the ID the VCO answered). Only that module's row is parsed, as an
+    update's returned row is: at the config level of *module*, or at none
+    when it has none. *refused* says the VCO refused the write's version;
     otherwise it counted the write (a row count, or an insert's ID). Raises
     ``ConfigConflictError`` for that ID, with no module and every planned
     change lost, when *module* has no ``configuration_id`` or its
@@ -94,20 +102,23 @@ async def _read_stored(
             refused, "the module has no configuration ID to read it by"
         )
         raise _not_read(module, plan, detail, module_id=wanted)
-    config = await client.get_configuration(
+    config = await client.portal(
+        "configuration/getConfiguration",
         GetConfiguration(
             id_=configuration_id,
             enterprise_id=enterprise_id if enterprise_id is not None else MISSING,
             with_=[GetConfigurationWith.MODULES],
-        )
+        ),
+        _ConfigurationRows,
     )
     held = config.modules if config.modules is not MISSING else []
-    found = next((m for m in held if m.id_ == wanted), None)
-    if found is None:
+    row = next((r for r in held if r.get("id") == wanted), None)
+    if row is None:
         detail = _not_read_detail(refused, "its configuration does not hold the module")
         raise _not_read(module, plan, detail, module_id=wanted)
-    level = module.config_context
-    return found if level is None else found.for_context(level)
+    return ConfigurationModuleList.model_validate_json(
+        json.dumps([row]), context=_level_context(module.config_context)
+    ).root[0]
 
 
 def _not_read_detail(refused: bool, reason: str) -> str:
@@ -317,18 +328,21 @@ class ConfigurationMixin(Protocol):
         An update or an insert, as the plan says, at the config level of
         *module*, asking for the module row as stored. When the VCO answers
         without one (it refused the version, or it ignores ``returnData``), the
-        module is read back from its configuration; an error of that read
-        propagates. An update with no change the check can find stored
-        (``has_checkable_change``: every change is to a value the VCO stores
-        its own way, or inside a ref row that keeps its identity) is sent
-        without ``returnData`` and read back: a VCO with its conditional
-        check off answers a stale update that asks for the row with the row
-        as it is, which then looks like a stored write, but it answers a
-        refusal of one that does not with a row count of zero. Sends nothing when the plan's operation is ``none``, and
-        returns *module* itself.
+        module is read back from its configuration, and only that module's
+        row is parsed; an error of that read propagates. An update with no
+        change the check can find stored (``has_checkable_change``: every
+        change is to a value the VCO stores its own way, or inside a ref row
+        that keeps its identity) is sent without ``returnData`` and read
+        back. A VCO with its conditional check off answers a stale update
+        that asked for the row with the row as it is, so it looks stored;
+        asked for no row, it answers a refusal with a row count of zero.
+
+        Sends nothing when the plan's operation is ``none``, and returns
+        *module* itself.
 
         Returns a ``ModuleWrite`` with the module as stored, of the class of
-        *module* and at its config level when it has one, when every planned
+        *module* and at its config level, or at none when it has none,
+        whichever way the VCO answered, when every planned
         change is stored. Otherwise raises ``ConfigConflictError`` or
         ``WriteNotAppliedError`` (``check_module_write``), with the module as
         stored and the lost edits; a ``ConfigConflictError`` with no module
