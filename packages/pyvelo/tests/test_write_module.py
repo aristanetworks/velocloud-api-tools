@@ -478,3 +478,43 @@ async def test_update_module_returns_the_stored_module(
     stored = await client.update_module(module, data)
     assert stored.version == store.rows[1]["version"] != "v1"
     assert await client.update_module(module, module.mutable_data()) is module
+
+
+ITEMS: list[dict[str, Any]] = [{"a": 1, "b": 2}]
+"""A list the models do not know, so it is compared whole."""
+
+
+def syslog_on(row: dict[str, Any]) -> None:
+    """Another writer's change to a key no test here edits or asserts on."""
+    row["data"]["syslog_forwarding"] = True
+
+
+@pytest.mark.parametrize("conditional_check", [True, False])
+async def test_stale_removal_inside_a_list_item_raises(
+    mock_vco_client: MockVcoClientFactory, conditional_check: bool
+):
+    module = fw({**RAW, "items": ITEMS})
+    plan = plan_module(module, {**RAW, "items": [{"a": 1}]})
+    store = store_of(module, conditional_check=conditional_check)
+    store.other_writer(1, syslog_on)
+    client = await mock_vco_client(store)
+    with pytest.raises(ConfigConflictError) as exc:
+        _ = await client.write_module(module, plan)
+    assert paths(exc.value.lost_edits) == ["items"]
+    assert exc.value.applied == ()
+    assert store.rows[1]["data"]["items"] == ITEMS
+
+
+async def test_stale_removal_beside_another_edit_is_a_lost_edit_too(
+    mock_vco_client: MockVcoClientFactory,
+):
+    module = fw({**RAW, "items": ITEMS})
+    plan = plan_module(module, {**RAW, "items": [{"a": 1}], "future": 2})
+    store = store_of(module)
+    store.other_writer(1, syslog_on)
+    client = await mock_vco_client(store)
+    with pytest.raises(ConfigConflictError) as exc:
+        _ = await client.write_module(module, plan)
+    assert paths(exc.value.lost_edits) == ["future", "items"]
+    assert exc.value.applied == ()
+    assert "already stored" not in str(exc.value)

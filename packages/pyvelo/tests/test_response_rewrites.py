@@ -369,3 +369,42 @@ def test_removed_and_gone_is_applied_all_the_same():
 )
 def test_matches(pattern: PathPattern, path: str, expected: bool):
     assert matches(Path.parse(path), pattern) is expected
+
+
+def test_removed_key_the_vco_adds_back_inside_a_list_compared_whole():
+    check = check_response(
+        {"hops": [{"ip": "10.0.0.1", "cost": 5}]},
+        {"hops": [{"ip": "10.0.0.1"}]},
+        {"hops": [{"ip": "10.0.0.1", "cost": 0}]},
+        Root,
+        rewrites=Rewrites(readded=(("hops", "*", "cost"),)),
+    )
+    assert check.not_applied == ()
+    assert paths(check.applied) == ["hops"]
+    change = server_change_at(check, "hops[#0].cost")
+    assert (change.as_read, change.stored) == (MISSING, 0)
+
+
+def test_owned_key_removed_inside_a_list_compared_whole_and_kept_by_the_vco():
+    check = check_response(
+        {"plain": [{"name": "a", "stamp": "s1"}]},
+        {"plain": [{"name": "b"}]},
+        {"plain": [{"name": "b", "stamp": "s1"}]},
+        Box,
+    )
+    assert check.not_applied == ()
+    assert paths(check.applied) == ["plain"]
+    assert paths(check.server_changes) == ["plain[#0].stamp"]
+
+
+def test_server_change_below_a_list_compared_whole_has_no_value_read():
+    check = check_response(
+        {"hops": [{"ip": "2001:DB8::1"}]},
+        {"hops": [{"ip": "2001:DB8::2"}]},
+        {"hops": [{"ip": "2001:db8::2"}]},
+        Root,
+        rewrites=IPV6,
+    )
+    assert_paths(check, applied=["hops"], server_changes=["hops[#0].ip"])
+    change = server_change_at(check, "hops[#0].ip")
+    assert (change.as_read, change.stored) == (MISSING, "2001:db8::2")

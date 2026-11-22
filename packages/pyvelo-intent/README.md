@@ -427,7 +427,11 @@ Known limits:
   or two items of one name read without IDs. A change in it to a field the VCO
   owns is then part of the list's change, not in `left_out`, and a value stored
   there otherwise than sent is a server change with no value read (`as_read`
-  is `MISSING`), even when it is the value read.
+  is `MISSING`), even when it is the value read. A key you removed from an
+  item of such a list counts as stored only when the stored item at that
+  position no longer has it. If the VCO puts the key back on its own, every
+  save that changes that list raises `WriteNotAppliedError` until the key is in
+  the table of rewrites.
 - A key the VCO stores in a form the table of rewrites does not cover reads as
   your item lost and another item, only the VCO's, in `server_changes`. IPv6
   addresses in the keys of device settings (a static route's destination and

@@ -25,7 +25,8 @@ for a side that has no value there.
 5. Anything else is one planned change: a scalar that was set, an object that
    was set or added, a list replaced whole (a list without a key, or a keyed
    list ``pair_items`` cannot pair), a key or an item that was removed. It is
-   applied when ``D`` holds the payload's value (``_beyond``).
+   applied when ``D`` holds the payload's value (``_beyond``): ``D`` may hold
+   more keys than the payload, but not a key ``R`` had and the payload lacks.
 
 A path names an item of a keyed list by its key, or by its position ``#n``
 where the key repeats or there is none. ``#n`` counts in the payload for an
@@ -186,8 +187,9 @@ def check_response(
     the deepest path that can be told apart (the items of a keyed list by
     their key, as ``raw_changes`` pairs them). It is applied when *stored*
     holds the payload's value there: the same scalar; for an object, every
-    leaf of the payload's (*stored* may hold more keys); for a list replaced
-    whole, the payload's items in the payload's order; nothing, for a removal.
+    leaf of the payload's (*stored* may hold more keys, but not a key
+    *as_read* had and *payload* lacks); for a list replaced whole, the
+    payload's items in the payload's order; nothing, for a removal.
     A reorder of a keyed list is one change at the list, whose three values
     are the items' keys in each document, and an edit inside an item is
     another. Whatever else differs between *payload* and *stored* is a server
@@ -586,7 +588,14 @@ def _planned(
 
 
 def _beyond(
-    rewrites: Rewrites, path: Path, r: object, p: object, d: object, node: _CheckNode
+    rewrites: Rewrites,
+    path: Path,
+    r: object,
+    p: object,
+    d: object,
+    node: _CheckNode,
+    *,
+    top: bool = True,
 ) -> list[ServerChange] | None:
     """What *d* has beyond *p*, or None when *d* does not hold *p*.
 
@@ -594,7 +603,9 @@ def _beyond(
 
     - *p* is ``MISSING`` and so is *d*;
     - *p* is an object and *d* an object that holds ``p[key]`` at every key of
-      *p*. *d* may have more keys. A key the VCO owns always holds;
+      *p*. *d* may have more keys, but not a key *r* had and *p* lacks, unless
+      the VCO owns that key or adds it back (``Rewrites.readded``). A key the
+      VCO owns always holds;
     - *p* is a list and *d* a list of the same length whose item at each
       position holds the item of *p* there;
     - otherwise, the two are equal, or with ``rewrites.ipv6`` two strings
@@ -604,10 +615,11 @@ def _beyond(
     and so is a key the VCO owns whose value differs, and a string that holds
     only as IPv6. An item of a list is named by its position.
 
-    *r* is the value as read at *path*, the ``as_read`` of a server change
-    there. Nothing as read is paired with what lies below *p* (where *p* is an
-    object *r* is not one, and a list here is replaced whole), so a server
-    change below *path* has ``as_read`` ``MISSING``.
+    *r* is the value as read at *path*: the key's value under an object, the
+    item at the same position under a list, ``MISSING`` where there is none.
+    It is the ``as_read`` of a server change at *path* when *top* is true.
+    Below the path of the planned change nothing as read is paired with what
+    *d* has, so a server change there has ``as_read`` ``MISSING``.
     """
     if _is_dict(p):
         if not _is_dict(d):
@@ -621,16 +633,29 @@ def _beyond(
                     out.append(ServerChange(key_path, MISSING, stored))
                 continue
             below = _beyond(
-                rewrites, key_path, MISSING, value, stored, _child_node(node, key)
+                rewrites,
+                key_path,
+                r.get(key, MISSING) if _is_dict(r) else MISSING,
+                value,
+                stored,
+                _child_node(node, key),
+                top=False,
             )
             if below is None:
                 return None
             out.extend(below)
-        out.extend(
-            ServerChange(path.child(str(key)), MISSING, value)
-            for key, value in d.items()
-            if key not in p
-        )
+        for key, value in d.items():
+            if key in p:
+                continue
+            key_path = path.child(str(key))
+            if (
+                _is_dict(r)
+                and key in r
+                and not _is_owned(rewrites, node, key, key_path)
+                and not any(matches(key_path, pattern) for pattern in rewrites.readded)
+            ):
+                return None
+            out.append(ServerChange(key_path, MISSING, value))
         return out
     if _is_list(p):
         if not _is_list(d) or len(d) != len(p):
@@ -638,7 +663,10 @@ def _beyond(
         item_node = _item_node(node)
         out = []
         for n, (p_item, d_item) in enumerate(zip(p, d, strict=True)):
-            below = _beyond(rewrites, path.child(n), MISSING, p_item, d_item, item_node)
+            r_item = r[n] if _is_list(r) and n < len(r) else MISSING
+            below = _beyond(
+                rewrites, path.child(n), r_item, p_item, d_item, item_node, top=False
+            )
             if below is None:
                 return None
             out.extend(below)
@@ -646,7 +674,7 @@ def _beyond(
     if d == p:
         return []
     if rewrites.ipv6 and _same_ipv6(p, d):
-        return [ServerChange(path, r, d)]
+        return [ServerChange(path, r if top else MISSING, d)]
     return None
 
 

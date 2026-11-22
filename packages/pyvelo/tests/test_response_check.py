@@ -3,8 +3,9 @@
 from collections.abc import Iterable, Sequence
 from typing import Annotated
 
+import pytest
 from pydantic import MISSING, Field
-from pyvelo.core import KeyField, VcoModel
+from pyvelo.core import KeyField, Positional, VcoModel
 from pyvelo.core.response_check import (
     PlannedChange,
     ResponseCheck,
@@ -418,3 +419,122 @@ def test_an_edit_below_a_map_entry_the_stored_data_lacks_is_not_applied():
     check = check_response(read, sent, read, Boxes)
     assert_paths(check, not_applied=["boxes.a.ports[p1].speed"])
     assert not_applied_at(check, "boxes.a.ports[p1].speed").stored == 1
+
+
+class Step(VcoModel):
+    ip: str
+    note: str | MISSING = MISSING
+
+
+class Steps(VcoModel):
+    steps: Annotated[list[Step], Positional()] = Field(default_factory=list)
+
+
+WHOLE_LISTS = [
+    pytest.param(
+        Root,
+        "hops",
+        [{"ip": "10.0.0.1", "cost": 5, "note": "x"}],
+        [{"ip": "10.0.0.1", "cost": 5}],
+        id="model list without a key",
+    ),
+    pytest.param(
+        Steps,
+        "steps",
+        [{"ip": "10.0.0.1", "note": "x"}],
+        [{"ip": "10.0.0.1"}],
+        id="positional model list",
+    ),
+    pytest.param(
+        Root,
+        "blobs",
+        [{"a": 1, "nested": {"b": 2, "c": 3}}],
+        [{"a": 1, "nested": {"b": 2}}],
+        id="plain objects, a nested key",
+    ),
+    pytest.param(
+        Root,
+        "links",
+        [{"name": "l", "mtu": 1400}],
+        [{"name": "l"}],
+        id="keyed list read with an item without its key",
+    ),
+    pytest.param(
+        None,
+        "rules",
+        [{"name": "a", "priority": 1}],
+        [{"name": "a"}],
+        id="no model",
+    ),
+]
+"""A model, a list field of it, the list as read and as sent: one key of one item is removed."""
+
+
+@pytest.mark.parametrize(("model", "name", "read", "sent"), WHOLE_LISTS)
+def test_key_removed_in_a_list_compared_whole_and_still_there_is_not_applied(
+    model: type[VcoModel] | None, name: str, read: list[object], sent: list[object]
+):
+    check = check_response({name: read}, {name: sent}, {name: read}, model)
+    assert_paths(check, not_applied=[name])
+    change = not_applied_at(check, name)
+    assert change.stored == read
+    assert change.clash is False
+
+
+@pytest.mark.parametrize(("model", "name", "read", "sent"), WHOLE_LISTS)
+def test_key_removed_in_a_list_compared_whole_and_gone_is_applied(
+    model: type[VcoModel] | None, name: str, read: list[object], sent: list[object]
+):
+    check = check_response({name: read}, {name: sent}, {name: sent}, model)
+    assert_paths(check, applied=[name])
+
+
+def test_key_removed_in_a_list_item_and_stored_with_another_value_is_not_applied():
+    check = chk(
+        {"hops": [{"ip": "10.0.0.1", "cost": 5}]},
+        {"hops": [{"ip": "10.0.0.1"}]},
+        {"hops": [{"ip": "10.0.0.1", "cost": 9}]},
+    )
+    assert_paths(check, not_applied=["hops"])
+    assert not_applied_at(check, "hops").clash is True
+
+
+def test_key_removed_beside_a_change_that_is_stored_is_not_applied():
+    # Another writer stored the same cost; the write that removed the note was not.
+    check = chk(
+        {"hops": [{"ip": "10.0.0.1", "cost": 5, "note": "x"}]},
+        {"hops": [{"ip": "10.0.0.1", "cost": 6}]},
+        {"hops": [{"ip": "10.0.0.1", "cost": 6, "note": "x"}]},
+    )
+    assert_paths(check, not_applied=["hops"])
+
+
+def test_key_the_vco_adds_where_none_was_read_is_a_server_change():
+    check = chk(
+        {"hops": [{"ip": "10.0.0.1"}]},
+        {"hops": [{"ip": "10.0.0.2"}]},
+        {"hops": [{"ip": "10.0.0.2", "cost": 0}]},
+    )
+    assert_paths(check, applied=["hops"], server_changes=["hops[#0].cost"])
+    change = server_change_at(check, "hops[#0].cost")
+    assert (change.as_read, change.stored) == (MISSING, 0)
+
+
+def test_the_item_as_read_is_the_one_at_the_same_position():
+    # The plan appends an item and removes a key of the first. The stored list
+    # has the key, and an item another writer appended that holds the new one.
+    check = chk(
+        {"hops": [{"ip": "10.0.0.1", "cost": 5}]},
+        {"hops": [{"ip": "10.0.0.1"}, {"ip": "10.0.0.2"}]},
+        {"hops": [{"ip": "10.0.0.1", "cost": 5}, {"ip": "10.0.0.2"}]},
+    )
+    assert_paths(check, not_applied=["hops"])
+
+
+def test_an_item_past_the_end_of_the_list_as_read_may_hold_more():
+    check = chk(
+        {"hops": [{"ip": "10.0.0.1", "cost": 5}]},
+        {"hops": [{"ip": "10.0.0.1", "cost": 5}, {"ip": "10.0.0.2"}]},
+        {"hops": [{"ip": "10.0.0.1", "cost": 5}, {"ip": "10.0.0.2", "cost": 0}]},
+    )
+    assert_paths(check, applied=["hops"], server_changes=["hops[#1].cost"])
