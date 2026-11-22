@@ -12,10 +12,12 @@ With ``returnData`` the answer is the module row as stored.
 """
 
 import copy
+from collections.abc import Awaitable, Callable
 
 import httpx
 import pytest
-from pydantic import MISSING
+from pydantic import MISSING, ValidationError
+from pyvelo.client import VcoClient
 from pyvelo.client.exceptions import (
     ConfigConflictError,
     VcoOperationError,
@@ -25,6 +27,7 @@ from pyvelo.client.schemas.configuration import (
     ConfigurationModuleUpdate,
     FirewallConfigurationModule,
     InsertConfigurationModuleResult,
+    InsertFirewallConfigurationModule,
     InsertQosConfigurationModule,
     QosConfigurationModule,
     UpdateConfigurationModule,
@@ -262,6 +265,36 @@ async def test_a_result_that_is_neither_raises(
     )
     with pytest.raises(VcoOperationError, match="neither"):
         _ = await client.update_configuration_module(req("1700", return_data=True))
+
+
+async def send_update(client: VcoClient) -> object:
+    return await client.update_configuration_module(req("1700", return_data=True))
+
+
+async def send_insert(client: VcoClient) -> object:
+    return await client.insert_configuration_module(
+        InsertFirewallConfigurationModule(
+            configuration_id=10, data={"segments": []}, return_data=True
+        )
+    )
+
+
+@pytest.mark.parametrize("send", [send_update, send_insert])
+async def test_a_known_module_row_that_fails_validation_raises_its_error(
+    mock_vco_client: MockVcoClientFactory,
+    json_rpc_response: JsonRpcResponseFactory,
+    send: Callable[[VcoClient], Awaitable[object]],
+):
+    """A row the models know by name is validated as a module, as on any read."""
+    row = make_module_json(
+        "firewall", {"segments": "not a list"}, module_id=7, configuration_id=10
+    )
+    client = await mock_vco_client(
+        lambda r: httpx.Response(200, json=json_rpc_response(row))
+    )
+    with pytest.raises(ValidationError) as exc:
+        _ = await send(client)
+    assert [error["loc"][-2:] for error in exc.value.errors()] == [("data", "segments")]
 
 
 async def test_insert_with_return_data_returns_the_module(
