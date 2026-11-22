@@ -7,18 +7,20 @@ configuration 10.
 """
 
 import copy
+import json
 from collections.abc import Callable, Iterable
 from typing import Any
 
 import httpx
 import pytest
-from pydantic import MISSING
+from pydantic import MISSING, ValidationError
 from pyvelo.client.enums.configuration import ConfigurationModuleName
 from pyvelo.client.exceptions import (
     ConfigConflictError,
     ModuleWriteError,
     VcoOperationError,
     WriteNotAppliedError,
+    WriteOutcomeUnknownError,
 )
 from pyvelo.client.models.configuration.qos.segment import QosSegment
 from pyvelo.client.module_write import insert_request, plan_module
@@ -319,42 +321,6 @@ async def test_follow_up_read_error_propagates(mock_vco_client: MockVcoClientFac
     assert isinstance(exc.value.__context__, ConfigConflictError)
 
 
-async def test_follow_up_read_without_the_module(mock_vco_client: MockVcoClientFactory):
-    module = firewall_disabled()
-    store = store_of(module, conditional_check=True)
-    store.other_writer(1, elsewhere)
-    client = await mock_vco_client(reading(store, []))
-    with pytest.raises(ConfigConflictError) as exc:
-        _ = await client.write_module(module, plan_module(module))
-    assert exc.value.module is None
-    assert exc.value.detail == (
-        "the VCO refused the version, and its configuration does not hold the module"
-    )
-    (lost,) = exc.value.lost_edits
-    assert (lost.path, lost.as_read, lost.intended) == ("firewall_enabled", True, False)
-    assert lost.stored is MISSING
-
-
-async def test_follow_up_read_without_the_module_lists_the_ref_rows(
-    mock_vco_client: MockVcoClientFactory,
-):
-    module = qos({"segments": []}, refs={"a": [ROW1, ROW3]})
-    plan = plan_module(module, refs={"a": [ROW1, ROW2]})
-    store = store_of(module, conditional_check=True)
-    store.other_writer(module.id_, elsewhere)
-    client = await mock_vco_client(reading(store, []))
-    with pytest.raises(ConfigConflictError) as exc:
-        _ = await client.write_module(module, plan)
-    assert exc.value.module is None
-    assert paths(exc.value.lost_edits) == ["a[6]", "a[7]"]
-    added, removed = sorted(exc.value.lost_edits, key=lambda change: str(change.path))
-    assert (added.part, added.intended) == ("refs", ROW2)
-    assert added.stored is MISSING
-    # Nothing was read back, so the refs are taken to be stored as read.
-    assert (removed.part, removed.as_read, removed.stored) == ("refs", ROW3, ROW3)
-    assert removed.intended is MISSING
-
-
 async def test_refs_only_write_refused_raises(mock_vco_client: MockVcoClientFactory):
     module = qos({"segments": []}, refs={"a": ROW1})
     plan = plan_module(module, refs={"a": [ROW1, ROW2]})
@@ -411,27 +377,6 @@ async def test_insert_answered_without_a_row_is_read_back(
     assert (write.module.name, write.module.id_) == ("QOS", stored_id)
 
 
-async def test_insert_is_read_back_by_the_id_answered(
-    mock_vco_client: MockVcoClientFactory,
-):
-    module = new_qos_with_a_segment()
-    store = store_of(module, return_data=False)
-    # The read answers with another writer's module of the same name only.
-    another = make_module_json(
-        "QOS", {"segments": []}, module_id=99, configuration_id=10
-    )
-    client = await mock_vco_client(reading(store, [another]))
-    with pytest.raises(ConfigConflictError) as exc:
-        _ = await client.write_module(module, plan_module(module))
-    (answered,) = store.rows
-    assert exc.value.module_id == answered != 99
-    assert exc.value.module is None
-    assert exc.value.detail == (
-        "the VCO counted the write, but the module could not be read back"
-        " (its configuration does not hold the module)"
-    )
-
-
 async def test_a_plan_for_another_module_is_refused(
     mock_vco_client: MockVcoClientFactory,
 ):
@@ -442,17 +387,6 @@ async def test_a_plan_for_another_module_is_refused(
     with pytest.raises(ValueError, match="the plan is for QOS, not firewall"):
         _ = await client.write_module(module, plan)
     assert store.requests == []
-
-
-async def test_a_module_held_as_another_class_raises(
-    mock_vco_client: MockVcoClientFactory,
-):
-    module = firewall_disabled()
-    store = store_of(module)
-    store.rows[1]["name"] = "QOS"
-    client = await mock_vco_client(store)
-    with pytest.raises(VcoOperationError, match="as a QosConfigurationModule"):
-        _ = await client.write_module(module, plan_module(module))
 
 
 def test_insert_request_refuses_what_it_cannot_insert():
@@ -664,3 +598,231 @@ async def test_the_read_back_parses_only_the_module_written(
     client = await mock_vco_client(store)
     write = await client.write_module(module, plan_module(module))
     assert write.module.raw_data == store.rows[1]["data"]
+
+
+def without_an_action(new: dict[str, Any], _old: dict[str, Any] | None) -> None:
+    """Store an inbound rule the models do not take: it has no ``action``."""
+    new["data"]["inbound"] = [{"name": "a", "match": {}}]
+
+
+def returning(
+    store: ModuleStore, change: Callable[[dict[str, Any]], None]
+) -> Callable[[httpx.Request], httpx.Response]:
+    """A handler that sends each request to *store* and lets *change* edit the row a write returns."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        response = store(request)
+        method = parse_json_object(request.content)["method"]
+        if method == "configuration/getConfiguration":
+            return response
+        body: dict[str, Any] = json.loads(response.content)
+        change(body["result"])
+        return httpx.Response(200, json=body)
+
+    return handler
+
+
+async def test_counted_update_that_cannot_be_read_back_is_an_unknown_outcome(
+    mock_vco_client: MockVcoClientFactory,
+):
+    module = firewall_disabled()
+    module.data.syslog_forwarding = True
+    plan = plan_module(module)
+    store = store_of(module, return_data=False)
+    client = await mock_vco_client(reading(store, []))
+    with pytest.raises(WriteOutcomeUnknownError) as exc:
+        _ = await client.write_module(module, plan)
+    error = exc.value
+    assert not isinstance(error, ConfigConflictError | WriteNotAppliedError)
+    assert error.answer == "counted"
+    assert error.detail == "its configuration does not hold the module"
+    assert error.module is None
+    assert error.plan is plan
+    assert (error.module_id, error.module_name, error.version) == (1, "firewall", "v1")
+    assert (error.lost_edits, error.applied, error.left_out) == ((), (), ())
+    assert error.server_changes == ()
+    assert str(error).splitlines() == [
+        (
+            "Configuration module 1 (firewall): the write was sent, but the module "
+            "as stored could not be read: its configuration does not hold the module"
+        ),
+        "The VCO counted the write, so the changes below are most likely stored.",
+        "sent, not checked:",
+        "  firewall_enabled: read true, meant false",
+        "  syslog_forwarding: read false, meant true",
+        "Read the configuration again and compare before you write this module again.",
+    ]
+    assert store.rows[1]["data"]["firewall_enabled"] is False
+
+
+async def test_refused_update_that_cannot_be_read_back_is_an_unknown_outcome(
+    mock_vco_client: MockVcoClientFactory,
+):
+    module = firewall_disabled()
+    store = store_of(module, conditional_check=True)
+    store.other_writer(1, elsewhere)
+    client = await mock_vco_client(reading(store, []))
+    with pytest.raises(WriteOutcomeUnknownError) as exc:
+        _ = await client.write_module(module, plan_module(module))
+    error = exc.value
+    assert error.answer == "refused"
+    assert error.detail == "its configuration does not hold the module"
+    assert error.module is None
+    assert error.lost_edits == ()
+    assert isinstance(error.__context__, ConfigConflictError)
+    assert str(error).splitlines()[1] == (
+        "The VCO refused this write, so it stored nothing of it. Whether the "
+        "changes below are stored already is not known."
+    )
+
+
+async def test_an_unknown_outcome_names_the_refs_it_sent(
+    mock_vco_client: MockVcoClientFactory,
+):
+    module = qos({"segments": []}, refs={"a": [ROW1, ROW3]})
+    plan = plan_module(module, refs={"a": [ROW1, ROW2]})
+    store = store_of(module, conditional_check=True)
+    store.other_writer(module.id_, elsewhere)
+    client = await mock_vco_client(reading(store, []))
+    with pytest.raises(WriteOutcomeUnknownError) as exc:
+        _ = await client.write_module(module, plan)
+    assert exc.value.plan is plan
+    assert str(exc.value).splitlines()[2:4] == [
+        "sent, not checked:",
+        "  refs: replaced",
+    ]
+
+
+async def test_counted_insert_that_cannot_be_read_back_carries_the_id_answered(
+    mock_vco_client: MockVcoClientFactory,
+):
+    module = new_qos_with_a_segment()
+    store = store_of(module, return_data=False)
+    # The read answers with another writer's module of the same name only.
+    another = make_module_json(
+        "QOS", {"segments": []}, module_id=99, configuration_id=10
+    )
+    client = await mock_vco_client(reading(store, [another]))
+    with pytest.raises(WriteOutcomeUnknownError) as exc:
+        _ = await client.write_module(module, plan_module(module))
+    (answered,) = store.rows
+    assert exc.value.answer == "counted"
+    assert exc.value.module_id == answered != 99
+    assert exc.value.module is None
+    assert exc.value.version == ""
+
+
+@pytest.mark.parametrize(
+    ("conditional_check", "answer"), [(True, "refused"), (False, "counted")]
+)
+async def test_a_module_with_no_configuration_id_cannot_be_read_back(
+    mock_vco_client: MockVcoClientFactory, conditional_check: bool, answer: str
+):
+    module = firewall_disabled()
+    plan = plan_module(module)
+    store = store_of(module, conditional_check=conditional_check, return_data=False)
+    if conditional_check:
+        store.other_writer(1, elsewhere)
+    module.configuration_id = None
+    client = await mock_vco_client(store)
+    with pytest.raises(WriteOutcomeUnknownError) as exc:
+        _ = await client.write_module(module, plan)
+    assert exc.value.answer == answer
+    assert exc.value.detail == "the module has no configuration ID to read it by"
+    assert methods(store) == ["updateConfigurationModule"]
+
+
+async def test_update_answer_that_does_not_parse_is_an_unknown_outcome(
+    mock_vco_client: MockVcoClientFactory,
+):
+    module = firewall_disabled()
+    store = store_of(module)
+    store.on_store.append(without_an_action)
+    client = await mock_vco_client(store)
+    with pytest.raises(WriteOutcomeUnknownError) as exc:
+        _ = await client.write_module(module, plan_module(module))
+    error = exc.value
+    assert error.answer == "row"
+    assert error.detail == "the VCO's answer to the update does not parse"
+    assert isinstance(error.__cause__, ValidationError)
+    assert str(error).splitlines()[1] == (
+        "Whether the changes below are stored is not known."
+    )
+    assert store.rows[1]["data"]["firewall_enabled"] is False
+
+
+async def test_insert_answer_that_does_not_parse_is_an_unknown_outcome(
+    mock_vco_client: MockVcoClientFactory,
+):
+    def segments_as_text(new: dict[str, Any], _old: dict[str, Any] | None) -> None:
+        new["data"]["segments"] = "not a list"
+
+    module = new_qos_with_a_segment()
+    store = store_of(module)
+    store.on_store.append(segments_as_text)
+    client = await mock_vco_client(store)
+    with pytest.raises(WriteOutcomeUnknownError) as exc:
+        _ = await client.write_module(module, plan_module(module))
+    assert exc.value.answer == "row"
+    assert exc.value.detail == "the VCO's answer to the insert does not parse"
+    assert isinstance(exc.value.__cause__, ValidationError)
+    assert len(store.rows) == 1
+
+
+@pytest.mark.parametrize(
+    ("conditional_check", "answer"), [(True, "refused"), (False, "counted")]
+)
+async def test_read_back_row_that_does_not_parse_is_an_unknown_outcome(
+    mock_vco_client: MockVcoClientFactory, conditional_check: bool, answer: str
+):
+    module = firewall_disabled()
+    store = store_of(module, conditional_check=conditional_check, return_data=False)
+    if conditional_check:
+        store.other_writer(1, lambda row: without_an_action(row, None))
+    else:
+        store.on_store.append(without_an_action)
+    client = await mock_vco_client(store)
+    with pytest.raises(WriteOutcomeUnknownError) as exc:
+        _ = await client.write_module(module, plan_module(module))
+    assert exc.value.answer == answer
+    assert exc.value.detail == "the module row read back does not parse"
+    assert isinstance(exc.value.__cause__, ValidationError)
+
+
+@pytest.mark.parametrize(
+    ("change", "detail"),
+    [
+        ({"id": 999}, "the VCO answered with module 999, not module 1"),
+        (
+            {"configurationId": 77},
+            "the VCO answered with a module of configuration 77, not 10",
+        ),
+    ],
+)
+async def test_a_returned_row_of_another_module_is_an_unknown_outcome(
+    mock_vco_client: MockVcoClientFactory, change: dict[str, Any], detail: str
+):
+    module = firewall_disabled()
+    store = store_of(module)
+    client = await mock_vco_client(returning(store, lambda row: row.update(change)))
+    with pytest.raises(WriteOutcomeUnknownError) as exc:
+        _ = await client.write_module(module, plan_module(module))
+    assert exc.value.answer == "row"
+    assert exc.value.detail == detail
+    assert exc.value.module_id == 1
+
+
+async def test_a_module_held_as_another_class_is_an_unknown_outcome(
+    mock_vco_client: MockVcoClientFactory,
+):
+    module = firewall_disabled()
+    store = store_of(module)
+    store.rows[1]["name"] = "QOS"
+    client = await mock_vco_client(store)
+    with pytest.raises(WriteOutcomeUnknownError) as exc:
+        _ = await client.write_module(module, plan_module(module))
+    assert exc.value.answer == "row"
+    assert exc.value.detail == (
+        "the VCO holds module 1 as a QosConfigurationModule, "
+        "not a FirewallConfigurationModule"
+    )

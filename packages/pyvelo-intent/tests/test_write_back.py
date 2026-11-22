@@ -11,13 +11,14 @@ from collections.abc import Iterable, Iterator
 from typing import Any, cast
 
 import pytest
-from pydantic import MISSING
+from pydantic import MISSING, ValidationError
 from pyvelo.client.enums.configuration import ConfigurationModuleName
 from pyvelo.client.exceptions import (
     ConfigConflictError,
     DetachedObjectError,
     VcoOperationError,
     WriteNotAppliedError,
+    WriteOutcomeUnknownError,
 )
 from pyvelo.client.models.configuration.firewall.rules import FirewallOutboundRule
 from pyvelo.client.models.configuration.firewall.segment import FirewallSegment
@@ -521,3 +522,26 @@ async def test_dry_run_sends_nothing_and_detaches_nothing():
     assert seg.is_detached is False
     assert state.module("firewall").is_detached is False
     assert changed(state) == ["firewall"]
+
+
+async def test_a_save_whose_answer_does_not_parse_keeps_the_edits_in_the_state():
+    def without_an_action(new: dict[str, Any], _old: dict[str, Any] | None) -> None:
+        new["data"]["segments"][0]["outbound"] = [{"name": "a", "match": {}}]
+
+    state = make_state()
+    client = MockVcoClient.for_state(state)
+    client.store.on_store.append(without_an_action)
+    state.edge.firewall.firewall_enabled = False
+
+    with pytest.raises(WriteOutcomeUnknownError) as exc:
+        _ = await ConfigPipeline(client).save(state)
+
+    error = exc.value
+    assert error.answer == "row"
+    assert error.module is None
+    assert error.completed == ()
+    assert isinstance(error.__cause__, ValidationError)
+    assert client.store.rows[1]["data"]["firewall_enabled"] is False
+    # The state is as it was: the module as read, at its version, with the edit.
+    assert state.module("firewall").version == "e1"
+    assert [m.name for m in state.plan().changed] == ["firewall"]

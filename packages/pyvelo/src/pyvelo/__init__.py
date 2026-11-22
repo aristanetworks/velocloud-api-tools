@@ -36,6 +36,7 @@ from pyvelo.client import (
     VcoWebSocketTimeoutError,
     VcoWebSocketValidationError,
     WriteNotAppliedError,
+    WriteOutcomeUnknownError,
     get_vco_credentials,
 )
 from pyvelo.config.resolver import (
@@ -95,5 +96,6 @@ __all__ = [
     "VcoWebSocketTimeoutError",
     "VcoWebSocketValidationError",
     "WriteNotAppliedError",
+    "WriteOutcomeUnknownError",
     "get_vco_credentials",
 ]

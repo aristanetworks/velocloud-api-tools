@@ -16,7 +16,8 @@ says whether it stored the write, and a row cannot.
 VCO stored with what the plan meant to change. When every planned change is
 stored, the write returns the module as stored, with what else the VCO
 changed (``server_changes``); otherwise it raises ``ConfigConflictError`` or
-``WriteNotAppliedError``, which list the lost edits.
+``WriteNotAppliedError``, which list the lost edits, or
+``WriteOutcomeUnknownError`` when the module as stored could not be read.
 
 Segment reconciliation: an edge module may lack a segment entry that its profile
 has. The write then carries an empty entry for it (the profile's descriptor and

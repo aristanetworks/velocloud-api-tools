@@ -130,7 +130,7 @@ async def main() -> None:
 asyncio.run(main())
 ```
 
-Without `dry_run`, the save asks the VCO for each module it writes, as stored, and the state continues from it: no reload is needed, the rule ID the VCO gives `block-ssh` is in the state, `state.plan()` is empty, and the state takes more edits and saves. A write the VCO did not store as planned raises `ConfigConflictError` or `WriteNotAppliedError`, which lists the lost edits to redo.
+Without `dry_run`, the save asks the VCO for each module it writes, as stored, and the state continues from it: no reload is needed, the rule ID the VCO gives `block-ssh` is in the state, `state.plan()` is empty, and the state takes more edits and saves. A write the VCO did not store as planned raises `ConfigConflictError` or `WriteNotAppliedError`, which lists the lost edits to redo. A write whose stored module could not be read back raises `WriteOutcomeUnknownError`.
 
 The [pyvelo-intent README](packages/pyvelo-intent/README.md) covers the patch format, what a save writes and reports, validators, resolvers, and the limits of the save path.
 

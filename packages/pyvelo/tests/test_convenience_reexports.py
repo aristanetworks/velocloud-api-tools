@@ -26,6 +26,7 @@ class TestSaveErrorReexports:
             "ModuleWriteError",
             "UnboundError",
             "WriteNotAppliedError",
+            "WriteOutcomeUnknownError",
         ):
             error = getattr(exceptions, name)
             assert getattr(pyvelo.client, name) is error

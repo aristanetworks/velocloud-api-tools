@@ -5,6 +5,7 @@ from pyvelo.client.exceptions import (
     DetachedObjectError,
     ModuleWriteError,
     WriteNotAppliedError,
+    WriteOutcomeUnknownError,
 )
 from pyvelo.core import PatchError, add, at, delete, move
 
@@ -55,6 +56,7 @@ __all__ = [
     "UnknownRegistryEntryError",
     "ValidationWarning",
     "WriteNotAppliedError",
+    "WriteOutcomeUnknownError",
     "add",
     "at",
     "build_default_pipeline",

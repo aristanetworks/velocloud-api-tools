@@ -328,16 +328,20 @@ storing your changes. Neither list is an error.
   redone. After a refusal such a change is a lost edit instead, when it is
   still as read: see below.
 
-A write whose changes are not all stored raises one of two errors, from
-`pyvelo.client.exceptions` and re-exported by `pyvelo_intent`.
-`ConfigConflictError` says the module changed on the VCO since it was read;
+A write that is not known to be stored as planned raises one of three errors,
+from `pyvelo.client.exceptions` and re-exported by `pyvelo_intent`.
+`ConfigConflictError` says the VCO refused the write because the module changed
+since it was read, or seems to have (`stated`, below, says which);
 `WriteNotAppliedError` says the VCO stored the write otherwise than as sent.
+`WriteOutcomeUnknownError` says the write was sent and the module as stored
+could not be read.
 The rows below are tried in order, and the first that fits is raised, so a
 refused version is a `ConfigConflictError` even when some of your changes are
 stored:
 
 | When | Raises |
 |---|---|
+| the module as stored could not be read back, or the VCO's answer is not this module's row | `WriteOutcomeUnknownError` |
 | the VCO refused the version, and the module as stored does not already hold every one of your changes | `ConfigConflictError` |
 | the write is an insert, which carries no version | `WriteNotAppliedError` |
 | the VCO answered with the module, none of your changes is stored in it, and each value there is as read | `ConfigConflictError` |
@@ -378,7 +382,7 @@ yours whose answer was lost, passes. A left-out change beside them is then
 reported in `left_out` although the write that carried it was not stored. Look
 at `left_out` when a save follows one that failed.
 
-Both errors carry:
+`ConfigConflictError` and `WriteNotAppliedError` carry:
 
 | Attribute | Holds |
 |---|---|
@@ -386,7 +390,7 @@ Both errors carry:
 | `applied` | the planned changes that are stored |
 | `left_out` | the planned changes the VCO stores its own way, as in `SaveResult.left_out` |
 | `server_changes` | what else the VCO stores otherwise than sent, as in `SaveResult.server_changes` |
-| `module` | the module as the VCO holds it now; None when it could not be read |
+| `module` | the module as the VCO holds it now |
 | `plan` | the module's `ModulePlan` |
 | `stated` | on `ConfigConflictError`: whether the VCO said it refused the version, or the save inferred it |
 | `completed` | the writes of the same save before this one, which are stored |
@@ -405,8 +409,8 @@ stored otherwise than sent:
   syslog_forwarding: read false, stored true
 ```
 
-After either error the state holds the module as stored (when `error.module`
-has it), so your edits to that module are no longer in it. Redo the edits in
+After either of those two errors the state holds the module as stored, so your
+edits to that module are no longer in it. Redo the edits in
 `error.lost_edits` and save again; no reload is needed. Redo only those: an
 `add` of an item that is already stored raises `PatchError`. A clash is where
 the redo overwrites another writer's change. The modules written before the
@@ -414,6 +418,8 @@ failing one are stored and in the state (`error.completed`). Any other error of
 a request (a transport error, for example) leaves that module and the later
 ones with your edits, and carries a note that names the modules written before
 it; a second save sends what still differs.
+
+`WriteOutcomeUnknownError` has no lists and no module. `error.answer` says what the VCO said of the write itself: `"refused"` (it refused the version, so this write stored nothing), `"counted"` (it counted the write, so the changes are most likely stored) or `"row"` (its answer could not be read as this module). `error.detail` says why the module could not be read, and `error.plan` holds what was sent. The state keeps the module as read, with your edits. For an update, saving again is safe: if the first write was stored, the VCO refuses the old version, the save reads the module and reports what is stored. For an insert, look at the configuration first.
 
 A `WriteNotAppliedError` after a write that did work means the VCO stores that
 value in another form than the one sent. When the value is part of the key of

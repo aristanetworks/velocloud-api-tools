@@ -60,15 +60,19 @@ Otherwise it raises, from `pyvelo.client.exceptions`:
 - `WriteNotAppliedError` when the VCO stored the write otherwise than as sent.
   That includes a stale write to a VCO whose conditional version check is off,
   when another writer changed a value the plan also changes: that edit is
-  marked as a clash.
+  marked as a clash;
+- `WriteOutcomeUnknownError` when the write was sent and the module as stored
+  could not be read: the read-back did not find it or it does not parse, or the
+  VCO's answer is not this module's row. It has no lost edits; `error.answer`
+  says whether the VCO refused the write, counted it, or answered with a row.
 
-Each carries `lost_edits` (the planned changes not stored, with the values as
-read, meant and stored), `applied`, `left_out`, `server_changes`, the `plan`
-and the `module` as stored, when it could be read. Where the VCO stores a value
-its own way (a field marked `ServerOwned`, and the rewrites per module in
+The first two carry `lost_edits` (the planned changes not stored, with the
+values as read, meant and stored), `applied`, `left_out`, `server_changes`, the
+`plan` and the `module` as stored. Where the VCO stores a value its own way
+(a field marked `ServerOwned`, and the rewrites per module in
 `MODULE_REWRITES`, `pyvelo.client.module_check`), a planned change is not a
-lost edit: it is in the write's (or the error's) `left_out`, and a value other
-than the one read is a server change. After a refusal, and when the VCO
+lost edit: it is in `left_out` of the write, or of one of the first two errors,
+and a value other than the one read is a server change. After a refusal, and when the VCO
 answered with a module that holds none of the changes, such a change that is
 still as read is a lost edit. `check_module_write(module, plan, stored,
 answer=...)` takes what the VCO said of the write: `"row"`, `"counted"` or

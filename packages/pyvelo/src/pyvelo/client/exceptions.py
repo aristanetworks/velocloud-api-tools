@@ -231,13 +231,17 @@ def _where(change: PlannedChange | ServerChange) -> str:
 
 
 class ModuleWriteError(VcoError):
-    """A module write the VCO answered, whose changes are not all stored.
+    """A module write that was sent and is not known to be stored as planned.
 
-    ``lost_edits`` are the planned changes that are not stored, to redo;
-    ``applied`` those that are; ``left_out`` those the VCO stores its own way,
-    neither applied nor lost; ``server_changes`` what else differs between
-    the payload and what is stored. ``str(error)`` lists them by path
-    (``render``), all but ``left_out``.
+    ``ConfigConflictError`` and ``WriteNotAppliedError`` are a write whose
+    module as stored was read and holds the changes only in part. They carry
+    ``module``, and ``lost_edits``, the planned changes that are not stored, to
+    redo; ``applied``, those that are; ``left_out``, those the VCO stores its
+    own way, neither applied nor lost; and ``server_changes``, what else
+    differs between the payload and what is stored. ``WriteOutcomeUnknownError``
+    is a write whose module as stored could not be read: it has no ``module``
+    and no lists. ``str(error)`` lists them by path (``render``), all but
+    ``left_out``.
     """
 
     module_id: int
@@ -452,6 +456,71 @@ class WriteNotAppliedError(ModuleWriteError):
             f"{headline}. None is stored, and a value there is not the one read: "
             "the VCO stored it in another form, or another writer changed it."
         )
+
+
+class WriteOutcomeUnknownError(ModuleWriteError):
+    """Raised when a module write was sent and the module as stored could not be read.
+
+    The write's answer did not parse, or it was not this module's row, or the
+    read-back found no module to check (``detail`` says which). Nothing is
+    known of what is stored, so no change is listed as lost or stored:
+    ``plan`` holds what was sent, and ``module`` is None. ``answer`` is what the
+    VCO said of the write itself: ``"refused"`` (it refused the version, so it
+    stored nothing of this write), ``"counted"`` (it counted the write, so the
+    changes are most likely stored) or ``"row"`` (it answered with a row that
+    could not be used). ``module_id`` is the module's ID; for an insert the VCO
+    counted or answered with a row, the ID it gave.
+    """
+
+    detail: str
+    answer: WriteAnswer
+
+    def __init__(
+        self,
+        module_id: int,
+        version: str,
+        detail: str,
+        *,
+        answer: WriteAnswer,
+        module_name: str,
+        plan: ModulePlan,
+    ) -> None:
+        self.detail = detail
+        self.answer = answer
+        super().__init__(module_id, version, module_name=module_name, plan=plan)
+
+    @override
+    def _headline(self) -> str:
+        return (
+            f"Configuration module {self._label()}: the write was sent, but the "
+            f"module as stored could not be read: {self.detail}"
+        )
+
+    @override
+    def _notes(self) -> list[str]:
+        if self.answer == "refused":
+            said = (
+                "The VCO refused this write, so it stored nothing of it. Whether "
+                "the changes below are stored already is not known."
+            )
+        elif self.answer == "counted":
+            said = "The VCO counted the write, so the changes below are most likely stored."
+        else:
+            said = "Whether the changes below are stored is not known."
+        lines = [said, "sent, not checked:"]
+        if self.plan is not None:
+            lines.extend(
+                f"  {change.path}: read {_shown(change.before)}, "
+                f"meant {_shown(change.after)}"
+                for change in self.plan.changes
+            )
+            if self.plan.refs is not None:
+                lines.append("  refs: replaced")
+        lines.append(
+            "Read the configuration again and compare before you write this "
+            "module again."
+        )
+        return lines
 
 
 class UnboundError(VcoError):
