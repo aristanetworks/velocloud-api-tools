@@ -398,3 +398,35 @@ def test_a_deep_copy_of_a_detached_rule_can_go_into_the_state():
     ]
     assert again.is_detached is False
     assert held.name == "web"
+
+
+def test_a_held_model_that_is_not_a_vco_model_is_compared():
+    raw: dict[str, Any] = {
+        "lan": {},
+        "segments": [
+            {
+                "segment": desc(0, "Global Segment"),
+                "vrrp": {"enabled": False, "data": []},
+            }
+        ],
+    }
+    row = make_module_json(
+        "deviceSettings", raw, module_id=5, configuration_id=10, version="e1"
+    )
+    state = make_state([row])
+    old = state.module("deviceSettings")
+    assert isinstance(old, DeviceSettingsConfigurationModule)
+    vrrp = old.data.segments[0].vrrp
+    assert vrrp is not MISSING
+    state.replace_module(old, as_stored(old, copy.deepcopy(raw)))
+    del old
+    _ = gc.collect()  # only the vrrp object is held now
+
+    vrrp.root = {"enabled": True, "data": []}
+
+    with pytest.raises(DetachedObjectError) as exc:
+        _ = state.plan()
+    assert exc.value.paths == [
+        Path(("data", "segments", Key("Global Segment"), "vrrp", "enabled"))
+    ]
+    assert state.plan().changed == ()

@@ -5,7 +5,7 @@ import pickle
 from typing import Any, ClassVar, Self, cast
 
 import pytest
-from pydantic import ConfigDict, Field, model_validator
+from pydantic import ConfigDict, Field, RootModel, model_validator
 from pyvelo.client.exceptions import DetachedObjectError, VcoError
 from pyvelo.client.models.configuration import FirewallData
 from pyvelo.client.models.configuration.device_settings.refs import DeviceSettingsRefs
@@ -154,13 +154,13 @@ def test_mark_detached_lists_every_model_with_its_place():
     assert places[("segments", 0)] is segment
     assert places[("segments", 0, "outbound", 0)] is rule
     assert places[("securityFeatures",)] is data.security_features  # the dump key
-    assert all(node.is_detached for _, node in marked)
+    assert all(node.is_detached for _, node in marked if isinstance(node, VcoModel))
     # Each place leads to the node's own dump in the dump of the whole.
     for place, node in marked:
         at: Any = then
         for part in place:
             at = at[part]
-        assert at == dump(node), place
+        assert at == node.model_dump(mode="json", by_alias=True), place
 
 
 def test_a_module_marks_its_data_and_refs():
@@ -325,3 +325,27 @@ def test_a_shallow_copy_of_a_detached_object_is_detached():
         assert copied.is_detached
     with pytest.raises(DetachedObjectError, match="FirewallOutboundRule.name"):
         copy.copy(rule).name = "other"
+
+
+Blob = RootModel[dict[str, Any] | None]
+
+
+class Crate(VcoModel):
+    blob: Blob | None = None
+    blobs: list[Blob] = Field(default_factory=list)
+
+
+def test_a_pydantic_model_that_is_not_a_vco_model_is_listed_and_not_guarded():
+    blob, other = Blob({"enabled": False}), Blob(None)
+    crate = Crate(blob=blob, blobs=[other])
+
+    marked = crate.mark_detached()
+
+    places = dict(marked)
+    assert places[()] is crate
+    assert places[("blob",)] is blob
+    assert places[("blobs", 0)] is other
+    assert crate.is_detached
+    assert not hasattr(blob, "is_detached")
+    blob.root = {"enabled": True}  # no guard: it is found by comparing dumps
+    assert crate.model_dump(mode="json", by_alias=True)["blob"] == {"enabled": True}

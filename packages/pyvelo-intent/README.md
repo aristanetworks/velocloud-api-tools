@@ -597,9 +597,12 @@ Objects taken from the state before a save
 the save replaced, and are detached. Reading one is fine. An assignment to one
 raises `DetachedObjectError`, and an in-place edit to a list or dict it holds
 (`seg.outbound.insert(0, rule)`) is reported, once, by the next `plan()` or
-save. Take the object from the state again and redo the edit. To reuse a
-detached object as a new item, put a deep copy of it in the state
-(`copy.deepcopy(rule)`): the copy is not detached.
+save. A device settings segment's `vrrp` is not one of the library's models
+and has no such guard: an assignment to `vrrp.root` does not raise, and is
+reported by the next `plan()` or save like an in-place edit. Take the object
+from the state again and redo the edit. To reuse a detached object as a new
+item, put a deep copy of it in the state (`copy.deepcopy(rule)`): the copy is
+not detached.
 
 A write whose answer never arrived (a transport error after the request was
 sent, a cancelled save) may or may not be stored, and so may one that raised
@@ -618,9 +621,12 @@ adds a warning with the code `insert_unconfirmed`.
 
 Known limits:
 
-- A plain list or dict taken from a module before a save and held on its own,
-  after every model of that module is dropped, is not checked for in-place
-  edits. Hold the model, or take the list from the state again.
+- A plain list or dict taken from a module before a save is checked for
+  in-place edits only while the model it belongs to is alive: the object whose
+  field it is, or one that contains that object. For `rules = seg.outbound`
+  that is `seg`, or the firewall data it came from. An item of the list does
+  not count: holding `rules[0]` does not keep `rules` checked. Keep the model
+  the list came from, or take the list from the state again.
 - A lookup through a detached layer that adds a placeholder
   (`fw.segment("Guest")` on a `fw` taken before the save) is reported by the
   next `plan()`. Take the layer from the state again.

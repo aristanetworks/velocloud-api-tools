@@ -349,14 +349,17 @@ type _Place = tuple[str | int, ...]
 """Where a model is from another: dump keys (``str``) and list positions (``int``)."""
 
 
-def _models_inside(value: object, place: _Place) -> Iterator[tuple[_Place, VcoModel]]:
-    """Every VcoModel in *value*, at any depth, with its place; *value* is at *place*.
+def _models_inside(value: object, place: _Place) -> Iterator[tuple[_Place, BaseModel]]:
+    """Every pydantic model in *value*, at any depth, with its place; *value* is at *place*.
 
     Walks as ``_propagate_context`` does: fields, extra values, lists and
     dicts. A model comes before the models inside it. A field is named by its
     dump key (its alias), a dict entry by its key as text, as in a JSON dump.
+    A pydantic model that is not a ``VcoModel`` is yielded and not entered.
     """
-    if isinstance(value, VcoModel):
+    if isinstance(value, BaseModel) and not isinstance(value, VcoModel):
+        yield place, value
+    elif isinstance(value, VcoModel):
         yield place, value
         for name, field_info in type(value).model_fields.items():
             key = _field_alias(field_info, name)
@@ -433,11 +436,14 @@ class VcoModel(BaseModel):
             return False
         return private is not None and private.get("_detached") is True
 
-    def mark_detached(self) -> list[tuple[tuple[str | int, ...], VcoModel]]:
+    def mark_detached(self) -> list[tuple[tuple[str | int, ...], BaseModel]]:
         """Mark this model and every VcoModel inside it as replaced by a save.
 
         Returns each of them with where it is from here: the dump key of each
-        field on the way, and the position of each list item.
+        field on the way, and the position of each list item. It also returns
+        each pydantic model inside that is not a ``VcoModel`` (a segment's
+        ``vrrp``), without marking it: it has no guard, so an assignment to it
+        does not raise, and a change through it is found by comparing dumps.
 
         A marked model raises ``DetachedObjectError`` on assignment to an
         attribute whose name does not start with ``_``, and on
@@ -450,7 +456,8 @@ class VcoModel(BaseModel):
         """
         marked = list(_models_inside(self, ()))
         for _, model in marked:
-            model._detached = True
+            if isinstance(model, VcoModel):
+                model._detached = True
         return marked
 
     @override

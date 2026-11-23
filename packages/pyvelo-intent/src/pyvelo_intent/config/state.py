@@ -7,7 +7,7 @@ import weakref
 from dataclasses import dataclass, field
 from typing import Any, Literal, Protocol, cast, override, runtime_checkable
 
-from pydantic import MISSING
+from pydantic import MISSING, BaseModel
 from pyvelo.client.enums.configuration import ConfigurationModuleName
 from pyvelo.client.exceptions import DetachedObjectError
 from pyvelo.client.models.configuration.common import segment_id_of
@@ -193,7 +193,7 @@ class _Replaced:
     name: str
     model: type[VcoModel]
     dump: object
-    nodes: list[tuple[_Place, weakref.ref[VcoModel]]]
+    nodes: list[tuple[_Place, weakref.ref[BaseModel]]]
 
     def changed_paths(self) -> list[Path]:
         """Where the objects still alive were changed in place since ``dump``, each once.
@@ -235,7 +235,7 @@ class _Replaced:
         return list(dict.fromkeys(change.path for change in changes))
 
 
-def _dump(model: VcoModel) -> object:
+def _dump(model: BaseModel) -> object:
     return model.model_dump(mode="json", by_alias=True)
 
 
@@ -503,10 +503,13 @@ class ConfigState:
         :meth:`plan` after an in-place change to a list or dict they hold. So
         does a lookup through a detached layer that adds a placeholder
         (``segment("Guest")``), on purpose: it usually comes before an edit
-        that would be lost. A plain list or dict still held after every model
-        of its module is dropped is not compared, because a list cannot be
-        weakly referenced; nor is a model the module's dump leaves out (a
-        field absent at its level). The state keeps no strong reference to
+        that would be lost. A plain list or dict is compared only while the
+        model it is a field of, or one that contains that model, is alive,
+        because a list cannot be weakly referenced; holding an item of the list
+        does not keep it compared. Nor is a model the module's dump leaves out
+        (a field absent at its level). A pydantic model inside that is not a
+        ``VcoModel`` (a segment's ``vrrp``) is compared like the others, but an
+        assignment to it does not raise. The state keeps no strong reference to
         *old*. Raises ``ValueError`` if *old* is not in the target config.
         """
         config = self.target_config
