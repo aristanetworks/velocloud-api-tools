@@ -46,14 +46,13 @@ async def observed_client(
     observer: RequestObserver,
     **options: Unpack[ClientOptions],
 ) -> AsyncGenerator[VcoClient]:
-    client = VcoClient(
-        "example.test", "private-token", request_observer=observer, **options
+    yield VcoClient(
+        "example.test",
+        "private-token",
+        request_observer=observer,
+        transport=httpx.MockTransport(handler),
+        **options,
     )
-    async with httpx.AsyncClient(
-        base_url="https://example.test", transport=httpx.MockTransport(handler)
-    ) as http:
-        client._http = http
-        yield client
 
 
 async def test_retry_after_and_limiter_waits_match_actual_attempts():

@@ -2,6 +2,7 @@
 
 from typing import cast
 
+import httpx
 import pytest
 from pyvelo.client.enums.configuration import ConfigurationModuleName
 from pyvelo.client.schemas.configuration import (
@@ -126,6 +127,23 @@ async def test_mock_client_seeds_from_a_state_and_records_requests():
     (request,) = client.update_requests
     assert request.configuration_module_id == 1
     assert client.store.rows[1]["data"] == request.update.data
+    assert [method for method, _ in client.store.requests] == [
+        "configuration/updateConfigurationModule"
+    ]
+
+
+@pytest.mark.asyncio
+async def test_mock_client_under_async_with_still_talks_to_its_store():
+    state = _make_state()
+    client = MockVcoClient.for_state(state)
+    async with client:
+        # Checked before anything is sent: without the store's transport a
+        # request would leave the machine.
+        http = client._http_client()  # pyright: ignore[reportPrivateUsage]
+        assert isinstance(http._transport, httpx.MockTransport)  # pyright: ignore[reportPrivateUsage]
+        assert state.edge_config is not None
+        state.edge_config.firewall.data.firewall_enabled = False
+        _ = await ConfigPipeline(client).save(state)
     assert [method for method, _ in client.store.requests] == [
         "configuration/updateConfigurationModule"
     ]

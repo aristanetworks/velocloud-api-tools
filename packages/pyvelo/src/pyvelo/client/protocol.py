@@ -155,6 +155,7 @@ class VcoClientProtocol(
     Protocol,
 ):
     _http: httpx.AsyncClient | None = None
+    _transport: httpx.AsyncBaseTransport | None = None
     _vco_fqdn: str
     _token: SecretStr
     _verify_ssl: bool
@@ -180,14 +181,17 @@ class VcoClientProtocol(
             self._http = None
 
     async def _connect(self) -> None:
-        headers = {"Content-Type": "application/json"}
-        self._http = await httpx.AsyncClient(
+        self._http = await self._new_http_client().__aenter__()
+
+    def _new_http_client(self) -> httpx.AsyncClient:
+        return httpx.AsyncClient(
             auth=VcoAuth(self._token.get_secret_value()),
             base_url=f"https://{self._vco_fqdn}",
-            headers=headers,
+            headers={"Content-Type": "application/json"},
             verify=self._verify_ssl,
             timeout=self._timeout,
-        ).__aenter__()
+            transport=self._transport,
+        )
 
     def _http_client(self) -> httpx.AsyncClient:
         if self._http is not None:

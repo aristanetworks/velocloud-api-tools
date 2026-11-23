@@ -7,9 +7,7 @@ from collections.abc import Sequence
 from datetime import UTC, datetime
 from typing import Self, override
 
-import httpx
 from pydantic import MISSING
-from pyvelo.client.auth import VcoAuth
 from pyvelo.client.enums.configuration import ConfigurationModuleType
 from pyvelo.client.enums.enterprise import NetworkSegmentType
 from pyvelo.client.models.configuration.common import SegmentMetadata
@@ -103,7 +101,8 @@ class MockVcoClient(VcoClient):
         *,
         conditional_check: bool = False,
     ) -> None:
-        super().__init__(_HOST, "test-token")
+        self.store = ModuleStore(conditional_check=conditional_check)
+        super().__init__(_HOST, "test-token", transport=make_transport(self.store))
         self.stack: GetEdgeConfigurationStackResult | None = stack
         self._edges: Sequence[GetEnterpriseEdgesItem] = (
             edges if edges is not None else []
@@ -111,12 +110,6 @@ class MockVcoClient(VcoClient):
         self.calls: list[tuple[str, object]] = []
         self.update_requests: list[UpdateConfigurationModule] = []
         self.insert_requests: list[InsertConfigurationModule] = []
-        self.store = ModuleStore(conditional_check=conditional_check)
-        self._http: httpx.AsyncClient | None = httpx.AsyncClient(
-            auth=VcoAuth("test-token"),
-            transport=make_transport(self.store),
-            base_url=f"https://{_HOST}",
-        )
         if stack is not None:
             _ = self.seed(*stack)
 

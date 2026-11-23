@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock
 import httpx
 from pydantic import MISSING
 
-from pyvelo.client import VcoAuth, VcoClient
+from pyvelo.client import VcoClient
 from pyvelo.client.enums.enterprise import NetworkSegmentType
 from pyvelo.config.resolver import ResolverContext
 from pyvelo.config.resolvers.segment import SegmentResolver
@@ -145,11 +145,7 @@ def mock_vco_client_factory() -> Callable[..., Any]:
             max_retries=max_retries,
             max_concurrent_requests=max_concurrent_requests,
             max_requests_per_window=max_requests_per_window,
-        )
-        client._http = httpx.AsyncClient(
-            auth=VcoAuth("test-token"),
             transport=make_transport(handler),
-            base_url="https://test.velocloud.net",
         )
         return client
 

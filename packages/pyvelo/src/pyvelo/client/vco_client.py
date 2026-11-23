@@ -26,7 +26,16 @@ _RATE_LIMIT_WINDOW = 5.0
 
 
 class VcoClient(VcoClientProtocol):
-    """Concrete VcoClient with retry, rate-limiting, and concurrency control."""
+    """Concrete VcoClient with retry, rate-limiting, and concurrency control.
+
+    With a ``transport`` the client sends every request through it, is
+    connected from the moment it is built (no ``async with`` needed), and keeps
+    the transport inside ``async with``; after the block it is closed like any
+    client. ``verify_ssl`` has no effect with a transport. Leaving the block
+    closes the transport, and entering a block again enters it again, so a
+    transport that can be entered again (an ``httpx`` one can) serves a second
+    block.
+    """
 
     def __init__(
         self,
@@ -40,6 +49,7 @@ class VcoClient(VcoClientProtocol):
         max_requests_per_window: int | None = None,
         exchange_hook: ExchangeHook | None = None,
         request_observer: RequestObserver | None = None,
+        transport: httpx.AsyncBaseTransport | None = None,
     ) -> None:
         self._vco_fqdn: str = vco_fqdn
         self._token: SecretStr = SecretStr(token)
@@ -49,6 +59,9 @@ class VcoClient(VcoClientProtocol):
         self._exchange_hook: ExchangeHook | None = exchange_hook
         self._request_observer: RequestObserver | None = request_observer
         self._ws_cleanup_tasks: set[asyncio.Task[None]] = set()
+        self._transport = transport
+        if transport is not None:
+            self._http = self._new_http_client()
 
         if max_concurrent_requests is not None:
             self._concurrency_semaphore: asyncio.Semaphore | None = asyncio.Semaphore(
