@@ -94,6 +94,10 @@ def test_parse_change():
     assert op.place == Place("first")
 
 
+def test_an_empty_object_is_a_change_of_nothing():
+    assert parse_item_op({}, PATH) == ItemOp("change", {}, None)
+
+
 def test_parse_add_delete_move():
     assert parse_item_op(add({"a": 1}, after="x"), PATH) == ItemOp(
         "add", {"a": 1}, Place("after", "x")
@@ -121,7 +125,6 @@ def test_parse_composite_anchor():
         ({"_position": 0}, "removed"),
         ({"_position": "before:x"}, "removed"),
         ({"_position": {"before": "a", "after": "b"}}, ""),
-        ({}, ""),
     ],
 )
 def test_parse_refuses(value: object, text: str):

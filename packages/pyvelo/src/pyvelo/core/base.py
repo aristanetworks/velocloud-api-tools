@@ -645,7 +645,8 @@ class VcoModel(BaseModel):
 
         - a plain object: a change, merged into the item. It may change the
           key (a rename) to one no other item has. It may change the alt key
-          to one no other item has. A list of values takes none.
+          to one no other item has. A list of values takes none. An empty
+          object changes nothing; it must still name one item.
         - ``add(body, **place)``, which is ``{"_op": "add", ...}``: a new
           item built from *body*, validated whole. In a keyed list the
           selector is the key and is written into the item; a body that gives

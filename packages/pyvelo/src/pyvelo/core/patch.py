@@ -250,12 +250,7 @@ def parse_item_op(value: object, path: Path) -> ItemOp:
     if op == "add":
         return ItemOp("add", fields, place)
     if not fields:
-        if place is None:
-            raise PatchError(
-                "an empty object changes nothing; give fields, delete() or move()",
-                path,
-            )
-        return ItemOp("move", {}, place)
+        return ItemOp("move" if place is not None else "change", {}, place)
     return ItemOp("change", fields, place)
 
 

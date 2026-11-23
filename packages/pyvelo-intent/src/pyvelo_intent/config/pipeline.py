@@ -280,7 +280,7 @@ class ConfigPipeline:
 
            - a change of a segment the edge only inherits first adds its
              placeholder entry, which carries the profile's descriptor and
-             IDs;
+             IDs (an empty object changes nothing and adds none);
            - a ``_position`` (``{"_position": ...}`` (``move(...)``), or on a
              change) for a segment the edge module did not have when it was
              read raises ``PatchError``, and so does one given ``before`` or
@@ -770,6 +770,10 @@ def _profile_segments_unchanged(data: object, trial: object) -> None:
     )
 
 
+# Stands for the selector of a segment entry that is left out of the patch.
+_LEFT_OUT = object()
+
+
 def _prepare_segments(
     data: VcoModel,
     patch: Mapping[str, object],
@@ -790,7 +794,9 @@ def _prepare_segments(
     - one that names a segment only the profile has:
       a change or a ``move`` first adds the placeholder entry
       (``segment(name)``), which carries the profile's descriptor and IDs, and
-      is keyed under the profile's name; an ``add`` or a ``delete`` raises
+      is keyed under the profile's name (an empty object changes nothing and
+      adds none: the entry is left out of the patch returned, and the segment
+      still counts as named); an ``add`` or a ``delete`` raises
       ``PatchError``, and adds nothing;
     - one that names a segment neither layer has, or any on data that is not
       bound to a profile, is left to ``merge_patch``.
@@ -829,6 +835,8 @@ def _prepare_segments(
                         where,
                     )
                 named[name] = where
+            if key is _LEFT_OUT:
+                continue
         prepared[key] = value
     return {**patch, "segments": prepared}
 
@@ -844,9 +852,12 @@ def _prepare_segment(
     """The selector to merge one segment entry under, and the segment it names (``_prepare_segments``).
 
     The segment is None where the entry is left to ``merge_patch`` without
-    naming one, and for ``"+"``. Raises ``PatchError`` for a place the edge
-    cannot store: one for a segment in *inherited*, or one given ``before`` or
-    ``after`` such a segment. This comes before a placeholder is added.
+    naming one, and for ``"+"``. The selector is ``_LEFT_OUT`` for an empty
+    object that names a segment the edge only inherits: it changes nothing, so
+    no placeholder is added and the entry is not merged. Raises
+    ``PatchError`` for a place the edge cannot store: one for a segment in
+    *inherited*, or one given ``before`` or ``after`` such a segment. This
+    comes before a placeholder is added.
     """
     assert isinstance(data, _SegmentLayer)  # _prepare_segments checked
     _refuse_place_by_inherited(data, op, where, resolvers, inherited)
@@ -897,6 +908,8 @@ def _prepare_segment(
             where,
         )
     _refuse_place_for(op, name, segment_id, where, inherited)
+    if op.kind == "change" and not op.body:
+        return _LEFT_OUT, name
     _ = data.segment(name)
     return name, name
 

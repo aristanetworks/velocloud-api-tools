@@ -788,6 +788,43 @@ async def test_edge_entry_under_another_name_is_the_profiles_segment():
         assert _edge_segment_names(state) == ["Global Segment", "Guest-old"]
 
 
+@pytest.mark.asyncio
+async def test_an_empty_object_for_an_inherited_segment_adds_no_placeholder():
+    state = make_raw_state()
+    before = state.plan().render()
+    pipeline = ConfigPipeline(client=None)
+    for selector in ("Guest", "guest", "2", "Global Segment"):
+        _ = await pipeline.apply(
+            state, module="firewall", patch={"segments": {selector: {}}}
+        )
+        assert _edge_segment_names(state) == ["Global Segment"]
+    _ = await pipeline.apply(state, module="firewall", segment="Guest", patch={})
+    assert _edge_segment_names(state) == ["Global Segment"]
+    assert state.plan().render() == before
+
+
+@pytest.mark.asyncio
+async def test_an_empty_object_counts_as_a_selector_of_its_segment():
+    state = make_raw_state()
+    patch: dict[str, object] = {
+        "segments": {"Guest": {}, "2": {"outbound": {"block": add(_DENY)}}}
+    }
+    with pytest.raises(PatchError, match="one selector per segment"):
+        _ = await ConfigPipeline(client=None).apply(
+            state, module="firewall", patch=patch
+        )
+    assert _edge_segment_names(state) == ["Global Segment"]
+
+
+@pytest.mark.asyncio
+async def test_an_empty_object_for_a_segment_neither_layer_has_raises():
+    state = make_raw_state()
+    with pytest.raises(PatchError, match="no item has the key"):
+        _ = await ConfigPipeline(client=None).apply(
+            state, module="firewall", patch={"segments": {"Nope": {}}}
+        )
+
+
 # --- segments on a profile target ---------------------------------------------
 
 

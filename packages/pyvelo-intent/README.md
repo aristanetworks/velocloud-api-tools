@@ -168,20 +168,22 @@ Every list has a kind, which says how its items are named:
 | map | being `dict[K, Model]` | the map key; no order, so no positions or moves |
 
 An object on a list is item operations, keyed by selector. A selector is a
-key, alt key, label or value in string form (`"10"` names VLAN 10),
-`at(n)` (the item at position `n` of the list as it was), or `"+"` for a new
-item of a keyed or positional list (in a list of values and in a map, `add`
-goes under the new value or key itself). Under it, a plain object changes the
-item (and may rename it to a key no other item has), `add(body, ...)` adds
-one, `delete()` removes it, and `move(...)` moves it. A place is one of
-`first=True`, `last=True`, `before=selector` or `after=selector`; an `add`
-without one goes last. A selector that names no item, or more than one,
-raises and lists the matches; `add` of a key or value already in the list
-raises. An alt key is kept unique the same way: an `add` or a change that
-gives an item an alt key another item has (a rule's logical ID, a segment's
-`segmentId`) raises, and so does a list value that repeats one. Every
-selector is resolved against the list as it was, then changes, deletes, and
-adds and moves (in the order written) are applied.
+key, alt key, label or value in string form (`"10"` names VLAN 10), `at(n)`
+(the item at position `n` of the list as it was), or `"+"` for a new item of a
+keyed or positional list (in a list of values and in a map, `add` goes under
+the new value or key itself). Under it, a plain object changes the item (and
+may rename it to a key no other item has), `add(body, ...)` adds one,
+`delete()` removes it, and `move(...)` moves it. An empty object changes
+nothing and is accepted for an item that exists, so the dump of an item whose
+fields are all defaults can be written back. A place is one of `first=True`,
+`last=True`, `before=selector` or `after=selector`; an `add` without one goes
+last. A selector that names no item, or more than one, raises and lists the
+matches; `add` of a key or value already in the list raises. An alt key is
+kept unique the same way: an `add` or a change that gives an item an alt key
+another item has (a rule's logical ID, a segment's `segmentId`) raises, and so
+does a list value that repeats one. Every selector is resolved against the
+list as it was, then changes, deletes, and adds and moves (in the order
+written) are applied.
 
 ```python
 from pyvelo_intent import add, at, delete, move
@@ -253,14 +255,15 @@ to another state, or changed, afterwards.
 The `segments` lists have rules of their own:
 
 - On an edge, a segment the edge inherits from its profile counts as there. A
-  change of one the edge layer lacks first adds its placeholder entry; `add` of
-  an inherited segment raises (write a plain object), and so does `delete` of
-  one the edge layer has no entry for. A place (`move(...)`, or `"_position"`
-  on a change) is for the edge's own segments, the ones its module had when it
-  was read. A save writes the segments the edge only inherits after those, in
-  the profile's order, so `apply` refuses a place for one of them, and a place
-  given `before` or `after` one of them. Once a save has written an entry for
-  such a segment, it is one of the edge's own.
+  change of one the edge layer lacks first adds its placeholder entry (an
+  empty object adds none); `add` of an inherited segment raises (write a plain
+  object), and so does `delete` of one the edge layer has no entry for. A
+  place (`move(...)`, or `"_position"` on a change) is for the edge's own
+  segments, the ones its module had when it was read. A save writes the
+  segments the edge only inherits after those, in the profile's order, so
+  `apply` refuses a place for one of them, and a place given `before` or
+  `after` one of them. Once a save has written an entry for such a segment, it
+  is one of the edge's own.
 - On a profile, `apply` refuses a patch that adds or removes a segment, or
   changes a segment's descriptor (the `segment` object: its name, `segmentId`,
   type and logical ID), in whatever form: `add` or `delete` under a selector, a

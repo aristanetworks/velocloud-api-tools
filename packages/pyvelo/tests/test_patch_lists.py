@@ -297,6 +297,32 @@ def test_select_items():
     assert select_items(hops(), "hops", "10.0.0.1") == []
 
 
+def test_an_empty_object_on_an_item_changes_nothing():
+    root = Root(rules=[Rule(name="a"), Rule(name="b")], by_name={"x": Sub()})
+    dump = root.model_dump()
+    fields_set = set(root.model_fields_set)
+    _ = root.merge_patch({"rules": {"a": {}, at(1): {}}, "by_name": {"x": {}}})
+    assert root.model_dump() == dump
+    assert root.model_fields_set == fields_set
+
+
+@pytest.mark.parametrize(
+    ("patch", "path"),
+    [
+        ({"rules": {"zz": {}}}, "rules[zz]"),
+        ({"rules": {"a": {}, at(0): {}}}, "rules[#0]"),
+        ({"names": {"a": {}}}, "names[a]"),
+        ({"by_name": {"zz": {}}}, "by_name[zz]"),
+        ({"rules": {"z": add({"tags": {"t": {}}})}}, "rules[z].tags[t]"),
+    ],
+)
+def test_an_empty_object_still_has_to_name_one_item_that_exists(
+    patch: dict[str, object], path: str
+):
+    root = Root(rules=[Rule(name="a")], names=["a"], by_name={"x": Sub()})
+    _ = raises_at(root, patch, path)
+
+
 # ---------------------------------------------------------------------------
 # Value lists
 # ---------------------------------------------------------------------------
