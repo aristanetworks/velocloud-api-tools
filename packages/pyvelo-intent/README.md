@@ -96,7 +96,8 @@ before loading; each state's copy is then loaded with the state. For the other
 types, load a resolver with `state.resolver_context` and register it on the
 state (`state.resolvers.register(resolver)`), or give numeric IDs in patches. A
 state you build yourself, from a cache for example, has no resolvers until
-`await pipeline.load_resolvers(state)`.
+`await pipeline.load_resolvers(state)`. Without its resolver, a name in a patch
+raises `PatchError` at that field; the ID is always accepted.
 
 ## The patch format
 

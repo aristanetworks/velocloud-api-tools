@@ -356,7 +356,7 @@ def _merge_field(
 
     # Resolvable: a name given where the field expects an ID.
     if isinstance(value, str) and resolvers is not None:
-        value = _resolve_name(field_info, value, resolvers)
+        value = _resolve_name(field_info, value, resolvers, path)
 
     setattr(model, name, _validate_field(model_cls, name, value, path))
 
@@ -597,7 +597,7 @@ def _refuse_unread_keys(
 
 
 def _resolve_name(
-    field_info: FieldInfo, name: str, resolvers: IdentityResolver
+    field_info: FieldInfo, name: str, resolvers: IdentityResolver, path: Path
 ) -> object:
     """Turn the string *name* on a Resolvable field into the field's ID.
 
@@ -609,7 +609,10 @@ def _resolve_name(
     3. If the ID type is ``str`` and *name* equals a known ID, *name* is the ID.
     4. Otherwise the ``ResolutionError`` propagates.
 
-    A missing resolver raises a ``LookupError`` that is not a ``ResolutionError``.
+    With no resolver registered for the identity type, *name* is returned when
+    the ID type is ``str`` or cannot be told (any text may be the ID, and
+    validation decides). Otherwise *name* is not an ID and nothing can look it
+    up, so ``PatchError`` at *path* says to register the resolver or give the ID.
     """
     resolvable = get_resolvable(field_info)
     if resolvable is None:
@@ -628,6 +631,15 @@ def _resolve_name(
         ):
             return name
         raise
+    except LookupError:
+        if id_type is None or id_type is str:
+            return name
+        raise PatchError(
+            f"{name!r} is not an ID of this field, and no "
+            f"{resolvable.identity_type.__name__} resolver is registered to look "
+            "it up as a name: give the ID, or register that resolver",
+            path,
+        ) from None
     return _field_value(identity, resolvable.id_attr)
 
 
@@ -841,7 +853,8 @@ def _build_input(
       with another alias) as the python name
     - resolves string values on Resolvable fields the way ``merge_patch``
       does (see ``_resolve_name``): an unknown name raises ``ResolutionError``
-      and a missing resolver leaves the value for pydantic
+      and a name with no resolver to look it up raises ``PatchError``,
+      unless the text can be the ID
     - builds a list or map field given as an object from its item
       operations, on an empty list: each must be an ``add``
       (``_new_list_input``)
@@ -864,12 +877,7 @@ def _build_input(
             value = _null_value(fi, field_name, child, built=True)
         elif isinstance(value, str):
             if resolvers is not None:
-                try:
-                    value = _resolve_name(fi, value, resolvers)
-                except ResolutionError:
-                    raise
-                except LookupError:
-                    pass  # no resolver: leave it for pydantic to accept or reject
+                value = _resolve_name(fi, value, resolvers, child)
         elif _is_dict(value) and (sub_types := _field_model_types(fi)):
             value = _build_input(
                 _merged_fields(sub_types),

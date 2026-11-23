@@ -681,11 +681,13 @@ class VcoModel(BaseModel):
         **Errors.** A patch that cannot be applied raises ``PatchError`` (a
         ``ValueError``) whose ``path`` is where in the patch it failed; a
         pydantic ``ValidationError`` behind it is its ``__cause__``. Resolver
-        errors keep their types. All or nothing: a patch that raises,
-        ``PatchError``, ``ResolutionError`` or ``LookupError``, leaves self as
-        it was, the same dump and the same ``model_fields_set``. On an object
-        a save replaced (``is_detached``) it raises ``DetachedObjectError``
-        before anything else.
+        errors keep their types. A name on a field whose resolver is not
+        registered raises ``PatchError`` at the field, unless the text can be
+        the ID. All or nothing: a patch that raises, ``PatchError``,
+        ``ResolutionError`` or ``LookupError``, leaves self as it was, the same
+        dump and the same ``model_fields_set``. On an object a save replaced
+        (``is_detached``) it raises ``DetachedObjectError`` before anything
+        else.
         """
         if self.is_detached:
             _raise_detached(self, "merge_patch")

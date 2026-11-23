@@ -12,7 +12,7 @@ from typing import Annotated, Literal
 import pytest
 from pydantic import MISSING, Discriminator, Field, ValidationError, field_validator
 from pyvelo.client.models.configuration.device_settings import NatRule
-from pyvelo.config.resolver import ResolutionError
+from pyvelo.config.resolver import ResolutionError, ResolverRegistry
 from pyvelo.core import Alias, PatchError, VcoModel, add
 from pyvelo.core.fields import KeyField, Lenient, NoneIsFalse, Resolvable
 from pyvelo.core.identity import SegmentIdentity
@@ -322,6 +322,47 @@ def test_resolver_error_changes_nothing_and_keeps_its_type():
         )
     assert not isinstance(exc.value, PatchError)
     assert model.model_dump() == dump
+
+
+class Bound(VcoModel):
+    segment_id: Annotated[int, Resolvable(SegmentIdentity, "segment_id")] = 0
+    segment_ref: Annotated[str, Resolvable(SegmentIdentity, "name")] = ""
+
+
+class Member(VcoModel):
+    name: str
+    segment_id: Annotated[int, Resolvable(SegmentIdentity, "segment_id")]
+
+
+class Members(VcoModel):
+    members: Annotated[list[Member], KeyField("name")] = Field(default_factory=list)
+
+
+def test_a_name_with_no_resolver_registered_is_refused_at_its_field():
+    empty = ResolverRegistry()
+    with pytest.raises(PatchError) as exc:
+        _ = Bound().merge_patch({"segment_id": "Guest"}, resolvers=empty)
+    assert exc.value.path == Path.parse("segment_id")
+    assert "'Guest'" in exc.value.message
+    assert "SegmentIdentity" in exc.value.message
+    with pytest.raises(PatchError) as exc:
+        _ = Members().merge_patch(
+            {"members": {"m": add({"segment_id": "Guest"})}}, resolvers=empty
+        )
+    assert exc.value.path == Path.parse("members[m].segment_id")
+    assert "SegmentIdentity" in exc.value.message
+
+
+def test_an_id_needs_no_resolver():
+    empty = ResolverRegistry()
+    model = Bound()
+    _ = model.merge_patch(
+        {"segment_id": "7", "segment_ref": "any text"}, resolvers=empty
+    )
+    assert (model.segment_id, model.segment_ref) == (7, "any text")
+    members = Members()
+    _ = members.merge_patch({"members": {"m": add({"segment_id": 7})}}, resolvers=empty)
+    assert members.members[0].segment_id == 7
 
 
 def test_patch_is_not_mutated():

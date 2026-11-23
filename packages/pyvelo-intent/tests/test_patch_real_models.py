@@ -23,8 +23,9 @@ from pyvelo.client.schemas.configuration import (
     EnterpriseConfigurationProfile,
 )
 from pyvelo.config.resolver import ResolverContext
+from pyvelo.core.identity import ResolutionError
 from pyvelo.core.rebase import ItemMove, ItemPlace, Key, key_text
-from pyvelo.testing import make_module_json
+from pyvelo.testing import make_module_json, make_segment_resolver
 from pyvelo_intent import PatchError, add, delete, move
 from pyvelo_intent.config.pipeline import ConfigPipeline
 from pyvelo_intent.config.state import ConfigState
@@ -927,3 +928,47 @@ def test_field_changes_show_nothing_for_a_read():
     _ = state.edge.qos  # starts the module the edge lacks
     assert state.plan().changed == ()
     assert state.get_field_changes() == []
+
+
+# --- names ------------------------------------------------------------------
+
+
+async def test_an_application_name_with_no_application_resolver_is_refused_at_the_field():
+    state = make_state({"firewall": firewall(fw_rule("a"))}, {"firewall": firewall()})
+    state.resolvers.register(
+        await make_segment_resolver([{"name": "Global Segment", "segment_id": 0}])
+    )
+    pipeline = ConfigPipeline(None)
+    cases: list[tuple[dict[str, object], str]] = [
+        ({"a": {"match": {"appid": "skype"}}}, "outbound[a].match.application_id"),
+        (
+            {
+                "n": add(
+                    {"action": {"allow_or_deny": "deny"}, "match": {"appid": "skype"}}
+                )
+            },
+            "outbound[n].match.application_id",
+        ),
+    ]
+    for patch, where in cases:
+        with pytest.raises(PatchError) as exc:
+            _ = await pipeline.apply(
+                state, module="firewall", segment=SEGMENT, path="outbound", patch=patch
+            )
+        assert str(exc.value.path) == f'segments["Global Segment"].{where}'
+        assert "'skype'" in exc.value.message
+        assert "ApplicationIdentity" in exc.value.message
+    _ = await pipeline.apply(
+        state,
+        module="firewall",
+        segment=SEGMENT,
+        path="outbound",
+        patch={"a": {"match": {"appid": "70"}}},
+    )
+    rule = state.edge.firewall.segment(SEGMENT).outbound[0]
+    assert rule.match.application_id == 70
+    # An unknown name where a resolver is registered keeps its own error.
+    with pytest.raises(ResolutionError):
+        _ = await pipeline.apply(
+            state, module="firewall", segment="Global", path="outbound", patch={}
+        )
