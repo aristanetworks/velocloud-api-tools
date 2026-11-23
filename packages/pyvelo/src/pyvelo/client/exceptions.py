@@ -10,9 +10,21 @@ from typing import TYPE_CHECKING, Any, Final, Literal, cast, override
 
 from pydantic import MISSING
 
-from pyvelo.core.base import VcoModel
+from pyvelo.core.base import VcoModel, field_models, is_list, wire_name
 from pyvelo.core.changes import patch_of
-from pyvelo.core.rebase import ItemMove, ItemPart, ItemPlace, Path, RawChange
+from pyvelo.core.patch import selector_of
+from pyvelo.core.rebase import (
+    ItemMove,
+    ItemPart,
+    ItemPlace,
+    Key,
+    KeyedList,
+    Path,
+    RawChange,
+    item_parts,
+    item_text,
+    node_child,
+)
 from pyvelo.core.response_check import PlannedChange, ServerChange
 from pyvelo.core.secrets import HIDDEN
 from pyvelo.core.show import moves_text, patch_text, shown_together
@@ -506,13 +518,17 @@ class ModuleWriteError(VcoError):
 
         A clash is an edit whose value was also changed on the VCO, and
         redoing it overwrites that change: it is left out unless
-        *include_clashes*. A ref row is left out (a patch changes data, not
-        refs), and so is an edit no patch can make or whose item is no longer
-        stored or cannot be named alone. ``not_redone`` lists what is left
-        out. A key the VCO does not know, which a write drops, is neither
-        redone nor listed. A change made in a segment the plan reconciled
-        (the edge had none of its own) is redone in the segment's place, and
-        ``apply`` adds the segment again.
+        *include_clashes*. A ref row of a ``RefOnly`` field (a DNS or
+        authentication provider) is redone by setting the field again, in the
+        segment as the stored list names it: to the service's logical ID for a
+        row added, to ``null`` for a row removed, and to the row added when one
+        is removed and another added at the field. Any other ref row is left
+        out (a patch changes data, not refs), and so is an edit no patch can
+        make or whose item is no longer stored or cannot be named alone.
+        ``not_redone`` lists what is left out. A key the VCO does not know,
+        which a write drops, is neither redone nor listed. A change made in a
+        segment the plan reconciled (the edge had none of its own) is redone in
+        the segment's place, and ``apply`` adds the segment again.
 
         The patch is empty, and nothing is left out, for a
         ``WriteOutcomeUnknownError``: the caller's data still holds the edits.
@@ -537,14 +553,21 @@ class ModuleWriteError(VcoError):
         """The patch that redoes the lost edits, and the lost edits it leaves out."""
         plan, module = self.plan, self.module
         data: object = None if module is None else getattr(module, "data", None)
+        stored_data: object = MISSING if module is None else module.raw_data
         if plan is None or not isinstance(data, VcoModel):
             return {}, self.lost_edits
         stored_parts = dict(self.stored_parts)
         changes: list[RawChange] = []
         owner: dict[int, PlannedChange] = {}
         left_out: set[int] = set()
+        provider_edits: dict[Path, list[PlannedChange]] = {}
         for edit in self.lost_edits:
-            if edit.part == "refs" or (edit.clash and not include_clashes):
+            if edit.part == "refs":
+                if edit.owner is None:
+                    left_out.add(id(edit))
+                else:
+                    provider_edits.setdefault(edit.owner, []).append(edit)
+            elif edit.clash and not include_clashes:
                 left_out.add(id(edit))
             elif edit.path in plan.legacy_keys:
                 continue
@@ -572,6 +595,20 @@ class ModuleWriteError(VcoError):
                 changes.append(change)
         patch, unwritten = patch_of(changes, type(data), stored_parts=stored_parts)
         left_out.update(id(owner[id(change)]) for change in unwritten)
+        for path, edits in provider_edits.items():
+            stored_adds = [
+                edit
+                for edit in self.applied
+                if edit.part == "refs"
+                and edit.owner == path
+                and edit.as_read is MISSING
+                and edit.intended is not MISSING
+            ]
+            value = _provider_value([*edits, *stored_adds])
+            if value is MISSING or not _set_provider(
+                patch, data, stored_data, stored_parts, path, value
+            ):
+                left_out.update(id(edit) for edit in edits)
         return patch, tuple(edit for edit in self.lost_edits if id(edit) in left_out)
 
 
@@ -601,6 +638,125 @@ def _is_reconciled_segment(plan: ModulePlan, edit: PlannedChange) -> bool:
         and not isinstance(parts[1], str)
         and all(change.path != edit.path for change in plan.changes)
     )
+
+
+def _provider_value(edits: Sequence[PlannedChange]) -> object:
+    """The value that sets a ``RefOnly`` field again, from the refs entries *edits* at it.
+
+    The added row's logical ID as text, or ``None`` for a row removed with none
+    added; ``MISSING`` when an entry is neither. A row added carries only the
+    object it goes with, so its logical ID is the first part of its path's key.
+    A row removed and a row added at one owner are one set, to the added row's;
+    so is a row removed and lost beside a row added and stored (*edits* then
+    holds the stored one too), so that the field is not cleared.
+    """
+    added: object = None
+    for edit in edits:
+        if edit.intended is MISSING:
+            continue
+        key = edit.path.parts[-1]
+        identity = None if not isinstance(key, Key) else key.value
+        if isinstance(identity, tuple):
+            identity = identity[0]
+        if edit.as_read is not MISSING or not isinstance(identity, str):
+            return MISSING
+        added = identity
+    return added
+
+
+def _stored_segment(
+    data: VcoModel,
+    stored_data: object,
+    stored_parts: Mapping[Path, ItemPart],
+    item: ItemPart,
+) -> ItemPart | None:
+    """The part that names the segment *item* names in the ``segments`` of *stored_data*, the module's JSON as stored, or None.
+
+    The check records it for an item it walked. Else a segment named by its key
+    is the one of the stored list with that key, when the key is its alone.
+    """
+    found = stored_parts.get(Path(("segments", item)))
+    if found is not None or not isinstance(item, Key):
+        return found
+    node = node_child(type(data), "segments")
+    items: object = (
+        cast("dict[str, object]", stored_data).get("segments")
+        if isinstance(stored_data, dict)
+        else None
+    )
+    if not isinstance(node, KeyedList) or not is_list(items):
+        return None
+    return next(
+        (
+            part
+            for part in item_parts(items, node)
+            if item_text(part) == item_text(item)
+        ),
+        None,
+    )
+
+
+def _field_spellings(
+    models: Sequence[type[VcoModel]], names: Sequence[str]
+) -> list[tuple[str, str]] | None:
+    """For each of the fields *names* below one of *models*, its python name and its wire name; None where no model has the field."""
+    name, *rest = names
+    for model in models:
+        field_info = model.model_fields.get(name)
+        if field_info is None:
+            continue
+        below = _field_spellings(field_models(field_info), rest) if rest else []
+        if below is not None:
+            return [(name, wire_name(model, name)), *below]
+    return None
+
+
+def _set_provider(
+    patch: dict[str, object],
+    data: VcoModel,
+    stored_data: object,
+    stored_parts: Mapping[Path, ItemPart],
+    owner: Path,
+    value: object,
+) -> bool:
+    """Set the ``RefOnly`` field at *owner* to *value* in *patch*, in the segment as the stored list names it; False when the patch has no place for it.
+
+    *owner* is ``segments[<segment>].<fields>`` in python names, and a
+    ``RefOnly`` field is not in a raw dump, so the path is built from its parts.
+    Each field is written by its wire name, unless the patch already has the
+    object under its python name: ``merge_patch`` refuses both for one field.
+    The segment's object is the one a data entry of the patch has, if any.
+    """
+    segment, *names = owner.parts[1:]
+    if isinstance(segment, str) or not all(isinstance(name, str) for name in names):
+        return False
+    models = field_models(type(data).model_fields["segments"])
+    fields = _field_spellings(models, cast("list[str]", names))
+    part = _stored_segment(data, stored_data, stored_parts, segment)
+    if fields is None or part is None:
+        return False
+    node = _child(patch, ("segments",))
+    for spellings in ((selector_of(part),), *fields[:-1]):
+        if node is None or node.get("_op") == "delete":
+            return False
+        node = _child(node, spellings)
+    if node is None:
+        return False
+    node[_spelled(node, fields[-1])] = value
+    return True
+
+
+def _spelled(node: dict[str, object], spellings: tuple[str, ...]) -> str:
+    """The key *node* already has for a field, by one of its *spellings*; else the last."""
+    return next((key for key in spellings if key in node), spellings[-1])
+
+
+def _child(
+    node: dict[str, object], spellings: tuple[str, ...]
+) -> dict[str, object] | None:
+    """The object of *node* under a field's key (``_spelled``), made if there is none; None where the key holds something else."""
+    found = node.setdefault(_spelled(node, spellings), {})
+    return cast("dict[str, object]", found) if isinstance(found, dict) else None
 
 
 class ConfigConflictError(ModuleWriteError):
@@ -837,6 +993,11 @@ class RefsDroppedError(WriteNotAppliedError):
                     "goes with again on error.module."
                 )
         owners = [edit for edit in self.lost_edits if edit.owner is not None]
+        if owners:
+            lines.append(
+                "  error.redo_patch() builds these patches with the service "
+                "filled in, for each field whose segment error.module has:"
+            )
         for edit in _first(owners, limit):
             owner = cast(Path, edit.owner)
             if edit.intended is MISSING:

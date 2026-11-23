@@ -123,8 +123,10 @@ values as read, meant and stored), `applied`, `left_out`, `server_changes`, the
 `plan` and the `module` as stored. `error.redo_patch()` is the patch that redoes
 the lost edits on that module (`error.module.data.merge_patch(error.redo_patch())`);
 it leaves out a clash unless asked, and `error.not_redone()` lists what it
-leaves out. On a `WriteOutcomeUnknownError` the patch is empty: nothing is
-known to be lost. Where the VCO stores a value its own way (a field marked
+leaves out. It redoes a lost provider row by setting the `RefOnly` field again
+(`{"segments": {"Global Segment": {"dns": {"primaryProvider": {"service": "<logical ID>"}}}}}`,
+`null` to clear it) and leaves out any other ref row. On a
+`WriteOutcomeUnknownError` the patch is empty: nothing is known to be lost. Where the VCO stores a value its own way (a field marked
 `ServerOwned`, and the rewrites per module in `MODULE_REWRITES`,
 `pyvelo.client.module_check`), a planned change is not a lost edit: it is in
 `left_out` of the write, or of one of the first two errors, and a value other

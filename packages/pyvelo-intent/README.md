@@ -654,10 +654,11 @@ take a new row because it cannot resolve its object. The error lists each lost
 row by its ref name and identity. To redo one you added, check that the object
 exists and set the field again on `error.module`, which reads it as unset; for
 one you removed that the VCO kept, clear the field again, as it reads as set.
-The message gives the patch for each. The VCO writes nothing of its own to put
-a skipped row back. When it took none of the rows the write sent,
-`error.every_row_lost` is true and `error.refs_as_read` holds the refs as the
-module was read, to put back by sending
+The message gives the patch for each, and `error.redo_patch()` gives it with
+the service filled in. The VCO writes nothing of its own to put a skipped row
+back. When it took none of the rows the write sent, `error.every_row_lost` is
+true and `error.refs_as_read` holds the refs as the module was read, to put back
+by sending
 `configuration/updateConfigurationModule` with
 `{"id": <module ID>, "_update": {"refs": <error.refs_as_read>}}`
 (`update_configuration_module`). A row you did not change that the VCO leaves
@@ -731,11 +732,16 @@ order again, and it names each item as the stored list names it. An item you
 added is added again, never set on an item another writer put in its place. The
 patch leaves out a clash, because redoing one overwrites what another writer
 stored there; `error.redo_patch(include_clashes=True)` redoes those too.
+A lost DNS or authentication provider (a ref row of a field that stands for
+it) is redone by setting the field again, in the segment as the stored list
+names it: `{"segments": {"Global Segment": {"dns": {"primaryProvider":
+{"service": "<logical ID>"}}}}}`, or `null` for a provider you cleared.
 `error.not_redone()` lists the lost edits the patch leaves out: the clashes, a
-lost ref row (a patch changes data, not refs), and an edit that no patch can
-make or whose item is no longer stored or cannot be named. An edit at a key the
-VCO does not know, which a write drops, is neither redone nor listed. Check it
-before you save. In a rule list the first match decides, so check the order with
+lost ref row of any other kind (a patch changes data, not refs), a provider
+whose segment is no longer stored, and an edit that no patch can make or whose
+item is no longer stored or cannot be named. An edit at a key the VCO does not
+know, which a write drops, is neither redone nor listed. Check it before you
+save. In a rule list the first match decides, so check the order with
 `state.plan().render()` too. `apply` can still refuse the patch, changing
 nothing, where the stored data no longer takes it (a rename to a name another
 writer gave an item, for example), and where the lost edit was made by assigning

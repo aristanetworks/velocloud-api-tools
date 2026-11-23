@@ -2,6 +2,7 @@
 
 import copy
 import dataclasses
+import json
 import uuid
 from collections.abc import Callable, Iterable
 from typing import Any, cast
@@ -42,7 +43,7 @@ from pyvelo.client.schemas.configuration import (
     new_edge_module,
 )
 from pyvelo.core.identity import NetworkServiceIdentity, SegmentIdentity
-from pyvelo.core.rebase import Path
+from pyvelo.core.rebase import Key, Path
 from pyvelo.core.response_check import (
     PathPattern,
     PlannedChange,
@@ -378,7 +379,7 @@ def test_redo_patch_rebuilds_a_place_and_a_move():
     assert again.render() == plan.render()
 
 
-def test_redo_patch_leaves_out_a_clash_and_a_ref_row():
+def test_redo_patch_leaves_out_a_clash_and_redoes_a_provider_row():
     module = primary_provider_module()
     current = copy_of_data(module)
     _ = current.merge_patch({"ntp": {"enabled": True}})
@@ -390,10 +391,13 @@ def test_redo_patch_leaves_out_a_clash_and_a_ref_row():
         _ = check_module_write(module, plan, stored)
     error = exc.value
     assert paths(error.lost_edits) == sorted([PRIMARY_ROW_PATH, "ntp"])
-    assert error.redo_patch() == {}
-    assert error.not_redone() == error.lost_edits
-    assert error.redo_patch(include_clashes=True) == {"ntp": plan.data["ntp"]}
-    assert paths(error.not_redone(include_clashes=True)) == [PRIMARY_ROW_PATH]
+    assert error.redo_patch() == a_service_set(None)
+    assert paths(error.not_redone()) == ["ntp"]
+    assert error.redo_patch(include_clashes=True) == {
+        "ntp": plan.data["ntp"],
+        **a_service_set(None),
+    }
+    assert error.not_redone(include_clashes=True) == ()
 
 
 def test_redo_patch_never_sets_another_writers_unkeyed_item():
@@ -1086,6 +1090,9 @@ async def test_a_provider_row_the_vco_skipped_is_refs_dropped(
         "lost edits (not stored; `error.redo_patch()` redoes those it can, "
         "`error.not_redone()` lists the rest):"
     ) in message
+    assert (
+        "error.redo_patch() builds these patches with the service filled in"
+    ) in message
 
 
 async def test_a_skipped_row_leaves_the_others_stored_and_sends_no_further_request(
@@ -1359,3 +1366,244 @@ def test_an_insert_checks_the_refs_it_planned():
         _ = check_module_write(module, plan, as_stored(module, plan.data))
     assert caught.value.version == ""
     assert ref_paths(caught.value.lost_edits) == [PRIMARY_ROW_PATH]
+
+
+# --- a lost provider edit is redone by setting its field ---------------------
+
+
+def a_service_set(value: str | None) -> dict[str, object]:
+    """The patch that sets the primary provider of the Global Segment to *value* (``None`` clears it)."""
+    return {
+        "segments": {"Global Segment": {"dns": {"primaryProvider": {"service": value}}}}
+    }
+
+
+def put_the_removed_row_back(new: dict[str, Any], old: dict[str, Any] | None) -> None:
+    """A store hook: the VCO keeps the primary provider row the write removed."""
+    assert old is not None
+    new["refs"][PRIMARY] = {**old["refs"][PRIMARY], "id": 99}
+
+
+async def provider_swapped_over_a_store(
+    mock_vco_client: MockVcoClientFactory,
+) -> tuple[DeviceSettingsConfigurationModule, ModulePlan, ModuleStore, VcoClient]:
+    """A write that swaps ``dns-a`` for ``dns-b`` as the primary provider, and sets ``ntp``, over a store that holds the services."""
+    module = primary_provider_module()
+    current = copy_of_data(module)
+    set_primary_provider(current, uuid.UUID(DNS_B))
+    _ = current.merge_patch({"ntp": {"enabled": True}})
+    plan = plan_module(
+        module,
+        current,
+        resolvers=await table_registry(
+            NetworkServiceIdentity("dns-b", uuid.UUID(DNS_B), 702, "dns")
+        ),
+    )
+    store = store_of(module)
+    store.objects.update(store_with_services().objects)
+    return module, plan, store, await mock_vco_client(store)
+
+
+async def test_a_lost_provider_set_is_redone_by_its_field(
+    mock_vco_client: MockVcoClientFactory,
+):
+    module, plan, store, client = await provider_set_over_a_store(mock_vco_client)
+    store.skipped_objects.add(701)
+    with pytest.raises(RefsDroppedError) as caught:
+        _ = await client.write_module(module, plan)
+    patch = caught.value.redo_patch()
+    assert patch == a_service_set(DNS_A)
+    assert json.loads(json.dumps(patch)) == patch
+    assert caught.value.not_redone() == ()
+    assert caught.value.redo_patch(include_clashes=True) == patch
+
+
+async def test_a_lost_provider_set_is_redone_on_a_conflict_too(
+    mock_vco_client: MockVcoClientFactory,
+):
+    module, plan, store, client = await provider_set_over_a_store(
+        mock_vco_client, with_data_change=False
+    )
+    store.skipped_objects.add(701)
+    with pytest.raises(ConfigConflictError) as caught:
+        _ = await client.write_module(module, plan)
+    assert not isinstance(caught.value, RefsDroppedError)
+    assert caught.value.redo_patch() == a_service_set(DNS_A)
+    assert caught.value.not_redone() == ()
+
+
+async def test_a_lost_provider_clear_is_redone_as_null(
+    mock_vco_client: MockVcoClientFactory,
+):
+    module, plan = provider_cleared_with_a_data_edit()
+    store = store_of(module)
+    store.objects.update(store_with_services().objects)
+    store.on_store.append(put_the_removed_row_back)
+    client = await mock_vco_client(store)
+    with pytest.raises(RefsDroppedError) as caught:
+        _ = await client.write_module(module, plan)
+    assert caught.value.redo_patch() == a_service_set(None)
+    assert caught.value.not_redone() == ()
+
+
+async def test_a_lost_provider_swap_is_one_set(mock_vco_client: MockVcoClientFactory):
+    module, plan, store, client = await provider_swapped_over_a_store(mock_vco_client)
+    store.skipped_objects.add(702)
+    store.on_store.append(put_the_removed_row_back)
+    with pytest.raises(RefsDroppedError) as caught:
+        _ = await client.write_module(module, plan)
+    error = caught.value
+    assert sorted(c.intended is MISSING for c in error.lost_edits) == [False, True]
+    assert error.redo_patch() == a_service_set(DNS_B)
+    assert error.not_redone() == ()
+
+
+async def test_a_lost_removal_beside_a_stored_add_is_a_set_not_a_clear(
+    mock_vco_client: MockVcoClientFactory,
+):
+    module, plan, _, _ = await provider_swapped_over_a_store(mock_vco_client)
+    both = {
+        SEGMENT: segment_row(0, SEG0_OBJECT, SEG0),
+        PRIMARY: [
+            primary_provider_row(),  # the row the plan removed is kept
+            service_row(PRIMARY, DNS_B, 702, SEG0_OBJECT, SEG0),  # and the new one
+        ],
+    }
+    with pytest.raises(RefsDroppedError) as caught:
+        _ = check_module_write(module, plan, as_stored(module, plan.data, refs=both))
+    error = caught.value
+    assert [c.intended is MISSING for c in error.lost_edits] == [True]
+    assert [c.part for c in error.applied] == ["data", "refs"]
+    assert error.redo_patch() == a_service_set(DNS_B)
+    assert error.not_redone() == ()
+
+
+async def test_the_redo_applied_to_the_module_as_stored_plans_the_same_row(
+    mock_vco_client: MockVcoClientFactory,
+):
+    module, plan, store, client = await provider_set_over_a_store(mock_vco_client)
+    store.skipped_objects.add(701)
+    with pytest.raises(RefsDroppedError) as caught:
+        _ = await client.write_module(module, plan)
+    stored = caught.value.module
+    assert isinstance(stored, DeviceSettingsConfigurationModule)
+    current = copy_of_data(stored)
+    _ = current.merge_patch(caught.value.redo_patch())
+    again = plan_module(
+        stored,
+        current,
+        resolvers=await table_registry(DNS_A_IDENTITY, SEG0_IDENTITY),
+    )
+
+    def identities(changes: tuple[RefChange, ...]) -> list[tuple[str, object, object]]:
+        return [(c.name, c.value, c.segment) for c in changes]
+
+    assert identities(again.ref_changes) == identities(plan.ref_changes)
+    assert identities(again.ref_changes) == [(PRIMARY, DNS_A, "Global Segment")]
+
+
+async def lost_provider_and_dns_edit(
+    stored_data: Callable[[dict[str, Any]], dict[str, Any]] = lambda raw: raw,
+) -> WriteNotAppliedError:
+    """The error of a write that sets a primary provider and the DNS source interface of the Global Segment, over a module as stored that *stored_data* makes of the module's data as read with its ``ntp`` change, and that holds neither of the others."""
+    module = unset_provider_module()
+    current = copy_of_data(module)
+    set_primary_provider(current, uuid.UUID(DNS_A))
+    _ = current.merge_patch(
+        {
+            "ntp": {"enabled": True},
+            "segments": {"Global Segment": {"dns": {"source_interface": "GE1"}}},
+        }
+    )
+    plan = plan_module(
+        module,
+        current,
+        resolvers=await table_registry(
+            NetworkServiceIdentity("dns-a", uuid.UUID(DNS_A), 701, "dns")
+        ),
+    )
+    raw = stored_data(
+        {
+            **copy.deepcopy(cast(dict[str, Any], module.raw_data)),
+            "ntp": plan.data["ntp"],
+        }
+    )
+    with pytest.raises(WriteNotAppliedError) as caught:
+        _ = check_module_write(module, plan, as_stored(module, raw))
+    return caught.value
+
+
+async def test_a_data_and_a_refs_edit_under_one_segment_are_one_object():
+    error = await lost_provider_and_dns_edit()
+    assert sorted((c.part, str(c.path)) for c in error.lost_edits) == [
+        ("data", 'segments["Global Segment"].dns.sourceInterface'),
+        ("refs", PRIMARY_ROW_PATH),
+    ]
+    patch = error.redo_patch()
+    assert patch == {
+        "segments": {
+            "Global Segment": {
+                "dns": {
+                    "source_interface": "GE1",
+                    "primaryProvider": {"service": DNS_A},
+                }
+            }
+        }
+    }
+    assert error.not_redone() == ()
+
+
+async def test_a_provider_is_set_in_the_segment_as_the_stored_list_names_it():
+    def renamed(raw: dict[str, Any]) -> dict[str, Any]:
+        raw["segments"][0]["segment"]["name"] = "Voice"
+        return raw
+
+    error = await lost_provider_and_dns_edit(renamed)
+    assert error.redo_patch() == {
+        "segments": {
+            "Voice": {
+                "dns": {
+                    "source_interface": "GE1",
+                    "primaryProvider": {"service": DNS_A},
+                }
+            }
+        }
+    }
+    assert error.not_redone() == ()
+
+
+async def test_a_provider_whose_segment_is_not_stored_is_not_redone():
+    def no_segment(raw: dict[str, Any]) -> dict[str, Any]:
+        raw["segments"] = []
+        return raw
+
+    error = await lost_provider_and_dns_edit(no_segment)
+    assert sorted(c.part for c in error.not_redone()) == ["data", "refs"]
+    assert error.redo_patch() == {}
+
+
+async def test_a_provider_is_set_under_the_spelling_a_data_entry_used():
+    error = await lost_provider_and_dns_edit()
+    stub = Path(("segments", Key("Global Segment"), "dns", "primaryProvider", "ref"))
+    error.lost_edits = tuple(
+        dataclasses.replace(edit, path=stub, as_read="a", intended=PRIMARY, stored="a")
+        if edit.part == "data"
+        else edit
+        for edit in error.lost_edits
+    )
+    patch = error.redo_patch()
+    assert cast(dict[str, Any], patch)["segments"]["Global Segment"]["dns"] == {
+        "primary_provider": {"ref": PRIMARY, "service": DNS_A}
+    }
+    assert isinstance(error.module, DeviceSettingsConfigurationModule)
+    _ = error.module.data.merge_patch(patch)  # one spelling per field: no refusal
+
+
+async def test_a_refs_entry_with_no_owner_is_not_redone():
+    error = await lost_provider_and_dns_edit()
+    error.lost_edits = tuple(
+        dataclasses.replace(edit, owner=None) if edit.part == "refs" else edit
+        for edit in error.lost_edits
+    )
+    assert [c.part for c in error.not_redone()] == ["refs"]
+    assert "service" not in json.dumps(error.redo_patch())
