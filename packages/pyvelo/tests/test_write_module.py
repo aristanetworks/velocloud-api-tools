@@ -271,6 +271,32 @@ async def test_clash_with_another_writer(
     assert paths(exc.value.server_changes) == ["syslog_forwarding"]
 
 
+@pytest.mark.parametrize(
+    ("conditional_check", "raised"),
+    [(False, WriteNotAppliedError), (True, ConfigConflictError)],
+)
+async def test_an_edit_another_writer_made_identically_counts_as_applied(
+    mock_vco_client: MockVcoClientFactory,
+    conditional_check: bool,
+    raised: type[ModuleWriteError],
+):
+    def same_edit(row: dict[str, Any]) -> None:
+        row["data"]["firewall_enabled"] = False
+
+    module = fw(RAW)
+    data = module.mutable_data()
+    data.firewall_enabled = False
+    data.syslog_forwarding = True
+    store = store_of(module, conditional_check=conditional_check)
+    store.other_writer(1, same_edit)
+    client = await mock_vco_client(store)
+    with pytest.raises(ModuleWriteError) as exc:
+        _ = await client.write_module(module, plan_module(module, data))
+    assert type(exc.value) is raised
+    assert paths(exc.value.applied) == ["firewall_enabled"]
+    assert paths(exc.value.lost_edits) == ["syslog_forwarding"]
+
+
 @pytest.mark.parametrize("conditional_check", [True, False])
 async def test_refused_write_whose_changes_are_already_stored_passes(
     mock_vco_client: MockVcoClientFactory, conditional_check: bool

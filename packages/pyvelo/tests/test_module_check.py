@@ -452,6 +452,17 @@ def test_refs_only_write_refused_is_a_conflict():
     assert (lost.as_read, lost.intended, lost.stored) == (MISSING, ROW2, MISSING)
 
 
+def test_stale_data_with_refs_replaced_is_not_applied_and_not_a_conflict():
+    """A VCO with the check off that kept the data as it was and replaced the refs."""
+    module = qos(QOS_RAW, refs={"a": ROW1})
+    plan = plan_module(module, {**QOS_RAW, "future": 1}, refs={"a": [ROW1, ROW2]})
+    replaced = {"a": [{**ROW1, "id": 201}, {**ROW2, "id": 202}]}
+    with pytest.raises(WriteNotAppliedError) as exc:
+        _ = check_module_write(module, plan, as_stored(module, QOS_RAW, refs=replaced))
+    assert [(c.part, str(c.path)) for c in exc.value.applied] == [("refs", "a[6]")]
+    assert [(c.part, str(c.path)) for c in exc.value.lost_edits] == [("data", "future")]
+
+
 def test_refs_the_vco_dropped_on_its_own():
     module = qos(QOS_RAW, refs={"a": [ROW1, ROW2]})
     plan = plan_module(module, {**QOS_RAW, "future": 1})

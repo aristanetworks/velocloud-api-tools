@@ -625,7 +625,8 @@ class VcoModel(BaseModel):
         - value (``list[str]`` or ``list[int]`` without ``Positional()``): by
           the value or a position;
         - positional (``Positional()``, or a list of models that declares
-          nothing): by position;
+          nothing, which ``list_kind`` reports as ``"undeclared"``): by
+          position;
         - untyped (``list[Any]``, ``list[dict]``): not at all; it takes a
           list value only;
         - map (``dict[K, Model]``): by map key. It takes an object only and
@@ -888,6 +889,13 @@ def _list_item_type(fi: FieldInfo) -> _ListItemType | None:
 
 
 type ListKind = Literal["keyed", "value", "positional", "undeclared", "untyped", "map"]
+"""How the items of a list field are told apart (``list_kind``).
+
+``"undeclared"`` is a list of models with neither ``KeyField`` nor
+``Positional()``. A patch names its items as it names those of a
+``"positional"`` list, by position; the value is kept apart so that such
+lists can be counted and declared.
+"""
 
 
 def _is_model_members(members: Iterable[object]) -> bool:

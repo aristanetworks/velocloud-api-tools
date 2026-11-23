@@ -177,6 +177,14 @@ Every list has a kind, which says how its items are named:
 | untyped | being `list[Any]` or `list[dict]` | not at all: give a list value |
 | map | being `dict[K, Model]` | the map key; no order, so no positions or moves |
 
+A keyed list names its items by a *key*: one field of the item (a rule's
+`name`, a VLAN's `vlan_id`) or several together (a static route's destination,
+prefix, gateway and interface). Some keyed lists also declare an *alt key*, a
+second field that identifies an item on its own, usually an ID the VCO issues
+(a rule's `ruleLogicalId`, a segment's `segmentId`), and some a *label*, a name
+people use for the item that is not kept unique (a WAN link's `name`; its key
+is its `internalId` with its address family).
+
 An object on a list is item operations, keyed by selector. A selector is a
 key, alt key, label or value in string form (`"10"` names VLAN 10), `at(n)`
 (the item at position `n` of the list as it was), or `"+"` for a new item of a
@@ -194,6 +202,11 @@ another item has (a rule's logical ID, a segment's `segmentId`) raises, and so
 does a list value that repeats one. Every selector is resolved against the
 list as it was, then changes, deletes, and adds and moves (in the order
 written) are applied.
+
+`list_kind` (`pyvelo.core`) reports a sixth value, `"undeclared"`, for a list
+of models that declares neither `KeyField` nor `Positional()`. A patch treats
+such a list as positional; the separate value marks a list whose kind has not
+been decided.
 
 A list whose key has several parts, such as the static routes, names an item
 by the parts joined by commas: `10.0.0.0,24,192.168.1.1,GE3`. A part that
@@ -344,6 +357,11 @@ A save sends each changed module's `data` as it was read, with only your
 changes applied. Keys the models do not know are preserved, and a module you
 did not change is not sent.
 
+Beside its `data`, a device settings or QoS module has `refs`: the rows that
+tie the module to the enterprise objects it uses (segments, address groups,
+services). A save sends refs only when you changed them (an edited
+`module.refs`, or `refs=` on `update_module`), and then it sends them whole.
+
 This is `state.plan().render()` for the firewall patch of "The patch format",
 with `firewall_enabled` set as well, on an edge whose profile has a segment the
 edge module lacks:
@@ -366,6 +384,10 @@ firewall: update
   continues from it, so no reload is needed. Rule IDs the VCO assigns are in
   the state after the save, and `state.plan()` right after a save is empty.
   The state takes more edits and saves.
+- A new firewall rule has no `rule_logical_id` until the save, when the VCO
+  issues one; the field is the VCO's, and it may issue another on a later
+  write. A new QoS rule gets its `rule_logical_id` from this library when the
+  patch builds it, a random UUID, and it is sent as it is.
 - `state.plan().render()` shows each module's changes against the raw data as
   read, as in the example above. A `+` line is a key or an item that is added,
   a `-` line one that is removed, and a `~` line a value that changes. An item
@@ -506,10 +528,15 @@ Which of the two a stale write raises depends on the VCO's conditional check
 of the version. With it on, the VCO refuses the write, and the save raises
 `ConfigConflictError`. With it off, the VCO does not store the data and
 answers with the module as it is. The save then raises `ConfigConflictError`
-too, unless another writer also changed a value you edited: that raises
-`WriteNotAppliedError`, with the edit marked as a clash. A write that carries
-refs (an edited `module.refs`, or `refs=` on `update_module`) may still replace
-them, until the next phase reads the version before such a write.
+too, when none of your changes is found stored and each value is as read. It
+raises `WriteNotAppliedError` in three cases: another writer also changed a
+value you edited (that edit is marked as a clash); another writer made one of
+your edits too, so that it counts as stored, while another of your edits is
+not; or the write carried refs (an edited `module.refs`, or `refs=` on
+`update_module`) and the VCO replaced them while it left the data as it was,
+so that your refs changes are under `applied` and your data changes under
+`lost_edits`. Reading the version before a write that carries refs would
+prevent the last; it is planned and not built.
 
 A VCO with the check off says nothing when it answers with the module, so the
 save tells a stale write by what is stored. Where no change of a write can be
@@ -539,6 +566,10 @@ at `left_out` when a save follows one that failed.
 | `completed` | the writes of the same save before this one, which are stored |
 | `redo_patch(include_clashes=False)` | the patch that redoes the lost edits on `module`, for `apply(state, module=error.module_name, patch=...)` |
 | `not_redone(include_clashes=False)` | the lost edits that patch leaves out |
+
+A planned change counts as stored when the VCO holds the value you meant,
+whoever put it there: an edit that another writer made identically is under
+`applied`, not under `lost_edits`.
 
 The entries are `PlannedChange` and `ServerChange`, which `pyvelo_intent`
 exports (they are defined in `pyvelo.core.response_check`). The message lists
@@ -666,13 +697,15 @@ Known limits:
   together may need a second save, when the device settings change propagates:
   the later module's write raises with your edits in `lost_edits`, and the
   state holds that module as stored, so apply `error.redo_patch()` and save
-  again. Rebasing those edits comes with derived refs, the next phase.
-- Until then, device settings and QoS writes send refs only when your refs
-  changed, as before.
+  again. A save that does this itself, together with refs the library derives
+  from the data, is planned and not built.
+- Device settings and QoS writes send refs only when you changed them. Refs
+  derived from the data are planned and not built.
 - On a VCO with the conditional check off, a stale write that carries refs may
   replace them while the data is not stored, overwriting another writer's
-  refs; the save then reports your data changes, if any, as not stored. Reading the version
-  before a write that carries refs comes with the next phase.
+  refs; the save then reports your data changes, if any, as not stored.
+  Reading the version before a write that carries refs is planned and not
+  built.
 - A keyed list read with an item that cannot be told apart is compared as a
   whole: an item with no key and no ID (a WAN link without an `internalId`),
   or two items of one name read without IDs. A change in it to a field the VCO

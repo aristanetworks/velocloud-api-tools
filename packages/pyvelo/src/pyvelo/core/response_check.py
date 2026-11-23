@@ -37,8 +37,8 @@ A path names an item of a keyed list as ``raw_changes`` does: by its key, or
 by its position ``#n`` where the key repeats or there is none. An item that
 was read is named as read, also when it was renamed or moved; an added item by
 its key or position in the payload; an item only the VCO has by its key or
-position in the stored data. So two entries share a path only when keys
-repeat; their values tell them apart. A keyed list in which an added item
+position in the stored data. So two entries share a path only where a key
+repeats or an item has none; their values tell them apart. A keyed list in which an added item
 would have the name of an item as read is compared whole (rule 5).
 
 The VCO stores some values otherwise than as sent; ``Rewrites`` says where.
