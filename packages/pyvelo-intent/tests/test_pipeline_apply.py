@@ -787,6 +787,26 @@ _REDESCRIBED = "does not add, remove or re-describe a segment of a profile"
             "changes a segment's descriptor",
             id="descriptor-id-changed",
         ),
+        pytest.param(
+            {"patch": {"segments": {"Guest": {"segment": {"type": "CDE"}}}}},
+            "changes a segment's descriptor",
+            id="descriptor-type-changed",
+        ),
+        pytest.param(
+            {
+                "patch": {
+                    "segments": {
+                        "Guest": {
+                            "segment": {
+                                "segment_logical_id": "00000000-0000-4000-8000-000000000001"
+                            }
+                        }
+                    }
+                }
+            },
+            "changes a segment's descriptor",
+            id="descriptor-logical-id-changed",
+        ),
     ],
 )
 async def test_profile_target_keeps_its_segments_whatever_the_patch_form(
@@ -801,6 +821,18 @@ async def test_profile_target_keeps_its_segments_whatever_the_patch_form(
     assert detail in exc.value.message
     assert _profile_segment_names(state) == [["Global Segment", "Guest"]] * 3
     assert state.plan().render() == before
+
+
+@pytest.mark.asyncio
+async def test_profile_target_refuses_a_descriptor_rewritten_into_anothers_id():
+    state = _segment_profile_state("Global Segment", "Guest")
+    with pytest.raises(PatchError):
+        _ = await ConfigPipeline(client=None).apply(
+            state,
+            module="firewall",
+            patch={"segments": {"Guest": {"segment": {"segment_id": 0}}}},
+        )
+    assert _profile_segment_names(state) == [["Global Segment", "Guest"]] * 3
 
 
 @pytest.mark.asyncio

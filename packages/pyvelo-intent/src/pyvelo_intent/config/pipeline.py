@@ -659,7 +659,7 @@ def _profile_segments_unchanged(data: object, trial: object) -> None:
         + 'so neither a list value for "segments", nor {"_op": "add", ...} '
         + '(`add(...)`) or {"_op": "delete"} (`delete()`) under a selector, '
         + "nor a rewritten descriptor can change which segments a profile has. "
-        + "Adding a segment will be `assign_segment`, which is not built yet. "
+        + "Adding or removing a segment of a profile through a patch is not supported yet. "
         + 'To change what a segment holds, name it: {"segments": {"<name>": {...}}}',
         _SEGMENTS,
     )
