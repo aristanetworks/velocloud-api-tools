@@ -69,7 +69,7 @@ is reported (``legacy_keys``) and left, never written just to strip it.
 
 import copy
 import json
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass, replace
 from typing import Any, Final, Literal, cast, override
 
@@ -98,6 +98,7 @@ from pyvelo.client.models.configuration.common import (
 from pyvelo.client.models.configuration.firewall.root import FirewallData
 from pyvelo.client.models.configuration.profile_segments import (
     AddedSegment,
+    SegmentAddition,
     insert_defaults,
     pair_defaults,
     repaired_entry,
@@ -122,6 +123,7 @@ from pyvelo.core.base import (
 )
 from pyvelo.core.fixed_list import fixed_list_violations
 from pyvelo.core.rebase import (
+    Key,
     Path,
     RawChange,
     carry_unset_defaults,
@@ -130,7 +132,13 @@ from pyvelo.core.rebase import (
     raw_changes,
     rebase,
 )
-from pyvelo.core.response_check import Rewrites, ServerChange, check_response
+from pyvelo.core.response_check import (
+    PlannedChange,
+    ResponseCheck,
+    Rewrites,
+    ServerChange,
+    check_response,
+)
 from pyvelo.core.show import moves_text, shown, shown_together
 
 type _Operation = Literal["none", "update", "insert"]
@@ -889,14 +897,11 @@ def plan_module(
     )
 
 
-_REBASE_CLASH = (
-    "the module changed on the VCO after this save wrote device settings, at a "
-    "path this save also changes; nothing was sent"
-)
+_REBASE_CHANGED = "the module changed on the VCO after this save wrote device settings"
+_REBASE_CLASH = f"{_REBASE_CHANGED}, at a path this save also changes; nothing was sent"
 _REBASE_LIST = (
-    "the module changed on the VCO after this save wrote device settings, in a "
-    "list this save also changes, so its edits cannot be applied item by item; "
-    "nothing was sent"
+    f"{_REBASE_CHANGED}, in a list this save also changes, so its edits cannot be "
+    "applied item by item; nothing was sent"
 )
 
 
@@ -944,6 +949,27 @@ def _without_repairs(
     return data, carried
 
 
+def _added_segments_held(
+    additions: Sequence[SegmentAddition], held: object
+) -> Iterator[tuple[str, PlannedChange]]:
+    """Each ``AddedSegment`` of *additions* whose ``segmentId`` the segments of *held* hold, with the lost edit that is its entry, as stored there."""
+    segments = held.get("segments") if is_dict(held) else None
+    for addition in additions:
+        if not isinstance(addition, AddedSegment):
+            continue
+        for entry in segments if is_list(segments) else []:
+            if segment_id_of(entry) == addition.segment_id:
+                yield (
+                    addition.name,
+                    PlannedChange(
+                        Path(("segments", Key(addition.name))),
+                        MISSING,
+                        copy.deepcopy(dict(addition.entry)),
+                        copy.deepcopy(entry),
+                    ),
+                )
+
+
 def rebase_onto[M: ConfigurationModuleBase](
     module: M, plan: ModulePlan, fresh: ConfigurationModuleBase
 ) -> tuple[M, ModulePlan, tuple[ServerChange, ...]]:
@@ -953,20 +979,25 @@ def rebase_onto[M: ConfigurationModuleBase](
     The module is of the class of *module*, with the raw snapshot, ``version``
     and ``refs_loaded`` of *fresh* and the data of *fresh* with the caller's
     edits (the plan's changes) applied, so that ``plan_module`` of it plans
-    exactly those edits relative to *fresh*: the plan is that. Its operation
-    is ``none`` when *fresh* holds every change already. The server changes
-    are what differs between the payload and *fresh* outside the plan's
-    changes, each marked ``merged``.
+    exactly those edits relative to *fresh*: the plan is that. At the profile
+    level the edits are relative to the module plus its additions (R'), so
+    they go onto *fresh* plus the same additions, the rebased module has them
+    as its own, and the repaired ``defaults`` entries go back as planned
+    (``carried_repairs``). Its operation is ``none`` when *fresh* holds every
+    change already. The server changes are what differs between the payload
+    and *fresh* outside the plan's changes, each marked ``merged``.
 
     A planned change whose path holds in *fresh* neither the value read nor
     the value planned is a clash: something else changed it too. So is a list
     whose items another writer added or removed, when the caller edits an item
     of it: the items cannot be matched, and the edit would replace the list
-    whole. Raises ``ConfigConflictError`` (not ``stated``, not ``sent``) for
-    either, with *fresh* as its module, the planned changes *fresh* does not
-    hold as the lost edits, and nothing sent. Raises ``ValueError`` for a plan
-    that adds or removes a ref row: the rebase has no owner to carry it, and
-    nothing a profile writes after its device settings declares one.
+    whole. So is a segment the pipeline added to *module* (``additions``) that
+    *fresh* holds already, which is checked first: its entry in *fresh* is the
+    clash. Raises ``ConfigConflictError`` (not ``stated``, not ``sent``) for
+    any of them, with *fresh* as its module, the planned changes *fresh* does
+    not hold as the lost edits, and nothing sent. Raises ``ValueError`` for a
+    plan that adds or removes a ref row: the rebase has no owner to carry it,
+    and nothing a profile writes after its device settings declares one.
     """
     # Imported here: module_check imports this module.
     from pyvelo.client.module_check import MODULE_REWRITES, data_model
@@ -980,18 +1011,18 @@ def rebase_onto[M: ConfigurationModuleBase](
         raise TypeError(
             f"the module read is a {type(fresh).__name__}, not a {type(module).__name__}"
         )
+    additions = module.additions
     as_read = {} if module.raw_data is MISSING else module.raw_data
+    held = fresh.raw_data
     model = data_model(module)
-    planned_data, carried_repairs = _without_repairs(plan, as_read)
-    found = check_response(
-        as_read,
-        planned_data,
-        fresh.raw_data,
-        model,
-        rewrites=MODULE_REWRITES.get(plan.name, Rewrites()),
-    )
 
-    def conflict(detail: str) -> ConfigConflictError:
+    def conflict(
+        detail: str,
+        found: ResponseCheck | None = None,
+        *,
+        lost_edits: Sequence[PlannedChange] | None = None,
+    ) -> ConfigConflictError:
+        found = ResponseCheck() if found is None else found
         return ConfigConflictError(
             fresh.id_,
             module.version or "",
@@ -1001,17 +1032,43 @@ def rebase_onto[M: ConfigurationModuleBase](
             module_name=plan.name,
             plan=plan,
             module=fresh,
-            lost_edits=found.not_applied,
+            lost_edits=found.not_applied if lost_edits is None else lost_edits,
             applied=found.applied,
             left_out=found.left_out,
             server_changes=found.server_changes,
             stored_parts=found.stored_parts,
         )
 
+    # What the module holds with the entries the pipeline added to it (R'): the
+    # edits of the plan are relative to it, so the rebase works from it onto the
+    # fresh data plus the same entries.
+    if additions:
+        for name, clash in _added_segments_held(additions, held):
+            raise conflict(
+                f"{_REBASE_CHANGED}: it now holds segment {name!r}, which this "
+                "save adds; nothing was sent",
+                lost_edits=(clash,),
+            )
+        try:
+            held = with_additions(held, additions)
+        except ValueError as error:
+            raise conflict(
+                f"{_REBASE_CHANGED}, and what this save adds to it no longer "
+                f"fits ({error}); nothing was sent"
+            ) from error
+        as_read = with_additions(as_read, additions)
+    planned_data, carried_repairs = _without_repairs(plan, as_read)
+    found = check_response(
+        as_read,
+        planned_data,
+        held,
+        model,
+        rewrites=MODULE_REWRITES.get(plan.name, Rewrites()),
+    )
     if any(change.clash for change in found.not_applied):
-        raise conflict(_REBASE_CLASH)
+        raise conflict(_REBASE_CLASH, found)
     rebased = fresh.with_data_parsed_from(
-        rebase(fresh.raw_data, as_read, planned_data, model)
+        rebase(held, as_read, planned_data, model), additions=additions
     )
     rebased_plan = plan_module(
         rebased,
@@ -1022,7 +1079,7 @@ def rebase_onto[M: ConfigurationModuleBase](
     )
     planned = {change.path for change in plan.changes}
     if any(change.path not in planned for change in rebased_plan.changes):
-        raise conflict(_REBASE_LIST)
+        raise conflict(_REBASE_LIST, found)
     return (
         rebased,
         rebased_plan,

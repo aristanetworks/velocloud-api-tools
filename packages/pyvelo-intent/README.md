@@ -653,6 +653,28 @@ result = await pipeline.save(state)
 - All or nothing: the assignment is first planned on copies of the modules, and
   an error leaves the state and `plan()` as they were. The call holds
   `state.lock`, as `apply` does.
+- The save writes the three modules, one request each, device settings first,
+  with the new `deviceSettings:segment` row and every other row as read, then
+  QoS, then firewall. Writing device settings can change the other two, so each
+  is read for its version and rebased when it changed (see "After a save"): your
+  edits go onto the module as it is then, together with the entry of the
+  assignment and the template `defaults` the write repairs, with the IDs they
+  were planned with. A module that holds the segment by then (another writer
+  assigned it) raises `ConfigConflictError`, with `error.sent` False, and
+  sends nothing for that module.
+- A write that fails after device settings is stored leaves the profile with
+  the segment in device settings and not in the module that failed, and
+  `plan()` raises `SegmentSetError`, which names the segment and the modules
+  that lack it. For a `WriteNotAppliedError` that lost the segment,
+  `error.redo_patch()` is the assignment again, with the edits made to the
+  entry inside it (`{"segments": {"Guest": {"_op": "add", ...}}}`), and
+  `apply(state, module=error.module_name, patch=error.redo_patch())` makes it,
+  so that the next `save` writes the modules that are left. Template
+  `defaults` that a write repaired and the VCO did not store are neither
+  redone nor listed in `error.not_redone()`: the next write of the module
+  repairs them again. After a `WriteOutcomeUnknownError`, or an error of the
+  request, the modules keep their entries, and saving again completes the
+  assignment.
 
 ## After a save
 
