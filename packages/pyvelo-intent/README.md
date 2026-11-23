@@ -532,7 +532,8 @@ Known limits:
   made by assigning to the models while a save is writing is not waited for.
   The save stores the module without it, puts the module as stored in the
   state, and raises `DetachedObjectError` with the paths of such edits: redo
-  them. To make such an edit safely, hold the lock around it
+  them. The save stops at that module: the error's note names the modules
+  written, and the next save writes the rest. To make such an edit safely, hold the lock around it
   (`async with state.lock:`). `apply` and `save` take the lock themselves:
   called inside that block by the same task they raise `RuntimeError`, so call
   them after it.

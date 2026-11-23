@@ -440,7 +440,9 @@ class ConfigPipeline:
         not one a save writes. A ``ModuleWriteError`` puts the module as
         stored in *state* too, when it carries one, and gets the writes before
         it as ``completed``. Any other error gets a note that names them, if
-        there are any.
+        there are any. So does the ``DetachedObjectError`` of an edit made
+        while a module was written: it stops the save once that module is
+        stored, and its note also names the modules not written.
         """
         enterprise_id = state.resolver_context.enterprise_id
         # Each write replaces only its own module, so these stay the state's.
@@ -448,7 +450,9 @@ class ConfigPipeline:
         # What each module holds as planned, to find an edit made while a write was out.
         dumps = [_dump(mod) for mod in modules]
         done: list[ModuleWrite[Any]] = []
-        for module_plan, mod, planned in zip(plan.changed, modules, dumps, strict=True):
+        for i, (module_plan, mod, planned) in enumerate(
+            zip(plan.changed, modules, dumps, strict=True)
+        ):
             try:
                 write = await self.client.write_module(
                     mod, module_plan, enterprise_id=enterprise_id
@@ -465,10 +469,7 @@ class ConfigPipeline:
                 raise
             except Exception as error:
                 if done:
-                    error.add_note(
-                        "written before this failure: "
-                        + ", ".join(f"{w.name} ({w.operation})" for w in done)
-                    )
+                    error.add_note(_written_note(done))
                 raise
             paths = list(
                 dict.fromkeys(
@@ -482,7 +483,7 @@ class ConfigPipeline:
             result.server_changes[name] = write.server_changes
             result.left_out[name] = write.left_out
             if paths:
-                raise DetachedObjectError(
+                error = DetachedObjectError(
                     f"{mod.name}: the module was edited while this save was writing it, at: "
                     + f"{', '.join(paths)}. The write is stored without those edits and the "
                     + "state holds the module as stored; take the objects from the state again "
@@ -490,6 +491,15 @@ class ConfigPipeline:
                     + "use apply, or hold state.lock around the edit",
                     paths,
                 )
+                note = _written_note(done)
+                if later := modules[i + 1 :]:
+                    note += (
+                        "; the save stopped here, so these are not written: "
+                        + ", ".join(m.name for m in later)
+                        + ". The next save writes them"
+                    )
+                error.add_note(note)
+                raise error
         return result
 
     def validate(self, state: ConfigState) -> ValidationResult:
@@ -747,6 +757,13 @@ type _WritableModule = (
     | WanConfigurationModule
     | FirewallConfigurationModule
 )
+
+
+def _written_note(done: Sequence[ModuleWrite[Any]]) -> str:
+    """The note of an error that stops a save: the modules it wrote before."""
+    return "written before this failure: " + ", ".join(
+        f"{w.name} ({w.operation})" for w in done
+    )
 
 
 def _dump(mod: AnyConfigurationModule) -> object:

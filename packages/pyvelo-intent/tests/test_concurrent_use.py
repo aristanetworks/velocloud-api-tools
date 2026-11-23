@@ -31,6 +31,7 @@ from test_write_back import (  # pyright: ignore[reportImplicitRelativeImport]
     QOS_ACTION,
     changed,
     data_of,
+    edit_all,
     methods,
     three_module_state,
 )
@@ -195,6 +196,28 @@ async def test_an_edit_of_a_later_module_during_a_save_is_reported_too():
     assert methods(client.store) == ["updateConfigurationModule"] * 2
     assert data_of(client.store, 5)["links"][0]["description"] == "first"
     assert state.plan().changed == ()
+
+
+async def test_the_error_names_the_modules_written_and_those_left():
+    state = three_module_state()
+    client = Gated.over(state)
+    pipeline = ConfigPipeline(client)
+    edit_all(state)
+    saving = asyncio.create_task(pipeline.save(state))
+    _ = await client.started.wait()  # the firewall write is out; QoS is planned
+
+    rate = state.edge.qos.service_rate_limit
+    assert rate is not MISSING
+    rate.value = 60
+    client.release.set()
+    with pytest.raises(DetachedObjectError) as exc:
+        _ = await saving
+
+    (note,) = exc.value.__notes__
+    assert "firewall (update), QOS (update)" in note
+    assert "not written: WAN" in note
+    assert methods(client.store) == ["updateConfigurationModule"] * 2
+    assert changed(state) == ["WAN"]
 
 
 async def test_an_assignment_under_the_lock_waits_for_the_save():
