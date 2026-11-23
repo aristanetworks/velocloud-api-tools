@@ -12,25 +12,46 @@ from pyvelo_intent.errors import ConfigInputError
 
 
 class _UniqueKeyLoader(yaml.SafeLoader):
-    """A safe YAML loader that refuses a key given twice in one mapping."""
+    """A safe YAML loader that refuses a key given twice in one mapping.
+
+    The keys are checked on the composed tree before anything is constructed,
+    because constructing a mapping that merges another (``<<``) rewrites the
+    merged mapping's own pairs. A key that overrides a merged one is legal.
+    """
 
     @override
-    def construct_mapping(self, node: yaml.MappingNode, deep: bool = False):
-        seen: set[object] = set()
-        pairs = cast(list[tuple[yaml.Node, yaml.Node]], node.value)
-        for key_node, _ in pairs:
-            if key_node.tag == "tag:yaml.org,2002:merge":
-                continue
-            key = cast(object, self.construct_object(key_node, deep=True))  # pyright: ignore[reportUnknownMemberType]
-            if isinstance(key, Hashable) and key in seen:
-                raise yaml.constructor.ConstructorError(
-                    None,
-                    None,
-                    f"the key {key!r} is given twice",
-                    key_node.start_mark,
-                )
-            seen.add(key)
-        return super().construct_mapping(node, deep=deep)
+    def get_single_data(self) -> object:
+        node = self.get_single_node()
+        if node is None:
+            return None
+        self._refuse_repeated_keys(node, set())
+        return cast(object, self.construct_document(node))  # pyright: ignore[reportUnknownMemberType]
+
+    def _refuse_repeated_keys(self, node: yaml.Node, visited: set[int]) -> None:
+        if id(node) in visited:
+            return
+        visited.add(id(node))
+        if isinstance(node, yaml.SequenceNode):
+            for item in cast(list[yaml.Node], node.value):
+                self._refuse_repeated_keys(item, visited)
+        elif isinstance(node, yaml.MappingNode):
+            seen: set[object] = set()
+            for key_node, value_node in cast(
+                list[tuple[yaml.Node, yaml.Node]], node.value
+            ):
+                self._refuse_repeated_keys(value_node, visited)
+                if key_node.tag == "tag:yaml.org,2002:merge":
+                    continue
+                self._refuse_repeated_keys(key_node, visited)
+                key = cast(object, self.construct_object(key_node, deep=True))  # pyright: ignore[reportUnknownMemberType]
+                if isinstance(key, Hashable) and key in seen:
+                    raise yaml.constructor.ConstructorError(
+                        None,
+                        None,
+                        f"the key {key!r} is given twice, keep one of them",
+                        key_node.start_mark,
+                    )
+                seen.add(key)
 
 
 def _location(loc: tuple[int | str, ...]) -> str:

@@ -4,7 +4,8 @@ import io
 from pathlib import Path
 
 import pytest
-from pydantic import BaseModel
+import yaml
+from pydantic import BaseModel, ConfigDict
 from pyvelo_intent import ConfigInputError, confirm_save, load_config
 from test_state_plan import (  # pyright: ignore[reportImplicitRelativeImport]
     make_state,
@@ -44,6 +45,30 @@ def test_load_config_refuses_a_nested_key_given_twice(tmp_path: Path):
     path = write(tmp_path, "inner:\n  a: 1\n  a: 2\n")
     with pytest.raises(ConfigInputError, match="the key 'a' is given twice"):
         _ = load_config(path, Outer)
+
+
+class Loose(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "base: &b {k: 1, j: 0}\nuse: {<<: *b, k: 2}\n",
+        "c: &c {k: 1}\nfirst: {inner: &b {<<: *c, k: 2}}\nsecond: {<<: *b}\n",
+    ],
+)
+def test_load_config_accepts_a_key_that_overrides_a_merged_key(
+    tmp_path: Path, text: str
+):
+    loaded = load_config(write(tmp_path, text), Loose)
+    assert loaded.model_dump() == yaml.safe_load(text)
+
+
+def test_load_config_refuses_a_key_given_twice_beside_a_merge(tmp_path: Path):
+    path = write(tmp_path, "base: &b {k: 1}\nuse:\n  <<: *b\n  j: 1\n  j: 2\n")
+    with pytest.raises(ConfigInputError, match="the key 'j' is given twice"):
+        _ = load_config(path, Loose)
 
 
 @pytest.mark.parametrize(
