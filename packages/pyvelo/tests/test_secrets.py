@@ -212,6 +212,16 @@ class Holder(VcoModel):
     by_number: dict[int, TaggedA] = Field(default_factory=dict)
 
 
+def assert_chain_quotes_no_input(error: BaseException) -> None:
+    """Neither the cause nor the context of *error* quotes an input value; the context is empty."""
+    assert error.__context__ is None
+    for linked in (error.__cause__, error.__context__):
+        if linked is not None:
+            assert isinstance(linked, ValidationError)
+            for text in (str(linked), repr(linked)):
+                assert "input_value" not in text and OLD not in text
+
+
 @pytest.mark.parametrize(
     "patch",
     [
@@ -231,6 +241,7 @@ def test_the_cause_of_a_patch_error_does_not_quote_the_patch(
     assert isinstance(cause, ValidationError)
     for text in (str(cause), repr(cause)):
         assert "input_value" not in text and OLD not in text
+    assert_chain_quotes_no_input(exc.value)
 
 
 @pytest.mark.parametrize("field", ["inner", "defaulted"])
@@ -246,6 +257,7 @@ def test_a_field_typed_as_a_model_does_not_quote_a_value_that_is_not_one(
     for text in (str(cause), repr(cause), str(exc.value)):
         assert "input_value" not in text and OLD not in text
     assert cause.errors()[0]["input"] == value
+    assert_chain_quotes_no_input(exc.value)
 
 
 def test_no_field_of_the_models_quotes_a_patch_value_in_the_cause_of_its_error():
@@ -259,6 +271,7 @@ def test_no_field_of_the_models_quotes_a_patch_value_in_the_cause_of_its_error()
                 cause = error.__cause__
                 assert isinstance(cause, ValidationError)
                 assert OLD not in f"{cause}{cause!r}", f"{cls.__name__}.{name}"
+                assert_chain_quotes_no_input(error)
                 refused += 1
     assert refused > 1000
 

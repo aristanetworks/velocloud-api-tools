@@ -454,14 +454,12 @@ def _validate_field(
     boolean given for a value that is not one raises as well
     (``_refuse_bool_as_number``).
     """
-    try:
-        validated = _field_adapter(model_cls, name).validate_python(
-            value, context={"patch": True}
-        )
-    except ValidationError as exc:
-        raise _invalid_value(
-            exc, field_models(model_cls.model_fields[name]), path
-        ) from _without_input(exc)
+    validated = _validated(
+        _field_adapter(model_cls, name).validate_python,
+        value,
+        field_models(model_cls.model_fields[name]),
+        path,
+    )
     _refuse_bool_as_number(value, validated, path)
     return validated
 
@@ -582,13 +580,27 @@ def _without_input(exc: ValidationError) -> ValidationError:
     return ValidationError.from_exception_data(exc.title, details, hide_input=True)
 
 
-def _invalid_value(
-    exc: ValidationError, models: Sequence[type[VcoModel]], path: Path
-) -> PatchError:
-    """The ``PatchError`` at *path* for a value that fails validation; raise it ``from exc``."""
-    return PatchError(
-        "invalid value: " + _validation_lines(exc, models), path, "invalid_value"
-    )
+def _validated[T](
+    validate: Callable[..., T],
+    value: object,
+    models: Sequence[type[VcoModel]],
+    path: Path,
+) -> T:
+    """*value* as ``validate(value, context={"patch": True})`` gives it; ``PatchError`` at *path* if it is refused.
+
+    The error's cause is the ``ValidationError`` without its input, and the
+    error is raised outside the ``except`` block: raised inside, it would
+    also hold the original as its ``__context__``, and that text quotes the
+    patch value.
+    """
+    try:
+        return validate(value, context={"patch": True})
+    except ValidationError as exc:
+        refusal = PatchError(
+            "invalid value: " + _validation_lines(exc, models), path, "invalid_value"
+        )
+        refusal.__cause__ = _without_input(exc)
+    raise refusal
 
 
 def _check_merged(model: VcoModel, validate: Callable[..., object], path: Path) -> None:
@@ -610,11 +622,12 @@ def _check_merged(model: VcoModel, validate: Callable[..., object], path: Path) 
     try:
         _ = validate(model.model_copy(), context={"patch": True})
     except ValidationError as exc:
-        raise PatchError(
+        refusal = PatchError(
             f"{name} is not valid after this change: {_validation_lines(exc, (type(model),))}",
             path,
             "invalid_value",
-        ) from _without_input(exc)
+        )
+        refusal.__cause__ = _without_input(exc)
     except Exception as exc:
         raise PatchError(
             f"a validator of {name} failed on the changed model with "
@@ -624,6 +637,9 @@ def _check_merged(model: VcoModel, validate: Callable[..., object], path: Path) 
             path,
             "invalid_value",
         ) from exc
+    else:
+        return
+    raise refusal
 
 
 def _new_model_from_patch(
@@ -645,10 +661,7 @@ def _new_model_from_patch(
         data = _build_input(
             model_type.model_fields, patch, resolvers, path, owner=model_type.__name__
         )
-        try:
-            built = model_type.model_validate(data, context={"patch": True})
-        except ValidationError as exc:
-            raise _invalid_value(exc, (model_type,), path) from _without_input(exc)
+        built = _validated(model_type.model_validate, data, (model_type,), path)
         _refuse_unread_keys(built, data, path)
         return built
     _merge_model(instance, patch, resolvers, path, built=True)
@@ -855,10 +868,7 @@ def _new_item(
     item_input = _build_input(
         item_type.fields, body, resolvers, path, owner=item_type.name
     )
-    try:
-        item = item_type.validate(item_input, context={"patch": True})
-    except ValidationError as exc:
-        raise _invalid_value(exc, item_type.variants, path) from _without_input(exc)
+    item = _validated(item_type.validate, item_input, item_type.variants, path)
     _refuse_unread_keys(item, item_input, path)
     if context is not None:
         _ = item.for_context(context)
@@ -1996,10 +2006,7 @@ def _check_add(
             "operation",
         )
     assert spec.element is not None
-    try:
-        new = spec.element.validate_python(selector, context={"patch": True})
-    except ValidationError as exc:
-        raise _invalid_value(exc, (), where) from _without_input(exc)
+    new = _validated(spec.element.validate_python, selector, (), where)
     if any(str(item) == str(new) for item in items):
         raise PatchError(
             f"{new!r} is already in the list{_CHANGE_IT_IN_LIST}", where, "exists"
@@ -2410,10 +2417,7 @@ def _new_map_key(spec: _ListSpec, text: str, where: Path) -> object:
             "this map has no one model type to build from", where, "operation"
         )
     assert spec.map_key is not None  # a map
-    try:
-        return spec.map_key.validate_python(text, context={"patch": True})
-    except ValidationError as exc:
-        raise _invalid_value(exc, (), where) from _without_input(exc)
+    return _validated(spec.map_key.validate_python, text, (), where)
 
 
 def _body(op: ItemOp) -> dict[object, object]:
