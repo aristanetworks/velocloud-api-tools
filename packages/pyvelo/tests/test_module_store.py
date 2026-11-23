@@ -671,6 +671,15 @@ def test_rows_group_under_their_ref_one_as_an_object_several_as_a_list():
     assert got["null"]["enterpriseObjectId"] == 701
 
 
+def test_a_row_with_no_ref_of_an_unknown_object_is_grouped_under_null():
+    store = refs_store()
+    row = ref_row(10, 999, PRIMARY)
+    del row["ref"]  # a row with no ref key, of an object the store does not know
+    got = update_refs(store, 10, {"ignored": [row]})["refs"]
+    assert list(got) == ["null"]
+    assert got["null"]["enterpriseObjectId"] == 999 and "ref" not in got["null"]
+
+
 def test_a_row_that_fails_is_skipped_and_the_others_are_stored():
     store = refs_store()
     store.add_object(702, logical_id=DNS_B, name="dns-b", type_="dnsService")

@@ -438,7 +438,7 @@ class ModuleStore:
             stored = self._stored_row(entry)
             if stored is None:
                 continue
-            name = stored["ref"] or "null"
+            name = stored.get("ref") or "null"
             target = pairs if name in APPEND_ONLY_REF_NAMES else ordinary
             target.append((name, stored))
         _set_refs(row, [*ordinary, *pairs])
