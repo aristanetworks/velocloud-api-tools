@@ -9,7 +9,7 @@ This package is split into these submodules:
 - rebase: the path and key types that locate a change
 - secrets: hide_secrets, which shows a value without its secrets
 
-All public symbols are re-exported here for backwards compatibility.
+This package exports the public names of those submodules; ``__all__`` lists them.
 """
 
 from .base import (
