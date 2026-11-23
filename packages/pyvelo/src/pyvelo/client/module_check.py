@@ -31,6 +31,7 @@ that is still as read is a lost edit instead: the write did not reach it.
 ``ServerOwned``.
 """
 
+import copy
 from dataclasses import dataclass
 from typing import Any, Final, Literal, cast, override
 
@@ -332,6 +333,21 @@ def has_checkable_change(module: ConfigurationModuleBase, plan: ModulePlan) -> b
     return bool(plan.ref_changes)
 
 
+def _refs_to_put_back(raw_refs: object) -> object:
+    """The module's refs as read, less the rows of ``APPEND_ONLY_REF_NAMES``.
+
+    Those rows are the VCO's own: sending them back would store them twice. A
+    value that is not a dict of refs (``MISSING``) is returned as it is.
+    """
+    if not is_dict(raw_refs):
+        return raw_refs
+    return {
+        name: copy.deepcopy(rows)
+        for name, rows in raw_refs.items()
+        if name not in APPEND_ONLY_REF_NAMES
+    }
+
+
 def check_module_write[M: ConfigurationModuleBase](
     module: M,
     plan: ModulePlan,
@@ -440,7 +456,7 @@ def check_module_write[M: ConfigurationModuleBase](
             left_out=left_out,
             server_changes=server_changes,
             stored_parts=data.stored_parts,
-            refs_as_read=module.raw_refs,
+            refs_as_read=_refs_to_put_back(module.raw_refs),
         )
     raise WriteNotAppliedError(
         stored.id_,

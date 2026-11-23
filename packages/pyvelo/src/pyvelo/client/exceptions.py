@@ -984,9 +984,12 @@ class RefsDroppedError(WriteNotAppliedError):
     rows back.
 
     When the VCO took none of the rows sent, ``every_row_lost`` is true and
-    ``refs_as_read`` holds the refs as the module was read, to put back;
-    ``refs_as_read`` is the module's ``raw_refs`` (``MISSING`` when it had
-    none).
+    ``refs_as_read`` holds the rows to put back: the module's refs as read
+    (``MISSING`` when it had none), without the rows of the
+    ``APPEND_ONLY_REF_NAMES`` (``deviceSettings:vnfs:edge``,
+    ``objectGroup:addressGroup`` and ``objectGroup:portGroup``). Those rows are
+    the VCO's own and it keeps them through the write, so sending them back
+    would store them twice; they were not among the rows sent either.
     """
 
     refs_as_read: object
@@ -1037,19 +1040,36 @@ class RefsDroppedError(WriteNotAppliedError):
             "and all of them are ref rows"
         )
 
+    def _put_back_note(self) -> str:
+        """How to put the rows back when the VCO took none of those sent, for a caller with or without Python."""
+        configuration_id = (
+            "<configuration ID>"
+            if self.module is None or self.module.configuration_id is None
+            else self.module.configuration_id
+        )
+        # Imported here: ``derived_refs`` reaches this module through the models.
+        from pyvelo.client.derived_refs import APPEND_ONLY_REF_NAMES
+
+        names = ", ".join(sorted(APPEND_ONLY_REF_NAMES))
+        return (
+            "The VCO took none of the ref rows this write sent, and the data is "
+            "stored. To put the rows back, send "
+            "configuration/updateConfigurationModule with "
+            f'{{"id": {self.module_id}, "_update": {{"data": <the module\'s '
+            'data as stored now>, "refs": <error.refs_as_read>}} '
+            "(update_configuration_module; error.refs_as_read holds the rows to "
+            "send). If you speak only JSON, read the data as stored now with "
+            "configuration/getConfiguration and "
+            f'{{"id": {configuration_id}, "with": ["modules"]}}, and for "refs" '
+            "send the module's refs from the read this write was planned on (the "
+            "VCO's own now lack the rows it dropped), without the rows named "
+            f"{names}: the VCO keeps those itself and would store them twice."
+        )
+
     @override
     def _notes(self, limit: int | None) -> list[str]:
         if self.every_row_lost:
-            lines = [
-                (
-                    "The VCO took none of the ref rows this write sent, and the "
-                    "data is stored. error.refs_as_read holds the refs as they "
-                    "were read: to put them back, send "
-                    "configuration/updateConfigurationModule with "
-                    f'{{"id": {self.module_id}, "_update": {{"refs": '
-                    "<error.refs_as_read>}} (update_configuration_module)."
-                )
-            ]
+            lines = [self._put_back_note()]
         else:
             lines = []
             if any(edit.intended is not MISSING for edit in self.lost_edits):

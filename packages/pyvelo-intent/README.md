@@ -661,11 +661,17 @@ one you removed that the VCO kept, clear the field again, as it reads as set.
 The message gives the patch for each, and `error.redo_patch()` gives it with
 the real value. The VCO writes nothing of its own to put a skipped row
 back. When it took none of the rows the write sent, `error.every_row_lost` is
-true and `error.refs_as_read` holds the refs as the module was read, to put back
-by sending
+true and `error.refs_as_read` holds the module's refs as read, less the rows of
+`deviceSettings:vnfs:edge`, `objectGroup:addressGroup` and
+`objectGroup:portGroup`, which the VCO keeps itself and would store twice if
+they were sent back. Put the rows back by sending
 `configuration/updateConfigurationModule` with
-`{"id": <module ID>, "_update": {"refs": <error.refs_as_read>}}`
-(`update_configuration_module`). A row you did not change that the VCO leaves
+`{"id": <module ID>, "_update": {"data": <the module's data as stored now>,
+"refs": <error.refs_as_read>}}` (`update_configuration_module`). If you speak
+only JSON, read the data as stored now with `configuration/getConfiguration`
+and `{"id": <configuration ID>, "with": ["modules"]}`, and send as `refs` the
+refs from the read the save was planned on, less those three names (the VCO's
+own refs now lack the rows it dropped). A row you did not change that the VCO leaves
 out of the refs it returns is not an error: it is a `server_changes` entry, as
 is any difference in the rows of the refs the VCO's own processors manage.
 
@@ -679,7 +685,7 @@ is any difference in the rows of the refs the VCO's own processors manage.
 | `server_changes` | what else the VCO stores otherwise than sent, as in `SaveResult.server_changes` |
 | `module` | the module as the VCO holds it now; None on a `ConfigConflictError` for a module gone from its configuration, where nothing was sent and the state keeps the module as read |
 | `plan` | the module's `ModulePlan` |
-| `refs_as_read` | on `RefsDroppedError`: the module's refs as read, to put back when `every_row_lost` is true |
+| `refs_as_read` | on `RefsDroppedError`: the module's refs as read, less the three append-only names, to put back when `every_row_lost` is true |
 | `stated` | on `ConfigConflictError`: whether the VCO said it refused the version, or the save inferred it |
 | `sent` | on `ConfigConflictError`: False when nothing was sent, because the version read before a write found the module changed (or gone): a write that carries refs, or one after a profile's device settings, where a path you edited was also changed |
 | `completed` | the writes of the same save before this one, which are stored |

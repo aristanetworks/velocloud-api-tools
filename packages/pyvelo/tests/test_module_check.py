@@ -1125,10 +1125,48 @@ async def test_every_row_lost_lists_them_all_and_carries_the_refs_as_read(
     message = str(error)
     assert "took none of the ref rows this write sent" in message
     assert "error.refs_as_read" in message
-    assert f'{{"id": {module.id_}, "_update": {{"refs": <error.refs_as_read>}}' in (
-        message
-    )
+    assert (
+        f'{{"id": {module.id_}, "_update": {{"data": <the module\'s data as stored '
+        'now>, "refs": <error.refs_as_read>}}'
+    ) in message
     assert "update_configuration_module" in message
+
+
+async def test_refs_as_read_leaves_out_an_append_only_row_present_as_read(
+    mock_vco_client: MockVcoClientFactory,
+):
+    vnf = "deviceSettings:vnfs:edge"
+    appended = {
+        **service_row(vnf, DNS_A, 810, SEG0_OBJECT, SEG0),
+        "type": "securityVnf",
+    }
+    module = ds_module(
+        [segment_entry(0, "Global Segment", SEG0, dns=dns(primary=True))],
+        {SEGMENT: segment_row(0, SEG0_OBJECT, SEG0), vnf: appended},
+    )
+    current = copy_of_data(module)
+    set_primary_provider(current, uuid.UUID(DNS_A))
+    _ = current.merge_patch({"ntp": {"enabled": True}})
+    resolvers = await table_registry(DNS_A_IDENTITY, SEG0_IDENTITY)
+    plan = plan_module(module, current, resolvers=resolvers)
+    store = store_of(module)
+    store.objects.update(store_with_services().objects)
+    store.skipped_objects.update({SEG0_OBJECT, 701})
+    client = await mock_vco_client(store)
+    with pytest.raises(RefsDroppedError) as caught:
+        _ = await client.write_module(module, plan)
+    error = caught.value
+    assert error.every_row_lost
+    assert vnf in cast(dict[str, Any], module.raw_refs)
+    assert error.refs_as_read == {SEGMENT: segment_row(0, SEG0_OBJECT, SEG0)}
+    message = str(error)
+    for name in sorted(APPEND_ONLY_REF_NAMES):
+        assert name in message
+    assert "configuration/getConfiguration" in message
+    assert f'{{"id": {module.configuration_id}, "with": ["modules"]}}' in message
+    assert '"_update": {"data": <the module\'s data as stored now>' in message
+    assert '"refs": <error.refs_as_read>}' in message
+    assert '"logicalId"' not in message
 
 
 async def test_a_row_sent_as_read_the_vco_dropped_is_a_server_change(

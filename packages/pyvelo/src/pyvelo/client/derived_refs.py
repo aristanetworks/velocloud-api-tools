@@ -52,7 +52,11 @@ if TYPE_CHECKING:
 APPEND_ONLY_REF_NAMES: Final = frozenset(
     {"deviceSettings:vnfs:edge", "objectGroup:addressGroup", "objectGroup:portGroup"}
 )
-"""Ref names whose rows a write does not remove: the removal of one is left out."""
+"""Ref names whose rows the VCO keeps itself: a write sends none of their rows.
+
+A row of one of these names is never planned as removed and never ``left_out``;
+it is left out of the refs sent, and the VCO stores the ones it holds again.
+"""
 
 SERVICE_TYPES: Final[Mapping[str, str]] = {
     "deviceSettings:dns:primaryProvider": EnterpriseServiceType.DNS.value,

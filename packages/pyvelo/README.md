@@ -96,11 +96,19 @@ than sent, such as an ID it issued). Otherwise it raises, from
   a ref row: the VCO stored the data and skipped a row it could not resolve (an
   object it does not have), or kept a row the plan removed. Rows of refs are
   compared by identity, never by content. `error.lost_edits` names each row by
-  its ref and identity, and `error.refs_as_read` holds the refs as the module
-  was read: when the VCO took none of the rows sent (`error.every_row_lost`),
-  put them back by sending `configuration/updateConfigurationModule` with
-  `{"id": <module ID>, "_update": {"refs": <error.refs_as_read>}}`
-  (`update_configuration_module`). Otherwise, for a row you added, check that
+  its ref and identity, and `error.refs_as_read` holds the module's refs as
+  read, less the rows of `deviceSettings:vnfs:edge`, `objectGroup:addressGroup`
+  and `objectGroup:portGroup`, which the VCO keeps itself and would store twice
+  if they were sent back. When the VCO took none of the rows sent
+  (`error.every_row_lost`), put the rows back by sending
+  `configuration/updateConfigurationModule` with
+  `{"id": <module ID>, "_update": {"data": <the module's data as stored now>,
+  "refs": <error.refs_as_read>}}` (`update_configuration_module`). A caller who
+  speaks only JSON reads the data as stored now with
+  `configuration/getConfiguration` and
+  `{"id": <configuration ID>, "with": ["modules"]}`, and sends as `refs` the
+  refs from the read the write was planned on, less those three names (the
+  VCO's own refs now lack the rows it dropped). Otherwise, for a row you added, check that
   the object exists and set the field again on `error.module`; for a row you
   removed that the VCO kept, clear the field again. The message gives the patch
   for each. An update the VCO answered with the module needs one change that is
