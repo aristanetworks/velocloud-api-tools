@@ -81,6 +81,10 @@ answer=...)` takes what the VCO said of the write: `"row"`, `"counted"` or
 `"refused"`. With `"row"` it has only the module to go by, so a write none of
 whose changes is found stored is taken as not stored.
 
+With `if_absent=True` an insert first reads the configuration, and a module of
+that name found there is taken as the insert's answer and checked like one, with
+nothing inserted: the way to repeat an insert whose answer never arrived.
+
 `pyvelo.testing.ModuleStore` is an `httpx` handler that holds module rows as
 JSON and answers module updates, inserts and `getConfiguration` as a VCO does.
 Its knobs are the conditional version check, a VCO that ignores `returnData`,

@@ -989,3 +989,121 @@ async def test_every_request_of_an_insert_names_the_enterprise(
     assert [params.get("enterpriseId") for _, params in store.requests] == (
         [7] if return_data else [7, 7]
     )
+
+
+async def test_if_absent_inserts_when_the_configuration_has_no_module_of_the_name(
+    mock_vco_client: MockVcoClientFactory,
+):
+    module = new_qos_with_a_segment()
+    store = store_of(module)
+    client = await mock_vco_client(store)
+    write = await client.write_module(module, plan_module(module), if_absent=True)
+    assert methods(store) == ["getConfiguration", "insertConfigurationModule"]
+    assert write.operation == "insert"
+    (stored_id,) = store.rows
+    assert write.module.id_ == stored_id
+
+
+async def test_if_absent_takes_a_module_of_the_name_as_the_answer(
+    mock_vco_client: MockVcoClientFactory,
+):
+    module = new_qos_with_a_segment().for_edge()
+    plan = plan_module(module)
+    store = store_of(module)
+    client = await mock_vco_client(store)
+    _ = await client.write_module(module, plan)  # the insert whose answer is lost
+    (stored_id,) = store.rows
+
+    write = await client.write_module(module, plan, if_absent=True)
+
+    assert methods(store) == ["insertConfigurationModule", "getConfiguration"]
+    assert list(store.rows) == [stored_id]
+    assert (write.operation, write.module.id_) == ("insert", stored_id)
+    assert write.module.is_new is False
+    assert write.module.config_context is module.config_context is ConfigContext.EDGE
+    assert paths(write.applied) == ['segments["Global Segment"]']
+
+
+async def test_if_absent_checks_the_module_it_finds_against_the_plan(
+    mock_vco_client: MockVcoClientFactory,
+):
+    module = new_qos_with_a_segment()
+    store = store_of(module)
+    another = make_module_json(
+        "QOS", {"segments": []}, module_id=99, configuration_id=10
+    )
+    store.rows[99] = another
+    client = await mock_vco_client(store)
+
+    with pytest.raises(WriteNotAppliedError) as exc:
+        _ = await client.write_module(module, plan_module(module), if_absent=True)
+
+    assert methods(store) == ["getConfiguration"]
+    assert exc.value.module_id == 99
+    assert isinstance(exc.value.module, QosConfigurationModule)
+    assert paths(exc.value.lost_edits) == ['segments["Global Segment"]']
+
+
+async def test_if_absent_takes_the_newest_of_several(
+    mock_vco_client: MockVcoClientFactory,
+):
+    module = new_qos_with_a_segment()
+    plan = plan_module(module)
+    store = store_of(module)
+    store.rows[7] = make_module_json(
+        "QOS", {"segments": []}, module_id=7, configuration_id=10
+    )
+    store.rows[8] = make_module_json(
+        "QOS", copy.deepcopy(plan.data), module_id=8, configuration_id=10
+    )
+    client = await mock_vco_client(store)
+    write = await client.write_module(module, plan, if_absent=True)
+    assert write.module.id_ == 8
+
+
+async def test_if_absent_changes_nothing_for_an_update(
+    mock_vco_client: MockVcoClientFactory,
+):
+    module = firewall_disabled()
+    store = store_of(module)
+    client = await mock_vco_client(store)
+    _ = await client.write_module(module, plan_module(module), if_absent=True)
+    assert methods(store) == ["updateConfigurationModule"]
+
+
+async def test_if_absent_cannot_take_a_row_that_does_not_parse(
+    mock_vco_client: MockVcoClientFactory,
+):
+    module = new_qos_with_a_segment()
+    plan = plan_module(module)
+    store = store_of(module)
+    store.rows[99] = make_module_json(
+        "QOS", {"segments": "not a list"}, module_id=99, configuration_id=10
+    )
+    client = await mock_vco_client(store)
+
+    with pytest.raises(WriteOutcomeUnknownError) as exc:
+        _ = await client.write_module(module, plan, if_absent=True)
+
+    assert methods(store) == ["getConfiguration"]  # nothing is inserted beside it
+    assert (exc.value.answer, exc.value.module_id) == ("row", 99)
+    assert exc.value.detail == (
+        "the configuration holds a module of this name whose row does not parse"
+    )
+    assert exc.value.plan is plan
+    assert isinstance(exc.value.__cause__, ValidationError)
+
+
+async def test_if_absent_reads_only_the_rows_of_the_name(
+    mock_vco_client: MockVcoClientFactory,
+):
+    module = new_qos_with_a_segment()
+    store = store_of(module)
+    # Another module of the configuration, which the models do not take.
+    store.rows[2] = make_module_json(
+        "firewall", {"segments": "not a list"}, module_id=2, configuration_id=10
+    )
+    client = await mock_vco_client(store)
+    write = await client.write_module(module, plan_module(module), if_absent=True)
+    assert methods(store) == ["getConfiguration", "insertConfigurationModule"]
+    assert write.module.name == "QOS"

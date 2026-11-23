@@ -93,6 +93,38 @@ def _unknown_outcome(
     )
 
 
+async def _read_rows(
+    client: VcoClientBaseProtocol, configuration_id: int, enterprise_id: int | None
+) -> list[dict[str, Any]]:
+    """The module rows of configuration *configuration_id*, each left as the JSON object it came as.
+
+    Raises ``ValidationError`` when what the VCO answers is not a
+    configuration; an error of the request itself propagates.
+    """
+    config = await client.portal(
+        "configuration/getConfiguration",
+        GetConfiguration(
+            id_=configuration_id,
+            enterprise_id=enterprise_id if enterprise_id is not None else MISSING,
+            with_=[GetConfigurationWith.MODULES],
+        ),
+        _ConfigurationRows,
+    )
+    return config.modules if config.modules is not MISSING else []
+
+
+def _parse_row(
+    module: ConfigurationModuleBase, row: dict[str, Any]
+) -> AnyConfigurationModule:
+    """The module row *row* as a module at the config level of *module*, or at none when it has none.
+
+    Raises ``ValidationError`` when the row does not parse.
+    """
+    return ConfigurationModuleList.model_validate_json(
+        json.dumps([row]), context=_level_context(module.config_context)
+    ).root[0]
+
+
 async def _read_stored(
     client: VcoClientBaseProtocol,
     module: ConfigurationModuleBase,
@@ -124,15 +156,7 @@ async def _read_stored(
             module_id=wanted,
         )
     try:
-        config = await client.portal(
-            "configuration/getConfiguration",
-            GetConfiguration(
-                id_=configuration_id,
-                enterprise_id=enterprise_id if enterprise_id is not None else MISSING,
-                with_=[GetConfigurationWith.MODULES],
-            ),
-            _ConfigurationRows,
-        )
+        held = await _read_rows(client, configuration_id, enterprise_id)
     except ValidationError as error:
         raise _unknown_outcome(
             module,
@@ -141,7 +165,6 @@ async def _read_stored(
             answer=answer,
             module_id=wanted,
         ) from error
-    held = config.modules if config.modules is not MISSING else []
     row = next((r for r in held if r.get("id") == wanted), None)
     if row is None:
         raise _unknown_outcome(
@@ -152,9 +175,7 @@ async def _read_stored(
             module_id=wanted,
         )
     try:
-        return ConfigurationModuleList.model_validate_json(
-            json.dumps([row]), context=_level_context(module.config_context)
-        ).root[0]
+        return _parse_row(module, row)
     except ValidationError as error:
         raise _unknown_outcome(
             module,
@@ -162,6 +183,59 @@ async def _read_stored(
             "the module row read back does not parse",
             answer=answer,
             module_id=wanted,
+        ) from error
+
+
+async def _read_named(
+    client: VcoClientBaseProtocol,
+    module: ConfigurationModuleBase,
+    plan: ModulePlan,
+    enterprise_id: int | None,
+) -> AnyConfigurationModule | None:
+    """The module of the name of *plan* that the configuration of *module* already holds, or None.
+
+    Of several rows of that name it is the one with the highest ID, the last
+    inserted. Only that row is parsed, as ``_read_stored`` parses its row.
+    None when *module* has no ``configuration_id`` or the configuration holds
+    no row of the name. Raises ``WriteOutcomeUnknownError`` when the
+    configuration read does not parse or the row found does not. An error of
+    the read request itself propagates.
+    """
+    configuration_id = module.configuration_id
+    if configuration_id is None:
+        return None
+    try:
+        held = await _read_rows(client, configuration_id, enterprise_id)
+    except ValidationError as error:
+        raise _unknown_outcome(
+            module,
+            plan,
+            "the configuration read does not parse",
+            answer="row",
+            module_id=module.id_,
+        ) from error
+    row: dict[str, Any] | None = None
+    row_id = -1
+    for candidate in held:
+        candidate_id = candidate.get("id")
+        if (
+            candidate.get("name") == plan.name
+            and isinstance(candidate_id, int)
+            and candidate_id > row_id
+        ):
+            row, row_id = candidate, candidate_id
+    if row is None:
+        return None
+    try:
+        return _parse_row(module, row)
+    except ValidationError as error:
+        raise WriteOutcomeUnknownError(
+            row_id,
+            "",
+            "the configuration holds a module of this name whose row does not parse",
+            answer="row",
+            module_name=plan.name,
+            plan=plan,
         ) from error
 
 
@@ -379,6 +453,7 @@ class ConfigurationMixin(Protocol):
         plan: ModulePlan,
         *,
         enterprise_id: int | None = None,
+        if_absent: bool = False,
     ) -> ModuleWrite[M]:
         """Send *plan*, made by ``plan_module`` for *module*, and check what the VCO stored.
 
@@ -396,6 +471,11 @@ class ConfigurationMixin(Protocol):
 
         Sends nothing when the plan's operation is ``none``, and returns
         *module* itself.
+
+        With *if_absent*, an insert first reads the configuration: a module of
+        the plan's name found there (of several, the one with the highest ID)
+        is taken as the insert's answer and checked like one, and nothing is
+        inserted. Use it to repeat an insert whose answer was not read.
 
         A row the VCO answers with that has no version is replaced by the
         module read from its configuration, so that the module returned
@@ -415,7 +495,8 @@ class ConfigurationMixin(Protocol):
           as stored cannot be read: the answer or the row read back does not
           parse, the read-back does not find the module, or the module the VCO
           answered with is not this one (another ID, another configuration or
-          another class of module).
+          another class of module). With *if_absent* it also says that the
+          module found by name does not parse or is not this one.
 
         The first two always carry the lost edits and the module as stored;
         ``WriteOutcomeUnknownError`` carries neither.
@@ -436,28 +517,38 @@ class ConfigurationMixin(Protocol):
         stored: ConfigurationModuleBase | None
         if plan.operation == "insert":
             insert = insert_request(module, plan, enterprise_id)
-            try:
-                inserted = await self.insert_configuration_module(insert, level=level)
-            except ValidationError as error:
-                raise _unknown_outcome(
-                    module,
-                    plan,
-                    "the VCO's answer to the insert does not parse",
-                    answer="row",
-                    module_id=module.id_,
-                ) from error
-            if isinstance(inserted, InsertConfigurationModuleResult):
-                answer = "counted"
-                stored = await _read_stored(
-                    self,
-                    module,
-                    plan,
-                    enterprise_id,
-                    answer=answer,
-                    module_id=inserted.id_,
-                )
+            found = (
+                await _read_named(self, module, plan, enterprise_id)
+                if if_absent
+                else None
+            )
+            if found is not None:
+                stored = found
             else:
-                stored = inserted
+                try:
+                    inserted = await self.insert_configuration_module(
+                        insert, level=level
+                    )
+                except ValidationError as error:
+                    raise _unknown_outcome(
+                        module,
+                        plan,
+                        "the VCO's answer to the insert does not parse",
+                        answer="row",
+                        module_id=module.id_,
+                    ) from error
+                if isinstance(inserted, InsertConfigurationModuleResult):
+                    answer = "counted"
+                    stored = await _read_stored(
+                        self,
+                        module,
+                        plan,
+                        enterprise_id,
+                        answer=answer,
+                        module_id=inserted.id_,
+                    )
+                else:
+                    stored = inserted
         else:
             update = update_request(
                 module,
