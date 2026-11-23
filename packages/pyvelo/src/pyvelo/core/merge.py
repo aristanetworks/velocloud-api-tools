@@ -937,6 +937,13 @@ def _item_key(item: object, paths: tuple[str, ...]) -> KeyForm | None:
     return key_form(item_key(item, paths))
 
 
+def _alt_key(spec: _ListSpec, item: object) -> KeyForm | None:
+    """The alt key of *item* in a keyed list, in string form; None if the list has no alt key or the item none."""
+    if spec.alt_path is None:
+        return None
+    return _item_key(item, (spec.alt_path,))
+
+
 def _show_key(key: KeyValue) -> str:
     """A key for a message: a composite key as ``key_text`` writes it, quoted."""
     return repr(key_text(key) if isinstance(key, tuple) else str(key))
@@ -1276,8 +1283,8 @@ def _check_list_value(
     (``_refuse_unread_keys``). In a list whose key is a name (``NameOf``),
     such an item that has a name and lacks the IDs of it raises
     ``LookupError``, as an add under that name does
-    (``_require_ids_for_name``). A keyed list whose items repeat a key raises
-    ``PatchError`` at *path*.
+    (``_require_ids_for_name``). A keyed list whose items repeat a key or an
+    alt key raises ``PatchError`` at *path*.
     """
     if len(data) == len(built):
         for index, (item_data, item) in enumerate(zip(data, built)):
@@ -1292,18 +1299,29 @@ def _check_list_value(
                         item, spec.name_identity, spec.key_paths[0], str(key)
                     )
     seen: dict[KeyForm, int] = {}
+    seen_alt: dict[KeyForm, int] = {}
     for index, item in enumerate(built):
         key = item_key(item, spec.key_paths)
         form = key_form(key)
-        if key is None or form is None:
-            continue
-        if form in seen:
-            raise PatchError(
-                f"items #{seen[form]} and #{index} have one key, {_show_key(key)}: "
-                + "the items of a keyed list have distinct keys",
-                path,
-            )
-        seen[form] = index
+        if key is not None and form is not None:
+            if form in seen:
+                raise PatchError(
+                    f"items #{seen[form]} and #{index} have one key, "
+                    + f"{_show_key(key)}: the items of a keyed list have "
+                    + "distinct keys",
+                    path,
+                )
+            seen[form] = index
+        alt = _alt_key(spec, item)
+        if alt is not None:
+            if alt in seen_alt:
+                raise PatchError(
+                    f"items #{seen_alt[alt]} and #{index} have one alt key, "
+                    + f"{alt!r}: the items of a keyed list have distinct "
+                    + "alt keys",
+                    path,
+                )
+            seen_alt[alt] = index
 
 
 def _item_part(spec: _ListSpec, item: object, index: int) -> PathPart:
@@ -1351,7 +1369,8 @@ def _merge_items(
        every item an add adds is built (``_resolve_items``); any error raises
        here, before anything changes.
     2. Changes, in the order written. Afterwards a renamed item whose key
-       another item has raises.
+       another item has raises, and so does an item whose alt key changed to
+       one another item has.
     3. Deletes.
     4. Adds and moves, in the order written; a place is turned into an index
        when its entry is applied. An add with no place goes to the end.
@@ -1366,15 +1385,19 @@ def _merge_items(
 
     paths = spec.key_paths
     renamed: list[_ItemEntry] = []
+    alt_changed: list[_ItemEntry] = []
     for entry in entries:
         if entry.kind != "change" or entry.slot is None:
             continue
         item = entry.slot.value
         assert isinstance(item, VcoModel)  # _resolve_items checked it
         before = _item_key(item, paths)
+        alt_before = _alt_key(spec, item)
         _merge_model(item, entry.body, resolvers, entry.path)
         if _item_key(item, paths) != before:
             renamed.append(entry)
+        if _alt_key(spec, item) != alt_before:
+            alt_changed.append(entry)
     for entry in renamed:
         assert entry.slot is not None
         key = item_key(entry.slot.value, paths)
@@ -1383,6 +1406,13 @@ def _merge_items(
             s is not entry.slot and _item_key(s.value, paths) == form for s in slots
         ):
             raise PatchError(f"another item has the key {_show_key(key)}", entry.path)
+    for entry in alt_changed:
+        assert entry.slot is not None
+        alt = _alt_key(spec, entry.slot.value)
+        if alt is not None and any(
+            s is not entry.slot and _alt_key(spec, s.value) == alt for s in slots
+        ):
+            raise PatchError(f"another item has the alt key {alt!r}", entry.path)
 
     deleted = {id(e.slot) for e in entries if e.kind == "delete"}
     slots = [s for s in slots if id(s) not in deleted]
@@ -1723,7 +1753,7 @@ def _names_several(
                 key = "no key"
             else:
                 key = key_text(value) if isinstance(value, tuple) else str(value)
-        alt = None if spec.alt_path is None else _item_key(item, (spec.alt_path,))
+        alt = _alt_key(spec, item)
         shown.append(
             f"#{index} ({key})" if alt is None else f"#{index} ({key}, alt key {alt})"
         )
@@ -1762,23 +1792,25 @@ def _new_list_item(
 ) -> object:
     """What an ``add`` entry adds (built in step 1), checked against the list now in *slots*.
 
-    Its key or value may have come into the list since step 1, by a rename:
-    that raises ``PatchError``.
+    Its key, value or alt key may have come into the list since step 1, by a
+    rename or an earlier add: that raises ``PatchError``.
     """
     new = entry.new
     form = _added_form(spec, new)
-    if form is None:
-        return new
-    if spec.kind == "value":
-        taken = any(str(s.value) == form for s in slots)
-    else:
-        taken = any(_item_key(s.value, spec.key_paths) == form for s in slots)
-    if taken:
-        shown = item_key(new, spec.key_paths) if spec.kind == "keyed" else None
-        raise PatchError(
-            f"{_show_key(form if shown is None else shown)} is already in the list",
-            entry.path,
-        )
+    if form is not None:
+        if spec.kind == "value":
+            taken = any(str(s.value) == form for s in slots)
+        else:
+            taken = any(_item_key(s.value, spec.key_paths) == form for s in slots)
+        if taken:
+            shown = item_key(new, spec.key_paths) if spec.kind == "keyed" else None
+            raise PatchError(
+                f"{_show_key(form if shown is None else shown)} is already in the list",
+                entry.path,
+            )
+    alt = _alt_key(spec, new)
+    if alt is not None and any(_alt_key(spec, s.value) == alt for s in slots):
+        raise PatchError(f"{alt!r} is already in the list as an alt key", entry.path)
     return new
 
 

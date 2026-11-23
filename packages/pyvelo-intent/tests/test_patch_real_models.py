@@ -459,6 +459,31 @@ async def test_select_a_segment_by_segment_id():
     assert change_paths(state) == ["segments[Guest].outbound[block]"]
 
 
+async def test_a_change_cannot_give_a_segment_or_a_rule_another_ones_id():
+    raw = firewall(
+        fw_rule("a", ruleLogicalId="la"), fw_rule("b", ruleLogicalId="lb"), guest=True
+    )
+    state = make_state({"firewall": raw}, {"firewall": firewall(guest=True)})
+    pipeline = ConfigPipeline(None)
+    with pytest.raises(PatchError) as exc:
+        _ = await pipeline.apply(
+            state,
+            module="firewall",
+            patch={"segments": {"Guest": {"segment": {"segment_id": 0}}}},
+        )
+    assert str(exc.value.path) == "segments[Guest]"
+    with pytest.raises(PatchError) as exc:
+        _ = await pipeline.apply(
+            state,
+            module="firewall",
+            segment=SEGMENT,
+            path="outbound",
+            patch={"b": {"rule_logical_id": "la"}},
+        )
+    assert str(exc.value.path) == 'segments["Global Segment"].outbound[b]'
+    assert state.plan().changed == ()
+
+
 def bgp_settings(bgp: dict[str, Any]) -> dict[str, Any]:
     return {
         "lan": {"networks": [], "interfaces": []},

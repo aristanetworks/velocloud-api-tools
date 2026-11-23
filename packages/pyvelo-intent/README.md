@@ -148,8 +148,11 @@ one, `delete()` removes it, and `move(...)` moves it. A place is one of
 `first=True`, `last=True`, `before=selector` or `after=selector`; an `add`
 without one goes last. A selector that names no item, or more than one,
 raises and lists the matches; `add` of a key or value already in the list
-raises. Every selector is resolved against the list as it was, then changes,
-deletes, and adds and moves (in the order written) are applied.
+raises. An alt key is kept unique the same way: an `add` or a change that
+gives an item an alt key another item has (a rule's logical ID, a segment's
+`segmentId`) raises, and so does a list value that repeats one. Every
+selector is resolved against the list as it was, then changes, deletes, and
+adds and moves (in the order written) are applied.
 
 ```python
 from pyvelo_intent import add, at, delete, move

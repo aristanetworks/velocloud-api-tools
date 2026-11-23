@@ -604,7 +604,8 @@ class VcoModel(BaseModel):
           anything else is a plain value.
 
         A list value replaces the list, its items validated; a keyed list's
-        items must have distinct keys. In a list keyed by a ``NameOf`` field,
+        items must have distinct keys, and distinct alt keys where the list
+        has one. In a list keyed by a ``NameOf`` field,
         an item given as an object is treated as an ``add`` under its name:
         it takes the resolver's name and IDs, and one that gets its IDs from
         neither a resolver nor its own fields raises ``LookupError``.
@@ -636,19 +637,20 @@ class VcoModel(BaseModel):
         **Item operations.** The value under a selector:
 
         - a plain object: a change, merged into the item. It may change the
-          key (a rename) to one no other item has. A list of values takes
-          none.
+          key (a rename) to one no other item has. It may change the alt key
+          to one no other item has. A list of values takes none.
         - ``add(body, **place)``, which is ``{"_op": "add", ...}``: a new
           item built from *body*, validated whole. In a keyed list the
           selector is the key and is written into the item; a body that gives
           another key raises, and so does a key that is already in the list,
-          as a key or as another item's alt key. Under ``"+"`` the key is
-          whatever the body gives; in a list keyed by a ``NameOf`` field a
-          name in the body is an ``add`` under that name. In a value list the
-          selector is the value and ``add`` takes no body; in a map it is the
-          new key. Neither takes ``"+"``, and a map takes no ``"#n"``. A
-          positional list of models takes ``add`` under ``"+"`` only, one of
-          values none (give a list value), and ``at(n)`` never takes one.
+          as a key or as another item's alt key. A body that gives an alt
+          key another item has raises too. Under ``"+"`` the key is whatever
+          the body gives; in a list keyed by a ``NameOf`` field a name in the
+          body is an ``add`` under that name. In a value list the selector
+          is the value and ``add`` takes no body; in a map it is the new key.
+          Neither takes ``"+"``, and a map takes no ``"#n"``. A positional
+          list of models takes ``add`` under ``"+"`` only, one of values none
+          (give a list value), and ``at(n)`` never takes one.
         - ``delete()``, which is ``{"_op": "delete"}``: the item is removed.
           It carries nothing else.
         - ``move(**place)``, which is ``{"_position": P}``: the item moves.
