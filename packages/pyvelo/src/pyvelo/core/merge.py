@@ -97,17 +97,21 @@ def apply_patch(
 
     All or nothing: the patch is merged into a deep copy of *model* first, so
     a patch that raises does so before *model* is touched. Each model the
-    patch changes, and *model* itself, is checked once the merge into it is
-    complete (``_check_merged``).
+    patch changes, and the copy itself, is checked once the merge into it is
+    complete (``_check_merged``); *model* is then merged without a second check.
     """
     if not isinstance(patch, dict):
-        raise TypeError(f"a patch is a dict, not {type(patch).__name__}")
+        raise TypeError(
+            f"a patch is a dict, not {type(patch).__name__}: give an object, "
+            'and to set one value write {"<field>": value}'
+        )
     items = cast("dict[object, object]", checked_patch(patch))
     trial = model.model_copy(deep=True)
     _merge_model(trial, items, resolvers, Path(()))
+    # The trial is what is checked: the same merge into *model* gives the same
+    # result, so a second check of *model* could only break the all or nothing.
     _check_merged(trial, type(trial).model_validate, Path(()))
     _merge_model(model, items, resolvers, Path(()))
-    _check_merged(model, type(model).model_validate, Path(()))
     return model
 
 
@@ -143,7 +147,8 @@ def nest_patch(
     if segment is None and path is None:
         if not isinstance(patch, dict):
             raise TypeError(
-                f"a patch with no address must be a dict, not {type(patch).__name__}"
+                f"a patch with no address must be a dict, not {type(patch).__name__}: "
+                "give an object, or name the place a value goes with segment or path"
             )
         return cast("dict[str, object]", checked_patch(patch))
     cls = model
@@ -372,8 +377,12 @@ def _null_value(field_info: FieldInfo, name: str, path: Path, *, built: bool) ->
         return None
     if takes_missing:
         return MISSING
+    remedy = (
+        "leave the key out" if built else "a change cannot unset it: give it a value"
+    )
     raise PatchError(
-        f"null cannot unset {name}: its type takes neither MISSING nor None", path
+        f"null cannot unset {name}: its type takes neither MISSING nor None; " + remedy,
+        path,
     )
 
 
@@ -393,7 +402,9 @@ def _field_adapter(model_cls: type[VcoModel], name: str) -> TypeAdapter[object]:
     ``@field_validator``s for the field (``"*"`` ones too), applied after the
     metadata in the order defined, as pydantic does, and the class's config
     (``use_enum_values`` and the rest). Model validators are not field
-    validation and do not run.
+    validation and do not run here. When a model instance is the value, as
+    ``_merge_field`` gives one, the class's ``after`` and ``wrap`` model
+    validators do run on it.
     """
     fi = model_cls.model_fields[name]
     metadata: list[object] = list(fi.metadata)
@@ -439,16 +450,19 @@ def _validate_field(
 
 
 def _refuse_bool_as_number(given: object, stored: object, path: Path) -> None:
-    """Raise ``PatchError`` at *path* when *given* is a boolean and *stored*, what validation made of it, is not.
+    """Raise ``PatchError`` at *path* for a boolean *given* where *stored* is none.
 
-    Pydantic reads ``True`` as the integer 1, so ``{"vlan_id": true}`` would
-    otherwise be VLAN 1. A boolean is taken only where the field holds one.
+    *stored* is what validation made of *given*. Pydantic reads ``True`` as
+    the integer 1, so ``{"vlan_id": true}`` would otherwise be VLAN 1. A
+    boolean is taken only where the field holds one.
     """
+    # Only *given* itself is compared: a boolean nested in a ``dict[str, int]``
+    # value or a list of lists is not (no configuration model has such a field).
     if isinstance(given, bool) and not isinstance(stored, bool):
         word = "true" if given else "false"
         raise PatchError(
             f"{word} is a boolean, which this value does not take: "
-            + f"it would be read as {stored!r}",
+            + f"it would be read as {stored!r}; send a number",
             path,
         )
 
@@ -477,6 +491,10 @@ def _check_merged(model: VcoModel, validate: Callable[..., object], path: Path) 
     context, so that a ``DefaultingModel`` field does not swallow the failure.
     A validator that raises anything but ``ValidationError`` (one that takes
     its input to be a dict, say) raises ``PatchError`` as well.
+
+    The copy is shallow: a validator that assigns an attribute does not change
+    *model*, but one that mutates a list in place would (no validator of the
+    models does).
     """
     name = type(model).__name__
     try:
@@ -487,8 +505,10 @@ def _check_merged(model: VcoModel, validate: Callable[..., object], path: Path) 
         ) from exc
     except Exception as exc:
         raise PatchError(
-            f"{name} could not be checked after this change: "
-            + f"{type(exc).__name__}: {exc}",
+            f"a validator of {name} failed on the changed model with "
+            + f"{type(exc).__name__}: {exc}; the model validators of {name} "
+            + "must accept a model instance, as well as the dict a response "
+            + "gives them",
             path,
         ) from exc
 
@@ -993,6 +1013,12 @@ def _show_key(key: KeyValue) -> str:
     return repr(key_text(key) if isinstance(key, tuple) else str(key))
 
 
+def _show_item(spec: _ListSpec, item: object, index: int) -> str:
+    """The item at position *index* of a keyed list for a message: by its key, or by its position when it has none."""
+    key = item_key(item, spec.key_paths)
+    return f"item #{index}" if key is None else f"item {_show_key(key)}"
+
+
 def _show_selector(selector: object) -> str:
     """A selector for a message: a tuple or list of key parts as ``key_text`` writes it, quoted."""
     if isinstance(selector, (tuple, list)):
@@ -1359,10 +1385,12 @@ def _check_list_value(
         alt = _alt_key(spec, item)
         if alt is not None:
             if alt in seen_alt:
+                first = seen_alt[alt]
                 raise PatchError(
-                    f"items #{seen_alt[alt]} and #{index} have one alt key, "
-                    + f"{alt!r}: the items of a keyed list have distinct "
-                    + "alt keys",
+                    f"items #{first} and #{index} have one alt key, {alt!r}: "
+                    + "the items of a keyed list have distinct alt keys; "
+                    + f"{_show_item(spec, built[first], first)} holds it "
+                    + f"already, so give item #{index} another alt key",
                     path,
                 )
             seen_alt[alt] = index
@@ -1460,10 +1488,16 @@ def _merge_items(
     for entry in alt_changed:
         assert entry.slot is not None
         alt = _alt_key(spec, entry.slot.value)
-        if alt is not None and any(
-            s is not entry.slot and _alt_key(spec, s.value) == alt for s in slots
-        ):
-            raise PatchError(f"another item has the alt key {alt!r}", entry.path)
+        if alt is None:
+            continue
+        for index, other in enumerate(slots):
+            if other is not entry.slot and _alt_key(spec, other.value) == alt:
+                raise PatchError(
+                    f"{_show_item(spec, other.value, index)} already has the "
+                    + f"alt key {alt!r}: give this item another alt key, or "
+                    + "change that item instead",
+                    entry.path,
+                )
 
     deleted = {id(e.slot) for e in entries if e.kind == "delete"}
     slots = [s for s in slots if id(s) not in deleted]
@@ -1632,7 +1666,9 @@ def _check_add(
         raise PatchError(
             f"{str(selector)!r} names no value: an add in a list of values takes "
             + "the value itself as its selector, "
-            + 'as in {"<value>": {"_op": "add"}}',
+            + 'as in {"<value>": {"_op": "add"}} (`{"<value>": add()}`); a '
+            + 'value that starts with "+" cannot be added under its own text, '
+            + "so give the whole list as a list value",
             where,
         )
     if op.body:
@@ -1860,8 +1896,15 @@ def _new_list_item(
                 entry.path,
             )
     alt = _alt_key(spec, new)
-    if alt is not None and any(_alt_key(spec, s.value) == alt for s in slots):
-        raise PatchError(f"{alt!r} is already in the list as an alt key", entry.path)
+    if alt is not None:
+        for index, slot in enumerate(slots):
+            if _alt_key(spec, slot.value) == alt:
+                raise PatchError(
+                    f"{alt!r} is already in the list as an alt key, that of "
+                    + f"{_show_item(spec, slot.value, index)}: give the new "
+                    + "item another alt key, or change that item instead",
+                    entry.path,
+                )
     return new
 
 
@@ -1913,7 +1956,8 @@ def _merge_map(
                 raise PatchError(
                     f"{text!r} names no entry of a map: an add takes the new "
                     + "entry's key as its selector, "
-                    + 'as in {"<key>": {"_op": "add", ...}}',
+                    + 'as in {"<key>": {"_op": "add", ...}} '
+                    + '(`{"<key>": add(...)}`)',
                     where,
                 )
             key = _new_map_key(spec, text, where)

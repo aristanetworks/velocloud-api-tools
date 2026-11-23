@@ -543,9 +543,10 @@ def test_unset_keyed_list_is_created_by_an_add():
 @pytest.mark.parametrize("selector", ["+", "+lo", "#0", "#7"])
 def test_map_add_takes_a_key_not_a_new_item_or_position_selector(selector: str):
     root = Root(by_name={"x": Sub()})
-    _ = raises_at(
+    error = raises_at(
         root, {"by_name": {selector: add({"v": 1})}}, f'by_name["{selector}"]'
     )
+    assert "add(...)" in error.message
     assert list(root.by_name) == ["x"]
 
 
@@ -558,8 +559,17 @@ def test_a_map_entry_whose_key_reads_as_a_selector_is_still_named_by_it():
 @pytest.mark.parametrize("selector", ["+", "+tag"])
 def test_value_list_add_takes_the_value_not_a_new_item_selector(selector: str):
     root = values()
-    _ = raises_at(root, {"names": {selector: add()}}, f'names["{selector}"]')
+    error = raises_at(root, {"names": {selector: add()}}, f'names["{selector}"]')
+    assert "add()" in error.message
+    assert "a list value" in error.message
     assert root.names == ["a", "b", "c"]
+
+
+def test_a_value_spelled_like_a_selector_is_still_named_by_it():
+    root = Root(names=["+x", "a"])
+    error = raises_at(root, {"names": {"+x": add()}}, 'names["+x"]')
+    assert "already in the list" in error.message
+    assert root.names == ["+x", "a"]
 
 
 # ---------------------------------------------------------------------------

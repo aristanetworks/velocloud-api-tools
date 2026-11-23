@@ -138,7 +138,8 @@ def test_a_change_cannot_give_an_item_another_items_alt_key():
     with pytest.raises(PatchError) as exc:
         _ = root.merge_patch({"rules": {"b": {"rule_id": "i1"}}})
     assert exc.value.path == Path.parse("rules[b]")
-    assert "'i1'" in exc.value.message
+    assert "item 'a' already has the alt key 'i1'" in exc.value.message
+    assert "another alt key" in exc.value.message
     assert ids(root) == [("a", "i1"), ("b", "i2")]
 
 
@@ -154,6 +155,8 @@ def test_an_add_cannot_bring_an_alt_key_that_is_in_the_list():
         _ = root.merge_patch({"rules": {"c": add({"rule_id": "i1"})}})
     assert exc.value.path == Path.parse("rules[c]")
     assert "'i1'" in exc.value.message
+    assert "item 'a'" in exc.value.message
+    assert "another alt key" in exc.value.message
     assert ids(root) == [("a", "i1"), ("b", "i2")]
     with pytest.raises(PatchError) as exc:
         _ = two().merge_patch(
@@ -173,6 +176,15 @@ def test_an_add_may_take_an_alt_key_the_same_patch_frees():
     assert ids(root) == [("b", "i2"), ("c", "i1")]
 
 
+def test_a_change_cannot_take_an_alt_key_that_a_delete_in_the_same_patch_frees():
+    # Selectors are resolved against the list as it was, as for a rename.
+    root = two()
+    with pytest.raises(PatchError) as exc:
+        _ = root.merge_patch({"rules": {"a": delete(), "b": {"rule_id": "i1"}}})
+    assert exc.value.path == Path.parse("rules[b]")
+    assert ids(root) == [("a", "i1"), ("b", "i2")]
+
+
 def test_a_list_value_cannot_repeat_an_alt_key():
     root = two()
     value = [{"name": "x", "rule_id": "i"}, {"name": "y", "rule_id": "i"}]
@@ -180,6 +192,8 @@ def test_a_list_value_cannot_repeat_an_alt_key():
         _ = root.merge_patch({"rules": value})
     assert exc.value.path == Path.parse("rules")
     assert "#0" in exc.value.message and "#1" in exc.value.message
+    assert "item 'x' holds it already" in exc.value.message
+    assert "give item #1 another alt key" in exc.value.message
     assert ids(root) == [("a", "i1"), ("b", "i2")]
 
 

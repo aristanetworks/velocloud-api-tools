@@ -6,10 +6,12 @@ operations as plain JSON values; ``parse_item_op`` reads one back.
 ``checked_patch`` is the check every patch passes once, at entry.
 """
 
+import datetime
 import math
 import re
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
+from enum import Enum
 from typing import Literal, cast, override
 from uuid import UUID
 
@@ -269,7 +271,9 @@ def checked_patch(patch: object, path: Path = _ROOT) -> object:
     deep, the patch itself being the first. A selector may also be written
     the Python way: a dict key that is an ``int`` (not a ``bool``), a ``UUID``
     or a ``tuple`` of ``str``, ``int``, ``float`` and ``UUID`` parts. Keys are
-    kept as they are, in their order. Anything else raises ``PatchError`` at
+    kept as they are, in their order. A value or key that is an instance of
+    a subclass of ``int``, ``float`` or ``str`` (an ``IntEnum`` or ``StrEnum``
+    member) is copied as the plain value. Anything else raises ``PatchError`` at
     the place it sits; a key that is not one raises at the place of its dict.
     The walk never goes deeper than the bound, so a patch of any depth, or one
     that holds itself, raises and does not exhaust the stack.
@@ -284,18 +288,23 @@ def checked_patch(patch: object, path: Path = _ROOT) -> object:
 
 def _check(value: object, parts: tuple[PathPart, ...]) -> object:
     """*value* checked and copied. *parts* is where it sits (a ``Path`` is built only for an error)."""
-    if value is None or isinstance(value, (bool, int, str)):
+    if value is None or isinstance(value, bool):
         return value
+    if isinstance(value, (int, str)):
+        return _plain(value)
     if isinstance(value, float):
         if math.isfinite(value):
-            return value
+            return float(value)
         raise PatchError(
             f"{value!r} is not a JSON number: a number in a patch is finite",
             Path(parts),
         )
     if isinstance(value, (dict, list)) and len(parts) >= MAX_PATCH_DEPTH:
         raise PatchError(
-            f"the patch nests more than {MAX_PATCH_DEPTH} levels deep", Path(parts)
+            f"the patch nests more than {MAX_PATCH_DEPTH} levels deep: split it "
+            "into smaller patches, or address the place it changes with "
+            "segment or path",
+            Path(parts),
         )
     if isinstance(value, list):
         items = cast("list[object]", value)
@@ -310,8 +319,10 @@ def _check(value: object, parts: tuple[PathPart, ...]) -> object:
                     "or for a selector an int, a UUID or a tuple of key parts",
                     Path(parts),
                 )
-            copied[key] = _check(
-                item, (*parts, key if isinstance(key, str) else str(key))
+            plain_key = _plain(key)
+            copied[plain_key] = _check(
+                item,
+                (*parts, plain_key if isinstance(plain_key, str) else str(plain_key)),
             )
         return copied
     if value is MISSING:
@@ -319,13 +330,44 @@ def _check(value: object, parts: tuple[PathPart, ...]) -> object:
             "MISSING is not a JSON value: write None (null) to unset a field",
             Path(parts),
         )
+    raise PatchError(_not_json_message(value), Path(parts))
+
+
+def _not_json_message(value: object) -> str:
+    """What to say of *value*, which is not a JSON value: what it is, and what to give instead."""
     message = (
         f"{type(value).__name__} is not a JSON value: a patch holds dicts, "
         "lists, strings, numbers, booleans and None"
     )
     if isinstance(value, BaseModel):
-        message += '; give a model as its JSON-mode dump, model_dump(mode="json")'
-    raise PatchError(message, Path(parts))
+        return message + '; give a model as its JSON-mode dump, model_dump(mode="json")'
+    if isinstance(value, UUID):
+        message += "; write a UUID as its text, str(value)"
+    elif isinstance(value, Enum):
+        message += "; give an Enum member as its value, member.value"
+    elif isinstance(value, (datetime.date, datetime.time)):
+        message += "; write a date or a time as its text, value.isoformat()"
+    elif isinstance(value, (set, frozenset, tuple, Iterator)):
+        message += "; give a set, a tuple or a generator as a list, list(value)"
+    else:
+        return message
+    if isinstance(value, (UUID, Enum)):
+        message += (
+            '. A model dumped without mode="json" holds such values: '
+            'dump it with model_dump(mode="json")'
+        )
+    return message
+
+
+def _plain[T](value: T) -> T:
+    """*value* as the plain ``int`` or ``str`` when it is an instance of a subclass of one (an ``IntEnum`` or ``StrEnum`` member), else itself."""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int) and type(value) is not int:
+        return cast("T", int(value))
+    if isinstance(value, str) and type(value) is not str:
+        return cast("T", str.__str__(value))
+    return value
 
 
 def _is_json_key(key: object) -> bool:

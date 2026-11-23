@@ -2,6 +2,7 @@
 
 import copy
 import uuid
+from collections.abc import Callable
 from typing import Annotated, Any, Self, cast
 
 import pytest
@@ -17,8 +18,9 @@ from pydantic import (
 from pyvelo.client.models.configuration.device_settings.root import (
     DeviceSettingsData,
 )
-from pyvelo.core import KeyField, Positional, VcoModel, add, at, delete
+from pyvelo.core import KeyField, PatchError, Positional, VcoModel, add, at, delete
 
+from .patch_models import Root, Rule
 from .test_patch_strict import raises_at
 
 
@@ -102,6 +104,52 @@ def test_a_change_that_a_model_validator_refuses_raises_at_the_model(
     assert "a collector is required when enabled" in error.message
     assert isinstance(error.__cause__, ValidationError)
     assert site.model_dump() == dump
+
+
+def snapshot(value: object) -> object:
+    """What a model holds, recursively: its dump and the fields it was given."""
+    if isinstance(value, VcoModel):
+        return (
+            value.model_dump(),
+            set(value.model_fields_set),
+            {name: snapshot(getattr(value, name)) for name in type(value).model_fields},
+        )
+    if isinstance(value, list):
+        return [snapshot(item) for item in cast("list[object]", value)]
+    if isinstance(value, dict):
+        return {k: snapshot(v) for k, v in cast("dict[object, object]", value).items()}
+    return copy.deepcopy(value)
+
+
+def two_rules() -> VcoModel:
+    return Root(rules=[Rule(name="a", rule_id="i1"), Rule(name="b", rule_id="i2")])
+
+
+def one_flow() -> VcoModel:
+    return Site(flow=on(), by_name={"x": on()})
+
+
+@pytest.mark.parametrize(
+    ("make", "patch"),
+    [
+        (two_rules, {"sub": {"v": 9}, "count": True}),
+        (two_rules, {"sub": {"v": 9}, "by_name": {"+": add({"v": 1})}}),
+        (two_rules, {"sub": {"v": 9}, "rules": {"b": {"rule_id": "i1"}}}),
+        (
+            one_flow,
+            {"by_name": {"x": {"enabled": True}}, "flow": {"collectors": []}},
+        ),
+    ],
+    ids=["boolean", "add-under-plus", "repeated-alt-key", "validator"],
+)
+def test_a_refused_patch_leaves_the_model_alone(
+    make: Callable[[], VcoModel], patch: dict[str, object]
+):
+    model = make()
+    before = snapshot(model)
+    with pytest.raises(PatchError):
+        _ = model.merge_patch(patch)
+    assert snapshot(model) == before
 
 
 def test_a_model_validator_runs_on_the_model_merge_patch_is_called_on():
@@ -269,6 +317,7 @@ class Dicty(VcoModel):
 def test_a_validator_that_takes_its_input_to_be_a_dict_raises_a_patch_error():
     dicty = Dicty.model_validate({"v": 1})
     error = raises_at(dicty, {"v": 2}, "")
-    assert "could not be checked" in error.message
+    assert "a validator of Dicty failed" in error.message
+    assert "must accept a model instance" in error.message
     assert isinstance(error.__cause__, TypeError)
     assert dicty.v == 1

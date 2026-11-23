@@ -5,7 +5,7 @@ import datetime
 import ipaddress
 import json
 import uuid
-from enum import Enum, IntEnum
+from enum import Enum, IntEnum, StrEnum
 from types import MappingProxyType
 from typing import Annotated, Literal
 
@@ -70,7 +70,13 @@ def test_null_sets_none_where_the_type_has_none():
 
 @pytest.mark.parametrize("name", ["flag", "sub", "count"])
 def test_null_raises_where_the_type_has_neither(name: str):
-    _ = raises_at(Root(), {name: None}, name)
+    error = raises_at(Root(), {name: None}, name)
+    assert "a change cannot unset it" in error.message
+
+
+def test_null_in_a_built_model_where_the_type_has_neither_says_to_leave_the_key_out():
+    error = raises_at(Root(), {"maybe": {"v": None}}, "maybe.v")
+    assert error.message.endswith("leave the key out")
 
 
 def test_value_replaces_and_is_coerced():
@@ -369,6 +375,8 @@ def test_nesting_is_bounded():
     with pytest.raises(PatchError) as exc:
         _ = Root().merge_patch({"blobs": [nested(63)]})
     assert "64" in exc.value.message
+    assert "split it into smaller patches" in exc.value.message
+    assert "segment or path" in exc.value.message
     assert len(exc.value.path.parts) == 64
 
 
@@ -384,7 +392,7 @@ def test_the_model_shares_no_object_with_the_patch():
 
 def test_a_patch_that_is_not_a_dict_is_a_type_error():
     root = Root()
-    with pytest.raises(TypeError, match="dict"):
+    with pytest.raises(TypeError, match="write .*<field>.*: value"):
         _ = root.merge_patch(MappingProxyType({"count": 1}))
     with pytest.raises(TypeError, match="dict"):
         _ = root.merge_patch(json.loads('[["count", 1]]'))
@@ -393,6 +401,31 @@ def test_a_patch_that_is_not_a_dict_is_a_type_error():
 
 class Colour(Enum):
     RED = "red"
+
+
+@pytest.mark.parametrize(
+    ("value", "remedy"),
+    [
+        (uuid.UUID(int=1), "str(value)"),
+        (Colour.RED, "member.value"),
+        (datetime.date(2026, 1, 1), "isoformat()"),
+        (datetime.time(1, 2), "isoformat()"),
+        ({"a"}, "as a list"),
+        (("a",), "as a list"),
+        ((x for x in "a"), "as a list"),
+    ],
+)
+def test_a_value_that_is_not_json_says_what_to_write_instead(
+    value: object, remedy: str
+):
+    error = raises_at(Root(), {"blobs": [{"a": value}]}, "blobs[#0].a")
+    assert remedy in error.message
+
+
+@pytest.mark.parametrize("value", [uuid.UUID(int=1), Colour.RED])
+def test_a_uuid_or_enum_member_points_to_the_json_dump(value: object):
+    error = raises_at(Root(), {"title": value}, "title")
+    assert 'model_dump(mode="json")' in error.message
 
 
 @pytest.mark.parametrize(
@@ -414,6 +447,46 @@ def test_a_python_object_is_not_a_json_value(
     error = raises_at(root, patch, path)
     assert error.message.startswith(f"{text} is not a JSON value")
     assert root.model_dump() == dump
+
+
+class Count(IntEnum):
+    ONE = 1
+
+
+class Word(StrEnum):
+    HELLO = "hello"
+
+
+class Ratio(float):
+    pass
+
+
+def test_a_subclass_of_a_json_scalar_is_stored_as_the_plain_value():
+    root = Root()
+    _ = root.merge_patch(
+        {
+            "blobs": [
+                {"n": Count.ONE, "w": Word.HELLO, "r": Ratio(0.5), "k": [Count.ONE]}
+            ]
+        }
+    )
+    (blob,) = root.blobs
+    assert blob == {"n": 1, "w": "hello", "r": 0.5, "k": [1]}
+    assert {key: type(value) for key, value in blob.items() if key != "k"} == {
+        "n": int,
+        "w": str,
+        "r": float,
+    }
+    assert type(blob["k"][0]) is int
+
+
+def test_a_subclass_of_str_as_a_key_is_stored_as_the_plain_key():
+    root = Root()
+    _ = root.merge_patch({"blobs": [{"inner": {Word.HELLO: 1}}]})
+    (blob,) = root.blobs
+    (key,) = blob["inner"]
+    assert key == "hello"
+    assert type(key) is str
 
 
 def test_from_python_a_patch_is_json_too():
@@ -549,6 +622,7 @@ def test_a_boolean_is_not_taken_for_a_number(patch: dict[str, object], path: str
     dump = copy.deepcopy(root.model_dump())
     error = raises_at(root, patch, path)
     assert "true" in error.message or "false" in error.message
+    assert error.message.endswith("send a number")
     assert root.model_dump() == dump
 
 
