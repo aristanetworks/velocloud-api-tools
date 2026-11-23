@@ -508,8 +508,9 @@ class ConfigurationMixin(Protocol):
           answered with the module as read, unchanged.
         - ``WriteNotAppliedError`` when the VCO stored the write otherwise than
           as planned. ``RefsDroppedError``, a subclass, when every change not
-          stored is a ref row: it needs a change that is stored beside, and a
-          write of ref rows alone that stores none is a conflict.
+          stored is a ref row. An update the VCO answered with the module
+          needs a change that is stored beside: a write of ref rows alone
+          that stores none is a conflict.
         - ``WriteOutcomeUnknownError`` when the write was sent, or was about
           to be sent again, and the module as stored cannot be read: the
           answer or the row read back does not parse, the read-back does not

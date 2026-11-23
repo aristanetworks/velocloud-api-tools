@@ -263,7 +263,10 @@ def test_message_names_each_path_and_marks_a_clash():
     with pytest.raises(WriteNotAppliedError) as exc:
         _ = check_module_write(module, plan, as_stored(module, {**RAW, "future": 3}))
     lines = str(exc.value).splitlines()
-    assert "lost edits (not stored; `error.redo_patch()` redoes them):" in lines
+    assert (
+        "lost edits (not stored; `error.redo_patch()` redoes those it can, `error.not_redone()` lists the rest):"
+        in lines
+    )
     assert (
         "  future: read 1, meant 2, stored 3  [clash: also changed on the VCO]" in lines
     )
@@ -289,7 +292,7 @@ def test_long_values_are_cut_where_they_differ():
     with pytest.raises(ConfigConflictError) as exc:
         _ = check_module_write(module, plan, stored)
     assert str(exc.value).splitlines()[1:] == [
-        "lost edits (not stored; `error.redo_patch()` redoes them):",
+        "lost edits (not stored; `error.redo_patch()` redoes those it can, `error.not_redone()` lists the rest):",
         (
             "  future: read …50, 51, 52, 53, 54, 55, 56, 57, 58, 59], "
             "meant …50, 51, 52, 53, 54, 99, 56, 57, 58, 59], "
@@ -318,7 +321,10 @@ def test_message_shows_the_place_of_an_added_rule_and_the_order():
     with pytest.raises(ConfigConflictError) as exc:
         _ = check_module_write(module, plan, stored, answer="refused")
     lines = str(exc.value).splitlines()
-    assert lines[1] == "lost edits (not stored; `error.redo_patch()` redoes them):"
+    assert (
+        lines[1]
+        == "lost edits (not stored; `error.redo_patch()` redoes those it can, `error.not_redone()` lists the rest):"
+    )
     assert lines[2].startswith(
         '  inbound[c] (first): read (nothing), meant {"action": '
     )
@@ -1066,10 +1072,17 @@ async def test_a_provider_row_the_vco_skipped_is_refs_dropped(
     assert not caught.value.every_row_lost
     message = str(caught.value)
     assert "all of them are ref rows" in message
-    assert "Check that the object of each row below exists" in message
+    assert "Check that the object of each row added exists" in message
+    assert "The VCO kept a ref row" not in message
     assert (
-        'send the patch {"segments": {"Global Segment": {"dns": '
-        '{"primary_provider": {"service": '
+        f"to set {PRIMARY_OWNER} again, send the patch "
+        '{"segments": {"Global Segment": {"dns": {"primary_provider": '
+        '{"service": "<the name or the logical ID of a service that exists>"}}}}} '
+        "(error.module reads it as unset)"
+    ) in message
+    assert (
+        "lost edits (not stored; `error.redo_patch()` redoes those it can, "
+        "`error.not_redone()` lists the rest):"
     ) in message
 
 
@@ -1248,6 +1261,15 @@ async def test_a_row_the_plan_removed_that_is_still_stored_is_refs_dropped(
     assert str(lost.path) == PRIMARY_ROW_PATH and lost.intended is MISSING
     assert lost.stored is not MISSING and lost.clash is False
     assert not caught.value.every_row_lost
+    message = str(caught.value)
+    assert "The VCO kept a ref row the plan removed" in message
+    assert "Check that the object" not in message
+    assert (
+        f"to clear {PRIMARY_OWNER} again, send the patch "
+        '{"segments": {"Global Segment": {"dns": {"primary_provider": '
+        '{"service": null}}}}} (error.module reads it as set)'
+    ) in message
+    assert "to set " not in message
 
 
 async def test_a_refused_refs_only_write_is_a_conflict(

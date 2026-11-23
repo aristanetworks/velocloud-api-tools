@@ -580,19 +580,21 @@ A ref row the VCO does not store is not a stored write either. The VCO
 replaces a module's refs row by row, and it skips a row whose object it cannot
 resolve (a service that is not there) and stores the others. The save compares
 the refs it gets back with the ones it sent, row by row by identity and never
-by content. `RefsDroppedError` is raised when the data of the write is stored
-and every change that is not is a ref row: a row you added that the VCO did not
-store, or a row you removed that it kept. It needs one change that is stored,
-so a ref change beside a data edit. A write whose only changes are ref rows,
-none of them stored, is a `ConfigConflictError`, and its message names both
-causes: the module changed since it was read, or the VCO would not take a new
-row because it cannot resolve its object. The error lists each lost row by its
-ref name and identity. To redo it, check that the object exists and set the
-field again on `error.module`, which reads it as unset: the message gives the
-patch. The VCO writes nothing of its own to put a skipped row back. When it took
-none of the rows the write sent, `error.every_row_lost` is true and
-`error.refs_as_read` holds the refs as the module was read, to put back by
-sending `configuration/updateConfigurationModule` with
+by content. `RefsDroppedError` is raised when every change that is not stored
+is a ref row: a row you added that the VCO did not store, or a row you removed
+that it kept. An update the VCO answered with the module needs one change that
+is stored beside, so a ref change beside a data edit: one whose only changes
+are ref rows, none of them stored, is a `ConfigConflictError`, and its message
+names both causes: the module changed since it was read, or the VCO would not
+take a new row because it cannot resolve its object. The error lists each lost
+row by its ref name and identity. To redo one you added, check that the object
+exists and set the field again on `error.module`, which reads it as unset; for
+one you removed that the VCO kept, clear the field again, as it reads as set.
+The message gives the patch for each. The VCO writes nothing of its own to put
+a skipped row back. When it took none of the rows the write sent,
+`error.every_row_lost` is true and `error.refs_as_read` holds the refs as the
+module was read, to put back by sending
+`configuration/updateConfigurationModule` with
 `{"id": <module ID>, "_update": {"refs": <error.refs_as_read>}}`
 (`update_configuration_module`). A row you did not change that the VCO leaves
 out of the refs it returns is not an error: it is a `server_changes` entry, as
@@ -628,7 +630,7 @@ refused, and another writer had changed the same port and another key:
 
 ```text
 Configuration module 11 (firewall) changed since it was read (version v1): the VCO refused the version
-lost edits (not stored; `error.redo_patch()` redoes them):
+lost edits (not stored; `error.redo_patch()` redoes those it can, `error.not_redone()` lists the rest):
   segments["Global Segment"].outbound[block-ssh] (first): read (nothing), meant {"action": {"allow_or_deny": "deny"}, "comments": null, "loggingEnabled": false,…, stored (nothing)
   segments["Global Segment"].outbound[allow-web].match.dport_high: read 443, meant 8080, stored 8443  [clash: also changed on the VCO]
 stored otherwise than sent:

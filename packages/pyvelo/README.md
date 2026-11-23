@@ -69,10 +69,11 @@ when the VCO answers without it. An update none of whose changes could be found
 stored (every one is to a value the VCO stores its own way) is sent without
 `returnData`. The VCO then answers with a row count, which says whether it
 stored the write, and the module is read back. `write_module` then compares
-what the VCO stored with what the plan meant to change. When every planned change is stored it returns a `ModuleWrite`:
-the module as stored, the planned changes `applied`, and the `server_changes`
-(what else the VCO stores otherwise than sent, such as an ID it issued).
-Otherwise it raises, from `pyvelo.client.exceptions`:
+what the VCO stored with what the plan meant to change. When every planned
+change is stored it returns a `ModuleWrite`: the module as stored, the planned
+changes `applied`, and the `server_changes` (what else the VCO stores otherwise
+than sent, such as an ID it issued). Otherwise it raises, from
+`pyvelo.client.exceptions`:
 
 - `ConfigConflictError` when the VCO refused the version and the module as
   stored does not already hold every planned change, or when it answered with
@@ -90,10 +91,12 @@ Otherwise it raises, from `pyvelo.client.exceptions`:
   was read: when the VCO took none of the rows sent (`error.every_row_lost`),
   put them back by sending `configuration/updateConfigurationModule` with
   `{"id": <module ID>, "_update": {"refs": <error.refs_as_read>}}`
-  (`update_configuration_module`). Otherwise check that the object exists and
-  set the field again on `error.module`; the message gives the patch. It needs
-  one change that is stored: a write whose only changes are ref rows, none of
-  them stored, is a `ConfigConflictError`, and its message names both causes. A
+  (`update_configuration_module`). Otherwise, for a row you added, check that
+  the object exists and set the field again on `error.module`; for a row you
+  removed that the VCO kept, clear the field again. The message gives the patch
+  for each. An update the VCO answered with the module needs one change that is
+  stored beside: one whose only changes are ref rows, none of them stored, is a
+  `ConfigConflictError`, and its message names both causes. A
   row sent as read that the returned refs lack, and any difference in the rows
   of the refs the VCO's own processors manage, are `server_changes`, not errors;
 - `WriteOutcomeUnknownError` when the write was sent and the module as stored

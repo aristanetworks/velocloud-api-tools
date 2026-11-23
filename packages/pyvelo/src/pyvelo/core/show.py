@@ -109,14 +109,16 @@ def moves_text(moves: Sequence[ItemMove]) -> str:
     return text
 
 
-def patch_text(path: Path) -> str:
-    """The merge patch that sets the field at *path* to a service, as JSON a text-only caller can send.
+def patch_text(path: Path, *, clear: bool = False) -> str:
+    """The merge patch that sets the field at *path* to a service, or clears it, as JSON a text-only caller can send.
 
     The path is in the names a patch is written in; a keyed item is named by
     its key. The value is a placeholder to replace with the name or the
-    logical ID of a service that exists.
+    logical ID of a service that exists, or ``null`` with *clear*.
     """
-    patch: object = "<the name or the logical ID of a service that exists>"
+    patch: object = (
+        None if clear else "<the name or the logical ID of a service that exists>"
+    )
     for part in reversed(path.parts):
         text = str(part.value) if isinstance(part, Key) else str(part)
         patch = {text: patch}

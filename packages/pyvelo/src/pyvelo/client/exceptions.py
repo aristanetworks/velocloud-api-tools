@@ -442,7 +442,10 @@ class ModuleWriteError(VcoError):
         """
         lines = [self._headline(), *self._notes(limit)]
         if self.lost_edits:
-            lines.append("lost edits (not stored; `error.redo_patch()` redoes them):")
+            lines.append(
+                "lost edits (not stored; `error.redo_patch()` redoes those it can, "
+                "`error.not_redone()` lists the rest):"
+            )
             for change in _first(self.lost_edits, limit):
                 as_read, intended, stored = self._values(
                     change, change.as_read, change.intended, change.stored
@@ -725,8 +728,10 @@ class WriteNotAppliedError(ModuleWriteError):
 class RefsDroppedError(WriteNotAppliedError):
     """Raised when the VCO stored a module write but not all of its ref rows.
 
-    Every lost edit is a ref row, and at least one change is stored: the VCO
-    deletes the module's refs and inserts the rows sent one by one, and it
+    Every lost edit is a ref row. After an update answered with the module, a
+    change is stored beside them (with none, the write is a conflict); an
+    insert, or a write the VCO only counted, raises this with none stored too.
+    The VCO deletes the module's refs and inserts the rows sent one by one, and it
     skips on its own a row whose object it cannot resolve while it stores the
     others. A row the plan added is not stored, or one it removed still is
     (``lost_edits``; each has ``part == "refs"``, and ``owner`` is the path of
@@ -801,21 +806,32 @@ class RefsDroppedError(WriteNotAppliedError):
                 )
             ]
         else:
-            lines = [
-                (
+            lines = []
+            if any(edit.intended is not MISSING for edit in self.lost_edits):
+                lines.append(
                     "The VCO skips a ref row whose object it cannot resolve and "
-                    "stores the others. Check that the object of each row below "
-                    "exists on the VCO, then make the change again on "
+                    "stores the others. Check that the object of each row "
+                    "added exists on the VCO, then make the change again on "
                     "error.module."
                 )
-            ]
+            if any(edit.intended is MISSING for edit in self.lost_edits):
+                lines.append(
+                    "The VCO kept a ref row the plan removed. Clear the field it "
+                    "goes with again on error.module."
+                )
         owners = [edit for edit in self.lost_edits if edit.owner is not None]
         for edit in _first(owners, limit):
             owner = cast(Path, edit.owner)
-            lines.append(
-                f"  to set {owner} again, send the patch {patch_text(owner)} "
-                "(error.module reads it as unset)"
-            )
+            if edit.intended is MISSING:
+                lines.append(
+                    f"  to clear {owner} again, send the patch "
+                    f"{patch_text(owner, clear=True)} (error.module reads it as set)"
+                )
+            else:
+                lines.append(
+                    f"  to set {owner} again, send the patch {patch_text(owner)} "
+                    "(error.module reads it as unset)"
+                )
         lines.extend(_and_more(len(owners), limit, "lost_edits"))
         return lines
 

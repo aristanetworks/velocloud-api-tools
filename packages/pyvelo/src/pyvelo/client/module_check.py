@@ -358,8 +358,10 @@ def check_module_write[M: ConfigurationModuleBase](
     row with none of the changes stored and each value as read, and
     ``WriteNotAppliedError`` for anything else and for every ``"counted"``
     write. ``RefsDroppedError`` takes the place of ``WriteNotAppliedError``
-    when every lost edit is a ref row, so it needs at least one change applied
-    (a data edit beside the ref change): with none, the write is a conflict.
+    when every lost edit is a ref row. After a ``"row"`` answer to an update
+    it needs a change applied (a data edit beside the ref change): with none,
+    the write is a conflict. An insert and a ``"counted"`` write are never
+    inferred to be conflicts, so they raise it with none applied too.
     """
     if not isinstance(stored, type(module)):
         raise TypeError(
