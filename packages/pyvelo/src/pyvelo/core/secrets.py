@@ -11,9 +11,9 @@ from pydantic import MISSING
 
 from .base import (
     VcoModel,
-    _is_dict,  # pyright: ignore[reportPrivateUsage]
-    _is_list,  # pyright: ignore[reportPrivateUsage]
     field_models,
+    is_dict,
+    is_list,
     list_kind,
     python_name,
 )
@@ -54,9 +54,9 @@ def _under(classes: _Classes, key: object) -> tuple[bool, _Classes, bool] | None
 def _hide(value: object, classes: _Classes, is_map: bool) -> object:
     if not classes:
         return value
-    if _is_list(value) or _is_tuple(value):
+    if is_list(value) or _is_tuple(value):
         return [_hide(item, classes, is_map) for item in value]
-    if not _is_dict(value):
+    if not is_dict(value):
         return value
     if is_map:  # the keys are map keys, not field names
         return {key: _hide(item, classes, False) for key, item in value.items()}

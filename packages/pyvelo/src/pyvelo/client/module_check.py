@@ -38,8 +38,8 @@ from pyvelo.client.module_write import ModulePlan
 from pyvelo.client.schemas.configuration import ConfigurationModuleBase
 from pyvelo.core import VcoModel
 from pyvelo.core.base import (
-    _is_dict,  # pyright: ignore[reportPrivateUsage]
-    _is_list,  # pyright: ignore[reportPrivateUsage]
+    is_dict,
+    is_list,
 )
 from pyvelo.core.rebase import Key, KeyScalar, Path, key_part
 from pyvelo.core.response_check import (
@@ -113,12 +113,12 @@ def ref_rows(refs: object) -> dict[RowId, dict[str, Any]]:
     entry that is not an object is no row. An ID a row lacks is None.
     """
     rows: dict[RowId, dict[str, Any]] = {}
-    if not _is_dict(refs):
+    if not is_dict(refs):
         return rows
     for name, value in refs.items():
-        entries = value if _is_list(value) else [value]
+        entries = value if is_list(value) else [value]
         for entry in entries:
-            if _is_dict(entry):
+            if is_dict(entry):
                 row = cast(dict[str, Any], entry)
                 identity = (
                     str(name),

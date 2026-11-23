@@ -37,7 +37,7 @@ from .rebase import (
     key_form,
 )
 
-type _Node = dict[str, object]
+type Node = dict[str, object]
 """An object of the patch."""
 
 
@@ -218,14 +218,14 @@ def _order_plan(
     return _Plan(change, "order", steps, list_path=list_path, moves=tuple(moves))
 
 
-def _object(value: object) -> _Node | None:
+def _object(value: object) -> Node | None:
     """A copy of *value* when it is an object, else None."""
     if not isinstance(value, dict):
         return None
-    return copy.deepcopy(cast("_Node", value))
+    return copy.deepcopy(cast("Node", value))
 
 
-def _nulls_writable(body: _Node, fields: Mapping[str, FieldInfo]) -> bool:
+def _nulls_writable(body: Node, fields: Mapping[str, FieldInfo]) -> bool:
     """Whether every ``None`` in *body*, the fields of an item that exists, is written by a ``null``.
 
     For an item that exists, a patch's ``null`` unsets a field that takes
@@ -304,7 +304,7 @@ def _value_plan(
         return None
     after = change.after
     if spec is not None and spec.kind == "map" and isinstance(after, dict):
-        return _new_map_plan(change, steps, name, cast("_Node", after))
+        return _new_map_plan(change, steps, name, cast("Node", after))
     if after is MISSING:
         if not _field_accepts_missing(field_info):
             return None
@@ -327,7 +327,7 @@ def _value_plan(
 
 
 def _new_map_plan(
-    change: RawChange, steps: tuple[str, ...], name: str, entries: _Node
+    change: RawChange, steps: tuple[str, ...], name: str, entries: Node
 ) -> _Plan | None:
     """The plan of a map of models that was not there and now has *entries*: one add each.
 
@@ -337,7 +337,7 @@ def _new_map_plan(
     """
     if change.before is not MISSING:
         return None
-    adds: _Node = {}
+    adds: Node = {}
     for key, entry in entries.items():
         body = _object(entry)
         if body is None or key.startswith("+") or position_of(key) is not None:
@@ -427,14 +427,14 @@ def _follows_an_item_there(
 # ---------------------------------------------------------------------------
 
 
-def _node(patch: _Node, steps: tuple[str, ...]) -> _Node:
+def _node(patch: Node, steps: tuple[str, ...]) -> Node:
     """The object of *patch* at *steps*, made where it is not there."""
     node = patch
     for step in steps:
         child = node.get(step)
         if not isinstance(child, dict):
             child = node[step] = {}
-        node = cast("_Node", child)
+        node = cast("Node", child)
     return node
 
 
@@ -444,7 +444,7 @@ def _new_selectors() -> Iterator[str]:
     yield from (f"+{n}" for n in itertools.count(2))
 
 
-def _added_selector(item: ItemPart, node: _Node) -> str:
+def _added_selector(item: ItemPart, node: Node) -> str:
     """The selector an add of *item* goes under in *node*, the object of its list.
 
     The item's own selector, unless that names a position or is taken: then a
@@ -456,10 +456,10 @@ def _added_selector(item: ItemPart, node: _Node) -> str:
     return selector
 
 
-def _write(plans: list[_Plan], stored_parts: Mapping[Path, ItemPart] | None) -> _Node:
+def _write(plans: list[_Plan], stored_parts: Mapping[Path, ItemPart] | None) -> Node:
     """The patch the *plans* write, in the order given, then the places."""
-    patch: _Node = {}
-    entries: dict[tuple[Path, ItemPart], tuple[_Node, str]] = {}
+    patch: Node = {}
+    entries: dict[tuple[Path, ItemPart], tuple[Node, str]] = {}
     for plan in plans:
         if plan.kind == "order" and not plan.moves:
             continue
@@ -467,20 +467,20 @@ def _write(plans: list[_Plan], stored_parts: Mapping[Path, ItemPart] | None) -> 
         if plan.kind == "value":
             node[plan.key] = plan.value
         elif plan.kind == "map_add":
-            node[plan.key] = {"_op": "add", **cast("_Node", plan.value)}
+            node[plan.key] = {"_op": "add", **cast("Node", plan.value)}
         elif plan.kind in ("delete", "map_delete"):
             node[plan.key] = {"_op": "delete"}
         elif plan.kind == "add":
             assert plan.item is not None and plan.list_path is not None
             selector = _added_selector(plan.item, node)
-            node[selector] = {"_op": "add", **cast("_Node", plan.value)}
+            node[selector] = {"_op": "add", **cast("Node", plan.value)}
             entries[plan.list_path, plan.item] = (node, selector)
         elif plan.kind == "set":
             assert plan.item is not None and plan.list_path is not None
             entry = node.get(plan.key)
             if not isinstance(entry, dict):
                 entry = node[plan.key] = {}
-            cast("_Node", entry).update(cast("_Node", plan.value))
+            cast("Node", entry).update(cast("Node", plan.value))
             entries[plan.list_path, plan.item] = (node, plan.key)
         else:
             assert plan.list_path is not None
@@ -492,7 +492,7 @@ def _write(plans: list[_Plan], stored_parts: Mapping[Path, ItemPart] | None) -> 
         for item in sorted(placed, key=lambda it: -_anchor(placed, it)[0]):
             _, after = _anchor(placed, item)
             node, selector = entries[list_path, item]
-            entry = cast("_Node", node.pop(selector, {}))
+            entry = cast("Node", node.pop(selector, {}))
             if after is None:
                 entry["_position"] = "first"
             else:

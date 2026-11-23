@@ -42,12 +42,12 @@ from .base import (
     _field_alias,  # pyright: ignore[reportPrivateUsage]
     _field_model_type,  # pyright: ignore[reportPrivateUsage]
     _field_value,  # pyright: ignore[reportPrivateUsage]
-    _is_dict,  # pyright: ignore[reportPrivateUsage]
-    _is_list,  # pyright: ignore[reportPrivateUsage]
     _is_mapping,  # pyright: ignore[reportPrivateUsage]
     _is_vco_model_type,  # pyright: ignore[reportPrivateUsage]
-    _list_item_type,  # pyright: ignore[reportPrivateUsage]
     _members_without_missing_and_none,  # pyright: ignore[reportPrivateUsage]
+    is_dict,
+    is_list,
+    list_item_type,
     python_name,
 )
 from .fields import ConfigContext, KeySpec, get_key_spec, has_override_flag
@@ -400,7 +400,7 @@ class RawChange:
 
 
 @dataclass(frozen=True, slots=True)
-class _KeyedList:
+class KeyedList:
     """A list whose items are paired by alt key, then by key (``pair_items``)."""
 
     spec: KeySpec
@@ -409,13 +409,13 @@ class _KeyedList:
 
 
 @dataclass(frozen=True, slots=True)
-class _ModelMap:
+class ModelMap:
     """An object whose every value is the model *value* (a ``dict[K, Model]`` field)."""
 
     value: type[VcoModel]
 
 
-type _Node = type[VcoModel] | _KeyedList | _ModelMap | None
+type Node = type[VcoModel] | KeyedList | ModelMap | None
 """What a JSON value is known to be: a model, a keyed list, a map of models, or nothing (untyped)."""
 
 
@@ -424,7 +424,7 @@ type _Node = type[VcoModel] | _KeyedList | _ModelMap | None
 # ---------------------------------------------------------------------------
 
 
-def _model_field(node: _Node, key: object) -> tuple[str, FieldInfo] | None:
+def node_field(node: Node, key: object) -> tuple[str, FieldInfo] | None:
     """The field of a model node that JSON key *key* is read as, or None.
 
     Accepts every key the model reads a field from, not only the one it dumps.
@@ -435,9 +435,9 @@ def _model_field(node: _Node, key: object) -> tuple[str, FieldInfo] | None:
     return None if name is None else (name, node.model_fields[name])
 
 
-def _dump_key(node: _Node, key: object) -> object:
+def _dump_key(node: Node, key: object) -> object:
     """The key the model dumps the field read from *key* under (*key* if unknown)."""
-    found = _model_field(node, key)
+    found = node_field(node, key)
     return key if found is None else _field_alias(found[1], found[0])
 
 
@@ -463,7 +463,7 @@ def _map_value_type(field_info: FieldInfo) -> type[VcoModel] | None:
     return None
 
 
-def _child(node: _Node, key: object) -> _Node:
+def node_child(node: Node, key: object) -> Node:
     """What the value under *key* is known to be.
 
     Whatever the key, the model of a map of models' values. Otherwise a keyed
@@ -471,19 +471,19 @@ def _child(node: _Node, key: object) -> _Node:
     discriminated union), a map of models for a ``dict[K, Model]`` field, a
     model class for a model field, else None.
     """
-    if isinstance(node, _ModelMap):
+    if isinstance(node, ModelMap):
         return node.value
-    found = _model_field(node, key)
+    found = node_field(node, key)
     if found is None:
         return None
     field_info = found[1]
     spec = get_key_spec(field_info)
-    item_type = _list_item_type(field_info)
+    item_type = list_item_type(field_info)
     if spec is not None and item_type is not None:
-        return _KeyedList(spec, item_type.variants[0])
+        return KeyedList(spec, item_type.variants[0])
     map_value = _map_value_type(field_info)
     if map_value is not None:
-        return _ModelMap(map_value)
+        return ModelMap(map_value)
     return _field_model_type(field_info)
 
 
@@ -501,7 +501,7 @@ def _wire_keys(model: type[VcoModel], name: str) -> list[str]:
     return [dump_key, *others]
 
 
-def _read_path(item: object, model: type[VcoModel], path: str) -> KeyScalar | None:
+def read_path(item: object, model: type[VcoModel], path: str) -> KeyScalar | None:
     """The scalar at dotted *path* of a JSON *item* of *model*, or None if it has none.
 
     The path names python fields. Each step is read from any key the field is
@@ -510,7 +510,7 @@ def _read_path(item: object, model: type[VcoModel], path: str) -> KeyScalar | No
     current = item
     step_model: type[VcoModel] | None = model
     for part in path.split("."):
-        if not _is_dict(current):
+        if not is_dict(current):
             return None
         candidates = [part] if step_model is None else _wire_keys(step_model, part)
         found = next((k for k in candidates if k in current), None)
@@ -529,11 +529,11 @@ def _json_item_key(
 
     The value at the one path of *paths*, or the tuple of the values at
     several (a composite key). None unless every part can be read
-    (``_read_path``). ``item_key`` is the same for a model item.
+    (``read_path``). ``item_key`` is the same for a model item.
     """
     parts: list[KeyScalar] = []
     for path in paths:
-        part = _read_path(item, model, path)
+        part = read_path(item, model, path)
         if part is None:
             return None
         parts.append(part)
@@ -566,12 +566,12 @@ def _same_key(raw_key: KeyValue, parsed_key: KeyValue) -> bool:
     return raw_text == parsed_text or raw_text.casefold() == parsed_text.casefold()
 
 
-def _keys(items: list[object], node: _KeyedList) -> list[KeyValue | None]:
+def _keys(items: list[object], node: KeyedList) -> list[KeyValue | None]:
     """The key of each item, None for an item without one."""
     return [_json_item_key(item, node.item, node.spec.paths) for item in items]
 
 
-def _key_forms(items: list[object], node: _KeyedList) -> list[KeyForm | None]:
+def key_forms(items: list[object], node: KeyedList) -> list[KeyForm | None]:
     """The key of each item in string form, None for an item without one."""
     return [key_form(key) for key in _keys(items, node)]
 
@@ -594,7 +594,7 @@ class Pairing:
     """Indexes in *old* of the items only *old* has."""
 
 
-def _pair_unique(
+def pair_unique(
     old_values: list[KeyForm | None],
     new_values: list[KeyForm | None],
     old_left: list[int],
@@ -618,7 +618,7 @@ def _pair_unique(
 def pair_items(
     old: list[object],
     new: list[object],
-    node: _KeyedList,
+    node: KeyedList,
     *,
     old_alt_read: Sequence[bool] | None = None,
 ) -> Pairing | None:
@@ -639,21 +639,21 @@ def pair_items(
     made up (a generated default) names nothing, though it may have been copied
     to *new* (``carry_unset_defaults``). Default: every alt key was read.
     """
-    old_keys, new_keys = _key_forms(old, node), _key_forms(new, node)
+    old_keys, new_keys = key_forms(old, node), key_forms(new, node)
     pairs: dict[int, int] = {}  # index in new -> index in old
     old_left, new_left = list(range(len(old))), list(range(len(new)))
     alt = node.spec.alt
     old_alts: list[KeyForm | None] = [None] * len(old)
     if alt is not None:
         old_alts = [
-            key_form(_read_path(item, node.item, alt))
+            key_form(read_path(item, node.item, alt))
             if old_alt_read is None or old_alt_read[i]
             else None
             for i, item in enumerate(old)
         ]
-        _pair_unique(
+        pair_unique(
             old_alts,
-            [key_form(_read_path(item, node.item, alt)) for item in new],
+            [key_form(read_path(item, node.item, alt)) for item in new],
             old_left,
             new_left,
             pairs,
@@ -661,7 +661,7 @@ def pair_items(
         paired = set(pairs.values())
         old_left = [i for i in old_left if i not in paired]
         new_left = [j for j in new_left if j not in pairs]
-    _pair_unique(old_keys, new_keys, old_left, new_left, pairs)
+    pair_unique(old_keys, new_keys, old_left, new_left, pairs)
     paired = set(pairs.values())
     removed = tuple(i for i in old_left if i not in paired)
     unique_keys, unique_alts = _unique(old_keys), _unique(old_alts)
@@ -711,16 +711,16 @@ def rebase(
     return _rebase(raw, before, after, model)
 
 
-def _rebase(raw: object, before: object, after: object, node: _Node) -> object:
+def _rebase(raw: object, before: object, after: object, node: Node) -> object:
     if before == after:
         return raw
-    if _is_dict(raw) and _is_dict(before) and _is_dict(after):
+    if is_dict(raw) and is_dict(before) and is_dict(after):
         return _rebase_object(raw, before, after, node)
     if (
-        isinstance(node, _KeyedList)
-        and _is_list(raw)
-        and _is_list(before)
-        and _is_list(after)
+        isinstance(node, KeyedList)
+        and is_list(raw)
+        and is_list(before)
+        and is_list(after)
     ):
         merged = _rebase_keyed_list(raw, before, after, node)
         if merged is not None:
@@ -732,7 +732,7 @@ def _rebase_object(
     raw: dict[object, object],
     before: dict[object, object],
     after: dict[object, object],
-    node: _Node,
+    node: Node,
 ) -> dict[object, object]:
     out: dict[object, object] = {}
     handled: set[object] = set()  # dump keys that the loop over raw dealt with
@@ -749,7 +749,7 @@ def _rebase_object(
             out[key] = after[dump_key]
         else:
             out[key] = _rebase(
-                value, before[dump_key], after[dump_key], _child(node, dump_key)
+                value, before[dump_key], after[dump_key], node_child(node, dump_key)
             )
     for key, value in after.items():
         if key not in handled and (key not in before or before[key] != value):
@@ -771,7 +771,7 @@ def _alt_agrees(raw_alt: KeyScalar | None, before_alt: KeyScalar | None) -> bool
 
 
 def _rebase_keyed_list(
-    raw: list[object], before: list[object], after: list[object], node: _KeyedList
+    raw: list[object], before: list[object], after: list[object], node: KeyedList
 ) -> list[object] | None:
     """Rebase a keyed list item by item, or None when the items cannot be matched.
 
@@ -795,8 +795,8 @@ def _rebase_keyed_list(
         if alt is None
         else [
             _alt_agrees(
-                _read_path(raw_item, node.item, alt),
-                _read_path(before_item, node.item, alt),
+                read_path(raw_item, node.item, alt),
+                read_path(before_item, node.item, alt),
             )
             for raw_item, before_item in zip(raw, before, strict=True)
         ]
@@ -837,24 +837,24 @@ def raw_changes(
     own path.
     """
     changes: list[RawChange] = []
-    _collect_changes(changes, Path(()), old, new, model)
+    collect_changes(changes, Path(()), old, new, model)
     return changes
 
 
-def _collect_changes(
-    out: list[RawChange], path: Path, old: object, new: object, node: _Node
+def collect_changes(
+    out: list[RawChange], path: Path, old: object, new: object, node: Node
 ) -> None:
     if old == new:
         return
-    if _is_dict(old) and _is_dict(new):
+    if is_dict(old) and is_dict(new):
         for key, old_value in old.items():
             if key in new:
-                _collect_changes(
+                collect_changes(
                     out,
                     path.child(_name(key)),
                     old_value,
                     new[key],
-                    _child(node, key),
+                    node_child(node, key),
                 )
             else:
                 out.append(RawChange(path.child(_name(key)), old_value, MISSING))
@@ -865,16 +865,16 @@ def _collect_changes(
         )
         return
     if (
-        isinstance(node, _KeyedList)
-        and _is_list(old)
-        and _is_list(new)
+        isinstance(node, KeyedList)
+        and is_list(old)
+        and is_list(new)
         and _collect_keyed_changes(out, path, old, new, node)
     ):
         return
     out.append(RawChange(path, old, new))
 
 
-def _item_parts(items: list[object], node: _KeyedList) -> list[ItemPart]:
+def item_parts(items: list[object], node: KeyedList) -> list[ItemPart]:
     """The name of each item: its key, or its position where that is not unique."""
     keys = _keys(items, node)
     unique = _unique([key_form(key) for key in keys])
@@ -885,7 +885,7 @@ def _item_parts(items: list[object], node: _KeyedList) -> list[ItemPart]:
 
 
 def item_names(
-    old: list[object], new: list[object], node: _KeyedList, pairing: Pairing
+    old: list[object], new: list[object], node: KeyedList, pairing: Pairing
 ) -> dict[int, ItemPart] | None:
     """The name of each item of *new*, by its index; None if two items would share one.
 
@@ -893,8 +893,8 @@ def item_names(
     or moved; an added item by its part in *new*. None when an added item would
     be named as an item of *old*.
     """
-    old_parts = _item_parts(old, node)
-    new_parts = _item_parts(new, node)
+    old_parts = item_parts(old, node)
+    new_parts = item_parts(new, node)
     names: dict[int, ItemPart] = {j: old_parts[i] for i, j in pairing.pairs}
     names.update({j: new_parts[j] for j in pairing.added})
     if any(names[j] in old_parts for j in pairing.added):
@@ -928,7 +928,7 @@ def staying(order: Sequence[int]) -> set[int]:
     return kept
 
 
-def _place_of(names: dict[int, ItemPart], j: int) -> ItemPlace:
+def place_of(names: dict[int, ItemPart], j: int) -> ItemPlace:
     """The place of item *j* of the new list: after the item before it, or first."""
     return ItemPlace(names[j - 1] if j else None)
 
@@ -938,7 +938,7 @@ def _collect_keyed_changes(
     path: Path,
     old: list[object],
     new: list[object],
-    node: _KeyedList,
+    node: KeyedList,
 ) -> bool:
     """Add the changes of a keyed list item by item; False if they cannot be paired."""
     pairing = pair_items(old, new, node)
@@ -948,15 +948,15 @@ def _collect_keyed_changes(
     if names is None:
         return False
     new_of = dict(pairing.pairs)
-    old_parts = _item_parts(old, node)
+    old_parts = item_parts(old, node)
     for i, old_item in enumerate(old):
         item_path = path.child(old_parts[i])
         if i in new_of:
-            _collect_changes(out, item_path, old_item, new[new_of[i]], node.item)
+            collect_changes(out, item_path, old_item, new[new_of[i]], node.item)
         else:
             out.append(RawChange(item_path, old_item, MISSING))
     out.extend(
-        RawChange(path.child(names[j]), MISSING, new[j], place=_place_of(names, j))
+        RawChange(path.child(names[j]), MISSING, new[j], place=place_of(names, j))
         for j in pairing.added
     )
     order = [i for i, _ in pairing.pairs]
@@ -968,7 +968,7 @@ def _collect_keyed_changes(
                 [item_text(old_parts[i]) for i in sorted(order)],
                 [item_text(names[j]) for j in range(len(new))],
                 moves=tuple(
-                    ItemMove(names[j], _place_of(names, j))
+                    ItemMove(names[j], place_of(names, j))
                     for n, (_, j) in enumerate(pairing.pairs)
                     if n not in kept
                 ),
@@ -1040,16 +1040,16 @@ def python_path(path: Path, model: type[VcoModel] | None) -> Path:
     a key of a map of models. Below a list without a key, and for a *model* of
     None, nothing is renamed.
     """
-    node: _Node = model
+    node: Node = model
     parts: list[PathPart] = []
     for part in path.parts:
         if isinstance(part, str):
-            found = _model_field(node, part)
+            found = node_field(node, part)
             parts.append(part if found is None else found[0])
-            node = _child(node, part)
+            node = node_child(node, part)
         else:
             parts.append(part)
-            node = node.item if isinstance(node, _KeyedList) else None
+            node = node.item if isinstance(node, KeyedList) else None
     return Path(parts)
 
 
@@ -1063,15 +1063,15 @@ def is_override_flag(model: type[VcoModel], path: Path) -> bool:
     ``boxes.b1.ports[p1].override``.
     """
     *parents, last = path.parts
-    node: _Node = model
+    node: Node = model
     for part in parents:
         if isinstance(part, str):
-            node = _child(node, part)
-        elif isinstance(node, _KeyedList):
+            node = node_child(node, part)
+        elif isinstance(node, KeyedList):
             node = node.item
         else:
             return False
-    found = _model_field(node, last)
+    found = node_field(node, last)
     return found is not None and has_override_flag(found[1])
 
 
@@ -1087,15 +1087,15 @@ def _lossy_in_value(
     current: object,
     before: object,
     after: object,
-    node: _Node,
+    node: Node,
     level: ConfigContext | None,
 ) -> None:
     if isinstance(baseline, VcoModel):
         if isinstance(current, VcoModel) and type(current) is type(baseline):
             _lossy_in_model(out, path, baseline, current, before, after, level)
-    elif _is_list(baseline) and _is_list(current):
+    elif is_list(baseline) and is_list(current):
         _lossy_in_list(out, path, baseline, current, before, after, node, level)
-    elif _is_dict(baseline) and _is_dict(current):
+    elif is_dict(baseline) and is_dict(current):
         for key, value in current.items():
             if key not in baseline:
                 continue  # an entry only *current* has is written whole
@@ -1117,7 +1117,7 @@ def _lossy_in_value(
 
 
 def _is_container(value: object) -> bool:
-    return isinstance(value, VcoModel) or _is_list(value) or _is_dict(value)
+    return isinstance(value, VcoModel) or is_list(value) or is_dict(value)
 
 
 def _is_unset_scalar(a: VcoModel, b: VcoModel, name: str) -> bool:
@@ -1149,11 +1149,11 @@ def _same_value(a: object, b: object) -> bool:
                 if not _is_unset_scalar(a, b, name)
             )
         )
-    if _is_list(a) and _is_list(b):
+    if is_list(a) and is_list(b):
         return len(a) == len(b) and all(
             _same_value(x, y) for x, y in zip(a, b, strict=True)
         )
-    if _is_dict(a) and _is_dict(b):
+    if is_dict(a) and is_dict(b):
         return a.keys() == b.keys() and all(_same_value(a[k], b[k]) for k in a)
     return a == b
 
@@ -1197,7 +1197,7 @@ def _lossy_in_model(
             value,
             before_value,
             after_value,
-            _child(type(current), dump_key),
+            node_child(type(current), dump_key),
             level,
         )
 
@@ -1213,7 +1213,7 @@ def _was_read(item: object, path: str) -> bool:
 
 
 def _keyed_pairs(
-    baseline: list[object], before: list[object], after: list[object], node: _Node
+    baseline: list[object], before: list[object], after: list[object], node: Node
 ) -> list[tuple[PathPart, int, int]] | None:
     """The items a keyed list has on both sides, as (part, index in *before*, index in *after*).
 
@@ -1222,14 +1222,14 @@ def _keyed_pairs(
     pairs, by the alt keys of *baseline*'s items that were read and not
     defaulted. Items in only one of the dumps are not paired.
     """
-    if not isinstance(node, _KeyedList):
+    if not isinstance(node, KeyedList):
         return None
     alt = node.spec.alt
     alt_read = None if alt is None else [_was_read(item, alt) for item in baseline]
     pairing = pair_items(before, after, node, old_alt_read=alt_read)
     if pairing is None:
         return None
-    parts = _item_parts(before, node)
+    parts = item_parts(before, node)
     return [(parts[i], i, j) for i, j in pairing.pairs]
 
 
@@ -1240,10 +1240,10 @@ def _lossy_in_list(
     current: list[object],
     before: object,
     after: object,
-    node: _Node,
+    node: Node,
     level: ConfigContext | None,
 ) -> None:
-    if not (_is_list(before) and _is_list(after)):
+    if not (is_list(before) and is_list(after)):
         return
     if len(before) != len(baseline) or len(after) != len(current):
         return  # the dump's positions are not the model's
@@ -1307,15 +1307,15 @@ def _carry_in_value(
     current: object,
     before: object,
     after: object,
-    node: _Node,
+    node: Node,
 ) -> None:
     if isinstance(baseline, VcoModel):
         if isinstance(current, VcoModel) and type(current) is type(baseline):
             _carry_in_model(baseline, current, before, after)
-    elif _is_list(baseline) and _is_list(current):
+    elif is_list(baseline) and is_list(current):
         _carry_in_list(baseline, current, before, after, node)
-    elif _is_dict(baseline) and _is_dict(current):
-        if not (_is_dict(before) and _is_dict(after)):
+    elif is_dict(baseline) and is_dict(current):
+        if not (is_dict(before) and is_dict(after)):
             return
         for key, value in current.items():
             # A JSON-mode dump writes every map key as a string.
@@ -1327,7 +1327,7 @@ def _carry_in_value(
 def _carry_in_model(
     baseline: VcoModel, current: VcoModel, before: object, after: object
 ) -> None:
-    if not (_is_dict(before) and _is_dict(after)):
+    if not (is_dict(before) and is_dict(after)):
         return
     for name, field_info in type(current).model_fields.items():
         dump_key = _field_alias(field_info, name)
@@ -1341,7 +1341,7 @@ def _carry_in_model(
             _field_value(current, name),
             before[dump_key],
             after[dump_key],
-            _child(type(current), dump_key),
+            node_child(type(current), dump_key),
         )
 
 
@@ -1350,9 +1350,9 @@ def _carry_in_list(
     current: list[object],
     before: object,
     after: object,
-    node: _Node,
+    node: Node,
 ) -> None:
-    if not (_is_list(before) and _is_list(after)):
+    if not (is_list(before) and is_list(after)):
         return
     if len(before) != len(baseline) or len(after) != len(current):
         return  # the dump's positions are not the model's

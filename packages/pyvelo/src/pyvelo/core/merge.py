@@ -31,6 +31,7 @@ from pydantic_core import InitErrorDetails, PydanticCustomError, PydanticUndefin
 from .base import (
     IdentityResolver,
     JsonObject,
+    ListItemType,
     ListKind,
     VcoModel,
     _DefaultSource,  # pyright: ignore[reportPrivateUsage]
@@ -43,16 +44,15 @@ from .base import (
     _field_value,  # pyright: ignore[reportPrivateUsage]
     _id_adapter,  # pyright: ignore[reportPrivateUsage]
     _id_type,  # pyright: ignore[reportPrivateUsage]
-    _is_dict,  # pyright: ignore[reportPrivateUsage]
-    _is_list,  # pyright: ignore[reportPrivateUsage]
     _is_vco_model_type,  # pyright: ignore[reportPrivateUsage]
-    _list_item_type,  # pyright: ignore[reportPrivateUsage]
-    _ListItemType,  # pyright: ignore[reportPrivateUsage]
     _merged_fields,  # pyright: ignore[reportPrivateUsage]
     _union_members,  # pyright: ignore[reportPrivateUsage]
     _unwrap_annotated,  # pyright: ignore[reportPrivateUsage]
     _variant_names,  # pyright: ignore[reportPrivateUsage]
     field_models,
+    is_dict,
+    is_list,
+    list_item_type,
     list_kind,
     python_name,
 )
@@ -163,7 +163,7 @@ def nest_patch(
         field = cls.model_fields.get("segments")
         if field is None:
             raise PatchError(f"{cls.__name__} has no segments field", walked, "address")
-        item_type = _list_item_type(field)
+        item_type = list_item_type(field)
         if item_type is None:
             raise PatchError(
                 f"{cls.__name__}.segments is not a list of models", walked, "address"
@@ -336,14 +336,14 @@ def _merge_field(
     # on a field that also takes one sub-model is that sub-model, unless the
     # field holds a list.
     if _list_spec(field_info) is not None and not (
-        _is_dict(value)
+        is_dict(value)
         and _field_model_types(field_info)
         and not isinstance(_field_value(model, name), list)
     ):
         _merge_list(model, name, field_info, value, resolvers, path)
         return
 
-    if _is_dict(value):
+    if is_dict(value):
         current = _field_value(model, name)
 
         # Sub-model that already exists: merge into it.
@@ -699,11 +699,11 @@ def _refuse_unread_keys(
         child = path.child(name)
         current = _field_value(model, name)
         _refuse_bool_as_number(value, current, child)
-        if _is_dict(value) and isinstance(current, VcoModel):
+        if is_dict(value) and isinstance(current, VcoModel):
             _refuse_unread_keys(current, value, child)
         elif (
-            _is_list(value)
-            and _is_list(current)
+            is_list(value)
+            and is_list(current)
             and (spec := _list_spec(model_cls.model_fields[name])) is not None
         ):
             _check_list_value(spec, value, current, child)
@@ -757,7 +757,7 @@ def _resolve_name(
     return _field_value(identity, resolvable.id_attr)
 
 
-def _key_name_of(item_type: _ListItemType | None, key_path: str) -> type[object] | None:
+def _key_name_of(item_type: ListItemType | None, key_path: str) -> type[object] | None:
     """The identity type that the field at *key_path* of the list's items names (``NameOf``), or None."""
     if item_type is None:
         return None
@@ -839,7 +839,7 @@ def _require_ids_for_name(
 
 
 def _new_item(
-    item_type: _ListItemType,
+    item_type: ListItemType,
     body: Mapping[object, object],
     resolvers: IdentityResolver | None,
     path: Path,
@@ -868,7 +868,7 @@ def _new_item(
 
 def _new_keyed_item(
     spec: _ListSpec,
-    item_type: _ListItemType,
+    item_type: ListItemType,
     body: Mapping[object, object],
     key: KeyValue,
     resolvers: IdentityResolver | None,
@@ -942,7 +942,7 @@ def _inject_key_path(
     node = result
     for part in parents:
         existing = node.get(part)
-        child: dict[object, object] = dict(existing) if _is_dict(existing) else {}
+        child: dict[object, object] = dict(existing) if is_dict(existing) else {}
         node[part] = child
         node = child
     node[leaf] = key_value
@@ -1007,7 +1007,7 @@ def _build_input(
         elif isinstance(value, str):
             if resolvers is not None:
                 value = _resolve_name(fi, value, resolvers, child)
-        elif _is_dict(value) and (sub_types := _field_model_types(fi)):
+        elif is_dict(value) and (sub_types := _field_model_types(fi)):
             value = _build_input(
                 _merged_fields(sub_types),
                 value,
@@ -1015,7 +1015,7 @@ def _build_input(
                 child,
                 owner=_variant_names(sub_types),
             )
-        elif (_is_list(value) or _is_dict(value)) and (
+        elif (is_list(value) or is_dict(value)) and (
             spec := _list_spec(fi)
         ) is not None:
             value = _new_list_input(spec, value, resolvers, child)
@@ -1076,7 +1076,7 @@ class _ListSpec:
     """The ``KeyField`` alt key path of a keyed list that has one."""
     label_path: str | None
     """The ``KeyField`` label path of a keyed list that has one."""
-    item_type: _ListItemType | None
+    item_type: ListItemType | None
     """The model type of the items of a list of models."""
     element: TypeAdapter[object] | None
     """Validates one entry of a list that is not of models."""
@@ -1096,7 +1096,7 @@ def _list_spec(field_info: FieldInfo) -> _ListSpec | None:
         return None
     key_spec = get_key_spec(field_info) if kind == "keyed" else None
     key_paths = () if key_spec is None else key_spec.paths
-    item_type = _list_item_type(field_info)
+    item_type = list_item_type(field_info)
     element: TypeAdapter[object] | None = None
     map_type: type[VcoModel] | None = None
     map_key: TypeAdapter[object] | None = None
@@ -1208,7 +1208,7 @@ def _patch_value(
     value: object = data
     current: Mapping[str, FieldInfo] | None = fields
     for part in path.split("."):
-        if current is None or not _is_dict(value):
+        if current is None or not is_dict(value):
             return None
         names = _field_names_by_key(current)
         value = next(
@@ -1413,9 +1413,9 @@ def select_items(
         )
     current = _field_value(model, field_name)
     if spec.kind == "map":
-        entries: dict[object, object] = current if _is_dict(current) else {}
+        entries: dict[object, object] = current if is_dict(current) else {}
         return [i for i, key in enumerate(entries) if str(key) == str(selector)]
-    items: list[object] = current if _is_list(current) else []
+    items: list[object] = current if is_list(current) else []
     selection = _select(items, spec, selector, resolvers)
     _refuse_two_readings(selection, spec, items, selector, Path((field_name,)))
     return selection.positions
@@ -1447,7 +1447,7 @@ def item_selector(model: VcoModel, field_name: str, position: int) -> str | None
         )
     current = _field_value(model, field_name)
     entries: Sequence[object] = (
-        list(current) if _is_list(current) or _is_dict(current) else []
+        list(current) if is_list(current) or is_dict(current) else []
     )
     if not 0 <= position < len(entries):
         raise IndexError(
@@ -1511,7 +1511,7 @@ def _merge_list(
     spec = _list_spec(field_info)
     assert spec is not None  # _merge_field checked
     model_cls = type(model)
-    if not _is_dict(value):
+    if not is_dict(value):
         if spec.kind == "map":
             raise PatchError(
                 f"{name} is a map: give an object of item operations by map key",
@@ -1520,7 +1520,7 @@ def _merge_list(
             )
         data = _list_value_input(spec, value, resolvers, path)
         built = _validate_field(model_cls, name, data, path)
-        if _is_list(data) and _is_list(built):
+        if is_list(data) and is_list(built):
             _check_list_value(spec, data, built, path)
         setattr(model, name, built)
         return
@@ -1535,7 +1535,7 @@ def _merge_list(
     if spec.kind == "map":
         if unset:
             entries = {}
-        elif _is_dict(current):
+        elif is_dict(current):
             entries = current
         else:
             raise PatchError(
@@ -1545,7 +1545,7 @@ def _merge_list(
     else:
         if unset:
             entries = []
-        elif _is_list(current):
+        elif is_list(current):
             entries = current
         else:
             raise PatchError(
@@ -1571,14 +1571,14 @@ def _new_list_input(
     nothing exists yet to name.
     """
     if spec.kind == "map":
-        if not _is_dict(value):
+        if not is_dict(value):
             raise PatchError(
                 "a map takes an object of item operations by map key", path, "operation"
             )
         entries: dict[object, object] = {}
         _merge_map(entries, spec, value, resolvers, path, new_only=True)
         return entries
-    if _is_list(value):
+    if is_list(value):
         return _list_value_input(spec, value, resolvers, path)
     if spec.kind == "untyped":
         raise PatchError(
@@ -1605,11 +1605,11 @@ def _list_value_input(
     ``_check_list_value``. Any other value is returned as it is.
     """
     item_type = spec.item_type
-    if item_type is None or not _is_list(value):
+    if item_type is None or not is_list(value):
         return value
     built: list[object] = []
     for index, item in enumerate(value):
-        if _is_dict(item):
+        if is_dict(item):
             key = _patch_key(item_type.fields, item, spec.key_paths)
             if (
                 key is not None
@@ -1649,7 +1649,7 @@ def _check_list_value(
     if len(data) == len(built):
         for index, (item_data, item) in enumerate(zip(data, built)):
             _refuse_bool_as_number(item_data, item, path.child(index))
-            if _is_dict(item_data) and isinstance(item, VcoModel):
+            if is_dict(item_data) and isinstance(item, VcoModel):
                 _refuse_unread_keys(
                     item, item_data, path.child(_item_part(spec, item, index))
                 )

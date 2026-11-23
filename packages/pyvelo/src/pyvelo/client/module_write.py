@@ -65,8 +65,8 @@ from pyvelo.client.schemas.configuration import (
 )
 from pyvelo.core import ConfigContext, VcoModel
 from pyvelo.core.base import (
-    _is_dict,  # pyright: ignore[reportPrivateUsage]
-    _is_list,  # pyright: ignore[reportPrivateUsage]
+    is_dict,
+    is_list,
 )
 from pyvelo.core.rebase import (
     Path,
@@ -115,13 +115,13 @@ def missing_segments(
     """
     if module_name not in SEGMENT_LISTS:
         return []
-    if not (_is_dict(edge_data) and _is_dict(profile_data)):
+    if not (is_dict(edge_data) and is_dict(profile_data)):
         return []
     profile_segments = profile_data.get("segments")
     edge_segments: object = edge_data.get("segments")
     if edge_segments is None:
         edge_segments = []
-    if not (_is_list(profile_segments) and _is_list(edge_segments)):
+    if not (is_list(profile_segments) and is_list(edge_segments)):
         return []
     seen = [segment_id_of(entry) for entry in edge_segments]
     missing: list[dict[str, Any]] = []
@@ -277,13 +277,13 @@ def insert_request(
 def drop_legacy_keys(data: object, module_name: str) -> None:
     """Remove from *data*'s segment entries the keys that *module_name* does not have."""
     keys = LEGACY_SEGMENT_KEYS.get(module_name)
-    if not (keys and _is_dict(data)):
+    if not (keys and is_dict(data)):
         return
     segments = data.get("segments")
-    if not _is_list(segments):
+    if not is_list(segments):
         return
     for entry in segments:
-        if _is_dict(entry):
+        if is_dict(entry):
             for key in keys:
                 _ = entry.pop(key, None)
 
@@ -350,10 +350,10 @@ def _segment_name(placeholder: Mapping[str, Any]) -> str:
 
 def _add_segments(data: object, entries: list[dict[str, Any]]) -> None:
     """Append *entries* to the ``segments`` of *data*, an absent or null one included."""
-    if not (entries and _is_dict(data)):
+    if not (entries and is_dict(data)):
         return
     segments = data.get("segments")
-    if _is_list(segments):
+    if is_list(segments):
         segments.extend(entries)
     else:  # absent or null
         data["segments"] = list(entries)
@@ -379,7 +379,7 @@ def _with_reconciled_segments(
     if current_segments is None:
         current_segments = []
     baseline_segments = baseline.get("segments")
-    if not (extra and _is_list(current_segments) and _is_list(baseline_segments)):
+    if not (extra and is_list(current_segments) and is_list(baseline_segments)):
         return current
     ids = [segment_id_of(placeholder) for placeholder in extra]
     own = [e for e in current_segments if segment_id_of(e) not in ids]

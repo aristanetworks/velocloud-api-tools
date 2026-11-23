@@ -67,35 +67,35 @@ from pydantic import MISSING
 
 from .base import (
     VcoModel,
-    _is_dict,  # pyright: ignore[reportPrivateUsage]
-    _is_list,  # pyright: ignore[reportPrivateUsage]
-    _list_item_type,  # pyright: ignore[reportPrivateUsage]
+    is_dict,
+    is_list,
+    list_item_type,
 )
 from .fields import is_server_owned
 from .rebase import (
     ItemMove,
     ItemPart,
     ItemPlace,
+    KeyedList,
     KeyForm,
+    Node,
     Pairing,
     Path,
     PathPart,
     RawChange,
-    _child,  # pyright: ignore[reportPrivateUsage]
-    _collect_changes,  # pyright: ignore[reportPrivateUsage]
-    _item_parts,  # pyright: ignore[reportPrivateUsage]
-    _key_forms,  # pyright: ignore[reportPrivateUsage]
-    _KeyedList,  # pyright: ignore[reportPrivateUsage]
-    _model_field,  # pyright: ignore[reportPrivateUsage]
-    _Node,  # pyright: ignore[reportPrivateUsage]
-    _pair_unique,  # pyright: ignore[reportPrivateUsage]
-    _place_of,  # pyright: ignore[reportPrivateUsage]
-    _read_path,  # pyright: ignore[reportPrivateUsage]
+    collect_changes,
     item_names,
+    item_parts,
     item_text,
     key_form,
+    key_forms,
+    node_child,
+    node_field,
     pair_items,
+    pair_unique,
+    place_of,
     python_path,
+    read_path,
     staying,
 )
 
@@ -309,11 +309,11 @@ class _ModelList:
     item: type[VcoModel]
 
 
-type _CheckNode = _Node | _ModelList
-"""What a JSON value is known to be, as ``_Node`` says, or a list of models without a key."""
+type _CheckNode = Node | _ModelList
+"""What a JSON value is known to be, as ``Node`` says, or a list of models without a key."""
 
 
-def _rebase_node(node: _CheckNode) -> _Node:
+def _rebase_node(node: _CheckNode) -> Node:
     """*node* as ``rebase`` knows it: a list of models without a key is untyped."""
     return None if isinstance(node, _ModelList) else node
 
@@ -321,14 +321,14 @@ def _rebase_node(node: _CheckNode) -> _Node:
 def _child_node(node: _CheckNode, key: object) -> _CheckNode:
     """What the value under *key* is known to be.
 
-    As ``_child`` says, and a ``_ModelList`` for a list of models without a
+    As ``node_child`` says, and a ``_ModelList`` for a list of models without a
     ``KeyField`` (of the first variant, for a discriminated union, as
-    ``_child`` does for a keyed list).
+    ``node_child`` does for a keyed list).
     """
     parent = _rebase_node(node)
-    child = _child(parent, key)
-    if child is None and (found := _model_field(parent, key)) is not None:
-        item_type = _list_item_type(found[1])
+    child = node_child(parent, key)
+    if child is None and (found := node_field(parent, key)) is not None:
+        item_type = list_item_type(found[1])
         if item_type is not None:
             return _ModelList(item_type.variants[0])
     return child
@@ -336,7 +336,7 @@ def _child_node(node: _CheckNode, key: object) -> _CheckNode:
 
 def _item_node(node: _CheckNode) -> _CheckNode:
     """What each item of a list of *node* is known to be."""
-    return node.item if isinstance(node, (_KeyedList, _ModelList)) else None
+    return node.item if isinstance(node, (KeyedList, _ModelList)) else None
 
 
 def _is_owned(rewrites: Rewrites, node: _CheckNode, key: object, path: Path) -> bool:
@@ -345,7 +345,7 @@ def _is_owned(rewrites: Rewrites, node: _CheckNode, key: object, path: Path) -> 
     It does when the field *key* is read as is marked ``ServerOwned``, or
     *path* matches a pattern of ``rewrites.server_owned``.
     """
-    found = _model_field(_rebase_node(node), key)
+    found = node_field(_rebase_node(node), key)
     return (found is not None and is_server_owned(found[1])) or any(
         matches(path, pattern) for pattern in rewrites.server_owned
     )
@@ -375,7 +375,7 @@ def _differences(
     included.
     """
     out: list[RawChange] = []
-    _collect_changes(out, path, old, new, _rebase_node(node))
+    collect_changes(out, path, old, new, _rebase_node(node))
     return out
 
 
@@ -388,19 +388,19 @@ def _walk(
             ServerChange(change.path, change.before, change.after)
             for change in _differences(path, p, d, node)
         )
-    elif _is_dict(r) and _is_dict(p):
-        if _is_dict(d):
+    elif is_dict(r) and is_dict(p):
+        if is_dict(d):
             _walk_object(found, path, r, p, d, node)
         else:
             _walk_replaced(found, path, r, p, d, node)
     elif (
-        isinstance(node, _KeyedList)
-        and _is_list(r)
-        and _is_list(p)
+        isinstance(node, KeyedList)
+        and is_list(r)
+        and is_list(p)
         and (pairing := pair_items(r, p, node)) is not None
         and (names := item_names(r, p, node, pairing)) is not None
     ):
-        if _is_list(d):
+        if is_list(d):
             _walk_keyed_list(found, path, r, p, d, node, pairing, names)
         else:
             _walk_replaced(found, path, r, p, d, node)
@@ -487,7 +487,7 @@ def _walk_keyed_list(
     r: list[object],
     p: list[object],
     d: list[object],
-    node: _KeyedList,
+    node: KeyedList,
     pairing: Pairing,
     names: dict[int, ItemPart],
 ) -> None:
@@ -497,8 +497,8 @@ def _walk_keyed_list(
     """
     r_of = {in_p: in_r for in_r, in_p in pairing.pairs}
     d_of, d_of_removed = _pair_stored(r, p, d, node, pairing.removed, found.rewrites)
-    r_parts, d_parts = (_item_parts(items, node) for items in (r, d))
-    d_keys = set(_key_forms(d, node))
+    r_parts, d_parts = (item_parts(items, node) for items in (r, d))
+    d_keys = set(key_forms(d, node))
 
     def record(item_path: Path, k: int) -> None:
         """Note the part that names item *k* of *d*, when a selector can name it alone."""
@@ -521,7 +521,7 @@ def _walk_keyed_list(
                 item,
                 stored,
                 node.item,
-                place=_place_of(names, j),
+                place=place_of(names, j),
             )
     for i in pairing.removed:
         still_there = d[d_of_removed[i]] if i in d_of_removed else MISSING
@@ -548,7 +548,7 @@ def _walk_keyed_list(
     if not in_payload_order:
         keep = staying(order_in_d)
         moves = tuple(
-            ItemMove(names[j], _place_of(names, j))
+            ItemMove(names[j], place_of(names, j))
             for n, j in enumerate(held)
             if n not in keep
         )
@@ -564,12 +564,12 @@ def _walk_keyed_list(
         found.server_changes.append(ServerChange(path, sent_names, stored_names))
 
 
-def _alt_forms(items: list[object], node: _KeyedList) -> list[KeyForm | None]:
+def _alt_forms(items: list[object], node: KeyedList) -> list[KeyForm | None]:
     """The alt key of each item in string form, None for an item without one."""
     alt = node.spec.alt
     if alt is None:
         return [None] * len(items)
-    return [key_form(_read_path(item, node.item, alt)) for item in items]
+    return [key_form(read_path(item, node.item, alt)) for item in items]
 
 
 def _compared_forms(
@@ -617,7 +617,7 @@ def _pair_stored(
     r: list[object],
     p: list[object],
     d: list[object],
-    node: _KeyedList,
+    node: KeyedList,
     removed: tuple[int, ...],
     rewrites: Rewrites,
 ) -> tuple[dict[int, int], dict[int, int]]:
@@ -648,7 +648,7 @@ def _pair_stored(
     the key text it stores otherwise is a server change.
     """
     r_keys, p_keys, d_keys = (
-        _compared_forms(_key_forms(items, node), rewrites) for items in (r, p, d)
+        _compared_forms(key_forms(items, node), rewrites) for items in (r, p, d)
     )
     r_alts, p_alts, d_alts = (
         _compared_forms(_alt_forms(items, node), rewrites) for items in (r, p, d)
@@ -657,7 +657,7 @@ def _pair_stored(
     p_left: list[int] = list(range(len(p)))
     d_left: list[int] = list(range(len(d)))
     for p_values, d_values in ((p_alts, d_alts), (p_keys, d_keys)):
-        _pair_unique(d_values, p_values, d_left, p_left, d_of)
+        pair_unique(d_values, p_values, d_left, p_left, d_of)
         paired = set(d_of.values())
         p_left = [j for j in p_left if j not in d_of]
         d_left = [k for k in d_left if k not in paired]
@@ -751,8 +751,8 @@ def _beyond(
     Below the path of the planned change nothing as read is paired with what
     *d* has, so a server change there has ``as_read`` ``MISSING``.
     """
-    if _is_dict(p):
-        if not _is_dict(d):
+    if is_dict(p):
+        if not is_dict(d):
             return None
         out: list[ServerChange] = []
         for key, value in p.items():
@@ -765,7 +765,7 @@ def _beyond(
             below = _beyond(
                 rewrites,
                 key_path,
-                r.get(key, MISSING) if _is_dict(r) else MISSING,
+                r.get(key, MISSING) if is_dict(r) else MISSING,
                 value,
                 stored,
                 _child_node(node, key),
@@ -779,7 +779,7 @@ def _beyond(
                 continue
             key_path = path.child(str(key))
             if (
-                _is_dict(r)
+                is_dict(r)
                 and key in r
                 and not _is_owned(rewrites, node, key, key_path)
                 and not any(matches(key_path, pattern) for pattern in rewrites.readded)
@@ -787,13 +787,13 @@ def _beyond(
                 return None
             out.append(ServerChange(key_path, MISSING, value))
         return out
-    if _is_list(p):
-        if not _is_list(d) or len(d) != len(p):
+    if is_list(p):
+        if not is_list(d) or len(d) != len(p):
             return None
         item_node = _item_node(node)
         out = []
         for n, (p_item, d_item) in enumerate(zip(p, d, strict=True)):
-            r_item = r[n] if _is_list(r) and n < len(r) else MISSING
+            r_item = r[n] if is_list(r) and n < len(r) else MISSING
             below = _beyond(
                 rewrites, path.child(n), r_item, p_item, d_item, item_node, top=False
             )

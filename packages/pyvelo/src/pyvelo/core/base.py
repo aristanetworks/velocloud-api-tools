@@ -113,11 +113,11 @@ class IdentityResolver(Protocol):
 # elements still has to check their types.
 
 
-def _is_list(value: object) -> TypeIs[list[object]]:
+def is_list(value: object) -> TypeIs[list[object]]:
     return isinstance(value, list)
 
 
-def _is_dict(value: object) -> TypeIs[dict[object, object]]:
+def is_dict(value: object) -> TypeIs[dict[object, object]]:
     return isinstance(value, dict)
 
 
@@ -323,9 +323,9 @@ def _compact_value(
         return _compact_dump(value, by_alias=by_alias, inherited_level=level)
     if isinstance(value, BaseModel):
         return value.model_dump(by_alias=by_alias)
-    if _is_list(value):
+    if is_list(value):
         return [_compact_value(v, by_alias=by_alias, level=level) for v in value]
-    if _is_dict(value):
+    if is_dict(value):
         return {
             k: _compact_value(v, by_alias=by_alias, level=level)
             for k, v in value.items()
@@ -337,10 +337,10 @@ def _propagate_context(value: object, level: ConfigContext) -> None:
     """Set the config level on every VcoModel inside *value*, at any depth."""
     if isinstance(value, VcoModel):
         _ = value.for_context(level)
-    elif _is_list(value):
+    elif is_list(value):
         for item in value:
             _propagate_context(item, level)
-    elif _is_dict(value):
+    elif is_dict(value):
         for item in value.values():
             _propagate_context(item, level)
 
@@ -367,10 +367,10 @@ def _models_inside(value: object, place: _Place) -> Iterator[tuple[_Place, BaseM
         extra: Mapping[str, object] = value.model_extra or {}
         for key, item in extra.items():
             yield from _models_inside(item, (*place, key))
-    elif _is_list(value):
+    elif is_list(value):
         for index, item in enumerate(value):
             yield from _models_inside(item, (*place, index))
-    elif _is_dict(value):
+    elif is_dict(value):
         for key, item in value.items():
             text = key if isinstance(key, str) else str(key)
             yield from _models_inside(item, (*place, text))
@@ -827,7 +827,7 @@ def _variant_names(variants: Iterable[type[VcoModel]]) -> str:
 
 
 @dataclass(frozen=True)
-class _ListItemType:
+class ListItemType:
     """The VcoModel element type of a ``list[...]`` field.
 
     It is either a single model class or a discriminated union of them. In
@@ -863,7 +863,7 @@ class _ListItemType:
         return _merged_fields(self.variants)
 
 
-def _list_item_type(fi: FieldInfo) -> _ListItemType | None:
+def list_item_type(fi: FieldInfo) -> ListItemType | None:
     """Get the VcoModel element type of a ``list[T]`` field, or None.
 
     Handles plain ``list[Model]`` and
@@ -875,7 +875,7 @@ def _list_item_type(fi: FieldInfo) -> _ListItemType | None:
         element: object = args[0]
         inner = _unwrap_annotated(element)
         if _is_vco_model_type(inner):
-            return _ListItemType(inner, (inner,))
+            return ListItemType(inner, (inner,))
 
         variants = tuple(
             v
@@ -883,9 +883,9 @@ def _list_item_type(fi: FieldInfo) -> _ListItemType | None:
             if _is_vco_model_type(v)
         )
         if len(variants) >= 2:
-            return _ListItemType(element, variants)
+            return ListItemType(element, variants)
         if len(variants) == 1:
-            return _ListItemType(variants[0], variants)
+            return ListItemType(variants[0], variants)
     return None
 
 
@@ -968,7 +968,7 @@ def list_kind(field_info: FieldInfo) -> ListKind | None:
     set aside.
     """
     is_dict_of_models = False
-    is_list = False
+    has_list = False
     element_kind: Literal["model", "value", "other"] = "other"
     for member in _members_without_missing_and_none(field_info.annotation):
         origin = get_origin(member)
@@ -977,15 +977,15 @@ def list_kind(field_info: FieldInfo) -> ListKind | None:
             value_members = _members_without_missing_and_none(args[1])
             is_dict_of_models = is_dict_of_models or _is_model_members(value_members)
         elif member is list or origin is list:
-            is_list = True
+            has_list = True
             element_members = _members_without_missing_and_none(args[0]) if args else []
             if _is_model_members(element_members):
                 element_kind = "model"
             elif element_members and all(m in (str, int) for m in element_members):
                 element_kind = "value"
-    if is_dict_of_models and not is_list:
+    if is_dict_of_models and not has_list:
         return "map"
-    if not is_list:
+    if not has_list:
         return None
     if get_key_spec(field_info) is not None:
         return "keyed"
@@ -1151,7 +1151,7 @@ def _looks_like_bare_filter(v: Mapping[object, object]) -> bool:
 
 
 def _api_filters_discriminator(v: object) -> str | None:
-    if _is_dict(v):
+    if is_dict(v):
         if "and_" in v or "and" in v:
             return "and"
         if "or_" in v or "or" in v:
@@ -1186,7 +1186,7 @@ def _wrap_bare_filter(v: object) -> object:
     """
     if isinstance(v, ApiFilter):
         return ApiFiltersAnd(and_=[v])
-    if _is_dict(v):
+    if is_dict(v):
         if "anyOf" in v or "oneOf" in v:
             return {"or": v.get("anyOf") or v.get("oneOf")}
         if "allOf" in v:
