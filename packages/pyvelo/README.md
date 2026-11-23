@@ -98,10 +98,12 @@ that name found there is taken as the insert's answer and checked like one, with
 nothing inserted: the way to repeat an insert whose answer never arrived.
 
 `pyvelo.testing.ModuleStore` is an `httpx` handler that holds module rows as
-JSON and answers module updates, inserts and `getConfiguration` as a VCO does.
-Its knobs are the conditional version check, a VCO that ignores `returnData`,
-the enterprise a request has to name, writes that fail, writes that are stored
-and whose answer is lost (`lose_answers`), hooks that change what is stored
+JSON and answers module updates, inserts, `getConfiguration` and, for an edge
+whose two configurations it was told (`add_stack`), `getEdgeConfigurationStack`,
+as a VCO does. Its knobs are the conditional version check, a VCO that ignores
+`returnData`, the enterprise a request has to name, writes that fail, writes
+that are stored and whose answer is lost (`lose_answers`), rule IDs issued as a
+VCO issues them (`issue_rule_ids`), hooks that change what is stored
 (`on_store`) and another writer's change (`other_writer`). A client over it is
 `VcoClient(host, token, transport=make_transport(store))`: it runs its own
 request building, parsing and error mapping against the store. A client given a

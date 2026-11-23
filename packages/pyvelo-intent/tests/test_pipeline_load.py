@@ -1,8 +1,11 @@
 """Tests for ConfigPipeline.load() and load_profile()."""
 
+import copy
 import uuid
+from typing import Any
 
 import pytest
+from pyvelo.client.enums.configuration import ConfigurationModuleName
 from pyvelo.client.operations.edge import GetEdgeConfigurationStackResult
 from pyvelo.client.schemas.configuration import (
     EdgeConfiguration,
@@ -12,6 +15,8 @@ from pyvelo.client.schemas.edge import GetEdgeConfigurationStack
 from pyvelo.client.schemas.enterprise import GetEnterpriseEdgesItem
 from pyvelo.config.resolver import ResolutionError, ResolverRegistry
 from pyvelo.config.resolvers.edge import EdgeResolver
+from pyvelo.testing import make_module_json
+from pyvelo_intent import add
 from pyvelo_intent.config.pipeline import ConfigPipeline
 from pyvelo_intent.config.state import ConfigState
 from pyvelo_intent.testing import MockVcoClient, make_firewall_module
@@ -155,3 +160,90 @@ async def test_load_profile_refuses_an_edge_specific_configuration():
     )
     assert [name for name, _ in client.calls] == ["get_configuration"]
     assert (await pipeline.load_profile(20)).target_type == "profile"
+
+
+def _rule(name: str, **extra: object) -> dict[str, Any]:
+    return {"name": name, "match": {}, "action": {"allow_or_deny": "allow"}, **extra}
+
+
+_SEGMENT: dict[str, object] = {
+    "segmentId": 0,
+    "name": "Global Segment",
+    "type": "REGULAR",
+    "segmentLogicalId": "00000000-0000-0000-0000-000000000000",
+}
+_FIREWALL: dict[str, Any] = {
+    "firewall_enabled": True,
+    "segments": [
+        {
+            "segment": _SEGMENT,
+            "outbound": [_rule("allow-web", ruleLogicalId="read-id-0000000000001")],
+        }
+    ],
+}
+
+
+def _raw_stack() -> GetEdgeConfigurationStackResult:
+    """A stack whose modules were read from JSON: edge 10 (module 11), profile 20 (module 21)."""
+
+    def row(module_id: int, config_id: int) -> dict[str, Any]:
+        return make_module_json(
+            "firewall",
+            copy.deepcopy(_FIREWALL),
+            module_id=module_id,
+            configuration_id=config_id,
+        )
+
+    edge = EdgeConfiguration.model_validate(
+        {"name": "Edge Specific Profile", "id": 10, "modules": [row(11, 10)]}
+    )
+    profile = EnterpriseConfigurationProfile.model_validate(
+        {"name": "Profile 20", "id": 20, "modules": [row(21, 20)]}
+    )
+    return edge, profile
+
+
+@pytest.mark.asyncio
+async def test_two_loads_are_two_reads_and_a_second_load_sees_the_save():
+    client = MockVcoClient(stack=_raw_stack())
+    client.store.issue_rule_ids = True
+    pipeline = ConfigPipeline(client)
+    state = await pipeline.load(42, enterprise_id=1)
+    other = await pipeline.load(42, enterprise_id=1)
+    assert other.edge_config is not state.edge_config
+    _ = await pipeline.apply(
+        state,
+        module="firewall",
+        segment="Global Segment",
+        path="outbound",
+        patch={
+            "block-ssh": add(
+                {"action": {"allow_or_deny": "deny"}, "match": {}}, first=True
+            )
+        },
+    )
+    # An edit to one state is not in another until it is saved and loaded.
+    assert [r.name for r in other.edge.firewall.segments[0].outbound] == ["allow-web"]
+    result = await pipeline.save(state)
+    assert [
+        str(c.path) for c in result.server_changes[ConfigurationModuleName.FIREWALL]
+    ] == ['segments["Global Segment"].outbound[block-ssh].ruleLogicalId']
+    again = await pipeline.load(42, enterprise_id=1)
+    rules = again.edge.firewall.segments[0].outbound
+    assert [(r.name, r.rule_logical_id) for r in rules] == [
+        ("block-ssh", "rule-id-00000000000001"),
+        ("allow-web", "read-id-0000000000001"),
+    ]
+    assert again.plan().changed == ()
+    methods = [method for method, _ in client.store.requests]
+    assert methods.count("edge/getEdgeConfigurationStack") == 3
+
+
+@pytest.mark.asyncio
+async def test_a_client_seeded_from_a_state_serves_that_edges_stack():
+    first = await ConfigPipeline(MockVcoClient(stack=_raw_stack())).load(42)
+    client = MockVcoClient.for_state(first)
+    loaded = await ConfigPipeline(client).load(42)
+    assert loaded.edge_config is not first.edge_config
+    assert loaded.edge.firewall.firewall_enabled is True
+    assert loaded.profile_config.id_ == 20

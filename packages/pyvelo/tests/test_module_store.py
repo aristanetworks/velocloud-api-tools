@@ -348,3 +348,209 @@ async def test_lose_answers_leaves_an_error_answered(
     with pytest.raises(ConfigConflictError):  # the refusal is the answer
         _ = await client.update_configuration_module(request)
     assert store.rows[1]["data"] == RAW
+
+
+STACK = "edge/getEdgeConfigurationStack"
+
+
+def rule(name: str, **extra: object) -> dict[str, Any]:
+    return {"name": name, "match": {}, "action": {"allow_or_deny": "allow"}, **extra}
+
+
+SEGMENT: dict[str, object] = {
+    "segmentId": 0,
+    "name": "Global Segment",
+    "type": "REGULAR",
+    "segmentLogicalId": "00000000-0000-0000-0000-000000000000",
+}
+RULES: dict[str, Any] = {
+    "firewall_enabled": True,
+    "segments": [
+        {
+            "segment": SEGMENT,
+            "outbound": [rule("allow-web", ruleLogicalId="read-id-0000000000001")],
+        }
+    ],
+}
+
+
+def stack_store() -> ModuleStore:
+    """Configuration 10 with firewall module 11, and an empty configuration 20."""
+    store = ModuleStore()
+    store.add_configuration(
+        {
+            "id": 10,
+            "name": "Edge Specific Profile",
+            "modules": [
+                make_module_json(
+                    "firewall", copy.deepcopy(RULES), module_id=11, configuration_id=10
+                )
+            ],
+        }
+    )
+    store.add_configuration({"id": 20, "name": "Profile 20"})
+    return store
+
+
+def test_the_store_serves_an_edges_stack_from_its_rows():
+    store = stack_store()
+    store.add_stack(10, 20, edge_id=42)
+    answer = store.handle(STACK, {"edgeId": 42})
+    assert answer == [
+        {"id": 10, "name": "Edge Specific Profile", "modules": [store.rows[11]]},
+        {"id": 20, "name": "Profile 20", "modules": []},
+    ]
+    store.rows[11]["data"]["firewall_enabled"] = False
+    again = cast(list[dict[str, Any]], store.handle(STACK, {"edgeId": 42}))
+    assert again[0]["modules"][0]["data"]["firewall_enabled"] is False
+    with pytest.raises(RpcError) as unknown:
+        _ = store.handle(STACK, {"edgeId": 7})
+    assert unknown.value.code == -32003
+    store.add_stack(10, 20)  # for every edge
+    assert store.handle(STACK, {"edgeId": 7}) == again
+
+
+def test_a_module_given_under_another_configuration_is_refused():
+    store = ModuleStore()
+    row = make_module_json("firewall", {}, module_id=1, configuration_id=99)
+    with pytest.raises(
+        ValueError,
+        match="module 1 is given under configuration 10, but its configurationId is 99",
+    ):
+        store.add_configuration({"id": 10, "name": "P", "modules": [row]})
+    bare = {k: v for k, v in row.items() if k != "configurationId"}
+    store.add_configuration({"id": 10, "name": "P", "modules": [bare]})
+    assert store.rows[1]["configurationId"] == 10
+    with pytest.raises(ValueError, match="a configuration row needs an id"):
+        store.add_configuration({"name": "P"})
+
+
+@pytest.mark.parametrize(
+    ("method", "params", "missing"),
+    [
+        (INSERT, {"configurationId": 10, "data": {}}, "name"),
+        (INSERT, {"configurationId": 10, "name": "QOS"}, "data"),
+        (INSERT, {"name": "QOS", "data": {}}, "configurationId"),
+        (UPDATE, {"_update": {"data": {}}}, "id"),
+        (UPDATE, {"id": 11}, "_update"),
+        (UPDATE, {"id": 11, "_update": {}}, "data"),
+    ],
+)
+def test_a_request_without_a_required_key_is_answered_with_an_error(
+    method: str, params: dict[str, Any], missing: str
+):
+    store = stack_store()
+    with pytest.raises(RpcError) as exc:
+        _ = store.handle(method, params)
+    assert exc.value.code == -32003
+    assert f"missing required property: {missing}" in str(exc.value.data)
+    assert set(store.rows) == {11}
+
+
+def test_a_hook_cannot_change_the_stored_row_through_old():
+    store = stack_store()
+
+    def hook(row: dict[str, Any], old: dict[str, Any] | None) -> None:
+        assert old is not None
+        old["data"]["touched"] = True
+
+    store.on_store.append(hook)
+    kept = store.rows[11]
+    _ = store.handle(UPDATE, {"id": 11, "_update": {"data": {"segments": []}}})
+    assert "touched" not in kept["data"]
+
+
+def test_the_store_issues_firewall_rule_ids_as_a_vco_does():
+    store = stack_store()
+    store.issue_rule_ids = True
+    data = copy.deepcopy(RULES)
+    data["segments"][0]["outbound"].insert(0, rule("block-ssh"))
+    _ = store.handle(UPDATE, {"id": 11, "_update": {"data": data}})
+    stored = store.rows[11]["data"]["segments"][0]["outbound"]
+    assert [(r["name"], r["ruleLogicalId"]) for r in stored] == [
+        ("block-ssh", "rule-id-00000000000001"),
+        ("allow-web", "read-id-0000000000001"),
+    ]
+    # A rename keeps the ID; a change of content replaces it.
+    edited = copy.deepcopy(store.rows[11]["data"])
+    edited["segments"][0]["outbound"][0]["name"] = "deny-ssh"
+    edited["segments"][0]["outbound"][1]["loggingEnabled"] = True
+    _ = store.handle(UPDATE, {"id": 11, "_update": {"data": edited}})
+    stored = store.rows[11]["data"]["segments"][0]["outbound"]
+    assert [(r["name"], r["ruleLogicalId"]) for r in stored] == [
+        ("deny-ssh", "rule-id-00000000000001"),
+        ("allow-web", "rule-id-00000000000002"),
+    ]
+    assert all(len(r["ruleLogicalId"]) == 22 for r in stored)
+
+
+def test_the_store_issues_a_qos_rule_id_only_where_there_is_none():
+    store = ModuleStore(issue_rule_ids=True)
+    store.add_configuration({"id": 10, "name": "P"})
+    data: dict[str, Any] = {
+        "segments": [
+            {
+                "segment": SEGMENT,
+                "rules": [{"name": "a"}, {"name": "b", "ruleLogicalId": "kept"}],
+                "defaults": [{"name": "d"}],
+            }
+        ]
+    }
+    _ = store.handle(INSERT, {"configurationId": 10, "name": "QOS", "data": data})
+    segment = store.rows[1]["data"]["segments"][0]
+    assert [r["ruleLogicalId"] for r in segment["rules"]] == [
+        "00000000-0000-0000-0000-000000000001",
+        "kept",
+    ]
+    assert segment["defaults"][0]["ruleLogicalId"] == (
+        "00000000-0000-0000-0000-000000000002"
+    )
+
+
+@pytest.mark.parametrize(
+    ("method", "params"),
+    [
+        (INSERT, {"configurationId": 10, "data": {}}),
+        (INSERT, {"configurationId": 10, "name": "QOS"}),
+        (INSERT, {"name": "QOS", "data": {}}),
+        (UPDATE, {"_update": {"data": {}}}),
+        (UPDATE, {"id": 11}),
+        (UPDATE, {"id": 11, "_update": {}}),
+    ],
+)
+def test_a_refused_request_takes_no_write_number_and_changes_nothing(
+    method: str, params: dict[str, Any]
+):
+    store = stack_store()
+    store.fail_writes = {1}
+    before = copy.deepcopy(store.rows)
+    with pytest.raises(RpcError) as refused:
+        _ = store.handle(method, params)
+    assert refused.value.code == -32003
+    assert store.rows == before
+    # The refused request was not write 1: the first real write is.
+    with pytest.raises(RpcError) as failed:
+        _ = store.handle(UPDATE, {"id": 11, "_update": {"data": {}}})
+    assert failed.value.message == "simulated failure"
+
+
+def test_a_read_without_its_key_is_answered_with_an_error():
+    store = stack_store()
+    store.add_stack(10, 20)
+    for method, missing in ((GET_CONFIGURATION, "id"), (STACK, "edgeId")):
+        with pytest.raises(RpcError) as exc:
+            _ = store.handle(method, {})
+        assert exc.value.code == -32003
+        assert f"missing required property: {missing}" in str(exc.value.data)
+
+
+def test_a_refused_configuration_stores_nothing_and_says_what_to_do():
+    store = ModuleStore()
+    good = make_module_json("firewall", {}, module_id=1, configuration_id=10)
+    bad = make_module_json("qos", {}, module_id=2, configuration_id=99)
+    with pytest.raises(ValueError) as exc:
+        store.add_configuration({"id": 10, "name": "P", "modules": [good, bad]})
+    assert "give the module under configuration 99" in str(exc.value)
+    assert "drop its configurationId so it takes 10" in str(exc.value)
+    assert not store.rows
+    assert not store.configurations

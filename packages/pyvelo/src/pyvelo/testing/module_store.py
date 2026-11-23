@@ -1,18 +1,23 @@
 """``ModuleStore``: a fake VCO that holds configuration module rows as JSON.
 
 The store is an ``httpx`` handler, so a client built over it runs its own request
-building, parsing and error mapping. It serves module updates and inserts and
-``configuration/getConfiguration``, and answers them the way a VCO does: a
-stale ``version`` is refused with the precondition error when the conditional
-check is on and updates nothing when it is off, and ``returnData`` makes the
-answer the module row as stored.
+building, parsing and error mapping. It serves module updates and inserts,
+``configuration/getConfiguration`` and, for an edge whose two configurations
+it was told (``add_stack``), ``edge/getEdgeConfigurationStack``, and answers
+them the way a VCO does: a stale ``version`` is refused with the precondition
+error when the conditional check is on and updates nothing when it is off,
+``returnData`` makes the answer the module row as stored, a request with a
+required key missing is refused with the ``validationError`` and changes
+nothing, and with ``issue_rule_ids`` on a stored write gets the rule IDs a VCO
+issues.
 """
 
 import copy
 import itertools
 import json
+import uuid
 from collections.abc import Callable, Mapping
-from typing import Any
+from typing import Any, cast
 
 import httpx
 from pydantic import MISSING
@@ -31,6 +36,10 @@ type StoreHook = Callable[[dict[str, Any], dict[str, Any] | None], None]
 _FIRST_VERSION = 1_700_000_000_000
 _FIXED_TIME = "2024-01-01T00:00:00.000Z"
 _UPDATE_PATH = "configuration.updateConfigurationModule"
+_INSERT_PATH = "configuration.insertConfigurationModule"
+_STACK_PATH = "edge.getEdgeConfigurationStack"
+_RULE_ID = "ruleLogicalId"
+_QOS_LISTS = ("rules", "defaults")
 
 
 class RpcError(Exception):
@@ -41,6 +50,13 @@ class RpcError(Exception):
         self.message: str = message
         self.data: object = data
         super().__init__(f"{code}: {message}")
+
+
+def _required(params: Mapping[str, Any], key: str, path: str) -> Any:
+    """``params[key]``; the VCO's ``validationError`` naming *key* when it is missing."""
+    if key not in params:
+        raise _validation_error(path, f"missing required property: {key}")
+    return params[key]
 
 
 def _validation_error(path: str, message: str, *, code: str | None = None) -> RpcError:
@@ -61,12 +77,19 @@ class ModuleStore:
     A write is an update or an insert; writes are numbered together from 1,
     and a write whose number is in ``fail_writes`` is answered with an error
     and stores nothing; a write whose number is in ``lose_answers`` is stored
-    and then not answered. Each stored write gets a new ``version``, a decimal
-    string from a counter. ``conditional_check`` is the VCO's check of the
-    ``version`` sent; ``return_data`` False is a VCO that ignores
-    ``returnData``. ``enterprise_id`` is the enterprise the rows belong to, for
-    tests of a client that has to name it: a request that does not name it is
-    answered with an error and changes nothing.
+    and then not answered. A request with a required key missing is answered
+    with the ``validationError`` naming the key; it takes no write number and
+    changes nothing. Each stored write gets a new ``version``, a decimal string
+    from a counter. ``conditional_check`` is the VCO's check of the ``version``
+    sent; ``return_data`` False is a VCO that ignores ``returnData``.
+    ``enterprise_id`` is the enterprise the rows belong to, for tests of a
+    client that has to name it: a request that does not name it is answered
+    with an error and changes nothing.
+
+    With ``issue_rule_ids`` on, a stored write gives rule IDs as a VCO does: a
+    firewall rule gets one when it has none, and a new one when its content
+    changes (a rename keeps it); a QoS rule gets one only when it has none.
+    A hook sees the IDs. A refused or failed write issues none.
     """
 
     rows: dict[int, dict[str, Any]]
@@ -84,6 +107,10 @@ class ModuleStore:
     return_data: bool
     enterprise_id: int | None
     """The enterprise every request has to name; None when requests need not name one."""
+    issue_rule_ids: bool
+    """Whether a stored write gives its rules the IDs a VCO gives them."""
+    stacks: dict[int | None, tuple[int, int]]
+    """Edge ID, or None for every edge, to the IDs of its edge and profile configurations."""
 
     def __init__(
         self,
@@ -91,6 +118,7 @@ class ModuleStore:
         conditional_check: bool = False,
         return_data: bool = True,
         enterprise_id: int | None = None,
+        issue_rule_ids: bool = False,
     ) -> None:
         self.rows = {}
         self.configurations = {}
@@ -101,21 +129,59 @@ class ModuleStore:
         self.conditional_check = conditional_check
         self.return_data = return_data
         self.enterprise_id = enterprise_id
+        self.issue_rule_ids = issue_rule_ids
+        self.stacks = {}
         self._writes: int = 0
+        self._rule_count: int = 0
         self._versions: itertools.count[int] = itertools.count(_FIRST_VERSION)
         self._methods: dict[str, Callable[[dict[str, Any]], object]] = {
             "configuration/updateConfigurationModule": self._update,
             "configuration/insertConfigurationModule": self._insert,
             "configuration/getConfiguration": self._get_configuration,
+            "edge/getEdgeConfigurationStack": self._get_edge_configuration_stack,
         }
 
     def add_configuration(self, row: Mapping[str, Any]) -> None:
-        """Hold the configuration *row*; the module rows under its ``modules``, if any, too."""
+        """Hold the configuration *row*; the module rows under its ``modules``, if any, too.
+
+        A module without a ``configurationId`` gets the configuration's;
+        ``ValueError`` for a row without an ``id`` and for a module whose
+        ``configurationId`` is another's. Nothing is stored then.
+        """
         stored = copy.deepcopy(dict(row))
+        if "id" not in stored:
+            raise ValueError(
+                "a configuration row needs an id; add an 'id' key to the row"
+            )
+        config_id: int = stored["id"]
         modules: list[dict[str, Any]] = stored.pop("modules", None) or []
-        self.configurations[stored["id"]] = stored
+        for module in modules:
+            held = module.setdefault("configurationId", config_id)
+            if held != config_id:
+                raise ValueError(
+                    f"module {module.get('id')} is given under configuration "
+                    f"{config_id}, but its configurationId is {held}; give the "
+                    f"module under configuration {held}, or drop its "
+                    f"configurationId so it takes {config_id}"
+                )
+        self.configurations[config_id] = stored
         for module in modules:
             self.rows[module["id"]] = module
+
+    def add_stack(
+        self,
+        edge_configuration_id: int,
+        profile_configuration_id: int,
+        *,
+        edge_id: int | None = None,
+    ) -> None:
+        """Answer ``edge/getEdgeConfigurationStack`` for *edge_id* with these two configurations.
+
+        The configurations are read as the store holds them at each request,
+        with their module rows; ``edge_id=None`` answers for every edge that
+        has no stack of its own.
+        """
+        self.stacks[edge_id] = (edge_configuration_id, profile_configuration_id)
 
     def other_writer(
         self, module_id: int, edit: Callable[[dict[str, Any]], None]
@@ -161,9 +227,11 @@ class ModuleStore:
     # -- methods ------------------------------------------------------------
 
     def _update(self, params: dict[str, Any]) -> object:
+        module_id: int = _required(params, "id", _UPDATE_PATH)
+        update: dict[str, Any] = _required(params, "_update", _UPDATE_PATH)
+        data = _required(update, "data", _UPDATE_PATH)
         if self._count_write():
             raise RpcError(-32603, "simulated failure")
-        module_id: int = params["id"]
         row = self.rows.get(module_id)
         if row is None:
             raise _validation_error(
@@ -180,18 +248,19 @@ class ModuleStore:
                     code=PRECONDITION_FAILED,
                 )
             return copy.deepcopy(row) if self._returns_data(params) else {"rows": 0}
-        update: dict[str, Any] = params["_update"]
         new = copy.deepcopy(row)
-        new["data"] = copy.deepcopy(update["data"])
+        new["data"] = copy.deepcopy(data)
         if "refs" in update:
             _set_refs(new, update["refs"])
-        for hook in self.on_store:
-            hook(new, row)
+        self._prepare(new, row)
         new["version"] = self._new_version()
         self.rows[module_id] = new
         return copy.deepcopy(new) if self._returns_data(params) else {"rows": 1}
 
     def _insert(self, params: dict[str, Any]) -> object:
+        configuration_id = _required(params, "configurationId", _INSERT_PATH)
+        name = _required(params, "name", _INSERT_PATH)
+        data = _required(params, "data", _INSERT_PATH)
         if self._count_write():
             raise RpcError(-32603, "simulated failure")
         module_id = max(self.rows, default=0) + 1
@@ -201,32 +270,48 @@ class ModuleStore:
             "created": _FIXED_TIME,
             "modified": _FIXED_TIME,
             "description": params.get("description"),
-            "configurationId": params["configurationId"],
+            "configurationId": configuration_id,
             "enterpriseLogicalId": None,
             "schemaVersion": None,
             "version": self._new_version(),
             "metadata": None,
-            "name": params["name"],
-            "data": copy.deepcopy(params["data"]),
+            "name": name,
+            "data": copy.deepcopy(data),
         }
         _set_refs(row, params.get("refs"))
-        for hook in self.on_store:
-            hook(row, None)
+        self._prepare(row, None)
         self.rows[module_id] = row
         if self._returns_data(params):
             return copy.deepcopy(row)
         return {"id": module_id, "rows": 1}
 
     def _get_configuration(self, params: dict[str, Any]) -> object:
-        config_id: int = params["id"]
+        path = "configuration.getConfiguration"
+        config_id: int = _required(params, "id", path)
+        return self._configuration(
+            config_id, path, with_modules="modules" in (params.get("with") or ())
+        )
+
+    def _get_edge_configuration_stack(self, params: dict[str, Any]) -> object:
+        edge_id: int = _required(params, "edgeId", _STACK_PATH)
+        ids = self.stacks.get(edge_id) or self.stacks.get(None)
+        if ids is None:
+            raise _validation_error(_STACK_PATH, f"edge not found with ID: {edge_id}")
+        return [self._configuration(i, _STACK_PATH, with_modules=True) for i in ids]
+
+    # -- helpers ------------------------------------------------------------
+
+    def _configuration(
+        self, config_id: int, path: str, *, with_modules: bool
+    ) -> dict[str, Any]:
+        """A copy of configuration *config_id*, with copies of its module rows when asked."""
         config = self.configurations.get(config_id)
         if config is None:
             raise _validation_error(
-                "configuration.getConfiguration",
-                f"configuration not found with ID: {config_id}",
+                path, f"configuration not found with ID: {config_id}"
             )
         answer = copy.deepcopy(config)
-        if "modules" in (params.get("with") or ()):
+        if with_modules:
             answer["modules"] = [
                 copy.deepcopy(row)
                 for row in self.rows.values()
@@ -234,7 +319,46 @@ class ModuleStore:
             ]
         return answer
 
-    # -- helpers ------------------------------------------------------------
+    def _prepare(self, new: dict[str, Any], old: dict[str, Any] | None) -> None:
+        """Give *new* its rule IDs, then run the hooks with it and a copy of *old*.
+
+        A hook that raises leaves the rule counter where it was.
+        """
+        issued = self._rule_count
+        try:
+            if self.issue_rule_ids:
+                self._issue_rule_ids(new, old)
+            for hook in self.on_store:
+                hook(new, copy.deepcopy(old))
+        except BaseException:
+            self._rule_count = issued
+            raise
+
+    def _next_rule_number(self) -> int:
+        self._rule_count += 1
+        return self._rule_count
+
+    def _issue_rule_ids(self, new: dict[str, Any], old: dict[str, Any] | None) -> None:
+        """The rule IDs of module row *new*, given *old*, the row it replaces."""
+        if new.get("name") == "firewall":
+            before = {
+                rule[_RULE_ID]: rule
+                for rules in _rule_lists(old, "firewall")
+                for rule in rules
+                if rule.get(_RULE_ID)
+            }
+            for rules in _rule_lists(new, "firewall"):
+                for rule in rules:
+                    held = rule.get(_RULE_ID)
+                    if not held or (
+                        held in before and _content(rule) != _content(before[held])
+                    ):
+                        rule[_RULE_ID] = f"rule-id-{self._next_rule_number():014d}"
+        elif new.get("name") == "QOS":
+            for rules in _rule_lists(new, "QOS"):
+                for rule in rules:
+                    if not rule.get(_RULE_ID):
+                        rule[_RULE_ID] = str(uuid.UUID(int=self._next_rule_number()))
 
     def _count_write(self) -> bool:
         """Number this write; whether it is one of ``fail_writes``."""
@@ -246,6 +370,41 @@ class ModuleStore:
 
     def _returns_data(self, params: Mapping[str, Any]) -> bool:
         return bool(params.get("returnData")) and self.return_data
+
+
+def _rule_lists(row: dict[str, Any] | None, module: str) -> list[list[dict[str, Any]]]:
+    """The lists of rules a VCO gives IDs to in the data of *row*, a module named *module*."""
+    data = None if row is None else row.get("data")
+    if not isinstance(data, dict):
+        return []
+    data = cast(dict[str, Any], data)
+    segments = [
+        cast(dict[str, Any], s)
+        for s in cast(list[Any], data.get("segments") or [])
+        if isinstance(s, dict)
+    ]
+    if module == "firewall":
+        places = [(data, "inbound"), (data, "inboundV6")]
+        places += [(s, "outbound") for s in segments]
+    else:
+        places = [(s, key) for s in segments for key in _QOS_LISTS]
+    found: list[list[dict[str, Any]]] = []
+    for holder, key in places:
+        rules = holder.get(key)
+        if isinstance(rules, list):
+            found.append(
+                [
+                    cast(dict[str, Any], r)
+                    for r in cast(list[Any], rules)
+                    if isinstance(r, dict)
+                ]
+            )
+    return found
+
+
+def _content(rule: dict[str, Any]) -> dict[str, Any]:
+    """*rule* without its name and ID: what a VCO compares to tell an edited rule from a renamed one."""
+    return {k: v for k, v in rule.items() if k not in ("name", _RULE_ID)}
 
 
 def _set_refs(row: dict[str, Any], refs: object) -> None:
