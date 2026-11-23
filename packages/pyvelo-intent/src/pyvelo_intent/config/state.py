@@ -1,9 +1,10 @@
 """ConfigState: holds edge/profile configuration with snapshot for diff-on-save."""
 
+import asyncio
 import copy
 import weakref
 from dataclasses import dataclass, field
-from typing import Literal, Protocol, cast, runtime_checkable
+from typing import Literal, Protocol, cast, override, runtime_checkable
 
 from pydantic import MISSING, BaseModel
 from pyvelo.client.enums.configuration import ConfigurationModuleName
@@ -233,6 +234,39 @@ def _put(doc: object, place: _Place, value: object) -> object:
     return entries
 
 
+class StateLock(asyncio.Lock):
+    """An ``asyncio.Lock`` that knows the task that holds it.
+
+    A task that holds the lock and asks for it again would wait for itself
+    without end. Here ``acquire`` raises ``RuntimeError`` at once instead, so
+    ``ConfigPipeline.apply`` and ``save``, which take the lock themselves, fail
+    loudly when called inside an ``async with state.lock:`` block.
+
+    The check sees only the calling task. A task that holds the lock and waits,
+    inside the block, for another task that calls ``apply`` or ``save`` still
+    deadlocks: that task waits for the lock, and nothing here can tell.
+    """
+
+    _holder: asyncio.Task[object] | None = None
+
+    @override
+    async def acquire(self) -> Literal[True]:
+        task = asyncio.current_task()
+        if task is not None and task is self._holder:
+            raise RuntimeError(
+                "this task already holds the lock of this state. apply and save take "
+                + "the lock themselves: call them outside the `async with state.lock:` block"
+            )
+        _ = await super().acquire()
+        self._holder = task
+        return True
+
+    @override
+    def release(self) -> None:
+        super().release()
+        self._holder = None
+
+
 @dataclass
 class ConfigState:
     """Holds the loaded configuration state with snapshot for diff detection.
@@ -266,6 +300,15 @@ class ConfigState:
     load_warnings: list[ValidationWarning] = field(default_factory=list)
     resolvers: ResolverRegistry = field(default_factory=ResolverRegistry, repr=False)
     """The resolvers that turn the names in a patch for this state into IDs."""
+    lock: StateLock = field(
+        default_factory=StateLock, init=False, repr=False, compare=False
+    )
+    """Held by ``ConfigPipeline.apply`` and ``save`` for the whole call, so that
+    they run one after the other. Code that edits the state by assignment from
+    another task may hold it around the edit (``async with state.lock:``).
+    ``apply`` and ``save`` called by the task that holds it raise
+    ``RuntimeError``. Do not wait, inside the block, for another task that calls
+    them: that task waits for the lock."""
     _made_into_unset: list[tuple[AnyConfigurationModule, bool]] = field(
         default_factory=list, repr=False
     )

@@ -6,7 +6,11 @@ from typing import Any, Protocol, TypeIs, runtime_checkable
 from pydantic import MISSING
 from pyvelo.client.enums.configuration import ConfigurationModuleName
 from pyvelo.client.enums.profiles import GetConfigurationWith
-from pyvelo.client.exceptions import ModuleWriteError, UnboundError
+from pyvelo.client.exceptions import (
+    DetachedObjectError,
+    ModuleWriteError,
+    UnboundError,
+)
 from pyvelo.client.module_check import ModuleWrite
 from pyvelo.client.protocol import VcoClientProtocol
 from pyvelo.client.schemas.configuration import (
@@ -32,7 +36,7 @@ from pyvelo.core.base import IdentityResolver, VcoModel
 from pyvelo.core.identity import EdgeName, ProfileName, ResolutionError
 from pyvelo.core.merge import nest_patch, select_items
 from pyvelo.core.patch import ItemOp, is_new, parse_item_op, position_of
-from pyvelo.core.rebase import Key, Path
+from pyvelo.core.rebase import Key, Path, raw_changes
 
 from pyvelo_intent.config.module_names import (
     resolve_module_name as _resolve_module_name,
@@ -290,40 +294,51 @@ class ConfigPipeline:
         downstream (reconciler, YAML export) can distinguish "unset" from
         "explicitly set".
 
+        Holds ``state.lock`` for the whole call, so it runs after a ``save`` or
+        another ``apply`` of the same state that is running. Raises
+        ``RuntimeError`` when the calling task already holds ``state.lock``.
+
         Raises ``ValueError`` for an unknown *module*.
         """
-        internal_name = _resolve_module_name(module)
-        existing = state.find_module(internal_name)
-        mod = (
-            existing
-            if existing is not None
-            else state.module(internal_name, create=True)
-        )
-        edge = state.target_type == "edge"
-        try:
-            data = mod.data
-            if not isinstance(data, VcoModel):
-                raise TypeError(
-                    f"Module '{internal_name}' has unstructured data; merge_patch requires a typed module"
+        async with state.lock:
+            internal_name = _resolve_module_name(module)
+            existing = state.find_module(internal_name)
+            mod = (
+                existing
+                if existing is not None
+                else state.module(internal_name, create=True)
+            )
+            edge = state.target_type == "edge"
+            try:
+                data = mod.data
+                if not isinstance(data, VcoModel):
+                    raise TypeError(
+                        f"Module '{internal_name}' has unstructured data; merge_patch requires a typed module"
+                    )
+                nested = nest_patch(type(data), patch, segment=segment, path=path)
+                segments = nested.get("segments")
+                if (
+                    not edge
+                    and _is_object(segments)
+                    and isinstance(data, _SegmentLayer)
+                ):
+                    _profile_segment_ops(segments, _SEGMENTS)
+                trial = data.model_copy(deep=True)
+                _ = trial.merge_patch(
+                    _prepare_segments(trial, nested, state.resolvers)
+                    if edge
+                    else nested,
+                    resolvers=state.resolvers,
                 )
-            nested = nest_patch(type(data), patch, segment=segment, path=path)
-            segments = nested.get("segments")
-            if not edge and _is_object(segments) and isinstance(data, _SegmentLayer):
-                _profile_segment_ops(segments, _SEGMENTS)
-            trial = data.model_copy(deep=True)
-            _ = trial.merge_patch(
-                _prepare_segments(trial, nested, state.resolvers) if edge else nested,
+            except BaseException:
+                if existing is None:
+                    state.drop_module(mod)
+                raise
+            _ = data.merge_patch(
+                _prepare_segments(data, nested, state.resolvers) if edge else nested,
                 resolvers=state.resolvers,
             )
-        except BaseException:
-            if existing is None:
-                state.drop_module(mod)
-            raise
-        _ = data.merge_patch(
-            _prepare_segments(data, nested, state.resolvers) if edge else nested,
-            resolvers=state.resolvers,
-        )
-        return state
+            return state
 
     async def save(
         self,
@@ -366,36 +381,55 @@ class ConfigPipeline:
         other error of a request leaves that module and the later ones with
         their edits, and carries a note that names the modules written before
         it. ``dry_run`` stops after step 2 and sends nothing.
+
+        ``apply`` and ``save`` of one state run one after the other: this holds
+        ``state.lock`` from the plan to the return, so a second save plans the
+        state as the first one left it, and an ``apply`` made meanwhile waits
+        and is then applied to the state as stored. Raises ``RuntimeError``
+        when the calling task already holds ``state.lock``.
+
+        An edit made by assignment (``state.edge.firewall.syslog_forwarding =
+        True``) while a save is writing is not waited for: it lands in the
+        module that is about to be replaced. Once that module is stored, the
+        save puts it in the state without the edit and raises
+        ``DetachedObjectError`` with the paths of such edits; redo them. So does
+        a lookup that adds a placeholder to a module being written
+        (``state.edge.firewall.segment("Guest")``, for a segment the edge only
+        inherits). To edit by assignment from another task while a save may
+        run, use ``apply``, or hold ``state.lock`` around the edit; do not wait,
+        inside that block, for another task that calls ``apply`` or ``save``,
+        which would wait for the lock without end.
         """
-        plan = state.plan()
-        result = SaveResult(plan=plan)
+        async with state.lock:
+            plan = state.plan()
+            result = SaveResult(plan=plan)
 
-        if not plan.changed:
-            return result
-
-        # Run write-time validators
-        if validate:
-            validation = self._validators.run(
-                state,
-                phase="write",
-                modules=[ConfigurationModuleName(m.name) for m in plan.changed],
-            )
-            if not validation.is_valid:
-                result.validation_errors = validation.errors
+            if not plan.changed:
                 return result
-            for warn in validation.warnings:
-                result.warnings.append(_validation_error_to_warning(warn))
 
-        for module_plan in plan.changed:
-            name = ConfigurationModuleName(module_plan.name)
-            if module_plan.operation == "insert":
-                result.modules_inserted.append(name)
-            else:
-                result.modules_updated.append(name)
+            # Run write-time validators
+            if validate:
+                validation = self._validators.run(
+                    state,
+                    phase="write",
+                    modules=[ConfigurationModuleName(m.name) for m in plan.changed],
+                )
+                if not validation.is_valid:
+                    result.validation_errors = validation.errors
+                    return result
+                for warn in validation.warnings:
+                    result.warnings.append(_validation_error_to_warning(warn))
 
-        if dry_run:
-            return result
-        return await self._send(state, plan, result)
+            for module_plan in plan.changed:
+                name = ConfigurationModuleName(module_plan.name)
+                if module_plan.operation == "insert":
+                    result.modules_inserted.append(name)
+                else:
+                    result.modules_updated.append(name)
+
+            if dry_run:
+                return result
+            return await self._send(state, plan, result)
 
     async def _send(
         self, state: ConfigState, plan: ConfigPlan, result: SaveResult
@@ -411,8 +445,10 @@ class ConfigPipeline:
         enterprise_id = state.resolver_context.enterprise_id
         # Each write replaces only its own module, so these stay the state's.
         modules = [_require_writable(state.module(p.name)) for p in plan.changed]
+        # What each module holds as planned, to find an edit made while a write was out.
+        dumps = [_dump(mod) for mod in modules]
         done: list[ModuleWrite[Any]] = []
-        for module_plan, mod in zip(plan.changed, modules, strict=True):
+        for module_plan, mod, planned in zip(plan.changed, modules, dumps, strict=True):
             try:
                 write = await self.client.write_module(
                     mod, module_plan, enterprise_id=enterprise_id
@@ -420,8 +456,10 @@ class ConfigPipeline:
             except ModuleWriteError as error:
                 stored = error.module
                 # Of the class of mod (write_module checks it), or None when
-                # the module could not be read: then the state keeps mod.
-                if isinstance(stored, type(mod)):
+                # the module could not be read: then the state keeps mod. It
+                # is also kept when the state no longer holds mod, so that the
+                # write error is not hidden behind the ValueError of replace_module.
+                if isinstance(stored, type(mod)) and state.find_module(mod.name) is mod:
                     state.replace_module(mod, stored)
                 error.completed = tuple(done)
                 raise
@@ -432,11 +470,26 @@ class ConfigPipeline:
                         + ", ".join(f"{w.name} ({w.operation})" for w in done)
                     )
                 raise
+            paths = list(
+                dict.fromkeys(
+                    change.path
+                    for change in raw_changes(planned, _dump(mod), type(mod))
+                )
+            )
             state.replace_module(mod, write.module)
             done.append(write)
             name = ConfigurationModuleName(write.name)
             result.server_changes[name] = write.server_changes
             result.left_out[name] = write.left_out
+            if paths:
+                raise DetachedObjectError(
+                    f"{mod.name}: the module was edited while this save was writing it, at: "
+                    + f"{', '.join(paths)}. The write is stored without those edits and the "
+                    + "state holds the module as stored; take the objects from the state again "
+                    + "and redo them. To edit a state from another task while a save may run, "
+                    + "use apply, or hold state.lock around the edit",
+                    paths,
+                )
         return result
 
     def validate(self, state: ConfigState) -> ValidationResult:
@@ -694,6 +747,11 @@ type _WritableModule = (
     | WanConfigurationModule
     | FirewallConfigurationModule
 )
+
+
+def _dump(mod: AnyConfigurationModule) -> object:
+    """The JSON form of *mod*, to find an edit made while it was written."""
+    return mod.model_dump(mode="json", by_alias=True)
 
 
 def _require_writable(mod: AnyConfigurationModule) -> _WritableModule:

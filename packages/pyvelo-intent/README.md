@@ -525,6 +525,17 @@ Known limits:
 - A failed `apply` changes nothing. Patches and saves run one after another,
   though: a failure leaves earlier patches, and the remote writes of a save
   that stopped part way, applied; there is no transaction or rollback.
+- One state may be used from several tasks of one event loop. `apply` and
+  `save` hold `state.lock` for the whole call, so they run one after the other:
+  an `apply` made while a save is writing waits and is then applied to the
+  state as stored, and a second `save` writes only what still differs. An edit
+  made by assigning to the models while a save is writing is not waited for.
+  The save stores the module without it, puts the module as stored in the
+  state, and raises `DetachedObjectError` with the paths of such edits: redo
+  them. To make such an edit safely, hold the lock around it
+  (`async with state.lock:`). `apply` and `save` take the lock themselves:
+  called inside that block by the same task they raise `RuntimeError`, so call
+  them after it.
 - The `override_consistency` validator is a traversal placeholder and currently
   reports no violations. Other registered validators cover specific structural
   or domain checks; they do not guarantee that every patch is valid for a live VCO.
@@ -541,7 +552,7 @@ Known limits:
 |---|---|
 | `pyvelo_intent` | Re-exports the public surface: `ConfigPipeline`, `ConfigState`, `SaveResult`, the patch helpers (`add`, `delete`, `move`, `at`) and `PatchError`, diff types (`DiffResult`, `Added`, `Removed`, `Modified`, `Unchanged`, `FieldChange`), the intent error types, the write errors `ModuleWriteError` (the base of the next three), `ConfigConflictError`, `WriteNotAppliedError`, `WriteOutcomeUnknownError` and `DetachedObjectError` (from `pyvelo.client.exceptions`), helpers (`build_default_pipeline`, `confirm_save`, `load_config`) |
 | `pyvelo_intent.config.pipeline` | `ConfigPipeline` (load/load_profile → apply → save), `build_default_pipeline` |
-| `pyvelo_intent.config.state` | `ConfigState`, `SaveResult`, `ConfigFieldChange`, `ValidationWarning` |
+| `pyvelo_intent.config.state` | `ConfigState`, `StateLock`, `SaveResult`, `ConfigFieldChange`, `ValidationWarning` |
 | `pyvelo_intent.config.helpers` | `load_config`, `confirm_save` |
 | `pyvelo_intent.config.validators.*` | Structural built-ins (`key_uniqueness`, `override_consistency`, `required_fields`) + domain validators (firewall, device settings) |
 | `pyvelo_intent.config.(firewall\|device_settings\|qos\|wan\|control_plane)` | Per-module configuration helpers |
