@@ -360,7 +360,9 @@ async def test_follow_up_read_error_propagates(mock_vco_client: MockVcoClientFac
     assert isinstance(exc.value.__context__, ConfigConflictError)
 
 
-async def test_refs_only_write_refused_raises(mock_vco_client: MockVcoClientFactory):
+async def test_refs_only_write_meeting_a_changed_version_raises_before_sending(
+    mock_vco_client: MockVcoClientFactory,
+):
     module = primary_provider_module()
     current = copy_of_data(module)
     set_primary_provider(current, None)

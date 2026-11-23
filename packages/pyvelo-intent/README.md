@@ -620,10 +620,11 @@ is any difference in the rows of the refs the VCO's own processors manage.
 | `applied` | the planned changes that are stored |
 | `left_out` | the planned changes the VCO stores its own way, as in `SaveResult.left_out` |
 | `server_changes` | what else the VCO stores otherwise than sent, as in `SaveResult.server_changes` |
-| `module` | the module as the VCO holds it now |
+| `module` | the module as the VCO holds it now; None on a `ConfigConflictError` for a module gone from its configuration, where nothing was sent and the state keeps the module as read |
 | `plan` | the module's `ModulePlan` |
 | `refs_as_read` | on `RefsDroppedError`: the module's refs as read, to put back when `every_row_lost` is true |
 | `stated` | on `ConfigConflictError`: whether the VCO said it refused the version, or the save inferred it |
+| `sent` | on `ConfigConflictError`: False when nothing was sent, because the version read before a write that carries refs found the module changed (or gone) |
 | `completed` | the writes of the same save before this one, which are stored |
 | `redo_patch(include_clashes=False)` | the patch that redoes the lost edits on `module`, for `apply(state, module=error.module_name, patch=...)` |
 | `not_redone(include_clashes=False)` | the lost edits that patch leaves out |

@@ -453,9 +453,10 @@ class ConfigPipeline:
         ``DetachedObjectError``.
 
         After ``ConfigConflictError`` or ``WriteNotAppliedError`` the state
-        holds the module as stored (they always carry it, as
-        ``error.module``), so the edits in ``error.lost_edits`` are to be
-        redone: apply ``error.redo_patch()`` (``apply(state,
+        holds the module as stored (they carry it, as ``error.module``; a
+        ``ConfigConflictError`` for a module gone from its configuration has
+        none, and the state keeps the module as read, with its edits), so the
+        edits in ``error.lost_edits`` are to be redone: apply ``error.redo_patch()`` (``apply(state,
         module=error.module_name, patch=error.redo_patch())``) and save again;
         ``error.not_redone()`` lists the lost edits it leaves out. After
         ``WriteOutcomeUnknownError`` (the write was sent, or an insert was

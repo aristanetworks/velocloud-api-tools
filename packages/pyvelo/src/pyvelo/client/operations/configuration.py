@@ -752,7 +752,9 @@ class ConfigurationMixin(Protocol):
         write. Raises ``ConfigConflictError`` if the module changed since it was
         read, and ``WriteNotAppliedError`` if the VCO stored the write
         otherwise than as sent. Each carries the module as stored and the lost
-        edits to redo on it. ``WriteOutcomeUnknownError`` says the write was
+        edits to redo on it, except a ``ConfigConflictError`` for a module gone
+        from its configuration, which has no module (``error.module`` is None,
+        and nothing was sent). ``WriteOutcomeUnknownError`` says the write was
         sent and the module as stored could not be read. The rules that need
         more than this one module are not run here: they need a state
         (``ConfigState``, in pyvelo-intent).

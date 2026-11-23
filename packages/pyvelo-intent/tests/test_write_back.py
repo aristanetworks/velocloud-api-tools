@@ -380,6 +380,48 @@ async def test_redo_after_a_conflict_saves_without_a_reload(conditional_check: b
     ]
 
 
+async def test_a_conflict_found_before_sending_puts_the_module_as_read_in_the_state():
+    state = three_module_state()
+    client = MockVcoClient.for_state(state)
+    client.store.other_writer(4, lambda row: row["data"].update(futureKey=1))
+    state.edge.qos.service_rate_limit = ServiceRateLimit(
+        enabled=True, input_type="percent", value=50
+    )
+
+    with pytest.raises(ConfigConflictError) as exc:
+        _ = await ConfigPipeline(client).save(state)
+
+    error = exc.value
+    assert (error.stated, error.sent) == (False, False)
+    assert methods(client.store) == ["getConfigurationModules", "getConfiguration"]
+    assert error.module is not None
+    assert state.module("QOS") is error.module
+    assert error.module.version == client.store.rows[4]["version"]
+    assert [str(c.path) for c in error.lost_edits] == ["serviceRateLimit"]
+    assert state.plan().changed == ()
+
+
+async def test_a_module_gone_from_its_configuration_keeps_the_state_as_it_was():
+    state = three_module_state()
+    client = MockVcoClient.for_state(state)
+    qos = state.module("QOS")
+    del client.store.rows[4]
+    state.edge.qos.service_rate_limit = ServiceRateLimit(
+        enabled=True, input_type="percent", value=50
+    )
+
+    with pytest.raises(ConfigConflictError) as exc:
+        _ = await ConfigPipeline(client).save(state)
+
+    error = exc.value
+    assert (error.stated, error.sent) == (False, False)
+    assert error.module is None
+    assert "updateConfigurationModule" not in methods(client.store)
+    assert state.module("QOS") is qos
+    assert qos.version == "e1"
+    assert [m.name for m in state.plan().changed] == ["QOS"]
+
+
 async def test_failure_at_module_two_reports_module_one():
     state = three_module_state()
     client = MockVcoClient.for_state(state)
