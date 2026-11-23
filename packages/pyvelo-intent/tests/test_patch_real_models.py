@@ -972,3 +972,37 @@ async def test_an_application_name_with_no_application_resolver_is_refused_at_th
         _ = await pipeline.apply(
             state, module="firewall", segment="Global", path="outbound", patch={}
         )
+
+
+async def test_validation_messages_on_the_real_models_use_python_names():
+    state = make_state({"QOS": qos()}, {"QOS": qos()})
+    with pytest.raises(PatchError) as exc:
+        _ = await ConfigPipeline(None).apply(
+            state,
+            module="qos",
+            segment=SEGMENT,
+            path="rules",
+            patch={"x": add({"match": {}, "action": {"qos": {"type_": "fast"}}})},
+        )
+    assert exc.value.message == (
+        "invalid value: action.edge_to_edge_route_action: Field required; "
+        "action.edge_to_data_center_route_action: Field required; "
+        "action.edge_to_cloud_route_action: Field required; "
+        "action.qos.type_: Input should be 'realtime', 'transactional' or 'bulk'"
+    )
+
+    state = make_state(
+        {"deviceSettings": device_settings()}, {"deviceSettings": PROFILE_DS}
+    )
+    with pytest.raises(PatchError) as exc:
+        _ = await ConfigPipeline(None).apply(
+            state,
+            module="device_settings",
+            segment=SEGMENT,
+            path="routes.static",
+            patch={"+": add({"destination": "10.9.0.0"})},
+        )
+    assert exc.value.message == (
+        "invalid value: netmask: Field required; gateway: Field required; "
+        "cidr_prefix: Field required"
+    )

@@ -444,7 +444,9 @@ def _validate_field(
             value, context={"patch": True}
         )
     except ValidationError as exc:
-        raise PatchError(_validation_message(exc), path) from exc
+        raise _invalid_value(
+            exc, _value_models(model_cls.model_fields[name]), path
+        ) from exc
     _refuse_bool_as_number(value, validated, path)
     return validated
 
@@ -467,18 +469,62 @@ def _refuse_bool_as_number(given: object, stored: object, path: Path) -> None:
         )
 
 
-def _validation_lines(exc: ValidationError) -> str:
-    """What a ``ValidationError`` says, one entry per error, joined by ``"; "``."""
+def _value_models(field_info: FieldInfo) -> tuple[type[VcoModel], ...]:
+    """The model classes a field's value is made of, without repeats.
+
+    The field's own (every variant of a union), then the items of its list,
+    then the values of its map.
+    """
+    found = list(_field_model_types(field_info))
+    if (item_type := _list_item_type(field_info)) is not None:
+        found.extend(item_type.variants)
+    if (spec := _list_spec(field_info)) is not None and spec.map_type is not None:
+        found.append(spec.map_type)
+    return tuple(dict.fromkeys(found))
+
+
+def _python_place(loc: Sequence[int | str], models: Sequence[type[VcoModel]]) -> Path:
+    """Where in the value an error is, in python names.
+
+    A part that names a field of the model classes in hand, by any name
+    ``merge_patch`` accepts, becomes its python name, and the walk goes on
+    in the classes that field's value is made of. Any other part is kept
+    as it is: a list position, a map key, the tag or the name of a union
+    member.
+    """
+    parts: list[PathPart] = []
+    current = tuple(models)
+    for part in loc:
+        if isinstance(part, str) and current:
+            fields = _merged_fields(current)
+            name = _field_names_by_key(fields).get(part)
+            if name is not None:
+                parts.append(name)
+                current = _value_models(fields[name])
+                continue
+        parts.append(part)
+    return Path(parts)
+
+
+def _validation_lines(exc: ValidationError, models: Sequence[type[VcoModel]]) -> str:
+    """What a ``ValidationError`` says, one ``place: message`` per error, joined by ``"; "``.
+
+    The place is in python names (``_python_place``), where *models* are the
+    classes the validated value is made of; it is left out for an error of
+    the value itself.
+    """
     lines: list[str] = []
     for error in exc.errors(include_url=False):
-        loc = ".".join(str(part) for part in error["loc"])
-        lines.append(f"{loc}: {error['msg']}" if loc else error["msg"])
+        place = _python_place(error["loc"], models)
+        lines.append(f"{place}: {error['msg']}" if place else error["msg"])
     return "; ".join(lines)
 
 
-def _validation_message(exc: ValidationError) -> str:
-    """What a ``ValidationError`` says, one line per error, for a ``PatchError``."""
-    return "invalid value: " + _validation_lines(exc)
+def _invalid_value(
+    exc: ValidationError, models: Sequence[type[VcoModel]], path: Path
+) -> PatchError:
+    """The ``PatchError`` at *path* for a value that fails validation; raise it ``from exc``."""
+    return PatchError("invalid value: " + _validation_lines(exc, models), path)
 
 
 def _check_merged(model: VcoModel, validate: Callable[..., object], path: Path) -> None:
@@ -501,7 +547,8 @@ def _check_merged(model: VcoModel, validate: Callable[..., object], path: Path) 
         _ = validate(model.model_copy(), context={"patch": True})
     except ValidationError as exc:
         raise PatchError(
-            f"{name} is not valid after this change: {_validation_lines(exc)}", path
+            f"{name} is not valid after this change: {_validation_lines(exc, (type(model),))}",
+            path,
         ) from exc
     except Exception as exc:
         raise PatchError(
@@ -535,7 +582,7 @@ def _new_model_from_patch(
         try:
             built = model_type.model_validate(data, context={"patch": True})
         except ValidationError as exc:
-            raise PatchError(_validation_message(exc), path) from exc
+            raise _invalid_value(exc, (model_type,), path) from exc
         _refuse_unread_keys(built, data, path)
         return built
     _merge_model(instance, patch, resolvers, path, built=True)
@@ -731,7 +778,7 @@ def _new_item(
     try:
         item = item_type.validate(item_input, context={"patch": True})
     except ValidationError as exc:
-        raise PatchError(_validation_message(exc), path) from exc
+        raise _invalid_value(exc, item_type.variants, path) from exc
     _refuse_unread_keys(item, item_input, path)
     if context is not None:
         _ = item.for_context(context)
@@ -1712,7 +1759,7 @@ def _check_add(
     try:
         new = spec.element.validate_python(selector, context={"patch": True})
     except ValidationError as exc:
-        raise PatchError(_validation_message(exc), where) from exc
+        raise _invalid_value(exc, (), where) from exc
     if any(str(item) == str(new) for item in items):
         raise PatchError(f"{new!r} is already in the list", where)
     return new
@@ -2071,7 +2118,7 @@ def _new_map_key(spec: _ListSpec, text: str, where: Path) -> object:
     try:
         return spec.map_key.validate_python(text, context={"patch": True})
     except ValidationError as exc:
-        raise PatchError(_validation_message(exc), where) from exc
+        raise _invalid_value(exc, (), where) from exc
 
 
 def _body(op: ItemOp) -> dict[object, object]:

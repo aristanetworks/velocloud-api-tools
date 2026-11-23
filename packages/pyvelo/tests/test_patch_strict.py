@@ -18,7 +18,7 @@ from pyvelo.core.fields import KeyField, Lenient, NoneIsFalse, Resolvable
 from pyvelo.core.identity import SegmentIdentity
 from pyvelo.core.rebase import Path
 
-from .patch_models import Root, Rule, Sub
+from .patch_models import Hop, Root, Rule, Sub
 from .test_write_safe_resolution import Fake
 
 
@@ -683,3 +683,47 @@ def test_a_field_whose_id_can_be_text_takes_the_name_as_it_is_with_no_resolver()
     model = Either()
     _ = model.merge_patch({"segment_id": "Guest"}, resolvers=ResolverRegistry())
     assert model.segment_id == "Guest"
+
+
+class Tunnel(VcoModel):
+    name: str
+    dh_group: Annotated[int, Alias("DHGroup")] = 0
+    peer_address: str
+    next_hops: list[Hop] = Field(default_factory=list)
+
+
+class Tunnels(VcoModel):
+    tunnels: Annotated[list[Tunnel], KeyField("name")] = Field(default_factory=list)
+    main: Tunnel | MISSING = MISSING
+    spares: dict[str, Tunnel] = Field(default_factory=dict)
+
+
+BAD_TUNNEL: dict[str, object] = {"dh_group": "x", "next_hops": [{"cost": "y"}]}
+INT = "Input should be a valid integer, unable to parse string as an integer"
+
+
+def test_validation_messages_name_fields_as_a_patch_writes_them():
+    error = raises_at(Tunnels(), {"tunnels": {"t": add(BAD_TUNNEL)}}, "tunnels[t]")
+    assert error.message == (
+        f"invalid value: dh_group: {INT}; peer_address: Field required; "
+        f"next_hops[#0].ip: Field required; next_hops[#0].cost: {INT}"
+    )
+    error = raises_at(Tunnels(), {"main": {"name": "m", **BAD_TUNNEL}}, "main")
+    assert f"dh_group: {INT}; peer_address: Field required" in error.message
+    error = raises_at(
+        Tunnels(), {"tunnels": [{"name": "t", "peerAddress": 5}]}, "tunnels"
+    )
+    assert error.message == (
+        "invalid value: [#0].peer_address: Input should be a valid string"
+    )
+    error = raises_at(
+        Tunnels(), {"spares": {"s": add({"name": "s", "peerAddress": 5})}}, "spares[s]"
+    )
+    assert (
+        error.message == "invalid value: peer_address: Input should be a valid string"
+    )
+
+
+def test_a_field_value_has_no_name_in_its_message():
+    error = raises_at(Root(), {"count": "abc"}, "count")
+    assert error.message == f"invalid value: {INT}"
