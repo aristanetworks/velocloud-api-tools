@@ -631,7 +631,7 @@ def _resolve_name(
         ):
             return name
         raise
-    except LookupError:
+    except LookupError as err:
         if id_type is None or id_type is str:
             return name
         raise PatchError(
@@ -639,7 +639,7 @@ def _resolve_name(
             f"{resolvable.identity_type.__name__} resolver is registered to look "
             "it up as a name: give the ID, or register that resolver",
             path,
-        ) from None
+        ) from err
     return _field_value(identity, resolvable.id_attr)
 
 

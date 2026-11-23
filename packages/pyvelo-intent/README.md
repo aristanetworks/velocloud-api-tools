@@ -97,7 +97,8 @@ types, load a resolver with `state.resolver_context` and register it on the
 state (`state.resolvers.register(resolver)`), or give numeric IDs in patches. A
 state you build yourself, from a cache for example, has no resolvers until
 `await pipeline.load_resolvers(state)`. Without its resolver, a name in a patch
-raises `PatchError` at that field; the ID is always accepted.
+raises `PatchError` at that field, unless the field's ID can be text, when the
+name is taken as the ID. An ID is always accepted.
 
 ## The patch format
 

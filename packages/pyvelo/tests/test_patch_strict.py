@@ -329,6 +329,10 @@ class Bound(VcoModel):
     segment_ref: Annotated[str, Resolvable(SegmentIdentity, "name")] = ""
 
 
+class Either(VcoModel):
+    segment_id: Annotated[int | str, Resolvable(SegmentIdentity, "segment_id")] = 0
+
+
 class Member(VcoModel):
     name: str
     segment_id: Annotated[int, Resolvable(SegmentIdentity, "segment_id")]
@@ -345,6 +349,8 @@ def test_a_name_with_no_resolver_registered_is_refused_at_its_field():
     assert exc.value.path == Path.parse("segment_id")
     assert "'Guest'" in exc.value.message
     assert "SegmentIdentity" in exc.value.message
+    assert isinstance(exc.value.__cause__, LookupError)
+    assert not isinstance(exc.value.__cause__, ResolutionError)
     with pytest.raises(PatchError) as exc:
         _ = Members().merge_patch(
             {"members": {"m": add({"segment_id": "Guest"})}}, resolvers=empty
@@ -671,3 +677,9 @@ def test_a_boolean_is_taken_where_the_field_holds_one():
     root = Root()
     _ = root.merge_patch({"flag": True, "safe": True, "blobs": [{"a": True}]})
     assert (root.flag, root.safe, root.blobs) == (True, True, [{"a": True}])
+
+
+def test_a_field_whose_id_can_be_text_takes_the_name_as_it_is_with_no_resolver():
+    model = Either()
+    _ = model.merge_patch({"segment_id": "Guest"}, resolvers=ResolverRegistry())
+    assert model.segment_id == "Guest"
