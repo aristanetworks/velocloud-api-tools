@@ -49,6 +49,17 @@ plan's changes) go onto the fresh data, and the write goes on with the fresh
 version. It is for a module written after a profile's device settings (see
 ``VcoClient.write_module``).
 
+Missing defaults: every QoS segment of a profile holds the template's four
+``defaults`` rules, which the VCO does not enforce. ``plan_module`` pairs the
+rules of each segment with the template's (``pair_defaults``) and warns of
+those a segment lacks (``defaults_repaired``). When the module is written for
+another reason it adds them, from the template, in template order; a module
+with nothing else to write is not written just to repair. A list the
+template does not describe (an item it has no entry for, or an entry whose
+name the list holds under another ``match``) is left alone, with a warning
+(``defaults_not_template``). The repaired entries are no change of the
+caller's: ``changes`` leave them out and ``data`` has them.
+
 Legacy keys: a firewall segment entry has no ``outboundOverride`` (the VCO and the
 edge do not know it), but an older version of this library may have written one.
 A write of a firewall module drops it from every segment entry, and the plan lists
@@ -87,6 +98,9 @@ from pyvelo.client.models.configuration.common import (
 from pyvelo.client.models.configuration.firewall.root import FirewallData
 from pyvelo.client.models.configuration.profile_segments import (
     AddedSegment,
+    insert_defaults,
+    pair_defaults,
+    repaired_entry,
     with_additions,
 )
 from pyvelo.client.models.configuration.ref_owners import fill_ref_only
@@ -177,6 +191,19 @@ def missing_segments(
 
 
 @dataclass(frozen=True)
+class MissingDefaults:
+    """The template ``defaults`` a profile QoS segment lacks."""
+
+    segment: str
+    """The segment's name."""
+    segment_id: object
+    names: tuple[str, ...]
+    """The missing template entries, in template order."""
+    repaired: bool
+    """Whether this plan adds them to its payload."""
+
+
+@dataclass(frozen=True)
 class ModulePlan:
     """What a save of one module writes."""
 
@@ -220,6 +247,11 @@ class ModulePlan:
     """What disagrees in the module as read about its refs, and the plan leaves as it is."""
     added_segments: tuple[str, ...] = ()
     """The names of the segments added to the module that the payload holds."""
+    missing_defaults: tuple[MissingDefaults, ...] = ()
+    """The segments of a profile QoS module that lack template ``defaults``, one entry each.
+
+    ``repaired`` says whether the payload has the missing entries.
+    """
 
     @override
     def __repr__(self) -> str:
@@ -246,7 +278,11 @@ class ModulePlan:
         or insert sends refs with no row changed, and ``warning: <message>``
         is something about the refs as read that the plan leaves as it is.
         ``added segments: A, B`` names the segments the pipeline added to a
-        profile module, which are no change from it.
+        profile module, which are no change from it. ``repaired defaults:
+        Guest: A, B`` names, for a segment, the ``defaults`` entries the
+        payload adds from the template; ``missing defaults:`` is the same
+        line for entries the plan leaves out (nothing else to write, or the
+        repair off).
         """
         lines = [f"{self.name}: {self.operation}"]
         for change in self.changes:
@@ -269,6 +305,11 @@ class ModulePlan:
             lines.append(f"  {label} segments: {', '.join(self.reconciled_segments)}")
         if self.added_segments:
             lines.append(f"  added segments: {', '.join(self.added_segments)}")
+        for missing in self.missing_defaults:
+            label = "repaired" if missing.repaired else "missing"
+            lines.append(
+                f"  {label} defaults: {missing.segment}: {', '.join(missing.names)}"
+            )
         for path in self.overrides_turned_on:
             lines.append(
                 f"  override turned on: {path} (the edge's own values apply there "
@@ -530,6 +571,64 @@ def _check_segment_set(module_name: str, as_read: object, payload: object) -> No
         raise _segment_set_error(module_name, added, removed)
 
 
+def _defaults_path(name: str) -> str:
+    return f"segments[{json.dumps(name)}].defaults"
+
+
+def _defaults_findings(
+    payload: object,
+) -> tuple[list[PlanWarning], list[tuple[str, object, tuple[str, ...]]], list[Any]]:
+    """What the template's ``defaults`` say about each QoS segment of *payload*.
+
+    Returns the ``defaults_not_template`` warnings, the segments with entries
+    to repair as ``(name, segment ID, missing names)`` and those segments'
+    entries, in step.
+    """
+    warnings: list[PlanWarning] = []
+    repairs: list[tuple[str, object, tuple[str, ...]]] = []
+    segments = payload.get("segments") if is_dict(payload) else None
+    targets: list[Any] = []
+    for entry in segments if is_list(segments) else []:
+        if not is_dict(entry):
+            continue
+        name = _segment_name(cast(Mapping[str, Any], entry))
+        pairing = pair_defaults(entry.get("defaults", MISSING))
+        if not pairing.missing:
+            continue
+        path = _defaults_path(name)
+        if pairing.unknown or pairing.clash:
+            items = cast(list[Any], entry.get("defaults"))
+            parts: list[str] = []
+            if pairing.unknown:
+                known = [
+                    str(items[i].get("name", f"item {i}"))
+                    if is_dict(items[i])
+                    else f"item {i}"
+                    for i in pairing.unknown
+                ]
+                parts.append(f"items the template does not know ({', '.join(known)})")
+            if pairing.clash:
+                parts.append(
+                    f"missing entries whose names it already holds ({', '.join(pairing.clash)}), "
+                    "which a repair would repeat"
+                )
+            warnings.append(
+                PlanWarning(
+                    "defaults_not_template",
+                    path,
+                    f"The defaults of segment {name!r} lack template entries "
+                    f"({', '.join(pairing.missing)}), but the list has "
+                    f"{' and '.join(parts)}. The list is left as it is: edit "
+                    "it so that it holds the four template entries, then write "
+                    "the module again.",
+                )
+            )
+            continue
+        repairs.append((name, segment_id_of(entry), pairing.missing))
+        targets.append(entry)
+    return warnings, repairs, targets
+
+
 def plan_module(
     module: ConfigurationModuleBase,
     data: VcoModel | Mapping[str, object] | None = None,
@@ -538,6 +637,9 @@ def plan_module(
     profile: ConfigurationModuleBase | None = None,
     resolvers: IdentityLookup | None = None,
     via_pipeline: bool = False,
+    repair_defaults: bool = True,
+    conditional_backhaul: Mapping[int, bool] | None = None,
+    carried_repairs: Mapping[tuple[str, str], Mapping[str, Any]] | None = None,
 ) -> ModulePlan:
     """Plan the write of *module*, with *data* (default ``module.data``) as its data.
 
@@ -565,6 +667,16 @@ def plan_module(
     Raises ``FixedListError`` for a payload that changes a fixed part of a
     ``FixedList`` (the QoS ``defaults``: only their actions can change),
     whatever made the change, relative to the module as read.
+    A QoS module at the profile level whose segments lack template ``defaults``
+    (see the module text) gets them when it is written, unless *repair_defaults*
+    is false; the plan warns either way, and lists them in ``missing_defaults``.
+    A repaired entry's ``ruleLogicalId`` is kept on the module
+    (``defaults_rule_id``), or is the one *carried_repairs* gives for
+    ``(str(segment ID), name)``, which is used as it is. A repaired entry's
+    ``action.allowConditionalBh`` is *conditional_backhaul*'s value for the
+    segment (``vpn.conditionalBackhaul`` of its device settings), and the
+    template action's, which has none, when that is None or lacks the
+    segment.
     Raises ``LossyFieldError`` if the caller assigned a value that cannot reach
     the written data (the default of a key that was absent when read).
 
@@ -668,6 +780,12 @@ def plan_module(
         restored = missing_segments(payload, inherited.raw_data, name)
         _add_segments(payload, restored)
 
+    not_template: list[PlanWarning] = []
+    repairs: list[tuple[str, object, tuple[str, ...]]] = []
+    repair_targets: list[Any] = []
+    if level is ConfigContext.PROFILE and name == "QOS":
+        not_template, repairs, repair_targets = _defaults_findings(payload)
+
     derived_refs: dict[str, Any] | None = None
     ref_changes: tuple[RefChange, ...] = ()
     warnings: tuple[PlanWarning, ...] = ()
@@ -700,6 +818,50 @@ def plan_module(
     if changed:  # never a write just to strip them
         drop_legacy_keys(payload, name)
     changes = tuple(raw_changes(planned_from, payload, model_type))
+    repaired = changed and repair_defaults
+    missing_defaults: list[MissingDefaults] = []
+    repair_warnings: list[PlanWarning] = []
+    for entry, (segment_name, segment_id, names) in zip(
+        repair_targets, repairs, strict=True
+    ):
+        if repaired:
+            held = entry.get("defaults")
+            entry["defaults"] = insert_defaults(
+                held if is_list(held) else None,
+                [
+                    copy.deepcopy(dict(carried_repairs[(str(segment_id), n)]))
+                    if carried_repairs is not None
+                    and (str(segment_id), n) in carried_repairs
+                    else repaired_entry(
+                        n,
+                        module.defaults_rule_id(segment_id, n),
+                        conditional_backhaul.get(cast(int, segment_id))
+                        if conditional_backhaul is not None
+                        else None,
+                    )
+                    for n in names
+                ],
+            )
+        missing_defaults.append(
+            MissingDefaults(segment_name, segment_id, names, repaired=repaired)
+        )
+        repair_warnings.append(
+            PlanWarning(
+                "defaults_repaired",
+                _defaults_path(segment_name),
+                f"The defaults of segment {segment_name!r} lack {', '.join(names)}, "
+                "which every QoS segment of a profile holds. "
+                + (
+                    "This write adds them from the template."
+                    if repaired
+                    else "The repair is off (repair_defaults is false), so this "
+                    "write leaves them out."
+                    if not repair_defaults
+                    else "This module has nothing else to write, so it is not "
+                    "written; a later write of it adds them."
+                ),
+            )
+        )
     in_payload = _segment_names(payload).keys()
     return ModulePlan(
         name=name,
@@ -714,12 +876,13 @@ def plan_module(
         overrides_turned_on=_overrides_turned_on(changes, model_type),
         model=_document_model(model_type, module),
         ref_changes=ref_changes,
-        warnings=warnings,
+        warnings=(*warnings, *not_template, *repair_warnings),
         added_segments=tuple(
             a.name
             for a in additions
             if isinstance(a, AddedSegment) and a.segment_id in in_payload
         ),
+        missing_defaults=tuple(missing_defaults),
     )
 
 
@@ -732,6 +895,50 @@ _REBASE_LIST = (
     "list this save also changes, so its edits cannot be applied item by item; "
     "nothing was sent"
 )
+
+
+def _without_repairs(
+    plan: ModulePlan, as_read: object
+) -> tuple[dict[str, Any], dict[tuple[str, str], Mapping[str, Any]]]:
+    """The payload of *plan* without its repaired ``defaults`` entries, and those entries by ``(str(segment ID), name)``.
+
+    The repaired entries are not the caller's edits: a rebase carries the
+    edits and puts the repairs back as they were planned (``carried_repairs``).
+    A segment left with no entry has the ``defaults`` it had in *as_read*,
+    absent or null.
+    """
+    data = copy.deepcopy(plan.data)
+    carried: dict[tuple[str, str], Mapping[str, Any]] = {}
+    segments = data.get("segments")
+    read_segments: object = as_read.get("segments") if is_dict(as_read) else None
+    for missing in plan.missing_defaults:
+        if not missing.repaired:
+            continue
+        for entry in segments if is_list(segments) else []:
+            if not (is_dict(entry) and segment_id_of(entry) == missing.segment_id):
+                continue
+            kept: list[object] = []
+            for rule in cast(list[object], entry.get("defaults", [])):
+                name = rule.get("name") if is_dict(rule) else None
+                if is_dict(rule) and name in missing.names:
+                    carried[(str(missing.segment_id), cast(str, name))] = cast(
+                        dict[str, Any], rule
+                    )
+                else:
+                    kept.append(rule)
+            if kept:
+                entry["defaults"] = kept
+                continue
+            read = [
+                e
+                for e in (read_segments if is_list(read_segments) else [])
+                if is_dict(e) and segment_id_of(e) == missing.segment_id
+            ]
+            if read and "defaults" in read[0]:
+                entry["defaults"] = read[0]["defaults"]
+            else:
+                _ = entry.pop("defaults", None)
+    return data, carried
 
 
 def rebase_onto[M: ConfigurationModuleBase](
@@ -772,9 +979,10 @@ def rebase_onto[M: ConfigurationModuleBase](
         )
     as_read = {} if module.raw_data is MISSING else module.raw_data
     model = data_model(module)
+    planned_data, carried_repairs = _without_repairs(plan, as_read)
     found = check_response(
         as_read,
-        plan.data,
+        planned_data,
         fresh.raw_data,
         model,
         rewrites=MODULE_REWRITES.get(plan.name, Rewrites()),
@@ -800,9 +1008,14 @@ def rebase_onto[M: ConfigurationModuleBase](
     if any(change.clash for change in found.not_applied):
         raise conflict(_REBASE_CLASH)
     rebased = fresh.with_data_parsed_from(
-        rebase(fresh.raw_data, as_read, plan.data, model)
+        rebase(fresh.raw_data, as_read, planned_data, model)
     )
-    rebased_plan = plan_module(rebased, level=module.config_context, via_pipeline=True)
+    rebased_plan = plan_module(
+        rebased,
+        level=module.config_context,
+        via_pipeline=True,
+        carried_repairs=carried_repairs,
+    )
     planned = {change.path for change in plan.changes}
     if any(change.path not in planned for change in rebased_plan.changes):
         raise conflict(_REBASE_LIST)

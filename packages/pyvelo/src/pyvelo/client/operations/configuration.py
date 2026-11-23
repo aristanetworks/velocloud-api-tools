@@ -785,6 +785,7 @@ class ConfigurationMixin(Protocol):
         enterprise_id: int | None = None,
         profile: ConfigurationModuleBase | None = None,
         resolvers: IdentityLookup | None = None,
+        repair_defaults: bool = True,
     ) -> M:
         """Write *data* to *module*: its raw data as read, plus the caller's changes.
 
@@ -850,7 +851,13 @@ class ConfigurationMixin(Protocol):
         try:
             write = await self.write_module(
                 module,
-                plan_module(module, data, profile=profile, resolvers=resolvers),
+                plan_module(
+                    module,
+                    data,
+                    profile=profile,
+                    resolvers=resolvers,
+                    repair_defaults=repair_defaults,
+                ),
                 enterprise_id=enterprise_id,
             )
         except ModuleWriteError as error:

@@ -19,6 +19,7 @@ from typing import Any
 
 import pytest
 from pyvelo.client.exceptions import ConfigConflictError
+from pyvelo.client.models.configuration.profile_segments import default_rules
 from pyvelo.client.models.configuration.qos.root import ServiceRateLimit
 from pyvelo.client.models.configuration.qos.segment import WebProxy
 from pyvelo.client.module_check import ModuleWrite
@@ -62,7 +63,12 @@ def qos_module() -> QosConfigurationModule:
     """A profile QoS module with the Global Segment, a web proxy and a rate limit."""
     data: dict[str, Any] = {
         "segments": [
-            {"segment": GLOBAL_SEGMENT, "rules": [], "webProxy": {"providers": []}}
+            {
+                "segment": GLOBAL_SEGMENT,
+                "rules": [],
+                "defaults": default_rules(),  # a segment that lacks them is repaired
+                "webProxy": {"providers": []},
+            }
         ],
         "serviceRateLimit": copy.deepcopy(RATE),
     }

@@ -57,6 +57,26 @@ an edge's raw `defaults` included, and `validate=False` does not skip it. The
 error lists each path with its reason. A missing entry is repaired when the
 module is written, never built by an edit.
 
+Every QoS segment of a profile holds the template's four `defaults` rules
+(`Default-Internet-UDP`, `Default-Internet-Other`, `Default-Any-UDP`,
+`Default-Any-Other`), which the VCO does not enforce. `plan_module` pairs the
+rules of each segment with them, one to one. For a segment that lacks some, the
+plan warns (`defaults_repaired`) and lists them in `ModulePlan.missing_defaults`
+(`repaired defaults:` or `missing defaults:` in `render()`). When the module is
+written for another reason the plan adds the missing rules from the template, in
+template order, each with a new `ruleLogicalId` that the module keeps, so a
+re-plan sends the same one; a module with nothing else to write is not written
+just to repair, and the next write does. `update_module(...,
+repair_defaults=False)` and `plan_module(..., repair_defaults=False)` keep the
+warning and leave the rules out. A list the template does not describe (an item
+it has no entry for, or a missing name that the list already holds under another
+`match`) is left as it is, with a `defaults_not_template` warning. The repaired
+rules are no change of the caller's, so `changes` leave them out. The edge level
+repairs nothing. `plan_module(..., conditional_backhaul={segmentId: bool})` sets
+`action.allowConditionalBh` of a repaired rule to the segment's
+`vpn.conditionalBackhaul`; without it, as in `update_module`, a repaired rule
+has the template's action.
+
 The segments of a profile are the same in its device settings, QoS and firewall
 modules, so one module alone cannot change them. `plan_module` and
 `update_module` raise `SegmentSetError` for a profile module whose payload adds

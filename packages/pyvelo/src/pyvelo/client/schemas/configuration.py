@@ -45,6 +45,7 @@ from pyvelo.client.models.configuration.profile_segments import (
     AddedSegment,
     SegmentAddition,
     insert_defaults,
+    with_additions,
 )
 from pyvelo.client.models.configuration.qos.rule import QosRule
 from pyvelo.client.models.configuration.ref_owners import fill_ref_only
@@ -201,6 +202,7 @@ class ConfigurationModuleBase(VcoModel):
     _is_new: bool = PrivateAttr(default=False)
     _refs_loaded: bool = PrivateAttr(default=True)
     _additions: tuple[SegmentAddition, ...] = PrivateAttr(default=())
+    _repair_ids: dict[tuple[str, str], str] = PrivateAttr(default_factory=dict)
 
     @model_validator(mode="wrap")
     @classmethod
@@ -363,14 +365,45 @@ class ConfigurationModuleBase(VcoModel):
         added = tuple(copy.deepcopy(dict(entry)) for entry in entries)
         rules = [self._parse_as(QosRule, entry) for entry in added]
         defaults: object = segment.defaults
-        if not isinstance(defaults, list):  # unset or null
-            defaults = []
-            segment.defaults = defaults
-        insert_defaults(cast(list[Any], defaults), rules)
+        held: list[Any] = list(defaults) if isinstance(defaults, list) else []
+        # The place is decided on the raw items (a parsed rule has normalized
+        # its match), which stand in the same order as the parsed ones.
+        raw_held = self._raw_defaults_of(segment_id)
+        if len(raw_held) == len(held):
+            placed = insert_defaults(raw_held, added)
+            parsed = {id(raw): item for raw, item in zip(raw_held, held, strict=True)}
+            parsed |= {id(raw): rule for raw, rule in zip(added, rules, strict=True)}
+            segment.defaults = [parsed[id(item)] for item in placed]
+        else:
+            segment.defaults = [*held, *rules]
         self._additions = (
             *self._additions,
             AddedDefaults(segment_id, segment.segment.name, added),
         )
+
+    def _raw_defaults_of(self, segment_id: int) -> list[object]:
+        """The raw ``defaults`` of segment *segment_id* in the raw data plus the additions so far; empty when it has none."""
+        if self._raw_data is MISSING:
+            return []
+        raw = with_additions(self._raw_data, self._additions)
+        entries: object = raw.get("segments") if isinstance(raw, dict) else None
+        for entry in entries if isinstance(entries, list) else []:
+            if isinstance(entry, dict) and segment_id_of(entry) == segment_id:
+                found: object = entry.get("defaults")
+                return list(found) if isinstance(found, list) else []
+        return []
+
+    def defaults_rule_id(self, segment_id: object, name: str) -> str:
+        """The ``ruleLogicalId`` kept for the repaired default *name* of segment *segment_id*.
+
+        A new ``uuid4`` text the first time, the same every time after, so a
+        plan, a re-plan and a plan of a copy of this module send one ID. A
+        copy made by ``with_data_parsed_from`` starts with none.
+        """
+        key = (str(segment_id), name)
+        if key not in self._repair_ids:
+            self._repair_ids[key] = str(uuid.uuid4())
+        return self._repair_ids[key]
 
     def with_data_parsed_from(
         self, raw_data: object, *, additions: Sequence[SegmentAddition] = ()
@@ -382,10 +415,12 @@ class ConfigurationModuleBase(VcoModel):
         ``plan_module`` of the copy is then the change from this module's raw
         data, plus *additions*, to *raw_data*. ``version``, the raw refs and
         ``refs_loaded`` are this module's. The copy's additions are
-        *additions*, never this module's.
+        *additions*, never this module's, and it keeps its own repair IDs
+        (``defaults_rule_id``), none to begin with.
         """
         copied = self.model_copy()
         copied._additions = tuple(additions)
+        copied._repair_ids = {}
         data: object = getattr(self, "data", MISSING)
         if isinstance(data, VcoModel):
             level = self.config_context
