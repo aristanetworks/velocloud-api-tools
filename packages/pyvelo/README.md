@@ -65,7 +65,11 @@ own way, use `write_module`, whose `ModuleWrite` has `left_out` and
 
 `VcoClient.write_module(module, plan)` sends a plan as an update or an insert
 that asks for the module as stored (`returnData`), and reads the module back
-when the VCO answers without it. An update none of whose changes could be found
+when the VCO answers without it. An insert is always read back, whatever the
+VCO answered, because an insert's `returnData` does not promise refs: the module
+returned has its refs (`refs_loaded` is `True`) and is the one compared with the
+plan. A QoS insert carries the plan's refs in its one request when the plan has
+any; a firewall insert has none. An update none of whose changes could be found
 stored (every one is to a value the VCO stores its own way) is sent without
 `returnData`. The VCO then answers with a row count, which says whether it
 stored the write, and the module is read back. `write_module` then compares
@@ -148,7 +152,8 @@ makes no extra request.
 
 With `if_absent=True` an insert first reads the configuration, and a module of
 that name found there is taken as the insert's answer and checked like one, with
-nothing inserted: the way to repeat an insert whose answer never arrived.
+nothing inserted: the way to repeat an insert whose answer never arrived. That
+read already holds the refs, so the module found is not read again.
 
 `pyvelo.testing.ModuleStore` is an `httpx` handler that holds module rows as
 JSON and answers module updates, inserts, `getConfiguration` and, for an edge

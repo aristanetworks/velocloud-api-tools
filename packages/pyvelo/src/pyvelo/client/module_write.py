@@ -9,6 +9,8 @@ raw JSON and the model as it is now) is applied to it.
 After the plan: ``VcoClient.write_module`` sends it as an update or an insert
 (the requests are built here) that asks for the module as stored
 (``returnData``), and reads the module back when the VCO answers without it.
+An insert is always read back, with its refs, because its row does not promise
+them.
 An update none of whose changes the check can find stored is sent without
 ``returnData`` and read back too: the VCO then answers with a row count, which
 says whether it stored the write, and a row cannot.
@@ -293,8 +295,9 @@ def insert_request(
     """The request that inserts *plan* as a new module of *module*'s configuration, asking for its row.
 
     Only a firewall or QoS module is inserted (``TypeError`` otherwise); a QoS
-    one carries the plan's refs. Raises ``ValueError`` if *module* has no
-    ``configuration_id``.
+    one carries the plan's refs when it has any, and a firewall one never does:
+    its request has no ``refs``, and no firewall field declares an owner.
+    Raises ``ValueError`` if *module* has no ``configuration_id``.
     """
     configuration_id = module.configuration_id
     if configuration_id is None:
@@ -311,7 +314,7 @@ def insert_request(
         return InsertQosConfigurationModule(
             configuration_id=configuration_id,
             data=plan.data,
-            refs=plan.refs,
+            refs=plan.refs if plan.refs is not None else MISSING,
             enterprise_id=enterprise,
             return_data=True,
         )

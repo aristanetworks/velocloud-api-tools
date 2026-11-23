@@ -402,7 +402,7 @@ async def test_insert_returns_the_row_and_is_not_new(
     store = store_of(module)
     client = await mock_vco_client(store)
     write = await client.write_module(module, plan_module(module))
-    assert methods(store) == ["insertConfigurationModule"]
+    assert methods(store) == ["insertConfigurationModule", "getConfiguration"]
     assert write.operation == "insert"
     assert write.module.is_new is False
     (stored_id,) = store.rows
@@ -1103,9 +1103,7 @@ async def test_every_request_of_an_insert_names_the_enterprise(
     client = await mock_vco_client(store)
     write = await client.write_module(module, plan_module(module), enterprise_id=7)
     assert write.module.is_new is False
-    assert [params.get("enterpriseId") for _, params in store.requests] == (
-        [7] if return_data else [7, 7]
-    )
+    assert [params.get("enterpriseId") for _, params in store.requests] == [7, 7]
 
 
 async def test_if_absent_inserts_when_the_configuration_has_no_module_of_the_name(
@@ -1115,7 +1113,11 @@ async def test_if_absent_inserts_when_the_configuration_has_no_module_of_the_nam
     store = store_of(module)
     client = await mock_vco_client(store)
     write = await client.write_module(module, plan_module(module), if_absent=True)
-    assert methods(store) == ["getConfiguration", "insertConfigurationModule"]
+    assert methods(store) == [
+        "getConfiguration",
+        "insertConfigurationModule",
+        "getConfiguration",
+    ]
     assert write.operation == "insert"
     (stored_id,) = store.rows
     assert write.module.id_ == stored_id
@@ -1133,7 +1135,11 @@ async def test_if_absent_takes_a_module_of_the_name_as_the_answer(
 
     write = await client.write_module(module, plan, if_absent=True)
 
-    assert methods(store) == ["insertConfigurationModule", "getConfiguration"]
+    assert methods(store) == [
+        "insertConfigurationModule",
+        "getConfiguration",
+        "getConfiguration",
+    ]
     assert list(store.rows) == [stored_id]
     assert (write.operation, write.module.id_) == ("insert", stored_id)
     assert write.module.is_new is False
@@ -1222,7 +1228,11 @@ async def test_if_absent_reads_only_the_rows_of_the_name(
     )
     client = await mock_vco_client(store)
     write = await client.write_module(module, plan_module(module), if_absent=True)
-    assert methods(store) == ["getConfiguration", "insertConfigurationModule"]
+    assert methods(store) == [
+        "getConfiguration",
+        "insertConfigurationModule",
+        "getConfiguration",
+    ]
     assert write.module.name == "QOS"
 
 

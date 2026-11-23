@@ -1279,7 +1279,7 @@ async def insert_module(site: Site, data: object, refs: object) -> None:
             InsertQosConfigurationModule(
                 configuration_id=site.configuration_id,
                 data=copy.deepcopy(data),
-                refs=copy.deepcopy(refs) if isinstance(refs, dict) else None,  # pyright: ignore[reportUnknownArgumentType]
+                refs=copy.deepcopy(refs) if isinstance(refs, dict) else MISSING,  # pyright: ignore[reportUnknownArgumentType]
                 enterprise_id=enterprise,
             )
         )

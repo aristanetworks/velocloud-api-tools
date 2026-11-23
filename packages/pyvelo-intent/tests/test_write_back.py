@@ -16,7 +16,6 @@ from pyvelo.client.enums.configuration import ConfigurationModuleName
 from pyvelo.client.exceptions import (
     ConfigConflictError,
     DetachedObjectError,
-    RefsNotLoadedError,
     VcoOperationError,
     WriteNotAppliedError,
     WriteOutcomeUnknownError,
@@ -546,7 +545,7 @@ async def saved_insert() -> tuple[ConfigState, MockVcoClient, ConfigPipeline, in
         patch={"voice": add({"match": {"dport_low": 5060}, "action": QOS_ACTION})},
     )
     result = await pipeline.save(state)
-    assert methods(client.store) == ["insertConfigurationModule"]
+    assert methods(client.store) == ["insertConfigurationModule", "getConfiguration"]
     params = client.store.requests[0][1]
     assert params["returnData"] is True
     assert params["configurationId"] == state.target_config.id_ == 10
@@ -565,12 +564,6 @@ async def test_insert_refreshes_and_is_no_longer_new():
     _ = await saved_insert()
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=RefsNotLoadedError,
-    reason="an insert's answer carries no refs, and the module is not read back "
-    "with them until Task 10 of the derived-refs plan",
-)
 async def test_a_module_inserted_is_updated_by_the_next_save():
     state, client, pipeline, inserted = await saved_insert()
     state.edge.qos.service_rate_limit = ServiceRateLimit(

@@ -114,6 +114,7 @@ async def test_an_insert_that_was_not_stored_is_sent_again_after_a_read():
         "insertConfigurationModule",
         "getConfiguration",
         "insertConfigurationModule",
+        "getConfiguration",
     ]
     (stored_id,) = edge_qos_rows(client)
     assert state.module("qos").id_ == stored_id
@@ -296,7 +297,11 @@ async def test_a_save_cancelled_while_an_insert_is_out_marks_it_unconfirmed():
     client.release.set()
     result = await pipeline.save(state)
 
-    assert methods(client.store) == ["getConfiguration", "insertConfigurationModule"]
+    assert methods(client.store) == [
+        "getConfiguration",
+        "insertConfigurationModule",
+        "getConfiguration",
+    ]
     assert result.modules_inserted == [QOS]
     (stored_id,) = edge_qos_rows(client)
     assert state.module("qos").id_ == stored_id

@@ -491,7 +491,7 @@ class InsertConfigurationModuleBase(VcoModel):
 class InsertQosConfigurationModule(InsertConfigurationModuleBase):
     name: Literal["QOS"] = "QOS"
     data: dict[str, Any]
-    refs: dict[str, Any] | None = None
+    refs: dict[str, Any] | MISSING = MISSING
 
 
 class InsertFirewallConfigurationModule(InsertConfigurationModuleBase):

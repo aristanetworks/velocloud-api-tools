@@ -540,7 +540,11 @@ class ConfigurationMixin(Protocol):
         *module*, asking for the module row as stored. When the VCO answers
         without one (it refused the version, or it ignores ``returnData``), the
         module is read back from its configuration, and only that module's
-        row is parsed; an error of that read request propagates. An update
+        row is parsed; an error of that read request propagates. An insert is
+        always read back, also when the VCO answered with its row, because an
+        insert's row does not promise the module's refs: the module returned
+        has them (``refs_loaded``), and the check runs on it. A QoS insert
+        sends the plan's refs, when it has any, in its one request. An update
         with no change the check can find stored (``has_checkable_change``:
         every change is to a value the VCO stores its own way) is sent
         without ``returnData`` and read back. A VCO with its conditional
@@ -570,7 +574,8 @@ class ConfigurationMixin(Protocol):
         is taken as the insert's answer and checked like one, and nothing is
         inserted. Use it to repeat an insert whose answer was not read. An
         error of that read request itself propagates, as it does for the
-        read-back.
+        read-back. That read holds the refs, so the module found is not read
+        again.
 
         A row the VCO answers with that has no version is replaced by the
         module read from its configuration, so that the module returned
@@ -644,16 +649,21 @@ class ConfigurationMixin(Protocol):
                     ) from error
                 if isinstance(inserted, InsertConfigurationModuleResult):
                     answer = "counted"
-                    stored = await _read_stored(
-                        self,
-                        module,
-                        plan,
-                        enterprise_id,
-                        answer=answer,
-                        module_id=inserted.id_,
-                    )
+                    inserted_id = inserted.id_
                 else:
-                    stored = inserted
+                    # The row says what was inserted; it promises no refs.
+                    inserted = _require_this_module(
+                        module, plan, inserted, answer=answer
+                    )
+                    inserted_id = inserted.id_
+                stored = await _read_stored(
+                    self,
+                    module,
+                    plan,
+                    enterprise_id,
+                    answer=answer,
+                    module_id=inserted_id,
+                )
         else:
             if (
                 plan.refs is not None
@@ -693,8 +703,9 @@ class ConfigurationMixin(Protocol):
                     self, module, plan, enterprise_id, answer=answer
                 )
         stored = _require_this_module(module, plan, stored, answer=answer)
-        if answer == "row" and not stored.version:
+        if plan.operation == "update" and answer == "row" and not stored.version:
             # The next write of the module is conditional on this version.
+            # (An insert is already read back.)
             stored = await _read_stored(
                 self, module, plan, enterprise_id, answer=answer, module_id=stored.id_
             )

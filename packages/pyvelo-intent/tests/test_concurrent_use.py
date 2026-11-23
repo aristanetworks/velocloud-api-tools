@@ -125,7 +125,7 @@ async def test_two_saves_at_once_insert_a_new_module_once():
 
     first, second = await asyncio.gather(pipeline.save(state), pipeline.save(state))
 
-    assert methods(client.store) == ["insertConfigurationModule"]
+    assert methods(client.store) == ["insertConfigurationModule", "getConfiguration"]
     assert (first.modules_inserted, second.modules_inserted) == ([QOS], [])
     rows = [r for r in client.store.rows.values() if r["configurationId"] == 10]
     assert sorted(r["name"] for r in rows) == ["QOS", "firewall"]
