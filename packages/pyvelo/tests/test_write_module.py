@@ -695,6 +695,28 @@ async def test_an_unknown_outcome_names_the_refs_it_sent(
     ]
 
 
+async def test_an_unknown_outcome_shows_a_place_and_an_order(
+    mock_vco_client: MockVcoClientFactory,
+):
+    module = fw({**RAW, "inbound": [inbound_rule("a"), inbound_rule("b")]})
+    rule_type = type(module.data.inbound[0])
+    module.data.inbound.reverse()
+    module.data.inbound.insert(0, rule_type.model_validate(inbound_rule("c")))
+    store = store_of(module, conditional_check=True)
+    store.other_writer(1, elsewhere)
+    client = await mock_vco_client(reading(store, []))
+    with pytest.raises(WriteOutcomeUnknownError) as exc:
+        _ = await client.write_module(module, plan_module(module))
+    lines = str(exc.value).splitlines()
+    assert lines[2] == "planned, not checked:"
+    assert lines[3].startswith(
+        '  inbound[c] (first): read (nothing), meant {"action": {"type": '
+    )
+    assert lines[4] == (
+        '  inbound: order: b after c: read ["a", "b"], meant ["c", "b", "a"]'
+    )
+
+
 async def test_counted_insert_that_cannot_be_read_back_carries_the_id_answered(
     mock_vco_client: MockVcoClientFactory,
 ):

@@ -77,6 +77,7 @@ from pyvelo.core.rebase import (
     raw_changes,
     rebase,
 )
+from pyvelo.core.show import moves_text, shown, shown_together
 
 type _Operation = Literal["none", "update", "insert"]
 
@@ -164,16 +165,28 @@ class ModulePlan:
     """
 
     def render(self) -> str:
+        """The plan as text: a headline, then a line for each change.
+
+        ``+ path: value`` is a key or an item that is added; an item added to a
+        keyed list has its place after the path, ``(first)`` or ``(after
+        other)``. ``- path`` is one that is removed. ``~ path: before -> after``
+        is a value that changes. ``~ path: order: moves`` is a keyed list whose
+        items change place: it names up to five moves, each with its new place,
+        and counts the rest. A value is shown as JSON, cut to 80 characters;
+        the two values of a ``~`` line are cut where they first differ.
+        """
         lines = [f"{self.name}: {self.operation}"]
         for change in self.changes:
-            if change.before is MISSING:
-                lines.append(f"  + {change.path}: {_json(change.after)}")
+            if change.moves is not None:
+                lines.append(f"  ~ {change.path}: order: {moves_text(change.moves)}")
+            elif change.before is MISSING:
+                place = f" ({change.place})" if change.place is not None else ""
+                lines.append(f"  + {change.path}{place}: {shown(change.after)}")
             elif change.after is MISSING:
                 lines.append(f"  - {change.path}")
             else:
-                lines.append(
-                    f"  ~ {change.path}: {_json(change.before)} -> {_json(change.after)}"
-                )
+                before, after = shown_together(change.before, change.after)
+                lines.append(f"  ~ {change.path}: {before} -> {after}")
         if self.refs is not None:
             lines.append("  refs: replaced")
         if self.reconciled_segments:
@@ -287,10 +300,6 @@ def _overrides_turned_on(
         and change.before is not True
         and is_override_flag(model_type, change.path)
     )
-
-
-def _json(value: object) -> str:
-    return json.dumps(value, sort_keys=True)
 
 
 def _attribute(obj: object, name: str) -> object:

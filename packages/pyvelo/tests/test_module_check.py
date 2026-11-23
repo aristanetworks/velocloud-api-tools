@@ -247,6 +247,25 @@ def test_long_values_are_cut():
     assert "…" in text
 
 
+def test_long_values_are_cut_where_they_differ():
+    old, new = list(range(60)), [*range(55), 99, *range(56, 60)]
+    module = fw({**RAW, "future": old})
+    plan = plan_module(module, {**RAW, "future": new})
+    stored = as_stored(module, {**RAW, "future": old, "syslog_forwarding": True})
+    with pytest.raises(ConfigConflictError) as exc:
+        _ = check_module_write(module, plan, stored)
+    assert str(exc.value).splitlines()[1:] == [
+        "lost edits (not stored; redo these):",
+        (
+            "  future: read …50, 51, 52, 53, 54, 55, 56, 57, 58, 59], "
+            "meant …50, 51, 52, 53, 54, 99, 56, 57, 58, 59], "
+            "stored …50, 51, 52, 53, 54, 55, 56, 57, 58, 59]"
+        ),
+        "stored otherwise than sent:",
+        "  syslog_forwarding: read false, stored true",
+    ]
+
+
 def test_completed_writes_are_named():
     module = firewall_disabled()
     with pytest.raises(ModuleWriteError) as exc:

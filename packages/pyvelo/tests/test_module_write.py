@@ -353,8 +353,71 @@ def test_change_paths_quote_keys_with_special_characters():
     assert (
         plan.render()
         .splitlines()[1]
-        .startswith('  + segments["Global Segment"].outbound[b]: ')
+        .startswith('  + segments["Global Segment"].outbound[b] (first): ')
     )
+
+
+def raw_rule(name: str) -> dict[str, Any]:
+    return {"name": name, "match": {}, "action": {"allow_or_deny": "allow"}}
+
+
+RULES_RAW: dict[str, Any] = {
+    **EDGE_RAW,
+    "segments": [
+        {
+            "segment": desc(0, "Global Segment"),
+            "outbound": [raw_rule("a"), raw_rule("b"), raw_rule("c")],
+        }
+    ],
+}
+OUTBOUND = 'segments["Global Segment"].outbound'
+
+
+def test_render_shows_where_an_added_rule_goes():
+    first, last = fw(RULES_RAW), fw(RULES_RAW)
+    first.data.segments[0].outbound.insert(0, rule("x"))
+    last.data.segments[0].outbound.append(rule("x"))
+    at_first = plan_module(first, level=EDGE).render().splitlines()
+    at_last = plan_module(last, level=EDGE).render().splitlines()
+    assert at_first[1].startswith(f'  + {OUTBOUND}[x] (first): {{"action": ')
+    assert at_last[1].startswith(f'  + {OUTBOUND}[x] (after c): {{"action": ')
+    assert at_first[1].endswith("…") and len(at_first[1]) < 150
+
+
+def test_render_of_a_move_is_one_short_line_beside_the_edit():
+    mod = fw(RULES_RAW)
+    rules = mod.data.segments[0].outbound
+    rules.insert(0, rules.pop())
+    rules[1].logging_enabled = True
+    assert plan_module(mod, level=EDGE).render().splitlines() == [
+        "firewall: update",
+        f"  + {OUTBOUND}[a].loggingEnabled: true",
+        f"  ~ {OUTBOUND}: order: c first",
+    ]
+
+
+def test_render_names_five_moves_and_counts_the_rest():
+    raw = copy.deepcopy(RULES_RAW)
+    raw["segments"][0]["outbound"] = [raw_rule(f"r{n}") for n in range(9)]
+    mod = fw(raw)
+    mod.data.segments[0].outbound.reverse()
+    assert plan_module(mod, level=EDGE).render().splitlines()[1] == (
+        f"  ~ {OUTBOUND}: order: r8 first; r7 after r8; r6 after r7; r5 after r6; "
+        "r4 after r5; and 3 more"
+    )
+
+
+def test_render_cuts_two_long_values_where_they_differ():
+    old, new = list(range(60)), [*range(55), 99, *range(56, 60)]
+    mod = fw({**EDGE_RAW, "futureTopLevel": old})
+    plan = plan_module(mod, {**EDGE_RAW, "futureTopLevel": new}, level=EDGE)
+    assert plan.render().splitlines() == [
+        "firewall: update",
+        (
+            "  ~ futureTopLevel: …50, 51, 52, 53, 54, 55, 56, 57, 58, 59] "
+            "-> …50, 51, 52, 53, 54, 99, 56, 57, 58, 59]"
+        ),
+    ]
 
 
 def test_lossy_error_carries_structured_paths():
@@ -1314,7 +1377,7 @@ def test_a_patch_inside_an_inherited_section_turns_its_override_on_and_the_plan_
     lines = plan.render().splitlines()
     assert lines[0] == "deviceSettings: update"
     assert lines[1] == f"  ~ {BGP}.override: false -> true"
-    assert lines[2].startswith(f'  + {BGP}.neighbors["10.0.0.2"]: ')
+    assert lines[2].startswith(f'  + {BGP}.neighbors["10.0.0.2"] (first): ')
     assert lines[3:] == [f"  override turned on: {BGP} {OVERRIDE_NOTE}"]
     # The edge layer's own section is sent; nothing of a profile's is in it.
     sent = plan.data["segments"][0]["bgp"]

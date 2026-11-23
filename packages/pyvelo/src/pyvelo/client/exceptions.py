@@ -8,10 +8,9 @@ import json
 from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING, Any, Final, Literal, cast, override
 
-from pydantic import MISSING
-
-from pyvelo.core.rebase import Path
+from pyvelo.core.rebase import ItemMove, ItemPlace, Path
 from pyvelo.core.response_check import PlannedChange, ServerChange
+from pyvelo.core.show import moves_text, shown_together
 
 if TYPE_CHECKING:
     from pyvelo.client.module_check import ModuleWrite
@@ -227,27 +226,18 @@ row count of at least one, or an insert's ID, so it says it stored the write.
 row count of zero).
 """
 
-_VALUE_WIDTH: Final = 80
-"""How much of a value's JSON a message shows."""
 
+def _place_or_order(place: ItemPlace | None, moves: tuple[ItemMove, ...] | None) -> str:
+    """What follows a path on a line of a write error.
 
-def _shown(value: object) -> str:
-    """*value* as a message shows it: its JSON, cut to ``_VALUE_WIDTH``; ``(nothing)`` for ``MISSING``.
-
-    A value with no JSON (keys of mixed types, a value whose text cannot be
-    made, a cycle) is shown by its ``repr``, and by its type name when that
-    raises too. Never raises.
+    ``: order: <moves>`` for an order entry with moves, ``: order`` for one
+    without, `` (<place>)`` for a change with a place, else nothing.
     """
-    if value is MISSING:
-        return "(nothing)"
-    try:
-        text = json.dumps(value, sort_keys=True, default=str)
-    except Exception:  # noqa: BLE001 - a message must print whatever it holds
-        try:
-            text = repr(value)
-        except Exception:  # noqa: BLE001 - a message must print whatever it holds
-            text = f"<{type(value).__name__}>"
-    return text if len(text) <= _VALUE_WIDTH else f"{text[:_VALUE_WIDTH]}…"
+    if moves is not None:
+        return f": order: {moves_text(moves)}" if moves else ": order"
+    if place is not None:
+        return f" ({place})"
+    return ""
 
 
 def _where(change: PlannedChange | ServerChange) -> str:
@@ -332,9 +322,12 @@ class ModuleWriteError(VcoError):
         if self.lost_edits:
             lines.append("lost edits (not stored; redo these):")
             for change in self.lost_edits:
+                as_read, intended, stored = shown_together(
+                    change.as_read, change.intended, change.stored
+                )
                 line = (
-                    f"  {_where(change)}: read {_shown(change.as_read)}, "
-                    f"meant {_shown(change.intended)}, stored {_shown(change.stored)}"
+                    f"  {_where(change)}: read {as_read}, "
+                    f"meant {intended}, stored {stored}"
                 )
                 if change.clash:
                     line += "  [clash: also changed on the VCO]"
@@ -344,11 +337,13 @@ class ModuleWriteError(VcoError):
             lines.extend(f"  {_where(change)}" for change in self.applied)
         if self.server_changes:
             lines.append("stored otherwise than sent:")
-            lines.extend(
-                f"  {_where(change)}: read {_shown(change.as_read)}, "
-                f"stored {_shown(change.stored)}"
-                for change in self.server_changes
-            )
+            for server_change in self.server_changes:
+                as_read, stored = shown_together(
+                    server_change.as_read, server_change.stored
+                )
+                lines.append(
+                    f"  {_where(server_change)}: read {as_read}, stored {stored}"
+                )
         if self.completed:
             lines.append(
                 "written before this one: "
@@ -544,11 +539,10 @@ class WriteOutcomeUnknownError(ModuleWriteError):
             said = "Whether the changes below are stored is not known."
         lines = [said, "planned, not checked:"]
         if self.plan is not None:
-            lines.extend(
-                f"  {change.path}: read {_shown(change.before)}, "
-                f"meant {_shown(change.after)}"
-                for change in self.plan.changes
-            )
+            for change in self.plan.changes:
+                before, after = shown_together(change.before, change.after)
+                where = f"{change.path}{_place_or_order(change.place, change.moves)}"
+                lines.append(f"  {where}: read {before}, meant {after}")
             if self.plan.refs is not None:
                 lines.append("  refs: replaced")
         lines.append(

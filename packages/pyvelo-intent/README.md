@@ -273,7 +273,7 @@ a change and names the section in a line of its own:
 ```text
 deviceSettings: update
   ~ segments["Global Segment"].bgp.override: false -> true
-  + segments["Global Segment"].bgp.neighbors["10.0.0.2"]: {...}
+  + segments["Global Segment"].bgp.neighbors["10.0.0.2"] (first): {...}
   override turned on: segments["Global Segment"].bgp (the edge's own values apply there from now on, and the profile's no longer do)
 ```
 
@@ -289,9 +289,17 @@ A save sends each changed module's `data` as it was read, with only your
 changes applied. Keys the models do not know are preserved, and a module you
 did not change is not sent.
 
+This is `state.plan().render()` for the firewall patch of "The patch format",
+with `firewall_enabled` set as well, on an edge whose profile has a segment the
+edge module lacks:
+
 ```text
 firewall: update
-  + firewall_enabled: false
+  ~ segments["Global Segment"].outbound[allow-web].match.dport_high: 443 -> 8443
+  - segments["Global Segment"].outbound[old-rule]
+  + segments["Global Segment"].outbound[block-ssh] (after guest-wifi): {"action": {"allow_or_deny": "deny"}, "comments": null, "loggingEnabled": false,…
+  ~ segments["Global Segment"].outbound: order: guest-wifi first
+  ~ firewall_enabled: false -> true
   reconciled segments: Guest
 ```
 
@@ -303,8 +311,14 @@ firewall: update
   the state after the save, and `state.plan()` right after a save is empty.
   The state takes more edits and saves.
 - `state.plan().render()` shows each module's changes against the raw data as
-  read, as in the example above. `SaveResult.plan` is the same plan, and
-  `dry_run=True` reports it without writing.
+  read, as in the example above. A `+` line is a key or an item that is added,
+  a `-` line one that is removed, and a `~` line a value that changes. An item
+  added to a keyed list has its place after its path, `(first)` or
+  `(after other)`. A list whose items change order has an `order:` line that
+  names the items that move, each with its new place: five of them, then a
+  count. A value is shown as JSON, cut to 80 characters, and the two values of
+  a `~` line are cut where they first differ. `SaveResult.plan` is the same
+  plan, and `dry_run=True` reports it without writing.
 - A state loaded with `load` saves the edge's own layer. `state.profile` is
   there to read: an edit made through it is not saved, and the next `plan()`,
   `get_changed_modules()` or `save()` raises `LayerNotSavedError` (from
