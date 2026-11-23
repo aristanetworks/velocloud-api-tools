@@ -112,6 +112,8 @@ A patch is strict and all or nothing:
   change, and is `None` in an item a patch builds, where leaving the key out
   leaves it unset. So the JSON dump of an item can be given as the body of an
   `add` and builds the same item.
+- `true` and `false` are taken only where the field holds a boolean. A boolean
+  for a number raises: `{"vlan_id": true}` is not VLAN 1.
 - A patch runs the field validators of what it assigns. The model-level
   validators (`@model_validator`) of a model that already exists do not run
   when a patch changes it; an item or sub-model built whole from a patch is

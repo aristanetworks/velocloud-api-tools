@@ -565,8 +565,9 @@ class VcoModel(BaseModel):
         the field's validators and the model's config. The one difference: a
         field that tolerates a bad value from the VCO (``DefaultingScalar``,
         ``DefaultingModel``, ``Lenient``, ``NoneIsFalse`` and its siblings)
-        does not in a patch, so the bad value raises. These are the field
-        validators of what the patch assigns: the model validators
+        does not in a patch, so the bad value raises. A boolean is taken only
+        where the field holds one: ``true`` for a number raises. These are the
+        field validators of what the patch assigns: the model validators
         (``@model_validator``) of a model that already exists do not run when
         a patch changes it. An item or sub-model built whole from the patch is
         validated whole, its model validators included. So a patch that

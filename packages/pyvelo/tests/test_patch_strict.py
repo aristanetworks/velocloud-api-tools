@@ -526,3 +526,33 @@ def test_null_in_a_sub_model_inside_a_built_sub_model_follows_the_null_rule():
     _ = holder.merge_patch({"sub": {"inner": {"both": None}}})
     assert isinstance(holder.sub.inner, Leaf)
     assert holder.sub.inner.both is MISSING
+
+
+@pytest.mark.parametrize(
+    ("patch", "path"),
+    [
+        ({"count": True}, "count"),
+        ({"rules": {"a": {"priority": False}}}, "rules[a].priority"),
+        ({"rules": {"z": add({"priority": True})}}, "rules[z].priority"),
+        ({"rules": [{"name": "x", "priority": True}]}, "rules[x].priority"),
+        ({"ports": [80, True]}, "ports[#1]"),
+        ({"need": {"name": "n", "priority": True}}, "need.priority"),
+        ({"need": {"name": "n", "sub": {"v": True}}}, "need.sub.v"),
+        (
+            {"routes": {"+": add({"dest": "d", "prefix": True, "gw": "g"})}},
+            'routes["+"].prefix',
+        ),
+    ],
+)
+def test_a_boolean_is_not_taken_for_a_number(patch: dict[str, object], path: str):
+    root = Root(rules=[Rule(name="a")])
+    dump = copy.deepcopy(root.model_dump())
+    error = raises_at(root, patch, path)
+    assert "true" in error.message or "false" in error.message
+    assert root.model_dump() == dump
+
+
+def test_a_boolean_is_taken_where_the_field_holds_one():
+    root = Root()
+    _ = root.merge_patch({"flag": True, "safe": True, "blobs": [{"a": True}]})
+    assert (root.flag, root.safe, root.blobs) == (True, True, [{"a": True}])

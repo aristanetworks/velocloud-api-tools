@@ -664,3 +664,26 @@ async def test_the_planned_dump_of_an_added_item_is_taken_as_the_body_of_an_add(
     second = await add_rule(dump)
     (again,) = second.plan().changed
     assert [(str(c.path), c.after) for c in again.changes] == [(str(change.path), dump)]
+
+
+async def test_true_is_not_a_vlan_id():
+    raw = {
+        "lan": {
+            "networks": [
+                {"vlanId": 10, "name": "Corp", "override": True},
+                {"vlanId": 20, "name": "Voice", "override": True},
+            ],
+            "interfaces": [],
+        },
+        "segments": [{"segment": desc(0, SEGMENT)}],
+    }
+    state = make_state({"deviceSettings": raw}, {"deviceSettings": PROFILE_DS})
+    with pytest.raises(PatchError) as exc:
+        _ = await ConfigPipeline(None).apply(
+            state,
+            module="device_settings",
+            path="lan.networks",
+            patch={"20": {"vlan_id": True}},
+        )
+    assert str(exc.value.path) == 'lan.networks["20"].vlan_id'
+    assert [n.vlan_id for n in state.edge.device_settings.lan.networks] == [10, 20]

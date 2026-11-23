@@ -406,14 +406,33 @@ def _validate_field(
 
     The patch context (``{"patch": True}``) stops ``DefaultingScalar`` and
     ``DefaultingModel`` from turning a bad value into the default. A value that
-    fails raises ``PatchError`` at *path*, from the ``ValidationError``.
+    fails raises ``PatchError`` at *path*, from the ``ValidationError``. A
+    boolean given for a value that is not one raises as well
+    (``_refuse_bool_as_number``).
     """
     try:
-        return _field_adapter(model_cls, name).validate_python(
+        validated = _field_adapter(model_cls, name).validate_python(
             value, context={"patch": True}
         )
     except ValidationError as exc:
         raise PatchError(_validation_message(exc), path) from exc
+    _refuse_bool_as_number(value, validated, path)
+    return validated
+
+
+def _refuse_bool_as_number(given: object, stored: object, path: Path) -> None:
+    """Raise ``PatchError`` at *path* when *given* is a boolean and *stored*, what validation made of it, is not.
+
+    Pydantic reads ``True`` as the integer 1, so ``{"vlan_id": true}`` would
+    otherwise be VLAN 1. A boolean is taken only where the field holds one.
+    """
+    if isinstance(given, bool) and not isinstance(stored, bool):
+        word = "true" if given else "false"
+        raise PatchError(
+            f"{word} is a boolean, which this value does not take: "
+            + f"it would be read as {stored!r}",
+            path,
+        )
 
 
 def _validation_message(exc: ValidationError) -> str:
@@ -496,6 +515,7 @@ def _refuse_unread_keys(
         name = _field_name(names, model_cls.__name__, key, path)
         child = path.child(name)
         current = _field_value(model, name)
+        _refuse_bool_as_number(value, current, child)
         if _is_dict(value) and isinstance(current, VcoModel):
             _refuse_unread_keys(current, value, child)
         elif (
@@ -1255,6 +1275,7 @@ def _check_list_value(
     """
     if len(data) == len(built):
         for index, (item_data, item) in enumerate(zip(data, built)):
+            _refuse_bool_as_number(item_data, item, path.child(index))
             if _is_dict(item_data) and isinstance(item, VcoModel):
                 _refuse_unread_keys(
                     item, item_data, path.child(_item_part(spec, item, index))
