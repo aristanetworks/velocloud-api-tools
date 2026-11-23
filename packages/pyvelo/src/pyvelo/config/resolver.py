@@ -1,11 +1,12 @@
 """Resolver protocol, registry, and cached wrapper for name/ID resolution."""
 
 import contextlib
+import copy
 import difflib
 import uuid
 from collections.abc import Callable, Collection, Generator, Iterable
 from dataclasses import dataclass
-from typing import Any, ClassVar, Protocol, cast, overload, runtime_checkable
+from typing import Any, ClassVar, Protocol, Self, cast, overload, runtime_checkable
 
 from pyvelo.client.protocol import VcoClientProtocol
 
@@ -89,6 +90,18 @@ class BaseResolver[KeyT, IdentityT]:
         """The identities loaded so far."""
         return self._by_name.values()
 
+    def unloaded(self) -> Self:
+        """A copy of this resolver, on the same client, with nothing loaded.
+
+        Loading the copy leaves this resolver as it was, and the other way
+        round. A subclass that keeps other loaded data overrides this to give
+        the copy its own, empty.
+        """
+        twin = copy.copy(self)
+        twin._by_name = {}
+        twin._reverse = {}
+        return twin
+
     def _register(
         self, name: str, identity: IdentityT, **reverse_keys: int | str | uuid.UUID
     ) -> None:
@@ -132,6 +145,27 @@ class ResolverRegistry:
             if isinstance(resolver, resolver_type):
                 return resolver
         raise LookupError(f"No resolver of type {resolver_type.__name__} registered")
+
+    def unloaded(self) -> "ResolverRegistry":
+        """A new registry holding an unloaded copy of each resolver, with no context.
+
+        Each copy is the resolver's own ``unloaded()``. A resolver without that
+        method cannot be copied, and raises ``TypeError``.
+        """
+        twin = ResolverRegistry()
+        for resolver in self._resolvers.values():
+            make_copy = cast(
+                Callable[[], Resolver[Any, Any]] | None,
+                getattr(resolver, "unloaded", None),
+            )
+            if make_copy is None:
+                raise TypeError(
+                    f"{type(resolver).__name__} has no unloaded() method, so a state "
+                    "cannot be given a copy of it; add one that returns a new "
+                    "resolver of the class with nothing loaded"
+                )
+            twin.register(make_copy())
+        return twin
 
     def set_context(self, context: ResolverContext) -> None:
         """Set the scoping context for all resolvers.

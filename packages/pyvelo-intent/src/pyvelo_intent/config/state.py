@@ -24,7 +24,7 @@ from pyvelo.client.schemas.configuration import (
     WanConfigurationModule,
     new_edge_module,
 )
-from pyvelo.config.resolver import ResolverContext
+from pyvelo.config.resolver import ResolverContext, ResolverRegistry
 from pyvelo.config.validation import ValidationError
 from pyvelo.core import ConfigContext, VcoModel
 from pyvelo.core.fields import get_key_spec
@@ -264,6 +264,8 @@ class ConfigState:
         default_factory=dict, repr=False
     )
     load_warnings: list[ValidationWarning] = field(default_factory=list)
+    resolvers: ResolverRegistry = field(default_factory=ResolverRegistry, repr=False)
+    """The resolvers that turn the names in a patch for this state into IDs."""
     _made_into_unset: list[tuple[AnyConfigurationModule, bool]] = field(
         default_factory=list, repr=False
     )

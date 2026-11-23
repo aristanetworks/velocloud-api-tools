@@ -528,9 +528,11 @@ async def test_segment_neither_layer_has_is_left_to_merge_patch():
         )
     assert exc.value.path == Path.parse("segments[Nope]")
     assert _edge_segment_names(state) == ["Global Segment"]
-    pipeline = ConfigPipeline(client=None, resolvers=await _segment_resolvers())
+    state.resolvers = await _segment_resolvers()
     with pytest.raises(ResolutionError, match="Nope"):
-        _ = await pipeline.apply(state, module="firewall", patch=patch)
+        _ = await ConfigPipeline(client=None).apply(
+            state, module="firewall", patch=patch
+        )
     assert _edge_segment_names(state) == ["Global Segment"]
 
 

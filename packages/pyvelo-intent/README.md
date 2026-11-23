@@ -69,15 +69,21 @@ asyncio.run(main())
 Calling `save(state)` sends configuration writes, and the state then continues
 from what the VCO stored (see "After a save"). Check `SaveResult` with
 `raise_for_errors()` to surface validation failures. `build_default_pipeline`
-registers edge/profile name resolvers; loading also initializes the
-segment resolver. Validators must be registered explicitly.
+registers the edge and profile name resolvers. Each state resolves the names in
+its patches with resolvers of its own (`state.resolvers`), loaded for its
+enterprise when the state is loaded, so one pipeline can serve several
+enterprises: `load` and `load_profile` give the new state an unloaded copy of
+every resolver registered on the pipeline, add a segment resolver, and load it.
+Validators must be registered explicitly.
 
-Application, address-group, and service-group name resolution require additional
-resolvers. For application names, register
-`ApplicationResolver(client)` from `pyvelo.config.resolvers.application` through
-`pipeline.resolvers.register(...)` before loading; the pipeline then loads it
-automatically. For other resolver types, register and load them explicitly with
-`state.resolver_context`, or supply numeric IDs in patches.
+Application, address-group and service-group names need more resolvers. For
+application names, register `ApplicationResolver(client)` (from
+`pyvelo.config.resolvers.application`) with `pipeline.resolvers.register(...)`
+before loading; each state's copy is then loaded with the state. For the other
+types, load a resolver with `state.resolver_context` and register it on the
+state (`state.resolvers.register(resolver)`), or give numeric IDs in patches. A
+state you build yourself, from a cache for example, has no resolvers until
+`await pipeline.load_resolvers(state)`.
 
 ## The patch format
 

@@ -69,7 +69,13 @@ class ConfigPipeline:
 
     @property
     def resolvers(self) -> ResolverRegistry:
-        """The resolver registry used by this pipeline."""
+        """The resolvers each state gets a copy of.
+
+        Register a resolver here before loading; ``load`` and ``load_profile``
+        give the new state an unloaded copy of each
+        (``ResolverRegistry.unloaded``) and load its segment and application
+        resolvers for the state's enterprise.
+        """
         return self._resolvers
 
     async def load(
@@ -85,15 +91,15 @@ class ConfigPipeline:
         Takes a snapshot of the loaded state for diff-on-save.
         """
         edge_id: int
+        resolvers = self._resolvers.unloaded()
 
         if isinstance(edge, str):
             # Resolve edge name to ID
             ctx = ResolverContext(enterprise_id=enterprise_id)
-            self._resolvers.set_context(ctx)
-            edge_resolver = self._resolvers.get_resolver(EdgeResolver)
+            edge_resolver = resolvers.get_resolver(EdgeResolver)
             await edge_resolver.load(ctx)
 
-            identity = await self._resolvers.resolve(EdgeName(edge))
+            identity = await resolvers.resolve(EdgeName(edge))
             edge_id = identity.id
         else:
             edge_id = edge
@@ -115,16 +121,14 @@ class ConfigPipeline:
                 edge_config.id_ if edge_config.id_ is not MISSING else None
             ),
         )
-        self._resolvers.set_context(resolver_context)
-
-        await self._ensure_segment_resolver(resolver_context)
-        await self._ensure_application_resolver(resolver_context)
+        await self._load_state_resolvers(resolvers, resolver_context)
 
         state = ConfigState(
             edge_config=edge_config,
             profile_config=profile_config,
             target_type="edge",
             resolver_context=resolver_context,
+            resolvers=resolvers,
         )
         state.take_snapshot()
 
@@ -145,15 +149,15 @@ class ConfigPipeline:
     ) -> ConfigState:
         """Load a profile configuration directly (no edge/template merge)."""
         profile_id: int
+        resolvers = self._resolvers.unloaded()
 
         if isinstance(profile, str):
             # Resolve profile name to ID
             ctx = ResolverContext(enterprise_id=enterprise_id)
-            self._resolvers.set_context(ctx)
-            profile_resolver = self._resolvers.get_resolver(ProfileResolver)
+            profile_resolver = resolvers.get_resolver(ProfileResolver)
             await profile_resolver.load(ctx)
 
-            identity = await self._resolvers.resolve(ProfileName(profile))
+            identity = await resolvers.resolve(ProfileName(profile))
             profile_id = identity.id
         else:
             profile_id = profile
@@ -183,16 +187,14 @@ class ConfigPipeline:
                 profile_config.id_ if profile_config.id_ is not MISSING else None
             ),
         )
-        self._resolvers.set_context(resolver_context)
-
-        await self._ensure_segment_resolver(resolver_context)
-        await self._ensure_application_resolver(resolver_context)
+        await self._load_state_resolvers(resolvers, resolver_context)
 
         state = ConfigState(
             edge_config=None,
             profile_config=profile_config,
             target_type="profile",
             resolver_context=resolver_context,
+            resolvers=resolvers,
         )
         state.take_snapshot()
 
@@ -298,16 +300,16 @@ class ConfigPipeline:
                 _profile_segment_ops(segments, _SEGMENTS)
             trial = data.model_copy(deep=True)
             _ = trial.merge_patch(
-                _prepare_segments(trial, nested, self._resolvers) if edge else nested,
-                resolvers=self._resolvers,
+                _prepare_segments(trial, nested, state.resolvers) if edge else nested,
+                resolvers=state.resolvers,
             )
         except BaseException:
             if existing is None:
                 state.drop_module(mod)
             raise
         _ = data.merge_patch(
-            _prepare_segments(data, nested, self._resolvers) if edge else nested,
-            resolvers=self._resolvers,
+            _prepare_segments(data, nested, state.resolvers) if edge else nested,
+            resolvers=state.resolvers,
         )
         return state
 
@@ -429,31 +431,34 @@ class ConfigPipeline:
         """Run all write-time validators without saving (dry-run validation)."""
         return self._validators.run(state, phase="write")
 
-    async def load_resolvers(self, context: ResolverContext) -> None:
-        """Ensure segment and application resolvers are loaded for the given context.
+    async def load_resolvers(self, state: ConfigState) -> None:
+        """Give *state* resolvers of its own, loaded for its enterprise.
 
-        Called automatically by load() and load_profile(). Call explicitly when
-        bypassing those methods, e.g. when loading config state from a cache.
+        ``load`` and ``load_profile`` already do this. Call it for a state
+        built another way, such as from a cache: the state gets an unloaded
+        copy of the pipeline's resolvers, loaded for ``state.resolver_context``.
         """
-        await self._ensure_segment_resolver(context)
-        await self._ensure_application_resolver(context)
+        resolvers = self._resolvers.unloaded()
+        await self._load_state_resolvers(resolvers, state.resolver_context)
+        state.resolvers = resolvers
 
-    async def _ensure_segment_resolver(self, context: ResolverContext) -> None:
-        """Ensure segment resolver is registered and loaded from VCO API."""
+    async def _load_state_resolvers(
+        self, resolvers: ResolverRegistry, context: ResolverContext
+    ) -> None:
+        """Set *context* on *resolvers*, then load the segment resolver, adding
+        one if there is none, and the application resolver if there is one."""
+        resolvers.set_context(context)
         try:
-            resolver = self._resolvers.get_resolver(SegmentResolver)
+            segments = resolvers.get_resolver(SegmentResolver)
         except LookupError:
-            resolver = SegmentResolver(self.client)
-            self._resolvers.register(resolver)
-        await resolver.load(context)
-
-    async def _ensure_application_resolver(self, context: ResolverContext) -> None:
-        """Ensure application resolver is loaded if registered."""
+            segments = SegmentResolver(self.client)
+            resolvers.register(segments)
+        await segments.load(context)
         try:
-            resolver = self._resolvers.get_resolver(ApplicationResolver)
-            await resolver.load(context)
+            applications = resolvers.get_resolver(ApplicationResolver)
         except LookupError:
-            pass
+            return
+        await applications.load(context)
 
 
 def build_default_pipeline(client: VcoClientProtocol) -> ConfigPipeline:
