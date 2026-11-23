@@ -83,11 +83,14 @@ def patch_of(
 
     The patch is plain JSON: ``json.loads(json.dumps(patch)) == patch``, and
     ``merge_patch`` takes it. A field is written under its python name, a value
-    as the change has it. An item added to a keyed list is an ``add`` with its
-    place, a removed one a ``delete``, an item that moves a ``_position``. A run
-    of items placed one after the other is written backwards, each after the
-    item the run follows, because a place may only name an item that is in the
-    list and stays where it is.
+    as the change has it. An item added to a keyed list is an add
+    (``{"_op": "add", ...}``, ``add(...)``) with its place, a removed one a
+    delete (``{"_op": "delete"}``, ``delete()``), an item that moves a place
+    (``{"_position": "first"}``, ``"last"``, ``{"before": ...}`` or
+    ``{"after": ...}``; ``move(first=True)`` and the like). A run of items
+    placed one after the other is written backwards, each after the item the
+    run follows, because a place may only name an item that is in the list and
+    stays where it is.
 
     A change no patch can make is left out and writes nothing: a key the model
     has no field for, a field that cannot be unset, a value below one that a

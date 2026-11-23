@@ -47,7 +47,7 @@ class ValidationWarning:
 
 @dataclass(frozen=True)
 class ConfigFieldChange:
-    """One change of :meth:`ConfigState.plan`, with the module and the path in python names.
+    """One change of :meth:`ConfigState.plan`: its module, and its path in python names.
 
     Attributes:
         module: The module's VCO name (e.g. ``"firewall"``, ``"WAN"``).
@@ -322,9 +322,9 @@ class ConfigState:
     ``WriteNotAppliedError`` with the module as stored (``error.module``):
     the edits to that module are gone, and ``error.lost_edits`` lists them;
     ``error.redo_patch()`` is the patch that redoes them (``error.not_redone()``
-    lists those it leaves out). Objects taken from the state before a save belong to the
-    modules it replaced, and are detached: an edit through one raises
-    ``DetachedObjectError``, at once or at the next :meth:`plan`.
+    lists those it leaves out). Objects taken from the state before a save
+    belong to the modules it replaced, and are detached: an edit through one
+    raises ``DetachedObjectError``, at once or at the next :meth:`plan`.
 
     After a save that raised ``WriteOutcomeUnknownError``, or failed with any
     other error once an insert was sent, the state keeps the new module as it
@@ -495,7 +495,8 @@ class ConfigState:
 
         An edge module is bound to the profile layer. The snapshot takes a
         copy of *new*, and a later :meth:`plan` starts from *new*, so it does
-        not show what was written; the other modules keep their edits. The module's name leaves ``unconfirmed_inserts``.
+        not show what was written; the other modules keep their edits. The
+        module's name leaves ``unconfirmed_inserts``.
         *old* and every model inside it are detached: an assignment raises
         ``DetachedObjectError``, and so does the next
         :meth:`plan` after an in-place change to a list or dict they hold. So
@@ -656,7 +657,7 @@ class ConfigState:
         )
 
     def _target_text(self) -> str:
-        """What a plan of this state is for: ``edge 101, enterprise 1, configuration 10``."""
+        """What a plan is for: ``edge 101, enterprise 1, configuration 10``."""
         config = self.target_config
         if self.target_type == "edge":
             edge_id = self.resolver_context.edge_id

@@ -506,7 +506,7 @@ refused, and another writer had changed the same port and another key:
 
 ```text
 Configuration module 11 (firewall) changed since it was read (version v1): the VCO refused the version
-lost edits (not stored; redo these):
+lost edits (not stored; `error.redo_patch()` redoes them):
   segments["Global Segment"].outbound[block-ssh] (first): read (nothing), meant {"action": {"allow_or_deny": "deny"}, "comments": null, "loggingEnabled": false,…, stored (nothing)
   segments["Global Segment"].outbound[allow-web].match.dport_high: read 443, meant 8080, stored 8443  [clash: also changed on the VCO]
 stored otherwise than sent:
@@ -534,22 +534,21 @@ except (ConfigConflictError, WriteNotAppliedError) as error:
     print(state.plan().render())  # review it, then save again
 ```
 
-The patch puts an added item back in its place and makes a lost order again,
-and it names each item as the stored list names it. It leaves out a clash,
-because redoing one overwrites what another writer stored there;
-`error.redo_patch(include_clashes=True)` redoes those too.
-`error.not_redone()` lists every lost edit the patch leaves out: the clashes, a
+The patch puts an added item back in its place, as an `add`, and makes a lost
+order again, and it names each item as the stored list names it. An item you
+added is added again, never set on an item another writer put in its place. The
+patch leaves out a clash, because redoing one overwrites what another writer
+stored there; `error.redo_patch(include_clashes=True)` redoes those too.
+`error.not_redone()` lists the lost edits the patch leaves out: the clashes, a
 lost ref row (a patch changes data, not refs), and an edit that no patch can
-make or whose item is no longer stored or cannot be named. Check it before you
-save. `apply` can still refuse the patch, changing nothing, where the stored
-data no longer takes it (a rename to a name another writer gave an item, for
-example), and where the lost edit was made by assigning to the models and is
-one `apply` refuses as a patch (a segment added to a profile). Make such an
-edit again the way you made it.
-
-In a rule list the first match decides, so check the order with
-`state.plan().render()` before you save. A clash is where the redo overwrites
-another writer's change.
+make or whose item is no longer stored or cannot be named. An edit at a key the
+VCO does not know, which a write drops, is neither redone nor listed. Check it
+before you save. In a rule list the first match decides, so check the order with
+`state.plan().render()` too. `apply` can still refuse the patch, changing
+nothing, where the stored data no longer takes it (a rename to a name another
+writer gave an item, for example), and where the lost edit was made by assigning
+to the models and is one `apply` refuses as a patch (a segment added to a
+profile). Make such an edit again the way you made it.
 
 The modules written before the failing one are stored and in the state
 (`error.completed`). Any other error of a request (a transport error, for

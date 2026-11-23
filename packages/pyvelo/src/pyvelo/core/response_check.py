@@ -223,11 +223,12 @@ class ResponseCheck:
 
     Each entry's ``as_read`` differs from its ``stored``."""
     stored_parts: Mapping[Path, ItemPart] = field(default_factory=dict[Path, ItemPart])
-    """For each item of a keyed list that a planned change names and the stored
-    list has, by the item's path, the part that names it in the stored list: its
-    key there, or its position. An item that no selector can name alone has no
-    entry: its position ``n`` is also, as text, the key ``#n`` of another item
-    of the stored list, and a selector is read as a key before a position."""
+    """For each item of every keyed list the check walks, that the payload has and
+    the stored list holds too, by the item's path (named as the plan names it),
+    the part that names it in the stored list: its key there, or its position.
+    An item that no selector can name alone has no entry: its position ``n`` is
+    also, as text, the key ``#n`` of another item of the stored list, and a
+    selector is read as a key before a position."""
 
 
 def check_response(

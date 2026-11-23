@@ -79,13 +79,14 @@ it leaves out a clash unless asked, and `error.not_redone()` lists what it
 leaves out. On a `WriteOutcomeUnknownError` the patch is empty: nothing is
 known to be lost. Where the VCO stores a value its own way (a field marked
 `ServerOwned`, and the rewrites per module in `MODULE_REWRITES`,
-`pyvelo.client.module_check`), a planned change is not a lost edit: it is in `left_out` of the write, or of one of the first two errors,
-and a value other than the one read is a server change. After a refusal, and
-when the VCO answered with a module that holds none of the changes, such a
-change that is still as read is a lost edit. `check_module_write(module, plan, stored,
-answer=...)` takes what the VCO said of the write: `"row"`, `"counted"` or
-`"refused"`. With `"row"` it has only the module to go by, so a write none of
-whose changes is found stored is taken as not stored.
+`pyvelo.client.module_check`), a planned change is not a lost edit: it is in
+`left_out` of the write, or of one of the first two errors, and a value other
+than the one read is a server change. After a refusal, and when the VCO answered
+with a module that holds none of the changes, such a change that is still as
+read is a lost edit. `check_module_write(module, plan, stored, answer=...)` takes
+what the VCO said of the write: `"row"`, `"counted"` or `"refused"`. With `"row"`
+it has only the module to go by, so a write none of whose changes is found stored
+is taken as not stored.
 
 With `if_absent=True` an insert first reads the configuration, and a module of
 that name found there is taken as the insert's answer and checked like one, with
