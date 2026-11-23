@@ -743,6 +743,105 @@ async def test_profile_target_changes_and_moves_a_segment():
     assert [r.name for r in blocked] == ["block"]
 
 
+_REDESCRIBED = "does not add, remove or re-describe a segment of a profile"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("call", "detail"),
+    [
+        pytest.param(
+            {"patch": {"segments": []}},
+            "removes Global Segment, Guest",
+            id="empty-list",
+        ),
+        pytest.param(
+            {"path": "segments", "patch": []},
+            "removes Global Segment, Guest",
+            id="empty-list-by-path",
+        ),
+        pytest.param(
+            {
+                "patch": {
+                    "segments": [
+                        {"segment": desc(2, "Guest"), "outbound": [_BLOCK_SSH]}
+                    ]
+                }
+            },
+            "removes Global Segment",
+            id="one-segment-as-a-list",
+        ),
+        pytest.param(
+            {
+                "patch": {
+                    "segments": {
+                        "Guest": {"segment": {"segment_id": 4, "name": "Voice"}}
+                    }
+                }
+            },
+            "removes Guest; it adds Voice",
+            id="descriptor-rewritten",
+        ),
+        pytest.param(
+            {"patch": {"segments": {"Guest": {"segment": {"segment_id": 7}}}}},
+            "changes a segment's descriptor",
+            id="descriptor-id-changed",
+        ),
+    ],
+)
+async def test_profile_target_keeps_its_segments_whatever_the_patch_form(
+    call: dict[str, object], detail: str
+):
+    state = _segment_profile_state("Global Segment", "Guest")
+    state.take_snapshot()
+    before = state.plan().render()
+    with pytest.raises(PatchError, match=_REDESCRIBED) as exc:
+        _ = await ConfigPipeline(client=None).apply(state, module="firewall", **call)  # pyright: ignore[reportArgumentType]
+    assert exc.value.path == Path(("segments",))
+    assert detail in exc.value.message
+    assert _profile_segment_names(state) == [["Global Segment", "Guest"]] * 3
+    assert state.plan().render() == before
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("module", ["firewall", "qos", "device_settings"])
+async def test_profile_target_refuses_an_empty_segments_list_in_each_module(
+    module: str,
+):
+    state = _segment_profile_state("Global Segment", "Guest")
+    with pytest.raises(PatchError, match=_REDESCRIBED):
+        _ = await ConfigPipeline(client=None).apply(
+            state, module=module, patch={"segments": []}
+        )
+    assert _profile_segment_names(state) == [["Global Segment", "Guest"]] * 3
+
+
+@pytest.mark.asyncio
+async def test_profile_target_takes_a_list_that_keeps_every_descriptor():
+    state = _segment_profile_state("Global Segment", "Guest")
+    segments: list[dict[str, object]] = [
+        {"segment": desc(2, "Guest"), "outbound": [_BLOCK_SSH]},
+        {"segment": desc(0, "Global Segment"), "outbound": []},
+    ]
+    _ = await ConfigPipeline(client=None).apply(
+        state, module="firewall", patch={"segments": segments}
+    )
+    firewall = state.profile.firewall
+    assert [s.segment.name for s in firewall.segments] == ["Guest", "Global Segment"]
+    assert [r.name for r in firewall.get_segment(name="Guest").outbound] == [
+        "block-ssh"
+    ]
+
+
+@pytest.mark.asyncio
+async def test_edge_target_still_takes_a_list_for_segments():
+    state = make_raw_state()
+    _ = await ConfigPipeline(client=None).apply(
+        state, module="firewall", patch={"segments": []}
+    )
+    assert _edge_segment_names(state) == []
+
+
 # --- the address ---------------------------------------------------------------
 
 _BLOCK: dict[str, object] = {"block": add(_DENY)}

@@ -234,9 +234,14 @@ The `segments` lists have rules of their own:
   does `delete` of one the edge layer has no entry for. Where the entry of a
   segment the edge only inherits is written does not follow a move: see "What
   a save writes".
-- On a profile, `apply` refuses `add` and `delete` of a segment: a segment
-  belongs to all three of device settings, QoS and firewall, and adding one
-  through a patch is not supported yet. Changing or moving one is fine.
+- On a profile, `apply` refuses a patch that adds or removes a segment, or
+  changes a segment's descriptor (the `segment` object: its name, `segmentId`,
+  type and logical ID), in whatever form: `add` or `delete` under a selector, a
+  list value for `segments` that leaves a segment out or brings a new one, or
+  an object that rewrites the descriptor. A segment belongs to all three of
+  device settings, QoS and firewall, and adding one through a patch is not
+  supported yet. Changing what a segment holds, moving it, and a list value
+  that keeps every descriptor are fine.
 
 Sections and items of an edge that can follow the profile have an `override`
 flag: the BGP of a segment, a VLAN, an interface. While the flag is off, the

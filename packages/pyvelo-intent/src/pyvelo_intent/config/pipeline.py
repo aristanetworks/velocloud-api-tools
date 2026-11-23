@@ -1,5 +1,6 @@
 """ConfigPipeline: orchestration layer for load → apply → save configuration workflow."""
 
+import json
 from collections.abc import Mapping, Sequence
 from typing import Any, Protocol, TypeIs, runtime_checkable
 
@@ -265,6 +266,10 @@ class ConfigPipeline:
            (``_profile_segment_ops``): a segment belongs to all three of
            device settings, QoS and firewall, and adding one to a profile is
            not supported yet. A change or a ``move`` of a segment is fine.
+           The same holds for any other form of patch: a list value for
+           ``segments`` that leaves a segment out or brings a new one, and a
+           change to a segment's descriptor, raise ``PatchError`` at
+           ``segments``. A list value that keeps every descriptor is taken.
            ``merge_patch`` called directly is not restricted.
         3. Merge the patch into a copy of the module's typed data, then into
            the data itself. On an edge target each merge is preceded by the
@@ -330,6 +335,8 @@ class ConfigPipeline:
                     else nested,
                     resolvers=state.resolvers,
                 )
+                if not edge and isinstance(trial, _SegmentLayer):
+                    _profile_segments_unchanged(data, trial)
             except BaseException:
                 if existing is None:
                     state.drop_module(mod)
@@ -611,6 +618,51 @@ def _profile_segment_ops(segments: Mapping[object, object], path: Path) -> None:
             raise PatchError(
                 "removing a segment from a profile is not supported", where
             )
+
+
+def _segment_descriptors(layer: object) -> list[dict[str, object]]:
+    """The wire form of the ``segment`` object of each entry of *layer*, in order."""
+    assert isinstance(layer, VcoModel)  # a profile module's data
+    dumped = layer.model_dump(mode="json", by_alias=True)
+    return [entry["segment"] for entry in dumped["segments"]]
+
+
+def _canonical(descriptor: Mapping[str, object]) -> str:
+    return json.dumps(descriptor, sort_keys=True)
+
+
+def _profile_segments_unchanged(data: object, trial: object) -> None:
+    """Refuse a patch after which a profile module has other segments than before.
+
+    *trial* is a copy of *data* with the patch merged in. Whatever the form of
+    the patch (an item operation, a list value, an object that rewrites a
+    descriptor), the descriptors of *trial* must be those of *data*, in any
+    order: a ``move`` is fine. Raises ``PatchError`` at ``segments``; changes
+    nothing.
+    """
+    before = _segment_descriptors(data)
+    after = _segment_descriptors(trial)
+    if sorted(map(_canonical, before)) == sorted(map(_canonical, after)):
+        return
+    names_before = {str(d.get("name")) for d in before}
+    names_after = {str(d.get("name")) for d in after}
+    parts: list[str] = []
+    if removed := sorted(names_before - names_after):
+        parts.append("it removes " + ", ".join(removed))
+    if added := sorted(names_after - names_before):
+        parts.append("it adds " + ", ".join(added))
+    detail = "; ".join(parts) or "it changes a segment's descriptor"
+    raise PatchError(
+        "a patch does not add, remove or re-describe a segment of a profile ("
+        + detail
+        + "): a segment belongs to device settings, QoS and firewall together, "
+        + 'so neither a list value for "segments", nor {"_op": "add", ...} '
+        + '(`add(...)`) or {"_op": "delete"} (`delete()`) under a selector, '
+        + "nor a rewritten descriptor can change which segments a profile has. "
+        + "Adding a segment will be `assign_segment`, which is not built yet. "
+        + 'To change what a segment holds, name it: {"segments": {"<name>": {...}}}',
+        _SEGMENTS,
+    )
 
 
 def _prepare_segments(
