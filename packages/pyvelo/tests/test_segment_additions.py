@@ -235,6 +235,50 @@ async def test_update_module_refuses_a_segment_set_change(
     assert [method for method, _ in store.requests] == []
 
 
+def raw_with_a_guest_segment() -> dict[str, Any]:
+    """The data of the Global QoS module with a Guest entry, as a plain dict."""
+    raw = copy.deepcopy(global_qos().raw_data)
+    assert isinstance(raw, dict)
+    return {"segments": [*raw["segments"], guest_qos_entry()]}
+
+
+def test_a_dict_with_a_new_segment_is_refused_at_the_profile_level():
+    module = global_qos()
+    with pytest.raises(SegmentSetError) as caught:
+        plan_module(module, raw_with_a_guest_segment())
+    assert caught.value.segments == ("Guest",)
+
+
+def test_a_dict_without_a_segment_is_refused_at_the_profile_level():
+    module = global_qos()
+    with pytest.raises(SegmentSetError) as caught:
+        plan_module(module, {"segments": []})
+    assert caught.value.segments == ("Global Segment",)
+
+
+def test_a_hand_built_model_with_a_new_segment_is_refused_at_the_profile_level():
+    module = global_qos()
+    data = type(module.data).model_validate(raw_with_a_guest_segment())
+    assert data.config_context is None
+    with pytest.raises(SegmentSetError) as caught:
+        plan_module(module, data)
+    assert caught.value.segments == ("Guest",)
+
+
+async def test_update_module_refuses_a_segment_set_change_of_a_hand_built_model(
+    mock_vco_client: MockVcoClientFactory,
+):
+    module = global_qos()
+    store = store_of(module)
+    client = await mock_vco_client(store)
+    data = type(module.data).model_validate(raw_with_a_guest_segment())
+    assert data.config_context is None
+    with pytest.raises(SegmentSetError) as caught:
+        _ = await client.update_module(module, data)
+    assert caught.value.segments == ("Guest",)
+    assert [method for method, _ in store.requests] == []
+
+
 def test_the_edge_level_is_not_refused():
     profile = global_qos()
     edge_row = make_module_json(

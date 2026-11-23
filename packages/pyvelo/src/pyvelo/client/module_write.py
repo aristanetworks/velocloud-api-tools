@@ -450,6 +450,12 @@ def _attribute(obj: object, name: str) -> object:
     return value
 
 
+def _module_level(module: ConfigurationModuleBase) -> ConfigContext | None:
+    """The config level of *module*, None for an object that has none."""
+    level = _attribute(module, "config_context")
+    return level if isinstance(level, ConfigContext) else None
+
+
 def _document_model(
     planned: type[VcoModel] | None, module: ConfigurationModuleBase
 ) -> type[VcoModel] | None:
@@ -654,7 +660,8 @@ def plan_module(
 ) -> ModulePlan:
     """Plan the write of *module*, with *data* (default ``module.data``) as its data.
 
-    *level* defaults to the config level of *data*. Give the *profile*'s module
+    *level* defaults to the config level of *data*, and of *module* when *data*
+    has none (a mapping, or a model built by hand). Give the *profile*'s module
     of the same name to reconcile the segments an edge module lacks (never at
     the profile level).
 
@@ -703,6 +710,8 @@ def plan_module(
         current = _plain_json(cast(Mapping[str, object], current))
     if level is None and isinstance(current, VcoModel):
         level = current.config_context
+    if level is None:  # a mapping, or a model built by hand, has no level of its own
+        level = _module_level(module)
 
     raw = module.raw_data
     if raw is MISSING:  # a module object that never carried data

@@ -80,8 +80,10 @@ has the template's action.
 The segments of a profile are the same in its device settings, QoS and firewall
 modules, so one module alone cannot change them. `plan_module` and
 `update_module` raise `SegmentSetError` for a profile module whose payload adds
-or removes a segment, and nothing is sent. The error names the segments and says
-how to do it instead: a segment is assigned through the pipeline, as
+or removes a segment, and nothing is sent. That holds whatever the payload is
+built from: a model read from the VCO, a model built by hand, or (for
+`plan_module`) a mapping. The error names the segments and says how to do it
+instead: a segment is assigned through the pipeline, as
 `{"segments": {"Guest": {"_op": "add"}}}` (`pipeline.assign_segment(state,
 "Guest")`), which makes its entry in all three modules; removing one from all
 three together is not supported. The pipeline records what it adds to a profile
