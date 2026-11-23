@@ -82,8 +82,7 @@ def dump(model: VcoModel) -> dict[str, object]:
 
 
 def test_a_ref_only_field_is_not_dumped():
-    stub = Stub()
-    stub.service = UUID(DNS_A)
+    stub = Stub(service=UUID(DNS_A))
     assert stub.service == UUID(DNS_A)
     assert "service" not in stub.model_dump(by_alias=True)
     assert "service" not in stub.model_dump()
@@ -129,12 +128,66 @@ def test_merge_patch_sets_a_ref_only_field():
     assert stub.service == UUID(DNS_A)
 
 
-def test_merge_patch_null_unsets_a_ref_only_field_and_leaves_the_ref():
-    stub = Stub(ref="other")
-    stub.service = UUID(DNS_A)
-    _ = stub.merge_patch({"service": None})  # null: MISSING, as for any such field
-    assert stub.service is MISSING
+def test_merge_patch_null_clears_a_ref_only_field_to_none_and_leaves_the_ref():
+    stub = Stub(ref="other", service=UUID(DNS_A))
+    _ = stub.merge_patch({"service": None})
+    assert stub.service is None  # no row, not "read without refs"
     assert stub.ref == "other"
+
+
+def test_merge_patch_null_on_a_new_ref_only_field_is_none_and_sets_no_ref():
+    stub = Stub().merge_patch({"service": None})
+    assert stub.service is None
+    assert stub.ref is MISSING
+
+
+def test_a_constructor_keyword_sets_a_ref_only_field_and_fills_the_ref():
+    stub = Stub(service=UUID(DNS_A))
+    assert stub.service == UUID(DNS_A)
+    assert stub.ref == "deviceSettings:authentication"
+    assert "service" in stub.model_fields_set
+
+
+def test_a_constructor_keyword_keeps_a_ref_that_is_given():
+    stub = Stub(ref="other", service=UUID(DNS_A), note="n")
+    assert (stub.ref, stub.service, stub.note) == ("other", UUID(DNS_A), "n")
+
+
+def test_a_constructor_keyword_of_the_wire_name_sets_it_too():
+
+    class Renamed(VcoModel):
+        ref: str | MISSING = MISSING
+        owner_service: Annotated[uuid.UUID | None | MISSING, RefOnly(default="x")] = (
+            MISSING
+        )
+
+    by_wire_name: dict[str, object] = {"ownerService": UUID(DNS_A)}
+    assert Renamed(**by_wire_name).owner_service == UUID(DNS_A)  # pyright: ignore[reportArgumentType]
+    assert Renamed(owner_service=UUID(DNS_A)).ref == "x"
+
+
+def test_a_constructor_keyword_of_none_is_no_row():
+    stub = Stub(service=None)
+    assert stub.service is None
+    assert stub.ref is MISSING
+
+
+def test_a_subclass_constructor_takes_the_keyword():
+    assert SubStub(service=UUID(DNS_A)).ref == "deviceSettings:authentication"
+
+
+def test_validated_input_does_not_read_a_ref_only_key():
+    assert Stub.model_validate({"service": DNS_A}).service is MISSING
+
+
+def test_a_parent_validated_from_data_does_not_read_a_ref_only_key():
+    holder = Holder.model_validate(
+        {"stub": {"service": DNS_A}, "stubs": [{"service": DNS_B}]}
+    )
+    assert isinstance(holder.stub, Stub)
+    assert holder.stub.service is MISSING
+    assert holder.stub.ref is MISSING
+    assert holder.stubs[0].service is MISSING
 
 
 def test_setting_a_value_fills_a_missing_ref_with_the_default():
@@ -254,7 +307,9 @@ def test_ref_only_fields_are_known_per_class():
 
 def test_a_class_with_no_ref_only_field_keeps_the_plain_hooks():
     assert Plain.__setattr__ is VcoModel.__setattr__
+    assert Plain.__init__ not in _REF_FILLING_HOOKS
     assert Plain.model_post_init not in _REF_FILLING_HOOKS
+    assert Stub.__init__ in _REF_FILLING_HOOKS
     assert Stub.__setattr__ in _REF_FILLING_HOOKS
     assert Stub.model_post_init in _REF_FILLING_HOOKS
 

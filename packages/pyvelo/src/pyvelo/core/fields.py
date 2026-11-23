@@ -558,12 +558,15 @@ class RefOnly:
     """Annotated marker: this field stands for a ref row and is never part of the wire data.
 
     A dump leaves it out, and validation does not read a key of its name: the
-    field stays ``MISSING`` and the key is not kept as an extra. A patch
-    (``merge_patch``) and an attribute assignment do set it. The ref name is
-    the value of the sibling ``ref`` field of the same model; *default* is the
-    name that an assignment or a patch of a value gives a model whose ``ref``
-    is ``MISSING``. A model with no ``ref`` field has nothing to fill, and
-    *default* is not used.
+    field stays ``MISSING`` and the key is not kept as an extra. That holds
+    for validated input (``model_validate``, a parent's validation of its
+    data). A keyword of the constructor, a patch (``merge_patch``) and an
+    attribute assignment do set it, and a patch ``null`` sets ``None``:
+    ``MISSING`` says the module was read without refs, ``None`` says there is
+    no row. The ref name is the value of the sibling ``ref`` field of the same
+    model; *default* is the name that a value given in one of those ways gives
+    a model whose ``ref`` is ``MISSING``. A model with no ``ref`` field has
+    nothing to fill, and *default* is not used.
 
     Code that fills the field from a module's refs does it with
     ``object.__setattr__(model, name, value)``: that sets neither the sibling

@@ -438,12 +438,14 @@ def _fill_ref(model: VcoModel, name: str) -> None:
 
 
 def _install_ref_filling(cls: type[VcoModel]) -> None:
-    """Make assignment and a patch fill the ``ref`` of a model with a ``RefOnly`` field.
+    """Make assignment, a constructor keyword and a patch set a ``RefOnly`` field, and fill the ``ref``.
 
-    Both are hooks put on *cls* itself, and only on a class that has such a
+    Each is a hook put on *cls* itself, and only on a class that has such a
     field: the base class pays nothing, for the instances of every other
     class. A patch sets the field through attribute assignment or builds a
-    model from it, which ``model_post_init`` sees.
+    model from it, which ``model_post_init`` sees. A keyword of the
+    constructor (``__init__``) sets it as an assignment does; validated input
+    (``model_validate``, a parent's validation of its data) does not read it.
     """
     previous_setattr = cls.__setattr__
     if previous_setattr not in _REF_FILLING_HOOKS:
@@ -476,6 +478,21 @@ def _install_ref_filling(cls: type[VcoModel]) -> None:
         _REF_FILLING_HOOKS.add(post_init_filling_ref)
         cls.model_post_init = post_init_filling_ref
 
+    previous_init = cls.__init__
+    if previous_init not in _REF_FILLING_HOOKS:
+
+        def init_taking_ref_only(self: VcoModel, /, **data: object) -> None:
+            ref_only = type(self)._ref_only_fields  # pyright: ignore[reportPrivateUsage]
+            keys = type(self)._ref_only_keys  # pyright: ignore[reportPrivateUsage]
+            given = {name: data.pop(key) for key, name in keys.items() if key in data}
+            previous_init(self, **data)
+            for name in ref_only:
+                if name in given:
+                    setattr(self, name, given[name])
+
+        _REF_FILLING_HOOKS.add(init_taking_ref_only)
+        cls.__init__ = init_taking_ref_only  # pyright: ignore[reportAttributeAccessIssue]
+
 
 # ---------------------------------------------------------------------------
 # VcoModel
@@ -495,6 +512,8 @@ class VcoModel(BaseModel):
     _config_context: ConfigContext | None = PrivateAttr(default=None)
     _detached: bool = PrivateAttr(default=False)
     _ref_only_fields: ClassVar[Mapping[str, str | None]] = types.MappingProxyType({})
+    _ref_only_keys: ClassVar[Mapping[str, str]] = types.MappingProxyType({})
+    """The keys that name a ``RefOnly`` field (its python name and its alias), each with the field."""
 
     @override
     def model_post_init(self, validation_context: object, /) -> None:
@@ -562,6 +581,13 @@ class VcoModel(BaseModel):
         cls._alias_map.cache_clear()
         apply_vco_markers(cls)
         cls._ref_only_fields = types.MappingProxyType(ref_only_defaults(cls))
+        cls._ref_only_keys = types.MappingProxyType(
+            {
+                key: name
+                for name in cls._ref_only_fields
+                for key in {name, _field_alias(cls.model_fields[name], name)}
+            }
+        )
         if cls._ref_only_fields:
             _install_ref_filling(cls)
 
