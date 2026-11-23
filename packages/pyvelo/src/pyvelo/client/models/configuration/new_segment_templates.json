@@ -1,0 +1,2320 @@
+{
+ "_comment": "Factory content of a new profile segment, as the Orchestrator UI writes it. No segment descriptor and no ruleLogicalId: both are added when a segment is made.",
+ "qos": {
+  "segment": {
+   "rules": [
+    {
+     "name": "Box",
+     "match": {
+      "sip": "any",
+      "sipV6": "any",
+      "sport_high": -1,
+      "sport_low": -1,
+      "ssm": "any",
+      "svlan": -1,
+      "os_version": -1,
+      "dip": "any",
+      "dipV6": "any",
+      "dport_high": -1,
+      "dport_low": -1,
+      "dsm": "any",
+      "dvlan": -1,
+      "hostname": "",
+      "proto": -1,
+      "appid": 767,
+      "classid": -1,
+      "dscp": -1,
+      "ipVersion": "IPv4v6"
+     },
+     "action": {
+      "QoS": {
+       "txScheduler": {
+        "latency": -1,
+        "burst": -1,
+        "queueLen": -1,
+        "priority": "high",
+        "bandwidthCapPct": -1,
+        "bandwidth": -1
+       },
+       "rxScheduler": {
+        "latency": -1,
+        "burst": -1,
+        "queueLen": -1,
+        "priority": "high",
+        "bandwidthCapPct": -1,
+        "bandwidth": -1
+       },
+       "type": "bulk"
+      },
+      "edgeToEdgeEncryption": true,
+      "edge2CloudRouteAction": {
+       "interface": "auto",
+       "linkInternalLogicalId": "auto",
+       "linkPolicy": "auto",
+       "routeCfg": {},
+       "routePolicy": "gateway",
+       "serviceGroup": "ALL",
+       "vlanId": -1,
+       "wanlink": "auto"
+      },
+      "edge2DataCenterRouteAction": {
+       "interface": "auto",
+       "linkInternalLogicalId": "auto",
+       "linkPolicy": "auto",
+       "routeCfg": {},
+       "routePolicy": "gateway",
+       "serviceGroup": "ALL",
+       "vlanId": -1,
+       "wanlink": "auto"
+      },
+      "edge2EdgeRouteAction": {
+       "interface": "auto",
+       "linkInternalLogicalId": "auto",
+       "linkPolicy": "auto",
+       "routeCfg": {},
+       "routePolicy": "gateway",
+       "serviceGroup": "ALL",
+       "vlanId": -1,
+       "wanlink": "auto"
+      },
+      "routeType": "edge2Any",
+      "nat": {
+       "destIp": "no",
+       "sourceIp": "no"
+      },
+      "natV6": {
+       "destIp": "no",
+       "sourceIp": "no"
+      },
+      "allowConditionalBh": false,
+      "userDisableConditionalBh": false
+     }
+    },
+    {
+     "name": "Speedtest",
+     "match": {
+      "appid": 1465,
+      "classid": -1,
+      "dip": "any",
+      "dsm": "any",
+      "proto": -1,
+      "sip": "any",
+      "ssm": "any",
+      "os_version": -1,
+      "sport_low": -1,
+      "sport_high": -1,
+      "dport_low": -1,
+      "dport_high": -1,
+      "dscp": -1,
+      "svlan": -1,
+      "hostname": "",
+      "dvlan": -1,
+      "ipVersion": "IPv4v6",
+      "sipV6": "any",
+      "dipV6": "any"
+     },
+     "action": {
+      "routePolicy": "auto",
+      "routeType": "edge2Any",
+      "QoS": {
+       "rxScheduler": {
+        "priority": "high",
+        "bandwidthCapPct": -1,
+        "bandwidth": -1,
+        "queueLen": -1,
+        "burst": -1,
+        "latency": -1
+       },
+       "txScheduler": {
+        "priority": "high",
+        "bandwidthCapPct": -1,
+        "bandwidth": -1,
+        "queueLen": -1,
+        "burst": -1,
+        "latency": -1
+       },
+       "type": "bulk"
+      },
+      "edge2EdgeRouteAction": {
+       "interface": "auto",
+       "linkInternalLogicalId": "auto",
+       "linkPolicy": "auto",
+       "routeCfg": {},
+       "routePolicy": "gateway",
+       "serviceGroup": "ALL",
+       "vlanId": -1,
+       "wanlink": "auto"
+      },
+      "edge2DataCenterRouteAction": {
+       "interface": "auto",
+       "linkInternalLogicalId": "auto",
+       "linkPolicy": "auto",
+       "routeCfg": {},
+       "routePolicy": "gateway",
+       "serviceGroup": "ALL",
+       "vlanId": -1,
+       "wanlink": "auto"
+      },
+      "edge2CloudRouteAction": {
+       "interface": "auto",
+       "linkInternalLogicalId": "auto",
+       "linkPolicy": "auto",
+       "routeCfg": {},
+       "routePolicy": "gateway",
+       "serviceGroup": "ALL",
+       "vlanId": -1,
+       "wanlink": "auto"
+      },
+      "edgeToEdgeEncryption": true
+     }
+    },
+    {
+     "name": "Skype",
+     "match": {
+      "appid": 183,
+      "classid": -1,
+      "dip": "any",
+      "dsm": "any",
+      "proto": -1,
+      "sip": "any",
+      "ssm": "any",
+      "os_version": -1,
+      "sport_low": -1,
+      "sport_high": -1,
+      "dport_low": -1,
+      "dport_high": -1,
+      "dscp": -1,
+      "svlan": -1,
+      "hostname": "",
+      "dvlan": -1,
+      "ipVersion": "IPv4v6",
+      "sipV6": "any",
+      "dipV6": "any"
+     },
+     "action": {
+      "routePolicy": "auto",
+      "routeType": "edge2Any",
+      "QoS": {
+       "rxScheduler": {
+        "priority": "low",
+        "bandwidthCapPct": -1,
+        "bandwidth": -1,
+        "queueLen": -1,
+        "burst": -1,
+        "latency": -1
+       },
+       "txScheduler": {
+        "priority": "low",
+        "bandwidthCapPct": -1,
+        "bandwidth": -1,
+        "queueLen": -1,
+        "burst": -1,
+        "latency": -1
+       },
+       "type": "transactional"
+      },
+      "edge2EdgeRouteAction": {
+       "interface": "auto",
+       "linkInternalLogicalId": "auto",
+       "linkPolicy": "auto",
+       "routeCfg": {},
+       "routePolicy": "gateway",
+       "serviceGroup": "ALL",
+       "vlanId": -1,
+       "wanlink": "auto"
+      },
+      "edge2DataCenterRouteAction": {
+       "interface": "auto",
+       "linkInternalLogicalId": "auto",
+       "linkPolicy": "auto",
+       "routeCfg": {},
+       "routePolicy": "gateway",
+       "serviceGroup": "ALL",
+       "vlanId": -1,
+       "wanlink": "auto"
+      },
+      "edge2CloudRouteAction": {
+       "interface": "auto",
+       "linkInternalLogicalId": "auto",
+       "linkPolicy": "auto",
+       "routeCfg": {},
+       "routePolicy": "direct",
+       "serviceGroup": "ALL",
+       "vlanId": -1,
+       "wanlink": "auto"
+      },
+      "edgeToEdgeEncryption": true
+     }
+    },
+    {
+     "name": "Business Application",
+     "match": {
+      "appid": -1,
+      "classid": 4,
+      "dip": "any",
+      "dsm": "any",
+      "proto": -1,
+      "sip": "any",
+      "ssm": "any",
+      "os_version": -1,
+      "sport_low": -1,
+      "sport_high": -1,
+      "dport_low": -1,
+      "dport_high": -1,
+      "dscp": -1,
+      "svlan": -1,
+      "hostname": "",
+      "dvlan": -1,
+      "ipVersion": "IPv4v6",
+      "sipV6": "any",
+      "dipV6": "any"
+     },
+     "action": {
+      "routePolicy": "auto",
+      "routeType": "edge2Any",
+      "QoS": {
+       "rxScheduler": {
+        "priority": "high",
+        "bandwidthCapPct": -1,
+        "bandwidth": -1,
+        "queueLen": -1,
+        "burst": -1,
+        "latency": -1
+       },
+       "txScheduler": {
+        "priority": "high",
+        "bandwidthCapPct": -1,
+        "bandwidth": -1,
+        "queueLen": -1,
+        "burst": -1,
+        "latency": -1
+       },
+       "type": "transactional"
+      },
+      "edge2EdgeRouteAction": {
+       "interface": "auto",
+       "linkInternalLogicalId": "auto",
+       "linkPolicy": "auto",
+       "routeCfg": {},
+       "routePolicy": "gateway",
+       "serviceGroup": "ALL",
+       "vlanId": -1,
+       "wanlink": "auto"
+      },
+      "edge2DataCenterRouteAction": {
+       "interface": "auto",
+       "linkInternalLogicalId": "auto",
+       "linkPolicy": "auto",
+       "routeCfg": {},
+       "routePolicy": "gateway",
+       "serviceGroup": "ALL",
+       "vlanId": -1,
+       "wanlink": "auto"
+      },
+      "edge2CloudRouteAction": {
+       "interface": "auto",
+       "linkInternalLogicalId": "auto",
+       "linkPolicy": "auto",
+       "routeCfg": {},
+       "routePolicy": "gateway",
+       "serviceGroup": "ALL",
+       "vlanId": -1,
+       "wanlink": "auto"
+      },
+      "edgeToEdgeEncryption": true
+     }
+    },
+    {
+     "name": "Remote Desktop",
+     "match": {
+      "appid": -1,
+      "classid": 15,
+      "dip": "any",
+      "dsm": "any",
+      "proto": -1,
+      "sip": "any",
+      "ssm": "any",
+      "os_version": -1,
+      "sport_low": -1,
+      "sport_high": -1,
+      "dport_low": -1,
+      "dport_high": -1,
+      "dscp": -1,
+      "svlan": -1,
+      "hostname": "",
+      "dvlan": -1,
+      "ipVersion": "IPv4v6",
+      "sipV6": "any",
+      "dipV6": "any"
+     },
+     "action": {
+      "routePolicy": "auto",
+      "routeType": "edge2Any",
+      "QoS": {
+       "rxScheduler": {
+        "priority": "high",
+        "bandwidthCapPct": -1,
+        "bandwidth": -1,
+        "queueLen": -1,
+        "burst": -1,
+        "latency": -1
+       },
+       "txScheduler": {
+        "priority": "high",
+        "bandwidthCapPct": -1,
+        "bandwidth": -1,
+        "queueLen": -1,
+        "burst": -1,
+        "latency": -1
+       },
+       "type": "transactional"
+      },
+      "edge2EdgeRouteAction": {
+       "interface": "auto",
+       "linkInternalLogicalId": "auto",
+       "linkPolicy": "auto",
+       "routeCfg": {},
+       "routePolicy": "gateway",
+       "serviceGroup": "ALL",
+       "vlanId": -1,
+       "wanlink": "auto"
+      },
+      "edge2DataCenterRouteAction": {
+       "interface": "auto",
+       "linkInternalLogicalId": "auto",
+       "linkPolicy": "auto",
+       "routeCfg": {},
+       "routePolicy": "gateway",
+       "serviceGroup": "ALL",
+       "vlanId": -1,
+       "wanlink": "auto"
+      },
+      "edge2CloudRouteAction": {
+       "interface": "auto",
+       "linkInternalLogicalId": "auto",
+       "linkPolicy": "auto",
+       "routeCfg": {},
+       "routePolicy": "gateway",
+       "serviceGroup": "ALL",
+       "vlanId": -1,
+       "wanlink": "auto"
+      },
+      "edgeToEdgeEncryption": true
+     }
+    },
+    {
+     "name": "Business Collaboration",
+     "match": {
+      "appid": -1,
+      "classid": 5,
+      "dip": "any",
+      "dsm": "any",
+      "proto": -1,
+      "sip": "any",
+      "ssm": "any",
+      "os_version": -1,
+      "sport_low": -1,
+      "sport_high": -1,
+      "dport_low": -1,
+      "dport_high": -1,
+      "dscp": -1,
+      "svlan": -1,
+      "hostname": "",
+      "dvlan": -1,
+      "ipVersion": "IPv4v6",
+      "sipV6": "any",
+      "dipV6": "any"
+     },
+     "action": {
+      "routePolicy": "auto",
+      "routeType": "edge2Any",
+      "QoS": {
+       "rxScheduler": {
+        "priority": "high",
+        "bandwidthCapPct": -1,
+        "bandwidth": -1,
+        "queueLen": -1,
+        "burst": -1,
+        "latency": -1
+       },
+       "txScheduler": {
+        "priority": "high",
+        "bandwidthCapPct": -1,
+        "bandwidth": -1,
+        "queueLen": -1,
+        "burst": -1,
+        "latency": -1
+       },
+       "type": "realtime"
+      },
+      "edge2EdgeRouteAction": {
+       "interface": "auto",
+       "linkInternalLogicalId": "auto",
+       "linkPolicy": "auto",
+       "routeCfg": {},
+       "routePolicy": "gateway",
+       "serviceGroup": "ALL",
+       "vlanId": -1,
+       "wanlink": "auto"
+      },
+      "edge2DataCenterRouteAction": {
+       "interface": "auto",
+       "linkInternalLogicalId": "auto",
+       "linkPolicy": "auto",
+       "routeCfg": {},
+       "routePolicy": "gateway",
+       "serviceGroup": "ALL",
+       "vlanId": -1,
+       "wanlink": "auto"
+      },
+      "edge2CloudRouteAction": {
+       "interface": "auto",
+       "linkInternalLogicalId": "auto",
+       "linkPolicy": "auto",
+       "routeCfg": {},
+       "routePolicy": "gateway",
+       "serviceGroup": "ALL",
+       "vlanId": -1,
+       "wanlink": "auto"
+      },
+      "edgeToEdgeEncryption": true
+     }
+    },
+    {
+     "name": "Email bulk/DATA",
+     "match": {
+      "appid": -1,
+      "classid": 6,
+      "dip": "any",
+      "dsm": "any",
+      "proto": -1,
+      "sip": "any",
+      "ssm": "any",
+      "os_version": -1,
+      "sport_low": -1,
+      "sport_high": -1,
+      "dport_low": -1,
+      "dport_high": -1,
+      "dscp": -1,
+      "svlan": -1,
+      "hostname": "",
+      "dvlan": -1,
+      "ipVersion": "IPv4v6",
+      "sipV6": "any",
+      "dipV6": "any"
+     },
+     "action": {
+      "routePolicy": "auto",
+      "routeType": "edge2Any",
+      "QoS": {
+       "rxScheduler": {
+        "priority": "high",
+        "bandwidthCapPct": -1,
+        "bandwidth": -1,
+        "queueLen": -1,
+        "burst": -1,
+        "latency": -1
+       },
+       "txScheduler": {
+        "priority": "high",
+        "bandwidthCapPct": -1,
+        "bandwidth": -1,
+        "queueLen": -1,
+        "burst": -1,
+        "latency": -1
+       },
+       "type": "bulk"
+      },
+      "edge2EdgeRouteAction": {
+       "interface": "auto",
+       "linkInternalLogicalId": "auto",
+       "linkPolicy": "auto",
+       "routeCfg": {},
+       "routePolicy": "gateway",
+       "serviceGroup": "ALL",
+       "vlanId": -1,
+       "wanlink": "auto"
+      },
+      "edge2DataCenterRouteAction": {
+       "interface": "auto",
+       "linkInternalLogicalId": "auto",
+       "linkPolicy": "auto",
+       "routeCfg": {},
+       "routePolicy": "gateway",
+       "serviceGroup": "ALL",
+       "vlanId": -1,
+       "wanlink": "auto"
+      },
+      "edge2CloudRouteAction": {
+       "interface": "auto",
+       "linkInternalLogicalId": "auto",
+       "linkPolicy": "auto",
+       "routeCfg": {},
+       "routePolicy": "gateway",
+       "serviceGroup": "ALL",
+       "vlanId": -1,
+       "wanlink": "auto"
+      },
+      "edgeToEdgeEncryption": true
+     }
+    },
+    {
+     "name": "Infrastructure",
+     "match": {
+      "appid": -1,
+      "classid": 9,
+      "dip": "any",
+      "dsm": "any",
+      "proto": -1,
+      "sip": "any",
+      "ssm": "any",
+      "os_version": -1,
+      "sport_low": -1,
+      "sport_high": -1,
+      "dport_low": -1,
+      "dport_high": -1,
+      "dscp": -1,
+      "svlan": -1,
+      "hostname": "",
+      "dvlan": -1,
+      "ipVersion": "IPv4v6",
+      "sipV6": "any",
+      "dipV6": "any"
+     },
+     "action": {
+      "routePolicy": "auto",
+      "routeType": "edge2Any",
+      "QoS": {
+       "rxScheduler": {
+        "priority": "normal",
+        "bandwidthCapPct": -1,
+        "bandwidth": -1,
+        "queueLen": -1,
+        "burst": -1,
+        "latency": -1
+       },
+       "txScheduler": {
+        "priority": "normal",
+        "bandwidthCapPct": -1,
+        "bandwidth": -1,
+        "queueLen": -1,
+        "burst": -1,
+        "latency": -1
+       },
+       "type": "transactional"
+      },
+      "edge2EdgeRouteAction": {
+       "interface": "auto",
+       "linkInternalLogicalId": "auto",
+       "linkPolicy": "auto",
+       "routeCfg": {},
+       "routePolicy": "gateway",
+       "serviceGroup": "ALL",
+       "vlanId": -1,
+       "wanlink": "auto"
+      },
+      "edge2DataCenterRouteAction": {
+       "interface": "auto",
+       "linkInternalLogicalId": "auto",
+       "linkPolicy": "auto",
+       "routeCfg": {},
+       "routePolicy": "gateway",
+       "serviceGroup": "ALL",
+       "vlanId": -1,
+       "wanlink": "auto"
+      },
+      "edge2CloudRouteAction": {
+       "interface": "auto",
+       "linkInternalLogicalId": "auto",
+       "linkPolicy": "auto",
+       "routeCfg": {},
+       "routePolicy": "gateway",
+       "serviceGroup": "ALL",
+       "vlanId": -1,
+       "wanlink": "auto"
+      },
+      "edgeToEdgeEncryption": true
+     }
+    },
+    {
+     "name": "Web",
+     "match": {
+      "appid": -1,
+      "classid": 19,
+      "dip": "any",
+      "dsm": "any",
+      "proto": -1,
+      "sip": "any",
+      "ssm": "any",
+      "os_version": -1,
+      "sport_low": -1,
+      "sport_high": -1,
+      "dport_low": -1,
+      "dport_high": -1,
+      "dscp": -1,
+      "svlan": -1,
+      "hostname": "",
+      "dvlan": -1,
+      "ipVersion": "IPv4v6",
+      "sipV6": "any",
+      "dipV6": "any"
+     },
+     "action": {
+      "routePolicy": "auto",
+      "routeType": "edge2Any",
+      "QoS": {
+       "rxScheduler": {
+        "priority": "normal",
+        "bandwidthCapPct": -1,
+        "bandwidth": -1,
+        "queueLen": -1,
+        "burst": -1,
+        "latency": -1
+       },
+       "txScheduler": {
+        "priority": "normal",
+        "bandwidthCapPct": -1,
+        "bandwidth": -1,
+        "queueLen": -1,
+        "burst": -1,
+        "latency": -1
+       },
+       "type": "transactional"
+      },
+      "edge2EdgeRouteAction": {
+       "interface": "auto",
+       "linkInternalLogicalId": "auto",
+       "linkPolicy": "auto",
+       "routeCfg": {},
+       "routePolicy": "gateway",
+       "serviceGroup": "ALL",
+       "vlanId": -1,
+       "wanlink": "auto"
+      },
+      "edge2DataCenterRouteAction": {
+       "interface": "auto",
+       "linkInternalLogicalId": "auto",
+       "linkPolicy": "auto",
+       "routeCfg": {},
+       "routePolicy": "gateway",
+       "serviceGroup": "ALL",
+       "vlanId": -1,
+       "wanlink": "auto"
+      },
+      "edge2CloudRouteAction": {
+       "interface": "auto",
+       "linkInternalLogicalId": "auto",
+       "linkPolicy": "auto",
+       "routeCfg": {},
+       "routePolicy": "direct",
+       "serviceGroup": "ALL",
+       "vlanId": -1,
+       "wanlink": "auto"
+      },
+      "edgeToEdgeEncryption": true
+     }
+    },
+    {
+     "name": "Authentication",
+     "match": {
+      "appid": -1,
+      "classid": 3,
+      "dip": "any",
+      "dsm": "any",
+      "proto": -1,
+      "sip": "any",
+      "ssm": "any",
+      "os_version": -1,
+      "sport_low": -1,
+      "sport_high": -1,
+      "dport_low": -1,
+      "dport_high": -1,
+      "dscp": -1,
+      "svlan": -1,
+      "hostname": "",
+      "dvlan": -1,
+      "ipVersion": "IPv4v6",
+      "sipV6": "any",
+      "dipV6": "any"
+     },
+     "action": {
+      "routePolicy": "auto",
+      "routeType": "edge2Any",
+      "QoS": {
+       "rxScheduler": {
+        "priority": "normal",
+        "bandwidthCapPct": -1,
+        "bandwidth": -1,
+        "queueLen": -1,
+        "burst": -1,
+        "latency": -1
+       },
+       "txScheduler": {
+        "priority": "normal",
+        "bandwidthCapPct": -1,
+        "bandwidth": -1,
+        "queueLen": -1,
+        "burst": -1,
+        "latency": -1
+       },
+       "type": "transactional"
+      },
+      "edge2EdgeRouteAction": {
+       "interface": "auto",
+       "linkInternalLogicalId": "auto",
+       "linkPolicy": "auto",
+       "routeCfg": {},
+       "routePolicy": "gateway",
+       "serviceGroup": "ALL",
+       "vlanId": -1,
+       "wanlink": "auto"
+      },
+      "edge2DataCenterRouteAction": {
+       "interface": "auto",
+       "linkInternalLogicalId": "auto",
+       "linkPolicy": "auto",
+       "routeCfg": {},
+       "routePolicy": "gateway",
+       "serviceGroup": "ALL",
+       "vlanId": -1,
+       "wanlink": "auto"
+      },
+      "edge2CloudRouteAction": {
+       "interface": "auto",
+       "linkInternalLogicalId": "auto",
+       "linkPolicy": "auto",
+       "routeCfg": {},
+       "routePolicy": "gateway",
+       "serviceGroup": "ALL",
+       "vlanId": -1,
+       "wanlink": "auto"
+      },
+      "edgeToEdgeEncryption": true
+     }
+    },
+    {
+     "name": "Management",
+     "match": {
+      "appid": -1,
+      "classid": 11,
+      "dip": "any",
+      "dsm": "any",
+      "proto": -1,
+      "sip": "any",
+      "ssm": "any",
+      "os_version": -1,
+      "sport_low": -1,
+      "sport_high": -1,
+      "dport_low": -1,
+      "dport_high": -1,
+      "dscp": -1,
+      "svlan": -1,
+      "hostname": "",
+      "dvlan": -1,
+      "ipVersion": "IPv4v6",
+      "sipV6": "any",
+      "dipV6": "any"
+     },
+     "action": {
+      "routePolicy": "auto",
+      "routeType": "edge2Any",
+      "QoS": {
+       "rxScheduler": {
+        "priority": "normal",
+        "bandwidthCapPct": -1,
+        "bandwidth": -1,
+        "queueLen": -1,
+        "burst": -1,
+        "latency": -1
+       },
+       "txScheduler": {
+        "priority": "normal",
+        "bandwidthCapPct": -1,
+        "bandwidth": -1,
+        "queueLen": -1,
+        "burst": -1,
+        "latency": -1
+       },
+       "type": "transactional"
+      },
+      "edge2EdgeRouteAction": {
+       "interface": "auto",
+       "linkInternalLogicalId": "auto",
+       "linkPolicy": "auto",
+       "routeCfg": {},
+       "routePolicy": "gateway",
+       "serviceGroup": "ALL",
+       "vlanId": -1,
+       "wanlink": "auto"
+      },
+      "edge2DataCenterRouteAction": {
+       "interface": "auto",
+       "linkInternalLogicalId": "auto",
+       "linkPolicy": "auto",
+       "routeCfg": {},
+       "routePolicy": "gateway",
+       "serviceGroup": "ALL",
+       "vlanId": -1,
+       "wanlink": "auto"
+      },
+      "edge2CloudRouteAction": {
+       "interface": "auto",
+       "linkInternalLogicalId": "auto",
+       "linkPolicy": "auto",
+       "routeCfg": {},
+       "routePolicy": "gateway",
+       "serviceGroup": "ALL",
+       "vlanId": -1,
+       "wanlink": "auto"
+      },
+      "edgeToEdgeEncryption": true
+     }
+    },
+    {
+     "name": "Network Service",
+     "match": {
+      "appid": -1,
+      "classid": 13,
+      "dip": "any",
+      "dsm": "any",
+      "proto": -1,
+      "sip": "any",
+      "ssm": "any",
+      "os_version": -1,
+      "sport_low": -1,
+      "sport_high": -1,
+      "dport_low": -1,
+      "dport_high": -1,
+      "dscp": -1,
+      "svlan": -1,
+      "hostname": "",
+      "dvlan": -1,
+      "ipVersion": "IPv4v6",
+      "sipV6": "any",
+      "dipV6": "any"
+     },
+     "action": {
+      "routePolicy": "auto",
+      "routeType": "edge2Any",
+      "QoS": {
+       "rxScheduler": {
+        "priority": "normal",
+        "bandwidthCapPct": -1,
+        "bandwidth": -1,
+        "queueLen": -1,
+        "burst": -1,
+        "latency": -1
+       },
+       "txScheduler": {
+        "priority": "normal",
+        "bandwidthCapPct": -1,
+        "bandwidth": -1,
+        "queueLen": -1,
+        "burst": -1,
+        "latency": -1
+       },
+       "type": "transactional"
+      },
+      "edge2EdgeRouteAction": {
+       "interface": "auto",
+       "linkInternalLogicalId": "auto",
+       "linkPolicy": "auto",
+       "routeCfg": {},
+       "routePolicy": "gateway",
+       "serviceGroup": "ALL",
+       "vlanId": -1,
+       "wanlink": "auto"
+      },
+      "edge2DataCenterRouteAction": {
+       "interface": "auto",
+       "linkInternalLogicalId": "auto",
+       "linkPolicy": "auto",
+       "routeCfg": {},
+       "routePolicy": "gateway",
+       "serviceGroup": "ALL",
+       "vlanId": -1,
+       "wanlink": "auto"
+      },
+      "edge2CloudRouteAction": {
+       "interface": "auto",
+       "linkInternalLogicalId": "auto",
+       "linkPolicy": "auto",
+       "routeCfg": {},
+       "routePolicy": "gateway",
+       "serviceGroup": "ALL",
+       "vlanId": -1,
+       "wanlink": "auto"
+      },
+      "edgeToEdgeEncryption": true
+     }
+    },
+    {
+     "name": "Tunneling and VPN",
+     "match": {
+      "appid": -1,
+      "classid": 18,
+      "dip": "any",
+      "dsm": "any",
+      "proto": -1,
+      "sip": "any",
+      "ssm": "any",
+      "os_version": -1,
+      "sport_low": -1,
+      "sport_high": -1,
+      "dport_low": -1,
+      "dport_high": -1,
+      "dscp": -1,
+      "svlan": -1,
+      "hostname": "",
+      "dvlan": -1,
+      "ipVersion": "IPv4v6",
+      "sipV6": "any",
+      "dipV6": "any"
+     },
+     "action": {
+      "routePolicy": "auto",
+      "routeType": "edge2Any",
+      "QoS": {
+       "rxScheduler": {
+        "priority": "normal",
+        "bandwidthCapPct": -1,
+        "bandwidth": -1,
+        "queueLen": -1,
+        "burst": -1,
+        "latency": -1
+       },
+       "txScheduler": {
+        "priority": "normal",
+        "bandwidthCapPct": -1,
+        "bandwidth": -1,
+        "queueLen": -1,
+        "burst": -1,
+        "latency": -1
+       },
+       "type": "transactional"
+      },
+      "edge2EdgeRouteAction": {
+       "interface": "auto",
+       "linkInternalLogicalId": "auto",
+       "linkPolicy": "auto",
+       "routeCfg": {},
+       "routePolicy": "gateway",
+       "serviceGroup": "ALL",
+       "vlanId": -1,
+       "wanlink": "auto"
+      },
+      "edge2DataCenterRouteAction": {
+       "interface": "auto",
+       "linkInternalLogicalId": "auto",
+       "linkPolicy": "auto",
+       "routeCfg": {},
+       "routePolicy": "gateway",
+       "serviceGroup": "ALL",
+       "vlanId": -1,
+       "wanlink": "auto"
+      },
+      "edge2CloudRouteAction": {
+       "interface": "auto",
+       "linkInternalLogicalId": "auto",
+       "linkPolicy": "auto",
+       "routeCfg": {},
+       "routePolicy": "gateway",
+       "serviceGroup": "ALL",
+       "vlanId": -1,
+       "wanlink": "auto"
+      },
+      "edgeToEdgeEncryption": true
+     }
+    },
+    {
+     "name": "Audio/Video",
+     "match": {
+      "appid": -1,
+      "classid": 2,
+      "dip": "any",
+      "dsm": "any",
+      "proto": -1,
+      "sip": "any",
+      "ssm": "any",
+      "os_version": -1,
+      "sport_low": -1,
+      "sport_high": -1,
+      "dport_low": -1,
+      "dport_high": -1,
+      "dscp": -1,
+      "svlan": -1,
+      "hostname": "",
+      "dvlan": -1,
+      "ipVersion": "IPv4v6",
+      "sipV6": "any",
+      "dipV6": "any"
+     },
+     "action": {
+      "routePolicy": "auto",
+      "routeType": "edge2Any",
+      "QoS": {
+       "rxScheduler": {
+        "priority": "high",
+        "bandwidthCapPct": -1,
+        "bandwidth": -1,
+        "queueLen": -1,
+        "burst": -1,
+        "latency": -1
+       },
+       "txScheduler": {
+        "priority": "high",
+        "bandwidthCapPct": -1,
+        "bandwidth": -1,
+        "queueLen": -1,
+        "burst": -1,
+        "latency": -1
+       },
+       "type": "realtime"
+      },
+      "edge2EdgeRouteAction": {
+       "interface": "auto",
+       "linkInternalLogicalId": "auto",
+       "linkPolicy": "auto",
+       "routeCfg": {},
+       "routePolicy": "gateway",
+       "serviceGroup": "ALL",
+       "vlanId": -1,
+       "wanlink": "auto"
+      },
+      "edge2DataCenterRouteAction": {
+       "interface": "auto",
+       "linkInternalLogicalId": "auto",
+       "linkPolicy": "auto",
+       "routeCfg": {},
+       "routePolicy": "gateway",
+       "serviceGroup": "ALL",
+       "vlanId": -1,
+       "wanlink": "auto"
+      },
+      "edge2CloudRouteAction": {
+       "interface": "auto",
+       "linkInternalLogicalId": "auto",
+       "linkPolicy": "auto",
+       "routeCfg": {},
+       "routePolicy": "gateway",
+       "serviceGroup": "ALL",
+       "vlanId": -1,
+       "wanlink": "auto"
+      },
+      "edgeToEdgeEncryption": true
+     }
+    },
+    {
+     "name": "File Sharing",
+     "match": {
+      "appid": -1,
+      "classid": 7,
+      "dip": "any",
+      "dsm": "any",
+      "proto": -1,
+      "sip": "any",
+      "ssm": "any",
+      "os_version": -1,
+      "sport_low": -1,
+      "sport_high": -1,
+      "dport_low": -1,
+      "dport_high": -1,
+      "dscp": -1,
+      "svlan": -1,
+      "hostname": "",
+      "dvlan": -1,
+      "ipVersion": "IPv4v6",
+      "sipV6": "any",
+      "dipV6": "any"
+     },
+     "action": {
+      "routePolicy": "auto",
+      "routeType": "edge2Any",
+      "QoS": {
+       "rxScheduler": {
+        "priority": "normal",
+        "bandwidthCapPct": -1,
+        "bandwidth": -1,
+        "queueLen": -1,
+        "burst": -1,
+        "latency": -1
+       },
+       "txScheduler": {
+        "priority": "normal",
+        "bandwidthCapPct": -1,
+        "bandwidth": -1,
+        "queueLen": -1,
+        "burst": -1,
+        "latency": -1
+       },
+       "type": "bulk"
+      },
+      "edge2EdgeRouteAction": {
+       "interface": "auto",
+       "linkInternalLogicalId": "auto",
+       "linkPolicy": "auto",
+       "routeCfg": {},
+       "routePolicy": "gateway",
+       "serviceGroup": "ALL",
+       "vlanId": -1,
+       "wanlink": "auto"
+      },
+      "edge2DataCenterRouteAction": {
+       "interface": "auto",
+       "linkInternalLogicalId": "auto",
+       "linkPolicy": "auto",
+       "routeCfg": {},
+       "routePolicy": "gateway",
+       "serviceGroup": "ALL",
+       "vlanId": -1,
+       "wanlink": "auto"
+      },
+      "edge2CloudRouteAction": {
+       "interface": "auto",
+       "linkInternalLogicalId": "auto",
+       "linkPolicy": "auto",
+       "routeCfg": {},
+       "routePolicy": "gateway",
+       "serviceGroup": "ALL",
+       "vlanId": -1,
+       "wanlink": "auto"
+      },
+      "edgeToEdgeEncryption": true
+     }
+    },
+    {
+     "name": "Internet Instant Messaging",
+     "match": {
+      "appid": -1,
+      "classid": 10,
+      "dip": "any",
+      "dsm": "any",
+      "proto": -1,
+      "sip": "any",
+      "ssm": "any",
+      "os_version": -1,
+      "sport_low": -1,
+      "sport_high": -1,
+      "dport_low": -1,
+      "dport_high": -1,
+      "dscp": -1,
+      "svlan": -1,
+      "hostname": "",
+      "dvlan": -1,
+      "ipVersion": "IPv4v6",
+      "sipV6": "any",
+      "dipV6": "any"
+     },
+     "action": {
+      "routePolicy": "auto",
+      "routeType": "edge2Any",
+      "QoS": {
+       "rxScheduler": {
+        "priority": "low",
+        "bandwidthCapPct": -1,
+        "bandwidth": -1,
+        "queueLen": -1,
+        "burst": -1,
+        "latency": -1
+       },
+       "txScheduler": {
+        "priority": "low",
+        "bandwidthCapPct": -1,
+        "bandwidth": -1,
+        "queueLen": -1,
+        "burst": -1,
+        "latency": -1
+       },
+       "type": "transactional"
+      },
+      "edge2EdgeRouteAction": {
+       "interface": "auto",
+       "linkInternalLogicalId": "auto",
+       "linkPolicy": "auto",
+       "routeCfg": {},
+       "routePolicy": "gateway",
+       "serviceGroup": "ALL",
+       "vlanId": -1,
+       "wanlink": "auto"
+      },
+      "edge2DataCenterRouteAction": {
+       "interface": "auto",
+       "linkInternalLogicalId": "auto",
+       "linkPolicy": "auto",
+       "routeCfg": {},
+       "routePolicy": "gateway",
+       "serviceGroup": "ALL",
+       "vlanId": -1,
+       "wanlink": "auto"
+      },
+      "edge2CloudRouteAction": {
+       "interface": "auto",
+       "linkInternalLogicalId": "auto",
+       "linkPolicy": "auto",
+       "routeCfg": {},
+       "routePolicy": "direct",
+       "serviceGroup": "ALL",
+       "vlanId": -1,
+       "wanlink": "auto"
+      },
+      "edgeToEdgeEncryption": true
+     }
+    },
+    {
+     "name": "Anonymizers And Proxies",
+     "match": {
+      "appid": -1,
+      "classid": 1,
+      "dip": "any",
+      "dsm": "any",
+      "proto": -1,
+      "sip": "any",
+      "ssm": "any",
+      "os_version": -1,
+      "sport_low": -1,
+      "sport_high": -1,
+      "dport_low": -1,
+      "dport_high": -1,
+      "dscp": -1,
+      "svlan": -1,
+      "hostname": "",
+      "dvlan": -1,
+      "ipVersion": "IPv4v6",
+      "sipV6": "any",
+      "dipV6": "any"
+     },
+     "action": {
+      "routePolicy": "auto",
+      "routeType": "edge2Any",
+      "QoS": {
+       "rxScheduler": {
+        "priority": "low",
+        "bandwidthCapPct": -1,
+        "bandwidth": -1,
+        "queueLen": -1,
+        "burst": -1,
+        "latency": -1
+       },
+       "txScheduler": {
+        "priority": "low",
+        "bandwidthCapPct": -1,
+        "bandwidth": -1,
+        "queueLen": -1,
+        "burst": -1,
+        "latency": -1
+       },
+       "type": "transactional"
+      },
+      "edge2EdgeRouteAction": {
+       "interface": "auto",
+       "linkInternalLogicalId": "auto",
+       "linkPolicy": "auto",
+       "routeCfg": {},
+       "routePolicy": "gateway",
+       "serviceGroup": "ALL",
+       "vlanId": -1,
+       "wanlink": "auto"
+      },
+      "edge2DataCenterRouteAction": {
+       "interface": "auto",
+       "linkInternalLogicalId": "auto",
+       "linkPolicy": "auto",
+       "routeCfg": {},
+       "routePolicy": "gateway",
+       "serviceGroup": "ALL",
+       "vlanId": -1,
+       "wanlink": "auto"
+      },
+      "edge2CloudRouteAction": {
+       "interface": "auto",
+       "linkInternalLogicalId": "auto",
+       "linkPolicy": "auto",
+       "routeCfg": {},
+       "routePolicy": "direct",
+       "serviceGroup": "ALL",
+       "vlanId": -1,
+       "wanlink": "auto"
+      },
+      "edgeToEdgeEncryption": true
+     }
+    },
+    {
+     "name": "Gaming",
+     "match": {
+      "appid": -1,
+      "classid": 8,
+      "dip": "any",
+      "dsm": "any",
+      "proto": -1,
+      "sip": "any",
+      "ssm": "any",
+      "os_version": -1,
+      "sport_low": -1,
+      "sport_high": -1,
+      "dport_low": -1,
+      "dport_high": -1,
+      "dscp": -1,
+      "svlan": -1,
+      "hostname": "",
+      "dvlan": -1,
+      "ipVersion": "IPv4v6",
+      "sipV6": "any",
+      "dipV6": "any"
+     },
+     "action": {
+      "routePolicy": "auto",
+      "routeType": "edge2Any",
+      "QoS": {
+       "rxScheduler": {
+        "priority": "low",
+        "bandwidthCapPct": -1,
+        "bandwidth": -1,
+        "queueLen": -1,
+        "burst": -1,
+        "latency": -1
+       },
+       "txScheduler": {
+        "priority": "low",
+        "bandwidthCapPct": -1,
+        "bandwidth": -1,
+        "queueLen": -1,
+        "burst": -1,
+        "latency": -1
+       },
+       "type": "transactional"
+      },
+      "edge2EdgeRouteAction": {
+       "interface": "auto",
+       "linkInternalLogicalId": "auto",
+       "linkPolicy": "auto",
+       "routeCfg": {},
+       "routePolicy": "gateway",
+       "serviceGroup": "ALL",
+       "vlanId": -1,
+       "wanlink": "auto"
+      },
+      "edge2DataCenterRouteAction": {
+       "interface": "auto",
+       "linkInternalLogicalId": "auto",
+       "linkPolicy": "auto",
+       "routeCfg": {},
+       "routePolicy": "gateway",
+       "serviceGroup": "ALL",
+       "vlanId": -1,
+       "wanlink": "auto"
+      },
+      "edge2CloudRouteAction": {
+       "interface": "auto",
+       "linkInternalLogicalId": "auto",
+       "linkPolicy": "auto",
+       "routeCfg": {},
+       "routePolicy": "direct",
+       "serviceGroup": "ALL",
+       "vlanId": -1,
+       "wanlink": "auto"
+      },
+      "edgeToEdgeEncryption": true
+     }
+    },
+    {
+     "name": "Media",
+     "match": {
+      "appid": -1,
+      "classid": 12,
+      "dip": "any",
+      "dsm": "any",
+      "proto": -1,
+      "sip": "any",
+      "ssm": "any",
+      "os_version": -1,
+      "sport_low": -1,
+      "sport_high": -1,
+      "dport_low": -1,
+      "dport_high": -1,
+      "dscp": -1,
+      "svlan": -1,
+      "hostname": "",
+      "dvlan": -1,
+      "ipVersion": "IPv4v6",
+      "sipV6": "any",
+      "dipV6": "any"
+     },
+     "action": {
+      "routePolicy": "auto",
+      "routeType": "edge2Any",
+      "QoS": {
+       "rxScheduler": {
+        "priority": "low",
+        "bandwidthCapPct": -1,
+        "bandwidth": -1,
+        "queueLen": -1,
+        "burst": -1,
+        "latency": -1
+       },
+       "txScheduler": {
+        "priority": "low",
+        "bandwidthCapPct": -1,
+        "bandwidth": -1,
+        "queueLen": -1,
+        "burst": -1,
+        "latency": -1
+       },
+       "type": "transactional"
+      },
+      "edge2EdgeRouteAction": {
+       "interface": "auto",
+       "linkInternalLogicalId": "auto",
+       "linkPolicy": "auto",
+       "routeCfg": {},
+       "routePolicy": "gateway",
+       "serviceGroup": "ALL",
+       "vlanId": -1,
+       "wanlink": "auto"
+      },
+      "edge2DataCenterRouteAction": {
+       "interface": "auto",
+       "linkInternalLogicalId": "auto",
+       "linkPolicy": "auto",
+       "routeCfg": {},
+       "routePolicy": "gateway",
+       "serviceGroup": "ALL",
+       "vlanId": -1,
+       "wanlink": "auto"
+      },
+      "edge2CloudRouteAction": {
+       "interface": "auto",
+       "linkInternalLogicalId": "auto",
+       "linkPolicy": "auto",
+       "routeCfg": {},
+       "routePolicy": "direct",
+       "serviceGroup": "ALL",
+       "vlanId": -1,
+       "wanlink": "auto"
+      },
+      "edgeToEdgeEncryption": true
+     }
+    },
+    {
+     "name": "Social Networking",
+     "match": {
+      "appid": -1,
+      "classid": 16,
+      "dip": "any",
+      "dsm": "any",
+      "proto": -1,
+      "sip": "any",
+      "ssm": "any",
+      "os_version": -1,
+      "sport_low": -1,
+      "sport_high": -1,
+      "dport_low": -1,
+      "dport_high": -1,
+      "dscp": -1,
+      "svlan": -1,
+      "hostname": "",
+      "dvlan": -1,
+      "ipVersion": "IPv4v6",
+      "sipV6": "any",
+      "dipV6": "any"
+     },
+     "action": {
+      "routePolicy": "auto",
+      "routeType": "edge2Any",
+      "QoS": {
+       "rxScheduler": {
+        "priority": "low",
+        "bandwidthCapPct": -1,
+        "bandwidth": -1,
+        "queueLen": -1,
+        "burst": -1,
+        "latency": -1
+       },
+       "txScheduler": {
+        "priority": "low",
+        "bandwidthCapPct": -1,
+        "bandwidth": -1,
+        "queueLen": -1,
+        "burst": -1,
+        "latency": -1
+       },
+       "type": "transactional"
+      },
+      "edge2EdgeRouteAction": {
+       "interface": "auto",
+       "linkInternalLogicalId": "auto",
+       "linkPolicy": "auto",
+       "routeCfg": {},
+       "routePolicy": "gateway",
+       "serviceGroup": "ALL",
+       "vlanId": -1,
+       "wanlink": "auto"
+      },
+      "edge2DataCenterRouteAction": {
+       "interface": "auto",
+       "linkInternalLogicalId": "auto",
+       "linkPolicy": "auto",
+       "routeCfg": {},
+       "routePolicy": "gateway",
+       "serviceGroup": "ALL",
+       "vlanId": -1,
+       "wanlink": "auto"
+      },
+      "edge2CloudRouteAction": {
+       "interface": "auto",
+       "linkInternalLogicalId": "auto",
+       "linkPolicy": "auto",
+       "routeCfg": {},
+       "routePolicy": "direct",
+       "serviceGroup": "ALL",
+       "vlanId": -1,
+       "wanlink": "auto"
+      },
+      "edgeToEdgeEncryption": true
+     }
+    },
+    {
+     "name": "Peer to Peer",
+     "match": {
+      "appid": -1,
+      "classid": 14,
+      "dip": "any",
+      "dsm": "any",
+      "proto": -1,
+      "sip": "any",
+      "ssm": "any",
+      "os_version": -1,
+      "sport_low": -1,
+      "sport_high": -1,
+      "dport_low": -1,
+      "dport_high": -1,
+      "dscp": -1,
+      "svlan": -1,
+      "hostname": "",
+      "dvlan": -1,
+      "ipVersion": "IPv4v6",
+      "sipV6": "any",
+      "dipV6": "any"
+     },
+     "action": {
+      "routePolicy": "auto",
+      "routeType": "edge2Any",
+      "QoS": {
+       "rxScheduler": {
+        "priority": "low",
+        "bandwidthCapPct": -1,
+        "bandwidth": -1,
+        "queueLen": -1,
+        "burst": -1,
+        "latency": -1
+       },
+       "txScheduler": {
+        "priority": "low",
+        "bandwidthCapPct": -1,
+        "bandwidth": -1,
+        "queueLen": -1,
+        "burst": -1,
+        "latency": -1
+       },
+       "type": "bulk"
+      },
+      "edge2EdgeRouteAction": {
+       "interface": "auto",
+       "linkInternalLogicalId": "auto",
+       "linkPolicy": "auto",
+       "routeCfg": {},
+       "routePolicy": "gateway",
+       "serviceGroup": "ALL",
+       "vlanId": -1,
+       "wanlink": "auto"
+      },
+      "edge2DataCenterRouteAction": {
+       "interface": "auto",
+       "linkInternalLogicalId": "auto",
+       "linkPolicy": "auto",
+       "routeCfg": {},
+       "routePolicy": "gateway",
+       "serviceGroup": "ALL",
+       "vlanId": -1,
+       "wanlink": "auto"
+      },
+      "edge2CloudRouteAction": {
+       "interface": "auto",
+       "linkInternalLogicalId": "auto",
+       "linkPolicy": "auto",
+       "routeCfg": {},
+       "routePolicy": "direct",
+       "serviceGroup": "ALL",
+       "vlanId": -1,
+       "wanlink": "auto"
+      },
+      "edgeToEdgeEncryption": true
+     }
+    },
+    {
+     "name": "Storage and Backup",
+     "match": {
+      "appid": -1,
+      "classid": 17,
+      "dip": "any",
+      "dsm": "any",
+      "proto": -1,
+      "sip": "any",
+      "ssm": "any",
+      "os_version": -1,
+      "sport_low": -1,
+      "sport_high": -1,
+      "dport_low": -1,
+      "dport_high": -1,
+      "dscp": -1,
+      "svlan": -1,
+      "hostname": "",
+      "dvlan": -1,
+      "ipVersion": "IPv4v6",
+      "sipV6": "any",
+      "dipV6": "any"
+     },
+     "action": {
+      "routePolicy": "auto",
+      "routeType": "edge2Any",
+      "QoS": {
+       "rxScheduler": {
+        "priority": "low",
+        "bandwidthCapPct": -1,
+        "bandwidth": -1,
+        "queueLen": -1,
+        "burst": -1,
+        "latency": -1
+       },
+       "txScheduler": {
+        "priority": "low",
+        "bandwidthCapPct": -1,
+        "bandwidth": -1,
+        "queueLen": -1,
+        "burst": -1,
+        "latency": -1
+       },
+       "type": "bulk"
+      },
+      "edge2EdgeRouteAction": {
+       "interface": "auto",
+       "linkInternalLogicalId": "auto",
+       "linkPolicy": "auto",
+       "routeCfg": {},
+       "routePolicy": "gateway",
+       "serviceGroup": "ALL",
+       "vlanId": -1,
+       "wanlink": "auto"
+      },
+      "edge2DataCenterRouteAction": {
+       "interface": "auto",
+       "linkInternalLogicalId": "auto",
+       "linkPolicy": "auto",
+       "routeCfg": {},
+       "routePolicy": "gateway",
+       "serviceGroup": "ALL",
+       "vlanId": -1,
+       "wanlink": "auto"
+      },
+      "edge2CloudRouteAction": {
+       "interface": "auto",
+       "linkInternalLogicalId": "auto",
+       "linkPolicy": "auto",
+       "routeCfg": {},
+       "routePolicy": "direct",
+       "serviceGroup": "ALL",
+       "vlanId": -1,
+       "wanlink": "auto"
+      },
+      "edgeToEdgeEncryption": true
+     }
+    }
+   ],
+   "defaults": [
+    {
+     "name": "Default-Internet-UDP",
+     "match": {
+      "classid": -1,
+      "sip": "any",
+      "proto": 17,
+      "dport_high": -1,
+      "dport_low": -1,
+      "hostname": "",
+      "sport_low": -1,
+      "svlan": -1,
+      "dscp": -1,
+      "ssm": "255.255.255.255",
+      "os_version": -1,
+      "dsm": "255.255.255.255",
+      "appid": -1,
+      "sport_high": -1,
+      "dip": "any",
+      "dvlan": -1
+     },
+     "action": {
+      "edge2CloudRouteAction": {
+       "serviceGroup": "ALL",
+       "linkPolicy": "auto",
+       "linkOuterDscpTag": null,
+       "linkInnerDscpTag": null,
+       "routeCfg": {},
+       "wanlink": "auto",
+       "vlanId": -1,
+       "linkCosLogicalId": null,
+       "linkInternalLogicalId": "auto",
+       "routePolicy": "gateway",
+       "interface": "auto"
+      },
+      "edge2DataCenterRouteAction": {
+       "serviceGroup": "ALL",
+       "linkPolicy": "auto",
+       "linkOuterDscpTag": null,
+       "linkInnerDscpTag": null,
+       "routeCfg": {},
+       "wanlink": "auto",
+       "vlanId": -1,
+       "linkCosLogicalId": null,
+       "linkInternalLogicalId": "auto",
+       "routePolicy": "auto",
+       "interface": "auto"
+      },
+      "QoS": {
+       "txScheduler": {
+        "latency": -1,
+        "burst": -1,
+        "bandwidth": -1,
+        "priority": "high",
+        "bandwidthCapPct": -1,
+        "queueLen": -1
+       },
+       "type": "realtime",
+       "rxScheduler": {
+        "latency": -1,
+        "burst": -1,
+        "bandwidth": -1,
+        "priority": "high",
+        "bandwidthCapPct": -1,
+        "queueLen": -1
+       }
+      },
+      "edge2EdgeRouteAction": {
+       "serviceGroup": "ALL",
+       "linkPolicy": "auto",
+       "linkOuterDscpTag": null,
+       "linkInnerDscpTag": null,
+       "routeCfg": {},
+       "wanlink": "auto",
+       "vlanId": -1,
+       "linkCosLogicalId": null,
+       "linkInternalLogicalId": "auto",
+       "routePolicy": "auto",
+       "interface": "auto"
+      },
+      "routeType": "edge2Cloud"
+     }
+    },
+    {
+     "name": "Default-Internet-Other",
+     "match": {
+      "classid": -1,
+      "sip": "any",
+      "proto": -1,
+      "dport_high": -1,
+      "dport_low": -1,
+      "hostname": "",
+      "sport_low": -1,
+      "svlan": -1,
+      "dscp": -1,
+      "ssm": "255.255.255.255",
+      "os_version": -1,
+      "dsm": "255.255.255.255",
+      "appid": -1,
+      "sport_high": -1,
+      "dip": "any",
+      "dvlan": -1
+     },
+     "action": {
+      "edge2CloudRouteAction": {
+       "serviceGroup": "ALL",
+       "linkPolicy": "auto",
+       "linkOuterDscpTag": null,
+       "linkInnerDscpTag": null,
+       "routeCfg": {},
+       "wanlink": "auto",
+       "vlanId": -1,
+       "linkCosLogicalId": null,
+       "linkInternalLogicalId": "auto",
+       "routePolicy": "direct",
+       "interface": "auto"
+      },
+      "edge2DataCenterRouteAction": {
+       "serviceGroup": "ALL",
+       "linkPolicy": "auto",
+       "linkOuterDscpTag": null,
+       "linkInnerDscpTag": null,
+       "routeCfg": {},
+       "wanlink": "auto",
+       "vlanId": -1,
+       "linkCosLogicalId": null,
+       "linkInternalLogicalId": "auto",
+       "routePolicy": "auto",
+       "interface": "auto"
+      },
+      "QoS": {
+       "txScheduler": {
+        "latency": -1,
+        "burst": -1,
+        "bandwidth": -1,
+        "priority": "normal",
+        "bandwidthCapPct": -1,
+        "queueLen": -1
+       },
+       "type": "transactional",
+       "rxScheduler": {
+        "latency": -1,
+        "burst": -1,
+        "bandwidth": -1,
+        "priority": "normal",
+        "bandwidthCapPct": -1,
+        "queueLen": -1
+       }
+      },
+      "edge2EdgeRouteAction": {
+       "serviceGroup": "ALL",
+       "linkPolicy": "auto",
+       "linkOuterDscpTag": null,
+       "linkInnerDscpTag": null,
+       "routeCfg": {},
+       "wanlink": "auto",
+       "vlanId": -1,
+       "linkCosLogicalId": null,
+       "linkInternalLogicalId": "auto",
+       "routePolicy": "auto",
+       "interface": "auto"
+      },
+      "routeType": "edge2Cloud"
+     }
+    },
+    {
+     "name": "Default-Any-UDP",
+     "match": {
+      "classid": -1,
+      "sip": "any",
+      "proto": 17,
+      "dport_high": -1,
+      "dport_low": -1,
+      "hostname": "",
+      "sport_low": -1,
+      "svlan": -1,
+      "dscp": -1,
+      "ssm": "255.255.255.255",
+      "os_version": -1,
+      "dsm": "255.255.255.255",
+      "appid": -1,
+      "sport_high": -1,
+      "dip": "any",
+      "dvlan": -1
+     },
+     "action": {
+      "edge2CloudRouteAction": {
+       "serviceGroup": "ALL",
+       "linkPolicy": "auto",
+       "linkOuterDscpTag": null,
+       "linkInnerDscpTag": null,
+       "routeCfg": {},
+       "wanlink": "auto",
+       "vlanId": -1,
+       "linkCosLogicalId": null,
+       "linkInternalLogicalId": "auto",
+       "routePolicy": "gateway",
+       "interface": "auto"
+      },
+      "edge2DataCenterRouteAction": {
+       "serviceGroup": "ALL",
+       "linkPolicy": "auto",
+       "linkOuterDscpTag": null,
+       "linkInnerDscpTag": null,
+       "routeCfg": {},
+       "wanlink": "auto",
+       "vlanId": -1,
+       "linkCosLogicalId": null,
+       "linkInternalLogicalId": "auto",
+       "routePolicy": "auto",
+       "interface": "auto"
+      },
+      "QoS": {
+       "txScheduler": {
+        "latency": -1,
+        "burst": -1,
+        "bandwidth": -1,
+        "priority": "high",
+        "bandwidthCapPct": -1,
+        "queueLen": -1
+       },
+       "type": "realtime",
+       "rxScheduler": {
+        "latency": -1,
+        "burst": -1,
+        "bandwidth": -1,
+        "priority": "high",
+        "bandwidthCapPct": -1,
+        "queueLen": -1
+       }
+      },
+      "edge2EdgeRouteAction": {
+       "serviceGroup": "ALL",
+       "linkPolicy": "auto",
+       "linkOuterDscpTag": null,
+       "linkInnerDscpTag": null,
+       "routeCfg": {},
+       "wanlink": "auto",
+       "vlanId": -1,
+       "linkCosLogicalId": null,
+       "linkInternalLogicalId": "auto",
+       "routePolicy": "gateway",
+       "interface": "auto"
+      },
+      "routeType": "edge2Any"
+     }
+    },
+    {
+     "name": "Default-Any-Other",
+     "match": {
+      "classid": -1,
+      "sip": "any",
+      "proto": -1,
+      "dport_high": -1,
+      "dport_low": -1,
+      "hostname": "",
+      "sport_low": -1,
+      "svlan": -1,
+      "dscp": -1,
+      "ssm": "255.255.255.255",
+      "os_version": -1,
+      "dsm": "255.255.255.255",
+      "appid": -1,
+      "sport_high": -1,
+      "dip": "any",
+      "dvlan": -1
+     },
+     "action": {
+      "edge2CloudRouteAction": {
+       "serviceGroup": "ALL",
+       "linkPolicy": "auto",
+       "linkOuterDscpTag": null,
+       "linkInnerDscpTag": null,
+       "routeCfg": {},
+       "wanlink": "auto",
+       "vlanId": -1,
+       "linkCosLogicalId": null,
+       "linkInternalLogicalId": "auto",
+       "routePolicy": "gateway",
+       "interface": "auto"
+      },
+      "edge2DataCenterRouteAction": {
+       "serviceGroup": "ALL",
+       "linkPolicy": "auto",
+       "linkOuterDscpTag": null,
+       "linkInnerDscpTag": null,
+       "routeCfg": {},
+       "wanlink": "auto",
+       "vlanId": -1,
+       "linkCosLogicalId": null,
+       "linkInternalLogicalId": "auto",
+       "routePolicy": "auto",
+       "interface": "auto"
+      },
+      "QoS": {
+       "txScheduler": {
+        "latency": -1,
+        "burst": -1,
+        "bandwidth": -1,
+        "priority": "normal",
+        "bandwidthCapPct": -1,
+        "queueLen": -1
+       },
+       "type": "transactional",
+       "rxScheduler": {
+        "latency": -1,
+        "burst": -1,
+        "bandwidth": -1,
+        "priority": "normal",
+        "bandwidthCapPct": -1,
+        "queueLen": -1
+       }
+      },
+      "edge2EdgeRouteAction": {
+       "serviceGroup": "ALL",
+       "linkPolicy": "auto",
+       "linkOuterDscpTag": null,
+       "linkInnerDscpTag": null,
+       "routeCfg": {},
+       "wanlink": "auto",
+       "vlanId": -1,
+       "linkCosLogicalId": null,
+       "linkInternalLogicalId": "auto",
+       "routePolicy": "gateway",
+       "interface": "auto"
+      },
+      "routeType": "edge2Any"
+     }
+    }
+   ],
+   "webProxy": {
+    "providers": []
+   },
+   "cosMapping": {
+    "lsInputType": "weight",
+    "realtime": {
+     "high": {
+      "value": 35,
+      "ratelimit": false
+     },
+     "normal": {
+      "value": 15,
+      "ratelimit": false
+     },
+     "low": {
+      "value": 1,
+      "ratelimit": false
+     }
+    },
+    "transactional": {
+     "high": {
+      "value": 20,
+      "ratelimit": false
+     },
+     "normal": {
+      "value": 7,
+      "ratelimit": false
+     },
+     "low": {
+      "value": 1,
+      "ratelimit": false
+     }
+    },
+    "bulk": {
+     "high": {
+      "value": 15,
+      "ratelimit": false
+     },
+     "normal": {
+      "value": 5,
+      "ratelimit": false
+     },
+     "low": {
+      "value": 1,
+      "ratelimit": false
+     }
+    }
+   }
+  },
+  "module": {
+   "serviceRateLimit": {
+    "enabled": false,
+    "inputType": "percent",
+    "value": 1
+   },
+   "qoe": {
+    "voice": {
+     "latency": {
+      "yellow": 25,
+      "red": 65
+     }
+    },
+    "video": {
+     "latency": {
+      "yellow": 25,
+      "red": 65
+     }
+    },
+    "trans": {
+     "latency": {
+      "yellow": 50,
+      "red": 80
+     }
+    }
+   }
+  }
+ },
+ "firewall": {
+  "segment": {
+   "firewall_logging_enabled": false,
+   "outbound": [
+    {
+     "name": "AllowAny",
+     "match": {
+      "ipVersion": "IPv4v6",
+      "sipV6": "any",
+      "dipV6": "any",
+      "appid": -1,
+      "classid": -1,
+      "dscp": -1,
+      "sip": "any",
+      "sport_high": -1,
+      "sport_low": -1,
+      "ssm": "any",
+      "svlan": -1,
+      "os_version": -1,
+      "hostname": "",
+      "dip": "any",
+      "dport_low": -1,
+      "dport_high": -1,
+      "dsm": "any",
+      "dvlan": -1,
+      "proto": -1
+     },
+     "action": {
+      "allow_or_deny": "allow"
+     },
+     "hostedLoggingEnabled": false,
+     "syslogForwardingEnabled": false
+    }
+   ]
+  },
+  "module": {
+   "securityFeatures": {
+    "idpsEnabled": false,
+    "urlFilteringEnabled": false,
+    "maliciousIpFilteringEnabled": false
+   },
+   "firewall_enabled": true,
+   "atp_enabled": false,
+   "inbound": [],
+   "inboundV6": [],
+   "networkProtectionSettings": {
+    "denylistDuration": 10,
+    "newConnectionThreshold": 25,
+    "denylist": false,
+    "detectionTime": 10,
+    "tcpBasedAttacksEnabled": false,
+    "tcpBasedAttacks": {
+     "invalidFlags": false,
+     "enableLand": false,
+     "enableSynFragment": false
+    },
+    "icmpBasedAttacksEnabled": false,
+    "icmpBasedAttacks": {
+     "enablePingOfDeath": true,
+     "enableFragment": false
+    },
+    "ipBasedAttacksEnabled": false,
+    "ipBasedAttacks": {
+     "enableUnknownProtocol": false,
+     "enableInsecureOptions": false
+    },
+    "tcpHalfOpenThresholdEnabled": false
+   },
+   "networkProtectionSettingsV6": {
+    "denylistDuration": 10,
+    "newConnectionThreshold": 25,
+    "denylist": false,
+    "detectionTime": 10,
+    "tcpBasedAttacksEnabled": false,
+    "tcpBasedAttacks": {
+     "invalidFlags": false,
+     "enableLand": false,
+     "enableSynFragment": false
+    },
+    "icmpBasedAttacksEnabled": false,
+    "icmpBasedAttacks": {
+     "enablePingOfDeath": true,
+     "enableFragment": false
+    },
+    "ipBasedAttacksEnabled": false,
+    "ipBasedAttacks": {
+     "enableUnknownProtocol": false,
+     "enableInsecureOptions": false
+    },
+    "tcpHalfOpenThresholdEnabled": false
+   },
+   "services": {
+    "loggingEnabled": false,
+    "post": {
+     "enabled": false
+    },
+    "ssh": {
+     "enabled": false,
+     "allowSelectedIp": []
+    },
+    "localUi": {
+     "enabled": false,
+     "allowSelectedIp": [],
+     "portNumber": 80
+    },
+    "console": {
+     "enabled": false
+    },
+    "snmp": {
+     "enabled": false,
+     "allowSelectedIp": []
+    },
+    "icmp": {
+     "enabled": false,
+     "allowSelectedIp": [],
+     "allowSelectedIpV6": []
+    }
+   },
+   "statefulFirewallSettings": {
+    "establishedTcpFlowTimeout": 7440,
+    "nonEstablishedTcpFlowTimeout": 240,
+    "udpFlowTimeout": 300,
+    "otherFlowTimeout": 60
+   },
+   "statefulFirewallSettingsV6": {
+    "establishedTcpFlowTimeout": 7440,
+    "nonEstablishedTcpFlowTimeout": 240,
+    "udpFlowTimeout": 300,
+    "otherFlowTimeout": 60
+   },
+   "stateful_firewall_enabled": false,
+   "syslog_forwarding": false,
+   "firewall_logging_enabled": false,
+   "etm": {
+    "etmSecurityProfile": "",
+    "etmSecurityProfileName": "",
+    "description": "",
+    "enabled": false,
+    "securityFeatures": {
+     "idpsEnabled": false,
+     "urlFilteringEnabled": false,
+     "maliciousIpFilteringEnabled": false
+    }
+   }
+  }
+ },
+ "deviceSettings": {
+  "segment": {
+   "ospf": {
+    "enabled": false,
+    "aggregation": [],
+    "areas": [],
+    "defaultRoutes": "NONE",
+    "defaultRouteAdvertise": "NONE",
+    "defaultPrefixes": true,
+    "bgp": {
+     "enabled": false,
+     "metric": 20,
+     "metricType": "E2"
+    },
+    "v6Detail": {
+     "enabled": false,
+     "aggregation": [],
+     "areas": [],
+     "defaultRoutes": "NONE",
+     "defaultRouteAdvertise": "NONE",
+     "defaultPrefixes": true,
+     "bgp": {
+      "enabled": false,
+      "metric": 20,
+      "metricType": "E2"
+     }
+    }
+   },
+   "syslog": {
+    "enabled": false,
+    "collectors": [],
+    "facilityCode": "local0"
+   }
+  }
+ }
+}
