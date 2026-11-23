@@ -121,6 +121,14 @@ def get_key_spec(field_info: FieldInfo) -> KeySpec | None:
     return None
 
 
+def get_fixed_list(field_info: FieldInfo) -> FixedList | None:
+    """The ``FixedList`` of a field marked with one, or None."""
+    for m in field_info.metadata:
+        if isinstance(m, FixedList):
+            return m
+    return None
+
+
 def has_override_flag(field_info: FieldInfo) -> bool:
     """Check if a field is marked with OverrideFlag."""
     return any(isinstance(m, _ProcessedOverrideFlag) for m in field_info.metadata)
@@ -397,6 +405,22 @@ class KeySpec:
     paths: tuple[str, ...]
     alt: str | None = None
     label: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class FixedList:
+    """Annotated marker: the entries of a keyed list of models are fixed, but for some fields.
+
+    Usage: ``defaults: Annotated[list[Rule], KeyField("name"),
+    FixedList(editable=("action",))]``. Put it beside a ``KeyField``.
+
+    The entries, their keys and their order stay as they are: a patch may
+    change the fields in *editable* (python names) of an entry, and nothing
+    else. ``merge_patch`` refuses any other edit with a ``PatchError`` of kind
+    ``fixed_list`` (``get_fixed_list``).
+    """
+
+    editable: tuple[str, ...]
 
 
 class OverrideFlag:

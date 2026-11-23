@@ -3,7 +3,7 @@ from typing import Annotated, Any
 from pydantic import MISSING, Field
 
 from pyvelo.core import ProfileOnly, VcoModel
-from pyvelo.core.fields import KeyField, OverrideFlag
+from pyvelo.core.fields import FixedList, KeyField, OverrideFlag
 
 from ..common import SegmentMetadata
 from .common import CosMappingInputType
@@ -59,7 +59,10 @@ class QosSegment(VcoModel):
         default_factory=list
     )
     defaults: Annotated[
-        list[QosRule] | MISSING, ProfileOnly, KeyField("name", alt="rule_logical_id")
+        list[QosRule] | MISSING,
+        ProfileOnly,
+        KeyField("name", alt="rule_logical_id"),
+        FixedList(editable=("action",)),
     ] = MISSING
     cos_mapping: CosMapping | MISSING = MISSING
     web_proxy: WebProxy | MISSING = MISSING

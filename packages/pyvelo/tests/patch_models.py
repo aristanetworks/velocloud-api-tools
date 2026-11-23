@@ -1,11 +1,13 @@
 """Synthetic models shared by the patch tests."""
 
+import uuid
 from typing import Annotated, Any
 
 from pydantic import MISSING, Field
 from pyvelo.core import (
     DefaultingModel,
     DefaultingScalar,
+    FixedList,
     KeyField,
     Positional,
     VcoModel,
@@ -72,3 +74,19 @@ class Root(VcoModel):
     links: Annotated[list[Link], KeyField("internal_id", "family", label="name")] = (
         Field(default_factory=list)
     )
+
+
+class FixedRule(VcoModel):
+    name: str
+    rule_id: uuid.UUID = Field(default_factory=uuid.uuid4)
+    match: dict[str, int] = Field(default_factory=dict)
+    action: dict[str, str] = Field(default_factory=dict)
+
+
+class FixedSegment(VcoModel):
+    label: str = ""
+    defaults: Annotated[
+        list[FixedRule] | MISSING,
+        KeyField("name", alt="rule_id"),
+        FixedList(editable=("action",)),
+    ] = MISSING

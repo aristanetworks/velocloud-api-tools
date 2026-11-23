@@ -171,7 +171,7 @@ A patch is strict and all or nothing:
   directives: `_op` and `_position`, on a list item only.
 - A patch that cannot be applied raises `PatchError` (a `ValueError`). Its
   `path` is where in the patch it failed, its `message` the reason, and its
-  `kind` one of the twelve values below, for a caller that reacts to the
+  `kind` one of the thirteen values below, for a caller that reacts to the
   cause. Resolver errors keep their types (`ResolutionError` for an unknown
   name). A patch that applies but that a
   save could not write raises `LossyFieldError` (see "What a save writes"),
@@ -192,6 +192,7 @@ A patch is strict and all or nothing:
 | `several_items` | has a selector or anchor that names more than one item |
 | `exists` | adds, or renames to, a key, alt key or value that is already there |
 | `segment_rule` | breaks a rule of the `segments` lists (below) |
+| `fixed_list` | edits a fixed part of a list whose entries, keys and order are fixed (the QoS `defaults` of a segment): adds, deletes, moves, renames or reorders an entry, or changes a field but `action` |
 
 Every list has a kind, which says how its items are named:
 

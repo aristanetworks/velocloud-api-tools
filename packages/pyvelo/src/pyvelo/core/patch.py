@@ -46,6 +46,7 @@ type PatchErrorKind = Literal[
     "several_items",
     "exists",
     "segment_rule",
+    "fixed_list",
 ]
 """Which sort of refusal a ``PatchError`` is."""
 
@@ -74,6 +75,9 @@ class PatchError(ValueError):
     - ``exists``: adds, or renames to, a key, alt key or value that is already
       there.
     - ``segment_rule``: breaks a rule of the ``segments`` lists.
+    - ``fixed_list``: edits a fixed part of a ``FixedList``: adds, deletes,
+      moves, renames or reorders its entries, or changes a field of an
+      entry that is not editable.
 
     A pydantic ``ValidationError`` behind it is its ``__cause__``.
     """
