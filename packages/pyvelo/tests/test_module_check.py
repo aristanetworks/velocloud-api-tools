@@ -538,8 +538,8 @@ def test_refused_with_a_left_out_change_stored_otherwise_is_a_conflict_too():
         "(version v1): the VCO refused the version"
     )
     assert lines[1] == (
-        "Nothing is listed as lost: the check cannot tell whether the changes of "
-        "this write are stored. Compare the module as stored with what you meant, "
+        "Nothing is listed as lost: the check cannot tell whether every change of "
+        "this write is stored. Compare the module as stored with what you meant, "
         "and make the change again where it is missing."
     )
     assert "lost edits" not in str(error)

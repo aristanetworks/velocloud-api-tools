@@ -417,8 +417,8 @@ class ConfigConflictError(ModuleWriteError):
     def _notes(self) -> list[str]:
         if self.stated and not self.lost_edits and self.plan is not None:
             note = (
-                "Nothing is listed as lost: the check cannot tell whether the "
-                "changes of this write are stored. Compare the module as stored "
+                "Nothing is listed as lost: the check cannot tell whether every "
+                "change of this write is stored. Compare the module as stored "
                 "with what you meant, and make the change again where it is missing."
             )
             return [note]
@@ -487,7 +487,8 @@ class WriteOutcomeUnknownError(ModuleWriteError):
     stored nothing of this write), ``"counted"`` (it counted the write, so the
     changes are most likely stored) or ``"row"`` (it answered with a row that
     could not be used). ``module_id`` is the module's ID; for an insert the VCO
-    counted or answered with a row, the ID it gave.
+    counted or answered with a row, the ID it gave. When the read request
+    itself fails, its own error is raised instead, and the write may be stored.
     """
 
     detail: str

@@ -334,7 +334,8 @@ from `pyvelo.client.exceptions` and re-exported by `pyvelo_intent`.
 since it was read, or seems to have (`stated`, below, says which);
 `WriteNotAppliedError` says the VCO stored the write otherwise than as sent.
 `WriteOutcomeUnknownError` says the write was sent and the module as stored
-could not be read.
+could not be read. When the read itself fails, its own error is raised, and the
+write may be stored.
 The rows below are tried in order, and the first that fits is raised, so a
 refused version is a `ConfigConflictError` even when some of your changes are
 stored:
@@ -465,7 +466,13 @@ Known limits:
   item of such a list counts as stored only when the stored item at that
   position no longer has it. If the VCO puts the key back on its own, every
   save that changes that list raises `WriteNotAppliedError` until the key is in
-  the table of rewrites.
+  the table of rewrites. An edit that shifts the items of such a list
+  (removing or adding an item before others) can raise it too.
+- An update with no change the check can find stored is sent without
+  `returnData` and a row count of zero is taken as a refusal, so if a VCO
+  counted zero rows for a write it stored that changed nothing in effect (not
+  measured), that save raises a stated `ConfigConflictError` every time the
+  edit is redone.
 - A key the VCO stores in a form the table of rewrites does not cover reads as
   your item lost and another item, only the VCO's, in `server_changes`. IPv6
   addresses in the keys of device settings (a static route's destination and
@@ -497,7 +504,7 @@ Known limits:
 
 | Module | What it provides |
 |---|---|
-| `pyvelo_intent` | Re-exports the public surface: `ConfigPipeline`, `ConfigState`, `SaveResult`, the patch helpers (`add`, `delete`, `move`, `at`) and `PatchError`, diff types (`DiffResult`, `Added`, `Removed`, `Modified`, `Unchanged`, `FieldChange`), the intent error types, the write errors `ModuleWriteError` (the base of the next two), `ConfigConflictError`, `WriteNotAppliedError` and `DetachedObjectError` (from `pyvelo.client.exceptions`), helpers (`build_default_pipeline`, `confirm_save`, `load_config`) |
+| `pyvelo_intent` | Re-exports the public surface: `ConfigPipeline`, `ConfigState`, `SaveResult`, the patch helpers (`add`, `delete`, `move`, `at`) and `PatchError`, diff types (`DiffResult`, `Added`, `Removed`, `Modified`, `Unchanged`, `FieldChange`), the intent error types, the write errors `ModuleWriteError` (the base of the next three), `ConfigConflictError`, `WriteNotAppliedError`, `WriteOutcomeUnknownError` and `DetachedObjectError` (from `pyvelo.client.exceptions`), helpers (`build_default_pipeline`, `confirm_save`, `load_config`) |
 | `pyvelo_intent.config.pipeline` | `ConfigPipeline` (load/load_profile → apply → save), `build_default_pipeline` |
 | `pyvelo_intent.config.state` | `ConfigState`, `SaveResult`, `ConfigFieldChange`, `ValidationWarning` |
 | `pyvelo_intent.config.helpers` | `load_config`, `confirm_save` |

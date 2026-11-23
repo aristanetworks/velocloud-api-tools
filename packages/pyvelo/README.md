@@ -65,6 +65,8 @@ Otherwise it raises, from `pyvelo.client.exceptions`:
   could not be read: the read-back did not find it or it does not parse, or the
   VCO's answer is not this module's row. It has no lost edits; `error.answer`
   says whether the VCO refused the write, counted it, or answered with a row.
+  When the read itself fails, its own error is raised, and the write may be
+  stored.
 
 The first two carry `lost_edits` (the planned changes not stored, with the
 values as read, meant and stored), `applied`, `left_out`, `server_changes`, the
@@ -72,9 +74,9 @@ values as read, meant and stored), `applied`, `left_out`, `server_changes`, the
 (a field marked `ServerOwned`, and the rewrites per module in
 `MODULE_REWRITES`, `pyvelo.client.module_check`), a planned change is not a
 lost edit: it is in `left_out` of the write, or of one of the first two errors,
-and a value other than the one read is a server change. After a refusal, and when the VCO
-answered with a module that holds none of the changes, such a change that is
-still as read is a lost edit. `check_module_write(module, plan, stored,
+and a value other than the one read is a server change. After a refusal, and
+when the VCO answered with a module that holds none of the changes, such a
+change that is still as read is a lost edit. `check_module_write(module, plan, stored,
 answer=...)` takes what the VCO said of the write: `"row"`, `"counted"` or
 `"refused"`. With `"row"` it has only the module to go by, so a write none of
 whose changes is found stored is taken as not stored.
@@ -82,10 +84,10 @@ whose changes is found stored is taken as not stored.
 `pyvelo.testing.ModuleStore` is an `httpx` handler that holds module rows as
 JSON and answers module updates, inserts and `getConfiguration` as a VCO does.
 Its knobs are the conditional version check, a VCO that ignores `returnData`,
-the enterprise a request has to name, writes that fail, hooks that change what is stored (`on_store`) and another
-writer's change (`other_writer`). A client built over it
-(`make_transport(store)`) runs its own request building, parsing and error
-mapping in tests.
+the enterprise a request has to name, writes that fail, hooks that change what
+is stored (`on_store`) and another writer's change (`other_writer`). A client
+built over it (`make_transport(store)`) runs its own request building, parsing
+and error mapping in tests.
 
 ## Portal list and pagination methods
 
