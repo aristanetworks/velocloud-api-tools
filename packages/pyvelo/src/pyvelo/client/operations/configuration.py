@@ -619,6 +619,17 @@ class ConfigurationMixin(Protocol):
         nothing, and nothing is sent. Give the *profile*'s module of the same
         name to reconcile the segments an edge module lacks.
 
+        The module passed in is not updated: it still holds the data and the
+        ``version`` from before the write. Continue from the module returned
+        (``module = await client.update_module(module, data)``); after
+        ``ConfigConflictError`` or ``WriteNotAppliedError``, continue from
+        ``error.module``. After ``WriteOutcomeUnknownError`` the module as
+        stored could not be read and the write may be stored: read the
+        configuration again and compare before writing this module again.
+        Only the module is returned: what the VCO stored its own way
+        (``left_out``, ``server_changes``) is on the ``ModuleWrite`` that
+        ``write_module`` returns.
+
         Raises ``ConfigConflictError`` if the module changed since it was
         read, and ``WriteNotAppliedError`` if the VCO stored the write
         otherwise than as sent. Each carries the module as stored and the lost

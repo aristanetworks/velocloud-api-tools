@@ -46,6 +46,17 @@ the class of `module`. When nothing changed it sends nothing and returns
 `module` itself. It is `plan_module` (`pyvelo.client.module_write`) followed by
 `write_module`.
 
+The module you pass in is not updated: it keeps the data and the `version` from
+before the write. Continue from the module `update_module` returns (`module =
+await client.update_module(module, data)`), and after `ConfigConflictError` or
+`WriteNotAppliedError` from `error.module`. After `WriteOutcomeUnknownError` the
+module as stored could not be read and the write may be stored: read the
+configuration again and compare before you write this module again. Writing a
+module again after a write replaced it sends its old version, which the VCO
+answers as it answers another writer's stale write. `update_module` returns only
+the module; to see what the VCO stored its own way, use `write_module`, whose
+`ModuleWrite` has `left_out` and `server_changes`.
+
 `VcoClient.write_module(module, plan)` sends a plan as an update or an insert
 that asks for the module as stored (`returnData`), and reads the module back
 when the VCO answers without it. An update none of whose changes could be found
