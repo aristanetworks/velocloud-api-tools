@@ -8,6 +8,7 @@ import pytest
 from pyvelo.client.exceptions import (
     ConfigConflictError,
     DetachedObjectError,
+    FixedListError,
     LossyFieldError,
     ModuleWriteError,
     RefsDroppedError,
@@ -109,6 +110,15 @@ def test_the_other_write_errors_survive_pickling():
         "its configuration does not hold the module",
         plan,
     )
+
+
+def test_a_fixed_list_error_keeps_its_module_paths_and_message_through_copies():
+    paths = (Path(("segments", Key("Guest"), "defaults")),)
+    error = FixedListError("QOS", [(paths[0], "the list is gone")])
+    for copied in copies(error):
+        assert type(copied) is FixedListError
+        assert (copied.module_name, copied.paths) == ("QOS", paths)
+        assert str(copied) == str(error)
 
 
 def test_errors_built_from_several_values_survive_pickling():
@@ -225,6 +235,7 @@ def test_every_error_of_the_module_round_trips():
         UnboundError("not bound"),
         DetachedObjectError("changed", (path,)),
         RefsNotLoadedError("deviceSettings", (path,)),
+        FixedListError("QOS", [(path, "the list is gone")]),
         RefsDroppedError(
             1,
             "v1",

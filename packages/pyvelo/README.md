@@ -47,6 +47,16 @@ the class of `module`. When nothing changed it sends nothing and returns
 `module` itself. It is `plan_module` (`pyvelo.client.module_write`) followed by
 `write_module`.
 
+The `defaults` rules of a QoS segment are fixed: their entries, keys and order
+stay as read, and only the `action` of a rule can change. `plan_module` compares
+its payload with the module as read, and raises `FixedListError` for a payload
+that changes anything else in them (a rule's `match`, a rule added, removed,
+renamed or moved, the list built or dropped), whatever made the change: an
+attribute assignment, a plain-dict `data` or a patch. It does so at every level,
+an edge's raw `defaults` included, and `validate=False` does not skip it. The
+error lists each path with its reason. A missing entry is repaired when the
+module is written, never built by an edit.
+
 The module you pass in is not updated: it keeps the data and the `version` from
 before the write. Continue from the module `update_module` returns (`module =
 await client.update_module(module, data)`), and after `ConfigConflictError` or

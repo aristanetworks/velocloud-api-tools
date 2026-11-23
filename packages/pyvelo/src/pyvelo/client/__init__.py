@@ -5,6 +5,7 @@ from pyvelo.client.credentials import get_vco_credentials
 from pyvelo.client.exceptions import (
     ConfigConflictError,
     DetachedObjectError,
+    FixedListError,
     LossyFieldError,
     ModuleWriteError,
     RefsDroppedError,
@@ -41,6 +42,7 @@ __all__ = [
     "DetachedObjectError",
     "Exchange",
     "ExchangeHook",
+    "FixedListError",
     "LossyFieldError",
     "ModuleWriteError",
     "PendingDiagnostic",

@@ -264,6 +264,37 @@ class LossyFieldError(VcoError):
         super().__init__(message)
 
 
+class FixedListError(VcoError):
+    """Raised when a payload changes a fixed part of a ``FixedList``, such as the QoS ``defaults``.
+
+    The ``defaults`` rules of a segment have fixed entries, keys and order, and
+    only their ``action`` can change. A plan compares the payload with the
+    module as read, so the edit is refused however it was made (an attribute
+    assignment, a plain-dict data, a patch). ``module_name`` is the module;
+    ``paths`` are the places that changed, raw, each at the rule or at the
+    list (the reason of each is in the message).
+    """
+
+    module_name: str
+    paths: tuple[Path, ...]
+
+    def __init__(
+        self, module_name: str, violations: Sequence[tuple[Path, str]]
+    ) -> None:
+        self.module_name = module_name
+        self.paths = tuple(path for path, _ in violations)
+        found = "; ".join(f"{path}: {reason}" for path, reason in violations)
+        super().__init__(
+            f"{module_name}: the edit changes a fixed part of a list whose "
+            f"entries are fixed: {found}. Only the actions of the `defaults` "
+            "rules can change: send "
+            '{"segments": {"<segment>": {"defaults": {"<rule>": {"action": {...}}}}}} '
+            "and leave the rules' other fields, their order and their set as "
+            "they are. A missing entry is repaired when the module is written, "
+            "not built by an edit."
+        )
+
+
 class RefsNotLoadedError(VcoError):
     """Raised when a plan needs the refs of a module that was read without them.
 

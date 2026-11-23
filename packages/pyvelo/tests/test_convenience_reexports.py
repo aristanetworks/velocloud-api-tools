@@ -22,6 +22,7 @@ class TestSaveErrorReexports:
 
         for name in (
             "ConfigConflictError",
+            "FixedListError",
             "LossyFieldError",
             "ModuleWriteError",
             "RefsDroppedError",

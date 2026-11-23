@@ -74,6 +74,7 @@ from pyvelo.client.derived_refs import (
 )
 from pyvelo.client.exceptions import (
     ConfigConflictError,
+    FixedListError,
     LossyFieldError,
     RefsNotLoadedError,
 )
@@ -100,6 +101,7 @@ from pyvelo.core.base import (
     is_dict,
     is_list,
 )
+from pyvelo.core.fixed_list import fixed_list_violations
 from pyvelo.core.rebase import (
     Path,
     RawChange,
@@ -478,6 +480,9 @@ def plan_module(
     resolver for it) and ``ResolutionError`` (the VCO does not know the
     identity) for a row it cannot build, and ``RefsNotLoadedError`` for an
     edit that needs the refs of a module read without them.
+    Raises ``FixedListError`` for a payload that changes a fixed part of a
+    ``FixedList`` (the QoS ``defaults``: only their actions can change),
+    whatever made the change, relative to the module as read.
     Raises ``LossyFieldError`` if the caller assigned a value that cannot reach
     the written data (the default of a key that was absent when read).
 
@@ -553,6 +558,12 @@ def plan_module(
                 topped_up, cast(dict[str, Any], reconciled), extra
             )
         payload = copy.deepcopy(topped_up)
+
+    fixed_model = _document_model(model_type, module)
+    if fixed_model is not None and payload != reconciled:
+        broken = fixed_list_violations(fixed_model, reconciled, payload)
+        if broken:
+            raise FixedListError(name, broken)
 
     restored: list[dict[str, Any]] = []
     if inherited is not None:

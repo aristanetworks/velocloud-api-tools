@@ -3,6 +3,7 @@
 from pyvelo.client.exceptions import (
     ConfigConflictError,
     DetachedObjectError,
+    FixedListError,
     LossyFieldError,
     ModuleWriteError,
     RefsDroppedError,
@@ -63,6 +64,7 @@ __all__ = [
     "DetachedObjectError",
     "DiffResult",
     "FieldChange",
+    "FixedListError",
     "IntentError",
     "LayerNotSavedError",
     "LossyFieldError",
