@@ -9,11 +9,12 @@ from typing import Literal, Protocol, cast, override, runtime_checkable
 from pydantic import MISSING, BaseModel
 from pyvelo.client.enums.configuration import ConfigurationModuleName
 from pyvelo.client.exceptions import DetachedObjectError
+from pyvelo.client.models.configuration.common import segment_id_of
 from pyvelo.client.models.configuration.device_settings.root import DeviceSettingsData
 from pyvelo.client.models.configuration.firewall.root import FirewallData
 from pyvelo.client.models.configuration.qos.root import QosData
 from pyvelo.client.models.configuration.wan.root import WanData
-from pyvelo.client.module_write import ModulePlan, plan_module
+from pyvelo.client.module_write import ModulePlan, missing_segments, plan_module
 from pyvelo.client.schemas.configuration import (
     AnyConfigurationModule,
     ConfigurationBase,
@@ -372,6 +373,33 @@ class ConfigState:
         if unset and module.is_new:
             self._made_into_unset.append((module, was_set))
         return module
+
+    def inherited_segment_ids(self, module: AnyConfigurationModule) -> frozenset[str]:
+        """The ``segmentId``, in string form, of each segment *module* only inherits.
+
+        *module* is an edge module of this state. These are the segments of
+        the profile's module of the same name that *module* had no entry for
+        when it was read: the ones a save writes an entry for after the edge's
+        own (:func:`~pyvelo.client.module_write.missing_segments`), so a patch
+        cannot give them a place. Empty for a profile target, for a profile
+        with no module of that name, and for a module that has no
+        ``segments``. A module the state created has no segments as read, so
+        every segment of the profile is in it. After a save the module is the
+        one the VCO stored, which has the entries the save wrote.
+        """
+        if self.target_type != "edge":
+            return frozenset()
+        profile_module = _find_module(self.profile_config, module.name)
+        if profile_module is None:
+            return frozenset()
+        missing = missing_segments(
+            module.raw_data, profile_module.raw_data, module.name
+        )
+        return frozenset(
+            str(segment_id)
+            for entry in missing
+            if (segment_id := segment_id_of(entry)) is not None
+        )
 
     def find_module(
         self, name: ConfigurationModuleName | str

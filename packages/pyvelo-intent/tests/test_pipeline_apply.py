@@ -40,6 +40,7 @@ from pyvelo_intent import PatchError, add, delete, move
 from pyvelo_intent.config.pipeline import ConfigPipeline
 from pyvelo_intent.config.state import ConfigState
 from pyvelo_intent.testing import (
+    MockVcoClient,
     make_firewall_module,
     make_firewall_segment,
 )
@@ -462,13 +463,143 @@ async def test_inherited_segment_by_another_case_and_by_id():
         assert [r.name for r in guest.outbound] == ["block"]
 
 
+def _own_guest_state() -> ConfigState:
+    """The edge layer has Global Segment and Guest, both its own as read."""
+    raw = {
+        "segments": [
+            {"segment": desc(0, "Global Segment"), "outbound": []},
+            {"segment": desc(2, "Guest"), "outbound": []},
+        ]
+    }
+    row = make_module_json(
+        "firewall", raw, module_id=1, configuration_id=10, version="e1"
+    )
+    return make_raw_state(edge_modules=[row])
+
+
 @pytest.mark.asyncio
-async def test_move_of_an_inherited_segment_adds_the_placeholder():
+@pytest.mark.parametrize(
+    "entry",
+    [
+        pytest.param(move(first=True), id="move"),
+        pytest.param({"_position": {"after": "Global Segment"}}, id="move-as-json"),
+        pytest.param(
+            {"outbound": {"block": add(_DENY)}, "_position": "first"},
+            id="change-with-a-place",
+        ),
+    ],
+)
+async def test_a_place_for_an_inherited_segment_is_refused(entry: dict[str, object]):
     state = make_raw_state()
-    _ = await ConfigPipeline(client=None).apply(
-        state, module="firewall", patch={"segments": {"Guest": move(first=True)}}
+    before = state.plan().render()
+    with pytest.raises(PatchError, match="inherits segment 'Guest'") as exc:
+        _ = await ConfigPipeline(client=None).apply(
+            state, module="firewall", patch={"segments": {"Guest": entry}}
+        )
+    assert exc.value.path == Path.parse("segments[Guest]")
+    assert exc.value.message == (
+        "the edge inherits segment 'Guest' from its profile and had no entry of "
+        "its own for it when it was read. A save writes such a segment after the "
+        "edge's own, in the profile's order, so a place for it cannot be stored: "
+        'leave out "_position" (move())'
+    )
+    assert _edge_segment_names(state) == ["Global Segment"]  # no placeholder
+    assert state.plan().render() == before
+
+
+@pytest.mark.asyncio
+async def test_a_placeholder_an_earlier_patch_added_is_still_inherited():
+    state = make_raw_state()
+    pipeline = ConfigPipeline(client=None)
+    _ = await pipeline.apply(state, module="firewall", patch=_guest_rule_patch())
+    assert _edge_segment_names(state) == ["Global Segment", "Guest"]
+    before = state.plan().render()
+    for selector in ("Guest", "guest", "2", "#1"):
+        with pytest.raises(PatchError, match="inherits segment 'Guest'"):
+            _ = await pipeline.apply(
+                state,
+                module="firewall",
+                patch={"segments": {selector: move(first=True)}},
+            )
+    assert _edge_segment_names(state) == ["Global Segment", "Guest"]
+    assert state.plan().render() == before
+
+
+@pytest.mark.asyncio
+async def test_no_segment_of_a_module_the_state_created_takes_a_place():
+    state = make_raw_state(edge_modules=[])
+    with pytest.raises(PatchError, match="inherits segment 'Global Segment'"):
+        _ = await ConfigPipeline(client=None).apply(
+            state,
+            module="firewall",
+            patch={"segments": {"Global Segment": move(last=True)}},
+        )
+    assert state.find_module("firewall") is None
+
+
+@pytest.mark.asyncio
+async def test_a_place_before_or_after_an_inherited_segment_is_refused():
+    after_guest: dict[str, object] = {
+        "segments": {"Global Segment": move(after="Guest")}
+    }
+    with_a_change: dict[str, object] = {
+        "segments": {
+            "Guest": {"outbound": {"block": add(_DENY)}},
+            "Global Segment": move(after="Guest"),
+        }
+    }
+    pipeline = ConfigPipeline(client=None)
+    for patch in (after_guest, with_a_change):
+        state = make_raw_state()
+        with pytest.raises(PatchError, match="given by segment 'Guest'") as exc:
+            _ = await pipeline.apply(state, module="firewall", patch=patch)
+        assert exc.value.path == Path(("segments", Key("Global Segment")))
+        assert _edge_segment_names(state) == ["Global Segment"]
+
+    state = make_raw_state()
+    _ = await pipeline.apply(state, module="firewall", patch=_guest_rule_patch())
+    with pytest.raises(PatchError) as exc:
+        _ = await pipeline.apply(state, module="firewall", patch=after_guest)
+    assert exc.value.message == (
+        "the place is given by segment 'Guest', which the edge inherits from its "
+        "profile and had no entry of its own for when it was read. A save writes "
+        "such a segment after the edge's own, in the profile's order, so a place "
+        'before or after it cannot be stored: give "first", "last", or one of the '
+        'edge\'s own segments in "_position"'
+    )
+    assert _edge_segment_names(state) == ["Global Segment", "Guest"]
+
+
+@pytest.mark.asyncio
+async def test_a_move_among_the_edges_own_segments_is_written():
+    state = _own_guest_state()
+    client = MockVcoClient.for_state(state)
+    pipeline = ConfigPipeline(client)
+    _ = await pipeline.apply(
+        state,
+        module="firewall",
+        patch={"segments": {"Guest": move(before="Global Segment")}},
     )
     assert _edge_segment_names(state) == ["Guest", "Global Segment"]
+    _ = await pipeline.save(state)
+    stored = client.store.rows[1]["data"]["segments"]
+    assert [entry["segment"]["name"] for entry in stored] == ["Guest", "Global Segment"]
+
+
+@pytest.mark.asyncio
+async def test_once_a_save_wrote_its_entry_the_segment_is_the_edges_own():
+    state = make_raw_state()
+    client = MockVcoClient.for_state(state)
+    pipeline = ConfigPipeline(client)
+    _ = await pipeline.apply(state, module="firewall", patch=_guest_rule_patch())
+    _ = await pipeline.save(state)
+
+    _ = await pipeline.apply(
+        state, module="firewall", patch={"segments": {"Guest": move(first=True)}}
+    )
+
+    assert _edge_segment_names(state) == ["Guest", "Global Segment"]
+    assert [m.name for m in state.plan().changed] == ["firewall"]
 
 
 @pytest.mark.asyncio

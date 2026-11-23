@@ -229,11 +229,14 @@ to another state, or changed, afterwards.
 The `segments` lists have rules of their own:
 
 - On an edge, a segment the edge inherits from its profile counts as there. A
-  change or a move of one the edge layer lacks first adds its placeholder
-  entry; `add` of an inherited segment raises (write a plain object), and so
-  does `delete` of one the edge layer has no entry for. Where the entry of a
-  segment the edge only inherits is written does not follow a move: see "What
-  a save writes".
+  change of one the edge layer lacks first adds its placeholder entry; `add` of
+  an inherited segment raises (write a plain object), and so does `delete` of
+  one the edge layer has no entry for. A place (`move(...)`, or `"_position"`
+  on a change) is for the edge's own segments, the ones its module had when it
+  was read. A save writes the segments the edge only inherits after those, in
+  the profile's order, so `apply` refuses a place for one of them, and a place
+  given `before` or `after` one of them. Once a save has written an entry for
+  such a segment, it is one of the edge's own.
 - On a profile, `apply` refuses a patch that adds or removes a segment, or
   changes a segment's descriptor (the `segment` object: its name, `segmentId`,
   type and logical ID), in whatever form: `add` or `delete` under a selector, a
@@ -295,8 +298,10 @@ firewall: update
   adds them as entries that inherit everything, after the edge's own entries
   and in the profile's order. The plan lists them under "reconciled segments".
   Looking one up (`state.edge.firewall.segment("Voice")`) or editing it does
-  not change where it is written, and a lookup alone writes nothing. A `move`
-  of such an entry changes its place in the state only.
+  not change where it is written, and a lookup alone writes nothing. `apply`
+  refuses a `move` of such a segment (see "The patch format"). An edit made by
+  assignment that moves such an entry, such as reordering the model's
+  `segments` list in place, changes its place in the state only.
 - Deleting an edge segment that the profile also has leaves an empty entry for
   it in the write, as for a segment the edge never had.
 - A missing edge firewall or QoS module starts empty; nothing is copied from

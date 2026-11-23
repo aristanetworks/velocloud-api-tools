@@ -276,9 +276,16 @@ class ConfigPipeline:
            segment rules (``_prepare_segments``). The edge layer has an entry
            for only some of the segments it inherits from its profile:
 
-           - a change or a ``move`` of a segment the edge only inherits first
-             adds its placeholder entry, which carries the profile's
-             descriptor and IDs;
+           - a change of a segment the edge only inherits first adds its
+             placeholder entry, which carries the profile's descriptor and
+             IDs;
+           - a ``_position`` (``{"_op": "move", ...}`` (``move(...)``), or on a
+             change) for a segment the edge module did not have when it was
+             read raises ``PatchError``, and so does one given ``before`` or
+             ``after`` such a segment: a save writes those segments after the
+             edge's own, in the profile's order. A segment an earlier patch
+             gave a placeholder entry is still one of them; one a save wrote
+             an entry for is not;
            - an ``add`` of a segment the edge inherits raises ``PatchError``
              (write a plain object to change it), and so does an ``add``
              under ``"+"`` whose body names one;
@@ -328,9 +335,10 @@ class ConfigPipeline:
                     and isinstance(data, _SegmentLayer)
                 ):
                     _profile_segment_ops(segments, _SEGMENTS)
+                inherited = state.inherited_segment_ids(mod) if edge else frozenset()
                 trial = data.model_copy(deep=True)
                 _ = trial.merge_patch(
-                    _prepare_segments(trial, nested, state.resolvers)
+                    _prepare_segments(trial, nested, state.resolvers, inherited)
                     if edge
                     else nested,
                     resolvers=state.resolvers,
@@ -342,7 +350,9 @@ class ConfigPipeline:
                     state.drop_module(mod)
                 raise
             _ = data.merge_patch(
-                _prepare_segments(data, nested, state.resolvers) if edge else nested,
+                _prepare_segments(data, nested, state.resolvers, inherited)
+                if edge
+                else nested,
                 resolvers=state.resolvers,
             )
             return state
@@ -560,6 +570,9 @@ class _SegmentMetadata(Protocol):
     @property
     def name(self) -> str: ...
 
+    @property
+    def segment_id(self) -> int: ...
+
 
 class _SegmentEntry(Protocol):
     @property
@@ -666,7 +679,10 @@ def _profile_segments_unchanged(data: object, trial: object) -> None:
 
 
 def _prepare_segments(
-    data: VcoModel, patch: Mapping[str, object], resolvers: IdentityResolver | None
+    data: VcoModel,
+    patch: Mapping[str, object],
+    resolvers: IdentityResolver | None,
+    inherited: frozenset[str],
 ) -> dict[str, object]:
     """*patch* for edge-layer *data*, with the segment rules of an edge target applied.
 
@@ -687,6 +703,15 @@ def _prepare_segments(
     - one that names a segment neither layer has, or any on data that is not
       bound to a profile, is left to ``merge_patch``.
 
+    *inherited* holds the ``segmentId`` (in string form) of each segment the
+    edge module did not have when it was read
+    (``ConfigState.inherited_segment_ids``). A save writes those after the
+    edge's own, in the profile's order, so a ``_position`` for one of them
+    (``{"_op": "move", ...}`` (``move(...)``), or on a change) raises
+    ``PatchError``, and so does a ``_position`` given ``before`` or ``after``
+    one, whatever the operation. A placeholder an earlier patch added is still
+    one of them.
+
     Under ``"+"`` or ``"+tag"``, an ``add`` whose body gives the segment's
     name is read as an ``add`` under that name; one for a segment the layer
     has under another name raises ``PatchError``. Raises ``PatchError`` if two
@@ -702,7 +727,9 @@ def _prepare_segments(
         if _is_object(value):
             where = _entry_path(_SEGMENTS, selector)
             op = parse_item_op(value, where)
-            key, name = _prepare_segment(data, selector, op, where, resolvers)
+            key, name = _prepare_segment(
+                data, selector, op, where, resolvers, inherited
+            )
             if name is not None:
                 if name in named:
                     raise PatchError(
@@ -720,13 +747,17 @@ def _prepare_segment(
     op: ItemOp,
     where: Path,
     resolvers: IdentityResolver | None,
+    inherited: frozenset[str],
 ) -> tuple[object, str | None]:
     """The selector to merge one segment entry under, and the segment it names (``_prepare_segments``).
 
     The segment is None where the entry is left to ``merge_patch`` without
-    naming one, and for ``"+"``.
+    naming one, and for ``"+"``. Raises ``PatchError`` for a place the edge
+    cannot store: one for a segment in *inherited*, or one given ``before`` or
+    ``after`` such a segment. This comes before a placeholder is added.
     """
     assert isinstance(data, _SegmentLayer)  # _prepare_segments checked
+    _refuse_place_by_inherited(data, op, where, resolvers, inherited)
     new = is_new(selector)
     lookup: object = selector
     if new:
@@ -734,25 +765,29 @@ def _prepare_segment(
         if given is None:
             return selector, None
         lookup = given
-    name = _layer_segment_name(data, lookup, resolvers)
-    if name is not None:
-        return selector, None if new else name
+    found = _layer_segment(data, lookup, resolvers)
+    if found is not None:
+        _refuse_place_for(
+            op, found.segment.name, found.segment.segment_id, where, inherited
+        )
+        return selector, None if new else found.segment.name
     try:
         name = data.profile_segment_name(lookup)
     except UnboundError:
         return selector, None
     if name is None:
         return selector, None
-    entry = _layer_segment_name(data, name, None)
-    if entry is None:
+    segment_id = data.profile_segment_id(lookup)
+    own = _layer_segment(data, name, None)
+    if own is None and segment_id is not None:
         # The layer may have the profile's segment under another name.
-        segment_id = data.profile_segment_id(lookup)
-        if segment_id is not None:
-            entry = _layer_segment_name(data, str(segment_id), None)
-    if entry is not None:
+        own = _layer_segment(data, str(segment_id), None)
+    if own is not None:
         # The layer has it, under a name the selector does not give (another
         # case, or a name of its own): the patch is for that entry.
+        entry = own.segment.name
         if not new:
+            _refuse_place_for(op, name, own.segment.segment_id, where, inherited)
             return entry, entry
         raise PatchError(
             f"segment {name!r} is already in the edge layer, as {entry!r}", where
@@ -769,14 +804,78 @@ def _prepare_segment(
             + "it inherits from its profile",
             where,
         )
+    _refuse_place_for(op, name, segment_id, where, inherited)
     _ = data.segment(name)
     return name, name
 
 
-def _layer_segment_name(
+def _refuse_place_for(
+    op: ItemOp,
+    name: str,
+    segment_id: object,
+    where: Path,
+    inherited: frozenset[str],
+) -> None:
+    """Refuse a ``move``, or a change with a ``_position``, of segment *name* if the edge only inherits it.
+
+    Raises ``PatchError`` at *where*. A save writes the segments in
+    *inherited* after the edge's own, in the profile's order, so a place for
+    one cannot be stored.
+    """
+    if op.place is None or op.kind not in ("move", "change"):
+        return
+    if segment_id is None or str(segment_id) not in inherited:
+        return
+    raise PatchError(
+        f"the edge inherits segment {name!r} from its profile and had no entry "
+        + "of its own for it when it was read. A save writes such a segment "
+        + "after the edge's own, in the profile's order, so a place for it "
+        + 'cannot be stored: leave out "_position" (move())',
+        where,
+    )
+
+
+def _refuse_place_by_inherited(
+    data: VcoModel,
+    op: ItemOp,
+    where: Path,
+    resolvers: IdentityResolver | None,
+    inherited: frozenset[str],
+) -> None:
+    """Refuse a ``_position`` of *op* given ``before`` or ``after`` a segment the edge only inherits.
+
+    Raises ``PatchError`` at *where*. An anchor that names no segment, in the
+    layer or the profile, is left to ``merge_patch``.
+    """
+    place = op.place
+    if place is None or place.kind not in ("before", "after") or not inherited:
+        return
+    assert isinstance(data, _SegmentLayer)  # _prepare_segment checked
+    anchor = place.anchor
+    found = _layer_segment(data, anchor, resolvers)
+    if found is not None:
+        anchor_id: object = found.segment.segment_id
+    else:
+        try:
+            anchor_id = data.profile_segment_id(anchor)
+        except UnboundError:
+            return
+    if anchor_id is None or str(anchor_id) not in inherited:
+        return
+    raise PatchError(
+        f"the place is given by segment {anchor!r}, which the edge inherits "
+        + "from its profile and had no entry of its own for when it was read. "
+        + "A save writes such a segment after the edge's own, in the profile's "
+        + "order, so a place before or after it cannot be stored: give "
+        + '"first", "last", or one of the edge\'s own segments in "_position"',
+        where,
+    )
+
+
+def _layer_segment(
     data: VcoModel, selector: object, resolvers: IdentityResolver | None
-) -> str | None:
-    """The name of the entry of the layer's ``segments`` that *selector* names, or None.
+) -> _SegmentEntry | None:
+    """The entry of the layer's ``segments`` that *selector* names, or None.
 
     A name a resolver does not know names no entry here: ``merge_patch``
     raises for it, if the profile does not have it either.
@@ -788,7 +887,7 @@ def _layer_segment_name(
     if not positions:
         return None
     assert isinstance(data, _SegmentLayer)
-    return data.segments[positions[0]].segment.name
+    return data.segments[positions[0]]
 
 
 def _added_segment_name(op: ItemOp) -> str | None:
