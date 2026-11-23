@@ -277,3 +277,35 @@ def test_as_stored_is_the_module_validated_from_json():
     assert stored.version == "v2"
     assert (module.version, module.raw_data) == ("v1", RAW)
     assert module.data.firewall_enabled is True
+
+
+def test_a_store_of_one_enterprise_refuses_a_request_that_does_not_name_it():
+    store = ModuleStore(enterprise_id=7)
+    store.add_configuration({"id": 10, "name": "Edge Specific Profile"})
+    store.rows[1] = make_module_json(
+        "firewall", {"segments": []}, module_id=1, configuration_id=10, version="v1"
+    )
+    edited: dict[str, Any] = {"segments": [], "firewall_enabled": False}
+
+    for method, params in (
+        (GET_CONFIGURATION, {"id": 10}),
+        (UPDATE, update(edited)),
+        (UPDATE, {**update(edited), "enterpriseId": 8}),
+        (INSERT, insert({"segments": []})),
+    ):
+        with pytest.raises(RpcError, match="enterprise"):
+            _ = store.handle(method, params)
+    assert store.rows[1]["data"] == {"segments": []}
+    assert list(store.rows) == [1]
+
+    assert store.handle(UPDATE, {**update(edited), "enterpriseId": 7}) == {"rows": 1}
+    assert store.rows[1]["data"] == edited
+
+
+def test_a_store_of_no_enterprise_takes_any_request():
+    store = ModuleStore()
+    store.add_configuration({"id": 10, "name": "Edge Specific Profile"})
+    assert store.handle(GET_CONFIGURATION, {"id": 10, "enterpriseId": 8}) == {
+        "id": 10,
+        "name": "Edge Specific Profile",
+    }

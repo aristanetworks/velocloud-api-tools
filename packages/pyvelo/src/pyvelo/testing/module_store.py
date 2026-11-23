@@ -63,7 +63,9 @@ class ModuleStore:
     and stores nothing. Each stored write gets a new ``version``, a decimal
     string from a counter. ``conditional_check`` is the VCO's check of the
     ``version`` sent; ``return_data`` False is a VCO that ignores
-    ``returnData``.
+    ``returnData``. ``enterprise_id`` is the enterprise the rows belong to, for
+    tests of a client that has to name it: a request that does not name it is
+    answered with an error and changes nothing.
     """
 
     rows: dict[int, dict[str, Any]]
@@ -77,9 +79,15 @@ class ModuleStore:
     """The 1-based numbers of the writes answered with an error."""
     conditional_check: bool
     return_data: bool
+    enterprise_id: int | None
+    """The enterprise every request has to name; None when requests need not name one."""
 
     def __init__(
-        self, *, conditional_check: bool = False, return_data: bool = True
+        self,
+        *,
+        conditional_check: bool = False,
+        return_data: bool = True,
+        enterprise_id: int | None = None,
     ) -> None:
         self.rows = {}
         self.configurations = {}
@@ -88,6 +96,7 @@ class ModuleStore:
         self.fail_writes = set()
         self.conditional_check = conditional_check
         self.return_data = return_data
+        self.enterprise_id = enterprise_id
         self._writes: int = 0
         self._versions: itertools.count[int] = itertools.count(_FIRST_VERSION)
         self._methods: dict[str, Callable[[dict[str, Any]], object]] = {
@@ -120,6 +129,12 @@ class ModuleStore:
         serve = self._methods.get(method)
         if serve is None:
             raise RpcError(-32601, f"Method not found: {method}")
+        named = params.get("enterpriseId")
+        if self.enterprise_id is not None and named != self.enterprise_id:
+            raise RpcError(
+                -32603,
+                f"the request names enterprise {named}, not {self.enterprise_id}",
+            )
         return serve(params)
 
     def __call__(self, request: httpx.Request) -> httpx.Response:

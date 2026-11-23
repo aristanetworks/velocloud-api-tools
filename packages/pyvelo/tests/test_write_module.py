@@ -924,3 +924,43 @@ async def test_precondition_refusal_in_an_http_error_is_read_back_and_checked(
     assert isinstance(refusal, ConfigConflictError)
     assert isinstance(refusal.__cause__, VcoHttpError)
     assert refusal.__cause__.status_code == status
+
+
+@pytest.mark.parametrize("conditional_check", [True, False])
+async def test_every_request_of_an_update_names_the_enterprise(
+    mock_vco_client: MockVcoClientFactory, conditional_check: bool
+):
+    module = firewall_disabled()
+    store = store_of(
+        module, conditional_check=conditional_check, return_data=False, enterprise_id=7
+    )
+    if conditional_check:
+        store.other_writer(1, elsewhere)
+    client = await mock_vco_client(store)
+    if conditional_check:
+        with pytest.raises(ConfigConflictError) as exc:
+            _ = await client.write_module(module, plan_module(module), enterprise_id=7)
+        assert isinstance(exc.value.module, FirewallConfigurationModule)
+    else:
+        write = await client.write_module(module, plan_module(module), enterprise_id=7)
+        assert write.module.raw_data == store.rows[1]["data"]
+    assert [
+        (method, params.get("enterpriseId")) for method, params in store.requests
+    ] == [
+        ("configuration/updateConfigurationModule", 7),
+        ("configuration/getConfiguration", 7),
+    ]
+
+
+@pytest.mark.parametrize("return_data", [True, False])
+async def test_every_request_of_an_insert_names_the_enterprise(
+    mock_vco_client: MockVcoClientFactory, return_data: bool
+):
+    module = new_qos_with_a_segment()
+    store = store_of(module, return_data=return_data, enterprise_id=7)
+    client = await mock_vco_client(store)
+    write = await client.write_module(module, plan_module(module), enterprise_id=7)
+    assert write.module.is_new is False
+    assert [params.get("enterpriseId") for _, params in store.requests] == (
+        [7] if return_data else [7, 7]
+    )

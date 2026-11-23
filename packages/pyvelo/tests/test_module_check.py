@@ -13,8 +13,11 @@ from pyvelo.client.exceptions import (
     ModuleWriteError,
     WriteNotAppliedError,
 )
+from pyvelo.client.models.configuration import DeviceSettingsData
 from pyvelo.client.models.configuration.firewall.rules import FirewallInboundRule
 from pyvelo.client.module_check import (
+    APPEND_ONLY_REF_NAMES,
+    MODULE_REWRITES,
     ModuleWrite,
     check_module_write,
     check_refs,
@@ -30,7 +33,13 @@ from pyvelo.client.schemas.configuration import (
     new_edge_module,
 )
 from pyvelo.core.rebase import Path
-from pyvelo.core.response_check import PlannedChange, ResponseCheck, ServerChange
+from pyvelo.core.response_check import (
+    PathPattern,
+    PlannedChange,
+    ResponseCheck,
+    ServerChange,
+    check_response,
+)
 from pyvelo.testing import as_stored, make_module_json
 
 from .write_helpers import fw
@@ -652,3 +661,94 @@ def test_str_of_a_write_error_never_raises():
     assert len(lines) == 2 + len(values)
     assert '"00000000-0000-0000-0000-000000000006"' in lines[2]
     assert "<odd>" in lines[5]
+
+
+READDED: dict[
+    PathPattern, tuple[dict[str, Any], dict[str, Any], dict[str, Any], str]
+] = {
+    ("segments", "*", "ecmp"): (
+        {"segments": [{**GLOBAL, "ecmp": {"maximumPaths": 4}}]},
+        {"segments": [GLOBAL]},
+        {"segments": [{**GLOBAL, "ecmp": {"maximumPaths": 2}}]},
+        'segments["Global Segment"].ecmp',
+    ),
+    ("segments", "*", "ospf", "v6Detail"): (
+        {"segments": [{**GLOBAL, "ospf": {"v6Detail": {"enabled": True}}}]},
+        {"segments": [{**GLOBAL, "ospf": {}}]},
+        {"segments": [{**GLOBAL, "ospf": {"v6Detail": {"enabled": False}}}]},
+        'segments["Global Segment"].ospf.v6Detail',
+    ),
+    ("segments", "*", "bgp", "v6Detail", "ospf"): (
+        {"segments": [{**GLOBAL, "bgp": {"v6Detail": {"ospf": {"enabled": True}}}}]},
+        {"segments": [{**GLOBAL, "bgp": {"v6Detail": {}}}]},
+        {"segments": [{**GLOBAL, "bgp": {"v6Detail": {"ospf": {"enabled": False}}}}]},
+        'segments["Global Segment"].bgp.v6Detail.ospf',
+    ),
+    ("**", "fips"): (
+        {"ha": {"fips": True}},
+        {"ha": {}},
+        {"ha": {"fips": False}},
+        "ha.fips",
+    ),
+}
+"""Per ``readded`` pattern of device settings: the data as read, as sent and as stored, and the path left out."""
+
+
+def test_every_rewrite_in_the_table_has_a_case_here():
+    assert set(MODULE_REWRITES) == {"deviceSettings"}
+    rewrites = MODULE_REWRITES["deviceSettings"]
+    assert set(rewrites.readded) == set(READDED)
+    assert rewrites.server_owned == (("**", "clientConnector", "name"),)
+    assert rewrites.ipv6 is True
+
+
+@pytest.mark.parametrize("pattern", list(READDED), ids=".".join)
+def test_a_default_device_settings_adds_back_is_left_out(pattern: PathPattern):
+    read, sent, stored, path = READDED[pattern]
+    check = check_response(
+        read,
+        sent,
+        stored,
+        DeviceSettingsData,
+        rewrites=MODULE_REWRITES["deviceSettings"],
+    )
+    assert paths(check.left_out) == [path]
+    assert check.not_applied == ()
+
+
+def test_the_client_connector_name_is_owned_in_device_settings():
+    check = check_response(
+        {"clientConnector": {"name": "a"}},
+        {"clientConnector": {"name": "b"}},
+        {"clientConnector": {"name": "c"}},
+        rewrites=MODULE_REWRITES["deviceSettings"],
+    )
+    assert paths(check.left_out) == ["clientConnector.name"]
+    assert check.not_applied == ()
+
+
+def test_the_append_only_ref_names():
+    assert APPEND_ONLY_REF_NAMES == {
+        "deviceSettings:vnfs:edge",
+        "objectGroup:addressGroup",
+        "objectGroup:portGroup",
+    }
+
+
+@pytest.mark.parametrize("name", sorted(APPEND_ONLY_REF_NAMES))
+def test_removing_a_row_of_an_append_only_ref_is_left_out(name: str):
+    check = check_refs({name: [ROW1, ROW2]}, {name: [ROW2]}, {name: [ROW1, ROW2]})
+    assert [(c.part, c.as_read) for c in check.left_out] == [("refs", ROW1)]
+    assert check.not_applied == ()
+
+
+def test_removing_a_row_of_any_other_ref_is_not_applied_while_it_is_stored():
+    check = check_refs({"a": [ROW1, ROW2]}, {"a": [ROW2]}, {"a": [ROW1, ROW2]})
+    assert check.left_out == ()
+    assert paths(check.not_applied) == ["a[5,9]"]
+
+
+def test_the_stored_module_must_be_of_the_class_of_the_one_written():
+    module = firewall_disabled()
+    with pytest.raises(TypeError, match="QosConfigurationModule"):
+        _ = check_module_write(module, plan_module(module), qos(QOS_RAW))
