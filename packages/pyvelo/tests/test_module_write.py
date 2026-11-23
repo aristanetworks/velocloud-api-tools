@@ -379,9 +379,9 @@ def test_lossy_error_carries_structured_paths():
     assert exc.value.fields == [
         'segments["Global Segment"].outbound[r1].logging_enabled'
     ]
-    assert str(exc.value) == (
-        "firewall: assignment cannot be expressed on save for: "
-        'segments["Global Segment"].outbound[r1].logging_enabled'
+    assert str(exc.value).startswith(
+        "firewall: a save cannot write these edits: "
+        'segments["Global Segment"].outbound[r1].logging_enabled. '
     )
 
 

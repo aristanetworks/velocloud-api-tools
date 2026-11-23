@@ -260,7 +260,9 @@ class ConfigPipeline:
 
         1. Locate the module on the target config. A ``firewall`` or ``QOS``
            module that an edge lacks starts as an empty layer (nothing is
-           copied from the profile) and is inserted on save.
+           copied from the profile) and is inserted on save. A module a save
+           does not write (control plane) raises ``PatchError``, with an empty
+           path, before the patch is read.
         2. On a profile target, refuse ``add`` and ``delete`` of a
            ``segments`` item, whatever the selector, ``"+"`` included
            (``_profile_segment_ops``): a segment belongs to all three of
@@ -295,12 +297,24 @@ class ConfigPipeline:
              ``segmentId``) is that segment;
            - a segment neither layer has is left to ``merge_patch``; naming
              one segment twice raises ``PatchError``.
-        4. Return the updated :class:`ConfigState`.
+        4. Plan the patched copy as a save would (:meth:`ConfigState.plan_module`).
+           A patch that a save could not write raises ``LossyFieldError``: a
+           field set to its default where the module as read has no key for it
+           (on an edge, one it inherits), or an edit to a section this library
+           does not write at the level of the target.
+        5. Return the updated :class:`ConfigState`.
 
-        All or nothing: a patch that raises (``PatchError``, or a resolver's
-        ``ResolutionError`` or ``LookupError``) leaves the state, and
-        ``plan()``, as they were: no placeholder entries, and a module this
-        call created is removed.
+        **In place.** ``apply`` changes *state* and returns that same object;
+        there is no copy to fall back on.
+
+        All or nothing: a patch that raises (``PatchError``, including one for
+        a module a save does not write, ``LossyFieldError`` for a patch that a
+        save could not write, or a resolver's ``ResolutionError`` or
+        ``LookupError``) leaves the state, and ``plan()``, as they were: no
+        placeholder entries, and a module this call created is removed.
+        ``LossyFieldError`` is raised also when an earlier assignment to the
+        models had already made the module unwritable; its paths name that
+        field.
 
         MISSING fields on the patch target are preserved as MISSING so callers
         downstream (reconciler, YAML export) can distinguish "unset" from
@@ -322,11 +336,14 @@ class ConfigPipeline:
             )
             edge = state.target_type == "edge"
             try:
-                data = mod.data
-                if not isinstance(data, VcoModel):
-                    raise TypeError(
-                        f"Module '{internal_name}' has unstructured data; merge_patch requires a typed module"
+                if not isinstance(mod, _WRITABLE_MODULES):
+                    raise PatchError(
+                        f"{mod.name}: a save does not write this module (it writes "
+                        "device settings, QoS, WAN and firewall modules), so a "
+                        "patch to it is not applied",
+                        Path(()),
                     )
+                data = mod.data
                 nested = nest_patch(type(data), patch, segment=segment, path=path)
                 segments = nested.get("segments")
                 if (
@@ -345,6 +362,7 @@ class ConfigPipeline:
                 )
                 if not edge and isinstance(trial, _SegmentLayer):
                     _profile_segments_unchanged(data, trial)
+                _ = state.plan_module(mod, trial)
             except BaseException:
                 if existing is None:
                     state.drop_module(mod)
@@ -366,7 +384,9 @@ class ConfigPipeline:
     ) -> SaveResult:
         """Persist changes to VCO.
 
-        1. Plan the write of every module (:meth:`ConfigState.plan`).
+        1. Plan the write of every module (:meth:`ConfigState.plan`), and
+           raise ``TypeError`` if a changed module is not one a save writes
+           (device settings, QoS, WAN, firewall), also for ``dry_run``.
         2. Run write-time validators on the changed modules. Errors block save.
         3. Send each changed module, in order, as an update or an insert with
            ``returnData`` (``write_module``), and replace the state's module
@@ -423,6 +443,9 @@ class ConfigPipeline:
 
             if not plan.changed:
                 return result
+
+            for module_plan in plan.changed:
+                _ = _require_writable(state.module(module_plan.name))
 
             # Run write-time validators
             if validate:
@@ -909,6 +932,13 @@ type _WritableModule = (
     | FirewallConfigurationModule
 )
 
+_WRITABLE_MODULES = (
+    DeviceSettingsConfigurationModule,
+    QosConfigurationModule,
+    WanConfigurationModule,
+    FirewallConfigurationModule,
+)
+
 
 def _written_note(done: Sequence[ModuleWrite[Any]]) -> str:
     """The note of an error that stops a save: the modules it wrote before."""
@@ -924,14 +954,12 @@ def _dump(mod: AnyConfigurationModule) -> object:
 
 def _require_writable(mod: AnyConfigurationModule) -> _WritableModule:
     """*mod*, if it is a module a save writes; else ``TypeError``."""
-    if not isinstance(
-        mod,
-        DeviceSettingsConfigurationModule
-        | QosConfigurationModule
-        | WanConfigurationModule
-        | FirewallConfigurationModule,
-    ):
-        raise TypeError(f"Cannot update module type: {type(mod).__name__}")
+    if not isinstance(mod, _WRITABLE_MODULES):
+        raise TypeError(
+            f"{mod.name}: this state has an edit to a {type(mod).__name__}, which a "
+            "save does not write (it writes device settings, QoS, WAN and firewall "
+            "modules). Load the state again to drop that edit; nothing was sent"
+        )
     return mod
 
 

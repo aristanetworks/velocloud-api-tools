@@ -544,20 +544,31 @@ class ConfigState:
         config = self.target_config
         if config.modules is MISSING:
             return ConfigPlan(modules=())
+        return ConfigPlan(
+            modules=tuple(self.plan_module(mod) for mod in config.modules)
+        )
+
+    def plan_module(
+        self, module: AnyConfigurationModule, data: VcoModel | None = None
+    ) -> ModulePlan:
+        """Plan the write of one *module* of the target config, as :meth:`plan` plans it.
+
+        With *data*, that is planned in place of the module's own data: the
+        way to ask whether a change to *module* could be written before it is
+        made. Raises ``LossyFieldError`` if the module, or *data*, holds an
+        edit that cannot be written. Does not check for detached objects.
+        """
         level = (
             ConfigContext.PROFILE
             if self.target_type == "profile"
             else ConfigContext.EDGE
         )
-        plans: list[ModulePlan] = []
-        for mod in config.modules:
-            profile_mod = (
-                _find_module(self.profile_config, mod.name)
-                if level is ConfigContext.EDGE
-                else None
-            )
-            plans.append(plan_module(mod, level=level, profile=profile_mod))
-        return ConfigPlan(modules=tuple(plans))
+        profile_mod = (
+            _find_module(self.profile_config, module.name)
+            if level is ConfigContext.EDGE
+            else None
+        )
+        return plan_module(module, data, level=level, profile=profile_mod)
 
     def get_changed_modules(self) -> list[ConfigurationModuleName]:
         """Names of the modules that a save would write.

@@ -101,7 +101,7 @@ async def main() -> None:
         # The address names the list and the patch names its items: add()
         # makes a new rule, a plain object changes one, delete() and move()
         # remove and reorder. A patch that fails raises PatchError and
-        # changes nothing.
+        # changes nothing. apply edits state in place and returns it.
         state = await pipeline.apply(
             state,
             module="firewall",

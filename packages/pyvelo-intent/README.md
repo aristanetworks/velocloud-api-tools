@@ -55,7 +55,7 @@ async def main() -> None:
         # Replace these synthetic IDs with the intended enterprise and edge.
         state = await pipeline.load(101, enterprise_id=1)
         state = await pipeline.apply(
-            state, module="firewall", patch={"firewall_enabled": True}
+            state, module="firewall", patch={"firewall_logging_enabled": True}
         )
         preview = await pipeline.save(state, dry_run=True)
         preview.raise_for_errors()
@@ -96,6 +96,11 @@ names. `segment` names a segment like any other selector of the `segments`
 list: by name, in any case, or by `segmentId`. Without an address, `patch`
 must be a `dict`.
 
+`apply` changes `state` in place and returns that same object: `candidate =
+await pipeline.apply(state, ...)` gives no second state to fall back on
+(`candidate is state`). To try a patch and drop it, load the state again.
+`apply` is a coroutine: without `await` it applies nothing.
+
 A patch is strict and all or nothing:
 
 | Value | Field | Effect |
@@ -134,8 +139,10 @@ A patch is strict and all or nothing:
   directives: `_op` and `_position`, on a list item only.
 - A patch that cannot be applied raises `PatchError` (a `ValueError`), whose
   `path` is where in the patch it failed. Resolver errors keep their types
-  (`ResolutionError` for an unknown name). Either way the state, and
-  `plan()`, are as they were.
+  (`ResolutionError` for an unknown name). A patch that applies but that a
+  save could not write raises `LossyFieldError` (see "What a save writes"),
+  and a patch to a module a save does not write (control plane) raises
+  `PatchError`. In every case the state, and `plan()`, are as they were.
 
 Every list has a kind, which says how its items are named:
 
@@ -182,7 +189,7 @@ await pipeline.apply(
         "guest-wifi": move(first=True),
     },
 )
-# value: SNMP allowed IPs
+# value: SNMP allowed IPs (on a profile: an edge does not write this section)
 await pipeline.apply(
     state,
     module="device_settings",
@@ -209,6 +216,10 @@ await pipeline.apply(
     },
 )
 ```
+
+The SNMP patch is for a state loaded with `load_profile`. On an edge it raises
+`LossyFieldError`, because this library writes the SNMP section for a profile
+only.
 
 `add`, `delete`, `move` and `at` return plain JSON values, so a patch is JSON
 whether or not they are used. `VcoModel.merge_patch` and `ConfigPipeline.apply`
@@ -312,12 +323,15 @@ firewall: update
   drops it from every segment entry and the plan lists each removal (`-
   segments[...].outboundOverride`). A module with nothing else to write stays
   `none`: the plan reports the key under "legacy keys" and the save leaves it.
-- Setting a field to its default where the edge inherits it raises
-  `LossyFieldError` until that section is converted (planned), because the
-  written data cannot express it. So does an edit to a section the edge layer
-  does not write at all. `LossyFieldError` is importable from
-  `pyvelo.client.exceptions` (also from `pyvelo.client` and `pyvelo`), and
-  `get_changed_modules()` and `plan()` raise it as well as `save()`.
+- An edit that a save could not write raises `LossyFieldError`: setting a
+  field to its default where the module as read has no key for it (on an edge,
+  a field the edge inherits), and an edit to a section this library does not
+  write at that level. `apply` raises it and leaves the state as it was. An
+  edit made by assigning to the models is found later: `plan()`,
+  `get_changed_modules()` and `save()` raise it, before anything is sent, until
+  the assignment is changed to a value that can be written or the state is
+  loaded again. The message names the fields. `LossyFieldError` is importable
+  from `pyvelo.client.exceptions` (also from `pyvelo.client` and `pyvelo`).
 - Names resolve on an exact or case-insensitive match; a near miss raises with
   suggestions. A segment selector such as `guest` names the segment `Guest`,
   for every operation (which of them a `segments` list takes is in "The patch
@@ -530,8 +544,10 @@ Known limits:
 
 - Updates support firewall, device settings, QoS, and WAN modules. A missing
   edge firewall or QoS module can be created; it starts empty and is inserted
-  on save. Control plane helpers support inspection and in-memory patches,
-  but the save path does not support writing control plane modules.
+  on save. Control plane modules can be read. A save does not write them:
+  `apply` refuses a patch to one (`PatchError`), and a state whose control
+  plane module was edited by assignment cannot be saved or dry-run
+  (`TypeError`, before anything is sent) until it is loaded again.
 - A failed `apply` changes nothing. Patches and saves run one after another,
   though: a failure leaves earlier patches, and the remote writes of a save
   that stopped part way, applied; there is no transaction or rollback.

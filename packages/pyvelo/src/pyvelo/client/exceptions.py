@@ -176,11 +176,13 @@ class VcoCredentialsError(VcoError):
 
 
 class LossyFieldError(VcoError):
-    """Raised when assignments to a module cannot be expressed on save.
+    """Raised when edits to a module are ones a save could not write.
 
     The model parses a document lossily (a key absent from the document reads as
-    its default), so assigning that default changes nothing in what is written.
-    ``paths`` locates each such assignment; ``fields`` is the same, as text.
+    its default), so assigning that default changes nothing in what is written;
+    and this library writes some sections at one configuration level only, so
+    an edit to one at the other level is not written either.
+    ``paths`` locates each such edit; ``fields`` is the same, as text.
     ``override_flags`` are those paths that are override flags: an edit to a
     sibling sets the flag, but the document as read has no key for it and it
     already reads as on, so there is nothing to write.
@@ -197,14 +199,21 @@ class LossyFieldError(VcoError):
         self.fields = [str(path) for path in self.paths]
         self.override_flags = list(override_flags)
         message = (
-            f"{module}: assignment cannot be expressed on save for: "
-            f"{', '.join(self.fields)}"
+            f"{module}: a save cannot write these edits: {', '.join(self.fields)}. "
+            "A save sends what differs from the module as read, and at these "
+            "fields nothing would. Either this library does not write the field "
+            "at this configuration level (some sections are written for a "
+            "profile only, or for an edge only: make the edit at the level that "
+            "writes it), or the field was absent as read and now holds its "
+            "default, the value it already read as (leave it out, or set "
+            "another value)."
         )
         if self.override_flags:
             flags = ", ".join(str(path) for path in self.override_flags)
             message += (
-                f" (override flags: {flags}; set by an edit to a sibling, but the "
-                "document as read has no key for them and they already read as on)"
+                f" Of these, the override flags are: {flags}. An edit to a "
+                "sibling set them, the module as read has no key for them and "
+                "they already read as on."
             )
         super().__init__(message)
 

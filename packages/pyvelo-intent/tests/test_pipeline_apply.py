@@ -9,6 +9,7 @@ from pyvelo.client.enums.configuration import (
     ConfigurationModuleType,
 )
 from pyvelo.client.enums.enterprise import NetworkSegmentType
+from pyvelo.client.exceptions import LossyFieldError
 from pyvelo.client.models.configuration.common import SegmentMetadata
 from pyvelo.client.models.configuration.device_settings.lan import (
     LanNetwork,
@@ -1147,3 +1148,151 @@ async def test_non_mapping_patch_without_an_address_raises_type_error():
     state = make_raw_state()
     with pytest.raises(TypeError):
         _ = await ConfigPipeline(client=None).apply(state, module="firewall", patch=3)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("patch", "field"),
+    [
+        ({"atp_enabled": False}, "atp_enabled"),
+        ({"firewall_enabled": True}, "firewall_enabled"),
+        ({"stateful_firewall_enabled": True}, "stateful_firewall_enabled"),
+    ],
+)
+async def test_apply_refuses_a_default_for_a_key_the_edge_layer_lacks(
+    patch: dict[str, object], field: str
+):
+    state = make_raw_state()
+    with pytest.raises(LossyFieldError) as exc:
+        _ = await ConfigPipeline(client=None).apply(
+            state, module="firewall", patch=patch
+        )
+    assert exc.value.fields == [field]
+    assert state.plan().changed == ()
+    assert field not in state.edge.firewall.model_fields_set
+    # The state still takes edits and plans them.
+    _ = await ConfigPipeline(client=None).apply(
+        state, module="firewall", patch={"firewall_enabled": False}
+    )
+    assert [m.name for m in state.plan().changed] == ["firewall"]
+
+
+@pytest.mark.asyncio
+async def test_apply_refuses_an_edit_to_a_section_the_edge_layer_does_not_write():
+    raw: dict[str, object] = {
+        "lan": {"networks": [], "interfaces": []},
+        "segments": [{"segment": desc(0, "Global Segment")}],
+        "ntp": {"override": True, "enabled": False, "servers": []},
+        "snmp": {"port": 161, "snmpv2c": {"enabled": True, "allowedIps": ["10.0.0.9"]}},
+    }
+    row = make_module_json(
+        "deviceSettings", raw, module_id=7, configuration_id=10, version="d1"
+    )
+    state = make_raw_state(edge_modules=[row])
+    pipeline = ConfigPipeline(client=None)
+    with pytest.raises(LossyFieldError) as exc:
+        _ = await pipeline.apply(
+            state, module="device_settings", patch={"ntp": {"enabled": True}}
+        )
+    assert exc.value.fields == ["ntp"]
+    with pytest.raises(LossyFieldError) as exc:
+        _ = await pipeline.apply(
+            state,
+            module="device_settings",
+            path="snmp.v2c.allowed_ips",
+            patch={"10.0.0.1": add()},
+        )
+    assert exc.value.fields == ["snmp"]
+    assert state.plan().changed == ()
+
+
+@pytest.mark.asyncio
+async def test_a_refused_edit_removes_the_module_apply_created():
+    state = make_raw_state(edge_modules=[])
+    with pytest.raises(LossyFieldError) as exc:
+        _ = await ConfigPipeline(client=None).apply(
+            state, module="firewall", patch={"firewall_enabled": True}
+        )
+    assert exc.value.fields == ["firewall_enabled"]
+    assert state.find_module("firewall") is None
+    assert state.plan().modules == ()
+
+
+@pytest.mark.asyncio
+async def test_the_same_patches_apply_on_a_profile():
+    state = _segment_profile_state("Global Segment")
+    state.take_snapshot()
+    _ = await ConfigPipeline(client=None).apply(
+        state, module="firewall", patch={"firewall_enabled": False, "atp_enabled": True}
+    )
+    assert [m.name for m in state.plan().changed] == ["firewall"]
+
+
+def test_lossy_error_says_why_and_what_to_do():
+    state = make_raw_state()
+    state.edge.firewall.atp_enabled = False
+    with pytest.raises(LossyFieldError) as exc:
+        _ = state.plan()
+    assert str(exc.value) == (
+        "firewall: a save cannot write these edits: atp_enabled. A save sends "
+        "what differs from the module as read, and at these fields nothing would. "
+        "Either this library does not write the field at this configuration level "
+        "(some sections are written for a profile only, or for an edge only: make "
+        "the edit at the level that writes it), or the field was absent as read "
+        "and now holds its default, the value it already read as (leave it out, "
+        "or set another value)."
+    )
+
+
+def _control_plane_state() -> ConfigState:
+    control = make_module_json(
+        "controlPlane",
+        {"gatewaySelection": {"primary": "gw1", "secondary": "gw2", "mode": "dynamic"}},
+        module_id=8,
+        configuration_id=20,
+    )
+    firewall = make_module_json(
+        "firewall",
+        {"segments": [{"segment": desc(0, "Global Segment"), "outbound": []}]},
+        module_id=1,
+        configuration_id=20,
+    )
+    state = ConfigState(
+        edge_config=None,
+        profile_config=EnterpriseConfigurationProfile.model_validate(
+            {"name": "P", "id": 20, "modules": [firewall, control]}
+        ),
+        target_type="profile",
+        resolver_context=ResolverContext(),
+    )
+    state.take_snapshot()
+    return state
+
+
+@pytest.mark.asyncio
+async def test_apply_refuses_a_module_a_save_does_not_write():
+    state = _control_plane_state()
+    with pytest.raises(PatchError, match="controlPlane: a save does not write") as exc:
+        _ = await ConfigPipeline(client=None).apply(
+            state,
+            module="control_plane",
+            patch={"gateway_selection": {"mode": "static"}},
+        )
+    assert exc.value.path == Path(())
+    assert state.plan().changed == ()
+    assert state.profile_config.control_plane.data.gateway_selection.mode == "dynamic"
+
+
+@pytest.mark.asyncio
+async def test_dry_run_refuses_what_the_save_refuses():
+    state = _control_plane_state()
+    state.profile_config.control_plane.data.gateway_selection.mode = "static"
+    state.profile.firewall.firewall_enabled = False
+    assert [m.name for m in state.plan().changed] == ["firewall", "controlPlane"]
+    client = MockVcoClient.for_state(state)
+    pipeline = ConfigPipeline(client)
+    for dry_run in (True, False):
+        with pytest.raises(TypeError, match="ControlPlaneConfigurationModule") as exc:
+            _ = await pipeline.save(state, dry_run=dry_run)
+        assert str(exc.value).startswith("controlPlane: this state has an edit to a")
+    assert client.store.requests == []

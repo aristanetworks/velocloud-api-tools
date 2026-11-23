@@ -251,9 +251,7 @@ async def test_setting_a_default_on_an_inherited_key_is_refused():
     raw: dict[str, Any] = {"segments": [global_segment()]}
     state = edge_state(raw)
     client = MockVcoClient.for_state(state)
-    await ConfigPipeline(client).apply(
-        state, module="firewall", patch={"atp_enabled": False}
-    )
+    state.edge.firewall.atp_enabled = False
     with pytest.raises(LossyFieldError) as refused:
         await ConfigPipeline(client).save(state)
     assert refused.value.fields == ["atp_enabled"]
@@ -281,9 +279,7 @@ async def test_edit_to_a_section_the_edge_dump_omits_is_refused():
     )
     state = make_state(edge_modules=[row])
     client = MockVcoClient.for_state(state)
-    await ConfigPipeline(client).apply(
-        state, module="device_settings", patch={"ntp": {"enabled": True}}
-    )
+    _ = state.edge.device_settings.merge_patch({"ntp": {"enabled": True}})
     with pytest.raises(LossyFieldError) as refused:
         await ConfigPipeline(client).save(state)
     assert refused.value.fields == ["ntp"]
