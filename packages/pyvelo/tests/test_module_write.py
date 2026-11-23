@@ -1632,6 +1632,9 @@ async def test_a_module_whose_refs_were_not_read_refuses_an_owner_edit():
     message = str(caught.value)
     assert PRIMARY_PATH in message and NOT_READ in message
     assert "configuration/getConfiguration" in message and "modules" in message
+    assert "edge/getEdgeConfigurationStack" in message
+    assert '{"edgeId": <edge ID>}' in message
+    assert '"enterpriseId": <enterprise ID>' in message
 
 
 def test_a_module_whose_refs_were_not_read_refuses_a_write_with_segments():

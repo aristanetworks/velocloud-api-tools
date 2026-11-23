@@ -54,7 +54,9 @@ class NetworkServiceResolver(BaseResolver[NetworkServiceKey, NetworkServiceIdent
             return named[0]
         if not named:
             raise resolution_error(self._entity_label, name, self._by_name.keys())
-        listed = ", ".join(f"a {s.type_} service ({s.logical_id})" for s in named)
+        listed = ", ".join(
+            f"a service of type {s.type_!r} ({s.logical_id})" for s in named
+        )
         raise ResolutionError(
             name=name,
             identity_type=NetworkServiceIdentity,

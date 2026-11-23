@@ -199,8 +199,9 @@ async def test_a_shared_name_asks_for_the_logical_id(
     with pytest.raises(ResolutionError) as caught:
         _ = registry.resolve_sync(NetworkServiceIdentity, "dup")
     message = str(caught.value)
-    assert "dns" in message
-    assert "authentication" in message
+    assert f"a service of type 'dns' ({DUP_DNS})" in message
+    assert f"a service of type 'authentication' ({DUP_AUTH})" in message
+    assert "a authentication" not in message
     assert "logical ID" in message
     assert DUP_DNS in message
     assert DUP_AUTH in message

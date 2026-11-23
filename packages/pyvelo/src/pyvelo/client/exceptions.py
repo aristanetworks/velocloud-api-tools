@@ -289,7 +289,9 @@ class RefsNotLoadedError(VcoError):
             "Read the module with its refs and edit that one: send "
             '`configuration/getConfiguration` with {"id": <configuration ID>, '
             '"with": ["modules"]} (get_configuration), or '
-            "`edge/getEdgeConfigurationStack` for an edge (get_edge_configuration_stack)."
+            '`edge/getEdgeConfigurationStack` for an edge with {"edgeId": <edge ID>} '
+            '(and "enterpriseId": <enterprise ID> beside it when you are an operator) '
+            "(get_edge_configuration_stack)."
         )
         if self.paths:
             changed = ", ".join(self.paths)
