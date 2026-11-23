@@ -112,7 +112,10 @@ The network-service resolver is registered on each state but not loaded by
 `load` or `load_profile`, which therefore cost no more requests than before. It
 is loaded when a plan or a patch first needs it (see "What a save writes"), or
 by `await pipeline.load_resolvers(state, NetworkServiceIdentity)`, which loads
-only that resolver, and registers one on the state first if it has none.
+only that resolver. The call takes any identity type: it loads the state's
+resolver for it, or first registers an unloaded copy of the pipeline's (for the
+network services, a new resolver if the pipeline has none), and raises
+`ValueError` when neither has one.
 
 ## The patch format
 

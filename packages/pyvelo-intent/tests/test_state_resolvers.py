@@ -270,7 +270,40 @@ async def test_load_resolvers_with_no_identity_leaves_the_services_unloaded():
     assert SERVICES not in [m for m, _ in client.store.requests]
 
 
-async def test_load_resolvers_refuses_an_identity_it_has_no_loader_for():
+async def test_load_resolvers_with_a_loaded_type_reloads_the_states_resolver():
+    pipeline, client, state = await loaded_profile()
+    segments = state.resolvers.get_resolver(SegmentResolver)
+    calls = len(client.calls)
+
+    await pipeline.load_resolvers(state, SegmentIdentity)
+
+    assert state.resolvers.get_resolver(SegmentResolver) is segments
+    assert len(client.calls) == calls + 1  # the segments were read again
+    assert [m for m, _ in client.store.requests] == []  # and nothing else
+
+
+async def test_load_resolvers_copies_the_pipelines_resolver_for_a_type_the_state_lacks():
+    client = served(profile_state())
+    pipeline = ConfigPipeline(client)
+    registered = SegmentResolver(client)
+    pipeline.resolvers.register(registered)
     state = profile_state()
-    with pytest.raises(ValueError, match="SegmentIdentity"):
-        await ConfigPipeline(MockVcoClient()).load_resolvers(state, SegmentIdentity)
+
+    await pipeline.load_resolvers(state, SegmentIdentity)
+
+    own = state.resolvers.get_resolver(SegmentResolver)
+    assert own is not registered
+    assert [i.name for i in own.identities()] == ["Global Segment"]
+    assert list(registered.identities()) == []
+
+
+async def test_load_resolvers_refuses_a_type_neither_the_state_nor_the_pipeline_has():
+    state = profile_state()
+    pipeline = ConfigPipeline(MockVcoClient())
+
+    with pytest.raises(ValueError) as error:
+        await pipeline.load_resolvers(state, SegmentIdentity)
+
+    message = str(error.value)
+    assert "SegmentIdentity" in message
+    assert "pipeline.resolvers" in message and "state.resolvers" in message

@@ -26,7 +26,7 @@ from pyvelo.client.schemas.configuration import (
     WanConfigurationModule,
 )
 from pyvelo.client.schemas.edge import GetEdgeConfigurationStack
-from pyvelo.config.resolver import ResolverContext, ResolverRegistry
+from pyvelo.config.resolver import Resolver, ResolverContext, ResolverRegistry
 from pyvelo.config.resolvers.application import ApplicationResolver
 from pyvelo.config.resolvers.edge import EdgeResolver
 from pyvelo.config.resolvers.network_service import NetworkServiceResolver
@@ -724,15 +724,16 @@ class ConfigPipeline:
         The network-service resolver in that copy is not loaded: the table is
         read when a plan or a patch first needs it.
 
-        With *identities* (``NetworkServiceIdentity``), it sets
-        ``state.resolver_context`` on the state's registry and loads the
-        resolver of each type in it, whether it was loaded before or not. A
-        state that has none for a type gets one first: an unloaded copy of the
-        pipeline's, or a new ``NetworkServiceResolver`` on the pipeline's
-        client. This is what ``save``, ``dry_run`` and ``apply`` do when they
-        meet a resolver that is not loaded; call it to load the table at a
-        time of your choosing. Raises ``ValueError`` for a type the pipeline
-        cannot load a resolver for.
+        With *identities* (``NetworkServiceIdentity``, ``SegmentIdentity``,
+        ...), it sets ``state.resolver_context`` on the state's registry and
+        loads the resolver of each type in it, whether it was loaded before or
+        not. A state that has none for a type gets one first: an unloaded copy
+        of the pipeline's, or, for ``NetworkServiceIdentity``, a new
+        ``NetworkServiceResolver`` on the pipeline's client. This is what
+        ``save``, ``dry_run`` and ``apply`` do when they meet a resolver that is
+        not loaded; call it to load a table at a time of your choosing. Raises
+        ``ValueError`` for a type that neither the state nor the pipeline has a
+        resolver for.
         """
         if not identities:
             resolvers = self._resolvers.unloaded()
@@ -744,24 +745,25 @@ class ConfigPipeline:
             resolver = self._state_resolver(state, identity)
             await resolver.load(state.resolver_context)
 
-    def _state_resolver(
-        self, state: ConfigState, identity: type
-    ) -> NetworkServiceResolver:
-        """The resolver of *state* for *identity*, registered first when the state has none."""
-        if identity is not NetworkServiceIdentity:
-            raise ValueError(
-                f"load_resolvers can load the resolver of NetworkServiceIdentity, "
-                f"not of {identity.__name__}: load it with its own load(), or "
-                "register a loaded resolver on state.resolvers"
-            )
-        try:
-            return state.resolvers.get_resolver(NetworkServiceResolver)
-        except LookupError:
-            pass
-        try:
-            resolver = self._resolvers.get_resolver(NetworkServiceResolver).unloaded()
-        except LookupError:
+    def _state_resolver(self, state: ConfigState, identity: type) -> Resolver[Any, Any]:
+        """The resolver of *state* for *identity*, registered first when the state has none.
+
+        The state's own, else an unloaded copy of the pipeline's, else, for
+        ``NetworkServiceIdentity``, a new ``NetworkServiceResolver``.
+        """
+        held = state.resolvers.resolver_for(identity)
+        if held is not None:
+            return held
+        resolver = self._resolvers.unloaded().resolver_for(identity)
+        if resolver is None and identity is NetworkServiceIdentity:
             resolver = NetworkServiceResolver(self.client)
+        if resolver is None:
+            raise ValueError(
+                f"neither this pipeline nor the state has a resolver for "
+                f"{identity.__name__}, so load_resolvers cannot load one. "
+                "Register a resolver for it on pipeline.resolvers (a state loaded "
+                "afterwards gets a copy) or on state.resolvers"
+            )
         state.resolvers.register(resolver)
         return resolver
 

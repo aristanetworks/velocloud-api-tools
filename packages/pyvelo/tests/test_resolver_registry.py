@@ -259,6 +259,14 @@ class TestResolverRegistry:
             with pytest.raises(KeyError, match="Unknown foo"):
                 _ = await resolver.resolve("alpha")
 
+    def test_resolver_for_gives_the_resolver_of_an_identity_type_or_none(
+        self, registry: ResolverRegistry, foo_resolver: MockFooResolver
+    ):
+        assert registry.resolver_for(FooIdentity) is None
+        registry.register(foo_resolver)
+        assert registry.resolver_for(FooIdentity) is foo_resolver
+        assert registry.resolver_for(BarIdentity) is None
+
     async def test_unloaded_copies_each_resolver_with_nothing_loaded(
         self,
         registry: ResolverRegistry,

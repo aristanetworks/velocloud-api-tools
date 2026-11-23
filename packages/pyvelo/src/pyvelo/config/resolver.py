@@ -161,6 +161,10 @@ class ResolverRegistry:
                 return resolver
         raise LookupError(f"No resolver of type {resolver_type.__name__} registered")
 
+    def resolver_for(self, identity_type: type) -> Resolver[Any, Any] | None:
+        """The resolver registered for *identity_type*, or None when there is none."""
+        return self._resolvers.get(identity_type)
+
     def unloaded(self) -> "ResolverRegistry":
         """A new registry holding an unloaded copy of each resolver, with no context.
 
