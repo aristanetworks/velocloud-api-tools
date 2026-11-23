@@ -35,7 +35,7 @@ from __future__ import annotations
 import datetime
 import functools
 import types
-from collections.abc import Iterable, Iterator, Mapping
+from collections.abc import Callable, Iterable, Iterator, Mapping
 from dataclasses import dataclass
 from enum import Enum, IntEnum, auto
 from typing import (
@@ -84,6 +84,7 @@ from .fields import (
     get_key_spec,
     get_normalizer,
     is_positional,
+    ref_only_defaults,
     resolve_ctx_default,
 )
 
@@ -313,7 +314,10 @@ def _compact_dump(
     level = inherited_level if inherited_level is not None else model.config_context
 
     result: JsonObject = {}
+    ref_only = type(model)._ref_only_fields  # pyright: ignore[reportPrivateUsage]
     for name, field_info in type(model).model_fields.items():
+        if ref_only and name in ref_only:
+            continue  # it stands for a ref row, not for data
         value = _field_value(model, name)
         if _should_omit_field(value, field_info, level):
             continue
@@ -402,6 +406,78 @@ def _raise_detached(model: VcoModel, name: str) -> Never:
 
 
 # ---------------------------------------------------------------------------
+# RefOnly fields
+# ---------------------------------------------------------------------------
+
+_REF_FILLING_HOOKS: set[Callable[..., object]] = set()
+"""The hooks ``_install_ref_filling`` put on classes, to tell them from a class's own."""
+
+
+def ref_only_fields(model_cls: type[VcoModel]) -> Mapping[str, str | None]:
+    """The ``RefOnly`` fields of *model_cls*, each with the default ref name of its marker.
+
+    Computed once, when the class is complete. Empty for a class with none.
+    """
+    return model_cls._ref_only_fields  # pyright: ignore[reportPrivateUsage]
+
+
+def _fill_ref(model: VcoModel, name: str) -> None:
+    """Give *model* the default ref name of its ``RefOnly`` field *name*, if it holds a value and has no ``ref``.
+
+    A value is anything but ``None`` and ``MISSING``. The ref name is that of
+    the sibling field ``ref``; a model with none, and a marker with no default,
+    have nothing to fill.
+    """
+    default = type(model)._ref_only_fields[name]  # pyright: ignore[reportPrivateUsage]
+    if default is None or "ref" not in type(model).model_fields:
+        return
+    value = _field_value(model, name)
+    if value is None or value is MISSING or _field_value(model, "ref") is not MISSING:
+        return
+    model.ref = default
+
+
+def _install_ref_filling(cls: type[VcoModel]) -> None:
+    """Make assignment and a patch fill the ``ref`` of a model with a ``RefOnly`` field.
+
+    Both are hooks put on *cls* itself, and only on a class that has such a
+    field: the base class pays nothing, for the instances of every other
+    class. A patch sets the field through attribute assignment or builds a
+    model from it, which ``model_post_init`` sees.
+    """
+    previous_setattr = cls.__setattr__
+    if previous_setattr not in _REF_FILLING_HOOKS:
+
+        def setattr_filling_ref(self: VcoModel, name: str, value: object) -> None:
+            previous_setattr(self, name, value)
+            if name in type(self)._ref_only_fields:  # pyright: ignore[reportPrivateUsage]
+                _fill_ref(self, name)
+
+        _REF_FILLING_HOOKS.add(setattr_filling_ref)
+        cls.__setattr__ = setattr_filling_ref
+
+    previous_post_init = cls.model_post_init
+    if previous_post_init not in _REF_FILLING_HOOKS:
+
+        def post_init_filling_ref(
+            self: VcoModel, validation_context: object, /
+        ) -> None:
+            previous_post_init(self, validation_context)
+            in_patch = _is_mapping(validation_context) and bool(
+                validation_context.get("patch")
+            )
+            for name in type(self)._ref_only_fields:  # pyright: ignore[reportPrivateUsage]
+                if in_patch:
+                    _fill_ref(self, name)
+                else:
+                    # The key was not read, so it did not set the field.
+                    self.__pydantic_fields_set__.discard(name)
+
+        _REF_FILLING_HOOKS.add(post_init_filling_ref)
+        cls.model_post_init = post_init_filling_ref
+
+
+# ---------------------------------------------------------------------------
 # VcoModel
 # ---------------------------------------------------------------------------
 
@@ -418,6 +494,7 @@ class VcoModel(BaseModel):
 
     _config_context: ConfigContext | None = PrivateAttr(default=None)
     _detached: bool = PrivateAttr(default=False)
+    _ref_only_fields: ClassVar[Mapping[str, str | None]] = types.MappingProxyType({})
 
     @override
     def model_post_init(self, validation_context: object, /) -> None:
@@ -484,6 +561,9 @@ class VcoModel(BaseModel):
         super().__pydantic_on_complete__()
         cls._alias_map.cache_clear()
         apply_vco_markers(cls)
+        cls._ref_only_fields = types.MappingProxyType(ref_only_defaults(cls))
+        if cls._ref_only_fields:
+            _install_ref_filling(cls)
 
     @property
     def config_context(self) -> ConfigContext | None:
