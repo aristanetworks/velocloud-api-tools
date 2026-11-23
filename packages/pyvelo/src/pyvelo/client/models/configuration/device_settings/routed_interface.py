@@ -24,6 +24,7 @@ from pyvelo.core import (
     Resolvable,
     VcoModel,
 )
+from pyvelo.core.fields import Lenient
 from pyvelo.core.identity import SegmentIdentity
 
 from ..common import OverlayAddressPreferenceType
@@ -287,7 +288,7 @@ class RoutedInterfaceBase(VcoModel):
     override: Annotated[bool, OverrideFlag] = False
     dhcp_server: Annotated[
         RoutedInterfaceDhcpServer | MISSING,
-        BeforeValidator(_none_is_missing_dhcp_server),
+        Lenient(_none_is_missing_dhcp_server),
         EdgeOnly,
         EdgeLocal,
     ] = MISSING

@@ -14,7 +14,7 @@ from pydantic import MISSING, Discriminator, Field, ValidationError, field_valid
 from pyvelo.client.models.configuration.device_settings import NatRule
 from pyvelo.config.resolver import ResolutionError
 from pyvelo.core import Alias, PatchError, VcoModel, add
-from pyvelo.core.fields import KeyField, Resolvable
+from pyvelo.core.fields import KeyField, Lenient, NoneIsFalse, Resolvable
 from pyvelo.core.identity import SegmentIdentity
 from pyvelo.core.rebase import Path
 
@@ -423,3 +423,63 @@ def test_from_python_a_patch_is_json_too():
     )
     assert root.maybe is MISSING
     assert root.sub == Sub(v=2)
+
+
+class Net(VcoModel):
+    name: str
+    advertise: Annotated[bool, NoneIsFalse] = True
+    lease: Annotated[int, Lenient(lambda v: 86400 if v is None else v)] = 86400
+    passive: Annotated[bool, Lenient(lambda v: True if v in (None, "") else v)] = True
+    note: str | None = "n"
+    opt: int | MISSING = 5
+    both: int | None | MISSING = MISSING
+
+
+class Nets(VcoModel):
+    nets: Annotated[list[Net], KeyField("name")] = Field(default_factory=list)
+    one: Net | MISSING = MISSING
+
+
+def test_tolerant_fields_still_tolerate_on_parse():
+    net = Net.model_validate(
+        {"name": "n", "advertise": None, "lease": None, "passive": ""}
+    )
+    assert (net.advertise, net.lease, net.passive) == (False, 86400, True)
+
+
+@pytest.mark.parametrize(
+    ("patch", "path"),
+    [
+        ({"nets": {"new": add({"advertise": None})}}, "nets[new].advertise"),
+        ({"nets": {"new": add({"lease": None})}}, "nets[new].lease"),
+        ({"nets": [{"name": "new", "advertise": None}]}, "nets[new].advertise"),
+        ({"one": {"name": "new", "advertise": None}}, "one.advertise"),
+        ({"nets": {"corp": {"passive": ""}}}, "nets[corp].passive"),
+        ({"nets": {"new": add({"passive": ""})}}, "nets[new]"),
+        ({"nets": [{"name": "new", "passive": ""}]}, "nets"),
+    ],
+)
+def test_null_and_empty_text_are_not_coerced_in_a_patch(
+    patch: dict[str, object], path: str
+):
+    model = Nets(nets=[Net(name="corp")])
+    _ = raises_at(model, patch, path)
+    assert [(n.name, n.advertise, n.passive) for n in model.nets] == [
+        ("corp", True, True)
+    ]
+    assert model.one is MISSING
+
+
+def test_null_in_a_built_item_follows_the_null_rule():
+    model = Nets()
+    _ = model.merge_patch(
+        {"nets": {"new": add({"note": None, "opt": None, "both": None})}}
+    )
+    new = model.nets[0]
+    assert new.note is None
+    assert new.opt is MISSING
+    # A field that takes both is None in a built item, as a dump writes it ...
+    assert new.both is None
+    # ... and unset by a change, where leaving the key out would change nothing.
+    _ = model.merge_patch({"nets": {"new": {"both": None}}})
+    assert new.both is MISSING

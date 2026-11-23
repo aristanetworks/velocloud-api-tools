@@ -173,11 +173,6 @@ _none_to_false = _none_to(False)
 _none_to_true = _none_to(True)
 _none_to_zero = _none_to(0)
 
-NoneIsMissing = BeforeValidator(_none_to_missing)
-NoneIsFalse = BeforeValidator(_none_to_false)
-NoneIsTrue = BeforeValidator(_none_to_true)
-NoneIsZero = BeforeValidator(_none_to_zero)
-
 
 def _coerce_int(v: Any) -> Any:
     """Accept quoted-int strings ("42") in addition to real ints.
@@ -210,6 +205,27 @@ def _in_patch(info: ValidationInfo) -> bool:
     patch is an error, not something to tolerate.
     """
     return bool((info.context or {}).get("patch"))
+
+
+def Lenient(rewrite: Callable[[Any], Any]) -> BeforeValidator:
+    """Annotated marker: *rewrite* a value on parse, to tolerate a bad one from the VCO.
+
+    Not in a patch (see ``_in_patch``): there the value is left as it is, and
+    the field's type accepts it or raises.
+
+    Usage: ``lease: Annotated[int, Lenient(lambda v: 86400 if v is None else v)]``
+    """
+
+    def _validator(v: Any, info: ValidationInfo) -> Any:
+        return v if _in_patch(info) else rewrite(v)
+
+    return BeforeValidator(_validator)
+
+
+NoneIsMissing = Lenient(_none_to_missing)
+NoneIsFalse = Lenient(_none_to_false)
+NoneIsTrue = Lenient(_none_to_true)
+NoneIsZero = Lenient(_none_to_zero)
 
 
 def _audit(info: ValidationInfo, v: Any, reason: str):
@@ -517,9 +533,7 @@ def apply_vco_markers(cls: type[BaseModel]) -> None:
                         _ProcessedCtxDefaults(ContextDefaults(profile=MISSING))
                     )
                     already.add(_ProcessedCtxDefaults)
-                fi.metadata.append(
-                    BeforeValidator(lambda v, _info: False if v is None else v)
-                )
+                fi.metadata.append(Lenient(_none_to_false))
             elif (
                 isinstance(m, EdgeLocal)
                 or (isinstance(m, type) and issubclass(m, EdgeLocal))

@@ -554,29 +554,33 @@ class VcoModel(BaseModel):
           operations by map key;
         - ``null``: unsets the field if its type includes ``MISSING``, sets
           ``None`` if it includes ``None`` and not ``MISSING``, and raises
-          otherwise;
+          otherwise. The same holds in an item or sub-model the patch builds,
+          except that a field whose type includes both is ``None`` there:
+          leaving the key out leaves it unset, and the item's own JSON dump
+          writes ``null`` for ``None``;
         - anything else: replaces the value.
 
         Every value assigned is first validated as pydantic validates the
         field when it parses a response: the same coercions and constraints,
-        the field's validators and the model's config. The one difference:
-        a ``DefaultingScalar`` or ``DefaultingModel`` field does not fall back
-        to its default, so a bad value raises. These are the field
+        the field's validators and the model's config. The one difference: a
+        field that tolerates a bad value from the VCO (``DefaultingScalar``,
+        ``DefaultingModel``, ``Lenient``, ``NoneIsFalse`` and its siblings)
+        does not in a patch, so the bad value raises. These are the field
         validators of what the patch assigns: the model validators
         (``@model_validator``) of a model that already exists do not run when
-        a patch changes it. An item or sub-model built whole from the patch
-        is validated whole, its model validators included. So a patch that
+        a patch changes it. An item or sub-model built whole from the patch is
+        validated whole, its model validators included. So a patch that
         deletes every netflow collector while ``enabled`` stays true is
-        accepted, though parsing that state would refuse it. A key that
-        names no field raises, at every depth, items and sub-models built
-        from the patch included, and so do two keys that name one field
-        (``rule_id`` and ``ruleId``). Keys that start with ``_`` are
-        directives: only ``_op`` and ``_position``, and only on a list item's
-        value. ``OverrideFlag`` fields are set to True when a sibling that is
-        not ``EdgeLocal`` changes. On an edge layer the layer's own section
-        then applies in place of the profile's, with nothing copied from the
-        profile. A ``Resolvable`` field given a name resolves it to an ID
-        with *resolvers*.
+        accepted, though parsing that state would refuse it. A key that names
+        no field raises, at every depth, items and sub-models built from the
+        patch included, and so do two keys that name one field (``rule_id``
+        and ``ruleId``). Keys that start with ``_`` are directives: only
+        ``_op`` and ``_position``, and only on a list item's value.
+        ``OverrideFlag`` fields are set to True when a sibling that is not
+        ``EdgeLocal`` changes. On an edge layer the layer's own section then
+        applies in place of the profile's, with nothing copied from the
+        profile. A ``Resolvable`` field given a name resolves it to an ID with
+        *resolvers*.
 
         **Lists.** Each list field has a kind (``list_kind``):
 

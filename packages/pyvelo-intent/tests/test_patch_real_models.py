@@ -576,3 +576,91 @@ async def test_the_deepest_patch_apply_takes_is_planned_and_saved():
             patch={"a": {"comments": [nested(59)]}},
         )
     assert state.plan().changed == ()
+
+
+PROFILE_DS: dict[str, Any] = {"lan": {}, "segments": [{"segment": desc(0, SEGMENT)}]}
+LAN_DS: dict[str, Any] = {
+    "lan": {
+        "networks": [{"vlanId": 10, "name": "Corp", "advertise": True}],
+        "interfaces": [
+            {"name": "WLAN1", "type": "wireless", "ssid": "s", "passphrase": "p"}
+        ],
+    },
+    "segments": [{"segment": desc(0, SEGMENT), "routes": {"static": []}}],
+    "zscaler": {"config": {"enabled": True, "cloud": "zscaler.example.invalid"}},
+}
+
+
+@pytest.mark.parametrize(
+    ("address", "patch", "path"),
+    [
+        (
+            "lan.networks",
+            {"30": add({"name": "New", "advertise": None})},
+            'lan.networks["30"].advertise',
+        ),
+        (
+            "lan.networks",
+            {"30": add({"name": "New", "dhcp": {"lease_time_seconds": None}})},
+            'lan.networks["30"].dhcp.lease_time_seconds',
+        ),
+        (
+            "lan.networks",
+            [{"vlan_id": 10, "name": "Corp", "advertise": None}],
+            'lan.networks["10"].advertise',
+        ),
+        (
+            "lan.interfaces",
+            {"WLAN2": add({"ssid": "x", "passphrase": None})},
+            "lan.interfaces[WLAN2].passphrase",
+        ),
+        ("zscaler", "", "zscaler"),
+        (
+            "lan.networks",
+            {"10": {"ospf": {"passive_interface": ""}}},
+            'lan.networks["10"].ospf.passive_interface',
+        ),
+        (
+            "lan.networks",
+            {"30": add({"name": "New", "vnf_insertion": ""})},
+            'lan.networks["30"]',
+        ),
+    ],
+)
+async def test_null_and_empty_text_are_not_coerced_on_the_real_models(
+    address: str, patch: object, path: str
+):
+    state = make_state({"deviceSettings": LAN_DS}, {"deviceSettings": PROFILE_DS})
+    with pytest.raises(PatchError) as exc:
+        _ = await ConfigPipeline(None).apply(
+            state, module="device_settings", path=address, patch=patch
+        )
+    assert str(exc.value.path) == path
+    assert state.plan().changed == ()
+
+
+async def test_the_planned_dump_of_an_added_item_is_taken_as_the_body_of_an_add():
+    async def add_rule(body: dict[str, Any]) -> ConfigState:
+        state = make_state(
+            {"firewall": firewall(fw_rule("a"))}, {"firewall": firewall()}
+        )
+        return await ConfigPipeline(None).apply(
+            state,
+            module="firewall",
+            segment=SEGMENT,
+            path="outbound",
+            patch={"block": add(body)},
+        )
+
+    first = await add_rule(
+        {"action": {"allow_or_deny": "deny"}, "match": {"dport_low": 22}}
+    )
+    (module,) = first.plan().changed
+    (change,) = module.changes
+    dump = change.after
+    assert isinstance(dump, dict)
+    assert dump["comments"] is None  # a dump writes null where the item holds None
+
+    second = await add_rule(dump)
+    (again,) = second.plan().changed
+    assert [(str(c.path), c.after) for c in again.changes] == [(str(change.path), dump)]

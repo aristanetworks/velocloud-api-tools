@@ -103,8 +103,15 @@ A patch is strict and all or nothing:
 | anything else | any | replaces the value |
 
 - Every value is validated as the field is when a response is parsed. Fields
-  that tolerate a bad value from the VCO (turning it into the default) do not
-  in a patch: it raises.
+  that tolerate a bad value from the VCO (a `null` or an empty string turned
+  into the default) do not in a patch: it raises. This holds for an item or
+  sub-model a patch builds as for one it changes, and so do the three `null`
+  rows above: `add({"name": "New", "advertise": None})` raises, because
+  `advertise` can be neither unset nor `None`. One case differs: a field
+  whose type includes both `MISSING` and `None` is unset by `null` in a
+  change, and is `None` in an item a patch builds, where leaving the key out
+  leaves it unset. So the JSON dump of an item can be given as the body of an
+  `add` and builds the same item.
 - A patch runs the field validators of what it assigns. The model-level
   validators (`@model_validator`) of a model that already exists do not run
   when a patch changes it; an item or sub-model built whole from a patch is

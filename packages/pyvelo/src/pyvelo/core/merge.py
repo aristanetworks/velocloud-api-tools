@@ -293,15 +293,9 @@ def _merge_field(
     """
     model_cls = type(model)
 
-    # null unsets: MISSING if the field type allows it, else None if it allows that.
+    # null: what the field takes it as (``_null_value``).
     if value is None:
-        if _field_accepts_missing(field_info):
-            value = MISSING
-        elif not _field_accepts_none(field_info):
-            raise PatchError(
-                f"null cannot unset {name}: its type takes neither MISSING nor None",
-                path,
-            )
+        value = _null_value(field_info, name, path, built=False)
         setattr(model, name, _validate_field(model_cls, name, value, path))
         return
 
@@ -333,6 +327,27 @@ def _merge_field(
         value = _resolve_name(field_info, value, resolvers)
 
     setattr(model, name, _validate_field(model_cls, name, value, path))
+
+
+def _null_value(field_info: FieldInfo, name: str, path: Path, *, built: bool) -> object:
+    """What ``null`` means for field *name*: ``MISSING``, ``None``, or ``PatchError`` at *path*.
+
+    A field whose type takes ``MISSING`` is unset by ``null``, one that takes
+    only ``None`` is set to it, and one that takes neither refuses it. A field
+    that takes both is unset in a change, where leaving the key out would
+    change nothing. In an item or sub-model the patch *built* it is ``None``:
+    leaving the key out already leaves the field unset, and the JSON dump of
+    an item writes ``null`` for ``None``, so a dump builds the same item.
+    """
+    takes_missing = _field_accepts_missing(field_info)
+    takes_none = _field_accepts_none(field_info)
+    if takes_none and (built or not takes_missing):
+        return None
+    if takes_missing:
+        return MISSING
+    raise PatchError(
+        f"null cannot unset {name}: its type takes neither MISSING nor None", path
+    )
 
 
 _FIELD_VALIDATOR_MARKERS = {
@@ -721,6 +736,8 @@ def _build_input(
 
     - raises ``PatchError`` for a key that names no field, for a directive
       and for two keys that name one field (``_patch_fields``)
+    - turns a ``null`` into what the field takes it as (``_null_value``,
+      with ``built=True``)
     - writes a key that pydantic does not read (the camelCase form of a field
       with another alias) as the python name
     - resolves string values on Resolvable fields the way ``merge_patch``
@@ -744,7 +761,9 @@ def _build_input(
     for key, field_name, value in _patch_fields(names, owner, patch, path):
         fi = fields[field_name]
         child = path.child(field_name)
-        if isinstance(value, str):
+        if value is None:
+            value = _null_value(fi, field_name, child, built=True)
+        elif isinstance(value, str):
             if resolvers is not None:
                 try:
                     value = _resolve_name(fi, value, resolvers)

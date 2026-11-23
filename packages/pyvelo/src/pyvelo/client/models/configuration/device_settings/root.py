@@ -1,7 +1,7 @@
 import uuid
 from typing import Annotated, Any, Literal, get_args
 
-from pydantic import MISSING, BeforeValidator, Field, PrivateAttr, SerializeAsAny
+from pydantic import MISSING, Field, PrivateAttr, SerializeAsAny
 
 from pyvelo.core import (
     Alias,
@@ -13,7 +13,7 @@ from pyvelo.core import (
     ProfileOnly,
     VcoModel,
 )
-from pyvelo.core.fields import KeyField, OverrideFlag
+from pyvelo.core.fields import KeyField, Lenient, OverrideFlag
 
 from ..common import (
     copy_profile_segments,
@@ -182,7 +182,7 @@ class SnmpV3User(VcoModel):
     name: str
     passphrase: str | None = None
     authentication_algorithm: Annotated[
-        SnmpV3AuthenticationAlgorithm, BeforeValidator(_none_to_md5), Alias("authAlg")
+        SnmpV3AuthenticationAlgorithm, Lenient(_none_to_md5), Alias("authAlg")
     ] = "MD5"
     encryption_algorithm: Annotated[SnmpV3EncryptionAlgorithm, Alias("encrAlg")] = "AES"
     authentication: bool | MISSING = MISSING
@@ -341,7 +341,7 @@ class DeviceSettingsData(VcoModel):
     snmp: Annotated[
         EdgeSnmp | MISSING, ContextDefault(edge=MISSING, profile=EdgeSnmp)
     ] = MISSING
-    zscaler: Annotated[EdgeZscaler, BeforeValidator(_empty_string_to_zscaler)] = Field(
+    zscaler: Annotated[EdgeZscaler, Lenient(_empty_string_to_zscaler)] = Field(
         default_factory=EdgeZscaler
     )
     auto_sim_switchover: Annotated[EdgeAutoSimSwitchover | MISSING, EdgeOnly] = MISSING
