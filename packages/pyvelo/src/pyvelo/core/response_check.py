@@ -63,7 +63,7 @@ from .base import (
 )
 from .fields import is_server_owned
 from .rebase import (
-    Key,
+    ItemPart,
     KeyForm,
     Pairing,
     Path,
@@ -78,8 +78,8 @@ from .rebase import (
     _Node,  # pyright: ignore[reportPrivateUsage]
     _pair_unique,  # pyright: ignore[reportPrivateUsage]
     _read_path,  # pyright: ignore[reportPrivateUsage]
+    item_text,
     key_form,
-    key_text,
     pair_items,
 )
 
@@ -437,11 +437,9 @@ def _walk_keyed_list(
         )
 
 
-def _key_texts(parts: list[PathPart]) -> list[str]:
+def _key_texts(parts: list[ItemPart]) -> list[str]:
     """Each item of a list as its path names it: its key, or ``#n`` for a position."""
-    return [
-        key_text(part.value) if isinstance(part, Key) else f"#{part}" for part in parts
-    ]
+    return [item_text(part) for part in parts]
 
 
 def _alt_forms(items: list[object], node: _KeyedList) -> list[KeyForm | None]:

@@ -23,7 +23,7 @@ from pyvelo.client.schemas.configuration import (
     EnterpriseConfigurationProfile,
 )
 from pyvelo.config.resolver import ResolverContext
-from pyvelo.core.rebase import key_text
+from pyvelo.core.rebase import ItemMove, ItemPlace, Key, key_text
 from pyvelo.testing import make_module_json
 from pyvelo_intent import PatchError, add, delete, move
 from pyvelo_intent.config.pipeline import ConfigPipeline
@@ -137,13 +137,21 @@ async def test_firewall_rule_add_change_delete_move():
     assert rules["b"].logging_enabled is True
     assert rules["block-ssh"].action.allow_or_deny == "deny"
     assert rules["block-ssh"].match.destination_port_low == 22
-    # The move reorders paired items, which only the whole list can report.
+    # Each operation is a change at its item, and the move one order entry at the list.
     (module,) = state.plan().changed
-    (change,) = module.changes
-    assert str(change.path) == 'segments["Global Segment"].outbound'
-    assert change.before == raw["segments"][0]["outbound"]
-    assert isinstance(change.after, list)
-    assert [r["name"] for r in change.after] == ["d", "a", "block-ssh", "b"]
+    assert [str(c.path) for c in module.changes] == [
+        'segments["Global Segment"].outbound[b].loggingEnabled',
+        'segments["Global Segment"].outbound[c]',
+        'segments["Global Segment"].outbound[block-ssh]',
+        'segments["Global Segment"].outbound',
+    ]
+    added, order = module.changes[2:]
+    assert added.place == ItemPlace(Key("a"))
+    assert (order.before, order.after) == (
+        ["a", "b", "d"],
+        ["d", "a", "block-ssh", "b"],
+    )
+    assert order.moves == (ItemMove(Key("d"), ItemPlace()),)
     sent = (await payload(state))["segments"][0]["outbound"]
     assert [r["name"] for r in sent] == ["d", "a", "block-ssh", "b"]
     assert sent[1] == fw_rule("a", ruleLogicalId="la", futureKey=1)
@@ -254,13 +262,18 @@ async def test_qos_rule_add_change_delete_move():
     rules = {r.name: r for r in state.edge.qos.segment(SEGMENT).rules}
     assert rules["b"].action.route_type == "edge2Cloud"
     assert rules["voice"].match.destination_port_low == 5060
-    # The move reorders paired items, which only the whole list can report.
+    # Each operation is a change at its item, and the move one order entry at the list.
     (module,) = state.plan().changed
-    (change,) = module.changes
-    assert str(change.path) == 'segments["Global Segment"].rules'
-    assert change.before == raw["segments"][0]["rules"]
-    assert isinstance(change.after, list)
-    assert [r["name"] for r in change.after] == ["d", "a", "voice", "b"]
+    assert [str(c.path) for c in module.changes] == [
+        'segments["Global Segment"].rules[b].action.routeType',
+        'segments["Global Segment"].rules[c]',
+        'segments["Global Segment"].rules[voice]',
+        'segments["Global Segment"].rules',
+    ]
+    added, order = module.changes[2:]
+    assert added.place == ItemPlace(Key("a"))
+    assert (order.before, order.after) == (["a", "b", "d"], ["d", "a", "voice", "b"])
+    assert order.moves == (ItemMove(Key("d"), ItemPlace()),)
     sent = (await payload(state))["segments"][0]["rules"]
     assert [r["name"] for r in sent] == ["d", "a", "voice", "b"]
     assert sent[1] == qos_rule("a", ruleLogicalId=logical_id(1), futureKey=1)

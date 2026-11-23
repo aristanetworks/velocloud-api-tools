@@ -4,10 +4,18 @@ import copy
 from collections.abc import Sequence
 from typing import Annotated, cast
 
+import pytest
 from pydantic import MISSING, Field
 from pyvelo.core import VcoModel
 from pyvelo.core.fields import KeyField
-from pyvelo.core.rebase import RawChange, raw_changes, rebase
+from pyvelo.core.rebase import (
+    ItemMove,
+    ItemPlace,
+    Key,
+    RawChange,
+    raw_changes,
+    rebase,
+)
 
 from .patch_models import Route
 
@@ -197,14 +205,83 @@ def test_raw_changes_items_on_one_side_only_are_whole_changes():
     new = {"pols": [{"rule_name": "b"}, {"rule_name": "c"}]}
     assert raw_changes(old, new, Pols) == [
         RawChange("pols[a]", {"rule_name": "a"}, MISSING),
-        RawChange("pols[c]", MISSING, {"rule_name": "c"}),
+        RawChange("pols[c]", MISSING, {"rule_name": "c"}, place=ItemPlace(Key("b"))),
     ]
 
 
-def test_raw_changes_reorder_of_a_keyed_list_is_reported_on_the_list():
-    old = {"pols": [{"rule_name": "a"}, {"rule_name": "b"}]}
-    new = {"pols": [{"rule_name": "b"}, {"rule_name": "a"}]}
-    assert raw_changes(old, new, Pols) == [RawChange("pols", old["pols"], new["pols"])]
+def pol(name: str, **rest: object) -> dict[str, object]:
+    return {"rule_name": name, **rest}
+
+
+def pols(names: str) -> dict[str, object]:
+    """A document whose ``pols`` are named by the letters of *names*, in order."""
+    return {"pols": [pol(name) for name in names]}
+
+
+def test_raw_changes_reorder_is_one_order_entry_beside_the_item_changes():
+    old = {"pols": [pol("a", hits=1), pol("b"), pol("c")]}
+    new = {"pols": [pol("c"), pol("a", hits=2), pol("b")]}
+    changes = raw_changes(old, new, Pols)
+    assert changes == [
+        RawChange("pols[a].hits", 1, 2),
+        RawChange(
+            "pols",
+            ["a", "b", "c"],
+            ["c", "a", "b"],
+            moves=(ItemMove(Key("c"), ItemPlace()),),
+        ),
+    ]
+    assert [change.is_order for change in changes] == [False, True]
+
+
+def test_raw_changes_added_item_has_its_place():
+    first = raw_changes(pols("ab"), pols("xab"), Pols)
+    last = raw_changes(pols("ab"), pols("abx"), Pols)
+    assert first == [RawChange("pols[x]", MISSING, pol("x"), place=ItemPlace())]
+    assert last == [RawChange("pols[x]", MISSING, pol("x"), place=ItemPlace(Key("b")))]
+    assert first != last
+
+
+def test_raw_changes_place_names_the_item_before_also_an_added_or_a_moved_one():
+    assert raw_changes(pols("abc"), pols("cxyab"), Pols) == [
+        RawChange("pols[x]", MISSING, pol("x"), place=ItemPlace(Key("c"))),
+        RawChange("pols[y]", MISSING, pol("y"), place=ItemPlace(Key("x"))),
+        RawChange(
+            "pols",
+            ["a", "b", "c"],
+            ["c", "x", "y", "a", "b"],
+            moves=(ItemMove(Key("c"), ItemPlace()),),
+        ),
+    ]
+
+
+@pytest.mark.parametrize(
+    ("new", "moves"),
+    [
+        ("dabc", ["d first"]),
+        ("abdc", ["d after b"]),
+        ("bacd", ["b first"]),
+        ("dcba", ["d first", "c after d", "b after c"]),
+        ("cadb", ["c first", "d after a"]),
+    ],
+)
+def test_raw_changes_order_entry_moves_the_fewest_items(new: str, moves: list[str]):
+    (order,) = raw_changes(pols("abcd"), pols(new), Pols)
+    assert (order.before, order.after) == (list("abcd"), list(new))
+    assert order.moves is not None
+    assert [str(move) for move in order.moves] == moves
+
+
+def test_raw_changes_order_entry_names_only_items_of_the_new_list():
+    assert raw_changes(pols("abcd"), pols("dac"), Pols) == [
+        RawChange("pols[b]", pol("b"), MISSING),
+        RawChange(
+            "pols",
+            ["a", "c", "d"],
+            ["d", "a", "c"],
+            moves=(ItemMove(Key("d"), ItemPlace()),),
+        ),
+    ]
 
 
 def test_raw_changes_untyped_lists_are_whole_changes():
@@ -294,7 +371,9 @@ def test_new_item_without_alt_key_is_an_addition():
     after = {"rules": [*before["rules"], new]}
     out = rebase(raw, before, after, Rs)
     assert out == {"rules": [*raw["rules"], new]}
-    assert raw_changes(raw, out, Rs) == [RawChange("rules[new]", MISSING, new)]
+    assert raw_changes(raw, out, Rs) == [
+        RawChange("rules[new]", MISSING, new, place=ItemPlace(Key("b")))
+    ]
 
 
 def test_new_item_without_a_key_is_an_addition():
@@ -304,7 +383,31 @@ def test_new_item_without_a_key_is_an_addition():
     after = {"rules": [*before["rules"], new]}
     out = rebase(raw, before, after, Rs)
     assert out == {"rules": [*raw["rules"], new]}
-    assert raw_changes(raw, out, Rs) == [RawChange("rules[#2]", MISSING, new)]
+    assert raw_changes(raw, out, Rs) == [
+        RawChange("rules[#2]", MISSING, new, place=ItemPlace(Key("b")))
+    ]
+
+
+def test_raw_changes_items_that_share_a_name_are_ordered_by_position():
+    old = {"rules": [item("a", "1"), item("a", "2")]}
+    new = {"rules": [item("a", "2"), item("a", "1", port=3)]}
+    assert raw_changes(old, new, Rs) == [
+        RawChange("rules[#0].port", MISSING, 3),
+        RawChange(
+            "rules", ["#0", "#1"], ["#1", "#0"], moves=(ItemMove(1, ItemPlace()),)
+        ),
+    ]
+
+
+def test_raw_changes_added_item_named_as_an_old_one_makes_the_list_one_change():
+    # The item renamed from "a" is still named a; so would the new item be.
+    old = {"rules": [item("a", "1")]}
+    new = {"rules": [item("b", "1"), item("a")]}
+    assert raw_changes(old, new, Rs) == [RawChange("rules", old["rules"], new["rules"])]
+    # An item without a key is named by its position, as the first old item is.
+    old = {"rules": [item("a", "1"), item("a", "2")]}
+    new = {"rules": [item(None, port=1), *old["rules"]]}
+    assert raw_changes(old, new, Rs) == [RawChange("rules", old["rules"], new["rules"])]
 
 
 def test_repeated_key_without_alt_keys_replaces_the_list():

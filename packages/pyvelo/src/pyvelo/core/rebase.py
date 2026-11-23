@@ -27,6 +27,7 @@ The result of ``rebase`` may share sub-objects with its inputs. Callers copy.
 
 import json
 import re
+from bisect import bisect_left
 from collections import Counter
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
@@ -320,24 +321,81 @@ def _name(key: object) -> str:
     return key if isinstance(key, str) else str(key)
 
 
+type ItemPart = Key | int
+"""How a keyed-list item is named: by its key, or by its position where the key repeats or is absent."""
+
+
+def item_text(part: ItemPart) -> str:
+    """An item's name as text: the key as ``Path`` writes it, or ``#n`` for a position."""
+    if isinstance(part, Key):
+        return key_text(part.value)
+    return f"#{part}"
+
+
+@dataclass(frozen=True, slots=True)
+class ItemPlace:
+    """Where an item of a list goes: after the item named *after*, or first."""
+
+    after: ItemPart | None = None
+
+    @override
+    def __str__(self) -> str:
+        if self.after is None:
+            return "first"
+        return f"after {item_text(self.after)}"
+
+
+@dataclass(frozen=True, slots=True)
+class ItemMove:
+    """An item of a list that changes place, and where it goes."""
+
+    item: ItemPart
+    place: ItemPlace
+
+    @override
+    def __str__(self) -> str:
+        return f"{item_text(self.item)} {self.place}"
+
+
 @dataclass(frozen=True, slots=True, init=False)
 class RawChange:
     """One difference between two JSON documents.
 
     ``MISSING`` stands for the side that has no value at ``path``. A *path* given
     as text is parsed.
+
+    *place* is where an item added to a keyed list goes. *moves* is set on the
+    order entry of a keyed list (``is_order``): the items that change place,
+    each with its place; the entry's values are lists of item names.
     """
 
     path: Path
     before: object
     after: object
+    place: ItemPlace | None
+    moves: tuple[ItemMove, ...] | None
 
-    def __init__(self, path: str, before: object, after: object) -> None:
+    def __init__(
+        self,
+        path: str,
+        before: object,
+        after: object,
+        *,
+        place: ItemPlace | None = None,
+        moves: tuple[ItemMove, ...] | None = None,
+    ) -> None:
         object.__setattr__(
             self, "path", path if isinstance(path, Path) else Path.parse(path)
         )
         object.__setattr__(self, "before", before)
         object.__setattr__(self, "after", after)
+        object.__setattr__(self, "place", place)
+        object.__setattr__(self, "moves", moves)
+
+    @property
+    def is_order(self) -> bool:
+        """Whether this is the order entry of a keyed list."""
+        return self.moves is not None
 
 
 @dataclass(frozen=True, slots=True)
@@ -769,9 +827,13 @@ def raw_changes(
     those only in *new*. An item is addressed as ``path[key]``, by its key in
     *old* (in *new* for an item only *new* has), or as ``path[#n]``, by its
     position there, when that key is absent or not unique. An item present on
-    one side only is one change. Anything else that differs, including a list
-    without a usable key and a keyed list whose paired items changed order, is
-    one change at its own path.
+    one side only is one change; an item added to a keyed list has its
+    ``place``. A keyed list whose items changed order has one more change, at
+    its own path: the order entry, whose values are lists of item names and
+    whose ``moves`` are the items that changed place. Anything else that
+    differs, including a list without a usable key and a keyed list in which an
+    added item would have the name of an item of *old*, is one change at its
+    own path.
     """
     changes: list[RawChange] = []
     _collect_changes(changes, Path(()), old, new, model)
@@ -811,14 +873,63 @@ def _collect_changes(
     out.append(RawChange(path, old, new))
 
 
-def _item_parts(items: list[object], node: _KeyedList) -> list[PathPart]:
-    """The path part of each item: its key, or its position where that is not unique."""
+def _item_parts(items: list[object], node: _KeyedList) -> list[ItemPart]:
+    """The name of each item: its key, or its position where that is not unique."""
     keys = _keys(items, node)
     unique = _unique([key_form(key) for key in keys])
     return [
         Key(key) if key is not None and key_form(key) in unique else i
         for i, key in enumerate(keys)
     ]
+
+
+def item_names(
+    old: list[object], new: list[object], node: _KeyedList, pairing: Pairing
+) -> dict[int, ItemPart] | None:
+    """The name of each item of *new*, by its index; None if two items would share one.
+
+    An item that *old* has is named by its part there, also when it is renamed
+    or moved; an added item by its part in *new*. None when an added item would
+    be named as an item of *old*.
+    """
+    old_parts = _item_parts(old, node)
+    new_parts = _item_parts(new, node)
+    names: dict[int, ItemPart] = {j: old_parts[i] for i, j in pairing.pairs}
+    names.update({j: new_parts[j] for j in pairing.added})
+    if any(names[j] in old_parts for j in pairing.added):
+        return None
+    return names
+
+
+def staying(order: Sequence[int]) -> set[int]:
+    """The positions in *order* of a longest increasing run: the items that need not move."""
+    tails: list[
+        int
+    ] = []  # tails[k]: the position in order of the last value of the run of length k + 1
+    values: list[int] = []  # order[tails[k]]
+    before: list[
+        int
+    ] = []  # before[n]: the position of the value before order[n] in its run, or -1
+    for n, value in enumerate(order):
+        k = bisect_left(values, value)
+        before.append(tails[k - 1] if k else -1)
+        if k == len(tails):
+            tails.append(n)
+            values.append(value)
+        else:
+            tails[k] = n
+            values[k] = value
+    kept: set[int] = set()
+    n = tails[-1] if tails else -1
+    while n >= 0:
+        kept.add(n)
+        n = before[n]
+    return kept
+
+
+def _place_of(names: dict[int, ItemPart], j: int) -> ItemPlace:
+    """The place of item *j* of the new list: after the item before it, or first."""
+    return ItemPlace(names[j - 1] if j else None)
 
 
 def _collect_keyed_changes(
@@ -832,9 +943,9 @@ def _collect_keyed_changes(
     pairing = pair_items(old, new, node)
     if pairing is None:
         return False
-    old_order = [i for i, _ in pairing.pairs]
-    if old_order != sorted(old_order):
-        return False  # reordered: only the list can say so
+    names = item_names(old, new, node, pairing)
+    if names is None:
+        return False
     new_of = dict(pairing.pairs)
     old_parts = _item_parts(old, node)
     for i, old_item in enumerate(old):
@@ -843,10 +954,25 @@ def _collect_keyed_changes(
             _collect_changes(out, item_path, old_item, new[new_of[i]], node.item)
         else:
             out.append(RawChange(item_path, old_item, MISSING))
-    new_parts = _item_parts(new, node)
     out.extend(
-        RawChange(path.child(new_parts[j]), MISSING, new[j]) for j in pairing.added
+        RawChange(path.child(names[j]), MISSING, new[j], place=_place_of(names, j))
+        for j in pairing.added
     )
+    order = [i for i, _ in pairing.pairs]
+    if order != sorted(order):
+        kept = staying(order)
+        out.append(
+            RawChange(
+                path,
+                [item_text(old_parts[i]) for i in sorted(order)],
+                [item_text(names[j]) for j in range(len(new))],
+                moves=tuple(
+                    ItemMove(names[j], _place_of(names, j))
+                    for n, (_, j) in enumerate(pairing.pairs)
+                    if n not in kept
+                ),
+            )
+        )
     return True
 
 

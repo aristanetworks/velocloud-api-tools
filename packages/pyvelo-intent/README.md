@@ -365,8 +365,14 @@ firewall: update
   inside an interface that is not a plain port (a LAG's `slaveInterfaces`) is
   also written whole when something in it changes, and keys the models do not
   know are dropped from its other items.
-- A patch that moves items (a `move`) shows in `plan()` as one change at the
-  list; in a keyed list the items' unknown keys are still kept.
+- A patch that moves items (a `move`) plans each item's change at the item, and
+  one more change at the list: its order entry, which names the items that
+  move, each with its new place. An item added to a keyed list has its place in
+  its own change. In a keyed list the items' unknown keys are still kept.
+- When an added item would get the name of an item that was read (a new rule
+  named as a rule the same plan renames, or an item without a key at the
+  position of an item that is named by position), the two cannot be told apart
+  by name, and the list plans as one change.
 - A cache of loaded modules must keep the JSON rows or `module.raw_data`. A
   `model_validate(module.model_dump())` round trip loses the raw snapshot, and
   with it the "as read" guarantee above.
