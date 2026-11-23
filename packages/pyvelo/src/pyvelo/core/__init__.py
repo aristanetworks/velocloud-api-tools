@@ -108,8 +108,17 @@ from .identity import (
     ServiceGroupLogicalId,
     ServiceGroupName,
 )
-from .merge import nest_patch, select_items
-from .patch import PatchError, add, at, delete, move, position_of
+from .merge import item_selector, nest_patch, select_items
+from .patch import (
+    PatchError,
+    add,
+    at,
+    delete,
+    key_selector,
+    move,
+    position_of,
+    selector_of,
+)
 from .rebase import Key, Path, item_key_text, key_text
 
 __all__ = [
@@ -208,6 +217,8 @@ __all__ = [
     "is_positional",
     "is_server_owned",
     "item_key_text",
+    "item_selector",
+    "key_selector",
     "key_text",
     "list_kind",
     "missing_or",
@@ -215,5 +226,6 @@ __all__ = [
     "nest_patch",
     "position_of",
     "select_items",
+    "selector_of",
     "value_or",
 ]

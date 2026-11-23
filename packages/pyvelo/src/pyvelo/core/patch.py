@@ -18,7 +18,16 @@ from uuid import UUID
 
 from pydantic import MISSING, BaseModel
 
-from .rebase import ItemPart, Key, Path, PathPart, key_text
+from .rebase import (
+    ItemPart,
+    Key,
+    KeyValue,
+    Path,
+    PathPart,
+    key_form,
+    key_text,
+    parse_key_text,
+)
 
 MAX_PATCH_DEPTH = 64
 """How many levels of dicts and lists a patch may nest, the patch itself being the first."""
@@ -59,18 +68,39 @@ def at(n: int) -> str:
     return f"#{n}"
 
 
-def selector_of(part: ItemPart) -> str:
-    """The selector text that names the item *part* names: ``"#n"`` for a position, as ``at(n)`` gives it, else its key.
+def key_selector(key: KeyValue) -> str:
+    """The selector that names an item by *key*: the simplest text a patch reads back as that key.
 
-    A key is ``str(value)``, or ``key_text(value)`` for a composite key. This is
-    the text only: whether it names that item and no other in a given list is for
-    the caller to know (an item of the list may have the key ``#n`` as text).
+    A one-part key in string form. A composite key as its parts in string form
+    joined by commas (``10.0.0.0,24,192.168.1.1,GE3``); in the form
+    ``key_text`` writes where a part holds a comma or a double quote, or where
+    the joined text would be read as another key (a part ``"true"``).
+    """
+    if not isinstance(key, tuple):
+        return str(key)
+    texts = [str(part) for part in key]
+    if any("," in text or '"' in text for text in texts):
+        return key_text(key)
+    plain = ",".join(texts)
+    try:
+        written = parse_key_text(plain)
+    except ValueError:
+        return plain
+    if len(written) == len(key) and key_form(written) != key_form(key):
+        return key_text(key)
+    return plain
+
+
+def selector_of(part: ItemPart) -> str:
+    """The selector text that names the item *part* names: ``"#n"`` for a position, as ``at(n)`` gives it, else ``key_selector`` of its key.
+
+    This is the text only: whether it names that item and no other in a given
+    list is for the caller to know (an item of the list may have the key ``#n``
+    as text); ``item_selector`` checks it against a list.
     """
     if not isinstance(part, Key):
         return at(part)
-    if isinstance(part.value, tuple):
-        return key_text(part.value)
-    return str(part.value)
+    return key_selector(part.value)
 
 
 def _anchor(selector: Selector) -> str | int | float | list[str | int | float]:

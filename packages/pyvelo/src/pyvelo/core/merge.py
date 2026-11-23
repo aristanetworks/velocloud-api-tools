@@ -68,8 +68,10 @@ from .patch import (
     Place,
     checked_patch,
     is_new,
+    key_selector,
     parse_item_op,
     position_of,
+    selector_of,
 )
 from .rebase import (
     Key,
@@ -1233,29 +1235,6 @@ def _selector_keys(spec: _ListSpec, selector: object) -> list[KeyValue]:
     return keys
 
 
-def _plain_key_text(key: KeyValue) -> str:
-    """The simplest text that selects an item by *key*.
-
-    A one-part key in string form. A composite key: its parts in string form
-    joined by commas, unless a part holds a comma or a double quote, which
-    only the form ``key_text`` writes can carry, or the text reads as another
-    key in the form ``key_text`` writes (``true`` is the boolean there).
-    """
-    if not isinstance(key, tuple):
-        return str(key)
-    texts = [str(part) for part in key]
-    if any("," in text or '"' in text for text in texts):
-        return key_text(key)
-    plain = ",".join(texts)
-    try:
-        written = parse_key_text(plain)
-    except ValueError:
-        return plain
-    if len(written) == len(key) and key_form(written) != key_form(key):
-        return key_text(key)
-    return plain
-
-
 def _refuse_two_readings(
     selection: _Selection,
     spec: _ListSpec,
@@ -1364,26 +1343,105 @@ def select_items(
     selector: object,
     resolvers: IdentityResolver | None = None,
 ) -> list[int]:
-    """The positions of the items of the list field *field_name* that *selector* names.
+    """The positions of the items of the list or map field *field_name* that *selector* names.
 
-    Empty if it names none. A selector is read as in a patch
+    Empty if it names none. In a list a selector is read as in a patch
     (``_select``): the key of an item of a keyed list (for a composite key,
     its parts joined by commas, a tuple of them, or the form ``key_text``
     writes), an entry of a value list,
     ``at(n)``, the alt key or the label of an item of a keyed list that has
     one, and in a keyed list whose key is a ``NameOf`` field, the resolver's
-    name for it. An unknown name raises ``ResolutionError``. Raises
-    ``TypeError`` if the field is not a list.
+    name for it. An unknown name raises ``ResolutionError``; a text that two
+    readings of a composite key take to different items raises ``PatchError``.
+    In a map of models the selector is the key of an entry, in string form,
+    and the place is that of the entry in the map's order; ``at(n)`` names
+    nothing there. Raises ``TypeError`` if the field is neither.
     """
     model_cls = type(model)
     spec = _list_spec(model_cls.model_fields[field_name])
-    if spec is None or spec.kind == "map":
-        raise TypeError(f"{model_cls.__name__}.{field_name} is not a list")
+    if spec is None:
+        raise TypeError(
+            f"{model_cls.__name__}.{field_name} is not a list or a map of models"
+        )
     current = _field_value(model, field_name)
+    if spec.kind == "map":
+        entries: dict[object, object] = current if _is_dict(current) else {}
+        return [i for i, key in enumerate(entries) if str(key) == str(selector)]
     items: list[object] = current if _is_list(current) else []
     selection = _select(items, spec, selector, resolvers)
     _refuse_two_readings(selection, spec, items, selector, Path((field_name,)))
     return selection.positions
+
+
+def item_selector(model: VcoModel, field_name: str, position: int) -> str | None:
+    """The selector that names the item at *position* of the list or map field *field_name*, and no other.
+
+    The inverse of ``select_items``. Candidates, in order: in a keyed list the
+    item's label, its key (``selector_of``), its alt key, then ``at(position)``;
+    in a value list the entry in string form, then ``at(position)``; in a
+    positional or undeclared list ``at(position)``; in a map the entry's key in
+    string form. A candidate is used only when ``select_items`` gives exactly
+    that position for it: a label or an alt key that reads like another item's
+    key names that other item, and so does a text that two readings of a
+    composite key take to different items (a ``PatchError`` for ``select_items``,
+    so the next candidate is tried). The result is None when no candidate names
+    the item alone (``"#1"`` is the key of another item of a keyed list) and for
+    an untyped list, which a patch replaces whole.
+
+    Raises ``IndexError`` if there is no item at *position* and ``TypeError``
+    if the field is neither a list nor a map of models.
+    """
+    model_cls = type(model)
+    spec = _list_spec(model_cls.model_fields[field_name])
+    if spec is None:
+        raise TypeError(
+            f"{model_cls.__name__}.{field_name} is not a list or a map of models"
+        )
+    current = _field_value(model, field_name)
+    entries: Sequence[object] = (
+        list(current) if _is_list(current) or _is_dict(current) else []
+    )
+    if not 0 <= position < len(entries):
+        raise IndexError(
+            f"{model_cls.__name__}.{field_name} has no item at position {position}"
+        )
+    for candidate in _selector_candidates(spec, entries, position):
+        try:
+            if select_items(model, field_name, candidate) == [position]:
+                return candidate
+        except PatchError:
+            continue
+    return None
+
+
+def _selector_candidates(
+    spec: _ListSpec, entries: Sequence[object], position: int
+) -> list[str]:
+    """The texts ``item_selector`` tries for the entry at *position* of a list (or the keys of a map), best first."""
+    item = entries[position]
+    match spec.kind:
+        case "map":
+            return [str(item)]
+        case "keyed":
+            candidates: list[str] = []
+            if spec.label_path is not None:
+                label = item_key(item, (spec.label_path,))
+                if label is not None:
+                    candidates.append(str(label))
+            key = item_key(item, spec.key_paths)
+            if key is not None:
+                candidates.append(selector_of(Key(key)))
+            if spec.alt_path is not None:
+                alt = item_key(item, (spec.alt_path,))
+                if alt is not None:
+                    candidates.append(str(alt))
+            return [*candidates, selector_of(position)]
+        case "value":
+            return [str(item), selector_of(position)]
+        case "positional" | "undeclared":
+            return [selector_of(position)]
+        case "untyped":
+            return []
 
 
 def _merge_list(
@@ -1878,7 +1936,7 @@ def _key_form_hint(spec: _ListSpec, items: Sequence[object]) -> str:
     for item in items:
         key = item_key(item, spec.key_paths)
         if key is not None:
-            return f"{form}, as in {_plain_key_text(key)}"
+            return f"{form}, as in {key_selector(key)}"
     return form
 
 

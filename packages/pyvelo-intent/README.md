@@ -209,6 +209,21 @@ the commas, is refused with both items named, and the quoted form of each key
 to choose with. A selector that is not a key of such a list is refused with the
 key of one of its items as the example.
 
+Where a text could be read in more than one way, the first of these wins: an
+item's key, a position (`"#2"`, which is what `at(2)` returns), `"+"`, an alt
+key, a label. So an item whose alt key or label reads like a position, or like
+another item's key, cannot be named by it. `item_selector(model, field_name,
+position)` (`pyvelo.core`) gives the selector that names one item and no
+other. It tries the item's label, then its key, then its alt key, then `"#n"`,
+and takes the first that `select_items` resolves to that item alone: a
+candidate that names another item, several items, or is refused as ambiguous
+(the two readings of a composite key above) is passed over, and the result is
+None where none is left. `select_items(model, field_name, selector)` goes the
+other way and gives the positions a selector names. Both take a map of models
+too, where the selector is the map key and the position counts the entries in
+the map's order. `key_selector(key)` is the text of a key alone:
+`10.0.0.0,24,192.168.1.1,GE3` for a static route.
+
 ```python
 from pyvelo_intent import add, at, delete, move
 

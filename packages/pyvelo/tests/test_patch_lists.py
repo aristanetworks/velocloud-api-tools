@@ -12,15 +12,26 @@ from pyvelo.client.models.configuration.device_settings.root import (
 )
 from pyvelo.client.models.configuration.firewall.root import FirewallData
 from pyvelo.config.resolver import ResolutionError
-from pyvelo.core import PatchError, VcoModel, add, at, delete, move
+from pyvelo.core import (
+    Key,
+    PatchError,
+    VcoModel,
+    add,
+    at,
+    delete,
+    item_selector,
+    key_selector,
+    move,
+    select_items,
+    selector_of,
+)
 from pyvelo.core.fields import KeyField
 from pyvelo.core.merge import (
     _merge_model,  # pyright: ignore[reportPrivateUsage]
-    select_items,
 )
 from pyvelo.core.rebase import Path
 
-from .patch_models import Hop, Root, Rule, Sub
+from .patch_models import Hop, Link, Root, Route, Rule, Sub
 from .test_write_safe_resolution import Fake, fresh
 
 
@@ -295,6 +306,171 @@ def test_select_items():
     assert select_items(root, "rules", "zz") == []
     assert select_items(hops(), "hops", at(1)) == [1]
     assert select_items(hops(), "hops", "10.0.0.1") == []
+
+
+def test_select_items_in_a_map_names_an_entry_by_its_key():
+    root = Root(by_name={"LO1": Sub(v=1), "LO2": Sub(v=2)})
+    assert select_items(root, "by_name", "LO2") == [1]
+    assert select_items(root, "by_name", "nope") == []
+    assert select_items(root, "by_name", at(0)) == []  # a map has no positions
+    assert select_items(Root(), "by_name", "LO1") == []
+
+
+@pytest.mark.parametrize("field", ["labels", "count"])
+def test_select_items_refuses_a_field_that_is_neither(field: str):
+    with pytest.raises(
+        TypeError, match=f"Root.{field} is not a list or a map of models"
+    ):
+        _ = select_items(Root(), field, "x")
+
+
+@pytest.mark.parametrize(
+    ("key", "text"),
+    [
+        ("allow-web", "allow-web"),
+        (10, "10"),
+        (("10.0.0.0", 24, "192.168.1.1", "GE3"), "10.0.0.0,24,192.168.1.1,GE3"),
+        (("10.9.0.0", "16", "192.168.1.1", ""), "10.9.0.0,16,192.168.1.1,"),
+        (("i1", "IPv4"), "i1,IPv4"),
+        # A part with a comma or a quote needs the quoted form.
+        (("a,b", 1, "g", ""), '"a,b",1,g,""'),
+        # Joined by commas, "true" would read back as the boolean.
+        (("d", "true", "g", "e"), 'd,"true",g,e'),
+    ],
+)
+def test_key_selector_is_the_simplest_text_that_reads_back_as_the_key(
+    key: str | int | tuple[str | int, ...], text: str
+):
+    assert key_selector(key) == text
+    assert selector_of(Key(key)) == text
+
+
+def test_selector_of_a_position_is_at():
+    assert selector_of(2) == at(2) == "#2"
+
+
+ROUTES = [
+    Route(dest="10.0.0.0", prefix=24, gw="192.168.1.1", intf="GE3"),
+    Route(dest="10.9.0.0", prefix="16", gw="192.168.1.1"),
+    Route(dest="d", prefix="true", gw="g", intf="e"),
+    Route(dest="a,b", prefix=1, gw="g"),
+]
+
+
+@pytest.mark.parametrize(
+    ("root", "field", "selectors"),
+    [
+        (Root(rules=[Rule(name="a"), Rule(name="b")]), "rules", ["a", "b"]),
+        # A repeated key: the alt key, where it tells the items apart.
+        (
+            Root(
+                rules=[
+                    Rule(name="a", rule_id="r1"),
+                    Rule(name="a", rule_id="r2"),
+                    Rule(name="b"),
+                ]
+            ),
+            "rules",
+            ["r1", "r2", "b"],
+        ),
+        (Root(rules=[Rule(name="a"), Rule(name="a")]), "rules", ["#0", "#1"]),
+        # An alt key that is another item's key is not this item's selector.
+        (
+            Root(rules=[Rule(name="a", rule_id="b"), Rule(name="b")]),
+            "rules",
+            ["a", "b"],
+        ),
+        # "#1" is the key of item 0, so nothing names item 1 alone.
+        (
+            Root(rules=[Rule(name="#1"), Rule(name="x"), Rule(name="x")]),
+            "rules",
+            ["#1", None, "#2"],
+        ),
+        (Root(rules=[Rule(name="+"), Rule(name="10")]), "rules", ["+", "10"]),
+        (
+            Root(routes=ROUTES),
+            "routes",
+            [
+                "10.0.0.0,24,192.168.1.1,GE3",
+                "10.9.0.0,16,192.168.1.1,",
+                'd,"true",g,e',
+                '"a,b",1,g,""',
+            ],
+        ),
+        # A label, where it is unique; else the key; else the position.
+        (
+            Root(
+                links=[
+                    Link(internal_id="i1", name="wan1"),
+                    Link(internal_id="i2", name="wan2"),
+                ]
+            ),
+            "links",
+            ["wan1", "wan2"],
+        ),
+        (
+            Root(
+                links=[
+                    Link(internal_id="i1", name="wan"),
+                    Link(internal_id="i2", name="wan"),
+                ]
+            ),
+            "links",
+            ["i1,IPv4", "i2,IPv4"],
+        ),
+        (Root(links=[Link(name="wan"), Link(name="wan")]), "links", ["#0", "#1"]),
+        (Root(ports=[80, 443, 80]), "ports", ["#0", "443", "#2"]),
+        (Root(names=["a", "#0"]), "names", ["a", "#0"]),
+        (Root(hops=[Hop(ip="10.0.0.1"), Hop(ip="10.0.0.2")]), "hops", ["#0", "#1"]),
+        (Root(seq=["a", "b"]), "seq", ["#0", "#1"]),
+        (Root(blobs=[{"a": 1}]), "blobs", [None]),
+        (Root(by_name={"LO1": Sub(), "LO2": Sub()}), "by_name", ["LO1", "LO2"]),
+        # A label that two readings of a composite key take to other items:
+        # a literal candidate is ambiguous, so the next one is taken.
+        (
+            Root(
+                links=[
+                    Link(internal_id="x", family="true", name="wan"),
+                    Link(internal_id="x", family="True", name="wan"),
+                    Link(internal_id="i3", name="x,true"),
+                ]
+            ),
+            "links",
+            ['x,"true"', "x,True", "i3,IPv4"],
+        ),
+    ],
+)
+def test_item_selector_names_that_item_and_no_other(
+    root: Root, field: str, selectors: list[str | None]
+):
+    found = [item_selector(root, field, n) for n in range(len(selectors))]
+    assert found == selectors
+    for position, selector in enumerate(found):
+        if selector is not None:
+            assert select_items(root, field, selector) == [position]
+
+
+def test_item_selector_is_what_a_patch_takes():
+    root = Root(
+        rules=[Rule(name="a", rule_id="r1"), Rule(name="a", rule_id="r2")],
+        routes=ROUTES[:2],
+    )
+    rule, route = item_selector(root, "rules", 1), item_selector(root, "routes", 1)
+    assert (rule, route) == ("r2", "10.9.0.0,16,192.168.1.1,")
+    _ = root.merge_patch(
+        {"rules": {rule: {"priority": 7}}, "routes": {route: {"cost": 5}}}
+    )
+    assert [r.priority for r in root.rules] == [0, 7]
+    assert [r.cost for r in root.routes] == [0, 5]
+
+
+def test_item_selector_raises_for_no_such_item_and_for_no_list():
+    with pytest.raises(IndexError, match="Root.rules has no item at position 0"):
+        _ = item_selector(Root(), "rules", 0)
+    with pytest.raises(IndexError, match="Root.rules has no item at position -1"):
+        _ = item_selector(Root(rules=[Rule(name="a")]), "rules", -1)
+    with pytest.raises(TypeError, match="Root.labels is not a list or a map of models"):
+        _ = item_selector(Root(), "labels", 0)
 
 
 def test_an_empty_object_on_an_item_changes_nothing():
