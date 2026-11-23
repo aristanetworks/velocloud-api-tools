@@ -435,9 +435,8 @@ class ConfigPipeline:
            with the one the VCO stored (:meth:`ConfigState.replace_module`).
            Per module, ``SaveResult.left_out`` holds the planned changes the
            VCO stores its own way (a field it owns, a default it adds back
-           where the plan removed it, the removal of a row of an append-only
-           ref): neither applied nor lost, each with the value read, the
-           value sent and the value stored. ``SaveResult.server_changes``
+           where the plan removed it): neither applied nor lost, each with
+           the value read, the value sent and the value stored. ``SaveResult.server_changes``
            holds what the VCO stored otherwise than sent, at paths that are
            not lost edits: what it or another writer changed beside the
            plan, an ID it issued, an IPv6 address in canonical form, the

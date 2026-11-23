@@ -67,9 +67,9 @@ own way, use `write_module`, whose `ModuleWrite` has `left_out` and
 that asks for the module as stored (`returnData`), and reads the module back
 when the VCO answers without it. An update none of whose changes could be found
 stored (every one is to a value the VCO stores its own way) is sent without
-`returnData`. The VCO then answers with a row count, which says whether it stored the write, and the module is read
-back. `write_module` then compares what the VCO stored with what the plan
-meant to change. When every planned change is stored it returns a `ModuleWrite`:
+`returnData`. The VCO then answers with a row count, which says whether it
+stored the write, and the module is read back. `write_module` then compares
+what the VCO stored with what the plan meant to change. When every planned change is stored it returns a `ModuleWrite`:
 the module as stored, the planned changes `applied`, and the `server_changes`
 (what else the VCO stores otherwise than sent, such as an ID it issued).
 Otherwise it raises, from `pyvelo.client.exceptions`:
@@ -82,6 +82,20 @@ Otherwise it raises, from `pyvelo.client.exceptions`:
   That includes a stale write to a VCO whose conditional version check is off,
   when another writer changed a value the plan also changes: that edit is
   marked as a clash;
+- `RefsDroppedError`, a `WriteNotAppliedError`, when every change not stored is
+  a ref row: the VCO stored the data and skipped a row it could not resolve (an
+  object it does not have), or kept a row the plan removed. Rows of refs are
+  compared by identity, never by content. `error.lost_edits` names each row by
+  its ref and identity, and `error.refs_as_read` holds the refs as the module
+  was read: when the VCO took none of the rows sent (`error.every_row_lost`),
+  put them back by sending `configuration/updateConfigurationModule` with
+  `{"id": <module ID>, "_update": {"refs": <error.refs_as_read>}}`
+  (`update_configuration_module`). Otherwise check that the object exists and
+  set the field again on `error.module`; the message gives the patch. It needs
+  one change that is stored: a write whose only changes are ref rows, none of
+  them stored, is a `ConfigConflictError`, and its message names both causes. A
+  row sent as read that the returned refs lack, and any difference in the rows
+  of the refs the VCO's own processors manage, are `server_changes`, not errors;
 - `WriteOutcomeUnknownError` when the write was sent and the module as stored
   could not be read: the read-back did not find it or it does not parse, or the
   VCO's answer is not this module's row. It has no lost edits; `error.answer`
@@ -92,7 +106,7 @@ Otherwise it raises, from `pyvelo.client.exceptions`:
   when the read it makes before an insert whose earlier answer was lost cannot
   be used: an earlier insert of the module may be stored.
 
-The first two carry `lost_edits` (the planned changes not stored, with the
+The first three carry `lost_edits` (the planned changes not stored, with the
 values as read, meant and stored), `applied`, `left_out`, `server_changes`, the
 `plan` and the `module` as stored. `error.redo_patch()` is the patch that redoes
 the lost edits on that module (`error.module.data.merge_patch(error.redo_patch())`);

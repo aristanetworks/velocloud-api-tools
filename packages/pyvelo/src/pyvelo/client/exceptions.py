@@ -15,7 +15,7 @@ from pyvelo.core.changes import patch_of
 from pyvelo.core.rebase import ItemMove, ItemPart, ItemPlace, Path, RawChange
 from pyvelo.core.response_check import PlannedChange, ServerChange
 from pyvelo.core.secrets import HIDDEN
-from pyvelo.core.show import moves_text, shown_together
+from pyvelo.core.show import moves_text, patch_text, shown_together
 
 if TYPE_CHECKING:
     from pyvelo.client.module_check import ModuleWrite
@@ -720,6 +720,104 @@ class WriteNotAppliedError(ModuleWriteError):
             f"{headline}. None is stored, and a value there is not the one read: "
             "the VCO stored it in another form, or another writer changed it."
         )
+
+
+class RefsDroppedError(WriteNotAppliedError):
+    """Raised when the VCO stored a module write but not all of its ref rows.
+
+    Every lost edit is a ref row, and at least one change is stored: the VCO
+    deletes the module's refs and inserts the rows sent one by one, and it
+    skips on its own a row whose object it cannot resolve while it stores the
+    others. A row the plan added is not stored, or one it removed still is
+    (``lost_edits``; each has ``part == "refs"``, and ``owner`` is the path of
+    the ``RefOnly`` field the row goes with). Nothing was written to put the
+    rows back.
+
+    When the VCO took none of the rows sent, ``every_row_lost`` is true and
+    ``refs_as_read`` holds the refs as the module was read, to put back;
+    ``refs_as_read`` is the module's ``raw_refs`` (``MISSING`` when it had
+    none).
+    """
+
+    refs_as_read: object
+
+    def __init__(
+        self,
+        module_id: int,
+        version: str,
+        *,
+        module_name: str,
+        plan: ModulePlan,
+        module: ConfigurationModuleBase,
+        lost_edits: Sequence[PlannedChange],
+        refs_as_read: object,
+        applied: Sequence[PlannedChange] = (),
+        left_out: Sequence[PlannedChange] = (),
+        server_changes: Sequence[ServerChange] = (),
+        stored_parts: Mapping[Path, ItemPart] | None = None,
+    ) -> None:
+        self.refs_as_read = refs_as_read
+        super().__init__(
+            module_id,
+            version,
+            module_name=module_name,
+            plan=plan,
+            module=module,
+            lost_edits=lost_edits,
+            applied=applied,
+            left_out=left_out,
+            server_changes=server_changes,
+            stored_parts=stored_parts,
+        )
+
+    @property
+    def every_row_lost(self) -> bool:
+        """Whether the VCO took none of the rows sent, and some were sent as read: each of those is a lost edit, and ``refs_as_read`` holds them to put back."""
+        return any(
+            edit.as_read is not MISSING and edit.intended is not MISSING
+            for edit in self.lost_edits
+        )
+
+    @override
+    def _headline(self) -> str:
+        lost = len(self.lost_edits)
+        return (
+            f"Configuration module {self._label()}: {lost} of "
+            f"{lost + len(self.applied)} planned changes are not stored as sent, "
+            "and all of them are ref rows"
+        )
+
+    @override
+    def _notes(self, limit: int | None) -> list[str]:
+        if self.every_row_lost:
+            lines = [
+                (
+                    "The VCO took none of the ref rows this write sent, and the "
+                    "data is stored. error.refs_as_read holds the refs as they "
+                    "were read: to put them back, send "
+                    "configuration/updateConfigurationModule with "
+                    f'{{"id": {self.module_id}, "_update": {{"refs": '
+                    "<error.refs_as_read>}} (update_configuration_module)."
+                )
+            ]
+        else:
+            lines = [
+                (
+                    "The VCO skips a ref row whose object it cannot resolve and "
+                    "stores the others. Check that the object of each row below "
+                    "exists on the VCO, then make the change again on "
+                    "error.module."
+                )
+            ]
+        owners = [edit for edit in self.lost_edits if edit.owner is not None]
+        for edit in _first(owners, limit):
+            owner = cast(Path, edit.owner)
+            lines.append(
+                f"  to set {owner} again, send the patch {patch_text(owner)} "
+                "(error.module reads it as unset)"
+            )
+        lines.extend(_and_more(len(owners), limit, "lost_edits"))
+        return lines
 
 
 class WriteOutcomeUnknownError(ModuleWriteError):

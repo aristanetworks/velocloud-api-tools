@@ -826,9 +826,11 @@ class SaveResult:
     )
     """For each module written, the planned changes the VCO stores its own way.
 
-    A change to a field it owns, the removal of a default it adds back, and
-    the removal of a row of an append-only ref: neither applied nor lost, each
-    with the value read, the value sent and the value stored. Not in a list
+    A change to a field it owns, and the removal of a default it adds back:
+    neither applied nor lost, each with the value read, the value sent and the
+    value stored. A ref row is never left out: one the plan adds or removes is
+    applied or lost, and a row of a ref the VCO's processors manage or only
+    adds to is a server change when it differs. Not in a list
     compared whole (a keyed list read with an item that has no key): there an
     owned field is part of the list's change, and a value stored there
     otherwise than sent is a server change with ``as_read`` ``MISSING``."""

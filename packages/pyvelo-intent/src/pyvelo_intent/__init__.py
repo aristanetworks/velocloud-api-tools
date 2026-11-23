@@ -5,6 +5,8 @@ from pyvelo.client.exceptions import (
     DetachedObjectError,
     LossyFieldError,
     ModuleWriteError,
+    RefsDroppedError,
+    RefsNotLoadedError,
     WriteNotAppliedError,
     WriteOutcomeUnknownError,
 )
@@ -72,6 +74,8 @@ __all__ = [
     "PatchError",
     "PatchErrorKind",
     "PlannedChange",
+    "RefsDroppedError",
+    "RefsNotLoadedError",
     "Removed",
     "ResolutionError",
     "ResolverNotLoadedError",

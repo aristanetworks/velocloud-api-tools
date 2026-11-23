@@ -479,9 +479,10 @@ class ConfigurationMixin(Protocol):
         row is parsed; an error of that read request propagates. An update
         with no change the check can find stored (``has_checkable_change``:
         every change is to a value the VCO stores its own way) is sent
-        without ``returnData`` and read back. A VCO with its conditional check off answers a stale update
-        that asked for the row with the row as it is, so it looks stored;
-        asked for no row, it answers a refusal with a row count of zero.
+        without ``returnData`` and read back. A VCO with its conditional
+        check off answers a stale update that asked for the row with the row
+        as it is, so it looks stored; asked for no row, it answers a refusal
+        with a row count of zero.
 
         Sends nothing when the plan's operation is ``none``, and returns
         *module* itself.
@@ -506,13 +507,16 @@ class ConfigurationMixin(Protocol):
         - ``ConfigConflictError`` when the VCO refused the write's version, or
           answered with the module as read, unchanged.
         - ``WriteNotAppliedError`` when the VCO stored the write otherwise than
-          as planned.
+          as planned. ``RefsDroppedError``, a subclass, when every change not
+          stored is a ref row: it needs a change that is stored beside, and a
+          write of ref rows alone that stores none is a conflict.
         - ``WriteOutcomeUnknownError`` when the write was sent, or was about
-          to be sent again, and the module as stored cannot be read: the answer or the row read back does not
-          parse, the read-back does not find the module, or the module the VCO
-          answered with is not this one (another ID, another configuration or
-          another class of module). With *if_absent* it also says that the
-          module found by name does not parse or is not this one.
+          to be sent again, and the module as stored cannot be read: the
+          answer or the row read back does not parse, the read-back does not
+          find the module, or the module the VCO answered with is not this
+          one (another ID, another configuration or another class of
+          module). With *if_absent* it also says that the module found by
+          name does not parse or is not this one.
 
         The first two always carry the lost edits and the module as stored;
         ``WriteOutcomeUnknownError`` carries neither. ``error.redo_patch()`` is

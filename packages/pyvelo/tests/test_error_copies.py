@@ -10,6 +10,7 @@ from pyvelo.client.exceptions import (
     DetachedObjectError,
     LossyFieldError,
     ModuleWriteError,
+    RefsDroppedError,
     RefsNotLoadedError,
     UnboundError,
     VcoApiError,
@@ -138,6 +139,23 @@ def test_a_refs_not_loaded_error_keeps_its_module_paths_and_message_through_copi
             assert str(copied) == str(error)
 
 
+def test_a_refs_dropped_error_keeps_the_refs_as_read_through_copies():
+    plan = plan_module(fw({"segments": []}))
+    error = RefsDroppedError(
+        1,
+        "v1",
+        module_name="firewall",
+        plan=plan,
+        module=fw({}),
+        lost_edits=[],
+        refs_as_read={"a": [{"logicalId": "x"}]},
+    )
+    for copied in copies(error):
+        assert type(copied) is RefsDroppedError
+        assert copied.refs_as_read == {"a": [{"logicalId": "x"}]}
+        assert str(copied) == str(error)
+
+
 def test_notes_and_attributes_set_after_the_error_was_raised_survive():
     error = lost_write()
     error.add_note("saved: QOS")
@@ -198,6 +216,15 @@ def test_every_error_of_the_module_round_trips():
         UnboundError("not bound"),
         DetachedObjectError("changed", (path,)),
         RefsNotLoadedError("deviceSettings", (path,)),
+        RefsDroppedError(
+            1,
+            "v1",
+            module_name="firewall",
+            plan=plan,
+            module=fw({}),
+            lost_edits=[],
+            refs_as_read={"a": []},
+        ),
     ]
     # Test support may subclass an error (a live test's refusal); every
     # subclass the libraries define is listed here, whichever package has it.

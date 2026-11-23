@@ -18,7 +18,6 @@ imports ``ref_owners``, and this module is imported by ``module_check``.
 from __future__ import annotations
 
 import copy
-import json
 import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -42,7 +41,8 @@ from pyvelo.core.identity import (
     SegmentIdentity,
     entity_label,
 )
-from pyvelo.core.rebase import Key, Path
+from pyvelo.core.rebase import Path
+from pyvelo.core.show import patch_text
 
 if TYPE_CHECKING:
     from pyvelo.client.schemas.configuration import ConfigurationModuleBase
@@ -169,7 +169,7 @@ def _json_value(value: object) -> object:
     return str(value).lower() if isinstance(value, uuid.UUID) else value
 
 
-def _held(row: dict[object, object], field: str) -> object:
+def row_field(row: dict[object, object], field: str) -> object:
     """The value at the dotted *field* of *row*, or ``None``."""
     value: object = row
     for step in field.split("."):
@@ -179,9 +179,12 @@ def _held(row: dict[object, object], field: str) -> object:
     return value
 
 
-def _same_identity(identity: object, held: object) -> bool:
-    """Whether *held* (a row's value) is *identity*: UUIDs as lower-case text, ints as ints."""
-    if isinstance(identity, uuid.UUID):
+def same_identity(identity: object, held: object) -> bool:
+    """Whether *held* (a row's value) is *identity*: UUIDs as lower-case text, ints as ints.
+
+    *identity* may be a ``UUID`` or its text (as ``RefChange.value`` holds it).
+    """
+    if isinstance(identity, uuid.UUID | str):
         return isinstance(held, str) and held.lower() == str(identity).lower()
     return (
         isinstance(identity, int)
@@ -192,7 +195,7 @@ def _same_identity(identity: object, held: object) -> bool:
 
 
 def _row_matches(owner: RefOwner, row: dict[object, object], context: _Context) -> bool:
-    return _same_identity(owner.value, _held(row, _match_field(owner))) and (
+    return same_identity(owner.value, row_field(row, _match_field(owner))) and (
         row_is_of_segment(row, context.segment(owner), context.object_ids)
     )
 
@@ -212,15 +215,6 @@ def _warning_path(name: str, segment_name: str | None) -> str:
     return f"refs {name}" if segment_name is None else f"refs {name} ({segment_name})"
 
 
-def _patch_text(path: Path) -> str:
-    """The patch of the field at *path*, as JSON a text-only caller can send."""
-    leaf: object = "<the name or the logical ID of a service that exists>"
-    for part in reversed(path.parts):
-        text = str(part.value) if isinstance(part, Key) else str(part)
-        leaf = {text: leaf}
-    return json.dumps(leaf)
-
-
 def _unknown_identity(owner: RefOwner, caught: ResolutionError) -> ResolutionError:
     """The error for an owner whose identity the resolver does not know."""
     label = entity_label(owner.identity_type)
@@ -233,7 +227,7 @@ def _unknown_identity(owner: RefOwner, caught: ResolutionError) -> ResolutionErr
     else:
         advice = (
             f"Give the name or the logical ID of a {label} that exists: "
-            + f"{_patch_text(owner.path)} sets it."
+            + f"{patch_text(owner.path)} sets it."
         )
     return ResolutionError(
         name=caught.name,

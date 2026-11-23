@@ -508,18 +508,20 @@ storing your changes. Neither list is an error.
   edits. A value stored as it was read is not listed here.
 - `left_out` is the planned changes the VCO stores its own way, which are
   neither applied nor lost. They are a change to a field the VCO owns (a
-  firewall rule's `ruleLogicalId`), the removal of a default it adds back, and
-  the removal of a row of an append-only ref (an address group, for example). Each
-  has the value read (`as_read`), the value sent (`intended`) and the value
+  firewall rule's `ruleLogicalId`) and the removal of a default it adds back.
+  Each has the value read (`as_read`), the value sent (`intended`) and the value
   stored. Saving again would not store them either, so they are not to be
   redone. After a refusal such a change is a lost edit instead, when it is
-  still as read: see below.
+  still as read: see below. A ref row is never left out: see
+  `RefsDroppedError`, below.
 
 A write that is not known to be stored as planned raises one of three errors,
 from `pyvelo.client.exceptions` and re-exported by `pyvelo_intent`.
 `ConfigConflictError` says the VCO refused the write because the module changed
 since it was read, or seems to have (`stated`, below, says which);
-`WriteNotAppliedError` says the VCO stored the write otherwise than as sent.
+`WriteNotAppliedError` says the VCO stored the write otherwise than as sent;
+`RefsDroppedError`, a `WriteNotAppliedError`, says that the changes not stored
+are all ref rows (below).
 `WriteOutcomeUnknownError` says the write was sent (or, for an insert sent
 again, that an earlier save may have sent it) and the module as stored could
 not be read. When the read itself fails, its own error is raised, and the
@@ -534,7 +536,7 @@ stored:
 | the VCO refused the version, and the module as stored does not already hold every one of your changes | `ConfigConflictError` |
 | the write is an insert, which carries no version | `WriteNotAppliedError` |
 | the VCO answered with the module, none of your changes is stored in it, and each value there is as read | `ConfigConflictError` |
-| anything else: some of your changes are stored and some are not, a value you edited is stored as neither the one read nor the one sent, or the VCO counted the write and the module read back does not hold it | `WriteNotAppliedError` |
+| anything else: some of your changes are stored and some are not, a value you edited is stored as neither the one read nor the one sent, or the VCO counted the write and the module read back does not hold it | `WriteNotAppliedError`, or `RefsDroppedError` when every change not stored is a ref row |
 
 A refused write passes only when the module as stored already holds every one
 of your changes: at least one is found stored, and none is lost or left out.
@@ -564,16 +566,37 @@ refs would prevent the last; it is planned and not built.
 A VCO with the check off says nothing when it answers with the module, so the
 save tells a stale write by what is stored. Where no change of a write can be
 found stored (it changes only fields the VCO owns, or removes only defaults
-the VCO adds back or rows of an append-only ref), the save does not ask for the
-module. The VCO then answers with a row
-count, which is zero for a stale version, and the save reads the module back.
-Such a write costs one more request.
+the VCO adds back), the save does not ask for the module. The VCO then answers
+with a row count, which is zero for a stale version, and the save reads the
+module back. Such a write costs one more request.
 
 What a save cannot tell, on a VCO with the check off: a stale write whose other
 changes are all stored already, by another writer or by an earlier save of
 yours whose answer was lost, passes. A left-out change beside them is then
 reported in `left_out` although the write that carried it was not stored. Look
 at `left_out` when a save follows one that failed.
+
+A ref row the VCO does not store is not a stored write either. The VCO
+replaces a module's refs row by row, and it skips a row whose object it cannot
+resolve (a service that is not there) and stores the others. The save compares
+the refs it gets back with the ones it sent, row by row by identity and never
+by content. `RefsDroppedError` is raised when the data of the write is stored
+and every change that is not is a ref row: a row you added that the VCO did not
+store, or a row you removed that it kept. It needs one change that is stored,
+so a ref change beside a data edit. A write whose only changes are ref rows,
+none of them stored, is a `ConfigConflictError`, and its message names both
+causes: the module changed since it was read, or the VCO would not take a new
+row because it cannot resolve its object. The error lists each lost row by its
+ref name and identity. To redo it, check that the object exists and set the
+field again on `error.module`, which reads it as unset: the message gives the
+patch. The VCO writes nothing of its own to put a skipped row back. When it took
+none of the rows the write sent, `error.every_row_lost` is true and
+`error.refs_as_read` holds the refs as the module was read, to put back by
+sending `configuration/updateConfigurationModule` with
+`{"id": <module ID>, "_update": {"refs": <error.refs_as_read>}}`
+(`update_configuration_module`). A row you did not change that the VCO leaves
+out of the refs it returns is not an error: it is a `server_changes` entry, as
+is any difference in the rows of the refs the VCO's own processors manage.
 
 `ConfigConflictError` and `WriteNotAppliedError` carry:
 
@@ -585,6 +608,7 @@ at `left_out` when a save follows one that failed.
 | `server_changes` | what else the VCO stores otherwise than sent, as in `SaveResult.server_changes` |
 | `module` | the module as the VCO holds it now |
 | `plan` | the module's `ModulePlan` |
+| `refs_as_read` | on `RefsDroppedError`: the module's refs as read, to put back when `every_row_lost` is true |
 | `stated` | on `ConfigConflictError`: whether the VCO said it refused the version, or the save inferred it |
 | `completed` | the writes of the same save before this one, which are stored |
 | `redo_patch(include_clashes=False)` | the patch that redoes the lost edits on `module`, for `apply(state, module=error.module_name, patch=...)` |

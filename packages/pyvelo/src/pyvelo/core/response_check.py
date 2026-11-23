@@ -153,6 +153,8 @@ class PlannedChange:
     """Where an added item of a keyed list was planned to go."""
     moves: tuple[ItemMove, ...] | None = None
     """Not None for the order entry of a keyed list: the moves that put the stored order right."""
+    owner: Path | None = None
+    """For a ``refs`` entry of a ``RefOnly`` owner: the owner's path in python names."""
 
     @property
     def is_order(self) -> bool:
@@ -173,8 +175,11 @@ class PlannedChange:
 
         For an order entry: the items that were read are stored in another
         order than read (an item only one of the two lists has does not count).
-        True when either value is not a list.
+        True when either value is not a list. Never for a ``refs`` entry: a
+        row's content is not compared, so a row there cannot differ from itself.
         """
+        if self.part == "refs":
+            return False
         if not self.is_order:
             return self.stored != self.as_read
         if not isinstance(self.as_read, list) or not isinstance(self.stored, list):
