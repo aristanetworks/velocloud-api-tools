@@ -62,7 +62,15 @@ from .fields import (
     is_edge_local,
 )
 from .identity import ResolutionError
-from .patch import ItemOp, PatchError, Place, is_new, parse_item_op, position_of
+from .patch import (
+    ItemOp,
+    PatchError,
+    Place,
+    checked_patch,
+    is_new,
+    parse_item_op,
+    position_of,
+)
 from .rebase import (
     Key,
     KeyForm,
@@ -83,10 +91,16 @@ def apply_patch(
 ) -> VcoModel:
     """Recursively merge a partial dict into *model*, in place. See ``VcoModel.merge_patch``.
 
+    *patch* must be a ``dict`` (``TypeError`` otherwise) of JSON values
+    (``checked_patch``). It is checked and copied once, so *model* shares no
+    object with it.
+
     All or nothing: the patch is merged into a deep copy of *model* first, so
     a patch that raises does so before *model* is touched.
     """
-    items = dict[object, object](patch.items())  # Mapping keys are invariant
+    if not isinstance(patch, dict):
+        raise TypeError(f"a patch is a dict, not {type(patch).__name__}")
+    items = cast("dict[object, object]", checked_patch(patch))
     _merge_model(model.model_copy(deep=True), items, resolvers, Path(()))
     _merge_model(model, items, resolvers, Path(()))
     return model
@@ -101,11 +115,13 @@ def nest_patch(
 ) -> dict[str, object]:
     """The patch for *model* that an addressed call stands for.
 
-    Without *segment* and *path*, *patch* itself, which must be a mapping
+    Without *segment* and *path*, *patch* itself, which must be a ``dict``
     (``TypeError`` otherwise). Otherwise *patch* is any JSON value and is
     nested under the address: ``path="a.b"`` gives ``{"a": {"b": patch}}``,
     ``segment="S"`` gives ``{"segments": {"S": patch}}``, and both give
-    ``{"segments": {"S": {"a": {"b": patch}}}}``.
+    ``{"segments": {"S": {"a": {"b": patch}}}}``. What is returned is a
+    checked copy of the patch (``checked_patch``): it holds JSON values only,
+    and an error is reported under the address.
 
     A part of *path* names a field by any name ``merge_patch`` accepts; the
     nested patch uses the python name. With *segment* the parts start at the
@@ -120,11 +136,11 @@ def nest_patch(
     *path* or part, and *segment* for a class with no ``segments`` field.
     """
     if segment is None and path is None:
-        if not isinstance(patch, Mapping):
+        if not isinstance(patch, dict):
             raise TypeError(
-                f"a patch with no address must be a mapping, not {type(patch).__name__}"
+                f"a patch with no address must be a dict, not {type(patch).__name__}"
             )
-        return dict(cast("Mapping[str, object]", patch))
+        return cast("dict[str, object]", checked_patch(patch))
     cls = model
     walked = Path(())
     if segment is not None:
@@ -158,7 +174,11 @@ def nest_patch(
                 )
             cls = sub
         walked = where
-    nested: object = patch
+    # Where the patch sits once nested, in python names, for its errors and its depth.
+    where_nested = Path(
+        (*(("segments", Key(segment)) if segment is not None else ()), *names)
+    )
+    nested = checked_patch(patch, where_nested)
     for name in reversed(names):
         nested = {name: nested}
     if segment is None:

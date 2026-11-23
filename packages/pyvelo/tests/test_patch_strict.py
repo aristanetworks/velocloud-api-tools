@@ -1,7 +1,12 @@
 """Strict patches: fields, validation, unknown keys, all or nothing."""
 
 import copy
-from enum import IntEnum
+import datetime
+import ipaddress
+import json
+import uuid
+from enum import Enum, IntEnum
+from types import MappingProxyType
 from typing import Annotated, Literal
 
 import pytest
@@ -325,3 +330,96 @@ def test_patch_is_not_mutated():
     before = copy.deepcopy(patch)
     _ = root.merge_patch(patch)
     assert patch == before
+
+
+@pytest.mark.parametrize(
+    ("patch", "path", "text"),
+    [
+        ({"rules": (r for r in [{"name": "x"}])}, "rules", "generator"),
+        ({"rules": reversed([{"name": "x"}])}, "rules", "list_reverseiterator"),
+        ({"rules": ({"name": "x"},)}, "rules", "tuple"),
+        ({"names": {"a", "b"}}, "names", "set"),
+        ({"sub": MappingProxyType({"v": 1})}, "sub", "mappingproxy"),
+        ({"title": uuid.UUID(int=1)}, "title", "UUID"),
+        ({"blobs": [{"a": float("nan")}]}, "blobs[#0].a", "nan"),
+        ({"count": float("inf")}, "count", "inf"),
+        ({"rules": {True: {"priority": 1}}}, "rules", "True"),
+        ({"rules": {None: {"priority": 1}}}, "rules", "None"),
+    ],
+)
+def test_a_value_that_is_not_json_raises(
+    patch: dict[str, object], path: str, text: str
+):
+    root = Root(rules=[Rule(name="a")], names=["a"])
+    dump = copy.deepcopy(root.model_dump())
+    error = raises_at(root, patch, path)
+    assert text in error.message
+    assert root.model_dump() == dump
+
+
+def nested(levels: int) -> object:
+    return json.loads('{"x":' * levels + "1" + "}" * levels)
+
+
+def test_nesting_is_bounded():
+    # The patch, the list and 62 objects are levels 0 to 63; one more is too deep.
+    root = Root()
+    _ = root.merge_patch({"blobs": [nested(62)]})
+    assert root.blobs == [nested(62)]
+    with pytest.raises(PatchError) as exc:
+        _ = Root().merge_patch({"blobs": [nested(63)]})
+    assert "64" in exc.value.message
+    assert len(exc.value.path.parts) == 64
+
+
+def test_the_model_shares_no_object_with_the_patch():
+    patch: dict[str, object] = {"blobs": [{"who": {"tags": ["x"]}}]}
+    first, second = Root(), Root()
+    _ = first.merge_patch(patch)
+    _ = second.merge_patch(patch)
+    first.blobs[0]["who"]["tags"].append("edited")
+    assert second.blobs == [{"who": {"tags": ["x"]}}]
+    assert patch == {"blobs": [{"who": {"tags": ["x"]}}]}
+
+
+def test_a_patch_that_is_not_a_dict_is_a_type_error():
+    root = Root()
+    with pytest.raises(TypeError, match="dict"):
+        _ = root.merge_patch(MappingProxyType({"count": 1}))
+    with pytest.raises(TypeError, match="dict"):
+        _ = root.merge_patch(json.loads('[["count", 1]]'))
+    assert root.count == 0
+
+
+class Colour(Enum):
+    RED = "red"
+
+
+@pytest.mark.parametrize(
+    ("patch", "path", "text"),
+    [
+        ({"sub": Sub(v=1)}, "sub", "Sub"),
+        ({"rules": [Rule(name="x")]}, "rules[#0]", "Rule"),
+        ({"maybe": MISSING}, "maybe", "MISSING"),
+        ({"title": Colour.RED}, "title", "Colour"),
+        ({"title": ipaddress.IPv4Address("10.0.0.1")}, "title", "IPv4Address"),
+        ({"title": datetime.datetime(2026, 1, 1)}, "title", "datetime"),
+    ],
+)
+def test_a_python_object_is_not_a_json_value(
+    patch: dict[str, object], path: str, text: str
+):
+    root = Root(rules=[Rule(name="a")], maybe=Sub())
+    dump = copy.deepcopy(root.model_dump())
+    error = raises_at(root, patch, path)
+    assert error.message.startswith(f"{text} is not a JSON value")
+    assert root.model_dump() == dump
+
+
+def test_from_python_a_patch_is_json_too():
+    root = Root(rules=[Rule(name="a")], maybe=Sub(v=1))
+    _ = root.merge_patch(
+        {"maybe": None, "sub": Sub(v=2).model_dump(mode="json"), "title": "red"}
+    )
+    assert root.maybe is MISSING
+    assert root.sub == Sub(v=2)

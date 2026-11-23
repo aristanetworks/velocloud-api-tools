@@ -3,15 +3,22 @@
 ``PatchError`` is what a patch that cannot be applied raises, with the place in
 the patch it failed at. ``add``, ``delete``, ``move`` and ``at`` write list item
 operations as plain JSON values; ``parse_item_op`` reads one back.
+``checked_patch`` is the check every patch passes once, at entry.
 """
 
+import math
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Literal, cast, override
 from uuid import UUID
 
-from .rebase import Path
+from pydantic import MISSING, BaseModel
+
+from .rebase import Path, PathPart
+
+MAX_PATCH_DEPTH = 64
+"""How many levels of dicts and lists a patch may nest, the patch itself being the first."""
 
 
 class PatchError(ValueError):
@@ -249,3 +256,85 @@ def position_of(selector: object) -> int | None:
 def is_new(selector: object) -> bool:
     """Whether ``selector`` is ``"+"`` or ``"+tag"``: a new item."""
     return isinstance(selector, str) and selector.startswith("+")
+
+
+_ROOT = Path(())
+
+
+def checked_patch(patch: object, path: Path = _ROOT) -> object:
+    """A copy of *patch* made of new ``dict`` and ``list`` objects, or ``PatchError``.
+
+    A patch holds what ``json.loads`` returns: dicts, lists, strings, finite
+    numbers, booleans and ``None``, nested at most ``MAX_PATCH_DEPTH`` levels
+    deep, the patch itself being the first. A selector may also be written
+    the Python way: a dict key that is an ``int`` (not a ``bool``), a ``UUID``
+    or a ``tuple`` of ``str``, ``int``, ``float`` and ``UUID`` parts. Keys are
+    kept as they are, in their order. Anything else raises ``PatchError`` at
+    the place it sits; a key that is not one raises at the place of its dict.
+    The walk never goes deeper than the bound, so a patch of any depth, or one
+    that holds itself, raises and does not exhaust the stack.
+
+    *path* is where *patch* sits, for the errors and for the depth. The check
+    runs before the patch is read against a model, so it cannot tell a
+    selector from a field: a path made here names every object key as a name
+    (``blobs[#0].a``).
+    """
+    return _check(patch, path.parts)
+
+
+def _check(value: object, parts: tuple[PathPart, ...]) -> object:
+    """*value* checked and copied. *parts* is where it sits (a ``Path`` is built only for an error)."""
+    if value is None or isinstance(value, (bool, int, str)):
+        return value
+    if isinstance(value, float):
+        if math.isfinite(value):
+            return value
+        raise PatchError(
+            f"{value!r} is not a JSON number: a number in a patch is finite",
+            Path(parts),
+        )
+    if isinstance(value, (dict, list)) and len(parts) >= MAX_PATCH_DEPTH:
+        raise PatchError(
+            f"the patch nests more than {MAX_PATCH_DEPTH} levels deep", Path(parts)
+        )
+    if isinstance(value, list):
+        items = cast("list[object]", value)
+        return [_check(item, (*parts, index)) for index, item in enumerate(items)]
+    if isinstance(value, dict):
+        entries = cast("dict[object, object]", value)
+        copied: dict[object, object] = {}
+        for key, item in entries.items():
+            if not _is_json_key(key):
+                raise PatchError(
+                    f"{key!r} is not a key of a JSON object: a key is a string, "
+                    "or for a selector an int, a UUID or a tuple of key parts",
+                    Path(parts),
+                )
+            copied[key] = _check(
+                item, (*parts, key if isinstance(key, str) else str(key))
+            )
+        return copied
+    if value is MISSING:
+        raise PatchError(
+            "MISSING is not a JSON value: write None (null) to unset a field",
+            Path(parts),
+        )
+    message = (
+        f"{type(value).__name__} is not a JSON value: a patch holds dicts, "
+        "lists, strings, numbers, booleans and None"
+    )
+    if isinstance(value, BaseModel):
+        message += '; give a model as its JSON-mode dump, model_dump(mode="json")'
+    raise PatchError(message, Path(parts))
+
+
+def _is_json_key(key: object) -> bool:
+    """Whether *key* is a string or a selector written the Python way."""
+    if isinstance(key, (str, UUID)):
+        return True
+    if isinstance(key, tuple):
+        return all(
+            isinstance(p, (str, int, float, UUID))
+            for p in cast("tuple[object, ...]", key)
+        )
+    return isinstance(key, int) and not isinstance(key, bool)

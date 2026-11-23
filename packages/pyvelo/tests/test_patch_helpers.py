@@ -2,14 +2,17 @@
 
 import json
 import uuid
+from typing import cast
 
 import pytest
 from pyvelo.core import PatchError
 from pyvelo.core.patch import (
+    MAX_PATCH_DEPTH,
     ItemOp,
     Place,
     add,
     at,
+    checked_patch,
     delete,
     is_new,
     move,
@@ -165,3 +168,44 @@ def test_selector_syntax():
     assert is_new("+")
     assert is_new("+tag")
     assert not is_new("a+")
+
+
+def test_what_the_helpers_return_passes_the_check():
+    values: list[object] = [
+        at(0),
+        delete(),
+        add(),
+        add({"a": 1}, before="x"),
+        add(first=True),
+        add(after=("a", 1)),
+        move(last=True),
+        move(after=at(0)),
+        move(before=uuid.UUID(int=1)),
+    ]
+    for value in values:
+        assert checked_patch(value) == value
+
+
+def test_the_checked_patch_is_a_copy_with_the_selector_keys_kept():
+    key = ("10.0.0.0", 24, uuid.UUID(int=1))
+    patch = {"routes": {key: {"cost": 1}, 10: {"tags": ["t"]}}}
+    checked = cast("dict[str, dict[object, dict[str, object]]]", checked_patch(patch))
+    assert checked == patch
+    assert checked is not patch
+    assert checked["routes"] is not patch["routes"]
+    assert checked["routes"][10]["tags"] is not patch["routes"][10]["tags"]
+    assert list(checked["routes"]) == [key, 10]
+
+
+def test_the_check_reports_and_counts_from_the_path_given():
+    with pytest.raises(PatchError) as exc:
+        _ = checked_patch([1, {2}], Path.parse("segments[Guest].outbound"))
+    assert exc.value.path == Path.parse("segments[Guest].outbound[#1]")
+
+    assert MAX_PATCH_DEPTH == 64
+    start = Path(["a"] * 63)
+    assert checked_patch({"x": 1}, start) == {"x": 1}
+    with pytest.raises(PatchError) as exc:
+        _ = checked_patch({"x": {}}, start)
+    assert exc.value.path == start.child("x")
+    assert "64" in exc.value.message

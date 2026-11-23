@@ -532,6 +532,17 @@ class VcoModel(BaseModel):
     ) -> Self:
         """Merge *patch*, a JSON object, into this model in place; return self.
 
+        **JSON.** *patch* is a ``dict`` (``TypeError`` otherwise) that holds what
+        ``json.loads`` returns: dicts, lists, strings, finite numbers, booleans and
+        ``None``, nested at most 64 levels deep (``patch.MAX_PATCH_DEPTH``). A
+        selector may also be an ``int``, a ``UUID`` or the tuple of a composite
+        key's parts. Anything else raises ``PatchError`` where it sits: a tuple, a
+        set or a generator for a list, another mapping type for a dict, an object
+        for its text, ``NaN`` or an infinity. This holds from Python too:
+        ``None`` unsets a field, not ``MISSING``, and a model is given as its
+        JSON-mode dump (``model_dump(mode="json")``). The patch is copied before
+        it is merged (``patch.checked_patch``): the model shares no object with it.
+
         **Fields.** A key names a field by its python name, an alias or its
         camelCase form. Absent keys leave their fields as they are. For a key
         that names a field:

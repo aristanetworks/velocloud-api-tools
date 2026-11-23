@@ -6,6 +6,7 @@ sends.
 """
 
 import copy
+import json
 import uuid
 from typing import Any
 
@@ -504,3 +505,74 @@ async def test_a_patch_inside_inherited_bgp_is_listed_on_the_plan_and_copies_not
     sent = request.update.data["segments"][0]["bgp"]
     assert (sent["override"], sent["enabled"], sent["ASN"]) == (True, False, "")
     assert [n["neighborIp"] for n in sent["neighbors"]] == ["10.0.0.2"]
+
+
+# --- what a patch may hold ----------------------------------------------------
+
+
+async def test_a_list_value_that_is_not_a_list_raises_and_keeps_the_rules():
+    raw = firewall(fw_rule("allow-web"), fw_rule("allow-dns"), fw_rule("deny-all"))
+    new = [fw_rule("only-ssh"), fw_rule("deny-all")]
+    state = make_state({"firewall": raw}, {"firewall": firewall()})
+    for value in ((r for r in new), reversed(new), map(dict, new), tuple(new)):
+        with pytest.raises(PatchError) as exc:
+            _ = await ConfigPipeline(None).apply(
+                state, module="firewall", segment=SEGMENT, path="outbound", patch=value
+            )
+        assert str(exc.value.path) == 'segments["Global Segment"].outbound'
+        assert outbound(state) == ["allow-web", "allow-dns", "deny-all"]
+    assert state.plan().changed == ()
+
+
+async def test_one_patch_applied_to_two_states_shares_nothing():
+    patch: dict[str, object] = {"a": {"comments": [{"who": {"tags": ["x"]}}]}}
+    states = [
+        make_state({"firewall": firewall(fw_rule("a"))}, {"firewall": firewall()})
+        for _ in range(2)
+    ]
+    for state in states:
+        _ = await ConfigPipeline(None).apply(
+            state, module="firewall", segment=SEGMENT, path="outbound", patch=patch
+        )
+    first, second = (s.edge.firewall.segment(SEGMENT).outbound[0] for s in states)
+    assert first.comments is not None
+    first.comments[0]["who"]["tags"].append("edited")
+    assert second.comments == [{"who": {"tags": ["x"]}}]
+    assert patch == {"a": {"comments": [{"who": {"tags": ["x"]}}]}}
+
+
+def nested(levels: int) -> object:
+    return json.loads('{"x":' * levels + "1" + "}" * levels)
+
+
+async def test_the_deepest_patch_apply_takes_is_planned_and_saved():
+    def state_and_client() -> tuple[ConfigState, MockVcoClient]:
+        state = make_state(
+            {"firewall": firewall(fw_rule("a"))}, {"firewall": firewall()}
+        )
+        return state, MockVcoClient.for_state(state)
+
+    # The address is 3 levels and the patch 3 more above the nested value.
+    state, client = state_and_client()
+    pipeline = ConfigPipeline(client)
+    _ = await pipeline.apply(
+        state,
+        module="firewall",
+        segment=SEGMENT,
+        path="outbound",
+        patch={"a": {"comments": [nested(58)]}},
+    )
+    _ = await pipeline.save(state)
+    assert len(client.update_requests) == 1
+    assert state.plan().changed == ()
+
+    state, client = state_and_client()
+    with pytest.raises(PatchError, match="64"):
+        _ = await ConfigPipeline(client).apply(
+            state,
+            module="firewall",
+            segment=SEGMENT,
+            path="outbound",
+            patch={"a": {"comments": [nested(59)]}},
+        )
+    assert state.plan().changed == ()

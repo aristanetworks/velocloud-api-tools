@@ -221,7 +221,7 @@ class ConfigPipeline:
         - ``segment="S"`` is ``patch={"segments": {"S": patch}}``;
         - both are ``patch={"segments": {"S": {"a": {"b": patch}}}}``.
 
-        With neither, *patch* must be a mapping (``TypeError`` otherwise).
+        With neither, *patch* must be a ``dict`` (``TypeError`` otherwise).
         With either, it is any JSON value; ``None`` means what ``null`` means
         at that place. *path* is one or more field names joined by dots, each
         by any name ``merge_patch`` accepts. Every part but the last must be

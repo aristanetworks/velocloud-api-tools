@@ -88,7 +88,7 @@ names joined by dots, each a field that holds one sub-model, except the last,
 which may be any field; it does not step into list items, which the patch
 names. `segment` names a segment like any other selector of the `segments`
 list: by name, in any case, or by `segmentId`. Without an address, `patch`
-must be a mapping.
+must be a `dict`.
 
 A patch is strict and all or nothing:
 
@@ -190,6 +190,18 @@ await pipeline.apply(
 `add`, `delete`, `move` and `at` return plain JSON values, so a patch is JSON
 whether or not they are used. `VcoModel.merge_patch` and `ConfigPipeline.apply`
 document the full rules in their docstrings.
+
+A patch holds only what `json.loads` returns: dicts, lists, strings, finite
+numbers, booleans and `None`, nested at most 64 levels deep. Anything else
+raises `PatchError` at its place in the patch: a tuple, a set or a generator
+where a list goes, another mapping type where a dict goes, an object such as
+a `UUID` where its text goes, `NaN` or an infinity. The one exception is a
+selector, which as a dict key may also be an `int`, a `UUID` or the tuple of
+a composite key's parts. A patch written in Python is JSON too: `None`
+unsets a field, not `MISSING`, and a model is given as its JSON-mode dump
+(`model_dump(mode="json")`), not as the object. `apply` merges a copy of the
+patch, so the state shares no object with it: the same patch can be applied
+to another state, or changed, afterwards.
 
 The `segments` lists have rules of their own:
 
