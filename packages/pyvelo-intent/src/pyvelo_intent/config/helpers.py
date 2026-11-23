@@ -101,6 +101,7 @@ def confirm_save(
         return True
     try:
         response = input(f"{message} [y/N]: ").strip().lower()
-    except EOFError:
+    except (EOFError, RuntimeError):
+        # The input ended, or the process has no stdin (``sys.stdin`` is None).
         return False
     return response in ("y", "yes")

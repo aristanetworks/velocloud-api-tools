@@ -118,6 +118,11 @@ def test_confirm_save_without_input_is_not_confirmed(monkeypatch: pytest.MonkeyP
     assert confirm_save() is False
 
 
+def test_confirm_save_with_no_stdin_is_not_confirmed(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr("sys.stdin", None)  # a process started with no stdin
+    assert confirm_save() is False
+
+
 def test_confirm_save_takes_only_a_bool_for_auto_yes(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr("sys.stdin", io.StringIO("n\n"))
     assert confirm_save(auto_yes=True) is True
