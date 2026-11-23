@@ -377,13 +377,12 @@ def _null_value(field_info: FieldInfo, name: str, path: Path, *, built: bool) ->
         return None
     if takes_missing:
         return MISSING
-    remedy = (
-        "leave the key out" if built else "a change cannot unset it: give it a value"
+    reason, remedy = (
+        ("the field cannot be unset", "leave the key out")
+        if built
+        else ("a change cannot unset it", "give a value, or leave the key out")
     )
-    raise PatchError(
-        f"null cannot unset {name}: its type takes neither MISSING nor None; " + remedy,
-        path,
-    )
+    raise PatchError(f"null is not a value of {name}, and {reason}: {remedy}", path)
 
 
 _FIELD_VALIDATOR_MARKERS = {
@@ -1640,8 +1639,8 @@ def _resolve_items(
                 added[form] = where
         elif new_only:
             raise PatchError(
-                f"{op.kind} in a list the patch builds: nothing exists yet to "
-                + "name; write add() entries or a list value",
+                f"a {op.kind} in a list the patch builds has nothing to name: "
+                + 'write {"_op": "add", ...} entries (add(...)) or a list value',
                 where,
             )
         else:
@@ -1727,14 +1726,16 @@ def _check_add(
             )
         if not is_new(selector):
             raise PatchError(
-                'add() in a list named by position takes "+" or "+tag" as its selector',
+                "a new item of a list named by position goes under "
+                + '"+" or "+tag": write {"+": {"_op": "add", ...}} ("+": add(...))',
                 where,
             )
         return _new_item(spec.item_type, _body(op), resolvers, where, context)
     if selection.position is not None:
         raise PatchError(
-            "at(n) names an item that exists: add() takes a "
-            + ("key" if spec.kind == "keyed" else "value"),
+            '"#n" (at(n)) names an item that exists: an add takes a '
+            + ("key" if spec.kind == "keyed" else "value")
+            + " as its selector",
             where,
         )
     if spec.kind == "keyed":
@@ -1754,7 +1755,11 @@ def _check_add(
             where,
         )
     if op.body:
-        raise PatchError("add() in a list of values takes no body", where)
+        raise PatchError(
+            "an add in a list of values takes no fields: "
+            + 'write {"_op": "add"} (add()) under the value',
+            where,
+        )
     assert spec.element is not None
     try:
         new = spec.element.validate_python(selector, context={"patch": True})
@@ -1836,7 +1841,7 @@ def _check_keyed_add(
         if not from_body and given is not None and str(given) != str(part):
             raise PatchError(
                 f"the body gives {key_path} {str(given)!r}, and the selector "
-                + f"{_show_key(key)}: add() takes the key from its selector",
+                + f"{_show_key(key)}: an add takes the key from its selector",
                 where,
             )
     return _new_keyed_item(spec, item_type, _body(op), key, resolvers, where, context)
@@ -1847,7 +1852,8 @@ def _check_change(spec: _ListSpec, where: Path) -> None:
     if spec.item_type is None:
         raise PatchError(
             "an entry of a list of values has no fields to change: "
-            + "add() or delete() it, or give a list value",
+            + 'add it with {"_op": "add"} (add()), '
+            + 'remove it with {"_op": "delete"} (delete()), or give a list value',
             where,
         )
 
@@ -1875,15 +1881,21 @@ def _named_item(
             where,
         )
     if spec.kind in ("positional", "undeclared"):
-        hint = "; a new item is written with add()" if is_new(selector) else ""
+        hint = (
+            '; a new item is written {"+": {"_op": "add", ...}} ("+": add(...))'
+            if is_new(selector)
+            else ""
+        )
         raise PatchError(
             f"{str(selector)!r} is not a position: the items of this list are "
-            + f"named by at(n){hint}",
+            + f'named by "#n" (at(n)){hint}',
             where,
         )
     if selection.new:
         raise PatchError(
-            f"{str(selector)!r} names a new item: only add() takes it", where
+            f"{str(selector)!r} names a new item, which only "
+            + '{"_op": "add", ...} (add(...)) takes',
+            where,
         )
     if spec.kind != "keyed":
         message = f"no item has the entry {selection.key!r}"
@@ -1916,7 +1928,7 @@ def _named_item(
             )
             message = f"no item has the {what} {shown}"
     if op.kind == "change":
-        message += "; to add one, write add(...)"
+        message += '; to add one, write {"_op": "add", ...} under that key (add(...))'
     raise PatchError(message, where)
 
 
@@ -2047,7 +2059,9 @@ def _merge_map(
         where = path.child(Key(text))
         op = parse_item_op(value, where)
         if op.place is not None:
-            raise PatchError("a map has no order: no move() and no _position", where)
+            raise PatchError(
+                'a map has no order: it takes no "_position" (move(...))', where
+            )
         if op.kind == "add":
             if text not in keys and (
                 position_of(selector) is not None or is_new(selector)
@@ -2065,8 +2079,8 @@ def _merge_map(
                 raise PatchError(f"{text!r} is already in the map", where)
         elif new_only:
             raise PatchError(
-                f"{op.kind} in a map the patch builds: nothing exists yet to name; "
-                + "write add() entries",
+                f"a {op.kind} in a map the patch builds has nothing to name: "
+                + 'write {"_op": "add", ...} entries (add(...))',
                 where,
             )
         elif text not in keys:
@@ -2074,7 +2088,11 @@ def _merge_map(
                 "a map has no positions: name an entry by its key"
                 if position_of(selector) is not None
                 else f"no entry has the key {text!r}"
-                + ("; to add one, write add(...)" if op.kind == "change" else ""),
+                + (
+                    '; to add one, write {"_op": "add", ...} under that key (add(...))'
+                    if op.kind == "change"
+                    else ""
+                ),
                 where,
             )
         else:

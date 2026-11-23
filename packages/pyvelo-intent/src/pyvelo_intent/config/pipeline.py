@@ -898,7 +898,7 @@ def _prepare_segment(
     if op.kind == "add":
         raise PatchError(
             f"the edge has segment {name!r} by inheritance from its profile: "
-            + "write a plain object to change it, not add()",
+            + 'change it with a plain object, not {"_op": "add"} (add())',
             where,
         )
     if op.kind == "delete":

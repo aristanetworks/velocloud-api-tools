@@ -184,7 +184,7 @@ def _selector(value: object, path: Path) -> Selector:
         if all(isinstance(p, (str, int, float)) for p in parts):
             return tuple(parts)
     raise PatchError(
-        f"{value!r} is not a selector: write a key, a value, at(n) "
+        f'{value!r} is not a selector: write a key, a value, "#n" (at(n)) '
         "or a list of key parts",
         path,
     )
@@ -227,7 +227,9 @@ def parse_item_op(value: object, path: Path) -> ItemOp:
     given as a JSON array of key parts comes back as a tuple.
     """
     if value is None:
-        raise PatchError("null does not delete an item; write delete()", path)
+        raise PatchError(
+            'null does not delete an item; write {"_op": "delete"} (delete())', path
+        )
     if not isinstance(value, dict):
         raise PatchError(
             f"an item operation is an object, not {type(value).__name__}", path
@@ -244,7 +246,7 @@ def parse_item_op(value: object, path: Path) -> ItemOp:
         )
     if op == "delete":
         if fields or has_position:
-            raise PatchError("delete() takes nothing else", path)
+            raise PatchError('{"_op": "delete"} (delete()) takes no other key', path)
         return ItemOp("delete", {}, None)
     place = _parse_place(position, path) if has_position else None
     if op == "add":
