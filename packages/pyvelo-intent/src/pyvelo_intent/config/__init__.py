@@ -5,6 +5,7 @@ from pyvelo.client.enums.configuration import ConfigurationModuleName
 from .helpers import confirm_save, load_config
 from .pipeline import ConfigPipeline, build_default_pipeline
 from .state import (
+    ConfigPlan,
     ConfigState,
     SaveProgress,
     SaveResult,
@@ -14,6 +15,7 @@ from .state import (
 
 __all__ = [
     "ConfigPipeline",
+    "ConfigPlan",
     "ConfigState",
     "ConfigurationModuleName",
     "SaveProgress",

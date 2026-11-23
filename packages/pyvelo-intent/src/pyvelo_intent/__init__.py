@@ -3,14 +3,18 @@
 from pyvelo.client.exceptions import (
     ConfigConflictError,
     DetachedObjectError,
+    LossyFieldError,
     ModuleWriteError,
     WriteNotAppliedError,
     WriteOutcomeUnknownError,
 )
 from pyvelo.core import PatchError, add, at, delete, move
+from pyvelo.core.identity import ResolutionError
+from pyvelo.core.response_check import PlannedChange, ServerChange
 
 from pyvelo_intent.config import (
     ConfigPipeline,
+    ConfigPlan,
     ConfigState,
     SaveProgress,
     SaveResult,
@@ -44,19 +48,24 @@ __all__ = [
     "ConfigConflictError",
     "ConfigInputError",
     "ConfigPipeline",
+    "ConfigPlan",
     "ConfigState",
     "DetachedObjectError",
     "DiffResult",
     "FieldChange",
     "IntentError",
     "LayerNotSavedError",
+    "LossyFieldError",
     "Modified",
     "ModuleWriteError",
     "PatchError",
+    "PlannedChange",
     "Removed",
+    "ResolutionError",
     "SaveProgress",
     "SaveResult",
     "SaveValidationError",
+    "ServerChange",
     "Unchanged",
     "UnknownRegistryEntryError",
     "ValidationWarning",

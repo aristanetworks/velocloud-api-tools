@@ -1,9 +1,12 @@
 """VcoModel base class, field declaration toolkit, and API types.
 
-This package is split into three submodules:
+This package is split into these submodules:
 - base: VcoModel base class, serialization, and API types
 - fields: Field declaration markers, validators, and helpers
 - identity: NewType ID aliases and identity dataclasses
+- patch: the patch helpers (add, delete, move, at) and PatchError
+- merge: applying a patch to a model, and selecting items of a list
+- rebase: the path and key types that locate a change
 
 All public symbols are re-exported here for backwards compatibility.
 """
@@ -22,6 +25,7 @@ from .base import (
     JsonRpcError,
     JsonRpcRequest,
     JsonRpcResponse,
+    ListKind,
     PaginatedResult,
     PaginatedVcoModel,
     PaginationMetadata,
@@ -30,6 +34,7 @@ from .base import (
     VcoModel,
     VcoTimestamp,
     check_time_is_never,
+    list_kind,
     missing_or,
     value_or,
 )
@@ -57,10 +62,12 @@ from .fields import (
     Resolvable,
     ServerOwned,
     get_key_spec,
+    get_name_of,
     get_normalizer,
     get_resolvable,
     has_override_flag,
     is_edge_local,
+    is_positional,
     is_server_owned,
 )
 from .identity import (
@@ -101,7 +108,9 @@ from .identity import (
     ServiceGroupLogicalId,
     ServiceGroupName,
 )
-from .patch import PatchError, add, at, delete, move
+from .merge import nest_patch, select_items
+from .patch import PatchError, add, at, delete, move, position_of
+from .rebase import Key, Path, item_key_text, key_text
 
 __all__ = [
     "AddressGroupId",
@@ -141,6 +150,7 @@ __all__ = [
     "JsonRpcError",
     "JsonRpcRequest",
     "JsonRpcResponse",
+    "Key",
     "KeyField",
     "KeySpec",
     "LicenseId",
@@ -152,6 +162,7 @@ __all__ = [
     "LinkInternalId",
     "LinkLogicalId",
     "LinkName",
+    "ListKind",
     "NameOf",
     "NoneIsFalse",
     "NoneIsMissing",
@@ -163,6 +174,7 @@ __all__ = [
     "PaginatedVcoModel",
     "PaginationMetadata",
     "PatchError",
+    "Path",
     "Positional",
     "ProfileId",
     "ProfileIdentity",
@@ -188,12 +200,20 @@ __all__ = [
     "check_time_is_never",
     "delete",
     "get_key_spec",
+    "get_name_of",
     "get_normalizer",
     "get_resolvable",
     "has_override_flag",
     "is_edge_local",
+    "is_positional",
     "is_server_owned",
+    "item_key_text",
+    "key_text",
+    "list_kind",
     "missing_or",
     "move",
+    "nest_patch",
+    "position_of",
+    "select_items",
     "value_or",
 ]

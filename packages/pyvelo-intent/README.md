@@ -390,8 +390,9 @@ firewall: update
   edit made by assigning to the models is found later: `plan()`,
   `get_changed_modules()` and `save()` raise it, before anything is sent, until
   the assignment is changed to a value that can be written or the state is
-  loaded again. The message names the fields. `LossyFieldError` is importable
-  from `pyvelo.client.exceptions` (also from `pyvelo.client` and `pyvelo`).
+  loaded again. The message names the fields. `LossyFieldError` is exported by
+  `pyvelo_intent` (and by `pyvelo`, `pyvelo.client` and
+  `pyvelo.client.exceptions`).
 - Names resolve on an exact or case-insensitive match; a near miss raises with
   suggestions. A segment selector such as `guest` names the segment `Guest`,
   for every operation (which of them a `segments` list takes is in "The patch
@@ -524,11 +525,12 @@ at `left_out` when a save follows one that failed.
 | `redo_patch(include_clashes=False)` | the patch that redoes the lost edits on `module`, for `apply(state, module=error.module_name, patch=...)` |
 | `not_redone(include_clashes=False)` | the lost edits that patch leaves out |
 
-The entries are `PlannedChange` and `ServerChange`, from
-`pyvelo.core.response_check`. The message lists them by path. A path uses the
-VCO's names for fields. `change.python_path(type(data))`, with `data` the
-module's data (`state.module("firewall").data`), gives the same path in the
-names a patch is written in. Here, a change to a rule's port and a new rule are
+The entries are `PlannedChange` and `ServerChange`, which `pyvelo_intent`
+exports (they are defined in `pyvelo.core.response_check`). The message lists
+them by path. A path uses the VCO's names for fields.
+`change.python_path(type(data))`, with `data` the module's data
+(`state.module("firewall").data`), gives the same path in the names a patch is
+written in. Here, a change to a rule's port and a new rule are
 refused, and another writer had changed the same port and another key:
 
 ```text
@@ -717,7 +719,7 @@ Known limits:
 
 | Module | What it provides |
 |---|---|
-| `pyvelo_intent` | Re-exports the public surface: `ConfigPipeline`, `ConfigState`, `SaveResult`, `SaveProgress` and `save_progress`, the patch helpers (`add`, `delete`, `move`, `at`) and `PatchError`, diff types (`DiffResult`, `Added`, `Removed`, `Modified`, `Unchanged`, `FieldChange`), the intent error types, the write errors `ModuleWriteError` (the base of the next three), `ConfigConflictError`, `WriteNotAppliedError`, `WriteOutcomeUnknownError` and `DetachedObjectError` (from `pyvelo.client.exceptions`), helpers (`build_default_pipeline`, `confirm_save`, `load_config`) |
+| `pyvelo_intent` | Re-exports the public surface: `ConfigPipeline`, `ConfigState`, `SaveResult`, `ConfigPlan`, the entries a save reports (`PlannedChange`, `ServerChange`), `SaveProgress` and `save_progress`, the patch helpers (`add`, `delete`, `move`, `at`) and `PatchError`, diff types (`DiffResult`, `Added`, `Removed`, `Modified`, `Unchanged`, `FieldChange`), the intent error types, the write errors `ModuleWriteError` (the base of the next three), `ConfigConflictError`, `WriteNotAppliedError`, `WriteOutcomeUnknownError` and `DetachedObjectError` (from `pyvelo.client.exceptions`), `LossyFieldError` and `ResolutionError`, helpers (`build_default_pipeline`, `confirm_save`, `load_config`) |
 | `pyvelo_intent.config.pipeline` | `ConfigPipeline` (load/load_profile → apply → save), `build_default_pipeline` |
 | `pyvelo_intent.config.state` | `ConfigState`, `StateLock`, `SaveResult`, `SaveProgress`, `save_progress`, `ConfigFieldChange`, `ValidationWarning` |
 | `pyvelo_intent.config.helpers` | `load_config` (a YAML file validated against a model; `ConfigInputError` for a file it cannot use, a key given twice included), `confirm_save` (a yes or no prompt, which prints the plan it is given: `confirm_save(plan=preview.plan)`) |
