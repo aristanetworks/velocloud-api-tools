@@ -6,6 +6,7 @@ checked here with no lab.
 """
 
 import ast
+import asyncio
 import contextlib
 import copy
 import inspect
@@ -1968,7 +1969,7 @@ async def test_an_interrupt_during_the_restore_is_held_until_it_is_done(
     assert list(backups.iterdir()) == []
 
 
-def test_interrupts_are_held_and_then_delivered():
+def test_interrupts_are_held_and_then_delivered(capsys: pytest.CaptureFixture[str]):
     seen: list[str] = []
     previous = signal.signal(signal.SIGINT, lambda *_: seen.append("delivered"))
     try:
@@ -1977,9 +1978,13 @@ def test_interrupts_are_held_and_then_delivered():
             signal.raise_signal(signal.SIGINT)
             assert seen == []
         assert seen == ["delivered"]
+        assert capsys.readouterr().err == (
+            "live suite: holding Ctrl-C until the module is put back\n"
+        )  # one line for two interrupts
         with live.interrupts_held():
             pass
         assert seen == ["delivered"]
+        assert capsys.readouterr().err == ""
     finally:
         _ = signal.signal(signal.SIGINT, previous)
 
@@ -2004,3 +2009,83 @@ async def test_another_module_in_place_of_the_one_found_is_left_alone(
     )
     assert fake.data(77)["added"] == 1
     assert "updateConfigurationModule" not in fake.methods()
+
+
+async def test_a_write_refused_for_its_data_leaves_what_the_run_last_saw(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    fake = lab_fake()
+    lab = await opened(fake, monkeypatch)
+    site = lab.profile_site(20, Name.QOS)
+    with pytest.raises(pytest.fail.Exception, match="changed outside this run"):
+        async with live.restoring(site):
+            await raise_limit(site, 2)
+            fake.store.other_writer(2, lambda row: row["data"].update(added=1))
+            fake.refused.add(2)  # a stated validation refusal stores nothing
+            with pytest.raises(live.DataRefused):
+                await raise_limit(site, 3)
+            fake.refused.discard(2)
+    assert fake.data(2)["added"] == 1
+    assert fake.data(2)["serviceRateLimit"]["value"] == 2
+    assert fake.methods().count("updateConfigurationModule") == 2  # none after it
+
+
+async def test_a_write_that_failed_before_it_was_sent_leaves_what_the_run_last_saw(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    fake = lab_fake()
+    lab = await opened(fake, monkeypatch)
+    site = lab.profile_site(20, Name.QOS)
+    with pytest.raises(pytest.fail.Exception, match="changed outside this run"):
+        async with live.restoring(site):
+            await raise_limit(site, 2)
+            fake.store.other_writer(2, lambda row: row["data"].update(added=1))
+            module = await site.read_present()
+            with monkeypatch.context() as patched:
+
+                async def unsendable(*_args: object, **_kwargs: object) -> None:
+                    raise RuntimeError("failed before anything was sent")
+
+                patched.setattr(site.client, "portal", unsendable)
+                with pytest.raises(RuntimeError):
+                    await live.write_data(site, module, module.raw_data)
+    assert fake.data(2)["added"] == 1
+    assert fake.methods().count("updateConfigurationModule") == 1
+
+
+async def test_a_write_cancelled_after_it_was_stored_is_not_blamed_on_anyone(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    fake = lab_fake()
+    lab = await opened(fake, monkeypatch)
+    site = lab.profile_site(20, Name.QOS)
+    stores = ModuleStore.__call__
+
+    def stores_then_cancels(
+        self: ModuleStore, request: httpx.Request
+    ) -> httpx.Response:
+        answer = stores(self, request)
+        if json.loads(request.content)["method"].endswith("updateConfigurationModule"):
+            raise asyncio.CancelledError
+        return answer
+
+    async with live.restoring(site):
+        with monkeypatch.context() as patched:
+            patched.setattr(ModuleStore, "__call__", stores_then_cancels)
+            with pytest.raises(asyncio.CancelledError):
+                await raise_limit(site, 2)
+        assert fake.data(2)["serviceRateLimit"]["value"] == 2
+    assert fake.data(2) == QOS
+
+
+async def test_a_delete_of_a_module_no_block_covers_names_its_type(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    fake = lab_fake()
+    fake.edges[5]["description"] = REPLACEABLE
+    lab = await opened(fake, monkeypatch)
+    site = lab.edge_site(lab.layouts[0], Name.QOS)
+    async with live.restoring(site):
+        with pytest.raises(live.WritesRefused, match="^a delete of a QOS module "):
+            await live.delete_module(site, 3)
+    assert 3 in fake.store.rows

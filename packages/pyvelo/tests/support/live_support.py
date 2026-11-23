@@ -648,6 +648,22 @@ def _states_errors(exc: VcoOperationError) -> bool:
     return isinstance(entries, list) and bool(entries)
 
 
+def _stored_nothing(exc: BaseException, unsent: bool) -> bool:
+    """Whether a write that raised *exc* is known to have stored nothing.
+
+    So it is where nothing was sent, where the version was refused, and where
+    the Orchestrator refused the data with errors it states. Any other failure,
+    a cancellation or an interrupt included, may have come after it stored.
+    """
+    if unsent or isinstance(exc, ConfigConflictError):
+        return True
+    return (
+        isinstance(exc, VcoOperationError)
+        and not isinstance(exc, WriteOutcomeUnknownError)
+        and _states_errors(exc)
+    )
+
+
 def _redacted(exc: VcoOperationError) -> VcoOperationError:
     """*exc* with each error code and field kept and no message; ``refusal_codes`` reads it as it reads *exc*.
 
@@ -853,6 +869,8 @@ class LiveRun:
     """The ID of each module a block's test inserted, with the block that was open for it."""
     deleted: set[int] = field(default_factory=lambda: set[int]())
     """The ID of each module this run deleted."""
+    sent: int = 0
+    """How many portal calls that are not reads the client has begun: a write that raised with this unchanged sent nothing."""
     seen: dict[int, object] = field(default_factory=lambda: dict[int, object]())
     """Each module's raw data as the Orchestrator last answered this run's write with, or ``_UNKNOWN``."""
 
@@ -918,7 +936,7 @@ class LiveRun:
         """Raise ``WritesRefused`` unless a block is on that module and *module_id* is one it found or inserted."""
         self.check_replace(configuration_id, name, "a delete")
         if not self._covers(module_id):
-            raise WritesRefused(f"a delete of a module {NOT_COVERED}")
+            raise WritesRefused(f"a delete of a {name} module {NOT_COVERED}")
 
 
 def require_writes(run: LiveRun) -> None:
@@ -970,12 +988,17 @@ _RUNS: weakref.WeakKeyDictionary[VcoClient, LiveRun] = weakref.WeakKeyDictionary
 
 
 def _checked_call(
-    original: Callable[..., Awaitable[Any]],
+    original: Callable[..., Awaitable[Any]], run: LiveRun
 ) -> Callable[..., Awaitable[Any]]:
-    """*original*, a portal method that takes the method string first, with ``check_call`` before it."""
+    """*original*, a portal method that takes the method string first, with ``check_call`` before it.
+
+    A write that passes is counted in ``run.sent``.
+    """
 
     async def checked(method: str, *args: Any, **kwargs: Any) -> Any:
         check_call(method)
+        if not _READ.match(method.rsplit("/", 1)[-1]):
+            run.sent += 1
         return await original(method, *args, **kwargs)
 
     return checked
@@ -1011,12 +1034,19 @@ def run_of(client: VcoClient) -> LiveRun:
     ) -> AnyConfigurationModule | None:
         module_id = request.configuration_module_id
         run.check_update(module_id)
+        had, prior, sent = module_id in run.seen, run.seen.get(module_id), run.sent
+        # From the send on, what the Orchestrator holds is not known: the write
+        # may be stored whatever happens to the answer, an interrupt included.
+        run.seen[module_id] = _UNKNOWN
         try:
             with _sends("configuration/updateConfigurationModule"):
                 stored = await update(request, level=level)
-        except Exception as exc:
-            if not isinstance(exc, ConfigConflictError):
-                run.seen[module_id] = _UNKNOWN  # it may have been stored
+        except BaseException as exc:
+            if _stored_nothing(exc, run.sent == sent):
+                if had:
+                    run.seen[module_id] = prior
+                else:
+                    del run.seen[module_id]
             if isinstance(exc, VcoOperationError):
                 raise _redacted(exc) from None
             raise
@@ -1059,7 +1089,7 @@ def run_of(client: VcoClient) -> LiveRun:
     attributes["insert_configuration_module"] = guarded_insert
     attributes["portal_paginated"] = guarded_paginated
     for name in ("portal", "portal_list", "portal_paginated_list"):
-        attributes[name] = _checked_call(getattr(client, name))
+        attributes[name] = _checked_call(getattr(client, name), run)
     return run
 
 
@@ -1548,6 +1578,11 @@ def interrupts_held() -> Generator[None]:
 
     def note(_signal: int, _frame: object) -> None:
         nonlocal noted
+        if not noted:
+            print(
+                "live suite: holding Ctrl-C until the module is put back",
+                file=sys.stderr,
+            )
         noted = True
 
     previous = signal.signal(signal.SIGINT, note)
