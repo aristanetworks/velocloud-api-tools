@@ -2372,6 +2372,8 @@ async def test_assign_a_segment_and_read_it_back(
         state = await pipeline.load_profile(
             target.profile_id, enterprise_id=lab.enterprise_id
         )
+        writes.updates.clear()  # the preflight writes were not the save under test
+        writes.inserts.clear()
         _ = await pipeline.assign_segment(state, target.segment.name)
         planned = {plan.name for plan in state.plan().changed}
         check(
@@ -2464,6 +2466,8 @@ async def test_record_versions_around_the_device_settings_write(
             )
             for name in later
         }
+        writes.updates.clear()  # the preflight writes were not the save under test
+        writes.inserts.clear()
         _ = await pipeline.assign_segment(state, target.segment.name)
         _ = await _save(pipeline, state)
 
