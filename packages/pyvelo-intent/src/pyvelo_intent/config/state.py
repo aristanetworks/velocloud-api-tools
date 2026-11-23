@@ -810,7 +810,10 @@ class ConfigState:
         entry whose ``moves`` say which items change place. A provider set,
         replaced or cleared is one entry at the provider's field, with the
         logical ID of the service before and after, or None; a provider
-        replaced is one entry, not a removal and an addition.
+        replaced is one entry, not a removal and an addition. When the
+        provider's stub had no ``ref``, setting a provider also writes the
+        stub's ``ref``, and that is an entry of its own, before the
+        provider's.
         """
         wanted = None if module_name is None else resolve_module_name(module_name)
         changes: list[ConfigFieldChange] = []

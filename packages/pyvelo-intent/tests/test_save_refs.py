@@ -9,6 +9,7 @@ import uuid
 from typing import Any, cast
 
 import pytest
+from pydantic import MISSING
 from pyvelo.client.exceptions import DetachedObjectError
 from pyvelo.client.models.configuration import DeviceSettingsData
 from pyvelo.client.models.configuration.device_settings.segment import (
@@ -361,14 +362,31 @@ async def test_field_changes_list_a_provider_change_at_its_path():
     assert state.get_field_changes() == []
 
 
-async def test_a_new_provider_is_listed_with_no_before():
+async def test_a_new_provider_on_a_stub_with_no_ref_lists_the_ref_it_writes():
     _, _, state = await loaded_profile()
     state.resolvers = await table_registry(DNS_A_SERVICE)
     primary_provider(state).service = uuid.UUID(DNS_A)
 
-    changes = {c.path: c for c in state.get_field_changes("device_settings")}
+    changes = state.get_field_changes("device_settings")
 
-    assert (changes[OWNER].before, changes[OWNER].after) == (None, DNS_A)
+    assert [(c.path, c.before, c.after) for c in changes] == [
+        (
+            Path.parse('segments["Global Segment"].dns.primary_provider.ref'),
+            MISSING,
+            PRIMARY,
+        ),
+        (OWNER, None, DNS_A),
+    ]
+
+
+async def test_a_provider_on_a_stub_that_has_a_ref_is_one_change():
+    _, _, state = await loaded_profile(DNS_A)
+    state.resolvers = await table_registry(DNS_A_SERVICE, DNS_B_SERVICE)
+    primary_provider(state).service = uuid.UUID(DNS_B)
+
+    changes = state.get_field_changes("device_settings")
+
+    assert [(c.path, c.before, c.after) for c in changes] == [(OWNER, DNS_A, DNS_B)]
 
 
 def edge_state() -> ConfigState:

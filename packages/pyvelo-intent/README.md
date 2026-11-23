@@ -410,7 +410,10 @@ table is loaded; `await pipeline.load_resolvers(state, NetworkServiceIdentity)`
 `get_field_changes()` lists a provider that is set, replaced or cleared as one
 change at the provider's field
 (`segments["Global Segment"].dns.primary_provider.service`), with the service's
-logical ID before and after, or `None`. A provider edit on the layer a state
+logical ID before and after, or `None`. When the provider's stub had no `ref`,
+setting a provider also writes the stub's `ref` into the data, and that is its
+own change in the list (`...dns.primary_provider.ref`), before the provider's.
+A provider edit on the layer a state
 does not save (the profile layer of an edge state) raises `LayerNotSavedError`
 like any other edit there, and one made while its module is being written
 raises `DetachedObjectError` after the write.
