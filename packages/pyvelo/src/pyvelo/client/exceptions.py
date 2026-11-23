@@ -22,7 +22,6 @@ from pyvelo.core.rebase import (
     Path,
     RawChange,
     item_parts,
-    item_text,
     node_child,
 )
 from pyvelo.core.response_check import PlannedChange, ServerChange
@@ -553,7 +552,6 @@ class ModuleWriteError(VcoError):
         """The patch that redoes the lost edits, and the lost edits it leaves out."""
         plan, module = self.plan, self.module
         data: object = None if module is None else getattr(module, "data", None)
-        stored_data: object = MISSING if module is None else module.raw_data
         if plan is None or not isinstance(data, VcoModel):
             return {}, self.lost_edits
         stored_parts = dict(self.stored_parts)
@@ -605,8 +603,12 @@ class ModuleWriteError(VcoError):
                 and edit.intended is not MISSING
             ]
             value = _provider_value([*edits, *stored_adds])
-            if value is MISSING or not _set_provider(
-                patch, data, stored_data, stored_parts, path, value
+            if (
+                value is MISSING
+                or module is None
+                or not _set_provider(
+                    patch, data, module, plan, stored_parts, edits, value
+                )
             ):
                 left_out.update(id(edit) for edit in edits)
         return patch, tuple(edit for edit in self.lost_edits if id(edit) in left_out)
@@ -664,36 +666,95 @@ def _provider_value(edits: Sequence[PlannedChange]) -> object:
     return added
 
 
+_SEGMENT_REF: Final = "deviceSettings:segment"
+"""The ref name of a segment's row; ``ref_owners.SEGMENT_REF``, which this module cannot import (a cycle)."""
+
+
+def _json_objects(value: object) -> list[dict[str, object]]:
+    """The objects of *value*, a list or one object; none for anything else."""
+    items = value if isinstance(value, list) else [value]
+    return [
+        cast("dict[str, object]", item)
+        for item in cast("list[object]", items)
+        if isinstance(item, dict)
+    ]
+
+
+def _json_field(value: object, *names: str) -> object:
+    """The value at *names* below *value*, None where a step is not an object or is absent."""
+    for name in names:
+        if not isinstance(value, dict):
+            return None
+        value = cast("dict[str, object]", value).get(name)
+    return value
+
+
+def _same_logical_id(left: object, right: object) -> bool:
+    return (
+        isinstance(left, str)
+        and isinstance(right, str)
+        and (left.lower() == right.lower())
+    )
+
+
 def _stored_segment(
     data: VcoModel,
-    stored_data: object,
+    module: ConfigurationModuleBase,
+    plan: ModulePlan,
     stored_parts: Mapping[Path, ItemPart],
     item: ItemPart,
+    object_ids: Sequence[int],
 ) -> ItemPart | None:
-    """The part that names the segment *item* names in the ``segments`` of *stored_data*, the module's JSON as stored, or None.
+    """The part that names, in the ``segments`` of *module* as stored, the segment the edits were made to; None when it cannot be proved.
 
-    The check records it for an item it walked. Else a segment named by its key
-    is the one of the stored list with that key, when the key is its alone.
+    The check records it for an item it walked (a data edit in the segment).
+    Otherwise the segment is found by identity, never by name: another segment
+    may have taken the name. A stored entry is the segment when its
+    ``segmentId`` is that of the stored ``deviceSettings:segment`` row whose
+    ``enterpriseObjectId`` is one of *object_ids* (the ``segmentObjectId`` of
+    the refs entries). When that row has no ``segmentId``, its ``segmentLogicalId``
+    is the row's ``logicalId``; with no such row, it is that of the plan's
+    segment named *item*. Exactly one entry must match, and a key must name it
+    alone.
     """
     found = stored_parts.get(Path(("segments", item)))
-    if found is not None or not isinstance(item, Key):
+    if found is not None:
         return found
     node = node_child(type(data), "segments")
-    items: object = (
-        cast("dict[str, object]", stored_data).get("segments")
-        if isinstance(stored_data, dict)
-        else None
-    )
-    if not isinstance(node, KeyedList) or not is_list(items):
+    stored = _json_field(module.raw_data, "segments")
+    if not isinstance(node, KeyedList) or not is_list(stored):
         return None
-    return next(
-        (
+    rows = [
+        row
+        for row in _json_objects(_json_field(module.raw_refs, _SEGMENT_REF))
+        if row.get("enterpriseObjectId") in object_ids
+    ]
+    by_id = {_json_field(row, "data", "segmentId") for row in rows} - {None}
+    if by_id:
+        matches = [
             part
-            for part in item_parts(items, node)
-            if item_text(part) == item_text(item)
-        ),
-        None,
-    )
+            for part, entry in zip(item_parts(stored, node), stored)
+            if _json_field(entry, "segment", "segmentId") in by_id
+        ]
+    else:
+        logical_ids = [row.get("logicalId") for row in rows]
+        if not rows and isinstance(item, Key):
+            logical_ids = [
+                _json_field(entry, "segment", "segmentLogicalId")
+                for entry in _json_objects(_json_field(plan.data, "segments"))
+                if _json_field(entry, "segment", "name") == item.value
+            ]
+        matches = [
+            part
+            for part, entry in zip(item_parts(stored, node), stored)
+            if any(
+                _same_logical_id(
+                    _json_field(entry, "segment", "segmentLogicalId"), known
+                )
+                for known in logical_ids
+            )
+        ]
+    return matches[0] if len(matches) == 1 and isinstance(matches[0], Key) else None
 
 
 def _field_spellings(
@@ -714,25 +775,36 @@ def _field_spellings(
 def _set_provider(
     patch: dict[str, object],
     data: VcoModel,
-    stored_data: object,
+    module: ConfigurationModuleBase,
+    plan: ModulePlan,
     stored_parts: Mapping[Path, ItemPart],
-    owner: Path,
+    edits: Sequence[PlannedChange],
     value: object,
 ) -> bool:
-    """Set the ``RefOnly`` field at *owner* to *value* in *patch*, in the segment as the stored list names it; False when the patch has no place for it.
+    """Set the ``RefOnly`` field the refs entries *edits* go with to *value* in *patch*, in the segment as the stored module names it; False when the patch has no place for it.
 
-    *owner* is ``segments[<segment>].<fields>`` in python names, and a
+    The owner is ``segments[<segment>].<fields>`` in python names, and a
     ``RefOnly`` field is not in a raw dump, so the path is built from its parts.
     Each field is written by its wire name, unless the patch already has the
     object under its python name: ``merge_patch`` refuses both for one field.
     The segment's object is the one a data entry of the patch has, if any.
     """
+    owner = cast(Path, edits[0].owner)
+    object_ids = [
+        key.value[1]
+        for edit in edits
+        for key in [edit.path.parts[-1]]
+        if isinstance(key, Key)
+        and isinstance(key.value, tuple)
+        and len(key.value) == 2
+        and isinstance(key.value[1], int)
+    ]
     segment, *names = owner.parts[1:]
     if isinstance(segment, str) or not all(isinstance(name, str) for name in names):
         return False
     models = field_models(type(data).model_fields["segments"])
     fields = _field_spellings(models, cast("list[str]", names))
-    part = _stored_segment(data, stored_data, stored_parts, segment)
+    part = _stored_segment(data, module, plan, stored_parts, segment, object_ids)
     if fields is None or part is None:
         return False
     node = _child(patch, ("segments",))
@@ -995,8 +1067,8 @@ class RefsDroppedError(WriteNotAppliedError):
         owners = [edit for edit in self.lost_edits if edit.owner is not None]
         if owners:
             lines.append(
-                "  error.redo_patch() builds these patches with the service "
-                "filled in, for each field whose segment error.module has:"
+                "  error.redo_patch() builds these patches with the real value "
+                "(null for a clear), for each field whose segment error.module has:"
             )
         for edit in _first(owners, limit):
             owner = cast(Path, edit.owner)

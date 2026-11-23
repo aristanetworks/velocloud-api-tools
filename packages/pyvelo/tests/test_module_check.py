@@ -1091,7 +1091,7 @@ async def test_a_provider_row_the_vco_skipped_is_refs_dropped(
         "`error.not_redone()` lists the rest):"
     ) in message
     assert (
-        "error.redo_patch() builds these patches with the service filled in"
+        "error.redo_patch() builds these patches with the real value (null for a clear)"
     ) in message
 
 
@@ -1597,6 +1597,67 @@ async def test_a_provider_is_set_under_the_spelling_a_data_entry_used():
     }
     assert isinstance(error.module, DeviceSettingsConfigurationModule)
     _ = error.module.data.merge_patch(patch)  # one spelling per field: no refusal
+
+
+OTHER_SEGMENT = "99999999-9999-4999-8999-999999999999"
+
+
+async def lost_provider_beside_ntp(
+    stored_segments: list[dict[str, Any]], *, refs: object = MISSING
+) -> WriteNotAppliedError:
+    """The error of a write that sets a primary provider and ``ntp``, over a module as stored that holds ``ntp`` and the *stored_segments*, with the module's refs unless *refs* is given.
+
+    No data edit is made in a segment, so the check records no stored part for
+    the segment and the redo has to find it by identity.
+    """
+    module = unset_provider_module()
+    current = copy_of_data(module)
+    set_primary_provider(current, uuid.UUID(DNS_A))
+    _ = current.merge_patch({"ntp": {"enabled": True}})
+    plan = plan_module(module, current, resolvers=await table_registry(DNS_A_IDENTITY))
+    raw = {**cast(dict[str, Any], module.raw_data), "ntp": plan.data["ntp"]}
+    raw["segments"] = stored_segments
+    with pytest.raises(WriteNotAppliedError) as caught:
+        _ = check_module_write(module, plan, as_stored(module, raw, refs=refs))
+    assert caught.value.stored_parts == {}
+    return caught.value
+
+
+async def test_a_provider_is_not_set_on_another_segment_that_took_the_name():
+    error = await lost_provider_beside_ntp(
+        [
+            segment_entry(0, "Voice", SEG0, dns=dns(primary=True)),
+            segment_entry(77, "Global Segment", OTHER_SEGMENT, dns=dns(primary=True)),
+        ]
+    )
+    assert error.redo_patch() == {
+        "segments": {"Voice": {"dns": {"primaryProvider": {"service": DNS_A}}}}
+    }
+    assert error.not_redone() == ()
+
+
+async def test_a_provider_is_not_redone_when_no_stored_segment_is_the_one_edited():
+    error = await lost_provider_beside_ntp(
+        [segment_entry(77, "Global Segment", OTHER_SEGMENT, dns=dns(primary=True))]
+    )
+    assert [c.part for c in error.not_redone()] == ["refs"]
+    assert error.redo_patch() == {}
+
+
+async def test_a_segment_with_no_stored_row_is_found_by_its_logical_id():
+    segments = [
+        segment_entry(0, "Voice", SEG0, dns=dns(primary=True)),
+        segment_entry(77, "Global Segment", OTHER_SEGMENT, dns=dns(primary=True)),
+    ]
+    no_rows: dict[str, Any] = {}
+    error = await lost_provider_beside_ntp(segments, refs=no_rows)
+    assert error.redo_patch() == {
+        "segments": {"Voice": {"dns": {"primaryProvider": {"service": DNS_A}}}}
+    }
+    nothing_alike = [segment_entry(77, "Global Segment", OTHER_SEGMENT)]
+    error = await lost_provider_beside_ntp(nothing_alike, refs=no_rows)
+    assert PRIMARY_OWNER in {str(c.owner) for c in error.not_redone()}
+    assert error.redo_patch() == {}
 
 
 async def test_a_refs_entry_with_no_owner_is_not_redone():
