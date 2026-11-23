@@ -11,7 +11,7 @@ import difflib
 import functools
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Annotated, Literal, cast, get_args, get_origin
+from typing import Annotated, Literal, LiteralString, cast, get_args, get_origin
 
 from pydantic import (
     MISSING,
@@ -26,7 +26,7 @@ from pydantic import (
     WrapValidator,
 )
 from pydantic.fields import FieldInfo
-from pydantic_core import PydanticUndefined
+from pydantic_core import InitErrorDetails, PydanticCustomError, PydanticUndefined
 
 from .base import (
     IdentityResolver,
@@ -450,7 +450,7 @@ def _validate_field(
     except ValidationError as exc:
         raise _invalid_value(
             exc, field_models(model_cls.model_fields[name]), path
-        ) from exc
+        ) from _without_input(exc)
     _refuse_bool_as_number(value, validated, path)
     return validated
 
@@ -545,6 +545,31 @@ def _validation_lines(exc: ValidationError, models: Sequence[type[VcoModel]]) ->
     return "; ".join(lines)
 
 
+def _without_input(exc: ValidationError) -> ValidationError:
+    """*exc* as an error whose text quotes no input value; ``errors()`` still holds them.
+
+    Pydantic reads ``hide_input_in_errors`` from the outermost validator, which
+    for a field typed as one model is a validator without the model's config. An
+    error chained under a ``PatchError`` is rebuilt here, so no place that
+    validates a patch value has to get that right.
+    """
+    details: list[InitErrorDetails] = []
+    for error in exc.errors(include_url=False):
+        detail = InitErrorDetails(
+            type=error["type"], loc=error["loc"], input=error["input"]
+        )
+        if "ctx" in error:
+            detail["ctx"] = error["ctx"]
+        try:
+            _ = ValidationError.from_exception_data("", [detail])
+        except KeyError:  # an error type of a validator of ours, not pydantic's
+            detail["type"] = PydanticCustomError(
+                cast(LiteralString, error["type"]), cast(LiteralString, error["msg"])
+            )
+        details.append(detail)
+    return ValidationError.from_exception_data(exc.title, details, hide_input=True)
+
+
 def _invalid_value(
     exc: ValidationError, models: Sequence[type[VcoModel]], path: Path
 ) -> PatchError:
@@ -574,7 +599,7 @@ def _check_merged(model: VcoModel, validate: Callable[..., object], path: Path) 
         raise PatchError(
             f"{name} is not valid after this change: {_validation_lines(exc, (type(model),))}",
             path,
-        ) from exc
+        ) from _without_input(exc)
     except Exception as exc:
         raise PatchError(
             f"a validator of {name} failed on the changed model with "
@@ -607,7 +632,7 @@ def _new_model_from_patch(
         try:
             built = model_type.model_validate(data, context={"patch": True})
         except ValidationError as exc:
-            raise _invalid_value(exc, (model_type,), path) from exc
+            raise _invalid_value(exc, (model_type,), path) from _without_input(exc)
         _refuse_unread_keys(built, data, path)
         return built
     _merge_model(instance, patch, resolvers, path, built=True)
@@ -816,7 +841,7 @@ def _new_item(
     try:
         item = item_type.validate(item_input, context={"patch": True})
     except ValidationError as exc:
-        raise _invalid_value(exc, item_type.variants, path) from exc
+        raise _invalid_value(exc, item_type.variants, path) from _without_input(exc)
     _refuse_unread_keys(item, item_input, path)
     if context is not None:
         _ = item.for_context(context)
@@ -1928,7 +1953,7 @@ def _check_add(
     try:
         new = spec.element.validate_python(selector, context={"patch": True})
     except ValidationError as exc:
-        raise _invalid_value(exc, (), where) from exc
+        raise _invalid_value(exc, (), where) from _without_input(exc)
     if any(str(item) == str(new) for item in items):
         raise PatchError(f"{new!r} is already in the list{_CHANGE_IT_IN_LIST}", where)
     return new
@@ -2310,7 +2335,7 @@ def _new_map_key(spec: _ListSpec, text: str, where: Path) -> object:
     try:
         return spec.map_key.validate_python(text, context={"patch": True})
     except ValidationError as exc:
-        raise _invalid_value(exc, (), where) from exc
+        raise _invalid_value(exc, (), where) from _without_input(exc)
 
 
 def _body(op: ItemOp) -> dict[object, object]:

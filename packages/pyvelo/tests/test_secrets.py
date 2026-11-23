@@ -19,8 +19,11 @@ from pyvelo.client.schemas.configuration import (
     DeviceSettingsConfigurationModule,
     GetConfiguration,
 )
-from pyvelo.core import PatchError, VcoModel, list_kind
-from pyvelo.core.merge import _list_spec  # pyright: ignore[reportPrivateUsage]
+from pyvelo.core import DefaultingModel, PatchError, Path, VcoModel, list_kind
+from pyvelo.core.merge import (
+    _list_spec,  # pyright: ignore[reportPrivateUsage]
+    _validate_field,  # pyright: ignore[reportPrivateUsage]
+)
 from pyvelo.testing import ModuleStore, make_module_json, store_of
 
 from ._type_support import MockVcoClientFactory, require_present
@@ -174,8 +177,14 @@ class TaggedB(VcoModel):
     secret: str
 
 
+class Inner(VcoModel):
+    secret: str = "s"
+
+
 class Holder(VcoModel):
     name: str = "x"
+    inner: Inner = Field(default_factory=Inner)
+    defaulted: Annotated[Inner, DefaultingModel(Inner)] = Field(default_factory=Inner)
     tagged: list[Annotated[TaggedA | TaggedB, Discriminator("kind")]] = Field(
         default_factory=list
     )
@@ -200,7 +209,38 @@ def test_the_cause_of_a_patch_error_does_not_quote_the_patch(
         _ = Holder().merge_patch(patch)
     cause = exc.value.__cause__
     assert isinstance(cause, ValidationError)
-    assert "input_value" not in str(cause) and OLD not in str(cause)
+    for text in (str(cause), repr(cause)):
+        assert "input_value" not in text and OLD not in text
+
+
+@pytest.mark.parametrize("field", ["inner", "defaulted"])
+@pytest.mark.parametrize("wrap", [False, True])
+def test_a_field_typed_as_a_model_does_not_quote_a_value_that_is_not_one(
+    field: str, wrap: bool
+):
+    value: object = [OLD] if wrap else OLD
+    with pytest.raises(PatchError) as exc:
+        _ = Holder().merge_patch({field: value})
+    cause = exc.value.__cause__
+    assert isinstance(cause, ValidationError)
+    for text in (str(cause), repr(cause), str(exc.value)):
+        assert "input_value" not in text and OLD not in text
+    assert cause.errors()[0]["input"] == value
+
+
+def test_no_field_of_the_models_quotes_a_patch_value_in_the_cause_of_its_error():
+    """Give every field the module data classes reach a text that none of them accepts."""
+    refused = 0
+    for cls in reachable_classes():
+        for name in cls.model_fields:
+            try:
+                _ = _validate_field(cls, name, OLD, Path(()))
+            except PatchError as error:
+                cause = error.__cause__
+                assert isinstance(cause, ValidationError)
+                assert OLD not in f"{cause}{cause!r}", f"{cls.__name__}.{name}"
+                refused += 1
+    assert refused > 1000
 
 
 def test_every_list_field_still_builds_its_adapters():
