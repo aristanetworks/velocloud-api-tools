@@ -46,13 +46,21 @@ on, ``ConfigConflictError``. A VCO that ignores ``returnData`` answers
 Seen on the lab (first write-back run, 2026-11-22): the module row as stored,
 so the check is off and ``returnData`` is honoured; a stale save of the same
 value raised ``WriteNotAppliedError``, of another value ``ConfigConflictError``.
-Three tests record what no assertion can know in advance: the level a module
+Four tests record what no assertion can know in advance: the level a module
 of an edge comes back at after a refused save
 (``test_refused_edge_save_refreshes_the_state``), what the Orchestrator stores
 for an IPv6 key sent in upper case (``test_an_ipv6_key_in_upper_case_is_recorded``,
 which needs a marked edge with an IPv6 static route of prefix 48 or longer to
-copy), and the read-back of an insert answered with an ID alone
-(``test_an_insert_answered_with_an_id_is_read_back``).
+copy), the read-back of an insert answered with an ID alone
+(``test_an_insert_answered_with_an_id_is_read_back``), and the shape of the ref
+rows the Orchestrator returns after a save that sends refs
+(``test_record_the_refs_a_write_returns``, which prints field names and counts
+and no value).
+
+The cases of section 14 (derived refs) write to a marked profile's deviceSettings
+module. The two that set a DNS provider need a marked profile whose Global
+Segment has a DNS section and no primary provider set, and a network service of
+type ``dns`` in the enterprise; each skips, saying which, where one is missing.
 
 Requires VCO_HOST and VCO_TOKEN (VCO_ENTERPRISE_ID if the token needs one), and
 to write, PYVELO_IT_WRITE_HOST and PYVELO_IT_WRITE_ENTERPRISE_ID: see
@@ -66,6 +74,7 @@ from __future__ import annotations
 
 import copy
 import uuid
+from collections import Counter
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from typing import Any, Literal, cast
@@ -88,6 +97,7 @@ from live_support import (
     describe,
     effective_data,
     expect,
+    failure_text,
     has_key,
     outcome,
     read_backs,
@@ -99,6 +109,7 @@ from live_support import (
     refusal_codes,
     refusal_form,
     restoring,
+    run_of,
     same_value,
     settle,
     synthetic_name,
@@ -126,6 +137,7 @@ from pyvelo.client.models.configuration import (
 from pyvelo.client.models.configuration.device_settings.segment import StaticRoute
 from pyvelo.client.models.configuration.qos.qoe import QoeSettings
 from pyvelo.client.models.configuration.qos.root import ServiceRateLimit
+from pyvelo.client.models.configuration.ref_owners import declared_ref_names
 from pyvelo.client.module_write import ModulePlan
 from pyvelo.client.schemas.configuration import (
     AnyConfigurationModule,
@@ -139,6 +151,10 @@ from pyvelo.client.schemas.configuration import (
     WanConfigurationModule,
 )
 from pyvelo.client.schemas.edge import GetEdgeConfigurationStack
+from pyvelo.client.schemas.enterprise import (
+    EnterpriseServiceSummary,
+    GetEnterpriseServices,
+)
 from pyvelo.core import ConfigContext, VcoModel
 from pyvelo.core.rebase import Key, Path, RawChange, raw_changes
 from pyvelo.core.response_check import (
@@ -1749,3 +1765,375 @@ async def test_an_insert_answered_with_an_id_is_read_back(
 
         await delete_module(site, stored.id_)
         check(await site.read() is None, "the inserted module is still there")
+
+
+# ---------------------------------------------------------------------------
+# 14. Derived refs: a provider set and cleared, a stale version, every row kept
+# ---------------------------------------------------------------------------
+
+PRIMARY_PROVIDER = "deviceSettings:dns:primaryProvider"
+SEGMENT_REF = "deviceSettings:segment"
+SENT_ROW_FIELDS = frozenset(
+    {"configurationId", "moduleId", "enterpriseObjectId", "ref"}
+)
+"""The fields of a new row (spec 5.15): a per-segment ref also has ``segmentObjectId``."""
+
+
+def _rows_named(refs: object, name: str) -> list[dict[str, Any]]:
+    """The rows of ref *name* in raw *refs*: the one object, or each of the list."""
+    if not isinstance(refs, dict):
+        return []
+    held = cast("dict[str, Any]", refs).get(name)
+    rows = cast("list[Any]", held) if isinstance(held, list) else [held]
+    return [cast("dict[str, Any]", row) for row in rows if isinstance(row, dict)]
+
+
+def _row_keys(refs: object) -> Counter[tuple[str, str, str]]:
+    """Each row of raw *refs* by ``(name, logicalId, segmentLogicalId)``: row IDs are re-issued on a write."""
+    keys: Counter[tuple[str, str, str]] = Counter()
+    if isinstance(refs, dict):
+        for name in cast("dict[str, Any]", refs):
+            for row in _rows_named(refs, name):
+                key = (
+                    name,
+                    str(row.get("logicalId")).lower(),
+                    str(row.get("segmentLogicalId")).lower(),
+                )
+                keys[key] += 1
+    return keys
+
+
+def _stable_refs(refs: object) -> dict[str, Any]:
+    """Raw *refs* without a client-connector ref, which carries a login token that is new on every read."""
+    if not isinstance(refs, dict):
+        return {}
+    return {
+        name: rows
+        for name, rows in cast("dict[str, Any]", refs).items()
+        if "clientConnector" not in name
+    }
+
+
+def _check_state_holds_stored(
+    label: str, state: ConfigState, stored: AnyConfigurationModule
+) -> None:
+    """After a save the state's module is the module as stored: the version, data and refs of a read made right after."""
+    held = state.module(Name.DEVICE_SETTINGS)
+    check_as_read(label, held, stored)
+    ours, theirs = _stable_refs(held.raw_refs), _stable_refs(stored.raw_refs)
+    differing = sorted(
+        name for name in {*ours, *theirs} if ours.get(name) != theirs.get(name)
+    )
+    check(
+        not differing,
+        f"{label}: the refs held differ from a read made right after, at "
+        f"{', '.join(differing)}",
+    )
+
+
+def _global_entry(raw: object) -> dict[str, Any] | None:
+    """The segment entry of the Global Segment in a module's raw data."""
+    if not isinstance(raw, dict):
+        return None
+    entries = cast("dict[str, Any]", raw).get("segments")
+    for entry in cast("list[Any]", entries) if isinstance(entries, list) else []:
+        if _segment_id(entry) == GLOBAL_SEGMENT_ID:
+            return cast("dict[str, Any]", entry)
+    return None
+
+
+def _descriptor_of(entry: dict[str, Any] | None) -> tuple[str, str] | None:
+    """The name and the logical ID of a segment entry's segment, where it has both as text."""
+    descriptor = entry.get("segment") if entry is not None else None
+    if not isinstance(descriptor, dict):
+        return None
+    fields = cast("dict[str, Any]", descriptor)
+    name, logical_id = fields.get("name"), fields.get("segmentLogicalId")
+    if isinstance(name, str) and isinstance(logical_id, str):
+        return name, logical_id
+    return None
+
+
+def _primary_rows(refs: object, segment_logical_id: str) -> list[dict[str, Any]]:
+    return [
+        row
+        for row in _rows_named(refs, PRIMARY_PROVIDER)
+        if str(row.get("segmentLogicalId")).lower() == segment_logical_id.lower()
+    ]
+
+
+def _global_segment_without_provider(module: AnyConfigurationModule) -> bool:
+    """A device settings module with refs read, whose Global Segment has a DNS section and no primary provider row."""
+    if not isinstance(module, DeviceSettingsConfigurationModule):
+        return False
+    if not isinstance(module.raw_refs, dict):
+        return False
+    entry = _global_entry(module.raw_data)
+    descriptor = _descriptor_of(entry)
+    if entry is None or descriptor is None:
+        return False
+    section = entry.get("dns")
+    return (
+        isinstance(section, dict)
+        and isinstance(cast("dict[str, Any]", section).get("primaryProvider"), dict)
+        and not _primary_rows(module.raw_refs, descriptor[1])
+    )
+
+
+@dataclass(frozen=True)
+class DnsTarget:
+    """A marked profile's Global Segment, and a network service of type ``dns`` to set on it."""
+
+    profile_id: int
+    segment: str
+    segment_logical_id: str
+    service: uuid.UUID
+
+
+async def _dns_services(lab: Lab) -> list[EnterpriseServiceSummary]:
+    request = GetEnterpriseServices()
+    if lab.enterprise_id is not None:
+        request.enterprise_id = lab.enterprise_id
+    services = await lab.client.get_enterprise_service_summaries(request)
+    return [service for service in services if service.type_ == "dns"]
+
+
+async def _dns_target(lab: Lab) -> DnsTarget:
+    """The target of a case that sets a DNS provider; skip, saying what to set up, where there is none.
+
+    The profile is picked first, which checks the opt-in before anything else.
+    """
+    profile_id = await lab.pick_writable_profile(
+        Name.DEVICE_SETTINGS,
+        _global_segment_without_provider,
+        "whose Global Segment has a DNS section and no primary provider set",
+    )
+    services = await _dns_services(lab)
+    if not services:
+        pytest.skip(
+            "the enterprise has no network service of type dns: add one for "
+            "this test to set as a provider"
+        )
+    module = await lab.profile_site(profile_id, Name.DEVICE_SETTINGS).read_present()
+    descriptor = _descriptor_of(_global_entry(module.raw_data))
+    check(descriptor is not None, "the Global Segment is gone from the profile")
+    assert descriptor is not None
+    return DnsTarget(profile_id, descriptor[0], descriptor[1], services[0].logical_id)
+
+
+async def _set_primary_provider(
+    pipeline: ConfigPipeline,
+    state: ConfigState,
+    target: DnsTarget,
+    service: uuid.UUID | None,
+) -> None:
+    """Set the Global Segment's primary DNS provider to the service of this logical ID, or clear it with ``None``."""
+    _ = await pipeline.apply(
+        state,
+        module=Name.DEVICE_SETTINGS.value,
+        segment=target.segment,
+        patch={
+            "dns": {
+                "primaryProvider": {
+                    "service": None if service is None else str(service)
+                }
+            }
+        },
+    )
+
+
+def _check_provider_change(
+    label: str, plan: ModulePlan, *, added: bool, target: DnsTarget
+) -> None:
+    """The plan adds (or removes) the primary provider row of the Global Segment, and no other row."""
+    changes = plan.ref_changes
+    check(
+        len(changes) == 1
+        and changes[0].added == added
+        and changes[0].name == PRIMARY_PROVIDER
+        and changes[0].segment == target.segment,
+        f"{label}: the plan lists {len(changes)} ref change(s), expected the "
+        f"primary provider row of the Global Segment {'added' if added else 'removed'} alone",
+    )
+
+
+def _check_primary_row(
+    label: str, stored: AnyConfigurationModule, target: DnsTarget, *, set_: bool
+) -> None:
+    """The stored refs hold the primary provider row of the Global Segment, for the service set, or none."""
+    rows = _primary_rows(stored.raw_refs, target.segment_logical_id)
+    if not set_:
+        check(not rows, f"{label}: the primary provider row is still stored")
+        return
+    check(
+        len(rows) == 1
+        and str(rows[0].get("logicalId")).lower() == str(target.service).lower(),
+        f"{label}: {len(rows)} primary provider row(s) stored, expected the one "
+        "of the service set",
+    )
+
+
+@pytest.mark.live_write
+async def test_set_and_clear_a_dns_provider(lab: Lab, pipeline: ConfigPipeline) -> None:
+    target = await _dns_target(lab)
+    site = lab.profile_site(target.profile_id, Name.DEVICE_SETTINGS)
+    async with restoring(site) as original:
+        assert original is not None
+        state = await pipeline.load_profile(
+            target.profile_id, enterprise_id=lab.enterprise_id
+        )
+
+        await _set_primary_provider(pipeline, state, target, target.service)
+        plan = _planned(state, Name.DEVICE_SETTINGS)
+        _check_provider_change("set", plan, added=True, target=target)
+        _ = await _save(pipeline, state)
+        stored = await site.read_present()
+        _check_state_holds_stored("set", state, stored)
+        _check_primary_row("set", stored, target, set_=True)
+
+        await _set_primary_provider(pipeline, state, target, None)
+        plan = _planned(state, Name.DEVICE_SETTINGS)
+        _check_provider_change("clear", plan, added=False, target=target)
+        _ = await _save(pipeline, state)
+        stored = await site.read_present()
+        _check_state_holds_stored("clear", state, stored)
+        _check_primary_row("clear", stored, target, set_=False)
+
+
+def _raise_profile_lan_cost(state: ConfigState, by: int) -> Path:
+    """Raise the OSPF cost of the profile's first LAN network by *by*; the path it changes.
+
+    Assigned on the typed data, so that no override flag is set along with it.
+    """
+    network = state.profile.device_settings.lan.networks[0]
+    network.cost += by
+    return Path(("lan", "networks", Key(network.vlan_id), "cost"))
+
+
+@pytest.mark.live_write
+async def test_a_stale_version_with_refs_raises_before_sending(
+    lab: Lab, pipeline: ConfigPipeline
+) -> None:
+    profile_id = await lab.pick_writable_profile(
+        Name.DEVICE_SETTINGS,
+        _device_settings_with_refs,
+        "with refs, a segment and a LAN network",
+    )
+    site = lab.profile_site(profile_id, Name.DEVICE_SETTINGS)
+    run = run_of(lab.client)
+    async with restoring(site) as original:
+        assert original is not None
+        newer = await pipeline.load_profile(profile_id, enterprise_id=lab.enterprise_id)
+        older = await pipeline.load_profile(profile_id, enterprise_id=lab.enterprise_id)
+        kept = _raise_profile_lan_cost(newer, 1)
+        _ = _raise_profile_lan_cost(older, 2)
+        check(
+            _planned(older, Name.DEVICE_SETTINGS).refs is not None,
+            "the plan of the older state does not carry the refs",
+        )
+
+        # The second writer: the newer state saves first, through the guarded client.
+        _ = await _save(pipeline, newer)
+        written = run.sent
+        with pytest.raises(ConfigConflictError) as caught:
+            _ = await pipeline.save(older)
+        error = caught.value
+        check(
+            not error.stated and not error.sent,
+            f"the stale save raised {outcome(error)}, expected a refusal that "
+            "is neither stated nor sent",
+        )
+        check(
+            run.sent == written,
+            f"the stale save sent {run.sent - written} write(s), expected none",
+        )
+
+        # The module holds the newer state's edit, and nothing of the older one.
+        now = await site.read_present()
+        check_paths(
+            "stale save",
+            "the module read back",
+            changes_between(
+                Name.DEVICE_SETTINGS, original.data, now.raw_data, DeviceSettingsData
+            ),
+            [kept],
+        )
+        check(error.module is not None, "the error carries no module")
+        assert error.module is not None
+        check_as_read("the error's module", error.module, now)
+
+
+@pytest.mark.live_write
+async def test_a_data_edit_keeps_every_row(lab: Lab, pipeline: ConfigPipeline) -> None:
+    profile_id = await lab.pick_writable_profile(
+        Name.DEVICE_SETTINGS,
+        _device_settings_with_refs,
+        "with refs, a segment and a LAN network",
+    )
+    site = lab.profile_site(profile_id, Name.DEVICE_SETTINGS)
+    async with restoring(site) as original:
+        assert original is not None
+        as_read = _row_keys(original.refs)
+        state = await pipeline.load_profile(profile_id, enterprise_id=lab.enterprise_id)
+        _ = _raise_profile_lan_cost(state, 1)
+        _ = await _save(pipeline, state)
+
+        stored = await site.read_present()
+        _check_state_holds_stored("data edit", state, stored)
+        gone = as_read - _row_keys(stored.raw_refs)
+        check(
+            not gone,
+            f"a data edit lost {gone.total()} of {as_read.total()} ref row(s) as "
+            f"read, of: {', '.join(sorted({name for name, _, _ in gone}))}",
+        )
+
+
+@pytest.mark.live_write
+async def test_record_the_refs_a_write_returns(
+    lab: Lab, pipeline: ConfigPipeline, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The fields of the ref rows the Orchestrator returns after a save that sends refs, for each declared name.
+
+    A primary DNS provider is set on the Global Segment, so that the save adds a
+    row of the five-field shape (``configurationId``, ``moduleId``,
+    ``enterpriseObjectId``, ``ref``, and ``segmentObjectId`` for a per-segment
+    ref) beside the rows as read. The run records, for each declared ref name,
+    how many rows come back, which fields they have, and whether every field
+    sent is among them (spec section 8, "Needs a live VCO"). Only ref names
+    and field names are printed, never a value; the provider is cleared again.
+    """
+    target = await _dns_target(lab)
+    site = lab.profile_site(target.profile_id, Name.DEVICE_SETTINGS)
+    async with restoring(site) as original:
+        assert original is not None
+        state = await pipeline.load_profile(
+            target.profile_id, enterprise_id=lab.enterprise_id
+        )
+        await _set_primary_provider(pipeline, state, target, target.service)
+        saved = "passed"
+        try:
+            _ = await pipeline.save(state)
+        except ModuleWriteError as error:
+            saved = f"raised {failure_text(error)}"
+        stored = await site.read_present()
+        lines = [f"a save that sends refs: the save {saved}"]
+        declared = declared_ref_names(DeviceSettingsData, ConfigContext.PROFILE)
+        for name in sorted(declared):
+            rows = _rows_named(stored.raw_refs, name)
+            if not rows:
+                lines.append(f"  {name}: no row")
+                continue
+            sent: frozenset[str] = SENT_ROW_FIELDS
+            if name != SEGMENT_REF:
+                sent = sent | {"segmentObjectId"}
+            fields = sorted({field for row in rows for field in row})
+            kept = all(sent <= set(row) for row in rows)
+            lines.append(
+                f"  {name}: {len(rows)} row(s), fields {', '.join(fields)}; "
+                f"every field sent is kept: {'yes' if kept else 'no'}"
+            )
+        record(capsys, "\n".join(lines))
+        check(saved == "passed", f"the save of a provider {saved}")
+
+        await _set_primary_provider(pipeline, state, target, None)
+        _ = await _save(pipeline, state)
