@@ -741,11 +741,11 @@ Known limits:
   neither module data nor the changes it reports, only their number per module
   (it still holds the validators' messages). A response that fails to parse
   raises pydantic's `ValidationError` without the input in its text;
-  `error.errors()` still has it. Nothing else is hidden. A secret under a key
-  the models do not mark is printed as it is: that is a key the models do not
-  know, an untyped field (`dict[str, Any]`, a QoS `refs` row), the data of a
-  generic module, and a module planned from a dict that has no typed data to
-  tell which keys are secrets.
+  `error.errors()` still has it. Nothing else is hidden. A secret is printed
+  as it is in two places: under a key the models do not know, which includes
+  everything inside a field typed `dict[str, Any]` (`EdgeZscaler.deployment`,
+  a WAN link's `private_network`), and in the data of a module whose data is
+  not a model (a generic module: `analyticsSettings`, `atpMetadata`).
 - Keep API tokens and environment files outside version control. TLS verification
   uses the SDK default. Tests use synthetic fixtures and do not require a live VCO.
 

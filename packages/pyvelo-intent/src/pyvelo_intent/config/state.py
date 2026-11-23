@@ -100,7 +100,8 @@ class ConfigPlan:
       does not know, on a module with nothing else to write.
 
     Paths are in the names the VCO uses. A value is JSON, cut to 80 characters;
-    the two values of a "~" line are cut where they first differ.
+    the two values of a "~" line are cut where they first differ. A secret
+    shows as ``"***"``.
 
     Attributes:
         modules: The plan of each module of the target.
