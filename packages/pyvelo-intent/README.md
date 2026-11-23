@@ -1007,6 +1007,11 @@ Known limits:
   `apply` refuses a patch to one (`PatchError`), and a state whose control
   plane module was edited by assignment cannot be saved or dry-run
   (`TypeError`, before anything is sent) until it is loaded again.
+- A profile's segment is assigned with `assign_segment` or an `add`, but not
+  removed: an edit that removes a segment the device settings module has
+  raises `SegmentSetError` (a patch: `PatchError`), and only an orphan, a QoS
+  or firewall segment that the device settings lack, can be removed.
+  Inserting a missing module into a profile is not supported either.
 - A failed `apply` changes nothing. Patches and saves run one after another,
   though: a failure leaves earlier patches, and the remote writes of a save
   that stopped part way, applied; there is no transaction or rollback.

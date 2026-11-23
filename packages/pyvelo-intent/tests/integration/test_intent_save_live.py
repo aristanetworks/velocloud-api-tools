@@ -62,6 +62,14 @@ module. The two that set a DNS provider need a marked profile whose Global
 Segment has a DNS section and no primary provider set, and a network service of
 type ``dns`` in the enterprise; each skips, saying which, where one is missing.
 
+The cases of section 15 assign a segment of the enterprise to a marked profile
+that lacks it in all three of its modules (device settings, QoS and firewall),
+and restore the three, QoS and firewall first. The first reads the three back and
+counts the writes and the reads of a version; the second, on a profile that is
+also marked ``pyvelo-it-with-edges``, records whether the QoS and firewall
+writes are sent with the version read before the save. Each skips where no
+marked profile lacks a segment of the enterprise.
+
 Requires VCO_HOST and VCO_TOKEN (VCO_ENTERPRISE_ID if the token needs one), and
 to write, PYVELO_IT_WRITE_HOST and PYVELO_IT_WRITE_ENTERPRISE_ID: see
 ``live_support``.
@@ -84,6 +92,9 @@ import pytest
 from live_support import (
     SEGMENT_DRIFT_KEY,
     SERVER_ASSIGNED_KEYS,
+    TARGET_MARK,
+    WITH_EDGES_MARK,
+    Answer,
     DataRefused,
     EdgeLayout,
     Lab,
@@ -101,6 +112,7 @@ from live_support import (
     failure_text,
     has_key,
     outcome,
+    own_data_refusal,
     read_backs,
     record,
     record_answers,
@@ -157,7 +169,9 @@ from pyvelo.client.schemas.enterprise import (
     EnterpriseServiceSummary,
     GetEnterpriseServices,
 )
+from pyvelo.config.resolvers.segment import SegmentResolver
 from pyvelo.core import ConfigContext, VcoModel
+from pyvelo.core.identity import SegmentIdentity
 from pyvelo.core.rebase import Key, Path, RawChange, raw_changes
 from pyvelo.core.response_check import (
     PathPattern,
@@ -2223,3 +2237,249 @@ async def test_record_the_refs_a_write_returns(
             record(capsys, "\n".join(lines))
         # Past the clearing, so that a save that failed has its row cleared first.
         check(saved == "passed", f"the save of a provider {saved}")
+
+
+# ---------------------------------------------------------------------------
+# 15. A segment of the enterprise assigned to a profile
+# ---------------------------------------------------------------------------
+
+SEGMENT_MODULES = (Name.DEVICE_SETTINGS, Name.QOS, Name.FIREWALL)
+"""The three modules of a profile that hold its segments, device settings written first."""
+
+VERSION_READ = "configuration/getConfigurationModules"
+"""The request that reads a module's ``version`` alone (``noData``)."""
+
+
+@dataclass(frozen=True)
+class SegmentTarget:
+    """A marked profile, and an enterprise segment that none of its three modules has."""
+
+    profile_id: int
+    segment: SegmentIdentity
+
+
+def _segment_ids_of(data: object) -> set[object]:
+    """The ``segmentId`` of each segment entry of raw module *data*."""
+    entries = cast("dict[str, object]", data).get("segments")
+    return {_segment_id(entry) for entry in cast("list[object]", entries or [])}
+
+
+def _lacked_segment(state: ConfigState) -> SegmentIdentity | None:
+    """The first enterprise segment, by ID, that none of the profile's three modules has; ``None`` where there is none or a module is missing."""
+    try:
+        held = [
+            _segment_ids_of(state.module(name).raw_data) for name in SEGMENT_MODULES
+        ]
+    except ValueError:
+        return None
+    resolver = state.resolvers.get_resolver(SegmentResolver)
+    return next(
+        (
+            identity
+            for identity in sorted(resolver.identities(), key=lambda i: i.segment_id)
+            if all(identity.segment_id not in ids for ids in held)
+        ),
+        None,
+    )
+
+
+async def _segment_target(
+    lab: Lab, pipeline: ConfigPipeline, *, with_edges: bool
+) -> SegmentTarget:
+    """The first marked profile that lacks an enterprise segment and takes a write of each of its three modules.
+
+    With *with_edges*, the profile must carry the mark for edges assigned to it
+    as well. Skip where there is none to use, fail where each one that lacks a
+    segment refuses a write of its own data. The opt-in is checked first, and
+    the modules are tried last: trying a module writes it back.
+    """
+    require_writes(run_of(lab.client))
+    marked = [
+        entry.profile_id
+        for entry in lab.profiles
+        if entry.target and (not with_edges or WITH_EDGES_MARK in entry.marks)
+    ]
+    if not marked:
+        pytest.skip(
+            f"no profile is marked {TARGET_MARK}"
+            + (f" and {WITH_EDGES_MARK}" if with_edges else "")
+        )
+    refusals: list[str] = []
+    for profile_id in marked:
+        state = await pipeline.load_profile(profile_id, enterprise_id=lab.enterprise_id)
+        segment = _lacked_segment(state)
+        if segment is None:
+            continue
+        for name in SEGMENT_MODULES:
+            refusal = await own_data_refusal(lab.profile_site(profile_id, name))
+            if refusal is not None:
+                refusals.append(f"{name.value}: {refusal}")
+                break
+        else:
+            return SegmentTarget(profile_id, segment)
+    if refusals:
+        pytest.fail(
+            f"none of the {len(refusals)} marked profile(s) that lack an enterprise "
+            f"segment takes a write of its own modules ({'; '.join(refusals)}): the "
+            "modules are not valid as they stand, or the update path is broken",
+            pytrace=False,
+        )
+    pytest.skip(
+        "no marked profile lacks a segment of the enterprise in all three of its "
+        "device settings, QoS and firewall modules"
+    )
+
+
+def _version_reads(answers: Sequence[Answer]) -> int:
+    """How many of the recorded answers are to the request that reads a module's version alone."""
+    return sum(answer.method == VERSION_READ for answer in answers)
+
+
+def _update_of(
+    writes: Writes, module: AnyConfigurationModule
+) -> UpdateConfigurationModule:
+    """The one update the test sent to *module*."""
+    sent = [u for u in writes.updates if u.configuration_module_id == module.id_]
+    check(len(sent) == 1, f"{len(sent)} update(s) sent to the {module.name} module")
+    return sent[0]
+
+
+@pytest.mark.live_write
+async def test_assign_a_segment_and_read_it_back(
+    lab: Lab,
+    pipeline: ConfigPipeline,
+    writes: Writes,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A segment assigned to a profile is three writes, device settings first, and reads back as the state holds it.
+
+    The modules are restored QoS and firewall first, device settings last, as
+    the restore of device settings sends its refs as read. Three reads of a
+    module's version are made: device settings reads its own, because it sends
+    refs, and QoS and firewall read theirs because they follow a profile's
+    device settings write and are rebased onto what it changed.
+    """
+    target = await _segment_target(lab, pipeline, with_edges=False)
+    sites = {
+        name: lab.profile_site(target.profile_id, name) for name in SEGMENT_MODULES
+    }
+    async with (
+        restoring(sites[Name.DEVICE_SETTINGS]) as original,
+        restoring(sites[Name.QOS]),
+        restoring(sites[Name.FIREWALL]),
+    ):
+        assert original is not None
+        state = await pipeline.load_profile(
+            target.profile_id, enterprise_id=lab.enterprise_id
+        )
+        _ = await pipeline.assign_segment(state, target.segment.name)
+        planned = {plan.name for plan in state.plan().changed}
+        check(
+            planned == {name.value for name in SEGMENT_MODULES},
+            "the assignment does not plan a write of each of the three modules",
+        )
+        answers = record_answers(lab.client, monkeypatch)
+        result = await _save(pipeline, state)
+
+        modules = {name: state.module(name) for name in SEGMENT_MODULES}
+        check(
+            len(writes.updates) == 3 and not writes.inserts,
+            f"{len(writes.updates)} update(s) and {len(writes.inserts)} insert(s) "
+            "sent, expected three updates",
+        )
+        check(
+            writes.updates[0].configuration_module_id
+            == modules[Name.DEVICE_SETTINGS].id_,
+            "the first write was not to the device settings module",
+        )
+        check(
+            result.modules_updated[0] == Name.DEVICE_SETTINGS
+            and set(result.modules_updated) == set(SEGMENT_MODULES)
+            and not result.modules_inserted,
+            f"updated {result.modules_updated}, inserted {result.modules_inserted}",
+        )
+        for name in SEGMENT_MODULES:
+            sent = _update_of(writes, modules[name])
+            check(
+                target.segment.segment_id in _segment_ids_of(sent.update.data),
+                f"the {name.value} write does not carry the new segment",
+            )
+        rows = _rows_named(writes.updates[0].update.refs, SEGMENT_REF)
+        check(
+            len(rows) == len(_rows_named(original.refs, SEGMENT_REF)) + 1
+            and any(
+                row.get("enterpriseObjectId") == target.segment.object_id
+                for row in rows
+            ),
+            f"the device settings write carries {len(rows)} {SEGMENT_REF} row(s), "
+            "expected the rows as read and one for the new segment",
+        )
+        check(
+            _version_reads(answers) == 3,
+            f"{_version_reads(answers)} version read(s) made by the save, expected "
+            "three",
+        )
+
+        fresh = await pipeline.load_profile(
+            target.profile_id, enterprise_id=lab.enterprise_id
+        )
+        check(not fresh.plan().changed, "a profile read after the save plans a change")
+        for name in SEGMENT_MODULES:
+            check_as_read(f"assign {name.value}", modules[name], fresh.module(name))
+        _check_state_holds_stored("assign", state, fresh.module(Name.DEVICE_SETTINGS))
+
+
+@pytest.mark.live_write
+async def test_record_versions_around_the_device_settings_write(
+    lab: Lab,
+    pipeline: ConfigPipeline,
+    writes: Writes,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Whether the device settings write of an assignment changes the version of the QoS and firewall modules.
+
+    The version of each of the two is read before the save, and the versions
+    their writes were sent with are taken from the requests. Only whether the
+    two are the same is said, never a version. The profile is one that edges
+    are assigned to, where a change of version is most likely to be seen.
+    """
+    target = await _segment_target(lab, pipeline, with_edges=True)
+    sites = {
+        name: lab.profile_site(target.profile_id, name) for name in SEGMENT_MODULES
+    }
+    async with (
+        restoring(sites[Name.DEVICE_SETTINGS]),
+        restoring(sites[Name.QOS]),
+        restoring(sites[Name.FIREWALL]),
+    ):
+        state = await pipeline.load_profile(
+            target.profile_id, enterprise_id=lab.enterprise_id
+        )
+        later = (Name.QOS, Name.FIREWALL)
+        before = {
+            name: expect(
+                (await sites[name].read_present()).version,
+                str,
+                f"the {name.value} version read before the save",
+            )
+            for name in later
+        }
+        _ = await pipeline.assign_segment(state, target.segment.name)
+        _ = await _save(pipeline, state)
+
+        lines = ["the versions of the modules written after device settings:"]
+        for name in later:
+            sent = expect(
+                _update_of(writes, state.module(name)).version,
+                str,
+                f"the version the {name.value} write was sent with",
+            )
+            lines.append(
+                f"  {name.value}: sent with "
+                + (
+                    "the version read before the save"
+                    if sent == before[name]
+                    else "another version than the one read before the save"
+                )
+            )
+        record(capsys, "\n".join(lines))
