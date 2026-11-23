@@ -557,6 +557,9 @@ stored otherwise than sent:
   syslog_forwarding: read false, stored true
 ```
 
+The message shows at most 20 entries of each list and says how many more there
+are; `error.render(limit=None)` has them all.
+
 The order of a keyed list is checked as a value is. A `move` that is not stored
 is a lost edit at the list. So is the place of an added item: when the VCO
 stores the item in another place than planned, the item is under `applied` and
@@ -723,10 +726,26 @@ Known limits:
   or domain checks; they do not guarantee that every patch is valid for a live VCO.
   A validator reports on the whole state, so an error in a module the save does
   not write blocks the save too; the path of the error names the module.
-- `ConfigState`, field diffs, and validation messages can contain
-  complete configuration values, including addresses and configuration secrets.
-  Redact them before logging, sharing, or committing exports. This library does
-  not persist configuration automatically or redact returned values.
+- `ConfigState`, the module objects, field changes (`get_field_changes`),
+  validation messages, and the change objects of a plan, of a `SaveResult` and
+  of a write error (`before`, `after`, `as_read`, `intended`, `stored`) hold
+  complete configuration values, including addresses and configuration
+  secrets. So does a patch from `redo_patch()`. Redact them before logging,
+  sharing, or committing exports. This library does not persist configuration
+  automatically.
+- Three kinds of text leave secrets out. `render()` of a plan and the message
+  of a write error (`str(error)`) show `"***"` in place of the value of every
+  field the models mark as a secret (`Secret`, in `pyvelo.core`: passwords,
+  pre-shared keys, SNMP communities), and in place of a ref row. `repr()` of a
+  plan or of a write holds no values, and `repr()` of a `SaveResult` holds
+  neither module data nor the changes it reports, only their number per module
+  (it still holds the validators' messages). A response that fails to parse
+  raises pydantic's `ValidationError` without the input in its text;
+  `error.errors()` still has it. Nothing else is hidden. A secret under a key
+  the models do not mark is printed as it is: that is a key the models do not
+  know, an untyped field (`dict[str, Any]`, a QoS `refs` row), the data of a
+  generic module, and a module planned from a dict that has no typed data to
+  tell which keys are secrets.
 - Keep API tokens and environment files outside version control. TLS verification
   uses the SDK default. Tests use synthetic fixtures and do not require a live VCO.
 

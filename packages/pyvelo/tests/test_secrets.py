@@ -9,16 +9,22 @@ from typing import Annotated, Any, Literal, get_args
 import pytest
 from pydantic import MISSING, Discriminator, Field, ValidationError
 from pyvelo.client.enums.profiles import GetConfigurationWith
-from pyvelo.client.exceptions import WriteOutcomeUnknownError
+from pyvelo.client.exceptions import (
+    ModuleWriteError,
+    WriteNotAppliedError,
+    WriteOutcomeUnknownError,
+)
 from pyvelo.client.models.configuration.control_plane.root import ControlPlaneData
 from pyvelo.client.models.configuration.device_settings.root import DeviceSettingsData
 from pyvelo.client.models.configuration.firewall.root import FirewallData
 from pyvelo.client.models.configuration.qos.root import QosData
 from pyvelo.client.models.configuration.wan.root import WanData
 from pyvelo.client.models.enterprise import service_data
+from pyvelo.client.module_check import ModuleWrite, check_module_write
 from pyvelo.client.module_write import plan_module
 from pyvelo.client.schemas.configuration import (
     DeviceSettingsConfigurationModule,
+    FirewallConfigurationModule,
     GetConfiguration,
 )
 from pyvelo.core import (
@@ -36,7 +42,9 @@ from pyvelo.core.merge import (
     _list_spec,  # pyright: ignore[reportPrivateUsage]
     _validate_field,  # pyright: ignore[reportPrivateUsage]
 )
-from pyvelo.testing import ModuleStore, make_module_json, store_of
+from pyvelo.core.response_check import PlannedChange
+from pyvelo.core.show import shown, shown_together
+from pyvelo.testing import ModuleStore, as_stored, make_module_json, store_of
 
 from ._type_support import MockVcoClientFactory, require_present
 
@@ -468,3 +476,194 @@ def test_hide_secrets(path: Path, value: object, hidden: object):
 
 def test_hide_secrets_without_a_model_hides_nothing():
     assert hide_secrets(None, Path(("a", "password")), "kept") == "kept"
+
+
+def rotated() -> DeviceSettingsConfigurationModule:
+    """Device settings whose one BGP neighbour gets a new password."""
+    module = ds(settings(neighbor(OLD)))
+    bgp = require_present(module.data.segments[0].bgp)
+    bgp.neighbors[0].md5_password = NEW
+    return module
+
+
+def test_shown_hides_the_secrets_of_the_model_at_the_path():
+    path = Path((*NEIGHBOR.parts, "md5Password"))
+    assert shown(OLD) == f'"{OLD}"'
+    assert shown(OLD, model=DeviceSettingsData, path=path) == '"***"'
+    assert shown_together(OLD, MISSING, NEW, model=DeviceSettingsData, path=path) == (
+        '"***"',
+        "(nothing)",
+        '"***"',
+    )
+    item = {"neighborIp": "192.0.2.1", "md5Password": OLD}
+    assert shown(item, model=DeviceSettingsData, path=NEIGHBOR) == (
+        '{"md5Password": "***", "neighborIp": "192.0.2.1"}'
+    )
+
+
+def test_a_plan_shows_no_secret_and_keeps_it_on_the_change():
+    plan = plan_module(rotated())
+    (change,) = plan.changes
+    assert (change.before, change.after) == (OLD, NEW)
+    text = plan.render()
+    assert OLD not in text and NEW not in text
+    assert f'{NEIGHBOR}.md5Password: "***" -> "***"' in text
+    assert plan.model is DeviceSettingsData
+
+
+def test_a_plan_made_from_a_dict_hides_secrets_too():
+    module = ds({**settings(), "snmp": {"snmpv2c": {"community": OLD}}})
+    plan = plan_module(module, {**settings(), "snmp": {"snmpv2c": {"community": NEW}}})
+    assert plan.model is DeviceSettingsData
+    text = plan.render()
+    assert OLD not in text and NEW not in text
+    assert 'snmp.snmpv2c.community: "***" -> "***"' in text
+
+
+def test_the_repr_of_a_plan_and_of_a_write_hold_no_data():
+    module = rotated()
+    plan = plan_module(module)
+    assert repr(plan) == (
+        "ModulePlan(name='deviceSettings', operation='update', changes=1)"
+    )
+    write = check_module_write(module, plan, as_stored(module, plan.data))
+    assert isinstance(write, ModuleWrite)
+    assert repr(write) == (
+        "ModuleWrite(name='deviceSettings', operation='update', applied=1, "
+        "left_out=0, server_changes=0)"
+    )
+
+
+def test_a_write_error_shows_no_secret_and_keeps_it_on_the_change():
+    module = rotated()
+    stored = as_stored(module, settings(neighbor(OTHER)))
+    with pytest.raises(ModuleWriteError) as exc:
+        _ = check_module_write(module, plan_module(module), stored)
+    (lost,) = exc.value.lost_edits
+    assert (lost.as_read, lost.intended, lost.stored) == (OLD, NEW, OTHER)
+    text = "".join(traceback.format_exception(exc.value))
+    assert not any(secret in text for secret in (OLD, NEW, OTHER))
+    assert f"{NEIGHBOR}.md5Password" in text and text.count("***") == 3
+
+
+def test_a_write_error_hides_what_another_writer_stored():
+    module = ds(settings(neighbor(OLD)))
+    require_present(module.data.segments[0].bgp).asn = "65010"
+    stored = as_stored(module, settings(neighbor(OTHER)))
+    with pytest.raises(ModuleWriteError) as exc:
+        _ = check_module_write(module, plan_module(module), stored)
+    assert [str(c.path) for c in exc.value.server_changes] == [
+        f"{NEIGHBOR}.md5Password"
+    ]
+    assert OLD not in str(exc.value) and OTHER not in str(exc.value)
+
+
+def test_a_write_error_does_not_show_a_ref_row():
+    module = ds(settings())
+    row = {"id": 101, "enterpriseObjectId": 5, "data": {"sharedSecret": OLD}}
+    lost = PlannedChange(Path.parse("auth[5]"), MISSING, row, MISSING, part="refs")
+    error = WriteNotAppliedError(
+        1,
+        "v1",
+        module_name="deviceSettings",
+        plan=plan_module(module),
+        module=module,
+        lost_edits=[lost],
+    )
+    (line,) = [line for line in str(error).splitlines() if "auth[5]" in line]
+    assert OLD not in line and "(nothing)" in line and "***" in line
+
+
+def test_an_unknown_outcome_shows_no_secret_of_what_it_sent():
+    error = WriteOutcomeUnknownError(
+        1,
+        "v1",
+        "its configuration does not hold the module",
+        answer="counted",
+        module_name="deviceSettings",
+        plan=plan_module(rotated()),
+    )
+    text = str(error)
+    assert OLD not in text and NEW not in text
+    assert 'md5Password: read "***", meant "***"' in text
+
+
+def rule(n: int) -> dict[str, Any]:
+    return {
+        "name": f"rule-{n:03d}",
+        "ruleLogicalId": f"00000000-0000-0000-0000-{n:012d}",
+        "action": {"allow_or_deny": "allow"},
+        "match": {"dport_low": 1000 + n, "dport_high": 1000 + n},
+        "loggingEnabled": False,
+    }
+
+
+def firewall(n: int) -> dict[str, Any]:
+    return {
+        "segments": [
+            {
+                "segment": desc(0, "Global Segment"),
+                "outbound": [rule(i) for i in range(n)],
+            }
+        ]
+    }
+
+
+def logging_on_500_rules() -> FirewallConfigurationModule:
+    module = FirewallConfigurationModule.model_validate(
+        make_module_json("firewall", firewall(500), configuration_id=10)
+    )
+    for item in module.data.segments[0].outbound:
+        item.logging_enabled = True
+    return module
+
+
+def entries(text: str, key: str) -> int:
+    """How many lines of *text* are the entry of a path that ends in *key*."""
+    return sum(1 for line in text.splitlines() if key in line)
+
+
+def test_the_message_of_a_write_error_is_bounded():
+    module = logging_on_500_rules()
+    other = firewall(500)
+    for item in other["segments"][0]["outbound"]:
+        item["match"]["dport_high"] += 1
+    with pytest.raises(ModuleWriteError) as exc:
+        _ = check_module_write(module, plan_module(module), as_stored(module, other))
+    error = exc.value
+    assert (len(error.lost_edits), len(error.server_changes)) == (500, 500)
+    text = str(error)
+    assert len(text) < 10_000
+    assert entries(text, ".loggingEnabled:") == 20
+    assert entries(text, ".match.dport_high:") == 20
+    assert "  and 480 more: error.lost_edits has them all" in text.splitlines()
+    assert "  and 480 more: error.server_changes has them all" in text.splitlines()
+    assert entries(error.render(limit=None), ".loggingEnabled:") == 500
+    assert " more: " not in error.render(limit=None)
+    assert entries(error.render(limit=1), ".loggingEnabled:") == 1
+
+
+def test_the_message_of_an_unknown_outcome_is_bounded():
+    error = WriteOutcomeUnknownError(
+        1,
+        "v1",
+        "its configuration does not hold the module",
+        answer="counted",
+        module_name="firewall",
+        plan=plan_module(logging_on_500_rules()),
+    )
+    text = str(error)
+    assert entries(text, ".loggingEnabled:") == 20
+    assert "  and 480 more: error.plan.changes has them all" in text.splitlines()
+    assert entries(error.render(limit=None), ".loggingEnabled:") == 500
+
+
+def test_hide_secrets_walks_a_tuple_as_it_walks_a_list():
+    item = ({"neighborIp": "192.0.2.1", "md5Password": OLD},)
+    path = Path((*SEGMENT, "bgp", "neighbors"))
+    assert hide_secrets(DeviceSettingsData, path, item) == [
+        {"neighborIp": "192.0.2.1", "md5Password": "***"}
+    ]
+    assert hide_secrets(
+        DeviceSettingsData, Path(("snmp", "snmpv2c")), {"communityList": ("a", "b")}
+    ) == {"communityList": "***"}

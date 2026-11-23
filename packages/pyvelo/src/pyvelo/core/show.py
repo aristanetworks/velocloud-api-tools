@@ -2,7 +2,9 @@
 
 ``value_text`` is the one place a value becomes text. ``shown`` and
 ``shown_together`` cut that text to ``VALUE_WIDTH`` characters; the values of one
-line are cut where they first differ, so a difference is never cut away.
+line are cut where they first differ, so a difference is never cut away. Given
+the model of the document and the path of the values, they show ``***`` in place
+of every secret first.
 """
 
 import json
@@ -12,7 +14,9 @@ from typing import Final
 
 from pydantic import MISSING
 
-from pyvelo.core.rebase import ItemMove
+from pyvelo.core.base import VcoModel
+from pyvelo.core.rebase import ItemMove, Path
+from pyvelo.core.secrets import hide_secrets
 
 VALUE_WIDTH: Final = 80
 """How many characters of a value's text a line shows."""
@@ -42,21 +46,42 @@ def value_text(value: object) -> str:
             return f"<{type(value).__name__}>"
 
 
-def shown(value: object) -> str:
-    """``value_text`` of *value*, cut to ``VALUE_WIDTH`` characters, with ``…`` after it when text is left out."""
-    text = value_text(value)
+def _hidden(value: object, model: type[VcoModel] | None, path: Path | None) -> object:
+    """*value* with its secrets hidden when both *model* and *path* are given."""
+    if model is None or path is None:
+        return value
+    return hide_secrets(model, path, value)
+
+
+def shown(
+    value: object,
+    *,
+    model: type[VcoModel] | None = None,
+    path: Path | None = None,
+) -> str:
+    """``value_text`` of *value*, cut to ``VALUE_WIDTH`` characters, with ``…`` after it when text is left out.
+
+    Given both *model* and *path* (where in a document of *model* the value
+    is), a secret in the value is shown as ``"***"`` (``hide_secrets``).
+    """
+    text = value_text(_hidden(value, model, path))
     return text if len(text) <= VALUE_WIDTH else f"{text[:VALUE_WIDTH]}…"
 
 
-def shown_together(*values: object) -> tuple[str, ...]:
+def shown_together(
+    *values: object,
+    model: type[VcoModel] | None = None,
+    path: Path | None = None,
+) -> tuple[str, ...]:
     """The values of one line as text, each cut at the same place.
 
     Texts of at most ``VALUE_WIDTH`` characters are whole. Otherwise each long
     text starts ``LEAD`` characters before the first character where the texts
     differ (at the start when they do not differ), and is ``VALUE_WIDTH``
-    characters long; ``…`` marks each end where text is left out.
+    characters long; ``…`` marks each end where text is left out. *model* and
+    *path* hide secrets as they do for ``shown``, before the texts are cut.
     """
-    texts = [value_text(value) for value in values]
+    texts = [value_text(_hidden(value, model, path)) for value in values]
     if all(len(text) <= VALUE_WIDTH for text in texts):
         return tuple(texts)
     start = 0

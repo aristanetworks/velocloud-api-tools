@@ -41,7 +41,7 @@ import copy
 import json
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any, Final, Literal, cast
+from typing import Any, Final, Literal, cast, override
 
 from pydantic import MISSING
 from pydantic_core import to_jsonable_python
@@ -163,6 +163,17 @@ class ModulePlan:
     profile's no longer do; nothing is copied from the profile. A flag inside a
     list that is written whole is part of that list's change and is not listed.
     """
+    model: type[VcoModel] | None = None
+    """The class of the module's data: that of the data planned when it is a
+    model, else that of ``module.data`` when it is one. It tells ``render`` which
+    values are secrets; a plan made from a dict still has it."""
+
+    @override
+    def __repr__(self) -> str:
+        return (
+            f"ModulePlan(name={self.name!r}, operation={self.operation!r}, "
+            f"changes={len(self.changes)})"
+        )
 
     def render(self) -> str:
         """The plan as text: a headline, then a line for each change.
@@ -173,7 +184,8 @@ class ModulePlan:
         is a value that changes. ``~ path: order: moves`` is a keyed list whose
         items change place: it names up to five moves, each with its new place,
         and counts the rest. A value is shown as JSON, cut to 80 characters;
-        the two values of a ``~`` line are cut where they first differ.
+        the two values of a ``~`` line are cut where they first differ. A
+        secret is shown as ``"***"``; the changes keep the real values.
         """
         lines = [f"{self.name}: {self.operation}"]
         for change in self.changes:
@@ -181,11 +193,14 @@ class ModulePlan:
                 lines.append(f"  ~ {change.path}: order: {moves_text(change.moves)}")
             elif change.before is MISSING:
                 place = f" ({change.place})" if change.place is not None else ""
-                lines.append(f"  + {change.path}{place}: {shown(change.after)}")
+                after = shown(change.after, model=self.model, path=change.path)
+                lines.append(f"  + {change.path}{place}: {after}")
             elif change.after is MISSING:
                 lines.append(f"  - {change.path}")
             else:
-                before, after = shown_together(change.before, change.after)
+                before, after = shown_together(
+                    change.before, change.after, model=self.model, path=change.path
+                )
                 lines.append(f"  ~ {change.path}: {before} -> {after}")
         if self.refs is not None:
             lines.append("  refs: replaced")
@@ -306,6 +321,16 @@ def _attribute(obj: object, name: str) -> object:
     """``getattr`` typed ``object``; ``MISSING`` if there is no such attribute."""
     value: object = getattr(obj, name, MISSING)
     return value
+
+
+def _document_model(
+    planned: type[VcoModel] | None, module: ConfigurationModuleBase
+) -> type[VcoModel] | None:
+    """The class of the data planned, else that of ``module.data``, else None."""
+    if planned is not None:
+        return planned
+    data = _attribute(module, "data")
+    return type(data) if isinstance(data, VcoModel) else None
 
 
 def _reparse[M: VcoModel](
@@ -446,6 +471,7 @@ def plan_module(
             refs=refs_out,
             changes=tuple(raw_changes({}, payload, model_type)),
             reconciled_segments=(),
+            model=_document_model(model_type, module),
         )
 
     inherited = profile if level is not ConfigContext.PROFILE else None
@@ -510,4 +536,5 @@ def plan_module(
         ),
         legacy_keys=legacy,
         overrides_turned_on=_overrides_turned_on(changes, model_type),
+        model=_document_model(model_type, module),
     )

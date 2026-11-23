@@ -14,6 +14,7 @@ from pyvelo.core.base import VcoModel
 from pyvelo.core.changes import patch_of
 from pyvelo.core.rebase import ItemMove, ItemPart, ItemPlace, Path, RawChange
 from pyvelo.core.response_check import PlannedChange, ServerChange
+from pyvelo.core.secrets import HIDDEN
 from pyvelo.core.show import moves_text, shown_together
 
 if TYPE_CHECKING:
@@ -270,6 +271,18 @@ def _place_or_order(place: ItemPlace | None, moves: tuple[ItemMove, ...] | None)
     return ""
 
 
+def _first[T](entries: Sequence[T], limit: int | None) -> Sequence[T]:
+    """The first *limit* of *entries*; all of them for None."""
+    return entries if limit is None else entries[:limit]
+
+
+def _and_more(total: int, limit: int | None, attribute: str) -> list[str]:
+    """The line that counts the entries of a list a message cut short, or no line when it did not."""
+    if limit is None or total <= limit:
+        return []
+    return [f"  and {total - limit} more: error.{attribute} has them all"]
+
+
 def _where(change: PlannedChange | ServerChange) -> str:
     """The path of *change*, with ``refs`` before it for a refs entry."""
     return f"refs {change.path}" if change.part == "refs" else str(change.path)
@@ -353,18 +366,40 @@ class ModuleWriteError(VcoError):
             f"Configuration module {self._label()}: the write is not stored as planned"
         )
 
-    def _notes(self) -> list[str]:
-        """Lines between the headline and the lists."""
+    def _notes(self, limit: int | None) -> list[str]:
+        """Lines between the headline and the lists; a list in them shows at most *limit* entries."""
         return []
 
-    def render(self) -> str:
-        """The message: the headline, any notes, then each list by path; a list with no entries is left out."""
-        lines = [self._headline(), *self._notes()]
+    def _document(self) -> type[VcoModel] | None:
+        """The class of the module's data, which says what a value of the plan is."""
+        return None if self.plan is None else self.plan.model
+
+    def _values(
+        self, change: PlannedChange | ServerChange, *values: object
+    ) -> tuple[str, ...]:
+        """*values* of *change* as text, with a secret as ``"***"``.
+
+        A ref row is shown as ``"***"`` whatever it holds: rows are compared by
+        identity only, and a row can hold a service's credentials.
+        """
+        if change.part == "refs":
+            return shown_together(
+                *(value if value is MISSING else HIDDEN for value in values)
+            )
+        return shown_together(*values, model=self._document(), path=change.path)
+
+    def render(self, limit: int | None = 20) -> str:
+        """The message: the headline, any notes, then each list by path; a list with no entries is left out.
+
+        Each list shows its first *limit* entries (all for None), and a line
+        after it counts the rest. A secret is shown as ``"***"``.
+        """
+        lines = [self._headline(), *self._notes(limit)]
         if self.lost_edits:
             lines.append("lost edits (not stored; `error.redo_patch()` redoes them):")
-            for change in self.lost_edits:
-                as_read, intended, stored = shown_together(
-                    change.as_read, change.intended, change.stored
+            for change in _first(self.lost_edits, limit):
+                as_read, intended, stored = self._values(
+                    change, change.as_read, change.intended, change.stored
                 )
                 line = (
                     f"  {_what(change)}: read {as_read}, "
@@ -373,18 +408,21 @@ class ModuleWriteError(VcoError):
                 if change.clash:
                     line += "  [clash: also changed on the VCO]"
                 lines.append(line)
+            lines.extend(_and_more(len(self.lost_edits), limit, "lost_edits"))
         if self.applied:
             lines.append("already stored:")
-            lines.extend(f"  {_what(change)}" for change in self.applied)
+            lines.extend(f"  {_what(change)}" for change in _first(self.applied, limit))
+            lines.extend(_and_more(len(self.applied), limit, "applied"))
         if self.server_changes:
             lines.append("stored otherwise than sent:")
-            for server_change in self.server_changes:
-                as_read, stored = shown_together(
-                    server_change.as_read, server_change.stored
+            for server_change in _first(self.server_changes, limit):
+                as_read, stored = self._values(
+                    server_change, server_change.as_read, server_change.stored
                 )
                 lines.append(
                     f"  {_where(server_change)}: read {as_read}, stored {stored}"
                 )
+            lines.extend(_and_more(len(self.server_changes), limit, "server_changes"))
         if self.completed:
             lines.append(
                 "written before this one: "
@@ -574,7 +612,7 @@ class ConfigConflictError(ModuleWriteError):
         )
 
     @override
-    def _notes(self) -> list[str]:
+    def _notes(self, limit: int | None) -> list[str]:
         if self.stated and not self.lost_edits and self.plan is not None:
             note = (
                 "Nothing is listed as lost: the check cannot tell whether every "
@@ -685,7 +723,7 @@ class WriteOutcomeUnknownError(ModuleWriteError):
         )
 
     @override
-    def _notes(self) -> list[str]:
+    def _notes(self, limit: int | None) -> list[str]:
         if self.answer == "refused":
             said = (
                 "The VCO refused this write, so it stored nothing of it. Whether "
@@ -697,10 +735,16 @@ class WriteOutcomeUnknownError(ModuleWriteError):
             said = "Whether the changes below are stored is not known."
         lines = [said, "planned, not checked:"]
         if self.plan is not None:
-            for change in self.plan.changes:
-                before, after = shown_together(change.before, change.after)
+            for change in _first(self.plan.changes, limit):
+                before, after = shown_together(
+                    change.before,
+                    change.after,
+                    model=self.plan.model,
+                    path=change.path,
+                )
                 where = f"{change.path}{_place_or_order(change.place, change.moves)}"
                 lines.append(f"  {where}: read {before}, meant {after}")
+            lines.extend(_and_more(len(self.plan.changes), limit, "plan.changes"))
             if self.plan.refs is not None:
                 lines.append("  refs: replaced")
         lines.append(

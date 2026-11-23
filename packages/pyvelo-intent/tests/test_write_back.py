@@ -20,6 +20,7 @@ from pyvelo.client.exceptions import (
     WriteNotAppliedError,
     WriteOutcomeUnknownError,
 )
+from pyvelo.client.models.configuration.device_settings.segment import SegmentBgp
 from pyvelo.client.models.configuration.firewall.rules import FirewallOutboundRule
 from pyvelo.client.models.configuration.firewall.segment import FirewallSegment
 from pyvelo.client.models.configuration.qos.root import ServiceRateLimit
@@ -550,3 +551,57 @@ async def test_a_save_whose_answer_does_not_parse_keeps_the_edits_in_the_state()
     # The state is as it was: the module as read, at its version, with the edit.
     assert state.module("firewall").version == "e1"
     assert [m.name for m in state.plan().changed] == ["firewall"]
+
+
+async def test_the_repr_of_a_save_result_holds_no_module_data():
+    settings: dict[str, Any] = {
+        "lan": {"networks": [], "interfaces": []},
+        "segments": [
+            {
+                "segment": desc(0, "Global Segment"),
+                "bgp": {
+                    "enabled": True,
+                    "override": True,
+                    "ASN": "65000",
+                    "neighbors": [
+                        {
+                            "neighborIp": "192.0.2.1",
+                            "neighborAS": "65001",
+                            "md5Password": "OLD-md5-made-up",
+                        }
+                    ],
+                },
+            }
+        ],
+    }
+    state = make_state(
+        edge_modules=[
+            make_module_json(
+                "firewall",
+                {"firewall_enabled": True, "segments": []},
+                module_id=1,
+                configuration_id=10,
+            ),
+            make_module_json(
+                "deviceSettings", settings, module_id=4, configuration_id=10
+            ),
+        ]
+    )
+    state.edge.firewall.firewall_enabled = False
+    bgp = state.edge.device_settings.segments[0].bgp
+    assert isinstance(bgp, SegmentBgp)
+    bgp.asn = "65010"
+    client = MockVcoClient.for_state(state)
+    preview = await ConfigPipeline(client).save(state, dry_run=True)
+    for name in ("firewall", "deviceSettings"):
+        assert f"ModulePlan(name='{name}', operation='update', changes=1)" in repr(
+            preview
+        )
+    result = await ConfigPipeline(client).save(state)
+    assert client.store.rows[4]["data"]["segments"][0]["bgp"]["ASN"] == "65010"
+    for text in (repr(preview), repr(result)):
+        assert "OLD-md5-made-up" not in text and "neighborIp" not in text
+        assert text.startswith("SaveResult(") and "modules_updated=[" in text
+    assert "server_changes={'firewall': 0, 'deviceSettings': 0}" in repr(result)
+    assert "left_out={'firewall': 0, 'deviceSettings': 0}" in repr(result)
+    assert "ModuleWrite(name='deviceSettings', operation='update'" in repr(result)

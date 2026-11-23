@@ -4,7 +4,7 @@ import asyncio
 import copy
 import json
 import weakref
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from typing import Any, Literal, Protocol, cast, override, runtime_checkable
 
 from pydantic import MISSING, BaseModel
@@ -831,6 +831,22 @@ class SaveResult:
     # Optional count for downstream integrations managing enterprise objects.
     # ConfigPipeline leaves this at zero.
     objects_applied: int = 0
+
+    @override
+    def __repr__(self) -> str:
+        """The dataclass ``repr``, with the number of entries per module for ``server_changes`` and ``left_out``.
+
+        The entries hold configuration values, so they are not printed.
+        """
+        counted = ("server_changes", "left_out")
+        parts: list[str] = []
+        for item in fields(self):
+            value: object = getattr(self, item.name)
+            if item.name in counted:
+                counts = cast(dict[object, tuple[object, ...]], value)
+                value = {str(name): len(entries) for name, entries in counts.items()}
+            parts.append(f"{item.name}={value!r}")
+        return f"{type(self).__name__}({', '.join(parts)})"
 
     @property
     def is_valid(self) -> bool:

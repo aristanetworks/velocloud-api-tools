@@ -25,7 +25,7 @@ that is still as read is a lost edit instead: the write did not reach it.
 """
 
 from dataclasses import dataclass
-from typing import Any, Final, Literal, cast
+from typing import Any, Final, Literal, cast, override
 
 from pydantic import MISSING
 
@@ -65,6 +65,14 @@ class ModuleWrite[M: ConfigurationModuleBase]:
     left_out: tuple[PlannedChange, ...] = ()
     """Planned changes the VCO stores otherwise than as sent (``ResponseCheck.left_out``)."""
     server_changes: tuple[ServerChange, ...] = ()
+
+    @override
+    def __repr__(self) -> str:
+        return (
+            f"ModuleWrite(name={self.name!r}, operation={self.operation!r}, "
+            f"applied={len(self.applied)}, left_out={len(self.left_out)}, "
+            f"server_changes={len(self.server_changes)})"
+        )
 
 
 MODULE_REWRITES: Final[dict[str, Rewrites]] = {

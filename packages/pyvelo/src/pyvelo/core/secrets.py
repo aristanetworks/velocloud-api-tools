@@ -5,7 +5,7 @@ A field marked ``Secret`` holds a password, a key or a community string.
 dump) into one that is safe to show.
 """
 
-from typing import Final
+from typing import Final, TypeIs
 
 from pydantic import MISSING
 
@@ -23,6 +23,10 @@ from .rebase import Path
 HIDDEN: Final = "***"
 
 type _Classes = tuple[type[VcoModel], ...]
+
+
+def _is_tuple(value: object) -> TypeIs[tuple[object, ...]]:
+    return isinstance(value, tuple)
 
 
 def _under(classes: _Classes, key: object) -> tuple[bool, _Classes, bool] | None:
@@ -50,7 +54,7 @@ def _under(classes: _Classes, key: object) -> tuple[bool, _Classes, bool] | None
 def _hide(value: object, classes: _Classes, is_map: bool) -> object:
     if not classes:
         return value
-    if _is_list(value):
+    if _is_list(value) or _is_tuple(value):
         return [_hide(item, classes, is_map) for item in value]
     if not _is_dict(value):
         return value
@@ -73,9 +77,9 @@ def hide_secrets(model: type[VcoModel] | None, path: Path, value: object) -> obj
 
     The string ``"***"`` stands in place of the value of every field marked
     ``Secret``, at any depth, and is the result when *path* is at or below such
-    a field. *value* is returned as it is when it is ``MISSING``, when *model*
-    is None, and where the model does not know the place. The value given is
-    never changed.
+    a field. A tuple is walked as a list is. *value* is returned as it is when
+    it is ``MISSING``, when *model* is None, and where the model does not know
+    the place. The value given is never changed.
     """
     if model is None or value is MISSING:
         return value
