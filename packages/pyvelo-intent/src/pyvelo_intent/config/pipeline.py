@@ -281,7 +281,7 @@ class ConfigPipeline:
            - a change of a segment the edge only inherits first adds its
              placeholder entry, which carries the profile's descriptor and
              IDs;
-           - a ``_position`` (``{"_op": "move", ...}`` (``move(...)``), or on a
+           - a ``_position`` (``{"_position": ...}`` (``move(...)``), or on a
              change) for a segment the edge module did not have when it was
              read raises ``PatchError``, and so does one given ``before`` or
              ``after`` such a segment: a save writes those segments after the
@@ -323,6 +323,9 @@ class ConfigPipeline:
         Holds ``state.lock`` for the whole call, so it runs after a ``save`` or
         another ``apply`` of the same state that is running. Raises
         ``RuntimeError`` when the calling task already holds ``state.lock``.
+        A task that holds ``state.lock`` and, inside the block, waits for a
+        child task that calls ``apply`` or ``save`` waits without end; nothing
+        detects it.
 
         Raises ``ValueError`` for an unknown *module*.
         """
@@ -340,7 +343,7 @@ class ConfigPipeline:
                     raise PatchError(
                         f"{mod.name}: a save does not write this module (it writes "
                         "device settings, QoS, WAN and firewall modules), so a "
-                        "patch to it is not applied",
+                        "patch to it is not applied. Make the change in the VCO",
                         Path(()),
                     )
                 data = mod.data
@@ -352,7 +355,11 @@ class ConfigPipeline:
                     and isinstance(data, _SegmentLayer)
                 ):
                     _profile_segment_ops(segments, _SEGMENTS)
-                inherited = state.inherited_segment_ids(mod) if edge else frozenset()
+                inherited = (
+                    state.inherited_segment_ids(mod)
+                    if edge and _is_object(segments)
+                    else frozenset()
+                )
                 trial = data.model_copy(deep=True)
                 _ = trial.merge_patch(
                     _prepare_segments(trial, nested, state.resolvers, inherited)
@@ -516,9 +523,11 @@ class ConfigPipeline:
         it as ``completed``. Any other error gets a note that names them, if
         there are any. An insert that fails in any way but with the module as
         stored is recorded in ``state.unconfirmed_inserts``, and the next save
-        reads before it inserts that module again. So does the ``DetachedObjectError`` of an edit made
-        while a module was written: it stops the save once that module is
-        stored, and its note also names the modules not written.
+        reads before it inserts that module again. An edit made to a module
+        while it was written (or a placeholder a lookup added to it) is not
+        in the module as stored: once that module is stored and in *state*,
+        the save stops with a ``DetachedObjectError`` whose note also names
+        the modules not written.
         """
         enterprise_id = state.resolver_context.enterprise_id
         # Each write replaces only its own module, so these stay the state's.
@@ -574,8 +583,10 @@ class ConfigPipeline:
                     f"{mod.name}: the module was edited while this save was writing it, at: "
                     + f"{', '.join(paths)}. The write is stored without those edits and the "
                     + "state holds the module as stored; take the objects from the state again "
-                    + "and redo them. To edit a state from another task while a save may run, "
-                    + "use apply, or hold state.lock around the edit",
+                    + "and redo them. A path that is a placeholder a lookup added "
+                    + "(segment(name), for a segment the edge only inherits) is no edit "
+                    + "and needs no redo. To edit a state from another task while a save "
+                    + "may run, use apply, or hold state.lock around the edit",
                     paths,
                 )
                 note = _written_note(done)
@@ -599,6 +610,8 @@ class ConfigPipeline:
         ``load`` and ``load_profile`` already do this. Call it for a state
         built another way, such as from a cache: the state gets an unloaded
         copy of the pipeline's resolvers, loaded for ``state.resolver_context``.
+        This replaces the state's whole registry, so a resolver registered on
+        ``state.resolvers`` is dropped.
         """
         resolvers = self._resolvers.unloaded()
         await self._load_state_resolvers(resolvers, state.resolver_context)
@@ -694,12 +707,19 @@ def _profile_segment_ops(segments: Mapping[object, object], path: Path) -> None:
         op = parse_item_op(value, where)
         if op.kind == "add":
             raise PatchError(
-                "adding a segment to a profile through a patch is not supported yet",
+                "adding a segment to a profile through a patch is not supported yet: "
+                + "a segment belongs to device settings, QoS and firewall together, "
+                + 'so {"_op": "add", ...} (`add(...)`) is refused. To change what '
+                + 'a segment holds, name it: {"segments": {"<name>": {...}}}',
                 where,
             )
         if op.kind == "delete":
             raise PatchError(
-                "removing a segment from a profile is not supported", where
+                "removing a segment from a profile through a patch is not supported "
+                + "yet: a segment belongs to device settings, QoS and firewall "
+                + 'together, so {"_op": "delete"} (`delete()`) is refused. To '
+                + 'change what a segment holds, name it: {"segments": {"<name>": {...}}}',
+                where,
             )
 
 
@@ -777,7 +797,7 @@ def _prepare_segments(
     edge module did not have when it was read
     (``ConfigState.inherited_segment_ids``). A save writes those after the
     edge's own, in the profile's order, so a ``_position`` for one of them
-    (``{"_op": "move", ...}`` (``move(...)``), or on a change) raises
+    (``{"_position": ...}`` (``move(...)``), or on a change) raises
     ``PatchError``, and so does a ``_position`` given ``before`` or ``after``
     one, whatever the operation. A placeholder an earlier patch added is still
     one of them.
@@ -899,8 +919,9 @@ def _refuse_place_for(
     raise PatchError(
         f"the edge inherits segment {name!r} from its profile and had no entry "
         + "of its own for it when it was read. A save writes such a segment "
-        + "after the edge's own, in the profile's order, so a place for it "
-        + 'cannot be stored: leave out "_position" (move())',
+        + "after the edge's own, in the profile's order, so it cannot be given a "
+        + 'place. For a move, such as {"_position": "first"} (`move(first=True)`), '
+        + 'drop the entry. For a change, drop "_position" and keep the fields',
         where,
     )
 
@@ -936,8 +957,11 @@ def _refuse_place_by_inherited(
         f"the place is given by segment {anchor!r}, which the edge inherits "
         + "from its profile and had no entry of its own for when it was read. "
         + "A save writes such a segment after the edge's own, in the profile's "
-        + "order, so a place before or after it cannot be stored: give "
-        + '"first", "last", or one of the edge\'s own segments in "_position"',
+        + "order, so a place before or after it cannot be stored. Place the "
+        + 'segment "first" or "last" ({"_position": "first"} (`move(first=True)`)), '
+        + "or before or after one of the edge's own segments "
+        + '({"_position": {"before": "<own segment>"}} '
+        + '(`move(before="<own segment>")`))',
         where,
     )
 

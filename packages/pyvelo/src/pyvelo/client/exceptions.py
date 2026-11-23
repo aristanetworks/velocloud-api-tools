@@ -256,7 +256,7 @@ def _where(change: PlannedChange | ServerChange) -> str:
 
 
 class ModuleWriteError(VcoError):
-    """A module write that was sent and is not known to be stored as planned.
+    """A module write that was sent, or was about to be sent again, and is not known to be stored as planned.
 
     ``ConfigConflictError`` and ``WriteNotAppliedError`` are a write whose
     module as stored was read and holds the changes only in part. They carry
@@ -486,12 +486,13 @@ class WriteNotAppliedError(ModuleWriteError):
 
 
 class WriteOutcomeUnknownError(ModuleWriteError):
-    """Raised when a module write was sent and the module as stored could not be read.
+    """Raised when a module write was sent, or was about to be sent again, and the module as stored could not be read.
 
     The write's answer did not parse, or it was not this module's row, or the
     read-back found no module to check (``detail`` says which). Nothing is
     known of what is stored, so no change is listed as lost or stored:
-    ``plan`` holds what was sent, and ``module`` is None. ``answer`` is what the
+    ``plan`` holds what was sent, or what was about to be sent, and ``module``
+    is None. ``answer`` is what the
     VCO said of the write itself: ``"refused"`` (it refused the version, so it
     stored nothing of this write), ``"counted"`` (it counted the write, so the
     changes are most likely stored) or ``"row"`` (it answered with a row that

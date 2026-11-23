@@ -588,11 +588,15 @@ Known limits:
   made by assigning to the models while a save is writing is not waited for.
   The save stores the module without it, puts the module as stored in the
   state, and raises `DetachedObjectError` with the paths of such edits: redo
-  them. The save stops at that module: the error's note names the modules
-  written, and the next save writes the rest. To make such an edit safely, hold the lock around it
+  them. A path that is a placeholder a lookup added (`segment(name)`, for a
+  segment the edge only inherits) is no edit and needs no redo. The save stops
+  at that module: the error's note names the modules written, and the next
+  save writes the rest. To make such an edit safely, hold the lock around it
   (`async with state.lock:`). `apply` and `save` take the lock themselves:
   called inside that block by the same task they raise `RuntimeError`, so call
-  them after it.
+  them after it. A task that holds the lock and waits, inside the block, for a
+  child task that calls `apply` or `save` waits without end: nothing detects
+  it.
 - The `override_consistency` validator is a traversal placeholder and currently
   reports no violations. Other registered validators cover specific structural
   or domain checks; they do not guarantee that every patch is valid for a live VCO.

@@ -308,7 +308,9 @@ class ConfigState:
         default_factory=dict, repr=False
     )
     load_warnings: list[ValidationWarning] = field(default_factory=list)
-    resolvers: ResolverRegistry = field(default_factory=ResolverRegistry, repr=False)
+    resolvers: ResolverRegistry = field(
+        default_factory=ResolverRegistry, repr=False, compare=False
+    )
     """The resolvers that turn the names in a patch for this state into IDs."""
     lock: StateLock = field(
         default_factory=StateLock, init=False, repr=False, compare=False
@@ -458,8 +460,9 @@ class ConfigState:
         An edge module is bound to the profile layer. The per-field snapshot
         takes a copy of *new*, so neither :meth:`plan` nor
         :meth:`get_field_changes` shows what was written; the other modules
-        keep their edits. The module's name leaves ``unconfirmed_inserts``. *old* and every model inside it are detached: an
-        assignment raises ``DetachedObjectError``, and so does the next
+        keep their edits. The module's name leaves ``unconfirmed_inserts``.
+        *old* and every model inside it are detached: an assignment raises
+        ``DetachedObjectError``, and so does the next
         :meth:`plan` after an in-place change to a list or dict they hold. So
         does a lookup through a detached layer that adds a placeholder
         (``segment("Guest")``), on purpose: it usually comes before an edit

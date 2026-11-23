@@ -501,8 +501,9 @@ async def test_a_place_for_an_inherited_segment_is_refused(entry: dict[str, obje
     assert exc.value.message == (
         "the edge inherits segment 'Guest' from its profile and had no entry of "
         "its own for it when it was read. A save writes such a segment after the "
-        "edge's own, in the profile's order, so a place for it cannot be stored: "
-        'leave out "_position" (move())'
+        "edge's own, in the profile's order, so it cannot be given a place. For a "
+        'move, such as {"_position": "first"} (`move(first=True)`), drop the '
+        'entry. For a change, drop "_position" and keep the fields'
     )
     assert _edge_segment_names(state) == ["Global Segment"]  # no placeholder
     assert state.plan().render() == before
@@ -565,8 +566,10 @@ async def test_a_place_before_or_after_an_inherited_segment_is_refused():
         "the place is given by segment 'Guest', which the edge inherits from its "
         "profile and had no entry of its own for when it was read. A save writes "
         "such a segment after the edge's own, in the profile's order, so a place "
-        'before or after it cannot be stored: give "first", "last", or one of the '
-        'edge\'s own segments in "_position"'
+        'before or after it cannot be stored. Place the segment "first" or "last" '
+        '({"_position": "first"} (`move(first=True)`)), or before or after one of '
+        'the edge\'s own segments ({"_position": {"before": "<own segment>"}} '
+        '(`move(before="<own segment>")`))'
     )
     assert _edge_segment_names(state) == ["Global Segment", "Guest"]
 
@@ -837,25 +840,27 @@ def _profile_segment_names(state: ConfigState) -> list[list[str]]:
 async def test_profile_target_refuses_segment_add_and_delete():
     state = _segment_profile_state("Global Segment")
     refused: list[tuple[dict[str, object], Path, str]] = [
-        ({"Guest": add({})}, Path.parse("segments[Guest]"), "not supported yet"),
+        ({"Guest": add({})}, Path.parse("segments[Guest]"), '{"_op": "add", ...}'),
         (
             {"+": add({"segment": {"name": "Guest"}})},
             Path(("segments", Key("+"))),
-            "not supported yet",
+            '{"_op": "add", ...}',
         ),
         (
             {"Global Segment": delete()},
             Path(("segments", Key("Global Segment"))),
-            "not supported",
+            '{"_op": "delete"}',
         ),
     ]
     for module in ("firewall", "qos", "device_settings"):
-        for segments, where, message in refused:
-            with pytest.raises(PatchError, match=message) as exc:
+        for segments, where, form in refused:
+            with pytest.raises(PatchError, match="not supported yet") as exc:
                 _ = await ConfigPipeline(client=None).apply(
                     state, module=module, patch={"segments": segments}
                 )
             assert exc.value.path == where
+            assert form in exc.value.message
+            assert '{"segments": {"<name>": {...}}}' in exc.value.message
     assert _profile_segment_names(state) == [["Global Segment"]] * 3
 
 
@@ -1279,6 +1284,9 @@ async def test_apply_refuses_a_module_a_save_does_not_write():
             patch={"gateway_selection": {"mode": "static"}},
         )
     assert exc.value.path == Path(())
+    assert exc.value.message.endswith(
+        "so a patch to it is not applied. Make the change in the VCO"
+    )
     assert state.plan().changed == ()
     assert state.profile_config.control_plane.data.gateway_selection.mode == "dynamic"
 

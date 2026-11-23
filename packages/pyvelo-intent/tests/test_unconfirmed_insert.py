@@ -4,6 +4,7 @@ The state is ``test_state_plan.make_state()``, whose edge (configuration 10)
 has a firewall module and no QoS module, so a QoS edit is saved as an insert.
 """
 
+import asyncio
 import copy
 from typing import Any
 
@@ -21,6 +22,7 @@ from pyvelo_intent import add
 from pyvelo_intent.config.pipeline import ConfigPipeline
 from pyvelo_intent.config.state import ConfigState
 from pyvelo_intent.testing import MockVcoClient
+from test_concurrent_use import Gated  # pyright: ignore[reportImplicitRelativeImport]
 from test_state_plan import (  # pyright: ignore[reportImplicitRelativeImport]
     EDGE_FW,
     make_state,
@@ -267,3 +269,28 @@ async def test_an_update_retried_with_a_change_the_vco_stores_its_own_way(
     assert state.module("firewall").version == stored_version
     assert state.edge.firewall.segments[0].outbound[0].rule_logical_id == "l1"
     assert state.plan().changed == ()
+
+
+async def test_a_save_cancelled_while_an_insert_is_out_marks_it_unconfirmed():
+    state = make_state()
+    client = Gated.over(state)
+    pipeline = await with_a_new_qos_rule(client, state)
+    saving = asyncio.create_task(pipeline.save(state))
+    _ = await client.started.wait()  # the insert is out
+
+    _ = saving.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        _ = await saving
+
+    assert state.unconfirmed_inserts == {"QOS"}
+    assert state.module("qos").is_new
+    assert not state.lock.locked()
+
+    client.release.set()
+    result = await pipeline.save(state)
+
+    assert methods(client.store) == ["getConfiguration", "insertConfigurationModule"]
+    assert result.modules_inserted == [QOS]
+    (stored_id,) = edge_qos_rows(client)
+    assert state.module("qos").id_ == stored_id
+    assert state.unconfirmed_inserts == set()

@@ -82,7 +82,7 @@ def _unknown_outcome(
     answer: WriteAnswer,
     module_id: int,
 ) -> WriteOutcomeUnknownError:
-    """The error for a write that was sent and whose module as stored could not be read."""
+    """The error for a write that was sent, or was about to be sent again, and whose module as stored could not be read."""
     return WriteOutcomeUnknownError(
         module_id,
         module.version or "",
@@ -478,7 +478,9 @@ class ConfigurationMixin(Protocol):
         With *if_absent*, an insert first reads the configuration: a module of
         the plan's name found there (of several, the one with the highest ID)
         is taken as the insert's answer and checked like one, and nothing is
-        inserted. Use it to repeat an insert whose answer was not read.
+        inserted. Use it to repeat an insert whose answer was not read. An
+        error of that read request itself propagates, as it does for the
+        read-back.
 
         A row the VCO answers with that has no version is replaced by the
         module read from its configuration, so that the module returned
@@ -494,8 +496,8 @@ class ConfigurationMixin(Protocol):
           answered with the module as read, unchanged.
         - ``WriteNotAppliedError`` when the VCO stored the write otherwise than
           as planned.
-        - ``WriteOutcomeUnknownError`` when the write was sent and the module
-          as stored cannot be read: the answer or the row read back does not
+        - ``WriteOutcomeUnknownError`` when the write was sent, or was about
+          to be sent again, and the module as stored cannot be read: the answer or the row read back does not
           parse, the read-back does not find the module, or the module the VCO
           answered with is not this one (another ID, another configuration or
           another class of module). With *if_absent* it also says that the

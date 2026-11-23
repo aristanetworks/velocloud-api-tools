@@ -175,6 +175,30 @@ async def test_an_assignment_during_a_save_is_reported_by_the_save():
     assert state.plan().changed == ()
 
 
+async def test_a_lookup_during_a_save_is_reported_as_no_edit():
+    state = make_state()  # the profile has a Guest segment the edge only inherits
+    client = Gated.over(state)
+    pipeline = ConfigPipeline(client)
+    state.edge.firewall.firewall_enabled = False
+    saving = asyncio.create_task(pipeline.save(state))
+    _ = await client.started.wait()
+
+    _ = state.edge.firewall.segment("Guest")  # adds a placeholder; edits nothing
+    client.release.set()
+    with pytest.raises(DetachedObjectError) as exc:
+        _ = await saving
+
+    assert exc.value.paths == [Path(("data", "segments", Key("Guest")))]
+    assert "at: data.segments[Guest]" in str(exc.value)
+    assert (
+        "A path that is a placeholder a lookup added (segment(name), for a "
+        "segment the edge only inherits) is no edit and needs no redo"
+    ) in str(exc.value)
+    assert data_of(client.store, 1)["firewall_enabled"] is False
+    assert state.module("firewall").version == client.store.rows[1]["version"]
+    assert state.plan().changed == ()
+
+
 async def test_an_edit_of_a_later_module_during_a_save_is_reported_too():
     state = three_module_state()
     client = Gated.over(state)
