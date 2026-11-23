@@ -349,8 +349,9 @@ The `segments` lists have rules of their own:
   list value for `segments` that leaves a segment out or brings a new one, or
   an object that rewrites the descriptor. A segment belongs to all three of
   device settings, QoS and firewall, and adding one through a patch is not
-  supported yet. Changing what a segment holds, moving it, and a list value
-  that keeps every descriptor are fine.
+  supported yet (`assign_segment` does it, see "Assigning a segment to a
+  profile"). Changing what a segment holds, moving it, and a list value that
+  keeps every descriptor are fine.
 
 Sections and items of an edge that can follow the profile have an `override`
 flag: the BGP of a segment, a VLAN, an interface. While the flag is off, the
@@ -557,6 +558,53 @@ firewall: update
 - A cache of loaded modules must keep the JSON rows or `module.raw_data`. A
   `model_validate(module.model_dump())` round trip loses the raw snapshot, and
   with it the "as read" guarantee above.
+
+## Assigning a segment to a profile
+
+A profile holds each of its segments in three modules: device settings, QoS and
+firewall. `pipeline.assign_segment(state, "Guest")` adds the entry the
+Orchestrator UI makes for a new segment to each of them that lacks it, in
+memory, and the next save writes them, device settings first, with its
+`deviceSettings:segment` row:
+
+```python
+state = await pipeline.load_profile("Branch profile", enterprise_id=1)
+state = await pipeline.assign_segment(state, "Guest")
+print(state.plan().render())  # added segments: Guest, in each of the three
+result = await pipeline.save(state)
+```
+
+- The name is resolved as in a patch: the enterprise's segment in any case, and
+  `ResolutionError` with suggestions for one it does not have. A state with no
+  segment resolver raises `LookupError`; `await pipeline.load_resolvers(state)`
+  gives it one (`load` and `load_profile` load it).
+- The entry of each module is the template of the UI, with the segment's
+  descriptor. Every QoS rule of a new entry, in `rules` and in `defaults`, has a
+  `ruleLogicalId` made when the segment is assigned, so `dry_run`, `save` and
+  a second `plan()` send the same IDs. A firewall rule has none until the VCO
+  issues it. An entry nobody edits is no change from the template: the plan has
+  an `added segments: Guest` line, and an edit made before the save (`apply`
+  of `{"segments": {"Guest": {"rules": {"Box": {...}}}}}`, or assignment to the
+  models) is a change from it.
+- `qos_rules` are the rules of the new QoS entry in place of the template's:
+  each a `QosRule` or its JSON, in order, with a missing `ruleLogicalId` made.
+  `qos_rules=[]` gives an entry with no rules. Two rules of one name or one
+  `ruleLogicalId` raise `ValueError`, and so do `qos_rules` for a profile whose
+  QoS module has the segment already: they would be dropped, so change those
+  rules with a patch.
+- A profile that has the segment in one or two of the modules is completed:
+  only the modules that lack it get an entry. A QoS entry that is there and
+  lacks some of the template's four `defaults` gets them, as a write of the
+  module would repair them, with `allowConditionalBh` set to the segment's
+  `vpn.conditionalBackhaul` in the device settings. A segment that is in all
+  three, with its defaults complete, raises `ValueError`: change it with a
+  patch.
+- An edge target, a profile that lacks one of the three modules, and a module
+  that is not at the profile level (`load_profile` loads them so; call
+  `.for_profile()` on a profile you built) raise `ValueError`.
+- All or nothing: the assignment is first planned on copies of the modules, and
+  an error leaves the state and `plan()` as they were. The call holds
+  `state.lock`, as `apply` does.
 
 ## After a save
 

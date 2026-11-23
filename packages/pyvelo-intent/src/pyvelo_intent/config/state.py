@@ -859,10 +859,10 @@ class ConfigState:
             resolvers=self.resolvers,
             via_pipeline=True,
             repair_defaults=repair_defaults,
-            conditional_backhaul=self._conditional_backhaul(module, level),
+            conditional_backhaul=self.conditional_backhaul(module, level),
         )
 
-    def _conditional_backhaul(
+    def conditional_backhaul(
         self, module: AnyConfigurationModule, level: ConfigContext
     ) -> dict[int, bool] | None:
         """For a profile QoS *module*, each segment's ``vpn.conditionalBackhaul`` in the profile's device settings now; else None."""

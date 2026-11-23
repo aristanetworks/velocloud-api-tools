@@ -131,6 +131,8 @@ asyncio.run(main())
 
 Without `dry_run`, the save asks the VCO for each module it writes, as stored, and the state continues from it: no reload is needed, the rule ID the VCO gives `block-ssh` is in the state, `state.plan()` is empty, and the state takes more edits and saves. A write the VCO did not store as planned raises `ConfigConflictError` or `WriteNotAppliedError`, whose `redo_patch()` is the patch that redoes the lost edits. A write whose stored module could not be read back raises `WriteOutcomeUnknownError`.
 
+A profile's segment is assigned with `pipeline.assign_segment(state, "Guest")`, which adds the UI's entry for it to the profile's device settings, QoS and firewall modules for the next save to write.
+
 The [pyvelo-intent README](packages/pyvelo-intent/README.md) covers the patch format, what a save writes and reports, validators, resolvers, and the limits of the save path.
 
 ## Development

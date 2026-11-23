@@ -69,12 +69,13 @@ def module_store_pipeline(
     """
     client = MockVcoClient.for_state(state)
     store = client.store
-    for _, name, logical_id, object_id in segments:
+    for segment_id, name, logical_id, object_id in segments:
         store.add_object(
             object_id,
             logical_id=logical_id,
             name=name,
             type_="REGULAR",
             object_="NETWORK_SEGMENT",
+            data={"segmentId": segment_id},
         )
     return ConfigPipeline(client), store

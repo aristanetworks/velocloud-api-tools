@@ -12,6 +12,7 @@ from pyvelo.client.exceptions import (
     ModuleWriteError,
     UnboundError,
 )
+from pyvelo.client.models.configuration.qos.rule import QosRule
 from pyvelo.client.models.configuration.ref_owners import ref_only_values
 from pyvelo.client.module_check import ModuleWrite
 from pyvelo.client.protocol import VcoClientProtocol
@@ -42,6 +43,8 @@ from pyvelo.core.identity import (
     ProfileName,
     ResolutionError,
     ResolverNotLoadedError,
+    SegmentIdentity,
+    SegmentName,
 )
 from pyvelo.core.merge import nest_patch, select_items
 from pyvelo.core.patch import ItemOp, is_new, parse_item_op, position_of
@@ -49,6 +52,12 @@ from pyvelo.core.rebase import Key, Path, raw_changes
 
 from pyvelo_intent.config.module_names import (
     resolve_module_name as _resolve_module_name,
+)
+from pyvelo_intent.config.profile_segments import (
+    apply_assignment,
+    assign_on_trial,
+    plan_assignment,
+    segment_modules,
 )
 from pyvelo_intent.config.state import (
     ConfigPlan,
@@ -434,6 +443,90 @@ class ConfigPipeline:
                 resolvers=state.resolvers,
             )
             return state
+
+    async def assign_segment(
+        self,
+        state: ConfigState,
+        name: str,
+        *,
+        qos_rules: Sequence[QosRule | Mapping[str, object]] | None = None,
+    ) -> ConfigState:
+        """Assign the enterprise segment *name* to the profile of *state*, in memory.
+
+        Each of the profile's device settings, QoS and firewall modules that
+        lacks the segment gets the entry the Orchestrator UI makes for a new
+        segment (``new_segment_entry``), and a QoS entry the profile already
+        has that lacks some of the template's four ``defaults`` gets those. A
+        segment that one or two of the modules have already is completed. The
+        next ``save`` writes the modules, device settings first, with the
+        ``deviceSettings:segment`` row the segment needs; ``plan()`` and
+        ``dry_run`` show it. An entry nobody edits afterwards is no change from
+        the template, and one that is edited (``apply``, or assignment to the
+        models) is.
+
+        *name* is resolved strictly by the state's segment resolver: any case
+        of the enterprise's name, and ``ResolutionError``, with suggestions,
+        for one it does not know. *qos_rules* are the rules of the new QoS
+        entry, in place of the template's, in order: each a ``QosRule`` or its
+        JSON (a missing ``ruleLogicalId`` is made). Two of one name or one
+        ``ruleLogicalId`` raise ``ValueError``, and so do *qos_rules* for a
+        profile whose QoS module already has the segment, which would drop
+        them: change those rules with a patch.
+
+        Raises ``ValueError`` for an edge target (an edge has the segments of
+        its profile), for a profile that lacks one of the three modules, for a
+        module that is not at the profile level (``load_profile`` loads them
+        so; call ``.for_profile()`` on one you built), and when the segment is
+        in all three already, with its defaults complete: change it with a
+        patch. Raises ``LookupError`` for a state with no segment resolver
+        (``await pipeline.load_resolvers(state)`` gives it one), and what
+        ``plan_module`` raises for an entry that could not be written.
+
+        All or nothing: the assignment is planned on copies of the modules
+        first, and an error leaves *state*, and ``plan()``, as they were.
+        Returns *state*, changed in place. Holds ``state.lock`` for the whole
+        call, as :meth:`apply` does, and raises ``RuntimeError`` when the
+        calling task holds it already.
+        """
+        async with state.lock:
+            rules = _qos_rules_json(qos_rules)
+            modules = segment_modules(state)
+            loaded: set[type] = set()
+            identity = await self._resolve_segment(state, name, loaded)
+            assignment = plan_assignment(state, identity, qos_rules=rules)
+            if not assignment.entries and not assignment.defaults:
+                raise ValueError(
+                    f"{identity.name} is in all three modules already; change it "
+                    "with a patch, such as "
+                    f'{{"segments": {{"{identity.name}": {{...}}}}}}.'
+                )
+            while True:
+                try:
+                    assign_on_trial(state, modules, [assignment])
+                    break
+                except ResolverNotLoadedError as error:
+                    # The trial worked on copies: loading and trying again
+                    # leaves the state as it was.
+                    await self.load_resolvers(state, _to_load(error, loaded))
+            apply_assignment(modules, assignment)
+            return state
+
+    async def _resolve_segment(
+        self, state: ConfigState, name: str, loaded: set[type]
+    ) -> SegmentIdentity:
+        """The identity of segment *name* by the state's segment resolver, loading it if it is registered and not loaded."""
+        if state.resolvers.resolver_for(SegmentIdentity) is None:
+            raise LookupError(
+                "This state has no segment resolver, so the name "
+                f"{name!r} cannot be resolved. Give the state its resolvers "
+                "with `await pipeline.load_resolvers(state)` (`load` and "
+                "`load_profile` do), then assign the segment."
+            )
+        while True:
+            try:
+                return await state.resolvers.resolve(SegmentName(name))
+            except ResolverNotLoadedError as error:
+                await self.load_resolvers(state, _to_load(error, loaded))
 
     async def save(
         self,
@@ -1240,6 +1333,35 @@ _WRITABLE_MODULES = (
     WanConfigurationModule,
     FirewallConfigurationModule,
 )
+
+
+def _qos_rules_json(
+    rules: Sequence[QosRule | Mapping[str, object]] | None,
+) -> list[dict[str, object]] | None:
+    """The JSON of *rules*, each validated as a ``QosRule``, in order; None for None.
+
+    Raises ``ValueError`` for two rules of one name or one ``ruleLogicalId``,
+    and pydantic's ``ValidationError`` (a ``ValueError``) for a rule that is not one.
+    """
+    if rules is None:
+        return None
+    dumped = [
+        (
+            rule if isinstance(rule, QosRule) else QosRule.model_validate(rule)
+        ).model_dump(mode="json", by_alias=True)
+        for rule in rules
+    ]
+    for key in ("name", "ruleLogicalId"):
+        seen: set[object] = set()
+        for rule in dumped:
+            if rule[key] in seen:
+                raise ValueError(
+                    f"qos_rules holds more than one rule with the {key} "
+                    f"{rule[key]!r}: each rule of a QoS entry has a name and a "
+                    "ruleLogicalId of its own."
+                )
+            seen.add(rule[key])
+    return dumped
 
 
 def _written_note(done: Sequence[ModuleWrite[Any]]) -> str:
