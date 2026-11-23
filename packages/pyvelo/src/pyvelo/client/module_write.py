@@ -77,6 +77,7 @@ from pyvelo.client.exceptions import (
     FixedListError,
     LossyFieldError,
     RefsNotLoadedError,
+    SegmentSetError,
 )
 from pyvelo.client.models.configuration.common import (
     SEGMENT_LISTS,
@@ -84,6 +85,10 @@ from pyvelo.client.models.configuration.common import (
     segment_id_of,
 )
 from pyvelo.client.models.configuration.firewall.root import FirewallData
+from pyvelo.client.models.configuration.profile_segments import (
+    AddedSegment,
+    with_additions,
+)
 from pyvelo.client.models.configuration.ref_owners import fill_ref_only
 from pyvelo.client.schemas.configuration import (
     ConfigurationModuleBase,
@@ -185,7 +190,11 @@ class ModulePlan:
     None whenever *operation* is ``none``, and for a module that never carried data.
     """
     changes: tuple[RawChange, ...]
-    """The caller's changes, relative to the raw data with the reconciled segments."""
+    """The caller's changes, relative to the raw data with the reconciled segments.
+
+    A profile module's are relative to the raw data plus the entries added to
+    it (``module.additions``), so an added entry nobody edited is no change.
+    """
     reconciled_segments: tuple[str, ...]
     """The profile's segments that the edge module, as read or as edited, does not have."""
     legacy_keys: tuple[Path, ...] = ()
@@ -209,6 +218,8 @@ class ModulePlan:
     """The ref rows the edit adds and removes, from the difference of the owners."""
     warnings: tuple[PlanWarning, ...] = ()
     """What disagrees in the module as read about its refs, and the plan leaves as it is."""
+    added_segments: tuple[str, ...] = ()
+    """The names of the segments added to the module that the payload holds."""
 
     @override
     def __repr__(self) -> str:
@@ -234,6 +245,8 @@ class ModulePlan:
         segment for a row of the module; ``refs: sent as read`` says an update
         or insert sends refs with no row changed, and ``warning: <message>``
         is something about the refs as read that the plan leaves as it is.
+        ``added segments: A, B`` names the segments the pipeline added to a
+        profile module, which are no change from it.
         """
         lines = [f"{self.name}: {self.operation}"]
         for change in self.changes:
@@ -254,6 +267,8 @@ class ModulePlan:
         if self.reconciled_segments:
             label = "missing" if self.operation == "none" else "reconciled"
             lines.append(f"  {label} segments: {', '.join(self.reconciled_segments)}")
+        if self.added_segments:
+            lines.append(f"  added segments: {', '.join(self.added_segments)}")
         for path in self.overrides_turned_on:
             lines.append(
                 f"  override turned on: {path} (the edge's own values apply there "
@@ -460,6 +475,61 @@ def _plain_json(value: Mapping[str, object]) -> dict[str, Any]:
     return cast(dict[str, Any], to_jsonable_python(dict(value), by_alias=True))
 
 
+def _segment_names(data: object) -> dict[object, str]:
+    """The name of each segment entry of *data*, by ``segmentId``, in order; entries without an ID are skipped."""
+    segments = data.get("segments") if is_dict(data) else None
+    if not is_list(segments):
+        return {}
+    return {
+        segment_id: _segment_name(cast(Mapping[str, Any], entry))
+        for entry in segments
+        if (segment_id := segment_id_of(entry)) is not None
+    }
+
+
+def _segment_set_error(
+    module_name: str, added: list[str], removed: list[str]
+) -> SegmentSetError:
+    """The refusal of a one-module plan that adds the segments *added* or removes *removed*."""
+    did = [
+        f"{verb} {', '.join(map(repr, names))}"
+        for verb, names in (("adds", added), ("removes", removed))
+        if names
+    ]
+    message = (
+        f"{module_name}: the edit {' and '.join(did)}, but the segments of a "
+        "profile are the same in its three modules (deviceSettings, QOS and "
+        "firewall), and one module alone cannot change them."
+    )
+    if added:
+        patch = json.dumps({"segments": {name: {"_op": "add"} for name in added}})
+        message += (
+            f" Assign a segment through the pipeline, which makes its entry in "
+            f"all three modules: send the patch {patch} "
+            f'(pipeline.assign_segment(state, "{added[0]}")).'
+        )
+    if removed:
+        message += (
+            " A segment of a profile is removed from all three modules together, "
+            "which is not supported: leave it in the data."
+        )
+    return SegmentSetError(
+        message,
+        module_name=module_name,
+        segments=(*added, *removed),
+        modules=(module_name,),
+    )
+
+
+def _check_segment_set(module_name: str, as_read: object, payload: object) -> None:
+    """Raise ``SegmentSetError`` when *payload*'s segments are not those of *as_read*, by ``segmentId``."""
+    read, written = _segment_names(as_read), _segment_names(payload)
+    added = [name for key, name in written.items() if key not in read]
+    removed = [name for key, name in read.items() if key not in written]
+    if added or removed:
+        raise _segment_set_error(module_name, added, removed)
+
+
 def plan_module(
     module: ConfigurationModuleBase,
     data: VcoModel | Mapping[str, object] | None = None,
@@ -467,12 +537,24 @@ def plan_module(
     level: ConfigContext | None = None,
     profile: ConfigurationModuleBase | None = None,
     resolvers: IdentityLookup | None = None,
+    via_pipeline: bool = False,
 ) -> ModulePlan:
     """Plan the write of *module*, with *data* (default ``module.data``) as its data.
 
     *level* defaults to the config level of *data*. Give the *profile*'s module
     of the same name to reconcile the segments an edge module lacks (never at
     the profile level).
+
+    At the profile level the module is planned against its raw data plus the
+    entries added to it (``module.additions``): an added entry nobody edited
+    is written as it was made and is no change, and the plan's ``changes`` are
+    relative to it. The refs are not: they are compared with the module as
+    read, so an added device settings entry adds its ``deviceSettings:segment``
+    row. The segments of a profile are the same in its three modules, so a
+    plan of one module alone raises ``SegmentSetError`` for a payload whose
+    segments differ from the module as read; *via_pipeline* (the pipeline
+    plans the three together, which runs the rule that covers all three) turns
+    that off.
 
     The refs are derived from *data* (see the module text): *resolvers* finds
     the ``enterpriseObjectId`` of an identity the edit adds, and a plan that
@@ -524,13 +606,25 @@ def plan_module(
         extra = missing_segments(raw, inherited.raw_data, name)
     reconciled = copy.deepcopy(raw)
     _add_segments(reconciled, extra)
+    # What the pipeline added to a profile module is part of what the plan
+    # compares with (R'), but not of the data as read: only that is what is
+    # stored, so it decides whether there is anything to write and what the
+    # refs compare with.
+    additions = module.additions if level is ConfigContext.PROFILE else ()
+    planned_from = with_additions(reconciled, additions) if additions else reconciled
 
     baseline: VcoModel | None
+    ref_baseline: VcoModel | None
     if isinstance(current, VcoModel):
         model_type = type(current)
-        baseline = _reparse(model_type, reconciled, module.raw_mode)
+        baseline = _reparse(model_type, planned_from, module.raw_mode)
         if module.refs_loaded:
             fill_ref_only(baseline, module.raw_refs)
+        ref_baseline = baseline
+        if additions:
+            ref_baseline = _reparse(model_type, reconciled, module.raw_mode)
+            if module.refs_loaded:
+                fill_ref_only(ref_baseline, module.raw_refs)
         before = wire_dump(baseline, level)
         after = wire_dump(current, level)
         carry_unset_defaults(baseline, current, before, after)
@@ -538,7 +632,7 @@ def plan_module(
             dict[str, Any],
             copy.deepcopy(
                 rebase(
-                    reconciled,
+                    planned_from,
                     before,
                     _with_reconciled_segments(after, before, extra),
                     model_type,
@@ -550,7 +644,7 @@ def plan_module(
             flags = [path for path in lossy if is_override_flag(model_type, path)]
             raise LossyFieldError(name, lossy, flags)
     else:
-        baseline = None
+        baseline = ref_baseline = None
         model_type = None
         topped_up = dict(cast(Mapping[str, Any], current))
         if extra:  # only for an object, so *reconciled* is one
@@ -559,9 +653,12 @@ def plan_module(
             )
         payload = copy.deepcopy(topped_up)
 
+    if level is ConfigContext.PROFILE and not via_pipeline:
+        _check_segment_set(name, raw, payload)
+
     fixed_model = _document_model(model_type, module)
-    if fixed_model is not None and payload != reconciled:
-        broken = fixed_list_violations(fixed_model, reconciled, payload)
+    if fixed_model is not None and payload != planned_from:
+        broken = fixed_list_violations(fixed_model, planned_from, payload)
         if broken:
             raise FixedListError(name, broken)
 
@@ -577,7 +674,7 @@ def plan_module(
     if module.refs_loaded:
         derived = derive_refs(
             module,
-            baseline,
+            ref_baseline,
             current if isinstance(current, VcoModel) else None,
             payload,
             level=level,
@@ -588,8 +685,8 @@ def plan_module(
             derived.changes,
             derived.warnings,
         )
-    elif baseline is not None and isinstance(current, VcoModel):
-        moved = changed_owners(baseline, current, level)
+    elif ref_baseline is not None and isinstance(current, VcoModel):
+        moved = changed_owners(ref_baseline, current, level)
         if moved:
             raise RefsNotLoadedError(name, tuple(dict.fromkeys(o.path for o in moved)))
 
@@ -602,7 +699,8 @@ def plan_module(
     legacy = legacy_key_paths(reconciled, name)
     if changed:  # never a write just to strip them
         drop_legacy_keys(payload, name)
-    changes = tuple(raw_changes(reconciled, payload, model_type))
+    changes = tuple(raw_changes(planned_from, payload, model_type))
+    in_payload = _segment_names(payload).keys()
     return ModulePlan(
         name=name,
         operation=operation,
@@ -617,6 +715,11 @@ def plan_module(
         model=_document_model(model_type, module),
         ref_changes=ref_changes,
         warnings=warnings,
+        added_segments=tuple(
+            a.name
+            for a in additions
+            if isinstance(a, AddedSegment) and a.segment_id in in_payload
+        ),
     )
 
 
@@ -699,7 +802,7 @@ def rebase_onto[M: ConfigurationModuleBase](
     rebased = fresh.with_data_parsed_from(
         rebase(fresh.raw_data, as_read, plan.data, model)
     )
-    rebased_plan = plan_module(rebased, level=module.config_context)
+    rebased_plan = plan_module(rebased, level=module.config_context, via_pipeline=True)
     planned = {change.path for change in plan.changes}
     if any(change.path not in planned for change in rebased_plan.changes):
         raise conflict(_REBASE_LIST)

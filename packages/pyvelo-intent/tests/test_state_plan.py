@@ -10,6 +10,7 @@ from pyvelo.client.exceptions import (
     ModuleWriteError,
     RefsDroppedError,
     RefsNotLoadedError,
+    SegmentSetError,
     WriteNotAppliedError,
     WriteOutcomeUnknownError,
 )
@@ -176,6 +177,7 @@ def test_write_errors_are_exported_from_the_package():
     assert pyvelo_intent.RefsDroppedError is RefsDroppedError
     assert pyvelo_intent.RefsNotLoadedError is RefsNotLoadedError
     assert pyvelo_intent.FixedListError is FixedListError
+    assert pyvelo_intent.SegmentSetError is SegmentSetError
     assert {
         "ModuleWriteError",
         "ConfigConflictError",
@@ -185,6 +187,7 @@ def test_write_errors_are_exported_from_the_package():
         "RefsDroppedError",
         "RefsNotLoadedError",
         "FixedListError",
+        "SegmentSetError",
     } <= set(pyvelo_intent.__all__)
     assert not hasattr(pyvelo_intent, "StateSpentError")
 

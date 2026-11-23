@@ -295,6 +295,35 @@ class FixedListError(VcoError):
         )
 
 
+class SegmentSetError(VcoError):
+    """Raised when one module's plan would change the set of segments of a profile.
+
+    A profile's segment is in all three modules (device settings, QoS and
+    firewall), so one module cannot add or remove one alone. The pipeline
+    changes the three together. ``module_name`` is the module planned, or
+    None when the error is about several; ``segments`` are the names of the
+    segments added or removed; ``modules`` are the modules the rule found
+    wanting. The message says what happened and how to do it instead.
+    """
+
+    module_name: str | None
+    segments: tuple[str, ...]
+    modules: tuple[str, ...]
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        module_name: str | None = None,
+        segments: Sequence[str] = (),
+        modules: Sequence[str] = (),
+    ) -> None:
+        self.module_name = module_name
+        self.segments = tuple(segments)
+        self.modules = tuple(modules)
+        super().__init__(message)
+
+
 class RefsNotLoadedError(VcoError):
     """Raised when a plan needs the refs of a module that was read without them.
 

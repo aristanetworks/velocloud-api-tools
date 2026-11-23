@@ -13,6 +13,7 @@ from pyvelo.client.exceptions import (
     ModuleWriteError,
     RefsDroppedError,
     RefsNotLoadedError,
+    SegmentSetError,
     UnboundError,
     VcoApiError,
     VcoClientNotInitializedError,
@@ -118,6 +119,23 @@ def test_a_fixed_list_error_keeps_its_module_paths_and_message_through_copies():
     for copied in copies(error):
         assert type(copied) is FixedListError
         assert (copied.module_name, copied.paths) == ("QOS", paths)
+        assert str(copied) == str(error)
+
+
+def test_a_segment_set_error_keeps_its_attributes_and_message_through_copies():
+    error = SegmentSetError(
+        "one module cannot add a segment",
+        module_name="QOS",
+        segments=("Guest",),
+        modules=("QOS",),
+    )
+    for copied in copies(error):
+        assert type(copied) is SegmentSetError
+        assert (copied.module_name, copied.segments, copied.modules) == (
+            "QOS",
+            ("Guest",),
+            ("QOS",),
+        )
         assert str(copied) == str(error)
 
 
@@ -236,6 +254,12 @@ def test_every_error_of_the_module_round_trips():
         DetachedObjectError("changed", (path,)),
         RefsNotLoadedError("deviceSettings", (path,)),
         FixedListError("QOS", [(path, "the list is gone")]),
+        SegmentSetError(
+            "no",
+            module_name="QOS",
+            segments=("Guest",),
+            modules=("QOS",),
+        ),
         RefsDroppedError(
             1,
             "v1",

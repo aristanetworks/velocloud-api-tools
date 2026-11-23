@@ -8,6 +8,7 @@ from pyvelo.client.exceptions import (
     ModuleWriteError,
     RefsDroppedError,
     RefsNotLoadedError,
+    SegmentSetError,
     WriteNotAppliedError,
     WriteOutcomeUnknownError,
 )
@@ -84,6 +85,7 @@ __all__ = [
     "SaveProgress",
     "SaveResult",
     "SaveValidationError",
+    "SegmentSetError",
     "ServerChange",
     "Unchanged",
     "UnknownRegistryEntryError",

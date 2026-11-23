@@ -763,6 +763,8 @@ class ConfigState:
         way to ask whether a change to *module* could be written before it is
         made. Raises ``LossyFieldError`` if the module, or *data*, holds an
         edit that cannot be written. Does not check for detached objects.
+        The segments of a profile's modules are not checked here: ``plan``
+        runs the rule that covers all three.
 
         A provider the edit sets needs the network services loaded
         (``state.resolvers``): ``ResolverNotLoadedError`` says they are not.
@@ -781,7 +783,12 @@ class ConfigState:
             else None
         )
         return plan_module(
-            module, data, level=level, profile=profile_mod, resolvers=self.resolvers
+            module,
+            data,
+            level=level,
+            profile=profile_mod,
+            resolvers=self.resolvers,
+            via_pipeline=True,
         )
 
     def get_changed_modules(self) -> list[ConfigurationModuleName]:

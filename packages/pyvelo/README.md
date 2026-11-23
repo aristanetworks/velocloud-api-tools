@@ -57,6 +57,23 @@ an edge's raw `defaults` included, and `validate=False` does not skip it. The
 error lists each path with its reason. A missing entry is repaired when the
 module is written, never built by an edit.
 
+The segments of a profile are the same in its device settings, QoS and firewall
+modules, so one module alone cannot change them. `plan_module` and
+`update_module` raise `SegmentSetError` for a profile module whose payload adds
+or removes a segment, and nothing is sent. The error names the segments and says
+how to do it instead: a segment is assigned through the pipeline, as
+`{"segments": {"Guest": {"_op": "add"}}}` (`pipeline.assign_segment(state,
+"Guest")`), which makes its entry in all three modules; removing one from all
+three together is not supported. The pipeline records what it adds to a profile
+module (`module.additions`, made with `add_segment_entry` and
+`add_default_entries`), and `plan_module` plans the module against its raw data
+plus those entries. An added entry nobody edited is written exactly as it was
+made and plans no change (`ModulePlan.added_segments` names them), while an edit
+to it is a change from that entry. The refs still compare with the module as
+read, so an added device settings entry adds its `deviceSettings:segment` row.
+`plan_module(..., via_pipeline=True)` skips the refusal, for the pipeline, which
+plans the three modules together.
+
 The module you pass in is not updated: it keeps the data and the `version` from
 before the write. Continue from the module `update_module` returns (`module =
 await client.update_module(module, data)`), and after `ConfigConflictError` or

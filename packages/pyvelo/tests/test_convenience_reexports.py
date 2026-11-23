@@ -27,6 +27,7 @@ class TestSaveErrorReexports:
             "ModuleWriteError",
             "RefsDroppedError",
             "RefsNotLoadedError",
+            "SegmentSetError",
             "UnboundError",
             "WriteNotAppliedError",
             "WriteOutcomeUnknownError",

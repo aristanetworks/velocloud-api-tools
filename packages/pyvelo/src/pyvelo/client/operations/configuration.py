@@ -800,6 +800,12 @@ class ConfigurationMixin(Protocol):
         refs. ``RefsNotLoadedError`` is raised for a module read without its
         refs when the edit needs them.
 
+        A profile's segments are the same in its device settings, QoS and
+        firewall modules, so one module alone cannot change them: *data* that
+        adds or removes a segment of a profile module raises
+        ``SegmentSetError``, and nothing is sent. A segment is assigned to a
+        profile through the pipeline (``pipeline.assign_segment``).
+
         The module passed in is not updated: it still holds the data and the
         ``version`` from before the write. It is marked as replaced (an
         assignment to it raises) when the write stored something, and when

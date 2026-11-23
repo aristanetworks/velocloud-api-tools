@@ -22,6 +22,7 @@ from pyvelo.client import (
     ModuleWriteError,
     RefsDroppedError,
     RefsNotLoadedError,
+    SegmentSetError,
     UnboundError,
     VcoApiError,
     VcoAuth,
@@ -81,6 +82,7 @@ __all__ = [
     "ResolverContext",
     "ResolverRegistry",
     "SegmentResolver",
+    "SegmentSetError",
     "ServiceGroupResolver",
     # Client
     "UnboundError",
