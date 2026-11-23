@@ -768,10 +768,14 @@ class UnboundError(VcoError):
 
 
 class DetachedObjectError(VcoError):
-    """Raised by an edit through an object that a save replaced.
+    """Raised by an edit through an object that a write replaced.
 
-    The state holds the module as the VCO stored it; this object belongs to
-    the module that was there before. Take the object from the state again.
+    ``update_module`` raises it too, for a module an earlier write replaced.
+
+    After a save the state holds the module as the VCO stored it; after
+    ``update_module`` the module it returned (or ``error.module``, after a
+    write error) is that module. The object raising belongs to the module
+    that was there before. Take the object again from the module as stored.
     ``paths`` are where in the module such edits were found, when they were
     found by comparison; they may come from several modules, which the message
     names, a line each. An assignment or ``merge_patch`` that raises names the

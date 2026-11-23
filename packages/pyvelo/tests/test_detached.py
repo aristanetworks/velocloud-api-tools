@@ -39,9 +39,10 @@ PATCH: dict[str, object] = {
     "segments": {"Global Segment": {"outbound": {"+": NEW_RULE}}},
 }
 REPLACED = (
-    "this object was replaced by a save; take it from the state again "
-    "(state.edge.<module> or state.profile.<module>), "
-    "or put a deep copy of it in the state (copy.deepcopy)"
+    "this object was replaced by a write; take it again from the module as stored "
+    "(after a save: state.edge.<module> or state.profile.<module>; "
+    "after update_module: the module it returned, or error.module after a write error), "
+    "or put a deep copy of it there (copy.deepcopy)"
 )
 
 
@@ -84,7 +85,7 @@ def test_assignment_on_a_detached_object_raises():
         segment.firewall_logging_enabled = True
     with pytest.raises(DetachedObjectError, match="FirewallOutboundRule.name") as exc:
         rule.name = "other"
-    assert "take it from the state again" in str(exc.value)
+    assert "take it again from the module as stored" in str(exc.value)
     assert data.firewall_enabled is True
     assert segment.firewall_logging_enabled is None
     assert rule.name == "allow-all"

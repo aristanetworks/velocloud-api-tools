@@ -9,6 +9,7 @@ from pydantic import MISSING, ValidationError
 from pyvelo.client.enums.profiles import GetConfigurationWith
 from pyvelo.client.exceptions import (
     ConfigConflictError,
+    DetachedObjectError,
     ModuleWriteError,
     VcoHttpError,
     VcoOperationError,
@@ -620,7 +621,8 @@ class ConfigurationMixin(Protocol):
         name to reconcile the segments an edge module lacks.
 
         The module passed in is not updated: it still holds the data and the
-        ``version`` from before the write. Continue from the module returned
+        ``version`` from before the write, and is marked as replaced (an
+        assignment to it raises). Continue from the module returned
         (``module = await client.update_module(module, data)``); after
         ``ConfigConflictError`` or ``WriteNotAppliedError``, continue from
         ``error.module``. After ``WriteOutcomeUnknownError`` the module as
@@ -630,7 +632,8 @@ class ConfigurationMixin(Protocol):
         (``left_out``, ``server_changes``) is on the ``ModuleWrite`` that
         ``write_module`` returns.
 
-        Raises ``ConfigConflictError`` if the module changed since it was
+        Raises ``DetachedObjectError`` if *module* was replaced by an earlier
+        write. Raises ``ConfigConflictError`` if the module changed since it was
         read, and ``WriteNotAppliedError`` if the VCO stored the write
         otherwise than as sent. Each carries the module as stored and the lost
         edits to redo on it. ``WriteOutcomeUnknownError`` says the write was
@@ -644,11 +647,26 @@ class ConfigurationMixin(Protocol):
             raise ValueError(
                 "module has not been inserted yet; insert it instead of updating"
             )
-        write = await self.write_module(
-            module,
-            plan_module(module, data, refs=refs, profile=profile),
-            enterprise_id=enterprise_id,
-        )
+        if module.is_detached:
+            raise DetachedObjectError(
+                f"Configuration module {module.id_} was replaced by an earlier "
+                "write: it holds the data and the version from before that write. "
+                "Use the module that write returned (or error.module, after a "
+                "write error)."
+            )
+        try:
+            write = await self.write_module(
+                module,
+                plan_module(module, data, refs=refs, profile=profile),
+                enterprise_id=enterprise_id,
+            )
+        except ModuleWriteError as error:
+            # Only a write error that read the module as stored replaced this one.
+            if error.module is not None:
+                _ = module.mark_detached()
+            raise
+        if write.module is not module:
+            _ = module.mark_detached()
         return write.module
 
     @domain_tag(CONFIG)

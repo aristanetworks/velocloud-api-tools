@@ -761,6 +761,9 @@ async def test_update_module_returns_the_module_as_stored(
     site = lab.edge_site(layout, Name.QOS)
     async with restoring(site):
         first = await site.read_present()
+        # update_module replaces `first` (it raises on a second write of it), so
+        # the stale write below goes out from a copy taken before the first one.
+        stale = copy.deepcopy(first)
         one = await _update(lab, first, _raised(first, VOICE_YELLOW))
         _check_as_read("the first write", one, await site.read_present())
 
@@ -775,12 +778,12 @@ async def test_update_module_returns_the_module_as_stored(
             [VOICE_YELLOW, VOICE_RED],
         )
 
-        # A write from the first module carries a stale version. It edits a
-        # value neither write touched, so nothing at its path moved: a conflict,
-        # whichever form the refusal takes.
+        # A write from the copy of the first module carries a stale version. It
+        # edits a value neither write touched, so nothing at its path moved: a
+        # conflict, whichever form the refusal takes.
         with pytest.raises(ModuleWriteError) as caught:
             _ = await lab.client.update_module(
-                first, _raised(first, VIDEO_RED), enterprise_id=lab.enterprise_id
+                stale, _raised(stale, VIDEO_RED), enterprise_id=lab.enterprise_id
             )
         error = caught.value
         _record_refusal(capsys, "a stale update_module, another value", error)

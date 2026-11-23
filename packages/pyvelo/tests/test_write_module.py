@@ -18,6 +18,7 @@ from pyvelo.client.enums.configuration import ConfigurationModuleName
 from pyvelo.client.exceptions import (
     PRECONDITION_FAILED,
     ConfigConflictError,
+    DetachedObjectError,
     ModuleWriteError,
     VcoHttpError,
     VcoOperationError,
@@ -414,7 +415,76 @@ async def test_update_module_returns_the_stored_module(
     data.firewall_enabled = False
     stored = await client.update_module(module, data)
     assert stored.version == store.rows[1]["version"] != "v1"
-    assert await client.update_module(module, module.mutable_data()) is module
+    # Nothing to write: the module given is returned, and stays usable.
+    assert await client.update_module(stored, stored.mutable_data()) is stored
+    assert not stored.is_detached
+
+
+async def test_update_module_refuses_a_module_an_earlier_write_replaced(
+    mock_vco_client: MockVcoClientFactory,
+):
+    module = fw(RAW)
+    store = store_of(module)
+    client = await mock_vco_client(store)
+    data = module.mutable_data()
+    data.firewall_enabled = False
+    stored = await client.update_module(module, data)
+    assert stored is not module and module.is_detached
+    data.syslog_forwarding = True
+    with pytest.raises(DetachedObjectError) as exc:
+        _ = await client.update_module(module, data)
+    assert str(exc.value) == (
+        "Configuration module 1 was replaced by an earlier write: it holds the data "
+        "and the version from before that write. Use the module that write returned "
+        "(or error.module, after a write error)."
+    )
+    assert len(store.requests) == 1
+    # An edit through the old module's own data says where the module is now.
+    with pytest.raises(DetachedObjectError) as exc:
+        module.data.firewall_enabled = True
+    assert "after update_module: the module it returned" in str(exc.value)
+    again = stored.mutable_data()
+    again.syslog_forwarding = True
+    final = await client.update_module(stored, again)
+    assert store.rows[1]["data"] == {
+        **RAW,
+        "firewall_enabled": False,
+        "syslog_forwarding": True,
+    }
+    assert final.version == store.rows[1]["version"]
+
+
+async def test_update_module_replaces_the_module_after_a_write_error_too(
+    mock_vco_client: MockVcoClientFactory,
+):
+    module = fw(RAW)
+    store = store_of(module)
+    store.other_writer(1, elsewhere)
+    client = await mock_vco_client(store)
+    data = module.mutable_data()
+    data.firewall_enabled = False
+    with pytest.raises(ModuleWriteError) as exc:
+        _ = await client.update_module(module, data)
+    assert exc.value.module is not None and not exc.value.module.is_detached
+    assert module.is_detached
+
+
+async def test_update_module_keeps_the_module_when_the_outcome_is_unknown(
+    mock_vco_client: MockVcoClientFactory,
+):
+    def unreadable(new: dict[str, Any], _old: dict[str, Any] | None) -> None:
+        new["data"]["segments"] = 5
+
+    module = fw(RAW)
+    store = store_of(module)
+    store.on_store.append(unreadable)
+    client = await mock_vco_client(store)
+    data = module.mutable_data()
+    data.firewall_enabled = False
+    with pytest.raises(WriteOutcomeUnknownError) as exc:
+        _ = await client.update_module(module, data)
+    assert exc.value.module is None
+    assert not module.is_detached
 
 
 ITEMS: list[dict[str, Any]] = [{"a": 1, "b": 2}]

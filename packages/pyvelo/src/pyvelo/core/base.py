@@ -381,9 +381,12 @@ def _raise_detached(model: VcoModel, name: str) -> Never:
     from pyvelo.client.exceptions import DetachedObjectError  # it imports pyvelo.core
 
     raise DetachedObjectError(
-        f"{type(model).__name__}.{name}: this object was replaced by a save; "
-        + "take it from the state again (state.edge.<module> or state.profile.<module>), "
-        + "or put a deep copy of it in the state (copy.deepcopy)"
+        f"{type(model).__name__}.{name}: this object was replaced by a write; "
+        + "take it again from the module as stored "
+        + "(after a save: state.edge.<module> or state.profile.<module>; "
+        + "after update_module: the module it returned, "
+        + "or error.module after a write error), "
+        + "or put a deep copy of it there (copy.deepcopy)"
     )
 
 
@@ -438,7 +441,7 @@ class VcoModel(BaseModel):
         return private is not None and private.get("_detached") is True
 
     def mark_detached(self) -> list[tuple[tuple[str | int, ...], BaseModel]]:
-        """Mark this model and every VcoModel inside it as replaced by a save.
+        """Mark this model and every VcoModel inside it as replaced by a write.
 
         Returns each of them with where it is from here: the dump key of each
         field on the way, and the position of each list item. It also returns
