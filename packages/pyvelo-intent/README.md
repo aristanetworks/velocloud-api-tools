@@ -96,6 +96,7 @@ A patch is strict and all or nothing:
 |---|---|---|
 | object | holds a sub-model | merged into it; built from the patch when unset |
 | object or list | a list | item operations, or a list value that replaces the list (below) |
+| object | takes one sub-model or a list of them, and holds no list | merged into the sub-model; built from the patch when unset. A list value makes the field a list |
 | object | a map of models (`dict[K, Model]`) | item operations by map key |
 | `null` | type includes `MISSING` | unset |
 | `null` | type includes `None`, not `MISSING` | `None` |

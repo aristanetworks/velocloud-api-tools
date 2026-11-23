@@ -541,6 +541,61 @@ def test_unset_keyed_list_is_created_by_an_add():
 
 
 # ---------------------------------------------------------------------------
+# A field that takes one sub-model or a list of them
+# ---------------------------------------------------------------------------
+
+
+class Provider(VcoModel):
+    ref: str | MISSING = MISSING
+    note: str = ""
+
+
+class Dns(VcoModel):
+    primary: Provider | list[Provider]
+    backup: Provider | list[Provider] | MISSING = MISSING
+
+
+class DnsHolder(VcoModel):
+    dns: Dns | MISSING = MISSING
+
+
+def test_an_object_on_a_model_or_list_field_that_holds_a_model_merges_into_it():
+    dns = Dns(primary=Provider(ref="a"))
+    held = dns.primary
+    _ = dns.merge_patch({"primary": {"note": "n"}})
+    assert dns.primary is held
+    assert dns.primary == Provider(ref="a", note="n")
+
+
+def test_an_object_on_an_unset_model_or_list_field_builds_the_model():
+    dns = Dns(primary=Provider(ref="a"))
+    _ = dns.merge_patch({"backup": {"ref": "b"}})
+    assert dns.backup == Provider(ref="b")
+
+
+def test_a_built_model_takes_an_object_or_a_list_for_a_model_or_list_field():
+    holder = DnsHolder()
+    _ = holder.merge_patch({"dns": {"primary": {"ref": "a"}, "backup": [{"ref": "b"}]}})
+    assert holder.dns == Dns(primary=Provider(ref="a"), backup=[Provider(ref="b")])
+    _ = raises_at(
+        DnsHolder(), {"dns": {"primary": {"ref": "a", "nope": 1}}}, "dns.primary.nope"
+    )
+
+
+def test_a_model_or_list_field_that_holds_a_list_takes_item_operations():
+    dns = Dns(primary=[Provider(ref="a"), Provider(ref="b")])
+    _ = dns.merge_patch({"primary": {at(0): {"note": "n"}, "+": add({"ref": "c"})}})
+    assert isinstance(dns.primary, list)
+    assert [(p.ref, p.note) for p in dns.primary] == [("a", "n"), ("b", ""), ("c", "")]
+
+
+def test_a_list_value_on_a_model_or_list_field_makes_it_a_list():
+    dns = Dns(primary=Provider(ref="a"))
+    _ = dns.merge_patch({"primary": [{"ref": "b"}]})
+    assert dns.primary == [Provider(ref="b")]
+
+
+# ---------------------------------------------------------------------------
 # Names: a keyed list whose key is a NameOf field
 # ---------------------------------------------------------------------------
 

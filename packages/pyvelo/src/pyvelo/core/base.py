@@ -550,6 +550,10 @@ class VcoModel(BaseModel):
         - an object, on a field that holds a sub-model: merged into it, or
           built from the patch when the field is unset;
         - an object or a list, on a list field: see *Lists*;
+        - an object, on a field that takes one sub-model or a list of them
+          (``Model | list[Model]``): the sub-model, merged or built as
+          above, unless the field holds a list, when it is item operations.
+          A list value makes the field a list;
         - an object, on a map of models (``dict[K, Model]``): item
           operations by map key;
         - ``null``: unsets the field if its type includes ``MISSING``, sets

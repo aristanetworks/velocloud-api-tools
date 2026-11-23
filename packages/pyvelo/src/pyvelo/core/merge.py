@@ -308,8 +308,14 @@ def _merge_field(
         setattr(model, name, _validate_field(model_cls, name, value, path))
         return
 
-    # A list, or a map of models: a list value, or item operations.
-    if _list_spec(field_info) is not None:
+    # A list, or a map of models: a list value, or item operations. An object
+    # on a field that also takes one sub-model is that sub-model, unless the
+    # field holds a list.
+    if _list_spec(field_info) is not None and not (
+        _is_dict(value)
+        and _field_model_types(field_info)
+        and not isinstance(_field_value(model, name), list)
+    ):
         _merge_list(model, name, field_info, value, resolvers, path)
         return
 
@@ -800,10 +806,6 @@ def _build_input(
                     raise
                 except LookupError:
                     pass  # no resolver: leave it for pydantic to accept or reject
-        elif (_is_list(value) or _is_dict(value)) and (
-            spec := _list_spec(fi)
-        ) is not None:
-            value = _new_list_input(spec, value, resolvers, child)
         elif _is_dict(value) and (sub_types := _field_model_types(fi)):
             value = _build_input(
                 _merged_fields(sub_types),
@@ -812,6 +814,10 @@ def _build_input(
                 child,
                 owner=_variant_names(sub_types),
             )
+        elif (_is_list(value) or _is_dict(value)) and (
+            spec := _list_spec(fi)
+        ) is not None:
+            value = _new_list_input(spec, value, resolvers, child)
         input_key = key if key in _input_keys(fi, field_name) else field_name
         built[str(input_key)] = value  # a str: _field_name refuses other keys
 

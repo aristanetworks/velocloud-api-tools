@@ -13,6 +13,7 @@ from typing import Any
 import pytest
 from pydantic import MISSING
 from pyvelo.client.models.configuration.device_settings.root import DeviceSettingsData
+from pyvelo.client.models.configuration.device_settings.segment import DnsProvider
 from pyvelo.client.models.configuration.firewall.root import FirewallData
 from pyvelo.client.models.configuration.qos.root import QosData
 from pyvelo.client.models.configuration.wan.link import WanLink
@@ -687,3 +688,56 @@ async def test_true_is_not_a_vlan_id():
         )
     assert str(exc.value.path) == 'lan.networks["20"].vlan_id'
     assert [n.vlan_id for n in state.edge.device_settings.lan.networks] == [10, 20]
+
+
+# --- DNS providers -----------------------------------------------------------
+
+DNS: dict[str, Any] = {
+    "primaryProvider": {"ref": "deviceSettings:dns:primaryProvider"},
+    "backupProvider": {"ref": "deviceSettings:dns:backupProvider"},
+    "privateProviders": {"ref": "deviceSettings:dns:privateProviders"},
+    "override": True,
+}
+
+
+def dns_settings(dns: dict[str, Any] | None) -> dict[str, Any]:
+    segment: dict[str, Any] = {"segment": desc(0, SEGMENT), "routes": {"static": []}}
+    if dns is not None:
+        segment["dns"] = dns
+    return {"lan": {"networks": [], "interfaces": []}, "segments": [segment]}
+
+
+async def test_a_dns_provider_takes_an_object():
+    state = make_state(
+        {"deviceSettings": dns_settings(DNS)}, {"deviceSettings": PROFILE_DS}
+    )
+    _ = await ConfigPipeline(None).apply(
+        state,
+        module="device_settings",
+        segment=SEGMENT,
+        path="dns.primary_provider",
+        patch={"ref": "deviceSettings:dns:backupProvider"},
+    )
+    dns = state.edge.device_settings.segment(SEGMENT).dns
+    assert dns is not MISSING
+    assert dns.primary_provider == DnsProvider(ref="deviceSettings:dns:backupProvider")
+    sent = (await payload(state))["segments"][0]["dns"]
+    assert sent == {
+        **DNS,
+        "primaryProvider": {"ref": "deviceSettings:dns:backupProvider"},
+    }
+
+
+async def test_a_dns_block_is_built_with_its_providers_as_objects():
+    state = make_state(
+        {"deviceSettings": dns_settings(None)}, {"deviceSettings": PROFILE_DS}
+    )
+    body = {k: v for k, v in DNS.items() if k != "override"}
+    _ = await ConfigPipeline(None).apply(
+        state, module="device_settings", segment=SEGMENT, path="dns", patch=body
+    )
+    dns = state.edge.device_settings.segment(SEGMENT).dns
+    assert dns is not MISSING
+    assert dns.backup_provider == DnsProvider(ref="deviceSettings:dns:backupProvider")
+    sent = (await payload(state))["segments"][0]["dns"]
+    assert sent["privateProviders"] == {"ref": "deviceSettings:dns:privateProviders"}
