@@ -18,6 +18,7 @@ from profile_state import (  # pyright: ignore[reportImplicitRelativeImport]
 from pydantic import MISSING
 from pyvelo.client.exceptions import (
     ConfigConflictError,
+    ModuleWriteError,
     SegmentSetError,
     WriteNotAppliedError,
 )
@@ -210,14 +211,26 @@ async def test_a_fresh_module_that_already_has_the_segment_is_a_conflict():
     assert [w.name for w in error.completed] == [DS]
 
 
-async def test_a_qos_write_not_applied_leaves_a_plan_that_raises_segment_set_error():
-    # The repaired defaults of Global are stored, so the write is applied in part.
-    state = await global_only(with_defaults=False)
+# A QoS write the VCO answers without Guest. On a profile whose defaults are
+# complete nothing else is stored, so the save infers a refusal
+# (ConfigConflictError); when the write repairs the defaults of Global, those are
+# stored beside the lost segment, and it is applied in part (WriteNotAppliedError).
+LOST_SEGMENT = [
+    pytest.param(True, ConfigConflictError, id="complete defaults: a conflict"),
+    pytest.param(False, WriteNotAppliedError, id="repaired defaults: not applied"),
+]
+
+
+@pytest.mark.parametrize(("with_defaults", "expected"), LOST_SEGMENT)
+async def test_a_qos_write_that_lost_the_segment_leaves_a_plan_that_raises_segment_set_error(
+    with_defaults: bool, expected: type[ModuleWriteError]
+):
+    state = await global_only(with_defaults=with_defaults)
     pipeline, store = module_store_pipeline(state)
     _ = await pipeline.assign_segment(state, "Guest")
     store.on_store.append(guest_stripped)
 
-    with pytest.raises(WriteNotAppliedError) as caught:
+    with pytest.raises(expected) as caught:
         _ = await pipeline.save(state)
 
     assert [w.name for w in caught.value.completed] == [DS]
@@ -228,8 +241,11 @@ async def test_a_qos_write_not_applied_leaves_a_plan_that_raises_segment_set_err
     assert raised.value.segments == ("Guest",)
 
 
-async def test_the_redo_of_a_lost_added_segment_assigns_it_again():
-    state = await global_only(with_defaults=False)
+@pytest.mark.parametrize(("with_defaults", "expected"), LOST_SEGMENT)
+async def test_the_redo_of_a_lost_added_segment_assigns_it_again(
+    with_defaults: bool, expected: type[ModuleWriteError]
+):
+    state = await global_only(with_defaults=with_defaults)
     pipeline, store = module_store_pipeline(state)
     _ = await pipeline.apply(
         state,
@@ -238,7 +254,7 @@ async def test_the_redo_of_a_lost_added_segment_assigns_it_again():
     )
     planned = planned_guest(state, QOS)
     store.on_store.append(guest_stripped)
-    with pytest.raises(WriteNotAppliedError) as caught:
+    with pytest.raises(expected) as caught:
         _ = await pipeline.save(state)
     error = caught.value
     store.on_store.remove(guest_stripped)

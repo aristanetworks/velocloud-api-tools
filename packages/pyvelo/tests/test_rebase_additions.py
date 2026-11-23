@@ -16,7 +16,7 @@ from pyvelo.client.schemas.configuration import QosConfigurationModule
 from pyvelo.core import ConfigContext
 from pyvelo.testing import make_module_json
 from refs_helpers import CONFIG, QOS_ID
-from segment_helpers import GLOBAL, GUEST, identity, qos_entry
+from segment_helpers import GLOBAL, GUEST, VOICE, identity, qos_entry
 
 RATE: dict[str, Any] = {"enabled": False, "inputType": "percent", "value": 1}
 
@@ -102,3 +102,56 @@ def test_a_fresh_module_that_holds_an_added_segment_is_a_conflict():
     assert clash.as_read is MISSING
     assert clash.stored == fresh.raw_data["segments"][1]  # pyright: ignore[reportIndexIssue, reportOptionalSubscript]
     assert clash.clash
+
+
+def test_a_fresh_module_that_holds_several_added_segments_reports_each():
+    qos = qos_at("q1", qos_entry(GLOBAL))
+    for segment in (GUEST, VOICE):
+        _ = qos.add_segment_entry(new_segment_entry("QOS", identity(segment)))
+    plan = plan_module(qos, via_pipeline=True)
+    fresh = qos_at("q2", qos_entry(GLOBAL), qos_entry(GUEST), qos_entry(VOICE))
+
+    with pytest.raises(ConfigConflictError) as caught:
+        _ = rebase_onto(qos, plan, fresh)
+
+    error = caught.value
+    assert "segments 'Guest', 'Voice'" in error.detail
+    assert [str(c.path) for c in error.lost_edits] == [
+        "segments[Guest]",
+        "segments[Voice]",
+    ]
+    assert (error.stated, error.sent) == (False, False)
+
+
+def test_a_fresh_module_that_lacks_the_segment_added_defaults_go_into_is_a_conflict():
+    qos = qos_at("q1", qos_entry(GLOBAL, defaults=MISSING))
+    rules = new_segment_entry("QOS", identity(GLOBAL))["defaults"]
+    qos.add_default_entries(GLOBAL[0], rules)
+    plan = plan_module(qos)
+    assert [type(a).__name__ for a in qos.additions] == ["AddedDefaults"]
+    fresh = qos_at("q2", qos_entry(GUEST))
+
+    with pytest.raises(ConfigConflictError) as caught:
+        _ = rebase_onto(qos, plan, fresh)
+
+    error = caught.value
+    assert (error.stated, error.sent) == (False, False)
+    assert error.module is fresh
+    assert error.detail == (
+        "the module changed on the VCO after this save wrote device settings: it "
+        "no longer holds segment 'Global Segment', which this save adds defaults "
+        "to; nothing was sent"
+    )
+
+
+def test_a_fresh_module_that_holds_the_segment_added_defaults_go_into_is_rebased():
+    qos = qos_at("q1", qos_entry(GLOBAL, defaults=MISSING))
+    rules = new_segment_entry("QOS", identity(GLOBAL))["defaults"]
+    qos.add_default_entries(GLOBAL[0], rules)
+    plan = plan_module(qos)
+    fresh = qos_at("q2", qos_entry(GLOBAL, defaults=MISSING), enabled=True)
+
+    rebased, rebased_plan, _ = rebase_onto(qos, plan, fresh)
+
+    assert rebased.additions == qos.additions
+    assert rebased_plan.data["segments"] == plan.data["segments"]

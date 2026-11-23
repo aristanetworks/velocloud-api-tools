@@ -69,7 +69,7 @@ is reported (``legacy_keys``) and left, never written just to strip it.
 
 import copy
 import json
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
 from typing import Any, Final, Literal, cast, override
 
@@ -97,6 +97,7 @@ from pyvelo.client.models.configuration.common import (
 )
 from pyvelo.client.models.configuration.firewall.root import FirewallData
 from pyvelo.client.models.configuration.profile_segments import (
+    AddedDefaults,
     AddedSegment,
     SegmentAddition,
     insert_defaults,
@@ -949,25 +950,45 @@ def _without_repairs(
     return data, carried
 
 
+def _segments_of(held: object) -> list[object]:
+    """The entries of the ``segments`` list of *held*; none for data that has no such list."""
+    segments = held.get("segments") if is_dict(held) else None
+    return list(segments) if is_list(segments) else []
+
+
 def _added_segments_held(
     additions: Sequence[SegmentAddition], held: object
-) -> Iterator[tuple[str, PlannedChange]]:
+) -> list[tuple[str, PlannedChange]]:
     """Each ``AddedSegment`` of *additions* whose ``segmentId`` the segments of *held* hold, with the lost edit that is its entry, as stored there."""
-    segments = held.get("segments") if is_dict(held) else None
+    found: list[tuple[str, PlannedChange]] = []
     for addition in additions:
         if not isinstance(addition, AddedSegment):
             continue
-        for entry in segments if is_list(segments) else []:
+        for entry in _segments_of(held):
             if segment_id_of(entry) == addition.segment_id:
-                yield (
-                    addition.name,
-                    PlannedChange(
-                        Path(("segments", Key(addition.name))),
-                        MISSING,
-                        copy.deepcopy(dict(addition.entry)),
-                        copy.deepcopy(entry),
-                    ),
+                change = PlannedChange(
+                    Path(("segments", Key(addition.name))),
+                    MISSING,
+                    copy.deepcopy(dict(addition.entry)),
+                    copy.deepcopy(entry),
                 )
+                found.append((addition.name, change))
+    return found
+
+
+def _defaults_without_segment(
+    additions: Sequence[SegmentAddition], held: object
+) -> list[str]:
+    """The names of the segments that an ``AddedDefaults`` of *additions* goes into and the segments of *held* lack."""
+    held_ids = {segment_id_of(entry) for entry in _segments_of(held)}
+    added_ids = {a.segment_id for a in additions if isinstance(a, AddedSegment)}
+    return [
+        a.name
+        for a in additions
+        if isinstance(a, AddedDefaults)
+        and a.segment_id not in held_ids
+        and a.segment_id not in added_ids
+    ]
 
 
 def rebase_onto[M: ConfigurationModuleBase](
@@ -1043,19 +1064,24 @@ def rebase_onto[M: ConfigurationModuleBase](
     # edits of the plan are relative to it, so the rebase works from it onto the
     # fresh data plus the same entries.
     if additions:
-        for name, clash in _added_segments_held(additions, held):
+        clashes = _added_segments_held(additions, held)
+        if clashes:
+            names = ", ".join(repr(name) for name, _ in clashes)
             raise conflict(
-                f"{_REBASE_CHANGED}: it now holds segment {name!r}, which this "
-                "save adds; nothing was sent",
-                lost_edits=(clash,),
+                f"{_REBASE_CHANGED}: it now holds "
+                f"{'segment' if len(clashes) == 1 else 'segments'} {names}, which "
+                "this save adds; nothing was sent",
+                lost_edits=tuple(change for _, change in clashes),
             )
-        try:
-            held = with_additions(held, additions)
-        except ValueError as error:
+        lacking = _defaults_without_segment(additions, held)
+        if lacking:
             raise conflict(
-                f"{_REBASE_CHANGED}, and what this save adds to it no longer "
-                f"fits ({error}); nothing was sent"
-            ) from error
+                f"{_REBASE_CHANGED}: it no longer holds "
+                f"{'segment' if len(lacking) == 1 else 'segments'} "
+                f"{', '.join(repr(name) for name in lacking)}, which this save "
+                "adds defaults to; nothing was sent"
+            )
+        held = with_additions(held, additions)
         as_read = with_additions(as_read, additions)
     planned_data, carried_repairs = _without_repairs(plan, as_read)
     found = check_response(
