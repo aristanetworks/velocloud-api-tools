@@ -51,7 +51,9 @@ from .base import (
     _union_members,  # pyright: ignore[reportPrivateUsage]
     _unwrap_annotated,  # pyright: ignore[reportPrivateUsage]
     _variant_names,  # pyright: ignore[reportPrivateUsage]
+    field_models,
     list_kind,
+    python_name,
 )
 from .fields import (
     ConfigContext,
@@ -446,7 +448,7 @@ def _validate_field(
         )
     except ValidationError as exc:
         raise _invalid_value(
-            exc, _value_models(model_cls.model_fields[name]), path
+            exc, field_models(model_cls.model_fields[name]), path
         ) from exc
     _refuse_bool_as_number(value, validated, path)
     return validated
@@ -470,20 +472,6 @@ def _refuse_bool_as_number(given: object, stored: object, path: Path) -> None:
         )
 
 
-def _value_models(field_info: FieldInfo) -> tuple[type[VcoModel], ...]:
-    """The model classes a field's value is made of, without repeats.
-
-    The field's own (every variant of a union), then the items of its list,
-    then the values of its map.
-    """
-    found = list(_field_model_types(field_info))
-    if (item_type := _list_item_type(field_info)) is not None:
-        found.extend(item_type.variants)
-    if (spec := _list_spec(field_info)) is not None and spec.map_type is not None:
-        found.append(spec.map_type)
-    return tuple(dict.fromkeys(found))
-
-
 def _python_place(loc: Sequence[int | str], models: Sequence[type[VcoModel]]) -> Path:
     """Where in the value an error is, in python names.
 
@@ -505,15 +493,25 @@ def _python_place(loc: Sequence[int | str], models: Sequence[type[VcoModel]]) ->
             parts.append(part)
             continue
         if isinstance(part, str) and current:
-            fields = _merged_fields(current)
-            name = _field_names_by_key(fields).get(part)
-            if name is not None:
+            found = _field_named(current, part)
+            if found is not None:
+                owner, name = found
                 parts.append(name)
-                current = _value_models(fields[name])
-                keep = _parts_before_fields(fields[name])
+                current = field_models(owner.model_fields[name])
+                keep = _parts_before_fields(owner.model_fields[name])
                 continue
         parts.append(part)
     return Path(parts)
+
+
+def _field_named(
+    models: Sequence[type[VcoModel]], key: str
+) -> tuple[type[VcoModel], str] | None:
+    """The first of *models* that has a field *key* names, and that field's python name."""
+    for model in models:
+        if (name := python_name(model, key)) is not None:
+            return model, name
+    return None
 
 
 def _parts_before_fields(field_info: FieldInfo) -> int:

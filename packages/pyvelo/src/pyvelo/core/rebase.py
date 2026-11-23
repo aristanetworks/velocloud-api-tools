@@ -48,6 +48,7 @@ from .base import (
     _is_vco_model_type,  # pyright: ignore[reportPrivateUsage]
     _list_item_type,  # pyright: ignore[reportPrivateUsage]
     _members_without_missing_and_none,  # pyright: ignore[reportPrivateUsage]
+    python_name,
 )
 from .fields import ConfigContext, KeySpec, get_key_spec, has_override_flag
 
@@ -430,7 +431,7 @@ def _model_field(node: _Node, key: object) -> tuple[str, FieldInfo] | None:
     """
     if not isinstance(node, type) or not isinstance(key, str):
         return None
-    name = node._alias_map().get(key)  # pyright: ignore[reportPrivateUsage]
+    name = python_name(node, key)
     return None if name is None else (name, node.model_fields[name])
 
 

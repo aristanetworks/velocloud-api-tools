@@ -899,6 +899,49 @@ def _members_without_missing_and_none(annotation: object) -> list[object]:
     ]
 
 
+def wire_name(model: type[VcoModel], name: str) -> str:
+    """The JSON key field *name* of *model* is written under.
+
+    Raises ``ValueError`` if *model* has no field of that name.
+    """
+    field_info = model.model_fields.get(name)
+    if field_info is None:
+        raise ValueError(f"{model.__name__} has no field '{name}'")
+    return _field_alias(field_info, name)
+
+
+def python_name(model: type[VcoModel], key: str) -> str | None:
+    """The python name of the field of *model* that *key* names, or None.
+
+    *key* is any key a patch accepts for a field: its python name, an alias,
+    or its camelCase form. This is the mapping *model* has (``_alias_map``).
+    """
+    return model._alias_map().get(key)  # pyright: ignore[reportPrivateUsage]
+
+
+def field_models(field_info: FieldInfo) -> tuple[type[VcoModel], ...]:
+    """Every ``VcoModel`` class the value of a field can hold, in the order written.
+
+    The field's own class, the classes of the items of a list, the classes of
+    the values of a map and the variants of a union, each once. ``MISSING``,
+    ``None`` and plain types add nothing, so a field of plain values gives an
+    empty tuple.
+    """
+    found: dict[type[VcoModel], None] = {}
+    _collect_models(field_info.annotation, found)
+    return tuple(found)
+
+
+def _collect_models(annotation: object, found: dict[type[VcoModel], None]) -> None:
+    """Add to *found* the ``VcoModel`` classes *annotation* is made of, in order."""
+    annotation = _unwrap_annotated(annotation)
+    if _is_vco_model_type(annotation):
+        _ = found.setdefault(annotation)
+    elif get_origin(annotation) in (*_UNION_ORIGINS, list, dict, tuple):
+        for member in get_args(annotation):
+            _collect_models(member, found)
+
+
 def list_kind(field_info: FieldInfo) -> ListKind | None:
     """How a list field's items are told apart, or None if it is not a list.
 

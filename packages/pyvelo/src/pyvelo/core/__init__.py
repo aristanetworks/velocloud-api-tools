@@ -34,9 +34,12 @@ from .base import (
     VcoModel,
     VcoTimestamp,
     check_time_is_never,
+    field_models,
     list_kind,
     missing_or,
+    python_name,
     value_or,
+    wire_name,
 )
 from .fields import (
     Alias,
@@ -208,6 +211,7 @@ __all__ = [
     "at",
     "check_time_is_never",
     "delete",
+    "field_models",
     "get_key_spec",
     "get_name_of",
     "get_normalizer",
@@ -225,7 +229,9 @@ __all__ = [
     "move",
     "nest_patch",
     "position_of",
+    "python_name",
     "select_items",
     "selector_of",
     "value_or",
+    "wire_name",
 ]
