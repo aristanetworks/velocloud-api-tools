@@ -666,6 +666,6 @@ async def test_the_repr_of_a_save_result_holds_no_module_data():
     for text in (repr(preview), repr(result)):
         assert "OLD-md5-made-up" not in text and "neighborIp" not in text
         assert text.startswith("SaveResult(") and "modules_updated=[" in text
-    assert "server_changes={'firewall': 0, 'deviceSettings': 0}" in repr(result)
-    assert "left_out={'firewall': 0, 'deviceSettings': 0}" in repr(result)
+    assert "server_changes={'deviceSettings': 0, 'firewall': 0}" in repr(result)
+    assert "left_out={'deviceSettings': 0, 'firewall': 0}" in repr(result)
     assert "ModuleWrite(name='deviceSettings', operation='update'" in repr(result)

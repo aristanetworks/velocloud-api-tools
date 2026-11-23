@@ -441,12 +441,22 @@ class ConfigPipeline:
         *,
         dry_run: bool = False,
         validate: bool = True,
+        repair_defaults: bool = True,
     ) -> SaveResult:
         """Persist changes to VCO.
 
         1. Plan the write of every module (:meth:`ConfigState.plan`), and
            raise ``TypeError`` if a changed module is not one a save writes
-           (device settings, QoS, WAN, firewall), also for ``dry_run``.
+           (device settings, QoS, WAN, firewall), also for ``dry_run``. A
+           profile's device settings module is planned, and written, first.
+           A profile's three modules (device settings, QoS and firewall) hold
+           the same segments, so the plan raises ``SegmentSetError`` for an
+           edit that removes a segment from one, or adds it to some and not
+           all, and carries a ``segments_disagree`` warning for a profile
+           whose modules disagree as read.
+           *repair_defaults* is false to leave the template ``defaults`` a
+           profile QoS segment lacks out of the write; the plan warns of them
+           either way (``defaults_repaired``).
         2. Run write-time validators on the changed modules. An error blocks
            the save: it raises ``SaveValidationError`` and sends nothing. A
            validator reports on the whole state, so an error in a module the
@@ -545,7 +555,7 @@ class ConfigPipeline:
         which would wait for the lock without end.
         """
         async with state.lock:
-            plan = await self._plan_loading(state)
+            plan = await self._plan_loading(state, repair_defaults=repair_defaults)
             result = SaveResult(
                 plan=plan, dry_run=dry_run, warnings=list(plan.warnings)
             )
@@ -782,7 +792,9 @@ class ConfigPipeline:
         state.resolvers.register(resolver)
         return resolver
 
-    async def _plan_loading(self, state: ConfigState) -> ConfigPlan:
+    async def _plan_loading(
+        self, state: ConfigState, *, repair_defaults: bool = True
+    ) -> ConfigPlan:
         """Plan *state*, loading a resolver the plan finds not loaded, once per identity type.
 
         A second ``ResolverNotLoadedError`` for a type that was loaded
@@ -791,7 +803,7 @@ class ConfigPipeline:
         loaded: set[type] = set()
         while True:
             try:
-                return state.plan()
+                return state.plan(repair_defaults=repair_defaults)
             except ResolverNotLoadedError as error:
                 await self.load_resolvers(state, _to_load(error, loaded))
 

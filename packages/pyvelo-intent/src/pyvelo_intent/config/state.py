@@ -4,16 +4,17 @@ import asyncio
 import copy
 import json
 import weakref
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, fields
 from typing import Any, Literal, Protocol, cast, override, runtime_checkable
 
 from pydantic import MISSING, BaseModel
 from pyvelo.client.enums.configuration import ConfigurationModuleName
-from pyvelo.client.exceptions import DetachedObjectError
+from pyvelo.client.exceptions import DetachedObjectError, SegmentSetError
 from pyvelo.client.models.configuration.common import segment_id_of
 from pyvelo.client.models.configuration.device_settings.root import DeviceSettingsData
 from pyvelo.client.models.configuration.firewall.root import FirewallData
+from pyvelo.client.models.configuration.profile_segments import AddedSegment
 from pyvelo.client.models.configuration.qos.root import QosData
 from pyvelo.client.models.configuration.ref_owners import ref_only_values
 from pyvelo.client.models.configuration.wan.root import WanData
@@ -33,11 +34,27 @@ from pyvelo.client.schemas.configuration import (
 from pyvelo.config.resolver import ResolverContext, ResolverRegistry
 from pyvelo.config.validation import ValidationError
 from pyvelo.core import ConfigContext, VcoModel
-from pyvelo.core.rebase import ItemMove, ItemPlace, Path, python_path, raw_changes
+from pyvelo.core.base import is_dict, is_list
+from pyvelo.core.rebase import (
+    ItemMove,
+    ItemPlace,
+    Key,
+    Path,
+    python_path,
+    raw_changes,
+)
 from pyvelo.core.response_check import PlannedChange, ServerChange
 
 from pyvelo_intent.config.module_names import resolve_module_name
 from pyvelo_intent.errors import LayerNotSavedError
+
+_DEVICE_SETTINGS = ConfigurationModuleName.DEVICE_SETTINGS.value
+_SEGMENT_MODULES = (
+    _DEVICE_SETTINGS,
+    ConfigurationModuleName.QOS.value,
+    ConfigurationModuleName.FIREWALL.value,
+)
+"""The three modules of a profile that hold its segments, in write order."""
 
 
 @dataclass
@@ -106,11 +123,21 @@ class ConfigPlan:
     - "reconciled segments: A, B" are the profile's segments the write adds to
       the edge module as empty entries; with "none" the line reads "missing
       segments".
+    - "added segments: A, B" are the segments added to a profile module
+      (``add_segment_entry``), which are no change from it; "repaired
+      defaults: Guest: A, B" are the QoS ``defaults`` entries of a profile
+      segment that the write adds from the template, and "missing defaults"
+      the same entries when the plan leaves them out.
     - "override turned on: path (...)" is a section or an item of an edge whose
       override flag the changes turn on: from this save on the edge's own
       values apply there, and the profile's no longer do.
     - "legacy keys (dropped when the module is written): ..." are keys the VCO
       does not know, on a module with nothing else to write.
+    - "warning: text", last and with no indent, is a segment of a profile that
+      its three modules disagree about as read (``segment_warnings``).
+
+    A profile's device settings module is written first, then the others in
+    the order the configuration lists them, and ``modules`` is in that order.
 
     Paths are in the names the VCO uses. A value is JSON, cut to 80 characters;
     the two values of a "~" line are cut where they first differ. A secret
@@ -121,11 +148,16 @@ class ConfigPlan:
         target: What the plan is for (the first line of ``render()``), or "".
         warnings: What each module's plan warns of, one entry per warning,
             with the module's name before the warning's path
-            (``"deviceSettings: refs deviceSettings:dns:primaryProvider"``).
+            (``"deviceSettings: refs deviceSettings:dns:primaryProvider"``),
+            then ``segment_warnings``.
+        segment_warnings: The segments of a profile that its three modules
+            disagree about as read, which the edit does not settle: code
+            ``segments_disagree``, at ``segments["<name>"]``. Empty for an edge.
     """
 
     modules: tuple[ModulePlan, ...]
     target: str = ""
+    segment_warnings: tuple[ValidationWarning, ...] = ()
 
     @property
     def changed(self) -> tuple[ModulePlan, ...]:
@@ -134,19 +166,23 @@ class ConfigPlan:
 
     @property
     def warnings(self) -> tuple[ValidationWarning, ...]:
-        """The warnings of every module's plan, as data; ``render()`` shows them in their blocks."""
-        return tuple(
-            ValidationWarning(
-                path=f"{module.name}: {warning.path}",
-                message=warning.message,
-                code=warning.code,
-            )
-            for module in self.modules
-            for warning in module.warnings
+        """The warnings of every module's plan, then the segment warnings, as data; ``render()`` shows them in their blocks."""
+        return (
+            *(
+                ValidationWarning(
+                    path=f"{module.name}: {warning.path}",
+                    message=warning.message,
+                    code=warning.code,
+                )
+                for module in self.modules
+                for warning in module.warnings
+            ),
+            *self.segment_warnings,
         )
 
     def render(self) -> str:
         lines = [m.render() for m in self.modules]
+        lines.extend(f"warning: {w.message}" for w in self.segment_warnings)
         return "\n".join([self.target, *lines] if self.target else lines)
 
 
@@ -710,12 +746,15 @@ class ConfigState:
         """The profile layer's module data."""
         return LayerView(self.profile_config)
 
-    def plan(self) -> ConfigPlan:
+    def plan(self, *, repair_defaults: bool = True) -> ConfigPlan:
         """Plan the write of every module of the target config, in order.
 
-        Each module is planned relative to the raw data it was read from. An
-        edge module also reconciles its segments with the profile's module of
-        the same name. Raises ``LossyFieldError`` if an edit cannot be written.
+        The order is the write order: ``deviceSettings`` first, for every
+        target, then the other modules in the order the configuration lists
+        them. Each module is planned relative to the raw data it was read
+        from. An edge module also reconciles its segments with the profile's
+        module of the same name. Raises ``LossyFieldError`` if an edit cannot
+        be written.
 
         First, raises ``DetachedObjectError`` naming the paths if objects of a
         module :meth:`replace_module` replaced were changed in place; once for
@@ -724,6 +763,20 @@ class ConfigState:
         Then raises ``LayerNotSavedError`` if the layer this state does not
         save (the profile layer of an edge state) was edited, naming the
         fields; once for those edits, so the next call plans.
+
+        A profile whose three modules (device settings, QoS and firewall) are
+        all there has the same segments in each, so the plans of the three are
+        then compared by ``segmentId``. Raises ``SegmentSetError``, naming the
+        segments and the modules, for a segment the edit removes from a
+        module (a QoS or firewall entry for a segment the device settings
+        lacked as read may be removed), and for a segment the edit adds to
+        some of the three and not all; the message gives the patch and the
+        call that complete it. A module that disagrees as read, with nothing
+        added, is left as it is and ``ConfigPlan.segment_warnings`` says so.
+
+        *repair_defaults* is false to leave out the template ``defaults`` that
+        a profile QoS segment lacks (:func:`~pyvelo.client.module_write.plan_module`);
+        the plan warns either way.
 
         Raises ``ResolverNotLoadedError`` when a provider was set and the
         state's network services are not loaded (:meth:`plan_module`). A
@@ -735,10 +788,17 @@ class ConfigState:
         target = self._target_text()
         if config.modules is MISSING:
             return ConfigPlan(modules=(), target=target)
-        return ConfigPlan(
-            modules=tuple(self.plan_module(mod) for mod in config.modules),
-            target=target,
+        ordered = sorted(
+            config.modules,
+            key=lambda m: m.name != ConfigurationModuleName.DEVICE_SETTINGS,
         )
+        plans = tuple(
+            self.plan_module(mod, repair_defaults=repair_defaults) for mod in ordered
+        )
+        warnings = (
+            _check_segment_set(ordered, plans) if self.target_type == "profile" else ()
+        )
+        return ConfigPlan(modules=plans, target=target, segment_warnings=warnings)
 
     def _target_text(self) -> str:
         """What a plan is for: ``edge 101, enterprise 1, configuration 10``."""
@@ -755,7 +815,11 @@ class ConfigState:
         return text
 
     def plan_module(
-        self, module: AnyConfigurationModule, data: VcoModel | None = None
+        self,
+        module: AnyConfigurationModule,
+        data: VcoModel | None = None,
+        *,
+        repair_defaults: bool = True,
     ) -> ModulePlan:
         """Plan the write of one *module* of the target config, as :meth:`plan` plans it.
 
@@ -765,6 +829,11 @@ class ConfigState:
         edit that cannot be written. Does not check for detached objects.
         The segments of a profile's modules are not checked here: ``plan``
         runs the rule that covers all three.
+
+        A profile QoS module is planned with the ``vpn.conditionalBackhaul``
+        of each segment of the profile's device settings, as it is now: a
+        ``defaults`` entry it repairs takes it as ``allowConditionalBh``.
+        *repair_defaults* is as for :meth:`plan`.
 
         A provider the edit sets needs the network services loaded
         (``state.resolvers``): ``ResolverNotLoadedError`` says they are not.
@@ -789,7 +858,29 @@ class ConfigState:
             profile=profile_mod,
             resolvers=self.resolvers,
             via_pipeline=True,
+            repair_defaults=repair_defaults,
+            conditional_backhaul=self._conditional_backhaul(module, level),
         )
+
+    def _conditional_backhaul(
+        self, module: AnyConfigurationModule, level: ConfigContext
+    ) -> dict[int, bool] | None:
+        """For a profile QoS *module*, each segment's ``vpn.conditionalBackhaul`` in the profile's device settings now; else None."""
+        if (
+            level is not ConfigContext.PROFILE
+            or module.name != ConfigurationModuleName.QOS
+        ):
+            return None
+        held = _find_module(
+            self.profile_config, ConfigurationModuleName.DEVICE_SETTINGS
+        )
+        data = None if held is None else held.data
+        if not isinstance(data, DeviceSettingsData):
+            return None
+        return {
+            item.segment.segment_id: item.vpn.conditional_backhaul
+            for item in data.segments
+        }
 
     def get_changed_modules(self) -> list[ConfigurationModuleName]:
         """Names of the modules that a save would write.
@@ -820,7 +911,10 @@ class ConfigState:
         replaced is one entry, not a removal and an addition. When the
         provider's stub had no ``ref``, setting a provider also writes the
         stub's ``ref``, and that is an entry of its own, before the
-        provider's.
+        provider's. A segment added to a profile module is one entry, at
+        ``segments["<name>"]``, with ``before`` ``MISSING`` and ``after`` the
+        entry as written; it comes before the changes to the module's other
+        values.
         """
         wanted = None if module_name is None else resolve_module_name(module_name)
         changes: list[ConfigFieldChange] = []
@@ -830,6 +924,7 @@ class ConfigState:
             held = _find_module(self.target_config, module.name)
             data = None if held is None else held.data
             model = type(data) if isinstance(data, VcoModel) else None
+            changes.extend(_added_segment_changes(module, held))
             changes.extend(
                 ConfigFieldChange(
                     module=module.name,
@@ -843,6 +938,171 @@ class ConfigState:
             )
             changes.extend(_provider_changes(module))
         return changes
+
+
+def _added_segment_changes(
+    module: ModulePlan, held: AnyConfigurationModule | None
+) -> list[ConfigFieldChange]:
+    """One change for each segment added to *held*, a profile module, with the entry as the plan writes it."""
+    if held is None:
+        return []
+    written = _segment_entries(module.data)
+    return [
+        ConfigFieldChange(
+            module=module.name,
+            path=Path(("segments", Key(addition.name))),
+            before=MISSING,
+            after=written[addition.segment_id],
+        )
+        for addition in held.additions
+        if isinstance(addition, AddedSegment) and addition.segment_id in written
+    ]
+
+
+def _segment_entries(data: object) -> dict[Any, Any]:
+    """The entries of the ``segments`` list of the module *data*, by ``segmentId``; one without an ID is left out."""
+    segments = data.get("segments") if is_dict(data) else None
+    if not is_list(segments):
+        return {}
+    return {
+        segment_id: entry
+        for entry in segments
+        if (segment_id := segment_id_of(entry)) is not None
+    }
+
+
+def _segment_name(entry: object, segment_id: object) -> str:
+    descriptor = entry.get("segment") if is_dict(entry) else None
+    name = descriptor.get("name") if is_dict(descriptor) else None
+    return name if isinstance(name, str) else str(segment_id)
+
+
+def _names_text(names: Sequence[str]) -> str:
+    return (
+        " and ".join(names)
+        if len(names) < 3
+        else f"{', '.join(names[:-1])} and {names[-1]}"
+    )
+
+
+def _add_hint(name: str, modules: Sequence[str]) -> str:
+    patch = json.dumps({"segments": {name: {"_op": "add"}}})
+    where = " and ".join(modules)
+    return (
+        f"Send the patch {patch} to {where}, or assign the segment to all three "
+        f'with pipeline.assign_segment(state, "{name}")'
+    )
+
+
+def _check_segment_set(
+    modules: Sequence[AnyConfigurationModule], plans: Sequence[ModulePlan]
+) -> tuple[ValidationWarning, ...]:
+    """Run the segment-set rule of a profile on the payloads of *plans* and the modules as read.
+
+    Does nothing, and returns no warning, unless the three modules of a profile
+    are all there. For each ``segmentId`` in the payloads or the modules as
+    read:
+
+    - removed from a module (it was in it as read, and is not in its payload):
+      ``SegmentSetError``, unless the module is QoS or firewall and device
+      settings lacked the segment as read (an orphan);
+    - added to a module (in its payload, not in it as read): it must be in
+      the payloads of all three, else ``SegmentSetError`` names the modules
+      that lack it;
+    - otherwise, in some payloads and not in others: a ``segments_disagree``
+      warning, which says how to complete it.
+    """
+    held = {
+        module.name: (module, plan)
+        for module, plan in zip(modules, plans, strict=True)
+        if module.name in _SEGMENT_MODULES
+    }
+    if len(held) != len(_SEGMENT_MODULES):
+        return ()
+    read = {name: _segment_entries(held[name][0].raw_data) for name in _SEGMENT_MODULES}
+    written = {name: _segment_entries(held[name][1].data) for name in _SEGMENT_MODULES}
+    ids = dict.fromkeys(
+        segment_id
+        for entries in (*read.values(), *written.values())
+        for segment_id in entries
+    )
+    removals: list[tuple[str, list[str]]] = []
+    incomplete: list[tuple[str, list[str], list[str]]] = []
+    warnings: list[ValidationWarning] = []
+    for segment_id in ids:
+        entry = next(
+            e[segment_id]
+            for e in (*written.values(), *read.values())
+            if segment_id in e
+        )
+        name = _segment_name(entry, segment_id)
+        orphan = segment_id not in read[_DEVICE_SETTINGS]
+        removed = [
+            m
+            for m in _SEGMENT_MODULES
+            if segment_id in read[m]
+            and segment_id not in written[m]
+            and not (orphan and m != _DEVICE_SETTINGS)
+        ]
+        lacking = [m for m in _SEGMENT_MODULES if segment_id not in written[m]]
+        added = [
+            m
+            for m in _SEGMENT_MODULES
+            if segment_id in written[m] and segment_id not in read[m]
+        ]
+        if removed:
+            removals.append((name, removed))
+        if added and lacking:
+            incomplete.append((name, added, lacking))
+        if not (removed or (added and lacking)) and 0 < len(lacking) < len(
+            _SEGMENT_MODULES
+        ):
+            has = [m for m in _SEGMENT_MODULES if m not in lacking]
+            warnings.append(
+                ValidationWarning(
+                    path=f"segments[{json.dumps(name)}]",
+                    message=(
+                        f"Segment {name!r} is in {_names_text(has)} but not in "
+                        f"{_names_text(lacking)}, as read, and the segments of a "
+                        "profile are the same in its three modules. This save "
+                        f"leaves it as it is. {_add_hint(name, lacking)}."
+                    ),
+                    code="segments_disagree",
+                )
+            )
+    if removals or incomplete:
+        parts: list[str] = []
+        for name, removed in removals:
+            parts.append(
+                f"removes the segment {name!r} from {_names_text(removed)}: a "
+                "segment of a profile is removed from all three modules "
+                "together, which is not supported, so leave it in the data "
+                "(only a QoS or firewall entry for a segment the device "
+                "settings lack can be removed)"
+            )
+        for name, added, lacking in incomplete:
+            parts.append(
+                f"adds the segment {name!r} to {_names_text(added)} but not to "
+                f"{_names_text(lacking)}, and the segments of a profile are the "
+                f"same in its three modules. {_add_hint(name, lacking)}"
+            )
+        raise SegmentSetError(
+            "The edit " + "; and it ".join(parts) + ".",
+            segments=[
+                *dict.fromkeys(
+                    [*(n for n, _ in removals), *(n for n, _, _ in incomplete)]
+                )
+            ],
+            modules=[
+                *dict.fromkeys(
+                    [
+                        *(m for _, r in removals for m in r),
+                        *(m for _, _, c in incomplete for m in c),
+                    ]
+                )
+            ],
+        )
+    return tuple(warnings)
 
 
 def _provider_changes(module: ModulePlan) -> list[ConfigFieldChange]:

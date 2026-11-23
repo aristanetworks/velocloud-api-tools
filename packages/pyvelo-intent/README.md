@@ -458,6 +458,33 @@ firewall: update
   count. A value is shown as JSON, cut to 80 characters, and the two values of
   a `~` line are cut where they first differ. `SaveResult.plan` is the same
   plan, and `dry_run=True` reports it without writing.
+- The plan lists `deviceSettings` first, then the other modules in the order the
+  configuration lists them, for an edge as for a profile, and a save writes
+  them in that order.
+- A profile's device settings, QoS and firewall modules hold the same
+  segments, so `plan()` compares the three by `segmentId`. An edit that removes
+  a segment from one raises `SegmentSetError` (from `pyvelo_intent`), except
+  for a QoS or firewall entry whose segment device settings did not have when
+  they were read. An edit that adds a segment to one or two of the three
+  raises it too, naming the segments and the modules that lack them, with the
+  patch `{"segments": {"Guest": {"_op": "add"}}}` and the call
+  `pipeline.assign_segment(state, "Guest")` that complete it. Modules that
+  already disagreed when read, with nothing added, are left as they are: each
+  such segment is a warning with the code `segments_disagree`, at
+  `segments["Guest"]`, in `ConfigPlan.segment_warnings` (also in
+  `ConfigPlan.warnings` and `SaveResult.warnings`), and `render()` ends with a
+  `warning: <message>` line for it. A profile that lacks one of the three
+  modules has nothing to compare.
+- A segment added to a profile module has an `added segments: Guest` line, and
+  `get_field_changes()` lists it as one change at `segments["Guest"]`, from
+  `MISSING` to the entry as written. A QoS segment that lacks template
+  `defaults` has them added to the module's write when the module is written
+  (`repaired defaults: Guest: Default-Any-UDP, Default-Any-Other`); the plan
+  warns with the code `defaults_repaired` either way, and `missing defaults`
+  is the same line for entries it leaves out. A repaired default's
+  `allowConditionalBh` is the segment's `vpn.conditionalBackhaul` in the
+  profile's device settings as it is then. `save(state, repair_defaults=False)`
+  and `state.plan(repair_defaults=False)` leave them out.
 - A state loaded with `load` saves the edge's own layer. `state.profile` is
   there to read: an edit made through it is not saved, and the next `plan()`,
   `get_changed_modules()` or `save()` raises `LayerNotSavedError` (from
