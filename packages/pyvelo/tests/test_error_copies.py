@@ -30,7 +30,7 @@ from pyvelo.client.exceptions import (
 )
 from pyvelo.client.module_check import ModuleWrite, check_module_write
 from pyvelo.client.module_write import plan_module
-from pyvelo.core.rebase import Path
+from pyvelo.core.rebase import Key, Path
 from pyvelo.testing import as_stored
 
 from .write_helpers import fw
@@ -182,3 +182,29 @@ def test_every_error_of_the_module_round_trips():
             assert copied.args == error.args
             assert str(copied) == str(error)
             assert vars(copied).keys() == vars(error).keys()
+
+
+def test_an_attribute_that_refers_back_to_the_error_survives():
+    error = VcoOperationError("update", "boom", code=5)
+    error.me = error  # pyright: ignore[reportAttributeAccessIssue]
+    error.add_note("one")
+    loaded, _, deep = copies(error)
+    for copied in (loaded, deep):
+        assert copied.me is copied
+        assert type(copied) is VcoOperationError
+        assert copied.__notes__ == ["one"]
+    assert deep is not error
+    shallow = copy.copy(error)
+    assert shallow.me is error  # pyright: ignore[reportAttributeAccessIssue]
+    shallow.add_note("two")
+    assert error.__notes__ == ["one"]
+
+
+def test_the_stored_parts_of_a_write_error_survive_a_deep_copy():
+    parts = {Path(("segments", 0)): 0, Path(("segments", 1)): Key("b")}
+    error = ConfigConflictError(
+        1, "v1", "stale", module_name="firewall", stored_parts=parts
+    )
+    for copied in copies(error):
+        assert copied.stored_parts == parts
+    assert copy.deepcopy(error).stored_parts is not error.stored_parts

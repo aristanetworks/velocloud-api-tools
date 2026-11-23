@@ -4,13 +4,38 @@ The CLI's ``main()`` is the single place that maps these to process exit
 codes. Library code raises them rather than calling ``sys.exit()``.
 """
 
+from __future__ import annotations
+
 from collections.abc import Mapping, Sequence
+from typing import Any, cast, override
 
 from pyvelo.config.validation import ValidationError
 
 
+def _rebuild_error(cls: type[IntentError], args: tuple[Any, ...]) -> IntentError:
+    """Build an error of *cls* without calling its constructor; its attributes arrive as state."""
+    error = cls.__new__(cls)
+    error.args = args
+    return error
+
+
 class IntentError(Exception):
-    """Base class for intent-layer errors."""
+    """Base class for intent-layer errors.
+
+    An error is pickled and copied from its class, its ``args`` and its
+    attributes (notes included), not by calling the constructor again: a
+    constructor may take more than the message, and ``args`` holds only the
+    message. As with any exception, ``__cause__``, ``__context__`` and the
+    traceback are not carried.
+    """
+
+    @override
+    def __reduce__(self) -> tuple[Any, ...]:
+        attributes = dict(self.__dict__)
+        if "__notes__" in attributes:
+            # A shallow copy must not add its notes to this error's list.
+            attributes["__notes__"] = list(cast(list[str], attributes["__notes__"]))
+        return (_rebuild_error, (type(self), self.args), attributes)
 
 
 class ConfigInputError(IntentError):

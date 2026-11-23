@@ -22,13 +22,10 @@ if TYPE_CHECKING:
     from pyvelo.client.schemas.configuration import ConfigurationModuleBase
 
 
-def _rebuild_error(
-    cls: type[VcoError], args: tuple[Any, ...], attributes: dict[str, Any]
-) -> VcoError:
-    """Build an error of *cls* without calling its constructor, from its ``args`` and attributes."""
+def _rebuild_error(cls: type[VcoError], args: tuple[Any, ...]) -> VcoError:
+    """Build an error of *cls* without calling its constructor; its attributes arrive as state."""
     error = cls.__new__(cls)
     error.args = args
-    error.__dict__.update(attributes)
     return error
 
 
@@ -38,8 +35,9 @@ class VcoError(Exception):
     An error is pickled and copied from its class, its ``args`` and its
     attributes (notes included), not by calling the constructor again: most
     constructors take more than the message, and ``args`` holds only the
-    message. As with any exception, ``__cause__``, ``__context__`` and the
-    traceback are not carried.
+    message. The attributes are the state of the rebuilt error, so one that
+    refers back to the error is copied too. As with any exception,
+    ``__cause__``, ``__context__`` and the traceback are not carried.
     """
 
     @override
@@ -48,7 +46,7 @@ class VcoError(Exception):
         if "__notes__" in attributes:
             # A shallow copy must not add its notes to this error's list.
             attributes["__notes__"] = list(cast(list[str], attributes["__notes__"]))
-        return (_rebuild_error, (type(self), self.args, attributes))
+        return (_rebuild_error, (type(self), self.args), attributes)
 
 
 class VcoClientNotInitializedError(VcoError):
