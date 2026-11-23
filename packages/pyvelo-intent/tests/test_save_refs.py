@@ -10,12 +10,14 @@ from typing import Any, cast
 
 import pytest
 from pydantic import MISSING
-from pyvelo.client.exceptions import DetachedObjectError
+from pyvelo.client.enums.configuration import ConfigurationModuleName
+from pyvelo.client.exceptions import ConfigConflictError, DetachedObjectError
 from pyvelo.client.models.configuration import DeviceSettingsData
 from pyvelo.client.models.configuration.device_settings.segment import (
     DnsPrimaryProvider,
     SegmentDns,
 )
+from pyvelo.client.models.configuration.qos.root import QosData, ServiceRateLimit
 from pyvelo.client.schemas.configuration import (
     EdgeConfiguration,
     EnterpriseConfigurationProfile,
@@ -39,6 +41,7 @@ from refs_helpers import (  # pyright: ignore[reportImplicitRelativeImport]
     DNS_B,
     DS_ID,
     PRIMARY,
+    QOS_ID,
     SEGMENT,
     dns,
     segment_entry,
@@ -53,6 +56,7 @@ OWNER = Path.parse('segments["Global Segment"].dns.primary_provider.service')
 DATA_OWNER = Path(("data", *OWNER.parts))
 SERVICES = "enterprise/getEnterpriseServices"
 VERSION_READ = "configuration/getConfigurationModules"
+CONFIGURATION_READ = "configuration/getConfiguration"
 UPDATE = "configuration/updateConfigurationModule"
 CSS_PROVIDER = "deviceSettings:css:provider"
 NETWORK = {"vlanId": 100, "name": "users", "segmentId": 0, "override": True}
@@ -464,3 +468,210 @@ async def test_a_provider_changed_behind_the_guard_of_a_detached_object_is_repor
     assert error.value.paths == [DATA_OWNER]
     assert state.plan().changed == ()  # reported once
     assert provider_of(data) is held
+
+
+RATE = {"enabled": False, "inputType": "percent", "value": 1}
+EDGE_CONFIG = 50
+EDGE_DS_ID = 51
+EDGE_QOS_ID = 52
+
+
+def qos_json(*, module_id: int, configuration_id: int) -> dict[str, Any]:
+    """A QoS module with the Global Segment and a rate limit, the one value a test edits."""
+    data = {
+        "segments": [
+            {
+                "segment": {
+                    "segmentId": 0,
+                    "name": "Global Segment",
+                    "type": "REGULAR",
+                    "segmentLogicalId": ZERO,
+                },
+                "rules": [],
+            }
+        ],
+        "serviceRateLimit": dict(RATE),
+    }
+    return make_module_json(
+        "QOS", data, module_id=module_id, configuration_id=configuration_id
+    )
+
+
+def profile_with_qos(*, qos_first: bool = False) -> ConfigState:
+    """A profile state with device settings and QoS, written in that order unless *qos_first*."""
+    modules = [
+        module_json(
+            module_id=DS_ID,
+            configuration_id=CONFIG,
+            refs=refs_of(None),
+            primary=False,
+        ),
+        qos_json(module_id=QOS_ID, configuration_id=CONFIG),
+    ]
+    if qos_first:
+        modules.reverse()
+    return ConfigState(
+        edge_config=None,
+        profile_config=EnterpriseConfigurationProfile.model_validate(
+            {"name": "P", "id": CONFIG, "modules": modules}
+        ),
+        target_type="profile",
+        resolver_context=ResolverContext(),
+    )
+
+
+def edge_with_qos() -> ConfigState:
+    """An edge state with device settings and QoS of its own, over a profile that has only device settings."""
+    edge = EdgeConfiguration.model_validate(
+        {
+            "name": "Edge Specific Profile",
+            "id": EDGE_CONFIG,
+            "modules": [
+                module_json(
+                    module_id=EDGE_DS_ID,
+                    configuration_id=EDGE_CONFIG,
+                    refs=refs_of(None, configuration_id=EDGE_CONFIG),
+                    primary=False,
+                ),
+                qos_json(module_id=EDGE_QOS_ID, configuration_id=EDGE_CONFIG),
+            ],
+        }
+    )
+    return ConfigState(
+        edge_config=edge,
+        profile_config=profile_config(),
+        target_type="edge",
+        resolver_context=ResolverContext(),
+    )
+
+
+def rate_limit(data: QosData) -> ServiceRateLimit:
+    rate = data.service_rate_limit
+    assert isinstance(rate, ServiceRateLimit)
+    return rate
+
+
+def propagating(client: MockVcoClient, qos_id: int) -> None:
+    """Make a write of device settings change the QoS row, as the VCO's propagation does."""
+
+    def enable(row: dict[str, Any]) -> None:
+        row["data"]["serviceRateLimit"]["enabled"] = True
+
+    def hook(new: dict[str, Any], old: dict[str, Any] | None) -> None:
+        del old
+        if new["name"] == "deviceSettings":
+            client.store.other_writer(qos_id, enable)
+
+    client.store.on_store.append(hook)
+
+
+async def test_a_profile_save_rebases_qos_after_device_settings():
+    state = profile_with_qos()
+    client = served(state)
+    propagating(client, QOS_ID)
+    pipeline = ConfigPipeline(client)
+    state = await pipeline.load_profile(CONFIG)
+    client.store.requests.clear()
+    device_settings(state).lan.networks[0].name = "renamed"
+    rate_limit(state.profile.qos).value = 5
+
+    result = await pipeline.save(state)
+
+    assert methods(client.store) == [
+        VERSION_READ,
+        UPDATE,
+        VERSION_READ,
+        CONFIGURATION_READ,
+        UPDATE,
+    ]
+    (_, qos_request) = client.store.requests[-1]
+    assert qos_request["id"] == QOS_ID
+    # The version the propagation left, not the one read at load.
+    assert qos_request["version"] not in ("v1", client.store.rows[QOS_ID]["version"])
+    assert [str(n) for n in result.modules_updated] == ["deviceSettings", "QOS"]
+    # The propagation and the edit are both stored and both in the state.
+    held = client.store.rows[QOS_ID]["data"]["serviceRateLimit"]
+    assert held == {**RATE, "enabled": True, "value": 5}
+    rate = rate_limit(state.profile.qos)
+    assert (rate.enabled, rate.value) == (True, 5)
+    assert state.plan().changed == ()
+    (change,) = result.server_changes[ConfigurationModuleName.QOS]
+    assert (str(change.path), change.as_read, change.stored, change.merged) == (
+        "serviceRateLimit.enabled",
+        False,
+        True,
+        True,
+    )
+
+
+async def test_a_profile_save_raises_a_conflict_where_the_propagation_reached_an_edit():
+    state = profile_with_qos()
+    client = served(state)
+    pipeline = ConfigPipeline(client)
+
+    def raise_rate(row: dict[str, Any]) -> None:
+        row["data"]["serviceRateLimit"]["value"] = 7
+
+    def hook(new: dict[str, Any], old: dict[str, Any] | None) -> None:
+        del old
+        if new["name"] == "deviceSettings":
+            client.store.other_writer(QOS_ID, raise_rate)
+
+    client.store.on_store.append(hook)
+    state = await pipeline.load_profile(CONFIG)
+    device_settings(state).lan.networks[0].name = "renamed"
+    rate_limit(state.profile.qos).value = 5
+
+    with pytest.raises(ConfigConflictError) as caught:
+        _ = await pipeline.save(state)
+
+    error = caught.value
+    assert (error.stated, error.sent) == (False, False)
+    assert "after this save wrote device settings" in error.detail
+    assert error.module is not None
+    assert [str(c.path) for c in error.lost_edits] == ["serviceRateLimit.value"]
+    assert client.store.rows[QOS_ID]["data"]["serviceRateLimit"]["value"] == 7
+    assert len(client.update_requests) == 1  # device settings; QoS was not sent
+    # The state holds the module as it is now, with the clash to redo on it.
+    assert rate_limit(state.profile.qos).value == 7
+
+
+async def test_a_module_before_device_settings_is_not_rebased():
+    state = profile_with_qos(qos_first=True)
+    client = served(state)
+    propagating(client, QOS_ID)
+    pipeline = ConfigPipeline(client)
+    state = await pipeline.load_profile(CONFIG)
+    client.store.requests.clear()
+    device_settings(state).lan.networks[0].name = "renamed"
+    rate_limit(state.profile.qos).value = 5
+
+    _ = await pipeline.save(state)
+
+    assert methods(client.store) == [VERSION_READ, UPDATE, VERSION_READ, UPDATE]
+    assert [r["id"] for _, r in client.store.requests if "id" in r] == [QOS_ID, DS_ID]
+
+
+async def test_an_edge_save_does_not_rebase():
+    state = edge_with_qos()
+    state.take_snapshot()
+    client = served(state)
+    propagating(client, EDGE_QOS_ID)
+    pipeline = ConfigPipeline(client)
+    device_settings_data = state.edge.device_settings
+    device_settings_data.lan.networks[0].name = "renamed"
+    rate_limit(state.edge.qos).value = 5
+    client.store.requests.clear()
+
+    with pytest.raises(ConfigConflictError) as caught:
+        _ = await pipeline.save(state)
+
+    # The version read finds the QoS module changed; it is a conflict, not a rebase.
+    assert methods(client.store) == [
+        VERSION_READ,
+        UPDATE,
+        VERSION_READ,
+        CONFIGURATION_READ,
+    ]
+    assert (caught.value.stated, caught.value.sent) == (False, False)
+    assert "after this save wrote device settings" not in caught.value.detail

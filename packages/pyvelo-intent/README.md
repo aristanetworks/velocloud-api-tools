@@ -537,7 +537,9 @@ storing your changes. Neither list is an error.
   firewall rule's `ruleLogicalId`, a WAN link's `internalId`), values it keeps
   in its own form (an IPv6 address in canonical form), the default it added
   back where you removed one, and what another writer changed beside your
-  edits. A value stored as it was read is not listed here.
+  edits. A value stored as it was read is not listed here. An entry with
+  `merged` true was found before the write, in a module written after a
+  profile's device settings, and your edits were put on it (below).
 - `left_out` is the planned changes the VCO stores its own way, which are
   neither applied nor lost. They are a change to a field the VCO owns (a
   firewall rule's `ruleLogicalId`) and the removal of a default it adds back.
@@ -592,6 +594,24 @@ the state continues from that module. Otherwise the save raises
 nothing was sent: `error.module` is the module as it is now, with your edits in
 `lost_edits` to redo on it. A module its configuration no longer holds raises it
 too, with `error.module` None: read the configuration again.
+
+A save of a profile that writes its device settings rebases the modules it
+writes after them. Writing device settings can change the profile's other
+modules: it rewrites QoS rule flags, and it updates the versions of all of them
+when a segment becomes in use. So each module written after the device settings
+reads its `version` first, refs or none, one more request per module. If the
+version is the one read, the save goes on. If it changed, the save reads the
+module in full and puts your edits on it, so a second save is not needed. The
+write is sent with the new version, and what changed beside your edits is in
+`SaveResult.server_changes` with `merged` true. It raises `ConfigConflictError`
+(`error.sent` False, `error.stated` False, nothing sent) only where the change
+reached a path you edited too, or a list you edit an item of had items added or
+removed; `error.lost_edits` lists your edits, to redo on `error.module`. When
+the module already holds every one of your changes, nothing is sent for it. The
+modules written before the device settings, and every module of an edge save,
+are not rebased: a changed version raises as above. The cost is one version
+read per module written after the device settings, and one full read of the
+module when its version changed.
 
 Which of the two a stale write raises depends on the VCO's conditional check
 of the version. With it on, the VCO refuses the write, and the save raises
@@ -656,7 +676,7 @@ is any difference in the rows of the refs the VCO's own processors manage.
 | `plan` | the module's `ModulePlan` |
 | `refs_as_read` | on `RefsDroppedError`: the module's refs as read, to put back when `every_row_lost` is true |
 | `stated` | on `ConfigConflictError`: whether the VCO said it refused the version, or the save inferred it |
-| `sent` | on `ConfigConflictError`: False when nothing was sent, because the version read before a write that carries refs found the module changed (or gone) |
+| `sent` | on `ConfigConflictError`: False when nothing was sent, because the version read before a write found the module changed (or gone): a write that carries refs, or one after a profile's device settings, where a path you edited was also changed |
 | `completed` | the writes of the same save before this one, which are stored |
 | `redo_patch(include_clashes=False)` | the patch that redoes the lost edits on `module`, for `apply(state, module=error.module_name, patch=...)` |
 | `not_redone(include_clashes=False)` | the lost edits that patch leaves out |
@@ -787,11 +807,6 @@ Known limits:
 - A lookup through a detached layer that adds a placeholder
   (`fw.segment("Guest")` on a `fw` taken before the save) is reported by the
   next `plan()`. Take the layer from the state again.
-- A save that changes a profile's device settings and its QoS (or firewall)
-  together may need a second save, when the device settings change propagates:
-  the later module's write raises with your edits in `lost_edits`, and the
-  state holds that module as stored, so apply `error.redo_patch()` and save
-  again. A save that does this itself is planned and not built.
 - On a VCO with the conditional check off, a stale write that carries refs may
   replace them while the data is not stored, overwriting another writer's
   refs; the save then reports your data changes, if any, as not stored. The

@@ -456,6 +456,13 @@ class ConfigPipeline:
         3. Send each changed module, in order, as an update or an insert with
            ``returnData`` (``write_module``), and replace the state's module
            with the one the VCO stored (:meth:`ConfigState.replace_module`).
+           A module written after a profile's device settings is rebased
+           (``write_module(..., rebase=True)``): the device settings write can
+           change it too, so its version is read first, and a changed one
+           makes the save read the module and apply your edits to it. Only a
+           path you edited that the other change also reached raises
+           ``ConfigConflictError``; what changed beside your edits is in
+           ``SaveResult.server_changes``, each with ``merged`` true.
            Per module, ``SaveResult.left_out`` holds the planned changes the
            VCO stores its own way (a field it owns, a default it adds back
            where the plan removed it): neither applied nor lost, each with
@@ -617,6 +624,8 @@ class ConfigPipeline:
         done: list[ModuleWrite[Any]] = []
         failed: str | None = None
         position = 0
+        # A profile's device settings write can change the modules after it.
+        device_settings_stored = False
         try:
             for position, (module_plan, mod, planned, planned_providers) in enumerate(
                 zip(plan.changed, modules, dumps, providers, strict=True)
@@ -629,6 +638,7 @@ class ConfigPipeline:
                         module_plan,
                         enterprise_id=enterprise_id,
                         if_absent=insert and mod.name in state.unconfirmed_inserts,
+                        rebase=device_settings_stored,
                     )
                 except ModuleWriteError as error:
                     stored = error.module
@@ -655,6 +665,11 @@ class ConfigPipeline:
                 # Stored: it counts as written even if the state cannot take it back.
                 done.append(write)
                 failed = None
+                if (
+                    state.target_type == "profile"
+                    and mod.name == ConfigurationModuleName.DEVICE_SETTINGS
+                ):
+                    device_settings_stored = True
                 paths = list(
                     dict.fromkeys(
                         change.path

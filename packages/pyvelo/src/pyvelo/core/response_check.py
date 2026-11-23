@@ -202,6 +202,9 @@ class ServerChange:
     as_read: object
     stored: object
     part: Literal["data", "refs"] = "data"
+    merged: bool = False
+    """The change was found before the write and merged into it: the plan was
+    rebased onto the module as it was then, so the write sent it as it was."""
 
     def python_path(self, model: type[VcoModel] | None) -> Path:
         """The path in the names a patch of *model* is written in.

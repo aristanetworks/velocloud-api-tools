@@ -43,6 +43,12 @@ processors on every such write. A module read without its refs
 (``module.refs_loaded`` false) cannot be written with an edit to an owner, or
 with segments (``RefsNotLoadedError``); any other plan of it sends no refs.
 
+Rebase: ``rebase_onto`` is the plan of a module that another write changed
+after it was read, applied to the module as it is now: the caller's edits (the
+plan's changes) go onto the fresh data, and the write goes on with the fresh
+version. It is for a module written after a profile's device settings (see
+``VcoClient.write_module``).
+
 Legacy keys: a firewall segment entry has no ``outboundOverride`` (the VCO and the
 edge do not know it), but an older version of this library may have written one.
 A write of a firewall module drops it from every segment entry, and the plan lists
@@ -53,7 +59,7 @@ is reported (``legacy_keys``) and left, never written just to strip it.
 import copy
 import json
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Final, Literal, cast, override
 
 from pydantic import MISSING
@@ -66,7 +72,11 @@ from pyvelo.client.derived_refs import (
     derive_refs,
     sends_refs_always,
 )
-from pyvelo.client.exceptions import LossyFieldError, RefsNotLoadedError
+from pyvelo.client.exceptions import (
+    ConfigConflictError,
+    LossyFieldError,
+    RefsNotLoadedError,
+)
 from pyvelo.client.models.configuration.common import (
     SEGMENT_LISTS,
     placeholder_segment,
@@ -99,6 +109,7 @@ from pyvelo.core.rebase import (
     raw_changes,
     rebase,
 )
+from pyvelo.core.response_check import Rewrites, ServerChange, check_response
 from pyvelo.core.show import moves_text, shown, shown_together
 
 type _Operation = Literal["none", "update", "insert"]
@@ -595,4 +606,94 @@ def plan_module(
         model=_document_model(model_type, module),
         ref_changes=ref_changes,
         warnings=warnings,
+    )
+
+
+_REBASE_CLASH = (
+    "the module changed on the VCO after this save wrote device settings, at a "
+    "path this save also changes; nothing was sent"
+)
+_REBASE_LIST = (
+    "the module changed on the VCO after this save wrote device settings, in a "
+    "list this save also changes, so its edits cannot be applied item by item; "
+    "nothing was sent"
+)
+
+
+def rebase_onto[M: ConfigurationModuleBase](
+    module: M, plan: ModulePlan, fresh: ConfigurationModuleBase
+) -> tuple[M, ModulePlan, tuple[ServerChange, ...]]:
+    """*plan*, made for *module* as read, applied to *fresh*, the module as the VCO holds it now.
+
+    Returns the rebased module, its plan and what changed under the caller.
+    The module is of the class of *module*, with the raw snapshot, ``version``
+    and ``refs_loaded`` of *fresh* and the data of *fresh* with the caller's
+    edits (the plan's changes) applied, so that ``plan_module`` of it plans
+    exactly those edits relative to *fresh*: the plan is that. Its operation
+    is ``none`` when *fresh* holds every change already. The server changes
+    are what differs between the payload and *fresh* outside the plan's
+    changes, each marked ``merged``.
+
+    A planned change whose path holds in *fresh* neither the value read nor
+    the value planned is a clash: something else changed it too. So is a list
+    whose items another writer added or removed, when the caller edits an item
+    of it: the items cannot be matched, and the edit would replace the list
+    whole. Raises ``ConfigConflictError`` (not ``stated``, not ``sent``) for
+    either, with *fresh* as its module, the planned changes *fresh* does not
+    hold as the lost edits, and nothing sent. Raises ``ValueError`` for a plan
+    that adds or removes a ref row: the rebase has no owner to carry it, and
+    nothing a profile writes after its device settings declares one.
+    """
+    # Imported here: module_check imports this module.
+    from pyvelo.client.module_check import MODULE_REWRITES, data_model
+
+    if plan.ref_changes:
+        raise ValueError(
+            f"the plan for {plan.name} adds or removes ref rows, and a rebase "
+            "cannot carry them onto another version of the module"
+        )
+    if not isinstance(fresh, type(module)):
+        raise TypeError(
+            f"the module read is a {type(fresh).__name__}, not a {type(module).__name__}"
+        )
+    as_read = {} if module.raw_data is MISSING else module.raw_data
+    model = data_model(module)
+    found = check_response(
+        as_read,
+        plan.data,
+        fresh.raw_data,
+        model,
+        rewrites=MODULE_REWRITES.get(plan.name, Rewrites()),
+    )
+
+    def conflict(detail: str) -> ConfigConflictError:
+        return ConfigConflictError(
+            fresh.id_,
+            module.version or "",
+            detail,
+            stated=False,
+            sent=False,
+            module_name=plan.name,
+            plan=plan,
+            module=fresh,
+            lost_edits=found.not_applied,
+            applied=found.applied,
+            left_out=found.left_out,
+            server_changes=found.server_changes,
+            stored_parts=found.stored_parts,
+        )
+
+    if any(change.clash for change in found.not_applied):
+        raise conflict(_REBASE_CLASH)
+    rebased = fresh.with_data_parsed_from(
+        rebase(fresh.raw_data, as_read, plan.data, model)
+    )
+    rebased_plan = plan_module(rebased, level=module.config_context)
+    planned = {change.path for change in plan.changes}
+    if any(change.path not in planned for change in rebased_plan.changes):
+        raise conflict(_REBASE_LIST)
+    return (
+        rebased,
+        rebased_plan,
+        tuple(replace(change, merged=True) for change in found.server_changes),
     )

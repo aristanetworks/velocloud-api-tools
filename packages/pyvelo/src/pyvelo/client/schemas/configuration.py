@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import copy
 import datetime
+import json
 import uuid
 from collections.abc import Mapping
 from typing import Annotated, Any, Literal, Self, TypeIs, cast, get_args, overload
@@ -254,6 +255,30 @@ class ConfigurationModuleBase(VcoModel):
         validation context key ``"refs_loaded"``, ``True`` when absent.
         """
         return self._refs_loaded
+
+    def with_data_parsed_from(self, raw_data: object) -> Self:
+        """A copy of this module whose ``data`` is *raw_data* parsed, and whose raw snapshot is this module's.
+
+        The data is parsed at this module's config level, and its ``RefOnly``
+        fields are filled from the refs of the snapshot, as a read does.
+        ``plan_module`` of the copy is then the change from this module's raw
+        data to *raw_data*. ``version``, the raw refs and ``refs_loaded`` are
+        this module's.
+        """
+        copied = self.model_copy()
+        data: object = getattr(self, "data", MISSING)
+        if isinstance(data, VcoModel):
+            level = self.config_context
+            parsed = type(data).model_validate_json(
+                json.dumps(raw_data),
+                context={"config_level": level} if level is not None else None,
+            )
+            if self._refs_loaded:
+                fill_ref_only(parsed, self._raw_refs)
+            object.__setattr__(copied, "data", parsed)
+        elif data is not MISSING:
+            object.__setattr__(copied, "data", copy.deepcopy(raw_data))
+        return copied
 
 
 class ControlPlaneConfigurationModule(ConfigurationModuleBase):

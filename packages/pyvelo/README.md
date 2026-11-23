@@ -150,6 +150,21 @@ with nothing sent. The read narrows the race and does not close it, and a
 module with no `version` is written unconditionally. A write that sends no refs
 makes no extra request.
 
+`write_module(..., rebase=True)` is for a module written after a profile's
+device settings, which can change the profile's other modules (QoS rule flags,
+and the versions of every module when a segment becomes in use). It reads the
+`version` of every update, refs or none. When it changed, the module is read in
+full and the plan is rebased onto it (`pyvelo.client.module_write.rebase_onto`):
+your edits, the plan's changes, go onto the data as it is now, and the rebased
+plan is sent with the version just read. The `ModuleWrite` holds that plan, and
+its `server_changes` hold what changed beside your edits, each with `merged`
+true. When the module holds every change already, nothing is sent and the write
+is that module with operation `none`. A path the plan changes that also changed
+there, and a list the plan edits an item of that had items added or removed,
+raise `ConfigConflictError` with `error.sent` False and the module as it is now.
+A plan that adds or removes a ref row cannot be rebased (`ValueError`). An
+insert is not rebased.
+
 With `if_absent=True` an insert first reads the configuration, and a module of
 that name found there is taken as the insert's answer and checked like one, with
 nothing inserted: the way to repeat an insert whose answer never arrived. That
