@@ -533,7 +533,7 @@ class ConfigState:
                 else:
                     snapshot.modules[at] = stored
         self._made_into_unset = [e for e in self._made_into_unset if e[0] is not old]
-        # Last: a copy of a detached object is detached too.
+        # Last: the steps above work on *old* as a live module.
         nodes = old.mark_detached()
         dump = _dump(old)
         self._replaced.append(

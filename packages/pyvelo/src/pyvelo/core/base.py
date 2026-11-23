@@ -40,6 +40,7 @@ from dataclasses import dataclass
 from enum import Enum, IntEnum, auto
 from typing import (
     Annotated,
+    Any,
     ClassVar,
     Literal,
     Never,
@@ -378,7 +379,8 @@ def _raise_detached(model: VcoModel, name: str) -> Never:
 
     raise DetachedObjectError(
         f"{type(model).__name__}.{name}: this object was replaced by a save; "
-        + "take it from the state again (state.edge.<module> or state.profile.<module>)"
+        + "take it from the state again (state.edge.<module> or state.profile.<module>), "
+        + "or put a deep copy of it in the state (copy.deepcopy)"
     )
 
 
@@ -413,6 +415,15 @@ class VcoModel(BaseModel):
             _raise_detached(self, name)
         super().__setattr__(name, value)
 
+    @override
+    def __deepcopy__(self, memo: dict[int, Any] | None = None) -> Self:
+        # A deep copy shares nothing with the module a save replaced, so it is
+        # a new object. Each nested model is copied through here too.
+        copied = super().__deepcopy__(memo)
+        if copied.is_detached:
+            copied._detached = False
+        return copied
+
     @property
     def is_detached(self) -> bool:
         """Whether a save replaced this object (``mark_detached``); then it takes no edit."""
@@ -432,8 +443,10 @@ class VcoModel(BaseModel):
         attribute whose name does not start with ``_``, and on
         ``merge_patch``; reading it is fine. A change in place of a plain
         ``list`` or ``dict`` it holds passes no attribute guard: such changes
-        are found by comparing dumps, at the places returned. A copy of a
-        marked model is marked too.
+        are found by comparing dumps, at the places returned. A deep copy of a
+        marked model is not marked: it shares nothing with the module that was
+        replaced. A shallow copy is, because it holds the same lists and nested
+        models.
         """
         marked = list(_models_inside(self, ()))
         for _, model in marked:

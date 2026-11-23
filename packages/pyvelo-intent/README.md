@@ -597,7 +597,9 @@ Objects taken from the state before a save
 the save replaced, and are detached. Reading one is fine. An assignment to one
 raises `DetachedObjectError`, and an in-place edit to a list or dict it holds
 (`seg.outbound.insert(0, rule)`) is reported, once, by the next `plan()` or
-save. Take the object from the state again and redo the edit.
+save. Take the object from the state again and redo the edit. To reuse a
+detached object as a new item, put a deep copy of it in the state
+(`copy.deepcopy(rule)`): the copy is not detached.
 
 A write whose answer never arrived (a transport error after the request was
 sent, a cancelled save) may or may not be stored, and so may one that raised

@@ -5,7 +5,7 @@ import pickle
 from typing import Any, ClassVar, Self, cast
 
 import pytest
-from pydantic import ConfigDict, model_validator
+from pydantic import ConfigDict, Field, model_validator
 from pyvelo.client.exceptions import DetachedObjectError, VcoError
 from pyvelo.client.models.configuration import FirewallData
 from pyvelo.client.models.configuration.device_settings.refs import DeviceSettingsRefs
@@ -40,7 +40,8 @@ PATCH: dict[str, object] = {
 }
 REPLACED = (
     "this object was replaced by a save; take it from the state again "
-    "(state.edge.<module> or state.profile.<module>)"
+    "(state.edge.<module> or state.profile.<module>), "
+    "or put a deep copy of it in the state (copy.deepcopy)"
 )
 
 
@@ -87,13 +88,6 @@ def test_assignment_on_a_detached_object_raises():
     assert data.firewall_enabled is True
     assert segment.firewall_logging_enabled is None
     assert rule.name == "allow-all"
-
-    # A copy of a detached object is detached too.
-    copied = data.model_copy(deep=True)
-    assert copied.is_detached and copied.segments[0].outbound[0].is_detached
-    assert copy.deepcopy(rule).is_detached and copy.copy(rule).is_detached
-    with pytest.raises(DetachedObjectError):
-        copied.firewall_enabled = False
 
     # The guard comes before validate_assignment: no ValidationError for a bad value.
     checked = Checked()
@@ -268,3 +262,66 @@ def test_the_error_is_a_vco_error_and_exported():
     error = DetachedObjectError("changed", (path,))
     assert (str(error), error.paths) == ("changed", [path])
     assert DetachedObjectError("changed").paths == []
+
+
+class Shelf(VcoModel):
+    by_name: dict[str, Checked] = Field(default_factory=dict)
+
+
+class Open(VcoModel):
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="allow")
+
+
+def test_models_in_a_dict_field_are_detached_and_listed():
+    held = Checked(count=1)
+    shelf = Shelf(by_name={"a": held})
+    places = dict(shelf.mark_detached())
+    assert places[("byName", "a")] is held
+    with pytest.raises(DetachedObjectError, match="Checked.count"):
+        held.count = 2
+    assert held.count == 1
+
+
+def test_models_in_extra_keys_are_detached_and_listed():
+    held = Checked(count=1)
+    box = Open.model_validate({"more": held, "many": [held]})
+    places = dict(box.mark_detached())
+    assert places[("more",)] is held
+    assert places[("many", 0)] is held
+    assert held.is_detached
+
+
+def test_the_level_of_a_detached_object_can_still_be_set():
+    data, _, rule = firewall()
+    _ = data.mark_detached()
+    assert data.for_edge() is data
+    assert rule.config_context is ConfigContext.EDGE
+
+
+def test_a_deep_copy_of_a_detached_object_is_not_detached():
+    data, _, rule = firewall()
+    _ = data.mark_detached()
+
+    for copied in (data.model_copy(deep=True), copy.deepcopy(data)):
+        assert copied.is_detached is False
+        assert copied.segments[0].is_detached is False
+        assert copied.segments[0].outbound[0].is_detached is False
+        copied.firewall_enabled = False
+        copied.segments[0].outbound[0].name = "copied"
+        _ = copied.merge_patch({"firewall_enabled": True})
+    again = copy.deepcopy(rule)
+    again.name = "again"
+    assert (again.name, again.is_detached) == ("again", False)
+    assert [r.is_detached for r in copy.deepcopy(data.segments[0].outbound)] == [False]
+    # The objects copied are as they were.
+    assert (rule.name, rule.is_detached, data.is_detached) == ("allow-all", True, True)
+    assert data.firewall_enabled is True
+
+
+def test_a_shallow_copy_of_a_detached_object_is_detached():
+    data, _, rule = firewall()
+    _ = data.mark_detached()
+    for copied in (copy.copy(rule), rule.model_copy(), data.model_copy()):
+        assert copied.is_detached
+    with pytest.raises(DetachedObjectError, match="FirewallOutboundRule.name"):
+        copy.copy(rule).name = "other"

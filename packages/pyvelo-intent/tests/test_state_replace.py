@@ -370,3 +370,31 @@ def test_an_inserted_module_is_replaced_and_no_longer_new():
 def test_save_result_has_server_changes():
     assert SaveResult().server_changes == {}
     assert SaveResult().left_out == {}
+
+
+WEB: dict[str, Any] = {"name": "web", "match": {}, "action": {"allow_or_deny": "allow"}}
+
+
+def test_a_deep_copy_of_a_detached_rule_can_go_into_the_state():
+    raw = copy.deepcopy(EDGE_FW)
+    raw["segments"][0]["outbound"] = [WEB]
+    row = make_module_json(
+        "firewall", raw, module_id=1, configuration_id=10, version="e1"
+    )
+    state = make_state([row])
+    held = state.edge.firewall.segment("Global Segment").outbound[0]
+    old = state.module("firewall")
+    assert isinstance(old, FirewallConfigurationModule)
+    state.replace_module(old, as_stored(old, copy.deepcopy(raw)))
+    assert held.is_detached
+
+    again = copy.deepcopy(held)
+    again.name = "web-2"
+    state.edge.firewall.segment("Global Segment").outbound.append(again)
+
+    (module,) = state.plan().changed
+    assert [str(change.path) for change in module.changes] == [
+        'segments["Global Segment"].outbound[web-2]'
+    ]
+    assert again.is_detached is False
+    assert held.name == "web"
