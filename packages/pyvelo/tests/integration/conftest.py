@@ -17,13 +17,13 @@ from contextlib import contextmanager
 import httpx
 import pytest
 import pytest_asyncio
+from live_support import Lab, discover_lab
 from pyvelo.analytics import Analytics
 from pyvelo.analytics.frame import MetricFrame
 from pyvelo.client import VcoClient
 from pyvelo.client.exceptions import VcoOperationError
 from pyvelo.core import ApiInterval
 
-from ._config_live import Lab, discover_lab
 from ._discovery import VcoTestContext, discover
 
 

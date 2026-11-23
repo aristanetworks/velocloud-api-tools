@@ -14,10 +14,7 @@ from collections.abc import AsyncGenerator
 
 import pytest
 import pytest_asyncio
-from _intent_live_support import (  # pyright: ignore[reportImplicitRelativeImport]
-    Lab,
-    discover_lab,
-)
+from live_support import Lab, discover_lab
 from pyvelo.client import VcoClient
 from pyvelo_intent import ConfigPipeline, build_default_pipeline
 

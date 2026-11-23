@@ -6,12 +6,12 @@ These tests prove that against a real Orchestrator: they edit, save, read the
 module back and compare it with what was there before, then put everything
 back.
 
-Every test that writes does so inside ``restoring`` (see ``_config_live``), which
+Every test that writes does so inside ``restoring`` (see ``live_support``), which
 restores the module and checks that it is restored whether or not the test
 passes. Targets are found at run time; a test that finds none is skipped. The
 edits are synthetic and inert: a copy of a rule appended after the rule it
 copies, a QoE threshold, a link description, a LAN network's OSPF cost. A write
-error is reported by its class and redacted paths (``_outcome``): its own
+error is reported by its class and redacted paths (``outcome``): its own
 message names lab entities and shows their values.
 
 Server-managed keys seen in what the Orchestrator stores (the tests allow
@@ -19,7 +19,7 @@ exactly these and nothing else):
 
 * ``ruleLogicalId``: assigned to a rule that was added without one.
 * ``routeMapsVersion``: added to a deviceSettings segment entry that lacks it
-  (accepted drift, see ``_config_live.settle``).
+  (accepted drift, see ``live_support.settle``).
 * refs: the Orchestrator re-derives a deviceSettings module's refs from its data
   when the data changes and drops one whose object is gone; a firewall or WAN
   module's refs stay as they were. The tests never write refs and restore data
@@ -48,20 +48,40 @@ from __future__ import annotations
 
 import copy
 import uuid
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from typing import Any, cast
+from typing import Any
 
 import pytest
+from live_support import (
+    Lab,
+    Site,
+    changes_between,
+    check,
+    check_as_read,
+    check_entries,
+    check_no_override_flag,
+    check_paths,
+    describe,
+    expect,
+    find_module,
+    outcome,
+    read_profile,
+    read_stack,
+    record_refusal,
+    redact,
+    restoring,
+    same_value,
+    synthetic_name,
+    value_at,
+)
 from pydantic import MISSING
 from pyvelo.client import (
     ConfigConflictError,
     ModuleWriteError,
-    VcoOperationError,
     WriteNotAppliedError,
 )
 from pyvelo.client.enums.configuration import ConfigurationModuleName as Name
-from pyvelo.client.exceptions import is_precondition_failure
 from pyvelo.client.models.configuration import (
     DeviceSettingsData,
     DeviceSettingsRefs,
@@ -72,7 +92,6 @@ from pyvelo.client.models.configuration import (
 from pyvelo.client.models.configuration.firewall.rules import FirewallOutboundRule
 from pyvelo.client.models.configuration.qos.qoe import QoeSettings
 from pyvelo.client.models.configuration.qos.rule import QosRule
-from pyvelo.client.module_check import data_model
 from pyvelo.client.module_write import plan_module, update_request, wire_dump
 from pyvelo.client.schemas.configuration import (
     AnyConfigurationModule,
@@ -85,30 +104,10 @@ from pyvelo.client.schemas.configuration import (
 )
 from pyvelo.core import ConfigContext, VcoModel
 from pyvelo.core.rebase import Key, Path, RawChange, raw_changes
-from pyvelo.core.response_check import PlannedChange, ServerChange
-
-from ._config_live import (
-    Lab,
-    Site,
-    changes_between,
-    check,
-    check_no_override_flag,
-    describe,
-    expect,
-    find_module,
-    read_profile,
-    read_stack,
-    redact,
-    restoring,
-    synthetic_name,
-)
 
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio(loop_scope="session")]
 
 type EditableData = DeviceSettingsData | WanData | QosData | FirewallData
-
-SERVER_ASSIGNED_KEYS = frozenset({"ruleLogicalId"})
-"""Keys the Orchestrator adds to a new rule; an added item is compared without them."""
 
 
 def data_of(module: ConfigurationModuleBase) -> EditableData:
@@ -203,152 +202,18 @@ class Case:
     what: str
 
 
-def _same_value(a: object, b: object) -> bool:
-    """Equal, but for the keys the Orchestrator assigns to an item it was given."""
-
-    def bare(value: object) -> object:
-        if isinstance(value, dict):
-            return {
-                k: v
-                for k, v in value.items()  # pyright: ignore[reportUnknownVariableType]
-                if k not in SERVER_ASSIGNED_KEYS
-            }
-        return value
-
-    return bare(a) == bare(b)
-
-
-def _check_paths(
-    label: str, what: str, changes: Sequence[RawChange], expected: Sequence[Path]
-) -> None:
-    got = sorted(str(c.path) for c in changes)
-    want = sorted(str(p) for p in expected)
-    check(
-        got == want,
-        f"{label}: {what} lists {describe(changes)}; expected "
-        f"{', '.join(redact(p) for p in expected)}",
-    )
-
-
-def _where(changes: Iterable[PlannedChange | ServerChange]) -> str:
-    """The paths of *changes*, redacted, with ``refs`` before a refs entry."""
-    shown = [
-        f"refs {redact(c.path)}" if c.part == "refs" else redact(c.path)
-        for c in changes
-    ]
-    return ", ".join(shown) or "none"
-
-
-def _stored_otherwise(lost_edits: Iterable[PlannedChange]) -> list[Path]:
-    """Where in each lost edit the value stored is not the value sent, at the deepest path."""
-    return [
-        Path((*change.path.parts, *inner.path.parts))
-        for change in lost_edits
-        for inner in raw_changes(change.intended, change.stored)
-    ]
-
-
-def _outcome(error: ModuleWriteError) -> str:
-    """*error* as its class and its paths, redacted.
-
-    Its own message names segments and rules of the lab and shows their
-    values, so a test reports this in its place. Where a lost edit was
-    stored otherwise than sent is a candidate for ``MODULE_REWRITES``.
-    """
-    kind = type(error).__name__
-    if isinstance(error, ConfigConflictError):
-        kind += f" ({error.detail})"
-    otherwise = ", ".join(redact(p) for p in _stored_otherwise(error.lost_edits))
-    return (
-        f"{kind} on the {error.module_name or 'unnamed'} module: "
-        f"lost edits {_where(error.lost_edits)}; "
-        f"stored otherwise than sent at {otherwise or 'none'}; "
-        f"applied {_where(error.applied)}; "
-        f"server changes {_where(error.server_changes)}"
-    )
-
-
 async def _update[M: ConfigurationModuleBase](
     lab: Lab, module: M, data: EditableData
 ) -> M:
-    """``update_module``; a write error fails the test with ``_outcome`` alone."""
+    """``update_module``; a write error fails the test with ``outcome`` alone."""
     try:
         return await lab.client.update_module(
             module, data, enterprise_id=lab.enterprise_id
         )
     except ModuleWriteError as error:
         # Failed outside the handler: the error must not be chained to the report.
-        message = _outcome(error)
+        message = outcome(error)
     pytest.fail(message, pytrace=False)
-
-
-def _refusal_form(error: ModuleWriteError) -> str:
-    """How the Orchestrator refused the stale write that raised *error*.
-
-    ``write_module`` raises the outcome from the refusal the client raised:
-    a ``ConfigConflictError`` from the precondition error, or one for a row
-    count of zero. When the module could not be read back after the refusal,
-    the refusal is the outcome's context instead (the outcome was raised
-    while handling it). An outcome with neither was checked against the
-    module row the Orchestrator answered with.
-    """
-    refusal = error.__cause__ if error.__cause__ is not None else error.__context__
-    if not isinstance(refusal, ConfigConflictError):
-        return "the module row as stored"
-    reason = refusal.__cause__
-    if isinstance(reason, VcoOperationError) and is_precondition_failure(reason):
-        return "the precondition error"
-    return "a row count of zero"
-
-
-def _record_refusal(
-    capsys: pytest.CaptureFixture[str], label: str, error: ModuleWriteError
-) -> None:
-    """Print, past the capture, the form of the refusal and the error it made."""
-    with capsys.disabled():
-        print(
-            f"\n{label}: refused with {_refusal_form(error)} ({type(error).__name__})"
-        )
-
-
-def _check_entries(
-    label: str,
-    what: str,
-    changes: Sequence[PlannedChange | ServerChange],
-    expected: Sequence[Path],
-) -> None:
-    got = sorted(str(c.path) for c in changes)
-    want = sorted(str(p) for p in expected)
-    check(
-        got == want,
-        f"{label}: {what} lists {_where(changes)}; expected "
-        f"{', '.join(redact(p) for p in expected) or 'none'}",
-    )
-
-
-def _check_as_read(
-    label: str, held: ConfigurationModuleBase, read: ConfigurationModuleBase
-) -> None:
-    """*held* is the module as a read made right after shows it: its version and raw data."""
-    check(
-        held.version == read.version,
-        f"{label}: the module held has another version than a read made right after",
-    )
-    check(
-        held.raw_data == read.raw_data,
-        f"{label}: the module held differs from a read made right after: "
-        + describe(raw_changes(read.raw_data, held.raw_data, data_model(read))),
-    )
-
-
-def _value_at(document: object, path: Path) -> object:
-    """The value at *path*, a path of names only, in a JSON document; ``MISSING`` if there is none."""
-    value = document
-    for part in path.parts:
-        if not isinstance(value, dict) or not isinstance(part, str):
-            return MISSING
-        value = cast(dict[str, object], value).get(part, MISSING)
-    return value
 
 
 async def apply_steps(
@@ -373,7 +238,7 @@ async def apply_steps(
             plan.operation == "update",
             f"{step.label}: planned {plan.operation}, expected an update",
         )
-        _check_paths(step.label, "the plan", plan.changes, expected)
+        check_paths(step.label, "the plan", plan.changes, expected)
 
         _ = await _update(lab, module, data)
 
@@ -383,15 +248,15 @@ async def apply_steps(
             f"{step.label}: the module version did not change on write",
         )
         stored = changes_between(site.name, before, after.raw_data, model)
-        _check_paths(step.label, "the module as read back", stored, expected)
+        check_paths(step.label, "the module as read back", stored, expected)
         if site.name is Name.FIREWALL:
             check_no_override_flag(step.label, before, plan.data, after.raw_data)
         sent = {str(c.path): c for c in plan.changes}
         for change in stored:
             planned = sent[str(change.path)]
             check(
-                _same_value(change.before, planned.before)
-                and _same_value(change.after, planned.after),
+                same_value(change.before, planned.before)
+                and same_value(change.after, planned.after),
                 f"{step.label}: {redact(change.path)} was stored other than as sent",
             )
         observed.append(stored)
@@ -700,7 +565,7 @@ async def test_a_module_read_before_another_write_is_refused(
                 older, data_of(older), enterprise_id=lab.enterprise_id
             )
         error = caught.value
-        _record_refusal(capsys, "a stale update_module, one value", error)
+        record_refusal(capsys, "a stale update_module, one value", error)
 
         after = await site.read_present()
         stored = changes_between(Name.WAN, original.data, after.raw_data, WanData)
@@ -712,8 +577,8 @@ async def test_a_module_read_before_another_write_is_refused(
         # and the refused edit to redo: in either form, a clash.
         check(error.module is not None, "the error carries no module")
         assert error.module is not None
-        _check_as_read("the error's module", error.module, after)
-        _check_entries(
+        check_as_read("the error's module", error.module, after)
+        check_entries(
             "the refused write", "lost_edits", error.lost_edits, [stored[0].path]
         )
         (lost,) = error.lost_edits
@@ -722,7 +587,7 @@ async def test_a_module_read_before_another_write_is_refused(
             "the lost edit is not the refused description, a clash with the other "
             "write's",
         )
-        _check_entries("the refused write", "server_changes", error.server_changes, [])
+        check_entries("the refused write", "server_changes", error.server_changes, [])
 
 
 VOICE_YELLOW = Path(("qoe", "voice", "latency", "yellow"))
@@ -733,7 +598,7 @@ VIDEO_RED = Path(("qoe", "video", "latency", "red"))
 def _qoe_thresholds_usable(module: AnyConfigurationModule) -> bool:
     """Whether *module* is a QoS module whose raw data has the QoE thresholds ``_raised`` raises."""
     return _qoe_usable(module) and all(
-        isinstance(_value_at(module.raw_data, path), int)
+        isinstance(value_at(module.raw_data, path), int)
         for path in (VOICE_YELLOW, VOICE_RED, VIDEO_RED)
     )
 
@@ -745,7 +610,7 @@ def _raised(module: AnyConfigurationModule, path: Path) -> QosData:
     its yellow one. The module's own data is left as it was read.
     """
     data = expect(data_of(module), QosData, "the QoS data").model_copy(deep=True)
-    value = expect(_value_at(module.raw_data, path), int, "a QoE threshold")
+    value = expect(value_at(module.raw_data, path), int, "a QoE threshold")
     patch: dict[str, object] = {str(path.parts[-1]): value + 1}
     for part in reversed(path.parts[:-1]):
         patch = {str(part): patch}
@@ -765,13 +630,13 @@ async def test_update_module_returns_the_module_as_stored(
         # the stale write below goes out from a copy taken before the first one.
         stale = copy.deepcopy(first)
         one = await _update(lab, first, _raised(first, VOICE_YELLOW))
-        _check_as_read("the first write", one, await site.read_present())
+        check_as_read("the first write", one, await site.read_present())
 
         # A second write, from the module the first returned.
         two = await _update(lab, one, _raised(one, VOICE_RED))
         now = await site.read_present()
-        _check_as_read("the second write", two, now)
-        _check_paths(
+        check_as_read("the second write", two, now)
+        check_paths(
             "two writes",
             "the module read back",
             changes_between(Name.QOS, first.raw_data, now.raw_data, QosData),
@@ -786,10 +651,10 @@ async def test_update_module_returns_the_module_as_stored(
                 stale, _raised(stale, VIDEO_RED), enterprise_id=lab.enterprise_id
             )
         error = caught.value
-        _record_refusal(capsys, "a stale update_module, another value", error)
+        record_refusal(capsys, "a stale update_module, another value", error)
         check(
             isinstance(error, ConfigConflictError),
-            f"the stale write raised {_outcome(error)}",
+            f"the stale write raised {outcome(error)}",
         )
 
         after = await site.read_present()
@@ -799,13 +664,13 @@ async def test_update_module_returns_the_module_as_stored(
         )
         check(error.module is not None, "the error carries no module")
         assert error.module is not None
-        _check_as_read("the error's module", error.module, after)
-        _check_entries("the refused write", "lost_edits", error.lost_edits, [VIDEO_RED])
+        check_as_read("the error's module", error.module, after)
+        check_entries("the refused write", "lost_edits", error.lost_edits, [VIDEO_RED])
         check(
             not any(change.clash for change in error.lost_edits),
             "the lost edit is a clash, though nothing moved there",
         )
-        _check_entries(
+        check_entries(
             "the refused write",
             "server_changes",
             error.server_changes,

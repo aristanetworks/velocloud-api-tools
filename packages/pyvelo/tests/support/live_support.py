@@ -4,9 +4,9 @@ The tests that use this write to a real Orchestrator, so everything here is
 about leaving it as it was found. Nothing names a lab entity: targets are found
 at run time, and every message refers to them by position and module type only.
 
-pyvelo-intent's live tests use the same file, copied to
-``packages/pyvelo-intent/tests/integration/_intent_live_support.py``; the two
-must stay identical (``cp`` one over the other).
+Both live suites import this module by name, pyvelo's and pyvelo-intent's:
+its directory is on ``pythonpath`` in the root ``pyproject.toml``. It is test
+support and no part of the library.
 
 ``restoring`` is the one way a test writes: it records a module's raw data first
 (in a private file under ``$PYVELO_IT_BACKUP_DIR``, which must be outside the
@@ -42,19 +42,22 @@ import pathlib
 import re
 import tempfile
 import uuid
-from collections.abc import AsyncGenerator, Awaitable, Callable, Sequence
+from collections.abc import AsyncGenerator, Awaitable, Callable, Iterable, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import Annotated, Any, cast
 
 import pytest
 from pydantic import MISSING, RootModel, ValidationError
-from pyvelo.client import VcoClient, VcoOperationError
+from pyvelo.client import ConfigConflictError, VcoClient, VcoOperationError
 from pyvelo.client.enums.configuration import ConfigurationModuleName
 from pyvelo.client.enums.profiles import GetConfigurationWith
+from pyvelo.client.exceptions import ModuleWriteError, is_precondition_failure
+from pyvelo.client.module_check import data_model
 from pyvelo.client.schemas.configuration import (
     AnyConfigurationModule,
     ConfigurationBase,
+    ConfigurationModuleBase,
     ConfigurationModuleUpdate,
     EdgeConfiguration,
     EnterpriseConfigurationProfile,
@@ -78,6 +81,7 @@ from pyvelo.core import (
     VcoModel,
 )
 from pyvelo.core.rebase import Key, Path, RawChange, raw_changes
+from pyvelo.core.response_check import PlannedChange, ServerChange
 
 SYNTHETIC_PREFIX = "pyvelo-it-"
 """Every rule, description and the like these tests add starts with this."""
@@ -789,3 +793,144 @@ async def accepts_a_write(site: Site) -> bool:
         except VcoOperationError:
             return False
     return True
+
+
+# ---------------------------------------------------------------------------
+# What a test reports of a write
+# ---------------------------------------------------------------------------
+
+
+SERVER_ASSIGNED_KEYS = frozenset({"ruleLogicalId"})
+"""Keys the Orchestrator adds to a new item; an added item is compared without them."""
+
+
+def where(changes: Iterable[PlannedChange | ServerChange]) -> str:
+    """The paths of *changes*, redacted, with ``refs`` before a refs entry."""
+    shown = [
+        f"refs {redact(c.path)}" if c.part == "refs" else redact(c.path)
+        for c in changes
+    ]
+    return ", ".join(shown) or "none"
+
+
+def stored_otherwise(lost_edits: Iterable[PlannedChange]) -> list[Path]:
+    """Where in each lost edit the value stored is not the value sent, at the deepest path."""
+    return [
+        Path((*change.path.parts, *inner.path.parts))
+        for change in lost_edits
+        for inner in raw_changes(change.intended, change.stored)
+    ]
+
+
+def outcome(error: ModuleWriteError) -> str:
+    """*error* as its class and its paths, redacted.
+
+    Its own message names segments and rules of the lab and shows their
+    values, so a test reports this in its place. Where a lost edit was
+    stored otherwise than sent is a candidate for ``MODULE_REWRITES``.
+    """
+    kind = type(error).__name__
+    if isinstance(error, ConfigConflictError):
+        kind += f" ({error.detail})"
+    otherwise = ", ".join(redact(p) for p in stored_otherwise(error.lost_edits))
+    return (
+        f"{kind} on the {error.module_name or 'unnamed'} module: "
+        f"lost edits {where(error.lost_edits)}; "
+        f"stored otherwise than sent at {otherwise or 'none'}; "
+        f"applied {where(error.applied)}; "
+        f"server changes {where(error.server_changes)}"
+    )
+
+
+def refusal_form(error: ModuleWriteError) -> str:
+    """How the Orchestrator refused the stale write that raised *error*.
+
+    ``write_module`` raises the outcome from the refusal the client raised:
+    a ``ConfigConflictError`` from the precondition error, or one for a row
+    count of zero. When the module could not be read back after the refusal,
+    the refusal is the outcome's context instead (the outcome was raised
+    while handling it). An outcome with neither was checked against the
+    module row the Orchestrator answered with.
+    """
+    refusal = error.__cause__ if error.__cause__ is not None else error.__context__
+    if not isinstance(refusal, ConfigConflictError):
+        return "the module row as stored"
+    reason = refusal.__cause__
+    if isinstance(reason, VcoOperationError) and is_precondition_failure(reason):
+        return "the precondition error"
+    return "a row count of zero"
+
+
+def record_refusal(
+    capsys: pytest.CaptureFixture[str], label: str, error: ModuleWriteError
+) -> None:
+    """Print, past the capture, the form of the refusal and the error it made."""
+    with capsys.disabled():
+        print(f"\n{label}: refused with {refusal_form(error)} ({type(error).__name__})")
+
+
+def check_entries(
+    label: str,
+    what: str,
+    changes: Sequence[PlannedChange | ServerChange],
+    expected: Sequence[Path],
+) -> None:
+    got = sorted(str(c.path) for c in changes)
+    want = sorted(str(p) for p in expected)
+    check(
+        got == want,
+        f"{label}: {what} lists {where(changes)}; expected "
+        f"{', '.join(redact(p) for p in expected) or 'none'}",
+    )
+
+
+def check_as_read(
+    label: str, held: ConfigurationModuleBase, read: ConfigurationModuleBase
+) -> None:
+    """*held* is the module as a read made right after shows it: its version and raw data."""
+    check(
+        held.version == read.version,
+        f"{label}: the module held has another version than a read made right after",
+    )
+    check(
+        held.raw_data == read.raw_data,
+        f"{label}: the module held differs from a read made right after: "
+        + describe(raw_changes(read.raw_data, held.raw_data, data_model(read))),
+    )
+
+
+def value_at(document: object, path: Path) -> object:
+    """The value at *path*, a path of names only, in a JSON document; ``MISSING`` if there is none."""
+    value = document
+    for part in path.parts:
+        if not isinstance(value, dict) or not isinstance(part, str):
+            return MISSING
+        value = cast(dict[str, object], value).get(part, MISSING)
+    return value
+
+
+def same_value(a: object, b: object) -> bool:
+    """Equal, but for the keys the Orchestrator assigns to an item it was given."""
+
+    def bare(value: object) -> object:
+        if isinstance(value, dict):
+            return {
+                k: v
+                for k, v in value.items()  # pyright: ignore[reportUnknownVariableType]
+                if k not in SERVER_ASSIGNED_KEYS
+            }
+        return value
+
+    return bare(a) == bare(b)
+
+
+def check_paths(
+    label: str, what: str, changes: Sequence[RawChange], expected: Sequence[Path]
+) -> None:
+    got = sorted(str(c.path) for c in changes)
+    want = sorted(str(p) for p in expected)
+    check(
+        got == want,
+        f"{label}: {what} lists {describe(changes)}; expected "
+        f"{', '.join(redact(p) for p in expected)}",
+    )

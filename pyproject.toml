@@ -22,11 +22,13 @@ asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 addopts = ["-ra", "-q", "-m", "not integration"]
 testpaths = ["packages/pyvelo/tests", "packages/pyvelo-intent/tests"]
+pythonpath = ["packages/pyvelo/tests/support"]
 markers = ["integration: live VCO integration tests (require VCO_HOST + VCO_TOKEN)"]
 
 [tool.basedpyright]
 enableExperimentalFeatures = true
 include = ["packages/pyvelo", "packages/pyvelo-intent"]
+extraPaths = ["packages/pyvelo/tests/support"]
 defineConstant = { DEBUG = true }
 reportMissingImports = "error"
 reportMissingTypeStubs = false
