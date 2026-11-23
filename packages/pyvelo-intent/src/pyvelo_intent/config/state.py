@@ -6,7 +6,7 @@ import weakref
 from dataclasses import dataclass, field
 from typing import Literal, Protocol, cast, override, runtime_checkable
 
-from pydantic import MISSING, BaseModel
+from pydantic import MISSING
 from pyvelo.client.enums.configuration import ConfigurationModuleName
 from pyvelo.client.exceptions import DetachedObjectError
 from pyvelo.client.models.configuration.common import segment_id_of
@@ -29,15 +29,7 @@ from pyvelo.client.schemas.configuration import (
 from pyvelo.config.resolver import ResolverContext, ResolverRegistry
 from pyvelo.config.validation import ValidationError
 from pyvelo.core import ConfigContext, VcoModel
-from pyvelo.core.fields import get_key_spec
-from pyvelo.core.rebase import (
-    KeyForm,
-    Path,
-    item_key,
-    item_key_text,
-    key_form,
-    raw_changes,
-)
+from pyvelo.core.rebase import ItemMove, ItemPlace, Path, python_path, raw_changes
 from pyvelo.core.response_check import PlannedChange, ServerChange
 
 from pyvelo_intent.config.module_names import resolve_module_name
@@ -54,21 +46,28 @@ class ValidationWarning:
 
 @dataclass(frozen=True)
 class ConfigFieldChange:
-    """A single per-field difference between snapshot and current state.
+    """One change of :meth:`ConfigState.plan`, with the module and the path in python names.
 
     Attributes:
-        module: User-facing module name (e.g. ``"firewall"``).
-        path: Dotted path to the changed field, with bracketed segments using
-            the KeyField key value (e.g. ``"lan.networks[100].name"``). The
-            path round-trips conceptually into a ``merge_patch`` patch.
-        before: Snapshot value, or ``MISSING`` if the field was unset.
-        after: Current value, or ``MISSING`` if the field is now unset.
+        module: The module's VCO name (e.g. ``"firewall"``, ``"WAN"``).
+        path: Where the change is, in the names a patch uses
+            (``segments["Global Segment"].outbound[block-ssh].name``).
+        before: The value as read, a JSON value, or ``MISSING`` where there
+            was none. For a keyed list whose items change place, the item
+            names in the order read.
+        after: The value as it is now, a JSON value, or ``MISSING`` where
+            there is none; the item names in the new order for a reorder.
+        place: Where an item added to a keyed list goes, else None.
+        moves: For the order of a keyed list, each item that changes place
+            with its new place, else None.
     """
 
     module: str
-    path: str
+    path: Path
     before: object
     after: object
+    place: ItemPlace | None = None
+    moves: tuple[ItemMove, ...] | None = None
 
 
 @dataclass(frozen=True)
@@ -274,11 +273,13 @@ class StateLock(asyncio.Lock):
 
 @dataclass
 class ConfigState:
-    """Holds the loaded configuration state with snapshot for diff detection.
+    """Holds the loaded configuration state.
 
-    After load, a snapshot is taken for the per-field diff. A save is planned
-    from each module's raw data as read (see :meth:`plan`), which is what
-    decides which modules changed.
+    ``take_snapshot`` keeps a copy of the configuration as loaded
+    (``snapshot_for_target``). :meth:`plan` compares the layer this state does
+    not save with it; the changes of a plan come from the data as read, not
+    from the snapshot. A save is planned from each module's raw data as read
+    (see :meth:`plan`), which is what decides which modules changed.
 
     A state continues after a save: each module written is replaced by the
     module the VCO stored (:meth:`replace_module`), so the next plan starts
@@ -458,10 +459,9 @@ class ConfigState:
     ) -> None:
         """Put *new*, the module as the VCO stored it, where *old* is in the target config.
 
-        An edge module is bound to the profile layer. The per-field snapshot
-        takes a copy of *new*, so neither :meth:`plan` nor
-        :meth:`get_field_changes` shows what was written; the other modules
-        keep their edits. The module's name leaves ``unconfirmed_inserts``.
+        An edge module is bound to the profile layer. The snapshot takes a
+        copy of *new*, and a later :meth:`plan` starts from *new*, so it does
+        not show what was written; the other modules keep their edits. The module's name leaves ``unconfirmed_inserts``.
         *old* and every model inside it are detached: an assignment raises
         ``DetachedObjectError``, and so does the next
         :meth:`plan` after an in-place change to a list or dict they hold. So
@@ -652,44 +652,38 @@ class ConfigState:
         self,
         module_name: str | None = None,
     ) -> list[ConfigFieldChange]:
-        """Per-field diff between snapshot and current state.
+        """The changes of :meth:`plan`, one entry each, in python names.
 
-        If ``module_name`` is None, returns changes across all changed
-        modules. KeyField-annotated lists are diffed by key (additions,
-        removals, per-key recursive diff), so reordering does not appear as
-        a change; one with an item without a key, or a key repeated, is
-        diffed by position. The path format describes the field a user would
-        patch via a ``merge_patch`` dict.
+        With *module_name*, only that module's: the python or the VCO name
+        (``"wan"`` or ``"WAN"``). A module the target does not have has none.
+        Raises ``ValueError`` for a name that is no module. Raises what
+        :meth:`plan` raises: ``LossyFieldError``, ``DetachedObjectError`` and
+        ``LayerNotSavedError``, the last once for a set of edits, as it does
+        for :meth:`get_changed_modules`.
 
-        MISSING is preserved as the sentinel rather than rendered as None.
+        These are the changes a save writes, so a read changes nothing and a
+        rename is one change. Each path is in the names a patch uses, and the
+        values are JSON, as in the plan; the order of a keyed list is one
+        entry whose ``moves`` say which items change place.
         """
-        if self.target_type == "edge" and self.edge_config is not None:
-            current_config = self.edge_config
-        else:
-            current_config = self.profile_config
-        snapshot_config = self.snapshot_for_target()
-
-        if snapshot_config is None or current_config.modules is MISSING:
-            return []
-
-        snapshot_modules: dict[str, AnyConfigurationModule] = {}
-        if snapshot_config.modules is not MISSING:
-            for mod in snapshot_config.modules:
-                snapshot_modules[mod.name] = mod
-
+        wanted = None if module_name is None else resolve_module_name(module_name)
         changes: list[ConfigFieldChange] = []
-        for mod in current_config.modules:
-            if module_name is not None and mod.name != module_name:
+        for module in self.plan().modules:
+            if wanted is not None and module.name != wanted:
                 continue
-            snap_mod = snapshot_modules.get(mod.name)
-            current_data = mod.data
-            snapshot_data = snap_mod.data if snap_mod is not None else MISSING
-            _diff_value(
-                module=mod.name,
-                path="",
-                before=snapshot_data,
-                after=current_data,
-                out=changes,
+            held = _find_module(self.target_config, module.name)
+            data = None if held is None else held.data
+            model = type(data) if isinstance(data, VcoModel) else None
+            changes.extend(
+                ConfigFieldChange(
+                    module=module.name,
+                    path=python_path(change.path, model),
+                    before=change.before,
+                    after=change.after,
+                    place=change.place,
+                    moves=change.moves,
+                )
+                for change in module.changes
             )
         return changes
 
@@ -795,122 +789,3 @@ def _module_of(
         return new
     # Raises ValueError, the same as for any module the config does not have.
     return config.get_module(name)
-
-
-# ---------------------------------------------------------------------------
-# Per-field diff helpers
-# ---------------------------------------------------------------------------
-
-
-def _diff_value(
-    *,
-    module: str,
-    path: str,
-    before: object,
-    after: object,
-    out: list[ConfigFieldChange],
-) -> None:
-    """Walk two parallel values and append a ConfigFieldChange per leaf difference.
-
-    KeyField-annotated lists are diffed by key. Sub-models recurse field by
-    field. Scalars compare via equality.
-    """
-    if before is MISSING and after is MISSING:
-        return
-    if before is MISSING or after is MISSING:
-        out.append(
-            ConfigFieldChange(module=module, path=path, before=before, after=after)
-        )
-        return
-    if isinstance(before, BaseModel) and isinstance(after, BaseModel):
-        if type(before) is not type(after):
-            out.append(
-                ConfigFieldChange(module=module, path=path, before=before, after=after)
-            )
-            return
-        for field_name, field_info in type(after).model_fields.items():
-            child_path = f"{path}.{field_name}" if path else field_name
-            before_val = cast(object, getattr(before, field_name, MISSING))
-            after_val = cast(object, getattr(after, field_name, MISSING))
-            spec = get_key_spec(field_info)
-            if (
-                spec is not None
-                and isinstance(before_val, list)
-                and isinstance(after_val, list)
-            ):
-                _diff_keyed_list(
-                    module=module,
-                    path=child_path,
-                    key_paths=spec.paths,
-                    before=cast(list[object], before_val),
-                    after=cast(list[object], after_val),
-                    out=out,
-                )
-            else:
-                _diff_value(
-                    module=module,
-                    path=child_path,
-                    before=before_val,
-                    after=after_val,
-                    out=out,
-                )
-        return
-    if isinstance(before, list) and isinstance(after, list):
-        before_items = cast(list[object], before)
-        after_items = cast(list[object], after)
-        if len(before_items) != len(after_items):
-            out.append(
-                ConfigFieldChange(module=module, path=path, before=before, after=after)
-            )
-            return
-        for i, (b, a) in enumerate(zip(before_items, after_items, strict=True)):
-            _diff_value(module=module, path=f"{path}[{i}]", before=b, after=a, out=out)
-        return
-    if before != after:
-        out.append(
-            ConfigFieldChange(module=module, path=path, before=before, after=after)
-        )
-
-
-def _diff_keyed_list(
-    *,
-    module: str,
-    path: str,
-    key_paths: tuple[str, ...],
-    before: list[object],
-    after: list[object],
-    out: list[ConfigFieldChange],
-) -> None:
-    """Diff two lists of BaseModel items by their KeyField key value.
-
-    Items are matched by key in string form, part by part (``key_form``). The
-    path names an item by ``item_key_text``: the value of a one-part key, a
-    composite key as ``key_text`` writes it
-    (``static["10.0.0.0",24,"192.168.1.1",GE3]``), as the item before had it.
-
-    When an item on either side has no key, or a key is repeated on either
-    side, items cannot be matched by key: the lists are diffed by position,
-    as a list without a ``KeyField`` is (``_diff_value``).
-    """
-    keys_before = [key_form(item_key(item, key_paths)) for item in before]
-    keys_after = [key_form(item_key(item, key_paths)) for item in after]
-    if any(
-        None in keys or len(set(keys)) != len(keys)
-        for keys in (keys_before, keys_after)
-    ):
-        _diff_value(module=module, path=path, before=before, after=after, out=out)
-        return
-    by_key_before: dict[KeyForm | None, object] = dict(
-        zip(keys_before, before, strict=True)
-    )
-    by_key_after: dict[KeyForm | None, object] = dict(
-        zip(keys_after, after, strict=True)
-    )
-    all_keys: list[KeyForm | None] = list(by_key_before.keys()) + [
-        k for k in by_key_after if k not in by_key_before
-    ]
-    for key in all_keys:
-        b = by_key_before.get(key, MISSING)
-        a = by_key_after.get(key, MISSING)
-        text = item_key_text(a if b is MISSING else b, key_paths)
-        _diff_value(module=module, path=f"{path}[{text}]", before=b, after=a, out=out)

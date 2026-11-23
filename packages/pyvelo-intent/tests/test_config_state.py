@@ -1,7 +1,9 @@
 """Tests for ConfigState snapshot and diff detection."""
 
 from datetime import UTC, datetime
+from typing import cast
 
+import pytest
 from pydantic import MISSING
 from pyvelo.client.enums.configuration import ConfigurationModuleType
 from pyvelo.client.enums.enterprise import NetworkSegmentType
@@ -25,6 +27,7 @@ from pyvelo.client.schemas.configuration import (
 )
 from pyvelo.config.resolver import ResolverContext
 from pyvelo.core import at
+from pyvelo.core.rebase import ItemMove, ItemPlace, Key
 from pyvelo_intent.config.state import ConfigState, SaveResult, ValidationWarning
 
 
@@ -181,8 +184,8 @@ class TestGetFieldChanges:
         # Ask about the actual mutated module - should be non-empty
         assert state.get_field_changes(module_name="firewall")
 
-    def test_keyfield_list_diffs_by_key_not_by_index(self):
-        """Reordering a KeyField list should not show as a change."""
+    def test_a_reorder_of_a_keyed_list_is_one_order_change(self):
+        """Reordering a KeyField list is one change at the list, as in the plan."""
         from datetime import datetime
 
         from pyvelo.client.enums.configuration import ConfigurationModuleType
@@ -235,11 +238,13 @@ class TestGetFieldChanges:
         state.take_snapshot()
         # Reorder segments — same content, reversed order
         edge_config.firewall.data.segments = [seg_b, seg_a]
-        # Sanity: get_field_changes should not flag a change just from reorder
         changes = state.get_field_changes(module_name="firewall")
-        assert all("segments" not in c.path for c in changes), (
-            f"reordering produced spurious change: {changes}"
-        )
+        assert [(c.path, c.before, c.after) for c in changes] == [
+            ("segments", ["A", "B"], ["B", "A"])
+        ]
+        assert changes[0].moves == (ItemMove(Key("B"), ItemPlace()),)
+        (planned,) = state.plan().changed
+        assert [c.path for c in planned.changes] == ["segments"]
 
 
 def test_field_changes_address_a_composite_key():
@@ -290,7 +295,7 @@ def test_field_changes_address_a_composite_key():
     changes = state.get_field_changes(module_name="deviceSettings")
     assert [(c.path, c.before, c.after) for c in changes] == [
         (
-            'segments[Global Segment].routes.static["10.0.0.0",24,"192.168.1.1",GE3].cost',
+            'segments["Global Segment"].routes.static["10.0.0.0",24,"192.168.1.1",GE3].cost',
             0,
             5,
         )
@@ -328,10 +333,16 @@ def test_field_changes_show_an_edit_to_a_keyless_item():
         [{"name": "A", "type": "WIRED"}, {"name": "B", "type": "WIRED"}]
     )
     _ = data.merge_patch({"links": {at(0): {"isp": "x"}}})
-    changes = state.get_field_changes(module_name="WAN")
-    assert [(c.path, c.before, c.after) for c in changes] == [
-        ("links[0].isp", None, "x")
-    ]
+    # A link without a key cannot be told from the other: the plan writes the list whole.
+    assert _isps(state) == ("links", [None, None], ["x", None])
+
+
+def _isps(state: ConfigState) -> tuple[str, list[object], list[object]]:
+    """The one WAN change of *state*: its path, and the ``isp`` of each link before and after."""
+    (change,) = state.get_field_changes(module_name="WAN")
+    before = cast(list[dict[str, object]], change.before)
+    after = cast(list[dict[str, object]], change.after)
+    return str(change.path), [x["isp"] for x in before], [x["isp"] for x in after]
 
 
 def test_field_changes_show_an_edit_among_repeated_keys():
@@ -343,10 +354,27 @@ def test_field_changes_show_an_edit_among_repeated_keys():
         ]
     )
     _ = data.merge_patch({"links": {at(0): {"isp": "x"}}})
-    changes = state.get_field_changes(module_name="WAN")
-    assert [(c.path, c.before, c.after) for c in changes] == [
-        ("links[0].isp", None, "x")
+    assert _isps(state) == ("links", [None, None], ["x", None])
+
+
+def test_field_changes_take_a_module_by_either_name():
+    link_id = "00000000-0000-0000-0000-000000000001"
+    state, data = _wan_state([{"internalId": link_id, "name": "A", "type": "WIRED"}])
+    _ = data.merge_patch({"links": {"A": {"isp": "x"}}})
+    by_vco_name = state.get_field_changes(module_name="WAN")
+    assert [(c.module, c.path) for c in by_vco_name] == [
+        ("WAN", f"links[{link_id},IPv4].isp")
     ]
+    assert state.get_field_changes(module_name="wan") == by_vco_name
+    assert state.get_field_changes() == by_vco_name
+    # A module the target does not have has no changes.
+    assert state.get_field_changes(module_name="firewall") == []
+
+
+def test_field_changes_of_a_name_that_is_no_module_raise():
+    state, _ = _wan_state([])
+    with pytest.raises(ValueError, match="Unknown module: 'no-such-module'"):
+        _ = state.get_field_changes(module_name="no-such-module")
 
 
 class TestSaveResult:

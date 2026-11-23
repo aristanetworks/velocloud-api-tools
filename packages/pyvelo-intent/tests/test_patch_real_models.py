@@ -839,3 +839,64 @@ async def test_disabling_netflow_and_deleting_its_collector_in_one_patch_applies
     )
     sent = (await payload(state))["segments"][0]["netflow"]
     assert (sent["enabled"], sent["collectors"]) == (False, [])
+
+
+# --- get_field_changes --------------------------------------------------------
+
+
+async def test_field_changes_are_the_plans_changes_in_python_names():
+    raw = firewall(fw_rule("a", ruleLogicalId="la"), fw_rule("b", ruleLogicalId="lb"))
+    state = make_state({"firewall": raw}, {"firewall": firewall()})
+    _ = await ConfigPipeline(None).apply(
+        state,
+        module="firewall",
+        segment=SEGMENT,
+        path="outbound",
+        patch={
+            "x": add({"action": {"allow_or_deny": "deny"}, "match": {}}, first=True),
+            "b": move(first=True),
+            "a": {"match": {"dport_high": 8443}},
+        },
+    )
+    assert outbound(state) == ["b", "x", "a"]
+    changes = state.get_field_changes()
+    assert [(c.module, str(c.path)) for c in changes] == [
+        (
+            "firewall",
+            'segments["Global Segment"].outbound[a].match.destination_port_high',
+        ),
+        ("firewall", 'segments["Global Segment"].outbound[x]'),
+        ("firewall", 'segments["Global Segment"].outbound'),
+    ]
+    assert changes[1].place == ItemPlace(Key("b"))
+    assert changes[2].moves == (ItemMove(Key("b"), ItemPlace()),)
+    (module,) = state.plan().changed
+    assert [(c.before, c.after) for c in changes] == [
+        (c.before, c.after) for c in module.changes
+    ]
+
+
+async def test_field_changes_show_a_rename_as_one_change():
+    raw = firewall(fw_rule("a", ruleLogicalId="la"), fw_rule("b", ruleLogicalId="lb"))
+    state = make_state({"firewall": raw}, {"firewall": firewall()})
+    _ = await ConfigPipeline(None).apply(
+        state,
+        module="firewall",
+        segment=SEGMENT,
+        path="outbound",
+        patch={"lb": {"name": "c"}},
+    )
+    assert [(str(c.path), c.before, c.after) for c in state.get_field_changes()] == [
+        ('segments["Global Segment"].outbound[b].name', "b", "c")
+    ]
+
+
+def test_field_changes_show_nothing_for_a_read():
+    state = make_state(
+        {"firewall": firewall(fw_rule("a"))},
+        {"firewall": firewall(guest=True), "QOS": qos()},
+    )
+    _ = state.edge.firewall.segment("Guest")  # adds the placeholder entry
+    _ = state.edge.qos  # starts the module the edge lacks
+    assert state.plan().changed == ()
+    assert state.get_field_changes() == []
