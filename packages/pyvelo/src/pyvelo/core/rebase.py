@@ -1030,6 +1030,28 @@ def find_lossy_assignments(
     return out
 
 
+def python_path(path: Path, model: type[VcoModel] | None) -> Path:
+    """*path* with each field named as a patch of *model* names it.
+
+    A path of ``raw_changes`` or of a plan names fields by the keys the VCO
+    uses (``loggingEnabled``); a patch uses python names (``logging_enabled``).
+    A name no field is found for is kept, so are a keyed item, a position and
+    a key of a map of models. Below a list without a key, and for a *model* of
+    None, nothing is renamed.
+    """
+    node: _Node = model
+    parts: list[PathPart] = []
+    for part in path.parts:
+        if isinstance(part, str):
+            found = _model_field(node, part)
+            parts.append(part if found is None else found[0])
+            node = _child(node, part)
+        else:
+            parts.append(part)
+            node = node.item if isinstance(node, _KeyedList) else None
+    return Path(parts)
+
+
 def is_override_flag(model: type[VcoModel], path: Path) -> bool:
     """Whether *path*, as ``find_lossy_assignments`` gives it, ends at an ``OverrideFlag`` of *model*.
 

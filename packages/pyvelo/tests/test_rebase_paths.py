@@ -6,6 +6,7 @@ import random
 
 import pytest
 from pydantic import MISSING
+from pyvelo.client.models.configuration.device_settings.root import DeviceSettingsData
 from pyvelo.core.rebase import (
     Key,
     Path,
@@ -14,6 +15,7 @@ from pyvelo.core.rebase import (
     find_lossy_assignments,
     key_text,
     parse_key_text,
+    python_path,
     raw_changes,
     rebase,
 )
@@ -350,3 +352,35 @@ def test_change_in_a_repeated_name_is_reported_by_position():
     after = {"rules": [item("a", "1", port=0), item("a", "2", port=5)]}
     payload = rebase(raw, before, after, Rs)
     assert raw_changes(raw, payload, Rs) == [RawChange("rules[#1].port", MISSING, 5)]
+
+
+def test_python_path_names_each_field_as_a_patch_does():
+    path = Path.parse('segments["Corp.Guest v2"].segment.segmentId')
+    assert python_path(path, Root) == 'segments["Corp.Guest v2"].segment.segment_id'
+    assert python_path(Path.parse("loggingEnabled"), Root) == "logging_enabled"
+    assert python_path(Path.parse("logging_enabled"), Root) == "logging_enabled"
+    assert python_path(Path.parse("segments[#1].rules[r1].port"), Root).parts == (
+        "segments",
+        1,
+        "rules",
+        Key("r1"),
+        "port",
+    )
+
+
+def test_python_path_keeps_a_name_the_model_has_no_field_for():
+    assert python_path(Path.parse("futureKey.innerKey"), Root) == "futureKey.innerKey"
+    path = Path.parse("segments[A].rules[r1].futureKey")
+    assert python_path(path, Root) == path
+    # Below a list without a key the model is not followed.
+    assert python_path(Path.parse("tags[#0].loggingEnabled"), Root) == (
+        "tags[#0].loggingEnabled"
+    )
+    assert python_path(Path.parse("loggingEnabled"), None) == "loggingEnabled"
+
+
+def test_python_path_goes_through_a_map_of_models():
+    path = Path.parse("loopbackInterfaces.LO1.disableV4")
+    assert python_path(path, DeviceSettingsData) == (
+        "loopback_interfaces.LO1.disable_ipv4"
+    )

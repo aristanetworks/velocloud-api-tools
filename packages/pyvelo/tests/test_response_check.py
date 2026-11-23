@@ -650,3 +650,20 @@ def test_item_taken_for_a_removal_is_not_paired_again():
     assert added.stored is MISSING
     assert added.clash is False
     assert not_applied_at(check, "links[u2,IPv4]").stored == two
+
+
+def test_a_change_gives_its_path_in_python_names():
+    check = chk(
+        {"sub": {"v": 1}, **rules(rule("a", i="i1"))},
+        {"sub": {"v": 1}, **rules(rule("a", i="i2"))},
+        {"sub": {"v": 1, "note": "n"}, **rules(rule("a", i="i1"))},
+    )
+    (lost,) = check.not_applied
+    assert (lost.path, lost.python_path(Root)) == (
+        "rules[a].ruleId",
+        "rules[a].rule_id",
+    )
+    (extra,) = check.server_changes
+    assert (extra.path, extra.python_path(Root)) == ("sub.note", "sub.note")
+    row = PlannedChange(lost.path, MISSING, {}, MISSING, part="refs")
+    assert row.python_path(Root) == "rules[a].ruleId"

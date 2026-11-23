@@ -94,6 +94,7 @@ from .rebase import (
     item_text,
     key_form,
     pair_items,
+    python_path,
     staying,
 )
 
@@ -157,6 +158,14 @@ class PlannedChange:
         """Whether this is the order entry of a keyed list."""
         return self.moves is not None
 
+    def python_path(self, model: type[VcoModel] | None) -> Path:
+        """The path in the names a patch of *model* is written in.
+
+        *model* is the module's data class. The path of a ``refs`` entry is
+        returned as it is: a row of refs is not a field of the data.
+        """
+        return self.path if self.part == "refs" else python_path(self.path, model)
+
     @property
     def clash(self) -> bool:
         """The stored value is not the one read: something else changed it too.
@@ -187,6 +196,14 @@ class ServerChange:
     as_read: object
     stored: object
     part: Literal["data", "refs"] = "data"
+
+    def python_path(self, model: type[VcoModel] | None) -> Path:
+        """The path in the names a patch of *model* is written in.
+
+        *model* is the module's data class. The path of a ``refs`` entry is
+        returned as it is: a row of refs is not a field of the data.
+        """
+        return self.path if self.part == "refs" else python_path(self.path, model)
 
 
 @dataclass(frozen=True, slots=True)

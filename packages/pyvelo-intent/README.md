@@ -482,9 +482,11 @@ at `left_out` when a save follows one that failed.
 | `completed` | the writes of the same save before this one, which are stored |
 
 The entries are `PlannedChange` and `ServerChange`, from
-`pyvelo.core.response_check`. The message lists them by path. Here, a change
-to a rule's port and a new rule are refused, and another writer had changed
-the same port and another key:
+`pyvelo.core.response_check`. The message lists them by path. A path uses the
+VCO's names for fields. `change.python_path(type(data))`, with `data` the
+module's data (`state.module("firewall").data`), gives the same path in the
+names a patch is written in. Here, a change to a rule's port and a new rule are
+refused, and another writer had changed the same port and another key:
 
 ```text
 Configuration module 11 (firewall) changed since it was read (version v1): the VCO refused the version
