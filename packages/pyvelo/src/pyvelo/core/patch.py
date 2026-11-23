@@ -2,7 +2,8 @@
 
 ``PatchError`` is what a patch that cannot be applied raises, with the place in
 the patch it failed at. ``add``, ``delete``, ``move`` and ``at`` write list item
-operations as plain JSON values; ``parse_item_op`` reads one back.
+operations as plain JSON values; ``parse_item_op`` reads one back and
+``selector_of`` writes the selector of an item named by its key or position.
 ``checked_patch`` is the check every patch passes once, at entry.
 """
 
@@ -17,7 +18,7 @@ from uuid import UUID
 
 from pydantic import MISSING, BaseModel
 
-from .rebase import Path, PathPart
+from .rebase import ItemPart, Key, Path, PathPart, key_text
 
 MAX_PATCH_DEPTH = 64
 """How many levels of dicts and lists a patch may nest, the patch itself being the first."""
@@ -56,6 +57,20 @@ def at(n: int) -> str:
     if n < 0:
         raise ValueError(f"a position counts from 0, not {n}")
     return f"#{n}"
+
+
+def selector_of(part: ItemPart) -> str:
+    """The selector text that names the item *part* names: ``"#n"`` for a position, as ``at(n)`` gives it, else its key.
+
+    A key is ``str(value)``, or ``key_text(value)`` for a composite key. This is
+    the text only: whether it names that item and no other in a given list is for
+    the caller to know (an item of the list may have the key ``#n`` as text).
+    """
+    if not isinstance(part, Key):
+        return at(part)
+    if isinstance(part.value, tuple):
+        return key_text(part.value)
+    return str(part.value)
 
 
 def _anchor(selector: Selector) -> str | int | float | list[str | int | float]:
