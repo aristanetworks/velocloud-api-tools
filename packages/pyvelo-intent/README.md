@@ -141,14 +141,15 @@ Every list has a kind, which says how its items are named:
 An object on a list is item operations, keyed by selector. A selector is a
 key, alt key, label or value in string form (`"10"` names VLAN 10),
 `at(n)` (the item at position `n` of the list as it was), or `"+"` for a new
-item. Under it, a plain object changes the item (and may rename it to a key no
-other item has), `add(body, ...)` adds one, `delete()` removes it, and
-`move(...)` moves it. A place is one of `first=True`, `last=True`,
-`before=selector` or `after=selector`; an `add` without one goes last. A
-selector that names no item, or more than one, raises and lists the matches;
-`add` of a key or value already in the list raises. Every selector is resolved
-against the list as it was, then changes, deletes, and adds and moves (in the
-order written) are applied.
+item of a keyed or positional list (in a list of values and in a map, `add`
+goes under the new value or key itself). Under it, a plain object changes the
+item (and may rename it to a key no other item has), `add(body, ...)` adds
+one, `delete()` removes it, and `move(...)` moves it. A place is one of
+`first=True`, `last=True`, `before=selector` or `after=selector`; an `add`
+without one goes last. A selector that names no item, or more than one,
+raises and lists the matches; `add` of a key or value already in the list
+raises. Every selector is resolved against the list as it was, then changes,
+deletes, and adds and moves (in the order written) are applied.
 
 ```python
 from pyvelo_intent import add, at, delete, move

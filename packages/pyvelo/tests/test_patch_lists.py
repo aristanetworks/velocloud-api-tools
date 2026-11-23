@@ -540,6 +540,28 @@ def test_unset_keyed_list_is_created_by_an_add():
     assert model.rules == [Rule(name="z")]
 
 
+@pytest.mark.parametrize("selector", ["+", "+lo", "#0", "#7"])
+def test_map_add_takes_a_key_not_a_new_item_or_position_selector(selector: str):
+    root = Root(by_name={"x": Sub()})
+    _ = raises_at(
+        root, {"by_name": {selector: add({"v": 1})}}, f'by_name["{selector}"]'
+    )
+    assert list(root.by_name) == ["x"]
+
+
+def test_a_map_entry_whose_key_reads_as_a_selector_is_still_named_by_it():
+    root = Root(by_name={"+": Sub(), "#0": Sub()})
+    _ = root.merge_patch({"by_name": {"+": {"v": 1}, "#0": delete()}})
+    assert {k: s.v for k, s in root.by_name.items()} == {"+": 1}
+
+
+@pytest.mark.parametrize("selector", ["+", "+tag"])
+def test_value_list_add_takes_the_value_not_a_new_item_selector(selector: str):
+    root = values()
+    _ = raises_at(root, {"names": {selector: add()}}, f'names["{selector}"]')
+    assert root.names == ["a", "b", "c"]
+
+
 # ---------------------------------------------------------------------------
 # A field that takes one sub-model or a list of them
 # ---------------------------------------------------------------------------

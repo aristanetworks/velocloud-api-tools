@@ -1547,6 +1547,13 @@ def _check_add(
     if selection.positions:
         raise PatchError(f"{selection.key!r} is already in the list", where)
     # A value list: the selector is the value.
+    if is_new(selector):
+        raise PatchError(
+            f"{str(selector)!r} names no value: an add in a list of values takes "
+            + "the value itself as its selector, "
+            + 'as in {"<value>": {"_op": "add"}}',
+            where,
+        )
     if op.body:
         raise PatchError("add() in a list of values takes no body", where)
     assert spec.element is not None
@@ -1817,6 +1824,15 @@ def _merge_map(
         if op.place is not None:
             raise PatchError("a map has no order: no move() and no _position", where)
         if op.kind == "add":
+            if text not in keys and (
+                position_of(selector) is not None or is_new(selector)
+            ):
+                raise PatchError(
+                    f"{text!r} names no entry of a map: an add takes the new "
+                    + "entry's key as its selector, "
+                    + 'as in {"<key>": {"_op": "add", ...}}',
+                    where,
+                )
             key = _new_map_key(spec, text, where)
             text = str(key)
             if text in keys:
