@@ -1,7 +1,7 @@
 """ConfigPipeline: orchestration layer for load → apply → save configuration workflow."""
 
 from collections.abc import Mapping, Sequence
-from typing import Any, Protocol, TypeIs, runtime_checkable
+from typing import Any, Protocol, TypeIs, cast, runtime_checkable
 
 from pydantic import MISSING
 from pyvelo.client.enums.configuration import ConfigurationModuleName
@@ -418,6 +418,10 @@ class ConfigPipeline:
         async with state.lock:
             internal_name = _resolve_module_name(module)
             existing = state.find_module(internal_name)
+            if existing is None:
+                _refuse_segment_ops_to_a_missing_module(
+                    state, str(internal_name), patch, segment, path
+                )
             mod = (
                 existing
                 if existing is not None
@@ -1286,6 +1290,42 @@ def _layer_segment(
         return None
     assert isinstance(data, _SegmentLayer)
     return data.segments[positions[0]]
+
+
+def _refuse_segment_ops_to_a_missing_module(
+    state: ConfigState,
+    module_name: str,
+    patch: object,
+    segment: str | None,
+    path: str | None,
+) -> None:
+    """Raise ``PatchError`` for a patch with segment operations to a module of three that the profile lacks.
+
+    A profile target only, for device settings, QoS and firewall: an ``add``,
+    a ``delete`` or a list value for ``segments`` works on all three modules,
+    and inserting a module into a profile is not supported. A patch without
+    them is left to ``state.module``, which raises ``ValueError`` as ever.
+    """
+    if state.target_type != "profile" or module_name not in PROFILE_SEGMENT_MODULES:
+        return
+    nested: object
+    if segment is not None and path is None:
+        nested = {"segments": {segment: patch}}
+    elif segment is None and path is None:
+        nested = patch
+    else:
+        return
+    if isinstance(nested, dict) and holds_segment_ops(
+        cast("dict[str, object]", nested)
+    ):
+        raise PatchError(
+            f"the profile has no {module_name} module, and a patch that adds, "
+            "removes or replaces a segment works on all three of device "
+            "settings, QoS and firewall together. Inserting a module into a "
+            "profile is not supported: add it in the VCO",
+            SEGMENTS,
+            "segment_rule",
+        )
 
 
 def _device_settings_as_read(state: ConfigState) -> object:

@@ -8,6 +8,7 @@ segment.
 """
 
 import copy
+import itertools
 import uuid
 from collections.abc import Mapping
 from typing import Any
@@ -135,13 +136,20 @@ def assigned_defaults(state: ConfigState) -> list[dict[str, Any]]:
 # --- an add assigns, from any module, in any order -----------------------------
 
 
-async def test_adds_in_any_module_order_each_merge_their_own_body():
+@pytest.mark.parametrize("order", list(itertools.permutations(MODULES)), ids="-".join)
+async def test_adds_in_any_module_order_each_merge_their_own_body(
+    order: tuple[str, ...],
+):
     state = await global_only()
     the_rule = rule("Box")
+    bodies: dict[str, dict[str, object]] = {
+        QOS: {"rules": [the_rule]},
+        DS: {"vpn": {"conditionalBackhaul": True}},
+        FIREWALL: {"firewall_logging_enabled": True},
+    }
 
-    _ = await patch(state, QOS, {"Guest": add({"rules": [the_rule]})})
-    _ = await patch(state, DS, {"Guest": add({"vpn": {"conditionalBackhaul": True}})})
-    _ = await patch(state, FIREWALL, {"Guest": add({"firewall_logging_enabled": True})})
+    for module in order:
+        _ = await patch(state, module, {"Guest": add(bodies[module])})
 
     plan = state.plan()
     assert [(m.name, m.operation) for m in plan.changed] == [
@@ -152,10 +160,11 @@ async def test_adds_in_any_module_order_each_merge_their_own_body():
     assert all(m.added_segments == ("Guest",) for m in plan.changed)
     assert plan.segment_warnings == ()
     template = {m: new_segment_entry(m, identity(GUEST)) for m in MODULES}
-    ds = entry_of(plan.modules[0], "Guest")
+    # Each body is in its own module's entry and in no other.
+    ds = entry_of(plan_of(state, DS), "Guest")
     assert ds["vpn"]["conditionalBackhaul"] is True
     assert {k: v for k, v in ds.items() if k != "vpn"} == template[DS]
-    qos = entry_of(plan.modules[1], "Guest")
+    qos = entry_of(plan_of(state, QOS), "Guest")
     assert [r["name"] for r in qos["rules"]] == ["Box"]
     assert qos["rules"][0]["ruleLogicalId"] == the_rule["ruleLogicalId"]
     # The defaults are the template's, with the IDs the assignment made once.
@@ -167,10 +176,20 @@ async def test_adds_in_any_module_order_each_merge_their_own_body():
     ]
     assert qos["cosMapping"] == template[QOS]["cosMapping"]
     assert qos["webProxy"] == template[QOS]["webProxy"]
-    assert entry_of(plan.modules[2], "Guest") == {
-        **template[FIREWALL],
-        "firewall_logging_enabled": True,
-    }
+    assert "vpn" not in qos and "firewall_logging_enabled" not in qos
+    firewall = entry_of(plan_of(state, FIREWALL), "Guest")
+    assert firewall == {**template[FIREWALL], "firewall_logging_enabled": True}
+
+
+async def test_assign_segment_after_an_add_raises_nothing_to_do():
+    state = await global_only()
+    _ = await patch(state, QOS, {"Guest": add({})})
+    before = state.plan().render()
+
+    with pytest.raises(ValueError, match="Guest is in all three modules already"):
+        _ = await ConfigPipeline(client=None).assign_segment(state, "Guest")
+
+    assert state.plan().render() == before
 
 
 async def test_the_first_add_assigns_all_three_modules():
@@ -405,6 +424,53 @@ async def test_a_profile_without_qos_refuses_an_add():
     assert raised.value.path == Path(("segments",))
     assert "QOS" in raised.value.message
     assert state.plan().render() == before
+
+
+@pytest.mark.parametrize(
+    "form",
+    [
+        pytest.param("add", id="an add"),
+        pytest.param("plus", id="an add under +"),
+        pytest.param("addressed", id="an addressed add"),
+        pytest.param("delete", id="a delete"),
+        pytest.param("list", id="a list value"),
+    ],
+)
+async def test_an_add_to_a_module_the_profile_lacks_raises_patch_error(form: str):
+    state = await global_only()
+    modules = state.profile_config.modules
+    assert isinstance(modules, list)
+    modules.remove(state.module(QOS))
+    before = state.plan().render()
+    call: dict[str, Any] = {
+        "add": {"patch": {"segments": {"Guest": add({})}}},
+        "plus": {"patch": {"segments": {"+": add({"segment": {"name": "Guest"}})}}},
+        "addressed": {"segment": "Guest", "patch": add({})},
+        "delete": {"patch": {"segments": {"Global Segment": delete()}}},
+        "list": {"patch": {"segments": []}},
+    }[form]
+
+    with pytest.raises(PatchError) as raised:
+        _ = await ConfigPipeline(client=None).apply(state, module="qos", **call)
+
+    assert raised.value.kind == "segment_rule"
+    assert raised.value.path == Path(("segments",))
+    assert "no QOS module" in raised.value.message
+    assert "not supported" in raised.value.message
+    assert state.find_module(QOS) is None
+    assert state.plan().render() == before
+
+
+async def test_a_patch_without_segment_ops_to_a_module_the_profile_lacks_keeps_its_error():
+    state = await global_only()
+    modules = state.profile_config.modules
+    assert isinstance(modules, list)
+    modules.remove(state.module(QOS))
+
+    with pytest.raises(ValueError, match="not found") as raised:
+        _ = await patch(state, QOS, {"Global Segment": {"rules": []}})
+
+    assert not isinstance(raised.value, PatchError)
 
 
 async def test_a_change_on_a_firewall_only_profile_still_works():
@@ -712,3 +778,14 @@ async def test_a_change_to_a_segment_the_module_lacks_is_no_item():
         _ = await patch(state, QOS, {"Voice": {"rules": []}})
 
     assert raised.value.kind == "no_item"
+
+
+async def test_a_second_add_to_the_same_module_before_a_save_is_merged_again():
+    state = await global_only()
+
+    _ = await patch(state, QOS, {"Guest": add({"rules": [rule("Box")]})})
+    _ = await patch(state, QOS, {"Guest": add({"rules": [rule("Video")]})})
+
+    guest = entry_of(plan_of(state, QOS), "Guest")
+    assert [r["name"] for r in guest["rules"]] == ["Video"]
+    assert [m.added_segments for m in state.plan().changed] == [("Guest",)] * 3

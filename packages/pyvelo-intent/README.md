@@ -366,7 +366,9 @@ The `segments` lists have rules of their own:
   change it with a plain object. The segment is judged per module, as read, so
   the second and third adds of a segment, after the first assigned it, are
   accepted, and an add to a module that lacks a segment the others have
-  completes the profile.
+  completes the profile. "As read" means as loaded, or as last saved: a second
+  `add` of the same segment to the same module before a save is merged into
+  the entry again, not refused.
   A patch does not remove a segment: a `delete`, or a list value that leaves a
   segment out, raises `segment_rule`, because a segment is removed from all
   three modules or none. The one exception is an orphan, a QoS or firewall
