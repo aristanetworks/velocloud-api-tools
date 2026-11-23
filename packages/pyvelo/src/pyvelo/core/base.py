@@ -104,6 +104,17 @@ class IdentityResolver(Protocol):
     ) -> bool: ...
 
 
+class IdentityLookup(Protocol):
+    """What a derived ref needs to find a loaded identity by one of its IDs.
+
+    Satisfied by ``pyvelo.config.resolver.ResolverRegistry``.
+    """
+
+    def identity_sync[T](
+        self, identity_type: type[T], id_attr: str, value: object, /
+    ) -> T: ...
+
+
 # ---------------------------------------------------------------------------
 # Runtime narrowing helpers
 # ---------------------------------------------------------------------------

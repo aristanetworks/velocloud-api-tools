@@ -149,6 +149,19 @@ class GetEnterpriseServices(VcoModel):
     include_partner_gateways: bool | MISSING = MISSING
 
 
+class EnterpriseServiceSummary(VcoModel):
+    """The four fields of any enterprise service that a lookup by name or ID needs.
+
+    ``type_`` is the type text as the VCO answers it, so a service of a type
+    ``AnyEnterpriseService`` does not know still parses. Other keys are ignored.
+    """
+
+    id_: Annotated[int, Alias("id")]
+    logical_id: uuid.UUID
+    name: str
+    type_: Annotated[str, Alias("type")]
+
+
 class InsertEnterpriseService(VcoModel):
     """Request to create a new enterprise service."""
 

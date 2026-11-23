@@ -1,7 +1,7 @@
 """Reusable fakes and factories for tests."""
 
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from typing import Any
 from unittest.mock import AsyncMock
 
@@ -10,8 +10,11 @@ from pydantic import MISSING
 
 from pyvelo.client import VcoClient
 from pyvelo.client.enums.enterprise import NetworkSegmentType
+from pyvelo.client.schemas.enterprise import EnterpriseServiceSummary
 from pyvelo.config.resolver import ResolverContext
+from pyvelo.config.resolvers.network_service import NetworkServiceResolver
 from pyvelo.config.resolvers.segment import SegmentResolver
+from pyvelo.core.identity import NetworkServiceIdentity
 
 
 def make_jsonrpc_response(
@@ -121,6 +124,25 @@ async def make_segment_resolver(segments: list[dict[str, Any]]) -> SegmentResolv
     client = AsyncMock()
     client.get_enterprise_network_segments.return_value = fake_segments
     resolver = SegmentResolver(client)
+    await resolver.load(ResolverContext())
+    return resolver
+
+
+async def make_network_service_resolver(
+    services: Iterable[NetworkServiceIdentity],
+) -> NetworkServiceResolver:
+    """Build a ``NetworkServiceResolver`` loaded with *services*, over a mock answer."""
+    client = AsyncMock()
+    client.get_enterprise_service_summaries.return_value = [
+        EnterpriseServiceSummary(
+            id_=service.object_id,
+            logical_id=service.logical_id,
+            name=service.name,
+            type_=service.type_,
+        )
+        for service in services
+    ]
+    resolver = NetworkServiceResolver(client)
     await resolver.load(ResolverContext())
     return resolver
 

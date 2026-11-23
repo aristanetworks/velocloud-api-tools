@@ -11,7 +11,11 @@ from pyvelo.client.exceptions import (
 from pyvelo.client.module_check import ModuleWrite
 from pyvelo.client.module_write import ModulePlan
 from pyvelo.core import PatchError, PatchErrorKind, add, at, delete, move
-from pyvelo.core.identity import ResolutionError
+from pyvelo.core.identity import (
+    NetworkServiceIdentity,
+    ResolutionError,
+    ResolverNotLoadedError,
+)
 from pyvelo.core.response_check import PlannedChange, ServerChange
 
 from pyvelo_intent.config import (
@@ -64,11 +68,13 @@ __all__ = [
     "ModulePlan",
     "ModuleWrite",
     "ModuleWriteError",
+    "NetworkServiceIdentity",
     "PatchError",
     "PatchErrorKind",
     "PlannedChange",
     "Removed",
     "ResolutionError",
+    "ResolverNotLoadedError",
     "SaveProgress",
     "SaveResult",
     "SaveValidationError",

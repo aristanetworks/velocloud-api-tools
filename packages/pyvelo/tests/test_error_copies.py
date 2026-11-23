@@ -30,7 +30,12 @@ from pyvelo.client.exceptions import (
 )
 from pyvelo.client.module_check import ModuleWrite, check_module_write
 from pyvelo.client.module_write import plan_module
-from pyvelo.core.identity import ResolutionError, SegmentIdentity
+from pyvelo.core.identity import (
+    NetworkServiceIdentity,
+    ResolutionError,
+    ResolverNotLoadedError,
+    SegmentIdentity,
+)
 from pyvelo.core.patch import PatchError
 from pyvelo.core.rebase import Key, Path
 from pyvelo.testing import as_stored
@@ -237,6 +242,19 @@ def test_a_resolution_error_keeps_its_message_and_attributes_through_copies():
     shallow = copy.copy(error)
     shallow.add_note("two")
     assert error.__notes__ == ["looked in the cache"]
+
+
+def test_a_resolver_not_loaded_error_keeps_its_class_message_and_identity_type_through_copies():
+    error = ResolverNotLoadedError(NetworkServiceIdentity)
+    error.add_note("while resolving a ref")
+    for copied in copies(error):
+        assert type(copied) is ResolverNotLoadedError
+        assert copied.args == error.args
+        assert str(copied) == str(error)
+        assert "load_resolvers(state, NetworkServiceIdentity)" in str(copied)
+        assert copied.identity_type is NetworkServiceIdentity
+        assert (copied.name, copied.candidates) == ("", [])
+        assert copied.__notes__ == ["while resolving a ref"]
 
 
 def test_a_resolution_error_given_its_own_message_keeps_it():

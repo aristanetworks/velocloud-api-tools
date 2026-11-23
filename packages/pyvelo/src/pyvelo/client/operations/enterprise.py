@@ -50,6 +50,7 @@ from pyvelo.client.schemas.enterprise import (
     EnterpriseRouteTableResult,
     EnterpriseSecurityObjectResult,
     EnterpriseServiceBase,
+    EnterpriseServiceSummary,
     EnterprisesMissingGatewayResult,
     EnterpriseSpecificOperatorConfigurationsResult,
     EnterprisesWithPropertyResult,
@@ -189,6 +190,22 @@ class EnterpriseMixin(Protocol):
             "enterprise/getEnterpriseServices",
             request,
             AnyEnterpriseService,  # pyright: ignore[reportArgumentType]
+        )
+
+    @domain_tag(CONFIG)
+    async def get_enterprise_service_summaries(
+        self: VcoClientBaseProtocol,
+        request: GetEnterpriseServices,
+    ) -> Sequence[EnterpriseServiceSummary]:
+        """List enterprise network services by ID, logical ID, name and type only.
+
+        ``get_enterprise_services`` parses each service by its type and refuses
+        one of a type the models do not list. This lists them all.
+        """
+        return await self.portal_list(
+            "enterprise/getEnterpriseServices",
+            request,
+            EnterpriseServiceSummary,
         )
 
     @domain_tag(CONFIG)

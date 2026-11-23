@@ -8,6 +8,7 @@ Identity dataclasses (SegmentIdentity, etc.) hold all resolved fields
 for an entity, using plain int/uuid.UUID types.
 """
 
+import re
 import uuid
 from dataclasses import dataclass
 from typing import Annotated, Any, ClassVar, NewType, cast, override
@@ -63,6 +64,37 @@ class ResolutionError(KeyError):
             cands = "\n".join(f"  - {c}" for c in self.candidates)
             return f"Unknown {label}: {self.name!r}.\nDid you mean:\n{cands}"
         return f"Unknown {label}: {self.name!r}."
+
+
+def entity_label(identity_type: type) -> str:
+    """The words of an identity type's name without ``Identity``: ``"network service"`` for ``NetworkServiceIdentity``."""
+    name = identity_type.__name__.removesuffix("Identity")
+    return re.sub(r"(?<=[a-z])(?=[A-Z])", " ", name).lower()
+
+
+class ResolverNotLoadedError(ResolutionError):
+    """Raised when a lookup needs a resolver that has not been loaded.
+
+    It keeps ``identity_type``; ``name`` is ``""`` and ``candidates`` is empty.
+    It pickles and copies as a ``ResolutionError`` does.
+    """
+
+    def __init__(self, identity_type: type) -> None:
+        label = entity_label(identity_type)
+        type_name = identity_type.__name__
+        super().__init__(
+            name="",
+            identity_type=identity_type,
+            candidates=[],
+            message=(
+                f"The {type_name} lookups are not loaded, so a {label} cannot be "
+                "found yet. With a ConfigState, a save, a dry run and apply load "
+                f"them themselves; `await pipeline.load_resolvers(state, {type_name})` "
+                "loads them now. With plan_module or update_module, pass "
+                f"resolvers= a registry in which a loaded resolver for {type_name} "
+                "is registered."
+            ),
+        )
 
 
 def _rebuild_resolution_error(
@@ -363,3 +395,36 @@ class LicenseSku:
 class LicenseName:
     value: str
     identity_type: ClassVar[type[LicenseIdentity]] = LicenseIdentity
+
+
+# ---------------------------------------------------------------------------
+# Network service
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class NetworkServiceIdentity:
+    """An enterprise network service; ``type_`` is its type text as the VCO answers it."""
+
+    name: str
+    logical_id: uuid.UUID
+    object_id: int
+    type_: str
+
+
+@dataclass(frozen=True)
+class NetworkServiceName:
+    value: str
+    identity_type: ClassVar[type[NetworkServiceIdentity]] = NetworkServiceIdentity
+
+
+@dataclass(frozen=True)
+class NetworkServiceLogicalId:
+    value: uuid.UUID
+    identity_type: ClassVar[type[NetworkServiceIdentity]] = NetworkServiceIdentity
+
+
+@dataclass(frozen=True)
+class NetworkServiceObjectId:
+    value: int
+    identity_type: ClassVar[type[NetworkServiceIdentity]] = NetworkServiceIdentity
