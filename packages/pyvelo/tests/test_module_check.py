@@ -16,6 +16,7 @@ from pyvelo.client.exceptions import (
 from pyvelo.client.models.configuration import DeviceSettingsData
 from pyvelo.client.models.configuration.firewall.rules import FirewallInboundRule
 from pyvelo.client.models.configuration.qos.root import ServiceRateLimit
+from pyvelo.client.models.configuration.wan.link import WanLink
 from pyvelo.client.module_check import (
     APPEND_ONLY_REF_NAMES,
     MODULE_REWRITES,
@@ -230,7 +231,7 @@ def test_message_names_each_path_and_marks_a_clash():
     with pytest.raises(WriteNotAppliedError) as exc:
         _ = check_module_write(module, plan, as_stored(module, {**RAW, "future": 3}))
     lines = str(exc.value).splitlines()
-    assert "lost edits (not stored; redo these):" in lines
+    assert "lost edits (not stored; `error.redo_patch()` redoes them):" in lines
     assert (
         "  future: read 1, meant 2, stored 3  [clash: also changed on the VCO]" in lines
     )
@@ -256,7 +257,7 @@ def test_long_values_are_cut_where_they_differ():
     with pytest.raises(ConfigConflictError) as exc:
         _ = check_module_write(module, plan, stored)
     assert str(exc.value).splitlines()[1:] == [
-        "lost edits (not stored; redo these):",
+        "lost edits (not stored; `error.redo_patch()` redoes them):",
         (
             "  future: read …50, 51, 52, 53, 54, 55, 56, 57, 58, 59], "
             "meant …50, 51, 52, 53, 54, 99, 56, 57, 58, 59], "
@@ -285,7 +286,7 @@ def test_message_shows_the_place_of_an_added_rule_and_the_order():
     with pytest.raises(ConfigConflictError) as exc:
         _ = check_module_write(module, plan, stored, answer="refused")
     lines = str(exc.value).splitlines()
-    assert lines[1] == "lost edits (not stored; redo these):"
+    assert lines[1] == "lost edits (not stored; `error.redo_patch()` redoes them):"
     assert lines[2].startswith(
         '  inbound[c] (first): read (nothing), meant {"action": '
     )
@@ -356,6 +357,39 @@ def test_redo_patch_leaves_out_a_clash_and_a_ref_row():
         "service_rate_limit": plan.data["serviceRateLimit"]
     }
     assert paths(error.not_redone(include_clashes=True)) == ["a[6]"]
+
+
+def test_redo_patch_never_sets_another_writers_unkeyed_item():
+    # A link added without an internalId has no key, so the check pairs it
+    # with the link another writer put at the front.
+    def link(name: str, internal_id: str) -> dict[str, Any]:
+        return {
+            "internalId": internal_id,
+            "name": name,
+            "type": "WIRED",
+            "addressingVersion": "IPv4",
+        }
+
+    ours = link("ours", U1)
+    del ours["internalId"]
+    module = wan({"links": [link("a", U2)]})
+    assert isinstance(module.data.links, list)
+    module.data.links.insert(0, WanLink.model_validate(ours))
+    plan = plan_module(module)
+    stored = as_stored(module, {"links": [link("theirs", U3), link("a", U2)]})
+    with pytest.raises(WriteNotAppliedError) as exc:
+        _ = check_module_write(module, plan, stored)
+    error = exc.value
+    assert error.lost_edits[0].as_read is MISSING
+    assert error.redo_patch() == {}
+
+    patch = error.redo_patch(include_clashes=True)
+    links = cast(dict[str, dict[str, object]], patch["links"])
+    assert (links["+"]["_op"], links["+"]["_position"]) == ("add", "first")
+    assert isinstance(error.module, WanConfigurationModule)
+    _ = error.module.data.merge_patch(patch)  # their link is not overwritten
+    assert isinstance(error.module.data.links, list)
+    assert [link.name for link in error.module.data.links] == ["ours", "theirs", "a"]
 
 
 def test_completed_writes_are_named():

@@ -286,8 +286,8 @@ class ModuleWriteError(VcoError):
     completed: tuple[ModuleWrite[Any], ...]
     """The earlier writes of the same save, which are stored. Set by the save."""
     stored_parts: dict[Path, ItemPart]
-    """For each item of a keyed list that a lost edit names and the module as
-    stored has, by its path, the part that names it there (``ResponseCheck.stored_parts``)."""
+    """For each item of every keyed list the check walks that the module as stored
+    holds too, by its path, the part that names it there (``ResponseCheck.stored_parts``)."""
 
     def __init__(
         self,
@@ -335,7 +335,7 @@ class ModuleWriteError(VcoError):
         """The message: the headline, any notes, then each list by path; a list with no entries is left out."""
         lines = [self._headline(), *self._notes()]
         if self.lost_edits:
-            lines.append("lost edits (not stored; redo these):")
+            lines.append("lost edits (not stored; `error.redo_patch()` redoes them):")
             for change in self.lost_edits:
                 as_read, intended, stored = shown_together(
                     change.as_read, change.intended, change.stored
@@ -384,7 +384,9 @@ class ModuleWriteError(VcoError):
         was meant: an added item goes back in its place, a lost order is made
         again by the moves from the stored order, and each item is named as the
         stored list names it, so an edit to "the second rule" still reaches
-        that rule when another writer put one in front of it.
+        that rule when another writer put one in front of it. An item the plan
+        added is added again, never set on the item another writer has under
+        its name or at its place: where that name is taken, ``apply`` refuses.
 
         A clash is an edit whose value was also changed on the VCO, and
         redoing it overwrites that change: it is left out unless
@@ -441,9 +443,11 @@ class ModuleWriteError(VcoError):
                             path = Path(change.path.parts[:n])
                             _ = stored_parts.setdefault(path, part)
             else:
+                # An item the plan added is added again, never set: the item
+                # stored under its name, or at its place, is another writer's.
                 change = RawChange(
                     edit.path,
-                    edit.stored,
+                    MISSING if edit.as_read is MISSING else edit.stored,
                     edit.intended,
                     place=edit.place,
                     moves=edit.moves,
