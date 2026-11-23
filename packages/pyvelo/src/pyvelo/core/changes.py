@@ -165,7 +165,14 @@ def _resolve(
             list_path = Path(parts[: index - 1])
             steps.append(name)
             if index == len(parts):
-                return _item_plan(change, tuple(steps), list_path, item, stored_parts)
+                return _item_plan(
+                    change,
+                    tuple(steps),
+                    list_path,
+                    item,
+                    stored_parts,
+                    None if spec.item_type is None else spec.item_type.fields,
+                )
             selector = _selector(stored_parts, list_path, item)
             if selector is None or spec.item_type is None:
                 return None
@@ -215,14 +222,38 @@ def _object(value: object) -> _Node | None:
     return copy.deepcopy(cast("_Node", value))
 
 
+def _nulls_writable(body: _Node, fields: Mapping[str, FieldInfo]) -> bool:
+    """Whether every ``None`` in *body*, the fields of an item that exists, is written by a ``null``.
+
+    For an item that exists, a patch's ``null`` unsets a field that takes
+    ``MISSING``, so it writes ``None`` only where the field takes that and not
+    ``MISSING``; a field that takes neither is refused.
+    """
+    names = _field_names_by_key(fields)
+    for key, value in body.items():
+        name = names.get(key)
+        if value is None and name is not None:
+            field_info = fields[name]
+            if not _field_accepts_none(field_info) or _field_accepts_missing(
+                field_info
+            ):
+                return False
+    return True
+
+
 def _item_plan(
     change: RawChange,
     steps: tuple[str, ...],
     list_path: Path,
     item: ItemPart,
     stored_parts: Mapping[Path, ItemPart] | None,
+    fields: Mapping[str, FieldInfo] | None,
 ) -> _Plan | None:
-    """The plan of a change that ends at an item of a keyed list: add, delete, or set its fields."""
+    """The plan of a change that ends at an item of a keyed list: add, delete, or set its fields.
+
+    *fields* are the fields of the items of the list. A set is left out whole
+    when it gives a field a ``None`` that a patch's ``null`` cannot write.
+    """
     after = _object(change.after)
     if change.before is MISSING and after is not None:
         return _Plan(change, "add", steps, value=after, list_path=list_path, item=item)
@@ -232,6 +263,8 @@ def _item_plan(
     if change.after is MISSING:
         return _Plan(change, "delete", steps, key=selector)
     if isinstance(change.before, dict) and after:
+        if fields is not None and not _nulls_writable(after, fields):
+            return None
         return _Plan(
             change,
             "set",
@@ -267,6 +300,8 @@ def _value_plan(
     if change.is_order:
         return None
     after = change.after
+    if spec is not None and spec.kind == "map" and isinstance(after, dict):
+        return _new_map_plan(change, steps, name, cast("_Node", after))
     if after is MISSING:
         if not _field_accepts_missing(field_info):
             return None
@@ -286,6 +321,26 @@ def _value_plan(
     else:
         value = copy.deepcopy(cast("object", after))
     return _Plan(change, "value", steps, key=name, value=value)
+
+
+def _new_map_plan(
+    change: RawChange, steps: tuple[str, ...], name: str, entries: _Node
+) -> _Plan | None:
+    """The plan of a map of models that was not there and now has *entries*: one add each.
+
+    A patch's object on a map is item operations, so the entries are written
+    as adds. Left out when the map was there, or when an entry is not an object
+    or has a key that an add cannot be written under.
+    """
+    if change.before is not MISSING:
+        return None
+    adds: _Node = {}
+    for key, entry in entries.items():
+        body = _object(entry)
+        if body is None or key.startswith("+") or position_of(key) is not None:
+            return None
+        adds[key] = {"_op": "add", **body}
+    return _Plan(change, "value", steps, key=name, value=adds)
 
 
 def _repeats_a_key(items: list[object], spec: _ListSpec) -> bool:

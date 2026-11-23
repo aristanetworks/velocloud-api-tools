@@ -3,11 +3,12 @@
 import copy
 import json
 import random
-from typing import Any
+from typing import Annotated, Any
 
 import pytest
-from pydantic import MISSING
+from pydantic import MISSING, Field
 from pyvelo.client.models.configuration.device_settings.segment import SegmentDns
+from pyvelo.core import KeyField, VcoModel
 from pyvelo.core.changes import patch_of
 from pyvelo.core.rebase import ItemMove, ItemPlace, Key, Path, RawChange, raw_changes
 
@@ -317,3 +318,55 @@ def test_patch_of_steps_into_a_field_that_takes_a_sub_model_or_a_list():
     assert dns.model_dump(mode="json", by_alias=True)["primaryProvider"] == {
         "ref": "deviceSettings:dns:backupProvider"
     }
+
+
+class Both(VcoModel):
+    name: str
+    both: int | None | MISSING = MISSING
+
+
+class Holder(VcoModel):
+    items: Annotated[list[Both], KeyField("name")] = Field(default_factory=list)
+
+
+def test_a_set_that_gives_none_to_a_field_that_takes_none_and_missing_is_left_out():
+    # A patch's null would unset the field: the change is left out whole.
+    stored_parts = {
+        Path.parse("items[a]"): Key("a"),
+        Path.parse("items[b]"): Key("b"),
+    }
+    none = RawChange("items[a]", {"name": "a"}, {"name": "a", "both": None})
+    kept = RawChange("items[b].both", MISSING, 3)
+    assert patch_of([none, kept], Holder, stored_parts=stored_parts) == (
+        {"items": {"b": {"both": 3}}},
+        (none,),
+    )
+
+
+def test_a_set_that_gives_a_value_to_such_a_field_is_written():
+    stored_parts = {Path.parse("items[a]"): Key("a")}
+    some = RawChange("items[a]", {"name": "a"}, {"name": "a", "both": 2})
+    assert patch_of([some], Holder, stored_parts=stored_parts) == (
+        {"items": {"a": {"name": "a", "both": 2}}},
+        (),
+    )
+
+
+def test_a_map_of_models_that_is_new_is_written_as_one_add_per_entry():
+    old = {key: value for key, value in doc({}).items() if key != "byName"}
+    new = doc({"byName": {"a": {"v": 1}, "b": {"v": 2}}})
+    patch, left_out = patch_of(raw_changes(old, new, Root), Root)
+    assert left_out == ()
+    assert patch == {
+        "by_name": {
+            "a": {"_op": "add", "v": 1, "note": None},
+            "b": {"_op": "add", "v": 2, "note": None},
+        }
+    }
+    assert patched(old, patch) == new
+    assert json.loads(json.dumps(patch)) == patch
+
+
+def test_a_new_map_with_an_entry_that_cannot_be_added_is_left_out():
+    change = RawChange("byName", MISSING, {"a": {"v": 1}, "+b": {"v": 2}})
+    assert patch_of([change], Root) == ({}, (change,))
