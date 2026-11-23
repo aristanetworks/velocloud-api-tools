@@ -378,6 +378,19 @@ The `segments` lists have rules of their own:
   a rewritten descriptor (the `segment` object: its name, `segmentId`, type
   and logical ID) raises `segment_rule`. The assignments are tried on copies of
   the three modules first, so an error leaves all three as they were.
+- The `defaults` of a QoS segment are a fixed list: only the `action` of an
+  entry can change, by `{"defaults": {"Default-Any-UDP": {"action": {...}}}}`.
+  A list value for `defaults` is accepted when it keeps the keys, their order
+  and every field outside `action`, and an item that gives no `ruleLogicalId`
+  keeps the current one, so an entry read, changed in its actions and sent
+  back is a valid list value; one that gives another `ruleLogicalId` is
+  refused (`fixed_list`), and the message says to leave it out. The entry an
+  assignment creates is the exception: in the body of an assigning `add` and
+  in a new item of a list value, a `defaults` item takes the `ruleLogicalId`
+  the assignment gave it, whatever the body says, so an entry copied from
+  another profile is accepted without repeating that profile's rule IDs in
+  the enterprise. Its keys, their order and its other fixed fields must still
+  be the template's, or the patch raises `fixed_list`.
 
 Sections and items of an edge that can follow the profile have an `override`
 flag: the BGP of a segment, a VLAN, an interface. While the flag is off, the

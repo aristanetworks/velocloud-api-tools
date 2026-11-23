@@ -181,6 +181,21 @@ def test_a_list_value_that_gives_the_current_alt_key_under_any_name_is_taken(
     assert seg.defaults[2].action == {"route": "cloud"}  # pyright: ignore[reportIndexIssue]
 
 
+def test_a_list_value_that_gives_another_alt_key_says_to_leave_it_out():
+    value = [without_alt_key(given(i)) for i in range(3)]
+    value[1]["ruleId"] = str(uuid.uuid4())
+    error = refusal(segment(), {"defaults": value})
+    assert "changes ruleId of" in error.message
+    assert "Leave `ruleId` out of the item and it keeps the current one" in (
+        error.message
+    )
+
+
+def test_a_list_value_that_changes_a_field_other_than_the_alt_key_does_not_say_it():
+    error = refusal(segment(), {"defaults": [given(0), given(1, match={}), given(2)]})
+    assert "keeps the current one" not in error.message
+
+
 def _reordered() -> list[dict[str, Any]]:
     return [given(1), given(0), given(2)]
 

@@ -217,6 +217,9 @@ def assign_on_trial(
 SEGMENTS: Final = Path(("segments",))
 """Where the ``segments`` list of a module is in a patch."""
 
+_RULE_ID_KEYS: Final = ("ruleLogicalId", "rule_logical_id")
+"""The names a patch can give a QoS rule's ID under."""
+
 
 def entry_path(path: Path, selector: object) -> Path:
     """Where the entry under *selector* of a ``segments`` object is in the patch.
@@ -464,8 +467,8 @@ class _SegmentReader:
                 where,
                 "exists",
             )
-        change = _agreeing(
-            identity, {k: v for k, v in value.items() if k != "_op"}, where
+        change = self._own_defaults_ids(
+            _agreeing(identity, {k: v for k, v in value.items() if k != "_op"}, where)
         )
         self._assign(identity)
         return identity, change
@@ -493,12 +496,30 @@ class _SegmentReader:
         if identity.segment_id in named:
             raise _duplicate(named[identity.segment_id], where)
         named[identity.segment_id] = where
-        body = _agreeing(identity, item, where)
+        body = self._own_defaults_ids(_agreeing(identity, item, where))
         self._assign(identity)
         template = self._template_entry(identity)
         if template is None:
             return None
         return self._merged_item(template, body, where)
+
+    def _own_defaults_ids(self, body: dict[object, object]) -> dict[object, object]:
+        """*body* of an assigning add or new list item, without the rule IDs of its QoS ``defaults``.
+
+        The assignment made the entry, so each ``defaults`` item keeps the
+        ``ruleLogicalId`` the assignment gave it, whatever the body says: an
+        entry copied from another profile carries that profile's IDs, which
+        would repeat in this enterprise. Every other field of a ``defaults``
+        item is still the template's, or the merge refuses it.
+        """
+        defaults = body.get("defaults")
+        if self.module_name != "QOS" or not (is_list(defaults) or is_dict(defaults)):
+            return body
+        if is_list(defaults):
+            kept: object = [_without_rule_id(item) for item in defaults]
+        else:
+            kept = {key: _without_rule_id(item) for key, item in defaults.items()}
+        return {**body, "defaults": kept}
 
     def _template_entry(self, identity: SegmentIdentity) -> Mapping[str, Any] | None:
         """The raw entry of *identity* the module gets from the assignment, or has now from an earlier one."""
@@ -535,6 +556,13 @@ class _SegmentReader:
                 error.message, Path((*where.parts, *error.path.parts)), error.kind
             ) from error
         return item.model_dump(mode="json", by_alias=True, exclude_unset=True)
+
+
+def _without_rule_id(item: object) -> object:
+    """*item*, a ``defaults`` item of a patch, without its ``ruleLogicalId`` under any name; anything else as it is."""
+    if not is_dict(item):
+        return item
+    return {key: value for key, value in item.items() if key not in _RULE_ID_KEYS}
 
 
 def _duplicate(first: Path, where: Path) -> PatchError:

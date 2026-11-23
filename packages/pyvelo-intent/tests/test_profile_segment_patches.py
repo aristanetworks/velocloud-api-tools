@@ -533,6 +533,103 @@ async def test_a_list_value_with_a_new_segment_of_another_descriptor_raises():
     assert dumps(state) == before
 
 
+# --- an entry copied from another profile ---------------------------------------------
+
+
+def copied_guest_entry() -> dict[str, Any]:
+    """A full QoS entry for Guest as another profile holds it: its own rule IDs."""
+    return new_segment_entry(QOS, identity(GUEST))
+
+
+def stored_default_ids(state: ConfigState) -> list[str]:
+    guest = entry_of(plan_of(state, QOS), "Guest")
+    return [d["ruleLogicalId"] for d in guest["defaults"]]
+
+
+@pytest.mark.parametrize("key", ["ruleLogicalId", "rule_logical_id"])
+async def test_an_add_of_a_copied_entry_takes_the_assignments_defaults_ids(key: str):
+    state = await global_only()
+    copied = copied_guest_entry()
+    for item in copied["defaults"]:
+        item[key] = item.pop("ruleLogicalId")
+
+    _ = await patch(state, QOS, {"Guest": add(copied)})
+
+    ids = [d["ruleLogicalId"] for d in assigned_defaults(state)]
+    assert stored_default_ids(state) == ids
+    assert len(set(ids)) == 4
+    assert not set(ids) & {d[key] for d in copied["defaults"]}
+    assert names_in(state, DS) == ["Global Segment", "Guest"]
+
+
+async def test_an_add_of_a_copied_entry_keeps_its_rules_and_actions():
+    state = await global_only()
+    copied = copied_guest_entry()
+    copied["rules"] = [rule("Voice")]
+    copied["defaults"][0]["action"]["QoS"]["type"] = "transactional"
+
+    _ = await patch(state, QOS, {"Guest": add(copied)})
+
+    guest = entry_of(plan_of(state, QOS), "Guest")
+    assert [r["name"] for r in guest["rules"]] == ["Voice"]
+    assert guest["rules"][0]["ruleLogicalId"] == copied["rules"][0]["ruleLogicalId"]
+    assert guest["defaults"][0]["action"] == copied["defaults"][0]["action"]
+
+
+async def test_an_add_of_defaults_given_as_changes_takes_the_assignments_ids():
+    state = await global_only()
+    copied = copied_guest_entry()
+    copied["defaults"] = {d["name"]: d for d in copied["defaults"]}
+
+    _ = await patch(state, QOS, {"Guest": add(copied)})
+
+    assert stored_default_ids(state) == [
+        d["ruleLogicalId"] for d in assigned_defaults(state)
+    ]
+
+
+async def test_a_list_item_that_copies_an_entry_takes_the_assignments_defaults_ids():
+    state = await global_only()
+    first = kept(state, QOS)
+    copied = copied_guest_entry()
+
+    _ = await patch(state, QOS, [first, copied])
+
+    ids = [d["ruleLogicalId"] for d in assigned_defaults(state)]
+    assert stored_default_ids(state) == ids
+    assert not set(ids) & {d["ruleLogicalId"] for d in copied["defaults"]}
+
+
+@pytest.mark.parametrize("form", ["add", "list"])
+async def test_a_copied_entry_whose_default_differs_is_still_refused(form: str):
+    state = await global_only()
+    copied = copied_guest_entry()
+    copied["defaults"][1]["match"] = {"appid": 9}
+    before = dumps(state)
+
+    with pytest.raises(PatchError) as raised:
+        _ = await patch(
+            state,
+            QOS,
+            {"Guest": add(copied)} if form == "add" else [kept(state, QOS), copied],
+        )
+
+    assert raised.value.kind == "fixed_list"
+    assert "match" in raised.value.message
+    assert dumps(state) == before
+
+
+async def test_a_copied_entry_with_its_defaults_reordered_is_still_refused():
+    state = await global_only()
+    copied = copied_guest_entry()
+    copied["defaults"].reverse()
+
+    with pytest.raises(PatchError) as raised:
+        _ = await patch(state, QOS, {"Guest": add(copied)})
+
+    assert raised.value.kind == "fixed_list"
+
+
 # --- an orphan can go, nothing else --------------------------------------------------------------
 
 

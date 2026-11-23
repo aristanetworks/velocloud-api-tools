@@ -39,6 +39,7 @@ from .base import (
     _effective_default,  # pyright: ignore[reportPrivateUsage]
     _field_accepts_missing,  # pyright: ignore[reportPrivateUsage]
     _field_accepts_none,  # pyright: ignore[reportPrivateUsage]
+    _field_alias,  # pyright: ignore[reportPrivateUsage]
     _field_model_type,  # pyright: ignore[reportPrivateUsage]
     _field_model_types,  # pyright: ignore[reportPrivateUsage]
     _field_names_by_key,  # pyright: ignore[reportPrivateUsage]
@@ -1878,12 +1879,24 @@ def _check_fixed_value(
             raise PatchError(
                 f"{rule}: the list value changes "
                 + f"{_fixed_differences(before, after)} of "
-                + f"{_show_item(spec, old, index)}. Give each entry as it is, "
+                + f"{_show_item(spec, old, index)}. "
+                + _alt_key_advice(spec, old, new)
+                + "Give each entry as it is, "
                 + "with its editable fields changed, or send "
                 + _fixed_form(spec, "<key>" if key is None else key, path),
                 where,
                 "fixed_list",
             )
+
+
+def _alt_key_advice(spec: _ListSpec, old: object, new: object) -> str:
+    """The sentence that says how to keep the alt key, when *new* gives another than *old*'s; else empty."""
+    assert spec.item_type is not None
+    if spec.alt_path is None or _alt_key(spec, old) == _alt_key(spec, new):
+        return ""
+    field = spec.item_type.fields.get(spec.alt_path)
+    name = spec.alt_path if field is None else _field_alias(field, spec.alt_path)
+    return f"Leave `{name}` out of the item and it keeps the current one. "
 
 
 def _copy_path(source: object, target: object, dotted: str) -> None:
