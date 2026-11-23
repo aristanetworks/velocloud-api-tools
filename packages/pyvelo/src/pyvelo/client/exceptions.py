@@ -109,10 +109,15 @@ def _format_validation_data(data: dict[str, Any]) -> str:
 
 
 class VcoHttpError(VcoError):
-    """Raised when the VCO returns a non-2xx HTTP response."""
+    """Raised when the VCO returns a non-2xx HTTP response.
+
+    ``body`` is the first 500 characters of the answer, which the message
+    shows; ``text`` is all of it.
+    """
 
     def __init__(self, status_code: int, body: str) -> None:
         self.status_code = status_code
+        self.text = body
         self.body = body[:500]
         super().__init__(f"HTTP {status_code}: {self.body}")
 
@@ -566,14 +571,8 @@ PRECONDITION_FAILED: Final = "UPDATE_CONFIGURATION_MODULE_PRECONDITION_FAILED"
 """The code of the VCO's refusal of a stale module version, in ``error.data.error[]``."""
 
 
-def is_precondition_failure(error: VcoOperationError) -> bool:
-    """Whether *error* is the VCO refusing a stale module version before it writes.
-
-    A VCO with its conditional check on answers an update whose ``version`` is
-    not the module's current one with a ``validationError`` whose data lists an
-    error with the code ``PRECONDITION_FAILED``, and writes nothing.
-    """
-    data = cast(object, error.data)
+def _lists_precondition(data: object) -> bool:
+    """Whether the ``data`` of a JSON-RPC error lists an ``error[]`` entry with the code ``PRECONDITION_FAILED``."""
     if not isinstance(data, Mapping):
         return False
     entries = cast(Mapping[str, object], data).get("error")
@@ -584,6 +583,36 @@ def is_precondition_failure(error: VcoOperationError) -> bool:
         and cast(Mapping[str, object], entry).get("code") == PRECONDITION_FAILED
         for entry in cast(list[object], entries)
     )
+
+
+def is_precondition_failure(error: VcoOperationError) -> bool:
+    """Whether *error* is the VCO refusing a stale module version before it writes.
+
+    A VCO with its conditional check on answers an update whose ``version`` is
+    not the module's current one with a ``validationError`` whose data lists an
+    error with the code ``PRECONDITION_FAILED``, and writes nothing.
+    """
+    return _lists_precondition(cast(object, error.data))
+
+
+def is_precondition_answer(text: str) -> bool:
+    """Whether *text* is a JSON-RPC answer carrying the precondition refusal.
+
+    The same refusal as :func:`is_precondition_failure`, found in the body of
+    an answer that came with a non-2xx HTTP status, and so was never parsed.
+    False for text that is not JSON, is not an object, or has no ``error``
+    object whose data lists the code.
+    """
+    try:
+        answer = cast(object, json.loads(text))
+    except ValueError:
+        return False
+    if not isinstance(answer, Mapping):
+        return False
+    error = cast(Mapping[str, object], answer).get("error")
+    if not isinstance(error, Mapping):
+        return False
+    return _lists_precondition(cast(Mapping[str, object], error).get("data"))
 
 
 def is_version_conflict(*, error: str | None, rows: int | None) -> bool:

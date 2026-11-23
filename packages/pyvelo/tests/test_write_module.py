@@ -16,8 +16,10 @@ import pytest
 from pydantic import MISSING, ValidationError
 from pyvelo.client.enums.configuration import ConfigurationModuleName
 from pyvelo.client.exceptions import (
+    PRECONDITION_FAILED,
     ConfigConflictError,
     ModuleWriteError,
+    VcoHttpError,
     VcoOperationError,
     WriteNotAppliedError,
     WriteOutcomeUnknownError,
@@ -871,3 +873,54 @@ async def test_a_stale_row_returned_without_its_version_is_still_a_conflict(
     assert exc.value.module is not None
     assert exc.value.module.version == store.rows[1]["version"]
     assert paths(exc.value.lost_edits) == ["firewall_enabled"]
+
+
+REFUSAL: dict[str, Any] = {
+    "code": -32003,
+    "message": "validationError",
+    "data": {
+        "valid": False,
+        "error": [
+            {
+                "code": PRECONDITION_FAILED,
+                "message": "module 1 has changed",
+                "path": "configuration.updateConfigurationModule",
+            }
+        ],
+        "warning": [],
+    },
+}
+
+
+def refusing_with_status(
+    store: ModuleStore, status: int
+) -> Callable[[httpx.Request], httpx.Response]:
+    """A handler that answers an update with the precondition refusal at HTTP *status*, and sends the rest to *store*."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = parse_json_object(request.content)
+        if body["method"] != "configuration/updateConfigurationModule":
+            return store(request)
+        store.requests.append((str(body["method"]), {}))
+        return httpx.Response(status, json=make_jsonrpc_response(error=REFUSAL))
+
+    return handler
+
+
+@pytest.mark.parametrize("status", [400, 409, 412])
+async def test_precondition_refusal_in_an_http_error_is_read_back_and_checked(
+    mock_vco_client: MockVcoClientFactory, status: int
+):
+    module = firewall_disabled()
+    store = store_of(module)
+    client = await mock_vco_client(refusing_with_status(store, status))
+    with pytest.raises(ConfigConflictError) as exc:
+        _ = await client.write_module(module, plan_module(module))
+    assert exc.value.stated is True
+    assert paths(exc.value.lost_edits) == ["firewall_enabled"]
+    assert isinstance(exc.value.module, FirewallConfigurationModule)
+    assert methods(store) == ["updateConfigurationModule", "getConfiguration"]
+    refusal = exc.value.__cause__
+    assert isinstance(refusal, ConfigConflictError)
+    assert isinstance(refusal.__cause__, VcoHttpError)
+    assert refusal.__cause__.status_code == status

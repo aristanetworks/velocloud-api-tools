@@ -19,7 +19,9 @@ import pytest
 from pydantic import MISSING, ValidationError
 from pyvelo.client import VcoClient
 from pyvelo.client.exceptions import (
+    PRECONDITION_FAILED,
     ConfigConflictError,
+    VcoHttpError,
     VcoOperationError,
     is_version_conflict,
 )
@@ -334,3 +336,67 @@ async def test_insert_without_it_returns_the_id_as_today(
     result = await client.insert_configuration_module(qos_insert())
     assert isinstance(result, InsertConfigurationModuleResult)
     assert result.id_ == 8
+
+
+PRECONDITION_ERROR: JsonObject = {
+    "code": -32003,
+    "message": "validationError",
+    "data": {
+        "valid": False,
+        # Long enough that the refusal lies past the part of a body an HTTP error shows.
+        "warning": [{"message": "w" * 600, "path": "configuration"}],
+        "error": [
+            {
+                "code": PRECONDITION_FAILED,
+                "message": "module 7 has changed",
+                "path": "configuration.updateConfigurationModule",
+            }
+        ],
+    },
+}
+
+
+@pytest.mark.parametrize("status", [400, 409, 412])
+async def test_precondition_failure_in_an_http_error_is_a_conflict(
+    mock_vco_client: MockVcoClientFactory,
+    json_rpc_response: JsonRpcResponseFactory,
+    status: int,
+):
+    client = await mock_vco_client(
+        lambda r: httpx.Response(
+            status, json=json_rpc_response(error=PRECONDITION_ERROR)
+        )
+    )
+    with pytest.raises(ConfigConflictError) as exc:
+        _ = await client.update_configuration_module(req("1700", return_data=True))
+    assert (exc.value.module_id, exc.value.version) == (7, "1700")
+    assert exc.value.detail == "the VCO refused the version"
+    cause = exc.value.__cause__
+    assert isinstance(cause, VcoHttpError)
+    assert cause.status_code == status
+    assert len(cause.body) == 500
+    assert PRECONDITION_FAILED in cause.text
+
+
+async def test_any_other_http_error_of_an_update_is_an_http_error(
+    mock_vco_client: MockVcoClientFactory, json_rpc_response: JsonRpcResponseFactory
+):
+    answers = [
+        httpx.Response(400, json=json_rpc_response(error=UNKNOWN_MODULE_ERROR)),
+        httpx.Response(502, text="<html>Bad Gateway</html>"),
+        httpx.Response(400, json=[1, 2]),
+    ]
+    for answer in answers:
+        client = await mock_vco_client(lambda r, answer=answer: answer)
+        with pytest.raises(VcoHttpError):
+            _ = await client.update_configuration_module(req("1700"))
+
+
+async def test_the_same_body_from_another_operation_is_an_http_error(
+    mock_vco_client: MockVcoClientFactory, json_rpc_response: JsonRpcResponseFactory
+):
+    client = await mock_vco_client(
+        lambda r: httpx.Response(412, json=json_rpc_response(error=PRECONDITION_ERROR))
+    )
+    with pytest.raises(VcoHttpError):
+        _ = await client.insert_configuration_module(qos_insert())

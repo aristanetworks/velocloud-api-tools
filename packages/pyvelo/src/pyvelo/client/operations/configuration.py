@@ -10,9 +10,11 @@ from pyvelo.client.enums.profiles import GetConfigurationWith
 from pyvelo.client.exceptions import (
     ConfigConflictError,
     ModuleWriteError,
+    VcoHttpError,
     VcoOperationError,
     WriteAnswer,
     WriteOutcomeUnknownError,
+    is_precondition_answer,
     is_precondition_failure,
     is_version_conflict,
 )
@@ -298,8 +300,9 @@ class ConfigurationMixin(Protocol):
         Raises ``ConfigConflictError`` if the request carries a ``version`` that
         is not the module's current one and the VCO says so: a VCO with its
         conditional check on refuses it with a precondition error, also when
-        the request asks for data, and one with the check off answers that no
-        rows were modified. A request without a version is not checked.
+        the request asks for data, whatever HTTP status it comes with, and one
+        with the check off answers that no rows were modified. A request
+        without a version is not checked.
 
         With ``return_data`` the result is the module row as stored, validated
         as a module at config level *level*, with its raw data and refs
@@ -329,6 +332,14 @@ class ConfigurationMixin(Protocol):
                 )
         except VcoOperationError as error:
             if is_precondition_failure(error):
+                raise ConfigConflictError(
+                    request.configuration_module_id,
+                    "" if version is MISSING else version,
+                    "the VCO refused the version",
+                ) from error
+            raise
+        except VcoHttpError as error:
+            if is_precondition_answer(error.text):
                 raise ConfigConflictError(
                     request.configuration_module_id,
                     "" if version is MISSING else version,
