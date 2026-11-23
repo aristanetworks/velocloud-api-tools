@@ -88,6 +88,7 @@ from live_support import (
     record_answers,
     record_refusal,
     redact,
+    refusal_form,
     restoring,
     same_value,
     synthetic_name,
@@ -145,7 +146,7 @@ def data_of(module: ConfigurationModuleBase) -> EditableData:
 
 
 def _plan_nothing(
-    where: str,
+    label: str,
     module: AnyConfigurationModule,
     level: ConfigContext,
     profile: AnyConfigurationModule | None,
@@ -155,19 +156,19 @@ def _plan_nothing(
     raw: object = module.raw_data
     if plan.operation != "none" or plan.changes:
         failures.append(
-            f"{where} {module.name}: planned {plan.operation} ({describe(plan.changes)})"
+            f"{label} {module.name}: planned {plan.operation} ({describe(plan.changes)})"
         )
     elif plan.data != raw or plan.data is raw:
-        failures.append(f"{where} {module.name}: plan.data is not a copy of raw_data")
+        failures.append(f"{label} {module.name}: plan.data is not a copy of raw_data")
     elif plan.refs is not None:
-        failures.append(f"{where} {module.name}: planned refs with no edit")
+        failures.append(f"{label} {module.name}: planned refs with no edit")
     refs: object = getattr(module, "refs", MISSING)
     if isinstance(module.raw_refs, dict) and refs is not MISSING:
         again = plan_module(
             module, refs=refs if isinstance(refs, VcoModel | dict) else None
         ).refs
         if again is not None:
-            failures.append(f"{where} {module.name}: unchanged refs were planned")
+            failures.append(f"{label} {module.name}: unchanged refs were planned")
 
 
 async def test_no_edit_plans_nothing_on_every_edge_and_profile(lab: Lab) -> None:
@@ -863,11 +864,13 @@ async def test_the_answer_to_a_stale_version_is_recorded(
             len(stored) == 1 and stored[0].after == written,
             f"the stale write changed the module: {describe(stored)}",
         )
-        if form.startswith("refused with the precondition error"):
+        if form.startswith(
+            ("refused with the precondition error", "not refused: a row count of 0 ")
+        ):
             check(
                 raised == "ConfigConflictError",
-                f"the Orchestrator {form} and the client raised {raised}, not "
-                "ConfigConflictError",
+                f"the Orchestrator answered {form} and the client raised {raised}, "
+                "not ConfigConflictError",
             )
 
 
@@ -978,7 +981,8 @@ async def test_a_write_with_no_checkable_change_asks_for_a_count(
     ``write_module`` asks for a row count, which says whether the VCO stored
     the write. The value is the rule ID of a rule this test adds first: a
     copy of the last rule, after it, which decides nothing. What the VCO does
-    with a rule ID it is sent is recorded.
+    with a rule ID it is sent is recorded, also where the VCO answers a row
+    count of zero, which fails the test after the answer is recorded.
     """
     layout = await lab.pick_writable_edge(
         Name.FIREWALL, _firewall_usable, "with a rule to copy"
@@ -988,6 +992,12 @@ async def test_a_write_with_no_checkable_change_asks_for_a_count(
         data = expect(
             data_of(await site.read_present()), FirewallData, "the firewall data"
         )
+        left_over = {
+            rule.name
+            for entry in data.segments
+            for rule in entry.outbound
+            if str(rule.name).startswith(SYNTHETIC_PREFIX)
+        }
         _ = await apply_steps(lab, site, FirewallData, _firewall_steps(data)[:1])
 
         module = await site.read_present()
@@ -999,6 +1009,7 @@ async def test_a_write_with_no_checkable_change_asks_for_a_count(
             for entry in payload["segments"]
             for rule in entry.get("outbound") or []
             if str(rule.get("name")).startswith(SYNTHETIC_PREFIX)
+            and rule.get("name") not in left_over
         )
         issued = rule.get("ruleLogicalId")
         sent_id = uuid.uuid4().hex[:22]
@@ -1024,9 +1035,22 @@ async def test_a_write_with_no_checkable_change_asks_for_a_count(
 
         monkeypatch.setattr(lab.client, "update_configuration_module", spy)
         answers = record_answers(lab.client, monkeypatch)
-        write = await lab.client.write_module(
-            module, plan, enterprise_id=lab.enterprise_id
-        )
+        try:
+            write = await lab.client.write_module(
+                module, plan, enterprise_id=lab.enterprise_id
+            )
+        except ConfigConflictError as error:
+            # A count of zero is read as a refusal: record the answer before failing.
+            answered = [
+                a for a in answers if a.method.endswith("/updateConfigurationModule")
+            ]
+            record(
+                capsys,
+                "a write with no checkable change: "
+                f"{answer_form(answered[0]) if answered else 'no answer seen'}; "
+                f"{refusal_form(error)} ({type(error).__name__})",
+            )
+            pytest.fail(f"the write was refused: {outcome(error)}", pytrace=False)
 
         check(
             len(requests) == 1 and requests[0].return_data is MISSING,
