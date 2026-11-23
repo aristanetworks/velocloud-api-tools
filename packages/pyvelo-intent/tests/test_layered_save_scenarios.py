@@ -311,7 +311,8 @@ async def test_profile_target_apply_adds_a_rule():
     result = await pipeline.save(state, dry_run=True)
     assert result.plan is not None
     assert result.plan.render().startswith(
-        'firewall: update\n  + segments["Global Segment"].outbound[block] '
+        'profile "P", configuration 20\nfirewall: update\n'
+        '  + segments["Global Segment"].outbound[block] '
         "(after allow-all): "
     )
     await pipeline.save(state)

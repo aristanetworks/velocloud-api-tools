@@ -2,6 +2,7 @@
 
 import asyncio
 import copy
+import json
 import weakref
 from dataclasses import dataclass, field
 from typing import Literal, Protocol, cast, override, runtime_checkable
@@ -72,9 +73,41 @@ class ConfigFieldChange:
 
 @dataclass(frozen=True)
 class ConfigPlan:
-    """What a save of a whole :class:`ConfigState` writes: one plan per module."""
+    """What a save of a whole ConfigState writes: one plan per module.
+
+    render() is the text to show before a save. Its first line names what is
+    written: "edge 101, enterprise 1, configuration 10" or
+    'profile "Branch", enterprise 1, configuration 20' (an ID that is not known
+    is left out). Then, for each module of the target, its name and what the
+    save does with it (none, update or insert), followed by a line for each
+    change:
+
+    - "+ path: value" is a key or an item that is added. An item added to a
+      keyed list has its place after the path: "(first)" or "(after other)".
+    - "- path" is a key or an item that is removed.
+    - "~ path: old -> new" is a value that changes.
+    - "~ path: order: item first; item after other" is a keyed list whose items
+      change order: the items that move, each with its new place.
+    - "refs: replaced" says the module's refs are sent.
+    - "reconciled segments: A, B" are the profile's segments the write adds to
+      the edge module as empty entries; with "none" the line reads "missing
+      segments".
+    - "override turned on: path (...)" is a section or an item of an edge whose
+      override flag the changes turn on: from this save on the edge's own
+      values apply there, and the profile's no longer do.
+    - "legacy keys (dropped when the module is written): ..." are keys the VCO
+      does not know, on a module with nothing else to write.
+
+    Paths are in the names the VCO uses. A value is JSON, cut to 80 characters;
+    the two values of a "~" line are cut where they first differ.
+
+    Attributes:
+        modules: The plan of each module of the target.
+        target: What the plan is for (the first line of ``render()``), or "".
+    """
 
     modules: tuple[ModulePlan, ...]
+    target: str = ""
 
     @property
     def changed(self) -> tuple[ModulePlan, ...]:
@@ -82,7 +115,8 @@ class ConfigPlan:
         return tuple(m for m in self.modules if m.operation != "none")
 
     def render(self) -> str:
-        return "\n".join(m.render() for m in self.modules)
+        lines = [m.render() for m in self.modules]
+        return "\n".join([self.target, *lines] if self.target else lines)
 
 
 class LayerView:
@@ -613,11 +647,27 @@ class ConfigState:
         self._check_detached()
         self._check_unsaved_layer()
         config = self.target_config
+        target = self._target_text()
         if config.modules is MISSING:
-            return ConfigPlan(modules=())
+            return ConfigPlan(modules=(), target=target)
         return ConfigPlan(
-            modules=tuple(self.plan_module(mod) for mod in config.modules)
+            modules=tuple(self.plan_module(mod) for mod in config.modules),
+            target=target,
         )
+
+    def _target_text(self) -> str:
+        """What a plan of this state is for: ``edge 101, enterprise 1, configuration 10``."""
+        config = self.target_config
+        if self.target_type == "edge":
+            edge_id = self.resolver_context.edge_id
+            text = "edge" if edge_id is None else f"edge {edge_id}"
+        else:
+            text = f"profile {json.dumps(config.name)}"
+        if self.resolver_context.enterprise_id is not None:
+            text += f", enterprise {self.resolver_context.enterprise_id}"
+        if isinstance(config.id_, int):
+            text += f", configuration {config.id_}"
+        return text
 
     def plan_module(
         self, module: AnyConfigurationModule, data: VcoModel | None = None

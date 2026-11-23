@@ -47,6 +47,7 @@ async def test_load_by_edge_id():
     assert state.profile_config.name == "Default Profile"
     assert state.resolver_context.edge_id == 42
     assert state.resolver_context.enterprise_id == 1
+    assert state.plan().target == "edge 42, enterprise 1, configuration 10"
 
     # Verify API call was made
     stack_calls = [c for c in client.calls if c[0] == "get_edge_configuration_stack"]
@@ -134,6 +135,9 @@ async def test_load_profile_by_id():
     assert state.edge_config is None
     assert state.profile_config.name == "Default Profile"
     assert state.resolver_context.enterprise_id == 1
+    assert state.plan().target == (
+        'profile "Default Profile", enterprise 1, configuration 20'
+    )
 
 
 @pytest.mark.asyncio

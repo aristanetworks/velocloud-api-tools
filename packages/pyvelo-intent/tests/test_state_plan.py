@@ -105,7 +105,25 @@ def test_plan_reports_missing_segments_without_changes():
         ("firewall", "none", ("Guest",))
     ]
     assert plan.changed == ()
-    assert plan.render() == "firewall: none\n  missing segments: Guest"
+    assert plan.render() == (
+        "edge, enterprise 5, configuration 10\n"
+        "firewall: none\n"
+        "  missing segments: Guest"
+    )
+
+
+def test_plan_names_its_target():
+    state = make_state()
+    assert state.plan().target == "edge, enterprise 5, configuration 10"
+    state.resolver_context.edge_id = 101
+    assert state.plan().target == "edge 101, enterprise 5, configuration 10"
+    profile = ConfigState(
+        edge_config=None,
+        profile_config=state.profile_config,
+        target_type="profile",
+        resolver_context=ResolverContext(),
+    )
+    assert profile.plan().render().splitlines()[0] == 'profile "P", configuration 20'
 
 
 async def test_save_sends_raw_payload_version_and_reconciles():
@@ -347,7 +365,11 @@ async def test_two_patches_that_cancel_out_leave_no_insert_pending():
         )
     plan = state.plan()
     assert plan.changed == ()
-    assert plan.render() == "firewall: none\n  missing segments: Global Segment, Guest"
+    assert plan.render() == (
+        "edge, enterprise 5, configuration 10\n"
+        "firewall: none\n"
+        "  missing segments: Global Segment, Guest"
+    )
     result = await pipeline.save(state)
     assert (result.modules_inserted, result.modules_updated) == ([], [])
     assert client.calls == []

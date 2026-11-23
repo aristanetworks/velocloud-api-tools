@@ -59,11 +59,24 @@ async def main() -> None:
         )
         preview = await pipeline.save(state, dry_run=True)
         preview.raise_for_errors()
-        print("Modules that would change:", preview.modules_updated)
+        print(preview.plan.render())
 
 
 asyncio.run(main())
 ```
+
+The preview is the plan of the save:
+
+```text
+edge 101, enterprise 1, configuration 10
+firewall: update
+  + firewall_logging_enabled: true
+```
+
+Its first line names what would be written to. A module the save would create
+shows as `firewall: insert`; `preview.modules_inserted` and
+`preview.modules_updated` hold the names. "What a save writes" explains the
+lines.
 
 `dry_run=True` skips write API calls; loading still reads live configuration.
 Calling `save(state)` sends configuration writes, and the state then continues
@@ -294,6 +307,7 @@ with `firewall_enabled` set as well, on an edge whose profile has a segment the
 edge module lacks:
 
 ```text
+edge 101, enterprise 1, configuration 10
 firewall: update
   ~ segments["Global Segment"].outbound[allow-web].match.dport_high: 443 -> 8443
   - segments["Global Segment"].outbound[old-rule]

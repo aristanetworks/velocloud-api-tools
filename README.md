@@ -83,7 +83,7 @@ asyncio.run(main())
 
 ## pyvelo-intent: change configuration safely
 
-This example loads an edge by name, adds a firewall rule at the top of a segment's outbound rules, reviews the field-level diff, and previews the save:
+This example loads an edge by name, adds a firewall rule at the top of a segment's outbound rules, and previews the save. The preview names the edge and lists each change, with where the new rule goes:
 
 ```python
 import asyncio
@@ -118,13 +118,12 @@ async def main() -> None:
             },
         )
 
-        for change in state.get_field_changes():
-            print(change.module, change.path)
-        # firewall segments["Global Segment"].outbound[block-ssh]
-
         result = await pipeline.save(state, dry_run=True)  # drop dry_run to write
         result.raise_for_errors()
-        print("Would update:", result.modules_updated)
+        print(result.plan.render())
+        # edge 101, enterprise 1, configuration 10
+        # firewall: update
+        #   + segments["Global Segment"].outbound[block-ssh] (first): {"action": {"allow_or_deny": "deny"}, "comments": null, "loggingEnabled": false,…
 
 
 asyncio.run(main())
