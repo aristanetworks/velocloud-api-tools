@@ -403,10 +403,14 @@ logical ID or the service's name (`patch={"dns": {"primaryProvider":
 {"service": "dns-a"}}}`). The row needs the enterprise's network services, and
 `load` does not read them: the first `apply`, `save` or `dry_run` that needs
 them reads the table, once for the state, and goes on. A name no service has
-raises `ResolutionError` and leaves the state as it was. `state.plan()` does
-not read it and raises `ResolverNotLoadedError` for a provider set before the
-table is loaded; `await pipeline.load_resolvers(state, NetworkServiceIdentity)`
-(from `pyvelo.core.identity`) reads it at a time of your choosing.
+raises `ResolutionError` and leaves the state as it was, and so does a service
+of the wrong type for the field (`dns` for a DNS provider, `authentication` for
+the authentication provider, `cloudSecurityService` for a CSS provider): the
+message names the service and both types and says to give a service of the
+wanted type. `state.plan()` does not read it and raises `ResolverNotLoadedError`
+for a provider set before the table is loaded;
+`await pipeline.load_resolvers(state, NetworkServiceIdentity)` (from
+`pyvelo.core.identity`) reads it at a time of your choosing.
 `get_field_changes()` lists a provider that is set, replaced or cleared as one
 change at the provider's field
 (`segments["Global Segment"].dns.primary_provider.service`), with the service's

@@ -204,6 +204,15 @@ name for the segment the provider sits in (`deviceSettings:authentication`,
 the stub has none). It is never part of `data` on the wire, and a `service` key
 in the data is not read. A provider given as a list owns no row.
 
+A row for a new provider is added only for a service of the type its ref
+names. `SERVICE_TYPES` in `pyvelo.client.derived_refs` gives it: `dns` for
+`deviceSettings:dns:primaryProvider` and `deviceSettings:dns:backupProvider`,
+`authentication` for `deviceSettings:authentication`, and `cloudSecurityService`
+for `deviceSettings:css:provider` (tags of `EnterpriseServiceType`). A service
+of another type raises `ResolutionError` that names the field, the service, its
+type and the wanted type, and gives the patch that sets the field; a ref name
+outside that table is not checked.
+
 A module is filled when it is validated with both its data and its refs: `None`
 means the segment has no row. A module from `getConfigurationModules` or from an
 insert's `returnData` was not read with its refs (`module.refs_loaded` is

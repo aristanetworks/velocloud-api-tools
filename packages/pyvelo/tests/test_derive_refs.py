@@ -16,6 +16,7 @@ from pyvelo.client.derived_refs import (
     ALWAYS_SEND_REFS,
     APPEND_ONLY_REF_NAMES,
     PROCESSOR_REF_NAMES,
+    SERVICE_TYPES,
     DerivedRefs,
     PlanWarning,
     RefChange,
@@ -26,6 +27,7 @@ from pyvelo.client.derived_refs import (
 from pyvelo.client.models.configuration import DeviceSettingsData
 from pyvelo.client.models.configuration.device_settings.segment import (
     DeviceSegment,
+    DnsBackupProvider,
     DnsPrimaryProvider,
     SegmentAuthentication,
     SegmentDns,
@@ -553,6 +555,84 @@ async def test_a_new_authentication_row():
     authentication.service = UUID(AUTH)
     (change,) = derive(module, current, await table_registry(AUTH_IDENTITY)).changes
     assert change.name == AUTHENTICATION and change.row["enterpriseObjectId"] == 703
+
+
+def set_backup(data: DeviceSettingsData, value: UUID | None, index: int = 0) -> None:
+    provider = dns_of(data, index).backup_provider
+    assert isinstance(provider, DnsBackupProvider)
+    provider.service = value
+
+
+def set_authentication(data: DeviceSettingsData, value: UUID) -> None:
+    authentication = data.segments[0].authentication
+    assert isinstance(authentication, SegmentAuthentication)
+    authentication.service = value
+
+
+async def provider_edit(name: str, service: NetworkServiceIdentity) -> DerivedRefs:
+    """``derive_refs`` of the edit that sets the owner of ref *name* to *service*."""
+    stub: dict[str, Any] = {"ref": name}
+    sections: dict[str, Any] = {
+        PRIMARY: {"dns": dns(primary=True)},
+        BACKUP: {"dns": dns(backup=True)},
+        AUTHENTICATION: {"authentication": stub},
+        CSS_PROVIDER: {"css": {"provider": {"logicalId": ""}}},
+    }
+    module = ds_module(
+        [segment_entry(0, "Global Segment", SEG0, **sections[name])], global_refs()
+    )
+    current = edited(module)
+    match name:
+        case "deviceSettings:dns:primaryProvider":
+            set_primary(current, service.logical_id)
+        case "deviceSettings:dns:backupProvider":
+            set_backup(current, service.logical_id)
+        case "deviceSettings:authentication":
+            set_authentication(current, service.logical_id)
+        case _:
+            set_css(current, service.logical_id)
+    return derive(module, current, await table_registry(service))
+
+
+SERVICE_OF_TYPE = {
+    "dns": DNS_A_IDENTITY,
+    "authentication": AUTH_IDENTITY,
+    "cloudSecurityService": CSS_IDENTITY,
+}
+
+
+def test_the_service_types_are_those_of_the_four_provider_refs():
+    assert SERVICE_TYPES == {
+        PRIMARY: "dns",
+        BACKUP: "dns",
+        AUTHENTICATION: "authentication",
+        CSS_PROVIDER: "cloudSecurityService",
+    }
+
+
+@pytest.mark.parametrize("name", sorted(SERVICE_TYPES))
+async def test_a_provider_of_the_type_its_ref_wants_gets_a_row(name: str):
+    wanted = SERVICE_OF_TYPE[SERVICE_TYPES[name]]
+    (change,) = (await provider_edit(name, wanted)).changes
+    assert change.added and change.name == name
+    assert change.row["enterpriseObjectId"] == wanted.object_id
+
+
+@pytest.mark.parametrize("name", sorted(SERVICE_TYPES))
+async def test_a_provider_of_another_type_is_refused_with_the_types_and_the_patch(
+    name: str,
+):
+    wanted = SERVICE_TYPES[name]
+    other = next(s for t, s in SERVICE_OF_TYPE.items() if t != wanted)
+    with pytest.raises(ResolutionError) as caught:
+        _ = await provider_edit(name, other)
+    message = str(caught.value)
+    assert not isinstance(caught.value, ResolverNotLoadedError)
+    assert f"{other.name!r}" in message
+    assert f"type {other.type_!r}" in message
+    assert f"type {wanted!r}" in message
+    assert "name or the logical ID of a service of type" in message
+    assert "sets it" in message
 
 
 def test_a_new_row_without_resolvers_is_not_loaded():

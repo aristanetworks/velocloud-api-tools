@@ -36,6 +36,7 @@ from pyvelo_intent.config.pipeline import ConfigPipeline
 from pyvelo_intent.config.state import ConfigState
 from pyvelo_intent.testing import MockVcoClient
 from refs_helpers import (  # pyright: ignore[reportImplicitRelativeImport]
+    AUTH,
     CONFIG,
     DNS_A,
     DNS_B,
@@ -224,6 +225,25 @@ async def test_an_unknown_provider_name_leaves_the_state_unchanged():
         )
 
     assert methods(client.store).count(SERVICES) == 1  # it was read to find out
+    assert primary_provider(state).service is None
+    assert state.plan().changed == ()
+
+
+async def test_a_provider_of_the_wrong_service_type_leaves_the_state_unchanged():
+    pipeline, client, state = await loaded_profile()
+    client.add_service(703, logical_id=AUTH, name="radius-1", type_="authentication")
+
+    with pytest.raises(ResolutionError) as caught:
+        _ = await pipeline.apply(
+            state,
+            module="deviceSettings",
+            segment="Global Segment",
+            patch=provider_patch("radius-1"),
+        )
+
+    message = str(caught.value)
+    assert "'radius-1'" in message
+    assert "type 'authentication'" in message and "type 'dns'" in message
     assert primary_provider(state).service is None
     assert state.plan().changed == ()
 

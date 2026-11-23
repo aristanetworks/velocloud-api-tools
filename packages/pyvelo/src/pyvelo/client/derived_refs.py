@@ -23,6 +23,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Final, cast
 
+from pyvelo.client.enums.enterprise import EnterpriseServiceType
 from pyvelo.client.models.configuration.ref_owners import (
     RefOwner,
     SegmentRef,
@@ -36,6 +37,7 @@ from pyvelo.client.models.configuration.ref_owners import (
 from pyvelo.core import ConfigContext, OwnsRef, RefOnly, VcoModel
 from pyvelo.core.base import IdentityLookup, is_dict, is_list
 from pyvelo.core.identity import (
+    NetworkServiceIdentity,
     ResolutionError,
     ResolverNotLoadedError,
     SegmentIdentity,
@@ -51,6 +53,18 @@ APPEND_ONLY_REF_NAMES: Final = frozenset(
     {"deviceSettings:vnfs:edge", "objectGroup:addressGroup", "objectGroup:portGroup"}
 )
 """Ref names whose rows a write does not remove: the removal of one is left out."""
+
+SERVICE_TYPES: Final[Mapping[str, str]] = {
+    "deviceSettings:dns:primaryProvider": EnterpriseServiceType.DNS.value,
+    "deviceSettings:dns:backupProvider": EnterpriseServiceType.DNS.value,
+    "deviceSettings:authentication": EnterpriseServiceType.AUTHENTICATION.value,
+    "deviceSettings:css:provider": EnterpriseServiceType.CLOUD_SECURITY_SERVICE.value,
+}
+"""The type of network service each provider ref names, a tag of ``EnterpriseServiceType``.
+
+A new row of one of these names whose service is of another type is refused:
+the VCO would store a row that names a service the field cannot use.
+"""
 
 PROCESSOR_REF_NAMES: Final = frozenset(
     {
@@ -240,19 +254,40 @@ def _unknown_identity(owner: RefOwner, caught: ResolutionError) -> ResolutionErr
     )
 
 
-def _object_id(
+def _identity(
     identity_type: type, by: str, value: object, resolvers: IdentityLookup | None
-) -> int:
-    """The ``object_id`` of the identity of *identity_type* whose *by* is *value*."""
+) -> object:
+    """The identity of *identity_type* whose *by* is *value*."""
     if resolvers is None:
         raise ResolverNotLoadedError(identity_type)
-    identity: object = resolvers.identity_sync(
-        cast(type[object], identity_type), by, value
-    )
+    return resolvers.identity_sync(cast(type[object], identity_type), by, value)
+
+
+def _object_id(identity: object) -> int:
+    """The ``object_id`` of *identity*."""
     found: object = getattr(identity, "object_id", None)
     if not isinstance(found, int):  # pragma: no cover - an identity holds an int
-        raise TypeError(f"{identity_type.__name__}.object_id is not an int: {found!r}")
+        raise TypeError(f"{type(identity).__name__}.object_id is not an int: {found!r}")
     return found
+
+
+def _wrong_service_type(
+    owner: RefOwner, service: NetworkServiceIdentity
+) -> ResolutionError:
+    """The error for an owner of a provider ref whose service is of another type."""
+    wanted = SERVICE_TYPES[owner.name]
+    return ResolutionError(
+        name=service.name,
+        identity_type=NetworkServiceIdentity,
+        candidates=[],
+        message=(
+            f"{owner.path} names the service {service.name!r}, which is of type "
+            + f"{service.type_!r}, and the field wants a service of type "
+            + f"{wanted!r}, so the row it goes with would name a service it "
+            + "cannot use. Give the name or the logical ID of a service of type "
+            + f"{wanted!r}: {patch_text(owner.path)} sets it."
+        ),
+    )
 
 
 def _new_row(
@@ -263,11 +298,19 @@ def _new_row(
 ) -> tuple[dict[str, Any], int | None]:
     """The row to add for *owner* and its ``segmentObjectId`` (``None`` for a ref with no segment)."""
     try:
-        object_id = _object_id(owner.identity_type, _by(owner), owner.value, resolvers)
+        identity = _identity(owner.identity_type, _by(owner), owner.value, resolvers)
     except ResolverNotLoadedError:
         raise
     except ResolutionError as caught:
         raise _unknown_identity(owner, caught) from caught
+    wanted = SERVICE_TYPES.get(owner.name)
+    if (
+        wanted is not None
+        and isinstance(identity, NetworkServiceIdentity)
+        and identity.type_ != wanted
+    ):
+        raise _wrong_service_type(owner, identity)
+    object_id = _object_id(identity)
     segment_object_id: int | None = None
     if _is_per_segment(owner):
         segment_object_id = (
@@ -278,7 +321,9 @@ def _new_row(
         if segment_object_id is None:
             try:
                 segment_object_id = _object_id(
-                    SegmentIdentity, "segment_id", owner.segment_id, resolvers
+                    _identity(
+                        SegmentIdentity, "segment_id", owner.segment_id, resolvers
+                    )
                 )
             except ResolverNotLoadedError:
                 raise
