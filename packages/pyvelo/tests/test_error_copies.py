@@ -30,6 +30,8 @@ from pyvelo.client.exceptions import (
 )
 from pyvelo.client.module_check import ModuleWrite, check_module_write
 from pyvelo.client.module_write import plan_module
+from pyvelo.core.identity import ResolutionError, SegmentIdentity
+from pyvelo.core.patch import PatchError
 from pyvelo.core.rebase import Key, Path
 from pyvelo.testing import as_stored
 
@@ -208,3 +210,49 @@ def test_the_stored_parts_of_a_write_error_survive_a_deep_copy():
     for copied in copies(error):
         assert copied.stored_parts == parts
     assert copy.deepcopy(error).stored_parts is not error.stored_parts
+
+
+def test_a_resolution_error_keeps_its_message_and_attributes_through_copies():
+    error = ResolutionError(
+        name="Corp", identity_type=SegmentIdentity, candidates=["Corporate", "Core"]
+    )
+    error.add_note("looked in the cache")
+    for copied in copies(error):
+        assert type(copied) is ResolutionError
+        assert copied.args == error.args
+        assert str(copied) == str(error) == error.args[0]
+        assert (copied.name, copied.identity_type, copied.candidates) == (
+            "Corp",
+            SegmentIdentity,
+            ["Corporate", "Core"],
+        )
+        assert copied.__notes__ == ["looked in the cache"]
+    assert copy.copy(error).candidates is error.candidates
+    assert copy.deepcopy(error).candidates is not error.candidates
+    shallow = copy.copy(error)
+    shallow.add_note("two")
+    assert error.__notes__ == ["looked in the cache"]
+
+
+def test_a_resolution_error_given_its_own_message_keeps_it():
+    error = ResolutionError(
+        name="x", identity_type="thing", candidates=[], message="no such thing"
+    )
+    for copied in copies(error):
+        assert str(copied) == "no such thing"
+        assert copied.identity_type == "thing"
+
+
+def test_a_patch_error_keeps_its_path_kind_and_notes_through_copies():
+    error = PatchError("no such field", Path(("segments", 0, "name")), "unknown_field")
+    error.add_note("in the second patch")
+    for copied in copies(error):
+        assert type(copied) is PatchError
+        assert copied.args == error.args
+        assert str(copied) == str(error)
+        assert (copied.message, copied.path, copied.kind) == (
+            "no such field",
+            Path(("segments", 0, "name")),
+            "unknown_field",
+        )
+        assert copied.__notes__ == ["in the second patch"]
