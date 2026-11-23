@@ -5,20 +5,38 @@ what they rely on to restore a lab and to keep its names out of their output is
 checked here with no lab.
 """
 
+import contextlib
+import copy
 import json
 import pathlib
 import re
+from collections.abc import Callable
 from typing import Any, ClassVar
 
+import httpx
 import live_support as live
 import pytest
 from pydantic import MISSING, BaseModel, ValidationError
-from pyvelo.client import ConfigConflictError, VcoOperationError, WriteNotAppliedError
+from pyvelo.client import (
+    ConfigConflictError,
+    ModuleWriteError,
+    VcoClient,
+    VcoOperationError,
+    WriteNotAppliedError,
+    WriteOutcomeUnknownError,
+)
 from pyvelo.client.enums.configuration import ConfigurationModuleName as Name
+from pyvelo.client.exceptions import WriteAnswer
+from pyvelo.client.module_write import plan_module
 from pyvelo.client.schemas.configuration import FirewallConfigurationModule
 from pyvelo.core.rebase import Key, Path, RawChange
 from pyvelo.core.response_check import PlannedChange, ServerChange
-from pyvelo.testing import make_module_json
+from pyvelo.testing import (
+    ModuleStore,
+    make_jsonrpc_response,
+    make_module_json,
+    make_transport,
+)
 
 DS = Name.DEVICE_SETTINGS
 
@@ -361,3 +379,140 @@ def test_check_as_read_compares_version_and_raw_data():
     with pytest.raises(pytest.fail.Exception) as caught:
         live.check_as_read("x", module("v1", future=1), module("v1"))
     assert str(caught.value).endswith("a read made right after: + future")
+
+
+HOST = "vco.example.invalid"
+
+
+FIREWALL: dict[str, Any] = {"segments": [], "firewall_enabled": True, "future": 1}
+"""A firewall module's data; ``future`` is a key the models do not know."""
+
+
+def client_over(
+    handler: Callable[[httpx.Request], httpx.Response], host: str = HOST
+) -> VcoClient:
+    """A client connected to *host*, whose requests go to *handler*."""
+    return VcoClient(host, "test-token", transport=make_transport(handler))
+
+
+def firewall_disabled() -> FirewallConfigurationModule:
+    module = FirewallConfigurationModule.model_validate(
+        make_module_json("firewall", copy.deepcopy(FIREWALL), configuration_id=10)
+    )
+    module.data.firewall_enabled = False
+    return module
+
+
+def held_elsewhere(store: ModuleStore) -> Callable[[httpx.Request], httpx.Response]:
+    """*store*, but a read of configuration 10 finds no module in it."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if json.loads(request.content)["method"] != "configuration/getConfiguration":
+            return store(request)
+        config = {**store.configurations[10], "modules": []}
+        return httpx.Response(200, json=make_jsonrpc_response(result=config))
+
+    return handler
+
+
+async def write_error(
+    *, stale: bool, read_back: bool = True, **knobs: bool
+) -> ModuleWriteError:
+    """The error of writing ``firewall_disabled`` to a store with *knobs*."""
+    module = firewall_disabled()
+    store = ModuleStore(**knobs)
+    store.add_configuration({"id": 10, "name": "Profile 10"})
+    store.rows[1] = make_module_json(
+        "firewall", copy.deepcopy(FIREWALL), configuration_id=10
+    )
+    if stale:
+        store.other_writer(1, lambda row: row["data"].update(future=2))
+    client = client_over(store if read_back else held_elsewhere(store))
+    with pytest.raises(ModuleWriteError) as caught:
+        _ = await client.write_module(module, plan_module(module))
+    return caught.value
+
+
+async def test_refusal_form_of_a_stale_write_whose_module_was_read():
+    form = live.refusal_form
+    precondition = await write_error(stale=True, conditional_check=True)
+    assert isinstance(precondition, ConfigConflictError) and precondition.stated
+    assert form(precondition) == "refused with the precondition error"
+    zero_rows = await write_error(stale=True, return_data=False)
+    assert isinstance(zero_rows, ConfigConflictError) and zero_rows.stated
+    assert form(zero_rows) == "refused with a row count of zero"
+    inferred = await write_error(stale=True)
+    assert isinstance(inferred, ConfigConflictError) and not inferred.stated
+    assert form(inferred) == "refused with the module row as stored"
+
+
+def unknown(
+    answer: WriteAnswer,
+    refusal: ConfigConflictError | None = None,
+    detail: str = "its configuration does not hold the module",
+) -> WriteOutcomeUnknownError:
+    """The error of a write whose stored module could not be read, raised while handling *refusal*."""
+    error = WriteOutcomeUnknownError(
+        1,
+        "v1",
+        detail,
+        answer=answer,
+        module_name="firewall",
+        plan=plan_module(firewall_disabled()),
+    )
+    error.__context__ = refusal
+    return error
+
+
+def test_refusal_form_of_a_write_whose_module_could_not_be_read():
+    form = live.refusal_form
+    unread = ", and the module as stored could not be read"
+    assert form(unknown("counted")) == "not refused: the write was counted" + unread
+    zero_rows = ConfigConflictError(1, "v1", "no rows were modified")
+    assert form(unknown("refused", zero_rows)) == (
+        "refused with a row count of zero" + unread
+    )
+    assert form(unknown("refused")) == "refused" + unread
+    assert form(unknown("row")) == (
+        "answered with a row that could not be taken as this module"
+    )
+
+
+def test_outcome_of_a_write_whose_module_could_not_be_read():
+    assert live.outcome(unknown("counted")) == (
+        "WriteOutcomeUnknownError (its configuration does not hold the module; "
+        "answer counted) on the firewall module: sent ~ firewall_enabled"
+    )
+
+
+def test_outcome_of_a_write_whose_module_could_not_be_read_shows_no_number():
+    error = unknown("counted", detail="configuration 4711 does not hold module 8123")
+    assert live.outcome(error) == (
+        "WriteOutcomeUnknownError (configuration # does not hold module #; "
+        "answer counted) on the firewall module: sent ~ firewall_enabled"
+    )
+
+
+def test_where_marks_the_order_of_a_list():
+    path = Path(("segments", SECRET, "outbound"))
+    order = PlannedChange(path, ["a", "b"], ["b", "a"], ["a", "b"], moves=())
+    assert live.where([order]) == "order of segments[*].outbound"
+
+
+class PassThrough:
+    """A capture whose ``disabled`` changes nothing, so that ``capsys`` sees what is printed past it."""
+
+    def disabled(self) -> contextlib.AbstractContextManager[None]:
+        return contextlib.nullcontext()
+
+
+async def test_a_counted_write_that_was_not_read_back_is_not_a_refusal(
+    capsys: pytest.CaptureFixture[str],
+):
+    error = await write_error(stale=False, return_data=False, read_back=False)
+    assert isinstance(error, WriteOutcomeUnknownError) and error.answer == "counted"
+    live.record_refusal(PassThrough(), "a save", error)  # pyright: ignore[reportArgumentType]
+    assert capsys.readouterr().out == (
+        "\na save: not refused: the write was counted, and the module as stored "
+        "could not be read (WriteOutcomeUnknownError)\n"
+    )

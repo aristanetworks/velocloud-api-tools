@@ -49,10 +49,15 @@ from typing import Annotated, Any, cast
 
 import pytest
 from pydantic import MISSING, RootModel, ValidationError
-from pyvelo.client import ConfigConflictError, VcoClient, VcoOperationError
+from pyvelo.client import (
+    ConfigConflictError,
+    VcoClient,
+    VcoOperationError,
+    WriteOutcomeUnknownError,
+)
 from pyvelo.client.enums.configuration import ConfigurationModuleName
 from pyvelo.client.enums.profiles import GetConfigurationWith
-from pyvelo.client.exceptions import ModuleWriteError, is_precondition_failure
+from pyvelo.client.exceptions import ModuleWriteError
 from pyvelo.client.module_check import data_model
 from pyvelo.client.schemas.configuration import (
     AnyConfigurationModule,
@@ -805,12 +810,16 @@ SERVER_ASSIGNED_KEYS = frozenset({"ruleLogicalId"})
 
 
 def where(changes: Iterable[PlannedChange | ServerChange]) -> str:
-    """The paths of *changes*, redacted, with ``refs`` before a refs entry."""
-    shown = [
-        f"refs {redact(c.path)}" if c.part == "refs" else redact(c.path)
-        for c in changes
-    ]
-    return ", ".join(shown) or "none"
+    """The paths of *changes*, redacted: ``refs`` before a refs entry, ``order of`` before the order entry of a list."""
+
+    def shown(change: PlannedChange | ServerChange) -> str:
+        if change.part == "refs":
+            return f"refs {redact(change.path)}"
+        if isinstance(change, PlannedChange) and change.is_order:
+            return f"order of {redact(change.path)}"
+        return redact(change.path)
+
+    return ", ".join(shown(change) for change in changes) or "none"
 
 
 def stored_otherwise(lost_edits: Iterable[PlannedChange]) -> list[Path]:
@@ -827,14 +836,25 @@ def outcome(error: ModuleWriteError) -> str:
 
     Its own message names segments and rules of the lab and shows their
     values, so a test reports this in its place. Where a lost edit was
-    stored otherwise than sent is a candidate for ``MODULE_REWRITES``.
+    stored otherwise than sent is a candidate for ``MODULE_REWRITES``. A
+    ``WriteOutcomeUnknownError`` lists no lost edit, so it is reported by its
+    detail, with each run of digits (the lab's IDs) shown as ``#``, what the
+    Orchestrator answered, and the paths that were sent.
     """
+    name = error.module_name or "unnamed"
+    if isinstance(error, WriteOutcomeUnknownError):
+        sent = describe(error.plan.changes) if error.plan is not None else "unknown"
+        detail = re.sub(r"\d+", "#", error.detail)
+        return (
+            f"WriteOutcomeUnknownError ({detail}; answer {error.answer}) "
+            f"on the {name} module: sent {sent}"
+        )
     kind = type(error).__name__
     if isinstance(error, ConfigConflictError):
         kind += f" ({error.detail})"
     otherwise = ", ".join(redact(p) for p in stored_otherwise(error.lost_edits))
     return (
-        f"{kind} on the {error.module_name or 'unnamed'} module: "
+        f"{kind} on the {name} module: "
         f"lost edits {where(error.lost_edits)}; "
         f"stored otherwise than sent at {otherwise or 'none'}; "
         f"applied {where(error.applied)}; "
@@ -842,31 +862,57 @@ def outcome(error: ModuleWriteError) -> str:
     )
 
 
-def refusal_form(error: ModuleWriteError) -> str:
-    """How the Orchestrator refused the stale write that raised *error*.
+def _stated_refusal(error: ModuleWriteError) -> str:
+    """How the Orchestrator stated a refusal, read from the conflict ``update_configuration_module`` raised.
 
-    ``write_module`` raises the outcome from the refusal the client raised:
-    a ``ConfigConflictError`` from the precondition error, or one for a row
-    count of zero. When the module could not be read back after the refusal,
-    the refusal is the outcome's context instead (the outcome was raised
-    while handling it). An outcome with neither was checked against the
-    module row the Orchestrator answered with.
+    ``write_module`` raises its error from that conflict, or while handling it
+    when the module could not be read back: its ``__cause__``, else its
+    ``__context__``. One with a cause of its own was raised from the
+    Orchestrator's precondition error, whatever HTTP status carried it; one
+    without is a row count of zero. With no such conflict in the chain, the
+    refusal is only ``refused``.
     """
     refusal = error.__cause__ if error.__cause__ is not None else error.__context__
     if not isinstance(refusal, ConfigConflictError):
-        return "the module row as stored"
-    reason = refusal.__cause__
-    if isinstance(reason, VcoOperationError) and is_precondition_failure(reason):
-        return "the precondition error"
-    return "a row count of zero"
+        return "refused"
+    if refusal.__cause__ is not None:
+        return "refused with the precondition error"
+    return "refused with a row count of zero"
+
+
+def refusal_form(error: ModuleWriteError) -> str:
+    """How the Orchestrator answered the stale write that raised *error*, as a clause.
+
+    A ``WriteOutcomeUnknownError`` says what the Orchestrator answered of the
+    write: a counted write is no refusal, a stated refusal is told as above
+    with the note that the module could not be read, and a row that could not
+    be used is no refusal either. A ``ConfigConflictError`` that is ``stated``
+    is a stated refusal. Any other error was checked against the module row
+    the Orchestrator answered with.
+    """
+    unread = ", and the module as stored could not be read"
+    if isinstance(error, WriteOutcomeUnknownError):
+        if error.answer == "counted":
+            return "not refused: the write was counted" + unread
+        if error.answer == "refused":
+            return _stated_refusal(error) + unread
+        return "answered with a row that could not be taken as this module"
+    if isinstance(error, ConfigConflictError) and error.stated:
+        return _stated_refusal(error)
+    return "refused with the module row as stored"
+
+
+def record(capsys: pytest.CaptureFixture[str], line: str) -> None:
+    """Print *line* on a line of its own, past the capture, so a passing test shows it."""
+    with capsys.disabled():
+        print(f"\n{line}")
 
 
 def record_refusal(
     capsys: pytest.CaptureFixture[str], label: str, error: ModuleWriteError
 ) -> None:
     """Print, past the capture, the form of the refusal and the error it made."""
-    with capsys.disabled():
-        print(f"\n{label}: refused with {refusal_form(error)} ({type(error).__name__})")
+    record(capsys, f"{label}: {refusal_form(error)} ({type(error).__name__})")
 
 
 def check_entries(
