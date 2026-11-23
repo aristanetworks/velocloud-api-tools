@@ -483,3 +483,46 @@ def test_null_in_a_built_item_follows_the_null_rule():
     # ... and unset by a change, where leaving the key out would change nothing.
     _ = model.merge_patch({"nets": {"new": {"both": None}}})
     assert new.both is MISSING
+
+
+class Leaf(VcoModel):
+    both: int | None | MISSING = MISSING
+
+
+class Loose(VcoModel):
+    both: int | None | MISSING = MISSING
+    inner: Leaf | MISSING = MISSING
+
+
+class LooseHolder(VcoModel):
+    sub: Loose | MISSING = MISSING
+    by_name: dict[str, Loose] = Field(default_factory=dict)
+
+
+def test_null_in_a_sub_model_the_patch_builds_follows_the_null_rule():
+    holder = LooseHolder()
+    _ = holder.merge_patch({"sub": {"both": None}})
+    assert isinstance(holder.sub, Loose)
+    assert holder.sub.both is None
+    # A change to the sub-model that now exists unsets the field.
+    _ = holder.merge_patch({"sub": {"both": None}})
+    assert holder.sub.both is MISSING
+
+
+def test_null_in_a_map_entry_the_patch_builds_follows_the_null_rule():
+    holder = LooseHolder()
+    _ = holder.merge_patch({"by_name": {"a": add({"both": None})}})
+    assert holder.by_name["a"].both is None
+    _ = holder.merge_patch({"by_name": {"a": {"both": None}}})
+    assert holder.by_name["a"].both is MISSING
+
+
+def test_null_in_a_sub_model_inside_a_built_sub_model_follows_the_null_rule():
+    holder = LooseHolder()
+    _ = holder.merge_patch({"sub": {"inner": {"both": None}}})
+    assert isinstance(holder.sub, Loose)
+    assert isinstance(holder.sub.inner, Leaf)
+    assert holder.sub.inner.both is None
+    _ = holder.merge_patch({"sub": {"inner": {"both": None}}})
+    assert isinstance(holder.sub.inner, Leaf)
+    assert holder.sub.inner.both is MISSING

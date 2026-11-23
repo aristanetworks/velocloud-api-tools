@@ -196,12 +196,16 @@ def _merge_model(
     patch: Mapping[object, object],
     resolvers: IdentityResolver | None,
     path: Path,
+    *,
+    built: bool = False,
 ) -> None:
     """Merge *patch* into *model*, in place. *path* is where *model* is in the patch.
 
     Every key must name a field of the model, and no two keys one field; a
     directive (a key that starts with ``_``) is not one. Each raises
-    ``PatchError`` (``_patch_fields``).
+    ``PatchError`` (``_patch_fields``). *built* is true for a model the patch
+    builds, here from its defaults, and holds for the sub-models in it: it
+    decides what ``null`` means (``_null_value``).
     """
     model_cls = type(model)
     fields = model_cls.model_fields
@@ -218,7 +222,9 @@ def _merge_model(
     }
 
     for name, value in updates:
-        _merge_field(model, name, fields[name], value, resolvers, path.child(name))
+        _merge_field(
+            model, name, fields[name], value, resolvers, path.child(name), built=built
+        )
 
     _auto_set_override_flags(model, before)
 
@@ -285,17 +291,20 @@ def _merge_field(
     value: object,
     resolvers: IdentityResolver | None,
     path: Path,
+    *,
+    built: bool = False,
 ) -> None:
     """Merge one patch value into ``model.<name>``. See ``VcoModel.merge_patch``.
 
     *path* is where the value is in the patch. Every value assigned is first
-    validated (``_validate_field``).
+    validated (``_validate_field``). *built* is true when *model* is one the
+    patch builds (``_merge_model``).
     """
     model_cls = type(model)
 
     # null: what the field takes it as (``_null_value``).
     if value is None:
-        value = _null_value(field_info, name, path, built=False)
+        value = _null_value(field_info, name, path, built=built)
         setattr(model, name, _validate_field(model_cls, name, value, path))
         return
 
@@ -309,17 +318,17 @@ def _merge_field(
 
         # Sub-model that already exists: merge into it.
         if isinstance(current, VcoModel):
-            _merge_model(current, value, resolvers, path)
+            _merge_model(current, value, resolvers, path, built=built)
             return
 
         # Sub-model that is unset: build a new one from the patch.
         model_types = _field_model_types(field_info)
         if model_types and (current is MISSING or current is None):
             if len(model_types) == 1:
-                built = _new_model_from_patch(model_types[0], value, resolvers, path)
+                new = _new_model_from_patch(model_types[0], value, resolvers, path)
             else:
-                built = _new_variant_from_patch(model_cls, name, value, resolvers, path)
-            setattr(model, name, _validate_field(model_cls, name, built, path))
+                new = _new_variant_from_patch(model_cls, name, value, resolvers, path)
+            setattr(model, name, _validate_field(model_cls, name, new, path))
             return
 
     # Resolvable: a name given where the field expects an ID.
@@ -441,7 +450,7 @@ def _new_model_from_patch(
             raise PatchError(_validation_message(exc), path) from exc
         _refuse_unread_keys(built, data, path)
         return built
-    _merge_model(instance, patch, resolvers, path)
+    _merge_model(instance, patch, resolvers, path, built=True)
     return instance
 
 
