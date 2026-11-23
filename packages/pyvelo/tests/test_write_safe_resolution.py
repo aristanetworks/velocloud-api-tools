@@ -276,6 +276,16 @@ def test_a_new_segment_no_resolver_can_give_ids_to_is_refused_by_name():
         assert [s.segment.name for s in fw.segments] == ["Global Segment"]
 
 
+def test_the_refusal_of_a_name_with_no_ids_says_where_and_what_to_do():
+    fw = fresh()
+    with pytest.raises(LookupError) as exc:
+        _ = fw.merge_patch({"segments": {"NewSeg": add()}})
+    message = str(exc.value)
+    assert "segments" in message
+    assert "in the body" in message
+    assert "resolver" in message
+
+
 def test_a_new_segment_with_its_ids_given_needs_no_resolver():
     fw = fresh()
     segment = {

@@ -726,10 +726,18 @@ def _canonical_name(
     return canonical if isinstance(canonical, str) else name
 
 
+_CHANGE_IT_IN_LIST = '; to change it, write a plain object under its selector (no "_op")'
+"""What a refusal of an add of an item already in the list says to do instead."""
+
+
 def _require_ids_for_name(
-    item: VcoModel, identity_type: type[object] | None, key_path: str, key: str
+    item: VcoModel,
+    identity_type: type[object] | None,
+    key_path: str,
+    key: str,
+    where: Path,
 ) -> None:
-    """Refuse *item*, named *key*, if the IDs of that name were not set on it.
+    """Refuse *item*, named *key* and at *where* in the patch, if the IDs of that name were not set on it.
 
     *identity_type* is what the field at *key_path* is the ``NameOf``. The IDs
     are the ``Resolvable`` fields for that type next to it. One that was neither
@@ -753,7 +761,10 @@ def _require_ids_for_name(
         raise LookupError(
             f"Cannot add {key!r} by name: no loaded {identity_type.__name__} "
             + "resolver or profile entry has it, and the patch does not give "
-            + f"{', '.join(unset)}"
+            + f"{', '.join(unset)} (at {where}). Give "
+            + f"{'it' if len(unset) == 1 else 'them'} in the body, or register a "
+            + f"{identity_type.__name__} resolver (the resolvers given to the "
+            + "merge; state.resolvers of a ConfigState)"
         )
 
 
@@ -813,7 +824,9 @@ def _new_keyed_item(
             body = _inject_key_path(body, key_path, part)
     item = _new_item(item_type, body, resolvers, path, context)
     if spec.name_identity is not None:
-        _require_ids_for_name(item, spec.name_identity, spec.key_paths[0], str(key))
+        _require_ids_for_name(
+            item, spec.name_identity, spec.key_paths[0], str(key), path
+        )
     return item
 
 
@@ -1447,7 +1460,11 @@ def _check_list_value(
                 key = item_key(item, spec.key_paths)
                 if spec.name_identity is not None and key is not None:
                     _require_ids_for_name(
-                        item, spec.name_identity, spec.key_paths[0], str(key)
+                        item,
+                        spec.name_identity,
+                        spec.key_paths[0],
+                        str(key),
+                        path.child(_item_part(spec, item, index)),
                     )
     seen: dict[KeyForm, int] = {}
     seen_alt: dict[KeyForm, int] = {}
@@ -1743,7 +1760,9 @@ def _check_add(
             spec, selector, selection, op, items, resolvers, where, context
         )
     if selection.positions:
-        raise PatchError(f"{selection.key!r} is already in the list", where)
+        raise PatchError(
+            f"{selection.key!r} is already in the list{_CHANGE_IT_IN_LIST}", where
+        )
     # A value list: the selector is the value.
     if is_new(selector):
         raise PatchError(
@@ -1766,7 +1785,7 @@ def _check_add(
     except ValidationError as exc:
         raise _invalid_value(exc, (), where) from exc
     if any(str(item) == str(new) for item in items):
-        raise PatchError(f"{new!r} is already in the list", where)
+        raise PatchError(f"{new!r} is already in the list{_CHANGE_IT_IN_LIST}", where)
     return new
 
 
@@ -1818,7 +1837,8 @@ def _check_keyed_add(
         key = item_key(item, spec.key_paths)
         if key is not None and _with_key(items, spec, key):
             raise PatchError(
-                f"the body gives the key {_show_key(key)}, which is already in the list",
+                f"the body gives the key {_show_key(key)}, which is already in the "
+                + f"list{_CHANGE_IT_IN_LIST}",
                 where,
             )
         return item
@@ -1833,7 +1853,10 @@ def _check_keyed_add(
         )
     if selection.positions and not selection.label:
         where_in = " as an alt key" if selection.alt else ""
-        raise PatchError(f"{_show_key(key)} is already in the list{where_in}", where)
+        raise PatchError(
+            f"{_show_key(key)} is already in the list{where_in}{_CHANGE_IT_IN_LIST}",
+            where,
+        )
     parts = key if isinstance(key, tuple) else (key,)
     for key_path, part in zip(spec.key_paths, parts, strict=True):
         given = _patch_value(item_type.fields, op.body, key_path)
@@ -2003,7 +2026,8 @@ def _new_list_item(
         if taken:
             shown = item_key(new, spec.key_paths) if spec.kind == "keyed" else None
             raise PatchError(
-                f"{_show_key(form if shown is None else shown)} is already in the list",
+                f"{_show_key(form if shown is None else shown)} is already in the "
+                + f"list{_CHANGE_IT_IN_LIST}",
                 entry.path,
             )
     alt = _alt_key(spec, new)
@@ -2076,7 +2100,11 @@ def _merge_map(
             key = _new_map_key(spec, text, where)
             text = str(key)
             if text in keys:
-                raise PatchError(f"{text!r} is already in the map", where)
+                raise PatchError(
+                    f"{text!r} is already in the map; to change it, write a plain "
+                    + 'object under its key (no "_op")',
+                    where,
+                )
         elif new_only:
             raise PatchError(
                 f"a {op.kind} in a map the patch builds has nothing to name: "

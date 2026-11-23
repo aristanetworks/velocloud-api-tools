@@ -942,7 +942,9 @@ def _prepare_segment(
             _refuse_place_for(op, name, own.segment.segment_id, where, inherited)
             return entry, entry
         raise PatchError(
-            f"segment {name!r} is already in the edge layer, as {entry!r}", where
+            f"segment {name!r} is already in the edge layer, as {entry!r}: change "
+            + f"it with a plain object under {entry!r}, not an add",
+            where,
         )
     if op.kind == "add":
         raise PatchError(
@@ -953,7 +955,8 @@ def _prepare_segment(
     if op.kind == "delete":
         raise PatchError(
             f"the edge layer has no entry to delete for segment {name!r}, which "
-            + "it inherits from its profile",
+            + "it inherits from its profile: leave it out of the patch, as "
+            + '{"_op": "delete"} (delete()) removes only an entry the edge layer holds',
             where,
         )
     _refuse_place_for(op, name, segment_id, where, inherited)

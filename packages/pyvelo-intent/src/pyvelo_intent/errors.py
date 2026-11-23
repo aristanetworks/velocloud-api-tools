@@ -57,7 +57,9 @@ class SaveValidationError(IntentError):
         self.errors: list[ValidationError] = list(errors)
         summary = ", ".join(f"{e.path}: {e.message}" for e in self.errors)
         super().__init__(
-            f"save blocked by {len(self.errors)} validator error(s): {summary}"
+            f"save blocked by {len(self.errors)} validator error(s): {summary}. "
+            + "Fix them and save again; a save with dry_run=True returns the "
+            + "errors without raising"
         )
 
 

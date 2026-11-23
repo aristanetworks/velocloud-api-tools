@@ -1341,3 +1341,25 @@ async def test_dry_run_refuses_what_the_save_refuses():
             _ = await pipeline.save(state, dry_run=dry_run)
         assert str(exc.value).startswith("controlPlane: this state has an edit to a")
     assert client.store.requests == []
+
+
+@pytest.mark.asyncio
+async def test_plus_add_of_a_segment_the_edge_has_under_another_name_says_what_to_do():
+    state = _renamed_guest_state()
+    patch: dict[str, object] = {"segments": {"+": add({"segment": {"name": "Guest"}})}}
+    with pytest.raises(PatchError, match="already in the edge layer, as 'Guest-old'") as exc:
+        _ = await ConfigPipeline(client=None).apply(
+            state, module="firewall", patch=patch
+        )
+    assert "plain object" in exc.value.message
+    assert "Guest-old" in exc.value.message
+
+
+@pytest.mark.asyncio
+async def test_delete_of_an_inherited_segment_says_what_to_do():
+    state = make_raw_state()
+    with pytest.raises(PatchError, match="no entry to delete") as exc:
+        _ = await ConfigPipeline(client=None).apply(
+            state, module="firewall", patch={"segments": {"Guest": delete()}}
+        )
+    assert "leave" in exc.value.message

@@ -232,7 +232,10 @@ def parse_item_op(value: object, path: Path) -> ItemOp:
         )
     if not isinstance(value, dict):
         raise PatchError(
-            f"an item operation is an object, not {type(value).__name__}", path
+            f"an item operation is an object, not {type(value).__name__}; write "
+            + 'a plain object, {"_op": "add", ...} (add(...)) or {"_op": "delete"} '
+            + "(delete())",
+            path,
         )
     fields = dict(cast("dict[str, object]", value))
     has_op = "_op" in fields
@@ -241,7 +244,9 @@ def parse_item_op(value: object, path: Path) -> ItemOp:
     position = fields.pop("_position", None)
     if has_op and op not in ("add", "delete"):
         raise PatchError(
-            f'_op is "add" or "delete", not {op!r}; write a change as a plain object',
+            f'_op is "add" or "delete", not {op!r}; write {{"_op": "add", ...}} '
+            + '(add(...)) or {"_op": "delete"} (delete()), a change as a plain '
+            + 'object, and a move as {"_position": ...} (move(...))',
             path,
         )
     if op == "delete":

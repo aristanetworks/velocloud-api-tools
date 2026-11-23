@@ -395,3 +395,11 @@ class TestPipelineValidation:
         result = await pipeline.save(state, validate=False, dry_run=True)
         assert result.is_valid
         assert result.modules_updated == ["firewall"]
+
+
+def test_a_save_validation_error_says_what_to_do():
+    error = SaveValidationError([ValidationError("a.b", "too long", "too_long")])
+    message = str(error)
+    assert message.startswith("save blocked by 1 validator error(s): a.b: too long")
+    assert "Fix them and save again" in message
+    assert "dry_run" in message

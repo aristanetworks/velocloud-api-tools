@@ -1,4 +1,4 @@
-"""What a refusal says: the JSON form of each operation it names, and its kind."""
+"""What a refusal says: the JSON form of each operation it names."""
 
 import pytest
 from pyvelo.core import PatchError, add, at, delete, move
@@ -36,6 +36,12 @@ def base() -> Root:
         ({"rules": {"a": None}}, "delete()"),
         ({"rules": {"a": {"_op": "delete", "priority": 1}}}, "delete()"),
         ({"rules": {"a": {"_position": {"before": None}}}}, "at(n)"),
+        ({"rules": {"a": {"_op": "move"}}}, "move("),
+        ({"rules": {"a": {"_op": "update"}}}, "add("),
+        ({"rules": {"a": 5}}, "add("),
+        ({"rules": {"a": 5}}, "delete()"),
+        ({"rules": {"a": add()}}, "plain object"),
+        ({"by_name": {"x": add()}}, "plain object"),
         ({"rules": {"zz": {"priority": 1}}}, "add("),
         ({"rules": {"z": add({"tags": {"t": delete()}})}}, "add("),
         ({"rules": {at(0): add()}}, "at(n)"),
