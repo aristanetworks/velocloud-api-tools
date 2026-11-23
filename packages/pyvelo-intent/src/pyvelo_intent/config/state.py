@@ -41,6 +41,7 @@ from pyvelo.core.rebase import (
 from pyvelo.core.response_check import PlannedChange, ServerChange
 
 from pyvelo_intent.config.module_names import resolve_module_name
+from pyvelo_intent.errors import LayerNotSavedError
 
 
 @dataclass
@@ -88,9 +89,12 @@ class ConfigPlan:
 class LayerView:
     """Read-only access to the data of one config layer's modules.
 
-    Each property is the module's ``data``, ready to read or edit in place.
-    *profile* is the profile layer an edge layer inherits from; a module this
-    view creates is bound to it.
+    Each property is the module's ``data``, ready to read or edit in place. An
+    edit is saved only through the state's target layer (``state.edge`` of an
+    edge state, ``state.profile`` of a profile state); an edit of the other
+    layer is reported by the next ``ConfigState.plan``. *profile* is the
+    profile layer an edge layer inherits from; a module this view creates is
+    bound to it.
     """
 
     def __init__(
@@ -517,6 +521,50 @@ class ConfigState:
             [path for _, paths in found for path in paths],
         )
 
+    def _check_unsaved_layer(self) -> None:
+        """Raise ``LayerNotSavedError`` if the layer a save does not write was edited.
+
+        The layer is compared with the copy ``take_snapshot`` took. For each
+        module that differs, the snapshot's copy becomes the module as it is
+        now, so the edits are reported once. A state with no snapshot is not
+        checked.
+        """
+        if self.target_type == "edge":
+            layer, current = "profile", self.profile_config
+        elif self.edge_config is not None:
+            layer, current = "edge", self.edge_config
+        else:
+            return
+        snapshot = self._snapshot.get(layer)
+        if snapshot is None or snapshot.modules is MISSING:
+            return
+        if current.modules is MISSING:
+            return
+        held = {m.name: i for i, m in enumerate(snapshot.modules)}
+        fields: dict[str, list[str]] = {}
+        for module in current.modules:
+            index = held.get(module.name)
+            data = module.data
+            if index is None or not isinstance(data, VcoModel):
+                continue
+            before = snapshot.modules[index].data
+            if not isinstance(before, VcoModel):
+                continue
+            changes = raw_changes(_dump(before), _dump(data), type(data))
+            if not changes:
+                continue
+            fields[module.name] = list(dict.fromkeys(str(c.path) for c in changes))
+            snapshot.modules[index] = copy.deepcopy(module)
+        if not fields:
+            return
+        profile_id = self.profile_config.id_
+        raise LayerNotSavedError(
+            layer,
+            self.target_type,
+            fields,
+            profile_id if isinstance(profile_id, int) else None,
+        )
+
     @property
     def edge(self) -> LayerView:
         """The edge layer's module data. Raises ``ValueError`` without an edge layer."""
@@ -539,8 +587,13 @@ class ConfigState:
         First, raises ``DetachedObjectError`` naming the paths if objects of a
         module :meth:`replace_module` replaced were changed in place; once for
         those changes, so the next call plans.
+
+        Then raises ``LayerNotSavedError`` if the layer this state does not
+        save (the profile layer of an edge state) was edited, naming the
+        fields; once for those edits, so the next call plans.
         """
         self._check_detached()
+        self._check_unsaved_layer()
         config = self.target_config
         if config.modules is MISSING:
             return ConfigPlan(modules=())

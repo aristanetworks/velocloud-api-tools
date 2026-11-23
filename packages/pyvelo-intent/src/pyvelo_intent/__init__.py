@@ -31,6 +31,7 @@ from pyvelo_intent.diff import (
 from pyvelo_intent.errors import (
     ConfigInputError,
     IntentError,
+    LayerNotSavedError,
     SaveValidationError,
     UnknownRegistryEntryError,
 )
@@ -46,6 +47,7 @@ __all__ = [
     "DiffResult",
     "FieldChange",
     "IntentError",
+    "LayerNotSavedError",
     "Modified",
     "ModuleWriteError",
     "PatchError",

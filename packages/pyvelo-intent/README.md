@@ -305,6 +305,11 @@ firewall: update
 - `state.plan().render()` shows each module's changes against the raw data as
   read, as in the example above. `SaveResult.plan` is the same plan, and
   `dry_run=True` reports it without writing.
+- A state loaded with `load` saves the edge's own layer. `state.profile` is
+  there to read: an edit made through it is not saved, and the next `plan()`,
+  `get_changed_modules()` or `save()` raises `LayerNotSavedError` (from
+  `pyvelo_intent`) with the fields, once, before anything is sent. To change
+  the profile, load it with `load_profile`.
 - When the profile has segments the edge module lacks, a write to that module
   adds them as entries that inherit everything, after the edge's own entries
   and in the profile's order. The plan lists them under "reconciled segments".
@@ -584,7 +589,7 @@ Known limits:
 | `pyvelo_intent.config.validators.*` | Structural built-ins (`key_uniqueness`, `override_consistency`, `required_fields`) + domain validators (firewall, device settings) |
 | `pyvelo_intent.config.(firewall\|device_settings\|qos\|wan\|control_plane)` | Per-module configuration helpers |
 | `pyvelo_intent.diff` | Generic keyed-list diff engine: `diff_intents`, `DiffResult`, `Added`, `Removed`, `Modified`, `Unchanged`, `FieldChange` |
-| `pyvelo_intent.errors` | `IntentError`, `ConfigInputError`, `SaveValidationError`, `UnknownRegistryEntryError` |
+| `pyvelo_intent.errors` | `IntentError`, `ConfigInputError`, `LayerNotSavedError`, `SaveValidationError`, `UnknownRegistryEntryError` |
 | `pyvelo_intent.testing` | Test fixtures: `MockVcoClient`, which holds a `ModuleStore` (`pyvelo.testing`) as `store` that serves module reads and writes (`MockVcoClient.for_state(state)` seeds it from a state), `make_firewall_module`, `make_firewall_segment` |
 
 ## Tests
