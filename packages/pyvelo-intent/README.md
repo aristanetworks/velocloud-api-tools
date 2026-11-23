@@ -700,10 +700,10 @@ Known limits:
 | `pyvelo_intent` | Re-exports the public surface: `ConfigPipeline`, `ConfigState`, `SaveResult`, `SaveProgress` and `save_progress`, the patch helpers (`add`, `delete`, `move`, `at`) and `PatchError`, diff types (`DiffResult`, `Added`, `Removed`, `Modified`, `Unchanged`, `FieldChange`), the intent error types, the write errors `ModuleWriteError` (the base of the next three), `ConfigConflictError`, `WriteNotAppliedError`, `WriteOutcomeUnknownError` and `DetachedObjectError` (from `pyvelo.client.exceptions`), helpers (`build_default_pipeline`, `confirm_save`, `load_config`) |
 | `pyvelo_intent.config.pipeline` | `ConfigPipeline` (load/load_profile → apply → save), `build_default_pipeline` |
 | `pyvelo_intent.config.state` | `ConfigState`, `StateLock`, `SaveResult`, `SaveProgress`, `save_progress`, `ConfigFieldChange`, `ValidationWarning` |
-| `pyvelo_intent.config.helpers` | `load_config`, `confirm_save` |
+| `pyvelo_intent.config.helpers` | `load_config` (a YAML file validated against a model; `ConfigInputError` for a file it cannot use, a key given twice included), `confirm_save` (a yes or no prompt, which prints the plan it is given: `confirm_save(plan=preview.plan)`) |
 | `pyvelo_intent.config.validators.*` | Structural built-ins (`key_uniqueness`, `override_consistency`, `required_fields`) + domain validators (firewall, device settings) |
 | `pyvelo_intent.config.(firewall\|device_settings\|qos\|wan\|control_plane)` | Per-module configuration helpers |
-| `pyvelo_intent.diff` | Generic keyed-list diff engine: `diff_intents`, `DiffResult`, `Added`, `Removed`, `Modified`, `Unchanged`, `FieldChange` |
+| `pyvelo_intent.diff` | Generic keyed-list diff engine: `diff_intents`, `DiffResult`, `Added`, `Removed`, `Modified`, `Unchanged`, `FieldChange`. Each side must have each key once (`ValueError` otherwise). |
 | `pyvelo_intent.errors` | `IntentError`, `ConfigInputError`, `LayerNotSavedError`, `SaveValidationError`, `UnknownRegistryEntryError` |
 | `pyvelo_intent.testing` | Test fixtures: `MockVcoClient`, which holds a `ModuleStore` (`pyvelo.testing`) as `store` that serves module reads and writes (`MockVcoClient.for_state(state)` seeds it from a state), `make_firewall_module`, `make_firewall_segment` |
 
