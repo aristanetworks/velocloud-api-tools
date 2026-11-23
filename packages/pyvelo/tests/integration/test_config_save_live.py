@@ -38,7 +38,9 @@ so the check is off and ``returnData`` is honoured; a stale ``update_module``
 of the same value raised ``WriteNotAppliedError``, of another value
 ``ConfigConflictError``.
 
-Requires VCO_HOST and VCO_TOKEN (VCO_ENTERPRISE_ID if the token needs one).
+Requires VCO_HOST and VCO_TOKEN (VCO_ENTERPRISE_ID if the token needs one), and
+to write, PYVELO_IT_WRITE_HOST and PYVELO_IT_WRITE_ENTERPRISE_ID: see
+``live_support``.
 
 Run:
     uv run --env-file .env pytest -m integration packages/pyvelo/tests/integration/test_config_save_live.py
@@ -455,6 +457,7 @@ CASES = [
 ]
 
 
+@pytest.mark.live_write
 @pytest.mark.parametrize("case", CASES, ids=[c.id for c in CASES])
 async def test_edit_reads_back_as_only_the_intended_change(
     lab: Lab, case: Case
@@ -499,6 +502,7 @@ def _uncarried_keys(module: AnyConfigurationModule) -> list[Path]:
     ]
 
 
+@pytest.mark.live_write
 @pytest.mark.parametrize("case", CASES, ids=[c.id for c in CASES])
 async def test_keys_the_model_does_not_carry_survive_an_edit(
     lab: Lab, case: Case
@@ -522,6 +526,7 @@ async def test_keys_the_model_does_not_carry_survive_an_edit(
         )
 
 
+@pytest.mark.live_write
 async def test_a_qos_rule_copied_from_an_ipv4_rule_saves(lab: Lab) -> None:
     layout = await lab.pick_writable_edge(
         Name.QOS,
@@ -542,6 +547,7 @@ async def test_a_qos_rule_copied_from_an_ipv4_rule_saves(lab: Lab) -> None:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.live_write
 async def test_a_module_read_before_another_write_is_refused(
     lab: Lab, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -617,6 +623,7 @@ def _raised(module: AnyConfigurationModule, path: Path) -> QosData:
     return data.merge_patch(patch)
 
 
+@pytest.mark.live_write
 async def test_update_module_returns_the_module_as_stored(
     lab: Lab, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -678,6 +685,7 @@ async def test_update_module_returns_the_module_as_stored(
         )
 
 
+@pytest.mark.live_write
 async def test_a_request_without_a_version_is_not_checked(lab: Lab) -> None:
     layout = await lab.pick_writable_edge(Name.WAN, _wan_usable, "with a link")
     site = lab.edge_site(layout, Name.WAN)
@@ -718,6 +726,7 @@ def _has_refs(module: AnyConfigurationModule) -> bool:
     )
 
 
+@pytest.mark.live_write
 async def test_a_data_edit_sends_no_refs(
     lab: Lab, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -764,6 +773,7 @@ def _firewall_with_refs(module: AnyConfigurationModule) -> bool:
     )
 
 
+@pytest.mark.live_write
 async def test_a_data_edit_leaves_the_refs_of_a_firewall_as_they_were(
     lab: Lab,
 ) -> None:

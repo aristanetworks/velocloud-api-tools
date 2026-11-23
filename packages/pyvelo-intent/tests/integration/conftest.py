@@ -39,12 +39,15 @@ def _env(name: str, required: bool = False) -> str | None:
 
 @pytest_asyncio.fixture(scope="session", loop_scope="session")
 async def vco_client() -> AsyncGenerator[VcoClient]:
-    host = _env("VCO_HOST", required=True)
-    token = _env("VCO_TOKEN", required=True)
-    assert host is not None
-    assert token is not None
-    async with VcoClient(vco_fqdn=host, token=token) as client:
+    async with live.connect() as client:
         yield client
+
+
+@pytest.fixture(autouse=True)
+def live_write_marker(request: pytest.FixtureRequest) -> Generator[None]:
+    """Only a test marked ``live_write`` may write to the Orchestrator."""
+    with live.writer_test(request.node.get_closest_marker("live_write") is not None):
+        yield
 
 
 @pytest.fixture(scope="session")

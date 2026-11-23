@@ -23,7 +23,10 @@ asyncio_default_fixture_loop_scope = "function"
 addopts = ["-ra", "-q", "-m", "not integration"]
 testpaths = ["packages/pyvelo/tests", "packages/pyvelo-intent/tests"]
 pythonpath = ["packages/pyvelo/tests/support"]
-markers = ["integration: live VCO integration tests (require VCO_HOST + VCO_TOKEN)"]
+markers = [
+    "integration: live tests against a real Orchestrator (VCO_HOST and VCO_TOKEN); deselected by default",
+    "live_write: live tests that write to the Orchestrator (PYVELO_IT_WRITE_HOST and PYVELO_IT_WRITE_ENTERPRISE_ID as well)",
+]
 
 [tool.basedpyright]
 enableExperimentalFeatures = true

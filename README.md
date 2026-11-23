@@ -144,4 +144,6 @@ scripts/check.sh fix          # ruff check --fix + ruff format
 
 Tests cover pyvelo and pyvelo-intent and don't need a live VCO. CI (`.github/workflows/ci.yml`) runs the same script on every pull request.
 
+A separate live suite runs against a real Orchestrator and is deselected by default (`-m integration`). It reads the Orchestrator `VCO_HOST` and `VCO_TOKEN` name. Its tests that write are marked `live_write`, and they are skipped unless `PYVELO_IT_WRITE_HOST` and `PYVELO_IT_WRITE_ENTERPRISE_ID` name the Orchestrator and the enterprise the client is connected to; if the two are set and do not match, the tests fail and nothing is written. `pytest -m "integration and not live_write"` runs the read-only tests alone. `packages/pyvelo/tests/support/live_support.py` says how to set a lab up for it.
+
 Licensed under [Apache-2.0](LICENSE).

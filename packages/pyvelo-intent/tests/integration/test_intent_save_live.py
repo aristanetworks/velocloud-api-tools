@@ -46,7 +46,9 @@ Seen on the lab (first write-back run, 2026-11-22): the module row as stored,
 so the check is off and ``returnData`` is honoured; a stale save of the same
 value raised ``WriteNotAppliedError``, of another value ``ConfigConflictError``.
 
-Requires VCO_HOST and VCO_TOKEN (VCO_ENTERPRISE_ID if the token needs one).
+Requires VCO_HOST and VCO_TOKEN (VCO_ENTERPRISE_ID if the token needs one), and
+to write, PYVELO_IT_WRITE_HOST and PYVELO_IT_WRITE_ENTERPRISE_ID: see
+``live_support``.
 
 Run:
     uv run --env-file .env pytest -m integration packages/pyvelo-intent/tests/integration
@@ -357,6 +359,7 @@ async def _copy_last_rule(pipeline: ConfigPipeline, state: ConfigState) -> Path:
     return Path(("segments", Key(segment), "outbound", Key(name)))
 
 
+@pytest.mark.live_write
 async def test_profile_rule_added_through_apply_reads_back_as_that_rule_only(
     lab: Lab, pipeline: ConfigPipeline
 ) -> None:
@@ -393,6 +396,7 @@ def _profile_has_qoe(module: AnyConfigurationModule) -> bool:
     )
 
 
+@pytest.mark.live_write
 async def test_profile_scalar_edit_through_apply_reads_back_as_that_edit_only(
     lab: Lab, pipeline: ConfigPipeline
 ) -> None:
@@ -616,6 +620,7 @@ async def _reconcile(
         )
 
 
+@pytest.mark.live_write
 async def test_unrelated_edit_adds_the_missing_segments_as_empty_placeholders(
     lab: Lab, pipeline: ConfigPipeline
 ) -> None:
@@ -677,6 +682,7 @@ async def _reconcile_unrefused(
     check(refused is None, f"the Orchestrator refused the write: {refused}")
 
 
+@pytest.mark.live_write
 async def test_missing_device_settings_segment_is_added_as_a_placeholder_the_orchestrator_accepts(
     lab: Lab, pipeline: ConfigPipeline
 ) -> None:
@@ -763,6 +769,7 @@ def _placeholders(
     ]
 
 
+@pytest.mark.live_write
 async def test_an_insert_returns_its_row(
     lab: Lab, pipeline: ConfigPipeline, writes: Writes
 ) -> None:
@@ -887,6 +894,7 @@ def _firewall_that_comes_back_whole(module: AnyConfigurationModule) -> bool:
     )
 
 
+@pytest.mark.live_write
 async def test_edge_firewall_deleted_and_inserted_again_reads_back_as_sent(
     lab: Lab, pipeline: ConfigPipeline, writes: Writes
 ) -> None:
@@ -991,6 +999,7 @@ STALE_CASES = [
 ]
 
 
+@pytest.mark.live_write
 @pytest.mark.parametrize("case", STALE_CASES, ids=[c.id for c in STALE_CASES])
 async def test_second_save_from_an_older_state_is_refused_and_refreshes_the_state(
     lab: Lab,
@@ -1096,6 +1105,7 @@ def _device_settings_with_refs(module: AnyConfigurationModule) -> bool:
     )
 
 
+@pytest.mark.live_write
 async def test_save_of_a_data_edit_sends_no_refs(
     lab: Lab, pipeline: ConfigPipeline, writes: Writes
 ) -> None:
@@ -1133,6 +1143,7 @@ def _firewall_segment_with_letters(module: AnyConfigurationModule) -> bool:
     )
 
 
+@pytest.mark.live_write
 async def test_segment_named_in_another_case_is_edited_in_place_not_duplicated(
     lab: Lab, pipeline: ConfigPipeline
 ) -> None:
@@ -1207,6 +1218,7 @@ def _first_link(state: ConfigState) -> tuple[str, str]:
     return str(links[0].internal_id), links[0].addressing_version
 
 
+@pytest.mark.live_write
 async def test_save_then_edit_and_save_again_without_a_reload(
     lab: Lab, pipeline: ConfigPipeline, writes: Writes, stack_reads: list[int]
 ) -> None:
@@ -1397,6 +1409,7 @@ def _known_rewrite(case: Rewrite, change: ServerChange) -> bool:
     return any(matches(change.path, pattern) for pattern in case.known)
 
 
+@pytest.mark.live_write
 @pytest.mark.parametrize("case", REWRITE_CASES, ids=[c.id for c in REWRITE_CASES])
 async def test_server_changes_hold_only_known_rewrites(
     lab: Lab, pipeline: ConfigPipeline, case: Rewrite

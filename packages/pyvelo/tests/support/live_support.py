@@ -13,6 +13,33 @@ it was raised, never the exception's own text: that quotes names and values
 of the lab. ``check`` and ``pytest.fail`` word a failure for the report as it
 is; a ``LiveSuiteError`` carries a message that is safe to show.
 
+Running the live suite
+----------------------
+
+The suite is deselected by default. It reads the Orchestrator the library's
+own variables name, ``VCO_HOST`` and ``VCO_TOKEN`` (and ``VCO_ENTERPRISE_ID``
+when the token is not an enterprise's own). It writes only when two more
+variables say that it may:
+
+    PYVELO_IT_WRITE_HOST            the host name of the Orchestrator the suite
+                                    may write to: the host of VCO_HOST, alone
+    PYVELO_IT_WRITE_ENTERPRISE_ID   the ID of the enterprise it may write to:
+                                    the token's own, or VCO_ENTERPRISE_ID
+
+Both are checked against the client before anything is written: the host
+against the one the client is connected to, the enterprise by asking the
+Orchestrator which enterprise the run's requests address. Unset, the tests
+that write are skipped and say so. Set and not matching, they fail, and
+nothing is written. Set them for a lab, and never in a file that also serves
+a production tenant.
+
+    uv run --env-file .env pytest -m "integration and not live_write"   # reads only
+    uv run --env-file .env pytest -m integration                        # everything
+
+A test that writes is marked ``live_write``. The client refuses a write from
+any other test, a write outside a ``restoring`` block, and a write to a
+module no open block covers: the suite can only write what it will put back.
+
 ``restoring`` is the one way a test writes: it records a module's raw data first
 (in a private file under ``$PYVELO_IT_BACKUP_DIR``, which must be outside the
 repository, else a new temp directory; it holds no refs but a QoS module's, and
@@ -47,9 +74,18 @@ import pathlib
 import re
 import tempfile
 import uuid
-from collections.abc import AsyncGenerator, Awaitable, Callable, Iterable, Sequence
-from contextlib import asynccontextmanager
-from dataclasses import dataclass
+import weakref
+from collections.abc import (
+    AsyncGenerator,
+    Awaitable,
+    Callable,
+    Generator,
+    Iterable,
+    Mapping,
+    Sequence,
+)
+from contextlib import asynccontextmanager, contextmanager
+from dataclasses import dataclass, field
 from typing import Annotated, Any, cast
 
 import pytest
@@ -75,6 +111,7 @@ from pyvelo.client.schemas.configuration import (
     EnterpriseConfigurationProfile,
     GetConfiguration,
     InsertConfigurationModule,
+    InsertConfigurationModuleResult,
     InsertFirewallConfigurationModule,
     InsertQosConfigurationModule,
     UpdateConfigurationModule,
@@ -83,7 +120,7 @@ from pyvelo.client.schemas.edge import (
     GetEdgeConfigurationModules,
     GetEdgeConfigurationStack,
 )
-from pyvelo.client.schemas.enterprise import GetEnterpriseEdges
+from pyvelo.client.schemas.enterprise import GetEnterprise, GetEnterpriseEdges
 from pyvelo.client.schemas.profiles import GetEnterpriseConfigurations
 from pyvelo.core import (
     Alias,
@@ -301,6 +338,7 @@ class Lab:
         self, layouts: Sequence[EdgeLayout], name: ConfigurationModuleName
     ) -> EdgeLayout | None:
         """The first of *layouts* whose *name* module takes a write."""
+        require_writes(run_of(self.client))
         for layout in layouts:
             if await accepts_a_write(self.edge_site(layout, name)):
                 return layout
@@ -313,6 +351,7 @@ class Lab:
         what: str = "",
     ) -> EdgeLayout:
         """The first such edge whose module takes a write, or skip the test."""
+        require_writes(run_of(self.client))
         found = self.edges_with(name, suitable)
         if not found:
             pytest.skip(f"no edge has a {name.value} module {what or 'to use'}")
@@ -328,6 +367,7 @@ class Lab:
         what: str = "",
     ) -> int:
         """The ID of the first profile with such a module that takes a write, or skip."""
+        require_writes(run_of(self.client))
         found = 0
         for profile_id in self.profile_ids:
             config = await read_profile(self.client, profile_id, self.enterprise_id)
@@ -392,46 +432,265 @@ def refusal_codes(exc: VcoOperationError) -> str:
     )
 
 
-_REDACTED: set[int] = set()
+# ---------------------------------------------------------------------------
+# Writing: the opt-in and the guard
+# ---------------------------------------------------------------------------
+
+WRITE_HOST_ENV = "PYVELO_IT_WRITE_HOST"
+WRITE_ENTERPRISE_ENV = "PYVELO_IT_WRITE_ENTERPRISE_ID"
+
+WRITES_OFF = (
+    "live write tests are off: set PYVELO_IT_WRITE_HOST to the host name of the "
+    "Orchestrator this suite may write to and PYVELO_IT_WRITE_ENTERPRISE_ID to the "
+    "ID of the enterprise, then run again"
+)
+NOT_MARKED = (
+    "this test writes to the Orchestrator and is not marked live_write; "
+    "nothing was written; mark the test with @pytest.mark.live_write"
+)
+OUTSIDE_RESTORING = (
+    "a write outside a restoring block; nothing was sent; "
+    "make the write inside an `async with restoring(site)` block"
+)
+NOT_COVERED = (
+    "that no open restoring block covers; nothing was sent; open "
+    "`restoring(site)` on the module's own site and write inside it"
+)
 
 
-def redact_refusals(client: VcoClient) -> None:
-    """Make the client's write refusals carry their codes alone.
+class WritesRefused(LiveSuiteError):
+    """A write the suite will not send; the message says why and names no entity."""
 
-    The Orchestrator's validation text quotes the names of what it refuses, and a
+
+@dataclass(frozen=True)
+class WriteAccess:
+    """Whether this run may write, and the refusal to show when it may not."""
+
+    granted: bool = False
+    refusal: str = WRITES_OFF
+    misconfigured: bool = False
+    """The opt-in is set and wrong: the test fails, where an unset one skips it."""
+
+
+class EnterpriseId(VcoModel):
+    """The one field of an enterprise that the opt-in is checked against."""
+
+    id_: Annotated[int, Alias("id")]
+
+
+_HOST = re.compile(r"[a-z0-9]([a-z0-9.-]*[a-z0-9])?")
+
+
+def _host_name(host: str) -> str:
+    """*host* without white space or a last dot, in lower case."""
+    return host.strip().removesuffix(".").lower()
+
+
+def _refused(reason: str, remedy: str) -> WriteAccess:
+    return WriteAccess(
+        False, f"writes refused: {reason}; nothing was written; {remedy}", True
+    )
+
+
+async def check_write_access(
+    client: VcoClient,
+    enterprise_id: int | None,
+    environ: Mapping[str, str] | None = None,
+) -> WriteAccess:
+    """Whether the two opt-in variables name the host and the enterprise of *client*.
+
+    The host is compared with the one the client is connected to; the
+    enterprise by asking the Orchestrator which enterprise the requests with
+    *enterprise_id* address. Nothing is asked before the host matches. No
+    message holds the host, the token or an ID.
+    """
+    variables = os.environ if environ is None else environ
+    host = _host_name(variables.get(WRITE_HOST_ENV, ""))
+    enterprise = variables.get(WRITE_ENTERPRISE_ENV, "").strip()
+    if not host and not enterprise:
+        return WriteAccess()
+    if not host or not enterprise:
+        return _refused(
+            f"{WRITE_HOST_ENV} and {WRITE_ENTERPRISE_ENV} must both be set",
+            "set the one that is missing, or unset the other to turn writes off",
+        )
+    if not re.fullmatch(r"[0-9]+", enterprise):
+        return _refused(
+            f"{WRITE_ENTERPRISE_ENV} is not a whole number",
+            "set it to the ID of the enterprise, in digits",
+        )
+    if not _HOST.fullmatch(host):
+        return _refused(
+            f"{WRITE_HOST_ENV} must be a host name alone, with no scheme, port, "
+            "path or user",
+            "set it to the host name VCO_HOST names, and nothing else",
+        )
+    connected = _host_name(client._http_client().base_url.host)  # pyright: ignore[reportPrivateUsage]
+    if host != connected:
+        return _refused(
+            f"{WRITE_HOST_ENV} does not name the Orchestrator this run is connected to",
+            "set it to the host name VCO_HOST names, or point VCO_HOST at the "
+            "Orchestrator you mean to write to",
+        )
+    try:
+        addressed = await client.portal(
+            "enterprise/getEnterprise",
+            GetEnterprise(
+                enterprise_id=enterprise_id if enterprise_id is not None else MISSING
+            ),
+            EnterpriseId,
+        )
+    except VcoOperationError as exc:
+        return _refused(
+            "the enterprise this run addresses could not be read from the "
+            f"Orchestrator ({refusal_codes(exc)})",
+            "set VCO_ENTERPRISE_ID if the token is not an enterprise's own",
+        )
+    except ValidationError:
+        return _refused(
+            "the enterprise this run addresses could not be read from the "
+            "Orchestrator (the answer has no ID)",
+            "check that VCO_HOST names an Orchestrator and that the token may "
+            "read its enterprise",
+        )
+    if addressed.id_ != int(enterprise):
+        return _refused(
+            f"{WRITE_ENTERPRISE_ENV} is not the enterprise this run addresses",
+            "set it to the ID of the enterprise the token belongs to, or that "
+            "VCO_ENTERPRISE_ID names",
+        )
+    return WriteAccess(granted=True, refusal="")
+
+
+_marked: bool = False
+"""Whether the test now running is marked ``live_write``; false outside ``writer_test``."""
+
+
+@contextmanager
+def writer_test(marked: bool) -> Generator[None]:
+    """For the length of the block, the test running is a writer (*marked*) or is not."""
+    global _marked
+    before = _marked
+    _marked = marked
+    try:
+        yield
+    finally:
+        _marked = before
+
+
+@dataclass
+class LiveRun:
+    """What one client may write, and what it has open to write: the guard's state."""
+
+    access: WriteAccess = field(default_factory=WriteAccess)
+    open: list[tuple[Site, int | None]] = field(
+        default_factory=lambda: list[tuple[Site, int | None]]()
+    )
+    """The site of each open ``restoring`` block, and the ID of the module it found."""
+    inserted: set[int] = field(default_factory=set[int])
+    """The IDs of the modules this run inserted and has not deleted."""
+
+    def _check_may_write(self) -> None:
+        if not _marked:
+            raise WritesRefused(NOT_MARKED)
+        if not self.access.granted:
+            raise WritesRefused(self.access.refusal)
+        if not self.open:
+            raise WritesRefused(OUTSIDE_RESTORING)
+
+    def check_update(self, module_id: int) -> None:
+        """Raise ``WritesRefused`` unless the update of *module_id* is one a block will put back."""
+        self._check_may_write()
+        found = {module for _, module in self.open if module is not None}
+        if module_id not in found and module_id not in self.inserted:
+            raise WritesRefused(f"an update of a module {NOT_COVERED}")
+
+    def check_replace(self, configuration_id: int, name: str, what: str) -> None:
+        """Raise ``WritesRefused`` unless an open block is on that configuration's *name* module.
+
+        *what* is ``"an insert"`` or ``"a delete"``.
+        """
+        self._check_may_write()
+        if not any(
+            site.configuration_id == configuration_id and site.name.value == name
+            for site, _ in self.open
+        ):
+            raise WritesRefused(f"{what} of a {name} module {NOT_COVERED}")
+
+
+def require_writes(run: LiveRun) -> None:
+    """Fail where the test may not write, skip where this run may not, else return."""
+    if not _marked:
+        pytest.fail(NOT_MARKED, pytrace=False)
+    if run.access.misconfigured:
+        pytest.fail(run.access.refusal, pytrace=False)
+    if not run.access.granted:
+        pytest.skip(run.access.refusal)
+
+
+_RUNS: weakref.WeakKeyDictionary[VcoClient, LiveRun] = weakref.WeakKeyDictionary()
+
+
+def run_of(client: VcoClient) -> LiveRun:
+    """The run of *client*, made on the first call, which also puts the guard on the client.
+
+    The guard is in the client's own write methods, so a test that forgets
+    every helper is refused too. A refused write carries its codes alone: the
+    Orchestrator's validation text quotes the names of what it refuses, and a
     refused write in a test would put them in the test output.
     """
-    if id(client) in _REDACTED:
-        return
+    run = _RUNS.get(client)
+    if run is not None:
+        return run
+    run = LiveRun()
+    _RUNS[client] = run
     update = client.update_configuration_module
     insert = client.insert_configuration_module
 
-    async def redacted_update(
+    async def guarded_update(
         request: UpdateConfigurationModule, *, level: ConfigContext | None = None
     ) -> AnyConfigurationModule | None:
+        run.check_update(request.configuration_module_id)
         try:
             return await update(request, level=level)
         except VcoOperationError as exc:
             raise _redacted(exc) from None
 
-    async def redacted_insert(
+    async def guarded_insert(
         request: InsertConfigurationModule, *, level: ConfigContext | None = None
-    ) -> Any:
+    ) -> InsertConfigurationModuleResult | AnyConfigurationModule:
+        run.check_replace(request.configuration_id, request.name, "an insert")
         try:
-            return await insert(request, level=level)
+            inserted = await insert(request, level=level)
         except VcoOperationError as exc:
             raise _redacted(exc) from None
+        run.inserted.add(inserted.id_)
+        return inserted
 
     # Instance attributes, which shadow the methods: a spy a test puts over them
     # (``monkeypatch.setattr``) wraps these.
     attributes = vars(client)
-    attributes["update_configuration_module"] = redacted_update
-    attributes["insert_configuration_module"] = redacted_insert
-    _ = _REDACTED.add(id(client))
+    attributes["update_configuration_module"] = guarded_update
+    attributes["insert_configuration_module"] = guarded_insert
+    return run
+
+
+@asynccontextmanager
+async def connect() -> AsyncGenerator[VcoClient]:
+    """A client for the Orchestrator ``VCO_HOST`` and ``VCO_TOKEN`` name, with the write guard on it."""
+    host = os.environ.get("VCO_HOST")
+    if not host:
+        pytest.skip("VCO_HOST not set")
+    token = os.environ.get("VCO_TOKEN")
+    if not token:
+        pytest.skip("VCO_TOKEN not set")
+    async with VcoClient(vco_fqdn=host, token=token) as client:
+        _ = run_of(client)
+        yield client
 
 
 async def discover_lab(client: VcoClient, enterprise_id: int | None) -> Lab:
-    redact_refusals(client)
+    run_of(client).access = await check_write_access(client, enterprise_id)
     return Lab(
         client=client,
         enterprise_id=enterprise_id,
@@ -533,6 +792,8 @@ class DeleteConfigurationModule(VcoModel):
 
 
 async def delete_module(site: Site, module_id: int) -> None:
+    run = run_of(site.client)
+    run.check_replace(site.configuration_id, site.name.value, "a delete")
     request = DeleteConfigurationModule(id_=module_id)
     if site.enterprise_id is not None:
         request.enterprise_id = site.enterprise_id
@@ -543,6 +804,7 @@ async def delete_module(site: Site, module_id: int) -> None:
     except VcoOperationError as exc:
         raise _redacted(exc) from None
     check(not result.error, f"deleting the {site.name.value} module was refused")
+    run.inserted.discard(module_id)
 
 
 async def insert_module(site: Site, data: object, refs: object) -> None:
@@ -804,29 +1066,41 @@ def ref_names(refs: object) -> list[str]:
 
 @asynccontextmanager
 async def restoring(site: Site) -> AsyncGenerator[Original | None]:
-    """Run a test's writes to *site*'s module and, however they end, undo them."""
+    """Run a test's writes to *site*'s module and, however they end, undo them.
+
+    The block is open for the client's write guard from the backup until the
+    restore is done, so that the restore's own writes are covered.
+    """
+    run = run_of(site.client)
+    require_writes(run)
     original = await capture(site)
     backup = save_backup(site, original) if original is not None else None
+    entry = (site, original.module_id if original is not None else None)
+    run.open.append(entry)
     try:
-        yield original
-    finally:
         try:
-            await restore(site, original)
-        except (Exception, pytest.fail.Exception) as exc:
-            if backup is None:
-                raise
-            what = (
-                str(exc)
-                if isinstance(exc, pytest.fail.Exception)
-                else type(exc).__name__
-            )
-            pytest.fail(
-                f"{what}; the original {site.name.value} module is saved at {backup}",
-                pytrace=False,
-            )
-        else:
-            if backup is not None:
-                backup.unlink(missing_ok=True)
+            yield original
+        finally:
+            try:
+                await restore(site, original)
+            except (Exception, pytest.fail.Exception) as exc:
+                if backup is None:
+                    raise
+                what = (
+                    str(exc)
+                    if isinstance(exc, (pytest.fail.Exception, LiveSuiteError))
+                    else type(exc).__name__
+                )
+                pytest.fail(
+                    f"{what}; the original {site.name.value} module is saved at "
+                    f"{backup}",
+                    pytrace=False,
+                )
+            else:
+                if backup is not None:
+                    backup.unlink(missing_ok=True)
+    finally:
+        run.open.remove(entry)
 
 
 async def accepts_a_write(site: Site) -> bool:
