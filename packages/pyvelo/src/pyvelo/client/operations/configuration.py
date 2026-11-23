@@ -109,8 +109,9 @@ async def _read_stored(
     update's returned row is: at the config level of *module*, or at none
     when it has none. *answer* is what the VCO said of the write. Raises
     ``WriteOutcomeUnknownError`` for that ID when *module* has no
-    ``configuration_id``, its configuration does not hold the module, or the
-    row does not parse. An error of the read request itself propagates.
+    ``configuration_id``, the configuration read does not parse, it does not
+    hold the module, or the row does not parse. An error of the read request
+    itself propagates.
     """
     wanted = module.id_ if module_id is None else module_id
     configuration_id = module.configuration_id
@@ -122,15 +123,24 @@ async def _read_stored(
             answer=answer,
             module_id=wanted,
         )
-    config = await client.portal(
-        "configuration/getConfiguration",
-        GetConfiguration(
-            id_=configuration_id,
-            enterprise_id=enterprise_id if enterprise_id is not None else MISSING,
-            with_=[GetConfigurationWith.MODULES],
-        ),
-        _ConfigurationRows,
-    )
+    try:
+        config = await client.portal(
+            "configuration/getConfiguration",
+            GetConfiguration(
+                id_=configuration_id,
+                enterprise_id=enterprise_id if enterprise_id is not None else MISSING,
+                with_=[GetConfigurationWith.MODULES],
+            ),
+            _ConfigurationRows,
+        )
+    except ValidationError as error:
+        raise _unknown_outcome(
+            module,
+            plan,
+            "the configuration read back does not parse",
+            answer=answer,
+            module_id=wanted,
+        ) from error
     held = config.modules if config.modules is not MISSING else []
     row = next((r for r in held if r.get("id") == wanted), None)
     if row is None:

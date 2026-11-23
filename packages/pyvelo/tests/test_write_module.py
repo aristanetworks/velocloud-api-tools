@@ -791,6 +791,31 @@ async def test_read_back_row_that_does_not_parse_is_an_unknown_outcome(
     assert isinstance(exc.value.__cause__, ValidationError)
 
 
+async def test_read_back_answer_that_does_not_parse_is_an_unknown_outcome(
+    mock_vco_client: MockVcoClientFactory,
+):
+    module = firewall_disabled()
+    store = store_of(module, return_data=False)
+
+    def modules_as_text(request: httpx.Request) -> httpx.Response:
+        if (
+            parse_json_object(request.content)["method"]
+            != "configuration/getConfiguration"
+        ):
+            return store(request)
+        config = {**store.configurations[10], "modules": "not a list"}
+        return httpx.Response(200, json=make_jsonrpc_response(result=config))
+
+    client = await mock_vco_client(modules_as_text)
+    with pytest.raises(WriteOutcomeUnknownError) as exc:
+        _ = await client.write_module(module, plan_module(module))
+    assert exc.value.answer == "counted"
+    assert exc.value.detail == "the configuration read back does not parse"
+    assert exc.value.module_id == 1
+    assert isinstance(exc.value.__cause__, ValidationError)
+    assert store.rows[1]["data"]["firewall_enabled"] is False
+
+
 @pytest.mark.parametrize(
     ("change", "detail"),
     [
