@@ -1347,7 +1347,9 @@ async def test_dry_run_refuses_what_the_save_refuses():
 async def test_plus_add_of_a_segment_the_edge_has_under_another_name_says_what_to_do():
     state = _renamed_guest_state()
     patch: dict[str, object] = {"segments": {"+": add({"segment": {"name": "Guest"}})}}
-    with pytest.raises(PatchError, match="already in the edge layer, as 'Guest-old'") as exc:
+    with pytest.raises(
+        PatchError, match="already in the edge layer, as 'Guest-old'"
+    ) as exc:
         _ = await ConfigPipeline(client=None).apply(
             state, module="firewall", patch=patch
         )

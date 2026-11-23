@@ -489,20 +489,45 @@ def _python_place(loc: Sequence[int | str], models: Sequence[type[VcoModel]]) ->
     ``merge_patch`` accepts, becomes its python name, and the walk goes on
     in the classes that field's value is made of. Any other part is kept
     as it is: a list position, a map key, the tag or the name of a union
-    member.
+    member. The part after a map field is the key, and the part after a
+    union (or after the position in a list of a union) is its tag, even
+    when that text is also the name of a field below: it is kept, and the
+    walk goes on in the value's classes.
     """
     parts: list[PathPart] = []
     current = tuple(models)
+    keep = 0  # the parts that follow a field and are not fields
     for part in loc:
+        if keep:
+            keep -= 1
+            parts.append(part)
+            continue
         if isinstance(part, str) and current:
             fields = _merged_fields(current)
             name = _field_names_by_key(fields).get(part)
             if name is not None:
                 parts.append(name)
                 current = _value_models(fields[name])
+                keep = _parts_before_fields(fields[name])
                 continue
         parts.append(part)
     return Path(parts)
+
+
+def _parts_before_fields(field_info: FieldInfo) -> int:
+    """How many parts of an error's location follow *field_info*'s name before the fields of its models.
+
+    A map gives its key; a list gives the position of the item (and, for a
+    union of models, the tag of the member); a union of models gives the tag.
+    """
+    spec = _list_spec(field_info)
+    if spec is not None:
+        if spec.kind == "map":
+            return 1
+        if spec.item_type is not None:
+            return 1 + (len(spec.item_type.variants) > 1)
+        return 0
+    return int(len(_field_model_types(field_info)) > 1)
 
 
 def _validation_lines(exc: ValidationError, models: Sequence[type[VcoModel]]) -> str:
@@ -726,7 +751,9 @@ def _canonical_name(
     return canonical if isinstance(canonical, str) else name
 
 
-_CHANGE_IT_IN_LIST = '; to change it, write a plain object under its selector (no "_op")'
+_CHANGE_IT_IN_LIST = (
+    '; to change it, write a plain object under its selector (no "_op")'
+)
 """What a refusal of an add of an item already in the list says to do instead."""
 
 
