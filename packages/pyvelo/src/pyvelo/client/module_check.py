@@ -29,6 +29,7 @@ from typing import Any, Final, Literal, cast, override
 
 from pydantic import MISSING
 
+from pyvelo.client.derived_refs import APPEND_ONLY_REF_NAMES
 from pyvelo.client.exceptions import (
     ConfigConflictError,
     WriteAnswer,
@@ -95,11 +96,6 @@ Seeded from what is known of the VCO's rewrites; a rewrite a live test finds
 is added here. A firewall rule's ``ruleLogicalId`` and a WAN link's
 ``internalId`` are ``ServerOwned`` fields instead.
 """
-
-APPEND_ONLY_REF_NAMES: Final = frozenset(
-    {"deviceSettings:vnfs:edge", "objectGroup:addressGroup", "objectGroup:portGroup"}
-)
-"""Ref names whose rows a write does not remove: the removal of one is left out."""
 
 type RowId = tuple[str, object, object]
 """A ref row's identity: its name, ``enterpriseObjectId`` and ``segmentObjectId``."""

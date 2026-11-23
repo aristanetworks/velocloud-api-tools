@@ -7,6 +7,7 @@ from typing import Any, cast
 
 import pytest
 from pydantic import MISSING
+from pyvelo.client.derived_refs import APPEND_ONLY_REF_NAMES
 from pyvelo.client.enums.configuration import ConfigurationModuleName
 from pyvelo.client.exceptions import (
     ConfigConflictError,
@@ -18,7 +19,6 @@ from pyvelo.client.models.configuration.firewall.rules import FirewallInboundRul
 from pyvelo.client.models.configuration.qos.root import ServiceRateLimit
 from pyvelo.client.models.configuration.wan.link import WanLink
 from pyvelo.client.module_check import (
-    APPEND_ONLY_REF_NAMES,
     MODULE_REWRITES,
     ModuleWrite,
     check_module_write,

@@ -40,8 +40,8 @@ from typing import Any, cast
 import httpx
 from pydantic import MISSING
 
+from pyvelo.client.derived_refs import APPEND_ONLY_REF_NAMES
 from pyvelo.client.exceptions import PRECONDITION_FAILED
-from pyvelo.client.module_check import APPEND_ONLY_REF_NAMES
 from pyvelo.client.schemas.configuration import (
     ConfigurationBase,
     ConfigurationModuleBase,

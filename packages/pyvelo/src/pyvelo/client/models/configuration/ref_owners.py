@@ -51,7 +51,9 @@ class RefOwner:
 
 
 @dataclass(frozen=True)
-class _Segment:
+class SegmentRef:
+    """A segment entry's descriptor: the three things a ref row is matched to it by."""
+
     segment_id: int | None
     name: str | None
     logical_id: uuid.UUID | None
@@ -65,7 +67,7 @@ class _Site:
     field: str
     field_info: FieldInfo
     path: Path
-    segment: _Segment | None
+    segment: SegmentRef | None
 
 
 def _as_uuid(value: object) -> uuid.UUID | None:
@@ -80,14 +82,14 @@ def _as_uuid(value: object) -> uuid.UUID | None:
     return None
 
 
-def _segment_of(item: object) -> _Segment | None:
+def _segment_of(item: object) -> SegmentRef | None:
     """The segment an item of ``segments`` stands for, or ``None`` when it has none."""
     metadata: object = getattr(item, "segment", None)
     if metadata is None or metadata is MISSING:
         return None
     segment_id: object = getattr(metadata, "segment_id", None)
     name: object = getattr(metadata, "name", None)
-    return _Segment(
+    return SegmentRef(
         segment_id if isinstance(segment_id, int) else None,
         name if isinstance(name, str) else None,
         _as_uuid(getattr(metadata, "segment_logical_id", None)),
@@ -131,8 +133,38 @@ def can_hold_owner(model_cls: type[VcoModel]) -> bool:
     return False
 
 
+@functools.cache
+def declared_ref_names(
+    model_cls: type[VcoModel], level: ConfigContext | None
+) -> frozenset[str]:
+    """The ref names that a model of *model_cls* declares at *level*, at any depth.
+
+    The name of each ``OwnsRef`` whose ``level`` is not set or is *level*, and
+    the default name of each ``RefOnly``. A row of one of these names that no
+    owner matches is a row that disagrees with the data. It is computed from
+    the declared field types, as ``can_hold_owner`` is.
+    """
+    names: set[str] = set()
+    seen: set[type[VcoModel]] = set()
+    pending = [model_cls]
+    while pending:
+        current = pending.pop()
+        if current in seen:
+            continue
+        seen.add(current)
+        for field_info in current.model_fields.values():
+            owns = get_owns_ref(field_info)
+            ref_only = get_ref_only(field_info)
+            if owns is not None and (owns.level is None or owns.level == level):
+                names.add(owns.name)
+            if ref_only is not None and ref_only.default is not None:
+                names.add(ref_only.default)
+            pending.extend(_model_classes(field_info.annotation))
+    return frozenset(names)
+
+
 def _walk(
-    model: VcoModel, path: Path, segment: _Segment | None, *, root: bool
+    model: VcoModel, path: Path, segment: SegmentRef | None, *, root: bool
 ) -> Iterator[_Site]:
     if not can_hold_owner(type(model)):
         return
@@ -155,6 +187,15 @@ def _walk(
 
 def _sites(data: VcoModel) -> Iterator[_Site]:
     return _walk(data, Path(()), None, root=True)
+
+
+def data_segments(data: VcoModel) -> tuple[SegmentRef, ...]:
+    """The descriptor of each item of the root's ``segments`` that has one."""
+    items: object = getattr(data, "segments", None)
+    if not is_list(items):
+        return ()
+    found = (_segment_of(item) for item in items)
+    return tuple(segment for segment in found if segment is not None)
 
 
 def _ref_name(site: _Site, fallback: str | None) -> str | None:
@@ -246,7 +287,7 @@ def ref_only_values(data: VcoModel) -> dict[Path, object]:
     return values
 
 
-def _rows(raw_refs: object, name: str) -> list[dict[object, object]]:
+def rows_named(raw_refs: object, name: str) -> list[dict[object, object]]:
     """The rows of ref *name* in *raw_refs*: a bare object or a list, each as a ``dict``."""
     if not is_dict(raw_refs):
         return []
@@ -259,7 +300,7 @@ def _rows(raw_refs: object, name: str) -> list[dict[object, object]]:
 def segment_object_ids(raw_refs: object) -> dict[int, int]:
     """``data.segmentId`` to ``enterpriseObjectId`` of the ``deviceSettings:segment`` rows."""
     found: dict[int, int] = {}
-    for row in _rows(raw_refs, SEGMENT_REF):
+    for row in rows_named(raw_refs, SEGMENT_REF):
         data = row.get("data")
         segment_id = data.get("segmentId") if is_dict(data) else None
         object_id = row.get("enterpriseObjectId")
@@ -268,8 +309,8 @@ def segment_object_ids(raw_refs: object) -> dict[int, int]:
     return found
 
 
-def _row_is_of(
-    row: dict[object, object], segment: _Segment | None, object_ids: dict[int, int]
+def row_is_of_segment(
+    row: dict[object, object], segment: SegmentRef | None, object_ids: dict[int, int]
 ) -> bool:
     """Whether *row* is a row of *segment*; ``None`` is a row with no segment."""
     segment_object = row.get("segmentObjectId")
@@ -303,9 +344,11 @@ def fill_ref_only(data: VcoModel, raw_refs: object) -> None:
             continue
         name = _ref_name(site, ref_only.default)
         found: uuid.UUID | None = None
-        for row in () if name is None else _rows(raw_refs, name):
+        for row in () if name is None else rows_named(raw_refs, name):
             logical_id = _as_uuid(row.get("logicalId"))
-            if logical_id is not None and _row_is_of(row, site.segment, object_ids):
+            if logical_id is not None and row_is_of_segment(
+                row, site.segment, object_ids
+            ):
                 found = logical_id
                 break
         object.__setattr__(site.model, site.field, found)
