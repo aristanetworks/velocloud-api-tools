@@ -6,26 +6,42 @@ the rule IDs in them are those every plan sends), ``apply_assignment`` puts
 them into modules, and ``assign_on_trial`` is the check run on copies before
 the real modules change. ``ConfigPipeline.assign_segment`` and ``apply`` both
 use them.
+
+``apply`` reaches the same assignment through a patch, from any of the three
+modules: ``prepare_profile_segments`` reads the ``segments`` part of the patch
+before anything is merged (an ``add`` of a segment the module had no entry for
+assigns it, a list value that brings one does too), and
+``check_profile_segments`` is what the patched module must satisfy after the
+merge.
 """
 
 import copy
+import json
 import uuid
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Final, cast
 
 from pydantic import MISSING
-from pyvelo.client.models.configuration.common import segment_id_of
+from pyvelo.client.models.configuration.common import SegmentMetadata, segment_id_of
 from pyvelo.client.models.configuration.profile_segments import (
+    descriptor_of,
     new_segment_entry,
     pair_defaults,
     repaired_entry,
     with_additions,
 )
 from pyvelo.client.schemas.configuration import AnyConfigurationModule
-from pyvelo.core import ConfigContext
-from pyvelo.core.base import is_dict, is_list
-from pyvelo.core.identity import SegmentIdentity
+from pyvelo.core import ConfigContext, PatchError
+from pyvelo.core.base import VcoModel, field_models, is_dict, is_list
+from pyvelo.core.identity import (
+    ResolutionError,
+    ResolverNotLoadedError,
+    SegmentIdentity,
+)
+from pyvelo.core.merge import select_items
+from pyvelo.core.patch import ItemOp, is_new, parse_item_op, position_of
+from pyvelo.core.rebase import Key, Path
 
 from pyvelo_intent.config.state import ConfigState
 
@@ -194,3 +210,481 @@ def assign_on_trial(
         edit(trial)
     for module in trial.values():
         _ = state.plan_module(module)
+
+
+# --- the rules of a patch ----------------------------------------------------
+
+SEGMENTS: Final = Path(("segments",))
+"""Where the ``segments`` list of a module is in a patch."""
+
+
+def entry_path(path: Path, selector: object) -> Path:
+    """Where the entry under *selector* of a ``segments`` object is in the patch.
+
+    The place ``merge_patch`` reports it at: a position for ``"#n"``, else the
+    selector in string form.
+    """
+    n = position_of(selector)
+    return path.child(n if n is not None else Key(str(selector)))
+
+
+def added_segment_name(op: ItemOp) -> str | None:
+    """The segment name the body of an ``add`` gives at ``segment.name``, or None.
+
+    That is the key path of every ``segments`` list, and neither ``segment``
+    nor ``name`` has an alias or a camelCase form of its own, so these are
+    the only keys ``merge_patch`` reads the name under.
+    """
+    descriptor = op.body.get("segment")
+    name = descriptor.get("name") if is_dict(descriptor) else None
+    return None if name is None else str(name)
+
+
+def _segment_descriptors(layer: object) -> list[dict[str, object]]:
+    """The wire form of the ``segment`` object of each entry of *layer*, in order."""
+    assert isinstance(layer, VcoModel)  # a profile module's data
+    dumped = layer.model_dump(mode="json", by_alias=True)
+    return [entry["segment"] for entry in dumped["segments"]]
+
+
+def _canonical(descriptor: Mapping[str, object]) -> str:
+    return json.dumps(descriptor, sort_keys=True)
+
+
+def _raw_segment_ids(raw: object) -> set[int]:
+    """The ``segmentId`` of each entry of ``segments`` in the raw data *raw*."""
+    entries = raw.get("segments") if is_dict(raw) else None
+    return {
+        segment_id
+        for entry in (entries if is_list(entries) else [])
+        if isinstance(segment_id := segment_id_of(entry), int)
+    }
+
+
+def holds_segment_ops(nested: Mapping[str, object]) -> bool:
+    """Whether the ``segments`` of the nested patch *nested* holds an ``add`` or a ``delete``, or is a list value.
+
+    These are the patches that need the three modules of a profile. A patch
+    of changes and moves alone goes through one module. Raises ``PatchError``
+    for a value that is no item operation, as the merge would.
+    """
+    segments = nested.get("segments")
+    if is_list(segments):
+        return True
+    if not is_dict(segments):
+        return False
+    return any(
+        parse_item_op(value, entry_path(SEGMENTS, selector)).kind in ("add", "delete")
+        for selector, value in segments.items()
+        if is_dict(value)
+    )
+
+
+@dataclass(frozen=True)
+class ProfileSegmentPatch:
+    """A nested patch for one profile module, and the assignments it needs first."""
+
+    patch: dict[str, object]
+    """The nested patch, rewritten: each assigning ``add`` is a change under the enterprise's name, and a list value's new items are merged into their template entries."""
+    assignments: tuple[Assignment, ...]
+    """What to add to the modules before *patch* is merged, one per assigned segment."""
+
+
+type Resolve = Callable[[str], Awaitable[SegmentIdentity]]
+"""Resolves a segment name strictly: its identity, ``ResolutionError`` for one the enterprise lacks, ``LookupError`` where nothing can look it up."""
+
+
+async def prepare_profile_segments(
+    state: ConfigState,
+    module: AnyConfigurationModule,
+    nested: Mapping[str, object],
+    *,
+    resolve: Resolve,
+) -> ProfileSegmentPatch:
+    """The ``segments`` part of *nested*, a patch for *module* of a profile, read before it is merged.
+
+    *module* is one of the profile's device settings, QoS and firewall
+    modules; *resolve* gives a name's segment (``ConfigPipeline`` passes
+    ``_resolve_segment``, which loads the resolver if it is registered and not
+    loaded). For each item of ``segments``:
+
+    - an ``add`` of a segment *module* had no entry for as read assigns it
+      (``plan_assignment``) and becomes a change under the enterprise's name,
+      with its ``_position``; the name is the selector's, or under ``"+"``
+      the one the body gives at ``segment.name``;
+    - an ``add`` of a segment *module* had as read raises ``PatchError``
+      (``exists``), and an add under ``"+"`` that gives no name, and a body
+      whose ``segment`` is not the enterprise segment's, raise ``segment_rule``;
+    - a ``delete``, a change and a move are left as they are (what a
+      ``delete`` may remove is for ``check_profile_segments``);
+    - in a list value, an item for a segment *module* had no entry for as read
+      assigns it, and the item is merged into the template entry the
+      assignment makes, so a new segment starts from the template whatever
+      form of patch brings it. The other items are left as they are.
+
+    Two selectors for one segment raise ``PatchError`` (``duplicate``); a
+    name the enterprise lacks raises ``ResolutionError``; a state with no
+    segment resolver raises ``PatchError`` (``invalid_value``) at the
+    selector, with the ``LookupError`` as its ``__cause__``; a profile that
+    lacks one of the three modules, or has one not at the profile level,
+    raises ``PatchError`` (``segment_rule``). Nothing changes: the entries are
+    made here, once, and the caller applies them (``assign_on_trial``,
+    ``apply_assignment``) with the rewritten patch.
+    """
+    segments = nested.get("segments")
+    if not is_dict(segments) and not is_list(segments):
+        return ProfileSegmentPatch(dict(nested), ())
+    try:
+        _ = segment_modules(state)
+    except ValueError as error:
+        raise PatchError(
+            "a patch that adds, removes or replaces the segments of a profile "
+            f"works on its three modules together. {error}",
+            SEGMENTS,
+            "segment_rule",
+        ) from error
+    reader = _SegmentReader(state, module, resolve)
+    if is_list(segments):
+        prepared: object = await reader.list_value(segments)
+    else:
+        prepared = await reader.items(segments)
+    return ProfileSegmentPatch(
+        {**nested, "segments": prepared}, tuple(reader.assignments)
+    )
+
+
+class _SegmentReader:
+    """What ``prepare_profile_segments`` reads of one module, and what it makes."""
+
+    def __init__(
+        self, state: ConfigState, module: AnyConfigurationModule, resolve: Resolve
+    ) -> None:
+        self.state = state
+        self.module = module
+        self.module_name = str(module.name)
+        self.resolve = resolve
+        self.data: object = getattr(module, "data", MISSING)
+        self.as_read = _raw_segment_ids(module.raw_data)
+        self.assignments: list[Assignment] = []
+        self.assigned: dict[int, Assignment] = {}
+
+    async def items(self, segments: Mapping[object, object]) -> dict[object, object]:
+        """*segments*, an object of item operations by selector, with each assigning ``add`` made a change."""
+        prepared: dict[object, object] = {}
+        named: dict[int, Path] = {}
+        for selector, value in segments.items():
+            where = entry_path(SEGMENTS, selector)
+            key, rewritten = selector, value
+            segment_id: int | None = None
+            if is_dict(value):
+                op = parse_item_op(value, where)
+                if op.kind == "add" and position_of(selector) is None:
+                    identity, rewritten = await self._assigning_add(
+                        selector, value, op, where
+                    )
+                    key, segment_id = identity.name, identity.segment_id
+                else:
+                    segment_id = self._held_segment_id(selector)
+            if segment_id is not None:
+                if segment_id in named:
+                    raise _duplicate(named[segment_id], where)
+                named[segment_id] = where
+            prepared[key] = rewritten
+        return prepared
+
+    async def list_value(self, items: Sequence[object]) -> list[object]:
+        """*items*, a list value, with each item that brings a new segment merged into its template entry."""
+        prepared: list[object] = []
+        named: dict[int, Path] = {}
+        for index, item in enumerate(items):
+            replaced = await self._new_item(item, SEGMENTS.child(index), named)
+            prepared.append(item if replaced is None else replaced)
+        return prepared
+
+    def _held_segment_id(self, selector: object) -> int | None:
+        """The ``segmentId`` of the entry *selector* names in the module's data, or None."""
+        if not isinstance(self.data, VcoModel):
+            return None
+        try:
+            positions = select_items(
+                self.data, "segments", selector, self.state.resolvers
+            )
+        except ResolverNotLoadedError:
+            raise
+        except ResolutionError:
+            return None  # merge_patch raises it, with the rest of the patch
+        if not positions:
+            return None
+        segments: object = getattr(self.data, "segments", None)
+        if not is_list(segments) or positions[0] >= len(segments):
+            return None
+        held: object = getattr(
+            getattr(segments[positions[0]], "segment", None), "segment_id", None
+        )
+        return held if isinstance(held, int) else None
+
+    async def _identity(self, name: str, where: Path) -> SegmentIdentity:
+        try:
+            return await self.resolve(name)
+        except ResolutionError:
+            raise
+        except LookupError as error:
+            raise PatchError(
+                f"{name!r} is a segment name, and this state has no segment "
+                "resolver to look it up: give the state its resolvers with "
+                "`await pipeline.load_resolvers(state)` (`load` and "
+                "`load_profile` do), then patch again",
+                where,
+                "invalid_value",
+            ) from error
+
+    async def _assigning_add(
+        self, selector: object, value: Mapping[object, object], op: ItemOp, where: Path
+    ) -> tuple[SegmentIdentity, dict[object, object]]:
+        """The segment an ``add`` under *selector* assigns, and the change that replaces it."""
+        if is_new(selector):
+            name = added_segment_name(op)
+            if name is None:
+                raise PatchError(
+                    'an add under "+" names its segment by its body: '
+                    '{"+": {"_op": "add", "segment": {"name": "Guest"}}} '
+                    '(`add({"segment": {"name": "Guest"}})`), or by the '
+                    'selector, {"Guest": {"_op": "add"}} (`add()`)',
+                    where,
+                    "segment_rule",
+                )
+        else:
+            name = str(selector)
+        identity = await self._identity(name, where)
+        if identity.segment_id in self.as_read:
+            raise PatchError(
+                f"{identity.name} is already in {self.module_name}; change it "
+                "with a plain object, such as "
+                f'{{"segments": {{"{identity.name}": {{...}}}}}}, not an add',
+                where,
+                "exists",
+            )
+        change = _agreeing(
+            identity, {k: v for k, v in value.items() if k != "_op"}, where
+        )
+        self._assign(identity)
+        return identity, change
+
+    def _assign(self, identity: SegmentIdentity) -> None:
+        assignment = plan_assignment(self.state, identity)
+        self.assigned[identity.segment_id] = assignment
+        if assignment.entries or assignment.defaults:
+            self.assignments.append(assignment)
+
+    async def _new_item(
+        self, item: object, where: Path, named: dict[int, Path]
+    ) -> dict[str, Any] | None:
+        """*item*, an item of a list value, merged into its template entry when it names a segment the module had no entry for as read; else None."""
+        descriptor = item.get("segment") if is_dict(item) else None
+        name = descriptor.get("name") if is_dict(descriptor) else None
+        if not is_dict(item) or not isinstance(name, str):
+            return None
+        held = self._held_segment_id(name)
+        if held is not None and held in self.as_read:
+            return None
+        identity = await self._identity(name, where)
+        if identity.segment_id in self.as_read:
+            return None
+        if identity.segment_id in named:
+            raise _duplicate(named[identity.segment_id], where)
+        named[identity.segment_id] = where
+        body = _agreeing(identity, item, where)
+        self._assign(identity)
+        template = self._template_entry(identity)
+        if template is None:
+            return None
+        return self._merged_item(template, body, where)
+
+    def _template_entry(self, identity: SegmentIdentity) -> Mapping[str, Any] | None:
+        """The raw entry of *identity* the module gets from the assignment, or has now from an earlier one."""
+        assignment = self.assigned.get(identity.segment_id)
+        if assignment is not None and self.module_name in assignment.entries:
+            return assignment.entries[self.module_name]
+        raw = with_additions(self.module.raw_data, self.module.additions)
+        entries = raw.get("segments") if is_dict(raw) else None
+        return next(
+            (
+                cast(Mapping[str, Any], entry)
+                for entry in (entries if is_list(entries) else [])
+                if segment_id_of(entry) == identity.segment_id
+            ),
+            None,
+        )
+
+    def _merged_item(
+        self, template: Mapping[str, Any], body: Mapping[object, object], where: Path
+    ) -> dict[str, Any]:
+        """*body* merged into the entry *template*, as the module's ``segments`` item class parses it, dumped as the wire has it."""
+        assert isinstance(self.data, VcoModel)  # _held_segment_id's read
+        (item_type,) = field_models(type(self.data).model_fields["segments"])
+        item = item_type.model_validate(
+            copy.deepcopy(dict(template)),
+            context={"config_level": self.module.config_context},
+        )
+        try:
+            _ = item.merge_patch(
+                cast("dict[str, object]", dict(body)), resolvers=self.state.resolvers
+            )
+        except PatchError as error:
+            raise PatchError(
+                error.message, Path((*where.parts, *error.path.parts)), error.kind
+            ) from error
+        return item.model_dump(mode="json", by_alias=True, exclude_unset=True)
+
+
+def _duplicate(first: Path, where: Path) -> PatchError:
+    return PatchError(
+        f"{first} names the same segment: one selector per segment",
+        where,
+        "duplicate",
+    )
+
+
+def _same(key: str, given: object, wanted: object) -> bool:
+    """Whether a descriptor's *given* value is the enterprise's *wanted* one: a name in any case."""
+    if key == "name":
+        return str(given).casefold() == str(wanted).casefold()
+    return given == wanted
+
+
+def _agreeing(
+    identity: SegmentIdentity, body: Mapping[object, object], where: Path
+) -> dict[object, object]:
+    """*body* of an add or a list item for *identity*, without its ``segment`` once that agrees with the enterprise's.
+
+    ``segmentId``, ``type`` and ``segmentLogicalId`` where the body gives them,
+    and its ``name`` in any case, must be the enterprise segment's. The
+    descriptor of the entry is the assignment's, so it is left out of what is
+    merged.
+    """
+    if "segment" not in body:
+        return dict(body)
+    given = body["segment"]
+    at = where.child("segment")
+    if not is_dict(given):
+        raise PatchError(
+            'segment is the descriptor object, such as {"name": "Guest"}',
+            at,
+            "segment_rule",
+        )
+    expected = descriptor_of(identity)
+    meta = SegmentMetadata.model_validate(expected)
+    try:
+        _ = meta.merge_patch(cast("dict[str, object]", given))
+    except PatchError as error:
+        raise PatchError(
+            error.message, Path((*at.parts, *error.path.parts)), error.kind
+        ) from error
+    dumped = meta.model_dump(mode="json", by_alias=True)
+    differing = [
+        key
+        for key, wanted in expected.items()
+        if not _same(key, dumped.get(key), wanted)
+    ]
+    if differing:
+        raise PatchError(
+            f"the segment {identity.name!r} of the enterprise is "
+            f"{json.dumps(expected)}, and the body gives another "
+            f"{', '.join(differing)}. A segment is assigned as the enterprise "
+            "has it: leave `segment` out of the body, or give it as it is",
+            at,
+            "segment_rule",
+        )
+    return {key: value for key, value in body.items() if key != "segment"}
+
+
+def check_profile_segments(
+    before: VcoModel,
+    after: VcoModel,
+    module: AnyConfigurationModule,
+    ds_as_read: object,
+    assignments: Sequence[Assignment],
+) -> None:
+    """Refuse a patch after which *module* of a profile has other segments than before, or other descriptors.
+
+    *before* is the data of *module* and *after* a copy with the patch merged
+    in; *ds_as_read* is the raw data of the profile's device settings as read;
+    *assignments* are those the patch makes. Every ``segmentId`` of *after*
+    must be one of *before*, with the same descriptor, or an assigned one,
+    with the descriptor of its identity (``descriptor_of``). A ``segmentId``
+    of *before* that *after* lacks is an orphan removal, accepted, when
+    *module* is QoS or firewall, had the segment as read and *ds_as_read*
+    lacks it; any other is a removal. Raises ``PatchError`` at ``segments``
+    (``segment_rule``), naming what is added, removed or re-described and how
+    to do it instead; changes nothing.
+    """
+    held = _descriptors_by_id(before)
+    now = _descriptors_by_id(after)
+    assigned = {
+        a.identity.segment_id: dict(descriptor_of(a.identity)) for a in assignments
+    }
+    module_name = str(module.name)
+    orphans = (
+        _raw_segment_ids(module.raw_data) - _raw_segment_ids(ds_as_read)
+        if module_name in ("QOS", "firewall")
+        else set[int]()
+    )
+    redescribed = {
+        str(held_by.get("name"))
+        for segment_id, now_by in now.items()
+        if (held_by := held.get(segment_id, assigned.get(segment_id))) is not None
+        and _canonical(held_by) != _canonical(now_by)
+    }
+    added = {
+        str(d.get("name"))
+        for i, d in now.items()
+        if i not in held and i not in assigned
+    }
+    gone = {i: str(d.get("name")) for i, d in held.items() if i not in now}
+    # An entry that gives up its ID for another is re-described, not one removed and one added.
+    redescribed |= added & set(gone.values())
+    added -= redescribed
+    removed = {name for i, name in gone.items() if i not in orphans} - redescribed
+    if not (redescribed or added or removed):
+        return
+    parts: list[str] = []
+    if redescribed:
+        parts.append(
+            "it re-describes " + ", ".join(sorted(redescribed)) + ": the "
+            "descriptor of a segment (its name, `segmentId`, type and logical "
+            "ID) is the enterprise's, so leave `segment` out of the patch"
+        )
+    if added:
+        names = sorted(added)
+        parts.append(
+            "it adds " + ", ".join(names) + " with no assignment: add an "
+            "enterprise segment by its name, "
+            f'{{"segments": {{"{names[0]}": {{"_op": "add"}}}}}} (`add()`), '
+            "which gives it to all three of device settings, QoS and firewall"
+        )
+    if removed:
+        names = sorted(removed)
+        parts.append(
+            "it removes " + ", ".join(names) + ": a segment of a profile is in "
+            "all three of device settings, QoS and firewall, and removing it "
+            "from all three is not supported. Only an orphan, a QoS or "
+            "firewall segment that the device settings lacked as read, is "
+            f'removed, by {{"segments": {{"{names[0]}": {{"_op": "delete"}}}}}} '
+            "(`delete()`) or a list value that leaves it out"
+        )
+    raise PatchError(
+        "a patch cannot change which segments a profile has, or what they "
+        "are, except by assigning an enterprise segment or removing an orphan: "
+        + "; ".join(parts),
+        SEGMENTS,
+        "segment_rule",
+    )
+
+
+def _descriptors_by_id(layer: VcoModel) -> dict[int, dict[str, object]]:
+    """The wire form of the ``segment`` object of each entry of *layer*, by ``segmentId``."""
+    return {
+        segment_id: descriptor
+        for descriptor in _segment_descriptors(layer)
+        if isinstance(segment_id := descriptor.get("segmentId"), int)
+    }

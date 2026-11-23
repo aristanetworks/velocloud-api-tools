@@ -343,15 +343,39 @@ The `segments` lists have rules of their own:
   `apply` refuses a place for one of them, and a place given `before` or
   `after` one of them. Once a save has written an entry for such a segment, it
   is one of the edge's own.
-- On a profile, `apply` refuses a patch that adds or removes a segment, or
-  changes a segment's descriptor (the `segment` object: its name, `segmentId`,
-  type and logical ID), in whatever form: `add` or `delete` under a selector, a
-  list value for `segments` that leaves a segment out or brings a new one, or
-  an object that rewrites the descriptor. A segment belongs to all three of
-  device settings, QoS and firewall, and adding one through a patch is not
-  supported yet (`assign_segment` does it, see "Assigning a segment to a
-  profile"). Changing what a segment holds, moving it, and a list value that
-  keeps every descriptor are fine.
+- On a profile, a segment belongs to all three of device settings, QoS and
+  firewall, and a patch assigns it from any of them. An `add` of an enterprise
+  segment under `segments` of any of the three assigns it as `assign_segment`
+  does (see "Assigning a segment to a profile"): each of the three modules that
+  lacks the segment gets the UI's template entry, and the body of the add is
+  merged into the entry of the module the patch is for, as a change (a
+  `_position` moves it). A client sends one `add` per module, in any order,
+  each with the body it wants, and needs no call of its own to assign:
+  `{"segments": {"Guest": {"_op": "add", "rules": [...]}}}` to QoS, then
+  `{"segments": {"Guest": {"_op": "add", "vpn": {...}}}}` to device settings.
+  The segment is named by the selector in any case, or under `"+"` by
+  `segment.name` of the body (an add under `"+"` without a name raises
+  `segment_rule`), as the enterprise has it: an unknown name raises
+  `ResolutionError` with suggestions, a state with no segment resolver raises
+  `PatchError` (`invalid_value`), a body whose `segment` gives another
+  `segmentId`, type or logical ID raises `segment_rule`, and so does an add on
+  a profile that lacks one of the three modules. A list value for `segments`
+  assigns the same way: an item for a segment the module had no entry for is
+  merged into the template entry, and the other items replace the module's as
+  given. An `add` of a segment the module already had as read raises `exists`:
+  change it with a plain object. The segment is judged per module, as read, so
+  the second and third adds of a segment, after the first assigned it, are
+  accepted, and an add to a module that lacks a segment the others have
+  completes the profile.
+  A patch does not remove a segment: a `delete`, or a list value that leaves a
+  segment out, raises `segment_rule`, because a segment is removed from all
+  three modules or none. The one exception is an orphan, a QoS or firewall
+  segment that the profile's device settings lacked as read, which is removed
+  as the segment-set rule of `plan()` allows. Changing what a segment holds
+  and moving it are fine, and so is a list value that keeps every descriptor;
+  a rewritten descriptor (the `segment` object: its name, `segmentId`, type
+  and logical ID) raises `segment_rule`. The assignments are tried on copies of
+  the three modules first, so an error leaves all three as they were.
 
 Sections and items of an edge that can follow the profile have an `override`
 flag: the BGP of a segment, a VLAN, an interface. While the flag is off, the
@@ -574,6 +598,28 @@ print(state.plan().render())  # added segments: Guest, in each of the three
 result = await pipeline.save(state)
 ```
 
+- A patch assigns the segment too, so a client that sends every change as a
+  patch has no case of its own for it. An `add` under `segments` of any of the
+  three modules assigns the segment to all three, then merges its body into
+  the entry of the module it is for; the next add, to another module, merges
+  into the entry that is there. In any order:
+
+  ```python
+  await pipeline.apply(
+      state, module="qos", patch={"segments": {"Guest": add({"rules": [rule]})}}
+  )
+  await pipeline.apply(
+      state,
+      module="device_settings",
+      segment="Guest",
+      patch=add({"vpn": {"conditionalBackhaul": True}}),
+  )
+  await pipeline.apply(state, module="firewall", patch={"segments": {"Guest": add()}})
+  ```
+
+  Each is the entry of `assign_segment` with that body merged into it. The
+  rules of a patch to the `segments` of a profile are in "The `segments` lists
+  have rules of their own", above.
 - The name is resolved as in a patch: the enterprise's segment in any case, and
   `ResolutionError` with suggestions for one it does not have. A state with no
   segment resolver raises `LookupError`; `await pipeline.load_resolvers(state)`
