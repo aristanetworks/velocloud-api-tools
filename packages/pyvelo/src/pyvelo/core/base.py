@@ -490,6 +490,13 @@ def _install_ref_filling(cls: type[VcoModel]) -> None:
                 if name in given:
                     setattr(self, name, given[name])
 
+        # A subclass inherits this hook. Pydantic validates through an
+        # ``__init__`` that is not its own base one (``__pydantic_custom_init__``),
+        # and that call would read the keys of validated input. The hook
+        # keeps the base mark of the init it wraps, as ``BaseModel.__init__`` has it.
+        init_taking_ref_only.__pydantic_base_init__ = getattr(  # pyright: ignore[reportFunctionMemberAccess]
+            previous_init, "__pydantic_base_init__", False
+        )
         _REF_FILLING_HOOKS.add(init_taking_ref_only)
         cls.__init__ = init_taking_ref_only  # pyright: ignore[reportAttributeAccessIssue]
 

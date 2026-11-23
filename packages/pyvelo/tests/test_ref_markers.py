@@ -1,6 +1,7 @@
 """``OwnsRef`` and ``RefOnly``: the markers of the data fields that a ref row goes with."""
 
 import copy
+import json
 import uuid
 from typing import Annotated, ClassVar, Literal
 from uuid import UUID
@@ -410,3 +411,37 @@ def test_another_lost_assignment_is_still_reported_beside_a_ref_only_one():
     before, after = dump(baseline), dump(current)
     carry_unset_defaults(baseline, current, before, after)
     assert find_lossy_assignments(baseline, current, before, after) == ["note"]
+
+
+def test_a_subclass_validated_from_data_does_not_read_a_ref_only_key():
+    sub = SubStub.model_validate({"service": DNS_A})
+    assert sub.service is MISSING
+    assert sub.ref is MISSING
+    assert "service" not in sub.model_fields_set
+    assert SubStub.model_validate_json(f'{{"service": "{DNS_A}"}}').service is MISSING
+
+
+def test_a_subclass_inside_a_parent_validated_from_data_does_not_read_the_key():
+    class SubHolder(VcoModel):
+        sub: SubStub | MISSING = MISSING
+        subs: list[SubStub] = Field(default_factory=list)
+
+    data = {"sub": {"service": DNS_A}, "subs": [{"service": DNS_A}]}
+    for holder in (
+        SubHolder.model_validate(data),
+        SubHolder.model_validate_json(json.dumps(data)),
+    ):
+        assert isinstance(holder.sub, SubStub)
+        assert holder.sub.service is MISSING
+        assert holder.sub.ref is MISSING
+        assert holder.subs[0].service is MISSING
+        assert holder.subs[0].ref is MISSING
+
+
+def test_validated_json_does_not_read_a_ref_only_key():
+    assert Stub.model_validate_json(f'{{"service": "{DNS_A}"}}').service is MISSING
+
+
+def test_the_constructor_hook_does_not_make_pydantic_validate_through_init():
+    assert not Stub.__pydantic_custom_init__
+    assert not SubStub.__pydantic_custom_init__
