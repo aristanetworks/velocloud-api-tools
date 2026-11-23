@@ -134,3 +134,20 @@ async def test_load_profile_by_id():
     assert state.edge_config is None
     assert state.profile_config.name == "Default Profile"
     assert state.resolver_context.enterprise_id == 1
+
+
+@pytest.mark.asyncio
+async def test_load_profile_refuses_an_edge_specific_configuration():
+    client = MockVcoClient(stack=_make_stack())  # its store holds 10 and 20
+    pipeline = ConfigPipeline(client)
+
+    with pytest.raises(ValueError) as exc:
+        _ = await pipeline.load_profile(10)
+
+    assert str(exc.value) == (
+        "configuration 10 is the edge-specific configuration of an edge, not a "
+        "profile. Load that edge with load(), by its ID or name; to edit its "
+        "profile, give load_profile the profile's ID"
+    )
+    assert [name for name, _ in client.calls] == ["get_configuration"]
+    assert (await pipeline.load_profile(20)).target_type == "profile"

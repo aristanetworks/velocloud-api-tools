@@ -27,7 +27,7 @@ from pyvelo.config.resolvers.profile import ProfileResolver
 from pyvelo.config.resolvers.segment import SegmentResolver
 from pyvelo.config.validation import ValidationError as ValidatorError
 from pyvelo.config.validation import ValidationResult, ValidatorRegistry
-from pyvelo.core import PatchError
+from pyvelo.core import ConfigContext, PatchError
 from pyvelo.core.base import IdentityResolver, VcoModel
 from pyvelo.core.identity import EdgeName, ProfileName, ResolutionError
 from pyvelo.core.merge import nest_patch, select_items
@@ -147,7 +147,11 @@ class ConfigPipeline:
         *,
         enterprise_id: int | None = None,
     ) -> ConfigState:
-        """Load a profile configuration directly (no edge/template merge)."""
+        """Load a profile configuration directly (no edge/template merge).
+
+        Raises ``ValueError`` for the ID of an edge-specific configuration: load
+        the edge with ``load``.
+        """
         profile_id: int
         resolvers = self._resolvers.unloaded()
 
@@ -171,6 +175,14 @@ class ConfigPipeline:
             request.enterprise_id = enterprise_id
 
         config = await self.client.get_configuration(request)
+
+        if config.config_context is ConfigContext.EDGE:
+            raise ValueError(
+                f"configuration {profile_id} is the edge-specific configuration "
+                "of an edge, not a profile. Load that edge with load(), by its "
+                "ID or name; to edit its profile, give load_profile the "
+                "profile's ID"
+            )
 
         # Wrap it as a profile. Reuse the module objects: they hold the raw data
         # that a save is planned against, which a dump and re-validate would lose.
