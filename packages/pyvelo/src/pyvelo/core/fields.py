@@ -154,6 +154,11 @@ def is_server_owned(field_info: FieldInfo) -> bool:
     return any(isinstance(m, ServerOwned) for m in field_info.metadata)
 
 
+def is_secret(field_info: FieldInfo) -> bool:
+    """Check if a field is marked with ``Secret``."""
+    return any(isinstance(m, Secret) for m in field_info.metadata)
+
+
 # ---------------------------------------------------------------------------
 # Annotated validators
 # ---------------------------------------------------------------------------
@@ -468,6 +473,17 @@ class ServerOwned:
     and is never a write that was not applied.
 
     Usage: ``rule_logical_id: Annotated[str | MISSING, ServerOwned()] = MISSING``
+    """
+
+
+@dataclass(frozen=True, slots=True)
+class Secret:
+    """Annotated marker: the field holds a configuration secret (a password, a key, a community string).
+
+    ``hide_secrets`` shows ``***`` in its place; the value itself is read,
+    compared and written like any other.
+
+    Usage: ``password: Annotated[str, Secret()] = ""``
     """
 
 

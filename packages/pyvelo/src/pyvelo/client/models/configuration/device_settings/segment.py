@@ -19,6 +19,7 @@ from pyvelo.core import (
     GatewayLogicalId,
     NoneIsFalse,
     Positional,
+    Secret,
     VcoModel,
 )
 from pyvelo.core.fields import (
@@ -308,7 +309,7 @@ class BgpNeighbor(VcoModel):
     holdtime: str = "180"
     connect: str = "120"
     enable_md5: bool = False
-    md5_password: str = ""
+    md5_password: Annotated[str, Secret()] = ""
     id_: Annotated[uuid.UUID, Alias("id")] = Field(default_factory=uuid.uuid4)
 
 
@@ -768,7 +769,7 @@ CssConfig = CssConfigGre | CssConfigZscalerIpsec | CssConfigGenericIpsec
 
 class CssIpsecSiteData(VcoModel):
     ike_id: str
-    psk: str
+    psk: Annotated[str, Secret()]
     ike_id_type: Literal["FQDN"] = "FQDN"
     psk_type: Literal["alpha"] = "alpha"
 

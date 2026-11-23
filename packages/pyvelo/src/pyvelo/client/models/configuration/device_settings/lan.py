@@ -3,7 +3,15 @@ from typing import Annotated, Any, Literal
 
 from pydantic import MISSING, Discriminator, Field, SerializeAsAny, Tag
 
-from pyvelo.core import Alias, EdgeOnly, NoneIsFalse, Positional, ProfileOnly, VcoModel
+from pyvelo.core import (
+    Alias,
+    EdgeOnly,
+    NoneIsFalse,
+    Positional,
+    ProfileOnly,
+    Secret,
+    VcoModel,
+)
 from pyvelo.core.fields import (
     DefaultingScalar,
     EdgeLocal,
@@ -90,7 +98,7 @@ class LanWirelessInterface(LanInterfaceBase):
     mac_allowlist: MacAllowList = Field(default_factory=MacAllowList)
     radius_acl_check: bool = False
     broadcast_ssid: bool = True
-    passphrase: Annotated[str, Lenient(_none_to_vcsecret)]
+    passphrase: Annotated[str, Lenient(_none_to_vcsecret), Secret()]
     ssid: str
     security_mode: WirelessSecurityMode = "WPA2Personal"
 

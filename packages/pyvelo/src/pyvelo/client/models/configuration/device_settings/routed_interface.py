@@ -22,6 +22,7 @@ from pyvelo.core import (
     OverrideFlag,
     Positional,
     Resolvable,
+    Secret,
     VcoModel,
 )
 from pyvelo.core.fields import Lenient
@@ -47,7 +48,7 @@ from .common import (
 class RoutedInterfaceAddressing(VcoModel):
     type_: Annotated[IPv4AddressingType, Alias("type")] = "DHCP"
     username: str | None | MISSING = MISSING
-    password: str | None | MISSING = MISSING
+    password: Annotated[str | None | MISSING, Secret()] = MISSING
     cidr_ip: Annotated[str | None, EdgeLocal] = None
     cidr_prefix: Annotated[Literal[""] | int | None, EdgeLocal] = None
     netmask: Annotated[str | None, EdgeLocal] = None
@@ -64,7 +65,7 @@ class RoutedInterfaceAddressing(VcoModel):
 class RoutedInterfaceAddressingV6(VcoModel):
     type_: Annotated[IPv6AddressingType, Alias("type")] = "DHCP_STATELESS"
     username: str | None | MISSING = MISSING
-    password: str | None | MISSING = MISSING
+    password: Annotated[str | None | MISSING, Secret()] = MISSING
     cidr_ip: str | None = None
     cidr_prefix: int | None = None
     netmask: str | None = None
@@ -125,7 +126,7 @@ class RoutedInterfaceOspfBase(VcoModel):
 class RoutedInterfaceOspf(RoutedInterfaceOspfBase):
     authentication: bool = False
     authentication_id: Annotated[int | str, Alias("authId")] = 0
-    authentication_passphrase: Annotated[str, Alias("authPassphrase")] = ""
+    authentication_passphrase: Annotated[str, Alias("authPassphrase"), Secret()] = ""
     md5_authentication: bool = False
 
 
@@ -179,11 +180,11 @@ CellularIpType = Literal["IPv4", "IPv4v6"]
 
 
 class RoutedInterfaceCellular(VcoModel):
-    sim_pin: str
+    sim_pin: Annotated[str, Secret()]
     network: CellularNetworks | Literal[""] = ""
     apn: str
     username: str
-    password: str | int
+    password: Annotated[str | int, Secret()]
     ip_type: CellularIpType | MISSING = MISSING
 
 

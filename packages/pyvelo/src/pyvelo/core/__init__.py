@@ -7,6 +7,7 @@ This package is split into these submodules:
 - patch: the patch helpers (add, delete, move, at) and PatchError
 - merge: applying a patch to a model, and selecting items of a list
 - rebase: the path and key types that locate a change
+- secrets: hide_secrets, which shows a value without its secrets
 
 All public symbols are re-exported here for backwards compatibility.
 """
@@ -63,6 +64,7 @@ from .fields import (
     Positional,
     ProfileOnly,
     Resolvable,
+    Secret,
     ServerOwned,
     get_key_spec,
     get_name_of,
@@ -71,6 +73,7 @@ from .fields import (
     has_override_flag,
     is_edge_local,
     is_positional,
+    is_secret,
     is_server_owned,
 )
 from .identity import (
@@ -123,6 +126,7 @@ from .patch import (
     selector_of,
 )
 from .rebase import Key, Path, item_key_text, key_text
+from .secrets import hide_secrets
 
 __all__ = [
     "AddressGroupId",
@@ -194,6 +198,7 @@ __all__ = [
     "ProfileOnly",
     "Resolvable",
     "RowsModifiedConfirmation",
+    "Secret",
     "SegmentId",
     "SegmentIdentity",
     "SegmentLogicalId",
@@ -217,8 +222,10 @@ __all__ = [
     "get_normalizer",
     "get_resolvable",
     "has_override_flag",
+    "hide_secrets",
     "is_edge_local",
     "is_positional",
+    "is_secret",
     "is_server_owned",
     "item_key_text",
     "item_selector",

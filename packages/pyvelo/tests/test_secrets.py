@@ -1,12 +1,13 @@
 """Configuration secrets stay out of the text of errors, plans and messages."""
 
 import copy
+import re
 import traceback
 from collections.abc import Iterator
 from typing import Annotated, Any, Literal, get_args
 
 import pytest
-from pydantic import Discriminator, Field, ValidationError
+from pydantic import MISSING, Discriminator, Field, ValidationError
 from pyvelo.client.enums.profiles import GetConfigurationWith
 from pyvelo.client.exceptions import WriteOutcomeUnknownError
 from pyvelo.client.models.configuration.control_plane.root import ControlPlaneData
@@ -14,12 +15,23 @@ from pyvelo.client.models.configuration.device_settings.root import DeviceSettin
 from pyvelo.client.models.configuration.firewall.root import FirewallData
 from pyvelo.client.models.configuration.qos.root import QosData
 from pyvelo.client.models.configuration.wan.root import WanData
+from pyvelo.client.models.enterprise import service_data
 from pyvelo.client.module_write import plan_module
 from pyvelo.client.schemas.configuration import (
     DeviceSettingsConfigurationModule,
     GetConfiguration,
 )
-from pyvelo.core import DefaultingModel, PatchError, Path, VcoModel, list_kind
+from pyvelo.core import (
+    DefaultingModel,
+    Key,
+    PatchError,
+    Path,
+    Secret,
+    VcoModel,
+    hide_secrets,
+    is_secret,
+    list_kind,
+)
 from pyvelo.core.merge import (
     _list_spec,  # pyright: ignore[reportPrivateUsage]
     _validate_field,  # pyright: ignore[reportPrivateUsage]
@@ -259,3 +271,200 @@ def test_every_list_field_still_builds_its_adapters():
                     pass
             built += 1
     assert built > 100
+
+
+SEGMENT = ("segments", Key("Global Segment"))
+NEIGHBOR = Path((*SEGMENT, "bgp", "neighbors", Key("192.0.2.1")))
+
+
+class Marked(VcoModel):
+    plain: str = ""
+    password: Annotated[str, Secret()] = ""
+
+
+def test_is_secret():
+    assert is_secret(Marked.model_fields["password"]) is True
+    assert is_secret(Marked.model_fields["plain"]) is False
+
+
+# The fields of the module data that hold a secret. Marking one, or adding a
+# field whose name looks like one, means changing one of these two sets.
+SECRET_FIELDS = frozenset(
+    {
+        "BgpNeighbor.md5_password",
+        "CssIpsecSiteData.psk",
+        "EdgeSnmpV2c.community",
+        "EdgeSnmpV2c.community_list",
+        "LanWirelessInterface.passphrase",
+        "Md5AuthKey.key",
+        "RoutedInterfaceAddressing.password",
+        "RoutedInterfaceAddressingV6.password",
+        "RoutedInterfaceCellular.password",
+        "RoutedInterfaceCellular.sim_pin",
+        "RoutedInterfaceOspf.authentication_passphrase",
+        "SnmpV3User.passphrase",
+        "WanNetwork.password",
+    }
+)
+NOT_SECRET = frozenset(
+    {
+        "BgpFilterActionValue.community_additive",
+        "CssIpsecSiteData.psk_type",
+        "Md5AuthKey.key_number",
+        "SegmentBgp.uplink_community",
+        "WanNetwork.isp_key",
+    }
+)
+LOOKS_SECRET = re.compile(
+    r"passw|passphrase|secret|psk|community|(^|_)key($|_)|token|(^|_)pin($|_)|credential"
+)
+
+
+def reachable_fields() -> dict[str, bool]:
+    """``"Class.field"`` to whether it is marked, for every class the module data classes reach."""
+    return {
+        f"{cls.__name__}.{name}": is_secret(fi)
+        for cls in reachable_classes()
+        for name, fi in cls.model_fields.items()
+    }
+
+
+def test_the_secret_fields_of_the_module_data_are_the_recorded_set():
+    fields = reachable_fields()
+    assert frozenset(name for name, marked in fields.items() if marked) == SECRET_FIELDS
+    looks = {name for name in fields if LOOKS_SECRET.search(name.split(".")[1])}
+    assert looks - SECRET_FIELDS == NOT_SECRET
+
+
+def test_the_credentials_of_enterprise_services_are_marked():
+    marked = {
+        f"{cls.__name__}.{name}"
+        for cls in vars(service_data).values()
+        if isinstance(cls, type) and issubclass(cls, VcoModel)
+        for name, fi in cls.model_fields.items()
+        if name in cls.__annotations__ and is_secret(fi)
+    }
+    assert marked == {
+        "RadiusServer.secret",
+        "TacacsServiceData.shared_secret",
+        "AzureVendorSpecificData.client_secret",
+        "ZscalerVendorSpecificData.api_token",
+        "ZscalerVendorSpecificData.password",
+        "AwsVendorSpecificData.access_key",
+        "AwsVendorSpecificData.secret_key",
+        "AwsVendorSpecificData.session_token",
+        "SseVendorSpecificData.password",
+        "LocalUiCredentialsData.password",
+        "BaseCloudSecurityCredentials.password",
+        "ZscalerCloudSecurityCredentials.api_token",
+    }
+
+
+@pytest.mark.parametrize(
+    ("path", "value", "hidden"),
+    [
+        (Path((*NEIGHBOR.parts, "md5Password")), OLD, "***"),
+        # A path written with the python name of the field.
+        (Path((*NEIGHBOR.parts, "md5_password")), OLD, "***"),
+        (Path((*NEIGHBOR.parts, "md5Password")), MISSING, MISSING),
+        # A whole item, as the value of an added neighbour is.
+        (
+            NEIGHBOR,
+            {"neighborIp": "192.0.2.1", "md5Password": OLD},
+            {"neighborIp": "192.0.2.1", "md5Password": "***"},
+        ),
+        # The whole document; a key the models do not know is left as it is.
+        (
+            Path(()),
+            {
+                "snmp": {
+                    "snmpv2c": {
+                        "community": "c",
+                        "communityList": ["a"],
+                        "allowedIps": ["10.0.0.1"],
+                    }
+                },
+                "unknown": {"password": "kept"},
+            },
+            {
+                "snmp": {
+                    "snmpv2c": {
+                        "community": "***",
+                        "communityList": "***",
+                        "allowedIps": ["10.0.0.1"],
+                    }
+                },
+                "unknown": {"password": "kept"},
+            },
+        ),
+        # Below a secret field.
+        (Path(("snmp", "snmpv2c", "communityList", 0)), "a", "***"),
+        # An item of a list without a key.
+        (
+            Path(("snmp", "snmpv3", "users", 0)),
+            {"name": "u", "passphrase": "p"},
+            {"name": "u", "passphrase": "***"},
+        ),
+        # An item of a list of a union: a field of any variant counts.
+        (
+            Path(("lan", "interfaces", 0)),
+            {"name": "WLAN1", "type": "wireless", "ssid": "s", "passphrase": "p"},
+            {"name": "WLAN1", "type": "wireless", "ssid": "s", "passphrase": "***"},
+        ),
+        # A map of models: its keys are not field names.
+        (
+            Path(("models",)),
+            {
+                "edge510": {
+                    "routedInterfaces": [
+                        {
+                            "name": "GE3",
+                            "addressing": {"password": "p"},
+                            "ospf": {"authPassphrase": "p"},
+                        }
+                    ]
+                }
+            },
+            {
+                "edge510": {
+                    "routedInterfaces": [
+                        {
+                            "name": "GE3",
+                            "addressing": {"password": "***"},
+                            "ospf": {"authPassphrase": "***"},
+                        }
+                    ]
+                }
+            },
+        ),
+        (
+            Path(
+                (
+                    "models",
+                    "edge510",
+                    "routedInterfaces",
+                    Key("GE3"),
+                    "addressing",
+                    "password",
+                )
+            ),
+            "p",
+            "***",
+        ),
+        (
+            Path(("ntpServer",)),
+            {"keys": [{"keyNumber": 1, "key": "k"}]},
+            {"keys": [{"keyNumber": 1, "key": "***"}]},
+        ),
+        (Path((*SEGMENT, "bgp", "ASN")), "65000", "65000"),
+        (Path(("nope", "password")), "kept", "kept"),
+    ],
+)
+def test_hide_secrets(path: Path, value: object, hidden: object):
+    given = copy.deepcopy(value)
+    assert hide_secrets(DeviceSettingsData, path, value) == hidden
+    assert value == given  # the value given is not changed
+
+
+def test_hide_secrets_without_a_model_hides_nothing():
+    assert hide_secrets(None, Path(("a", "password")), "kept") == "kept"

@@ -11,6 +11,7 @@ from pyvelo.core import (
     NoneIsMissing,
     Positional,
     ProfileOnly,
+    Secret,
     VcoModel,
 )
 from pyvelo.core.fields import KeyField, Lenient, OverrideFlag
@@ -108,7 +109,7 @@ class Ntp(VcoModel):
 
 class Md5AuthKey(VcoModel):
     key_number: int | None = None
-    key: str
+    key: Annotated[str, Secret()]
 
 
 class NtpServer(VcoModel):
@@ -169,8 +170,10 @@ class GlobalIpv6Settings(VcoModel):
 
 class EdgeSnmpV2c(VcoModel):
     enabled: bool = False
-    community: str = ""
-    community_list: Annotated[list[str], Positional()] = Field(default_factory=list)
+    community: Annotated[str, Secret()] = ""
+    community_list: Annotated[list[str], Positional(), Secret()] = Field(
+        default_factory=list
+    )
     allowed_ips: list[str] = Field(default_factory=list)
 
 
@@ -180,7 +183,7 @@ def _none_to_md5(v: Any) -> Any:
 
 class SnmpV3User(VcoModel):
     name: str
-    passphrase: str | None = None
+    passphrase: Annotated[str | None, Secret()] = None
     authentication_algorithm: Annotated[
         SnmpV3AuthenticationAlgorithm, Lenient(_none_to_md5), Alias("authAlg")
     ] = "MD5"
