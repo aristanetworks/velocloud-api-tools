@@ -1755,12 +1755,12 @@ def _stated_refusal(error: ModuleWriteError) -> str:
     ``write_module`` raises its error from that conflict, or while handling it
     when the module could not be read back. The conflict is found by walking
     the chain from *error*: each link's ``__cause__``, else its
-    ``__context__``, until a ``ConfigConflictError`` (a read-back that failed
-    to parse is raised from a ``ValidationError`` that was itself raised while
-    handling the conflict, one link deeper). One with a cause of its own was
-    raised from the Orchestrator's precondition error, whatever HTTP status
-    carried it; one without is a row count of zero. With no such conflict in
-    the chain, the refusal is only ``refused``.
+    ``__context__``, until a ``ConfigConflictError``. One with a cause of its
+    own was raised from the Orchestrator's precondition error, whatever HTTP
+    status carried it; one without is a row count of zero. With no such
+    conflict in the chain, the refusal is only ``refused``: that is so where a
+    read-back failed to parse, as the error is then raised from a pydantic
+    ``ValidationError``, which has no ``__context__`` to lead to the conflict.
     """
     seen = {id(error)}
     link = error.__cause__ if error.__cause__ is not None else error.__context__
