@@ -374,6 +374,33 @@ async def test_static_route_add_and_delete_by_composite_key():
     assert [r["destination"] for r in sent] == ["10.1.0.0", "10.3.0.0", "10.9.0.0"]
 
 
+async def test_a_static_route_is_named_by_its_parts_joined_with_commas():
+    raw = device_settings(route("10.1.0.0"), route("10.2.0.0"))
+    state = make_state({"deviceSettings": raw}, {"deviceSettings": PROFILE_DS})
+    _ = await ConfigPipeline(None).apply(
+        state,
+        module="device_settings",
+        segment=SEGMENT,
+        path="routes.static",
+        patch={"10.2.0.0,24,192.168.1.1,GE3": delete()},
+    )
+    routes = state.edge.device_settings.segment(SEGMENT).routes
+    assert routes is not MISSING
+    assert [r.destination for r in routes.static] == ["10.1.0.0"]
+    with pytest.raises(PatchError) as exc:
+        _ = await ConfigPipeline(None).apply(
+            state,
+            module="device_settings",
+            segment=SEGMENT,
+            path="routes.static",
+            patch={"10.9.0.0/24": delete()},
+        )
+    assert (
+        "its 4 parts (destination, cidr_prefix, gateway, wan_interface) joined by "
+        "commas, as in 10.1.0.0,24,192.168.1.1,GE3"
+    ) in exc.value.message
+
+
 # --- WAN links --------------------------------------------------------------
 
 

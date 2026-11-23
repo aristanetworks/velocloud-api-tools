@@ -18,6 +18,7 @@ from pyvelo.core import (
     move,
 )
 from pyvelo.core.fields import get_key_spec
+from pyvelo.core.merge import select_items
 from pyvelo.core.rebase import Path
 
 from .patch_models import Link, Root, Route, Rule
@@ -311,6 +312,86 @@ def test_comma_in_a_single_key_is_not_composite():
     root = Root(rules=[Rule(name="a,b")])
     _ = root.merge_patch({"rules": {"a,b": {"priority": 1}}})
     assert root.rules[0].priority == 1
+
+
+R1_TEXT = "10.0.0.0,24,192.168.1.1,GE3"
+R2_TEXT = "10.1.0.0,16,192.168.1.1,"
+
+
+def message_of(model: VcoModel, patch: dict[str, object]) -> str:
+    with pytest.raises(PatchError) as exc:
+        _ = model.merge_patch(patch)
+    return exc.value.message
+
+
+def test_a_composite_key_is_selected_by_its_parts_joined_with_commas():
+    root = routes()
+    _ = root.merge_patch({"routes": {R1_TEXT: {"cost": 5}, R2_TEXT: {"cost": 6}}})
+    assert costs(root) == [5, 6]
+    assert select_items(routes(), "routes", R2_TEXT) == [1]
+
+    root = routes()
+    _ = root.merge_patch({"routes": {R2_TEXT: move(before=R1_TEXT)}})
+    assert [route.dest for route in root.routes] == ["10.1.0.0", "10.0.0.0"]
+
+    root = routes()
+    _ = root.merge_patch({"routes": {R1_TEXT: delete()}})
+    assert [route.dest for route in root.routes] == ["10.1.0.0"]
+
+
+def test_an_add_under_the_comma_form_writes_the_parts_as_text():
+    root = routes()
+    _ = root.merge_patch({"routes": {"10.2.0.0,24,192.168.1.1,GE4": add({"cost": 1})}})
+    new = root.routes[2]
+    assert (new.dest, new.prefix, new.gw, new.intf) == (
+        "10.2.0.0",
+        "24",
+        "192.168.1.1",
+        "GE4",
+    )
+    assert "already in the list" in message_of(routes(), {"routes": {R1_TEXT: add()}})
+
+
+def test_a_part_that_holds_a_comma_needs_the_quoted_form():
+    root = Root(routes=[Route(dest="a,b", prefix=1, gw="g")])
+    with pytest.raises(PatchError):
+        _ = root.merge_patch({"routes": {"a,b,1,g,": {"cost": 1}}})
+    _ = root.merge_patch({"routes": {'"a,b",1,g,""': {"cost": 1}}})
+    assert costs(root) == [1]
+
+
+def test_the_comma_split_is_tried_when_the_written_form_names_no_item():
+    # Read as key_text writes it, "d,true,g,e" has the part True, not "true".
+    root = Root(routes=[Route(dest="d", prefix="true", gw="g", intf="e")])
+    _ = root.merge_patch({"routes": {"d,true,g,e": {"cost": 1}}})
+    assert costs(root) == [1]
+
+
+@pytest.mark.parametrize(
+    ("ops", "starts"),
+    [
+        ({"10.0.0.0/24": {"cost": 5}}, "'10.0.0.0/24' is not a key of this list"),
+        (
+            {"10.9.0.0,24,192.168.1.1,GE3": {"cost": 5}},
+            "no item has the key '10.9.0.0,24,192.168.1.1,GE3'",
+        ),
+        ({"10.0.0.0/24": add()}, "'10.0.0.0/24' is not a key of this list"),
+    ],
+)
+def test_a_composite_key_refusal_shows_how_a_key_is_written(
+    ops: dict[str, object], starts: str
+):
+    message = message_of(routes(), {"routes": ops})
+    assert message.startswith(starts)
+    assert (
+        "its 4 parts (dest, prefix, gw, intf) joined by commas, as in " + R1_TEXT
+    ) in message
+
+
+def test_the_example_key_is_quoted_when_a_part_holds_a_comma():
+    root = Root(routes=[Route(dest="a,b", prefix=1, gw="g")])
+    assert 'as in "a,b",1,g,""' in message_of(root, {"routes": {"x": delete()}})
+    assert "as in" not in message_of(Root(), {"routes": {"x": delete()}})
 
 
 def test_select_by_label():

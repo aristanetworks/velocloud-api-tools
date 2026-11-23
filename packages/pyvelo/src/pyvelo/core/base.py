@@ -621,9 +621,11 @@ class VcoModel(BaseModel):
         **Selectors.** In a keyed list, tried in this order:
 
         1. the key, compared in string form (``"10"`` names VLAN 10). For a
-           composite key (``KeyField`` with several fields), a tuple of the
-           parts or its string form (``rebase.key_text``), the parts compared
-           in string form;
+           composite key (``KeyField`` with several fields): its parts joined by
+           commas (``10.0.0.0,24,192.168.1.1,GE3``), the parts compared in
+           string form; a part that holds a comma or a quote needs the form
+           ``rebase.key_text`` writes (``"a,b",24,...``), which is tried first;
+           in Python also a tuple of the parts;
         2. ``at(n)``, which is ``"#n"``: the item at position ``n``, counted
            from 0 in the list as it was before the patch (any kind of list);
         3. ``"+"`` or ``"+tag"``: a new item, for ``add`` only; the tag only

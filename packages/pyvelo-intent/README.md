@@ -161,7 +161,7 @@ Every list has a kind, which says how its items are named:
 
 | Kind | Declared by | Items are named by |
 |---|---|---|
-| keyed | `KeyField(...)` | the key (for a composite key, a tuple of its parts or its string form), alt key, label or position |
+| keyed | `KeyField(...)` | the key, alt key, label or position |
 | value | being `list[str]` or `list[int]`, without `Positional()` | the value, or a position |
 | positional | `Positional()`, or a list of models that declares nothing | a position |
 | untyped | being `list[Any]` or `list[dict]` | not at all: give a list value |
@@ -184,6 +184,13 @@ another item has (a rule's logical ID, a segment's `segmentId`) raises, and so
 does a list value that repeats one. Every selector is resolved against the
 list as it was, then changes, deletes, and adds and moves (in the order
 written) are applied.
+
+A list whose key has several parts, such as the static routes, names an item
+by the parts joined by commas: `10.0.0.0,24,192.168.1.1,GE3`. A part that
+holds a comma or a double quote is written as a JSON string instead
+(`"a,b",24,"192.168.1.1",GE3`), and in Python a tuple of the parts works too.
+A selector that is not a key of such a list is refused with the key of one of
+its items as the example.
 
 ```python
 from pyvelo_intent import add, at, delete, move

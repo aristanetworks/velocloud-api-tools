@@ -1104,28 +1104,52 @@ class _Selection:
     """Whether it is ``"+"`` or ``"+tag"`` in a keyed list: a new item."""
 
 
-def _selector_key(spec: _ListSpec, selector: object) -> KeyValue | None:
-    """The key *selector* stands for in a keyed list, as written; None if it is not one.
+def _selector_keys(spec: _ListSpec, selector: object) -> list[KeyValue]:
+    """The keys *selector* may stand for in a keyed list, in the order tried.
 
-    For a one-part key, any selector is one, in string form: it is never
-    parsed for commas. For a key of n parts, a tuple or list of n parts, each
-    as ``key_part`` gives it (a ``UUID`` in string form, as an item's part
-    is), or a string that ``parse_key_text`` reads as n parts.
+    For a one-part key, the selector in string form: it is never parsed for
+    commas. For a key of n parts: first what it gives as written, a tuple or
+    list of n parts, each as ``key_part`` gives it (a ``UUID`` in string form,
+    as an item's part is), or a string that ``parse_key_text`` reads as n
+    parts; then, for a string, its n parts split at every comma, each part
+    text (unless that is the same key in string form). Empty when the
+    selector has n parts in no reading.
     """
     if len(spec.key_paths) == 1:
-        return str(selector)
-    parts: tuple[KeyScalar, ...]
+        return [str(selector)]
+    n = len(spec.key_paths)
+    keys: list[KeyValue] = []
     if isinstance(selector, str):
         try:
-            parts = parse_key_text(selector)
+            written = parse_key_text(selector)
         except ValueError:
-            return None
+            pass
+        else:
+            if len(written) == n:
+                keys.append(written)
+        split = tuple(selector.split(","))
+        if len(split) == n and (not keys or key_form(split) != key_form(keys[0])):
+            keys.append(split)
     elif isinstance(selector, (tuple, list)):
         values = cast("tuple[object, ...] | list[object]", selector)
-        parts = tuple(key_part(v) for v in values)
-    else:
-        return None
-    return parts if len(parts) == len(spec.key_paths) else None
+        if len(values) == n:
+            keys.append(tuple(key_part(v) for v in values))
+    return keys
+
+
+def _plain_key_text(key: KeyValue) -> str:
+    """The simplest text that selects an item by *key*.
+
+    A one-part key in string form. A composite key: its parts in string form
+    joined by commas, unless a part holds a comma or a double quote, which
+    only the form ``key_text`` writes can carry.
+    """
+    if not isinstance(key, tuple):
+        return str(key)
+    texts = [str(part) for part in key]
+    if any("," in text or '"' in text for text in texts):
+        return key_text(key)
+    return ",".join(texts)
 
 
 def _select(
@@ -1136,8 +1160,8 @@ def _select(
 ) -> _Selection:
     """Resolve *selector* against *items*; the one place a selector is read.
 
-    In a keyed list, tried in order: an item whose key is the
-    one the selector stands for (``_selector_key``), compared in string form
+    In a keyed list, tried in order: an item whose key is one
+    the selector stands for (``_selector_keys``), compared in string form
     part by part; ``"#n"``, the item at position ``n``; ``"+"`` or ``"+tag"``,
     a new item; an item whose alt key equals the selector in string form;
     an item whose label does; and, where the key is a ``NameOf`` field and
@@ -1150,9 +1174,11 @@ def _select(
         text = str(selector)
         if found := [i for i, item in enumerate(items) if str(item) == text]:
             return _Selection(found, text, None)
-    key = _selector_key(spec, selector) if spec.kind == "keyed" else None
-    if key is not None and (found := _with_key(items, spec, key)):
-        return _Selection(found, key, None)
+    keys = _selector_keys(spec, selector) if spec.kind == "keyed" else []
+    for candidate in keys:
+        if found := _with_key(items, spec, candidate):
+            return _Selection(found, candidate, None)
+    key = keys[0] if keys else None
     n = position_of(selector)
     if n is not None:
         return _Selection([n] if n < len(items) else [], None, n)
@@ -1195,8 +1221,9 @@ def select_items(
     """The positions of the items of the list field *field_name* that *selector* names.
 
     Empty if it names none. A selector is read as in a patch
-    (``_select``): the key of an item of a keyed list (for a composite key, a
-    tuple of its parts or their string form), an entry of a value list,
+    (``_select``): the key of an item of a keyed list (for a composite key,
+    its parts joined by commas, a tuple of them, or the form ``key_text``
+    writes), an entry of a value list,
     ``at(n)``, the alt key or the label of an item of a keyed list that has
     one, and in a keyed list whose key is a ``NameOf`` field, the resolver's
     name for it. An unknown name raises ``ResolutionError``. Raises
@@ -1683,6 +1710,17 @@ def _check_add(
     return new
 
 
+def _key_form_hint(spec: _ListSpec, items: Sequence[object]) -> str:
+    """How a composite key is written, with the key of the first keyed item of *items* as the example."""
+    n = len(spec.key_paths)
+    form = f"a key is its {n} parts ({', '.join(spec.key_paths)}) joined by commas"
+    for item in items:
+        key = item_key(item, spec.key_paths)
+        if key is not None:
+            return f"{form}, as in {_plain_key_text(key)}"
+    return form
+
+
 def _check_keyed_add(
     spec: _ListSpec,
     selector: object,
@@ -1727,10 +1765,10 @@ def _check_keyed_add(
     key = selection.key
     if key is None:
         raise PatchError(
-            f"{_show_selector(selector)} is not a key of this list, which has "
-            + f"{len(spec.key_paths)} parts ({', '.join(spec.key_paths)}): add() "
-            + 'takes the key as its selector, or "+" with the fields in the body, '
-            + 'as in "+": add({...})',
+            f"{_show_selector(selector)} is not a key of this list: "
+            + _key_form_hint(spec, items)
+            + '; or write the item under "+" with the parts among its fields, as in '
+            + '{"+": {"_op": "add", ...}} ("+": add({...}))',
             where,
         )
     if selection.positions and not selection.label:
@@ -1803,19 +1841,25 @@ def _named_item(
         what = (
             names[0] if len(names) == 1 else f"{', '.join(names[:-1])} or {names[-1]}"
         )
-        shown = (
-            _show_selector(selector)
-            if selection.key is None
-            else _show_key(selection.key)
-        )
-        message = f"no item has the {what} {shown}"
-        if selection.key is None:
-            message += f"; the key has {len(spec.key_paths)} parts: " + ", ".join(
-                spec.key_paths
+        if len(spec.key_paths) > 1:
+            form = _key_form_hint(spec, items)
+            shown = _show_selector(selector)
+            if selection.key is None:
+                message = f"{shown} is not a key of this list: {form}"
+                if op.kind == "change":
+                    message += (
+                        '; to add an item, write {"+": {"_op": "add", ...}} '
+                        + '("+": add({...})) with its fields'
+                    )
+                raise PatchError(message, where)
+            message = f"no item has the {what} {shown}; {form}"
+        else:
+            shown = (
+                _show_selector(selector)
+                if selection.key is None
+                else _show_key(selection.key)
             )
-            if op.kind == "change":
-                message += '; to add one, write "+": add({...}) with its fields'
-            raise PatchError(message, where)
+            message = f"no item has the {what} {shown}"
     if op.kind == "change":
         message += "; to add one, write add(...)"
     raise PatchError(message, where)
