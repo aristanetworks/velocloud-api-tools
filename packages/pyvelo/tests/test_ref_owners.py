@@ -13,7 +13,14 @@ from uuid import UUID
 import pytest
 from pydantic import MISSING
 from pyvelo.client.enums.profiles import GetConfigurationWith
-from pyvelo.client.models.configuration import DeviceSettingsData
+from pyvelo.client.models.configuration import (
+    DeviceSettingsData,
+    FirewallData,
+    QosData,
+    SegmentMetadata,
+    WanData,
+)
+from pyvelo.client.models.configuration.control_plane import ControlPlaneData
 from pyvelo.client.models.configuration.device_settings.segment import (
     CssProviderRef,
     DeviceSegment,
@@ -25,6 +32,7 @@ from pyvelo.client.models.configuration.device_settings.segment import (
 )
 from pyvelo.client.models.configuration.ref_owners import (
     RefOwner,
+    can_hold_owner,
     fill_ref_only,
     ref_only_values,
     ref_owners,
@@ -44,6 +52,7 @@ from pyvelo.client.schemas.configuration import (
 from pyvelo.core import ConfigContext, OwnsRef, RefOnly
 from pyvelo.core.fields import get_owns_ref, get_ref_only, get_resolvable
 from pyvelo.core.identity import NetworkServiceIdentity, SegmentIdentity
+from pyvelo.testing import make_module_json
 from refs_helpers import (
     AUTH,
     CONFIG,
@@ -641,3 +650,23 @@ def test_a_module_list_validated_with_the_flag_is_not_loaded():
 def test_a_module_copy_keeps_whether_its_refs_were_read(loaded: bool):
     module = primary_module(refs_loaded=loaded)
     assert copy.deepcopy(module).refs_loaded is loaded
+
+
+def test_only_the_classes_that_can_hold_an_owner_are_walked():
+    assert can_hold_owner(DeviceSettingsData) is True
+    assert can_hold_owner(DeviceSegment) is True
+    assert can_hold_owner(SegmentDns) is True
+    assert can_hold_owner(DnsPrimaryProvider) is True
+    assert can_hold_owner(CssProviderRef) is True
+    for data_class in (FirewallData, QosData, WanData, ControlPlaneData):
+        assert can_hold_owner(data_class) is False
+    assert can_hold_owner(DnsProvider) is False
+    assert can_hold_owner(SegmentMetadata) is False
+
+
+def test_the_data_of_a_module_that_holds_no_owner_has_none():
+    row = make_module_json("firewall", {"segments": []}, configuration_id=CONFIG)
+    module = FirewallConfigurationModule.model_validate(row)
+    assert ref_owners(module.data, ConfigContext.PROFILE) == ()
+    assert ref_only_values(module.data) == {}
+    fill_ref_only(module.data, {})

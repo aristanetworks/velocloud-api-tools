@@ -8,13 +8,17 @@ and the derivation of the rows to send imports it to compare owners.
 
 The walk takes the fields of models, and the items of the root's ``segments``
 list (the one list that holds segment entries); no other list, and no ``dict``.
-A provider given as a list is not walked, so it owns nothing.
+A provider given as a list is not walked, so it owns nothing. A model whose
+class cannot hold an owner (``can_hold_owner``) is not walked either, so the
+data of a module with no owner (firewall, QoS, WAN, control plane) costs
+nothing to look through.
 """
 
+import functools
 import uuid
 from collections.abc import Iterator
 from dataclasses import dataclass
-from typing import Final
+from typing import Annotated, Final, Literal, TypeAliasType, get_args, get_origin
 
 from pydantic import MISSING
 from pydantic.fields import FieldInfo
@@ -90,9 +94,48 @@ def _segment_of(item: object) -> _Segment | None:
     )
 
 
+def _model_classes(annotation: object) -> Iterator[type[VcoModel]]:
+    """The model classes a field type can hold, through ``Annotated``, unions, ``list``, ``dict`` and ``tuple``."""
+    if isinstance(annotation, TypeAliasType):
+        yield from _model_classes(annotation.__value__)
+    elif isinstance(annotation, type):
+        if issubclass(annotation, VcoModel):
+            yield annotation
+    elif get_origin(annotation) is not Literal:
+        args = get_args(annotation)  # ``Annotated`` has its type first, then markers
+        for arg in args[:1] if get_origin(annotation) is Annotated else args:
+            yield from _model_classes(arg)
+
+
+@functools.cache
+def can_hold_owner(model_cls: type[VcoModel]) -> bool:
+    """Whether a model of *model_cls* can hold a declared owner, at any depth.
+
+    True when one of its fields carries ``OwnsRef`` or ``RefOnly``, or the type
+    of a field (through ``Annotated``, unions, ``list``, ``dict`` and
+    ``tuple``) is a model class that can. It is computed from the classes, once
+    per class, from the declared field types: a subclass that adds an owner
+    below a field declared with a class that has none is not found.
+    """
+    seen: set[type[VcoModel]] = set()
+    pending = [model_cls]
+    while pending:
+        current = pending.pop()
+        if current in seen:
+            continue
+        seen.add(current)
+        for field_info in current.model_fields.values():
+            if get_owns_ref(field_info) is not None or get_ref_only(field_info):
+                return True
+            pending.extend(_model_classes(field_info.annotation))
+    return False
+
+
 def _walk(
     model: VcoModel, path: Path, segment: _Segment | None, *, root: bool
 ) -> Iterator[_Site]:
+    if not can_hold_owner(type(model)):
+        return
     for name, field_info in type(model).model_fields.items():
         value: object = getattr(model, name)
         here = path.child(name)
