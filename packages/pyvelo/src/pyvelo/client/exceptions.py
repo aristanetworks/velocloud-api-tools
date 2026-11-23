@@ -294,13 +294,15 @@ class RefsNotLoadedError(VcoError):
         super().__init__(message)
 
 
-type WriteAnswer = Literal["row", "counted", "refused"]
+type WriteAnswer = Literal["row", "counted", "refused", "stale"]
 """What the VCO said of a module write.
 
 ``"row"``: it answered with a module row. ``"counted"``: it answered with a
 row count of at least one, or an insert's ID, so it says it stored the write.
 ``"refused"``: it refused the write's version (its precondition error, or a
-row count of zero).
+row count of zero). ``"stale"``: nothing was sent, because the module's
+version on the VCO is not the one read (the read before a write that sends
+refs), so the module read now is checked as after a refusal.
 """
 
 
@@ -361,8 +363,9 @@ class ModuleWriteError(VcoError):
     plan: ModulePlan | None
     module: ConfigurationModuleBase | None
     """The module as the VCO holds it now. ``write_module`` sets it on every
-    ``ConfigConflictError`` and ``WriteNotAppliedError``; only
-    ``WriteOutcomeUnknownError`` has None."""
+    ``ConfigConflictError`` and ``WriteNotAppliedError``, except for a
+    ``ConfigConflictError`` whose module is gone from its configuration;
+    ``WriteOutcomeUnknownError`` always has None."""
     lost_edits: tuple[PlannedChange, ...]
     applied: tuple[PlannedChange, ...]
     left_out: tuple[PlannedChange, ...]
@@ -607,14 +610,20 @@ class ConfigConflictError(ModuleWriteError):
     are not all stored. ``stated`` says how the refusal is known. True: the
     VCO said it refused the version (``detail`` says how). False: the VCO
     answered with the module, which holds none of the changes and is as read
-    at each, and the refusal is inferred from that. ``lost_edits`` are the
-    edits to redo, and may be empty after a stated refusal when the check
-    cannot tell what is stored; ``module``, as the VCO holds it, is what to
-    redo them on. ``write_module`` always sets it.
+    at each, and the refusal is inferred from that; or ``sent`` is False.
+    ``sent`` is False when nothing was sent: the module's version on the VCO
+    was not the one read, and the module there did not hold the write's
+    changes (a write that sends refs reads the version first). ``lost_edits``
+    are the edits to redo, and may be empty after a stated refusal when the
+    check cannot tell what is stored; ``module``, as the VCO holds it, is
+    what to redo them on. ``write_module`` always sets it, except when the
+    module is gone from its configuration: ``module`` is then None and
+    ``detail`` says to read the configuration again.
     """
 
     detail: str
     stated: bool
+    sent: bool
 
     def __init__(
         self,
@@ -623,6 +632,7 @@ class ConfigConflictError(ModuleWriteError):
         detail: str,
         *,
         stated: bool = True,
+        sent: bool = True,
         module_name: str = "",
         plan: ModulePlan | None = None,
         module: ConfigurationModuleBase | None = None,
@@ -634,6 +644,7 @@ class ConfigConflictError(ModuleWriteError):
     ) -> None:
         self.detail = detail
         self.stated = stated
+        self.sent = sent
         super().__init__(
             module_id,
             version,
@@ -649,6 +660,12 @@ class ConfigConflictError(ModuleWriteError):
 
     @override
     def _headline(self) -> str:
+        if not self.sent:
+            # ``detail`` says that nothing was sent, and what to do.
+            return (
+                f"Configuration module {self._label()} changed on the VCO since "
+                f"it was read (version {self.version}): {self.detail}"
+            )
         if self.stated:
             return (
                 f"Configuration module {self._label()} changed since it was read "

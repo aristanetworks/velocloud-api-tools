@@ -47,6 +47,7 @@ from refs_helpers import (
     CONFIG,
     DNS_A,
     PRIMARY,
+    changing_after_the_version_read,
     copy_of_data,
     primary_provider_module,
     set_primary_provider,
@@ -606,9 +607,14 @@ async def test_a_plan_with_nothing_checkable_asks_for_a_count_and_reads_back(
     store.on_store.append(add_the_default_back)
     client = await mock_vco_client(store)
     write = await client.write_module(module, plan)
-    assert methods(store) == ["updateConfigurationModule", "getConfiguration"]
-    assert "returnData" not in store.requests[0][1]
-    assert store.requests[0][1]["version"] == "v1"
+    # The module has a segment, so the update sends refs and reads the version first.
+    assert methods(store) == [
+        "getConfigurationModules",
+        "updateConfigurationModule",
+        "getConfiguration",
+    ]
+    assert "returnData" not in store.requests[1][1]
+    assert store.requests[1][1]["version"] == "v1"
     assert paths(write.left_out) == [ECMP_PATH]
     assert write.applied == ()
     assert write.module.version == store.rows[1]["version"]
@@ -622,8 +628,10 @@ async def test_a_stale_write_with_nothing_checkable_is_a_conflict(
     module = ds(DS_RAW)
     plan = plan_module(module, DS_WITHOUT_ECMP)
     store = store_of(module, conditional_check=conditional_check)
-    store.other_writer(1, other_key)
-    client = await mock_vco_client(store)
+    # The module changes after the version read, so the update itself is stale.
+    client = await mock_vco_client(
+        changing_after_the_version_read(store, store, 1, other_key)
+    )
     with pytest.raises(ConfigConflictError) as exc:
         _ = await client.write_module(module, plan)
     error = exc.value
@@ -765,8 +773,12 @@ async def test_an_unknown_outcome_names_the_refs_it_sent(
     set_primary_provider(current, None)
     plan = plan_module(module, current)
     store = store_of(module, conditional_check=True)
-    store.other_writer(module.id_, elsewhere)
-    client = await mock_vco_client(reading(store, [], CONFIG))
+    # The module changes after the version read, so the update itself is refused.
+    client = await mock_vco_client(
+        changing_after_the_version_read(
+            reading(store, [], CONFIG), store, module.id_, elsewhere
+        )
+    )
     with pytest.raises(WriteOutcomeUnknownError) as exc:
         _ = await client.write_module(module, plan)
     assert exc.value.plan is plan

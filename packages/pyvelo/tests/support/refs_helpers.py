@@ -5,9 +5,12 @@
 """
 
 import copy
+import json
 import uuid
+from collections.abc import Callable
 from typing import Any
 
+import httpx
 from pydantic import MISSING
 from pyvelo.client.models.configuration import DeviceSettingsData
 from pyvelo.client.models.configuration.device_settings.segment import (
@@ -203,6 +206,31 @@ def store_with_services() -> ModuleStore:
         object_="NETWORK_SEGMENT",
     )
     return store
+
+
+def changing_after_the_version_read(
+    handler: Callable[[httpx.Request], httpx.Response],
+    store: ModuleStore,
+    module_id: int,
+    edit: Callable[[dict[str, Any]], None],
+) -> Callable[[httpx.Request], httpx.Response]:
+    """A handler that answers with *handler*, and after the version read has another writer *edit* module *module_id* of *store*.
+
+    A write that sends refs reads the module's version before it sends. The
+    module changes between that read and the write, which the read does not
+    close: the update itself then meets a stale version, as before the read.
+    *handler* is *store* or a handler that sends to it.
+    """
+
+    def racing(request: httpx.Request) -> httpx.Response:
+        response = handler(request)
+        if json.loads(request.content)["method"] == (
+            "configuration/getConfigurationModules"
+        ):
+            store.other_writer(module_id, edit)
+        return response
+
+    return racing
 
 
 async def table_registry(*identities: object) -> ResolverRegistry:

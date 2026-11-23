@@ -512,6 +512,14 @@ class GetConfigurationModules(VcoModel):
     modules: list[ConfigurationModuleName] | MISSING = MISSING
 
 
+class ConfigurationModuleVersion(VcoModel):
+    """A module row as ``getConfigurationModules`` answers with ``noData``: its identity and ``version``, with no data and no refs."""
+
+    id_: Annotated[int, Alias("id")]
+    name: str
+    version: str | None
+
+
 class GetConfiguration(VcoModel):
     id_: Annotated[int, Alias("id"), Resolvable(ProfileIdentity, "id")] = Field(
         description="Configuration ID"
@@ -599,6 +607,7 @@ __all__ = [
     "ConfigurationBase",
     "ConfigurationModuleBase",
     "ConfigurationModuleUpdate",
+    "ConfigurationModuleVersion",
     "ControlPlaneConfigurationModule",
     "DeleteConfiguration",
     "DeviceSettingsConfigurationModule",

@@ -550,6 +550,17 @@ so, with its precondition error or a row count of zero. False: the VCO answered
 with the module, and the save inferred the refusal from it; the message then
 says "seems to have refused".
 
+A write that carries refs (a device settings or QoS update with segments
+always does) reads the module's `version` first, one more request. If the
+version is the one read, the save goes on. If it changed, the save reads the
+module as the VCO holds it now and checks it against your changes. When it
+already holds them (a retry whose first copy was stored), the save passes and
+the state continues from that module. Otherwise the save raises
+`ConfigConflictError` with `error.sent` False and `error.stated` False, and
+nothing was sent: `error.module` is the module as it is now, with your edits in
+`lost_edits` to redo on it. A module its configuration no longer holds raises it
+too, with `error.module` None: read the configuration again.
+
 Which of the two a stale write raises depends on the VCO's conditional check
 of the version. With it on, the VCO refuses the write, and the save raises
 `ConfigConflictError`. With it off, the VCO does not store the data and
@@ -561,7 +572,8 @@ your edits too, so that it counts as stored, while another of your edits is
 not; or the write carried refs and the VCO replaced them while it left the
 data as it was, so that your refs changes are under `applied` and your data
 changes under `lost_edits`. Reading the version before a write that carries
-refs would prevent the last; it is planned and not built.
+refs prevents the last, unless the module changes between that read and the
+write.
 
 A VCO with the check off says nothing when it answers with the module, so the
 save tells a stale write by what is stored. Where no change of a write can be
@@ -749,9 +761,10 @@ Known limits:
   again. A save that does this itself is planned and not built.
 - On a VCO with the conditional check off, a stale write that carries refs may
   replace them while the data is not stored, overwriting another writer's
-  refs; the save then reports your data changes, if any, as not stored.
-  Reading the version before a write that carries refs is planned and not
-  built.
+  refs; the save then reports your data changes, if any, as not stored. The
+  save reads the module's version before it sends refs, which narrows this to
+  a change between that read and the write; a module with no `version` is
+  written without the read.
 - A keyed list read with an item that cannot be told apart is compared as a
   whole: an item with no key and no ID (a WAN link without an `internalId`),
   or two items of one name read without IDs. A change in it to a field the VCO

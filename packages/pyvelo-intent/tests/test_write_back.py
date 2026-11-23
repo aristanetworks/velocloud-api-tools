@@ -157,14 +157,21 @@ def assert_detached_and_replaced(
     assert state.edge.firewall.segments[0].firewall_logging_enabled is True
 
 
-async def test_three_modules_three_requests_and_no_read():
+async def test_three_modules_three_updates_and_a_version_read_for_the_one_with_segments():
     state = three_module_state()
     client = MockVcoClient.for_state(state)
     edit_all(state)
 
     result = await ConfigPipeline(client).save(state)
 
-    assert methods(client.store) == ["updateConfigurationModule"] * 3
+    # The QoS module has a segment, so its update sends refs and reads the
+    # module's version first; nothing reads a configuration.
+    assert methods(client.store) == [
+        "updateConfigurationModule",
+        "getConfigurationModules",
+        "updateConfigurationModule",
+        "updateConfigurationModule",
+    ]
     assert result.modules_updated == [FIREWALL, QOS, ConfigurationModuleName.WAN]
 
 
@@ -316,7 +323,15 @@ async def test_request_two_of_three_fails():
 
     _ = await pipeline.save(state)
 
-    assert methods(client.store) == ["updateConfigurationModule"] * 4
+    # Each attempt at QoS, which has a segment, reads the module's version first.
+    assert methods(client.store) == [
+        "updateConfigurationModule",
+        "getConfigurationModules",
+        "updateConfigurationModule",
+        "getConfigurationModules",
+        "updateConfigurationModule",
+        "updateConfigurationModule",
+    ]
     assert [r.configuration_module_id for r in client.update_requests[2:]] == [4, 5]
     assert state.plan().changed == ()
 

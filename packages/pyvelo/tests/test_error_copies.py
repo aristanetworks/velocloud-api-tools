@@ -206,6 +206,15 @@ def test_every_error_of_the_module_round_trips():
         VcoCredentialsError("VCO_HOST is not set"),
         LossyFieldError("firewall", [path], [path]),
         ConfigConflictError(1, "v1", "stale", module_name="firewall", plan=plan),
+        ConfigConflictError(
+            1,
+            "v1",
+            "stale",
+            stated=False,
+            sent=False,
+            module_name="firewall",
+            plan=plan,
+        ),
         WriteNotAppliedError(
             1, "v1", module_name="firewall", plan=plan, module=fw({}), lost_edits=[]
         ),

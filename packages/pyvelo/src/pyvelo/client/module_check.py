@@ -9,6 +9,9 @@ on the data and ``check_refs`` on the refs, and turns what they find into a
   is lost or left out (a write sent twice whose first copy was stored);
   otherwise ``ConfigConflictError``, which lists no lost edit when the check
   cannot tell what is stored;
+- ``"stale"``: nothing was sent, because the module's version on the VCO is not
+  the one read; the same rule as ``"refused"``, and the
+  ``ConfigConflictError`` says that nothing was sent (``sent`` is False);
 - ``"row"`` or ``"counted"``: a ``ModuleWrite`` when no change is lost;
   otherwise, the first that fits: ``WriteNotAppliedError`` for an insert;
   ``ConfigConflictError`` for a row with none of the changes stored and each
@@ -341,19 +344,21 @@ def check_module_write[M: ConfigurationModuleBase](
     *stored* is the module the VCO returned for the write, or read after it;
     it is of the class of *module*. *answer* says what the VCO said of the
     write (``WriteAnswer``); after ``"refused"``, *stored* is from the read
-    after the refusal.
+    after the refusal, and for ``"stale"``, which sends nothing, from the read
+    that found the version changed.
 
     The data is checked against the raw data as read (without reconciled
     segments, so those are planned changes too) and the refs of *module*
     against the refs *stored* holds (``check_refs``), for an insert as for an
     update.
 
-    After ``"refused"``, or ``"row"`` with no change found stored, a left-out
-    change whose stored value is the one read is a lost edit: the write did
-    not reach it. A refused write is returned only when a change is found
-    stored and none is lost or left out. A ``"row"`` or ``"counted"`` write
+    After ``"refused"`` or ``"stale"``, or ``"row"`` with no change found
+    stored, a left-out change whose stored value is the one read is a lost
+    edit: the write did not reach it. A refused or stale write is returned only
+    when a change is found stored and none is lost or left out. A ``"row"`` or ``"counted"`` write
     is returned when no change is lost. Otherwise this raises
-    ``ConfigConflictError`` after a refusal (``stated``), for an insert
+    ``ConfigConflictError`` after a refusal (``stated``) or for a stale write
+    (not ``stated``, and not ``sent``), for an insert
     ``WriteNotAppliedError``, ``ConfigConflictError`` (not ``stated``) for a
     row with none of the changes stored and each value as read, and
     ``WriteNotAppliedError`` for anything else and for every ``"counted"``
@@ -381,13 +386,14 @@ def check_module_write[M: ConfigurationModuleBase](
     lost_edits = (*data.not_applied, *refs.not_applied)
     left_out = data.left_out
     server_changes = (*data.server_changes, *refs.server_changes)
-    if answer == "refused" or (answer == "row" and not applied):
+    not_reached = answer in ("refused", "stale")
+    if not_reached or (answer == "row" and not applied):
         # The write did not reach a left-out change that is still as read.
         lost_edits = (*lost_edits, *(c for c in left_out if not c.clash))
         left_out = tuple(c for c in left_out if c.clash)
     stored_whole = (
         bool(applied) and not lost_edits and not left_out
-        if answer == "refused"
+        if not_reached
         else not lost_edits
     )
     if stored_whole:
@@ -412,6 +418,7 @@ def check_module_write[M: ConfigurationModuleBase](
             version,
             detail,
             stated=answer == "refused",
+            sent=answer != "stale",
             module_name=plan.name,
             plan=plan,
             module=stored,
@@ -465,6 +472,12 @@ def _conflict(
     """
     if answer == "refused":
         return "the VCO refused the version"
+    if answer == "stale":
+        return (
+            "the module's version on the VCO is not the one read, and the "
+            "module there does not hold this write's changes; nothing was "
+            "sent: redo the lost edits on error.module and save again"
+        )
     if plan.operation == "insert" or answer == "counted":
         return None
     if not applied and not any(change.clash for change in lost_edits):

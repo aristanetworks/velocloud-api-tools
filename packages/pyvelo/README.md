@@ -78,7 +78,12 @@ than sent, such as an ID it issued). Otherwise it raises, from
 - `ConfigConflictError` when the VCO refused the version and the module as
   stored does not already hold every planned change, or when it answered with
   the module, stored none of the changes and holds each value as read
-  (`error.stated` is then False: the refusal is inferred);
+  (`error.stated` is then False: the refusal is inferred). It is also raised
+  before anything is sent (`error.sent` is False, `error.stated` False) when
+  the write sends refs, the module's version on the VCO is not the one read, and
+  the module there does not hold the changes. When the module is gone from its
+  configuration, `error.module` is None and the message says to read the
+  configuration again;
 - `WriteNotAppliedError` when the VCO stored the write otherwise than as sent.
   That includes a stale write to a VCO whose conditional version check is off,
   when another writer changed a value the plan also changes: that edit is
@@ -122,9 +127,24 @@ known to be lost. Where the VCO stores a value its own way (a field marked
 than the one read is a server change. After a refusal, and when the VCO answered
 with a module that holds none of the changes, such a change that is still as
 read is a lost edit. `check_module_write(module, plan, stored, answer=...)` takes
-what the VCO said of the write: `"row"`, `"counted"` or `"refused"`. With `"row"`
-it has only the module to go by, so a write none of whose changes is found stored
-is taken as not stored.
+what the VCO said of the write: `"row"`, `"counted"`, `"refused"` or `"stale"`.
+With `"row"` it has only the module to go by, so a write none of whose changes
+is found stored is taken as not stored. `"stale"` is for a write that was not
+sent because the module's version had changed: it passes and fails as
+`"refused"` does, and the `ConfigConflictError` says that nothing was sent.
+
+A write that sends refs (an update whose plan carries them: a device settings or
+QoS module with segments always does) costs one more request. With the VCO's
+version precheck off, a stale write is refused for `data` but still replaces the
+refs, so `write_module` first reads the module's `version`
+(`configuration/getConfigurationModules` with `noData`, filtered to its name).
+When it is the one read, the update is sent. When it is not, `write_module`
+reads the configuration with its modules and checks the module there against the
+plan: it returns that module as the write when it already holds the changes (a
+retry whose first copy was stored), and otherwise raises `ConfigConflictError`
+with nothing sent. The read narrows the race and does not close it, and a
+module with no `version` is written unconditionally. A write that sends no refs
+makes no extra request.
 
 With `if_absent=True` an insert first reads the configuration, and a module of
 that name found there is taken as the insert's answer and checked like one, with

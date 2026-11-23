@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 
 from pydantic import MISSING, ValidationError
 
+from pyvelo.client.enums.configuration import ConfigurationModuleName
 from pyvelo.client.enums.profiles import GetConfigurationWith
 from pyvelo.client.exceptions import (
     ConfigConflictError,
@@ -40,6 +41,7 @@ from pyvelo.client.schemas.configuration import (
     ConfigurationBase,
     ConfigurationModuleBase,
     ConfigurationModuleList,
+    ConfigurationModuleVersion,
     DeleteConfiguration,
     GetAllApplicationsResult,
     GetApplicationsResult,
@@ -134,6 +136,68 @@ def _parse_row(
     return ConfigurationModuleList.model_validate_json(
         json.dumps([row]), context=_level_context(module.config_context)
     ).root[0]
+
+
+async def _read_version(
+    client: VcoClientBaseProtocol,
+    module: ConfigurationModuleBase,
+    enterprise_id: int | None,
+) -> str | None:
+    """The ``version`` the VCO holds for *module* now: the row with its ID, read without its data; None when no row has it.
+
+    One request: ``configuration/getConfigurationModules`` with ``noData``,
+    filtered to the module's name. Raises ``ValueError`` when *module* has no
+    ``configuration_id``. Any error of the request propagates.
+    """
+    configuration_id = module.configuration_id
+    if configuration_id is None:
+        raise ValueError("the module has no configuration ID to read its version by")
+    rows = await client.portal_list(
+        "configuration/getConfigurationModules",
+        GetConfigurationModules(
+            enterprise_id=enterprise_id if enterprise_id is not None else MISSING,
+            configuration_id=configuration_id,
+            no_data=True,
+            modules=[ConfigurationModuleName(str(getattr(module, "name", MISSING)))],
+        ),
+        ConfigurationModuleVersion,
+    )
+    return next((row.version for row in rows if row.id_ == module.id_), None)
+
+
+async def _check_stale[M: ConfigurationModuleBase](
+    client: VcoClientBaseProtocol,
+    module: M,
+    plan: ModulePlan,
+    enterprise_id: int | None,
+) -> ModuleWrite[M]:
+    """The outcome of *plan* for a module whose version on the VCO is not the one read, with nothing sent.
+
+    The module is read with its refs, as the VCO holds it now. It is returned
+    as the write when it already holds the plan's changes (a retry of a write
+    whose answer was lost); otherwise this raises ``ConfigConflictError``
+    (``check_module_write`` with ``"stale"``), and for a module its
+    configuration no longer holds, one with no module. An error of the read, or
+    a read that does not parse, propagates.
+    """
+    configuration_id = module.configuration_id
+    assert configuration_id is not None
+    held = await _read_rows(client, configuration_id, enterprise_id)
+    row = next((r for r in held if r.get("id") == module.id_), None)
+    if row is None:
+        raise ConfigConflictError(
+            module.id_,
+            module.version or "",
+            (
+                "its configuration no longer holds the module, and nothing was "
+                "sent: read the configuration again to see what is there"
+            ),
+            stated=False,
+            sent=False,
+            module_name=plan.name,
+            plan=plan,
+        )
+    return check_module_write(module, plan, _parse_row(module, row), answer="stale")
 
 
 async def _read_stored(
@@ -487,6 +551,20 @@ class ConfigurationMixin(Protocol):
         Sends nothing when the plan's operation is ``none``, and returns
         *module* itself.
 
+        An update whose plan carries refs (``plan.refs`` is not None; a
+        module with a ``version`` and a ``configuration_id``) first reads the
+        module's ``version`` (``_read_version``, one request). With the VCO's
+        precheck off, a stale write is refused for the data but still replaces
+        the refs, so a version that is not the one read is not sent over. The
+        configuration is read with its modules, and the module there is
+        checked as after a refusal (``check_module_write`` with
+        ``"stale"``): it is returned as the write when it already holds the
+        changes (a retry whose first copy was stored), and otherwise
+        ``ConfigConflictError`` is raised with ``sent`` False. Neither read
+        sends anything, and an error of either propagates. A write that sends
+        no refs has no extra request. The read narrows the race and does not
+        close it.
+
         With *if_absent*, an insert first reads the configuration: a module of
         the plan's name found there (of several, the one with the highest ID)
         is taken as the insert's answer and checked like one, and nothing is
@@ -505,7 +583,10 @@ class ConfigurationMixin(Protocol):
         raises one of:
 
         - ``ConfigConflictError`` when the VCO refused the write's version, or
-          answered with the module as read, unchanged.
+          answered with the module as read, unchanged; or, with nothing sent,
+          when the version read before a write that sends refs found the
+          module changed and not holding the changes. Also with nothing sent,
+          and with no module, when the module is gone from its configuration.
         - ``WriteNotAppliedError`` when the VCO stored the write otherwise than
           as planned. ``RefsDroppedError``, a subclass, when every change not
           stored is a ref row. An update the VCO answered with the module
@@ -519,10 +600,11 @@ class ConfigurationMixin(Protocol):
           module). With *if_absent* it also says that the module found by
           name does not parse or is not this one.
 
-        The first two always carry the lost edits and the module as stored;
-        ``WriteOutcomeUnknownError`` carries neither. ``error.redo_patch()`` is
-        the patch that redoes the lost edits on that module, and
-        ``error.not_redone()`` the lost edits it leaves out.
+        The first two carry the lost edits and the module as stored, except a
+        conflict about a module gone from its configuration, which has no
+        module; ``WriteOutcomeUnknownError`` carries neither.
+        ``error.redo_patch()`` is the patch that redoes the lost edits on that
+        module, and ``error.not_redone()`` the lost edits it leaves out.
 
         After a refusal, the refusal is the error's cause (its context, when
         the read-back fails). Raises ``ValueError``, before sending, when *plan*
@@ -573,6 +655,13 @@ class ConfigurationMixin(Protocol):
                 else:
                     stored = inserted
         else:
+            if (
+                plan.refs is not None
+                and module.version
+                and module.configuration_id is not None
+                and await _read_version(self, module, enterprise_id) != module.version
+            ):
+                return await _check_stale(self, module, plan, enterprise_id)
             update = update_request(
                 module,
                 plan,

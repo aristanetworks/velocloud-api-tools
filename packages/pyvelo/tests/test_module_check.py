@@ -61,6 +61,7 @@ from refs_helpers import (
     SEG0,
     SEG0_OBJECT,
     SEGMENT,
+    changing_after_the_version_read,
     copy_of_data,
     dns,
     ds_module,
@@ -1011,6 +1012,7 @@ def test_the_stored_module_must_be_of_the_class_of_the_one_written():
 
 PRIMARY_OWNER = 'segments["Global Segment"].dns.primary_provider.service'
 UPDATE = "configuration/updateConfigurationModule"
+VERSION = "configuration/getConfigurationModules"
 CSS_SITE = "deviceSettings:css:site"
 SITE_ROW: dict[str, Any] = {
     "id": 5,
@@ -1093,7 +1095,7 @@ async def test_a_skipped_row_leaves_the_others_stored_and_sends_no_further_reque
     store.skipped_objects.add(701)
     with pytest.raises(RefsDroppedError) as caught:
         _ = await client.write_module(module, plan)
-    assert [method for method, _ in store.requests] == [UPDATE]
+    assert [method for method, _ in store.requests] == [VERSION, UPDATE]
     assert list(store.rows[module.id_]["refs"]) == [SEGMENT]
     assert caught.value.module is not None
     assert list(cast(dict[str, Any], caught.value.module.raw_refs)) == [SEGMENT]
@@ -1278,12 +1280,18 @@ async def test_a_refused_refs_only_write_is_a_conflict(
     module, plan = await provider_set()
     store = store_of(module, conditional_check=True)
     store.objects.update(store_with_services().objects)
-    store.other_writer(module.id_, lambda row: row["data"].update({"future": 2}))
-    client = await mock_vco_client(store)
+    client = await mock_vco_client(
+        changing_after_the_version_read(
+            store,
+            store,
+            module.id_,
+            lambda row: row["data"].update({"future": 2}),
+        )
+    )
     with pytest.raises(ConfigConflictError) as caught:
         _ = await client.write_module(module, plan)
     assert not isinstance(caught.value, RefsDroppedError)
-    assert caught.value.stated
+    assert caught.value.stated and caught.value.sent
     assert caught.value.detail == "the VCO refused the version"
     assert ref_paths(caught.value.lost_edits) == [PRIMARY_ROW_PATH]
 
