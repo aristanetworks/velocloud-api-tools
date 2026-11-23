@@ -10,13 +10,24 @@ Connection details come from the environment, as in pyvelo's integration tests:
 from __future__ import annotations
 
 import os
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Generator
 
+import live_support as live
 import pytest
 import pytest_asyncio
 from live_support import Lab, discover_lab
 from pyvelo.client import VcoClient
 from pyvelo_intent import ConfigPipeline, build_default_pipeline
+
+
+@pytest.hookimpl(wrapper=True)
+def pytest_runtest_makereport(
+    item: pytest.Item, call: pytest.CallInfo[None]
+) -> Generator[None, pytest.TestReport, pytest.TestReport]:
+    """Keep lab data out of the report of a failed live configuration test."""
+    report = yield
+    live.redact_report(item, call, report)
+    return report
 
 
 def _env(name: str, required: bool = False) -> str | None:

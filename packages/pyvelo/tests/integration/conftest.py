@@ -15,6 +15,7 @@ from collections.abc import AsyncGenerator, Generator
 from contextlib import contextmanager
 
 import httpx
+import live_support as live
 import pytest
 import pytest_asyncio
 from live_support import Lab, discover_lab
@@ -25,6 +26,16 @@ from pyvelo.client.exceptions import VcoOperationError
 from pyvelo.core import ApiInterval
 
 from ._discovery import VcoTestContext, discover
+
+
+@pytest.hookimpl(wrapper=True)
+def pytest_runtest_makereport(
+    item: pytest.Item, call: pytest.CallInfo[None]
+) -> Generator[None, pytest.TestReport, pytest.TestReport]:
+    """Keep lab data out of the report of a failed live configuration test."""
+    report = yield
+    live.redact_report(item, call, report)
+    return report
 
 
 def _env(name: str, required: bool = False) -> str | None:

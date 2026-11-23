@@ -21,14 +21,16 @@ from pyvelo.client import (
     ConfigConflictError,
     ModuleWriteError,
     VcoClient,
+    VcoHttpError,
     VcoOperationError,
     WriteNotAppliedError,
     WriteOutcomeUnknownError,
 )
 from pyvelo.client.enums.configuration import ConfigurationModuleName as Name
-from pyvelo.client.exceptions import WriteAnswer
+from pyvelo.client.exceptions import LossyFieldError, WriteAnswer
 from pyvelo.client.module_write import plan_module
 from pyvelo.client.schemas.configuration import FirewallConfigurationModule
+from pyvelo.core import PatchError
 from pyvelo.core.rebase import Key, Path, RawChange
 from pyvelo.core.response_check import PlannedChange, ServerChange
 from pyvelo.testing import (
@@ -92,11 +94,11 @@ def test_a_redacted_path_shows_no_key_but_a_synthetic_one():
 
 
 def test_an_unreadable_edge_is_reported_by_error_type_alone():
-    class Model(BaseModel):
+    class Row(BaseModel):
         value: int
 
     with pytest.raises(ValidationError) as caught:
-        _ = Model.model_validate({"value": "secret-lab-value"})
+        _ = Row.model_validate({"value": "secret-lab-value"})
     message = str(live._unreadable(3, caught.value))  # pyright: ignore[reportPrivateUsage]
     assert message == (
         "edge #3 does not load: 1 validation error(s) of type int_parsing"
@@ -582,3 +584,211 @@ async def test_a_counted_write_that_was_not_read_back_is_not_a_refusal(
         "\na save: not refused: the write was counted, and the module as stored "
         "could not be read (WriteOutcomeUnknownError)\n"
     )
+
+
+class Model(BaseModel):
+    value: int
+
+
+def validation_error() -> ValidationError:
+    with pytest.raises(ValidationError) as caught:
+        _ = Model.model_validate({"value": "secret-lab-value"})
+    return caught.value
+
+
+class ValidatorError:
+    def __init__(self, code: str) -> None:
+        self.code: str = code
+        self.message: str = "secret-lab-name is wrong"
+
+
+class SaveBlocked(Exception):
+    """Shaped as pyvelo-intent's ``SaveValidationError``: ``errors`` with a code each."""
+
+    def __init__(self) -> None:
+        self.errors: list[ValidatorError] = [ValidatorError("B2"), ValidatorError("A1")]
+        super().__init__("secret-lab-name is wrong")
+
+
+def test_a_validation_error_shows_its_types_and_no_input():
+    assert live.failure_text(validation_error()) == (
+        "ValidationError for Model: 1 error(s) of type int_parsing"
+    )
+
+
+def test_a_refusal_shows_its_codes():
+    error = VcoOperationError(
+        "configuration/getConfiguration",
+        "validationError",
+        data={"error": [{"code": "E1", "path": "p", "message": "secret-lab-name"}]},
+    )
+    assert live.failure_text(error) == (
+        "VcoOperationError in configuration/getConfiguration: E1 p"
+    )
+
+
+def test_a_refusal_the_client_already_redacted_still_shows_its_codes():
+    error = VcoOperationError(
+        "configuration/updateConfigurationModule",
+        "validationError",
+        data={
+            "error": [
+                {"code": "E1", "path": "a.b[0]", "message": "secret-lab-name"},
+                {"code": "E_2", "path": "", "message": "secret-lab-name"},
+            ]
+        },
+    )
+    redacted_error = live._redacted(error)  # pyright: ignore[reportPrivateUsage]
+    assert "secret-lab-name" not in str(redacted_error)
+    assert (
+        live.refusal_codes(redacted_error)
+        == live.refusal_codes(error)
+        == ("E1 a.b[0]; E_2")
+    )
+    assert live.failure_text(redacted_error) == (
+        "VcoOperationError in configuration/updateConfigurationModule: E1 a.b[0]; E_2"
+    )
+
+
+def test_an_http_error_shows_its_status():
+    error = VcoHttpError(502, "<html>secret-lab-name</html>")
+    assert live.failure_text(error) == "VcoHttpError: HTTP 502"
+
+
+def test_a_refused_patch_shows_its_kind_and_where():
+    path = Path(("segments", SECRET, "outbound"))
+    error = PatchError("secret-lab-name is already in the list", path, "exists")
+    assert live.failure_text(error) == "PatchError (exists) at segments[*].outbound"
+
+
+def test_an_edit_a_save_cannot_write_shows_where():
+    error = LossyFieldError("firewall", [Path(("segments", SECRET, "x"))])
+    assert live.failure_text(error) == (
+        "LossyFieldError in the firewall module at segments[*].x"
+    )
+
+
+def test_a_write_error_shows_its_outcome():
+    error = ConfigConflictError(1, "v1", "the VCO refused the version")
+    assert live.failure_text(error) == live.outcome(error)
+
+
+def test_validator_errors_show_their_codes():
+    assert live.failure_text(SaveBlocked()) == (
+        "SaveBlocked: 2 error(s) with code A1, B2"
+    )
+
+
+def test_any_other_error_shows_its_class():
+    assert live.failure_text(KeyError("secret-lab-name")) == "KeyError"
+    assert live.failure_text(AssertionError("secret-lab-name")) == "AssertionError"
+
+
+def test_notes_arguments_and_causes_are_never_shown():
+    cause = ValueError("secret-lab-name in a cause")
+    for error in (
+        KeyError("secret-lab-name"),
+        PatchError("secret-lab-name", Path(("x",)), "exists"),
+        VcoHttpError(502, "secret-lab-name"),
+        SaveBlocked(),
+    ):
+        error.add_note("secret-lab-name in a note")
+        error.__cause__ = cause
+        error.__context__ = cause
+        assert "secret-lab-name" not in str(live.failure_text(error))
+
+
+def test_what_the_suite_words_itself_is_left():
+    with pytest.raises(pytest.fail.Exception) as failed:
+        pytest.fail("a message the test wrote", pytrace=False)
+    with pytest.raises(pytest.skip.Exception) as skipped:
+        pytest.skip("no target")
+    assert live.failure_text(failed.value) is None
+    assert live.failure_text(skipped.value) is None
+
+
+def test_an_error_of_the_suite_is_its_own_message():
+    error = live.LiveSuiteError("edge #3 does not load")
+    assert live.failure_text(error) == "edge #3 does not load"
+
+
+def test_an_unreadable_edge_is_an_error_of_the_suite():
+    assert issubclass(live.LabUnreadable, live.LiveSuiteError)
+
+
+class FakeItem:
+    """A test item: its marks, and the fixtures it uses."""
+
+    def __init__(self, marks: tuple[str, ...], fixtures: tuple[str, ...]) -> None:
+        self.marks: tuple[str, ...] = marks
+        self.fixturenames: list[str] = list(fixtures)
+
+    def get_closest_marker(self, name: str) -> object:
+        return name if name in self.marks else None
+
+
+class FakeReport:
+    def __init__(self, failed: bool) -> None:
+        self.failed: bool = failed
+        self.longrepr: object = "as pytest made it"
+
+
+def raising(error: BaseException) -> Callable[[], object]:
+    def body() -> None:
+        raise error
+
+    return body
+
+
+def redacted(
+    body: Callable[[], object],
+    *,
+    marks: tuple[str, ...] = ("integration",),
+    fixtures: tuple[str, ...] = ("lab", "capsys"),
+    failed: bool = True,
+) -> str:
+    """What ``redact_report`` leaves as the report of a test whose body is *body*."""
+    report = FakeReport(failed)
+    call = pytest.CallInfo.from_call(body, "call")
+    live.redact_report(FakeItem(marks, fixtures), call, report)  # pyright: ignore[reportArgumentType]
+    assert isinstance(report.longrepr, str)
+    return report.longrepr
+
+
+HERE = r" \(raised at test_live_support\.py:\d+\)"
+
+
+def test_a_live_failure_is_its_text_and_where_it_was_raised():
+    shown = redacted(raising(KeyError("secret-lab-name")))
+    assert re.fullmatch("KeyError" + HERE, shown)
+
+
+def test_the_place_is_the_last_frame_in_the_tests():
+    # Raised inside pydantic: the report names the line of this file that called it.
+    shown = redacted(lambda: Model.model_validate({"value": "secret-lab-value"}))
+    text = r"ValidationError for Model: 1 error\(s\) of type int_parsing"
+    assert re.fullmatch(text + HERE, shown)
+
+
+def test_the_place_is_in_the_test_and_not_in_the_support_code():
+    # Raised inside live_support, which is in a tests directory too: the report
+    # names the line of this file that called it.
+    shown = redacted(lambda: live.redact(1))  # pyright: ignore[reportArgumentType]
+    assert re.fullmatch("AttributeError" + HERE, shown)
+
+
+def test_an_error_of_the_suite_keeps_its_message():
+    shown = redacted(raising(live.LiveSuiteError("edge #3 does not load")))
+    assert re.fullmatch("edge #3 does not load" + HERE, shown)
+
+
+def test_other_tests_and_worded_failures_are_left():
+    def worded() -> None:
+        pytest.fail("a message the test wrote", pytrace=False)
+
+    error = raising(KeyError("x"))
+    assert redacted(error, marks=()) == "as pytest made it"
+    # A live test that does not read configuration: the analytics tests.
+    assert redacted(error, fixtures=("analytics",)) == "as pytest made it"
+    assert redacted(worded) == "as pytest made it"
+    assert redacted(lambda: None, failed=False) == "as pytest made it"

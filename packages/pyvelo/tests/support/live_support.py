@@ -8,6 +8,11 @@ Both live suites import this module by name, pyvelo's and pyvelo-intent's:
 its directory is on ``pythonpath`` in the root ``pyproject.toml``. It is test
 support and no part of the library.
 
+A failed test reports what ``failure_text`` makes of its exception and where
+it was raised, never the exception's own text: that quotes names and values
+of the lab. ``check`` and ``pytest.fail`` word a failure for the report as it
+is; a ``LiveSuiteError`` carries a message that is safe to show.
+
 ``restoring`` is the one way a test writes: it records a module's raw data first
 (in a private file under ``$PYVELO_IT_BACKUP_DIR``, which must be outside the
 repository, else a new temp directory; it holds no refs but a QoS module's, and
@@ -52,13 +57,14 @@ from pydantic import MISSING, RootModel, ValidationError
 from pyvelo.client import (
     ConfigConflictError,
     VcoClient,
+    VcoHttpError,
     VcoOperationError,
     WriteNotAppliedError,
     WriteOutcomeUnknownError,
 )
 from pyvelo.client.enums.configuration import ConfigurationModuleName
 from pyvelo.client.enums.profiles import GetConfigurationWith
-from pyvelo.client.exceptions import ModuleWriteError
+from pyvelo.client.exceptions import LossyFieldError, ModuleWriteError
 from pyvelo.client.module_check import data_model
 from pyvelo.client.schemas.configuration import (
     AnyConfigurationModule,
@@ -83,6 +89,7 @@ from pyvelo.core import (
     Alias,
     ConfigContext,
     NoneIsMissing,
+    PatchError,
     RowsModifiedConfirmation,
     VcoModel,
 )
@@ -216,7 +223,11 @@ async def list_profile_ids(client: VcoClient, enterprise_id: int | None) -> list
     return [p.id_ for p in profiles if isinstance(p.id_, int)][:LAB_LIMIT]
 
 
-class LabUnreadable(Exception):
+class LiveSuiteError(Exception):
+    """The base of the suite's own errors: a message of one names no entity of the lab."""
+
+
+class LabUnreadable(LiveSuiteError):
     """An edge of the lab does not load; the message names no entity."""
 
 
@@ -331,13 +342,27 @@ class Lab:
         pytest.skip(f"no profile has a {name.value} module {what or 'to use'}")
 
 
+def _found_codes(exc: VcoOperationError) -> list[tuple[str, str]]:
+    return re.findall(r"\[([A-Z][A-Z0-9_]*)\]\s*([\w.\[\]]*)", str(exc))
+
+
 def _redacted(exc: VcoOperationError) -> VcoOperationError:
-    return VcoOperationError(exc.operation, refusal_codes(exc), code=exc.code)
+    """*exc* with each error code and field kept, as the Orchestrator words them, and no message.
+
+    ``refusal_codes`` reads the result the same as it reads *exc*.
+    """
+    errors = [
+        {"code": code, "path": field, "message": ""}
+        for code, field in _found_codes(exc)
+    ]
+    return VcoOperationError(
+        exc.operation, "refused", code=exc.code, data={"error": errors}
+    )
 
 
 def refusal_codes(exc: VcoOperationError) -> str:
     """The error codes and fields of a refusal; the rest of its text names lab entities."""
-    found = re.findall(r"\[([A-Z][A-Z0-9_]*)\]\s*([\w.\[\]]*)", str(exc))
+    found = _found_codes(exc)
     return (
         "; ".join(f"{code} {field}".strip() for code, field in found) or "no error code"
     )
@@ -993,3 +1018,83 @@ def check_paths(
         f"{label}: {what} lists {describe(changes)}; expected "
         f"{', '.join(redact(p) for p in expected)}",
     )
+
+
+# ---------------------------------------------------------------------------
+# What a failed test reports
+# ---------------------------------------------------------------------------
+
+
+def failure_text(error: BaseException) -> str | None:
+    """*error* as what holds no lab data, or ``None`` where the report is left as it is.
+
+    It keeps the class, error codes and types, redacted paths and the
+    ``outcome`` of a write, and nothing else of the error: not its message or
+    arguments, not the notes a save adds, not the text of an error it was raised
+    from, any of which can quote names and values of the lab.
+    """
+    kind = type(error).__name__
+    if isinstance(error, (pytest.fail.Exception, pytest.skip.Exception)):
+        return None
+    if isinstance(error, LiveSuiteError):
+        return str(error)
+    if isinstance(error, ModuleWriteError):
+        return outcome(error)
+    if isinstance(error, VcoOperationError):
+        return f"{kind} in {error.operation}: {refusal_codes(error)}"
+    if isinstance(error, VcoHttpError):
+        return f"{kind}: HTTP {error.status_code}"
+    if isinstance(error, PatchError):
+        return f"{kind} ({error.kind}) at {redact(error.path)}"
+    if isinstance(error, LossyFieldError):
+        paths = ", ".join(redact(path) for path in error.paths)
+        return f"{kind} in the {error.module} module at {paths}"
+    if isinstance(error, ValidationError):
+        types = sorted({str(entry["type"]) for entry in error.errors()})
+        return (
+            f"{kind} for {error.title}: {error.error_count()} error(s) "
+            f"of type {', '.join(types)}"
+        )
+    entries = getattr(error, "errors", None)
+    if isinstance(entries, list):
+        listed = cast(list[object], entries)
+        codes = sorted(
+            {
+                code
+                for entry in listed
+                if isinstance(code := getattr(entry, "code", None), str)
+            }
+        )
+        return (
+            f"{kind}: {len(listed)} error(s) with code {', '.join(codes) or 'unknown'}"
+        )
+    return kind
+
+
+def redact_report(
+    item: pytest.Item, call: pytest.CallInfo[None], report: pytest.TestReport
+) -> None:
+    """Replace the report of a failed live configuration test by ``failure_text`` and the line that raised.
+
+    A test is a live configuration test if it is marked ``integration`` and
+    uses the ``lab`` fixture; the analytics tests assert on values and are left
+    alone. The place is the last frame in the tests' own code: a frame of this
+    support module, or of a library the test called, is not where the test went
+    wrong. Where no frame is in a ``tests`` directory it is the last frame.
+    """
+    if not report.failed or call.excinfo is None:
+        return
+    if item.get_closest_marker("integration") is None:
+        return
+    # Only a test function has fixtures; ``Item`` is the signature the hook has.
+    if "lab" not in cast(list[str], getattr(item, "fixturenames", [])):
+        return
+    text = failure_text(call.excinfo.value)
+    if text is None:
+        return
+    entries = list(call.excinfo.traceback)
+    paths = [pathlib.Path(str(entry.path)) for entry in entries]
+    in_tests = [i for i, path in enumerate(paths) if "tests" in path.parts]
+    own = [i for i in in_tests if "support" not in paths[i].parts]
+    at = (own or in_tests or [len(entries) - 1])[-1]
+    report.longrepr = f"{text} (raised at {paths[at].name}:{entries[at].lineno + 1})"
