@@ -131,6 +131,7 @@ from contextvars import ContextVar
 from dataclasses import dataclass, field
 from typing import Annotated, Any, NoReturn, cast
 
+import httpx
 import pytest
 from pydantic import MISSING, BaseModel, RootModel, ValidationError
 from pyvelo.client import (
@@ -147,7 +148,11 @@ from pyvelo.client.enums.profiles import (
     GetConfigurationWith,
     GetEnterpriseConfigurationsWith,
 )
-from pyvelo.client.exceptions import LossyFieldError, ModuleWriteError
+from pyvelo.client.exceptions import (
+    LossyFieldError,
+    ModuleWriteError,
+    is_precondition_answer,
+)
 from pyvelo.client.module_check import data_model
 from pyvelo.client.schemas.configuration import (
     AnyConfigurationModule,
@@ -1861,6 +1866,134 @@ def check_paths(
         f"{label}: {what} lists {describe(changes)}; expected "
         f"{', '.join(redact(p) for p in expected)}",
     )
+
+
+# ---------------------------------------------------------------------------
+# What the Orchestrator answered the client
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class Answer:
+    """One answer of the Orchestrator, as the client received it.
+
+    The body is lab data. It stays in memory: a test reads it through
+    ``answer_form`` and never prints it, and the repr of an answer leaves it out.
+    """
+
+    method: str
+    status: int
+    body: bytes = field(repr=False)
+
+
+def _method_of(content: str | None) -> str:
+    """The JSON-RPC method of a request body, or ``""`` where it cannot be read."""
+    try:
+        request = cast(object, json.loads(content or ""))
+    except ValueError:
+        return ""
+    if not isinstance(request, dict):
+        return ""
+    method = cast(dict[str, object], request).get("method")
+    return method if isinstance(method, str) else ""
+
+
+def record_answers(client: VcoClient, monkeypatch: pytest.MonkeyPatch) -> list[Answer]:
+    """Record, in the list returned, every answer *client* receives from now on.
+
+    It wraps the request the client sends over HTTP, which is behind the write
+    guard of ``run_of``: a write the guard refuses is never sent, so never
+    recorded. The test's ``monkeypatch`` puts the client back at its end.
+    """
+    answers: list[Answer] = []
+    send = client._send_request  # pyright: ignore[reportPrivateUsage]
+
+    async def recording(
+        http_method: str,
+        url: str,
+        *,
+        params: dict[str, object] | None = None,
+        json_data: dict[str, object] | None = None,
+        content: str | None = None,
+    ) -> httpx.Response:
+        response = await send(
+            http_method, url, params=params, json_data=json_data, content=content
+        )
+        answers.append(
+            Answer(_method_of(content), response.status_code, response.content)
+        )
+        return response
+
+    monkeypatch.setattr(client, "_send_request", recording)
+    return answers
+
+
+def answer_form(answer: Answer) -> str:
+    """How *answer* answers a module update, with its HTTP status and nothing of its body.
+
+    The body holds names and IDs of the lab, so only its form is said: a
+    refusal by the precondition error, another error, the module row, or a
+    row count (the count is a number and nothing else is read from it).
+    """
+    status = f"HTTP {answer.status}"
+    text = answer.body.decode(errors="replace")
+    if is_precondition_answer(text):
+        return f"refused with the precondition error ({status})"
+    try:
+        document = cast(object, json.loads(text))
+    except ValueError:
+        return f"an answer that is not JSON ({status})"
+    if isinstance(document, dict):
+        fields = cast(dict[str, object], document)
+        if isinstance(fields.get("error"), dict):
+            return f"refused with another error ({status})"
+        result = fields.get("result")
+        if isinstance(result, dict):
+            row = cast(dict[str, object], result)
+            if "data" in row:
+                return f"not refused: the module row ({status})"
+            rows = row.get("rows")
+            if isinstance(rows, int) and not isinstance(rows, bool):
+                return f"not refused: a row count of {rows} ({status})"
+    return f"an answer of another shape ({status})"
+
+
+def without_return_data(client: VcoClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Send *client*'s module updates and inserts without ``returnData``.
+
+    An Orchestrator then answers with a row count, as one that ignores
+    ``returnData`` does. The wrappers are over the client's methods as they are
+    now, the guard of ``run_of`` among them, so the guard still refuses and
+    counts every write before anything is sent. The request passed in is
+    changed.
+    """
+    update = client.update_configuration_module
+    insert = client.insert_configuration_module
+
+    async def update_without(
+        request: UpdateConfigurationModule, *, level: ConfigContext | None = None
+    ) -> AnyConfigurationModule | None:
+        request.return_data = MISSING
+        return await update(request, level=level)
+
+    async def insert_without(
+        request: InsertConfigurationModule, *, level: ConfigContext | None = None
+    ) -> InsertConfigurationModuleResult | AnyConfigurationModule:
+        request.return_data = MISSING
+        return await insert(request, level=level)
+
+    monkeypatch.setattr(client, "update_configuration_module", update_without)
+    monkeypatch.setattr(client, "insert_configuration_module", insert_without)
+
+
+def read_backs(answers: Sequence[Answer]) -> int:
+    """How many of *answers* are to ``getConfiguration``, the request ``write_module`` reads a module back with.
+
+    An edge site and an edge load of the pipeline read the configuration stack
+    and are not counted. Whichever method of the client sent the request, it
+    counts.
+    """
+    return sum(answer.method == "configuration/getConfiguration" for answer in answers)
 
 
 # ---------------------------------------------------------------------------

@@ -38,6 +38,17 @@ so the check is off and ``returnData`` is honoured; a stale ``update_module``
 of the same value raised ``WriteNotAppliedError``, of another value
 ``ConfigConflictError``.
 
+Three tests record what no assertion can know in advance.
+``test_the_answer_to_a_stale_version_is_recorded`` prints the form and the HTTP
+status of the answer to a stale version: a refusal by the precondition error
+on a VCO with its conditional check on, "not refused" otherwise.
+``test_writes_answered_without_the_row_are_read_back`` sends its writes
+without ``returnData``, which makes any VCO answer as one that ignores it,
+and prints the level the module comes back at from the read-back.
+``test_a_write_with_no_checkable_change_asks_for_a_count`` changes only a rule
+ID, which the VCO owns, and prints the row count it is answered with and what
+the VCO stored for the ID.
+
 Requires VCO_HOST and VCO_TOKEN (VCO_ENTERPRISE_ID if the token needs one), and
 to write, PYVELO_IT_WRITE_HOST and PYVELO_IT_WRITE_ENTERPRISE_ID: see
 ``live_support``.
@@ -56,8 +67,10 @@ from typing import Any
 
 import pytest
 from live_support import (
+    SYNTHETIC_PREFIX,
     Lab,
     Site,
+    answer_form,
     changes_between,
     check,
     check_as_read,
@@ -68,19 +81,25 @@ from live_support import (
     expect,
     find_module,
     outcome,
+    read_backs,
     read_profile,
     read_stack,
+    record,
+    record_answers,
     record_refusal,
     redact,
     restoring,
     same_value,
     synthetic_name,
     value_at,
+    where,
+    without_return_data,
 )
 from pydantic import MISSING
 from pyvelo.client import (
     ConfigConflictError,
     ModuleWriteError,
+    VcoError,
     WriteNotAppliedError,
 )
 from pyvelo.client.enums.configuration import ConfigurationModuleName as Name
@@ -94,6 +113,7 @@ from pyvelo.client.models.configuration import (
 from pyvelo.client.models.configuration.firewall.rules import FirewallOutboundRule
 from pyvelo.client.models.configuration.qos.qoe import QoeSettings
 from pyvelo.client.models.configuration.qos.rule import QosRule
+from pyvelo.client.module_check import has_checkable_change
 from pyvelo.client.module_write import plan_module, update_request, wire_dump
 from pyvelo.client.schemas.configuration import (
     AnyConfigurationModule,
@@ -792,4 +812,265 @@ async def test_a_data_edit_leaves_the_refs_of_a_firewall_as_they_were(
         check(
             after.raw_refs == original.refs,
             "writing the firewall data without refs changed its refs",
+        )
+
+
+# ---------------------------------------------------------------------------
+# 9. What a stale version is answered with
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.live_write
+async def test_the_answer_to_a_stale_version_is_recorded(
+    lab: Lab, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The form and the HTTP status of the answer to an update whose version is stale.
+
+    A VCO with its conditional check on refuses it with the precondition
+    error, and the client raises ``ConfigConflictError`` whatever HTTP status
+    carries that error. One with the check off does not refuse: it answers
+    with the module row unchanged, or with a row count of zero.
+    """
+    layout = await lab.pick_writable_edge(Name.WAN, _wan_usable, "with a link")
+    site = lab.edge_site(layout, Name.WAN)
+    async with restoring(site) as original:
+        assert original is not None
+        newer = await site.read_present()
+        older = await site.read_present()
+        written, refused = synthetic_name(), synthetic_name()
+        for module, text in ((newer, written), (older, refused)):
+            data = expect(data_of(module), WanData, "the WAN data")
+            expect(data.links, list, "the WAN links")[0].description = text
+        _ = await _update(lab, newer, data_of(newer))
+        stale = update_request(older, plan_module(older), lab.enterprise_id)
+
+        answers = record_answers(lab.client, monkeypatch)
+        raised = "nothing"
+        try:
+            _ = await lab.client.update_configuration_module(stale)
+        except VcoError as error:
+            raised = type(error).__name__
+        updates = [
+            a for a in answers if a.method.endswith("/updateConfigurationModule")
+        ]
+        check(len(updates) == 1, f"expected one update, saw {len(updates)}")
+        form = answer_form(updates[0])
+        record(capsys, f"a stale version: {form}; the client raised {raised}")
+
+        after = await site.read_present()
+        stored = changes_between(Name.WAN, original.data, after.raw_data, WanData)
+        check(
+            len(stored) == 1 and stored[0].after == written,
+            f"the stale write changed the module: {describe(stored)}",
+        )
+        if form.startswith("refused with the precondition error"):
+            check(
+                raised == "ConfigConflictError",
+                f"the Orchestrator {form} and the client raised {raised}, not "
+                "ConfigConflictError",
+            )
+
+
+# ---------------------------------------------------------------------------
+# 10. A write answered without the module row is read back
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.live_write
+async def test_writes_answered_without_the_row_are_read_back(
+    lab: Lab, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``write_module`` reads the module back when the answer to a write has no row.
+
+    A VCO that honours ``returnData`` never answers so, so the requests leave
+    without it here (``without_return_data``) and the answer is a row count,
+    as from a VCO that ignores ``returnData``. A counted write must come back
+    as a read made right after shows the module, at the level of the module
+    written: a module read from an edge's stack has none. A stale one is then
+    refused, by the precondition error or a row count of zero, and must raise
+    a ``ConfigConflictError`` that says the refusal was stated, with the
+    module as stored.
+    """
+    layout = await lab.pick_writable_edge(Name.WAN, _wan_usable, "with a link")
+    site = lab.edge_site(layout, Name.WAN)
+    async with restoring(site) as original:
+        assert original is not None
+        without_return_data(lab.client, monkeypatch)
+        answers = record_answers(lab.client, monkeypatch)
+        newer = await site.read_present()
+        older = await site.read_present()
+        written, refused = synthetic_name(), synthetic_name()
+        for module, text in ((newer, written), (older, refused)):
+            data = expect(data_of(module), WanData, "the WAN data")
+            expect(data.links, list, "the WAN links")[0].description = text
+
+        write = await lab.client.write_module(
+            newer, plan_module(newer), enterprise_id=lab.enterprise_id
+        )
+        check(
+            read_backs(answers) == 1,
+            f"the counted write was read back {read_backs(answers)} time(s), "
+            "expected once",
+        )
+        now = await site.read_present()
+        check_as_read("the module read back", write.module, now)
+        level = write.module.config_context
+        record(
+            capsys,
+            "a counted write: read back as stored; the module written was at level "
+            f"{newer.config_context or 'none'}, the one read back is at level "
+            f"{level or 'none'}",
+        )
+        check(
+            level is newer.config_context,
+            "the module read back is at another level than the module written",
+        )
+        stored = changes_between(Name.WAN, original.data, now.raw_data, WanData)
+        check(
+            len(stored) == 1 and stored[0].after == written,
+            f"the counted write is not the only change: {describe(stored)}",
+        )
+
+        answers.clear()
+        with pytest.raises(ConfigConflictError) as caught:
+            _ = await lab.client.write_module(
+                older, plan_module(older), enterprise_id=lab.enterprise_id
+            )
+        error = caught.value
+        record_refusal(capsys, "a stale write without returnData", error)
+        check(error.stated, "the conflict does not say that the VCO stated it")
+        check(
+            read_backs(answers) == 1,
+            f"the refused write was read back {read_backs(answers)} time(s), "
+            "expected once",
+        )
+        after = await site.read_present()
+        check(
+            after.version == now.version and after.raw_data == now.raw_data,
+            "the refused write changed the module",
+        )
+        check(error.module is not None, "the error carries no module")
+        assert error.module is not None
+        check_as_read("the error's module", error.module, after)
+        check_entries(
+            "the refused write", "lost_edits", error.lost_edits, [stored[0].path]
+        )
+        (lost,) = error.lost_edits
+        check(
+            lost.intended == refused and lost.stored == written and lost.clash,
+            "the lost edit is not the refused description, a clash with the other "
+            "write's",
+        )
+
+
+# ---------------------------------------------------------------------------
+# 11. A write with no change the check can find is counted
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.live_write
+async def test_a_write_with_no_checkable_change_asks_for_a_count(
+    lab: Lab, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An update that changes only a value the VCO owns goes out without ``returnData`` and is read back.
+
+    The check cannot find such a change stored or missing in a module row, so
+    ``write_module`` asks for a row count, which says whether the VCO stored
+    the write. The value is the rule ID of a rule this test adds first: a
+    copy of the last rule, after it, which decides nothing. What the VCO does
+    with a rule ID it is sent is recorded.
+    """
+    layout = await lab.pick_writable_edge(
+        Name.FIREWALL, _firewall_usable, "with a rule to copy"
+    )
+    site = lab.edge_site(layout, Name.FIREWALL)
+    async with restoring(site):
+        data = expect(
+            data_of(await site.read_present()), FirewallData, "the firewall data"
+        )
+        _ = await apply_steps(lab, site, FirewallData, _firewall_steps(data)[:1])
+
+        module = await site.read_present()
+        payload: dict[str, Any] = copy.deepcopy(
+            expect(module.raw_data, dict, "the firewall data")
+        )
+        segment, rule = next(
+            (entry, rule)
+            for entry in payload["segments"]
+            for rule in entry.get("outbound") or []
+            if str(rule.get("name")).startswith(SYNTHETIC_PREFIX)
+        )
+        issued = rule.get("ruleLogicalId")
+        sent_id = uuid.uuid4().hex[:22]
+        rule["ruleLogicalId"] = sent_id
+        plan = plan_module(module, payload)
+        check(
+            plan.operation == "update",
+            f"planned {plan.operation}, expected an update",
+        )
+        check(
+            not has_checkable_change(module, plan),
+            "the plan has a change the check can find stored",
+        )
+
+        requests: list[UpdateConfigurationModule] = []
+        send = lab.client.update_configuration_module
+
+        async def spy(
+            request: UpdateConfigurationModule, *, level: ConfigContext | None = None
+        ) -> AnyConfigurationModule | None:
+            requests.append(request)
+            return await send(request, level=level)
+
+        monkeypatch.setattr(lab.client, "update_configuration_module", spy)
+        answers = record_answers(lab.client, monkeypatch)
+        write = await lab.client.write_module(
+            module, plan, enterprise_id=lab.enterprise_id
+        )
+
+        check(
+            len(requests) == 1 and requests[0].return_data is MISSING,
+            "the update asked for the module row",
+        )
+        check(
+            read_backs(answers) == 1,
+            f"the write was read back {read_backs(answers)} time(s), expected once",
+        )
+        (answered,) = [
+            a for a in answers if a.method.endswith("/updateConfigurationModule")
+        ]
+        now = await site.read_present()
+        check_as_read("the module read back", write.module, now)
+        stored: dict[str, Any] = expect(now.raw_data, dict, "the firewall data")
+        stored_id = next(
+            r.get("ruleLogicalId")
+            for entry in stored["segments"]
+            for r in entry.get("outbound") or []
+            if r.get("name") == rule["name"]
+        )
+        kept = (
+            "as sent"
+            if stored_id == sent_id
+            else "as it was"
+            if stored_id == issued
+            else "as a new one"
+        )
+        record(
+            capsys,
+            f"a write with no checkable change: {answer_form(answered)}; read back "
+            f"once; the rule ID is stored {kept}",
+        )
+        path = Path(
+            (
+                "segments",
+                Key(segment["segment"]["name"]),
+                "outbound",
+                Key(rule["name"]),
+                "ruleLogicalId",
+            )
+        )
+        check_entries("the write", "left_out", write.left_out, [path])
+        check(
+            not write.applied,
+            f"the write lists applied changes: {where(write.applied)}",
         )

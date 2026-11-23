@@ -32,7 +32,7 @@ from pyvelo.client import (
     WriteOutcomeUnknownError,
 )
 from pyvelo.client.enums.configuration import ConfigurationModuleName as Name
-from pyvelo.client.exceptions import LossyFieldError, WriteAnswer
+from pyvelo.client.exceptions import PRECONDITION_FAILED, LossyFieldError, WriteAnswer
 from pyvelo.client.module_write import plan_module
 from pyvelo.client.schemas.configuration import (
     ConfigurationModuleUpdate,
@@ -2089,3 +2089,165 @@ async def test_a_delete_of_a_module_no_block_covers_names_its_type(
         with pytest.raises(live.WritesRefused, match="^a delete of a QOS module "):
             await live.delete_module(site, 3)
     assert 3 in fake.store.rows
+
+
+def answer(status: int, document: object) -> live.Answer:
+    return live.Answer(
+        "configuration/updateConfigurationModule", status, json.dumps(document).encode()
+    )
+
+
+PRECONDITION = {
+    "error": {
+        "code": -32003,
+        "message": "validationError",
+        "data": {
+            "error": [{"code": PRECONDITION_FAILED, "message": "secret-lab-name"}]
+        },
+    }
+}
+
+
+def test_the_form_of_the_answer_to_a_stale_version():
+    form = live.answer_form
+    assert form(answer(200, PRECONDITION)) == (
+        "refused with the precondition error (HTTP 200)"
+    )
+    assert form(answer(412, PRECONDITION)) == (
+        "refused with the precondition error (HTTP 412)"
+    )
+    other = {"error": {"code": -32603, "message": "secret-lab-name"}}
+    assert form(answer(200, other)) == "refused with another error (HTTP 200)"
+    row = {"result": make_module_json("firewall", {"segments": []})}
+    assert form(answer(200, row)) == "not refused: the module row (HTTP 200)"
+    assert form(answer(200, {"result": {"rows": 0}})) == (
+        "not refused: a row count of 0 (HTTP 200)"
+    )
+    assert form(live.Answer("m", 502, b"<html>")) == (
+        "an answer that is not JSON (HTTP 502)"
+    )
+    assert (
+        form(answer(200, {"result": None})) == "an answer of another shape (HTTP 200)"
+    )
+
+
+def test_the_form_of_an_answer_shows_no_name_of_the_lab():
+    """The body of an answer holds the lab's names and IDs: only its form is shown."""
+    named = {"name": "secret-lab-name", "id": 4711}
+    bodies = [
+        answer(200, PRECONDITION),
+        answer(200, {"error": {"code": -1, "message": "secret-lab-name"}}),
+        answer(200, {"result": {"data": named, "rows": 3, **named}}),
+        answer(200, {"result": {"rows": "secret-lab-name"}}),
+        answer(200, {"result": named}),
+        answer(200, named),
+        live.Answer("m", 502, b"secret-lab-name is down"),
+        live.Answer("m", 200, b"\xff secret-lab-name"),
+    ]
+    for body in bodies:
+        shown = live.answer_form(body)
+        assert "secret-lab-name" not in shown
+        assert "4711" not in shown
+        assert "secret-lab-name" not in repr(body)
+    assert live.answer_form(bodies[3]) == "an answer of another shape (HTTP 200)"
+
+
+@pytest.mark.parametrize(
+    ("knobs", "form"),
+    [
+        ({"conditional_check": True}, "refused with the precondition error (HTTP 200)"),
+        ({}, "not refused: the module row (HTTP 200)"),
+        ({"return_data": False}, "not refused: a row count of 0 (HTTP 200)"),
+    ],
+)
+async def test_answers_are_recorded_with_their_status(
+    monkeypatch: pytest.MonkeyPatch, knobs: dict[str, bool], form: str
+):
+    module = firewall_disabled()
+    store = ModuleStore(**knobs)
+    store.add_configuration({"id": 10, "name": "Profile 10"})
+    store.rows[1] = make_module_json(
+        "firewall", copy.deepcopy(FIREWALL), configuration_id=10
+    )
+    store.other_writer(1, lambda row: row["data"].update(future=2))
+    client = client_over(store)
+    answers = live.record_answers(client, monkeypatch)
+    with pytest.raises(ModuleWriteError):
+        _ = await client.write_module(module, plan_module(module))
+    assert answers[0].method == "configuration/updateConfigurationModule"
+    assert live.answer_form(answers[0]) == form
+
+
+async def test_a_refusal_with_an_http_error_status_is_recorded(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    def refuse(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(412, json={"jsonrpc": "2.0", "id": 1, **PRECONDITION})
+
+    client = client_over(refuse)
+    answers = live.record_answers(client, monkeypatch)
+    request = UpdateConfigurationModule(
+        configuration_module_id=1,
+        version="v1",
+        update=ConfigurationModuleUpdate(data={}),
+        return_data=True,
+    )
+    with pytest.raises(ConfigConflictError):
+        _ = await client.update_configuration_module(request)
+    (only,) = answers
+    assert live.answer_form(only) == "refused with the precondition error (HTTP 412)"
+
+
+async def test_without_return_data_the_module_is_read_back(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    module = firewall_disabled()
+    store = ModuleStore()
+    store.add_configuration({"id": 10, "name": "Profile 10"})
+    store.rows[1] = make_module_json(
+        "firewall", copy.deepcopy(FIREWALL), configuration_id=10
+    )
+    client = client_over(store)
+    live.without_return_data(client, monkeypatch)
+    answers = live.record_answers(client, monkeypatch)
+    write = await client.write_module(module, plan_module(module))
+    assert [method.rsplit("/", 1)[-1] for method, _ in store.requests] == [
+        "updateConfigurationModule",
+        "getConfiguration",
+    ]
+    assert "returnData" not in store.requests[0][1]
+    assert live.read_backs(answers) == 1
+    assert write.module.raw_data == store.rows[1]["data"]
+
+
+async def test_the_helpers_sit_behind_the_write_guard(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """A write the guard refuses is neither sent, recorded nor counted; one it passes is recorded and counted once."""
+    fake = lab_fake()
+    lab = await opened(fake, monkeypatch)
+    run = live.run_of(lab.client)
+    live.without_return_data(lab.client, monkeypatch)
+    answers = live.record_answers(lab.client, monkeypatch)
+    fake.requests.clear()
+    request = qos_update(1)
+    request.return_data = True
+    with pytest.raises(live.WritesRefused) as refused:
+        _ = await lab.client.update_configuration_module(request)
+    assert str(refused.value) == live.OUTSIDE_RESTORING
+    assert request.return_data is MISSING  # the wrapper ran, the guard refused
+    assert fake.requests == [] and answers == [] and run.sent == 0
+    site = lab.edge_site(lab.layouts[0], Name.QOS)
+    async with live.restoring(site):
+        sent = run.sent
+        answers.clear()
+        await raise_limit(site, 2)
+        assert run.sent == sent + 1
+        updates = [
+            a for a in answers if a.method.endswith("/updateConfigurationModule")
+        ]
+        assert [live.answer_form(a) for a in updates] == [
+            "not refused: a row count of 1 (HTTP 200)"
+        ]
+        assert live.read_backs(answers) == 0
+    assert fake.data(1) == QOS
