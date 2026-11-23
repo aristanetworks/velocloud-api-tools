@@ -541,7 +541,9 @@ class VcoModel(BaseModel):
         for its text, ``NaN`` or an infinity. This holds from Python too:
         ``None`` unsets a field, not ``MISSING``, and a model is given as its
         JSON-mode dump (``model_dump(mode="json")``). The patch is copied before
-        it is merged (``patch.checked_patch``): the model shares no object with it.
+        it is merged (``patch.checked_patch``): the model shares no object with
+        it, and a member of an ``IntEnum`` or ``StrEnum`` is copied as its plain
+        ``int`` or ``str``.
 
         **Fields.** A key names a field by its python name, an alias or its
         camelCase form. Absent keys leave their fields as they are. For a key
@@ -572,14 +574,15 @@ class VcoModel(BaseModel):
         does not in a patch, so the bad value raises. A boolean is taken only
         where the field holds one: ``true`` for a number raises. After the
         merge, every model the patch changed is checked as the parser would
-        check it: its model validators (``@model_validator``) run, and where
-        it sits in a union of several models (a field, or the items of a
-        list) it must still be the member its fields select. A change that
-        fails raises ``PatchError`` at the model's path: a patch that deletes
-        every netflow collector while ``enabled`` stays true raises at the
-        netflow block, so set ``enabled`` in the same patch. The check runs on
-        a copy: a validator that rewrites values does not change what the
-        patch wrote. An item or sub-model built whole from the patch is
+        check it: its ``after`` and ``wrap`` model validators
+        (``@model_validator``; a ``before`` one takes raw input, not a model)
+        run, and where it sits in a union of several models (a field, or the
+        items of a list) it must still be the member its fields select. A
+        change that fails raises ``PatchError`` at the model's path: a patch
+        that deletes every netflow collector while ``enabled`` stays true
+        raises at the netflow block, so set ``enabled`` in the same patch. The
+        check runs on a copy: a validator that rewrites values does not change
+        what the patch wrote. An item or sub-model built whole from the patch is
         validated whole, its model validators included. A key that names no
         field raises, at every depth, items and sub-models built from the
         patch included, and so do two keys that name one field (``rule_id``
