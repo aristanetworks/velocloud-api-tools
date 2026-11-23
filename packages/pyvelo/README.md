@@ -84,10 +84,11 @@ whose changes is found stored is taken as not stored.
 `pyvelo.testing.ModuleStore` is an `httpx` handler that holds module rows as
 JSON and answers module updates, inserts and `getConfiguration` as a VCO does.
 Its knobs are the conditional version check, a VCO that ignores `returnData`,
-the enterprise a request has to name, writes that fail, hooks that change what
-is stored (`on_store`) and another writer's change (`other_writer`). A client
-built over it (`make_transport(store)`) runs its own request building, parsing
-and error mapping in tests.
+the enterprise a request has to name, writes that fail, writes that are stored
+and whose answer is lost (`lose_answers`), hooks that change what is stored
+(`on_store`) and another writer's change (`other_writer`). A client built over
+it (`make_transport(store)`) runs its own request building, parsing and error
+mapping in tests.
 
 ## Portal list and pagination methods
 

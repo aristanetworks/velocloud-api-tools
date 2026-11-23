@@ -7,9 +7,10 @@ of configuration 10, unless it says otherwise.
 import copy
 from typing import Any, cast
 
+import httpx
 import pytest
 from pydantic import MISSING
-from pyvelo.client.exceptions import PRECONDITION_FAILED
+from pyvelo.client.exceptions import PRECONDITION_FAILED, ConfigConflictError
 from pyvelo.client.schemas.configuration import (
     ConfigurationModuleUpdate,
     FirewallConfigurationModule,
@@ -309,3 +310,41 @@ def test_a_store_of_no_enterprise_takes_any_request():
         "id": 10,
         "name": "Edge Specific Profile",
     }
+
+
+async def test_lose_answers_stores_the_write_and_then_times_out(
+    mock_vco_client: MockVcoClientFactory,
+):
+    store = make_store()
+    store.lose_answers = {1, 3}
+    client = await mock_vco_client(store)
+    request = UpdateConfigurationModule(
+        configuration_module_id=1,
+        update=ConfigurationModuleUpdate(data=EDITED),
+        version="v1",
+    )
+
+    with pytest.raises(httpx.ReadTimeout, match="the answer was lost"):
+        _ = await client.update_configuration_module(request)
+
+    assert store.rows[1]["data"] == EDITED
+    assert store.rows[1]["version"] != "v1"
+    request.version = store.rows[1]["version"]
+    _ = await client.update_configuration_module(request)  # write 2 is answered
+    assert [method for method, _ in store.requests] == [UPDATE, UPDATE]
+
+
+async def test_lose_answers_leaves_an_error_answered(
+    mock_vco_client: MockVcoClientFactory,
+):
+    store = make_store(conditional_check=True)
+    store.lose_answers = {1}
+    client = await mock_vco_client(store)
+    request = UpdateConfigurationModule(
+        configuration_module_id=1,
+        update=ConfigurationModuleUpdate(data=EDITED),
+        version="stale",
+    )
+    with pytest.raises(ConfigConflictError):  # the refusal is the answer
+        _ = await client.update_configuration_module(request)
+    assert store.rows[1]["data"] == RAW

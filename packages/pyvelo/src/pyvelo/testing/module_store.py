@@ -60,7 +60,8 @@ class ModuleStore:
 
     A write is an update or an insert; writes are numbered together from 1,
     and a write whose number is in ``fail_writes`` is answered with an error
-    and stores nothing. Each stored write gets a new ``version``, a decimal
+    and stores nothing; a write whose number is in ``lose_answers`` is stored
+    and then not answered. Each stored write gets a new ``version``, a decimal
     string from a counter. ``conditional_check`` is the VCO's check of the
     ``version`` sent; ``return_data`` False is a VCO that ignores
     ``returnData``. ``enterprise_id`` is the enterprise the rows belong to, for
@@ -77,6 +78,8 @@ class ModuleStore:
     on_store: list[StoreHook]
     fail_writes: set[int]
     """The 1-based numbers of the writes answered with an error."""
+    lose_answers: set[int]
+    """The 1-based numbers of the writes that are handled and then not answered: the request raises ``httpx.ReadTimeout``."""
     conditional_check: bool
     return_data: bool
     enterprise_id: int | None
@@ -94,6 +97,7 @@ class ModuleStore:
         self.requests = []
         self.on_store = []
         self.fail_writes = set()
+        self.lose_answers = set()
         self.conditional_check = conditional_check
         self.return_data = return_data
         self.enterprise_id = enterprise_id
@@ -142,12 +146,16 @@ class ModuleStore:
         method: str = body["method"]
         params: dict[str, Any] = body.get("params") or {}
         self.requests.append((method, params))
+        writes_before = self._writes
         try:
             answer = make_jsonrpc_response(result=self.handle(method, params))
         except RpcError as error:
             answer = make_jsonrpc_response(
                 error={"code": error.code, "message": error.message, "data": error.data}
             )
+        else:
+            if self._writes != writes_before and self._writes in self.lose_answers:
+                raise httpx.ReadTimeout("the answer was lost", request=request)
         return httpx.Response(200, json=answer)
 
     # -- methods ------------------------------------------------------------
