@@ -476,14 +476,26 @@ stored otherwise than sent:
 ```
 
 After either of those two errors the state holds the module as stored, so your
-edits to that module are no longer in it. Redo the edits in
-`error.lost_edits` and save again; no reload is needed. Redo only those: an
-`add` of an item that is already stored raises `PatchError`. A clash is where
-the redo overwrites another writer's change. The modules written before the
-failing one are stored and in the state (`error.completed`). Any other error of
-a request (a transport error, for example) leaves that module and the later
-ones with your edits, and carries a note that names the modules written before
-it; a second save sends what still differs.
+edits to that module are no longer in it. Redo them from your own patch and
+save again; no reload is needed. `error.lost_edits` says which edits to redo.
+Redo only those: an `add` of an item that is already stored raises
+`PatchError`. A lost edit is not itself a patch:
+
+- For a changed value, `intended` is the value to set.
+- For an added item, `intended` is the item, but not where it went. An `add`
+  built from it alone puts the item last. Give the place again (`first`,
+  `before` or `after`).
+- For a `move`, the lost edit is one entry at the list, and its values are the
+  items' names in order. The list does not take that as a value. Write the
+  `move` again.
+
+In a rule list the first match decides, so check the order with
+`state.plan().render()` before you save. A clash is where the redo overwrites
+another writer's change. The modules written before the failing one are stored
+and in the state (`error.completed`). Any other error of a request (a transport
+error, for example) leaves that module and the later ones with your edits, and
+carries a note that names the modules written before it; a second save sends
+what still differs.
 
 `WriteOutcomeUnknownError` has no lists and no module. `error.answer` says what the VCO said of the write itself: `"refused"` (it refused the version, so this write stored nothing), `"counted"` (it counted the write, so the changes are most likely stored) or `"row"` (its answer could not be read as this module). `error.detail` says why the module could not be read, and `error.plan` holds what was sent (what would have been, for an insert sent again). The state keeps the module as read, with your edits. For an update, saving again is safe: if the first write was stored, the VCO refuses the old version, the save reads the module and reports what is stored. For an insert, saving again is safe too: the state has recorded it, and the next save reads the configuration before it inserts (below).
 
