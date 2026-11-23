@@ -247,3 +247,25 @@ async def test_a_client_seeded_from_a_state_serves_that_edges_stack():
     assert loaded.edge_config is not first.edge_config
     assert loaded.edge.firewall.firewall_enabled is True
     assert loaded.profile_config.id_ == 20
+
+
+@pytest.mark.asyncio
+async def test_load_by_name_without_a_resolver_says_what_to_register():
+    client = MockVcoClient(stack=_make_stack())
+    with pytest.raises(LookupError) as exc:
+        _ = await ConfigPipeline(client).load("branch-nyc", enterprise_id=1)
+    assert str(exc.value) == (
+        "load('branch-nyc') was given a name, and this pipeline has no edge resolver "
+        "to turn it into an ID. Build the pipeline with build_default_pipeline(client), "
+        "or register EdgeResolver(client) on pipeline.resolvers, or pass the edge's "
+        "numeric ID."
+    )
+    with pytest.raises(LookupError) as exc:
+        _ = await ConfigPipeline(client).load_profile("P", enterprise_id=1)
+    assert str(exc.value) == (
+        "load_profile('P') was given a name, and this pipeline has no profile resolver "
+        "to turn it into an ID. Build the pipeline with build_default_pipeline(client), "
+        "or register ProfileResolver(client) on pipeline.resolvers, or pass the "
+        "profile's numeric ID."
+    )
+    assert client.calls == []

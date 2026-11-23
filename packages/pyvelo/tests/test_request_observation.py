@@ -224,8 +224,14 @@ async def test_observer_preparation_failure_preserves_source_error(
 async def test_uninitialized_client_records_no_http_attempt():
     records: list[RequestObservation] = []
     client = VcoClient("example.test", "private-token", request_observer=records.append)
-    with pytest.raises(VcoClientNotInitializedError):
+    with pytest.raises(VcoClientNotInitializedError) as exc:
         _ = await client.portal("test/get", Request(), Result)
+    assert str(exc.value) == (
+        "VcoClient is not connected. Use it inside "
+        "`async with VcoClient(host, token) as client:`; the connection closes when "
+        "that block ends, and a client built without a transport has none before it "
+        "starts."
+    )
     assert records[0].http_attempts == 0
 
 

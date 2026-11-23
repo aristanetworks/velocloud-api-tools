@@ -113,7 +113,15 @@ class ConfigPipeline:
         if isinstance(edge, str):
             # Resolve edge name to ID
             ctx = ResolverContext(enterprise_id=enterprise_id)
-            edge_resolver = resolvers.get_resolver(EdgeResolver)
+            try:
+                edge_resolver = resolvers.get_resolver(EdgeResolver)
+            except LookupError:
+                raise LookupError(
+                    f"load({edge!r}) was given a name, and this pipeline has no edge "
+                    "resolver to turn it into an ID. Build the pipeline with "
+                    "build_default_pipeline(client), or register EdgeResolver(client) "
+                    "on pipeline.resolvers, or pass the edge's numeric ID."
+                ) from None
             await edge_resolver.load(ctx)
 
             identity = await resolvers.resolve(EdgeName(edge))
@@ -175,7 +183,16 @@ class ConfigPipeline:
         if isinstance(profile, str):
             # Resolve profile name to ID
             ctx = ResolverContext(enterprise_id=enterprise_id)
-            profile_resolver = resolvers.get_resolver(ProfileResolver)
+            try:
+                profile_resolver = resolvers.get_resolver(ProfileResolver)
+            except LookupError:
+                raise LookupError(
+                    f"load_profile({profile!r}) was given a name, and this pipeline "
+                    "has no profile resolver to turn it into an ID. Build the "
+                    "pipeline with build_default_pipeline(client), or register "
+                    "ProfileResolver(client) on pipeline.resolvers, or pass the "
+                    "profile's numeric ID."
+                ) from None
             await profile_resolver.load(ctx)
 
             identity = await resolvers.resolve(ProfileName(profile))

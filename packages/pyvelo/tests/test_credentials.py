@@ -33,14 +33,30 @@ def test_missing_env_file_raises(tmp_path: Path) -> None:
         _ = get_vco_credentials(tmp_path / "absent.env")
 
 
-@pytest.mark.parametrize("present", [{}, {"VCO_HOST": "h"}, {"VCO_TOKEN": "t"}])
+SET_THEM = (
+    " not set or empty. Set VCO_HOST to the Orchestrator's hostname and VCO_TOKEN "
+    "to an API token, in the environment or in the env file given to "
+    "get_vco_credentials()."
+)
+
+
+@pytest.mark.parametrize(
+    ("present", "message"),
+    [
+        ({}, "VCO_HOST and VCO_TOKEN are" + SET_THEM),
+        ({"VCO_HOST": "h"}, "VCO_TOKEN is" + SET_THEM),
+        ({"VCO_TOKEN": "t"}, "VCO_HOST is" + SET_THEM),
+        ({"VCO_HOST": "h", "VCO_TOKEN": ""}, "VCO_TOKEN is" + SET_THEM),
+    ],
+)
 def test_missing_or_empty_vars_raise(
-    monkeypatch: pytest.MonkeyPatch, present: dict[str, str]
+    monkeypatch: pytest.MonkeyPatch, present: dict[str, str], message: str
 ) -> None:
     for key, value in present.items():
         monkeypatch.setenv(key, value)
-    with pytest.raises(VcoCredentialsError, match="VCO_HOST and VCO_TOKEN"):
+    with pytest.raises(VcoCredentialsError) as exc:
         _ = get_vco_credentials()
+    assert str(exc.value) == message
 
 
 def test_is_a_vco_error() -> None:

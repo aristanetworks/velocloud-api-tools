@@ -51,10 +51,15 @@ class VcoError(Exception):
 
 
 class VcoClientNotInitializedError(VcoError):
-    """Raised when the client is used before connecting."""
+    """Raised when the client is used without a connection."""
 
     def __init__(self) -> None:
-        super().__init__("VcoClient is not initialized")
+        super().__init__(
+            "VcoClient is not connected. Use it inside "
+            "`async with VcoClient(host, token) as client:`; the connection closes "
+            "when that block ends, and a client built without a transport has none "
+            "before it starts."
+        )
 
 
 class VcoApiError(VcoError):

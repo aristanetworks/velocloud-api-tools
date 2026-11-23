@@ -10,7 +10,7 @@ for an entity, using plain int/uuid.UUID types.
 
 import uuid
 from dataclasses import dataclass
-from typing import Annotated, Any, ClassVar, NewType
+from typing import Annotated, Any, ClassVar, NewType, override
 
 from pydantic import BeforeValidator, PlainSerializer
 
@@ -36,6 +36,11 @@ class ResolutionError(KeyError):
         self.identity_type = identity_type
         self.candidates = candidates
         super().__init__(message or self._default_message())
+
+    @override
+    def __str__(self) -> str:
+        # KeyError prints the repr of its argument, with quotes and a literal \n.
+        return str(self.args[0])
 
     def _default_message(self) -> str:
         label = (
