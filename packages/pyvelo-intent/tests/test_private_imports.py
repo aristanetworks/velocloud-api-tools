@@ -1,4 +1,9 @@
-"""Private names are not imported across modules, outside the three engines of ``pyvelo.core``."""
+"""No source file of the two packages writes ``from m import _name``, outside the three engines of ``pyvelo.core``.
+
+It reads each file's imports and so does not see an attribute access such as
+``module._x``, an ``import module`` followed by a use of its private name, or an
+import made at run time.
+"""
 
 import ast
 import pathlib

@@ -425,6 +425,15 @@ def test_a_module_given_under_another_configuration_is_refused():
         store.add_configuration({"name": "P"})
 
 
+def test_a_module_row_without_an_id_is_refused_and_nothing_is_stored():
+    store = ModuleStore()
+    good = make_module_json("firewall", {}, module_id=1, configuration_id=10)
+    nameless = {k: v for k, v in good.items() if k != "id"}
+    with pytest.raises(ValueError, match="a module row needs an id"):
+        store.add_configuration({"id": 10, "name": "P", "modules": [good, nameless]})
+    assert (store.configurations, store.rows) == ({}, {})
+
+
 @pytest.mark.parametrize(
     ("method", "params", "missing"),
     [

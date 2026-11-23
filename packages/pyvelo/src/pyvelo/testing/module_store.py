@@ -145,8 +145,9 @@ class ModuleStore:
         """Hold the configuration *row*; the module rows under its ``modules``, if any, too.
 
         A module without a ``configurationId`` gets the configuration's;
-        ``ValueError`` for a row without an ``id`` and for a module whose
-        ``configurationId`` is another's. Nothing is stored then.
+        ``ValueError`` for a row without an ``id``, for a module row without
+        an ``id`` and for a module whose ``configurationId`` is another's.
+        Nothing is stored then.
         """
         stored = copy.deepcopy(dict(row))
         if "id" not in stored:
@@ -156,6 +157,11 @@ class ModuleStore:
         config_id: int = stored["id"]
         modules: list[dict[str, Any]] = stored.pop("modules", None) or []
         for module in modules:
+            if "id" not in module:
+                raise ValueError(
+                    f"a module row needs an id; add an 'id' key to each module "
+                    f"row under configuration {config_id}"
+                )
             held = module.setdefault("configurationId", config_id)
             if held != config_id:
                 raise ValueError(
