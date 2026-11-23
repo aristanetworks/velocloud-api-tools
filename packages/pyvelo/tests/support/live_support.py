@@ -342,15 +342,39 @@ class Lab:
         pytest.skip(f"no profile has a {name.value} module {what or 'to use'}")
 
 
+def _shown_field(path: str) -> str:
+    """*path* of a refusal with every bracket but an index hidden: names in brackets are the lab's."""
+    shown = re.sub(
+        r"\[([^\]]*)\]", lambda m: m.group(0) if m.group(1).isdigit() else "[*]", path
+    )
+    return shown if re.fullmatch(r"[\w.\[\]*]*", shown) else "*"
+
+
 def _found_codes(exc: VcoOperationError) -> list[tuple[str, str]]:
-    return re.findall(r"\[([A-Z][A-Z0-9_]*)\]\s*([\w.\[\]]*)", str(exc))
+    """The code and the field of each error in the refusal's data, and nothing of its text or messages.
+
+    A refusal with no such data has none: its text can hold names of the lab in
+    any form, brackets included.
+    """
+    data: object = exc.data
+    if not isinstance(data, dict):
+        return []
+    entries = cast(dict[str, object], data).get("error")
+    if not isinstance(entries, list):
+        return []
+    found: list[tuple[str, str]] = []
+    for entry in cast(list[object], entries):
+        if not isinstance(entry, dict):
+            continue
+        fields = cast(dict[str, object], entry)
+        code, path = fields.get("code"), fields.get("path")
+        if isinstance(code, str) and re.fullmatch(r"[A-Z][A-Z0-9_]*", code):
+            found.append((code, _shown_field(path) if isinstance(path, str) else ""))
+    return found
 
 
 def _redacted(exc: VcoOperationError) -> VcoOperationError:
-    """*exc* with each error code and field kept, as the Orchestrator words them, and no message.
-
-    ``refusal_codes`` reads the result the same as it reads *exc*.
-    """
+    """*exc* with each error code and field kept and no message; ``refusal_codes`` reads it as it reads *exc*."""
     errors = [
         {"code": code, "path": field, "message": ""}
         for code, field in _found_codes(exc)
@@ -361,7 +385,7 @@ def _redacted(exc: VcoOperationError) -> VcoOperationError:
 
 
 def refusal_codes(exc: VcoOperationError) -> str:
-    """The error codes and fields of a refusal; the rest of its text names lab entities."""
+    """The error codes and fields of a refusal, from its data; its text and messages name lab entities."""
     found = _found_codes(exc)
     return (
         "; ".join(f"{code} {field}".strip() for code, field in found) or "no error code"

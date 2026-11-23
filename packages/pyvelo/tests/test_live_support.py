@@ -7,11 +7,12 @@ checked here with no lab.
 
 import contextlib
 import copy
+import inspect
 import json
 import pathlib
 import re
 from collections.abc import Callable
-from typing import Any, ClassVar
+from typing import Any, ClassVar, Literal
 
 import httpx
 import live_support as live
@@ -650,6 +651,41 @@ def test_a_refusal_the_client_already_redacted_still_shows_its_codes():
     )
 
 
+def test_a_bracketed_name_in_a_refusal_is_not_read_as_a_code():
+    named = "[HQ] Munich-Branch-7"
+    in_text = VcoOperationError("edge/getEdge", f"no such edge {named}")
+    in_message = VcoOperationError(
+        "edge/getEdge",
+        "validationError",
+        data={"error": [{"code": "E1", "path": "a", "message": f"{named} clash"}]},
+    )
+    for error in (in_text, in_message, live._redacted(in_message)):  # pyright: ignore[reportPrivateUsage]
+        for shown in (live.failure_text(error), live.refusal_codes(error)):
+            assert shown is not None and "HQ" not in shown and "Munich" not in shown
+        assert "HQ" not in str(live._redacted(error))  # pyright: ignore[reportPrivateUsage]
+    assert live.refusal_codes(in_text) == "no error code"
+    assert live.refusal_codes(in_message) == "E1 a"
+    assert live.refusal_codes(live._redacted(in_message)) == "E1 a"  # pyright: ignore[reportPrivateUsage]
+
+
+def test_a_name_in_brackets_in_a_refusal_path_is_hidden():
+    path = "segments[Munich-Branch-7].rules[12].outbound[HQ]"
+    error = VcoOperationError(
+        "edge/getEdge",
+        "validationError",
+        data={"error": [{"code": "E1", "path": path}]},
+    )
+    expected = "E1 segments[*].rules[12].outbound[*]"
+    assert live.refusal_codes(error) == expected
+    assert live.refusal_codes(live._redacted(error)) == expected  # pyright: ignore[reportPrivateUsage]
+    odd = VcoOperationError(
+        "edge/getEdge",
+        "validationError",
+        data={"error": [{"code": "E1", "path": "a.Munich Branch-7"}]},
+    )
+    assert live.refusal_codes(odd) == "E1 *"
+
+
 def test_an_http_error_shows_its_status():
     error = VcoHttpError(502, "<html>secret-lab-name</html>")
     assert live.failure_text(error) == "VcoHttpError: HTTP 502"
@@ -746,10 +782,11 @@ def redacted(
     marks: tuple[str, ...] = ("integration",),
     fixtures: tuple[str, ...] = ("lab", "capsys"),
     failed: bool = True,
+    when: Literal["setup", "call", "teardown"] = "call",
 ) -> str:
     """What ``redact_report`` leaves as the report of a test whose body is *body*."""
     report = FakeReport(failed)
-    call = pytest.CallInfo.from_call(body, "call")
+    call = pytest.CallInfo.from_call(body, when)
     live.redact_report(FakeItem(marks, fixtures), call, report)  # pyright: ignore[reportArgumentType]
     assert isinstance(report.longrepr, str)
     return report.longrepr
@@ -761,6 +798,27 @@ HERE = r" \(raised at test_live_support\.py:\d+\)"
 def test_a_live_failure_is_its_text_and_where_it_was_raised():
     shown = redacted(raising(KeyError("secret-lab-name")))
     assert re.fullmatch("KeyError" + HERE, shown)
+
+
+def test_the_line_is_the_one_that_raised():
+    def body() -> None:
+        frame = inspect.currentframe()
+        assert frame is not None
+        raised_at.append(frame.f_lineno + 1)
+        raise KeyError("secret-lab-name")
+
+    raised_at: list[int] = []
+    shown = redacted(body)
+    assert shown == f"KeyError (raised at test_live_support.py:{raised_at[0]})"
+
+
+def test_a_failure_in_a_fixture_is_redacted_too():
+    error = raising(live.LabUnreadable("edge #3 does not load"))
+    for when in ("setup", "teardown"):
+        shown = redacted(error, when=when)
+        assert re.fullmatch("edge #3 does not load" + HERE, shown)
+        shown = redacted(raising(KeyError("secret-lab-name")), when=when)
+        assert re.fullmatch("KeyError" + HERE, shown)
 
 
 def test_the_place_is_the_last_frame_in_the_tests():
