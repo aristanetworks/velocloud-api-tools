@@ -192,9 +192,11 @@ def test_the_types_a_save_hands_back_are_exported_from_the_package():
     import pyvelo_intent
     import pyvelo_intent.config
     from pyvelo.client.exceptions import LossyFieldError
+    from pyvelo.client.module_check import ModuleWrite
+    from pyvelo.client.module_write import ModulePlan
     from pyvelo.config.resolver import ResolutionError
     from pyvelo.core.response_check import PlannedChange, ServerChange
-    from pyvelo_intent.config.state import ConfigPlan
+    from pyvelo_intent.config.state import ConfigFieldChange, ConfigPlan
 
     exported = {
         "LossyFieldError": LossyFieldError,
@@ -202,12 +204,17 @@ def test_the_types_a_save_hands_back_are_exported_from_the_package():
         "PlannedChange": PlannedChange,
         "ServerChange": ServerChange,
         "ConfigPlan": ConfigPlan,
+        "ConfigFieldChange": ConfigFieldChange,
+        "ModulePlan": ModulePlan,
+        "ModuleWrite": ModuleWrite,
     }
     for name, value in exported.items():
         assert getattr(pyvelo_intent, name) is value, name
         assert name in pyvelo_intent.__all__, name
     assert pyvelo_intent.config.ConfigPlan is ConfigPlan
     assert "ConfigPlan" in pyvelo_intent.config.__all__
+    assert pyvelo_intent.config.ConfigFieldChange is ConfigFieldChange
+    assert "ConfigFieldChange" in pyvelo_intent.config.__all__
 
 
 def test_the_kind_of_a_patch_error_is_exported_from_the_package():

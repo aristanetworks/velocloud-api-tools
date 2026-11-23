@@ -8,11 +8,14 @@ from pyvelo.client.exceptions import (
     WriteNotAppliedError,
     WriteOutcomeUnknownError,
 )
+from pyvelo.client.module_check import ModuleWrite
+from pyvelo.client.module_write import ModulePlan
 from pyvelo.core import PatchError, PatchErrorKind, add, at, delete, move
 from pyvelo.core.identity import ResolutionError
 from pyvelo.core.response_check import PlannedChange, ServerChange
 
 from pyvelo_intent.config import (
+    ConfigFieldChange,
     ConfigPipeline,
     ConfigPlan,
     ConfigState,
@@ -46,6 +49,7 @@ __all__ = [
     "Added",
     "Change",
     "ConfigConflictError",
+    "ConfigFieldChange",
     "ConfigInputError",
     "ConfigPipeline",
     "ConfigPlan",
@@ -57,6 +61,8 @@ __all__ = [
     "LayerNotSavedError",
     "LossyFieldError",
     "Modified",
+    "ModulePlan",
+    "ModuleWrite",
     "ModuleWriteError",
     "PatchError",
     "PatchErrorKind",
