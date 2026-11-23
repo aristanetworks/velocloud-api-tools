@@ -1778,7 +1778,7 @@ SEGMENT_REF = "deviceSettings:segment"
 SENT_ROW_FIELDS = frozenset(
     {"configurationId", "moduleId", "enterpriseObjectId", "ref"}
 )
-"""The fields of a new row (spec 5.15): a per-segment ref also has ``segmentObjectId``."""
+"""The fields of a new row; a per-segment ref also has ``segmentObjectId``."""
 
 
 def _rows_named(refs: object, name: str) -> list[dict[str, Any]]:
@@ -2186,7 +2186,7 @@ async def test_record_the_refs_a_write_returns(
     ``enterpriseObjectId``, ``ref``, and ``segmentObjectId`` for a per-segment
     ref) beside the rows as read. The run records, for each declared ref name,
     how many rows come back, which fields they have, and whether every field
-    sent is among them (spec section 8, "Needs a live VCO"). Only ref names
+    sent is among them, which only a live VCO can tell. Only ref names
     and field names are printed, never a value; the provider is cleared again.
     """
     target = await _dns_target(lab)

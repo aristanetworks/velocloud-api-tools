@@ -1,7 +1,7 @@
 """The data fields that own ref rows: finding them, and filling the ``RefOnly`` ones from the refs read.
 
 A ref row goes with an identity the data holds (``OwnsRef``) or stands for a
-value only the row says (``RefOnly``), spec 5.15. This module walks a module's
+value only the row says (``RefOnly``). This module walks a module's
 data for those fields. It does not know modules: ``pyvelo.client.schemas``
 imports it to fill a module's ``RefOnly`` fields as the module is validated,
 and the derivation of the rows to send imports it to compare owners.

@@ -4,7 +4,7 @@
 """The ref rows an edit adds and removes, and the complete refs to send, by difference of the declared owners.
 
 A ref row goes with an identity that the data holds (``OwnsRef``) or that only
-the row says (``RefOnly``), spec 5.15. ``derive_refs`` compares the owners of a
+the row says (``RefOnly``). ``derive_refs`` compares the owners of a
 module as read with the owners now: an owner that appeared adds a row, one that
 went removes the row it showed, and every other row is sent as read. What
 already disagrees as read (a row with no owner, an owner with no row, several

@@ -510,7 +510,7 @@ class Secret:
 class OwnsRef:
     """Annotated marker: this data field holds an identity that a ref row goes with.
 
-    A row of ref name *name* goes with the identity (spec 5.15). *identity* is
+    A row of ref name *name* goes with the identity. *identity* is
     the identity type, whose resolver gives the ``object_id`` a new row needs;
     *by* is the attribute of it that the data holds, and *row* the row field
     that value is compared with (``"logicalId"``, ``"data.segmentId"``).
