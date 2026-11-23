@@ -6,7 +6,7 @@ has a firewall module and no QoS module, so a QoS edit is saved as an insert.
 
 import asyncio
 import copy
-from typing import Any
+from typing import Any, override
 
 import httpx
 import pytest
@@ -17,8 +17,15 @@ from pyvelo.client.exceptions import (
     WriteOutcomeUnknownError,
 )
 from pyvelo.client.models.configuration.qos.root import ServiceRateLimit
+from pyvelo.client.schemas.configuration import (
+    AnyConfigurationModule,
+    InsertConfigurationModule,
+    InsertConfigurationModuleResult,
+    UpdateConfigurationModule,
+)
+from pyvelo.core import ConfigContext
 from pyvelo.testing import make_module_json
-from pyvelo_intent import add
+from pyvelo_intent import add, save_progress
 from pyvelo_intent.config.pipeline import ConfigPipeline
 from pyvelo_intent.config.state import ConfigState
 from pyvelo_intent.testing import MockVcoClient
@@ -294,3 +301,61 @@ async def test_a_save_cancelled_while_an_insert_is_out_marks_it_unconfirmed():
     (stored_id,) = edge_qos_rows(client)
     assert state.module("qos").id_ == stored_id
     assert state.unconfirmed_inserts == set()
+
+
+class RemovesTheModuleDuringTheWrite(MockVcoClient):
+    """After the VCO stores a write, the module leaves the state it was planned from."""
+
+    state: ConfigState
+
+    @override
+    async def insert_configuration_module(
+        self, request: InsertConfigurationModule, *, level: ConfigContext | None = None
+    ) -> InsertConfigurationModuleResult | AnyConfigurationModule:
+        stored = await super().insert_configuration_module(request, level=level)
+        self.state.drop_module(self.state.module("qos"))
+        return stored
+
+    @override
+    async def update_configuration_module(
+        self, request: UpdateConfigurationModule, *, level: ConfigContext | None = None
+    ) -> AnyConfigurationModule | None:
+        stored = await super().update_configuration_module(request, level=level)
+        assert self.state.edge_config is not None
+        self.state.edge_config.modules = []
+        return stored
+
+
+async def test_a_stored_insert_the_state_could_not_take_back_is_written_and_unconfirmed():
+    state = make_state()
+    client = RemovesTheModuleDuringTheWrite.for_state(state)
+    client.state = state
+    pipeline = await with_a_new_qos_rule(client, state)
+
+    with pytest.raises(ValueError, match="not in the target config") as exc:
+        _ = await pipeline.save(state)
+
+    (stored_id,) = edge_qos_rows(client)
+    progress = save_progress(exc.value)
+    assert progress is not None
+    assert [(w.name, w.operation) for w in progress.completed] == [("QOS", "insert")]
+    assert (progress.failed, progress.pending) == (None, ())
+    assert state.unconfirmed_inserts == {"QOS"}
+    assert edge_qos_rows(client) == [stored_id]
+
+
+async def test_a_stored_update_the_state_could_not_take_back_is_written():
+    state = make_state()
+    client = RemovesTheModuleDuringTheWrite.for_state(state)
+    client.state = state
+    state.edge.firewall.firewall_enabled = False
+
+    with pytest.raises(ValueError, match="not in the target config") as exc:
+        _ = await ConfigPipeline(client).save(state)
+
+    progress = save_progress(exc.value)
+    assert progress is not None
+    assert [(w.name, w.operation) for w in progress.completed] == [
+        ("firewall", "update")
+    ]
+    assert (progress.failed, progress.pending) == (None, ())

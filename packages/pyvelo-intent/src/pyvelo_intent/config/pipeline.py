@@ -601,15 +601,23 @@ class ConfigPipeline:
                     if insert:
                         state.unconfirmed_inserts.add(mod.name)
                     raise
+                # Stored: it counts as written even if the state cannot take it back.
+                done.append(write)
+                failed = None
                 paths = list(
                     dict.fromkeys(
                         change.path
                         for change in raw_changes(planned, _dump(mod), type(mod))
                     )
                 )
-                state.replace_module(mod, write.module)
-                done.append(write)
-                failed = None
+                try:
+                    state.replace_module(mod, write.module)
+                except BaseException:
+                    # The insert is stored but the state still plans it: the
+                    # next save reads before it inserts again.
+                    if insert:
+                        state.unconfirmed_inserts.add(mod.name)
+                    raise
                 name = ConfigurationModuleName(write.name)
                 result.server_changes[name] = write.server_changes
                 result.left_out[name] = write.left_out
