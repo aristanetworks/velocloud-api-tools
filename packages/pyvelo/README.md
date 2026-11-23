@@ -52,11 +52,16 @@ before the write. Continue from the module `update_module` returns (`module =
 await client.update_module(module, data)`), and after `ConfigConflictError` or
 `WriteNotAppliedError` from `error.module`. After `WriteOutcomeUnknownError` the
 module as stored could not be read and the write may be stored: read the
-configuration again and compare before you write this module again. Writing a
-module again after a write replaced it raises `DetachedObjectError` before
-anything is sent, and so does an assignment through its `data`. `update_module`
-returns only the module; to see what the VCO stored its own way, use
-`write_module`, whose `ModuleWrite` has `left_out` and `server_changes`.
+configuration again and compare before you write this module again.
+`update_module` marks the module you pass in as replaced when the write stored
+something, and after `ConfigConflictError` or `WriteNotAppliedError`; it does
+not mark it when nothing changed, after `WriteOutcomeUnknownError`, or after an
+error before the VCO answered. Calling `update_module` again with a marked
+module raises `DetachedObjectError` before anything is sent, and so does an
+assignment through its `data`. `write_module` does not mark the module it is
+given. `update_module` returns only the module; to see what the VCO stored its
+own way, use `write_module`, whose `ModuleWrite` has `left_out` and
+`server_changes`.
 
 `VcoClient.write_module(module, plan)` sends a plan as an update or an insert
 that asks for the module as stored (`returnData`), and reads the module back

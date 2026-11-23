@@ -3,7 +3,7 @@
 Provides:
 - VcoModel base class with compact and context-aware serialization
 - ``VcoModel.merge_patch``: recursive merge of a partial dict into a model
-- ``VcoModel.mark_detached``: a model a save replaced refuses edits
+- ``VcoModel.mark_detached``: a model a write replaced refuses edits
 - ContextView / ContextFieldInfo for field metadata introspection
 - JsonRpc request/response/error models
 - Pagination, API filters, and utility types
@@ -424,7 +424,7 @@ class VcoModel(BaseModel):
 
     @override
     def __deepcopy__(self, memo: dict[int, Any] | None = None) -> Self:
-        # A deep copy shares nothing with the module a save replaced, so it is
+        # A deep copy shares nothing with the module a write replaced, so it is
         # a new object. Each nested model is copied through here too.
         copied = super().__deepcopy__(memo)
         if copied.is_detached:
@@ -433,7 +433,10 @@ class VcoModel(BaseModel):
 
     @property
     def is_detached(self) -> bool:
-        """Whether a save replaced this object (``mark_detached``); then it takes no edit."""
+        """Whether a write replaced this object (``mark_detached``); then it takes no edit.
+
+        A save marks the modules it replaces, and so does ``update_module``.
+        """
         try:
             private = self.__pydantic_private__
         except AttributeError:  # not set yet: in __new__, or while unpickling
@@ -707,13 +710,13 @@ class VcoModel(BaseModel):
         ``ValueError``) whose ``path`` is where in the patch it failed and
         whose ``kind`` says which sort of refusal it is
         (``patch.PatchErrorKind``); a pydantic ``ValidationError`` behind it
-        is its ``__cause__``. Resolver errors keep their types. A name on a field whose resolver is not
-        registered raises ``PatchError`` at the field, unless the text can be
-        the ID. All or nothing: a patch that raises, ``PatchError``,
-        ``ResolutionError`` or ``LookupError``, leaves self as it was, the same
-        dump and the same ``model_fields_set``. On an object a save replaced
-        (``is_detached``) it raises ``DetachedObjectError`` before anything
-        else.
+        is its ``__cause__``. Resolver errors keep their types. A name on a
+        field whose resolver is not registered raises ``PatchError`` at the
+        field, unless the text can be the ID. All or nothing: a patch that
+        raises, ``PatchError``, ``ResolutionError`` or ``LookupError``, leaves
+        self as it was, the same dump and the same ``model_fields_set``. On an
+        object a write replaced (``is_detached``: a save or ``update_module``
+        did it) it raises ``DetachedObjectError`` before anything else.
         """
         if self.is_detached:
             _raise_detached(self, "merge_patch")

@@ -621,13 +621,18 @@ class ConfigurationMixin(Protocol):
         name to reconcile the segments an edge module lacks.
 
         The module passed in is not updated: it still holds the data and the
-        ``version`` from before the write, and is marked as replaced (an
-        assignment to it raises). Continue from the module returned
+        ``version`` from before the write. It is marked as replaced (an
+        assignment to it raises) when the write stored something, and when
+        ``ConfigConflictError`` or ``WriteNotAppliedError`` read the module as
+        stored. It is not marked when nothing changed (the call returns the
+        module itself), after ``WriteOutcomeUnknownError``, or after an error
+        before the VCO answered. Continue from the module returned
         (``module = await client.update_module(module, data)``); after
         ``ConfigConflictError`` or ``WriteNotAppliedError``, continue from
         ``error.module``. After ``WriteOutcomeUnknownError`` the module as
         stored could not be read and the write may be stored: read the
         configuration again and compare before writing this module again.
+        ``write_module`` does not mark the module it is given.
         Only the module is returned: what the VCO stored its own way
         (``left_out``, ``server_changes``) is on the ``ModuleWrite`` that
         ``write_module`` returns.

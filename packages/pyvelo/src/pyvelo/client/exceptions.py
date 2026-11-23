@@ -779,7 +779,9 @@ class DetachedObjectError(VcoError):
     ``paths`` are where in the module such edits were found, when they were
     found by comparison; they may come from several modules, which the message
     names, a line each. An assignment or ``merge_patch`` that raises names the
-    object and leaves them empty.
+    object and leaves them empty, and so does the refusal of ``update_module``
+    to write a module an earlier ``update_module`` replaced. Only
+    ``update_module`` marks the module it is given; ``write_module`` does not.
     """
 
     paths: list[Path]
