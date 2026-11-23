@@ -266,6 +266,46 @@ def test_long_values_are_cut_where_they_differ():
     ]
 
 
+def inbound_rows(*names: str) -> list[dict[str, Any]]:
+    """Inbound rules as the VCO returns them, each with a ``ruleLogicalId``."""
+    return [
+        inbound(name, ruleLogicalId=f"l-{name}").model_dump(mode="json")
+        for name in names
+    ]
+
+
+def test_message_shows_the_place_of_an_added_rule_and_the_order():
+    rows = inbound_rows("a", "b")
+    module = fw({**RAW, "inbound": rows})
+    module.data.inbound.insert(0, inbound("c"))
+    module.data.inbound.append(module.data.inbound.pop(1))  # c, b, a
+    plan = plan_module(module)
+    stored = as_stored(module, {**RAW, "inbound": rows, "future": 2})
+    with pytest.raises(ConfigConflictError) as exc:
+        _ = check_module_write(module, plan, stored, answer="refused")
+    lines = str(exc.value).splitlines()
+    assert lines[1] == "lost edits (not stored; redo these):"
+    assert lines[2].startswith(
+        '  inbound[c] (first): read (nothing), meant {"action": '
+    )
+    assert lines[2].endswith("…, stored (nothing)")
+    assert lines[3] == (
+        '  inbound: order: b after c: read ["a", "b"], meant ["c", "b", "a"], '
+        'stored ["a", "b"]'
+    )
+
+
+def test_message_names_a_stored_order():
+    module = fw({**RAW, "inbound": inbound_rows("a", "b")})
+    module.data.inbound.reverse()
+    module.data.firewall_enabled = False
+    plan = plan_module(module)
+    stored = as_stored(module, {**plan.data, "firewall_enabled": True})
+    with pytest.raises(WriteNotAppliedError) as exc:
+        _ = check_module_write(module, plan, stored)
+    assert str(exc.value).splitlines()[-2:] == ["already stored:", "  inbound: order"]
+
+
 def test_completed_writes_are_named():
     module = firewall_disabled()
     with pytest.raises(ModuleWriteError) as exc:

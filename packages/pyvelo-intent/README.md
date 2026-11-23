@@ -472,7 +472,7 @@ at `left_out` when a save follows one that failed.
 
 | Attribute | Holds |
 |---|---|
-| `lost_edits` | the planned changes that are not stored: each with its `path`, the value `as_read`, the value `intended` and the value `stored`; `clash` is true where the stored value is not the one read, because something else changed it too |
+| `lost_edits` | the planned changes that are not stored: each with its `path`, the value `as_read`, the value `intended` and the value `stored`; `clash` is true where the stored value is not the one read, because something else changed it too. An added item has its `place`. The order of a keyed list is one entry (`is_order`): its three values are the items' names in order, and its `moves` are the moves that put the stored order right |
 | `applied` | the planned changes that are stored |
 | `left_out` | the planned changes the VCO stores its own way, as in `SaveResult.left_out` |
 | `server_changes` | what else the VCO stores otherwise than sent, as in `SaveResult.server_changes` |
@@ -489,11 +489,19 @@ the same port and another key:
 ```text
 Configuration module 11 (firewall) changed since it was read (version v1): the VCO refused the version
 lost edits (not stored; redo these):
-  segments["Global Segment"].outbound[block-ssh]: read (nothing), meant {"action": {"allow_or_deny": "deny"}, "comments": null, "loggingEnabled": false,…, stored (nothing)
+  segments["Global Segment"].outbound[block-ssh] (first): read (nothing), meant {"action": {"allow_or_deny": "deny"}, "comments": null, "loggingEnabled": false,…, stored (nothing)
   segments["Global Segment"].outbound[allow-web].match.dport_high: read 443, meant 8080, stored 8443  [clash: also changed on the VCO]
 stored otherwise than sent:
   syslog_forwarding: read false, stored true
 ```
+
+The order of a keyed list is checked as a value is. A `move` that is not stored
+is a lost edit at the list. So is the place of an added item: when the VCO
+stores the item in another place than planned, the item is under `applied` and
+the order under `lost_edits`. An order the VCO changed where your plan placed
+nothing is a server change. No list is known that the VCO puts in an order of
+its own. A save that places an item in such a list would raise every time; the
+fix is a pattern under `own_order` in the table of rewrites.
 
 After either of those two errors the state holds the module as stored, so your
 edits to that module are no longer in it. Redo them from your own patch and

@@ -319,7 +319,10 @@ async def test_refused_reorder_and_edit_list_both(conditional_check: bool):
     )
     assert paths(exc.value.server_changes) == ["futureKey"]
     text = str(exc.value)
-    assert f'  {rules}: read ["a", "b", "c", "d"], meant ["d", "a", "b", "c"]' in text
+    assert (
+        f'  {rules}: order: d first: read ["a", "b", "c", "d"], '
+        'meant ["d", "a", "b", "c"], stored ["a", "b", "c", "d"]'
+    ) in text
     assert '{"action"' not in text  # no rule body: one renders as {"action": ...
     assert qos_rules(state) == ["a", "b", "c", "d"]
     assert state.plan().changed == ()

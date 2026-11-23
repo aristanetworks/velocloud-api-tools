@@ -245,6 +245,11 @@ def _where(change: PlannedChange | ServerChange) -> str:
     return f"refs {change.path}" if change.part == "refs" else str(change.path)
 
 
+def _what(change: PlannedChange) -> str:
+    """The path of *change*, then its place or its order."""
+    return _where(change) + _place_or_order(change.place, change.moves)
+
+
 class ModuleWriteError(VcoError):
     """A module write that was sent, or was about to be sent again, and is not known to be stored as planned.
 
@@ -326,7 +331,7 @@ class ModuleWriteError(VcoError):
                     change.as_read, change.intended, change.stored
                 )
                 line = (
-                    f"  {_where(change)}: read {as_read}, "
+                    f"  {_what(change)}: read {as_read}, "
                     f"meant {intended}, stored {stored}"
                 )
                 if change.clash:
@@ -334,7 +339,7 @@ class ModuleWriteError(VcoError):
                 lines.append(line)
         if self.applied:
             lines.append("already stored:")
-            lines.extend(f"  {_where(change)}" for change in self.applied)
+            lines.extend(f"  {_what(change)}" for change in self.applied)
         if self.server_changes:
             lines.append("stored otherwise than sent:")
             for server_change in self.server_changes:

@@ -242,7 +242,8 @@ def test_ipv6_keys_pair_by_key_in_canonical_form_in_any_order():
     assert_paths(
         check,
         applied=[V6_ROUTE_PATH, other_path],
-        server_changes=[f"{V6_ROUTE_PATH}.dest", f"{other_path}.dest", "routes"],
+        not_applied=["routes"],
+        server_changes=[f"{V6_ROUTE_PATH}.dest", f"{other_path}.dest"],
     )
 
 
@@ -278,6 +279,7 @@ def test_ipv6_alt_key_in_canonical_form_pairs():
     assert_paths(
         check,
         applied=["rules[#0]", "rules[#1]"],
+        not_applied=["rules"],
         server_changes=["rules[#0].ruleId", "rules[#1].ruleId"],
     )
     assert server_change_at(check, "rules[#0].ruleId").stored == "2001:db8::1"

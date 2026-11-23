@@ -6,9 +6,11 @@ from typing import Annotated
 import pytest
 from pydantic import MISSING, Field
 from pyvelo.core import KeyField, Positional, VcoModel
+from pyvelo.core.rebase import ItemMove, ItemPlace, Key
 from pyvelo.core.response_check import (
     PlannedChange,
     ResponseCheck,
+    Rewrites,
     ServerChange,
     check_response,
 )
@@ -220,6 +222,9 @@ def test_keyed_item_removed_is_still_there():
 def test_reorder_is_checked_by_keys():
     check = chk(rules(A, B, C), rules(C, A, B), rules(C, A, B))
     assert_paths(check, applied=["rules"])
+    (order,) = check.applied
+    assert order.is_order
+    assert order.moves == ()
 
 
 def test_reorder_refused():
@@ -229,6 +234,82 @@ def test_reorder_refused():
     assert change.as_read == ["a", "b", "c"]
     assert change.intended == ["c", "a", "b"]
     assert change.stored == ["a", "b", "c"]
+    assert change.moves == (ItemMove(Key("c"), ItemPlace()),)
+    assert change.clash is False
+
+
+def test_reorder_refused_where_the_stored_order_changed_too_is_a_clash():
+    check = chk(rules(A, B, C), rules(C, A, B), rules(B, A, C))
+    change = not_applied_at(check, "rules")
+    assert change.stored == ["b", "a", "c"]
+    assert change.clash is True
+    assert change.moves is not None
+    assert [str(move) for move in change.moves] == ["c first", "a after c"]
+
+
+def test_added_item_carries_its_place():
+    first = not_applied_at(chk(rules(A), rules(B, A), rules(A)), "rules[b]")
+    last = not_applied_at(chk(rules(A), rules(A, B), rules(A)), "rules[b]")
+    assert (first.place, last.place) == (ItemPlace(), ItemPlace(Key("a")))
+    assert first.is_order is False
+
+
+def test_added_item_stored_in_another_place_is_a_lost_order():
+    check = chk(rules(A), rules(B, A), rules(A, B))
+    assert_paths(check, applied=["rules[b]"], not_applied=["rules"])
+    order = not_applied_at(check, "rules")
+    assert order.is_order
+    assert (order.as_read, order.intended, order.stored) == (
+        ["a"],
+        ["b", "a"],
+        ["a", "b"],
+    )
+    assert order.moves == (ItemMove(Key("b"), ItemPlace()),)
+    assert order.clash is False
+
+
+def test_added_item_stored_in_its_place_has_no_order_entry():
+    check = chk(rules(A), rules(B, A), rules(B, A))
+    assert_paths(check, applied=["rules[b]"])
+    assert check.applied[0].place == ItemPlace()
+
+
+def test_an_item_is_named_as_it_was_read():
+    renamed = chk(
+        rules(rule("a", i="i1")), rules(rule("z", i="i1")), rules(rule("a", i="i1"))
+    )
+    assert_paths(renamed, not_applied=["rules[a].name"])
+    shifted = chk(
+        rules(rule("d", i="i1"), rule("d", i="i2")),
+        rules(rule("new"), rule("d", i="i1"), rule("d", i="i2", p=7)),
+        rules(rule("d", i="i1"), rule("d", i="i2")),
+    )
+    assert_paths(shifted, not_applied=["rules[new]", "rules[#1].priority"])
+
+
+def test_added_item_named_as_a_read_one_compares_the_list_whole():
+    r, p = rules(rule("a", i="i1")), rules(rule("b", i="i1"), A)
+    assert_paths(chk(r, p, p), applied=["rules"])
+    refused = chk(r, p, r)
+    assert_paths(refused, not_applied=["rules"])
+    assert not_applied_at(refused, "rules").is_order is False
+
+
+def test_a_list_the_vco_orders_itself_has_no_planned_order():
+    own = Rewrites(own_order=(("rules",),))
+    added = check_response(rules(A), rules(B, A), rules(A, B), Root, rewrites=own)
+    assert (paths(added.applied), added.not_applied) == (["rules[b]"], ())
+    (change,) = added.server_changes
+    assert (str(change.path), change.as_read, change.stored) == (
+        "rules",
+        ["b", "a"],
+        ["a", "b"],
+    )
+    moved = check_response(rules(A, B), rules(B, A), rules(A, B), Root, rewrites=own)
+    assert (moved.applied, moved.not_applied) == ((), ())
+    assert paths(moved.left_out) == ["rules"]
+    assert moved.left_out[0].moves == (ItemMove(Key("b"), ItemPlace()),)
+    assert paths(moved.server_changes) == ["rules"]
 
 
 def test_reorder_and_edit_are_two_changes():

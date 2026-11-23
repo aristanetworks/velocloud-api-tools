@@ -17,7 +17,12 @@ for a side that has no value there.
    ``D`` is a list: the items of ``P`` are paired with those of ``D``
    (``_pair_stored``), and each is walked with its partners. An item the plan
    removed is one planned change, and an item only ``D`` has is one server
-   change. The order is one more change, at the list, told by the items' keys.
+   change. An added item is one planned change with its place. The order is
+   one more planned change, at the list, when the plan reordered the items or
+   added one that ``D`` has and ``D`` holds the items of ``P`` in another
+   order than ``P``; it is applied when ``D`` holds them in the order of
+   ``P``. An order the VCO changed where the plan placed nothing is a server
+   change.
 4. ``R`` and ``P`` are objects, or such a keyed list, and ``D`` is not: every
    difference between ``R`` and ``P`` is a planned change with nothing stored
    at its path, so a removal is applied and any other change is not. What
@@ -28,11 +33,13 @@ for a side that has no value there.
    applied when ``D`` holds the payload's value (``_beyond``): ``D`` may hold
    more keys than the payload, but not a key ``R`` had and the payload lacks.
 
-A path names an item of a keyed list by its key, or by its position ``#n``
-where the key repeats or there is none. ``#n`` counts in the payload for an
-item the payload has, in the data as read for a removed item, and in the
-stored data for an item only the VCO has, so two entries share a path only
-when keys repeat; their values tell them apart.
+A path names an item of a keyed list as ``raw_changes`` does: by its key, or
+by its position ``#n`` where the key repeats or there is none. An item that
+was read is named as read, also when it was renamed or moved; an added item by
+its key or position in the payload; an item only the VCO has by its key or
+position in the stored data. So two entries share a path only when keys
+repeat; their values tell them apart. A keyed list in which an added item
+would have the name of an item as read is compared whole (rule 5).
 
 The VCO stores some values otherwise than as sent; ``Rewrites`` says where.
 A key it owns (a field marked ``ServerOwned``, or a path a pattern matches)
@@ -41,7 +48,9 @@ and a value stored there otherwise than sent is a server change. So is the
 removal of a default the VCO adds back. With IPv6 canonical form on, two
 strings that parse as one IPv6 interface are the same value, and so are two
 such parts of a list item's key: the item pairs, and the key text stored
-otherwise is a server change.
+otherwise is a server change. A keyed list whose order the VCO sets itself
+(``own_order``) has no planned order: a reorder is left out, and an order
+stored otherwise than sent is a server change.
 
 The optional *model* is the ``VcoModel`` class the documents are data of. It
 supplies the ``KeyField`` of each list, as it does for ``rebase``, and the
@@ -63,7 +72,9 @@ from .base import (
 )
 from .fields import is_server_owned
 from .rebase import (
+    ItemMove,
     ItemPart,
+    ItemPlace,
     KeyForm,
     Pairing,
     Path,
@@ -77,10 +88,13 @@ from .rebase import (
     _model_field,  # pyright: ignore[reportPrivateUsage]
     _Node,  # pyright: ignore[reportPrivateUsage]
     _pair_unique,  # pyright: ignore[reportPrivateUsage]
+    _place_of,  # pyright: ignore[reportPrivateUsage]
     _read_path,  # pyright: ignore[reportPrivateUsage]
+    item_names,
     item_text,
     key_form,
     pair_items,
+    staying,
 )
 
 type PathPattern = tuple[str, ...]
@@ -97,6 +111,8 @@ class Rewrites:
     """Keys the VCO adds a default back at when they are removed."""
     ipv6: bool = False
     """Two strings that parse as one ``IPv6Interface`` are the same value."""
+    own_order: tuple[PathPattern, ...] = ()
+    """Keyed lists whose order the VCO sets itself."""
 
 
 def matches(path: Path, pattern: PathPattern) -> bool:
@@ -131,11 +147,32 @@ class PlannedChange:
     intended: object  # MISSING: a removal
     stored: object  # MISSING: nothing is there
     part: Literal["data", "refs"] = "data"
+    place: ItemPlace | None = None
+    """Where an added item of a keyed list was planned to go."""
+    moves: tuple[ItemMove, ...] | None = None
+    """Not None for the order entry of a keyed list: the moves that put the stored order right."""
+
+    @property
+    def is_order(self) -> bool:
+        """Whether this is the order entry of a keyed list."""
+        return self.moves is not None
 
     @property
     def clash(self) -> bool:
-        """The stored value is not the one read: something else changed it too."""
-        return self.stored != self.as_read
+        """The stored value is not the one read: something else changed it too.
+
+        For an order entry: the items that were read are stored in another
+        order than read (an item only one of the two lists has does not count).
+        True when either value is not a list.
+        """
+        if not self.is_order:
+            return self.stored != self.as_read
+        if not isinstance(self.as_read, list) or not isinstance(self.stored, list):
+            return True
+        read, stored = set(self.as_read), set(self.stored)
+        return [name for name in self.as_read if name in stored] != [
+            name for name in self.stored if name in read
+        ]
 
 
 @dataclass(frozen=True, slots=True)
@@ -190,15 +227,24 @@ def check_response(
     leaf of the payload's (*stored* may hold more keys, but not a key
     *as_read* had and *payload* lacks); for a list replaced whole, the
     payload's items in the payload's order; nothing, for a removal.
-    A reorder of a keyed list is one change at the list, whose three values
-    are the items' keys in each document, and an edit inside an item is
-    another. Whatever else differs between *payload* and *stored* is a server
-    change.
+    An item is named as ``raw_changes`` names it: as read when it was read,
+    by its key or position in the payload when it was added. An added item's
+    change has its ``place``. The order of a keyed list is one more change at
+    the list (``is_order``) when the plan reordered the items, or added an
+    item that *stored* has and *stored* holds the payload's items in another
+    order than the payload. Its three values are the items' names in *as_read*,
+    in *payload* and in *stored*, and its ``moves`` are the moves from the
+    stored order to the planned one (none when it is applied). An edit inside
+    an item is another change. Whatever else differs between *payload* and
+    *stored*, an order the VCO changed where the plan placed nothing included,
+    is a server change.
 
     *rewrites* are what the VCO stores otherwise than as sent. A planned
     change to a key it owns, or the removal of a default it adds back, is
     neither applied nor not applied but left out, and what is stored there is
-    a server change.
+    a server change. For a list in ``rewrites.own_order`` the order is not
+    held to the plan: a reorder is left out, with its ``moves``, and an order
+    stored otherwise than sent is a server change.
     """
     found = _Found(rewrites)
     _walk(found, Path(()), as_read, payload, stored, model)
@@ -325,9 +371,10 @@ def _walk(
         and _is_list(r)
         and _is_list(p)
         and (pairing := pair_items(r, p, node)) is not None
+        and (names := item_names(r, p, node, pairing)) is not None
     ):
         if _is_list(d):
-            _walk_keyed_list(found, path, r, p, d, node, pairing)
+            _walk_keyed_list(found, path, r, p, d, node, pairing, names)
         else:
             _walk_replaced(found, path, r, p, d, node)
     else:
@@ -384,10 +431,26 @@ def _walk_replaced(
     for change in _differences(path, r, p, node):
         if _is_owned_below(found.rewrites, path, node, change.path):
             found.left_out.append(
-                PlannedChange(change.path, change.before, change.after, MISSING)
+                PlannedChange(
+                    change.path,
+                    change.before,
+                    change.after,
+                    MISSING,
+                    place=change.place,
+                    moves=change.moves,
+                )
             )
         else:
-            _planned(found, change.path, change.before, change.after, MISSING, None)
+            _planned(
+                found,
+                change.path,
+                change.before,
+                change.after,
+                MISSING,
+                None,
+                place=change.place,
+                moves=change.moves,
+            )
     found.server_changes.append(ServerChange(path, r, d))
 
 
@@ -399,20 +462,29 @@ def _walk_keyed_list(
     d: list[object],
     node: _KeyedList,
     pairing: Pairing,
+    names: dict[int, ItemPart],
 ) -> None:
-    """Rule 3: the items of a keyed list, each with its partners, and then the order."""
+    """Rule 3: the items of a keyed list, each with its partners, and then the order.
+
+    *names* is the name of each item of *p* (``item_names``).
+    """
     r_of = {in_p: in_r for in_r, in_p in pairing.pairs}
     d_of, d_of_removed = _pair_stored(r, p, d, node, pairing.removed, found.rewrites)
-    r_parts, p_parts, d_parts = (_item_parts(items, node) for items in (r, p, d))
+    r_parts, d_parts = (_item_parts(items, node) for items in (r, d))
     for j, item in enumerate(p):
-        _walk(
-            found,
-            path.child(p_parts[j]),
-            r[r_of[j]] if j in r_of else MISSING,
-            item,
-            d[d_of[j]] if j in d_of else MISSING,
-            node.item,
-        )
+        stored = d[d_of[j]] if j in d_of else MISSING
+        if j in r_of:
+            _walk(found, path.child(names[j]), r[r_of[j]], item, stored, node.item)
+        else:
+            _planned(
+                found,
+                path.child(names[j]),
+                MISSING,
+                item,
+                stored,
+                node.item,
+                place=_place_of(names, j),
+            )
     for i in pairing.removed:
         still_there = d[d_of_removed[i]] if i in d_of_removed else MISSING
         _planned(found, path.child(r_parts[i]), r[i], MISSING, still_there, node.item)
@@ -424,22 +496,32 @@ def _walk_keyed_list(
     )
 
     order_in_r = [in_r for in_r, _ in pairing.pairs]
-    order_in_d = [d_of[j] for j in sorted(d_of)]
+    held = sorted(d_of)  # the items of p that d has, in the order of p
+    order_in_d = [d_of[j] for j in held]
     in_payload_order = order_in_d == sorted(order_in_d)
-    if order_in_r != sorted(order_in_r):
-        reorder = PlannedChange(
-            path, _key_texts(r_parts), _key_texts(p_parts), _key_texts(d_parts)
+    reordered = order_in_r != sorted(order_in_r)
+    read_names = [item_text(r_parts[i]) for i in sorted(order_in_r)]
+    meant_names = [item_text(names[j]) for j in range(len(p))]
+    sent_names = [item_text(names[j]) for j in held]
+    stored_names = [item_text(names[j]) for j in sorted(held, key=lambda j: d_of[j])]
+    moves: tuple[ItemMove, ...] = ()
+    if not in_payload_order:
+        keep = staying(order_in_d)
+        moves = tuple(
+            ItemMove(names[j], _place_of(names, j))
+            for n, j in enumerate(held)
+            if n not in keep
         )
-        (found.applied if in_payload_order else found.not_applied).append(reorder)
+    order = PlannedChange(path, read_names, meant_names, stored_names, moves=moves)
+    if any(matches(path, pattern) for pattern in found.rewrites.own_order):
+        if reordered:
+            found.left_out.append(order)
+        if not in_payload_order:
+            found.server_changes.append(ServerChange(path, sent_names, stored_names))
+    elif reordered or (not in_payload_order and any(j in d_of for j in pairing.added)):
+        (found.applied if in_payload_order else found.not_applied).append(order)
     elif not in_payload_order:
-        found.server_changes.append(
-            ServerChange(path, _key_texts(p_parts), _key_texts(d_parts))
-        )
-
-
-def _key_texts(parts: list[ItemPart]) -> list[str]:
-    """Each item of a list as its path names it: its key, or ``#n`` for a position."""
-    return [item_text(part) for part in parts]
+        found.server_changes.append(ServerChange(path, sent_names, stored_names))
 
 
 def _alt_forms(items: list[object], node: _KeyedList) -> list[KeyForm | None]:
@@ -561,14 +643,24 @@ def _pair_stored(
 
 
 def _planned(
-    found: _Found, path: Path, r: object, p: object, d: object, node: _CheckNode
+    found: _Found,
+    path: Path,
+    r: object,
+    p: object,
+    d: object,
+    node: _CheckNode,
+    *,
+    place: ItemPlace | None = None,
+    moves: tuple[ItemMove, ...] | None = None,
 ) -> None:
     """Rule 5: one planned change at *path*, applied when *d* holds *p*.
+
+    *place* and *moves* are the change's, as ``PlannedChange`` has them.
 
     The removal of a key the VCO adds a default back at (``Rewrites.readded``)
     is left out when *d* has a value there, and that value is a server change.
     """
-    change = PlannedChange(path, r, p, d)
+    change = PlannedChange(path, r, p, d, place=place, moves=moves)
     if (
         p is MISSING
         and d is not MISSING
