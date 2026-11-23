@@ -145,26 +145,40 @@ def test_a_list_value_changed_only_in_actions_is_taken():
     assert [r.rule_id for r in seg.defaults] == IDS  # pyright: ignore[reportGeneralTypeIssues]
 
 
+def without_alt_key(item: dict[str, Any]) -> dict[str, Any]:
+    return {k: v for k, v in item.items() if k not in ("rule_id", "ruleId")}
+
+
 def test_a_list_value_without_alt_keys_keeps_the_current_ones():
     seg = segment()
-    value: list[dict[str, Any]] = [
-        {k: v for k, v in given(i).items() if k != "rule_id"} for i in range(3)
-    ]
+    value = [without_alt_key(given(i)) for i in range(3)]
+    assert all("ruleId" not in item and "rule_id" not in item for item in value)
     value[0]["action"] = {"route": "cloud"}
     _ = seg.merge_patch({"defaults": value})
     assert [r.rule_id for r in seg.defaults] == IDS  # pyright: ignore[reportGeneralTypeIssues]
     assert seg.defaults[0].action == {"route": "cloud"}  # pyright: ignore[reportIndexIssue]
 
 
-def test_a_list_value_names_the_alt_key_under_any_of_its_names():
+@pytest.mark.parametrize("name", ["rule_id", "ruleId"])
+def test_a_list_value_that_gives_another_alt_key_under_any_name_is_refused(name: str):
+    value = [without_alt_key(given(i)) for i in range(3)]
+    value[1][name] = str(uuid.uuid4())
+    error = refusal(segment(), {"defaults": value})
+    assert error.path == "defaults[Beta]"
+
+
+@pytest.mark.parametrize("name", ["rule_id", "ruleId"])
+def test_a_list_value_that_gives_the_current_alt_key_under_any_name_is_taken(
+    name: str,
+):
     seg = segment()
-    value: list[dict[str, Any]] = []
-    for index in range(3):
-        item = {k: v for k, v in given(index).items() if k != "rule_id"}
-        item["ruleId"] = str(IDS[index])
-        value.append(item)
+    value = [without_alt_key(given(i)) for i in range(3)]
+    for index, item in enumerate(value):
+        item[name] = str(IDS[index])
+    value[2]["action"] = {"route": "cloud"}
     _ = seg.merge_patch({"defaults": value})
     assert [r.rule_id for r in seg.defaults] == IDS  # pyright: ignore[reportGeneralTypeIssues]
+    assert seg.defaults[2].action == {"route": "cloud"}  # pyright: ignore[reportIndexIssue]
 
 
 def _reordered() -> list[dict[str, Any]]:
@@ -314,3 +328,18 @@ def test_qos_rules_of_a_segment_stay_editable():
     rule["ruleLogicalId"] = str(uuid.uuid4())
     _ = data.merge_patch({"segments": {"Guest": {"rules": {"R": add(rule)}}}})
     assert [r.name for r in data.segments[0].rules] == ["R"]  # pyright: ignore[reportGeneralTypeIssues]
+
+
+def test_a_qos_round_trip_without_rule_ids_keeps_the_rule_ids():
+    entry = qos_entry(GUEST)
+    sent_ids = [r["ruleLogicalId"] for r in entry["defaults"]]
+    data = QosData.model_validate({"segments": [entry]})
+    sent = copy.deepcopy(entry["defaults"])
+    for rule in sent:
+        del rule["ruleLogicalId"]
+    sent[2]["action"]["routeType"] = "edge2DataCenter"
+    _ = data.merge_patch({"segments": {"Guest": {"defaults": sent}}})
+    defaults = data.segments[0].defaults  # pyright: ignore[reportGeneralTypeIssues]
+    assert isinstance(defaults, list)
+    assert [str(r.rule_logical_id) for r in defaults] == sent_ids
+    assert defaults[2].action.route_type == "edge2DataCenter"

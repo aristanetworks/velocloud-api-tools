@@ -1847,7 +1847,9 @@ def _check_fixed_value(
     if not is_list(current):
         raise PatchError(
             f"{rule}: a list value cannot build the list where there was "
-            + "none; its entries come from the template that makes the segment",
+            + "none. Leave the field out of the patch: its entries come from "
+            + "the template when the segment is assigned, or are repaired "
+            + "when the module is written",
             path,
             "fixed_list",
         )
