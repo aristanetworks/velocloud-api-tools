@@ -127,6 +127,31 @@ request building, parsing and error mapping against the store. A client given a
 `transport` is connected from the start and needs no `async with`; inside one it
 keeps the transport, and after it the client is closed.
 
+### Device settings fields that stand for ref rows
+
+A ref row sits beside a module's `data`, keyed by ref name, and associates the
+module (usually one of its segments) with an enterprise object. Some device
+settings fields go with such a row. `DeviceSegment.segment` (profile level) and
+`CssProviderRef.logical_id` hold an identity the data already has; the row
+`deviceSettings:segment` or `deviceSettings:css:provider` goes with it.
+`SegmentAuthentication.service`, `DnsPrimaryProvider.service` and
+`DnsBackupProvider.service` hold a value only the row says: the data has a stub
+(`{"ref": "deviceSettings:dns:primaryProvider"}`) and nothing that names the
+provider. That `service` is the network service of the row of the stub's ref
+name for the segment the provider sits in (`deviceSettings:authentication`,
+`deviceSettings:dns:primaryProvider` or `deviceSettings:dns:backupProvider` when
+the stub has none). It is never part of `data` on the wire, and a `service` key
+in the data is not read. A provider given as a list owns no row.
+
+A module is filled when it is validated with both its data and its refs: `None`
+means the segment has no row. A module from `getConfigurationModules` or from an
+insert's `returnData` was not read with its refs (`module.refs_loaded` is
+`False`), and its `service` fields are `MISSING`; a module from
+`getConfiguration`, the edge stack or an update's `returnData` is loaded, and an
+absent `refs` key means no rows. `ref_owners(data, level)` in
+`pyvelo.client.models.configuration.ref_owners` lists the fields that hold an
+identity, with their ref name, segment and path.
+
 ## Portal list and pagination methods
 
 | Method | Use for | Source requests |

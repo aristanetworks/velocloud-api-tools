@@ -38,6 +38,7 @@ from pyvelo.client.models.configuration import (
 from pyvelo.client.models.configuration.control_plane.root import (
     ControlPlaneData,
 )
+from pyvelo.client.models.configuration.ref_owners import fill_ref_only
 from pyvelo.core import (
     Alias,
     ConfigContext,
@@ -188,6 +189,7 @@ class ConfigurationModuleBase(VcoModel):
     _raw_refs: object = PrivateAttr(default=MISSING)
     _raw_mode: Literal["python", "json"] = PrivateAttr(default="python")
     _is_new: bool = PrivateAttr(default=False)
+    _refs_loaded: bool = PrivateAttr(default=True)
 
     @model_validator(mode="wrap")
     @classmethod
@@ -214,6 +216,12 @@ class ConfigurationModuleBase(VcoModel):
         module._raw_data = raw_data
         module._raw_refs = raw_refs
         module._raw_mode = info.mode
+        context: object = info.context
+        loaded = context.get("refs_loaded", True) if _is_mapping(context) else True
+        module._refs_loaded = loaded is not False
+        data: object = getattr(module, "data", None)
+        if module._refs_loaded and isinstance(data, VcoModel):
+            fill_ref_only(data, raw_refs)
         return module
 
     @property
@@ -235,6 +243,17 @@ class ConfigurationModuleBase(VcoModel):
     def is_new(self) -> bool:
         """True only for modules made by :func:`new_edge_module`."""
         return self._is_new
+
+    @property
+    def refs_loaded(self) -> bool:
+        """Whether the read that produced this module promised its refs.
+
+        A module from ``getConfigurationModules`` or an insert's ``returnData``
+        is not loaded, and its ``RefOnly`` fields are ``MISSING``; any other
+        is, and an absent ``refs`` key then means no rows. It is the
+        validation context key ``"refs_loaded"``, ``True`` when absent.
+        """
+        return self._refs_loaded
 
 
 class ControlPlaneConfigurationModule(ConfigurationModuleBase):

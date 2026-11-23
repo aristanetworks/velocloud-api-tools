@@ -64,9 +64,19 @@ if TYPE_CHECKING:
     from pyvelo.client._client_protocol import VcoClientBaseProtocol
 
 
-def _level_context(level: ConfigContext | None) -> dict[str, ConfigContext] | None:
-    """The validation context that puts a returned module at config level *level*."""
-    return None if level is None else {"config_level": level}
+def _level_context(
+    level: ConfigContext | None, *, refs_loaded: bool = True
+) -> dict[str, object] | None:
+    """The validation context that puts a returned module at config level *level*.
+
+    *refs_loaded* is false for an answer that does not promise the module's refs.
+    """
+    context: dict[str, object] = {}
+    if level is not None:
+        context["config_level"] = level
+    if not refs_loaded:
+        context["refs_loaded"] = False
+    return context or None
 
 
 class _ConfigurationRows(VcoModel):
@@ -339,6 +349,7 @@ class ConfigurationMixin(Protocol):
             "configuration/getConfigurationModules",
             request,
             ConfigurationModuleList,
+            validation_context=_level_context(None, refs_loaded=False),
         )
         return result.root
 
@@ -361,7 +372,7 @@ class ConfigurationMixin(Protocol):
                 "configuration/insertConfigurationModule",
                 request,
                 InsertedConfigurationModule,
-                validation_context=_level_context(level),
+                validation_context=_level_context(level, refs_loaded=False),
             )
             result = answer.root
         else:

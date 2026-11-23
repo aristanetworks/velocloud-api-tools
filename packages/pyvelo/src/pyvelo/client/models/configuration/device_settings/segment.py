@@ -15,10 +15,13 @@ from pydantic import (
 
 from pyvelo.core import (
     Alias,
+    ConfigContext,
     EdgeOnly,
     GatewayLogicalId,
     NoneIsFalse,
+    OwnsRef,
     Positional,
+    RefOnly,
     Secret,
     VcoModel,
 )
@@ -30,7 +33,9 @@ from pyvelo.core.fields import (
     NoneIsTrue,
     OverrideFlag,
     ProfileOnly,
+    Resolvable,
 )
+from pyvelo.core.identity import NetworkServiceIdentity, SegmentIdentity
 
 from ..common import SegmentMetadata
 from .common import (
@@ -539,11 +544,24 @@ class SegmentRoutes(VcoModel):
 
 
 class SegmentAuthentication(VcoModel):
+    """A segment's authentication settings.
+
+    The data holds a stub (``ref``) and nothing that says which authentication
+    service it is: the ``deviceSettings:authentication`` row of the segment
+    says it, and ``service`` is that row's service (a ``RefOnly`` field, not
+    part of the data on the wire).
+    """
+
     # Effective configurations use an empty object when no authentication
     # service is resolved. Keep that object round-trippable instead of
     # converting it to MISSING, because this model is also used for updates.
     ref: DeviceSettingsRef | MISSING = MISSING
     source_interface: str = ""
+    service: Annotated[
+        uuid.UUID | None | MISSING,
+        RefOnly(default="deviceSettings:authentication"),
+        Resolvable(NetworkServiceIdentity, "logical_id"),
+    ] = MISSING
 
 
 class NatRule(VcoModel):
@@ -684,6 +702,36 @@ class DnsProvider(VcoModel):
     ref: DeviceSettingsRef | MISSING = MISSING
 
 
+class DnsPrimaryProvider(DnsProvider):
+    """The primary DNS provider of a segment.
+
+    ``service`` is the network service of the ``deviceSettings:dns:primaryProvider``
+    row of the segment (a ``RefOnly`` field, not part of the data on the wire).
+    The row's name is the stub's ``ref`` when it has one.
+    """
+
+    service: Annotated[
+        uuid.UUID | None | MISSING,
+        RefOnly(default="deviceSettings:dns:primaryProvider"),
+        Resolvable(NetworkServiceIdentity, "logical_id"),
+    ] = MISSING
+
+
+class DnsBackupProvider(DnsProvider):
+    """The backup DNS provider of a segment.
+
+    ``service`` is the network service of the ``deviceSettings:dns:backupProvider``
+    row of the segment (a ``RefOnly`` field, not part of the data on the wire).
+    The row's name is the stub's ``ref`` when it has one.
+    """
+
+    service: Annotated[
+        uuid.UUID | None | MISSING,
+        RefOnly(default="deviceSettings:dns:backupProvider"),
+        Resolvable(NetworkServiceIdentity, "logical_id"),
+    ] = MISSING
+
+
 class LocalDomainItem(VcoModel):
     fqdn: str
     ipv4_address: list[str] = Field(default_factory=list)
@@ -691,8 +739,14 @@ class LocalDomainItem(VcoModel):
 
 
 class SegmentDns(VcoModel):
-    primary_provider: DnsProvider | list[DnsProvider]
-    backup_provider: DnsProvider | list[DnsProvider]
+    """A segment's DNS settings.
+
+    A primary or backup provider given as an object owns the ref row of its
+    segment (``service``); one given as a list owns none.
+    """
+
+    primary_provider: DnsPrimaryProvider | list[DnsProvider]
+    backup_provider: DnsBackupProvider | list[DnsProvider]
     private_providers: DnsProvider | list[DnsProvider]
     source_interface: str = ""
     override: Annotated[bool, OverrideFlag] = True
@@ -702,7 +756,23 @@ class SegmentDns(VcoModel):
 
 
 class CssProviderRef(VcoModel):
-    logical_id: uuid.UUID | Literal[""] = ""
+    """A segment's cloud security service provider.
+
+    A ``logical_id`` that holds a service owns the segment's
+    ``deviceSettings:css:provider`` ref row; ``""`` holds none.
+    """
+
+    logical_id: Annotated[
+        uuid.UUID | Literal[""],
+        OwnsRef(
+            "deviceSettings:css:provider",
+            NetworkServiceIdentity,
+            by="logical_id",
+            row="logicalId",
+            per_segment=True,
+        ),
+        Resolvable(NetworkServiceIdentity, "logical_id"),
+    ] = ""
     ref: DeviceSettingsRef = "deviceSettings:css:provider"
 
 
@@ -810,12 +880,28 @@ class SegmentCss(VcoModel):
 
 
 class DeviceSegment(VcoModel):
+    """A segment of a device settings module.
+
+    At the profile level ``segment`` owns the module's ``deviceSettings:segment``
+    ref row: the row goes with the segment ID.
+    """
+
     bfd: SegmentBfd | MISSING = MISSING
     edge_direct: SegmentEdgeDirect | MISSING = MISSING
     hub_interconnect: SegmentHubInterconnect | MISSING = MISSING
     handoff_controllers: SegmentHandoffGateways | MISSING = MISSING
     handoff_gateways: SegmentHandoffGateways | MISSING = MISSING
-    segment: SegmentMetadata
+    segment: Annotated[
+        SegmentMetadata,
+        OwnsRef(
+            "deviceSettings:segment",
+            SegmentIdentity,
+            by="segment_id",
+            value="segment_id",
+            row="data.segmentId",
+            level=ConfigContext.PROFILE,
+        ),
+    ]
     vrrp: SegmentVrrp | MISSING = MISSING
     vpn: Annotated[SegmentVpn, ProfileOnly] = Field(default_factory=SegmentVpn)
     multicast: SegmentMulticast | MISSING = MISSING

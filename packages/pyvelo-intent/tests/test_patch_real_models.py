@@ -13,7 +13,10 @@ from typing import Any
 import pytest
 from pydantic import MISSING
 from pyvelo.client.models.configuration.device_settings.root import DeviceSettingsData
-from pyvelo.client.models.configuration.device_settings.segment import DnsProvider
+from pyvelo.client.models.configuration.device_settings.segment import (
+    DnsBackupProvider,
+    DnsPrimaryProvider,
+)
 from pyvelo.client.models.configuration.firewall.root import FirewallData
 from pyvelo.client.models.configuration.qos.root import QosData
 from pyvelo.client.models.configuration.wan.link import WanLink
@@ -786,7 +789,8 @@ async def test_a_dns_provider_takes_an_object():
     )
     dns = state.edge.device_settings.segment(SEGMENT).dns
     assert dns is not MISSING
-    assert dns.primary_provider == DnsProvider(ref="deviceSettings:dns:backupProvider")
+    assert isinstance(dns.primary_provider, DnsPrimaryProvider)
+    assert dns.primary_provider.ref == "deviceSettings:dns:backupProvider"
     sent = (await payload(state))["segments"][0]["dns"]
     assert sent == {
         **DNS,
@@ -804,7 +808,9 @@ async def test_a_dns_block_is_built_with_its_providers_as_objects():
     )
     dns = state.edge.device_settings.segment(SEGMENT).dns
     assert dns is not MISSING
-    assert dns.backup_provider == DnsProvider(ref="deviceSettings:dns:backupProvider")
+    assert dns.backup_provider == DnsBackupProvider(
+        ref="deviceSettings:dns:backupProvider"
+    )
     sent = (await payload(state))["segments"][0]["dns"]
     assert sent["privateProviders"] == {"ref": "deviceSettings:dns:privateProviders"}
 

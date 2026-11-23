@@ -15,6 +15,7 @@ from pyvelo.client.models.configuration.device_settings.segment import (
     BgpNeighbor,
     CssGreSite,
     CssIpsecSite,
+    DnsPrimaryProvider,
     DnsProvider,
     SegmentCss,
     SegmentDns,
@@ -81,7 +82,7 @@ def test_field_models_are_the_classes_a_field_can_hold():
         RoutedInterfaceUsb,
     )
     assert models(SegmentCss, "sites") == (CssIpsecSite, CssGreSite)
-    assert models(SegmentDns, "primary_provider") == (DnsProvider,)
+    assert models(SegmentDns, "primary_provider") == (DnsPrimaryProvider, DnsProvider)
 
 
 def test_whether_a_field_exists_at_a_level_is_in_the_context_view():

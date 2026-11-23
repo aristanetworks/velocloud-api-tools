@@ -21,6 +21,8 @@ from pyvelo.client.models.configuration.device_settings.root import (
 )
 from pyvelo.client.models.configuration.device_settings.segment import (
     DeviceSegment,
+    DnsBackupProvider,
+    DnsPrimaryProvider,
     DnsProvider,
     SegmentDns,
 )
@@ -378,8 +380,8 @@ async def test_two_applies_in_a_row():
 @pytest.mark.asyncio
 async def test_apply_dns():
     dns = SegmentDns(
-        primary_provider=DnsProvider(ref="deviceSettings:dns:primaryProvider"),
-        backup_provider=DnsProvider(ref="deviceSettings:dns:backupProvider"),
+        primary_provider=DnsPrimaryProvider(ref="deviceSettings:dns:primaryProvider"),
+        backup_provider=DnsBackupProvider(ref="deviceSettings:dns:backupProvider"),
         private_providers=DnsProvider(ref="deviceSettings:dns:privateProviders"),
     )
     state = _profile_state(
