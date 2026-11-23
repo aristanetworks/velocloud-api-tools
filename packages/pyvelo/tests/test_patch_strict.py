@@ -4,6 +4,7 @@ import copy
 import datetime
 import ipaddress
 import json
+import pickle
 import uuid
 from enum import Enum, IntEnum, StrEnum
 from types import MappingProxyType
@@ -31,8 +32,22 @@ def raises_at(model: VcoModel, patch: dict[str, object], path: str) -> PatchErro
 
 def test_patch_error_text():
     assert issubclass(PatchError, ValueError)
-    assert str(PatchError("bad", Path.parse("sub.v"))) == "sub.v: bad"
-    assert str(PatchError("bad", Path(()))) == "bad"
+    error = PatchError("bad", Path.parse("sub.v"), "invalid_value")
+    assert str(error) == "sub.v: bad"
+    assert (error.message, error.path, error.kind) == (
+        "bad",
+        Path.parse("sub.v"),
+        "invalid_value",
+    )
+    assert error.args == ("bad", Path.parse("sub.v"), "invalid_value")
+    assert str(PatchError("bad", Path(()), "invalid_value")) == "bad"
+    for again in (pickle.loads(pickle.dumps(error)), copy.deepcopy(error)):
+        assert type(again) is PatchError
+        assert (again.message, again.path, again.kind) == (
+            "bad",
+            Path.parse("sub.v"),
+            "invalid_value",
+        )
 
 
 def test_object_merges_into_a_sub_model():

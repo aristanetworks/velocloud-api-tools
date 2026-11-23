@@ -343,6 +343,7 @@ async def test_apply_to_a_segment_the_profile_lacks_changes_nothing():
             patch=add({"outbound": {}}),
         )
     assert exc.value.path == Path.parse("segments[Guest]")
+    assert exc.value.kind == "segment_rule"
     assert [s.segment.name for s in state.profile.firewall.segments] == [
         "Global Segment"
     ]
@@ -498,6 +499,7 @@ async def test_a_place_for_an_inherited_segment_is_refused(entry: dict[str, obje
             state, module="firewall", patch={"segments": {"Guest": entry}}
         )
     assert exc.value.path == Path.parse("segments[Guest]")
+    assert exc.value.kind == "segment_rule"
     assert exc.value.message == (
         "the edge inherits segment 'Guest' from its profile and had no entry of "
         "its own for it when it was read. A save writes such a segment after the "
@@ -556,6 +558,7 @@ async def test_a_place_before_or_after_an_inherited_segment_is_refused():
         with pytest.raises(PatchError, match="given by segment 'Guest'") as exc:
             _ = await pipeline.apply(state, module="firewall", patch=patch)
         assert exc.value.path == Path(("segments", Key("Global Segment")))
+        assert exc.value.kind == "segment_rule"
         assert _edge_segment_names(state) == ["Global Segment"]
 
     state = make_raw_state()
@@ -571,6 +574,7 @@ async def test_a_place_before_or_after_an_inherited_segment_is_refused():
         'the edge\'s own segments ({"_position": {"before": "<own segment>"}} '
         '(`move(before="<own segment>")`))'
     )
+    assert exc.value.kind == "segment_rule"
     assert _edge_segment_names(state) == ["Global Segment", "Guest"]
 
 
@@ -614,6 +618,7 @@ async def test_add_of_an_inherited_segment_raises():
             state, module="firewall", patch={"segments": {"Guest": add({})}}
         )
     assert exc.value.path == Path.parse("segments[Guest]")
+    assert exc.value.kind == "segment_rule"
     assert _edge_segment_names(state) == ["Global Segment"]
 
 
@@ -626,6 +631,7 @@ async def test_plus_add_of_an_inherited_segment_raises():
             state, module="firewall", patch=patch
         )
     assert exc.value.path == Path(("segments", Key("+")))
+    assert exc.value.kind == "segment_rule"
     assert _edge_segment_names(state) == ["Global Segment"]
 
 
@@ -637,6 +643,7 @@ async def test_delete_of_an_inherited_segment_raises_and_makes_no_placeholder():
             state, module="firewall", patch={"segments": {"Guest": delete()}}
         )
     assert exc.value.path == Path.parse("segments[Guest]")
+    assert exc.value.kind == "segment_rule"
     assert _edge_segment_names(state) == ["Global Segment"]
 
 
@@ -646,10 +653,11 @@ async def test_segment_named_twice_raises():
     patch: dict[str, object] = {
         "segments": {"Guest": {"outbound": {}}, "guest": {"outbound": {}}}
     }
-    with pytest.raises(PatchError, match="Guest"):
+    with pytest.raises(PatchError, match="Guest") as exc:
         _ = await ConfigPipeline(client=None).apply(
             state, module="firewall", patch=patch
         )
+    assert exc.value.kind == "duplicate"
     assert _edge_segment_names(state) == ["Global Segment"]
 
 
@@ -662,6 +670,7 @@ async def test_segment_neither_layer_has_is_left_to_merge_patch():
             state, module="firewall", patch=patch
         )
     assert exc.value.path == Path.parse("segments[Nope]")
+    assert exc.value.kind == "no_item"
     assert _edge_segment_names(state) == ["Global Segment"]
     state.resolvers = await _segment_resolvers()
     with pytest.raises(ResolutionError, match="Nope"):
@@ -785,6 +794,7 @@ async def test_edge_entry_under_another_name_is_the_profiles_segment():
         assert "Guest-old" in str(exc.value)
         assert "no entry" not in str(exc.value)
         assert "inheritance" not in str(exc.value)
+        assert exc.value.kind == "exists"
         assert _edge_segment_names(state) == ["Global Segment", "Guest-old"]
 
 
@@ -896,6 +906,7 @@ async def test_profile_target_refuses_segment_add_and_delete():
                     state, module=module, patch={"segments": segments}
                 )
             assert exc.value.path == where
+            assert exc.value.kind == "segment_rule"
             assert form in exc.value.message
             assert '{"segments": {"<name>": {...}}}' in exc.value.message
     assert _profile_segment_names(state) == [["Global Segment"]] * 3
@@ -992,6 +1003,7 @@ async def test_profile_target_keeps_its_segments_whatever_the_patch_form(
     with pytest.raises(PatchError, match=_REDESCRIBED) as exc:
         _ = await ConfigPipeline(client=None).apply(state, module="firewall", **call)  # pyright: ignore[reportArgumentType]
     assert exc.value.path == Path(("segments",))
+    assert exc.value.kind == "segment_rule"
     assert detail in exc.value.message
     assert _profile_segment_names(state) == [["Global Segment", "Guest"]] * 3
     assert state.plan().render() == before
@@ -1151,6 +1163,7 @@ async def test_bad_address_raises_and_changes_nothing():
     with pytest.raises(PatchError, match="no field 'nope'") as exc:
         _ = await pipeline.apply(state, module="firewall", path="nope", patch=1)
     assert exc.value.path == Path.parse("nope")
+    assert exc.value.kind == "address"
     assert state.plan().render() == before
     assert _edge_segment_names(state) == ["Global Segment"]
 
@@ -1321,6 +1334,7 @@ async def test_apply_refuses_a_module_a_save_does_not_write():
             patch={"gateway_selection": {"mode": "static"}},
         )
     assert exc.value.path == Path(())
+    assert exc.value.kind == "address"
     assert exc.value.message.endswith(
         "so a patch to it is not applied. Make the change in the VCO"
     )

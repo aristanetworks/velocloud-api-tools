@@ -33,18 +33,59 @@ MAX_PATCH_DEPTH = 64
 """How many levels of dicts and lists a patch may nest, the patch itself being the first."""
 
 
+type PatchErrorKind = Literal[
+    "not_json",
+    "address",
+    "unknown_field",
+    "duplicate",
+    "null",
+    "invalid_value",
+    "operation",
+    "selector",
+    "no_item",
+    "several_items",
+    "exists",
+    "segment_rule",
+]
+"""Which sort of refusal a ``PatchError`` is."""
+
+
 class PatchError(ValueError):
     """A patch that cannot be applied. ``path`` is where in the patch it failed.
+
+    ``kind`` says which sort of refusal it is; the patch:
+
+    - ``not_json``: holds a value that is not JSON, a number that is not
+      finite, or nests too deep.
+    - ``address``: was sent, by the ``module``, ``segment`` or ``path`` of the
+      call, to a place that takes no patch.
+    - ``unknown_field``: has a key that names no field.
+    - ``duplicate``: names one thing twice: a field by two keys, an item by two
+      selectors, a key by two adds or by two items of a list value.
+    - ``null``: has ``null`` where it means nothing: a field that cannot be
+      unset, or an item's value.
+    - ``invalid_value``: has a value, an item or a changed model that
+      validation refuses, or a name that cannot be looked up.
+    - ``operation``: has an item operation that is malformed, or that this
+      list or map does not take.
+    - ``selector``: has a selector or anchor that is not one for this list.
+    - ``no_item``: has a selector or anchor that names no item.
+    - ``several_items``: has a selector or anchor that names more than one item.
+    - ``exists``: adds, or renames to, a key, alt key or value that is already
+      there.
+    - ``segment_rule``: breaks a rule of the ``segments`` lists.
 
     A pydantic ``ValidationError`` behind it is its ``__cause__``.
     """
 
     path: Path
+    kind: PatchErrorKind
 
-    def __init__(self, message: str, path: Path) -> None:
-        super().__init__(message, path)
+    def __init__(self, message: str, path: Path, kind: PatchErrorKind) -> None:
+        super().__init__(message, path, kind)
         self.message: str = message
         self.path = path
+        self.kind = kind
 
     @override
     def __str__(self) -> str:
@@ -217,6 +258,7 @@ def _selector(value: object, path: Path) -> Selector:
         f'{value!r} is not a selector: write a key, a value, "#n" (at(n)) '
         "or a list of key parts",
         path,
+        "selector",
     )
 
 
@@ -229,6 +271,7 @@ def _parse_place(value: object, path: Path) -> Place:
                 raise PatchError(
                     f'the "{word}:key" form of _position was removed; {_POSITION_FORMS}',
                     path,
+                    "operation",
                 )
     elif isinstance(value, dict):
         anchors = cast("dict[object, object]", value)
@@ -242,12 +285,17 @@ def _parse_place(value: object, path: Path) -> Place:
         raise PatchError(
             f"_position takes exactly one of before and after; {_POSITION_FORMS}",
             path,
+            "operation",
         )
     elif isinstance(value, int) and not isinstance(value, bool):
         raise PatchError(
-            f"the integer form of _position was removed; {_POSITION_FORMS}", path
+            f"the integer form of _position was removed; {_POSITION_FORMS}",
+            path,
+            "operation",
         )
-    raise PatchError(f"{value!r} is not a position; {_POSITION_FORMS}", path)
+    raise PatchError(
+        f"{value!r} is not a position; {_POSITION_FORMS}", path, "operation"
+    )
 
 
 def parse_item_op(value: object, path: Path) -> ItemOp:
@@ -258,7 +306,9 @@ def parse_item_op(value: object, path: Path) -> ItemOp:
     """
     if value is None:
         raise PatchError(
-            'null does not delete an item; write {"_op": "delete"} (delete())', path
+            'null does not delete an item; write {"_op": "delete"} (delete())',
+            path,
+            "null",
         )
     if not isinstance(value, dict):
         raise PatchError(
@@ -266,6 +316,7 @@ def parse_item_op(value: object, path: Path) -> ItemOp:
             + 'a plain object, {"_op": "add", ...} (add(...)) or {"_op": "delete"} '
             + "(delete())",
             path,
+            "operation",
         )
     fields = dict(cast("dict[str, object]", value))
     has_op = "_op" in fields
@@ -278,10 +329,13 @@ def parse_item_op(value: object, path: Path) -> ItemOp:
             + '(add(...)) or {"_op": "delete"} (delete()), a change as a plain '
             + 'object, and a move as {"_position": ...} (move(...))',
             path,
+            "operation",
         )
     if op == "delete":
         if fields or has_position:
-            raise PatchError('{"_op": "delete"} (delete()) takes no other key', path)
+            raise PatchError(
+                '{"_op": "delete"} (delete()) takes no other key', path, "operation"
+            )
         return ItemOp("delete", {}, None)
     place = _parse_place(position, path) if has_position else None
     if op == "add":
@@ -345,6 +399,7 @@ def _check(value: object, parts: tuple[PathPart, ...]) -> object:
         raise PatchError(
             f"{value!r} is not a JSON number: a number in a patch is finite",
             Path(parts),
+            "not_json",
         )
     if isinstance(value, (dict, list)) and len(parts) >= MAX_PATCH_DEPTH:
         raise PatchError(
@@ -352,6 +407,7 @@ def _check(value: object, parts: tuple[PathPart, ...]) -> object:
             "into smaller patches, or address the place it changes with "
             "segment or path",
             Path(parts),
+            "not_json",
         )
     if isinstance(value, list):
         items = cast("list[object]", value)
@@ -365,6 +421,7 @@ def _check(value: object, parts: tuple[PathPart, ...]) -> object:
                     f"{key!r} is not a key of a JSON object: a key is a string, "
                     "or for a selector an int, a UUID or a tuple of key parts",
                     Path(parts),
+                    "not_json",
                 )
             plain_key = _plain(key)
             copied[plain_key] = _check(
@@ -376,8 +433,9 @@ def _check(value: object, parts: tuple[PathPart, ...]) -> object:
         raise PatchError(
             "MISSING is not a JSON value: write None (null) to unset a field",
             Path(parts),
+            "not_json",
         )
-    raise PatchError(_not_json_message(value), Path(parts))
+    raise PatchError(_not_json_message(value), Path(parts), "not_json")
 
 
 def _not_json_message(value: object) -> str:

@@ -210,6 +210,14 @@ def test_the_types_a_save_hands_back_are_exported_from_the_package():
     assert "ConfigPlan" in pyvelo_intent.config.__all__
 
 
+def test_the_kind_of_a_patch_error_is_exported_from_the_package():
+    import pyvelo_intent
+    from pyvelo.core.patch import PatchErrorKind
+
+    assert pyvelo_intent.PatchErrorKind is PatchErrorKind
+    assert "PatchErrorKind" in pyvelo_intent.__all__
+
+
 async def test_no_edit_save_does_not_call():
     state = make_state()
     client = MockVcoClient.for_state(state)

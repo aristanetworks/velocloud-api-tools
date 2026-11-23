@@ -374,6 +374,7 @@ class ConfigPipeline:
                         "device settings, QoS, WAN and firewall modules), so a "
                         "patch to it is not applied. Make the change in the VCO",
                         Path(()),
+                        "address",
                     )
                 data = mod.data
                 nested = nest_patch(type(data), patch, segment=segment, path=path)
@@ -788,6 +789,7 @@ def _profile_segment_ops(segments: Mapping[object, object], path: Path) -> None:
                 + 'so {"_op": "add", ...} (`add(...)`) is refused. To change what '
                 + 'a segment holds, name it: {"segments": {"<name>": {...}}}',
                 where,
+                "segment_rule",
             )
         if op.kind == "delete":
             raise PatchError(
@@ -796,6 +798,7 @@ def _profile_segment_ops(segments: Mapping[object, object], path: Path) -> None:
                 + 'together, so {"_op": "delete"} (`delete()`) is refused. To '
                 + 'change what a segment holds, name it: {"segments": {"<name>": {...}}}',
                 where,
+                "segment_rule",
             )
 
 
@@ -841,6 +844,7 @@ def _profile_segments_unchanged(data: object, trial: object) -> None:
         + "Adding or removing a segment of a profile through a patch is not supported yet. "
         + 'To change what a segment holds, name it: {"segments": {"<name>": {...}}}',
         _SEGMENTS,
+        "segment_rule",
     )
 
 
@@ -907,6 +911,7 @@ def _prepare_segments(
                     raise PatchError(
                         f"{named[name]} names segment {name!r} too: one selector per segment",
                         where,
+                        "duplicate",
                     )
                 named[name] = where
             if key is _LEFT_OUT:
@@ -970,12 +975,14 @@ def _prepare_segment(
             f"segment {name!r} is already in the edge layer, as {entry!r}: change "
             + f"it with a plain object under {entry!r}, not an add",
             where,
+            "exists",
         )
     if op.kind == "add":
         raise PatchError(
             f"the edge has segment {name!r} by inheritance from its profile: "
             + 'change it with a plain object, not {"_op": "add"} (add())',
             where,
+            "segment_rule",
         )
     if op.kind == "delete":
         raise PatchError(
@@ -983,6 +990,7 @@ def _prepare_segment(
             + "it inherits from its profile: leave it out of the patch, as "
             + '{"_op": "delete"} (delete()) removes only an entry the edge layer holds',
             where,
+            "segment_rule",
         )
     _refuse_place_for(op, name, segment_id, where, inherited)
     if op.kind == "change" and not op.body:
@@ -1015,6 +1023,7 @@ def _refuse_place_for(
         + 'place. For a move, such as {"_position": "first"} (`move(first=True)`), '
         + 'drop the entry. For a change, drop "_position" and keep the fields',
         where,
+        "segment_rule",
     )
 
 
@@ -1055,6 +1064,7 @@ def _refuse_place_by_inherited(
         + '({"_position": {"before": "<own segment>"}} '
         + '(`move(before="<own segment>")`))',
         where,
+        "segment_rule",
     )
 
 

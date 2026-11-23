@@ -162,22 +162,26 @@ def nest_patch(
         walked = walked.child("segments")
         field = cls.model_fields.get("segments")
         if field is None:
-            raise PatchError(f"{cls.__name__} has no segments field", walked)
+            raise PatchError(f"{cls.__name__} has no segments field", walked, "address")
         item_type = _list_item_type(field)
         if item_type is None:
-            raise PatchError(f"{cls.__name__}.segments is not a list of models", walked)
+            raise PatchError(
+                f"{cls.__name__}.segments is not a list of models", walked, "address"
+            )
         cls, walked = item_type.variants[0], walked.child(Key(segment))
     names: list[str] = []
     parts = path.split(".") if path is not None else []
     for index, part in enumerate(parts):
         where = walked.child(part)
         if not part:
-            raise PatchError(f"the path {path!r} has an empty part", where)
+            raise PatchError(f"the path {path!r} has an empty part", where, "address")
         try:
             name = _field_name(cls._alias_map(), cls.__name__, part, walked)  # pyright: ignore[reportPrivateUsage]
         except PatchError as exc:
             fields = ", ".join(cls.model_fields)
-            raise PatchError(f"{exc.message}; its fields are {fields}", where) from exc
+            raise PatchError(
+                f"{exc.message}; its fields are {fields}", where, "address"
+            ) from exc
         names.append(name)
         if index < len(parts) - 1:
             sub = _field_model_type(cls.model_fields[name])
@@ -186,6 +190,7 @@ def nest_patch(
                     f"{cls.__name__}.{name} does not hold a single sub-model, "
                     + "so the path cannot continue past it",
                     where,
+                    "address",
                 )
             cls = sub
         walked = where
@@ -261,12 +266,15 @@ def _field_name(names: Mapping[str, str], owner: str, key: object, path: Path) -
         return names[key]
     where = path.child(text)
     if text in _DIRECTIVES:
-        raise PatchError(f"{text} is a directive for a list item only", where)
+        raise PatchError(
+            f"{text} is a directive for a list item only", where, "operation"
+        )
     if text.startswith("_"):
         raise PatchError(
             f"unknown directive {text!r}: the only directives are "
             + f"{' and '.join(_DIRECTIVES)}, on a list item",
             where,
+            "operation",
         )
     message = f"{owner} has no field {text!r}"
     close = list(
@@ -274,7 +282,7 @@ def _field_name(names: Mapping[str, str], owner: str, key: object, path: Path) -
     )
     if close:
         message += f"; did you mean {', '.join(close)}?"
-    raise PatchError(message, where)
+    raise PatchError(message, where, "unknown_field")
 
 
 def _patch_fields(
@@ -293,6 +301,7 @@ def _patch_fields(
             raise PatchError(
                 f"{seen[name]!r} and {key!r} both name the field {name}: give it once",
                 path.child(name),
+                "duplicate",
             )
         seen[name] = key
         fields.append((key, name, value))
@@ -387,7 +396,9 @@ def _null_value(field_info: FieldInfo, name: str, path: Path, *, built: bool) ->
         if built
         else ("a change cannot unset it", "give a value, or leave the key out")
     )
-    raise PatchError(f"null is not a value of {name}, and {reason}: {remedy}", path)
+    raise PatchError(
+        f"null is not a value of {name}, and {reason}: {remedy}", path, "null"
+    )
 
 
 _FIELD_VALIDATOR_MARKERS = {
@@ -470,6 +481,7 @@ def _refuse_bool_as_number(given: object, stored: object, path: Path) -> None:
             f"{word} is a boolean, which this value does not take: "
             + f"it would be read as {stored!r}; send a number",
             path,
+            "invalid_value",
         )
 
 
@@ -574,7 +586,9 @@ def _invalid_value(
     exc: ValidationError, models: Sequence[type[VcoModel]], path: Path
 ) -> PatchError:
     """The ``PatchError`` at *path* for a value that fails validation; raise it ``from exc``."""
-    return PatchError("invalid value: " + _validation_lines(exc, models), path)
+    return PatchError(
+        "invalid value: " + _validation_lines(exc, models), path, "invalid_value"
+    )
 
 
 def _check_merged(model: VcoModel, validate: Callable[..., object], path: Path) -> None:
@@ -599,6 +613,7 @@ def _check_merged(model: VcoModel, validate: Callable[..., object], path: Path) 
         raise PatchError(
             f"{name} is not valid after this change: {_validation_lines(exc, (type(model),))}",
             path,
+            "invalid_value",
         ) from _without_input(exc)
     except Exception as exc:
         raise PatchError(
@@ -607,6 +622,7 @@ def _check_merged(model: VcoModel, validate: Callable[..., object], path: Path) 
             + "must accept a model instance, as well as the dict a response "
             + "gives them",
             path,
+            "invalid_value",
         ) from exc
 
 
@@ -736,6 +752,7 @@ def _resolve_name(
             f"{resolvable.identity_type.__name__} resolver is registered to look "
             "it up as a name: give the ID, or register that resolver",
             path,
+            "invalid_value",
         ) from err
     return _field_value(identity, resolvable.id_attr)
 
@@ -1296,6 +1313,7 @@ def _refuse_two_readings(
         + f"it names {shown[1]}. Write the key in its quoted form, as shown "
         + "for the item, to choose",
         where,
+        "several_items",
     )
 
 
@@ -1498,6 +1516,7 @@ def _merge_list(
             raise PatchError(
                 f"{name} is a map: give an object of item operations by map key",
                 path,
+                "operation",
             )
         data = _list_value_input(spec, value, resolvers, path)
         built = _validate_field(model_cls, name, data, path)
@@ -1506,7 +1525,9 @@ def _merge_list(
         setattr(model, name, built)
         return
     if spec.kind == "untyped":
-        raise PatchError(f"{name} is a list of untyped items: give a list value", path)
+        raise PatchError(
+            f"{name} is a list of untyped items: give a list value", path, "operation"
+        )
 
     current = _field_value(model, name)
     unset = current is MISSING or current is None
@@ -1517,7 +1538,9 @@ def _merge_list(
         elif _is_dict(current):
             entries = current
         else:
-            raise PatchError(f"{name} holds {type(current).__name__}, not a map", path)
+            raise PatchError(
+                f"{name} holds {type(current).__name__}, not a map", path, "operation"
+            )
         _merge_map(entries, spec, value, resolvers, path, new_only=False)
     else:
         if unset:
@@ -1525,7 +1548,9 @@ def _merge_list(
         elif _is_list(current):
             entries = current
         else:
-            raise PatchError(f"{name} holds {type(current).__name__}, not a list", path)
+            raise PatchError(
+                f"{name} holds {type(current).__name__}, not a list", path, "operation"
+            )
         _merge_items(
             entries, spec, value, resolvers, path, model.config_context, new_only=False
         )
@@ -1548,7 +1573,7 @@ def _new_list_input(
     if spec.kind == "map":
         if not _is_dict(value):
             raise PatchError(
-                "a map takes an object of item operations by map key", path
+                "a map takes an object of item operations by map key", path, "operation"
             )
         entries: dict[object, object] = {}
         _merge_map(entries, spec, value, resolvers, path, new_only=True)
@@ -1556,7 +1581,9 @@ def _new_list_input(
     if _is_list(value):
         return _list_value_input(spec, value, resolvers, path)
     if spec.kind == "untyped":
-        raise PatchError("a list of untyped items takes a list value", path)
+        raise PatchError(
+            "a list of untyped items takes a list value", path, "operation"
+        )
     items: list[object] = []
     _merge_items(items, spec, value, resolvers, path, None, new_only=True)
     return items
@@ -1647,6 +1674,7 @@ def _check_list_value(
                     + f"{_show_key(key)}: the items of a keyed list have "
                     + "distinct keys",
                     path,
+                    "duplicate",
                 )
             seen[form] = index
         alt = _alt_key(spec, item)
@@ -1659,6 +1687,7 @@ def _check_list_value(
                     + f"{_show_item(spec, built[first], first)} holds it "
                     + f"already, so give item #{index} another alt key",
                     path,
+                    "duplicate",
                 )
             seen_alt[alt] = index
 
@@ -1751,7 +1780,9 @@ def _merge_items(
         if key is not None and any(
             s is not entry.slot and _item_key(s.value, paths) == form for s in slots
         ):
-            raise PatchError(f"another item has the key {_show_key(key)}", entry.path)
+            raise PatchError(
+                f"another item has the key {_show_key(key)}", entry.path, "exists"
+            )
     for entry in alt_changed:
         assert entry.slot is not None
         alt = _alt_key(spec, entry.slot.value)
@@ -1764,6 +1795,7 @@ def _merge_items(
                     + f"alt key {alt!r}: give this item another alt key, or "
                     + "change that item instead",
                     entry.path,
+                    "exists",
                 )
 
     deleted = {id(e.slot) for e in entries if e.kind == "delete"}
@@ -1822,6 +1854,7 @@ def _resolve_items(
                     raise PatchError(
                         f"{added[form]} adds this {what} too: one add per {what}",
                         where,
+                        "duplicate",
                     )
                 added[form] = where
         elif new_only:
@@ -1829,6 +1862,7 @@ def _resolve_items(
                 f"a {op.kind} in a list the patch builds has nothing to name: "
                 + 'write {"_op": "add", ...} entries (add(...)) or a list value',
                 where,
+                "operation",
             )
         else:
             if op.kind == "change":
@@ -1838,12 +1872,15 @@ def _resolve_items(
                 raise PatchError(
                     f"{named[index]} names this item too: one selector per item",
                     where,
+                    "duplicate",
                 )
             named[index] = where
             slot = slots[index]
             if op.kind == "change" and not isinstance(slot.value, VcoModel):
                 raise PatchError(
-                    f"the item is {type(slot.value).__name__}, not a model", where
+                    f"the item is {type(slot.value).__name__}, not a model",
+                    where,
+                    "operation",
                 )
         anchor: _Slot | None = None
         if op.place is not None and op.place.kind in ("before", "after"):
@@ -1858,7 +1895,9 @@ def _resolve_items(
     deleted = {id(e.slot) for e in entries if e.kind == "delete"}
     for entry in entries:
         if entry.anchor is not None and id(entry.anchor) in deleted:
-            raise PatchError("the anchor is an item this patch deletes", entry.path)
+            raise PatchError(
+                "the anchor is an item this patch deletes", entry.path, "operation"
+            )
     return entries
 
 
@@ -1910,12 +1949,14 @@ def _check_add(
                 "a list of values named by position has no body to build an item "
                 + "from: give a list value",
                 where,
+                "operation",
             )
         if not is_new(selector):
             raise PatchError(
                 "a new item of a list named by position goes under "
                 + '"+" or "+tag": write {"+": {"_op": "add", ...}} ("+": add(...))',
                 where,
+                "selector",
             )
         return _new_item(spec.item_type, _body(op), resolvers, where, context)
     if selection.position is not None:
@@ -1924,6 +1965,7 @@ def _check_add(
             + ("key" if spec.kind == "keyed" else "value")
             + " as its selector",
             where,
+            "selector",
         )
     if spec.kind == "keyed":
         return _check_keyed_add(
@@ -1931,7 +1973,9 @@ def _check_add(
         )
     if selection.positions:
         raise PatchError(
-            f"{selection.key!r} is already in the list{_CHANGE_IT_IN_LIST}", where
+            f"{selection.key!r} is already in the list{_CHANGE_IT_IN_LIST}",
+            where,
+            "exists",
         )
     # A value list: the selector is the value.
     if is_new(selector):
@@ -1942,12 +1986,14 @@ def _check_add(
             + 'value that starts with "+" cannot be added under its own text, '
             + "so give the whole list as a list value",
             where,
+            "selector",
         )
     if op.body:
         raise PatchError(
             "an add in a list of values takes no fields: "
             + 'write {"_op": "add"} (add()) under the value',
             where,
+            "operation",
         )
     assert spec.element is not None
     try:
@@ -1955,7 +2001,9 @@ def _check_add(
     except ValidationError as exc:
         raise _invalid_value(exc, (), where) from _without_input(exc)
     if any(str(item) == str(new) for item in items):
-        raise PatchError(f"{new!r} is already in the list{_CHANGE_IT_IN_LIST}", where)
+        raise PatchError(
+            f"{new!r} is already in the list{_CHANGE_IT_IN_LIST}", where, "exists"
+        )
     return new
 
 
@@ -1989,7 +2037,7 @@ def _check_keyed_add(
     """
     item_type = spec.item_type
     if item_type is None:
-        raise PatchError("this list has no item type to build from", where)
+        raise PatchError("this list has no item type to build from", where, "operation")
     from_body = False
     if selection.new and spec.name_identity is not None:
         name = _patch_key(item_type.fields, op.body, spec.key_paths)
@@ -2010,6 +2058,7 @@ def _check_keyed_add(
                 f"the body gives the key {_show_key(key)}, which is already in the "
                 + f"list{_CHANGE_IT_IN_LIST}",
                 where,
+                "exists",
             )
         return item
     key = selection.key
@@ -2020,12 +2069,14 @@ def _check_keyed_add(
             + '; or write the item under "+" with the parts among its fields, as in '
             + '{"+": {"_op": "add", ...}} ("+": add({...}))',
             where,
+            "selector",
         )
     if selection.positions and not selection.label:
         where_in = " as an alt key" if selection.alt else ""
         raise PatchError(
             f"{_show_key(key)} is already in the list{where_in}{_CHANGE_IT_IN_LIST}",
             where,
+            "exists",
         )
     parts = key if isinstance(key, tuple) else (key,)
     for key_path, part in zip(spec.key_paths, parts, strict=True):
@@ -2036,6 +2087,7 @@ def _check_keyed_add(
                 f"the body gives {key_path} {str(given)!r}, and the selector "
                 + f"{_show_key(key)}: an add takes the key from its selector",
                 where,
+                "operation",
             )
     return _new_keyed_item(spec, item_type, _body(op), key, resolvers, where, context)
 
@@ -2048,6 +2100,7 @@ def _check_change(spec: _ListSpec, where: Path) -> None:
             + 'add it with {"_op": "add"} (add()), '
             + 'remove it with {"_op": "delete"} (delete()), or give a list value',
             where,
+            "operation",
         )
 
 
@@ -2066,12 +2119,14 @@ def _named_item(
         raise PatchError(
             _names_several(_show_selector(selector), spec, items, selection.positions),
             where,
+            "several_items",
         )
     if selection.position is not None:
         raise PatchError(
             f"there is no item at position {selection.position}: "
             + f"the list has {len(items)}",
             where,
+            "no_item",
         )
     if spec.kind in ("positional", "undeclared"):
         hint = (
@@ -2083,12 +2138,14 @@ def _named_item(
             f"{str(selector)!r} is not a position: the items of this list are "
             + f'named by "#n" (at(n)){hint}',
             where,
+            "selector",
         )
     if selection.new:
         raise PatchError(
             f"{str(selector)!r} names a new item, which only "
             + '{"_op": "add", ...} (add(...)) takes',
             where,
+            "operation",
         )
     if spec.kind != "keyed":
         message = f"no item has the entry {selection.key!r}"
@@ -2111,7 +2168,7 @@ def _named_item(
                         '; to add an item, write {"+": {"_op": "add", ...}} '
                         + '("+": add({...})) with its fields'
                     )
-                raise PatchError(message, where)
+                raise PatchError(message, where, "selector")
             message = f"no item has the {what} {shown}; {form}"
         else:
             shown = (
@@ -2122,7 +2179,7 @@ def _named_item(
             message = f"no item has the {what} {shown}"
     if op.kind == "change":
         message += '; to add one, write {"_op": "add", ...} under that key (add(...))'
-    raise PatchError(message, where)
+    raise PatchError(message, where, "no_item")
 
 
 def _names_several(
@@ -2167,15 +2224,18 @@ def _anchor_position(
     selection = _select(items, spec, anchor, resolvers)
     _refuse_two_readings(selection, spec, items, anchor, where)
     if not selection.positions:
-        raise PatchError(f"the anchor {anchor!r} names no item", where)
+        raise PatchError(f"the anchor {anchor!r} names no item", where, "no_item")
     if len(selection.positions) > 1:
         raise PatchError(
             _names_several(f"the anchor {anchor!r}", spec, items, selection.positions),
             where,
+            "several_items",
         )
     index = selection.positions[0]
     if slots[index] is slot:
-        raise PatchError("an item cannot be placed before or after itself", where)
+        raise PatchError(
+            "an item cannot be placed before or after itself", where, "operation"
+        )
     return index
 
 
@@ -2200,6 +2260,7 @@ def _new_list_item(
                 f"{_show_key(form if shown is None else shown)} is already in the "
                 + f"list{_CHANGE_IT_IN_LIST}",
                 entry.path,
+                "exists",
             )
     alt = _alt_key(spec, new)
     if alt is not None:
@@ -2210,6 +2271,7 @@ def _new_list_item(
                     + f"{_show_item(spec, slot.value, index)}: give the new "
                     + "item another alt key, or change that item instead",
                     entry.path,
+                    "exists",
                 )
     return new
 
@@ -2255,7 +2317,9 @@ def _merge_map(
         op = parse_item_op(value, where)
         if op.place is not None:
             raise PatchError(
-                'a map has no order: it takes no "_position" (move(...))', where
+                'a map has no order: it takes no "_position" (move(...))',
+                where,
+                "operation",
             )
         if op.kind == "add":
             if text not in keys and (
@@ -2267,6 +2331,7 @@ def _merge_map(
                     + 'as in {"<key>": {"_op": "add", ...}} '
                     + '(`{"<key>": add(...)}`)',
                     where,
+                    "selector",
                 )
             key = _new_map_key(spec, text, where)
             text = str(key)
@@ -2275,34 +2340,45 @@ def _merge_map(
                     f"{text!r} is already in the map; to change it, write a plain "
                     + 'object under its key (no "_op")',
                     where,
+                    "exists",
                 )
         elif new_only:
             raise PatchError(
                 f"a {op.kind} in a map the patch builds has nothing to name: "
                 + 'write {"_op": "add", ...} entries (add(...))',
                 where,
+                "operation",
             )
         elif text not in keys:
+            if position_of(selector) is not None:
+                raise PatchError(
+                    "a map has no positions: name an entry by its key",
+                    where,
+                    "selector",
+                )
             raise PatchError(
-                "a map has no positions: name an entry by its key"
-                if position_of(selector) is not None
-                else f"no entry has the key {text!r}"
+                f"no entry has the key {text!r}"
                 + (
                     '; to add one, write {"_op": "add", ...} under that key (add(...))'
                     if op.kind == "change"
                     else ""
                 ),
                 where,
+                "no_item",
             )
         else:
             key = keys[text]
             current = entries[key]
             if op.kind == "change" and not isinstance(current, VcoModel):
                 raise PatchError(
-                    f"the entry is {type(current).__name__}, not a model", where
+                    f"the entry is {type(current).__name__}, not a model",
+                    where,
+                    "operation",
                 )
         if text in named:
-            raise PatchError("another selector names this entry: one per entry", where)
+            raise PatchError(
+                "another selector names this entry: one per entry", where, "duplicate"
+            )
         named.add(text)
         resolved.append((op, key, where))
 
@@ -2330,7 +2406,9 @@ def _new_map_key(spec: _ListSpec, text: str, where: Path) -> object:
     one model type, so there is nothing to build the entry as.
     """
     if spec.map_type is None:
-        raise PatchError("this map has no one model type to build from", where)
+        raise PatchError(
+            "this map has no one model type to build from", where, "operation"
+        )
     assert spec.map_key is not None  # a map
     try:
         return spec.map_key.validate_python(text, context={"patch": True})

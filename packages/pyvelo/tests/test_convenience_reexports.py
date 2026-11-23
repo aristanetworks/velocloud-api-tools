@@ -56,3 +56,10 @@ class TestPatchToolReexports:
         for name, home in homes.items():
             assert getattr(pyvelo.core, name) is getattr(home, name), name
             assert name in pyvelo.core.__all__, name
+
+    def test_the_kind_of_a_patch_error_comes_from_pyvelo_core(self):
+        import pyvelo.core
+        from pyvelo.core import patch
+
+        assert pyvelo.core.PatchErrorKind is patch.PatchErrorKind
+        assert "PatchErrorKind" in pyvelo.core.__all__

@@ -704,9 +704,10 @@ class VcoModel(BaseModel):
         or an object of ``add`` entries only.
 
         **Errors.** A patch that cannot be applied raises ``PatchError`` (a
-        ``ValueError``) whose ``path`` is where in the patch it failed; a
-        pydantic ``ValidationError`` behind it is its ``__cause__``. Resolver
-        errors keep their types. A name on a field whose resolver is not
+        ``ValueError``) whose ``path`` is where in the patch it failed and
+        whose ``kind`` says which sort of refusal it is
+        (``patch.PatchErrorKind``); a pydantic ``ValidationError`` behind it
+        is its ``__cause__``. Resolver errors keep their types. A name on a field whose resolver is not
         registered raises ``PatchError`` at the field, unless the text can be
         the ID. All or nothing: a patch that raises, ``PatchError``,
         ``ResolutionError`` or ``LookupError``, leaves self as it was, the same

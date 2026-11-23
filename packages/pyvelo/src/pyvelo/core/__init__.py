@@ -117,6 +117,7 @@ from .identity import (
 from .merge import item_selector, nest_patch, select_items
 from .patch import (
     PatchError,
+    PatchErrorKind,
     add,
     at,
     delete,
@@ -190,6 +191,7 @@ __all__ = [
     "PaginatedVcoModel",
     "PaginationMetadata",
     "PatchError",
+    "PatchErrorKind",
     "Path",
     "Positional",
     "ProfileId",

@@ -160,12 +160,29 @@ A patch is strict and all or nothing:
 - A key that names no field raises, at every depth, and so do two keys that
   name one field (`rule_id` and `ruleId`). Keys that start with `_` are
   directives: `_op` and `_position`, on a list item only.
-- A patch that cannot be applied raises `PatchError` (a `ValueError`), whose
-  `path` is where in the patch it failed. Resolver errors keep their types
-  (`ResolutionError` for an unknown name). A patch that applies but that a
+- A patch that cannot be applied raises `PatchError` (a `ValueError`). Its
+  `path` is where in the patch it failed, its `message` the reason, and its
+  `kind` one of the twelve values below, for a caller that reacts to the
+  cause. Resolver errors keep their types (`ResolutionError` for an unknown
+  name). A patch that applies but that a
   save could not write raises `LossyFieldError` (see "What a save writes"),
   and a patch to a module a save does not write (control plane) raises
   `PatchError`. In every case the state, and `plan()`, are as they were.
+
+| `kind` | The patch... |
+|---|---|
+| `not_json` | holds a value that is not JSON, a number that is not finite, or nests too deep |
+| `address` | was sent, by the `module`, `segment` or `path` of the call, to a place that takes no patch |
+| `unknown_field` | has a key that names no field |
+| `duplicate` | names one thing twice: a field by two keys, an item by two selectors, a key by two adds or by two items of a list value |
+| `null` | has `null` where it means nothing: a field that cannot be unset, or an item's value |
+| `invalid_value` | has a value, an item or a changed model that validation refuses, or a name that cannot be looked up |
+| `operation` | has an item operation that is malformed, or that this list or map does not take |
+| `selector` | has a selector or anchor that is not one for this list |
+| `no_item` | has a selector or anchor that names no item |
+| `several_items` | has a selector or anchor that names more than one item |
+| `exists` | adds, or renames to, a key, alt key or value that is already there |
+| `segment_rule` | breaks a rule of the `segments` lists (below) |
 
 Every list has a kind, which says how its items are named:
 
@@ -786,7 +803,7 @@ Known limits:
 
 | Module | What it provides |
 |---|---|
-| `pyvelo_intent` | Re-exports the public surface: `ConfigPipeline`, `ConfigState`, `SaveResult`, `ConfigPlan`, the entries a save reports (`PlannedChange`, `ServerChange`), `SaveProgress` and `save_progress`, the patch helpers (`add`, `delete`, `move`, `at`) and `PatchError`, diff types (`DiffResult`, `Added`, `Removed`, `Modified`, `Unchanged`, `FieldChange`), the intent error types, the write errors `ModuleWriteError` (the base of the next three), `ConfigConflictError`, `WriteNotAppliedError`, `WriteOutcomeUnknownError` and `DetachedObjectError` (from `pyvelo.client.exceptions`), `LossyFieldError` and `ResolutionError`, helpers (`build_default_pipeline`, `confirm_save`, `load_config`) |
+| `pyvelo_intent` | Re-exports the public surface: `ConfigPipeline`, `ConfigState`, `SaveResult`, `ConfigPlan`, the entries a save reports (`PlannedChange`, `ServerChange`), `SaveProgress` and `save_progress`, the patch helpers (`add`, `delete`, `move`, `at`), `PatchError` and `PatchErrorKind` (the type of its `kind`), diff types (`DiffResult`, `Added`, `Removed`, `Modified`, `Unchanged`, `FieldChange`), the intent error types, the write errors `ModuleWriteError` (the base of the next three), `ConfigConflictError`, `WriteNotAppliedError`, `WriteOutcomeUnknownError` and `DetachedObjectError` (from `pyvelo.client.exceptions`), `LossyFieldError` and `ResolutionError`, helpers (`build_default_pipeline`, `confirm_save`, `load_config`) |
 | `pyvelo_intent.config.pipeline` | `ConfigPipeline` (load/load_profile → apply → save), `build_default_pipeline` |
 | `pyvelo_intent.config.state` | `ConfigState`, `StateLock`, `SaveResult`, `SaveProgress`, `save_progress`, `ConfigFieldChange`, `ValidationWarning` |
 | `pyvelo_intent.config.helpers` | `load_config` (a YAML file validated against a model; `ConfigInputError` for a file it cannot use, a key given twice included), `confirm_save` (a yes or no prompt, which prints the plan it is given: `confirm_save(plan=preview.plan)`) |
