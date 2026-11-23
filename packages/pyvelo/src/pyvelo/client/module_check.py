@@ -326,6 +326,7 @@ def check_module_write[M: ConfigurationModuleBase](
             applied=applied,
             left_out=left_out,
             server_changes=server_changes,
+            stored_parts=data.stored_parts,
         )
     raise WriteNotAppliedError(
         stored.id_,
@@ -337,6 +338,7 @@ def check_module_write[M: ConfigurationModuleBase](
         applied=applied,
         left_out=left_out,
         server_changes=server_changes,
+        stored_parts=data.stored_parts,
     )
 
 

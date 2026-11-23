@@ -655,6 +655,8 @@ async def test_counted_update_that_cannot_be_read_back_is_an_unknown_outcome(
         "Read the configuration again and compare before you write this module again.",
     ]
     assert store.rows[1]["data"]["firewall_enabled"] is False
+    # Nothing is lost: the caller's module still has the edits.
+    assert (error.redo_patch(), error.not_redone()) == ({}, ())
 
 
 async def test_refused_update_that_cannot_be_read_back_is_an_unknown_outcome(

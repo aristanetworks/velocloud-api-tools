@@ -73,10 +73,13 @@ Otherwise it raises, from `pyvelo.client.exceptions`:
 
 The first two carry `lost_edits` (the planned changes not stored, with the
 values as read, meant and stored), `applied`, `left_out`, `server_changes`, the
-`plan` and the `module` as stored. Where the VCO stores a value its own way
-(a field marked `ServerOwned`, and the rewrites per module in
-`MODULE_REWRITES`, `pyvelo.client.module_check`), a planned change is not a
-lost edit: it is in `left_out` of the write, or of one of the first two errors,
+`plan` and the `module` as stored. `error.redo_patch()` is the patch that redoes
+the lost edits on that module (`error.module.data.merge_patch(error.redo_patch())`);
+it leaves out a clash unless asked, and `error.not_redone()` lists what it
+leaves out. On a `WriteOutcomeUnknownError` the patch is empty: nothing is
+known to be lost. Where the VCO stores a value its own way (a field marked
+`ServerOwned`, and the rewrites per module in `MODULE_REWRITES`,
+`pyvelo.client.module_check`), a planned change is not a lost edit: it is in `left_out` of the write, or of one of the first two errors,
 and a value other than the one read is a server change. After a refusal, and
 when the VCO answered with a module that holds none of the changes, such a
 change that is still as read is a lost edit. `check_module_write(module, plan, stored,

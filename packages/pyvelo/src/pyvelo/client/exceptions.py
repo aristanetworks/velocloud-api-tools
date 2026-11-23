@@ -8,7 +8,11 @@ import json
 from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING, Any, Final, Literal, cast, override
 
-from pyvelo.core.rebase import ItemMove, ItemPlace, Path
+from pydantic import MISSING
+
+from pyvelo.core.base import VcoModel
+from pyvelo.core.changes import patch_of
+from pyvelo.core.rebase import ItemMove, ItemPart, ItemPlace, Path, RawChange
 from pyvelo.core.response_check import PlannedChange, ServerChange
 from pyvelo.core.show import moves_text, shown_together
 
@@ -256,12 +260,13 @@ class ModuleWriteError(VcoError):
     ``ConfigConflictError`` and ``WriteNotAppliedError`` are a write whose
     module as stored was read and holds the changes only in part. They carry
     ``module``, and ``lost_edits``, the planned changes that are not stored, to
-    redo; ``applied``, those that are; ``left_out``, those the VCO stores its
-    own way, neither applied nor lost; and ``server_changes``, what else
-    differs between the payload and what is stored. ``WriteOutcomeUnknownError``
-    is a write whose module as stored could not be read: it has no ``module``
-    and no lists. ``str(error)`` lists them by path (``render``), all but
-    ``left_out``.
+    redo (``redo_patch()`` is the patch that redoes them, ``not_redone()`` the
+    ones it leaves out); ``applied``, those that are; ``left_out``, those the
+    VCO stores its own way, neither applied nor lost; and ``server_changes``,
+    what else differs between the payload and what is stored.
+    ``WriteOutcomeUnknownError`` is a write whose module as stored could not be
+    read: it has no ``module`` and no lists. ``str(error)`` lists them by path
+    (``render``), all but ``left_out``.
     """
 
     module_id: int
@@ -280,6 +285,9 @@ class ModuleWriteError(VcoError):
     server_changes: tuple[ServerChange, ...]
     completed: tuple[ModuleWrite[Any], ...]
     """The earlier writes of the same save, which are stored. Set by the save."""
+    stored_parts: dict[Path, ItemPart]
+    """For each item of a keyed list that a lost edit names and the module as
+    stored has, by its path, the part that names it there (``ResponseCheck.stored_parts``)."""
 
     def __init__(
         self,
@@ -293,6 +301,7 @@ class ModuleWriteError(VcoError):
         applied: Sequence[PlannedChange] = (),
         left_out: Sequence[PlannedChange] = (),
         server_changes: Sequence[ServerChange] = (),
+        stored_parts: Mapping[Path, ItemPart] | None = None,
     ) -> None:
         self.module_id = module_id
         self.module_name = module_name
@@ -304,6 +313,7 @@ class ModuleWriteError(VcoError):
         self.left_out = tuple(left_out)
         self.server_changes = tuple(server_changes)
         self.completed = ()
+        self.stored_parts = dict(stored_parts or {})
         super().__init__(self._headline())
 
     def _label(self) -> str:
@@ -363,6 +373,115 @@ class ModuleWriteError(VcoError):
         # Computed when asked: ``completed`` is set after the error is built.
         return self.render()
 
+    def redo_patch(self, include_clashes: bool = False) -> dict[str, object]:
+        """The patch that redoes the lost edits on ``module``, the module as stored.
+
+        It is plain JSON (``json.loads(json.dumps(patch)) == patch``), rooted
+        at the module, so
+        ``await pipeline.apply(state, module=error.module_name, patch=error.redo_patch())``
+        takes it, and so does ``error.module.data.merge_patch(error.redo_patch())``
+        without a state. Each lost edit is redone from what is stored to what
+        was meant: an added item goes back in its place, a lost order is made
+        again by the moves from the stored order, and each item is named as the
+        stored list names it, so an edit to "the second rule" still reaches
+        that rule when another writer put one in front of it.
+
+        A clash is an edit whose value was also changed on the VCO, and
+        redoing it overwrites that change: it is left out unless
+        *include_clashes*. A ref row is left out (a patch changes data, not
+        refs), and so is an edit no patch can make or whose item is no longer
+        stored or cannot be named alone. ``not_redone`` lists what is left
+        out. A key the VCO does not know, which a write drops, is neither
+        redone nor listed. A change made in a segment the plan reconciled
+        (the edge had none of its own) is redone in the segment's place, and
+        ``apply`` adds the segment again.
+
+        The patch is empty, and nothing is left out, for a
+        ``WriteOutcomeUnknownError``: the caller's data still holds the edits.
+        It is empty, with every lost edit left out, for an error that has no
+        plan or no module.
+
+        ``apply`` checks the patch like any other and may refuse it, changing
+        nothing, where the stored data no longer takes it (a rename to a name
+        another writer gave an item, for example) or where the edit is one
+        ``apply`` refuses as a patch (a segment added to a profile by
+        assignment): make such an edit again the way it was made.
+        """
+        return self._redo(include_clashes)[0]
+
+    def not_redone(self, include_clashes: bool = False) -> tuple[PlannedChange, ...]:
+        """The lost edits that ``redo_patch(include_clashes)`` leaves out, in the order of ``lost_edits``."""
+        return self._redo(include_clashes)[1]
+
+    def _redo(
+        self, include_clashes: bool
+    ) -> tuple[dict[str, object], tuple[PlannedChange, ...]]:
+        """The patch that redoes the lost edits, and the lost edits it leaves out."""
+        plan, module = self.plan, self.module
+        data: object = None if module is None else getattr(module, "data", None)
+        if plan is None or not isinstance(data, VcoModel):
+            return {}, self.lost_edits
+        stored_parts = dict(self.stored_parts)
+        changes: list[RawChange] = []
+        owner: dict[int, PlannedChange] = {}
+        left_out: set[int] = set()
+        for edit in self.lost_edits:
+            if edit.part == "refs" or (edit.clash and not include_clashes):
+                left_out.add(id(edit))
+            elif edit.path in plan.legacy_keys:
+                continue
+            elif _is_reconciled_segment(plan, edit):
+                for change in _changes_below(plan, edit.path):
+                    owner[id(change)] = edit
+                    changes.append(change)
+                    # Nothing of the segment is stored: its items are named as
+                    # the plan names them.
+                    for n, part in enumerate(change.path.parts, 1):
+                        if not isinstance(part, str):
+                            path = Path(change.path.parts[:n])
+                            _ = stored_parts.setdefault(path, part)
+            else:
+                change = RawChange(
+                    edit.path,
+                    edit.stored,
+                    edit.intended,
+                    place=edit.place,
+                    moves=edit.moves,
+                )
+                owner[id(change)] = edit
+                changes.append(change)
+        patch, unwritten = patch_of(changes, type(data), stored_parts=stored_parts)
+        left_out.update(id(owner[id(change)]) for change in unwritten)
+        return patch, tuple(edit for edit in self.lost_edits if id(edit) in left_out)
+
+
+def _changes_below(plan: ModulePlan, path: Path) -> list[RawChange]:
+    """The changes of *plan* at a path below *path*."""
+    depth = len(path.parts)
+    return [
+        change
+        for change in plan.changes
+        if len(change.path.parts) > depth and change.path.parts[:depth] == path.parts
+    ]
+
+
+def _is_reconciled_segment(plan: ModulePlan, edit: PlannedChange) -> bool:
+    """Whether *edit* is the entry of a segment the plan reconciled.
+
+    The edge had no entry for the segment, so nothing of it is stored and the
+    check finds the whole entry added; what the plan changed inside it is what
+    to redo.
+    """
+    parts = edit.path.parts
+    return (
+        bool(plan.reconciled_segments)
+        and edit.as_read is MISSING
+        and len(parts) == 2
+        and parts[0] == "segments"
+        and not isinstance(parts[1], str)
+        and all(change.path != edit.path for change in plan.changes)
+    )
+
 
 class ConfigConflictError(ModuleWriteError):
     """Raised when a module write is rejected because its version is stale.
@@ -394,6 +513,7 @@ class ConfigConflictError(ModuleWriteError):
         applied: Sequence[PlannedChange] = (),
         left_out: Sequence[PlannedChange] = (),
         server_changes: Sequence[ServerChange] = (),
+        stored_parts: Mapping[Path, ItemPart] | None = None,
     ) -> None:
         self.detail = detail
         self.stated = stated
@@ -407,6 +527,7 @@ class ConfigConflictError(ModuleWriteError):
             applied=applied,
             left_out=left_out,
             server_changes=server_changes,
+            stored_parts=stored_parts,
         )
 
     @override
@@ -455,6 +576,7 @@ class WriteNotAppliedError(ModuleWriteError):
         applied: Sequence[PlannedChange] = (),
         left_out: Sequence[PlannedChange] = (),
         server_changes: Sequence[ServerChange] = (),
+        stored_parts: Mapping[Path, ItemPart] | None = None,
     ) -> None:
         super().__init__(
             module_id,
@@ -466,6 +588,7 @@ class WriteNotAppliedError(ModuleWriteError):
             applied=applied,
             left_out=left_out,
             server_changes=server_changes,
+            stored_parts=stored_parts,
         )
 
     @override

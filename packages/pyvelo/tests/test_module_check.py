@@ -3,7 +3,7 @@
 import copy
 import uuid
 from collections.abc import Iterable
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from pydantic import MISSING
@@ -15,6 +15,7 @@ from pyvelo.client.exceptions import (
 )
 from pyvelo.client.models.configuration import DeviceSettingsData
 from pyvelo.client.models.configuration.firewall.rules import FirewallInboundRule
+from pyvelo.client.models.configuration.qos.root import ServiceRateLimit
 from pyvelo.client.module_check import (
     APPEND_ONLY_REF_NAMES,
     MODULE_REWRITES,
@@ -304,6 +305,57 @@ def test_message_names_a_stored_order():
     with pytest.raises(WriteNotAppliedError) as exc:
         _ = check_module_write(module, plan, stored)
     assert str(exc.value).splitlines()[-2:] == ["already stored:", "  inbound: order"]
+
+
+def test_redo_patch_rebuilds_a_place_and_a_move():
+    rows = inbound_rows("a", "b")
+    module = fw({**RAW, "inbound": rows})
+    module.data.inbound.insert(0, inbound("c"))
+    module.data.inbound.append(module.data.inbound.pop(1))  # c, b, a
+    module.data.inbound[1].logging_enabled = True
+    plan = plan_module(module)
+    stored = as_stored(module, {**RAW, "inbound": rows, "future": 2})
+    with pytest.raises(ConfigConflictError) as exc:
+        _ = check_module_write(module, plan, stored, answer="refused")
+    error = exc.value
+
+    patch = error.redo_patch()
+    assert list(patch) == ["inbound"]
+    ops = cast(dict[str, dict[str, object]], patch["inbound"])
+    assert list(ops) == ["b", "c"]  # b goes after c, so it is written before it
+    assert ops["b"] == {"logging_enabled": True, "_position": "first"}
+    assert (ops["c"]["_op"], ops["c"]["name"], ops["c"]["_position"]) == (
+        "add",
+        "c",
+        "first",
+    )
+    assert error.not_redone() == ()
+
+    assert isinstance(error.module, FirewallConfigurationModule)
+    _ = error.module.data.merge_patch(patch)
+    again = plan_module(error.module)
+    assert again.changes == plan.changes
+    assert again.render() == plan.render()
+
+
+def test_redo_patch_leaves_out_a_clash_and_a_ref_row():
+    module = qos(QOS_RAW, refs={"a": ROW1})
+    module.data.service_rate_limit = ServiceRateLimit(
+        enabled=True, input_type="percent", value=50
+    )
+    plan = plan_module(module, refs={"a": [ROW1, ROW2]})
+    theirs = {"enabled": True, "inputType": "percent", "value": 10}
+    stored = as_stored(module, {**QOS_RAW, "serviceRateLimit": theirs})
+    with pytest.raises(WriteNotAppliedError) as exc:
+        _ = check_module_write(module, plan, stored)
+    error = exc.value
+    assert paths(error.lost_edits) == ["a[6]", "serviceRateLimit"]
+    assert error.redo_patch() == {}
+    assert error.not_redone() == error.lost_edits
+    assert error.redo_patch(include_clashes=True) == {
+        "service_rate_limit": plan.data["serviceRateLimit"]
+    }
+    assert paths(error.not_redone(include_clashes=True)) == ["a[6]"]
 
 
 def test_completed_writes_are_named():

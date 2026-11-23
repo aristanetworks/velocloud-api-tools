@@ -667,3 +667,15 @@ def test_a_change_gives_its_path_in_python_names():
     assert (extra.path, extra.python_path(Root)) == ("sub.note", "sub.note")
     row = PlannedChange(lost.path, MISSING, {}, MISSING, part="refs")
     assert row.python_path(Root) == "rules[a].ruleId"
+
+
+def test_an_item_no_selector_names_has_no_stored_part():
+    # Item 1 is named by its position, and "#1" is the name of item 0.
+    r = rules(rule("#1"), rule("x", i="i1"), rule("x", i="i2"))
+    p = rules(rule("#1"), rule("x", i="i1", p=5), rule("x", i="i2", p=6))
+    check = chk(r, p, r)
+    assert_paths(check, not_applied=["rules[#1].priority", "rules[#2].priority"])
+    assert {str(path): part for path, part in check.stored_parts.items()} == {
+        'rules["#1"]': Key("#1"),
+        "rules[#2]": 2,
+    }

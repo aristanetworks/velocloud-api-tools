@@ -480,6 +480,8 @@ at `left_out` when a save follows one that failed.
 | `plan` | the module's `ModulePlan` |
 | `stated` | on `ConfigConflictError`: whether the VCO said it refused the version, or the save inferred it |
 | `completed` | the writes of the same save before this one, which are stored |
+| `redo_patch(include_clashes=False)` | the patch that redoes the lost edits on `module`, for `apply(state, module=error.module_name, patch=...)` |
+| `not_redone(include_clashes=False)` | the lost edits that patch leaves out |
 
 The entries are `PlannedChange` and `ServerChange`, from
 `pyvelo.core.response_check`. The message lists them by path. A path uses the
@@ -506,28 +508,42 @@ its own. A save that places an item in such a list would raise every time; the
 fix is a pattern under `own_order` in the table of rewrites.
 
 After either of those two errors the state holds the module as stored, so your
-edits to that module are no longer in it. Redo them from your own patch and
-save again; no reload is needed. `error.lost_edits` says which edits to redo.
-Redo only those: an `add` of an item that is already stored raises
-`PatchError`. A lost edit is not itself a patch:
+edits to that module are no longer in it. `error.redo_patch()` is the patch that
+redoes them on the module as stored. Apply it and save again; no reload is
+needed:
 
-- For a changed value, `intended` is the value to set.
-- For an added item, `intended` is the item, but not where it went. An `add`
-  built from it alone puts the item last. Give the place again (`first`,
-  `before` or `after`).
-- For a `move`, the lost edit is one entry at the list, and its values are the
-  items' names in order. The list does not take that as a value. Write the
-  `move` again.
+```python
+except (ConfigConflictError, WriteNotAppliedError) as error:
+    state = await pipeline.apply(
+        state, module=error.module_name, patch=error.redo_patch()
+    )
+    print(state.plan().render())  # review it, then save again
+```
+
+The patch puts an added item back in its place and makes a lost order again,
+and it names each item as the stored list names it. It leaves out a clash,
+because redoing one overwrites what another writer stored there;
+`error.redo_patch(include_clashes=True)` redoes those too.
+`error.not_redone()` lists every lost edit the patch leaves out: the clashes, a
+lost ref row (a patch changes data, not refs), and an edit that no patch can
+make or whose item is no longer stored or cannot be named. Check it before you
+save. `apply` can still refuse the patch, changing nothing, where the stored
+data no longer takes it (a rename to a name another writer gave an item, for
+example), and where the lost edit was made by assigning to the models and is
+one `apply` refuses as a patch (a segment added to a profile). Make such an
+edit again the way you made it.
 
 In a rule list the first match decides, so check the order with
 `state.plan().render()` before you save. A clash is where the redo overwrites
-another writer's change. The modules written before the failing one are stored
-and in the state (`error.completed`). Any other error of a request (a transport
-error, for example) leaves that module and the later ones with your edits, and
-carries a note that names the modules written before it; a second save sends
-what still differs.
+another writer's change.
 
-`WriteOutcomeUnknownError` has no lists and no module. `error.answer` says what the VCO said of the write itself: `"refused"` (it refused the version, so this write stored nothing), `"counted"` (it counted the write, so the changes are most likely stored) or `"row"` (its answer could not be read as this module). `error.detail` says why the module could not be read, and `error.plan` holds what was sent (what would have been, for an insert sent again). The state keeps the module as read, with your edits. For an update, saving again is safe: if the first write was stored, the VCO refuses the old version, the save reads the module and reports what is stored. For an insert, saving again is safe too: the state has recorded it, and the next save reads the configuration before it inserts (below).
+The modules written before the failing one are stored and in the state
+(`error.completed`). Any other error of a request (a transport error, for
+example) leaves that module and the later ones with your edits, and carries a
+note that names the modules written before it; a second save sends what still
+differs.
+
+`WriteOutcomeUnknownError` has no lists and no module. `error.answer` says what the VCO said of the write itself: `"refused"` (it refused the version, so this write stored nothing), `"counted"` (it counted the write, so the changes are most likely stored) or `"row"` (its answer could not be read as this module). `error.detail` says why the module could not be read, and `error.plan` holds what was sent (what would have been, for an insert sent again). The state keeps the module as read, with your edits. So there is nothing to redo: its `redo_patch()` is `{}` and its `not_redone()` is empty. For an update, saving again is safe: if the first write was stored, the VCO refuses the old version, the save reads the module and reports what is stored. For an insert, saving again is safe too: the state has recorded it, and the next save reads the configuration before it inserts (below).
 
 A `WriteNotAppliedError` after a write that did work means the VCO stores that
 value in another form than the one sent. When the value is part of the key of
@@ -571,8 +587,8 @@ Known limits:
 - A save that changes a profile's device settings and its QoS (or firewall)
   together may need a second save, when the device settings change propagates:
   the later module's write raises with your edits in `lost_edits`, and the
-  state holds that module as stored, so redo them and save again. Rebasing
-  those edits comes with derived refs, the next phase.
+  state holds that module as stored, so apply `error.redo_patch()` and save
+  again. Rebasing those edits comes with derived refs, the next phase.
 - Until then, device settings and QoS writes send refs only when your refs
   changed, as before.
 - On a VCO with the conditional check off, a stale write that carries refs may

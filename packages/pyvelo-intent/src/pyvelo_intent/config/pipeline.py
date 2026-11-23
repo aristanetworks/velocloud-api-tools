@@ -420,8 +420,10 @@ class ConfigPipeline:
 
         After ``ConfigConflictError`` or ``WriteNotAppliedError`` the state
         holds the module as stored, when the error carries it
-        (``error.module``): redo the edits in ``error.lost_edits`` and save
-        again. ``error.completed`` are the writes of this save before it. Any
+        (``error.module``): apply ``error.redo_patch()`` (``apply(state,
+        module=error.module_name, patch=error.redo_patch())``) and save again;
+        ``error.not_redone()`` lists the lost edits it leaves out.
+        ``error.completed`` are the writes of this save before it. Any
         other error of a request, ``WriteOutcomeUnknownError`` among them
         (the write was sent, or an insert was about to be sent again, and the
         module as stored could not be read), leaves that module and the later

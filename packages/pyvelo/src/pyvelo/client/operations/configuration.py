@@ -504,7 +504,9 @@ class ConfigurationMixin(Protocol):
           module found by name does not parse or is not this one.
 
         The first two always carry the lost edits and the module as stored;
-        ``WriteOutcomeUnknownError`` carries neither.
+        ``WriteOutcomeUnknownError`` carries neither. ``error.redo_patch()`` is
+        the patch that redoes the lost edits on that module, and
+        ``error.not_redone()`` the lost edits it leaves out.
 
         After a refusal, the refusal is the error's cause (its context, when
         the read-back fails). Raises ``ValueError``, before sending, when *plan*

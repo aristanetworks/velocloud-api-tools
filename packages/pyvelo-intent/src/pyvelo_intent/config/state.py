@@ -285,8 +285,9 @@ class ConfigState:
     from what the VCO holds and the state takes more edits and saves. So
     does a save that raised ``ConfigConflictError`` or
     ``WriteNotAppliedError`` with the module as stored (``error.module``):
-    the edits to that module are gone, and ``error.lost_edits`` lists the
-    ones to redo. Objects taken from the state before a save belong to the
+    the edits to that module are gone, and ``error.lost_edits`` lists them;
+    ``error.redo_patch()`` is the patch that redoes them (``error.not_redone()``
+    lists those it leaves out). Objects taken from the state before a save belong to the
     modules it replaced, and are detached: an edit through one raises
     ``DetachedObjectError``, at once or at the next :meth:`plan`.
 

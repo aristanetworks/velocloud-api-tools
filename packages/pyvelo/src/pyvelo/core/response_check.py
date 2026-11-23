@@ -58,6 +58,7 @@ fields marked ``ServerOwned``. With ``model=None`` every list is unkeyed, so
 a changed list is one change.
 """
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from ipaddress import IPv6Interface
 from typing import Literal
@@ -221,6 +222,12 @@ class ResponseCheck:
     """What else differs between the payload and what is stored.
 
     Each entry's ``as_read`` differs from its ``stored``."""
+    stored_parts: Mapping[Path, ItemPart] = field(default_factory=dict[Path, ItemPart])
+    """For each item of a keyed list that a planned change names and the stored
+    list has, by the item's path, the part that names it in the stored list: its
+    key there, or its position. An item that no selector can name alone has no
+    entry: its position ``n`` is also, as text, the key ``#n`` of another item
+    of the stored list, and a selector is read as a key before a position."""
 
 
 def check_response(
@@ -274,6 +281,7 @@ def check_response(
         server_changes=tuple(
             change for change in found.server_changes if change.as_read != change.stored
         ),
+        stored_parts=found.stored_parts,
     )
 
 
@@ -286,6 +294,7 @@ class _Found:
     not_applied: list[PlannedChange] = field(default_factory=list)
     left_out: list[PlannedChange] = field(default_factory=list)
     server_changes: list[ServerChange] = field(default_factory=list)
+    stored_parts: dict[Path, ItemPart] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
@@ -488,8 +497,19 @@ def _walk_keyed_list(
     r_of = {in_p: in_r for in_r, in_p in pairing.pairs}
     d_of, d_of_removed = _pair_stored(r, p, d, node, pairing.removed, found.rewrites)
     r_parts, d_parts = (_item_parts(items, node) for items in (r, d))
+    d_keys = set(_key_forms(d, node))
+
+    def record(item_path: Path, k: int) -> None:
+        """Note the part that names item *k* of *d*, when a selector can name it alone."""
+        part = d_parts[k]
+        if isinstance(part, int) and f"#{part}" in d_keys:
+            return
+        found.stored_parts[item_path] = part
+
     for j, item in enumerate(p):
         stored = d[d_of[j]] if j in d_of else MISSING
+        if j in d_of:
+            record(path.child(names[j]), d_of[j])
         if j in r_of:
             _walk(found, path.child(names[j]), r[r_of[j]], item, stored, node.item)
         else:
@@ -504,6 +524,8 @@ def _walk_keyed_list(
             )
     for i in pairing.removed:
         still_there = d[d_of_removed[i]] if i in d_of_removed else MISSING
+        if i in d_of_removed:
+            record(path.child(r_parts[i]), d_of_removed[i])
         _planned(found, path.child(r_parts[i]), r[i], MISSING, still_there, node.item)
     partnered = {*d_of.values(), *d_of_removed.values()}
     found.server_changes.extend(
