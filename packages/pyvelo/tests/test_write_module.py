@@ -645,11 +645,11 @@ async def test_counted_update_that_cannot_be_read_back_is_an_unknown_outcome(
     assert error.server_changes == ()
     assert str(error).splitlines() == [
         (
-            "Configuration module 1 (firewall): the write was sent, but the module "
-            "as stored could not be read: its configuration does not hold the module"
+            "Configuration module 1 (firewall): the module as stored could not be "
+            "read: its configuration does not hold the module"
         ),
         "The VCO counted the write, so the changes below are most likely stored.",
-        "sent, not checked:",
+        "planned, not checked:",
         "  firewall_enabled: read true, meant false",
         "  syslog_forwarding: read false, meant true",
         "Read the configuration again and compare before you write this module again.",
@@ -690,7 +690,7 @@ async def test_an_unknown_outcome_names_the_refs_it_sent(
         _ = await client.write_module(module, plan)
     assert exc.value.plan is plan
     assert str(exc.value).splitlines()[2:4] == [
-        "sent, not checked:",
+        "planned, not checked:",
         "  refs: replaced",
     ]
 
@@ -1107,3 +1107,44 @@ async def test_if_absent_reads_only_the_rows_of_the_name(
     write = await client.write_module(module, plan_module(module), if_absent=True)
     assert methods(store) == ["getConfiguration", "insertConfigurationModule"]
     assert write.module.name == "QOS"
+
+
+async def test_if_absent_cannot_use_a_configuration_that_does_not_parse(
+    mock_vco_client: MockVcoClientFactory,
+):
+    module = new_qos_with_a_segment()
+    plan = plan_module(module)
+    store = store_of(module)
+
+    def modules_as_text(request: httpx.Request) -> httpx.Response:
+        if (
+            parse_json_object(request.content)["method"]
+            != "configuration/getConfiguration"
+        ):
+            return store(request)
+        config = {**store.configurations[10], "modules": "not a list"}
+        return httpx.Response(200, json=make_jsonrpc_response(result=config))
+
+    client = await mock_vco_client(modules_as_text)
+
+    with pytest.raises(WriteOutcomeUnknownError) as exc:
+        _ = await client.write_module(module, plan, if_absent=True)
+
+    assert methods(store) == []  # no insert was sent
+    assert store.rows == {}
+    assert exc.value.answer == "row"
+    assert exc.value.detail == (
+        "the configuration read before sending the insert again does not parse, "
+        "and an earlier insert of this module may be stored"
+    )
+    assert isinstance(exc.value.__cause__, ValidationError)
+    lines = str(exc.value).splitlines()
+    assert lines[0] == (
+        "Configuration module 0 (QOS): the module as stored could not be read: "
+        f"{exc.value.detail}"
+    )
+    assert lines[1:3] == [
+        "Whether the changes below are stored is not known.",
+        "planned, not checked:",
+    ]
+    assert "sent" not in " ".join(lines[:3])

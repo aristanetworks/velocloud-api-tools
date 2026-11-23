@@ -498,6 +498,12 @@ class WriteOutcomeUnknownError(ModuleWriteError):
     could not be used). ``module_id`` is the module's ID; for an insert the VCO
     counted or answered with a row, the ID it gave. When the read request
     itself fails, its own error is raised instead, and the write may be stored.
+
+    ``write_module(if_absent=True)`` raises it too, before it sends anything,
+    when the read it makes before an insert whose earlier answer was lost
+    cannot be used: the configuration does not parse, or the module of the
+    plan's name found there does not. An earlier insert of the module may be
+    stored.
     """
 
     detail: str
@@ -520,8 +526,8 @@ class WriteOutcomeUnknownError(ModuleWriteError):
     @override
     def _headline(self) -> str:
         return (
-            f"Configuration module {self._label()}: the write was sent, but the "
-            f"module as stored could not be read: {self.detail}"
+            f"Configuration module {self._label()}: the module as stored could "
+            f"not be read: {self.detail}"
         )
 
     @override
@@ -535,7 +541,7 @@ class WriteOutcomeUnknownError(ModuleWriteError):
             said = "The VCO counted the write, so the changes below are most likely stored."
         else:
             said = "Whether the changes below are stored is not known."
-        lines = [said, "sent, not checked:"]
+        lines = [said, "planned, not checked:"]
         if self.plan is not None:
             lines.extend(
                 f"  {change.path}: read {_shown(change.before)}, "

@@ -210,7 +210,10 @@ async def _read_named(
         raise _unknown_outcome(
             module,
             plan,
-            "the configuration read does not parse",
+            (
+                "the configuration read before sending the insert again does not "
+                "parse, and an earlier insert of this module may be stored"
+            ),
             answer="row",
             module_id=module.id_,
         ) from error

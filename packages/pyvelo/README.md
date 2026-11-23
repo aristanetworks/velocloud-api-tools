@@ -67,6 +67,9 @@ Otherwise it raises, from `pyvelo.client.exceptions`:
   says whether the VCO refused the write, counted it, or answered with a row.
   When the read itself fails, its own error is raised, and the write may be
   stored.
+  `write_module(..., if_absent=True)` raises it too, before it sends anything,
+  when the read it makes before an insert whose earlier answer was lost cannot
+  be used: an earlier insert of the module may be stored.
 
 The first two carry `lost_edits` (the planned changes not stored, with the
 values as read, meant and stored), `applied`, `left_out`, `server_changes`, the
