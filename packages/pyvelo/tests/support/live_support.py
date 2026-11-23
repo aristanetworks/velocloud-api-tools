@@ -53,6 +53,7 @@ from pyvelo.client import (
     ConfigConflictError,
     VcoClient,
     VcoOperationError,
+    WriteNotAppliedError,
     WriteOutcomeUnknownError,
 )
 from pyvelo.client.enums.configuration import ConfigurationModuleName
@@ -866,18 +867,25 @@ def _stated_refusal(error: ModuleWriteError) -> str:
     """How the Orchestrator stated a refusal, read from the conflict ``update_configuration_module`` raised.
 
     ``write_module`` raises its error from that conflict, or while handling it
-    when the module could not be read back: its ``__cause__``, else its
-    ``__context__``. One with a cause of its own was raised from the
-    Orchestrator's precondition error, whatever HTTP status carried it; one
-    without is a row count of zero. With no such conflict in the chain, the
-    refusal is only ``refused``.
+    when the module could not be read back. The conflict is found by walking
+    the chain from *error*: each link's ``__cause__``, else its
+    ``__context__``, until a ``ConfigConflictError`` (a read-back that failed
+    to parse is raised from a ``ValidationError`` that was itself raised while
+    handling the conflict, one link deeper). One with a cause of its own was
+    raised from the Orchestrator's precondition error, whatever HTTP status
+    carried it; one without is a row count of zero. With no such conflict in
+    the chain, the refusal is only ``refused``.
     """
-    refusal = error.__cause__ if error.__cause__ is not None else error.__context__
-    if not isinstance(refusal, ConfigConflictError):
-        return "refused"
-    if refusal.__cause__ is not None:
-        return "refused with the precondition error"
-    return "refused with a row count of zero"
+    seen = {id(error)}
+    link = error.__cause__ if error.__cause__ is not None else error.__context__
+    while link is not None and id(link) not in seen:
+        if isinstance(link, ConfigConflictError):
+            if link.__cause__ is not None:
+                return "refused with the precondition error"
+            return "refused with a row count of zero"
+        seen.add(id(link))
+        link = link.__cause__ if link.__cause__ is not None else link.__context__
+    return "refused"
 
 
 def refusal_form(error: ModuleWriteError) -> str:
@@ -886,9 +894,12 @@ def refusal_form(error: ModuleWriteError) -> str:
     A ``WriteOutcomeUnknownError`` says what the Orchestrator answered of the
     write: a counted write is no refusal, a stated refusal is told as above
     with the note that the module could not be read, and a row that could not
-    be used is no refusal either. A ``ConfigConflictError`` that is ``stated``
-    is a stated refusal. Any other error was checked against the module row
-    the Orchestrator answered with.
+    be used is no refusal either. A ``WriteNotAppliedError`` is no refusal:
+    the Orchestrator counted the write or answered with a row, and stored it
+    otherwise than sent (a refusal it stated always raises a
+    ``ConfigConflictError``). A ``ConfigConflictError`` that is ``stated`` is
+    a stated refusal; one that is not was inferred from the module row the
+    Orchestrator answered with.
     """
     unread = ", and the module as stored could not be read"
     if isinstance(error, WriteOutcomeUnknownError):
@@ -897,6 +908,8 @@ def refusal_form(error: ModuleWriteError) -> str:
         if error.answer == "refused":
             return _stated_refusal(error) + unread
         return "answered with a row that could not be taken as this module"
+    if isinstance(error, WriteNotAppliedError):
+        return "not refused: stored otherwise than sent"
     if isinstance(error, ConfigConflictError) and error.stated:
         return _stated_refusal(error)
     return "refused with the module row as stored"

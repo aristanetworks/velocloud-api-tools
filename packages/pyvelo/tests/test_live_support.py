@@ -416,20 +416,37 @@ def held_elsewhere(store: ModuleStore) -> Callable[[httpx.Request], httpx.Respon
 
 
 async def write_error(
-    *, stale: bool, read_back: bool = True, **knobs: bool
+    *,
+    stale: bool,
+    read_back: bool = True,
+    clash: bool = False,
+    handler: Callable[[ModuleStore], Callable[[httpx.Request], httpx.Response]]
+    | None = None,
+    **knobs: bool,
 ) -> ModuleWriteError:
-    """The error of writing ``firewall_disabled`` to a store with *knobs*."""
+    """The error of writing ``firewall_disabled`` to a store with *knobs*.
+
+    With *clash* the write also changes ``future`` (1 to 2) and the other
+    writer sets it to 3. *handler* wraps the store in place of *read_back*.
+    """
     module = firewall_disabled()
+    plan = plan_module(module)
+    if clash:
+        plan = plan_module(module, {**FIREWALL, "future": 2, "firewall_enabled": False})
     store = ModuleStore(**knobs)
     store.add_configuration({"id": 10, "name": "Profile 10"})
     store.rows[1] = make_module_json(
         "firewall", copy.deepcopy(FIREWALL), configuration_id=10
     )
     if stale:
-        store.other_writer(1, lambda row: row["data"].update(future=2))
-    client = client_over(store if read_back else held_elsewhere(store))
+        future = 3 if clash else 2
+        store.other_writer(1, lambda row: row["data"].update(future=future))
+    if handler is not None:
+        client = client_over(handler(store))
+    else:
+        client = client_over(store if read_back else held_elsewhere(store))
     with pytest.raises(ModuleWriteError) as caught:
-        _ = await client.write_module(module, plan_module(module))
+        _ = await client.write_module(module, plan)
     return caught.value
 
 
@@ -444,6 +461,55 @@ async def test_refusal_form_of_a_stale_write_whose_module_was_read():
     inferred = await write_error(stale=True)
     assert isinstance(inferred, ConfigConflictError) and not inferred.stated
     assert form(inferred) == "refused with the module row as stored"
+
+
+async def test_refusal_form_of_a_write_stored_otherwise_than_sent_is_no_refusal():
+    error = await write_error(stale=True, clash=True)
+    assert isinstance(error, WriteNotAppliedError)
+    assert live.refusal_form(error) == "not refused: stored otherwise than sent"
+
+
+async def test_refusal_form_of_a_refusal_whose_read_back_did_not_parse():
+    """Pydantic's ``ValidationError`` carries no ``__context__``, so the refusal is not in this chain: the clause says only ``refused``."""
+
+    def unparsable(store: ModuleStore) -> Callable[[httpx.Request], httpx.Response]:
+        def handler(request: httpx.Request) -> httpx.Response:
+            if (
+                json.loads(request.content)["method"]
+                != "configuration/getConfiguration"
+            ):
+                return store(request)
+            config = {**store.configurations[10], "modules": "not a list"}
+            return httpx.Response(200, json=make_jsonrpc_response(result=config))
+
+        return handler
+
+    error = await write_error(stale=True, handler=unparsable, conditional_check=True)
+    assert isinstance(error, WriteOutcomeUnknownError) and error.answer == "refused"
+    assert isinstance(error.__cause__, ValidationError)
+    assert live.refusal_form(error) == (
+        "refused, and the module as stored could not be read"
+    )
+
+
+def test_refusal_form_walks_the_chain_to_the_refusal():
+    refusal = ConfigConflictError(1, "v1", "no rows were modified")
+    middle = ValueError("read back")
+    middle.__context__ = refusal
+    error = unknown("refused")
+    error.__cause__ = middle
+    unread = ", and the module as stored could not be read"
+    assert live.refusal_form(error) == "refused with a row count of zero" + unread
+    refusal.__cause__ = RuntimeError("the Orchestrator's precondition error")
+    assert live.refusal_form(error) == ("refused with the precondition error" + unread)
+    middle.__context__ = error  # a chain that loops back ends
+    assert live.refusal_form(error) == "refused" + unread
+
+
+async def test_refusal_form_finds_the_refusal_a_read_that_found_no_module_was_raised_in():
+    unread = ", and the module as stored could not be read"
+    error = await write_error(stale=True, conditional_check=True, read_back=False)
+    assert live.refusal_form(error) == ("refused with the precondition error" + unread)
 
 
 def unknown(
