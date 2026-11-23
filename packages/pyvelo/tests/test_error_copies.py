@@ -177,10 +177,10 @@ def test_every_error_of_the_module_round_trips():
         UnboundError("not bound"),
         DetachedObjectError("changed", (path,)),
     ]
-    # Test support may subclass an error (a live test's refusal): only the
-    # library's own are listed here.
+    # Test support may subclass an error (a live test's refusal); every
+    # subclass the libraries define is listed here, whichever package has it.
     library = {
-        sub for sub in all_subclasses(VcoError) if sub.__module__.startswith("pyvelo.")
+        sub for sub in all_subclasses(VcoError) if sub.__module__ != "live_support"
     }
     assert {type(error) for error in errors} == library | {VcoError}
     for error in errors:
