@@ -399,6 +399,7 @@ class VcoModel(BaseModel):
         serialize_by_alias=True,
         validate_by_alias=True,
         validate_by_name=True,
+        hide_input_in_errors=True,
     )
 
     _config_context: ConfigContext | None = PrivateAttr(default=None)
@@ -837,7 +838,10 @@ class _ListItemType:
 
     @functools.cached_property
     def _union_adapter(self) -> TypeAdapter[VcoModel]:
-        return TypeAdapter[VcoModel](self.annotation)  # pyright: ignore[reportArgumentType]
+        return TypeAdapter[VcoModel](
+            self.annotation,  # pyright: ignore[reportArgumentType]
+            config=ConfigDict(hide_input_in_errors=True),
+        )
 
     def validate(self, value: object, *, context: JsonObject | None = None) -> VcoModel:
         if len(self.variants) == 1:

@@ -17,6 +17,7 @@ from pydantic import (
     MISSING,
     AfterValidator,
     BeforeValidator,
+    ConfigDict,
     Discriminator,
     PlainValidator,
     PydanticUserError,
@@ -1061,9 +1062,15 @@ def _list_spec(field_info: FieldInfo) -> _ListSpec | None:
         key_type, value_type = _type_args(field_info, dict)
         value_types = [m for m in _members_of(value_type) if _is_vco_model_type(m)]
         map_type = value_types[0] if len(value_types) == 1 else None
-        map_key = TypeAdapter[object](key_type)  # pyright: ignore[reportArgumentType]
+        map_key = TypeAdapter[object](
+            key_type,  # pyright: ignore[reportArgumentType]
+            config=ConfigDict(hide_input_in_errors=True),
+        )
     elif item_type is None:
-        element = TypeAdapter[object](_type_args(field_info, list)[0])  # pyright: ignore[reportArgumentType]
+        element = TypeAdapter[object](
+            _type_args(field_info, list)[0],  # pyright: ignore[reportArgumentType]
+            config=ConfigDict(hide_input_in_errors=True),
+        )
     return _ListSpec(
         kind,
         key_paths,

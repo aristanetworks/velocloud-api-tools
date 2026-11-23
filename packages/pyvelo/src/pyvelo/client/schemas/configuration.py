@@ -8,6 +8,7 @@ from typing import Annotated, Any, Literal, Self, TypeIs, cast, get_args, overlo
 
 from pydantic import (
     MISSING,
+    ConfigDict,
     Discriminator,
     Field,
     ModelWrapValidatorHandler,
@@ -293,7 +294,12 @@ type AnyConfigurationModule = Annotated[
     Discriminator(discriminator="name"),
 ]
 
-ConfigurationModuleList = RootModel[list[AnyConfigurationModule]]
+
+class ConfigurationModuleList(RootModel[list[AnyConfigurationModule]]):
+    """A list of module rows; a row that does not parse is refused without quoting it."""
+
+    model_config = ConfigDict(hide_input_in_errors=True)
+
 
 EMPTY_EDGE_MODULE_DATA: dict[ConfigurationModuleName, dict[str, Any]] = {
     ConfigurationModuleName.FIREWALL: {"segments": []},
