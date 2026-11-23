@@ -45,6 +45,13 @@ on, ``ConfigConflictError``. A VCO that ignores ``returnData`` answers
 Seen on the lab (first write-back run, 2026-11-22): the module row as stored,
 so the check is off and ``returnData`` is honoured; a stale save of the same
 value raised ``WriteNotAppliedError``, of another value ``ConfigConflictError``.
+Three tests record what no assertion can know in advance: the level a module
+of an edge comes back at after a refused save
+(``test_refused_edge_save_refreshes_the_state``), what the Orchestrator stores
+for an IPv6 key sent in upper case (``test_an_ipv6_key_in_upper_case_is_recorded``,
+which needs a marked edge with an IPv6 static route of prefix 48 or longer to
+copy), and the read-back of an insert answered with an ID alone
+(``test_an_insert_answered_with_an_id_is_read_back``).
 
 Requires VCO_HOST and VCO_TOKEN (VCO_ENTERPRISE_ID if the token needs one), and
 to write, PYVELO_IT_WRITE_HOST and PYVELO_IT_WRITE_ENTERPRISE_ID: see
@@ -82,16 +89,21 @@ from live_support import (
     expect,
     has_key,
     outcome,
+    read_backs,
+    record,
+    record_answers,
     record_refusal,
     redact,
     ref_names,
     refusal_codes,
+    refusal_form,
     restoring,
     same_value,
     settle,
     synthetic_name,
     value_at,
     where,
+    without_return_data,
     write_data,
 )
 from pydantic import MISSING
@@ -109,6 +121,7 @@ from pyvelo.client.models.configuration import (
     QosData,
     WanData,
 )
+from pyvelo.client.models.configuration.device_settings.segment import StaticRoute
 from pyvelo.client.models.configuration.qos.qoe import QoeSettings
 from pyvelo.client.models.configuration.qos.root import ServiceRateLimit
 from pyvelo.client.module_write import ModulePlan
@@ -131,7 +144,7 @@ from pyvelo.core.response_check import (
     ServerChange,
     matches,
 )
-from pyvelo_intent import ConfigPipeline, ConfigState, SaveResult, add
+from pyvelo_intent import ConfigPipeline, ConfigState, PatchError, SaveResult, add
 
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio(loop_scope="session")]
 
@@ -346,7 +359,7 @@ async def _copy_last_rule(pipeline: ConfigPipeline, state: ConfigState) -> Path:
     )
     segment = next(s.segment.name for s in module.data.segments if s.outbound)
     rules = [
-        rule.model_dump(by_alias=False, context={"compact": True})
+        rule.model_dump(mode="json", by_alias=False, context={"compact": True})
         for rule in state.profile.firewall.segment(segment).outbound
     ]
     name = synthetic_name()
@@ -1448,3 +1461,280 @@ async def test_server_changes_hold_only_known_rewrites(
             not missing,
             f"{case.id}: no server change at {', '.join(redact(p) for p in missing)}",
         )
+
+
+# ---------------------------------------------------------------------------
+# 11. A refused save at edge level
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.live_write
+@pytest.mark.parametrize("read_back", [False, True], ids=["as-answered", "read-back"])
+async def test_refused_edge_save_refreshes_the_state(
+    lab: Lab,
+    pipeline: ConfigPipeline,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    read_back: bool,
+) -> None:
+    """A stale save of an edge module leaves the state holding the module as stored, to save again.
+
+    ``read-back`` sends the writes without ``returnData``, so the
+    Orchestrator answers with a row count and the module is read back from
+    the edge's configuration. Either way the module must come back at the
+    level it was loaded at: an edge state's modules are loaded without one.
+    """
+    layout = await lab.pick_writable_edge(
+        Name.WAN, _wan_link, "with a link that has an internal ID"
+    )
+    site = lab.edge_site(layout, Name.WAN)
+    async with restoring(site) as original:
+        assert original is not None
+        if read_back:
+            without_return_data(lab.client, monkeypatch)
+        newer = await pipeline.load(layout.edge_id, enterprise_id=lab.enterprise_id)
+        older = await pipeline.load(layout.edge_id, enterprise_id=lab.enterprise_id)
+        link = _first_link(older)
+        loaded = older.module("WAN").config_context
+        kept, refused, redone = synthetic_name(), synthetic_name(), synthetic_name()
+        for state, text in ((newer, kept), (older, refused)):
+            _ = await pipeline.apply(
+                state, module="WAN", patch={"links": {link: {"description": text}}}
+            )
+        _ = await _save(pipeline, newer)
+
+        with pytest.raises((ConfigConflictError, WriteNotAppliedError)) as caught:
+            _ = await pipeline.save(older)
+        error = caught.value
+        now = await site.read_present()
+        check(error.module is not None, "the error carries no module")
+        assert error.module is not None
+        level = error.module.config_context
+        record(
+            capsys,
+            f"refused edge save, {'read back' if read_back else 'as answered'}: "
+            f"{refusal_form(error)} ({type(error).__name__}); the module was loaded "
+            f"at level {loaded or 'none'} and comes back at level {level or 'none'}",
+        )
+        check(
+            level is loaded,
+            "the module comes back from a refused save at another level than it "
+            "was loaded at",
+        )
+        check_as_read("the error's module", error.module, now)
+        check_as_read("the refused state's module", older.module("WAN"), now)
+        check(not older.plan().changed, "the refused state still plans a write")
+        path = Path(("links", Key(link), "description"))
+        check_entries("refused edge save", "lost_edits", error.lost_edits, [path])
+        (lost,) = error.lost_edits
+        check(
+            lost.intended == refused and lost.stored == kept and lost.clash,
+            "the lost edit is not the refused description, a clash with the newer "
+            "state's",
+        )
+
+        # The same state redoes the edit and saves, with no reload.
+        _ = await pipeline.apply(
+            older, module="WAN", patch={"links": {link: {"description": redone}}}
+        )
+        _ = await _save(pipeline, older)
+        after = await site.read_present()
+        stored = changes_between(Name.WAN, original.data, after.raw_data, WanData)
+        check_paths("redo", "the module read back", stored, [path])
+        check(stored[0].after == redone, "the module does not hold the redone edit")
+
+
+# ---------------------------------------------------------------------------
+# 12. An IPv6 key in upper case
+# ---------------------------------------------------------------------------
+
+
+def _v6_route(data: object) -> tuple[str, StaticRoute] | None:
+    """The segment name and the route of the first IPv6 static route with a prefix of 48 or longer."""
+    if not isinstance(data, DeviceSettingsData):
+        return None
+    for segment in data.segments:
+        routes = segment.routes
+        if routes is MISSING:
+            continue
+        for route in routes.static_v6:
+            prefix = str(route.cidr_prefix)
+            if prefix.isdecimal() and int(prefix) >= 48:
+                return segment.segment.name, route
+    return None
+
+
+def _v6_route_source(module: AnyConfigurationModule) -> bool:
+    return _v6_route(module.data) is not None
+
+
+def _v6_destinations(module: AnyConfigurationModule, description: str) -> list[str]:
+    """The destination of each IPv6 static route of *module* that has *description*."""
+    data = expect(module.data, DeviceSettingsData, "the deviceSettings data")
+    return [
+        route.destination
+        for segment in data.segments
+        if segment.routes is not MISSING
+        for route in segment.routes.static_v6
+        if route.description == description
+    ]
+
+
+@pytest.mark.live_write
+async def test_an_ipv6_key_in_upper_case_is_recorded(
+    lab: Lab, pipeline: ConfigPipeline, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """What the Orchestrator stores for an IPv6 key sent in upper case, and whether the save passes.
+
+    A copy of an IPv6 static route the edge has, to a prefix of the
+    documentation range and not advertised, is added through ``apply`` with
+    its destination in upper case. The run records whether the destination
+    is stored as sent or in lower case, and what applying the same ``add``
+    again does to the state: a key stored in another text is not found by its
+    selector, and the item is planned a second time. Nothing of that second
+    apply is saved.
+    """
+    layout = await lab.pick_writable_edge(
+        Name.DEVICE_SETTINGS,
+        _v6_route_source,
+        "with an IPv6 static route of prefix 48 or longer to copy",
+    )
+    site = lab.edge_site(layout, Name.DEVICE_SETTINGS)
+    async with restoring(site) as original:
+        assert original is not None
+        state = await pipeline.load(layout.edge_id, enterprise_id=lab.enterprise_id)
+        found = _v6_route(state.edge.device_settings)
+        check(found is not None, "the state has no IPv6 static route to copy")
+        assert found is not None
+        segment, source = found
+        # A group of A000 to FFFF: upper case differs from the canonical text
+        # only by its case.
+        sent = f"2001:DB8:{0xA000 + uuid.uuid4().int % 0x6000:X}::"
+        name = synthetic_name()
+        key = (sent, source.cidr_prefix, source.gateway, source.wan_interface)
+        body: dict[str, Any] = {
+            field: value
+            for field, value in source.model_dump(
+                mode="json", by_alias=False, context={"compact": True}
+            ).items()
+            if field not in ("destination", "cidr_prefix", "gateway", "wan_interface")
+        }
+        body.update(description=name, advertise=False)
+        patch = {key: add(body)}
+
+        async def apply() -> None:
+            _ = await pipeline.apply(
+                state,
+                module="device_settings",
+                segment=segment,
+                path="routes.static_v6",
+                patch=patch,
+            )
+
+        await apply()
+        plan = _planned(state, Name.DEVICE_SETTINGS)
+        route = Path(("segments", Key(segment), "routes", "staticV6", Key(key)))
+        check_paths("IPv6 route", "the plan", plan.changes, [route])
+
+        saved = "passed"
+        try:
+            _ = await pipeline.save(state)
+        except ModuleWriteError as error:
+            saved = f"raised {outcome(error)}"
+        kept = _v6_destinations(await site.read_present(), name)
+        if len(kept) != 1:
+            form = f"in {len(kept)} routes"
+        elif kept[0] == sent:
+            form = "as sent"
+        elif kept[0] == sent.lower():
+            form = "in lower case"
+        else:
+            form = "in another text"
+        try:
+            await apply()
+        except PatchError as error:
+            again = (
+                "is refused: the item is there"
+                if error.kind == "exists"
+                else f"is refused ({error.kind})"
+            )
+        else:
+            again = "plans a second item" if state.plan().changed else "plans nothing"
+        record(
+            capsys,
+            f"an IPv6 key in upper case: the save {saved}; the destination is stored "
+            f"{form}; applying the same add again {again}",
+        )
+        check(saved == "passed", f"the save of an IPv6 key in upper case {saved}")
+        check(
+            form in ("as sent", "in lower case"),
+            f"the destination of the added route is stored {form}",
+        )
+
+
+# ---------------------------------------------------------------------------
+# 13. An insert answered with an ID is read back
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.live_write
+async def test_an_insert_answered_with_an_id_is_read_back(
+    lab: Lab,
+    pipeline: ConfigPipeline,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A missing edge QoS module, inserted without ``returnData``, is read back by the ID answered.
+
+    As from a VCO that ignores ``returnData`` (``without_return_data``): the
+    insert is answered with the new module's ID, and the state must then hold
+    the module as a read made right after shows it.
+    """
+    layout = next(iter(lab.edges_lacking(Name.QOS)), None)
+    if layout is None:
+        pytest.skip(
+            "no edge marked pyvelo-it-replace-modules lacks a QoS module of its own"
+        )
+    site = lab.edge_site(layout, Name.QOS)
+    async with restoring(site) as original:
+        assert original is None
+        without_return_data(lab.client, monkeypatch)
+        answers = record_answers(lab.client, monkeypatch)
+        state = await pipeline.load(layout.edge_id, enterprise_id=lab.enterprise_id)
+        # A disabled service rate limit: new content that limits nothing.
+        state.edge.qos.service_rate_limit = ServiceRateLimit.model_validate(
+            {"enabled": False, "inputType": "percent", "value": 1}
+        )
+        plan = _planned(state, Name.QOS)
+        check(plan.operation == "insert", f"planned {plan.operation}, expected insert")
+        result = await _save(pipeline, state)
+        check(
+            result.modules_inserted == [Name.QOS] and not result.modules_updated,
+            f"inserted {result.modules_inserted}, updated {result.modules_updated}",
+        )
+        check(
+            read_backs(answers) == 1,
+            f"the insert was read back {read_backs(answers)} time(s), expected once",
+        )
+
+        stored = await site.read_present()
+        inserted = state.module("QOS")
+        check(not inserted.is_new, "the inserted module is still new in the state")
+        check(
+            inserted.id_ == stored.id_,
+            "the state's module has another ID than the module inserted",
+        )
+        check_as_read("insert", inserted, stored)
+        check(
+            stored.raw_data == plan.data,
+            "the inserted module does not read back as it was sent: "
+            + describe(raw_changes(plan.data, stored.raw_data)),
+        )
+        record(
+            capsys,
+            "an insert without returnData: answered with an ID, and read back as "
+            f"stored at level {inserted.config_context or 'none'}",
+        )
+
+        await delete_module(site, stored.id_)
+        check(await site.read() is None, "the inserted module is still there")
