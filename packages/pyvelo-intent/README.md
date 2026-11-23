@@ -87,12 +87,15 @@ with what it would write, and `raise_for_errors()` raises them.
 `SaveResult.dry_run` says which kind of save a result is from, and
 `SaveResult.written` holds the writes a save stored, one `ModuleWrite` each:
 empty for a dry run and for a save with nothing to change.
-`build_default_pipeline` registers the edge and profile name resolvers. Each state resolves the names in
-its patches with resolvers of its own (`state.resolvers`), loaded for its
-enterprise when the state is loaded, so one pipeline can serve several
-enterprises: `load` and `load_profile` give the new state an unloaded copy of
-every resolver registered on the pipeline, add a segment resolver, and load it.
-Validators must be registered explicitly.
+`build_default_pipeline` registers the edge and profile name resolvers. Each
+state resolves the names in its patches with resolvers of its own
+(`state.resolvers`), loaded for its enterprise when the state is loaded, so one
+pipeline can serve several enterprises: `load` and `load_profile` give the new
+state an unloaded copy of every resolver registered on the pipeline, add a
+segment resolver, and load it.
+Validators are registered explicitly: pass a `ValidatorRegistry` as
+`validator_registry=` to `ConfigPipeline` or `build_default_pipeline`, or
+register on `pipeline.validators`.
 
 Application, address-group and service-group names need more resolvers. For
 application names, register `ApplicationResolver(client)` (from

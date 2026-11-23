@@ -63,7 +63,9 @@ class ConfigPipeline:
     ) -> None:
         self._client: VcoClientProtocol | None = client
         self._resolvers: ResolverRegistry = resolvers or ResolverRegistry()
-        self._validators: ValidatorRegistry = validator_registry or ValidatorRegistry()
+        self._validators: ValidatorRegistry = (
+            ValidatorRegistry() if validator_registry is None else validator_registry
+        )
 
     @property
     def client(self) -> VcoClientProtocol:
@@ -84,6 +86,14 @@ class ConfigPipeline:
         resolvers for the state's enterprise.
         """
         return self._resolvers
+
+    @property
+    def validators(self) -> ValidatorRegistry:
+        """The validators that ``save`` and ``validate`` run.
+
+        Register more with ``validators.register(...)``.
+        """
+        return self._validators
 
     async def load(
         self,
@@ -669,17 +679,25 @@ class ConfigPipeline:
         await applications.load(context)
 
 
-def build_default_pipeline(client: VcoClientProtocol) -> ConfigPipeline:
+def build_default_pipeline(
+    client: VcoClientProtocol,
+    *,
+    validator_registry: ValidatorRegistry | None = None,
+) -> ConfigPipeline:
     """Build a ConfigPipeline with the default resolvers.
 
     This is the standard bootstrap for intent operations: registers
-    EdgeResolver and ProfileResolver.
+    EdgeResolver and ProfileResolver. The validators in *validator_registry*,
+    if given, run before a save, and an error from one blocks a save that is
+    not a dry run.
     """
     resolvers = ResolverRegistry()
     resolvers.register(EdgeResolver(client))
     resolvers.register(ProfileResolver(client))
 
-    return ConfigPipeline(client, resolvers=resolvers)
+    return ConfigPipeline(
+        client, resolvers=resolvers, validator_registry=validator_registry
+    )
 
 
 class _SegmentMetadata(Protocol):

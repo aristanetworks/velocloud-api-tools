@@ -15,6 +15,7 @@ from pyvelo.client.schemas.configuration import (
     FirewallConfigurationModule,
 )
 from pyvelo.config.resolver import ResolverContext
+from pyvelo.config.resolvers.edge import EdgeResolver
 from pyvelo.config.validation import (
     ConfigStateLike,
     ValidationError,
@@ -22,9 +23,10 @@ from pyvelo.config.validation import (
     ValidatorRegistry,
     validator,
 )
-from pyvelo_intent.config.pipeline import ConfigPipeline
+from pyvelo_intent.config.pipeline import ConfigPipeline, build_default_pipeline
 from pyvelo_intent.config.state import ConfigState
 from pyvelo_intent.errors import SaveValidationError
+from pyvelo_intent.testing import MockVcoClient
 
 _TS = datetime(2024, 1, 1, tzinfo=UTC)
 
@@ -274,6 +276,62 @@ class TestPipelineValidation:
         result = pipeline.validate(state)
         assert not result.is_valid
         assert len(result.errors) == 1
+
+    def test_build_default_pipeline_takes_validators(self):
+        registry = ValidatorRegistry()
+
+        @validator(modules=[], phases=["write"], registry=registry)
+        def always_fail(_state: ConfigStateLike) -> ValidationResult:
+            return ValidationResult(
+                errors=[ValidationError(path="test", message="fail", code="test")]
+            )
+
+        assert always_fail.phases == ["write"]
+        pipeline = build_default_pipeline(MockVcoClient(), validator_registry=registry)
+        assert pipeline.validators is registry
+        assert [e.code for e in pipeline.validate(_make_state([])).errors] == ["test"]
+        # The name resolvers are still registered.
+        assert isinstance(pipeline.resolvers.get_resolver(EdgeResolver), EdgeResolver)
+
+    def test_validators_are_registered_on_a_pipeline_after_it_is_built(self):
+        pipeline = build_default_pipeline(MockVcoClient())
+        assert pipeline.validate(_make_state([])).is_valid
+
+        @validator(modules=[], phases=["write"], registry=pipeline.validators)
+        def always_fail(_state: ConfigStateLike) -> ValidationResult:
+            return ValidationResult(
+                errors=[ValidationError(path="test", message="fail", code="test")]
+            )
+
+        assert always_fail.phases == ["write"]
+        assert [e.code for e in pipeline.validate(_make_state([])).errors] == ["test"]
+
+    @pytest.mark.anyio
+    async def test_a_default_pipeline_save_is_blocked_by_its_validators(self):
+        pipeline = build_default_pipeline(MockVcoClient())
+
+        @validator(modules=[], phases=["write"], registry=pipeline.validators)
+        def always_fail(_state: ConfigStateLike) -> ValidationResult:
+            return ValidationResult(
+                errors=[ValidationError(path="test", message="blocked", code="test")]
+            )
+
+        assert always_fail.phases == ["write"]
+        fw_mod = FirewallConfigurationModule(
+            name="firewall",
+            data=FirewallData(segments=[]),
+            id_=1,
+            **_mod_kwargs(),
+        )
+        state = _make_state([fw_mod])
+        state.take_snapshot()
+        state.profile_config.firewall.data.firewall_enabled = False
+
+        with pytest.raises(SaveValidationError) as exc:
+            _ = await pipeline.save(state)
+        assert [e.code for e in exc.value.errors] == ["test"]
+        dry = await pipeline.save(state, dry_run=True)
+        assert [e.code for e in dry.validation_errors] == ["test"]
 
     @pytest.mark.anyio
     async def test_save_blocked_by_validation_errors(self):
