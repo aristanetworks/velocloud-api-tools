@@ -290,6 +290,11 @@ class ConfigState:
     modules it replaced, and are detached: an edit through one raises
     ``DetachedObjectError``, at once or at the next :meth:`plan`.
 
+    After a save that raised ``WriteOutcomeUnknownError``, or failed with any
+    other error once an insert was sent, the state keeps the new module as it
+    is and remembers the insert in ``unconfirmed_inserts``: the next save
+    reads the configuration for a module of that name before it inserts.
+
     The edge layer's module data is bound to the profile layer (see
     ``bind_profile`` on the module data), so a segment the edge layer lacks can
     be added to it as an empty entry that inherits from the profile's.
@@ -314,6 +319,12 @@ class ConfigState:
     ``apply`` and ``save`` called by the task that holds it raise
     ``RuntimeError``. Do not wait, inside the block, for another task that calls
     them: that task waits for the lock."""
+    unconfirmed_inserts: set[str] = field(
+        default_factory=set, init=False, repr=False, compare=False
+    )
+    """The new modules an insert was sent for whose answer was not read: the VCO
+    may hold them. The next save reads the configuration before it inserts one
+    of them."""
     _made_into_unset: list[tuple[AnyConfigurationModule, bool]] = field(
         default_factory=list, repr=False
     )
@@ -416,12 +427,14 @@ class ConfigState:
 
         A ``modules`` list that the creation set, where it was unset, is unset
         again once it is empty. Raises ``ValueError`` for a module that is not
-        new (``is_new``): one read from the VCO is never dropped.
+        new (``is_new``): one read from the VCO is never dropped. The module's
+        name leaves ``unconfirmed_inserts``.
         """
         if not module.is_new:
             raise ValueError(
                 f"module {module.name!r} was read from the VCO; only a new one is dropped"
             )
+        self.unconfirmed_inserts.discard(module.name)
         config = self.target_config
         if config.modules is MISSING:
             return
@@ -445,7 +458,7 @@ class ConfigState:
         An edge module is bound to the profile layer. The per-field snapshot
         takes a copy of *new*, so neither :meth:`plan` nor
         :meth:`get_field_changes` shows what was written; the other modules
-        keep their edits. *old* and every model inside it are detached: an
+        keep their edits. The module's name leaves ``unconfirmed_inserts``. *old* and every model inside it are detached: an
         assignment raises ``DetachedObjectError``, and so does the next
         :meth:`plan` after an in-place change to a list or dict they hold. So
         does a lookup through a detached layer that adds a placeholder
@@ -462,6 +475,7 @@ class ConfigState:
         if index is None:
             raise ValueError(f"module {old.name!r} is not in the target config")
         modules[index] = new
+        self.unconfirmed_inserts.discard(old.name)
         if config is self.edge_config:
             _bind_to_profile(new, self.profile_config)
         snapshot = self.snapshot_for_target()

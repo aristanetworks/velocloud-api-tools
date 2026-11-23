@@ -397,8 +397,9 @@ from `pyvelo.client.exceptions` and re-exported by `pyvelo_intent`.
 `ConfigConflictError` says the VCO refused the write because the module changed
 since it was read, or seems to have (`stated`, below, says which);
 `WriteNotAppliedError` says the VCO stored the write otherwise than as sent.
-`WriteOutcomeUnknownError` says the write was sent and the module as stored
-could not be read. When the read itself fails, its own error is raised, and the
+`WriteOutcomeUnknownError` says the write was sent (or, for an insert sent
+again, that an earlier save may have sent it) and the module as stored could
+not be read. When the read itself fails, its own error is raised, and the
 write may be stored.
 The rows below are tried in order, and the first that fits is raised, so a
 refused version is a `ConfigConflictError` even when some of your changes are
@@ -484,7 +485,7 @@ a request (a transport error, for example) leaves that module and the later
 ones with your edits, and carries a note that names the modules written before
 it; a second save sends what still differs.
 
-`WriteOutcomeUnknownError` has no lists and no module. `error.answer` says what the VCO said of the write itself: `"refused"` (it refused the version, so this write stored nothing), `"counted"` (it counted the write, so the changes are most likely stored) or `"row"` (its answer could not be read as this module). `error.detail` says why the module could not be read, and `error.plan` holds what was sent. The state keeps the module as read, with your edits. For an update, saving again is safe: if the first write was stored, the VCO refuses the old version, the save reads the module and reports what is stored. For an insert, look at the configuration first.
+`WriteOutcomeUnknownError` has no lists and no module. `error.answer` says what the VCO said of the write itself: `"refused"` (it refused the version, so this write stored nothing), `"counted"` (it counted the write, so the changes are most likely stored) or `"row"` (its answer could not be read as this module). `error.detail` says why the module could not be read, and `error.plan` holds what was sent (what would have been, for an insert sent again). The state keeps the module as read, with your edits. For an update, saving again is safe: if the first write was stored, the VCO refuses the old version, the save reads the module and reports what is stored. For an insert, saving again is safe too: the state has recorded it, and the next save reads the configuration before it inserts (below).
 
 A `WriteNotAppliedError` after a write that did work means the VCO stores that
 value in another form than the one sent. When the value is part of the key of
@@ -501,6 +502,21 @@ the save replaced, and are detached. Reading one is fine. An assignment to one
 raises `DetachedObjectError`, and an in-place edit to a list or dict it holds
 (`seg.outbound.insert(0, rule)`) is reported, once, by the next `plan()` or
 save. Take the object from the state again and redo the edit.
+
+A write whose answer never arrived (a transport error after the request was
+sent, a cancelled save) may or may not be stored, and so may one that raised
+`WriteOutcomeUnknownError`. For an update the next save settles it without
+writing twice: it sends the same version, which the VCO refuses or ignores when
+the first write was stored, and the save goes by the module it then holds. It
+passes when that module has every one of your changes, and otherwise raises one
+of the errors above with the module as stored: after a refusal the VCO states,
+for instance, a change to a value it stores its own way is a lost edit. An
+insert carries no version, so the state remembers it
+(`state.unconfirmed_inserts`), and the next save first reads the configuration.
+A module of that name found there is taken as the insert's answer and checked
+against the plan like any write, and nothing is inserted again; with none
+there, the save inserts. A `dry_run` does not read: it plans the insert and
+adds a warning with the code `insert_unconfirmed`.
 
 Known limits:
 
@@ -541,9 +557,6 @@ Known limits:
   your item lost and another item, only the VCO's, in `server_changes`. IPv6
   addresses in the keys of device settings (a static route's destination and
   gateway) are covered.
-- An insert that reached the VCO but whose save failed, for example with a
-  transport error, is retried as an insert by the next save. Check the
-  configuration before saving again.
 
 ## Scope and data handling
 

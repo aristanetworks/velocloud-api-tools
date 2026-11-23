@@ -415,9 +415,30 @@ class ConfigPipeline:
         holds the module as stored, when the error carries it
         (``error.module``): redo the edits in ``error.lost_edits`` and save
         again. ``error.completed`` are the writes of this save before it. Any
-        other error of a request leaves that module and the later ones with
-        their edits, and carries a note that names the modules written before
-        it. ``dry_run`` stops after step 2 and sends nothing.
+        other error of a request, ``WriteOutcomeUnknownError`` among them
+        (the write was sent, or an insert was about to be sent again, and the
+        module as stored could not be read), leaves that module and the later
+        ones with their edits, and carries a note that names the modules
+        written before it. ``dry_run`` stops after step 2 and sends nothing
+        and reads nothing.
+
+        When an insert may have reached the VCO and the save failed (the
+        answer timed out, the save was cancelled, or the VCO answered an ID
+        and the module could not be read back), the state keeps the module as
+        new and records its name in ``state.unconfirmed_inserts``. The next
+        save first reads the configuration: a module of that name found there
+        is the insert's answer, checked against the plan like any write, and
+        nothing is inserted again; with none there, the save inserts. If that
+        read cannot be used, the save raises ``WriteOutcomeUnknownError``
+        before it sends anything. A ``dry_run`` plans the insert and adds a
+        warning with the code ``insert_unconfirmed``.
+
+        An update whose answer was lost needs no record: the next save sends
+        the same version, which the VCO refuses or ignores when the first
+        write was stored, so nothing is written twice. The save goes by the
+        module it then holds: it passes when that module has every planned
+        change, and otherwise raises one of the errors above with the module
+        as stored.
 
         ``apply`` and ``save`` of one state run one after the other: this holds
         ``state.lock`` from the plan to the return, so a second save plans the
@@ -468,6 +489,19 @@ class ConfigPipeline:
                     result.modules_updated.append(name)
 
             if dry_run:
+                result.warnings.extend(
+                    ValidationWarning(
+                        path=module_plan.name,
+                        message=(
+                            "an earlier insert of this module may have reached the VCO; "
+                            + "the save reads the configuration first, and takes a module "
+                            + "of this name it finds there as the insert's answer"
+                        ),
+                        code="insert_unconfirmed",
+                    )
+                    for module_plan in plan.changed
+                    if module_plan.name in state.unconfirmed_inserts
+                )
                 return result
             return await self._send(state, plan, result)
 
@@ -480,7 +514,9 @@ class ConfigPipeline:
         not one a save writes. A ``ModuleWriteError`` puts the module as
         stored in *state* too, when it carries one, and gets the writes before
         it as ``completed``. Any other error gets a note that names them, if
-        there are any. So does the ``DetachedObjectError`` of an edit made
+        there are any. An insert that fails in any way but with the module as
+        stored is recorded in ``state.unconfirmed_inserts``, and the next save
+        reads before it inserts that module again. So does the ``DetachedObjectError`` of an edit made
         while a module was written: it stops the save once that module is
         stored, and its note also names the modules not written.
         """
@@ -493,9 +529,13 @@ class ConfigPipeline:
         for i, (module_plan, mod, planned) in enumerate(
             zip(plan.changed, modules, dumps, strict=True)
         ):
+            insert = module_plan.operation == "insert"
             try:
                 write = await self.client.write_module(
-                    mod, module_plan, enterprise_id=enterprise_id
+                    mod,
+                    module_plan,
+                    enterprise_id=enterprise_id,
+                    if_absent=insert and mod.name in state.unconfirmed_inserts,
                 )
             except ModuleWriteError as error:
                 stored = error.module
@@ -505,10 +545,17 @@ class ConfigPipeline:
                 # write error is not hidden behind the ValueError of replace_module.
                 if isinstance(stored, type(mod)) and state.find_module(mod.name) is mod:
                     state.replace_module(mod, stored)
+                elif insert:
+                    state.unconfirmed_inserts.add(mod.name)
                 error.completed = tuple(done)
                 raise
-            except Exception as error:
-                if done:
+            except BaseException as error:
+                # An insert may have reached the VCO: a transport error, a
+                # cancellation, or an error before the request was sent (the
+                # next save then reads once, finds nothing and inserts).
+                if insert:
+                    state.unconfirmed_inserts.add(mod.name)
+                if done and isinstance(error, Exception):
                     error.add_note(_written_note(done))
                 raise
             paths = list(
