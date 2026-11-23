@@ -5,6 +5,7 @@ what they rely on to restore a lab and to keep its names out of their output is
 checked here with no lab.
 """
 
+import ast
 import contextlib
 import copy
 import inspect
@@ -17,6 +18,7 @@ from typing import Any, ClassVar, Literal
 import httpx
 import live_support as live
 import pytest
+import pyvelo
 from pydantic import MISSING, BaseModel, ValidationError
 from pyvelo.client import (
     ConfigConflictError,
@@ -32,11 +34,19 @@ from pyvelo.client.exceptions import LossyFieldError, WriteAnswer
 from pyvelo.client.module_write import plan_module
 from pyvelo.client.schemas.configuration import (
     ConfigurationModuleUpdate,
+    EnterpriseConfigurationProfile,
     FirewallConfigurationModule,
     InsertQosConfigurationModule,
     UpdateConfigurationModule,
 )
-from pyvelo.core import PatchError
+from pyvelo.client.schemas.edge import DeleteEdge
+from pyvelo.client.schemas.enterprise import (
+    GetEnterprise,
+    GetEnterpriseEdges,
+    GetEnterpriseEdgesItem,
+)
+from pyvelo.client.schemas.profiles import GetEnterpriseConfigurations
+from pyvelo.core import PatchError, RowsModifiedConfirmation
 from pyvelo.core.rebase import Key, Path, RawChange
 from pyvelo.core.response_check import PlannedChange, ServerChange
 from pyvelo.testing import (
@@ -804,6 +814,8 @@ class FakeLab:
         self.refused_methods: set[str] = set()
         """The methods that are refused the same way, whatever they ask."""
         self.enterprise_error: bool = False
+        self.enterprise_failure: Literal["http", "empty", "no_id"] | None = None
+        """How ``enterprise/getEnterprise`` fails apart from a refusal: an HTTP status, no result, a result with no ID."""
         self.before: Callable[[str], None] | None = None
         """Called with the method of each request before it is answered."""
 
@@ -867,9 +879,15 @@ class FakeLab:
         if method in self.refused_methods or (update and params["id"] in self.refused):
             error = REFUSAL
         elif method == "enterprise/getEnterprise":
+            if self.enterprise_failure == "http":
+                return httpx.Response(503, text="secret-lab-name is down")
+            if self.enterprise_failure == "empty":
+                return httpx.Response(200, json=make_jsonrpc_response())
             if self.enterprise_error:
                 error = {"code": -32000, "message": "invalid enterprise context"}
             result = {"id": params.get("enterpriseId", ENTERPRISE)}
+            if self.enterprise_failure == "no_id":
+                result = {}
         elif method == "enterprise/getEnterpriseEdges":
             result = {"metaData": {"more": False}, "data": list(self.edges.values())}
         elif method == "enterprise/getEnterpriseConfigurations":
@@ -929,10 +947,12 @@ async def access_for(
     connected: str = HOST,
     enterprise_id: int | None = None,
     enterprise_error: bool = False,
+    enterprise_failure: Literal["http", "empty", "no_id"] | None = None,
 ) -> tuple[live.WriteAccess, list[tuple[str, dict[str, Any]]]]:
     """The access *environ* gives a client connected to *connected*, and what it asked the Orchestrator."""
     fake = FakeLab()
     fake.enterprise_error = enterprise_error
+    fake.enterprise_failure = enterprise_failure
     access = await live.check_write_access(
         client_over(fake, connected), enterprise_id, environ
     )
@@ -977,6 +997,7 @@ async def refused(
     connected: str = HOST,
     enterprise_id: int | None = None,
     enterprise_error: bool = False,
+    enterprise_failure: Literal["http", "empty", "no_id"] | None = None,
 ) -> None:
     """*environ* is refused for *reason*, with what to do, in a message with neither the host nor the token."""
     access, _ = await access_for(
@@ -984,6 +1005,7 @@ async def refused(
         connected=connected,
         enterprise_id=enterprise_id,
         enterprise_error=enterprise_error,
+        enterprise_failure=enterprise_failure,
     )
     assert access == live.WriteAccess(
         False, f"writes refused: {reason}; nothing was written; {remedy}", True
@@ -1028,6 +1050,29 @@ async def test_an_opt_in_that_does_not_match_is_refused():
         "(no error code)",
         "set VCO_ENTERPRISE_ID if the token is not an enterprise's own",
         enterprise_error=True,
+    )
+    await refused(
+        OPT_IN,
+        "the enterprise this run addresses could not be read from the Orchestrator "
+        "(HTTP 503)",
+        "check that VCO_HOST names an Orchestrator that answers and that "
+        "VCO_TOKEN is accepted by it, then run again",
+        enterprise_failure="http",
+    )
+    await refused(
+        OPT_IN,
+        "the enterprise this run addresses could not be read from the Orchestrator "
+        "(no answer)",
+        "set VCO_ENTERPRISE_ID if the token is not an enterprise's own",
+        enterprise_failure="empty",
+    )
+    await refused(
+        OPT_IN,
+        "the enterprise this run addresses could not be read from the Orchestrator "
+        "(the answer has no ID)",
+        "check that VCO_HOST names an Orchestrator and that the token may "
+        "read its enterprise",
+        enterprise_failure="no_id",
     )
 
 
@@ -1162,13 +1207,13 @@ async def test_an_insert_is_covered_by_the_block_of_its_configuration_and_name(
         )
         await live.insert_module(site, copy.deepcopy(QOS), None)
         (added,) = set(fake.store.rows) - {1, 2, 3}
-        assert run.inserted == {added}
+        assert set(run.inserted) == {added}
         # The module the run inserted is covered by the block.
         await raise_limit(site, 5)
         assert fake.data(added)["serviceRateLimit"]["value"] == 5
     # Leaving the block deleted it again.
     assert set(fake.store.rows) == {1, 2, 3}
-    assert run.inserted == set()
+    assert run.inserted == {}
 
 
 async def test_a_refused_write_carries_its_codes_and_not_the_names_in_its_text(
@@ -1181,10 +1226,8 @@ async def test_a_refused_write_carries_its_codes_and_not_the_names_in_its_text(
     async with live.restoring(site):
         with pytest.raises(VcoOperationError) as caught:
             await raise_limit(site, 2)
-    assert str(caught.value) == (
-        "configuration/updateConfigurationModule failed: refused\n"
-        "  - [DS00000001] lan.networks: "
-    )
+    assert live.refusal_codes(caught.value) == "DS00000001 lan.networks"
+    assert "secret-lab-name" not in str(caught.value)
     # The Orchestrator's own error, which names the entity, is not in the chain.
     assert caught.value.__cause__ is None and caught.value.__suppress_context__
 
@@ -1242,3 +1285,245 @@ async def test_a_refused_delete_and_a_refused_effective_read_carry_codes_alone(
         assert "secret-lab-name" not in str(caught.value)
         assert "DS00000001" in str(caught.value)
     assert 1 in fake.store.rows
+
+
+async def test_write_module_outside_a_block_is_refused(monkeypatch: pytest.MonkeyPatch):
+    fake = lab_fake()
+    lab = await opened(fake, monkeypatch)
+    module = await lab.edge_site(lab.layouts[0], Name.QOS).read_present()
+    data = copy.deepcopy(QOS)
+    data["serviceRateLimit"]["value"] = 2
+    with pytest.raises(live.WritesRefused) as refused:
+        _ = await lab.client.write_module(module, plan_module(module, data))
+    assert str(refused.value) == live.OUTSIDE_RESTORING
+    assert "updateConfigurationModule" not in fake.methods()
+    assert fake.data(1) == QOS
+
+
+async def test_write_module_inside_a_block_writes_the_module_it_covers(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    fake = lab_fake()
+    lab = await opened(fake, monkeypatch)
+    site = lab.edge_site(lab.layouts[0], Name.QOS)
+    async with live.restoring(site):
+        module = await site.read_present()
+        data = copy.deepcopy(QOS)
+        data["serviceRateLimit"]["value"] = 2
+        _ = await lab.client.write_module(module, plan_module(module, data))
+        assert fake.data(1)["serviceRateLimit"]["value"] == 2
+    assert fake.data(1) == QOS
+
+
+async def test_a_delete_outside_a_block_or_of_an_uncovered_module_is_refused(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    fake = lab_fake()
+    fake.edges[5]["description"] = REPLACEABLE
+    lab = await opened(fake, monkeypatch)
+    site = lab.edge_site(lab.layouts[0], Name.QOS)
+    elsewhere = lab.profile_site(20, Name.QOS)
+    with pytest.raises(live.WritesRefused) as outside:
+        await live.delete_module(site, 1)
+    assert str(outside.value) == live.OUTSIDE_RESTORING
+    async with live.restoring(site):
+        # A module of another configuration, and a module of this one the block did not find.
+        with pytest.raises(live.WritesRefused) as other_site:
+            await live.delete_module(elsewhere, 2)
+        with pytest.raises(live.WritesRefused) as other_module:
+            await live.delete_module(site, 3)
+    for refused in (other_site, other_module):
+        assert str(refused.value).endswith(
+            "that no open restoring block covers; nothing was sent; open "
+            "`restoring(site)` on the module's own site and write inside it"
+        )
+        assert str(refused.value).startswith("a delete of a")
+    assert "deleteConfigurationModule" not in fake.methods()
+    assert set(fake.store.rows) == {1, 2, 3}
+
+
+async def test_a_module_a_block_inserted_is_not_covered_once_the_block_is_closed(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    fake = lab_fake()
+    lab = await opened(fake, monkeypatch)
+    site = lab.edge_site(lab.layouts[0], Name.QOS)
+    run = live.run_of(lab.client)
+    async with live.restoring(site):
+        # A second QoS module in the configuration the block is on: the block does not delete it.
+        await live.insert_module(site, copy.deepcopy(QOS), None)
+        (added,) = set(fake.store.rows) - {1, 2, 3}
+        assert set(run.inserted) == {added}
+    assert run.inserted == {}
+    async with live.restoring(site):
+        with pytest.raises(live.WritesRefused, match="an update of a module"):
+            _ = await lab.client.update_configuration_module(qos_update(added))
+
+
+class WriteCall:
+    """A write the client sends over the portal, and how a test might send it."""
+
+    def __init__(self, name: str, send: Callable[[VcoClient], Any]) -> None:
+        self.name: str = name
+        self.send: Callable[[VcoClient], Any] = send
+
+
+WRITE_CALLS = [
+    WriteCall(
+        "portal",
+        lambda client: client.portal(
+            "edge/deleteEdge", DeleteEdge(id_=5), RowsModifiedConfirmation
+        ),
+    ),
+    WriteCall(
+        "portal_list",
+        lambda client: client.portal_list(
+            "edge/deleteEdge", DeleteEdge(id_=5), RowsModifiedConfirmation
+        ),
+    ),
+    WriteCall(
+        "portal_paginated_list",
+        lambda client: client.portal_paginated_list(
+            "edge/deleteEdge", GetEnterpriseEdges(), RowsModifiedConfirmation
+        ),
+    ),
+    WriteCall(
+        "portal_paginated",
+        lambda client: anext(
+            client.portal_paginated(
+                "edge/deleteEdge", GetEnterpriseEdges(), RowsModifiedConfirmation
+            )
+        ),
+    ),
+    WriteCall("delete_edge", lambda client: client.delete_edge(DeleteEdge(id_=5))),
+    WriteCall(
+        "a module update sent by hand",
+        lambda client: client.portal(
+            "configuration/updateConfigurationModule",
+            qos_update(1),
+            RowsModifiedConfirmation,
+        ),
+    ),
+    WriteCall(
+        "a module delete sent by hand",
+        lambda client: client.portal(
+            "configuration/deleteConfigurationModule",
+            live.DeleteConfigurationModule(id_=1),
+            RowsModifiedConfirmation,
+        ),
+    ),
+]
+
+
+@pytest.mark.parametrize("call", WRITE_CALLS, ids=[c.name for c in WRITE_CALLS])
+async def test_a_write_that_is_not_the_suites_own_is_refused_even_in_a_block(
+    call: WriteCall, monkeypatch: pytest.MonkeyPatch
+):
+    fake = lab_fake()
+    lab = await opened(fake, monkeypatch)
+    site = lab.edge_site(lab.layouts[0], Name.QOS)
+    async with live.restoring(site):
+        fake.requests.clear()
+        with pytest.raises(live.WritesRefused) as refused:
+            _ = await call.send(lab.client)
+        sent = list(fake.requests)
+    message = str(refused.value)
+    assert re.match(r"a call to \w+/\w+, which is not a read", message)
+    assert "nothing was sent" in message and "restoring block" in message
+    assert HOST not in message and "test-token" not in message
+    assert sent == []
+
+
+async def test_a_read_passes_every_form_of_the_call(monkeypatch: pytest.MonkeyPatch):
+    fake = lab_fake()
+    lab = await opened(fake, monkeypatch)
+    client = lab.client
+    _ = await client.portal(
+        "enterprise/getEnterprise", GetEnterprise(), live.EnterpriseId
+    )
+    _ = await client.portal_list(
+        "enterprise/getEnterpriseConfigurations",
+        GetEnterpriseConfigurations(),
+        EnterpriseConfigurationProfile,
+    )
+    _ = await client.portal_paginated_list(
+        "enterprise/getEnterpriseEdges", GetEnterpriseEdges(), GetEnterpriseEdgesItem
+    )
+    pages = [
+        page
+        async for page in client.portal_paginated(
+            "enterprise/getEnterpriseEdges",
+            GetEnterpriseEdges(),
+            GetEnterpriseEdgesItem,
+        )
+    ]
+    assert len(pages) == 1
+
+
+@pytest.mark.parametrize(
+    "method",
+    [
+        "enterprise/getEnterprise",
+        "edge/getEdgeConfigurationStack",
+        "event/getEnterpriseEventsList",
+        "network/getNetworkGateways",
+        "metrics/getEdgeAppMetrics",
+        "enterprise/listSomething",
+        "enterprise/isSomething",
+    ],
+)
+def test_a_method_that_starts_with_a_read_verb_passes(method: str):
+    live.check_call(method)
+
+
+@pytest.mark.parametrize(
+    "method",
+    [
+        "edge/deleteEdge",
+        "edge/edgeProvision",
+        "configuration/cloneEnterpriseTemplate",
+        "enterprise/insertObjectGroup",
+        "diagnosticBundle/updateDiagnosticBundle",
+        "pki/renewEdgeCertificate",
+        "enterprise/getter",  # a verb is followed by a capital
+        "enterprise/isolateSomething",
+        "configuration/updateConfigurationModule",
+        "configuration/insertConfigurationModule",
+        "configuration/deleteConfigurationModule",
+    ],
+)
+def test_any_other_method_is_refused_outside_the_code_that_checked_it(method: str):
+    with pytest.raises(live.WritesRefused, match="^a call to "):
+        live.check_call(method)
+
+
+def string_constants(function: ast.AST) -> list[str]:
+    return [
+        node.value
+        for node in ast.walk(function)
+        if isinstance(node, ast.Constant) and isinstance(node.value, str)
+    ]
+
+
+def test_every_method_the_read_only_live_tests_reach_passes_the_guard():
+    """The methods named in the analytics and in each read operation of the client are reads."""
+    source = pathlib.Path(pyvelo.__file__).parent
+    method = re.compile(r"[a-zA-Z]+/[a-zA-Z]+")
+    reached: set[str] = set()
+    for path in (source / "analytics").glob("*.py"):
+        reached.update(
+            text
+            for text in string_constants(ast.parse(path.read_text()))
+            if method.fullmatch(text)
+        )
+    for path in (source / "client" / "operations").glob("*.py"):
+        for node in ast.walk(ast.parse(path.read_text())):
+            if isinstance(
+                node, (ast.FunctionDef, ast.AsyncFunctionDef)
+            ) and node.name.startswith(("get_", "list_", "is_")):
+                reached.update(
+                    text for text in string_constants(node) if method.fullmatch(text)
+                )
+    assert "enterprise/getEnterpriseEdges" in reached and len(reached) > 20
+    for name in sorted(reached):
+        live.check_call(name)

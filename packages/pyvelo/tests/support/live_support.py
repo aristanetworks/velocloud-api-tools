@@ -36,9 +36,23 @@ a production tenant.
     uv run --env-file .env pytest -m "integration and not live_write"   # reads only
     uv run --env-file .env pytest -m integration                        # everything
 
-A test that writes is marked ``live_write``. The client refuses a write from
-any other test, a write outside a ``restoring`` block, and a write to a
-module no open block covers: the suite can only write what it will put back.
+A test that writes is marked ``live_write``. The client the suite connects
+(``connect``) refuses, with ``WritesRefused`` and before anything is sent:
+
+* every portal call that is not a read, except the three writes the suite
+  makes itself: ``update_configuration_module`` and
+  ``insert_configuration_module`` of the client, and ``delete_module``. A read
+  is a method whose name starts with ``get``, ``list`` or ``is``. This covers a
+  raw ``client.portal(...)`` and every other write method of the client
+  (``create_edge``, ``delete_edge``, the enterprise, object-group and
+  network-segment writes, the diagnostic bundles and the rest);
+* those three writes from a test that is not marked ``live_write``, outside a
+  ``restoring`` block, or to a module no open block found or inserted: the
+  suite can only write what it will put back.
+
+One hole is left: a second client that a test builds itself is not guarded
+(nor are the websocket calls of the client, remote diagnostics). A live test
+uses the ``vco_client`` fixture.
 
 ``restoring`` is the one way a test writes: it records a module's raw data first
 (in a private file under ``$PYVELO_IT_BACKUP_DIR``, which must be outside the
@@ -84,15 +98,17 @@ from collections.abc import (
     Mapping,
     Sequence,
 )
-from contextlib import asynccontextmanager, contextmanager
+from contextlib import aclosing, asynccontextmanager, contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from typing import Annotated, Any, cast
 
 import pytest
-from pydantic import MISSING, RootModel, ValidationError
+from pydantic import MISSING, BaseModel, RootModel, ValidationError
 from pyvelo.client import (
     ConfigConflictError,
     VcoClient,
+    VcoEmptyResultError,
     VcoHttpError,
     VcoOperationError,
     WriteNotAppliedError,
@@ -126,6 +142,7 @@ from pyvelo.core import (
     Alias,
     ConfigContext,
     NoneIsMissing,
+    PaginatedVcoModel,
     PatchError,
     RowsModifiedConfirmation,
     VcoModel,
@@ -546,6 +563,19 @@ async def check_write_access(
             f"Orchestrator ({refusal_codes(exc)})",
             "set VCO_ENTERPRISE_ID if the token is not an enterprise's own",
         )
+    except VcoHttpError as exc:
+        return _refused(
+            "the enterprise this run addresses could not be read from the "
+            f"Orchestrator (HTTP {exc.status_code})",
+            "check that VCO_HOST names an Orchestrator that answers and that "
+            "VCO_TOKEN is accepted by it, then run again",
+        )
+    except VcoEmptyResultError:
+        return _refused(
+            "the enterprise this run addresses could not be read from the "
+            "Orchestrator (no answer)",
+            "set VCO_ENTERPRISE_ID if the token is not an enterprise's own",
+        )
     except ValidationError:
         return _refused(
             "the enterprise this run addresses could not be read from the "
@@ -578,17 +608,19 @@ def writer_test(marked: bool) -> Generator[None]:
         _marked = before
 
 
+type Block = tuple[Site, int | None]
+"""An open ``restoring`` block: its site, and the ID of the module it found there."""
+
+
 @dataclass
 class LiveRun:
     """What one client may write, and what it has open to write: the guard's state."""
 
     access: WriteAccess = field(default_factory=WriteAccess)
-    open: list[tuple[Site, int | None]] = field(
-        default_factory=lambda: list[tuple[Site, int | None]]()
-    )
-    """The site of each open ``restoring`` block, and the ID of the module it found."""
-    inserted: set[int] = field(default_factory=set[int])
-    """The IDs of the modules this run inserted and has not deleted."""
+    open: list[Block] = field(default_factory=lambda: list[Block]())
+    """The open ``restoring`` blocks, the innermost last."""
+    inserted: dict[int, Block] = field(default_factory=lambda: dict[int, Block]())
+    """The ID of each module a block's test inserted, with the block that was open for it."""
 
     def _check_may_write(self) -> None:
         if not _marked:
@@ -598,11 +630,33 @@ class LiveRun:
         if not self.open:
             raise WritesRefused(OUTSIDE_RESTORING)
 
+    def _covers(self, module_id: int) -> bool:
+        """Whether an open block found module *module_id* or inserted it."""
+        found = {module for _, module in self.open if module is not None}
+        return module_id in found or module_id in self.inserted
+
+    def block_for(self, configuration_id: int, name: str) -> Block | None:
+        """The innermost open block on that configuration's *name* module."""
+        return next(
+            (
+                block
+                for block in reversed(self.open)
+                if block[0].configuration_id == configuration_id
+                and block[0].name.value == name
+            ),
+            None,
+        )
+
+    def close(self, block: Block) -> None:
+        """Take *block* out of the open ones, and with it the modules it inserted."""
+        self.open[:] = [b for b in self.open if b is not block]
+        for module_id in [m for m, b in self.inserted.items() if b is block]:
+            del self.inserted[module_id]
+
     def check_update(self, module_id: int) -> None:
         """Raise ``WritesRefused`` unless the update of *module_id* is one a block will put back."""
         self._check_may_write()
-        found = {module for _, module in self.open if module is not None}
-        if module_id not in found and module_id not in self.inserted:
+        if not self._covers(module_id):
             raise WritesRefused(f"an update of a module {NOT_COVERED}")
 
     def check_replace(self, configuration_id: int, name: str, what: str) -> None:
@@ -611,11 +665,14 @@ class LiveRun:
         *what* is ``"an insert"`` or ``"a delete"``.
         """
         self._check_may_write()
-        if not any(
-            site.configuration_id == configuration_id and site.name.value == name
-            for site, _ in self.open
-        ):
+        if self.block_for(configuration_id, name) is None:
             raise WritesRefused(f"{what} of a {name} module {NOT_COVERED}")
+
+    def check_delete(self, configuration_id: int, name: str, module_id: int) -> None:
+        """Raise ``WritesRefused`` unless a block is on that module and *module_id* is one it found or inserted."""
+        self.check_replace(configuration_id, name, "a delete")
+        if not self._covers(module_id):
+            raise WritesRefused(f"a delete of a module {NOT_COVERED}")
 
 
 def require_writes(run: LiveRun) -> None:
@@ -628,16 +685,71 @@ def require_writes(run: LiveRun) -> None:
         pytest.skip(run.access.refusal)
 
 
+_READ = re.compile(r"(get|list|is)[A-Z]")
+
+_sending: ContextVar[str | None] = ContextVar("live_support_sending", default=None)
+"""The one write method the code now running has checked and may send."""
+
+
+@contextmanager
+def _sends(method: str) -> Generator[None]:
+    """For the length of the block, the client may send *method*: the caller has checked the write."""
+    token = _sending.set(method)
+    try:
+        yield
+    finally:
+        _sending.reset(token)
+
+
+def check_call(method: str) -> None:
+    """Raise ``WritesRefused`` for a portal call that is neither a read nor a write already checked.
+
+    A read is a method whose name, after its namespace, starts with ``get``,
+    ``list`` or ``is``. A write passes only from the code that checked it:
+    ``update_configuration_module`` and ``insert_configuration_module`` as
+    ``run_of`` guards them, and ``delete_module``.
+    """
+    if _READ.match(method.rsplit("/", 1)[-1]) or _sending.get() == method:
+        return
+    raise WritesRefused(
+        f"a call to {method}, which is not a read and is not a write the suite "
+        "checks; nothing was sent; the live suite writes only module updates and "
+        "inserts through the client's own methods, and deletes through "
+        "delete_module, each inside a restoring block, so leave this call out of "
+        "a live test"
+    )
+
+
 _RUNS: weakref.WeakKeyDictionary[VcoClient, LiveRun] = weakref.WeakKeyDictionary()
+
+
+def _checked_call(
+    original: Callable[..., Awaitable[Any]],
+) -> Callable[..., Awaitable[Any]]:
+    """*original*, a portal method that takes the method string first, with ``check_call`` before it."""
+
+    async def checked(method: str, *args: Any, **kwargs: Any) -> Any:
+        check_call(method)
+        return await original(method, *args, **kwargs)
+
+    return checked
 
 
 def run_of(client: VcoClient) -> LiveRun:
     """The run of *client*, made on the first call, which also puts the guard on the client.
 
-    The guard is in the client's own write methods, so a test that forgets
-    every helper is refused too. A refused write carries its codes alone: the
+    The guard is on the client's own methods, so a test that forgets every
+    helper is refused too. It covers every portal call the client makes
+    (``portal``, ``portal_list``, ``portal_paginated`` and
+    ``portal_paginated_list``): a read passes, and a write passes only from
+    ``update_configuration_module`` or ``insert_configuration_module`` (inside
+    a ``restoring`` block, to a module that block covers) or from
+    ``delete_module``. A refused write carries its codes alone: the
     Orchestrator's validation text quotes the names of what it refuses, and a
     refused write in a test would put them in the test output.
+
+    It does not cover a second client a test builds itself, nor the websocket
+    calls of a client (remote diagnostics).
     """
     run = _RUNS.get(client)
     if run is not None:
@@ -646,13 +758,15 @@ def run_of(client: VcoClient) -> LiveRun:
     _RUNS[client] = run
     update = client.update_configuration_module
     insert = client.insert_configuration_module
+    paginated = client.portal_paginated
 
     async def guarded_update(
         request: UpdateConfigurationModule, *, level: ConfigContext | None = None
     ) -> AnyConfigurationModule | None:
         run.check_update(request.configuration_module_id)
         try:
-            return await update(request, level=level)
+            with _sends("configuration/updateConfigurationModule"):
+                return await update(request, level=level)
         except VcoOperationError as exc:
             raise _redacted(exc) from None
 
@@ -661,17 +775,31 @@ def run_of(client: VcoClient) -> LiveRun:
     ) -> InsertConfigurationModuleResult | AnyConfigurationModule:
         run.check_replace(request.configuration_id, request.name, "an insert")
         try:
-            inserted = await insert(request, level=level)
+            with _sends("configuration/insertConfigurationModule"):
+                inserted = await insert(request, level=level)
         except VcoOperationError as exc:
             raise _redacted(exc) from None
-        run.inserted.add(inserted.id_)
+        block = run.block_for(request.configuration_id, request.name)
+        if block is not None:
+            run.inserted[inserted.id_] = block
         return inserted
+
+    async def guarded_paginated[T: BaseModel](
+        method: str, request: PaginatedVcoModel, ItemType: type[T]
+    ) -> AsyncGenerator[list[T]]:
+        check_call(method)
+        async with aclosing(paginated(method, request, ItemType)) as pages:
+            async for page in pages:
+                yield page
 
     # Instance attributes, which shadow the methods: a spy a test puts over them
     # (``monkeypatch.setattr``) wraps these.
     attributes = vars(client)
     attributes["update_configuration_module"] = guarded_update
     attributes["insert_configuration_module"] = guarded_insert
+    attributes["portal_paginated"] = guarded_paginated
+    for name in ("portal", "portal_list", "portal_paginated_list"):
+        attributes[name] = _checked_call(getattr(client, name))
     return run
 
 
@@ -793,18 +921,21 @@ class DeleteConfigurationModule(VcoModel):
 
 async def delete_module(site: Site, module_id: int) -> None:
     run = run_of(site.client)
-    run.check_replace(site.configuration_id, site.name.value, "a delete")
+    run.check_delete(site.configuration_id, site.name.value, module_id)
     request = DeleteConfigurationModule(id_=module_id)
     if site.enterprise_id is not None:
         request.enterprise_id = site.enterprise_id
     try:
-        result = await site.client.portal(
-            "configuration/deleteConfigurationModule", request, RowsModifiedConfirmation
-        )
+        with _sends("configuration/deleteConfigurationModule"):
+            result = await site.client.portal(
+                "configuration/deleteConfigurationModule",
+                request,
+                RowsModifiedConfirmation,
+            )
     except VcoOperationError as exc:
         raise _redacted(exc) from None
     check(not result.error, f"deleting the {site.name.value} module was refused")
-    run.inserted.discard(module_id)
+    _ = run.inserted.pop(module_id, None)
 
 
 async def insert_module(site: Site, data: object, refs: object) -> None:
@@ -1075,7 +1206,7 @@ async def restoring(site: Site) -> AsyncGenerator[Original | None]:
     require_writes(run)
     original = await capture(site)
     backup = save_backup(site, original) if original is not None else None
-    entry = (site, original.module_id if original is not None else None)
+    entry: Block = (site, original.module_id if original is not None else None)
     run.open.append(entry)
     try:
         try:
@@ -1100,7 +1231,7 @@ async def restoring(site: Site) -> AsyncGenerator[Original | None]:
                 if backup is not None:
                     backup.unlink(missing_ok=True)
     finally:
-        run.open.remove(entry)
+        run.close(entry)
 
 
 async def accepts_a_write(site: Site) -> bool:
