@@ -563,7 +563,7 @@ def test_a_refusal_the_client_already_redacted_still_shows_its_codes():
         == ("E1 a.b[0]; E_2")
     )
     assert live.failure_text(redacted_error) == (
-        "VcoOperationError in configuration/updateConfigurationModule: E1 a.b[0]; E_2"
+        "DataRefused in configuration/updateConfigurationModule: E1 a.b[0]; E_2"
     )
 
 
@@ -1680,3 +1680,101 @@ async def test_an_insert_and_a_delete_need_the_mark_for_modules(
         )
     assert set(fake.store.rows) == {1, 2, 3}
     assert "deleteConfigurationModule" not in fake.methods()
+
+
+async def test_a_module_that_takes_its_own_data_is_writable(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    fake = lab_fake()
+    lab = await opened(fake, monkeypatch)
+    site = lab.edge_site(lab.layouts[0], Name.QOS)
+    assert await live.own_data_refusal(site) is None
+    assert await live.accepts_a_write(site)
+
+
+async def test_a_validation_refusal_is_its_codes(monkeypatch: pytest.MonkeyPatch):
+    fake = lab_fake()
+    fake.refused.add(1)
+    lab = await opened(fake, monkeypatch)
+    site = lab.edge_site(lab.layouts[0], Name.QOS)
+    assert await live.own_data_refusal(site) == "DS00000001 lan.networks"
+    assert not await live.accepts_a_write(site)
+
+
+async def test_any_other_error_of_the_write_is_raised(monkeypatch: pytest.MonkeyPatch):
+    fake = lab_fake()
+    lab = await opened(fake, monkeypatch)
+    real = fake.store.handle
+
+    def answer_nothing_useful(method: str, params: dict[str, Any]) -> object:
+        if method.endswith("updateConfigurationModule"):
+            return {}  # as a client that no longer reads the answer would see it
+        return real(method, params)
+
+    monkeypatch.setattr(fake.store, "handle", answer_nothing_useful)
+    site = lab.edge_site(lab.layouts[0], Name.QOS)
+    with pytest.raises(VcoOperationError) as caught:
+        _ = await live.accepts_a_write(site)
+    assert not isinstance(caught.value, live.DataRefused)
+    with pytest.raises(VcoOperationError):
+        _ = await lab.pick_writable_edge(Name.QOS)
+
+
+async def test_marked_targets_that_all_refuse_fail_the_test(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    fake = lab_fake()
+    fake.refused.update({1, 2})
+    lab = await opened(fake, monkeypatch)
+    with pytest.raises(pytest.fail.Exception) as failed:
+        _ = await lab.pick_writable_edge(Name.QOS)
+    assert str(failed.value) == (
+        "none of the 1 marked edge(s) with a suitable QOS module takes a write "
+        "of its own data (DS00000001 lan.networks): the modules are not valid "
+        "as they stand, or the update path is broken"
+    )
+    assert "secret-lab-name" not in str(failed.value)
+    with pytest.raises(pytest.fail.Exception, match="^none of the 1 marked profile"):
+        _ = await lab.pick_writable_profile(Name.QOS)
+
+
+async def test_the_next_marked_edge_is_tried(monkeypatch: pytest.MonkeyPatch):
+    fake = lab_fake()
+    fake.add_edge(7, 12, 20, description=MARKED)
+    fake.module(4, 12, "QOS", QOS)
+    fake.refused.add(1)
+    lab = await opened(fake, monkeypatch)
+    assert (await lab.pick_writable_edge(Name.QOS)).edge_id == 7
+    first = await lab.first_writable(lab.targets, Name.QOS)
+    assert first is not None and first.edge_id == 7
+
+
+async def test_a_refusal_the_orchestrator_states_is_a_data_refusal(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    fake = lab_fake()
+    fake.refused.add(1)
+    lab = await opened(fake, monkeypatch)
+    site = lab.edge_site(lab.layouts[0], Name.QOS)
+    async with live.restoring(site):
+        with pytest.raises(live.DataRefused) as caught:
+            await raise_limit(site, 2)
+    assert caught.value.error == "DS00000001 lan.networks"
+    assert "secret-lab-name" not in str(caught.value)
+    assert live.refusal_codes(caught.value) == "DS00000001 lan.networks"
+
+
+async def test_edges_that_all_refuse_fail_a_pick_among_given_layouts(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    fake = lab_fake()
+    fake.refused.add(1)
+    lab = await opened(fake, monkeypatch)
+    assert await lab.first_writable_or_fail([], Name.QOS) is None
+    with pytest.raises(pytest.fail.Exception) as failed:
+        _ = await lab.first_writable_or_fail(lab.targets, Name.QOS)
+    assert str(failed.value).startswith("none of the 1 marked edge(s) with a suitable")
+    assert "secret-lab-name" not in str(failed.value)
+    fake.refused.clear()
+    taken = await lab.first_writable_or_fail(lab.targets, Name.QOS)
+    assert taken is not None and taken.edge_id == 5

@@ -91,7 +91,8 @@ What the Orchestrator does to a module as it stores it, seen on a lab:
 * It assigns ``ruleLogicalId`` to a rule added without one (the tests that add
   rules allow it).
 * Some modules of a lab are not valid as they stand and refuse any write, even
-  of their own data: ``pick_writable_edge`` skips those.
+  of their own data: ``pick_writable_edge`` passes over those, and fails the
+  test when every marked candidate refuses.
 """
 
 from __future__ import annotations
@@ -117,7 +118,7 @@ from collections.abc import (
 from contextlib import aclosing, asynccontextmanager, contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
-from typing import Annotated, Any, cast
+from typing import Annotated, Any, NoReturn, cast
 
 import pytest
 from pydantic import MISSING, BaseModel, RootModel, ValidationError
@@ -489,15 +490,44 @@ class Lab:
             if layout.replace_modules and find_module(layout.edge, name) is None
         ]
 
+    async def _first_that_takes_a_write(
+        self, layouts: Sequence[EdgeLayout], name: ConfigurationModuleName
+    ) -> tuple[EdgeLayout | None, list[str]]:
+        """The first marked one of *layouts* whose *name* module takes a write, and the refusal of each one tried before it."""
+        refusals: list[str] = []
+        for layout in layouts:
+            if not layout.target:
+                continue
+            refusal = await own_data_refusal(self.edge_site(layout, name))
+            if refusal is None:
+                return layout, refusals
+            refusals.append(refusal)
+        return None, refusals
+
     async def first_writable(
         self, layouts: Sequence[EdgeLayout], name: ConfigurationModuleName
     ) -> EdgeLayout | None:
-        """The first of *layouts* that is marked and whose *name* module takes a write."""
+        """The first of *layouts* that is marked and whose *name* module takes a write.
+
+        ``None`` when none does. An error of the write other than the
+        Orchestrator's validation error is raised.
+        """
         require_writes(run_of(self.client))
-        for layout in layouts:
-            if layout.target and await accepts_a_write(self.edge_site(layout, name)):
-                return layout
-        return None
+        layout, _ = await self._first_that_takes_a_write(layouts, name)
+        return layout
+
+    async def first_writable_or_fail(
+        self, layouts: Sequence[EdgeLayout], name: ConfigurationModuleName
+    ) -> EdgeLayout | None:
+        """``first_writable``, but the test fails where *layouts* has marked edges and every one refuses.
+
+        ``None`` only when none of *layouts* is marked: there was nothing to try.
+        """
+        require_writes(run_of(self.client))
+        layout, refusals = await self._first_that_takes_a_write(layouts, name)
+        if layout is None and refusals:
+            _none_takes_a_write("edge", name, refusals)
+        return layout
 
     async def pick_writable_edge(
         self,
@@ -507,7 +537,7 @@ class Lab:
         *,
         replace_modules: bool = False,
     ) -> EdgeLayout:
-        """The first marked edge whose module takes a write, or skip the test.
+        """The first marked edge whose module takes a write; skip the test where none is a candidate, fail it where all refuse.
 
         With *replace_modules*, the edge must also be marked for deleting and
         inserting modules.
@@ -521,9 +551,8 @@ class Lab:
         found = self.edges_with(name, suitable, replace_modules=replace_modules)
         if not found:
             pytest.skip(f"no marked edge has a {name.value} module {what or 'to use'}")
-        layout = await self.first_writable(found, name)
-        if layout is None:
-            pytest.skip(f"no marked edge has a {name.value} module that takes a write")
+        layout = await self.first_writable_or_fail(found, name)
+        assert layout is not None  # every edge of *found* is marked
         return layout
 
     async def pick_writable_profile(
@@ -532,25 +561,36 @@ class Lab:
         suitable: Callable[[AnyConfigurationModule], bool] = lambda _: True,
         what: str = "",
     ) -> int:
-        """The ID of the first marked profile with such a module that takes a write, or skip."""
+        """The ID of the first marked profile with such a module that takes a write; skip the test where none is a candidate, fail it where all refuse."""
         require_writes(run_of(self.client))
         targets = [entry.profile_id for entry in self.profiles if entry.target]
         if not targets:
             pytest.skip(NO_PROFILE_MARKED)
-        found = 0
+        refusals: list[str] = []
         for profile_id in targets:
             config = await read_profile(self.client, profile_id, self.enterprise_id)
             module = find_module(config, name)
             if module is None or not suitable(module):
                 continue
-            found += 1
-            if await accepts_a_write(self.profile_site(profile_id, name)):
+            refusal = await own_data_refusal(self.profile_site(profile_id, name))
+            if refusal is None:
                 return profile_id
-        if found:
-            pytest.skip(
-                f"no marked profile has a {name.value} module that takes a write"
-            )
+            refusals.append(refusal)
+        if refusals:
+            _none_takes_a_write("profile", name, refusals)
         pytest.skip(f"no marked profile has a {name.value} module {what or 'to use'}")
+
+
+def _none_takes_a_write(
+    kind: str, name: ConfigurationModuleName, refusals: Sequence[str]
+) -> NoReturn:
+    """Fail the test: each marked *kind* it could write to refused a write of its own data."""
+    pytest.fail(
+        f"none of the {len(refusals)} marked {kind}(s) with a suitable {name.value} "
+        f"module takes a write of its own data ({'; '.join(refusals)}): the modules "
+        "are not valid as they stand, or the update path is broken",
+        pytrace=False,
+    )
 
 
 def _shown_field(path: str) -> str:
@@ -584,12 +624,33 @@ def _found_codes(exc: VcoOperationError) -> list[tuple[str, str]]:
     return found
 
 
+class DataRefused(VcoOperationError):
+    """A write the Orchestrator refused with a validation error: its message is the codes alone."""
+
+
+def _states_errors(exc: VcoOperationError) -> bool:
+    """Whether the data of *exc* has a non-empty ``error`` list: the Orchestrator's validation error."""
+    data: object = exc.data
+    if not isinstance(data, dict):
+        return False
+    entries = cast(dict[str, object], data).get("error")
+    return isinstance(entries, list) and bool(entries)
+
+
 def _redacted(exc: VcoOperationError) -> VcoOperationError:
-    """*exc* with each error code and field kept and no message; ``refusal_codes`` reads it as it reads *exc*."""
+    """*exc* with each error code and field kept and no message; ``refusal_codes`` reads it as it reads *exc*.
+
+    A refusal that states its errors in its data is a ``DataRefused``; any other
+    error stays a plain ``VcoOperationError``.
+    """
     errors = [
         {"code": code, "path": field, "message": ""}
         for code, field in _found_codes(exc)
     ]
+    if _states_errors(exc):
+        return DataRefused(
+            exc.operation, refusal_codes(exc), code=exc.code, data={"error": errors}
+        )
     return VcoOperationError(
         exc.operation, "refused", code=exc.code, data={"error": errors}
     )
@@ -1415,11 +1476,14 @@ async def restoring(site: Site) -> AsyncGenerator[Original | None]:
         run.close(entry)
 
 
-async def accepts_a_write(site: Site) -> bool:
-    """Whether the Orchestrator takes the module's own data back.
+async def own_data_refusal(site: Site) -> str | None:
+    """Why the Orchestrator does not take the module's own data back, or ``None`` where it does.
 
     Some modules of a lab are not valid as they stand (an address missing from a
-    LAN network, say) and every write to them is refused, whatever it holds.
+    LAN network, say) and every write to them is refused, whatever it holds: the
+    answer is then the codes of the refusal. A module that is not there is
+    answered too. Any other error of the write, the client's own included, is
+    raised: it says nothing of the module.
 
     The write is not free: the Orchestrator may add ``routeMapsVersion`` to a
     deviceSettings segment entry of a module it takes (``settle``). That key is
@@ -1428,12 +1492,17 @@ async def accepts_a_write(site: Site) -> bool:
     async with restoring(site) as original:
         module = await site.read()
         if original is None or module is None:
-            return False
+            return "the module is not there"
         try:
             await write_data(site, module, original.data)
-        except VcoOperationError:
-            return False
-    return True
+        except DataRefused as refusal:
+            return refusal.error
+    return None
+
+
+async def accepts_a_write(site: Site) -> bool:
+    """Whether the Orchestrator takes the module's own data back (``own_data_refusal``)."""
+    return await own_data_refusal(site) is None
 
 
 # ---------------------------------------------------------------------------

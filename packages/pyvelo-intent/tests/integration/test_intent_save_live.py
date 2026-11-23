@@ -66,6 +66,7 @@ import pytest
 from live_support import (
     SEGMENT_DRIFT_KEY,
     SERVER_ASSIGNED_KEYS,
+    DataRefused,
     EdgeLayout,
     Lab,
     Site,
@@ -532,7 +533,11 @@ DEVICE_SETTINGS_CASE = Reconcile(
 
 
 async def _lacking_layout(lab: Lab, case: Reconcile) -> EdgeLayout:
-    """An edge whose *case* module lacks a segment its profile has and takes a write, or skip."""
+    """An edge whose *case* module lacks a segment its profile has and takes a write.
+
+    Skip where no marked edge lacks one; fail where some do and every one
+    refuses a write of its own data.
+    """
     candidates: list[EdgeLayout] = []
     for layout in lab.targets:
         edge_module = await lab.edge_site(layout, case.name).read()
@@ -543,11 +548,8 @@ async def _lacking_layout(lab: Lab, case: Reconcile) -> EdgeLayout:
             candidates.append(layout)
     if not candidates:
         pytest.skip(f"no edge {case.name.value} module lacks a segment its profile has")
-    layout = await lab.first_writable(candidates, case.name)
-    if layout is None:
-        pytest.skip(
-            f"no edge {case.name.value} module that lacks a segment takes a write"
-        )
+    layout = await lab.first_writable_or_fail(candidates, case.name)
+    assert layout is not None  # every candidate is a marked edge
     return layout
 
 
@@ -703,8 +705,9 @@ async def test_missing_device_settings_segment_is_added_as_a_placeholder_the_orc
             sharing.append(layout)
 
     # An edge that already lacks a segment its profile has; a module that
-    # refuses its own unchanged data is no target (it would refuse anything).
-    target = await lab.first_writable(lacking, case.name)
+    # refuses its own unchanged data is passed over (it would refuse anything),
+    # and the test fails where every such edge refuses.
+    target = await lab.first_writable_or_fail(lacking, case.name)
     if target is not None:
         own = lab.edge_site(target, case.name)
         refs_own = ref_names((await own.read_present()).raw_refs)
@@ -718,11 +721,11 @@ async def test_missing_device_settings_segment_is_added_as_a_placeholder_the_orc
     # Else make an edge lack one: take out a non-Global segment entry that is
     # already empty (nothing in it is lost) from a module that takes a write,
     # and put it back afterwards.
-    target = await lab.first_writable(sharing, case.name)
+    target = await lab.first_writable_or_fail(sharing, case.name)
     if target is None:
         pytest.skip(
-            "no edge deviceSettings module that takes a write lacks a segment "
-            "entry of its profile's, or has an empty one besides the Global one"
+            "no marked edge deviceSettings module lacks a segment entry of its "
+            "profile's, or has an empty one besides the Global one"
         )
     site = lab.edge_site(target, case.name)
     profile_site = lab.profile_site(target.profile_id, case.name)
@@ -736,7 +739,7 @@ async def test_missing_device_settings_segment_is_added_as_a_placeholder_the_orc
         refused: str | None = None
         try:
             await write_data(site, module, data)
-        except VcoOperationError as exc:
+        except DataRefused as exc:
             refused = refusal_codes(exc)
         if refused is not None:
             pytest.skip(

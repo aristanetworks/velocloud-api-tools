@@ -177,7 +177,12 @@ def test_every_error_of_the_module_round_trips():
         UnboundError("not bound"),
         DetachedObjectError("changed", (path,)),
     ]
-    assert {type(error) for error in errors} == all_subclasses(VcoError) | {VcoError}
+    # Test support may subclass an error (a live test's refusal): only the
+    # library's own are listed here.
+    library = {
+        sub for sub in all_subclasses(VcoError) if sub.__module__.startswith("pyvelo.")
+    }
+    assert {type(error) for error in errors} == library | {VcoError}
     for error in errors:
         for copied in copies(error):
             assert type(copied) is type(error)
