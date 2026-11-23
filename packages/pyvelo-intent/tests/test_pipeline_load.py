@@ -5,6 +5,7 @@ import uuid
 from typing import Any
 
 import pytest
+from pydantic import BaseModel, ConfigDict
 from pyvelo.client.enums.configuration import ConfigurationModuleName
 from pyvelo.client.operations.edge import GetEdgeConfigurationStackResult
 from pyvelo.client.schemas.configuration import (
@@ -12,7 +13,11 @@ from pyvelo.client.schemas.configuration import (
     EnterpriseConfigurationProfile,
 )
 from pyvelo.client.schemas.edge import GetEdgeConfigurationStack
-from pyvelo.client.schemas.enterprise import GetEnterpriseEdgesItem
+from pyvelo.client.schemas.enterprise import (
+    GetEnterpriseEdgesItem,
+    GetEnterpriseNetworkSegments,
+    GetEnterpriseServices,
+)
 from pyvelo.config.resolver import ResolutionError, ResolverRegistry
 from pyvelo.config.resolvers.edge import EdgeResolver
 from pyvelo.testing import make_module_json
@@ -269,3 +274,51 @@ async def test_load_by_name_without_a_resolver_says_what_to_register():
         "profile's numeric ID."
     )
     assert client.calls == []
+
+
+class ServiceRow(BaseModel):
+    """A row of ``enterprise/getEnterpriseServices`` as the store answers it."""
+
+    model_config = ConfigDict(extra="allow")
+    id: int
+    logicalId: str
+    name: str
+    type: str
+
+
+async def listed_services(client: MockVcoClient) -> list[tuple[int, str, str]]:
+    """The ID, logical ID and name of each service the store lists, asked through the client."""
+    rows = await client.portal_list(
+        "enterprise/getEnterpriseServices", GetEnterpriseServices(), ServiceRow
+    )
+    return [(row.id, row.logicalId, row.name) for row in rows]
+
+
+@pytest.mark.asyncio
+async def test_the_mock_client_holds_the_services_it_adds_as_objects():
+    client = MockVcoClient()
+    logical_id = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+    client.add_service(701, logical_id=logical_id, name="dns-a", type_="dnsService")
+    assert client.store.objects[701] == {
+        "id": 701,
+        "logicalId": logical_id,
+        "name": "dns-a",
+        "type": "dnsService",
+        "object": "NETWORK_SERVICE",
+        "data": {},
+    }
+    assert await listed_services(client) == [(701, logical_id, "dns-a")]
+
+
+@pytest.mark.asyncio
+async def test_the_mock_client_holds_the_segment_it_answers_as_an_object():
+    client = MockVcoClient()
+    (segment,) = await client.get_enterprise_network_segments(
+        GetEnterpriseNetworkSegments()
+    )
+    held = client.store.objects[segment.id_]
+    assert held["object"] == "NETWORK_SEGMENT"
+    assert held["logicalId"] == str(segment.logical_id)
+    assert (held["name"], held["type"]) == (segment.name, segment.type_.value)
+    # A segment is not a service: the services listing leaves it out.
+    assert await listed_services(client) == []
