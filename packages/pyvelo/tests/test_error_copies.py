@@ -10,6 +10,7 @@ from pyvelo.client.exceptions import (
     DetachedObjectError,
     LossyFieldError,
     ModuleWriteError,
+    RefsNotLoadedError,
     UnboundError,
     VcoApiError,
     VcoClientNotInitializedError,
@@ -122,6 +123,21 @@ def test_errors_built_from_several_values_survive_pickling():
             assert vars(copied) == vars(error)
 
 
+def test_a_refs_not_loaded_error_keeps_its_module_paths_and_message_through_copies():
+    paths = (Path(("segments", 0, "dns")),)
+    for error in (
+        RefsNotLoadedError("deviceSettings", paths),
+        RefsNotLoadedError("QOS"),
+    ):
+        for copied in copies(error):
+            assert type(copied) is RefsNotLoadedError
+            assert (copied.module_name, copied.paths) == (
+                error.module_name,
+                error.paths,
+            )
+            assert str(copied) == str(error)
+
+
 def test_notes_and_attributes_set_after_the_error_was_raised_survive():
     error = lost_write()
     error.add_note("saved: QOS")
@@ -181,6 +197,7 @@ def test_every_error_of_the_module_round_trips():
         ModuleWriteError(1, "v1"),
         UnboundError("not bound"),
         DetachedObjectError("changed", (path,)),
+        RefsNotLoadedError("deviceSettings", (path,)),
     ]
     # Test support may subclass an error (a live test's refusal); every
     # subclass the libraries define is listed here, whichever package has it.

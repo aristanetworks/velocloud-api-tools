@@ -216,9 +216,9 @@ def has_checkable_change(module: ConfigurationModuleBase, plan: ModulePlan) -> b
     True when the data has a planned change that is not the removal of a
     default the VCO adds back (``MODULE_REWRITES``), taking the payload as
     stored exactly as sent (a change to a value the VCO owns is then left out
-    in the same way as in the check itself), or when an update's refs add or
-    remove a row. A write with none of these cannot tell a stored write from
-    a stale one by the module it gets back.
+    in the same way as in the check itself), or when the plan adds or removes
+    a ref row (``ref_changes``). A write with none of these cannot tell a
+    stored write from a stale one by the module it gets back.
     """
     as_read = module.raw_data
     rewrites = MODULE_REWRITES.get(plan.name, Rewrites())
@@ -237,11 +237,7 @@ def has_checkable_change(module: ConfigurationModuleBase, plan: ModulePlan) -> b
         for change in data.applied
     ):
         return True
-    return (
-        plan.operation == "update"
-        and plan.refs is not None
-        and bool(check_refs(module.raw_refs, plan.refs, plan.refs).applied)
-    )
+    return bool(plan.ref_changes)
 
 
 def check_module_write[M: ConfigurationModuleBase](

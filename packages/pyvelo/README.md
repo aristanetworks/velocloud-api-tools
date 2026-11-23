@@ -66,9 +66,8 @@ own way, use `write_module`, whose `ModuleWrite` has `left_out` and
 `VcoClient.write_module(module, plan)` sends a plan as an update or an insert
 that asks for the module as stored (`returnData`), and reads the module back
 when the VCO answers without it. An update none of whose changes could be found
-stored (every one is to a value the VCO stores its own way, or inside a ref row
-that keeps its identity) is sent without `returnData`. The VCO then answers with
-a row count, which says whether it stored the write, and the module is read
+stored (every one is to a value the VCO stores its own way) is sent without
+`returnData`. The VCO then answers with a row count, which says whether it stored the write, and the module is read
 back. `write_module` then compares what the VCO stored with what the plan
 meant to change. When every planned change is stored it returns a `ModuleWrite`:
 the module as stored, the planned changes `applied`, and the `server_changes`
@@ -151,6 +150,21 @@ insert's `returnData` was not read with its refs (`module.refs_loaded` is
 absent `refs` key means no rows. `ref_owners(data, level)` in
 `pyvelo.client.models.configuration.ref_owners` lists the fields that hold an
 identity, with their ref name, segment and path.
+
+The refs of a write are derived from these fields, never given: `plan_module`
+and `update_module` take no `refs`. An edit that sets or changes one of them
+adds the row it goes with, and one that clears it removes the row; every other
+row is sent as read, and `plan.ref_changes` lists the rows added and removed
+(`plan.render()` shows them as `+ refs <name> (<segment>): <value>` and `- refs
+...`). A new row needs the object's ID, which the `resolvers=` argument finds
+(`ResolverNotLoadedError` when it is missing). A device settings or QoS update
+with segments always carries its refs, as read when nothing in them changed,
+because the VCO runs its processors on every such write. A module read without
+its refs (`refs_loaded` is `False`) cannot be written that way, nor with an edit
+to one of these fields: `RefsNotLoadedError` says to read it with
+`configuration/getConfiguration` and `modules`, or from the edge stack. The ref
+names that are not derived are written with `update_configuration_module`, the
+low-level request.
 
 ## Portal list and pagination methods
 

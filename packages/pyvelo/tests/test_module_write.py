@@ -1,17 +1,20 @@
 import copy
+import inspect
 import json
 import uuid
-from typing import Any
+from typing import Any, cast
 
 import pytest
-from pydantic import MISSING, Field
+from pydantic import MISSING
 from pyvelo.client.enums.configuration import ConfigurationModuleName
-from pyvelo.client.exceptions import LossyFieldError
-from pyvelo.client.models.configuration import FirewallData
+from pyvelo.client.exceptions import LossyFieldError, RefsNotLoadedError
+from pyvelo.client.models.configuration import DeviceSettingsData, FirewallData
 from pyvelo.client.models.configuration.firewall.rules import FirewallOutboundRule
 from pyvelo.client.models.configuration.firewall.segment import FirewallSegment
+from pyvelo.client.models.configuration.qos.root import ServiceRateLimit
 from pyvelo.client.module_write import missing_segments, plan_module
 from pyvelo.client.schemas.configuration import (
+    ConfigurationModuleBase,
     ConfigurationModuleList,
     DeviceSettingsConfigurationModule,
     FirewallConfigurationModule,
@@ -19,9 +22,33 @@ from pyvelo.client.schemas.configuration import (
     QosConfigurationModule,
     new_edge_module,
 )
-from pyvelo.core import ConfigContext, VcoModel, add, at, delete
+from pyvelo.core import ConfigContext, add, at, delete
+from pyvelo.core.identity import (
+    NetworkServiceIdentity,
+    ResolverNotLoadedError,
+    SegmentIdentity,
+)
 from pyvelo.core.rebase import Key
 from pyvelo.testing import make_module_json
+from refs_helpers import (
+    DNS_A,
+    DNS_B,
+    PRIMARY,
+    SEG0,
+    SEG0_OBJECT,
+    SEGMENT,
+    copy_of_data,
+    dns,
+    ds_module,
+    primary_provider_module,
+    primary_provider_row,
+    segment_entry,
+    segment_row,
+    service_row,
+    set_primary_provider,
+    table_registry,
+    unset_provider_module,
+)
 
 EDGE = ConfigContext.EDGE
 
@@ -304,17 +331,25 @@ def test_untyped_module_plans_none():
     assert plan_module(mod).data == {"a": [1, 2]}
 
 
-def test_refs_are_sent_only_when_changed_and_then_whole():
-    qos = QosConfigurationModule.model_validate(
-        make_module_json("QOS", {"segments": []}, refs={"x": [1], "y": 2})
+def test_refs_are_sent_only_with_a_ref_change_or_segments_and_then_whole():
+    raw_refs: dict[str, Any] = {"x": [1], "y": 2}
+    bare = QosConfigurationModule.model_validate(
+        make_module_json("QOS", {"segments": []}, refs=raw_refs)
     )
-    assert plan_module(qos, level=EDGE).refs is None
-    plan = plan_module(qos, level=EDGE, refs={"x": [1, 5], "y": 2})
-    assert (plan.operation, plan.refs, plan.data) == (
-        "update",
-        {"x": [1, 5], "y": 2},
-        {"segments": []},
+    assert plan_module(bare, level=EDGE).refs is None
+    bare.data.service_rate_limit = ServiceRateLimit(input_type="percent")
+    assert plan_module(bare, level=EDGE).refs is None  # no segments: none sent
+
+    segmented = QosConfigurationModule.model_validate(
+        make_module_json(
+            "QOS", {"segments": [{"segment": desc(0, "Global Segment")}]}, refs=raw_refs
+        )
     )
+    assert plan_module(segmented, level=EDGE).refs is None  # nothing to write
+    segmented.data.service_rate_limit = ServiceRateLimit(input_type="percent")
+    plan = plan_module(segmented, level=EDGE)
+    assert (plan.operation, plan.refs) == ("update", raw_refs)
+    assert plan.refs is not raw_refs
 
 
 def test_explicit_data_argument_leaves_module_data_out_of_it():
@@ -451,29 +486,31 @@ def test_lossy_error_carries_structured_paths():
 # --- behaviour the cases above do not pin ----------------------------------
 
 
-class _Refs(VcoModel):
-    x: list[int] = Field(default_factory=list)
-
-
-def test_typed_refs_keep_unknown_keys_and_are_sent_only_when_changed():
-    raw_refs = {"x": [1], "unknownRef": {"k": 1}}
-    qos = QosConfigurationModule.model_validate(
-        make_module_json("QOS", {"segments": []}, refs=raw_refs)
+async def test_unknown_ref_names_are_kept_in_the_refs_sent():
+    module = primary_provider_module({"unknownRef": {"k": 1}})
+    current = module.data.model_copy(deep=True)
+    set_primary_provider(current, uuid.UUID(DNS_B))
+    plan = plan_module(
+        module, current, resolvers=await table_registry(DNS_B_IDENTITY, SEG0_IDENTITY)
     )
-    refs = _Refs.model_validate(raw_refs)
-    assert plan_module(qos, refs=refs, level=EDGE).refs is None
-    refs.x.append(5)
-    plan = plan_module(qos, refs=refs, level=EDGE)
-    assert plan.operation == "update"
-    assert plan.refs == {"x": [1, 5], "unknownRef": {"k": 1}}
+    assert plan.refs is not None
+    assert plan.refs["unknownRef"] == {"k": 1}
 
 
-def test_refs_for_a_module_that_had_none_are_sent_whole():
-    qos = QosConfigurationModule.model_validate(
-        make_module_json("QOS", {"segments": []})
+async def test_a_module_that_had_no_refs_gets_only_the_new_row():
+    module = ds_module(
+        [segment_entry(0, "Global Segment", SEG0, dns=dns(primary=True))], MISSING
     )
-    plan = plan_module(qos, level=EDGE, refs=_Refs(x=[2]))
-    assert (plan.operation, plan.refs) == ("update", {"x": [2]})
+    assert module.raw_refs is MISSING
+    current = module.data.model_copy(deep=True)
+    set_primary_provider(current, uuid.UUID(DNS_A))
+    plan = plan_module(
+        module, current, resolvers=await table_registry(DNS_A_IDENTITY, SEG0_IDENTITY)
+    )
+    assert plan.refs is not None
+    assert list(plan.refs) == [PRIMARY]
+    (change,) = plan.ref_changes
+    assert plan.refs[PRIMARY] == [change.row]
 
 
 def test_module_that_never_carried_data_sends_the_whole_dump():
@@ -1323,26 +1360,6 @@ def test_only_a_firewall_module_has_legacy_keys():
     assert plan.data["segments"][0]["outboundOverride"] is True
 
 
-def test_a_refs_only_change_to_a_firewall_module_also_drops_a_stray_override_key():
-    """A firewall module written for any reason is written without the key."""
-    refs: dict[str, Any] = {"firewall:securityServiceGroup": {"id": 1}}
-    mod = FirewallConfigurationModule.model_validate(
-        make_module_json("firewall", copy.deepcopy(STRAY_RAW), refs=refs)
-    )
-    changed = {"firewall:securityServiceGroup": {"id": 2}}
-
-    unchanged = plan_module(mod, level=EDGE, refs=refs)
-    assert (unchanged.operation, unchanged.refs) == ("none", None)
-
-    plan = plan_module(mod, level=EDGE, refs=changed)
-    assert plan.operation == "update"
-    assert plan.refs == changed
-    assert not _has_key(plan.data, "outboundOverride")
-    assert [str(c.path) for c in plan.changes] == [STRAY_PATH]
-    assert f"  - {STRAY_PATH}" in plan.render().splitlines()
-    assert [str(k) for k in plan.legacy_keys] == [STRAY_PATH]
-
-
 # --- override flags a write turns on -----------------------------------------
 
 BGP = 'segments["Global Segment"].bgp'
@@ -1378,7 +1395,10 @@ def test_a_patch_inside_an_inherited_section_turns_its_override_on_and_the_plan_
     assert lines[0] == "deviceSettings: update"
     assert lines[1] == f"  ~ {BGP}.override: false -> true"
     assert lines[2].startswith(f'  + {BGP}.neighbors["10.0.0.2"] (first): ')
-    assert lines[3:] == [f"  override turned on: {BGP} {OVERRIDE_NOTE}"]
+    assert lines[3:] == [
+        "  refs: sent as read",
+        f"  override turned on: {BGP} {OVERRIDE_NOTE}",
+    ]
     # The edge layer's own section is sent; nothing of a profile's is in it.
     sent = plan.data["segments"][0]["bgp"]
     assert (sent["override"], sent["enabled"], sent["ASN"]) == (True, False, "")
@@ -1446,29 +1466,21 @@ def test_a_section_read_without_its_flag_still_refuses_the_patch():
     assert [str(p) for p in exc.value.override_flags] == [f"{BGP}.override"]
 
 
-def test_data_and_refs_given_as_dicts_are_planned_as_plain_json():
-    row1 = {"enterpriseObjectId": 5, "logicalId": "a5"}
+def test_data_given_as_a_dict_is_planned_as_plain_json():
     qos = QosConfigurationModule.model_validate(
-        make_module_json("QOS", {"segments": []}, refs={"a": [row1]})
+        make_module_json("QOS", {"segments": []})
     )
-    row2 = {"enterpriseObjectId": 6, "logicalId": uuid.UUID(int=6)}
     data = {"segments": [], "stamp": uuid.UUID(int=7)}
-    refs = {"a": [row1, row2]}
 
-    plan = plan_module(qos, data, refs=refs)
+    plan = plan_module(qos, data)
 
     assert plan.data == {
         "segments": [],
         "stamp": "00000000-0000-0000-0000-000000000007",
     }
-    assert plan.refs == {
-        "a": [row1, {**row2, "logicalId": "00000000-0000-0000-0000-000000000006"}]
-    }
-    assert json.loads(json.dumps([plan.data, plan.refs])) == [plan.data, plan.refs]
-    # What the caller gave is not changed, and not shared with the plan.
-    assert isinstance(row2["logicalId"], uuid.UUID)
-    assert plan.refs is not None
-    assert plan.refs["a"][0] is not row1
+    assert json.loads(json.dumps(plan.data)) == plan.data
+    # What the caller gave is not changed.
+    assert isinstance(data["stamp"], uuid.UUID)
 
 
 def test_a_value_given_in_its_text_form_or_as_an_object_plans_the_same():
@@ -1476,3 +1488,224 @@ def test_a_value_given_in_its_text_form_or_as_an_object_plans_the_same():
     qos = QosConfigurationModule.model_validate(make_module_json("QOS", raw))
     plan = plan_module(qos, {"segments": [], "stamp": uuid.UUID(int=7)})
     assert plan.operation == "none"
+
+
+# --- the refs a plan derives from the data ------------------------------------
+
+CSS_PROVIDER = "deviceSettings:css:provider"
+PRIMARY_PATH = 'segments["Global Segment"].dns.primary_provider.service'
+DNS_A_IDENTITY = NetworkServiceIdentity("dns-a", uuid.UUID(DNS_A), 701, "dns")
+DNS_B_IDENTITY = NetworkServiceIdentity("dns-b", uuid.UUID(DNS_B), 702, "dns")
+SEG0_IDENTITY = SegmentIdentity("Global Segment", 0, SEG0_OBJECT, uuid.UUID(SEG0))
+NOT_READ = "(it came from configuration/getConfigurationModules)"
+
+
+def an_edit_of_the_data(data: DeviceSettingsData) -> None:
+    """An edit of the data that no ref owner sees."""
+    _ = data.merge_patch({"ntp": {"enabled": True}})
+
+
+def raw_refs_of(module: ConfigurationModuleBase) -> dict[str, Any]:
+    return cast(dict[str, Any], module.raw_refs)
+
+
+async def test_a_provider_set_plans_an_update_of_the_data_as_read_with_its_row():
+    module = unset_provider_module()
+    current = copy_of_data(module)
+    set_primary_provider(current, uuid.UUID(DNS_A))
+    plan = plan_module(module, current, resolvers=await table_registry(DNS_A_IDENTITY))
+    assert plan.operation == "update"
+    assert plan.data == module.raw_data
+    assert plan.changes == ()
+    (change,) = plan.ref_changes
+    assert (change.added, change.name, change.segment) == (
+        True,
+        PRIMARY,
+        "Global Segment",
+    )
+    assert plan.refs == {
+        SEGMENT: segment_row(0, SEG0_OBJECT, SEG0),
+        PRIMARY: [change.row],
+    }
+    assert plan.warnings == ()
+
+
+def test_a_provider_cleared_plans_an_update_that_removes_its_row():
+    module = primary_provider_module()
+    current = copy_of_data(module)
+    set_primary_provider(current, None)
+    plan = plan_module(module, current)
+    assert (plan.operation, plan.data) == ("update", module.raw_data)
+    (change,) = plan.ref_changes
+    assert not change.added and change.row == primary_provider_row()
+    assert plan.refs == {SEGMENT: segment_row(0, SEG0_OBJECT, SEG0)}
+    lines = plan.render().splitlines()
+    assert f"  - refs {PRIMARY} (Global Segment): {DNS_A}" in lines
+
+
+def test_a_data_edit_of_device_settings_with_segments_sends_its_refs_as_read():
+    module = primary_provider_module(
+        {
+            "deviceSettings:vnfs:edge": [
+                {
+                    **service_row(
+                        "deviceSettings:vnfs:edge", DNS_B, 810, SEG0_OBJECT, SEG0
+                    ),
+                    "type": "securityVnf",
+                }
+            ],
+            "objectGroup:portGroup": [{"ref": "objectGroup:portGroup"}],
+        }
+    )
+    current = copy_of_data(module)
+    an_edit_of_the_data(current)
+    plan = plan_module(module, current)
+    assert (plan.operation, plan.ref_changes) == ("update", ())
+    assert plan.refs == {
+        name: rows
+        for name, rows in raw_refs_of(module).items()
+        if name not in ("deviceSettings:vnfs:edge", "objectGroup:portGroup")
+    }
+    assert "  refs: sent as read" in plan.render().splitlines()
+    assert "refs: replaced" not in plan.render()
+
+
+def test_a_data_edit_of_qos_with_segments_sends_its_refs_as_read():
+    refs: dict[str, Any] = {"x": [1], "y": 2}
+    qos = QosConfigurationModule.model_validate(
+        make_module_json(
+            "QOS", {"segments": [{"segment": desc(0, "Global Segment")}]}, refs=refs
+        )
+    )
+    qos.data.service_rate_limit = ServiceRateLimit(input_type="percent")
+    plan = plan_module(qos, level=EDGE)
+    assert (plan.operation, plan.refs, plan.ref_changes) == ("update", refs, ())
+    assert "  refs: sent as read" in plan.render().splitlines()
+
+
+def test_a_plan_of_plain_data_with_segments_sends_the_refs_as_read():
+    module = primary_provider_module()
+    edited: dict[str, Any] = copy.deepcopy(cast(dict[str, Any], module.raw_data))
+    edited["syslog_forwarding"] = True
+    plan = plan_module(module, edited)
+    assert (plan.operation, plan.ref_changes) == ("update", ())
+    assert plan.refs == module.raw_refs
+    same = copy.deepcopy(cast(dict[str, Any], module.raw_data))
+    unchanged = plan_module(module, same)
+    assert (unchanged.operation, unchanged.refs) == ("none", None)
+
+
+def test_a_plan_with_nothing_to_write_has_no_refs():
+    module = primary_provider_module()
+    plan = plan_module(module)
+    assert (plan.operation, plan.refs, plan.ref_changes) == ("none", None, ())
+    assert plan.data == module.raw_data
+    assert plan.render() == "deviceSettings: none"
+    unread = plan_module(primary_provider_module(refs_loaded=False))
+    assert (unread.operation, unread.refs) == ("none", None)
+
+
+def test_a_data_edit_of_a_module_without_segments_sends_no_refs():
+    module = ds_module([], {SEGMENT: segment_row(0, SEG0_OBJECT, SEG0)})
+    current = copy_of_data(module)
+    an_edit_of_the_data(current)
+    plan = plan_module(module, current)
+    assert (plan.operation, plan.refs) == ("update", None)
+
+
+def test_a_module_that_never_carried_data_sends_no_refs():
+    mod = FirewallConfigurationModule.model_construct(
+        name="firewall", data=FirewallData(segments=[], firewall_enabled=False)
+    )
+    plan = plan_module(mod, level=EDGE)
+    assert (plan.operation, plan.refs, plan.ref_changes) == ("update", None, ())
+
+
+async def test_a_module_whose_refs_were_not_read_refuses_an_owner_edit():
+    module = unset_provider_module(refs_loaded=False)
+    current = copy_of_data(module)
+    set_primary_provider(current, uuid.UUID(DNS_A))
+    with pytest.raises(RefsNotLoadedError) as caught:
+        plan_module(module, current, resolvers=await table_registry(DNS_A_IDENTITY))
+    assert caught.value.module_name == "deviceSettings"
+    assert caught.value.paths == (PRIMARY_PATH,)
+    message = str(caught.value)
+    assert PRIMARY_PATH in message and NOT_READ in message
+    assert "configuration/getConfiguration" in message and "modules" in message
+
+
+def test_a_module_whose_refs_were_not_read_refuses_a_write_with_segments():
+    module = primary_provider_module(refs_loaded=False)
+    current = copy_of_data(module)
+    an_edit_of_the_data(current)
+    with pytest.raises(RefsNotLoadedError) as caught:
+        plan_module(module, current)
+    assert (caught.value.module_name, caught.value.paths) == ("deviceSettings", ())
+    assert NOT_READ in str(caught.value)
+    assert "replace" in str(caught.value)
+
+
+def test_a_module_whose_refs_were_not_read_plans_any_other_write_without_refs():
+    module = ds_module([], MISSING, refs_loaded=False)
+    current = copy_of_data(module)
+    an_edit_of_the_data(current)
+    plan = plan_module(module, current)
+    assert (plan.operation, plan.refs, plan.ref_changes) == ("update", None, ())
+
+    firewall = FirewallConfigurationModule.model_validate(
+        make_module_json("firewall", copy.deepcopy(EDGE_RAW)),
+        context={"refs_loaded": False},
+    )
+    firewall.data.firewall_enabled = False
+    plan = plan_module(firewall, level=EDGE)
+    assert (plan.operation, plan.refs) == ("update", None)
+
+
+def test_render_lists_ref_rows_and_warnings():
+    module = ds_module(
+        [segment_entry(0, "Global Segment", SEG0, dns=dns(primary=True), css={})],
+        {
+            SEGMENT: segment_row(0, SEG0_OBJECT, SEG0),
+            PRIMARY: primary_provider_row(),
+            CSS_PROVIDER: service_row(CSS_PROVIDER, DNS_B, 702, SEG0_OBJECT, SEG0),
+        },
+    )
+    current = copy_of_data(module)
+    set_primary_provider(current, None)
+    plan = plan_module(module, current)
+    lines = plan.render().splitlines()
+    assert lines[:2] == [
+        "deviceSettings: update",
+        f"  - refs {PRIMARY} (Global Segment): {DNS_A}",
+    ]
+    (warning,) = plan.warnings
+    assert warning.code == "ref_without_owner"
+    assert lines[2:] == [f"  warning: {warning.message}"]
+    # A module nobody edited still reports what disagrees in it.
+    assert plan_module(module).render().splitlines()[0] == "deviceSettings: none"
+    assert f"  warning: {warning.message}" in plan_module(module).render()
+
+
+async def test_render_lists_an_added_row_with_its_value():
+    module = unset_provider_module()
+    current = copy_of_data(module)
+    set_primary_provider(current, uuid.UUID(DNS_A))
+    plan = plan_module(module, current, resolvers=await table_registry(DNS_A_IDENTITY))
+    assert plan.render().splitlines() == [
+        "deviceSettings: update",
+        f"  + refs {PRIMARY} (Global Segment): {DNS_A}",
+    ]
+
+
+def test_an_owner_edit_without_resolvers_is_not_loaded():
+    module = unset_provider_module()
+    current = copy_of_data(module)
+    set_primary_provider(current, uuid.UUID(DNS_A))
+    with pytest.raises(ResolverNotLoadedError):
+        plan_module(module, current)
+
+
+def test_plan_module_has_no_refs_parameter():
+    parameters = inspect.signature(plan_module).parameters
+    assert "refs" not in parameters
+    assert "resolvers" in parameters

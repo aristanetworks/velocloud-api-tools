@@ -41,7 +41,6 @@ from pyvelo.client.schemas.configuration import (
     ConfigurationModuleBase,
     ConfigurationModuleList,
     DeleteConfiguration,
-    DeviceSettingsRefs,
     GetAllApplicationsResult,
     GetApplicationsResult,
     GetConfiguration,
@@ -59,6 +58,7 @@ from pyvelo.client.schemas.profiles import (
     CreateProfileResult,
 )
 from pyvelo.core import ConfigContext, RowsModifiedConfirmation, VcoModel
+from pyvelo.core.base import IdentityLookup
 
 if TYPE_CHECKING:
     from pyvelo.client._client_protocol import VcoClientBaseProtocol
@@ -478,9 +478,8 @@ class ConfigurationMixin(Protocol):
         module is read back from its configuration, and only that module's
         row is parsed; an error of that read request propagates. An update
         with no change the check can find stored (``has_checkable_change``:
-        every change is to a value the VCO stores its own way, or inside a ref
-        row that keeps its identity) is sent without ``returnData`` and read
-        back. A VCO with its conditional check off answers a stale update
+        every change is to a value the VCO stores its own way) is sent
+        without ``returnData`` and read back. A VCO with its conditional check off answers a stale update
         that asked for the row with the row as it is, so it looks stored;
         asked for no row, it answers a refusal with a row count of zero.
 
@@ -621,15 +620,22 @@ class ConfigurationMixin(Protocol):
         data: DeviceSettingsData | WanData | QosData | FirewallData,
         *,
         enterprise_id: int | None = None,
-        refs: DeviceSettingsRefs | dict[str, Any] | None = None,
         profile: ConfigurationModuleBase | None = None,
+        resolvers: IdentityLookup | None = None,
     ) -> M:
         """Write *data* to *module*: its raw data as read, plus the caller's changes.
 
         Returns the module as stored (``write_module``), of the class of
-        *module*; that is *module* itself when *data* (and *refs*) change
-        nothing, and nothing is sent. Give the *profile*'s module of the same
-        name to reconcile the segments an edge module lacks.
+        *module*; that is *module* itself when *data* changes nothing, and
+        nothing is sent. Give the *profile*'s module of the same name to
+        reconcile the segments an edge module lacks.
+
+        The refs are derived from *data*, not given (``plan_module``): an
+        edit to an owner of a ref row adds or removes the row, and *resolvers*
+        finds the ``enterpriseObjectId`` of an identity it adds. A device
+        settings or QoS module with segments is always written with its
+        refs. ``RefsNotLoadedError`` is raised for a module read without its
+        refs when the edit needs them.
 
         The module passed in is not updated: it still holds the data and the
         ``version`` from before the write. It is marked as replaced (an
@@ -673,7 +679,7 @@ class ConfigurationMixin(Protocol):
         try:
             write = await self.write_module(
                 module,
-                plan_module(module, data, refs=refs, profile=profile),
+                plan_module(module, data, profile=profile, resolvers=resolvers),
                 enterprise_id=enterprise_id,
             )
         except ModuleWriteError as error:

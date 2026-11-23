@@ -385,6 +385,39 @@ def _non_empty_list(value: object) -> bool:
     return is_list(value) and len(value) > 0
 
 
+def sends_refs_always(
+    module: ConfigurationModuleBase, payload: Mapping[str, Any]
+) -> bool:
+    """Whether a write of *module* with *payload* carries its refs whatever changed.
+
+    True for a module that is not new, of a name in ``ALWAYS_SEND_REFS``,
+    whose payload ``segments`` is a non-empty list.
+    """
+    return (
+        not module.is_new
+        and str(getattr(module, "name", "")) in ALWAYS_SEND_REFS
+        and _non_empty_list(payload.get("segments"))
+    )
+
+
+def changed_owners(
+    baseline: VcoModel, current: VcoModel, level: ConfigContext | None
+) -> tuple[RefOwner, ...]:
+    """The owners that *baseline* has and *current* has not, then those *current* has and *baseline* has not.
+
+    Owners are told apart as ``derive_refs`` tells them (ref name, identity
+    and segment), so an owner that moved to another place with the same
+    identity is no change. It needs no resolver, no refs and no rows: for a
+    module whose refs were not read, it says which edit would need them.
+    """
+    before = _by_key(ref_owners(baseline, level))
+    now = _by_key(ref_owners(current, level))
+    return (
+        *(owner for key, owner in before.items() if key not in now),
+        *(owner for key, owner in now.items() if key not in before),
+    )
+
+
 def derive_refs(
     module: ConfigurationModuleBase,
     baseline: VcoModel | None,
@@ -480,12 +513,7 @@ def derive_refs(
     if baseline is not None and module.refs_loaded:
         warnings = _warnings(baseline, before, read, level, context)
 
-    module_name = str(getattr(module, "name", ""))
-    send = bool(changes) or (
-        not module.is_new
-        and module_name in ALWAYS_SEND_REFS
-        and _non_empty_list(payload.get("segments"))
-    )
+    send = bool(changes) or sends_refs_always(module, payload)
     refs: dict[str, Any] | None = None
     if send:
         refs = {}

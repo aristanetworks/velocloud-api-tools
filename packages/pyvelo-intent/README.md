@@ -376,8 +376,15 @@ did not change is not sent.
 
 Beside its `data`, a device settings or QoS module has `refs`: the rows that
 tie the module to the enterprise objects it uses (segments, address groups,
-services). A save sends refs only when you changed them (an edited
-`module.refs`, or `refs=` on `update_module`), and then it sends them whole.
+services). The library derives them from the data, so you edit the data and
+never the refs. Setting a provider adds the row it goes with and clearing it
+removes the row; `state.plan().render()` lists each as `+ refs <name>
+(<segment>): <value>` or `- refs <name> (<segment>): <value>`, without the
+segment for a row of the module, and a module that sends its refs with no row
+changed says `refs: sent as read`. A device settings or QoS write with segments
+always carries its refs, because the VCO's processors run on every such write.
+What disagrees in the refs as read is a `warning: <message>` line, and the
+write leaves it as it is.
 
 This is `state.plan().render()` for the firewall patch of "The patch format",
 with `firewall_enabled` set as well, on an edge whose profile has a segment the
@@ -549,17 +556,16 @@ too, when none of your changes is found stored and each value is as read. It
 raises `WriteNotAppliedError` in three cases: another writer also changed a
 value you edited (that edit is marked as a clash); another writer made one of
 your edits too, so that it counts as stored, while another of your edits is
-not; or the write carried refs (an edited `module.refs`, or `refs=` on
-`update_module`) and the VCO replaced them while it left the data as it was,
-so that your refs changes are under `applied` and your data changes under
-`lost_edits`. Reading the version before a write that carries refs would
-prevent the last; it is planned and not built.
+not; or the write carried refs and the VCO replaced them while it left the
+data as it was, so that your refs changes are under `applied` and your data
+changes under `lost_edits`. Reading the version before a write that carries
+refs would prevent the last; it is planned and not built.
 
 A VCO with the check off says nothing when it answers with the module, so the
 save tells a stale write by what is stored. Where no change of a write can be
-found stored (it changes only fields the VCO owns, removes only defaults the
-VCO adds back or rows of an append-only ref, or changes only the inside of ref
-rows), the save does not ask for the module. The VCO then answers with a row
+found stored (it changes only fields the VCO owns, or removes only defaults
+the VCO adds back or rows of an append-only ref), the save does not ask for the
+module. The VCO then answers with a row
 count, which is zero for a stale version, and the save reads the module back.
 Such a write costs one more request.
 
@@ -714,10 +720,7 @@ Known limits:
   together may need a second save, when the device settings change propagates:
   the later module's write raises with your edits in `lost_edits`, and the
   state holds that module as stored, so apply `error.redo_patch()` and save
-  again. A save that does this itself, together with refs the library derives
-  from the data, is planned and not built.
-- Device settings and QoS writes send refs only when you changed them. Refs
-  derived from the data are planned and not built.
+  again. A save that does this itself is planned and not built.
 - On a VCO with the conditional check off, a stale write that carries refs may
   replace them while the data is not stored, overwriting another writer's
   refs; the save then reports your data changes, if any, as not stored.

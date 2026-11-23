@@ -16,6 +16,7 @@ from pyvelo.client.enums.configuration import ConfigurationModuleName
 from pyvelo.client.exceptions import (
     ConfigConflictError,
     DetachedObjectError,
+    RefsNotLoadedError,
     VcoOperationError,
     WriteNotAppliedError,
     WriteOutcomeUnknownError,
@@ -475,7 +476,8 @@ async def test_in_place_edit_on_a_detached_object_is_reported_by_plan():
     assert seg.is_detached
 
 
-async def test_insert_refreshes_and_is_no_longer_new():
+async def saved_insert() -> tuple[ConfigState, MockVcoClient, ConfigPipeline, int]:
+    """A state whose edge had no QoS module, saved: the module is inserted; its ID."""
     state = make_state()  # the edge has no QoS module
     client = MockVcoClient.for_state(state)
     pipeline = ConfigPipeline(client)
@@ -486,9 +488,7 @@ async def test_insert_refreshes_and_is_no_longer_new():
         path="rules",
         patch={"voice": add({"match": {"dport_low": 5060}, "action": QOS_ACTION})},
     )
-
     result = await pipeline.save(state)
-
     assert methods(client.store) == ["insertConfigurationModule"]
     params = client.store.requests[0][1]
     assert params["returnData"] is True
@@ -501,7 +501,21 @@ async def test_insert_refreshes_and_is_no_longer_new():
         if row["name"] == "QOS" and row["configurationId"] == 10
     ]
     assert state.module("qos").id_ == inserted
+    return state, client, pipeline, inserted
 
+
+async def test_insert_refreshes_and_is_no_longer_new():
+    _ = await saved_insert()
+
+
+@pytest.mark.xfail(
+    strict=True,
+    raises=RefsNotLoadedError,
+    reason="an insert's answer carries no refs, and the module is not read back "
+    "with them until Task 10 of the derived-refs plan",
+)
+async def test_a_module_inserted_is_updated_by_the_next_save():
+    state, client, pipeline, inserted = await saved_insert()
     state.edge.qos.service_rate_limit = ServiceRateLimit(
         enabled=True, input_type="percent", value=50
     )

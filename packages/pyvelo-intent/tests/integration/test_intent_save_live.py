@@ -27,8 +27,9 @@ for a value stored otherwise at a planned path):
   (accepted drift, see ``live_support.settle``).
 * refs: the Orchestrator re-derives a deviceSettings module's refs from its data
   when the data changes and drops one whose object is gone; a firewall or WAN
-  module's refs stay as they were. The tests never write refs and restore data
-  only.
+  module's refs stay as they were. A deviceSettings or QoS write that has
+  segments carries its refs as read (the plan derives them); the tests edit no
+  owner of a ref row and restore data only.
 
 What an edge inherits: ``edge/getEdgeConfigurationModules`` returns the module as
 the Orchestrator composes it from the profile's and the edge's. The
@@ -114,6 +115,7 @@ from pyvelo.client import (
     VcoOperationError,
     WriteNotAppliedError,
 )
+from pyvelo.client.derived_refs import APPEND_ONLY_REF_NAMES
 from pyvelo.client.enums.configuration import ConfigurationModuleName as Name
 from pyvelo.client.models.configuration import (
     DeviceSettingsData,
@@ -1121,12 +1123,13 @@ def _device_settings_with_refs(module: AnyConfigurationModule) -> bool:
         isinstance(module, DeviceSettingsConfigurationModule)
         and isinstance(module.raw_refs, dict)
         and bool(module.raw_refs)
+        and bool(module.data.segments)
         and bool(module.data.lan.networks)
     )
 
 
 @pytest.mark.live_write
-async def test_save_of_a_data_edit_sends_no_refs(
+async def test_save_of_a_data_edit_sends_its_refs_as_read(
     lab: Lab, pipeline: ConfigPipeline, writes: Writes
 ) -> None:
     layout = await lab.pick_writable_edge(
@@ -1138,17 +1141,23 @@ async def test_save_of_a_data_edit_sends_no_refs(
         writes.updates.clear()  # the preflight write was not the save under test
         state = await pipeline.load(layout.edge_id, enterprise_id=lab.enterprise_id)
         _ = await _cost_edit(pipeline, state, _json_object(original.data))
+        as_read = {
+            name: rows
+            for name, rows in cast("dict[str, Any]", original.refs).items()
+            if name not in APPEND_ONLY_REF_NAMES
+        }
+        plan = _planned(state, Name.DEVICE_SETTINGS)
         check(
-            _planned(state, Name.DEVICE_SETTINGS).refs is None,
-            "the plan carries refs for a data edit",
+            plan.refs == as_read and plan.ref_changes == (),
+            "the plan does not carry the refs as read for a data edit",
         )
         _ = await _save(pipeline, state)
         check(
             len(writes.updates) == 1, f"expected one write, saw {len(writes.updates)}"
         )
         check(
-            writes.updates[0].update.refs is MISSING,
-            "a data edit sent refs along with the data",
+            writes.updates[0].update.refs == as_read,
+            "a data edit of a module with segments did not send its refs as read",
         )
 
 

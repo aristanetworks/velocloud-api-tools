@@ -19,7 +19,9 @@ from pyvelo.client.derived_refs import (
     DerivedRefs,
     PlanWarning,
     RefChange,
+    changed_owners,
     derive_refs,
+    sends_refs_always,
 )
 from pyvelo.client.models.configuration import DeviceSettingsData
 from pyvelo.client.models.configuration.device_settings.segment import (
@@ -691,3 +693,38 @@ def test_a_change_is_frozen():
     assert isinstance(change, RefChange)
     with pytest.raises(AttributeError):
         change.name = "x"  # pyright: ignore[reportAttributeAccessIssue]
+
+
+def test_the_owners_that_changed_need_no_refs_and_no_resolvers():
+    module = ds_module(
+        [segment_entry(0, "Global Segment", SEG0, dns=dns(primary=True, backup=True))],
+        MISSING,
+        refs_loaded=False,
+    )
+    data = module.data
+    assert isinstance(data, DeviceSettingsData)
+    level = data.config_context
+    current = edited(module)
+    assert changed_owners(data, current, level) == ()
+    set_primary(current, UUID(DNS_A))
+    (added,) = changed_owners(data, current, level)
+    assert (added.name, added.value, added.path) == (
+        PRIMARY,
+        UUID(DNS_A),
+        PRIMARY_PATH,
+    )
+    (removed,) = changed_owners(current, data, level)
+    assert removed.path == PRIMARY_PATH
+
+
+def test_a_write_always_sends_its_refs_for_a_module_with_segments_that_is_not_new():
+    module = primary_module()
+    assert sends_refs_always(module, {"segments": [{}]}) is True
+    assert sends_refs_always(module, {"segments": []}) is False
+    assert sends_refs_always(module, {}) is False
+    module._is_new = True  # pyright: ignore[reportPrivateUsage]
+    assert sends_refs_always(module, {"segments": [{}]}) is False
+    firewall = FirewallConfigurationModule.model_validate(
+        make_module_json("firewall", {"segments": []})
+    )
+    assert sends_refs_always(firewall, {"segments": [{}]}) is False

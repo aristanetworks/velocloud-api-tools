@@ -5,9 +5,15 @@
 """
 
 import copy
+import uuid
 from typing import Any
 
 from pydantic import MISSING
+from pyvelo.client.models.configuration import DeviceSettingsData
+from pyvelo.client.models.configuration.device_settings.segment import (
+    DnsPrimaryProvider,
+    SegmentDns,
+)
 from pyvelo.client.schemas.configuration import DeviceSettingsConfigurationModule
 from pyvelo.config.resolver import ResolverRegistry
 from pyvelo.core import ConfigContext
@@ -29,8 +35,9 @@ DNS_B = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
 AUTH = "cccccccc-cccc-4ccc-8ccc-cccccccccccc"
 CSS = "dddddddd-dddd-4ddd-8ddd-dddddddddddd"
 
-_PRIMARY = "deviceSettings:dns:primaryProvider"
-_BACKUP = "deviceSettings:dns:backupProvider"
+PRIMARY = "deviceSettings:dns:primaryProvider"
+BACKUP = "deviceSettings:dns:backupProvider"
+SEGMENT = "deviceSettings:segment"
 
 
 def segment_entry(
@@ -51,8 +58,8 @@ def segment_entry(
 def dns(primary: bool = False, backup: bool = False) -> dict[str, Any]:
     """A ``dns`` section with a ``{"ref": ...}`` stub for each provider asked for; the others are empty."""
     return {
-        "primaryProvider": {"ref": _PRIMARY} if primary else {},
-        "backupProvider": {"ref": _BACKUP} if backup else {},
+        "primaryProvider": {"ref": PRIMARY} if primary else {},
+        "backupProvider": {"ref": BACKUP} if backup else {},
         "privateProviders": {},
     }
 
@@ -123,6 +130,55 @@ def ds_module(
     return DeviceSettingsConfigurationModule.model_validate(
         row, context={"config_level": level, "refs_loaded": refs_loaded}
     )
+
+
+def primary_provider_row() -> dict[str, Any]:
+    """The complete row of ``dns-a`` as the primary provider of the Global Segment."""
+    return service_row(PRIMARY, DNS_A, 701, SEG0_OBJECT, SEG0)
+
+
+def primary_provider_module(
+    more_refs: dict[str, Any] | None = None, *, refs_loaded: bool = True
+) -> DeviceSettingsConfigurationModule:
+    """A module whose Global Segment has ``dns-a`` as primary provider, with its row; *more_refs* adds refs."""
+    return ds_module(
+        [segment_entry(0, "Global Segment", SEG0, dns=dns(primary=True))],
+        {
+            SEGMENT: segment_row(0, SEG0_OBJECT, SEG0),
+            PRIMARY: primary_provider_row(),
+            **(more_refs or {}),
+        },
+        refs_loaded=refs_loaded,
+    )
+
+
+def unset_provider_module(
+    *, refs_loaded: bool = True
+) -> DeviceSettingsConfigurationModule:
+    """A module whose Global Segment has a primary provider stub and no row for it.
+
+    With *refs_loaded* false it has no refs at all, as a module from
+    ``getConfigurationModules`` has none.
+    """
+    return ds_module(
+        [segment_entry(0, "Global Segment", SEG0, dns=dns(primary=True))],
+        {SEGMENT: segment_row(0, SEG0_OBJECT, SEG0)} if refs_loaded else MISSING,
+        refs_loaded=refs_loaded,
+    )
+
+
+def copy_of_data(module: DeviceSettingsConfigurationModule) -> DeviceSettingsData:
+    """A deep copy of the module's data, to edit."""
+    return module.data.model_copy(deep=True)
+
+
+def set_primary_provider(data: DeviceSettingsData, value: uuid.UUID | None) -> None:
+    """Set the primary provider of the first segment of *data* to the service *value*."""
+    dns_section = data.segments[0].dns
+    assert isinstance(dns_section, SegmentDns)
+    provider = dns_section.primary_provider
+    assert isinstance(provider, DnsPrimaryProvider)
+    provider.service = value
 
 
 def store_with_services() -> ModuleStore:

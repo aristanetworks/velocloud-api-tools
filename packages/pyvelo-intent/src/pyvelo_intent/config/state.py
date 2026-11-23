@@ -89,7 +89,12 @@ class ConfigPlan:
     - "~ path: old -> new" is a value that changes.
     - "~ path: order: item first; item after other" is a keyed list whose items
       change order: the items that move, each with its new place.
-    - "refs: replaced" says the module's refs are sent.
+    - "+ refs name (segment): value" and "- refs name (segment): value" are
+      a ref row the edit adds or removes, with no segment for a row of the
+      module; "refs: sent as read" says the module's refs are sent with no
+      row changed.
+    - "warning: text" is something about the module's refs as read that the
+      plan leaves as it is.
     - "reconciled segments: A, B" are the profile's segments the write adds to
       the edge module as empty entries; with "none" the line reads "missing
       segments".

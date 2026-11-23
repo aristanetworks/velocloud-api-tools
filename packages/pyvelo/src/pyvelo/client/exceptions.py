@@ -253,6 +253,47 @@ class LossyFieldError(VcoError):
         super().__init__(message)
 
 
+class RefsNotLoadedError(VcoError):
+    """Raised when a plan needs the refs of a module that was read without them.
+
+    A module from ``configuration/getConfigurationModules`` (or an insert's
+    answer) carries no refs. An edit to an owner of a ref row then cannot be
+    written, because the row that goes with it is not known, and a write of
+    a device settings or QoS module with segments would let the VCO replace its
+    refs. ``module_name`` is the module; ``paths`` are the owners the edit
+    changed (empty when the write alone is refused).
+    """
+
+    module_name: str
+    paths: tuple[Path, ...]
+
+    def __init__(self, module_name: str, paths: Sequence[Path] = ()) -> None:
+        self.module_name = module_name
+        self.paths = tuple(paths)
+        read = (
+            f"{module_name} was read without its refs (it came from "
+            "configuration/getConfigurationModules)"
+        )
+        how = (
+            "Read the module with its refs and edit that one: send "
+            '`configuration/getConfiguration` with {"id": <configuration ID>, '
+            '"with": ["modules"]} (get_configuration), or '
+            "`edge/getEdgeConfigurationStack` for an edge (get_edge_configuration_stack)."
+        )
+        if self.paths:
+            changed = ", ".join(self.paths)
+            message = (
+                f"{read}, so an edit to {changed} cannot be written: the ref rows "
+                f"that go with it are not known. {how}"
+            )
+        else:
+            message = (
+                f"{read}, so a write of it would let the VCO replace its refs, "
+                f"which this module does not have. {how}"
+            )
+        super().__init__(message)
+
+
 type WriteAnswer = Literal["row", "counted", "refused"]
 """What the VCO said of a module write.
 
@@ -750,8 +791,7 @@ class WriteOutcomeUnknownError(ModuleWriteError):
                 where = f"{change.path}{_place_or_order(change.place, change.moves)}"
                 lines.append(f"  {where}: read {before}, meant {after}")
             lines.extend(_and_more(len(self.plan.changes), limit, "plan.changes"))
-            if self.plan.refs is not None:
-                lines.append("  refs: replaced")
+            lines.extend(self.plan.ref_lines())
         lines.append(
             "Read the configuration again and compare before you write this "
             "module again."
