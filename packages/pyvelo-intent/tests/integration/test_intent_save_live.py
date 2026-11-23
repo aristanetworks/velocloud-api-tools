@@ -75,7 +75,8 @@ from __future__ import annotations
 import copy
 import uuid
 from collections import Counter
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import AsyncGenerator, Awaitable, Callable, Sequence
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import Any, Literal, cast
 
@@ -108,6 +109,7 @@ from live_support import (
     ref_names,
     refusal_codes,
     refusal_form,
+    require_writes,
     restoring,
     run_of,
     same_value,
@@ -126,7 +128,7 @@ from pyvelo.client import (
     VcoOperationError,
     WriteNotAppliedError,
 )
-from pyvelo.client.derived_refs import APPEND_ONLY_REF_NAMES
+from pyvelo.client.derived_refs import APPEND_ONLY_REF_NAMES, PROCESSOR_REF_NAMES
 from pyvelo.client.enums.configuration import ConfigurationModuleName as Name
 from pyvelo.client.models.configuration import (
     DeviceSettingsData,
@@ -1788,11 +1790,24 @@ def _rows_named(refs: object, name: str) -> list[dict[str, Any]]:
     return [cast("dict[str, Any]", row) for row in rows if isinstance(row, dict)]
 
 
+REBUILT_REF_NAMES = PROCESSOR_REF_NAMES - APPEND_ONLY_REF_NAMES
+"""Names whose rows the VCO's processors delete and rebuild on a write: not compared after one.
+
+``deviceSettings:vnfs:edge`` is a processor name too, but it is append-only, so
+its rows stay and are compared.
+"""
+
+
 def _row_keys(refs: object) -> Counter[tuple[str, str, str]]:
-    """Each row of raw *refs* by ``(name, logicalId, segmentLogicalId)``: row IDs are re-issued on a write."""
+    """Each row of raw *refs* by ``(name, logicalId, segmentLogicalId)`` but those of a rebuilt name.
+
+    Row IDs are re-issued on a write, so they are no part of the key.
+    """
     keys: Counter[tuple[str, str, str]] = Counter()
     if isinstance(refs, dict):
         for name in cast("dict[str, Any]", refs):
+            if name in REBUILT_REF_NAMES:
+                continue
             for row in _rows_named(refs, name):
                 key = (
                     name,
@@ -1801,6 +1816,11 @@ def _row_keys(refs: object) -> Counter[tuple[str, str, str]]:
                 )
                 keys[key] += 1
     return keys
+
+
+def _rebuilt_rows(refs: object) -> int:
+    """How many rows of raw *refs* are of a rebuilt name."""
+    return sum(len(_rows_named(refs, name)) for name in REBUILT_REF_NAMES)
 
 
 def _stable_refs(refs: object) -> dict[str, Any]:
@@ -1901,19 +1921,22 @@ async def _dns_services(lab: Lab) -> list[EnterpriseServiceSummary]:
 async def _dns_target(lab: Lab) -> DnsTarget:
     """The target of a case that sets a DNS provider; skip, saying what to set up, where there is none.
 
-    The profile is picked first, which checks the opt-in before anything else.
+    The opt-in is checked first and the services are read next: the pick of a
+    profile writes the module back to try it, so a case that is to skip for a
+    missing service skips before it.
     """
-    profile_id = await lab.pick_writable_profile(
-        Name.DEVICE_SETTINGS,
-        _global_segment_without_provider,
-        "whose Global Segment has a DNS section and no primary provider set",
-    )
+    require_writes(run_of(lab.client))
     services = await _dns_services(lab)
     if not services:
         pytest.skip(
             "the enterprise has no network service of type dns: add one for "
             "this test to set as a provider"
         )
+    profile_id = await lab.pick_writable_profile(
+        Name.DEVICE_SETTINGS,
+        _global_segment_without_provider,
+        "whose Global Segment has a DNS section and no primary provider set",
+    )
     module = await lab.profile_site(profile_id, Name.DEVICE_SETTINGS).read_present()
     descriptor = _descriptor_of(_global_entry(module.raw_data))
     check(descriptor is not None, "the Global Segment is gone from the profile")
@@ -1973,11 +1996,61 @@ def _check_primary_row(
     )
 
 
+def _what(error: BaseException) -> str:
+    """*error* as what holds no lab data: ``failure_text``, else the suite's own message of a failed check."""
+    return failure_text(error) or str(error)
+
+
+@asynccontextmanager
+async def _provider_cleared(
+    pipeline: ConfigPipeline, lab: Lab, target: DnsTarget, site: Site
+) -> AsyncGenerator[None]:
+    """However the block ends, clear the Global Segment's primary provider row if one is stored.
+
+    It reads the module fresh and saves a fresh state, so it needs nothing the
+    block held. A block that failed and a clearing that fails are both
+    reported; the block's own failure is never hidden by the clearing's.
+    """
+
+    async def clear() -> None:
+        stored = await site.read_present()
+        if not _primary_rows(stored.raw_refs, target.segment_logical_id):
+            return
+        state = await pipeline.load_profile(
+            target.profile_id, enterprise_id=lab.enterprise_id
+        )
+        await _set_primary_provider(pipeline, state, target, None)
+        _ = await _save(pipeline, state)
+        after = await site.read_present()
+        check(
+            not _primary_rows(after.raw_refs, target.segment_logical_id),
+            "clearing the primary provider afterwards left its row stored",
+        )
+
+    try:
+        yield
+    except BaseException as case:
+        try:
+            await clear()
+        except (Exception, pytest.fail.Exception) as cleanup:  # noqa: BLE001 - both are reported
+            pytest.fail(
+                f"{_what(case)}; and clearing the primary provider row afterwards "
+                f"failed: {_what(cleanup)}; the lab may still hold the row",
+                pytrace=False,
+            )
+        raise
+    else:
+        await clear()
+
+
 @pytest.mark.live_write
 async def test_set_and_clear_a_dns_provider(lab: Lab, pipeline: ConfigPipeline) -> None:
     target = await _dns_target(lab)
     site = lab.profile_site(target.profile_id, Name.DEVICE_SETTINGS)
-    async with restoring(site) as original:
+    async with (
+        restoring(site) as original,
+        _provider_cleared(pipeline, lab, target, site),
+    ):
         assert original is not None
         state = await pipeline.load_profile(
             target.profile_id, enterprise_id=lab.enterprise_id
@@ -2064,7 +2137,15 @@ async def test_a_stale_version_with_refs_raises_before_sending(
 
 
 @pytest.mark.live_write
-async def test_a_data_edit_keeps_every_row(lab: Lab, pipeline: ConfigPipeline) -> None:
+async def test_a_data_edit_keeps_every_row(
+    lab: Lab, pipeline: ConfigPipeline, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Every ref row as read is still stored after a data edit, but the rows of the names the VCO rebuilds.
+
+    The VCO deletes and rebuilds the hand-off gateway and controller objects
+    and the rest of ``REBUILT_REF_NAMES`` on every such write, and a write is
+    not compared at them; their rows are counted and printed apart.
+    """
     profile_id = await lab.pick_writable_profile(
         Name.DEVICE_SETTINGS,
         _device_settings_with_refs,
@@ -2079,6 +2160,12 @@ async def test_a_data_edit_keeps_every_row(lab: Lab, pipeline: ConfigPipeline) -
         _ = await _save(pipeline, state)
 
         stored = await site.read_present()
+        record(
+            capsys,
+            "a data edit: rows of the names the VCO rebuilds: "
+            f"{_rebuilt_rows(original.refs)} as read, "
+            f"{_rebuilt_rows(stored.raw_refs)} stored",
+        )
         _check_state_holds_stored("data edit", state, stored)
         gone = as_read - _row_keys(stored.raw_refs)
         check(
@@ -2104,36 +2191,35 @@ async def test_record_the_refs_a_write_returns(
     """
     target = await _dns_target(lab)
     site = lab.profile_site(target.profile_id, Name.DEVICE_SETTINGS)
+    saved = "passed"
     async with restoring(site) as original:
         assert original is not None
-        state = await pipeline.load_profile(
-            target.profile_id, enterprise_id=lab.enterprise_id
-        )
-        await _set_primary_provider(pipeline, state, target, target.service)
-        saved = "passed"
-        try:
-            _ = await pipeline.save(state)
-        except ModuleWriteError as error:
-            saved = f"raised {failure_text(error)}"
-        stored = await site.read_present()
-        lines = [f"a save that sends refs: the save {saved}"]
-        declared = declared_ref_names(DeviceSettingsData, ConfigContext.PROFILE)
-        for name in sorted(declared):
-            rows = _rows_named(stored.raw_refs, name)
-            if not rows:
-                lines.append(f"  {name}: no row")
-                continue
-            sent: frozenset[str] = SENT_ROW_FIELDS
-            if name != SEGMENT_REF:
-                sent = sent | {"segmentObjectId"}
-            fields = sorted({field for row in rows for field in row})
-            kept = all(sent <= set(row) for row in rows)
-            lines.append(
-                f"  {name}: {len(rows)} row(s), fields {', '.join(fields)}; "
-                f"every field sent is kept: {'yes' if kept else 'no'}"
+        async with _provider_cleared(pipeline, lab, target, site):
+            state = await pipeline.load_profile(
+                target.profile_id, enterprise_id=lab.enterprise_id
             )
-        record(capsys, "\n".join(lines))
+            await _set_primary_provider(pipeline, state, target, target.service)
+            try:
+                _ = await pipeline.save(state)
+            except ModuleWriteError as error:
+                saved = f"raised {failure_text(error)}"
+            stored = await site.read_present()
+            lines = [f"a save that sends refs: the save {saved}"]
+            declared = declared_ref_names(DeviceSettingsData, ConfigContext.PROFILE)
+            for name in sorted(declared):
+                rows = _rows_named(stored.raw_refs, name)
+                if not rows:
+                    lines.append(f"  {name}: no row")
+                    continue
+                sent: frozenset[str] = SENT_ROW_FIELDS
+                if name != SEGMENT_REF:
+                    sent = sent | {"segmentObjectId"}
+                fields = sorted({field for row in rows for field in row})
+                kept = all(sent <= set(row) for row in rows)
+                lines.append(
+                    f"  {name}: {len(rows)} row(s), fields {', '.join(fields)}; "
+                    f"every field sent is kept: {'yes' if kept else 'no'}"
+                )
+            record(capsys, "\n".join(lines))
+        # Past the clearing, so that a save that failed has its row cleared first.
         check(saved == "passed", f"the save of a provider {saved}")
-
-        await _set_primary_provider(pipeline, state, target, None)
-        _ = await _save(pipeline, state)

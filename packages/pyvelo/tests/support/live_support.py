@@ -73,8 +73,15 @@ uses the ``vco_client`` fixture.
 ``restoring`` is the one way a test writes: it records a module's raw data
 first (in a private file under ``$PYVELO_IT_BACKUP_DIR``, which must be outside
 the repository, else a new temp directory; it holds no refs but a QoS module's,
-and never a client-connector ref; it is removed once the module is back) and,
+kept to insert it again, and never a client-connector ref; it is removed once
+the module is back) and,
 however the test ends, puts it back and checks that it is back. The restore
+sends the data, and, for a deviceSettings or QoS module whose data has
+segments, the module's refs as read in the same step (never from the backup),
+less the append-only names, as every pipeline save of such a module does: the
+VCO runs its processors on every such write, and a write without refs could
+make them replace the module's whole association set. Any other module is
+restored with data alone. The restore
 undoes what this run did and nothing else. A module this run inserted is
 deleted; one it deleted is inserted again; one it wrote gets its original data
 back. Where the module is not as the Orchestrator last answered this run
@@ -95,7 +102,11 @@ What the Orchestrator does to a module as it stores it, seen on a lab:
   changes: ref IDs are re-issued, and a ref whose object is gone is dropped (it
   cannot be written back). The refs of a firewall or WAN module are left as they
   were. A client-connector ref carries a login token that is new on every read.
-  So the tests never write refs, and restore data only.
+  A save through the library of a deviceSettings or QoS module with segments
+  sends its complete refs as read (the derived refs), so a test that saves
+  one leaves the refs to the library, and a test edits no ref but through the
+  field that owns it. The restore sends the refs as read at the restore, as
+  described above, and compares data only.
 * It assigns ``ruleLogicalId`` to a rule added without one (the tests that add
   rules allow it).
 * Some modules of a lab are not valid as they stand and refuse any write, even
@@ -143,6 +154,7 @@ from pyvelo.client import (
     WriteNotAppliedError,
     WriteOutcomeUnknownError,
 )
+from pyvelo.client.derived_refs import APPEND_ONLY_REF_NAMES, sends_refs_always
 from pyvelo.client.enums.configuration import ConfigurationModuleName
 from pyvelo.client.enums.profiles import (
     GetConfigurationWith,
@@ -1496,8 +1508,27 @@ async def capture(site: Site) -> Original | None:
     )
 
 
+def refs_as_read(
+    module: AnyConfigurationModule, document: Mapping[str, Any]
+) -> dict[str, Any] | MISSING:
+    """The refs a write of *document* to *module* carries: the module's refs as read, less the append-only names.
+
+    Only a deviceSettings or QoS module whose data has segments carries them
+    (``sends_refs_always``), and only where the refs were read; any other write
+    is of data alone. A copy, taken from *module* as it was just read.
+    """
+    refs = module.raw_refs
+    if not sends_refs_always(module, document) or not isinstance(refs, dict):
+        return MISSING
+    return {
+        str(name): copy.deepcopy(rows)
+        for name, rows in cast("dict[object, Any]", refs).items()
+        if name not in APPEND_ONLY_REF_NAMES
+    }
+
+
 async def write_data(site: Site, module: AnyConfigurationModule, data: object) -> None:
-    """Send *data* to the module as it stands (its version), with no refs."""
+    """Send *data* to the module as it stands (its version), with the refs a library write of it carries (``refs_as_read``)."""
     document = expect(data, dict, "the data to write")
     _ = await site.client.update_configuration_module(
         UpdateConfigurationModule(
@@ -1506,7 +1537,9 @@ async def write_data(site: Site, module: AnyConfigurationModule, data: object) -
                 site.enterprise_id if site.enterprise_id is not None else MISSING
             ),
             version=module.version or MISSING,
-            update=ConfigurationModuleUpdate(data=copy.deepcopy(document)),
+            update=ConfigurationModuleUpdate(
+                data=copy.deepcopy(document), refs=refs_as_read(module, document)
+            ),
             return_data=True,
         )
     )

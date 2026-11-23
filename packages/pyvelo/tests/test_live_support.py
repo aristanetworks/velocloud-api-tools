@@ -57,6 +57,16 @@ from pyvelo.testing import (
     make_module_json,
     make_transport,
 )
+from refs_helpers import (
+    DNS_A,
+    SEG0,
+    SEG0_OBJECT,
+    SEGMENT,
+    dns,
+    segment_entry,
+    segment_row,
+    service_row,
+)
 
 DS = Name.DEVICE_SETTINGS
 
@@ -1247,6 +1257,100 @@ async def test_a_restore_that_works_leaves_no_backup(
         assert fake.data(2)["serviceRateLimit"]["value"] == 2
     assert fake.data(2) == QOS
     assert list(backups.iterdir()) == []
+
+
+NETWORK = {"vlanId": 100, "name": "users", "segmentId": 0, "override": True}
+VNFS_EDGE = "deviceSettings:vnfs:edge"
+"""An append-only ref name: its rows are left out of the refs a restore sends."""
+
+
+def ds_lab() -> FakeLab:
+    """Profile 20 with a deviceSettings module (4) that has a segment, a segment row and an append-only row."""
+    fake = lab_fake()
+    data = {
+        "lan": {"networks": [dict(NETWORK)], "interfaces": []},
+        "segments": [segment_entry(0, "Global Segment", SEG0, dns=dns(), css={})],
+    }
+    fake.module(4, 20, "deviceSettings", data)
+    fake.store.rows[4]["refs"] = {
+        SEGMENT: segment_row(0, SEG0_OBJECT, SEG0),
+        VNFS_EDGE: {
+            **service_row(VNFS_EDGE, DNS_A, 701, SEG0_OBJECT, SEG0),
+            "type": "securityVnf",
+        },
+    }
+    return fake
+
+
+def updates_of(fake: FakeLab) -> list[dict[str, Any]]:
+    """The ``_update`` of each module update the fake was sent."""
+    return [
+        params["_update"]
+        for method, params in fake.requests
+        if method == "configuration/updateConfigurationModule"
+    ]
+
+
+async def test_a_restore_of_a_module_with_segments_sends_the_refs_as_read(
+    backups: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+):
+    fake = ds_lab()
+    original = copy.deepcopy(fake.data(4))
+    lab = await opened(fake, monkeypatch)
+    site = lab.profile_site(20, DS)
+    async with live.restoring(site):
+        module = await site.read_present()
+        data = copy.deepcopy(module.raw_data)
+        assert isinstance(data, dict)
+        data["lan"]["networks"][0]["name"] = "renamed"
+        await live.write_data(site, module, data)
+        assert fake.data(4) != original
+        at_restore = copy.deepcopy(fake.store.rows[4]["refs"])
+    assert fake.data(4) == original
+    *_, restore = updates_of(fake)
+    assert restore["refs"] == {
+        name: rows for name, rows in at_restore.items() if name != VNFS_EDGE
+    }
+    assert SEGMENT in restore["refs"]
+    # The backup holds none of them.
+    assert list(backups.iterdir()) == []
+
+
+async def test_a_write_of_a_module_with_segments_carries_the_refs_but_not_the_append_only_ones(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    fake = ds_lab()
+    lab = await opened(fake, monkeypatch)
+    site = lab.profile_site(20, DS)
+    module = await site.read_present()
+    as_read = copy.deepcopy(fake.store.rows[4]["refs"][SEGMENT])
+    data = module.raw_data
+    assert isinstance(data, dict)
+    assert live.refs_as_read(module, data) == {SEGMENT: as_read}
+    assert await live.own_data_refusal(site) is None
+    # The preflight write is a write of the module as it is: it carries them too.
+    first, *_ = updates_of(fake)
+    assert set(first["refs"]) == {SEGMENT}
+
+
+async def test_a_restore_of_a_module_without_segments_or_of_another_name_sends_no_refs(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    fake = ds_lab()
+    fake.data(4)["segments"] = []  # no segments: no refs go
+    fake.module(6, 20, "firewall", {**FIREWALL, "segments": [segment(0)]})
+    fake.store.rows[6]["refs"] = {SEGMENT: segment_row(0, SEG0_OBJECT, SEG0)}
+    lab = await opened(fake, monkeypatch)
+    for module_id, name in ((4, DS), (6, Name.FIREWALL)):
+        site = lab.profile_site(20, name)
+        async with live.restoring(site):
+            module = await site.read_present()
+            assert module.id_ == module_id
+            data = copy.deepcopy(module.raw_data)
+            assert isinstance(data, dict)
+            assert live.refs_as_read(module, data) is MISSING
+            await live.write_data(site, module, data)
+    assert all("refs" not in update for update in updates_of(fake))
 
 
 async def test_a_restore_that_fails_names_the_backup_and_never_the_data(
