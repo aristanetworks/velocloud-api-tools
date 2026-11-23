@@ -46,6 +46,8 @@ from pyvelo.testing import (
 from pyvelo_intent.config.state import ConfigState
 
 _HOST = "vco.example.invalid"
+_GLOBAL_SEGMENT_OBJECT_ID = 1
+_GLOBAL_SEGMENT_LOGICAL_ID = uuid.UUID(int=0)
 
 
 def make_firewall_segment(
@@ -105,7 +107,10 @@ class MockVcoClient(VcoClient):
     :meth:`seed`, or build the client with :meth:`for_state`. A ``stack`` seeds
     it with both its configurations and is served for every edge. A load reads
     the stack from the store, as new objects each time, so a second load sees
-    what a save stored. The other calls are answered here.
+    what a save stored. The store also holds the one segment
+    ``get_enterprise_network_segments`` answers, as an object a ref row can
+    point at; :meth:`add_service` adds the services. The other calls are
+    answered here.
     """
 
     store: ModuleStore
@@ -119,6 +124,13 @@ class MockVcoClient(VcoClient):
     ) -> None:
         self.store = ModuleStore(conditional_check=conditional_check)
         super().__init__(_HOST, "test-token", transport=make_transport(self.store))
+        self.store.add_object(
+            _GLOBAL_SEGMENT_OBJECT_ID,
+            logical_id=str(_GLOBAL_SEGMENT_LOGICAL_ID),
+            name="Global Segment",
+            type_=NetworkSegmentType.REGULAR.value,
+            object_="NETWORK_SEGMENT",
+        )
         self.stack: GetEdgeConfigurationStackResult | None = stack
         self._edges: Sequence[GetEnterpriseEdgesItem] = (
             edges if edges is not None else []
@@ -144,6 +156,12 @@ class MockVcoClient(VcoClient):
                 }
             )
         return self
+
+    def add_service(
+        self, object_id: int, *, logical_id: str, name: str, type_: str
+    ) -> None:
+        """Have the store hold the network service *object_id*, which a ref row can point at."""
+        self.store.add_object(object_id, logical_id=logical_id, name=name, type_=type_)
 
     @classmethod
     def for_state(cls, state: ConfigState, *, conditional_check: bool = False) -> Self:
@@ -198,9 +216,9 @@ class MockVcoClient(VcoClient):
         self.calls.append(("get_enterprise_network_segments", request))
         return [
             NetworkSegment.model_construct(
-                id_=1,
+                id_=_GLOBAL_SEGMENT_OBJECT_ID,
                 name="Global Segment",
-                logical_id=uuid.UUID(int=0),
+                logical_id=_GLOBAL_SEGMENT_LOGICAL_ID,
                 type_=NetworkSegmentType.REGULAR,
                 data=NetworkSegmentData.model_construct(segment_id=0),
             )

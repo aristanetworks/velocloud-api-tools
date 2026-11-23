@@ -608,14 +608,17 @@ async def test_a_ref_row_changed_inside_asks_for_a_count_too(
     mock_vco_client: MockVcoClientFactory,
 ):
     module = qos({"segments": []}, refs={"a": [ROW1]})
-    changed = {"a": [{**ROW1, "logicalId": "b5"}]}
+    changed_row = {**ROW1, "configurationId": 10, "moduleId": 1, "ref": "a"}
+    changed = {"a": [{**changed_row, "logicalId": "b5"}]}
     store = store_of(module)
     client = await mock_vco_client(store)
     write = await client.write_module(module, plan_module(module, refs=changed))
     assert methods(store) == ["updateConfigurationModule", "getConfiguration"]
     assert "returnData" not in store.requests[0][1]
-    assert store.rows[1]["refs"] == changed
-    assert write.module.raw_refs == changed
+    stored = store.rows[1]["refs"]["a"]  # the VCO stores the row with a new id
+    assert stored == {**changed["a"][0], "id": stored["id"]}
+    assert stored["id"] != ROW1["id"]
+    assert write.module.raw_refs == store.rows[1]["refs"]
 
 
 @pytest.mark.parametrize("conditional_check", [True, False])
