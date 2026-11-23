@@ -247,6 +247,8 @@ class ModulePlan:
     """What disagrees in the module as read about its refs, and the plan leaves as it is."""
     added_segments: tuple[str, ...] = ()
     """The names of the segments added to the module that the payload holds."""
+    repair_defaults: bool = True
+    """The ``repair_defaults`` that ``plan_module`` was called with; a rebase of the plan keeps it."""
     missing_defaults: tuple[MissingDefaults, ...] = ()
     """The segments of a profile QoS module that lack template ``defaults``, one entry each.
 
@@ -882,6 +884,7 @@ def plan_module(
             for a in additions
             if isinstance(a, AddedSegment) and a.segment_id in in_payload
         ),
+        repair_defaults=repair_defaults,
         missing_defaults=tuple(missing_defaults),
     )
 
@@ -1015,6 +1018,7 @@ def rebase_onto[M: ConfigurationModuleBase](
         level=module.config_context,
         via_pipeline=True,
         carried_repairs=carried_repairs,
+        repair_defaults=plan.repair_defaults,
     )
     planned = {change.path for change in plan.changes}
     if any(change.path not in planned for change in rebased_plan.changes):

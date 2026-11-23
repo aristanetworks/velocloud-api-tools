@@ -807,6 +807,17 @@ class ConfigurationMixin(Protocol):
         ``SegmentSetError``, and nothing is sent. A segment is assigned to a
         profile through the pipeline (``pipeline.assign_segment``).
 
+        Every QoS segment of a profile holds the template's four ``defaults``
+        rules. A profile QoS module with a segment that lacks some gets them
+        from the template when it is written, with a warning in the plan
+        (``plan_module``); a module with nothing else to write is not
+        written to repair. ``repair_defaults=False`` writes the module as it
+        is, and the warning stays. This call has no device settings to read,
+        so a repaired default keeps the template's action, without
+        ``allowConditionalBh``, unlike a repair planned through a
+        ``ConfigState``, which sets it from the segment's
+        ``vpn.conditionalBackhaul``.
+
         The module passed in is not updated: it still holds the data and the
         ``version`` from before the write. It is marked as replaced (an
         assignment to it raises) when the write stored something, and when
