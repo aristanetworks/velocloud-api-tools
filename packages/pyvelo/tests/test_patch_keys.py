@@ -19,7 +19,7 @@ from pyvelo.core import (
 )
 from pyvelo.core.fields import get_key_spec
 from pyvelo.core.merge import select_items
-from pyvelo.core.rebase import Path
+from pyvelo.core.rebase import Key, Path, item_key, key_text
 
 from .patch_models import Link, Root, Route, Rule
 
@@ -570,3 +570,62 @@ def test_add_under_a_name_where_the_key_is_composite_points_to_plus():
     assert exc.value.path == Path.parse("links[Backup]")
     assert '"+"' in str(exc.value)
     assert len(root.links) == 3
+
+
+def true_and_True() -> Root:
+    """Two routes that differ in the one part ``true`` / ``True``: the text ``..,true,..`` is two keys."""
+    return Root(
+        routes=[
+            Route(dest="a", prefix=24, gw="true", intf="GE3"),
+            Route(dest="a", prefix=24, gw="True", intf="GE3"),
+        ]
+    )
+
+
+AMBIGUOUS_TEXT = "a,24,true,GE3"
+
+
+def test_a_text_two_readings_take_to_different_items_is_refused_not_guessed():
+    root = true_and_True()
+    with pytest.raises(PatchError) as exc:
+        _ = root.merge_patch({"routes": {AMBIGUOUS_TEXT: {"cost": 5}}})
+    assert exc.value.path == Path(("routes", Key(("a", 24, True, "GE3"))))
+    message = exc.value.message
+    assert "ambiguous" in message
+    assert "#0" in message
+    assert "#1" in message
+    assert "quoted form" in message
+    assert costs(root) == [0, 0]
+
+
+def test_the_quoted_form_a_refusal_gives_selects_the_item_it_names():
+    for index in (0, 1):
+        key = item_key(true_and_True().routes[index], ("dest", "prefix", "gw", "intf"))
+        assert key is not None
+        text = key_text(key)
+        root = true_and_True()
+        assert select_items(root, "routes", text) == [index]
+        _ = root.merge_patch({"routes": {text: {"cost": 5}}})
+        assert costs(root) == [5 if i == index else 0 for i in (0, 1)]
+    with pytest.raises(PatchError, match="ambiguous") as exc:
+        _ = true_and_True().merge_patch({"routes": {AMBIGUOUS_TEXT: {"cost": 5}}})
+    for index in (0, 1):
+        key = item_key(true_and_True().routes[index], ("dest", "prefix", "gw", "intf"))
+        assert key is not None
+        assert key_text(key) in exc.value.message
+
+
+def test_an_anchor_two_readings_take_to_different_items_is_refused():
+    root = true_and_True()
+    root.routes.append(Route(dest="z", prefix=8, gw="g", intf="e"))
+    with pytest.raises(PatchError, match="ambiguous"):
+        _ = root.merge_patch({"routes": {"z,8,g,e": move(before=AMBIGUOUS_TEXT)}})
+
+
+def test_the_example_of_a_composite_key_selects_its_item():
+    root = true_and_True()
+    message = message_of(root, {"routes": {"zz": {"cost": 1}}})
+    example = message.split(", as in ")[1].split(";")[0]
+    assert select_items(root, "routes", example) == [0]
+    _ = root.merge_patch({"routes": {example: {"cost": 5}}})
+    assert costs(root) == [5, 0]

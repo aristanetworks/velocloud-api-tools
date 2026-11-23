@@ -1196,6 +1196,8 @@ class _Selection:
     """Whether it names the items by their label."""
     new: bool = False
     """Whether it is ``"+"`` or ``"+tag"`` in a keyed list: a new item."""
+    other_reading: tuple[KeyValue, list[int]] | None = None
+    """The key and positions of a second reading of the selector that names other items than ``positions`` (``_select``)."""
 
 
 def _selector_keys(spec: _ListSpec, selector: object) -> list[KeyValue]:
@@ -1236,14 +1238,56 @@ def _plain_key_text(key: KeyValue) -> str:
 
     A one-part key in string form. A composite key: its parts in string form
     joined by commas, unless a part holds a comma or a double quote, which
-    only the form ``key_text`` writes can carry.
+    only the form ``key_text`` writes can carry, or the text reads as another
+    key in the form ``key_text`` writes (``true`` is the boolean there).
     """
     if not isinstance(key, tuple):
         return str(key)
     texts = [str(part) for part in key]
     if any("," in text or '"' in text for text in texts):
         return key_text(key)
-    return ",".join(texts)
+    plain = ",".join(texts)
+    try:
+        written = parse_key_text(plain)
+    except ValueError:
+        return plain
+    if len(written) == len(key) and key_form(written) != key_form(key):
+        return key_text(key)
+    return plain
+
+
+def _refuse_two_readings(
+    selection: _Selection,
+    spec: _ListSpec,
+    items: Sequence[object],
+    selector: object,
+    where: Path,
+) -> None:
+    """Raise ``PatchError`` at *where* if *selector* has two readings that name different items.
+
+    A text of a composite key is read as the form ``key_text`` writes and as
+    its parts split at every comma; where those are two keys of the list, one
+    of them would be taken without a word. The message names both items and
+    the quoted form that picks one.
+    """
+    other = selection.other_reading
+    if other is None:
+        return
+    shown: list[str] = []
+    for positions in (selection.positions, other[1]):
+        texts = [
+            f"#{index} ({key_text(key)})"
+            for index in positions
+            if (key := item_key(items[index], spec.key_paths)) is not None
+        ]
+        shown.append(", ".join(texts))
+    raise PatchError(
+        f"{_show_selector(selector)} is ambiguous: written as a quoted key "
+        + f"(key_text) it names {shown[0]}, and as parts split at the commas "
+        + f"it names {shown[1]}. Write the key in its quoted form, as shown "
+        + "for the item, to choose",
+        where,
+    )
 
 
 def _select(
@@ -1256,7 +1300,9 @@ def _select(
 
     In a keyed list, tried in order: an item whose key is one
     the selector stands for (``_selector_keys``), compared in string form
-    part by part; ``"#n"``, the item at position ``n``; ``"+"`` or ``"+tag"``,
+    part by part (when two readings of the selector name different items,
+    the selection says so in ``other_reading`` and the caller refuses it,
+    ``_refuse_two_readings``); ``"#n"``, the item at position ``n``; ``"+"`` or ``"+tag"``,
     a new item; an item whose alt key equals the selector in string form;
     an item whose label does; and, where the key is a ``NameOf`` field and
     with *resolvers*, the name the resolver has for the selector, as the key
@@ -1269,9 +1315,15 @@ def _select(
         if found := [i for i, item in enumerate(items) if str(item) == text]:
             return _Selection(found, text, None)
     keys = _selector_keys(spec, selector) if spec.kind == "keyed" else []
-    for candidate in keys:
-        if found := _with_key(items, spec, candidate):
-            return _Selection(found, candidate, None)
+    matched = [
+        (candidate, found)
+        for candidate in keys
+        if (found := _with_key(items, spec, candidate))
+    ]
+    if matched:
+        (candidate, found), *rest = matched
+        other = next(((c, f) for c, f in rest if f != found), None)
+        return _Selection(found, candidate, None, other_reading=other)
     key = keys[0] if keys else None
     n = position_of(selector)
     if n is not None:
@@ -1329,7 +1381,9 @@ def select_items(
         raise TypeError(f"{model_cls.__name__}.{field_name} is not a list")
     current = _field_value(model, field_name)
     items: list[object] = current if _is_list(current) else []
-    return _select(items, spec, selector, resolvers).positions
+    selection = _select(items, spec, selector, resolvers)
+    _refuse_two_readings(selection, spec, items, selector, Path((field_name,)))
+    return selection.positions
 
 
 def _merge_list(
@@ -1665,6 +1719,7 @@ def _resolve_items(
     for selector, value in ops.items():
         selection = _select(items, spec, selector, resolvers)
         where = path.child(_selector_part(selector, selection))
+        _refuse_two_readings(selection, spec, items, selector, where)
         op = parse_item_op(value, where)
         slot: _Slot | None = None
         new: object = None
@@ -2022,6 +2077,7 @@ def _anchor_position(
 ) -> int:
     """The position of the one item *anchor* names, which is not *slot*'s; else ``PatchError``."""
     selection = _select(items, spec, anchor, resolvers)
+    _refuse_two_readings(selection, spec, items, anchor, where)
     if not selection.positions:
         raise PatchError(f"the anchor {anchor!r} names no item", where)
     if len(selection.positions) > 1:
