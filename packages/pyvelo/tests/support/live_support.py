@@ -226,15 +226,16 @@ def synthetic_name() -> str:
 
 
 def marks_in(description: object) -> frozenset[str]:
-    """The marks that are words of *description*; a mark inside a longer word is none.
+    """The marks that are whole tokens of *description*; a mark inside a longer token is none.
 
-    A word is a run of letters, digits and hyphens. Anything that is not a
-    string has no marks.
+    A token is a run of letters, digits, underscores, hyphens and slashes, so
+    ``pyvelo-it-target_old`` and ``pyvelo-it-target/prod`` hold no mark. Anything
+    that is not a string has no marks.
     """
     if not isinstance(description, str):
         return frozenset()
-    words = set(re.findall(r"[A-Za-z0-9-]+", description))
-    return frozenset(mark for mark in _MARKS if mark in words)
+    tokens = set(re.findall(r"[\w/-]+", description))
+    return frozenset(mark for mark in _MARKS if mark in tokens)
 
 
 # ---------------------------------------------------------------------------
@@ -478,6 +479,23 @@ class Lab:
             self.client, profile_id, name, self.enterprise_id, target=target
         )
 
+    def require_edge_targets(
+        self, *, replace_modules: bool = False
+    ) -> list[EdgeLayout]:
+        """The marked edges, once the test may write; else fail or skip the test, saying which mark is missing.
+
+        The opt-in is checked first, so a run that may not write fails or skips
+        for that and never for an unmarked lab. With *replace_modules*, some
+        marked edge must also be marked for deleting and inserting modules.
+        """
+        require_writes(run_of(self.client))
+        targets = self.targets
+        if not targets:
+            pytest.skip(NO_EDGE_MARKED)
+        if replace_modules and not any(layout.replace_modules for layout in targets):
+            pytest.skip(NO_EDGE_FOR_MODULES)
+        return targets
+
     def edges_with(
         self,
         name: ConfigurationModuleName,
@@ -558,12 +576,7 @@ class Lab:
         With *replace_modules*, the edge must also be marked for deleting and
         inserting modules.
         """
-        require_writes(run_of(self.client))
-        targets = self.targets
-        if not targets:
-            pytest.skip(NO_EDGE_MARKED)
-        if replace_modules and not any(layout.replace_modules for layout in targets):
-            pytest.skip(NO_EDGE_FOR_MODULES)
+        self.require_edge_targets(replace_modules=replace_modules)
         found = self.edges_with(name, suitable, replace_modules=replace_modules)
         if not found:
             pytest.skip(f"no marked edge has a {name.value} module {what or 'to use'}")

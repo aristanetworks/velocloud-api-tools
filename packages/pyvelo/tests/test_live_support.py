@@ -1540,6 +1540,34 @@ def test_marks_are_whole_words_of_a_description():
     assert live.marks_in(None) == frozenset()
 
 
+@pytest.mark.parametrize(
+    "description",
+    [
+        "pyvelo-it-target_old",
+        "old_pyvelo-it-target",
+        "pyvelo-it-target\u00dc",
+        "pyvelo-it-target/prod",
+        "prod/pyvelo-it-target",
+    ],
+)
+def test_a_mark_inside_a_longer_token_is_none(description):
+    assert live.marks_in(description) == frozenset()
+
+
+@pytest.mark.parametrize(
+    "description",
+    [
+        "pyvelo-it-target",
+        "lab edge pyvelo-it-target and more",
+        "lab edge pyvelo-it-target.",
+        "lab edge, pyvelo-it-target, more",
+        "(pyvelo-it-target)",
+    ],
+)
+def test_a_mark_bounded_by_spaces_or_punctuation_counts(description):
+    assert live.marks_in(description) == {live.TARGET_MARK}
+
+
 def test_a_profile_with_edges_needs_the_second_mark():
     entry = live.ProfileEntry
     both = frozenset({live.TARGET_MARK, live.WITH_EDGES_MARK})
@@ -1625,6 +1653,40 @@ async def test_with_no_mark_every_pick_skips_and_says_how(
         "well if edges are assigned to it"
     )
     assert "updateConfigurationModule" not in fake.methods()
+
+
+async def test_edge_targets_are_required_after_the_opt_in_and_name_the_missing_mark(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    fake = FakeLab()
+    fake.add_profile(20, description="the default profile")
+    fake.add_edge(5, 10, 20)
+    lab = await opened(fake, monkeypatch)
+    with pytest.raises(pytest.skip.Exception) as skipped:
+        _ = lab.require_edge_targets()
+    assert str(skipped.value) == live.NO_EDGE_MARKED
+
+    marked = FakeLab()
+    marked.add_profile(20, description="the default profile")
+    marked.add_edge(5, 10, 20, description=MARKED)
+    lab = await opened(marked, monkeypatch)
+    assert [x.edge_id for x in lab.require_edge_targets()] == [5]
+    with pytest.raises(pytest.skip.Exception) as skipped:
+        _ = lab.require_edge_targets(replace_modules=True)
+    assert str(skipped.value) == live.NO_EDGE_FOR_MODULES
+
+
+async def test_edge_targets_with_the_opt_in_wrong_fail_before_the_marks_are_looked_at(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setenv(live.WRITE_HOST_ENV, "other.example.invalid")
+    monkeypatch.setenv(live.WRITE_ENTERPRISE_ENV, str(ENTERPRISE))
+    fake = FakeLab()
+    fake.add_profile(20, description="the default profile")
+    fake.add_edge(5, 10, 20)
+    lab = await live.discover_lab(client_over(fake), None)
+    with pytest.raises(pytest.fail.Exception, match="^writes refused: "):
+        _ = lab.require_edge_targets(replace_modules=True)
 
 
 async def test_a_marked_profile_with_edges_is_passed_over(

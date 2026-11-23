@@ -552,7 +552,7 @@ async def _lacking_layout(lab: Lab, case: Reconcile) -> EdgeLayout:
     refuses a write of its own data.
     """
     candidates: list[EdgeLayout] = []
-    for layout in lab.targets:
+    for layout in lab.require_edge_targets():
         edge_module = await lab.edge_site(layout, case.name).read()
         profile_module = await lab.profile_site(layout.profile_id, case.name).read()
         if edge_module is None or profile_module is None:
@@ -704,7 +704,7 @@ async def test_missing_device_settings_segment_is_added_as_a_placeholder_the_orc
     case = DEVICE_SETTINGS_CASE
     lacking: list[EdgeLayout] = []
     sharing: list[EdgeLayout] = []
-    for layout in lab.targets:
+    for layout in lab.require_edge_targets():
         edge_module = await lab.edge_site(layout, case.name).read()
         profile_module = await lab.profile_site(layout.profile_id, case.name).read()
         if edge_module is None or profile_module is None:
@@ -794,6 +794,7 @@ async def test_an_insert_returns_its_row(
     The state then holds the row the insert returned, no longer new, and a
     second edit saves as an update of it.
     """
+    lab.require_edge_targets(replace_modules=True)
     layout = next(iter(lab.edges_lacking(Name.QOS)), None)
     if layout is None:
         pytest.skip(
@@ -1690,6 +1691,7 @@ async def test_an_insert_answered_with_an_id_is_read_back(
     insert is answered with the new module's ID, and the state must then hold
     the module as a read made right after shows it.
     """
+    lab.require_edge_targets(replace_modules=True)
     layout = next(iter(lab.edges_lacking(Name.QOS)), None)
     if layout is None:
         pytest.skip(
