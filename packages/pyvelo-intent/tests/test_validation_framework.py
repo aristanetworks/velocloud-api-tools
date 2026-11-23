@@ -24,6 +24,7 @@ from pyvelo.config.validation import (
 )
 from pyvelo_intent.config.pipeline import ConfigPipeline
 from pyvelo_intent.config.state import ConfigState
+from pyvelo_intent.errors import SaveValidationError
 
 _TS = datetime(2024, 1, 1, tzinfo=UTC)
 
@@ -299,10 +300,14 @@ class TestPipelineValidation:
         # Modify the data to trigger a change
         state.profile_config.firewall.data.firewall_enabled = False
 
-        result = await pipeline.save(state)
+        with pytest.raises(SaveValidationError) as exc:
+            _ = await pipeline.save(state)
+        assert [e.message for e in exc.value.errors] == ["blocked"]
+
+        result = await pipeline.save(state, dry_run=True)
         assert not result.is_valid
         assert len(result.validation_errors) == 1
-        assert result.modules_updated == []  # save was blocked
+        assert result.modules_updated == ["firewall"]
 
     @pytest.mark.anyio
     async def test_save_with_validation_disabled(self):

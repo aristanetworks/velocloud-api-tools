@@ -30,7 +30,7 @@ from pyvelo.core.response_check import PlannedChange, ServerChange
 from pyvelo.testing import ModuleStore, make_module_json
 from pyvelo_intent import add
 from pyvelo_intent.config.pipeline import ConfigPipeline
-from pyvelo_intent.config.state import ConfigState
+from pyvelo_intent.config.state import ConfigState, save_progress
 from pyvelo_intent.testing import MockVcoClient
 from test_state_plan import (  # pyright: ignore[reportImplicitRelativeImport]
     EDGE_FW,
@@ -302,7 +302,12 @@ async def test_request_two_of_three_fails():
         _ = await pipeline.save(state)
 
     assert exc.value.code == -32603
-    assert exc.value.__notes__ == ["written before this failure: firewall (update)"]
+    progress = save_progress(exc.value)
+    assert progress is not None
+    assert [(w.name, w.operation) for w in progress.completed] == [
+        ("firewall", "update")
+    ]
+    assert (progress.failed, progress.pending) == ("QOS", ("WAN",))
     assert state.module("firewall").version == client.store.rows[1]["version"]
     assert {m.name: m.operation for m in state.plan().modules}["firewall"] == "none"
     assert changed(state) == ["QOS", "WAN"]

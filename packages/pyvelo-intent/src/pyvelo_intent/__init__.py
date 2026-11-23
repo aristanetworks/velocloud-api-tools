@@ -12,11 +12,13 @@ from pyvelo.core import PatchError, add, at, delete, move
 from pyvelo_intent.config import (
     ConfigPipeline,
     ConfigState,
+    SaveProgress,
     SaveResult,
     ValidationWarning,
     build_default_pipeline,
     confirm_save,
     load_config,
+    save_progress,
 )
 from pyvelo_intent.diff import (
     Added,
@@ -52,6 +54,7 @@ __all__ = [
     "ModuleWriteError",
     "PatchError",
     "Removed",
+    "SaveProgress",
     "SaveResult",
     "SaveValidationError",
     "Unchanged",
@@ -67,4 +70,5 @@ __all__ = [
     "diff_intents",
     "load_config",
     "move",
+    "save_progress",
 ]

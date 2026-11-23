@@ -5,7 +5,7 @@ import copy
 import json
 import weakref
 from dataclasses import dataclass, field
-from typing import Literal, Protocol, cast, override, runtime_checkable
+from typing import Any, Literal, Protocol, cast, override, runtime_checkable
 
 from pydantic import MISSING
 from pyvelo.client.enums.configuration import ConfigurationModuleName
@@ -15,6 +15,7 @@ from pyvelo.client.models.configuration.device_settings.root import DeviceSettin
 from pyvelo.client.models.configuration.firewall.root import FirewallData
 from pyvelo.client.models.configuration.qos.root import QosData
 from pyvelo.client.models.configuration.wan.root import WanData
+from pyvelo.client.module_check import ModuleWrite
 from pyvelo.client.module_write import ModulePlan, missing_segments, plan_module
 from pyvelo.client.schemas.configuration import (
     AnyConfigurationModule,
@@ -739,15 +740,68 @@ class ConfigState:
         return changes
 
 
+_PROGRESS_ATTRIBUTE = "_save_progress"
+
+
+@dataclass(frozen=True)
+class SaveProgress:
+    """How far a save got when it raised.
+
+    Attributes:
+        completed: The writes stored before the error, in order.
+        failed: The name of the module whose write raised, or None when the
+            error came after a write was stored (an edit made while a module
+            was written).
+        pending: The names of the planned modules that were not sent.
+    """
+
+    completed: tuple[ModuleWrite[Any], ...]
+    failed: str | None
+    pending: tuple[str, ...]
+
+    def attach(self, error: BaseException) -> None:
+        """Set this on *error*, for :func:`save_progress`; an error whose class takes no attributes is left as it is."""
+        try:
+            setattr(error, _PROGRESS_ATTRIBUTE, self)
+        except (AttributeError, TypeError):
+            pass
+
+
+def save_progress(error: BaseException) -> SaveProgress | None:
+    """The progress a save attached to *error*, or None.
+
+    Looks at *error*, then at the error behind it (``__cause__``, else
+    ``__context__``), so it answers for the ``TimeoutError`` that
+    ``asyncio.timeout`` raises from a cancelled save. None for an error that
+    did not come from a save that had started to write.
+    """
+    seen: set[int] = set()
+    current: BaseException | None = error
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        progress = getattr(current, _PROGRESS_ATTRIBUTE, None)
+        if isinstance(progress, SaveProgress):
+            return progress
+        current = current.__cause__ or current.__context__
+    return None
+
+
 @dataclass
 class SaveResult:
     """Outcome of ``ConfigPipeline.save``.
 
-    Validator errors are collected into ``validation_errors`` rather than
-    raised, so callers can inspect them. Most CLI / scripting callers should
-    follow up with :meth:`raise_for_errors` to surface failures as exceptions.
+    A save that is not a dry run raises :class:`SaveValidationError` when a
+    write-time validator reports an error, and sends nothing. A dry run
+    collects the errors in ``validation_errors`` and returns;
+    :meth:`raise_for_errors` raises them. ``modules_updated`` and
+    ``modules_inserted`` are what the plan updates and inserts, written when
+    ``written`` names them.
     """
 
+    dry_run: bool = False
+    """Whether the save that returned this sent nothing on purpose."""
+    written: tuple[ModuleWrite[Any], ...] = ()
+    """The writes this save stored, in order; empty for a dry run and for a save with nothing to change."""
     modules_updated: list[ConfigurationModuleName] = field(default_factory=list)
     modules_inserted: list[ConfigurationModuleName] = field(default_factory=list)
     plan: ConfigPlan | None = None

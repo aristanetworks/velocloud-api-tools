@@ -45,9 +45,11 @@ from pyvelo_intent.config.module_names import (
 from pyvelo_intent.config.state import (
     ConfigPlan,
     ConfigState,
+    SaveProgress,
     SaveResult,
     ValidationWarning,
 )
+from pyvelo_intent.errors import SaveValidationError
 
 
 class ConfigPipeline:
@@ -394,7 +396,12 @@ class ConfigPipeline:
         1. Plan the write of every module (:meth:`ConfigState.plan`), and
            raise ``TypeError`` if a changed module is not one a save writes
            (device settings, QoS, WAN, firewall), also for ``dry_run``.
-        2. Run write-time validators on the changed modules. Errors block save.
+        2. Run write-time validators on the changed modules. An error blocks
+           the save: it raises ``SaveValidationError`` and sends nothing. A
+           validator reports on the whole state, so an error in a module the
+           save does not write blocks it too. A ``dry_run`` returns the errors
+           in ``SaveResult.validation_errors`` instead, with the modules it
+           would write in ``modules_updated`` and ``modules_inserted``.
         3. Send each changed module, in order, as an update or an insert with
            ``returnData`` (``write_module``), and replace the state's module
            with the one the VCO stored (:meth:`ConfigState.replace_module`).
@@ -419,17 +426,22 @@ class ConfigPipeline:
         ``DetachedObjectError``.
 
         After ``ConfigConflictError`` or ``WriteNotAppliedError`` the state
-        holds the module as stored, when the error carries it
-        (``error.module``): apply ``error.redo_patch()`` (``apply(state,
+        holds the module as stored (they always carry it, as
+        ``error.module``), so the edits in ``error.lost_edits`` are to be
+        redone: apply ``error.redo_patch()`` (``apply(state,
         module=error.module_name, patch=error.redo_patch())``) and save again;
-        ``error.not_redone()`` lists the lost edits it leaves out.
-        ``error.completed`` are the writes of this save before it. Any
-        other error of a request, ``WriteOutcomeUnknownError`` among them
-        (the write was sent, or an insert was about to be sent again, and the
-        module as stored could not be read), leaves that module and the later
-        ones with their edits, and carries a note that names the modules
-        written before it. ``dry_run`` stops after step 2 and sends nothing
-        and reads nothing.
+        ``error.not_redone()`` lists the lost edits it leaves out. After
+        ``WriteOutcomeUnknownError`` (the write was sent, or an insert was
+        about to be sent again, and the module as stored could not be read)
+        the state keeps the module as read, with its edits, and saving again
+        is safe: an update carries its version, and an insert is read for
+        before it is sent again. Any other error of a request leaves that
+        module and the later ones with their edits too. ``error.completed``
+        are the writes of this save before a write error. For every error
+        raised once a write has been sent, ``save_progress(error)`` gives the
+        writes stored, the module whose write raised and the modules not
+        sent. ``dry_run`` stops after step 2 and sends nothing and reads
+        nothing.
 
         When an insert may have reached the VCO and the save failed (the
         answer timed out, the save was cancelled, or the VCO answered an ID
@@ -469,13 +481,20 @@ class ConfigPipeline:
         """
         async with state.lock:
             plan = state.plan()
-            result = SaveResult(plan=plan)
+            result = SaveResult(plan=plan, dry_run=dry_run)
 
             if not plan.changed:
                 return result
 
             for module_plan in plan.changed:
                 _ = _require_writable(state.module(module_plan.name))
+
+            for module_plan in plan.changed:
+                name = ConfigurationModuleName(module_plan.name)
+                if module_plan.operation == "insert":
+                    result.modules_inserted.append(name)
+                else:
+                    result.modules_updated.append(name)
 
             # Run write-time validators
             if validate:
@@ -485,17 +504,12 @@ class ConfigPipeline:
                     modules=[ConfigurationModuleName(m.name) for m in plan.changed],
                 )
                 if not validation.is_valid:
+                    if not dry_run:
+                        raise SaveValidationError(validation.errors)
                     result.validation_errors = validation.errors
                     return result
                 for warn in validation.warnings:
                     result.warnings.append(_validation_error_to_warning(warn))
-
-            for module_plan in plan.changed:
-                name = ConfigurationModuleName(module_plan.name)
-                if module_plan.operation == "insert":
-                    result.modules_inserted.append(name)
-                else:
-                    result.modules_updated.append(name)
 
             if dry_run:
                 result.warnings.extend(
@@ -522,14 +536,17 @@ class ConfigPipeline:
         Raises ``TypeError`` before the first request when a changed module is
         not one a save writes. A ``ModuleWriteError`` puts the module as
         stored in *state* too, when it carries one, and gets the writes before
-        it as ``completed``. Any other error gets a note that names them, if
-        there are any. An insert that fails in any way but with the module as
-        stored is recorded in ``state.unconfirmed_inserts``, and the next save
-        reads before it inserts that module again. An edit made to a module
-        while it was written (or a placeholder a lookup added to it) is not
-        in the module as stored: once that module is stored and in *state*,
-        the save stops with a ``DetachedObjectError`` whose note also names
-        the modules not written.
+        it as ``completed``. Every error raised once the first write may be
+        sent, of any class and a cancellation included, gets a
+        ``SaveProgress`` (``save_progress(error)``): the writes stored, the
+        module being written and the modules after it. An insert that fails
+        in any way but with the module as stored is recorded in
+        ``state.unconfirmed_inserts``, and the next save reads before it
+        inserts that module again. An edit made to a module while it was
+        written (or a placeholder a lookup added to it) is not in the module
+        as stored: once that module is stored and in *state*, the save stops
+        with a ``DetachedObjectError`` whose note also names the modules not
+        written.
         """
         enterprise_id = state.resolver_context.enterprise_id
         # Each write replaces only its own module, so these stay the state's.
@@ -537,69 +554,83 @@ class ConfigPipeline:
         # What each module holds as planned, to find an edit made while a write was out.
         dumps = [_dump(mod) for mod in modules]
         done: list[ModuleWrite[Any]] = []
-        for i, (module_plan, mod, planned) in enumerate(
-            zip(plan.changed, modules, dumps, strict=True)
-        ):
-            insert = module_plan.operation == "insert"
-            try:
-                write = await self.client.write_module(
-                    mod,
-                    module_plan,
-                    enterprise_id=enterprise_id,
-                    if_absent=insert and mod.name in state.unconfirmed_inserts,
-                )
-            except ModuleWriteError as error:
-                stored = error.module
-                # Of the class of mod (write_module checks it), or None when
-                # the module could not be read: then the state keeps mod. It
-                # is also kept when the state no longer holds mod, so that the
-                # write error is not hidden behind the ValueError of replace_module.
-                if isinstance(stored, type(mod)) and state.find_module(mod.name) is mod:
-                    state.replace_module(mod, stored)
-                elif insert:
-                    state.unconfirmed_inserts.add(mod.name)
-                error.completed = tuple(done)
-                raise
-            except BaseException as error:
-                # An insert may have reached the VCO: a transport error, a
-                # cancellation, or an error before the request was sent (the
-                # next save then reads once, finds nothing and inserts).
-                if insert:
-                    state.unconfirmed_inserts.add(mod.name)
-                if done and isinstance(error, Exception):
-                    error.add_note(_written_note(done))
-                raise
-            paths = list(
-                dict.fromkeys(
-                    change.path
-                    for change in raw_changes(planned, _dump(mod), type(mod))
-                )
-            )
-            state.replace_module(mod, write.module)
-            done.append(write)
-            name = ConfigurationModuleName(write.name)
-            result.server_changes[name] = write.server_changes
-            result.left_out[name] = write.left_out
-            if paths:
-                error = DetachedObjectError(
-                    f"{mod.name}: the module was edited while this save was writing it, at: "
-                    + f"{', '.join(paths)}. The write is stored without those edits and the "
-                    + "state holds the module as stored; take the objects from the state again "
-                    + "and redo them. A path that is a placeholder a lookup added "
-                    + "(segment(name), for a segment the edge only inherits) is no edit "
-                    + "and needs no redo. To edit a state from another task while a save "
-                    + "may run, use apply, or hold state.lock around the edit",
-                    paths,
-                )
-                note = _written_note(done)
-                if later := modules[i + 1 :]:
-                    note += (
-                        "; the save stopped here, so these are not written: "
-                        + ", ".join(m.name for m in later)
-                        + ". The next save writes them"
+        failed: str | None = None
+        position = 0
+        try:
+            for position, (module_plan, mod, planned) in enumerate(
+                zip(plan.changed, modules, dumps, strict=True)
+            ):
+                failed = mod.name
+                insert = module_plan.operation == "insert"
+                try:
+                    write = await self.client.write_module(
+                        mod,
+                        module_plan,
+                        enterprise_id=enterprise_id,
+                        if_absent=insert and mod.name in state.unconfirmed_inserts,
                     )
-                error.add_note(note)
-                raise error
+                except ModuleWriteError as error:
+                    stored = error.module
+                    # Of the class of mod (write_module checks it), or None when
+                    # the module could not be read: then the state keeps mod. It
+                    # is also kept when the state no longer holds mod, so that the
+                    # write error is not hidden behind the ValueError of replace_module.
+                    if (
+                        isinstance(stored, type(mod))
+                        and state.find_module(mod.name) is mod
+                    ):
+                        state.replace_module(mod, stored)
+                    elif insert:
+                        state.unconfirmed_inserts.add(mod.name)
+                    error.completed = tuple(done)
+                    raise
+                except BaseException:
+                    # An insert may have reached the VCO: a transport error, a
+                    # cancellation, or an error before the request was sent (the
+                    # next save then reads once, finds nothing and inserts).
+                    if insert:
+                        state.unconfirmed_inserts.add(mod.name)
+                    raise
+                paths = list(
+                    dict.fromkeys(
+                        change.path
+                        for change in raw_changes(planned, _dump(mod), type(mod))
+                    )
+                )
+                state.replace_module(mod, write.module)
+                done.append(write)
+                failed = None
+                name = ConfigurationModuleName(write.name)
+                result.server_changes[name] = write.server_changes
+                result.left_out[name] = write.left_out
+                result.written = tuple(done)
+                if paths:
+                    error = DetachedObjectError(
+                        f"{mod.name}: the module was edited while this save was writing it, at: "
+                        + f"{', '.join(paths)}. The write is stored without those edits and the "
+                        + "state holds the module as stored; take the objects from the state again "
+                        + "and redo them. A path that is a placeholder a lookup added "
+                        + "(segment(name), for a segment the edge only inherits) is no edit "
+                        + "and needs no redo. To edit a state from another task while a save "
+                        + "may run, use apply, or hold state.lock around the edit",
+                        paths,
+                    )
+                    note = _written_note(done)
+                    if later := modules[position + 1 :]:
+                        note += (
+                            "; the save stopped here, so these are not written: "
+                            + ", ".join(m.name for m in later)
+                            + ". The next save writes them"
+                        )
+                    error.add_note(note)
+                    raise error
+        except BaseException as error:
+            SaveProgress(
+                completed=tuple(done),
+                failed=failed,
+                pending=tuple(m.name for m in modules[position + 1 :]),
+            ).attach(error)
+            raise
         return result
 
     def validate(self, state: ConfigState) -> ValidationResult:

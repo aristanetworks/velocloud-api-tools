@@ -80,9 +80,14 @@ lines.
 
 `dry_run=True` skips write API calls; loading still reads live configuration.
 Calling `save(state)` sends configuration writes, and the state then continues
-from what the VCO stored (see "After a save"). Check `SaveResult` with
-`raise_for_errors()` to surface validation failures. `build_default_pipeline`
-registers the edge and profile name resolvers. Each state resolves the names in
+from what the VCO stored (see "After a save"). A save that is not a dry run
+raises `SaveValidationError` when a write-time validator reports an error, and
+sends nothing. A dry run returns the errors in `SaveResult.validation_errors`,
+with what it would write, and `raise_for_errors()` raises them.
+`SaveResult.dry_run` says which kind of save a result is from, and
+`SaveResult.written` holds the writes a save stored, one `ModuleWrite` each:
+empty for a dry run and for a save with nothing to change.
+`build_default_pipeline` registers the edge and profile name resolvers. Each state resolves the names in
 its patches with resolvers of its own (`state.resolvers`), loaded for its
 enterprise when the state is loaded, so one pipeline can serve several
 enterprises: `load` and `load_profile` give the new state an unloaded copy of
@@ -564,9 +569,14 @@ profile). Make such an edit again the way you made it.
 
 The modules written before the failing one are stored and in the state
 (`error.completed`). Any other error of a request (a transport error, for
-example) leaves that module and the later ones with your edits, and carries a
-note that names the modules written before it; a second save sends what still
-differs.
+example) leaves that module and the later ones with your edits; a second save
+sends what still differs. For every error a save raises once it has started to
+write, a cancellation included, `save_progress(error)` (from `pyvelo_intent`)
+gives a `SaveProgress`: the writes stored before it (`completed`), the module
+whose write raised (`failed`, None when the error came after a write was
+stored) and the modules not sent (`pending`). It is None for an error raised
+before the first request. After `asyncio.timeout` it finds the progress on the
+cancellation behind the `TimeoutError`.
 
 `WriteOutcomeUnknownError` has no lists and no module. `error.answer` says what the VCO said of the write itself: `"refused"` (it refused the version, so this write stored nothing), `"counted"` (it counted the write, so the changes are most likely stored) or `"row"` (its answer could not be read as this module). `error.detail` says why the module could not be read, and `error.plan` holds what was sent (what would have been, for an insert sent again). The state keeps the module as read, with your edits. So there is nothing to redo: its `redo_patch()` is `{}` and its `not_redone()` is empty. For an update, saving again is safe: if the first write was stored, the VCO refuses the old version, the save reads the module and reports what is stored. For an insert, saving again is safe too: the state has recorded it, and the next save reads the configuration before it inserts (below).
 
@@ -671,6 +681,8 @@ Known limits:
 - The `override_consistency` validator is a traversal placeholder and currently
   reports no violations. Other registered validators cover specific structural
   or domain checks; they do not guarantee that every patch is valid for a live VCO.
+  A validator reports on the whole state, so an error in a module the save does
+  not write blocks the save too; the path of the error names the module.
 - `ConfigState`, field diffs, and validation messages can contain
   complete configuration values, including addresses and configuration secrets.
   Redact them before logging, sharing, or committing exports. This library does
@@ -682,9 +694,9 @@ Known limits:
 
 | Module | What it provides |
 |---|---|
-| `pyvelo_intent` | Re-exports the public surface: `ConfigPipeline`, `ConfigState`, `SaveResult`, the patch helpers (`add`, `delete`, `move`, `at`) and `PatchError`, diff types (`DiffResult`, `Added`, `Removed`, `Modified`, `Unchanged`, `FieldChange`), the intent error types, the write errors `ModuleWriteError` (the base of the next three), `ConfigConflictError`, `WriteNotAppliedError`, `WriteOutcomeUnknownError` and `DetachedObjectError` (from `pyvelo.client.exceptions`), helpers (`build_default_pipeline`, `confirm_save`, `load_config`) |
+| `pyvelo_intent` | Re-exports the public surface: `ConfigPipeline`, `ConfigState`, `SaveResult`, `SaveProgress` and `save_progress`, the patch helpers (`add`, `delete`, `move`, `at`) and `PatchError`, diff types (`DiffResult`, `Added`, `Removed`, `Modified`, `Unchanged`, `FieldChange`), the intent error types, the write errors `ModuleWriteError` (the base of the next three), `ConfigConflictError`, `WriteNotAppliedError`, `WriteOutcomeUnknownError` and `DetachedObjectError` (from `pyvelo.client.exceptions`), helpers (`build_default_pipeline`, `confirm_save`, `load_config`) |
 | `pyvelo_intent.config.pipeline` | `ConfigPipeline` (load/load_profile → apply → save), `build_default_pipeline` |
-| `pyvelo_intent.config.state` | `ConfigState`, `StateLock`, `SaveResult`, `ConfigFieldChange`, `ValidationWarning` |
+| `pyvelo_intent.config.state` | `ConfigState`, `StateLock`, `SaveResult`, `SaveProgress`, `save_progress`, `ConfigFieldChange`, `ValidationWarning` |
 | `pyvelo_intent.config.helpers` | `load_config`, `confirm_save` |
 | `pyvelo_intent.config.validators.*` | Structural built-ins (`key_uniqueness`, `override_consistency`, `required_fields`) + domain validators (firewall, device settings) |
 | `pyvelo_intent.config.(firewall\|device_settings\|qos\|wan\|control_plane)` | Per-module configuration helpers |
