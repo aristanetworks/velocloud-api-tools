@@ -4,6 +4,7 @@ import asyncio
 import copy
 import json
 import weakref
+from collections.abc import Mapping
 from dataclasses import dataclass, field, fields
 from typing import Any, Literal, Protocol, cast, override, runtime_checkable
 
@@ -14,6 +15,7 @@ from pyvelo.client.models.configuration.common import segment_id_of
 from pyvelo.client.models.configuration.device_settings.root import DeviceSettingsData
 from pyvelo.client.models.configuration.firewall.root import FirewallData
 from pyvelo.client.models.configuration.qos.root import QosData
+from pyvelo.client.models.configuration.ref_owners import ref_only_values
 from pyvelo.client.models.configuration.wan.root import WanData
 from pyvelo.client.module_check import ModuleWrite
 from pyvelo.client.module_write import ModulePlan, missing_segments, plan_module
@@ -53,12 +55,17 @@ class ConfigFieldChange:
     Attributes:
         module: The module's VCO name (e.g. ``"firewall"``, ``"WAN"``).
         path: Where the change is, in the names a patch uses
-            (``segments["Global Segment"].outbound[block-ssh].name``).
+            (``segments["Global Segment"].outbound[block-ssh].name``). A
+            provider change is at the provider's field
+            (``segments["Global Segment"].dns.primary_provider.service``).
         before: The value as read, a JSON value, or ``MISSING`` where there
             was none. For a keyed list whose items change place, the item
-            names in the order read.
+            names in the order read. For a provider (a field whose value is
+            a ref row), the service's logical ID as lower-case text, or None
+            for no provider.
         after: The value as it is now, a JSON value, or ``MISSING`` where
             there is none; the item names in the new order for a reorder.
+            For a provider, as ``before``.
         place: Where an item added to a keyed list goes, else None.
         moves: For the order of a keyed list, each item that changes place
             with its new place, else None.
@@ -94,7 +101,8 @@ class ConfigPlan:
       module; "refs: sent as read" says the module's refs are sent with no
       row changed.
     - "warning: text" is something about the module's refs as read that the
-      plan leaves as it is.
+      plan leaves as it is. ``warnings`` holds them all as data; ``render()``
+      shows each once, in its module's block.
     - "reconciled segments: A, B" are the profile's segments the write adds to
       the edge module as empty entries; with "none" the line reads "missing
       segments".
@@ -111,6 +119,9 @@ class ConfigPlan:
     Attributes:
         modules: The plan of each module of the target.
         target: What the plan is for (the first line of ``render()``), or "".
+        warnings: What each module's plan warns of, one entry per warning,
+            with the module's name before the warning's path
+            (``"deviceSettings: refs deviceSettings:dns:primaryProvider"``).
     """
 
     modules: tuple[ModulePlan, ...]
@@ -120,6 +131,19 @@ class ConfigPlan:
     def changed(self) -> tuple[ModulePlan, ...]:
         """The plans that write something."""
         return tuple(m for m in self.modules if m.operation != "none")
+
+    @property
+    def warnings(self) -> tuple[ValidationWarning, ...]:
+        """The warnings of every module's plan, as data; ``render()`` shows them in their blocks."""
+        return tuple(
+            ValidationWarning(
+                path=f"{module.name}: {warning.path}",
+                message=warning.message,
+                code=warning.code,
+            )
+            for module in self.modules
+            for warning in module.warnings
+        )
 
     def render(self) -> str:
         lines = [m.render() for m in self.modules]
@@ -194,17 +218,25 @@ class _Replaced:
     edit was last found; ``nodes`` are the models inside it, held weakly, each
     with its place in ``dump``, which ``dump`` always holds. Nothing here keeps
     the module or its objects alive.
+
+    ``refs`` are the module's ``RefOnly`` values then (``ref_only_values``),
+    which a dump leaves out, and ``root`` is its data, held weakly, to read
+    them again.
     """
 
     name: str
     model: type[VcoModel]
     dump: object
     nodes: list[tuple[_Place, weakref.ref[BaseModel]]]
+    refs: dict[Path, object]
+    root: weakref.ref[VcoModel] | None
 
     def changed_paths(self) -> list[Path]:
         """Where the objects still alive were changed in place since ``dump``, each once.
 
-        Drops the nodes no longer alive. A node inside another live node is in
+        A ``RefOnly`` value of the data, if it is alive, that is not the one
+        recorded is a change too, at its path under ``data``. Drops the nodes
+        no longer alive. A node inside another live node is in
         that one's dump, so only the outermost live nodes are dumped: put at
         their places in ``dump``, they make the module as it is now, and
         ``raw_changes`` against ``dump`` gives the paths, from the module, with
@@ -212,6 +244,17 @@ class _Replaced:
         ``dump``, so each change is found once; a node below that the edit
         moved from its place there is no longer compared.
         """
+        paths = self._changed_dump_paths()
+        root = None if self.root is None else self.root()
+        if root is not None:
+            now = ref_only_values(root)
+            moved = ref_only_changes(self.refs, now)
+            if moved:
+                self.refs = now
+                paths.extend(Path(("data", *path.parts)) for path in moved)
+        return paths
+
+    def _changed_dump_paths(self) -> list[Path]:
         alive = [
             (place, ref, node)
             for place, ref in self.nodes
@@ -243,6 +286,22 @@ class _Replaced:
 
 def _dump(model: BaseModel) -> object:
     return model.model_dump(mode="json", by_alias=True)
+
+
+def ref_only_changes(
+    before: Mapping[Path, object], after: Mapping[Path, object]
+) -> list[Path]:
+    """The paths whose ``RefOnly`` value differs between *before* and *after*, in python names.
+
+    A dump leaves these values out, so a comparison of dumps does not see
+    them. A path only one side has (a segment added or removed) counts as
+    ``None`` on the other: a provider is then a change, no provider is not.
+    """
+    return [
+        path
+        for path in dict.fromkeys([*before, *after])
+        if before.get(path) != after.get(path)
+    ]
 
 
 def _at(doc: object, place: _Place) -> object:
@@ -512,7 +571,10 @@ class ConfigState:
         that would be lost. A plain list or dict is compared only while the
         model it is a field of, or one that contains that model, is alive,
         because a list cannot be weakly referenced; holding an item of the list
-        does not keep it compared. Nor is a model the module's dump leaves out
+        does not keep it compared. The providers (``RefOnly`` fields, which a
+        dump leaves out) are compared while the module's ``data`` object is
+        alive; an assignment to one raises at once, so this finds only a
+        change that no guard sees. Nor is a model the module's dump leaves out
         (a field absent at its level). A pydantic model inside that is not a
         ``VcoModel`` (a segment's ``vrrp``) is compared like the others, but an
         assignment to it does not raise. The state keeps no strong reference to
@@ -543,6 +605,8 @@ class ConfigState:
                     snapshot.modules[at] = stored
         self._made_into_unset = [e for e in self._made_into_unset if e[0] is not old]
         # Last: the steps above work on *old* as a live module.
+        data = old.data
+        refs = ref_only_values(data) if isinstance(data, VcoModel) else {}
         nodes = old.mark_detached()
         dump = _dump(old)
         self._replaced.append(
@@ -550,6 +614,8 @@ class ConfigState:
                 name=old.name,
                 model=type(old),
                 dump=dump,
+                refs=refs,
+                root=weakref.ref(data) if isinstance(data, VcoModel) else None,
                 # A model the dump leaves out can be neither compared nor put back.
                 nodes=[
                     (place, weakref.ref(node))
@@ -587,10 +653,11 @@ class ConfigState:
     def _check_unsaved_layer(self) -> None:
         """Raise ``LayerNotSavedError`` if the layer a save does not write was edited.
 
-        The layer is compared with the copy ``take_snapshot`` took. For each
-        module that differs, the snapshot's copy becomes the module as it is
-        now, so the edits are reported once. A state with no snapshot is not
-        checked.
+        The layer is compared with the copy ``take_snapshot`` took, its data
+        and its providers (the ``RefOnly`` fields, which a dump leaves out).
+        For each module that differs, the snapshot's copy becomes the module as
+        it is now, so the edits are reported once. A state with no snapshot is
+        not checked.
         """
         if self.target_type == "edge":
             layer, current = "profile", self.profile_config
@@ -614,9 +681,12 @@ class ConfigState:
             if not isinstance(before, VcoModel):
                 continue
             changes = raw_changes(_dump(before), _dump(data), type(data))
-            if not changes:
+            providers = ref_only_changes(ref_only_values(before), ref_only_values(data))
+            if not changes and not providers:
                 continue
-            fields[module.name] = list(dict.fromkeys(str(c.path) for c in changes))
+            fields[module.name] = list(
+                dict.fromkeys([*(str(c.path) for c in changes), *providers])
+            )
             snapshot.modules[index] = copy.deepcopy(module)
         if not fields:
             return
@@ -654,6 +724,10 @@ class ConfigState:
         Then raises ``LayerNotSavedError`` if the layer this state does not
         save (the profile layer of an edge state) was edited, naming the
         fields; once for those edits, so the next call plans.
+
+        Raises ``ResolverNotLoadedError`` when a provider was set and the
+        state's network services are not loaded (:meth:`plan_module`). A
+        save, a dry run and ``apply`` load them first; this does not.
         """
         self._check_detached()
         self._check_unsaved_layer()
@@ -689,6 +763,12 @@ class ConfigState:
         way to ask whether a change to *module* could be written before it is
         made. Raises ``LossyFieldError`` if the module, or *data*, holds an
         edit that cannot be written. Does not check for detached objects.
+
+        A provider the edit sets needs the network services loaded
+        (``state.resolvers``): ``ResolverNotLoadedError`` says they are not.
+        ``ConfigPipeline.save``, ``dry_run`` and ``apply`` load them and plan
+        again; ``await pipeline.load_resolvers(state, NetworkServiceIdentity)``
+        loads them now.
         """
         level = (
             ConfigContext.PROFILE
@@ -700,7 +780,9 @@ class ConfigState:
             if level is ConfigContext.EDGE
             else None
         )
-        return plan_module(module, data, level=level, profile=profile_mod)
+        return plan_module(
+            module, data, level=level, profile=profile_mod, resolvers=self.resolvers
+        )
 
     def get_changed_modules(self) -> list[ConfigurationModuleName]:
         """Names of the modules that a save would write.
@@ -725,7 +807,10 @@ class ConfigState:
         These are the changes a save writes, so a read changes nothing and a
         rename is one change. Each path is in the names a patch uses, and the
         values are JSON, as in the plan; the order of a keyed list is one
-        entry whose ``moves`` say which items change place.
+        entry whose ``moves`` say which items change place. A provider set,
+        replaced or cleared is one entry at the provider's field, with the
+        logical ID of the service before and after, or None; a provider
+        replaced is one entry, not a removal and an addition.
         """
         wanted = None if module_name is None else resolve_module_name(module_name)
         changes: list[ConfigFieldChange] = []
@@ -746,7 +831,30 @@ class ConfigState:
                 )
                 for change in module.changes
             )
+            changes.extend(_provider_changes(module))
         return changes
+
+
+def _provider_changes(module: ModulePlan) -> list[ConfigFieldChange]:
+    """The provider changes of *module*'s plan: the ref rows of ``RefOnly`` owners, one change per owner.
+
+    The row a change removes is the owner's ``before`` and the row it adds
+    its ``after``, each as the identity's lower-case text.
+    """
+    before: dict[Path, str] = {}
+    after: dict[Path, str] = {}
+    for change in module.ref_changes:
+        if change.owner is not None:
+            (after if change.added else before)[change.owner] = str(change.value)
+    return [
+        ConfigFieldChange(
+            module=module.name,
+            path=owner,
+            before=before.get(owner),
+            after=after.get(owner),
+        )
+        for owner in dict.fromkeys([*before, *after])
+    ]
 
 
 _PROGRESS_ATTRIBUTE = "_save_progress"

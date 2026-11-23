@@ -108,6 +108,12 @@ state you build yourself, from a cache for example, has no resolvers until
 raises `PatchError` at that field, unless the field's ID can be text, when the
 name is taken as the ID. An ID is always accepted.
 
+The network-service resolver is registered on each state but not loaded by
+`load` or `load_profile`, which therefore cost no more requests than before. It
+is loaded when a plan or a patch first needs it (see "What a save writes"), or
+by `await pipeline.load_resolvers(state, NetworkServiceIdentity)`, which loads
+only that resolver, and registers one on the state first if it has none.
+
 ## The patch format
 
 `apply` takes a module, a patch and, optionally, an address. The address is
@@ -384,7 +390,27 @@ segment for a row of the module, and a module that sends its refs with no row
 changed says `refs: sent as read`. A device settings or QoS write with segments
 always carries its refs, because the VCO's processors run on every such write.
 What disagrees in the refs as read is a `warning: <message>` line, and the
-write leaves it as it is.
+write leaves it as it is. `ConfigPlan.warnings` holds the same warnings as
+data, each with its module's name before its path, and `save` and `dry_run`
+copy them to `SaveResult.warnings`.
+
+A DNS or authentication provider is set by assignment, with the service's
+logical ID (`provider.service = uuid.UUID(...)`), or by `apply`, with the
+logical ID or the service's name (`patch={"dns": {"primaryProvider":
+{"service": "dns-a"}}}`). The row needs the enterprise's network services, and
+`load` does not read them: the first `apply`, `save` or `dry_run` that needs
+them reads the table, once for the state, and goes on. A name no service has
+raises `ResolutionError` and leaves the state as it was. `state.plan()` does
+not read it and raises `ResolverNotLoadedError` for a provider set before the
+table is loaded; `await pipeline.load_resolvers(state, NetworkServiceIdentity)`
+(from `pyvelo.core.identity`) reads it at a time of your choosing.
+`get_field_changes()` lists a provider that is set, replaced or cleared as one
+change at the provider's field
+(`segments["Global Segment"].dns.primary_provider.service`), with the service's
+logical ID before and after, or `None`. A provider edit on the layer a state
+does not save (the profile layer of an edge state) raises `LayerNotSavedError`
+like any other edit there, and one made while its module is being written
+raises `DetachedObjectError` after the write.
 
 This is `state.plan().render()` for the firewall patch of "The patch format",
 with `firewall_enabled` set as well, on an edge whose profile has a segment the

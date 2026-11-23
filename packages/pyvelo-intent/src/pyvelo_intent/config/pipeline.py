@@ -12,6 +12,7 @@ from pyvelo.client.exceptions import (
     ModuleWriteError,
     UnboundError,
 )
+from pyvelo.client.models.configuration.ref_owners import ref_only_values
 from pyvelo.client.module_check import ModuleWrite
 from pyvelo.client.protocol import VcoClientProtocol
 from pyvelo.client.schemas.configuration import (
@@ -28,13 +29,20 @@ from pyvelo.client.schemas.edge import GetEdgeConfigurationStack
 from pyvelo.config.resolver import ResolverContext, ResolverRegistry
 from pyvelo.config.resolvers.application import ApplicationResolver
 from pyvelo.config.resolvers.edge import EdgeResolver
+from pyvelo.config.resolvers.network_service import NetworkServiceResolver
 from pyvelo.config.resolvers.profile import ProfileResolver
 from pyvelo.config.resolvers.segment import SegmentResolver
 from pyvelo.config.validation import ValidationError as ValidatorError
 from pyvelo.config.validation import ValidationResult, ValidatorRegistry
 from pyvelo.core import ConfigContext, PatchError
 from pyvelo.core.base import IdentityResolver, VcoModel
-from pyvelo.core.identity import EdgeName, ProfileName, ResolutionError
+from pyvelo.core.identity import (
+    EdgeName,
+    NetworkServiceIdentity,
+    ProfileName,
+    ResolutionError,
+    ResolverNotLoadedError,
+)
 from pyvelo.core.merge import nest_patch, select_items
 from pyvelo.core.patch import ItemOp, is_new, parse_item_op, position_of
 from pyvelo.core.rebase import Key, Path, raw_changes
@@ -48,6 +56,7 @@ from pyvelo_intent.config.state import (
     SaveProgress,
     SaveResult,
     ValidationWarning,
+    ref_only_changes,
 )
 from pyvelo_intent.errors import SaveValidationError
 
@@ -333,6 +342,12 @@ class ConfigPipeline:
            does not write at the level of the target.
         5. Return the updated :class:`ConfigState`.
 
+        A patch that gives a network service by name (a provider), or sets a
+        provider, needs the enterprise's services loaded. The first such
+        patch of a state reads them (:meth:`load_resolvers`), once, and goes
+        on; a name that no service has raises ``ResolutionError`` and leaves
+        the state as it was, as any other patch that raises does.
+
         **In place.** ``apply`` changes *state* and returns that same object;
         there is no copy to fall back on.
 
@@ -390,16 +405,24 @@ class ConfigPipeline:
                     if edge and _is_object(segments)
                     else frozenset()
                 )
-                trial = data.model_copy(deep=True)
-                _ = trial.merge_patch(
-                    _prepare_segments(trial, nested, state.resolvers, inherited)
-                    if edge
-                    else nested,
-                    resolvers=state.resolvers,
-                )
-                if not edge and isinstance(trial, _SegmentLayer):
-                    _profile_segments_unchanged(data, trial)
-                _ = state.plan_module(mod, trial)
+                loaded: set[type] = set()
+                while True:
+                    trial = data.model_copy(deep=True)
+                    try:
+                        _ = trial.merge_patch(
+                            _prepare_segments(trial, nested, state.resolvers, inherited)
+                            if edge
+                            else nested,
+                            resolvers=state.resolvers,
+                        )
+                        if not edge and isinstance(trial, _SegmentLayer):
+                            _profile_segments_unchanged(data, trial)
+                        _ = state.plan_module(mod, trial)
+                        break
+                    except ResolverNotLoadedError as error:
+                        # The trial worked on a copy: loading and trying again
+                        # leaves the state as it was.
+                        await self.load_resolvers(state, _to_load(error, loaded))
             except BaseException:
                 if existing is None:
                     state.drop_module(mod)
@@ -446,6 +469,13 @@ class ConfigPipeline:
            item that has no key) nothing is left out: a value stored at an
            owned field otherwise than sent is a server change with
            ``as_read`` ``MISSING``.
+
+        A provider you set (a DNS or authentication provider) goes with a ref
+        row, which needs the enterprise's network services: the first plan
+        that needs them reads them (:meth:`load_resolvers`), once per state,
+        and ``dry_run`` does so too. ``SaveResult.warnings`` also holds the
+        warnings of the plan (``ConfigPlan.warnings``): what disagrees in the
+        refs as read and the write leaves as it is.
 
         A later :meth:`ConfigState.plan` is empty, and the state takes more
         edits and saves. Objects taken from the state before the save belong
@@ -508,8 +538,10 @@ class ConfigPipeline:
         which would wait for the lock without end.
         """
         async with state.lock:
-            plan = state.plan()
-            result = SaveResult(plan=plan, dry_run=dry_run)
+            plan = await self._plan_loading(state)
+            result = SaveResult(
+                plan=plan, dry_run=dry_run, warnings=list(plan.warnings)
+            )
 
             if not plan.changed:
                 return result
@@ -581,12 +613,13 @@ class ConfigPipeline:
         modules = [_require_writable(state.module(p.name)) for p in plan.changed]
         # What each module holds as planned, to find an edit made while a write was out.
         dumps = [_dump(mod) for mod in modules]
+        providers = [ref_only_values(mod.data) for mod in modules]
         done: list[ModuleWrite[Any]] = []
         failed: str | None = None
         position = 0
         try:
-            for position, (module_plan, mod, planned) in enumerate(
-                zip(plan.changed, modules, dumps, strict=True)
+            for position, (module_plan, mod, planned, planned_providers) in enumerate(
+                zip(plan.changed, modules, dumps, providers, strict=True)
             ):
                 failed = mod.name
                 insert = module_plan.operation == "insert"
@@ -626,6 +659,13 @@ class ConfigPipeline:
                     dict.fromkeys(
                         change.path
                         for change in raw_changes(planned, _dump(mod), type(mod))
+                    )
+                )
+                # A provider is no part of a dump: compare it by itself.
+                paths.extend(
+                    Path(("data", *path.parts))
+                    for path in ref_only_changes(
+                        planned_providers, ref_only_values(mod.data)
                     )
                 )
                 try:
@@ -673,25 +713,85 @@ class ConfigPipeline:
         """Run all write-time validators without saving (dry-run validation)."""
         return self._validators.run(state, phase="write")
 
-    async def load_resolvers(self, state: ConfigState) -> None:
-        """Give *state* resolvers of its own, loaded for its enterprise.
+    async def load_resolvers(self, state: ConfigState, *identities: type) -> None:
+        """Give *state* resolvers of its own, or load the ones it has for some identity types.
 
-        ``load`` and ``load_profile`` already do this. Call it for a state
-        built another way, such as from a cache: the state gets an unloaded
-        copy of the pipeline's resolvers, loaded for ``state.resolver_context``.
-        This replaces the state's whole registry, so a resolver registered on
-        ``state.resolvers`` is dropped.
+        With no *identities*, as ``load`` and ``load_profile`` do it for the
+        state they return. Call it for a state built another way, such as from
+        a cache: the state gets an unloaded copy of the pipeline's resolvers,
+        loaded for ``state.resolver_context``. This replaces the state's whole
+        registry, so a resolver registered on ``state.resolvers`` is dropped.
+        The network-service resolver in that copy is not loaded: the table is
+        read when a plan or a patch first needs it.
+
+        With *identities* (``NetworkServiceIdentity``), it sets
+        ``state.resolver_context`` on the state's registry and loads the
+        resolver of each type in it, whether it was loaded before or not. A
+        state that has none for a type gets one first: an unloaded copy of the
+        pipeline's, or a new ``NetworkServiceResolver`` on the pipeline's
+        client. This is what ``save``, ``dry_run`` and ``apply`` do when they
+        meet a resolver that is not loaded; call it to load the table at a
+        time of your choosing. Raises ``ValueError`` for a type the pipeline
+        cannot load a resolver for.
         """
-        resolvers = self._resolvers.unloaded()
-        await self._load_state_resolvers(resolvers, state.resolver_context)
-        state.resolvers = resolvers
+        if not identities:
+            resolvers = self._resolvers.unloaded()
+            await self._load_state_resolvers(resolvers, state.resolver_context)
+            state.resolvers = resolvers
+            return
+        state.resolvers.set_context(state.resolver_context)
+        for identity in identities:
+            resolver = self._state_resolver(state, identity)
+            await resolver.load(state.resolver_context)
+
+    def _state_resolver(
+        self, state: ConfigState, identity: type
+    ) -> NetworkServiceResolver:
+        """The resolver of *state* for *identity*, registered first when the state has none."""
+        if identity is not NetworkServiceIdentity:
+            raise ValueError(
+                f"load_resolvers can load the resolver of NetworkServiceIdentity, "
+                f"not of {identity.__name__}: load it with its own load(), or "
+                "register a loaded resolver on state.resolvers"
+            )
+        try:
+            return state.resolvers.get_resolver(NetworkServiceResolver)
+        except LookupError:
+            pass
+        try:
+            resolver = self._resolvers.get_resolver(NetworkServiceResolver).unloaded()
+        except LookupError:
+            resolver = NetworkServiceResolver(self.client)
+        state.resolvers.register(resolver)
+        return resolver
+
+    async def _plan_loading(self, state: ConfigState) -> ConfigPlan:
+        """Plan *state*, loading a resolver the plan finds not loaded, once per identity type.
+
+        A second ``ResolverNotLoadedError`` for a type that was loaded
+        propagates: the load did not give the plan what it needs.
+        """
+        loaded: set[type] = set()
+        while True:
+            try:
+                return state.plan()
+            except ResolverNotLoadedError as error:
+                await self.load_resolvers(state, _to_load(error, loaded))
 
     async def _load_state_resolvers(
         self, resolvers: ResolverRegistry, context: ResolverContext
     ) -> None:
         """Set *context* on *resolvers*, then load the segment resolver, adding
-        one if there is none, and the application resolver if there is one."""
+        one if there is none, and the application resolver if there is one.
+
+        A network-service resolver is added, and left unloaded, if there is
+        none: a plan or a patch that needs the services loads it.
+        """
         resolvers.set_context(context)
+        try:
+            _ = resolvers.get_resolver(NetworkServiceResolver)
+        except LookupError:
+            resolvers.register(NetworkServiceResolver(self.client))
         try:
             segments = resolvers.get_resolver(SegmentResolver)
         except LookupError:
@@ -1118,6 +1218,19 @@ def _written_note(done: Sequence[ModuleWrite[Any]]) -> str:
     return "written before this failure: " + ", ".join(
         f"{w.name} ({w.operation})" for w in done
     )
+
+
+def _to_load(error: ResolverNotLoadedError, loaded: set[type]) -> type:
+    """The identity type *error* asks to have loaded, noted in *loaded*.
+
+    Raises *error* when that type was loaded before in the same call: the load
+    did not give the plan what it needs.
+    """
+    kind = error.identity_type
+    if not isinstance(kind, type) or kind in loaded:
+        raise error
+    loaded.add(kind)
+    return kind
 
 
 def _dump(mod: AnyConfigurationModule) -> object:
