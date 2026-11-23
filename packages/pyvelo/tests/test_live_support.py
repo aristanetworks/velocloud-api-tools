@@ -1346,6 +1346,7 @@ async def test_a_module_a_block_inserted_is_not_covered_once_the_block_is_closed
     monkeypatch: pytest.MonkeyPatch,
 ):
     fake = lab_fake()
+    fake.edges[5]["description"] = REPLACEABLE
     lab = await opened(fake, monkeypatch)
     site = lab.edge_site(lab.layouts[0], Name.QOS)
     run = live.run_of(lab.client)
@@ -1527,3 +1528,155 @@ def test_every_method_the_read_only_live_tests_reach_passes_the_guard():
     assert "enterprise/getEnterpriseEdges" in reached and len(reached) > 20
     for name in sorted(reached):
         live.check_call(name)
+
+
+def test_marks_are_whole_words_of_a_description():
+    assert live.marks_in("lab edge, pyvelo-it-target.") == {live.TARGET_MARK}
+    assert live.marks_in(REPLACEABLE) == {live.TARGET_MARK, live.REPLACE_MODULES_MARK}
+    assert live.marks_in("pyvelo-it-targets pyvelo-it-0123456789") == frozenset()
+    assert live.marks_in(None) == frozenset()
+
+
+def test_a_profile_with_edges_needs_the_second_mark():
+    entry = live.ProfileEntry
+    both = frozenset({live.TARGET_MARK, live.WITH_EDGES_MARK})
+    assert entry(1, frozenset({live.TARGET_MARK}), 0).target
+    assert not entry(1, frozenset({live.TARGET_MARK}), 3).target
+    assert not entry(
+        1, frozenset({live.TARGET_MARK}), None
+    ).target  # not told: as if it had
+    assert entry(1, both, 3).target
+    assert not entry(1, frozenset({live.WITH_EDGES_MARK}), 0).target
+    assert not entry(1, frozenset(), 0).target
+
+
+async def test_discovery_reads_the_marks(monkeypatch: pytest.MonkeyPatch):
+    fake = lab_fake()
+    fake.add_profile(21, description="pyvelo-it-target", edge_count=2)
+    fake.add_edge(7, 12, 20, description=REPLACEABLE)
+    lab = await opened(fake, monkeypatch)
+    assert [(x.edge_id, x.target, x.replace_modules) for x in lab.layouts] == [
+        (5, True, False),
+        (6, False, False),
+        (7, True, True),
+    ]
+    assert [x.edge_id for x in lab.targets] == [5, 7]
+    assert lab.profile_ids == [20, 21]
+    assert [p.target for p in lab.profiles] == [True, False]
+    assert ("enterprise/getEnterpriseConfigurations", {"with": ["edgeCount"]}) in (
+        fake.requests
+    )
+    assert lab.profile_site(20, Name.QOS).target
+    assert not lab.profile_site(21, Name.QOS).target
+    assert not lab.edge_site(lab.layouts[1], Name.QOS).target
+    assert lab.edge_site(lab.layouts[2], Name.QOS).replace_modules
+
+
+async def test_only_marked_edges_are_picked(monkeypatch: pytest.MonkeyPatch):
+    fake = lab_fake()
+    lab = await opened(fake, monkeypatch)
+    assert [x.edge_id for x in lab.edges_with(Name.QOS)] == [5]
+    assert (await lab.pick_writable_edge(Name.QOS)).edge_id == 5
+    # An unmarked edge given to first_writable is passed over.
+    assert await lab.first_writable([lab.layouts[1]], Name.QOS) is None
+    assert fake.store.rows[3]["version"] == "v1"  # edge 6 was never written
+    with pytest.raises(pytest.skip.Exception) as skipped:
+        _ = await lab.pick_writable_edge(Name.QOS, replace_modules=True)
+    assert str(skipped.value) == live.NO_EDGE_FOR_MODULES
+    with pytest.raises(pytest.skip.Exception) as skipped:
+        _ = await lab.pick_writable_edge(Name.FIREWALL, what="with a rule")
+    assert str(skipped.value) == "no marked edge has a firewall module with a rule"
+
+
+async def test_edges_lacking_a_module_are_those_marked_for_modules(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    fake = lab_fake()
+    fake.add_edge(7, 12, 20, description=REPLACEABLE)
+    fake.add_edge(8, 13, 20, description=MARKED)
+    lab = await opened(fake, monkeypatch)
+    assert [x.edge_id for x in lab.edges_lacking(Name.QOS)] == [7]
+    assert [x.edge_id for x in lab.edges_lacking(Name.FIREWALL)] == [7]
+
+
+async def test_with_no_mark_every_pick_skips_and_says_how(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    fake = FakeLab()
+    fake.add_profile(20, description="the default profile")
+    fake.module(2, 20, "QOS", QOS)
+    fake.add_edge(5, 10, 20)
+    fake.module(1, 10, "QOS", QOS)
+    lab = await opened(fake, monkeypatch)
+    with pytest.raises(pytest.skip.Exception) as skipped:
+        _ = await lab.pick_writable_edge(Name.QOS)
+    assert str(skipped.value) == (
+        "no edge is marked for this suite: put pyvelo-it-target in the "
+        "description of an edge it may write to"
+    )
+    with pytest.raises(pytest.skip.Exception) as skipped:
+        _ = await lab.pick_writable_profile(Name.QOS)
+    assert str(skipped.value) == (
+        "no profile is marked for this suite: put pyvelo-it-target in the "
+        "description of a profile it may write to, and pyvelo-it-with-edges as "
+        "well if edges are assigned to it"
+    )
+    assert "updateConfigurationModule" not in fake.methods()
+
+
+async def test_a_marked_profile_with_edges_is_passed_over(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    fake = lab_fake()
+    fake.profiles[20]["edgeCount"] = 2
+    lab = await opened(fake, monkeypatch)
+    with pytest.raises(pytest.skip.Exception) as skipped:
+        _ = await lab.pick_writable_profile(Name.QOS)
+    assert str(skipped.value) == live.NO_PROFILE_MARKED
+    fake.profiles[20]["description"] = "pyvelo-it-target pyvelo-it-with-edges"
+    lab = await opened(fake, monkeypatch)
+    assert await lab.pick_writable_profile(Name.QOS) == 20
+
+
+async def test_a_target_that_is_not_marked_is_refused(monkeypatch: pytest.MonkeyPatch):
+    fake = lab_fake()
+    lab = await opened(fake, monkeypatch)
+    unmarked = lab.edge_site(lab.layouts[1], Name.QOS)
+    fake.requests.clear()
+    with pytest.raises(pytest.fail.Exception) as caught:
+        async with live.restoring(unmarked):
+            pass
+    assert str(caught.value) == live.NOT_A_TARGET
+    assert str(caught.value).startswith(
+        "the test tried to write to an edge or profile that is not marked "
+        "pyvelo-it-target; nothing was written; "
+    )
+    assert fake.requests == []
+
+
+async def test_an_insert_and_a_delete_need_the_mark_for_modules(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    fake = lab_fake()
+    lab = await opened(fake, monkeypatch)
+    site = lab.edge_site(lab.layouts[0], Name.QOS)  # edge 5: marked, not for modules
+    insert = InsertQosConfigurationModule(configuration_id=10, data=copy.deepcopy(QOS))
+    remedy = (
+        "put pyvelo-it-replace-modules beside pyvelo-it-target in the description "
+        "of an edge the suite may delete and insert modules of"
+    )
+    async with live.restoring(site):
+        with pytest.raises(live.WritesRefused) as refused:
+            await live.delete_module(site, 1)
+        assert str(refused.value) == (
+            "a delete of a QOS module of an edge that is not marked "
+            f"pyvelo-it-replace-modules; nothing was sent; {remedy}"
+        )
+        with pytest.raises(live.WritesRefused) as refused:
+            _ = await lab.client.insert_configuration_module(insert)
+        assert str(refused.value) == (
+            "an insert of a QOS module of an edge that is not marked "
+            f"pyvelo-it-replace-modules; nothing was sent; {remedy}"
+        )
+    assert set(fake.store.rows) == {1, 2, 3}
+    assert "deleteConfigurationModule" not in fake.methods()

@@ -534,7 +534,7 @@ DEVICE_SETTINGS_CASE = Reconcile(
 async def _lacking_layout(lab: Lab, case: Reconcile) -> EdgeLayout:
     """An edge whose *case* module lacks a segment its profile has and takes a write, or skip."""
     candidates: list[EdgeLayout] = []
-    for layout in lab.layouts:
+    for layout in lab.targets:
         edge_module = await lab.edge_site(layout, case.name).read()
         profile_module = await lab.profile_site(layout.profile_id, case.name).read()
         if edge_module is None or profile_module is None:
@@ -689,7 +689,7 @@ async def test_missing_device_settings_segment_is_added_as_a_placeholder_the_orc
     case = DEVICE_SETTINGS_CASE
     lacking: list[EdgeLayout] = []
     sharing: list[EdgeLayout] = []
-    for layout in lab.layouts:
+    for layout in lab.targets:
         edge_module = await lab.edge_site(layout, case.name).read()
         profile_module = await lab.profile_site(layout.profile_id, case.name).read()
         if edge_module is None or profile_module is None:
@@ -778,9 +778,11 @@ async def test_an_insert_returns_its_row(
     The state then holds the row the insert returned, no longer new, and a
     second edit saves as an update of it.
     """
-    layout = next((e for e in lab.layouts if not e.has(Name.QOS)), None)
+    layout = next(iter(lab.edges_lacking(Name.QOS)), None)
     if layout is None:
-        pytest.skip("every edge already has a QoS module of its own")
+        pytest.skip(
+            "no edge marked pyvelo-it-replace-modules lacks a QoS module of its own"
+        )
     profile_module = await lab.profile_site(layout.profile_id, Name.QOS).read()
     if profile_module is None:
         pytest.skip("the profile of an edge with no QoS module has none either")
@@ -903,6 +905,7 @@ async def test_edge_firewall_deleted_and_inserted_again_reads_back_as_sent(
         _firewall_that_comes_back_whole,
         "with no refs, no rule IDs and no inbound or NAT content, which an insert "
         "would not give back or which a lab edge may depend on",
+        replace_modules=True,
     )
     site = lab.edge_site(layout, Name.FIREWALL)
     async with restoring(site) as original:

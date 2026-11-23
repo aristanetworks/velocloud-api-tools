@@ -36,6 +36,22 @@ a production tenant.
     uv run --env-file .env pytest -m "integration and not live_write"   # reads only
     uv run --env-file .env pytest -m integration                        # everything
 
+Within that enterprise the suite writes only to what its owner marked, with
+a word in the description of the edge or profile on the Orchestrator:
+
+    pyvelo-it-target            the suite may edit the modules of this edge
+                                or profile; it puts each back as it found it
+    pyvelo-it-with-edges        on a profile, beside pyvelo-it-target: it may
+                                be edited though edges are assigned to it
+                                (each of them receives every change)
+    pyvelo-it-replace-modules   on an edge, beside pyvelo-it-target: the suite
+                                may also delete and insert whole modules of
+                                the edge (its firewall and QoS)
+
+A marked profile with edges assigned and no ``pyvelo-it-with-edges`` is
+passed over. Everything unmarked is read and never written. With nothing
+marked, each test that writes is skipped and says which mark it wants.
+
 A test that writes is marked ``live_write``. The client the suite connects
 (``connect``) refuses, with ``WritesRefused`` and before anything is sent:
 
@@ -115,7 +131,10 @@ from pyvelo.client import (
     WriteOutcomeUnknownError,
 )
 from pyvelo.client.enums.configuration import ConfigurationModuleName
-from pyvelo.client.enums.profiles import GetConfigurationWith
+from pyvelo.client.enums.profiles import (
+    GetConfigurationWith,
+    GetEnterpriseConfigurationsWith,
+)
 from pyvelo.client.exceptions import LossyFieldError, ModuleWriteError
 from pyvelo.client.module_check import data_model
 from pyvelo.client.schemas.configuration import (
@@ -153,9 +172,52 @@ from pyvelo.core.response_check import PlannedChange, ServerChange
 SYNTHETIC_PREFIX = "pyvelo-it-"
 """Every rule, description and the like these tests add starts with this."""
 
+TARGET_MARK = "pyvelo-it-target"
+WITH_EDGES_MARK = "pyvelo-it-with-edges"
+REPLACE_MODULES_MARK = "pyvelo-it-replace-modules"
+"""The words an owner puts in the description of an edge or profile (see the docstring)."""
+
+_MARKS = (TARGET_MARK, WITH_EDGES_MARK, REPLACE_MODULES_MARK)
+
+REPLACE_MODULES_REMEDY = (
+    f"put {REPLACE_MODULES_MARK} beside {TARGET_MARK} in the description of an "
+    "edge the suite may delete and insert modules of"
+)
+NOT_A_TARGET = (
+    f"the test tried to write to an edge or profile that is not marked {TARGET_MARK}; "
+    "nothing was written; take the target from pick_writable_edge or "
+    "pick_writable_profile, which pass over what is not marked, or put "
+    f"{TARGET_MARK} in the description of an edge or profile the suite may write to"
+)
+NO_EDGE_MARKED = (
+    f"no edge is marked for this suite: put {TARGET_MARK} in the description of an "
+    "edge it may write to"
+)
+NO_EDGE_FOR_MODULES = (
+    f"no edge is marked {REPLACE_MODULES_MARK} as well as {TARGET_MARK}: this test "
+    f"deletes and inserts a module of the edge; {REPLACE_MODULES_REMEDY}"
+)
+NO_PROFILE_MARKED = (
+    f"no profile is marked for this suite: put {TARGET_MARK} in the description of "
+    f"a profile it may write to, and {WITH_EDGES_MARK} as well if edges are "
+    "assigned to it"
+)
+
 
 def synthetic_name() -> str:
     return f"{SYNTHETIC_PREFIX}{uuid.uuid4().hex[:10]}"
+
+
+def marks_in(description: object) -> frozenset[str]:
+    """The marks that are words of *description*; a mark inside a longer word is none.
+
+    A word is a run of letters, digits and hyphens. Anything that is not a
+    string has no marks.
+    """
+    if not isinstance(description, str):
+        return frozenset()
+    words = set(re.findall(r"[A-Za-z0-9-]+", description))
+    return frozenset(mark for mark in _MARKS if mark in words)
 
 
 # ---------------------------------------------------------------------------
@@ -223,9 +285,37 @@ class EdgeLayout:
     profile_id: int
     edge: EdgeConfiguration
     profile: EnterpriseConfigurationProfile
+    marks: frozenset[str] = frozenset()
+
+    @property
+    def target(self) -> bool:
+        """Whether the owner marked the edge as one the suite may write to."""
+        return TARGET_MARK in self.marks
+
+    @property
+    def replace_modules(self) -> bool:
+        """Whether the suite may also delete and insert modules of the edge."""
+        return self.target and REPLACE_MODULES_MARK in self.marks
 
     def has(self, name: ConfigurationModuleName) -> bool:
         return find_module(self.edge, name) is not None
+
+
+@dataclass(frozen=True)
+class ProfileEntry:
+    """One profile of the lab: its ID, its marks and how many edges are assigned to it."""
+
+    profile_id: int
+    marks: frozenset[str] = frozenset()
+    edge_count: int | None = None
+    """``None`` where the Orchestrator did not say: counted as edges assigned."""
+
+    @property
+    def target(self) -> bool:
+        """Marked, and either with no edge assigned or marked to be written with edges."""
+        return TARGET_MARK in self.marks and (
+            self.edge_count == 0 or WITH_EDGES_MARK in self.marks
+        )
 
 
 def find_module(
@@ -261,20 +351,37 @@ LAB_LIMIT = 50
 """At most this many edges, and this many profiles, are read and swept."""
 
 
-async def list_edge_ids(client: VcoClient, enterprise_id: int | None) -> list[int]:
+async def list_edges(
+    client: VcoClient, enterprise_id: int | None
+) -> list[tuple[int, frozenset[str]]]:
+    """The ID of each edge, with the marks in its description."""
     edges = await client.get_enterprise_edges(
         GetEnterpriseEdges(enterprise_id=enterprise_id if enterprise_id else MISSING)
     )
-    return [e.id_ for e in edges if isinstance(e.id_, int)][:LAB_LIMIT]
+    return [(e.id_, marks_in(e.description)) for e in edges if isinstance(e.id_, int)][
+        :LAB_LIMIT
+    ]
 
 
-async def list_profile_ids(client: VcoClient, enterprise_id: int | None) -> list[int]:
+async def list_profiles(
+    client: VcoClient, enterprise_id: int | None
+) -> list[ProfileEntry]:
+    """Each profile, with the marks in its description and the number of edges assigned."""
     profiles = await client.get_enterprise_configurations(
         GetEnterpriseConfigurations(
-            enterprise_id=enterprise_id if enterprise_id else MISSING
+            enterprise_id=enterprise_id if enterprise_id else MISSING,
+            with_=[GetEnterpriseConfigurationsWith.EDGE_COUNT],
         )
     )
-    return [p.id_ for p in profiles if isinstance(p.id_, int)][:LAB_LIMIT]
+    return [
+        ProfileEntry(
+            p.id_,
+            marks_in(p.description),
+            p.edge_count if isinstance(p.edge_count, int) else None,
+        )
+        for p in profiles
+        if isinstance(p.id_, int)
+    ][:LAB_LIMIT]
 
 
 class LiveSuiteError(Exception):
@@ -303,7 +410,7 @@ async def discover_layouts(
     cannot read is not a lab it can test.
     """
     layouts: list[EdgeLayout] = []
-    for index, edge_id in enumerate(await list_edge_ids(client, enterprise_id)):
+    for index, (edge_id, marks) in enumerate(await list_edges(client, enterprise_id)):
         try:
             edge, profile = await read_stack(client, edge_id, enterprise_id)
         except ValidationError as exc:
@@ -318,6 +425,7 @@ async def discover_layouts(
                 profile_id=profile.id_,
                 edge=edge,
                 profile=profile,
+                marks=marks,
             )
         )
     return layouts
@@ -330,34 +438,64 @@ class Lab:
     client: VcoClient
     enterprise_id: int | None
     layouts: list[EdgeLayout]
-    profile_ids: list[int]
+    profiles: list[ProfileEntry]
+
+    @property
+    def profile_ids(self) -> list[int]:
+        """Every profile, marked or not: the read-only sweeps read them all."""
+        return [entry.profile_id for entry in self.profiles]
+
+    @property
+    def targets(self) -> list[EdgeLayout]:
+        """The edges the owner marked as ones the suite may write to."""
+        return [layout for layout in self.layouts if layout.target]
 
     def edge_site(self, layout: EdgeLayout, name: ConfigurationModuleName) -> Site:
         return edge_site(self.client, layout, name, self.enterprise_id)
 
     def profile_site(self, profile_id: int, name: ConfigurationModuleName) -> Site:
-        return profile_site(self.client, profile_id, name, self.enterprise_id)
+        target = any(
+            entry.target for entry in self.profiles if entry.profile_id == profile_id
+        )
+        return profile_site(
+            self.client, profile_id, name, self.enterprise_id, target=target
+        )
 
     def edges_with(
         self,
         name: ConfigurationModuleName,
         suitable: Callable[[AnyConfigurationModule], bool] = lambda _: True,
+        *,
+        replace_modules: bool = False,
     ) -> list[EdgeLayout]:
-        """The edges whose own configuration has a *name* module that is *suitable*."""
+        """The marked edges whose own configuration has a *name* module that is *suitable*.
+
+        With *replace_modules*, only those marked for deleting and inserting modules.
+        """
         found: list[EdgeLayout] = []
-        for layout in self.layouts:
+        for layout in self.targets:
+            if replace_modules and not layout.replace_modules:
+                continue
             module = find_module(layout.edge, name)
             if module is not None and suitable(module):
                 found.append(layout)
         return found
 
+    def edges_lacking(self, name: ConfigurationModuleName) -> list[EdgeLayout]:
+        """The edges marked for deleting and inserting modules whose own configuration has no *name* module."""
+        return [
+            layout
+            for layout in self.targets
+            if layout.replace_modules and find_module(layout.edge, name) is None
+        ]
+
     async def first_writable(
         self, layouts: Sequence[EdgeLayout], name: ConfigurationModuleName
     ) -> EdgeLayout | None:
-        """The first of *layouts* whose *name* module takes a write."""
+        """The first of *layouts* that is marked and whose *name* module takes a write."""
         require_writes(run_of(self.client))
         for layout in layouts:
-            if await accepts_a_write(self.edge_site(layout, name)):
+            if layout.target and await accepts_a_write(self.edge_site(layout, name)):
                 return layout
         return None
 
@@ -366,15 +504,26 @@ class Lab:
         name: ConfigurationModuleName,
         suitable: Callable[[AnyConfigurationModule], bool] = lambda _: True,
         what: str = "",
+        *,
+        replace_modules: bool = False,
     ) -> EdgeLayout:
-        """The first such edge whose module takes a write, or skip the test."""
+        """The first marked edge whose module takes a write, or skip the test.
+
+        With *replace_modules*, the edge must also be marked for deleting and
+        inserting modules.
+        """
         require_writes(run_of(self.client))
-        found = self.edges_with(name, suitable)
+        targets = self.targets
+        if not targets:
+            pytest.skip(NO_EDGE_MARKED)
+        if replace_modules and not any(layout.replace_modules for layout in targets):
+            pytest.skip(NO_EDGE_FOR_MODULES)
+        found = self.edges_with(name, suitable, replace_modules=replace_modules)
         if not found:
-            pytest.skip(f"no edge has a {name.value} module {what or 'to use'}")
+            pytest.skip(f"no marked edge has a {name.value} module {what or 'to use'}")
         layout = await self.first_writable(found, name)
         if layout is None:
-            pytest.skip(f"no edge has a {name.value} module that takes a write")
+            pytest.skip(f"no marked edge has a {name.value} module that takes a write")
         return layout
 
     async def pick_writable_profile(
@@ -383,10 +532,13 @@ class Lab:
         suitable: Callable[[AnyConfigurationModule], bool] = lambda _: True,
         what: str = "",
     ) -> int:
-        """The ID of the first profile with such a module that takes a write, or skip."""
+        """The ID of the first marked profile with such a module that takes a write, or skip."""
         require_writes(run_of(self.client))
+        targets = [entry.profile_id for entry in self.profiles if entry.target]
+        if not targets:
+            pytest.skip(NO_PROFILE_MARKED)
         found = 0
-        for profile_id in self.profile_ids:
+        for profile_id in targets:
             config = await read_profile(self.client, profile_id, self.enterprise_id)
             module = find_module(config, name)
             if module is None or not suitable(module):
@@ -395,8 +547,10 @@ class Lab:
             if await accepts_a_write(self.profile_site(profile_id, name)):
                 return profile_id
         if found:
-            pytest.skip(f"no profile has a {name.value} module that takes a write")
-        pytest.skip(f"no profile has a {name.value} module {what or 'to use'}")
+            pytest.skip(
+                f"no marked profile has a {name.value} module that takes a write"
+            )
+        pytest.skip(f"no marked profile has a {name.value} module {what or 'to use'}")
 
 
 def _shown_field(path: str) -> str:
@@ -662,11 +816,23 @@ class LiveRun:
     def check_replace(self, configuration_id: int, name: str, what: str) -> None:
         """Raise ``WritesRefused`` unless an open block is on that configuration's *name* module.
 
-        *what* is ``"an insert"`` or ``"a delete"``.
+        *what* is ``"an insert"`` or ``"a delete"``. The block's site must also
+        be one marked for deleting and inserting modules.
         """
         self._check_may_write()
-        if self.block_for(configuration_id, name) is None:
+        blocks = [
+            block
+            for block in self.open
+            if block[0].configuration_id == configuration_id
+            and block[0].name.value == name
+        ]
+        if not blocks:
             raise WritesRefused(f"{what} of a {name} module {NOT_COVERED}")
+        if not any(site.replace_modules for site, _ in blocks):
+            raise WritesRefused(
+                f"{what} of a {name} module of an edge that is not marked "
+                f"{REPLACE_MODULES_MARK}; nothing was sent; {REPLACE_MODULES_REMEDY}"
+            )
 
     def check_delete(self, configuration_id: int, name: str, module_id: int) -> None:
         """Raise ``WritesRefused`` unless a block is on that module and *module_id* is one it found or inserted."""
@@ -823,7 +989,7 @@ async def discover_lab(client: VcoClient, enterprise_id: int | None) -> Lab:
         client=client,
         enterprise_id=enterprise_id,
         layouts=await discover_layouts(client, enterprise_id),
-        profile_ids=await list_profile_ids(client, enterprise_id),
+        profiles=await list_profiles(client, enterprise_id),
     )
 
 
@@ -841,6 +1007,10 @@ class Site:
     configuration_id: int
     name: ConfigurationModuleName
     layer: Callable[[], Awaitable[Sequence[AnyConfigurationModule]]]
+    target: bool = False
+    """Whether the owner marked the edge or profile as one the suite may write to."""
+    replace_modules: bool = False
+    """Whether the suite may also delete and insert modules of the edge."""
 
     async def read(self) -> AnyConfigurationModule | None:
         modules = await self.layer()
@@ -863,7 +1033,15 @@ def edge_site(
         edge, _ = await read_stack(client, layout.edge_id, enterprise_id)
         return [] if edge.modules is MISSING else edge.modules
 
-    return Site(client, enterprise_id, layout.configuration_id, name, layer)
+    return Site(
+        client,
+        enterprise_id,
+        layout.configuration_id,
+        name,
+        layer,
+        target=layout.target,
+        replace_modules=layout.replace_modules,
+    )
 
 
 def profile_site(
@@ -871,12 +1049,14 @@ def profile_site(
     profile_id: int,
     name: ConfigurationModuleName,
     enterprise_id: int | None,
+    *,
+    target: bool = False,
 ) -> Site:
     async def layer() -> Sequence[AnyConfigurationModule]:
         profile = await read_profile(client, profile_id, enterprise_id)
         return [] if profile.modules is MISSING else profile.modules
 
-    return Site(client, enterprise_id, profile_id, name, layer)
+    return Site(client, enterprise_id, profile_id, name, layer, target=target)
 
 
 RawJson = RootModel[dict[str, Any]]
@@ -1204,6 +1384,7 @@ async def restoring(site: Site) -> AsyncGenerator[Original | None]:
     """
     run = run_of(site.client)
     require_writes(run)
+    check(site.target, NOT_A_TARGET)
     original = await capture(site)
     backup = save_backup(site, original) if original is not None else None
     entry: Block = (site, original.module_id if original is not None else None)
