@@ -12,6 +12,7 @@ from urllib.parse import urlsplit
 import httpx
 from pydantic import SecretStr
 
+from pyvelo.client.auth import clean_token
 from pyvelo.client.exceptions import VcoRateLimitError
 from pyvelo.client.protocol import ExchangeHook, VcoClientProtocol
 from pyvelo.client.request_observation import RequestObservation, RequestObserver
@@ -52,7 +53,7 @@ class VcoClient(VcoClientProtocol):
         transport: httpx.AsyncBaseTransport | None = None,
     ) -> None:
         self._vco_fqdn: str = vco_fqdn
-        self._token: SecretStr = SecretStr(token)
+        self._token: SecretStr = SecretStr(clean_token(token))
         self._verify_ssl: bool = verify_ssl
         self._timeout: float = timeout
         self._max_retries: int = max_retries

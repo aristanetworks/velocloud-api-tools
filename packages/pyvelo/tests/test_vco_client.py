@@ -11,6 +11,7 @@ import pytest
 from pyvelo.client.exceptions import (
     VcoApiError,
     VcoClientNotInitializedError,
+    VcoCredentialsError,
     VcoEmptyResultError,
     VcoOperationError,
     VcoRateLimitError,
@@ -932,3 +933,77 @@ class TestVcoAuth:
         _ = await client.portal(
             "test/getStuff", SampleRequest(enterprise_id=1), SampleResult
         )
+
+    REFUSED = (
+        "The API token has a character that cannot be sent in an HTTP header: a "
+        "line break, a tab, another control character or a character that is not "
+        "ASCII. The token is not shown here. Check where it comes from, for "
+        "example a file with more than one line or text pasted with its formatting."
+    )
+
+    async def test_whitespace_around_the_token_is_stripped(
+        self, json_rpc_response: JsonRpcResponseFactory
+    ):
+        from pyvelo.client import VcoClient
+        from pyvelo.testing import make_transport
+
+        seen: list[httpx.Request] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen.append(request)
+            return httpx.Response(
+                200, json=json_rpc_response(result={"name": "x", "value": 0})
+            )
+
+        client = VcoClient(
+            "vco.example.invalid",
+            "  made-up-token\r\n",
+            transport=make_transport(handler),
+        )
+        _ = await client.portal(
+            "test/getStuff", SampleRequest(enterprise_id=1), SampleResult
+        )
+        assert seen[0].headers["Authorization"] == "Token made-up-token"
+
+    @pytest.mark.parametrize(
+        "token",
+        [
+            "zzSECRETzz\nX-Injected: 1",
+            "zzSECRETzz\x00",
+            "Token\tzzSECRETzz",
+            "zzSECRETzz\x7f",
+            "zzSECRETzz\u00e9",
+        ],
+    )
+    def test_a_token_no_header_can_carry_is_refused_and_not_shown(self, token: str):
+        from pyvelo.client import VcoAuth, VcoClient
+
+        with pytest.raises(VcoCredentialsError) as exc:
+            _ = VcoClient("vco.example.invalid", token)
+        assert str(exc.value) == self.REFUSED
+        assert "SECRET" not in repr(exc.value)
+        with pytest.raises(VcoCredentialsError) as direct:
+            _ = VcoAuth(token)
+        assert str(direct.value) == self.REFUSED
+
+    @pytest.mark.parametrize("token", ["", "   ", "\r\n"])
+    def test_an_empty_token_is_refused(self, token: str):
+        from pyvelo.client import VcoAuth, VcoClient
+
+        expected = (
+            "The API token is empty. Give the token, or check the file or "
+            "variable it is read from."
+        )
+        with pytest.raises(VcoCredentialsError) as exc:
+            _ = VcoClient("vco.example.invalid", token)
+        assert str(exc.value) == expected
+        with pytest.raises(VcoCredentialsError) as direct:
+            _ = VcoAuth(token)
+        assert str(direct.value) == expected
+
+    def test_vco_auth_strips_and_keeps_a_prefix(self):
+        from pyvelo.client import VcoAuth
+
+        request = httpx.Request("POST", "https://vco.example.invalid/portal/")
+        sent = next(VcoAuth(" Bearer made-up-token\n").auth_flow(request))
+        assert sent.headers["Authorization"] == "Bearer made-up-token"

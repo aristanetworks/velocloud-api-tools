@@ -198,7 +198,10 @@ class VcoUserTypeUnknownError(VcoError):
 
 
 class VcoCredentialsError(VcoError):
-    """Raised when VCO credentials cannot be loaded from the environment."""
+    """Raised when VCO credentials cannot be loaded from the environment.
+
+    Also raised for a token that is empty or that cannot be sent.
+    """
 
 
 class LossyFieldError(VcoError):
