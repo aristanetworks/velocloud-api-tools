@@ -267,7 +267,7 @@ class ControlPlaneConfigurationModule(ConfigurationModuleBase):
 class DeviceSettingsConfigurationModule(ConfigurationModuleBase):
     name: Literal["deviceSettings"] = "deviceSettings"
     data: DeviceSettingsData
-    refs: DeviceSettingsRefs | MISSING = MISSING
+    refs: DeviceSettingsRefs | MISSING = Field(default=MISSING, frozen=True)
 
     def mutable_data(self) -> DeviceSettingsData:
         return copy.deepcopy(self.data)
@@ -284,7 +284,7 @@ class WanConfigurationModule(ConfigurationModuleBase):
 class QosConfigurationModule(ConfigurationModuleBase):
     name: Literal["QOS"] = "QOS"
     data: QosData
-    refs: dict[str, Any] | MISSING = MISSING
+    refs: dict[str, Any] | MISSING = Field(default=MISSING, frozen=True)
 
     def mutable_data(self) -> QosData:
         return copy.deepcopy(self.data)

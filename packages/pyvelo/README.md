@@ -183,6 +183,12 @@ to one of these fields: `RefsNotLoadedError` says to read it with
 names that are not derived are written with `update_configuration_module`, the
 low-level request.
 
+`module.refs` is read-only, because the write ignores it. `module.refs = ...`
+raises a `ValidationError`, and the rows (`ConfigurationRef` and its
+subclasses) and the device settings refs container are frozen: assigning to
+one raises, and a ref name that holds several rows holds a tuple of them. Edit
+the fields that own the refs instead.
+
 ## Portal list and pagination methods
 
 | Method | Use for | Source requests |
