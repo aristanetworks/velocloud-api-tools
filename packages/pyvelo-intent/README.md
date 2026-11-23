@@ -584,9 +584,14 @@ sends what still differs. For every error a save raises once it has started to
 write, a cancellation included, `save_progress(error)` (from `pyvelo_intent`)
 gives a `SaveProgress`: the writes stored before it (`completed`), the module
 whose write raised (`failed`, None when the error came after a write was
-stored) and the modules not sent (`pending`). It is None for an error raised
-before the first request. After `asyncio.timeout` it finds the progress on the
-cancellation behind the `TimeoutError`.
+stored) and the modules not sent (`pending`). The progress is attached to any
+error raised inside the write loop, one raised while the first request is built
+included, so `completed` is empty and `failed` names that module. It is None
+for an error raised before the first write is attempted (planning, validation),
+and for any error that did not come from a save. `save_progress` also follows
+`__cause__`, else `__context__`: after `asyncio.timeout` it finds the progress
+on the cancellation behind the `TimeoutError`, and an error raised while you
+handle an earlier save's error can return that save's progress.
 
 `WriteOutcomeUnknownError` has no lists and no module. `error.answer` says what the VCO said of the write itself: `"refused"` (it refused the version, so this write stored nothing), `"counted"` (it counted the write, so the changes are most likely stored) or `"row"` (its answer could not be read as this module). `error.detail` says why the module could not be read, and `error.plan` holds what was sent (what would have been, for an insert sent again). The state keeps the module as read, with your edits. So there is nothing to redo: its `redo_patch()` is `{}` and its `not_redone()` is empty. For an update, saving again is safe: if the first write was stored, the VCO refuses the old version, the save reads the module and reports what is stored. For an insert, saving again is safe too: the state has recorded it, and the next save reads the configuration before it inserts (below).
 
