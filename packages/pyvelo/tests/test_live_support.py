@@ -12,6 +12,7 @@ import inspect
 import json
 import pathlib
 import re
+import signal
 from collections.abc import Callable, Generator
 from typing import Any, ClassVar, Literal
 
@@ -175,6 +176,7 @@ def backups(
     """Backups go to a temporary directory, the opt-in is unset, and the test is a writer."""
     monkeypatch.setenv(live.BACKUP_DIR_ENV, str(tmp_path))
     monkeypatch.setattr(live, "_backup_dir", None)
+    monkeypatch.setattr(live, "_LEFT", {})
     monkeypatch.delenv(live.WRITE_HOST_ENV, raising=False)
     monkeypatch.delenv(live.WRITE_ENTERPRISE_ENV, raising=False)
     with live.writer_test(True):
@@ -1778,3 +1780,227 @@ async def test_edges_that_all_refuse_fail_a_pick_among_given_layouts(
     fake.refused.clear()
     taken = await lab.first_writable_or_fail(lab.targets, Name.QOS)
     assert taken is not None and taken.edge_id == 5
+
+
+async def test_backups_left_are_listed_once(
+    backups: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+):
+    fake = lab_fake()
+    lab = await opened(fake, monkeypatch)
+    lines: list[str] = []
+    async with live.restoring(lab.edge_site(lab.layouts[0], Name.QOS)):
+        pass
+    live.report_leftover_backups(lines.append)
+    assert lines == []  # a module that was put back leaves nothing to list
+
+    site = lab.profile_site(20, Name.QOS)
+    with pytest.raises(pytest.fail.Exception):
+        async with live.restoring(site):
+            await raise_limit(site, 2)
+            fake.refused.add(2)  # the write back is refused
+    (backup,) = backups.iterdir()
+    live.report_leftover_backups(lines.append)
+    assert lines == [
+        (
+            "live suite: 1 module(s) were not put back; the original of each is "
+            "saved at:"
+        ),
+        f"  {backup}  (QOS)",
+    ]
+    live.report_leftover_backups(lines.append)
+    assert len(lines) == 2
+
+
+async def test_a_change_by_another_writer_is_not_written_over(
+    backups: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+):
+    fake = lab_fake()
+    lab = await opened(fake, monkeypatch)
+    site = lab.profile_site(20, Name.QOS)
+    with pytest.raises(pytest.fail.Exception) as caught:
+        async with live.restoring(site):
+            await raise_limit(site, 2)
+            # Someone else, in the UI, while the test runs:
+            fake.store.other_writer(
+                2, lambda row: row["data"].update(addedByAnAdmin={"keep": "me"})
+            )
+    (backup,) = backups.iterdir()
+    assert str(caught.value) == (
+        "restore: the QOS module changed outside this run after its last write "
+        "(+ addedByAnAdmin); it was left as it is, with this run's changes; "
+        "check who else changed the QOS module, and put the original back by "
+        f"hand if it is wanted; the original QOS module is saved at {backup}"
+    )
+    assert fake.data(2)["addedByAnAdmin"] == {"keep": "me"}
+    assert fake.data(2)["serviceRateLimit"]["value"] == 2
+    assert fake.methods().count("updateConfigurationModule") == 1
+
+
+async def test_a_change_before_the_run_wrote_is_seen_too(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    fake = lab_fake()
+    lab = await opened(fake, monkeypatch)
+    site = lab.profile_site(20, Name.QOS)
+    with pytest.raises(pytest.fail.Exception, match="changed outside this run"):
+        async with live.restoring(site):
+            fake.store.other_writer(2, lambda row: row["data"].update(added=1))
+    assert fake.data(2)["added"] == 1
+    assert "updateConfigurationModule" not in fake.methods()
+
+
+async def test_a_change_between_two_blocks_is_not_blamed_on_the_second(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    fake = lab_fake()
+    lab = await opened(fake, monkeypatch)
+    site = lab.profile_site(20, Name.QOS)
+    async with live.restoring(site):
+        await raise_limit(site, 2)
+    fake.store.other_writer(2, lambda row: row["data"].update(added=1))
+    async with live.restoring(site):
+        await raise_limit(site, 3)
+    assert fake.data(2) == {**QOS, "added": 1}
+
+
+async def test_without_the_row_of_the_last_write_the_original_goes_back(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    fake = lab_fake()
+    fake.store.return_data = False  # it answers a write with a row count
+    lab = await opened(fake, monkeypatch)
+    site = lab.profile_site(20, Name.QOS)
+    async with live.restoring(site):
+        await raise_limit(site, 2)
+    assert fake.data(2) == QOS
+
+
+async def test_after_a_write_whose_answer_was_lost_the_original_goes_back(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    fake = lab_fake()
+    lab = await opened(fake, monkeypatch)
+    site = lab.profile_site(20, Name.QOS)
+    async with live.restoring(site):
+        fake.store.lose_answers = {1}  # the store's first write: stored, not answered
+        with pytest.raises(httpx.ReadTimeout):
+            await raise_limit(site, 2)
+        assert fake.data(2)["serviceRateLimit"]["value"] == 2
+    assert fake.data(2) == QOS
+
+
+async def test_a_module_the_run_did_not_insert_is_not_deleted(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    fake = lab_fake()
+    fake.add_edge(7, 12, 20, description=REPLACEABLE)
+    lab = await opened(fake, monkeypatch)
+    site = lab.edge_site(lab.layouts[2], Name.QOS)
+    with pytest.raises(pytest.fail.Exception) as caught:
+        async with live.restoring(site) as original:
+            assert original is None
+            # The test inserts nothing; an administrator creates the module meanwhile.
+            fake.module(77, 12, "QOS", QOS)
+    assert str(caught.value) == (
+        "restore: a QOS module this run did not insert is there now; it was "
+        "left as it is; check who created it, and delete it by hand if the lab "
+        "should not have it"
+    )
+    assert 77 in fake.store.rows
+    assert "deleteConfigurationModule" not in fake.methods()
+
+
+async def test_a_module_the_run_deleted_is_inserted_again(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    fake = lab_fake()
+    fake.edges[5]["description"] = REPLACEABLE
+    lab = await opened(fake, monkeypatch)
+    site = lab.edge_site(lab.layouts[0], Name.QOS)
+    async with live.restoring(site):
+        await live.delete_module(site, 1)
+        assert await site.read() is None
+    back = await site.read_present()
+    assert back.id_ != 1 and back.raw_data == QOS
+
+
+async def test_a_module_someone_else_deleted_is_not_put_back(
+    backups: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+):
+    fake = lab_fake()
+    fake.edges[5]["description"] = REPLACEABLE
+    lab = await opened(fake, monkeypatch)
+    site = lab.edge_site(lab.layouts[0], Name.QOS)
+    with pytest.raises(pytest.fail.Exception) as caught:
+        async with live.restoring(site):
+            del fake.store.rows[1]
+    (backup,) = backups.iterdir()
+    assert str(caught.value) == (
+        "restore: the QOS module is gone and this run did not delete it; it "
+        "was not put back; check who deleted it, and insert it again from the "
+        f"saved original if it is wanted; the original QOS module is saved at {backup}"
+    )
+    assert "insertConfigurationModule" not in fake.methods()
+
+
+async def test_an_interrupt_during_the_restore_is_held_until_it_is_done(
+    backups: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+):
+    fake = lab_fake()
+    lab = await opened(fake, monkeypatch)
+    site = lab.profile_site(20, Name.QOS)
+    seen: list[str] = []
+
+    def interrupt(_method: str) -> None:
+        signal.raise_signal(signal.SIGINT)  # Ctrl-C, at each request of the restore
+        assert seen == []
+
+    previous = signal.signal(signal.SIGINT, lambda *_: seen.append("delivered"))
+    try:
+        async with live.restoring(site):
+            await raise_limit(site, 99)
+            fake.before = interrupt
+        fake.before = None
+        assert seen == ["delivered"]  # once, after the module was back
+    finally:
+        _ = signal.signal(signal.SIGINT, previous)
+    assert fake.data(2) == QOS
+    assert list(backups.iterdir()) == []
+
+
+def test_interrupts_are_held_and_then_delivered():
+    seen: list[str] = []
+    previous = signal.signal(signal.SIGINT, lambda *_: seen.append("delivered"))
+    try:
+        with live.interrupts_held():
+            signal.raise_signal(signal.SIGINT)
+            signal.raise_signal(signal.SIGINT)
+            assert seen == []
+        assert seen == ["delivered"]
+        with live.interrupts_held():
+            pass
+        assert seen == ["delivered"]
+    finally:
+        _ = signal.signal(signal.SIGINT, previous)
+
+
+async def test_another_module_in_place_of_the_one_found_is_left_alone(
+    backups: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+):
+    fake = lab_fake()
+    lab = await opened(fake, monkeypatch)
+    site = lab.profile_site(20, Name.QOS)
+    with pytest.raises(pytest.fail.Exception) as caught:
+        async with live.restoring(site):
+            # Someone replaces the module, in the UI, while the test runs:
+            del fake.store.rows[2]
+            fake.module(77, 20, "QOS", {**QOS, "added": 1})
+    (backup,) = backups.iterdir()
+    assert str(caught.value) == (
+        "restore: another QOS module is there than the one the test began "
+        "with, and this run did not insert it; it was left as it is; check who "
+        "replaced the module, and put the original back by hand if it is "
+        f"wanted; the original QOS module is saved at {backup}"
+    )
+    assert fake.data(77)["added"] == 1
+    assert "updateConfigurationModule" not in fake.methods()

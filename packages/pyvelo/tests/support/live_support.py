@@ -70,12 +70,20 @@ One hole is left: a second client that a test builds itself is not guarded
 (nor are the websocket calls of the client, remote diagnostics). A live test
 uses the ``vco_client`` fixture.
 
-``restoring`` is the one way a test writes: it records a module's raw data first
-(in a private file under ``$PYVELO_IT_BACKUP_DIR``, which must be outside the
-repository, else a new temp directory; it holds no refs but a QoS module's, and
-never a client-connector ref; it is removed once the module is back) and, however the test ends, puts it back and checks that it is back. A
-module that did not exist is deleted; one that was deleted is inserted again.
-If the restore fails, the message names the file; it never prints the data.
+``restoring`` is the one way a test writes: it records a module's raw data
+first (in a private file under ``$PYVELO_IT_BACKUP_DIR``, which must be outside
+the repository, else a new temp directory; it holds no refs but a QoS module's,
+and never a client-connector ref; it is removed once the module is back) and,
+however the test ends, puts it back and checks that it is back. The restore
+undoes what this run did and nothing else. A module this run inserted is
+deleted; one it deleted is inserted again; one it wrote gets its original data
+back. Where the module is not as the Orchestrator last answered this run
+(another writer changed it, added it or removed it), the restore leaves it
+alone and fails the test. On an Orchestrator that answers a write with a row
+count, what it stored is not known, and the original is written back without
+that comparison. Ctrl-C is held while a module is put back. A failure names the
+backup file and never prints the data, and every backup still there when the
+run ends is listed in its summary.
 
 What the Orchestrator does to a module as it stores it, seen on a lab:
 
@@ -103,7 +111,10 @@ import json
 import os
 import pathlib
 import re
+import signal
+import sys
 import tempfile
+import threading
 import uuid
 import weakref
 from collections.abc import (
@@ -823,6 +834,10 @@ def writer_test(marked: bool) -> Generator[None]:
         _marked = before
 
 
+_UNKNOWN: object = object()
+"""In ``LiveRun.seen``: the Orchestrator answered a write without the module row, or the answer is lost."""
+
+
 type Block = tuple[Site, int | None]
 """An open ``restoring`` block: its site, and the ID of the module it found there."""
 
@@ -836,6 +851,10 @@ class LiveRun:
     """The open ``restoring`` blocks, the innermost last."""
     inserted: dict[int, Block] = field(default_factory=lambda: dict[int, Block]())
     """The ID of each module a block's test inserted, with the block that was open for it."""
+    deleted: set[int] = field(default_factory=lambda: set[int]())
+    """The ID of each module this run deleted."""
+    seen: dict[int, object] = field(default_factory=lambda: dict[int, object]())
+    """Each module's raw data as the Orchestrator last answered this run's write with, or ``_UNKNOWN``."""
 
     def _check_may_write(self) -> None:
         if not _marked:
@@ -990,12 +1009,21 @@ def run_of(client: VcoClient) -> LiveRun:
     async def guarded_update(
         request: UpdateConfigurationModule, *, level: ConfigContext | None = None
     ) -> AnyConfigurationModule | None:
-        run.check_update(request.configuration_module_id)
+        module_id = request.configuration_module_id
+        run.check_update(module_id)
         try:
             with _sends("configuration/updateConfigurationModule"):
-                return await update(request, level=level)
-        except VcoOperationError as exc:
-            raise _redacted(exc) from None
+                stored = await update(request, level=level)
+        except Exception as exc:
+            if not isinstance(exc, ConfigConflictError):
+                run.seen[module_id] = _UNKNOWN  # it may have been stored
+            if isinstance(exc, VcoOperationError):
+                raise _redacted(exc) from None
+            raise
+        run.seen[module_id] = (
+            _UNKNOWN if stored is None else copy.deepcopy(stored.raw_data)
+        )
+        return stored
 
     async def guarded_insert(
         request: InsertConfigurationModule, *, level: ConfigContext | None = None
@@ -1009,6 +1037,11 @@ def run_of(client: VcoClient) -> LiveRun:
         block = run.block_for(request.configuration_id, request.name)
         if block is not None:
             run.inserted[inserted.id_] = block
+        run.seen[inserted.id_] = (
+            _UNKNOWN
+            if isinstance(inserted, InsertConfigurationModuleResult)
+            else copy.deepcopy(inserted.raw_data)
+        )
         return inserted
 
     async def guarded_paginated[T: BaseModel](
@@ -1176,7 +1209,9 @@ async def delete_module(site: Site, module_id: int) -> None:
     except VcoOperationError as exc:
         raise _redacted(exc) from None
     check(not result.error, f"deleting the {site.name.value} module was refused")
+    run.deleted.add(module_id)
     _ = run.inserted.pop(module_id, None)
+    _ = run.seen.pop(module_id, None)
 
 
 async def insert_module(site: Site, data: object, refs: object) -> None:
@@ -1306,6 +1341,8 @@ def check_no_override_flag(
 
 BACKUP_DIR_ENV = "PYVELO_IT_BACKUP_DIR"
 _backup_dir: pathlib.Path | None = None
+_LEFT: dict[pathlib.Path, str] = {}
+"""The backup of each module not yet put back, with the module's name."""
 
 
 def _repository_root() -> pathlib.Path | None:
@@ -1371,7 +1408,32 @@ def save_backup(site: Site, original: Original) -> pathlib.Path:
     descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     with os.fdopen(descriptor, "w") as handle:
         json.dump(document, handle)
+    _LEFT[path] = site.name.value
     return path
+
+
+def report_leftover_backups(write: Callable[[str], object]) -> None:
+    """Say, through *write*, where the backup of each module not put back is; once.
+
+    Only a backup whose file is still there is listed, and the list is then empty.
+    """
+    left = {path: name for path, name in _LEFT.items() if path.exists()}
+    _LEFT.clear()
+    if not left:
+        return
+    _ = write(
+        f"live suite: {len(left)} module(s) were not put back; the original of "
+        "each is saved at:"
+    )
+    for path, name in left.items():
+        _ = write(f"  {path}  ({name})")
+
+
+def _print_to_stderr(line: str) -> None:
+    print(line, file=sys.stderr)
+
+
+_ = atexit.register(report_leftover_backups, _print_to_stderr)
 
 
 async def capture(site: Site) -> Original | None:
@@ -1397,36 +1459,73 @@ async def write_data(site: Site, module: AnyConfigurationModule, data: object) -
             ),
             version=module.version or MISSING,
             update=ConfigurationModuleUpdate(data=copy.deepcopy(document)),
+            return_data=True,
         )
     )
 
 
 async def restore(site: Site, original: Original | None) -> None:
-    """Put the module back as *original* and check that it is.
+    """Put the module back as *original* and check that it is, undoing only what this run did.
 
     The raw data goes back as written, under the module's current version. A
-    module that was absent is deleted; one that was deleted is inserted again.
+    module this run inserted is deleted; one it deleted is inserted again; one
+    it wrote gets the original data. Where the module is not as the
+    Orchestrator last answered this run (another writer changed, added or
+    removed it) nothing is written and the test fails.
     """
+    run = run_of(site.client)
+    name = site.name.value
     current = await site.read()
     if original is None:
-        if current is not None:
-            await delete_module(site, current.id_)
+        if current is None:
+            return
+        check(
+            current.id_ in run.inserted,
+            f"restore: a {name} module this run did not insert is there now; it "
+            "was left as it is; check who created it, and delete it by hand if "
+            "the lab should not have it",
+        )
+        await delete_module(site, current.id_)
         check(
             await site.read() is None,
-            f"restore: the {site.name.value} module the test added is still there",
+            f"restore: the {name} module the test added is still there",
         )
         return
     if current is None:
+        check(
+            original.module_id in run.deleted,
+            f"restore: the {name} module is gone and this run did not delete it; "
+            "it was not put back; check who deleted it, and insert it again "
+            "from the saved original if it is wanted",
+        )
         await insert_module(site, original.data, original.refs)
-    elif changes_between(site.name, original.data, current.raw_data):
-        await write_data(site, current, original.data)
+    else:
+        check(
+            current.id_ == original.module_id or current.id_ in run.inserted,
+            f"restore: another {name} module is there than the one the test "
+            "began with, and this run did not insert it; it was left as it is; "
+            "check who replaced the module, and put the original back by hand "
+            "if it is wanted",
+        )
+        expected = run.seen.get(current.id_, _UNKNOWN)
+        if expected is not _UNKNOWN:
+            outside = changes_between(site.name, expected, current.raw_data)
+            check(
+                not outside,
+                f"restore: the {name} module changed outside this run after its "
+                f"last write ({describe(outside)}); it was left as it is, with "
+                f"this run's changes; check who else changed the {name} module, "
+                "and put the original back by hand if it is wanted",
+            )
+        if changes_between(site.name, original.data, current.raw_data):
+            await write_data(site, current, original.data)
     after = await site.read()
-    check(after is not None, f"restore: the {site.name.value} module is missing")
+    check(after is not None, f"restore: the {name} module is missing")
     assert after is not None
     changes = changes_between(site.name, original.data, after.raw_data)
     check(
         not changes,
-        f"restore: the {site.name.value} module differs from the original after "
+        f"restore: the {name} module differs from the original after "
         f"writing it back: {describe(changes)}",
     )
 
@@ -1434,6 +1533,32 @@ async def restore(site: Site, original: Original | None) -> None:
 def ref_names(refs: object) -> list[str]:
     """The names of the refs; their content (IDs, login tokens) is not stable."""
     return sorted(cast(dict[str, object], refs)) if isinstance(refs, dict) else []
+
+
+@contextmanager
+def interrupts_held() -> Generator[None]:
+    """For the length of the block, hold Ctrl-C; deliver it once the block is left.
+
+    Only the main thread takes signals; in another thread nothing is held.
+    """
+    if threading.current_thread() is not threading.main_thread():
+        yield
+        return
+    noted = False
+
+    def note(_signal: int, _frame: object) -> None:
+        nonlocal noted
+        noted = True
+
+    previous = signal.signal(signal.SIGINT, note)
+    try:
+        yield
+    finally:
+        _ = signal.signal(
+            signal.SIGINT, previous if previous is not None else signal.SIG_DFL
+        )
+        if noted:
+            signal.raise_signal(signal.SIGINT)
 
 
 @asynccontextmanager
@@ -1448,30 +1573,34 @@ async def restoring(site: Site) -> AsyncGenerator[Original | None]:
     check(site.target, NOT_A_TARGET)
     original = await capture(site)
     backup = save_backup(site, original) if original is not None else None
+    if original is not None:
+        run.seen[original.module_id] = copy.deepcopy(original.data)
     entry: Block = (site, original.module_id if original is not None else None)
     run.open.append(entry)
     try:
         try:
             yield original
         finally:
-            try:
-                await restore(site, original)
-            except (Exception, pytest.fail.Exception) as exc:
-                if backup is None:
-                    raise
-                what = (
-                    str(exc)
-                    if isinstance(exc, (pytest.fail.Exception, LiveSuiteError))
-                    else type(exc).__name__
-                )
-                pytest.fail(
-                    f"{what}; the original {site.name.value} module is saved at "
-                    f"{backup}",
-                    pytrace=False,
-                )
-            else:
-                if backup is not None:
-                    backup.unlink(missing_ok=True)
+            with interrupts_held():
+                try:
+                    await restore(site, original)
+                except (Exception, pytest.fail.Exception) as exc:
+                    if backup is None:
+                        raise
+                    what = (
+                        str(exc)
+                        if isinstance(exc, (pytest.fail.Exception, LiveSuiteError))
+                        else type(exc).__name__
+                    )
+                    pytest.fail(
+                        f"{what}; the original {site.name.value} module is saved "
+                        f"at {backup}",
+                        pytrace=False,
+                    )
+                else:
+                    if backup is not None:
+                        backup.unlink(missing_ok=True)
+                        _ = _LEFT.pop(backup, None)
     finally:
         run.close(entry)
 

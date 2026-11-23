@@ -38,6 +38,11 @@ def pytest_runtest_makereport(
     return report
 
 
+def pytest_terminal_summary(terminalreporter: pytest.TerminalReporter) -> None:
+    """Name the backup of every module a live test did not put back."""
+    live.report_leftover_backups(terminalreporter.write_line)
+
+
 def _env(name: str, required: bool = False) -> str | None:
     val = os.environ.get(name)
     if required and not val:
