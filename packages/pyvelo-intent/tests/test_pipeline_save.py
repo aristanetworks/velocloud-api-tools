@@ -12,7 +12,7 @@ from pyvelo.client.schemas.configuration import (
 )
 from pyvelo.config.resolver import ResolverContext
 from pyvelo_intent.config.pipeline import ConfigPipeline
-from pyvelo_intent.config.state import ConfigState, SaveResult
+from pyvelo_intent.config.state import ConfigState
 from pyvelo_intent.testing import MockVcoClient, make_firewall_module
 
 
@@ -48,6 +48,7 @@ async def test_save_no_changes():
 
     assert result.modules_updated == []
     assert result.modules_inserted == []
+    assert (result.server_changes, result.left_out) == ({}, {})
     assert len(client.calls) == 0
 
 
@@ -87,18 +88,6 @@ async def test_save_dry_run():
 
     assert ConfigurationModuleName.FIREWALL in result.modules_updated
     assert len(client.calls) == 0  # No API calls
-
-
-@pytest.mark.asyncio
-async def test_save_result_type():
-    """SaveResult should have correct types."""
-    result = SaveResult(
-        modules_updated=[ConfigurationModuleName.FIREWALL],
-        modules_inserted=[ConfigurationModuleName.QOS],
-    )
-    assert result.modules_updated == [ConfigurationModuleName.FIREWALL]
-    assert result.modules_inserted == [ConfigurationModuleName.QOS]
-    assert result.warnings == []
 
 
 @pytest.mark.asyncio

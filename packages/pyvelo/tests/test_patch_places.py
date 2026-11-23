@@ -80,7 +80,10 @@ def test_a_union_tag_that_is_a_field_name_keeps_its_text():
 def test_a_merged_model_that_is_not_valid_names_its_fields_as_a_patch_writes_them():
     bad = Entry.model_construct(max_rate=0, peer_address=5)
     table = Table.model_construct(by_name={"MaxRate": bad}, entry=Entry())
-    with pytest.raises(PatchError) as exc:
+    with (
+        pytest.warns(UserWarning, match="Pydantic serializer warnings"),
+        pytest.raises(PatchError) as exc,
+    ):
         _check_merged(table, Table.model_validate, Path(()))
     assert exc.value.message == (
         "Table is not valid after this change: "

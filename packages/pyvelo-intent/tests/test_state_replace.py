@@ -21,7 +21,7 @@ from pyvelo.config.resolver import ResolverContext
 from pyvelo.core import VcoModel
 from pyvelo.core.rebase import Key, Path
 from pyvelo.testing import as_stored, make_module_json
-from pyvelo_intent.config.state import ConfigPlan, ConfigState, SaveResult
+from pyvelo_intent.config.state import ConfigPlan, ConfigState
 
 
 def desc(sid: int, name: str) -> dict[str, object]:
@@ -365,11 +365,6 @@ def test_an_inserted_module_is_replaced_and_no_longer_new():
     stored = snapshot.modules[1]
     assert stored is not new and dump(stored) == dump(new)
     assert state.get_field_changes() == []
-
-
-def test_save_result_has_server_changes():
-    assert SaveResult().server_changes == {}
-    assert SaveResult().left_out == {}
 
 
 WEB: dict[str, Any] = {"name": "web", "match": {}, "action": {"allow_or_deny": "allow"}}

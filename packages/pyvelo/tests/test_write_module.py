@@ -25,6 +25,7 @@ from pyvelo.client.exceptions import (
     WriteNotAppliedError,
     WriteOutcomeUnknownError,
 )
+from pyvelo.client.models.configuration.firewall.root import FirewallData
 from pyvelo.client.models.configuration.qos.segment import QosSegment
 from pyvelo.client.module_write import insert_request, plan_module
 from pyvelo.client.schemas.configuration import (
@@ -1268,3 +1269,38 @@ async def test_if_absent_cannot_use_a_configuration_that_does_not_parse(
         "planned, not checked:",
     ]
     assert "sent" not in " ".join(lines[:3])
+
+
+def never_read() -> FirewallConfigurationModule:
+    """Firewall module 1 of configuration 10, built without a read: it has no raw data."""
+    module = FirewallConfigurationModule.model_construct(
+        name="firewall",
+        data=FirewallData(segments=[], firewall_enabled=False),
+        id_=1,
+        version="v1",
+        configuration_id=10,
+    )
+    assert module.raw_data is MISSING
+    return module
+
+
+async def test_module_that_never_carried_data_is_written_whole(
+    mock_vco_client: MockVcoClientFactory,
+):
+    module = never_read()
+    store = store_of(fw(RAW))
+    client = await mock_vco_client(store)
+    plan = plan_module(module)
+    write = await client.write_module(module, plan)
+    ((_, params),) = store.requests
+    assert params["_update"]["data"] == module.data.model_dump(
+        mode="json", by_alias=True
+    )
+    assert (params["version"], params["returnData"]) == ("v1", True)
+    # Nothing was read, so nothing the VCO held is kept: ``future`` is gone.
+    assert store.rows[1]["data"] == plan.data
+    assert "future" not in store.rows[1]["data"]
+    assert paths(write.applied) == sorted(plan.data)
+    assert (write.server_changes, write.left_out) == ((), ())
+    assert write.module.raw_data == plan.data
+    assert plan_module(write.module).operation == "none"
