@@ -766,3 +766,63 @@ async def test_a_dns_block_is_built_with_its_providers_as_objects():
     assert dns.backup_provider == DnsProvider(ref="deviceSettings:dns:backupProvider")
     sent = (await payload(state))["segments"][0]["dns"]
     assert sent["privateProviders"] == {"ref": "deviceSettings:dns:privateProviders"}
+
+
+# --- a patch the parser would refuse ------------------------------------------
+
+C1 = str(U1)
+VALIDATED_DS: dict[str, Any] = {
+    "lan": {
+        "networks": [{"vlanId": 10, "name": "Corp"}],
+        "interfaces": [{"name": "GE1", "type": "wired", "vlanIds": [10]}],
+    },
+    "segments": [
+        {
+            "segment": desc(0, SEGMENT),
+            "netflow": {
+                "enabled": True,
+                "override": True,
+                "collectors": [{"logicalId": C1, "name": "c", "type": "x"}],
+            },
+        }
+    ],
+}
+
+
+@pytest.mark.parametrize(
+    ("kw", "path", "text"),
+    [
+        (
+            {"path": "lan.interfaces", "patch": {"GE1": {"name": "WLAN1"}}},
+            "lan.interfaces[GE1]",
+            "LanWiredInterface",
+        ),
+        (
+            {"segment": SEGMENT, "path": "netflow.collectors", "patch": {C1: delete()}},
+            'segments["Global Segment"].netflow',
+            "At least one collector is required",
+        ),
+    ],
+)
+async def test_a_patch_the_parser_would_refuse_is_refused_by_apply(
+    kw: dict[str, Any], path: str, text: str
+):
+    state = make_state({"deviceSettings": VALIDATED_DS}, {"deviceSettings": PROFILE_DS})
+    with pytest.raises(PatchError) as exc:
+        _ = await ConfigPipeline(None).apply(state, module="device_settings", **kw)
+    assert str(exc.value.path) == path
+    assert text in exc.value.message
+    assert state.plan().changed == ()
+
+
+async def test_disabling_netflow_and_deleting_its_collector_in_one_patch_applies():
+    state = make_state({"deviceSettings": VALIDATED_DS}, {"deviceSettings": PROFILE_DS})
+    _ = await ConfigPipeline(None).apply(
+        state,
+        module="device_settings",
+        segment=SEGMENT,
+        path="netflow",
+        patch={"enabled": False, "collectors": {C1: delete()}},
+    )
+    sent = (await payload(state))["segments"][0]["netflow"]
+    assert (sent["enabled"], sent["collectors"]) == (False, [])

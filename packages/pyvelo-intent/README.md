@@ -115,11 +115,14 @@ A patch is strict and all or nothing:
   `add` and builds the same item.
 - `true` and `false` are taken only where the field holds a boolean. A boolean
   for a number raises: `{"vlan_id": true}` is not VLAN 1.
-- A patch runs the field validators of what it assigns. The model-level
-  validators (`@model_validator`) of a model that already exists do not run
-  when a patch changes it; an item or sub-model built whole from a patch is
-  validated whole. So a patch that deletes every netflow collector while
-  `enabled` stays true is accepted, though parsing that state would refuse it.
+- A patch must leave every model it changes valid. After the merge, the
+  model-level validators (`@model_validator`) of each changed model run, and
+  an item of a list of several model types must still be the type its fields
+  select. A change that fails raises `PatchError` at that model: a patch that
+  deletes every netflow collector while `enabled` stays true raises at the
+  netflow block (set `enabled` in the same patch), and so does renaming LAN
+  interface `GE1` to `WLAN1`. An item or sub-model built whole from a patch
+  is validated whole.
 - A key that names no field raises, at every depth, and so do two keys that
   name one field (`rule_id` and `ruleId`). Keys that start with `_` are
   directives: `_op` and `_position`, on a list item only.

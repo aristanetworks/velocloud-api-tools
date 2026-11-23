@@ -570,14 +570,18 @@ class VcoModel(BaseModel):
         field that tolerates a bad value from the VCO (``DefaultingScalar``,
         ``DefaultingModel``, ``Lenient``, ``NoneIsFalse`` and its siblings)
         does not in a patch, so the bad value raises. A boolean is taken only
-        where the field holds one: ``true`` for a number raises. These are the
-        field validators of what the patch assigns: the model validators
-        (``@model_validator``) of a model that already exists do not run when
-        a patch changes it. An item or sub-model built whole from the patch is
-        validated whole, its model validators included. So a patch that
-        deletes every netflow collector while ``enabled`` stays true is
-        accepted, though parsing that state would refuse it. A key that names
-        no field raises, at every depth, items and sub-models built from the
+        where the field holds one: ``true`` for a number raises. After the
+        merge, every model the patch changed is checked as the parser would
+        check it: its model validators (``@model_validator``) run, and where
+        it sits in a union of several models (a field, or the items of a
+        list) it must still be the member its fields select. A change that
+        fails raises ``PatchError`` at the model's path: a patch that deletes
+        every netflow collector while ``enabled`` stays true raises at the
+        netflow block, so set ``enabled`` in the same patch. The check runs on
+        a copy: a validator that rewrites values does not change what the
+        patch wrote. An item or sub-model built whole from the patch is
+        validated whole, its model validators included. A key that names no
+        field raises, at every depth, items and sub-models built from the
         patch included, and so do two keys that name one field (``rule_id``
         and ``ruleId``). Keys that start with ``_`` are directives: only
         ``_op`` and ``_position``, and only on a list item's value.

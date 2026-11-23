@@ -9,7 +9,7 @@ from __future__ import annotations
 import copy
 import difflib
 import functools
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Annotated, Literal, cast, get_args, get_origin
 
@@ -96,13 +96,18 @@ def apply_patch(
     object with it.
 
     All or nothing: the patch is merged into a deep copy of *model* first, so
-    a patch that raises does so before *model* is touched.
+    a patch that raises does so before *model* is touched. Each model the
+    patch changes, and *model* itself, is checked once the merge into it is
+    complete (``_check_merged``).
     """
     if not isinstance(patch, dict):
         raise TypeError(f"a patch is a dict, not {type(patch).__name__}")
     items = cast("dict[object, object]", checked_patch(patch))
-    _merge_model(model.model_copy(deep=True), items, resolvers, Path(()))
+    trial = model.model_copy(deep=True)
+    _merge_model(trial, items, resolvers, Path(()))
+    _check_merged(trial, type(trial).model_validate, Path(()))
     _merge_model(model, items, resolvers, Path(()))
+    _check_merged(model, type(model).model_validate, Path(()))
     return model
 
 
@@ -325,6 +330,13 @@ def _merge_field(
         # Sub-model that already exists: merge into it.
         if isinstance(current, VcoModel):
             _merge_model(current, value, resolvers, path, built=built)
+            _check_merged(
+                current,
+                _field_adapter(model_cls, name).validate_python
+                if len(_field_model_types(field_info)) > 1
+                else type(current).model_validate,
+                path,
+            )
             return
 
         # Sub-model that is unset: build a new one from the patch.
@@ -441,13 +453,44 @@ def _refuse_bool_as_number(given: object, stored: object, path: Path) -> None:
         )
 
 
-def _validation_message(exc: ValidationError) -> str:
-    """What a ``ValidationError`` says, one line per error, for a ``PatchError``."""
+def _validation_lines(exc: ValidationError) -> str:
+    """What a ``ValidationError`` says, one entry per error, joined by ``"; "``."""
     lines: list[str] = []
     for error in exc.errors(include_url=False):
         loc = ".".join(str(part) for part in error["loc"])
         lines.append(f"{loc}: {error['msg']}" if loc else error["msg"])
-    return "invalid value: " + "; ".join(lines)
+    return "; ".join(lines)
+
+
+def _validation_message(exc: ValidationError) -> str:
+    """What a ``ValidationError`` says, one line per error, for a ``PatchError``."""
+    return "invalid value: " + _validation_lines(exc)
+
+
+def _check_merged(model: VcoModel, validate: Callable[..., object], path: Path) -> None:
+    """Check *model*, merged into and complete, as the parser would; ``PatchError`` at *path* if not.
+
+    *validate* is the validator of the place that holds *model*: its own
+    class, or the union of models that the place is typed as, so that the
+    discriminator runs. It is given a shallow copy, so a model validator that
+    rewrites values does not change what the patch wrote, and the patch
+    context, so that a ``DefaultingModel`` field does not swallow the failure.
+    A validator that raises anything but ``ValidationError`` (one that takes
+    its input to be a dict, say) raises ``PatchError`` as well.
+    """
+    name = type(model).__name__
+    try:
+        _ = validate(model.model_copy(), context={"patch": True})
+    except ValidationError as exc:
+        raise PatchError(
+            f"{name} is not valid after this change: {_validation_lines(exc)}", path
+        ) from exc
+    except Exception as exc:
+        raise PatchError(
+            f"{name} could not be checked after this change: "
+            + f"{type(exc).__name__}: {exc}",
+            path,
+        ) from exc
 
 
 def _new_model_from_patch(
@@ -476,6 +519,7 @@ def _new_model_from_patch(
         _refuse_unread_keys(built, data, path)
         return built
     _merge_model(instance, patch, resolvers, path, built=True)
+    _check_merged(instance, model_type.model_validate, path)
     return instance
 
 
@@ -1394,6 +1438,13 @@ def _merge_items(
         before = _item_key(item, paths)
         alt_before = _alt_key(spec, item)
         _merge_model(item, entry.body, resolvers, entry.path)
+        _check_merged(
+            item,
+            spec.item_type.validate
+            if spec.item_type is not None and len(spec.item_type.variants) > 1
+            else type(item).model_validate,
+            entry.path,
+        )
         if _item_key(item, paths) != before:
             renamed.append(entry)
         if _alt_key(spec, item) != alt_before:
@@ -1900,6 +1951,7 @@ def _merge_map(
             current = entries[key]
             assert isinstance(current, VcoModel)  # checked above
             _merge_model(current, _body(op), resolvers, where)
+            _check_merged(current, type(current).model_validate, where)
     for op, key, _ in resolved:
         if op.kind == "delete":
             del entries[key]
