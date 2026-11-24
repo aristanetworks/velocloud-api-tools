@@ -285,7 +285,9 @@ async def test_a_result_that_is_neither_raises(
 
 
 async def send_update(client: VcoClient) -> object:
-    return await client.update_configuration_module(req("1700", return_data=True))
+    return await client.update_configuration_module(
+        req("1700", return_data=True), level=ConfigContext.EDGE
+    )
 
 
 async def send_insert(client: VcoClient) -> object:

@@ -26,6 +26,7 @@ class TestSaveErrorReexports:
             "FixedListError",
             "GroupOwnershipError",
             "HubListError",
+            "LayerUnknownError",
             "LossyFieldError",
             "ModuleWriteError",
             "RefsDroppedError",

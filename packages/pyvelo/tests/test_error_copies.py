@@ -13,6 +13,7 @@ from pyvelo.client.exceptions import (
     FixedListError,
     GroupOwnershipError,
     HubListError,
+    LayerUnknownError,
     LossyFieldError,
     ModuleWriteError,
     RefsDroppedError,
@@ -303,6 +304,9 @@ def test_every_error_of_the_module_round_trips():
         ),
         ModuleWriteError(1, "v1"),
         UnboundError("not bound"),
+        LayerUnknownError(
+            "the row has no layer", module_id=1, answer={"id": 1, "data": {}}
+        ),
         GroupOwnershipError(
             "one member", group="stateful", field="stateful_firewall_enabled"
         ),

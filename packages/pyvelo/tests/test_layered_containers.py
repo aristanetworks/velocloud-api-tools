@@ -12,6 +12,7 @@ from pyvelo.client.enums.configuration import (
     ConfigurationModuleType,
 )
 from pyvelo.client.enums.profiles import GetConfigurationWith
+from pyvelo.client.exceptions import LayerUnknownError
 from pyvelo.client.models.configuration import FirewallData
 from pyvelo.client.models.configuration.firewall.segment import FirewallSegment
 from pyvelo.client.module_write import plan_module
@@ -248,8 +249,13 @@ async def test_an_update_answered_with_a_firewall_row_names_the_layer(
         )
 
     # The request does not name its module, so this is known only from the answer.
-    with pytest.raises(ValueError, match=r"was sent.*level=ConfigContext\.PROFILE"):
+    with pytest.raises(
+        LayerUnknownError, match=r"was sent.*level=ConfigContext\.PROFILE"
+    ) as caught:
         _ = await client.update_configuration_module(update())
+    assert len(store.requests) == 1
+    assert caught.value.module_id == 1
+    assert caught.value.answer == store.rows[1]  # as the VCO sent it
     updated = await client.update_configuration_module(update(), level=PROFILE)
     assert type(updated) is FirewallConfigurationModule[Profile]
 

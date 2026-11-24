@@ -1,17 +1,25 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import replace
-from typing import TYPE_CHECKING, Any, Protocol, cast, overload
+from typing import TYPE_CHECKING, Annotated, Any, Protocol, cast, overload
 
-from pydantic import MISSING, RootModel, ValidationError
+from pydantic import (
+    MISSING,
+    ConfigDict,
+    Discriminator,
+    RootModel,
+    Tag,
+    ValidationError,
+)
 
 from pyvelo.client.enums.configuration import ConfigurationModuleName
 from pyvelo.client.enums.profiles import GetConfigurationWith
 from pyvelo.client.exceptions import (
     ConfigConflictError,
     DetachedObjectError,
+    LayerUnknownError,
     ModuleWriteError,
     VcoHttpError,
     VcoOperationError,
@@ -47,7 +55,6 @@ from pyvelo.client.schemas.configuration import (
     DeleteConfiguration,
     EdgeConfiguration,
     EnterpriseConfigurationProfile,
-    FirewallConfigurationModule,
     GetAllApplicationsResult,
     GetApplicationsResult,
     GetConfiguration,
@@ -116,19 +123,44 @@ def _require_level_for_a_firewall_row(
         )
 
 
-def _refuse_unleveled_firewall(module: object, level: ConfigContext | None) -> None:
-    """``ValueError`` when an update asked for its row, was given no *level* and was answered with a firewall module.
+def _is_firewall_row(value: object) -> str:
+    return (
+        "firewall"
+        if isinstance(value, Mapping) and value.get("name") == "firewall"  # pyright: ignore[reportUnknownMemberType]
+        else "other"
+    )
+
+
+class _UnleveledAnswer(
+    RootModel[
+        Annotated[
+            Annotated[dict[str, Any], Tag("firewall")]  # pyright: ignore[reportExplicitAny]
+            | Annotated[UpdateConfigurationModuleResult[Edge], Tag("other")],
+            Discriminator(_is_firewall_row),
+        ]
+    ]
+):
+    """An update's answer when the layer of a row is not known: a firewall row stays the JSON object it came as, as its layer cannot be told; anything else is read as it is for an update."""
+
+    model_config = ConfigDict(hide_input_in_errors=True)
+
+
+def _unleveled_firewall_row(answer: dict[str, Any]) -> LayerUnknownError:  # pyright: ignore[reportExplicitAny]
+    """The ``LayerUnknownError`` for *answer*, the firewall row an update was answered with when it was given no level.
 
     The request of an update does not name its module, so this cannot be known
-    before it is sent, and the message says that it was.
+    before it is sent. The error carries the row as the VCO answered it.
     """
-    if level is None and isinstance(module, FirewallConfigurationModule):
-        raise ValueError(
-            "the update was sent and answered with a firewall module, which is of "
-            + "the edge layer or the profile layer, and the answer does not say "
-            + "which: pass level=ConfigContext.EDGE or level=ConfigContext.PROFILE "
-            + "(read the module again to see what was stored)"
-        )
+    module_id = answer.get("id")
+    return LayerUnknownError(
+        "the update was sent and the VCO answered with the module's row, so the "
+        + "write is most likely stored; the row could not be read without its "
+        + "layer, which it does not say. Read the module again, or call with "
+        + "level=ConfigContext.EDGE or level=ConfigContext.PROFILE; the row is "
+        + "on .answer",
+        module_id=module_id if isinstance(module_id, int) else None,
+        answer=dict(answer),
+    )
 
 
 class _RawConfiguration(RootModel[dict[str, Any]]):
@@ -591,13 +623,15 @@ class ConfigurationMixin(Protocol):
         With ``return_data`` the result is the module row as stored, validated
         as a module at config level *level* and of the layer it names, with
         its raw data and refs captured as on any read; a row that does not
-        validate raises as a read does. A firewall row needs *level*: the request
-        does not name its module, so ``ValueError`` is raised after it was sent
-        when the answer is a firewall module and there is none. At this level a stale ``version`` cannot be
-        told from a write: a VCO with the check off answers both with a row,
-        the stale one with the current row unchanged. ``write_module`` compares
-        the row with what was sent. Without ``return_data``, or from a VCO that
-        ignores it and answers with a row count, the result is None.
+        validate raises as a read does. A firewall row needs *level*: the
+        request does not name its module, so ``LayerUnknownError`` (carrying
+        the row as answered) is raised after it was sent when the answer is a
+        firewall module and there is none. At this level a stale ``version``
+        cannot be told from a write: a VCO with the check off answers both
+        with a row, the stale one with the current row unchanged.
+        ``write_module`` compares the row with what was sent. Without
+        ``return_data``, or from a VCO that ignores it and answers with a row
+        count, the result is None.
         """
         version = request.version
         result: AnyStoredModule | RowsModifiedConfirmation
@@ -608,12 +642,23 @@ class ConfigurationMixin(Protocol):
                     if _module_layer(level) is Edge
                     else UpdateConfigurationModuleResult[Profile]
                 )
-                answer = await self.portal(
-                    "configuration/updateConfigurationModule",
-                    request,
-                    updated,
-                    validation_context=_level_context(level),
-                )
+                if level is None:
+                    unleveled = await self.portal(
+                        "configuration/updateConfigurationModule",
+                        request,
+                        _UnleveledAnswer,
+                        validation_context=_level_context(None),
+                    )
+                    if isinstance(unleveled.root, dict):
+                        raise _unleveled_firewall_row(unleveled.root)
+                    answer = unleveled.root
+                else:
+                    answer = await self.portal(
+                        "configuration/updateConfigurationModule",
+                        request,
+                        updated,
+                        validation_context=_level_context(level),
+                    )
                 result = answer.root
             else:
                 result = await self.portal(
@@ -638,7 +683,6 @@ class ConfigurationMixin(Protocol):
                 ) from error
             raise
         if not isinstance(result, RowsModifiedConfirmation):
-            _refuse_unleveled_firewall(result, level)
             return result
         if version is not MISSING and is_version_conflict(
             error=result.error, rows=result.rows
