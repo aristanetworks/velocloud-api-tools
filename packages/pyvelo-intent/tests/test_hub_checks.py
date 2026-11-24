@@ -445,6 +445,53 @@ async def test_adding_a_listed_hub_to_another_list_of_a_segment_with_the_vpn_off
     assert_names(error, "vpn.enabled", "Hub-A", lists=(BACKHAUL_LIST,))
 
 
+@pytest.mark.parametrize(
+    ("path", "list_path"),
+    [
+        (("edgeToEdgeDetail", "vpnHubs"), BRIDGE_LIST),
+        (("backHaulEdges",), BACKHAUL_LIST),
+    ],
+    ids=["bridge", "backhaul"],
+)
+async def test_adding_a_listed_hub_to_another_list_of_a_segment_with_the_hub_list_off_raises(
+    path: tuple[str, ...], list_path: str
+):
+    # Enabling a bridge or backhaul sets the hub role too, on a segment whose
+    # Branch-to-Hub list is off.
+    ds = ds_with_vpn(GLOBAL, hubs=(HUB_A,), hub_list_enabled=False)
+    state = await profile_of(ds, HUB_A)
+    change: Any = add(HUB_A.name)
+    for key in reversed(path):
+        change = {key: change}
+    await edit(state, change)
+
+    error = await refused(state)
+
+    assert_names(error, "edgeToEdgeHub.enabled", "Hub-A", lists=(HUB_LIST,))
+
+
+@pytest.mark.parametrize(
+    "ds",
+    [
+        ds_with_vpn(GLOBAL, hubs=(HUB_A,), backhaul=(HUB_A,), hub_list_enabled=False),
+        ds_with_vpn(GLOBAL, enabled=False, hubs=(HUB_A,), backhaul=(HUB_A,)),
+    ],
+    ids=["hub-list-off", "vpn-off"],
+)
+async def test_removing_a_hub_from_one_list_of_a_segment_already_off_still_warns(
+    ds: dict[str, Any],
+):
+    state = await profile_of(ds, HUB_A)
+    await edit(state, {"backHaulEdges": remove(HUB_A.name)})
+
+    (warning,) = as_read_warnings(state)
+
+    assert "Hub-A" in warning.message
+    assert [s.render() for s in state.plan().steps] == [
+        "disable backhaul for Hub-A on segment Global Segment"
+    ]
+
+
 async def test_segments_with_no_vpn_change_are_not_checked():
     state = await profile_of(broken_as_read(), HUB_A, HUB_B)
     patch = {"segments": {GLOBAL[1]: {"ospf": {"enabled": True}}}}

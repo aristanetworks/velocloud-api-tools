@@ -557,7 +557,7 @@ def _broken_rules(
                 prefix + how,
                 ["hub"],
                 hub_list,
-                listed=[("hub", h) for h in hub_list],
+                listed=[(role, h) for role in _ROLES for h in lists.get(role, [])],
             )
         )
     if enabled and not hub_list:
