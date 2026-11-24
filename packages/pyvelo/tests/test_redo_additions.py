@@ -19,13 +19,13 @@ from pyvelo.client.models.configuration.profile_segments import (
 from pyvelo.client.module_check import check_module_write
 from pyvelo.client.module_write import ModulePlan, plan_module
 from pyvelo.client.schemas.configuration import QosConfigurationModule
-from pyvelo.core import ConfigContext
+from pyvelo.core import Profile
 from segment_helpers import GLOBAL, GUEST, ds_entry, identity, profile_rows, qos_entry
 
 
 def qos_module(
     *, with_defaults: bool = True, data: object = None
-) -> QosConfigurationModule:
+) -> QosConfigurationModule[Profile]:
     """A profile QoS module with the Global Segment, which has the template's ``defaults`` unless *with_defaults* is false.
 
     With *data*, the module holds that data instead.
@@ -34,12 +34,12 @@ def qos_module(
     row = profile_rows([ds_entry(GLOBAL)], [entry], [])[1]
     if data is not None:
         row["data"] = data
-    return QosConfigurationModule.model_validate(
-        row, context={"config_level": ConfigContext.PROFILE}
-    )
+    return QosConfigurationModule[Profile].model_validate(row)
 
 
-def with_guest(module: QosConfigurationModule, *, edited: bool = False) -> ModulePlan:
+def with_guest(
+    module: QosConfigurationModule[Profile], *, edited: bool = False
+) -> ModulePlan:
     """The plan of *module* with Guest added, its first rule renamed to ``Box2`` when *edited*."""
     item: Any = module.add_segment_entry(new_segment_entry("QOS", identity(GUEST)))
     if edited:
@@ -48,7 +48,7 @@ def with_guest(module: QosConfigurationModule, *, edited: bool = False) -> Modul
 
 
 def lost_write(
-    module: QosConfigurationModule, plan: ModulePlan, stored_raw: object
+    module: QosConfigurationModule[Profile], plan: ModulePlan, stored_raw: object
 ) -> ModuleWriteError:
     """The error of a write of *plan* that the VCO answered with *stored_raw*."""
     stored = qos_module(data=stored_raw)
@@ -110,9 +110,7 @@ def test_a_lost_repaired_default_of_a_list_that_held_some_is_not_redone_either()
     ]
     entry = qos_entry(GLOBAL, defaults=kept)
     row = profile_rows([ds_entry(GLOBAL)], [entry], [])[1]
-    module = QosConfigurationModule.model_validate(
-        row, context={"config_level": ConfigContext.PROFILE}
-    )
+    module = QosConfigurationModule[Profile].model_validate(row)
     plan = with_guest(module)
     (missing,) = [m for m in plan.missing_defaults if m.repaired]
     assert len(missing.names) == 3

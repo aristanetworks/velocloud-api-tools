@@ -38,6 +38,7 @@ from typing import (
     Annotated,
     Any,
     ClassVar,
+    Final,
     Generic,
     NamedTuple,
     Self,
@@ -214,19 +215,23 @@ class Authority:
     rule: Callable[[object], bool]
 
 
+_NO_VALUE: Final = object()
+"""What ``kind_default`` reads as "no value given"; ``MISSING`` is a value it takes."""
+
+
 def kind_default(
-    value: object = MISSING, *, factory: Callable[[], object] | None = None
+    value: object = _NO_VALUE, *, factory: Callable[[], object] | None = None
 ) -> Any:
     """The default of a field of the kind ``EdgeOnly``, ``ProfileOnly``, ``Additive`` or ``Unconverted``.
 
     ``kind_default("")`` or ``kind_default(factory=list)``: exactly one of the
-    two. It is ``Field(default=value)`` or ``Field(default_factory=factory)``
+    two; the value may be ``MISSING``. It is ``Field(default=value)`` or ``Field(default_factory=factory)``
     typed ``Any``, because the checker takes a plain default for a value that
     is not the field's declared kind (``EdgeOnly[str] = ""`` is an error) and
     still treats the field as optional. An ``Inheritable`` field has no use
     for it: it is ``= Field(default=...)`` and its default is the ``Default``.
     """
-    if (value is MISSING) == (factory is None):
+    if (value is _NO_VALUE) == (factory is None):
         raise TypeError(
             "kind_default takes a value or a factory, not both and not neither: "
             + 'kind_default("") or kind_default(factory=list)'

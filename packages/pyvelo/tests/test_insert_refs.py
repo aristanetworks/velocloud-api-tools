@@ -22,7 +22,7 @@ from pyvelo.client.schemas.configuration import (
     QosConfigurationModule,
     new_edge_module,
 )
-from pyvelo.core import OwnsRef
+from pyvelo.core import Edge, OwnsRef
 from pyvelo.core.fields import KeyField
 from pyvelo.core.identity import NetworkServiceIdentity, SegmentIdentity
 from pyvelo.testing import ModuleStore, store_of
@@ -48,7 +48,7 @@ DNS_B_IDENTITY = NetworkServiceIdentity("dns-b", uuid.UUID(DNS_B), 702, "dns")
 SEG0_IDENTITY = SegmentIdentity("Global Segment", 0, SEG0_OBJECT, uuid.UUID(SEG0))
 
 
-class ProbeSegment(QosSegment):
+class ProbeSegment(QosSegment[Edge]):
     probe: Annotated[
         uuid.UUID | Literal[""],
         OwnsRef(
@@ -61,7 +61,7 @@ class ProbeSegment(QosSegment):
     ] = ""
 
 
-class ProbeData(QosData):
+class ProbeData(QosData[Edge]):
     probe: Annotated[
         uuid.UUID | Literal[""],
         OwnsRef(PROBE, NetworkServiceIdentity, by="logical_id", row="logicalId"),
@@ -93,7 +93,7 @@ def a_store() -> ModuleStore:
 
 async def probe_insert(
     *, probe: str | None = DNS_A, segment_probe: str = DNS_B
-) -> tuple[QosConfigurationModule, ModulePlan]:
+) -> tuple[QosConfigurationModule[Edge], ModulePlan]:
     """A new QOS module and its plan, with both owners set unless *probe* is None."""
     module = new_edge_module(ConfigurationModuleName.QOS, CONFIG)
     assert isinstance(module, QosConfigurationModule)

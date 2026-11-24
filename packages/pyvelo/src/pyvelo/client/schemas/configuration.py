@@ -376,12 +376,18 @@ class WanConfigurationModule(ConfigurationModuleBase):
         return copy.deepcopy(self.data)
 
 
-class QosConfigurationModule(ConfigurationModuleBase):
+class QosConfigurationModule(ConfigurationModuleBase, Generic[L]):  # noqa: UP046 (one shared constrained L, as a TypeVar)
     name: Literal["QOS"] = "QOS"
-    data: QosData
+    data: QosData[L]
     refs: dict[str, Any] | MISSING = Field(default=MISSING, frozen=True)
 
-    def mutable_data(self) -> QosData:
+    @property
+    @override
+    def config_context(self) -> ConfigContext | None:
+        """The level of the layer this module is for: ``EDGE`` or ``PROFILE``, none for the others."""
+        return self.data.config_context
+
+    def mutable_data(self) -> QosData[L]:
         return copy.deepcopy(self.data)
 
 
@@ -408,15 +414,15 @@ type AnyConfigurationModule[X: (Edge, Profile, Effective, Composed)] = Annotated
     ControlPlaneConfigurationModule
     | DeviceSettingsConfigurationModule
     | WanConfigurationModule
-    | QosConfigurationModule
+    | QosConfigurationModule[X]
     | FirewallConfigurationModule[X]
     | GenericConfigurationModule,
     Discriminator(discriminator="name"),
 ]
 """A module row of the layer ``X``.
 
-Only the firewall module class depends on the layer so far; each of the others
-joins when its data is converted.
+Only the QoS and firewall module classes depend on the layer so far; each of
+the others joins when its data is converted.
 """
 
 type AnyStoredModule = AnyConfigurationModule[Edge] | AnyConfigurationModule[Profile]
@@ -467,7 +473,7 @@ class ConfigurationBase(VcoModel, Generic[L]):  # noqa: UP046 (one shared constr
     @overload
     def get_module(
         self, name: Literal[ConfigurationModuleName.QOS]
-    ) -> QosConfigurationModule: ...
+    ) -> QosConfigurationModule[L]: ...
     @overload
     def get_module(
         self, name: Literal[ConfigurationModuleName.FIREWALL]
@@ -500,7 +506,7 @@ class ConfigurationBase(VcoModel, Generic[L]):  # noqa: UP046 (one shared constr
         return m
 
     @property
-    def qos(self) -> QosConfigurationModule:
+    def qos(self) -> QosConfigurationModule[L]:
         m = self._get_module(ConfigurationModuleName.QOS)
         assert isinstance(m, QosConfigurationModule)
         return m
@@ -540,7 +546,7 @@ EMPTY_EDGE_MODULE_DATA: dict[ConfigurationModuleName, dict[str, Any]] = {
 
 def new_edge_module(
     name: ConfigurationModuleName, configuration_id: int
-) -> FirewallConfigurationModule[Edge] | QosConfigurationModule:
+) -> FirewallConfigurationModule[Edge] | QosConfigurationModule[Edge]:
     """Build an empty edge-layer module that does not exist on the VCO yet."""
     if name not in EMPTY_EDGE_MODULE_DATA:
         raise ValueError(
@@ -564,7 +570,7 @@ def new_edge_module(
     module = (
         FirewallConfigurationModule[Edge]
         if name is ConfigurationModuleName.FIREWALL
-        else QosConfigurationModule
+        else QosConfigurationModule[Edge]
     ).model_validate(row)
     module._is_new = True  # pyright: ignore[reportPrivateUsage]
     return module
@@ -627,9 +633,9 @@ class InsertConfigurationModuleResult(VcoModel):
 def _module_names() -> frozenset[str]:
     """The ``name`` of each module class of ``AnyConfigurationModule``, whatever the layer.
 
-    The alias stays a plain union with a layer variable in its firewall member
-    (``FirewallConfigurationModule[X]``), and that class has its ``name`` as
-    any other.
+    The alias stays a plain union with a layer variable in its QoS and firewall
+    members (``QosConfigurationModule[X]``), and those classes have their ``name``
+    as any other.
     """
     union = cast(object, get_args(cast(object, AnyConfigurationModule.__value__))[0])
     modules = cast(tuple[type[ConfigurationModuleBase], ...], get_args(union))

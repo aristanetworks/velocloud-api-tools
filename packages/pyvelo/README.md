@@ -381,9 +381,13 @@ A configuration module is read at two stored layers, and a model that is
 stores, `FirewallData[Profile]` what a profile stores, `FirewallData[Effective]`
 (computed by `effective_view`, read-only) what the edge shows once its profile
 is applied, and `FirewallData[Composed]` what the VCO composes for an edge
-(`edge/getEdgeConfigurationModules`, read-only). A model needs its layer: a
-class without one raises `TypeError` when it is validated or built. Each field
-of such a model has a kind, which says what it is at each layer:
+(`edge/getEdgeConfigurationModules`, read-only). The firewall and QoS modules
+are layered so far: `QosData[Edge]`, `QosData[Profile]` and
+`QosData[Composed]`, with `QosSegment` and `QosConfigurationModule` typed the
+same way, and every QoS field other than `segments` and a segment's `segment`
+is `Unconverted` until its kind is declared. A model needs its layer: a class
+without one raises `TypeError` when it is validated or built. Each field of
+such a model has a kind, which says what it is at each layer:
 
 | Kind | Edge | Profile | Meaning |
 |---|---|---|---|

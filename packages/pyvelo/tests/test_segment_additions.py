@@ -32,7 +32,7 @@ from pyvelo.client.schemas.configuration import (
     WanConfigurationModule,
 )
 from pyvelo.core import ConfigContext
-from pyvelo.core.layers import Profile
+from pyvelo.core.layers import Edge, Profile
 from pyvelo.core.rebase import Path
 from pyvelo.testing import make_module_json, store_of
 from refs_helpers import SEG1_OBJECT, SEGMENT
@@ -57,7 +57,7 @@ def profile_modules(
     firewall: list[dict[str, Any]],
 ) -> tuple[
     DeviceSettingsConfigurationModule,
-    QosConfigurationModule,
+    QosConfigurationModule[Profile],
     FirewallConfigurationModule[Profile],
 ]:
     """The three modules of a profile, read as a profile's are."""
@@ -65,12 +65,12 @@ def profile_modules(
     rows = profile_rows(ds, qos, firewall)
     return (
         DeviceSettingsConfigurationModule.model_validate(rows[0], context=context),
-        QosConfigurationModule.model_validate(rows[1], context=context),
+        QosConfigurationModule[Profile].model_validate(rows[1]),
         FirewallConfigurationModule[Profile].model_validate(rows[2], context=context),
     )
 
 
-def global_qos() -> QosConfigurationModule:
+def global_qos() -> QosConfigurationModule[Profile]:
     return profile_modules([ds_entry(GLOBAL)], [qos_entry(GLOBAL)], [])[1]
 
 
@@ -82,7 +82,7 @@ def guest_qos_entry() -> dict[str, Any]:
     return new_segment_entry("QOS", identity(GUEST))
 
 
-def add_guest_to_qos() -> tuple[QosConfigurationModule, dict[str, Any], Any]:
+def add_guest_to_qos() -> tuple[QosConfigurationModule[Profile], dict[str, Any], Any]:
     module = global_qos()
     entry = guest_qos_entry()
     item = module.add_segment_entry(entry)
@@ -132,9 +132,7 @@ def test_the_render_of_a_plan_with_nothing_added_has_no_such_line():
 def test_added_defaults_are_part_of_the_baseline():
     entry = qos_entry(GLOBAL, defaults=MISSING)
     row = profile_rows([ds_entry(GLOBAL)], [entry], [])[1]
-    module = QosConfigurationModule.model_validate(
-        row, context={"config_level": ConfigContext.PROFILE}
-    )
+    module = QosConfigurationModule[Profile].model_validate(row)
     rules = new_segment_entry("QOS", identity(GLOBAL))["defaults"]
     module.add_default_entries(GLOBAL[0], rules)
     plan = plan_module(module)
@@ -260,7 +258,9 @@ def test_a_dict_without_a_segment_is_refused_at_the_profile_level():
 def test_a_hand_built_model_with_a_new_segment_is_refused_at_the_profile_level():
     module = global_qos()
     data = type(module.data).model_validate(raw_with_a_guest_segment())
-    assert data.config_context is None
+    assert (
+        data.config_context is ConfigContext.PROFILE
+    )  # a layer, not a context, now says so
     with pytest.raises(SegmentSetError) as caught:
         plan_module(module, data)
     assert caught.value.segments == ("Guest",)
@@ -273,7 +273,9 @@ async def test_update_module_refuses_a_segment_set_change_of_a_hand_built_model(
     store = store_of(module)
     client = await mock_vco_client(store)
     data = type(module.data).model_validate(raw_with_a_guest_segment())
-    assert data.config_context is None
+    assert (
+        data.config_context is ConfigContext.PROFILE
+    )  # a layer, not a context, now says so
     with pytest.raises(SegmentSetError) as caught:
         _ = await client.update_module(module, data)
     assert caught.value.segments == ("Guest",)
@@ -285,9 +287,7 @@ def test_the_edge_level_is_not_refused():
     edge_row = make_module_json(
         "QOS", {"segments": []}, module_id=21, configuration_id=200
     )
-    edge = QosConfigurationModule.model_validate(
-        edge_row, context={"config_level": ConfigContext.EDGE}
-    )
+    edge = QosConfigurationModule[Edge].model_validate(edge_row)
     plan = plan_module(edge, profile=profile, level=ConfigContext.EDGE)
     assert plan.operation == "none"
     assert plan.reconciled_segments == ("Global Segment",)
@@ -313,9 +313,8 @@ def test_add_segment_entry_returns_the_item_and_records_the_addition():
 
 
 def test_add_segment_entry_refuses_an_edge_module_and_a_segment_already_there():
-    edge = QosConfigurationModule.model_validate(
-        make_module_json("QOS", {"segments": []}, module_id=21, configuration_id=200),
-        context={"config_level": ConfigContext.EDGE},
+    edge = QosConfigurationModule[Edge].model_validate(
+        make_module_json("QOS", {"segments": []}, module_id=21, configuration_id=200)
     )
     with pytest.raises(ValueError, match="profile"):
         _ = edge.add_segment_entry(guest_qos_entry())
@@ -350,9 +349,7 @@ def test_add_default_entries_is_for_qos_and_a_segment_it_holds():
 
 def test_add_default_entries_parses_the_rules_into_the_segment():
     row = profile_rows([ds_entry(GLOBAL)], [qos_entry(GLOBAL, defaults=MISSING)], [])[1]
-    module = QosConfigurationModule.model_validate(
-        row, context={"config_level": ConfigContext.PROFILE}
-    )
+    module = QosConfigurationModule[Profile].model_validate(row)
     module.add_default_entries(0, default_rules())
     defaults = module.data.segments[0].defaults
     assert isinstance(defaults, list) and len(defaults) == 4

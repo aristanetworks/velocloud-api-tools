@@ -87,8 +87,8 @@ def paths(xs: Iterable[PlannedChange | ServerChange]) -> list[str]:
     return sorted(str(x.path) for x in xs)
 
 
-def qos(raw: dict[str, Any], *, refs: object = MISSING) -> QosConfigurationModule:
-    return QosConfigurationModule.model_validate(
+def qos(raw: dict[str, Any], *, refs: object = MISSING) -> QosConfigurationModule[Edge]:
+    return QosConfigurationModule[Edge].model_validate(
         make_module_json(
             "QOS", copy.deepcopy(raw), configuration_id=10, refs=copy.deepcopy(refs)
         )
@@ -1391,7 +1391,7 @@ async def test_rows_that_disagree_as_read_raise_nothing_after_a_write(
 def test_an_insert_checks_the_refs_it_planned():
     module = new_edge_module(ConfigurationModuleName.QOS, 10)
     assert isinstance(module, QosConfigurationModule)
-    module.data.segments.append(QosSegment.model_validate(GLOBAL))
+    module.data.segments.append(QosSegment[Edge].model_validate(GLOBAL))
     plan = plan_module(module)
     assert plan.operation == "insert"
     row = {**primary_provider_row(), "id": None}

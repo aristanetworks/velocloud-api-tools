@@ -5,7 +5,7 @@ from pyvelo.client.models.configuration.common import SegmentMetadata
 from pyvelo.client.models.configuration.qos.root import QosData
 from pyvelo.client.models.configuration.qos.rule import QosRuleMatch
 from pyvelo.client.models.configuration.qos.segment import CosMapping, QosSegment
-from pyvelo.core import KeySpec, add
+from pyvelo.core import Edge, KeySpec, add
 from pyvelo.core.fields import get_key_spec, get_resolvable, has_override_flag
 
 
@@ -46,11 +46,11 @@ class TestQosResolvable:
 class TestQosMerge:
     def test_merge_rule_into_segment(self):
         """Merge a rule into a QoS segment by name."""
-        seg = QosSegment(
+        seg = QosSegment[Edge](
             segment=_seg_meta(),
             rules=[],
         )
-        data = QosData(segments=[seg])
+        data = QosData[Edge](segments=[seg])
 
         _ = data.merge_patch(
             {

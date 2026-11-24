@@ -11,7 +11,7 @@ and Guest (object 502); the Edge's own QoS module is in ``EDGE_CONFIG``.
 
 import uuid
 from collections.abc import Iterator
-from typing import Any, cast
+from typing import Any, Literal, cast, overload
 
 import hub_helpers
 import pytest
@@ -38,7 +38,7 @@ from pyvelo.client.schemas.configuration import (
 )
 from pyvelo.core import ConfigContext, VcoModel
 from pyvelo.core.identity import HubService, HubServiceNotFoundError
-from pyvelo.core.layers import Profile
+from pyvelo.core.layers import Edge, Profile
 from pyvelo.core.rebase import Path
 from pyvelo.testing import make_module_json, store_of
 from refs_helpers import (
@@ -130,12 +130,31 @@ def rule(name: str, *entries: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
+type AnyQosModule = QosConfigurationModule[Edge] | QosConfigurationModule[Profile]
+type AnyQosData = QosData[Edge] | QosData[Profile]
+
+
+@overload
+def qos_module(
+    rules: dict[Segment, list[dict[str, Any]]],
+    refs: dict[str, Any],
+    *,
+    level: Literal[ConfigContext.EDGE],
+) -> QosConfigurationModule[Edge]: ...
+@overload
+def qos_module(
+    rules: dict[Segment, list[dict[str, Any]]],
+    refs: dict[str, Any],
+    *,
+    level: Literal[ConfigContext.PROFILE] = ...,
+) -> QosConfigurationModule[Profile]: ...
 def qos_module(
     rules: dict[Segment, list[dict[str, Any]]],
     refs: dict[str, Any],
     *,
     level: ConfigContext = ConfigContext.PROFILE,
-) -> QosConfigurationModule:
+) -> AnyQosModule:
+    """A QoS module of the layer *level* names, with *rules* in its segments and *refs*."""
     edge = level is ConfigContext.EDGE
     row = make_module_json(
         "QOS",
@@ -149,12 +168,21 @@ def qos_module(
         configuration_id=EDGE_CONFIG if edge else CONFIG,
         refs=refs,
     )
-    return QosConfigurationModule.model_validate(
-        row, context={"config_level": level, "refs_loaded": True}
-    )
+    context = {"refs_loaded": True}
+    if edge:
+        return QosConfigurationModule[Edge].model_validate(row, context=context)
+    return QosConfigurationModule[Profile].model_validate(row, context=context)
 
 
-def edited(module: QosConfigurationModule, **entries: list[dict[str, Any]]) -> QosData:
+@overload
+def edited(
+    module: QosConfigurationModule[Edge], **entries: list[dict[str, Any]]
+) -> QosData[Edge]: ...
+@overload
+def edited(
+    module: QosConfigurationModule[Profile], **entries: list[dict[str, Any]]
+) -> QosData[Profile]: ...
+def edited(module: AnyQosModule, **entries: list[dict[str, Any]]) -> AnyQosData:
     """A copy of the module's data in which each rule named in *entries* has those backhaul entries."""
     data = module.data.model_copy(deep=True)
     for segment in data.segments:
@@ -168,8 +196,8 @@ def edited(module: QosConfigurationModule, **entries: list[dict[str, Any]]) -> Q
 
 
 def plan(
-    module: QosConfigurationModule,
-    data: QosData,
+    module: AnyQosModule,
+    data: AnyQosData,
     ds: DeviceSettingsConfigurationModule | None,
 ) -> ModulePlan:
     return plan_module(
@@ -522,7 +550,7 @@ def test_a_row_the_data_no_longer_names_as_read_warns_and_stays():
 # -- the check of the row ---------------------------------------------------
 
 
-def a_service_store(module: QosConfigurationModule) -> Any:
+def a_service_store(module: AnyQosModule) -> Any:
     store = store_of(module)
     store.add_object(
         GLOBAL[3],
@@ -542,7 +570,7 @@ def a_service_store(module: QosConfigurationModule) -> Any:
     return store
 
 
-def an_added_hub() -> tuple[QosConfigurationModule, ModulePlan]:
+def an_added_hub() -> tuple[QosConfigurationModule[Profile], ModulePlan]:
     module = qos_module({GLOBAL: [rule("r1")]}, {})
     data = edited(module, r1=[backhaul_entry(HUB_A, SERVICE_A)])
     return module, plan(module, data, profile_services())
@@ -656,7 +684,7 @@ def test_the_walk_reaches_rule_lists_and_skips_what_holds_no_owner(visits: _Visi
     visits.walked.clear()
     rules = [rule(f"q{n}") for n in range(3000)]
     rules[1234] = rule("q1234", backhaul_entry(HUB_A, SERVICE_A))
-    qos = QosData.model_validate(
+    qos = QosData[Profile].model_validate(
         {"segments": [segment_helpers.qos_entry(GLOBAL, rules=rules)]}
     )
 

@@ -22,7 +22,7 @@ from pyvelo.client.models.configuration.profile_segments import (
 from pyvelo.client.models.configuration.qos.rule import QosRule
 from pyvelo.client.module_write import MissingDefaults, plan_module
 from pyvelo.client.schemas.configuration import QosConfigurationModule
-from pyvelo.core import ConfigContext
+from pyvelo.core import ConfigContext, Edge, Profile
 from pyvelo.testing import make_module_json, store_of
 from refs_helpers import QOS_ID
 from segment_helpers import GLOBAL, GUEST, ds_entry, identity, profile_rows, qos_entry
@@ -49,7 +49,7 @@ def rules_of_template() -> list[dict[str, Any]]:
 
 def qos_module(
     guest_defaults: list[dict[str, Any]] | None | MISSING,
-) -> QosConfigurationModule:
+) -> QosConfigurationModule[Profile]:
     """A profile QoS module of Global (complete) and Guest (with *guest_defaults*)."""
     rows = profile_rows(
         [ds_entry(GLOBAL), ds_entry(GUEST)],
@@ -59,16 +59,16 @@ def qos_module(
         ],
         [],
     )
-    return QosConfigurationModule.model_validate(
-        rows[1], context={"config_level": ConfigContext.PROFILE}
-    )
+    return QosConfigurationModule[Profile].model_validate(rows[1])
 
 
-def raw_of(module: QosConfigurationModule) -> dict[str, Any]:
+def raw_of(
+    module: QosConfigurationModule[Edge] | QosConfigurationModule[Profile],
+) -> dict[str, Any]:
     return cast(dict[str, Any], module.raw_data)
 
 
-def edit_global(module: QosConfigurationModule) -> None:
+def edit_global(module: QosConfigurationModule[Profile]) -> None:
     """An edit outside the defaults, so that the module is written."""
     module.data.segments[0].rules[0].name = "Edited"
 
@@ -330,9 +330,7 @@ def test_the_edge_level_repairs_nothing():
         module_id=QOS_ID,
         configuration_id=200,
     )
-    edge = QosConfigurationModule.model_validate(
-        row, context={"config_level": ConfigContext.EDGE}
-    )
+    edge = QosConfigurationModule[Edge].model_validate(row)
     data = copy.deepcopy(raw_of(edge))
     data["segments"][0]["rules"][0]["name"] = "Edited"
     plan = plan_module(edge, data, level=ConfigContext.EDGE)

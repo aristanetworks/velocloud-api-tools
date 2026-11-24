@@ -289,7 +289,7 @@ class LayerView[X: (Edge, Profile)]:
         return cast(FirewallData[X], module.data)  # the module is of this layer
 
     @property
-    def qos(self) -> QosData:
+    def qos(self) -> QosData[X]:
         """The QoS data; an edge layer that has none starts it empty."""
         module = _module_of(
             self._config,
@@ -298,7 +298,7 @@ class LayerView[X: (Edge, Profile)]:
             profile=self._profile,
         )
         assert isinstance(module, QosConfigurationModule)
-        return module.data
+        return cast(QosData[X], module.data)  # the module is of this layer
 
     @property
     def device_settings(self) -> DeviceSettingsData:

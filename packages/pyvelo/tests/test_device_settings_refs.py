@@ -22,7 +22,7 @@ from pyvelo.client.schemas.configuration import (
     DeviceSettingsConfigurationModule,
     QosConfigurationModule,
 )
-from pyvelo.core import ConfigContext
+from pyvelo.core import ConfigContext, Edge
 from pyvelo.testing import make_module_json
 
 REF_NAME = "deviceSettings:clientConnector:config"
@@ -167,7 +167,7 @@ def test_assigning_module_refs_raises_for_device_settings():
 
 
 def test_assigning_module_refs_raises_for_qos():
-    module = QosConfigurationModule.model_validate(
+    module = QosConfigurationModule[Edge].model_validate(
         make_module_json("QOS", {"segments": []}, refs={"qos:ref": {"a": 1}})
     )
     assert module.refs == {"qos:ref": {"a": 1}}

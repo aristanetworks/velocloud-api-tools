@@ -12,7 +12,7 @@ from pyvelo.client.hub_services import BACKHAUL_REF
 from pyvelo.client.models.configuration.qos.root import QosData
 from pyvelo.client.module_write import ModulePlan, plan_module, rebase_onto
 from pyvelo.client.schemas.configuration import QosConfigurationModule
-from pyvelo.core import ConfigContext
+from pyvelo.core import ConfigContext, Profile
 from pyvelo.testing import make_module_json
 from refs_helpers import CONFIG, QOS_ID
 from segment_helpers import GLOBAL, qos_entry
@@ -42,7 +42,7 @@ def qos_at(
     refs: dict[str, Any],
     *,
     enabled: bool = False,
-) -> QosConfigurationModule:
+) -> QosConfigurationModule[Profile]:
     """A profile QoS module at *version* with *rules* in the Global Segment and *refs*; its rate limit is *enabled* or not."""
     data = {
         "segments": [qos_entry(GLOBAL, rules=rules)],
@@ -56,12 +56,14 @@ def qos_at(
         version=version,
         refs=refs,
     )
-    return QosConfigurationModule.model_validate(
-        row, context={"config_level": ConfigContext.PROFILE, "refs_loaded": True}
+    return QosConfigurationModule[Profile].model_validate(
+        row, context={"refs_loaded": True}
     )
 
 
-def planned(module: QosConfigurationModule, data: QosData) -> ModulePlan:
+def planned(
+    module: QosConfigurationModule[Profile], data: QosData[Profile]
+) -> ModulePlan:
     return plan_module(
         module,
         data,
@@ -71,8 +73,10 @@ def planned(module: QosConfigurationModule, data: QosData) -> ModulePlan:
 
 
 def rebased(
-    module: QosConfigurationModule, plan: ModulePlan, fresh: QosConfigurationModule
-) -> tuple[QosConfigurationModule, ModulePlan]:
+    module: QosConfigurationModule[Profile],
+    plan: ModulePlan,
+    fresh: QosConfigurationModule[Profile],
+) -> tuple[QosConfigurationModule[Profile], ModulePlan]:
     """*plan* rebased onto *fresh*, with the profile's device settings as the plan was made with."""
     onto, onto_plan, _ = rebase_onto(
         module, plan, fresh, profile_device_settings=profile_services()

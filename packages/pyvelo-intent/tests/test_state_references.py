@@ -403,7 +403,7 @@ async def test_a_profile_plan_parses_each_module_as_read_once(
     assert sorted(t.__name__ for t in parsed) == [
         "DeviceSettingsData",
         "FirewallData[Profile]",
-        "QosData",
+        "QosData[Profile]",
     ]
 
 
@@ -422,5 +422,5 @@ async def test_an_edge_plan_parses_only_the_profile_modules_that_provide(
     assert sorted(t.__name__ for t in parsed) == [
         "DeviceSettingsData",  # the edge's, once
         "DeviceSettingsData",  # the profile's, for the sets
-        "QosData",  # the edge's, once
+        "QosData[Edge]",  # the edge's, once
     ]

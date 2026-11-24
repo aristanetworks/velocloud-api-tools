@@ -1,7 +1,7 @@
 """A payload that changes a fixed part of the QoS ``defaults`` is refused, whatever made the change."""
 
 import copy
-from typing import Any
+from typing import Any, overload
 
 import pytest
 from pydantic import MISSING
@@ -9,7 +9,7 @@ from pyvelo.client.exceptions import FixedListError
 from pyvelo.client.models.configuration.qos.root import QosData
 from pyvelo.client.module_write import plan_module
 from pyvelo.client.schemas.configuration import QosConfigurationModule
-from pyvelo.core import ConfigContext
+from pyvelo.core import ConfigContext, Edge, Profile
 from pyvelo.core.fixed_list import fixed_list_violations
 from pyvelo.core.rebase import Path
 from pyvelo.testing import make_module_json
@@ -133,14 +133,26 @@ def test_items_pair_by_key_so_a_segment_moved_in_its_list_passes():
 # --- through plan_module ----------------------------------------------------
 
 
-def qos_module(*entries: dict[str, Any]) -> QosConfigurationModule:
-    return QosConfigurationModule.model_validate(
-        make_module_json("QOS", copy.deepcopy(data(*entries)), refs={})
-    )
+@overload
+def qos_module(
+    *entries: dict[str, Any], layer: type[Edge]
+) -> QosConfigurationModule[Edge]: ...
+@overload
+def qos_module(
+    *entries: dict[str, Any], layer: type[Profile]
+) -> QosConfigurationModule[Profile]: ...
+def qos_module(
+    *entries: dict[str, Any], layer: type[Edge] | type[Profile]
+) -> QosConfigurationModule[Edge] | QosConfigurationModule[Profile]:
+    """A QoS module of the layer *layer*, read with *entries* as its segments."""
+    row = make_module_json("QOS", copy.deepcopy(data(*entries)), refs={})
+    if layer is Edge:
+        return QosConfigurationModule[Edge].model_validate(row)
+    return QosConfigurationModule[Profile].model_validate(row)
 
 
 def test_plan_module_raises_fixed_list_error_for_an_assigned_match_edit():
-    module = qos_module(qos_entry(GUEST))
+    module = qos_module(qos_entry(GUEST), layer=Profile)
     module.data.segments[0].defaults[0].match.proto = 99  # pyright: ignore[reportIndexIssue, reportAttributeAccessIssue, reportOptionalMemberAccess]
     with pytest.raises(FixedListError) as caught:
         plan_module(module, level=ConfigContext.PROFILE)
@@ -150,14 +162,14 @@ def test_plan_module_raises_fixed_list_error_for_an_assigned_match_edit():
 
 
 def test_plan_module_passes_an_action_assignment():
-    module = qos_module(qos_entry(GUEST))
+    module = qos_module(qos_entry(GUEST), layer=Profile)
     module.data.segments[0].defaults[0].action.route_type = "gateway"  # pyright: ignore[reportIndexIssue, reportAttributeAccessIssue, reportOptionalMemberAccess]
     plan = plan_module(module, level=ConfigContext.PROFILE)
     assert plan.operation == "update"
 
 
 def test_plan_module_raises_for_a_rule_appended_to_defaults():
-    module = qos_module(qos_entry(GUEST))
+    module = qos_module(qos_entry(GUEST), layer=Profile)
     defaults = module.data.segments[0].defaults
     assert isinstance(defaults, list)
     defaults.append(defaults[0].model_copy(update={"name": "Extra"}))
@@ -167,7 +179,7 @@ def test_plan_module_raises_for_a_rule_appended_to_defaults():
 
 
 def test_the_message_says_what_can_change_and_that_missing_entries_are_repaired():
-    module = qos_module(qos_entry(GUEST))
+    module = qos_module(qos_entry(GUEST), layer=Profile)
     module.data.segments[0].defaults[0].match.proto = 99  # pyright: ignore[reportIndexIssue, reportAttributeAccessIssue, reportOptionalMemberAccess]
     with pytest.raises(FixedListError) as caught:
         plan_module(module, level=ConfigContext.PROFILE)
@@ -193,7 +205,7 @@ def test_the_check_runs_at_the_edge_level_too():
             },
         },
     ]
-    module = qos_module(entry)
+    module = qos_module(entry, layer=Edge)
     # An edge write dumps no `defaults`: only the raw data keeps them.
     module.data.segments[0].rules[0].name = "r2"
     assert plan_module(module, level=ConfigContext.EDGE).operation == "update"
@@ -207,7 +219,7 @@ def test_the_check_runs_at_the_edge_level_too():
 
 def test_a_plain_dict_data_that_leaves_the_defaults_alone_passes():
     entry = qos_entry(GUEST)
-    module = qos_module(entry)
+    module = qos_module(entry, layer=Profile)
     assert (
         plan_module(module, data(entry), level=ConfigContext.PROFILE).operation
         == "none"

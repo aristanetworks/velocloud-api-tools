@@ -1921,7 +1921,8 @@ def _try_assigning(
 
 type _WritableModule = (
     DeviceSettingsConfigurationModule
-    | QosConfigurationModule
+    | QosConfigurationModule[Edge]
+    | QosConfigurationModule[Profile]
     | WanConfigurationModule
     | FirewallConfigurationModule[Edge]
     | FirewallConfigurationModule[Profile]

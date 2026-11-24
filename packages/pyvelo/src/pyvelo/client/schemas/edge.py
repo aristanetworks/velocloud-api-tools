@@ -538,7 +538,7 @@ class CompositeFirewallModule(CompositeModuleBase):
 
 
 class CompositeQosModule(CompositeModuleBase):
-    data: QosData
+    data: QosData[Composed]
 
 
 class CompositeWanModule(CompositeModuleBase):

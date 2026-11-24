@@ -1437,7 +1437,8 @@ uv run ruff check packages/pyvelo-intent
 `packages/pyvelo-intent/tests/test_layer_typing.py` is checked by basedpyright
 with `reportUnnecessaryTypeIgnoreComment` on (see pyvelo's "Tests"): it fixes
 the layer each `ConfigState` view gives (`state.edge.firewall` is
-`FirewallData[Edge]`, `state.profile.firewall` is `FirewallData[Profile]`).
+`FirewallData[Edge]`, `state.profile.firewall` is `FirewallData[Profile]`, and
+`state.edge.qos` is `QosData[Edge]`).
 
 The live comparison of "The effective view" is
 `packages/pyvelo-intent/tests/integration/test_effective_live.py`. It only

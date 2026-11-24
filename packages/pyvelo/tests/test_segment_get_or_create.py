@@ -121,7 +121,7 @@ def test_profile_segment_name():
     ]
     with pytest.raises(UnboundError):
         _ = profile_segment_name(None, "Guest")
-    fw, qos = edge_fw(), QosData.model_validate({"segments": []})
+    fw, qos = edge_fw(), QosData[Edge].model_validate({"segments": []})
     ds = DeviceSettingsData.model_validate(
         {"lan": {"networks": [], "interfaces": []}, "segments": []}
     )
@@ -140,7 +140,7 @@ def test_profile_segment_name():
 
 
 def test_qos_placeholder_has_empty_rules():
-    qos = QosData.model_validate({"segments": []})
+    qos = QosData[Edge].model_validate({"segments": []})
     qos.bind_profile(PROFILE)
     assert qos.segment("Guest").rules == []
 

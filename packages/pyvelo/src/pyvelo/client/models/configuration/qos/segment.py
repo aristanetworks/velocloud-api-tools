@@ -2,8 +2,9 @@ from typing import Annotated, Any
 
 from pydantic import MISSING, Field
 
-from pyvelo.core import ProfileOnly, VcoModel
+from pyvelo.core import Layered, Unconverted, VcoModel, kind_default
 from pyvelo.core.fields import FixedList, KeyField, OverrideFlag
+from pyvelo.core.layers import L
 
 from ..common import SegmentMetadata
 from .common import CosMappingInputType
@@ -53,16 +54,15 @@ class WebProxy(VcoModel):
     providers: list[Any] = Field(default_factory=list)
 
 
-class QosSegment(VcoModel):
+class QosSegment(Layered[L]):
     segment: SegmentMetadata
-    rules: Annotated[list[QosRule], KeyField("name", alt="rule_logical_id")] = Field(
-        default_factory=list
-    )
+    rules: Annotated[
+        Unconverted[list[QosRule]], KeyField("name", alt="rule_logical_id")
+    ] = kind_default(factory=list)
     defaults: Annotated[
-        list[QosRule] | MISSING,
-        ProfileOnly,
+        Unconverted[list[QosRule] | MISSING],
         KeyField("name", alt="rule_logical_id"),
         FixedList(editable=("action",)),
-    ] = MISSING
-    cos_mapping: CosMapping | MISSING = MISSING
-    web_proxy: WebProxy | MISSING = MISSING
+    ] = kind_default(MISSING)
+    cos_mapping: Unconverted[CosMapping | MISSING] = kind_default(MISSING)
+    web_proxy: Unconverted[WebProxy | MISSING] = kind_default(MISSING)

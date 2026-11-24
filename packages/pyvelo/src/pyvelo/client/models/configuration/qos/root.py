@@ -2,8 +2,9 @@ from typing import Annotated, Any
 
 from pydantic import MISSING, Field, PrivateAttr
 
-from pyvelo.core import VcoModel
+from pyvelo.core import Layered, Unconverted, VcoModel, kind_default
 from pyvelo.core.fields import KeyField
+from pyvelo.core.layers import L
 
 from ..common import (
     copy_profile_segments,
@@ -28,13 +29,15 @@ class QosClientConnector(VcoModel):
     data: dict[str, Any] = Field(default_factory=dict)
 
 
-class QosData(VcoModel):
+class QosData(Layered[L]):
     segments: Annotated[
-        list[QosSegment], KeyField("segment.name", alt="segment.segment_id")
+        list[QosSegment[L]], KeyField("segment.name", alt="segment.segment_id")
     ] = Field(default_factory=list)
-    service_rate_limit: ServiceRateLimit | MISSING = MISSING
-    qoe: QoeSettings | MISSING = MISSING
-    qos_client_connector: QosClientConnector | MISSING = MISSING
+    service_rate_limit: Unconverted[ServiceRateLimit | MISSING] = kind_default(MISSING)
+    qoe: Unconverted[QoeSettings | MISSING] = kind_default(MISSING)
+    qos_client_connector: Unconverted[QosClientConnector | MISSING] = kind_default(
+        MISSING
+    )
 
     _profile_segments: list[dict[str, Any]] | None = PrivateAttr(default=None)
 
@@ -46,7 +49,7 @@ class QosData(VcoModel):
         """
         self._profile_segments = copy_profile_segments(profile_data)
 
-    def segment(self, name: str) -> QosSegment:
+    def segment(self, name: str) -> QosSegment[L]:
         """The segment called *name*; a layer that lacks it gets an empty entry.
 
         The new entry has the profile segment's descriptor and inherits all of
@@ -54,13 +57,17 @@ class QosData(VcoModel):
         profile (see :meth:`bind_profile`) and ``ValueError`` if the profile has
         no such segment. Use :meth:`get_segment` to look up without creating.
         """
+        # QosSegment[layer], where the layer is this data's own.
+        segment_class: Any = QosSegment
+        segment_type: type[QosSegment[L]] = segment_class[self.layer()]
         return get_or_create_segment(
             self.segments,
             name,
             self._profile_segments,
             "QOS",
-            QosSegment.model_validate,
+            segment_type.model_validate,
             self.config_context,
+            owner=self,
         )
 
     def profile_segment_name(self, selector: object) -> str | None:
@@ -81,5 +88,5 @@ class QosData(VcoModel):
 
     def get_segment(
         self, *, name: str | None = None, segment_id: int | None = None
-    ) -> QosSegment:
+    ) -> QosSegment[L]:
         return find_segment(self.segments, name=name, segment_id=segment_id)

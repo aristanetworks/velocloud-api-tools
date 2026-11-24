@@ -21,7 +21,13 @@ from pyvelo.core.layers import Edge
 
 from .patch_models import Root
 
-ROOTS = (FirewallData[Edge], QosData, DeviceSettingsData, WanData, ControlPlaneData)
+ROOTS = (
+    FirewallData[Edge],
+    QosData[Edge],
+    DeviceSettingsData,
+    WanData,
+    ControlPlaneData,
+)
 
 # Lists of models with neither a KeyField nor Positional(): a patch names their
 # items by position, at(n), and adds under "+". Declaring one (or adding a new

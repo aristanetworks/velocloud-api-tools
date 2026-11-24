@@ -305,7 +305,7 @@ def test_store_of_holds_the_rows_and_their_configurations():
         )
         .for_edge()
     )
-    m2 = QosConfigurationModule.model_validate(
+    m2 = QosConfigurationModule[Edge].model_validate(
         make_module_json(
             "QOS", {"segments": []}, module_id=2, configuration_id=20, refs=REFS
         )
