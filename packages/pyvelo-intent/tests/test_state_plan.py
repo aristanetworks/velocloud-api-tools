@@ -5,6 +5,7 @@ import pytest
 from pyvelo.client.enums.configuration import ConfigurationModuleName
 from pyvelo.client.exceptions import (
     ConfigConflictError,
+    DanglingReferenceError,
     DetachedObjectError,
     FixedListError,
     ModuleWriteError,
@@ -171,6 +172,7 @@ def test_write_errors_are_exported_from_the_package():
 
     assert pyvelo_intent.ModuleWriteError is ModuleWriteError
     assert pyvelo_intent.ConfigConflictError is ConfigConflictError
+    assert pyvelo_intent.DanglingReferenceError is DanglingReferenceError
     assert pyvelo_intent.WriteNotAppliedError is WriteNotAppliedError
     assert pyvelo_intent.WriteOutcomeUnknownError is WriteOutcomeUnknownError
     assert pyvelo_intent.DetachedObjectError is DetachedObjectError
@@ -181,6 +183,7 @@ def test_write_errors_are_exported_from_the_package():
     assert {
         "ModuleWriteError",
         "ConfigConflictError",
+        "DanglingReferenceError",
         "WriteNotAppliedError",
         "WriteOutcomeUnknownError",
         "DetachedObjectError",

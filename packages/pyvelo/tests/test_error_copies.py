@@ -2,11 +2,13 @@
 
 import copy
 import pickle
+import uuid
 from typing import Any
 
 import pytest
 from pyvelo.client.exceptions import (
     ConfigConflictError,
+    DanglingReferenceError,
     DetachedObjectError,
     FixedListError,
     LossyFieldError,
@@ -42,6 +44,7 @@ from pyvelo.core.identity import (
 )
 from pyvelo.core.patch import PatchError
 from pyvelo.core.rebase import Key, Path
+from pyvelo.core.references import Reference
 from pyvelo.testing import as_stored
 
 from .write_helpers import fw
@@ -119,6 +122,26 @@ def test_a_fixed_list_error_keeps_its_module_paths_and_message_through_copies():
     for copied in copies(error):
         assert type(copied) is FixedListError
         assert (copied.module_name, copied.paths) == ("QOS", paths)
+        assert str(copied) == str(error)
+
+
+def test_a_dangling_reference_error_keeps_its_references_and_message_through_copies():
+    references = (
+        Reference(
+            "deviceSettings",
+            Path(("lan", "networks", Key(100), "segment_id")),
+            7,
+            "segment",
+            None,
+        ),
+        Reference(
+            "QOS", Path(("segments", Key("Guest"))), uuid.UUID(int=5), "backhaul_hub", 2
+        ),
+    )
+    error = DanglingReferenceError(references)
+    for copied in copies(error):
+        assert type(copied) is DanglingReferenceError
+        assert copied.references == references
         assert str(copied) == str(error)
 
 
@@ -260,6 +283,7 @@ def test_every_error_of_the_module_round_trips():
             segments=("Guest",),
             modules=("QOS",),
         ),
+        DanglingReferenceError([Reference("deviceSettings", path, 7, "segment", None)]),
         RefsDroppedError(
             1,
             "v1",

@@ -7,6 +7,8 @@ This package is split into these submodules:
 - patch: the patch helpers (add, delete, move, at) and PatchError
 - merge: applying a patch to a model, and selecting items of a list
 - rebase: the path and key types that locate a change
+- walk: walk_fields, the walk over the fields of a model and the models below it
+- references: the values that name a member of a set the configuration provides, and the check of them
 - secrets: hide_secrets, which shows a value without its secrets
 
 This package exports the public names of those submodules; ``__all__`` lists them.
@@ -149,7 +151,18 @@ from .patch import (
     selector_of,
 )
 from .rebase import Key, Path, item_key_text, key_text
+from .references import (
+    Reference,
+    ReferenceFindings,
+    Sets,
+    check_references,
+    provided,
+    reference_text,
+    references,
+    union,
+)
 from .secrets import hide_secrets
+from .walk import FieldSite, walk_fields
 
 __all__ = [
     "AddressGroupId",
@@ -181,6 +194,7 @@ __all__ = [
     "EdgeLogicalId",
     "EdgeName",
     "EdgeOnly",
+    "FieldSite",
     "FixedList",
     "GatewayId",
     "GatewayIdentity",
@@ -234,6 +248,8 @@ __all__ = [
     "ProfileOnly",
     "Provides",
     "RefOnly",
+    "Reference",
+    "ReferenceFindings",
     "RefersTo",
     "Resolvable",
     "ResolverNotLoadedError",
@@ -249,11 +265,13 @@ __all__ = [
     "ServiceGroupIdentity",
     "ServiceGroupLogicalId",
     "ServiceGroupName",
+    "Sets",
     "Tinyint",
     "VcoModel",
     "VcoTimestamp",
     "add",
     "at",
+    "check_references",
     "check_time_is_never",
     "delete",
     "field_models",
@@ -282,9 +300,14 @@ __all__ = [
     "move",
     "nest_patch",
     "position_of",
+    "provided",
     "python_name",
+    "reference_text",
+    "references",
     "select_items",
     "selector_of",
+    "union",
     "value_or",
+    "walk_fields",
     "wire_name",
 ]

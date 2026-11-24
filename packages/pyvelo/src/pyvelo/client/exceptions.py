@@ -24,6 +24,7 @@ from pyvelo.core.rebase import (
     item_parts,
     node_child,
 )
+from pyvelo.core.references import Reference, reference_text
 from pyvelo.core.response_check import PlannedChange, ServerChange
 from pyvelo.core.secrets import HIDDEN
 from pyvelo.core.show import moves_text, patch_text, shown_together
@@ -321,6 +322,50 @@ class SegmentSetError(VcoError):
         self.module_name = module_name
         self.segments = tuple(segments)
         self.modules = tuple(modules)
+        super().__init__(message)
+
+
+class DanglingReferenceError(VcoError):
+    """Raised when a save would leave a value that names nothing the configuration has.
+
+    A field that refers to a segment (an interface, a LAN network, a loopback)
+    or to a hub (a QoS rule's backhaul entry) holds a value that no item of
+    the set it refers to has. The VCO would store it without complaint, and
+    what it stands for would not work: an interface in a segment that does
+    not exist, a rule that backhauls nowhere. ``references`` are the
+    references found, each with its module, path and value. A reference the
+    configuration already held as it was read is not one of them.
+    """
+
+    references: tuple[Reference, ...]
+
+    def __init__(self, references: Sequence[Reference]) -> None:
+        self.references = tuple(references)
+        lines = "\n".join(f"  {reference_text(r)}" for r in self.references)
+        names = {r.set_name for r in self.references}
+        sources: list[str] = []
+        if "segment" in names:
+            sources.append(
+                "a segment is one of the device settings `segments` of the profile"
+            )
+        if "backhaul_hub" in names:
+            sources.append(
+                "a backhaul hub is one of the segment's `vpn.backHaulEdges` in the "
+                "profile's device settings"
+            )
+        message = (
+            f"{len(self.references)} reference(s) name nothing:\n{lines}\n"
+            "The save is refused because the VCO would store a value that names "
+            "nothing (for a hub, a rule that backhauls nowhere). Give a value "
+            "that exists, or remove the reference; " + "; ".join(sources) + "."
+        )
+        if "backhaul_hub" in names:
+            message += (
+                " To make a hub a backhaul hub of a segment, send "
+                '{"segments": {"Global Segment": {"vpn": {"backHaulEdges": '
+                '{"+": {"_op": "add", "name": "Hub-A"}}}}}} to the '
+                "device settings (in Python, the `add` helper builds the entry)."
+            )
         super().__init__(message)
 
 

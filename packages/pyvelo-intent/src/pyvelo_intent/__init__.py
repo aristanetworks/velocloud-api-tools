@@ -2,6 +2,7 @@
 
 from pyvelo.client.exceptions import (
     ConfigConflictError,
+    DanglingReferenceError,
     DetachedObjectError,
     FixedListError,
     LossyFieldError,
@@ -62,6 +63,7 @@ __all__ = [
     "ConfigPipeline",
     "ConfigPlan",
     "ConfigState",
+    "DanglingReferenceError",
     "DetachedObjectError",
     "DiffResult",
     "FieldChange",
