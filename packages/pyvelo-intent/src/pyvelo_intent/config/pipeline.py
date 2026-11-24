@@ -1312,8 +1312,10 @@ class ConfigPipeline:
         and compares each of *modules* (by default every converted one,
         ``CONVERTED_MODULES``) with ``state.effective``. The profile half of
         the state is read again first, so a profile changed since the load is
-        not a finding; *state* is not changed. Every difference is an entry, and the ones that say the
-        view and the VCO disagree are ``EffectiveComparison.findings``.
+        not a finding; *state* is not changed, except that a resolver the plan
+        needs is loaded into it, as ``save`` does. Every difference is an
+        entry, and the ones that say the view and the VCO disagree are
+        ``EffectiveComparison.findings``.
 
         Raises ``ValueError`` for a profile state (the VCO composes modules
         for edges), for a state with changes that are not saved (it differs
