@@ -17,12 +17,14 @@ from pyvelo.client.models.configuration.firewall.segment import FirewallSegment
 from pyvelo.client.module_write import plan_module
 from pyvelo.client.schemas.configuration import (
     ConfigurationModuleList,
+    ConfigurationModuleUpdate,
     EdgeConfiguration,
     EnterpriseConfigurationProfile,
     FirewallConfigurationModule,
     GetConfiguration,
     GetConfigurationModules,
     InsertFirewallConfigurationModule,
+    UpdateConfigurationModule,
     new_edge_module,
 )
 from pyvelo.client.schemas.edge import (
@@ -211,22 +213,57 @@ async def test_get_configuration_modules_needs_the_layer(
     assert type(listed) is FirewallConfigurationModule[Edge]
 
 
-async def test_an_answer_with_a_firewall_module_needs_its_level(
+async def test_a_firewall_insert_that_asks_for_its_row_names_the_layer_before_it_is_sent(
     mock_vco_client: MockVcoClientFactory,
 ):
     store = ModuleStore()
     store.add_configuration({"id": 10, "name": "Default Profile"})
     client = await mock_vco_client(store)
+    insert = InsertFirewallConfigurationModule(
+        configuration_id=10, data={"segments": []}, return_data=True
+    )
 
-    def request() -> InsertFirewallConfigurationModule:
-        return InsertFirewallConfigurationModule(
-            configuration_id=10, data={"segments": []}, return_data=True
+    with pytest.raises(TypeError, match=r"level=ConfigContext\.EDGE.*Nothing was sent"):
+        _ = await client.insert_configuration_module(insert)
+    assert store.requests == []
+
+    inserted = await client.insert_configuration_module(insert, level=PROFILE)
+    assert type(inserted) is FirewallConfigurationModule[Profile]
+
+
+async def test_an_update_answered_with_a_firewall_row_names_the_layer(
+    mock_vco_client: MockVcoClientFactory,
+):
+    store = ModuleStore()
+    store.add_configuration({"id": 10, "name": "Default Profile"})
+    store.rows[1] = row(PROFILE_RAW)
+    client = await mock_vco_client(store)
+
+    def update() -> UpdateConfigurationModule:
+        return UpdateConfigurationModule(
+            configuration_module_id=1,
+            version="v1",
+            update=ConfigurationModuleUpdate(data=copy.deepcopy(PROFILE_RAW)),
+            return_data=True,
         )
 
-    with pytest.raises(ValueError, match="level=ConfigContext.EDGE"):
-        _ = await client.insert_configuration_module(request())
-    inserted = await client.insert_configuration_module(request(), level=PROFILE)
-    assert type(inserted) is FirewallConfigurationModule[Profile]
+    # The request does not name its module, so this is known only from the answer.
+    with pytest.raises(ValueError, match=r"was sent.*level=ConfigContext\.PROFILE"):
+        _ = await client.update_configuration_module(update())
+    updated = await client.update_configuration_module(update(), level=PROFILE)
+    assert type(updated) is FirewallConfigurationModule[Profile]
+
+
+async def test_a_write_that_does_not_ask_for_its_row_needs_no_layer(
+    mock_vco_client: MockVcoClientFactory,
+):
+    store = ModuleStore()
+    store.add_configuration({"id": 10, "name": "Default Profile"})
+    client = await mock_vco_client(store)
+    result = await client.insert_configuration_module(
+        InsertFirewallConfigurationModule(configuration_id=10, data={"segments": []})
+    )
+    assert not isinstance(result, FirewallConfigurationModule)
 
 
 # --- the composed read -------------------------------------------------------

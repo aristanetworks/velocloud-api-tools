@@ -98,22 +98,36 @@ def _module_layer(level: ConfigContext | None) -> type[Edge | Profile]:
     return layer_for(level) if level is not None else Edge
 
 
-def _refuse_unleveled_firewall(
-    module: object, level: ConfigContext | None, call: str
+def _require_level_for_a_firewall_row(
+    request: InsertConfigurationModule, level: ConfigContext | None
 ) -> None:
-    """``ValueError`` when *call* was answered with a firewall module and was given no *level*.
+    """``TypeError`` when the insert *request* is for a firewall module, asks for its row back and names no *level*; nothing has been sent.
 
-    A firewall module is of one layer, and an answer does not say which; a
-    guess would read a profile's module as an edge's, or the other way round,
-    without an error. The request has been sent by then, so the message says
-    so.
+    A firewall row is of the edge layer or the profile layer and the answer
+    does not say which; reading it as the wrong one would not raise.
+    """
+    if request.return_data is True and level is None and request.name == "firewall":
+        raise TypeError(
+            "the insert asks for the firewall module row back (return_data), and "
+            + "that row is read as a module of the edge layer or of the profile "
+            + "layer, which the answer does not say: pass "
+            + "level=ConfigContext.EDGE or level=ConfigContext.PROFILE. Nothing "
+            + "was sent"
+        )
+
+
+def _refuse_unleveled_firewall(module: object, level: ConfigContext | None) -> None:
+    """``ValueError`` when an update asked for its row, was given no *level* and was answered with a firewall module.
+
+    The request of an update does not name its module, so this cannot be known
+    before it is sent, and the message says that it was.
     """
     if level is None and isinstance(module, FirewallConfigurationModule):
         raise ValueError(
-            f"{call} was sent and answered with a firewall module, which is of the "
-            + "edge layer or the profile layer, and the answer does not say which: "
-            + "pass level=ConfigContext.EDGE or level=ConfigContext.PROFILE (read "
-            + "the module again to see what was stored)"
+            "the update was sent and answered with a firewall module, which is of "
+            + "the edge layer or the profile layer, and the answer does not say "
+            + "which: pass level=ConfigContext.EDGE or level=ConfigContext.PROFILE "
+            + "(read the module again to see what was stored)"
         )
 
 
@@ -526,10 +540,12 @@ class ConfigurationMixin(Protocol):
         """Insert a new configuration module into a profile or edge-specific configuration.
 
         With ``return_data`` the result is the module row as stored, validated
-        as a module at config level *level* (and of the layer it names: a
-        firewall row needs it, ``ValueError`` otherwise); otherwise, or from a
-        VCO that ignores ``returnData``, it is the new module's ID.
+        as a module at config level *level* and of the layer it names. A
+        firewall module needs *level* then (``TypeError`` before anything is
+        sent); otherwise, or from a VCO that ignores ``returnData``, the result
+        is the new module's ID.
         """
+        _require_level_for_a_firewall_row(request, level)
         result: InsertConfigurationModuleResult | AnyStoredModule
         if request.return_data is True:
             inserted = (
@@ -544,7 +560,6 @@ class ConfigurationMixin(Protocol):
                 validation_context=_level_context(level, refs_loaded=False),
             )
             result = answer.root
-            _refuse_unleveled_firewall(result, level, "the insert")
         else:
             result = await self.portal(
                 "configuration/insertConfigurationModule",
@@ -574,14 +589,15 @@ class ConfigurationMixin(Protocol):
         without a version is not checked.
 
         With ``return_data`` the result is the module row as stored, validated
-        as a module at config level *level* (and of the layer it names: a
-        firewall row needs it, ``ValueError`` otherwise), with its raw data and
-        refs captured as on any read; a row that does not validate raises as a
-        read does. At this level a stale ``version`` cannot be told from a
-        write: a VCO with the check off answers both with a row, the stale one
-        with the current row unchanged. ``write_module`` compares the row with
-        what was sent. Without ``return_data``, or from a VCO that ignores it
-        and answers with a row count, the result is None.
+        as a module at config level *level* and of the layer it names, with
+        its raw data and refs captured as on any read; a row that does not
+        validate raises as a read does. A firewall row needs *level*: the request
+        does not name its module, so ``ValueError`` is raised after it was sent
+        when the answer is a firewall module and there is none. At this level a stale ``version`` cannot be
+        told from a write: a VCO with the check off answers both with a row,
+        the stale one with the current row unchanged. ``write_module`` compares
+        the row with what was sent. Without ``return_data``, or from a VCO that
+        ignores it and answers with a row count, the result is None.
         """
         version = request.version
         result: AnyStoredModule | RowsModifiedConfirmation
@@ -622,7 +638,7 @@ class ConfigurationMixin(Protocol):
                 ) from error
             raise
         if not isinstance(result, RowsModifiedConfirmation):
-            _refuse_unleveled_firewall(result, level, "the update")
+            _refuse_unleveled_firewall(result, level)
             return result
         if version is not MISSING and is_version_conflict(
             error=result.error, rows=result.rows

@@ -292,7 +292,8 @@ async def send_insert(client: VcoClient) -> object:
     return await client.insert_configuration_module(
         InsertFirewallConfigurationModule(
             configuration_id=10, data={"segments": []}, return_data=True
-        )
+        ),
+        level=ConfigContext.EDGE,
     )
 
 
