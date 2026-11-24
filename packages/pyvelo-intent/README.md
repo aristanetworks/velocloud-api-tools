@@ -1405,3 +1405,14 @@ uv run --package pyvelo-intent pytest packages/pyvelo-intent/tests
 uv run basedpyright packages/pyvelo-intent
 uv run ruff check packages/pyvelo-intent
 ```
+
+`packages/pyvelo-intent/tests/test_layer_typing.py` is checked by basedpyright
+with `reportUnnecessaryTypeIgnoreComment` on (see pyvelo's "Tests"): it fixes
+the layer each `ConfigState` view gives (`state.edge.firewall` is
+`FirewallData[Edge]`, `state.profile.firewall` is `FirewallData[Profile]`).
+
+The live comparison of "The effective view" is
+`packages/pyvelo-intent/tests/integration/test_effective_live.py`. It only
+reads, runs under `-m integration` with `VCO_HOST` and `VCO_TOKEN` set, and
+prints the comparison of every edge (run it with `-s`), whose `factory`,
+`ignored` and `unconverted` entries it records; a finding fails it.
