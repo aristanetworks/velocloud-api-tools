@@ -10,13 +10,27 @@ import uuid
 from typing import Any
 
 import pytest
-from hub_helpers import HUB_A, HUB_B, backhaul_entry, backhaul_rule, ds_with_vpn
+from hub_helpers import (
+    HUB_A,
+    HUB_B,
+    Hub,
+    backhaul_entry,
+    backhaul_row,
+    backhaul_rule,
+    ds_with_vpn,
+    hub_row,
+)
+from hub_state import (  # pyright: ignore[reportImplicitRelativeImport]
+    hub_profile_state,
+    profile_hub_rows,
+)
 from profile_state import (  # pyright: ignore[reportImplicitRelativeImport]
     module_store_pipeline,
     profile_state,
 )
 from pydantic import MISSING
 from pyvelo.client.exceptions import DanglingReferenceError
+from pyvelo.client.hub_services import BACKHAUL_REF
 from pyvelo.client.schemas.configuration import (
     DeviceSettingsConfigurationModule,
     EdgeConfiguration,
@@ -27,6 +41,7 @@ from pyvelo.testing import make_module_json
 from pyvelo_intent.config.pipeline import ConfigPipeline
 from pyvelo_intent.config.state import ConfigState
 from pyvelo_intent.testing import MockVcoClient
+from refs_helpers import QOS_ID, segment_row
 from segment_helpers import GLOBAL, GUEST, ds_entry, firewall_entry, qos_entry
 
 DS = "deviceSettings"
@@ -174,6 +189,27 @@ async def test_a_vlan_moved_onto_a_missing_segment_raises():
     assert [r.value for r in error.value.references] == [8]
 
 
+SERVICE_ID = 601
+
+
+def hub_refs(*hubs: Hub, segment: tuple[int, str, str, int] = GLOBAL) -> dict[str, Any]:
+    """The device settings refs of a profile with the Global Segment and Guest, and a hub row in *segment* (service ``SERVICE``) for each of *hubs*."""
+    return profile_hub_rows(
+        segment_row(GLOBAL[0], GLOBAL[3], GLOBAL[2]),
+        segment_row(GUEST[0], GUEST[3], GUEST[2]),
+        *(
+            hub_row(
+                hub,
+                service_id=SERVICE_ID + n,
+                service_logical_id=SERVICE,
+                segment=segment,
+                roles=("hub", "backhaul"),
+            )
+            for n, hub in enumerate(hubs)
+        ),
+    )
+
+
 def hub_profile_ds() -> list[dict[str, Any]]:
     """Global, and Guest (segment 2) with ``HUB_A`` as hub and backhaul hub."""
     return [
@@ -188,8 +224,37 @@ def guest_rule_qos(hub: Any) -> list[dict[str, Any]]:
     return [qos_entry(GLOBAL), qos_entry(GUEST, rules=[rule])]
 
 
+async def hub_profile_of(
+    ds: list[dict[str, Any]],
+    qos: list[dict[str, Any]],
+    refs: dict[str, Any],
+    **more: Any,
+) -> ConfigState:
+    """A profile of *ds* and *qos* with the device settings refs *refs*; the Global Segment and Guest are in the firewall too."""
+    return await hub_profile_state(
+        ds,
+        qos,
+        [firewall_entry(GLOBAL), firewall_entry(GUEST)],
+        ds_refs=refs,
+        **more,
+    )
+
+
 async def test_removing_a_hub_a_rule_uses_raises_and_names_the_rule():
-    state = await profile_of(ds=hub_profile_ds(), qos=guest_rule_qos(HUB_A))
+    state = await hub_profile_of(
+        hub_profile_ds(),
+        guest_rule_qos(HUB_A),
+        hub_refs(HUB_A, segment=GUEST),
+        qos_refs={
+            BACKHAUL_REF: backhaul_row(
+                HUB_A,
+                service_id=SERVICE_ID,
+                service_logical_id=SERVICE,
+                segment=GUEST,
+                module_id=QOS_ID,
+            )
+        },
+    )
     assert state.plan().warnings == ()
 
     await patch(
@@ -217,8 +282,14 @@ async def test_removing_a_hub_a_rule_uses_raises_and_names_the_rule():
 
 
 async def test_an_edge_rule_must_name_a_backhaul_hub_of_the_profile():
-    profile = await profile_of(
-        ds=[ds_with_vpn(GLOBAL, hubs=(HUB_A,), backhaul=(HUB_A,)), ds_entry(GUEST)]
+    # Hub-B has a service in the Global Segment, and the segment does not list it for backhaul.
+    profile = await hub_profile_of(
+        [
+            ds_with_vpn(GLOBAL, hubs=(HUB_A, HUB_B), backhaul=(HUB_A,)),
+            ds_entry(GUEST),
+        ],
+        [qos_entry(GLOBAL), qos_entry(GUEST)],
+        hub_refs(HUB_B),
     )
     state = await edge_over(profile, with_qos=True)
     await patch(
@@ -243,8 +314,10 @@ async def test_an_edge_rule_must_name_a_backhaul_hub_of_the_profile():
 
 
 async def test_an_edge_rule_naming_a_backhaul_hub_of_the_profile_is_accepted():
-    profile = await profile_of(
-        ds=[ds_with_vpn(GLOBAL, hubs=(HUB_A,), backhaul=(HUB_A,)), ds_entry(GUEST)]
+    profile = await hub_profile_of(
+        [ds_with_vpn(GLOBAL, hubs=(HUB_A,), backhaul=(HUB_A,)), ds_entry(GUEST)],
+        [qos_entry(GLOBAL), qos_entry(GUEST)],
+        hub_refs(HUB_A),
     )
     state = await edge_over(profile, with_qos=True)
     await patch(

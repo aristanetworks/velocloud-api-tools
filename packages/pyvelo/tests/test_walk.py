@@ -2,6 +2,7 @@
 
 from typing import Annotated
 
+import pytest
 from pydantic import Field
 from pyvelo.core import (
     FieldSite,
@@ -12,6 +13,7 @@ from pyvelo.core import (
     VcoModel,
     walk_fields,
 )
+from pyvelo.core import walk as walk_module
 
 
 class Meta(VcoModel):
@@ -159,3 +161,37 @@ def test_a_big_class_is_skipped_whole():
     sites = _sites(_root())
     assert Path(("segments", Key("Guest"), "big")) in _paths(sites, "big")
     assert not any(s.name == "items" for s in sites)
+
+
+def test_a_list_of_items_that_hold_nothing_costs_no_key_lookups(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    class Quiet(VcoModel):
+        name: str
+
+    class Holder(VcoModel):
+        leaf: Leaf = Field(default_factory=Leaf)
+        quiet: Annotated[list[Quiet], KeyField("name")] = Field(default_factory=list)
+        quiet_by_name: dict[str, Quiet] = Field(default_factory=dict)
+
+    looked_up: list[object] = []
+    real = walk_module.item_key
+
+    def spy(item: object, paths: tuple[str, ...]) -> object:
+        looked_up.append(item)
+        return real(item, paths)
+
+    monkeypatch.setattr(walk_module, "item_key", spy)
+    data = Holder.model_validate(
+        {
+            "leaf": {"value": 1},
+            "quiet": [{"name": f"q{n}"} for n in range(3000)],
+            "quiet_by_name": {f"q{n}": {"name": f"q{n}"} for n in range(3000)},
+        }
+    )
+
+    sites = list(walk_fields(data, holds=lambda model_cls: model_cls is not Quiet))
+
+    assert looked_up == []
+    assert Path(("leaf", "value")) in [s.path for s in sites]
+    assert not any(s.name == "name" for s in sites)

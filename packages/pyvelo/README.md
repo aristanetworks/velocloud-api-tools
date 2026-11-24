@@ -297,11 +297,15 @@ adds the row it goes with, and one that clears it removes the row; every other
 row is sent as read, and `plan.ref_changes` lists the rows added and removed
 (`plan.render()` shows them as `+ refs <name> (<segment>): <value>` and `- refs
 ...`). A new row needs the object's ID, which the `resolvers=` argument finds
-(`ResolverNotLoadedError` when it is missing). A device settings or QoS update
-with segments always carries its refs, as read when nothing in them changed,
-because the VCO runs its processors on every such write. A module read without
-its refs (`refs_loaded` is `False`) cannot be written that way, nor with an edit
-to one of these fields: `RefsNotLoadedError` says to read it with
+(`ResolverNotLoadedError` when it is missing). A QoS rule's new backhaul hub
+adds a `deviceSettings:backHaulEdge` row that points at the hub's service for
+the profile and segment, which the profile's device settings module holds: give
+it as `profile_device_settings=` (`HubServiceNotFoundError` when the hub has no
+service there, or none is given). A device settings or QoS update with segments
+always carries its refs, as read when nothing in them changed, because the VCO
+runs its processors on every such write. A module read without its refs
+(`refs_loaded` is `False`) cannot be written that way, nor with an edit to one
+of these fields: `RefsNotLoadedError` says to read it with
 `configuration/getConfiguration` and `modules`, or from the edge stack. The ref
 names that are not derived are written with `update_configuration_module`, the
 low-level request.

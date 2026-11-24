@@ -941,6 +941,12 @@ class ConfigState:
         ``defaults`` entry it repairs takes it as ``allowConditionalBh``.
         *repair_defaults* is as for :meth:`plan`.
 
+        A QoS rule's new backhaul hub takes the hub's service for its segment
+        from the profile's device settings module as read (the target's own on
+        a profile, the profile layer's on an edge): ``HubServiceNotFoundError``
+        says a hub has none, and that the hub is saved first and the rule
+        after.
+
         A provider the edit sets needs the network services loaded
         (``state.resolvers``): ``ResolverNotLoadedError`` says they are not.
         ``ConfigPipeline.save``, ``dry_run`` and ``apply`` load them and plan
@@ -958,6 +964,9 @@ class ConfigState:
             data,
             level=level,
             profile=profile_mod,
+            profile_device_settings=_find_module(
+                self.profile_config, ConfigurationModuleName.DEVICE_SETTINGS
+            ),
             resolvers=self.resolvers,
             via_pipeline=True,
             repair_defaults=repair_defaults,

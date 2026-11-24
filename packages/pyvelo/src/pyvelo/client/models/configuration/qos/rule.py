@@ -4,8 +4,8 @@ from typing import Annotated, Any, Literal, override
 from pydantic import MISSING, Field
 
 from pyvelo.core import Alias, NameOf, Normalizer, VcoModel
-from pyvelo.core.fields import KeyField, RefersTo, Resolvable
-from pyvelo.core.identity import ApplicationIdentity, HubIdentity
+from pyvelo.core.fields import KeyField, OwnsRef, RefersTo, Resolvable
+from pyvelo.core.identity import ApplicationIdentity, HubIdentity, HubService
 
 from ..common import (
     AddressGroupRef,
@@ -124,7 +124,16 @@ class BackhaulEdge(VcoModel):
     type_: Annotated[
         BackhaulEdgeType, Alias("type"), Resolvable(HubIdentity, "type_")
     ] = "edgeHub"
-    logical_id: uuid.UUID | MISSING = MISSING
+    logical_id: Annotated[
+        uuid.UUID | MISSING,
+        OwnsRef(
+            "deviceSettings:backHaulEdge",
+            HubService,
+            by="logical_id",
+            row="logicalId",
+            per_segment=True,
+        ),
+    ] = MISSING
     edge_logical_id: Annotated[
         uuid.UUID | MISSING,
         Resolvable(HubIdentity, "logical_id"),

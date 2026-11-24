@@ -471,6 +471,12 @@ does not save (the profile layer of an edge state) raises `LayerNotSavedError`
 like any other edit there, and one made while its module is being written
 raises `DetachedObjectError` after the write.
 
+A QoS rule's backhaul hub adds a `deviceSettings:backHaulEdge` row the same
+way, on a profile and on an edge. The row points at the hub's service for the
+profile and segment, which the profile's device settings rows hold, so a hub
+that has no service there raises `HubServiceNotFoundError`: the hub is saved
+first and the rule after.
+
 This is `state.plan().render()` for the firewall patch of "The patch format",
 with `firewall_enabled` set as well, on an edge whose profile has a segment the
 edge module lacks:

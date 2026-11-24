@@ -130,6 +130,7 @@ class MockVcoClient(VcoClient):
             name="Global Segment",
             type_=NetworkSegmentType.REGULAR.value,
             object_="NETWORK_SEGMENT",
+            data={"segmentId": 0},
         )
         self.stack: GetEdgeConfigurationStackResult | None = stack
         self._edges: Sequence[GetEnterpriseEdgesItem] = (

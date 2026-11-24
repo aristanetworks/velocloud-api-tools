@@ -37,6 +37,8 @@ from pyvelo.client.exceptions import (
 from pyvelo.client.module_check import ModuleWrite, check_module_write
 from pyvelo.client.module_write import plan_module
 from pyvelo.core.identity import (
+    HubService,
+    HubServiceNotFoundError,
     NetworkServiceIdentity,
     ResolutionError,
     ResolverNotLoadedError,
@@ -367,6 +369,31 @@ def test_a_resolver_not_loaded_error_keeps_its_class_message_and_identity_type_t
         assert copied.identity_type is NetworkServiceIdentity
         assert (copied.name, copied.candidates) == ("", [])
         assert copied.__notes__ == ["while resolving a ref"]
+
+
+def test_a_hub_service_not_found_error_keeps_its_class_message_and_attributes_through_copies():
+    error = HubServiceNotFoundError(
+        hub="Hub-A",
+        segment="Global Segment",
+        path='segments["Global Segment"].rules["r1"].action.route_cfg',
+    )
+    error.add_note("while planning QOS")
+    for copied in copies(error):
+        assert type(copied) is HubServiceNotFoundError
+        assert copied.args == error.args
+        assert str(copied) == str(error)
+        assert (copied.hub, copied.segment, copied.path) == (
+            "Hub-A",
+            "Global Segment",
+            'segments["Global Segment"].rules["r1"].action.route_cfg',
+        )
+        assert (copied.name, copied.identity_type, copied.candidates) == (
+            "Hub-A",
+            HubService,
+            [],
+        )
+        assert copied.__notes__ == ["while planning QOS"]
+    assert isinstance(error, ResolutionError)
 
 
 def test_a_resolution_error_given_its_own_message_keeps_it():

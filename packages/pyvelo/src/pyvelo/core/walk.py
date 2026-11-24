@@ -66,7 +66,7 @@ def walk_fields(
             elif is_list(value):
                 spec = get_key_spec(field_info)
                 for position, item in enumerate(value):
-                    if not isinstance(item, VcoModel):
+                    if not isinstance(item, VcoModel) or not wanted(item):
                         continue
                     key = item_key(item, spec.paths) if spec is not None else None
                     part = Key(key) if key is not None else position
@@ -74,7 +74,7 @@ def walk_fields(
                     yield from walk(item, here.child(part), below, root=False)
             elif is_dict(value):
                 for key, item in value.items():
-                    if isinstance(item, VcoModel):
+                    if isinstance(item, VcoModel) and wanted(item):
                         yield from walk(item, here.child(str(key)), segment, root=False)
 
     yield from walk(data, Path(()), None, root=True)

@@ -6,18 +6,17 @@ data for those fields. It does not know modules: ``pyvelo.client.schemas``
 imports it to fill a module's ``RefOnly`` fields as the module is validated,
 and the derivation of the rows to send imports it to compare owners.
 
-The walk takes the fields of models, and the items of the root's ``segments``
-list (the one list that holds segment entries); no other list, and no ``dict``.
-A provider given as a list is not walked, so it owns nothing. A model whose
-class cannot hold an owner (``can_hold_owner``) is not walked either, so the
-data of a module with no owner (firewall, QoS, WAN, control plane) costs
-nothing to look through.
+The walk is ``pyvelo.core.walk.walk_fields``: it takes the fields of models,
+and the items of lists and maps of models, as the references check does. A
+model whose class cannot hold an owner (``can_hold_owner``) is not walked, so
+the rules of a firewall module, which hold none, cost nothing to look through,
+and a QoS module is walked down to the backhaul hub entries of its rules.
 """
 
 import functools
 import uuid
 from collections.abc import Iterator
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Annotated, Final, Literal, TypeAliasType, get_args, get_origin
 
 from pydantic import MISSING
@@ -25,8 +24,9 @@ from pydantic.fields import FieldInfo
 
 from pyvelo.core import ConfigContext, OwnsRef, RefOnly, VcoModel
 from pyvelo.core.base import is_dict, is_list
-from pyvelo.core.fields import get_key_spec, get_owns_ref, get_ref_only, get_resolvable
-from pyvelo.core.rebase import Key, Path, item_key
+from pyvelo.core.fields import get_owns_ref, get_ref_only, get_resolvable
+from pyvelo.core.rebase import Path
+from pyvelo.core.walk import walk_fields
 
 SEGMENT_REF: Final = "deviceSettings:segment"
 """The ref name of a profile device settings segment's row."""
@@ -48,6 +48,8 @@ class RefOwner:
     """That segment's name, under the same rule."""
     path: Path
     """The field's path in python names: ``segments["Global Segment"].dns.primary_provider.service``."""
+    holder: VcoModel | None = field(default=None, compare=False, repr=False)
+    """The model that holds the field, for a message that names more than the identity (the hub of a backhaul entry)."""
 
 
 @dataclass(frozen=True)
@@ -163,30 +165,16 @@ def declared_ref_names(
     return frozenset(names)
 
 
-def _walk(
-    model: VcoModel, path: Path, segment: SegmentRef | None, *, root: bool
-) -> Iterator[_Site]:
-    if not can_hold_owner(type(model)):
-        return
-    for name, field_info in type(model).model_fields.items():
-        value: object = getattr(model, name)
-        here = path.child(name)
-        if get_owns_ref(field_info) is not None or get_ref_only(field_info):
-            yield _Site(model, name, field_info, here, segment)
-        if isinstance(value, VcoModel):
-            yield from _walk(value, here, segment, root=False)
-        elif root and name == "segments" and is_list(value):
-            spec = get_key_spec(field_info)
-            for position, item in enumerate(value):
-                if not isinstance(item, VcoModel):
-                    continue
-                key = item_key(item, spec.paths) if spec is not None else None
-                part = Key(key) if key is not None else position
-                yield from _walk(item, here.child(part), _segment_of(item), root=False)
-
-
 def _sites(data: VcoModel) -> Iterator[_Site]:
-    return _walk(data, Path(()), None, root=True)
+    for site in walk_fields(data, holds=can_hold_owner):
+        if get_owns_ref(site.field_info) is not None or get_ref_only(site.field_info):
+            yield _Site(
+                site.model,
+                site.name,
+                site.field_info,
+                site.path,
+                None if site.segment is None else _segment_of(site.segment),
+            )
 
 
 def data_segments(data: VcoModel) -> tuple[SegmentRef, ...]:
@@ -266,6 +254,7 @@ def ref_owners(data: VcoModel, level: ConfigContext | None) -> tuple[RefOwner, .
                 segment_id=segment.segment_id if segment is not None else None,
                 segment_name=segment.name if segment is not None else None,
                 path=site.path,
+                holder=site.model,
             )
         )
     return tuple(owners)

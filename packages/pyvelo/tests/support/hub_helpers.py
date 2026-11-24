@@ -10,7 +10,7 @@ from typing import Any, Final, Literal, NamedTuple
 import segment_helpers
 from pyvelo.client.models.configuration.profile_segments import segment_template
 from pyvelo.testing.module_store import ModuleStore
-from segment_helpers import CONFIG, DS_ID
+from segment_helpers import CONFIG, DS_ID, QOS_ID
 
 
 class Hub(NamedTuple):
@@ -141,6 +141,36 @@ def hub_row(
         "type": hub.type_,
         "object": "NETWORK_SERVICE",
         "data": data,
+        "segmentLogicalId": segment[2],
+    }
+
+
+def backhaul_row(
+    hub: Hub,
+    *,
+    service_id: int,
+    service_logical_id: str,
+    segment: segment_helpers.Segment,
+    configuration_id: int = CONFIG,
+    module_id: int = QOS_ID,
+) -> dict[str, Any]:
+    """A ``deviceSettings:backHaulEdge`` row of a QoS module, as the VCO stores it.
+
+    It points at the hub's service (*service_id*, *service_logical_id*) in
+    *segment*.
+    """
+    return {
+        "id": 7000 + service_id,
+        "configurationId": configuration_id,
+        "moduleId": module_id,
+        "enterpriseObjectId": service_id,
+        "ref": "deviceSettings:backHaulEdge",
+        "segmentObjectId": segment[3],
+        "logicalId": service_logical_id,
+        "name": hub.name,
+        "type": hub.type_,
+        "object": "NETWORK_SERVICE",
+        "data": {"logicalId": hub.logical_id},
         "segmentLogicalId": segment[2],
     }
 

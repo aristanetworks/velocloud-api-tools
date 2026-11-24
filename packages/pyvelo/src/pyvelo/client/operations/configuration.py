@@ -784,6 +784,7 @@ class ConfigurationMixin(Protocol):
         *,
         enterprise_id: int | None = None,
         profile: ConfigurationModuleBase | None = None,
+        profile_device_settings: ConfigurationModuleBase | None = None,
         resolvers: IdentityLookup | None = None,
         repair_defaults: bool = True,
     ) -> M:
@@ -799,7 +800,12 @@ class ConfigurationMixin(Protocol):
         finds the ``enterpriseObjectId`` of an identity it adds. A device
         settings or QoS module with segments is always written with its
         refs. ``RefsNotLoadedError`` is raised for a module read without its
-        refs when the edit needs them.
+        refs when the edit needs them. A QoS rule's new backhaul hub adds a row
+        that points at the hub's service for the profile and segment, which
+        only the profile's device settings module knows: give it as
+        *profile_device_settings* (the profile's own on a profile, the
+        profile's on an edge), and ``HubServiceNotFoundError`` says what is
+        missing when the hub has no service there.
 
         A profile's segments are the same in its device settings, QoS and
         firewall modules, so one module alone cannot change them: *data* that
@@ -866,6 +872,7 @@ class ConfigurationMixin(Protocol):
                     module,
                     data,
                     profile=profile,
+                    profile_device_settings=profile_device_settings,
                     resolvers=resolvers,
                     repair_defaults=repair_defaults,
                 ),

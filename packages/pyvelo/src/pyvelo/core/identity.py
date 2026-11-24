@@ -8,6 +8,7 @@ Identity dataclasses (SegmentIdentity, etc.) hold all resolved fields
 for an entity, using plain int/uuid.UUID types.
 """
 
+import json
 import re
 import uuid
 from dataclasses import dataclass
@@ -482,3 +483,50 @@ class HubService:
     segment_object_id: int | None
     kind: Literal["edge", "cluster"]
     name: str
+
+
+class HubServiceNotFoundError(ResolutionError):
+    """A QoS rule names a hub that has no service for its profile and segment.
+
+    The row that goes with the rule's hub points at the hub's service for the
+    profile and segment, and only a role call makes one (a save of the
+    profile's device settings that adds the hub to the segment's lists does).
+    *hub* is the hub's name, else its logical ID; *segment* the segment's name
+    and *path* the entry of the rule. It is a ``ResolutionError`` and pickles
+    and copies as one does, with its three attributes.
+    """
+
+    def __init__(
+        self, *, hub: str, segment: str, path: str, message: str | None = None
+    ) -> None:
+        self.hub = hub
+        self.segment = segment
+        self.path = path
+        super().__init__(
+            name=hub,
+            identity_type=HubService,
+            candidates=[],
+            message=message or self._service_message(),
+        )
+
+    def _service_message(self) -> str:
+        add = {
+            "segments": {
+                self.segment: {
+                    "vpn": {
+                        "edgeToEdgeHub": {
+                            "vpnHubs": {"+": {"_op": "add", "name": self.hub}}
+                        }
+                    }
+                }
+            }
+        }
+        return (
+            f"{self.path} names the hub {self.hub!r}, which has no service for "
+            + f"this profile in the segment {self.segment!r}, so the row that "
+            + "goes with the rule cannot be added: the VCO would store a row "
+            + "that points at nothing. A hub gets its service when a save of "
+            + "the profile's device settings adds it to the segment's "
+            + "Branch-to-Hub list, so save the hub first and the rule after. "
+            + f"To add the hub to the list, send the patch {json.dumps(add)}."
+        )

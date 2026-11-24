@@ -24,6 +24,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Final, cast
 
 from pyvelo.client.enums.enterprise import EnterpriseServiceType
+from pyvelo.client.hub_services import HubServiceTable, hub_name
 from pyvelo.client.models.configuration.ref_owners import (
     RefOwner,
     SegmentRef,
@@ -37,6 +38,8 @@ from pyvelo.client.models.configuration.ref_owners import (
 from pyvelo.core import ConfigContext, OwnsRef, RefOnly, VcoModel
 from pyvelo.core.base import IdentityLookup, is_dict, is_list
 from pyvelo.core.identity import (
+    HubService,
+    HubServiceNotFoundError,
     NetworkServiceIdentity,
     ResolutionError,
     ResolverNotLoadedError,
@@ -163,6 +166,11 @@ class _Context:
             owner.segment_name,
             None if segment_id is None else self.logical_ids.get(segment_id),
         )
+
+
+def _object_ids(raw_refs: object, given: Mapping[int, int] | None) -> dict[int, int]:
+    """``segmentId`` to the segment's object ID: the module's own segment rows, over those *given*."""
+    return {**(given or {}), **segment_object_ids(raw_refs)}
 
 
 def _is_per_segment(owner: RefOwner) -> bool:
@@ -294,55 +302,98 @@ def _wrong_service_type(
     )
 
 
+def _segment_object_id(
+    owner: RefOwner, context: _Context, resolvers: IdentityLookup | None
+) -> int:
+    """The ``segmentObjectId`` of the row for *owner*: from the segment rows the module has or was given, else the segment resolver."""
+    found = (
+        None if owner.segment_id is None else context.object_ids.get(owner.segment_id)
+    )
+    if found is not None:
+        return found
+    try:
+        return _object_id(
+            _identity(SegmentIdentity, "segment_id", owner.segment_id, resolvers)
+        )
+    except ResolverNotLoadedError:
+        raise
+    except ResolutionError as caught:
+        raise ResolutionError(
+            name=caught.name,
+            identity_type=SegmentIdentity,
+            candidates=[],
+            message=(
+                f"{owner.path} sits in the segment with segment ID "
+                + f"{owner.segment_id}, which the VCO does not have, so "
+                + "the row cannot be added. Add the segment to the profile "
+                + "first, or use one that exists."
+            ),
+        ) from caught
+
+
+def _no_service(
+    owner: RefOwner, hub_services: HubServiceTable | None
+) -> HubServiceNotFoundError:
+    """The error for an owner whose hub has no service in its segment of the profile."""
+    error = HubServiceNotFoundError(
+        hub=hub_name(owner.holder),
+        segment=owner.segment_name or str(owner.segment_id),
+        path=str(owner.path),
+    )
+    if hub_services is not None:
+        return error
+    return HubServiceNotFoundError(
+        hub=error.hub,
+        segment=error.segment,
+        path=error.path,
+        message=(
+            f"{error} No device settings of the profile were given to look "
+            + "in: pass the profile's device settings module as "
+            + "profile_device_settings= (a ConfigState does)."
+        ),
+    )
+
+
 def _new_row(
     module: ConfigurationModuleBase,
     owner: RefOwner,
     context: _Context,
     resolvers: IdentityLookup | None,
+    hub_services: HubServiceTable | None,
 ) -> tuple[dict[str, Any], int | None]:
     """The row to add for *owner* and its ``segmentObjectId`` (``None`` for a ref with no segment)."""
-    try:
-        identity = _identity(owner.identity_type, _by(owner), owner.value, resolvers)
-    except ResolverNotLoadedError:
-        raise
-    except ResolutionError as caught:
-        raise _unknown_identity(owner, caught) from caught
-    wanted = SERVICE_TYPES.get(owner.name)
-    if (
-        wanted is not None
-        and isinstance(identity, NetworkServiceIdentity)
-        and identity.type_ != wanted
-    ):
-        raise _wrong_service_type(owner, identity)
-    object_id = _object_id(identity)
     segment_object_id: int | None = None
-    if _is_per_segment(owner):
-        segment_object_id = (
-            None
-            if owner.segment_id is None
-            else context.object_ids.get(owner.segment_id)
+    if owner.identity_type is HubService:
+        if hub_services is None:
+            raise _no_service(owner, hub_services)
+        segment_object_id = _segment_object_id(owner, context, resolvers)
+        service = (
+            hub_services.find(segment_object_id, owner.value)
+            if isinstance(owner.value, uuid.UUID)
+            else None
         )
-        if segment_object_id is None:
-            try:
-                segment_object_id = _object_id(
-                    _identity(
-                        SegmentIdentity, "segment_id", owner.segment_id, resolvers
-                    )
-                )
-            except ResolverNotLoadedError:
-                raise
-            except ResolutionError as caught:
-                raise ResolutionError(
-                    name=caught.name,
-                    identity_type=SegmentIdentity,
-                    candidates=[],
-                    message=(
-                        f"{owner.path} sits in the segment with segment ID "
-                        + f"{owner.segment_id}, which the VCO does not have, so "
-                        + "the row cannot be added. Add the segment to the profile "
-                        + "first, or use one that exists."
-                    ),
-                ) from caught
+        if service is None:
+            raise _no_service(owner, hub_services)
+        object_id = service.object_id
+    else:
+        try:
+            identity = _identity(
+                owner.identity_type, _by(owner), owner.value, resolvers
+            )
+        except ResolverNotLoadedError:
+            raise
+        except ResolutionError as caught:
+            raise _unknown_identity(owner, caught) from caught
+        wanted = SERVICE_TYPES.get(owner.name)
+        if (
+            wanted is not None
+            and isinstance(identity, NetworkServiceIdentity)
+            and identity.type_ != wanted
+        ):
+            raise _wrong_service_type(owner, identity)
+        object_id = _object_id(identity)
+        if _is_per_segment(owner):
+            segment_object_id = _segment_object_id(owner, context, resolvers)
     row: dict[str, Any] = {"configurationId": module.configuration_id}
     if not module.is_new:
         row["moduleId"] = module.id_
@@ -469,6 +520,8 @@ def derive_refs(
     *,
     level: ConfigContext | None,
     resolvers: IdentityLookup | None,
+    hub_services: HubServiceTable | None = None,
+    segment_object_ids: Mapping[int, int] | None = None,
 ) -> DerivedRefs:
     """The rows the edit from *baseline* to *current* adds and removes, and the refs to send.
 
@@ -478,9 +531,16 @@ def derive_refs(
     written. ``level`` is the config level the owners are read at.
 
     Each added owner with no row as read gets a new row; the resolver gives the
-    ``enterpriseObjectId``. Raises ``ResolverNotLoadedError`` for a resolver
-    that is not loaded (``resolvers`` ``None`` included) and ``ResolutionError``
-    for an identity it does not know, naming the owner.
+    ``enterpriseObjectId``, and for an owner of a hub's service (a QoS rule's
+    backhaul hub) *hub_services* does. *segment_object_ids* (``segmentId`` to
+    the segment's object ID) is where a module with no ``deviceSettings:segment``
+    rows of its own, such as a QoS module, finds the ``segmentObjectId`` of a
+    per-segment row, before the segment resolver.
+
+    Raises ``ResolverNotLoadedError`` for a resolver that is not loaded
+    (``resolvers`` ``None`` included), ``ResolutionError`` for an identity it
+    does not know, naming the owner, and ``HubServiceNotFoundError`` for a hub
+    that has no service in its segment of *hub_services* (``None`` has none).
     """
     raw_refs: object = module.raw_refs
     read: dict[str, Any] = {}
@@ -494,7 +554,7 @@ def derive_refs(
         for segment in () if model is None else data_segments(model):
             if segment.segment_id is not None:
                 logical_ids[segment.segment_id] = segment.logical_id
-    context = _Context(segment_object_ids(raw_refs), logical_ids)
+    context = _Context(_object_ids(raw_refs, segment_object_ids), logical_ids)
 
     before_by_key = _by_key(before) if comparing else {}
     now_by_key = _by_key(now) if comparing else {}
@@ -537,7 +597,9 @@ def derive_refs(
             continue
         if any(_row_matches(owner, r, context) for r in rows_named(read, owner.name)):
             continue
-        row, segment_object_id = _new_row(module, owner, context, resolvers)
+        row, segment_object_id = _new_row(
+            module, owner, context, resolvers, hub_services
+        )
         new_rows.setdefault(owner.name, []).append(row)
         changes.append(
             RefChange(

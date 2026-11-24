@@ -90,6 +90,7 @@ from pyvelo.client.exceptions import (
     RefsNotLoadedError,
     SegmentSetError,
 )
+from pyvelo.client.hub_services import HubServiceTable, missing_service_error
 from pyvelo.client.models.configuration.common import (
     SEGMENT_LISTS,
     placeholder_segment,
@@ -105,7 +106,10 @@ from pyvelo.client.models.configuration.profile_segments import (
     repaired_entry,
     with_additions,
 )
-from pyvelo.client.models.configuration.ref_owners import fill_ref_only
+from pyvelo.client.models.configuration.ref_owners import (
+    fill_ref_only,
+    segment_object_ids,
+)
 from pyvelo.client.schemas.configuration import (
     ConfigurationModuleBase,
     ConfigurationModuleUpdate,
@@ -706,6 +710,7 @@ def plan_module(
     *,
     level: ConfigContext | None = None,
     profile: ConfigurationModuleBase | None = None,
+    profile_device_settings: ConfigurationModuleBase | None = None,
     resolvers: IdentityLookup | None = None,
     via_pipeline: bool = False,
     repair_defaults: bool = True,
@@ -853,6 +858,16 @@ def plan_module(
     derived_refs: dict[str, Any] | None = None
     ref_changes: tuple[RefChange, ...] = ()
     warnings: tuple[PlanWarning, ...] = ()
+    hub_services: HubServiceTable | None = None
+    segment_ids: dict[int, int] | None = None
+    if profile_device_settings is not None:
+        hub_refs: object = profile_device_settings.raw_refs
+        hub_services = HubServiceTable.from_refs(hub_refs)
+        segment_ids = segment_object_ids(hub_refs)
+    if name == "QOS" and isinstance(current, VcoModel):
+        unserved = missing_service_error(current, as_read=ref_baseline)
+        if unserved is not None:
+            raise unserved
     if module.refs_loaded:
         derived = derive_refs(
             module,
@@ -861,6 +876,8 @@ def plan_module(
             payload,
             level=level,
             resolvers=resolvers,
+            hub_services=hub_services,
+            segment_object_ids=segment_ids,
         )
         derived_refs, ref_changes, warnings = (
             derived.refs,
@@ -1070,8 +1087,9 @@ def rebase_onto[M: ConfigurationModuleBase](
     clash. Raises ``ConfigConflictError`` (not ``stated``, not ``sent``) for
     any of them, with *fresh* as its module, the planned changes *fresh* does
     not hold as the lost edits, and nothing sent. Raises ``ValueError`` for a
-    plan that adds or removes a ref row: the rebase has no owner to carry it,
-    and nothing a profile writes after its device settings declares one.
+    plan that adds or removes a ref row: the rebase has no owner to carry it
+    (a QoS rule's backhaul hub declares one, so a QoS plan that adds or
+    removes a hub is not rebased).
     """
     # Imported here: module_check imports this module.
     from pyvelo.client.module_check import MODULE_REWRITES, data_model

@@ -118,6 +118,7 @@ def profile_rows(
     firewall: list[dict[str, Any]],
     *,
     ds_refs: dict[str, Any] | MISSING = _ONE_ROW_PER_ENTRY,
+    qos_refs: dict[str, Any] | MISSING = MISSING,
     networks: list[dict[str, Any]] = [],  # noqa: B006 -- copied, never changed
 ) -> list[dict[str, Any]]:
     """The three module rows of a profile of configuration ``CONFIG``, with the given segment lists.
@@ -158,6 +159,7 @@ def profile_rows(
             {"segments": copy.deepcopy(qos)},
             module_id=QOS_ID,
             configuration_id=CONFIG,
+            refs=copy.deepcopy(qos_refs),
         ),
         make_module_json(
             "firewall",
