@@ -34,7 +34,7 @@ from pyvelo.client.exceptions import (
     RefsDroppedError,
     VcoError,
 )
-from pyvelo.client.hub_services import CLUSTER_HUB_REF, EDGE_HUB_REF
+from pyvelo.client.hub_services import BACKHAUL_REF, CLUSTER_HUB_REF, EDGE_HUB_REF
 from pyvelo.client.models.configuration.device_settings.root import DeviceSettingsData
 from pyvelo.client.schemas.enterprise import EdgeHubClusterService, EdgeHubService
 from pyvelo.core import ConfigContext, delete
@@ -56,8 +56,14 @@ from pyvelo_intent.config.hub_calls import (
 from pyvelo_intent.config.hub_steps import HubRef
 from pyvelo_intent.config.pipeline import ConfigPipeline
 from pyvelo_intent.config.state import ConfigState
-from refs_helpers import CONFIG, DS_ID, segment_row
+from refs_helpers import CONFIG, DS_ID, QOS_ID, segment_row
 from segment_helpers import GLOBAL, GUEST, ds_entry, firewall_entry, qos_entry
+from test_backhaul_refs_state import (  # pyright: ignore[reportImplicitRelativeImport]
+    SERVICE_A,
+    SERVICE_A_ID,
+    a_profile,
+    use_hub,
+)
 
 DS = "deviceSettings"
 SERVICES = "enterprise/getEnterpriseServices"
@@ -822,6 +828,54 @@ async def test_a_plan_without_steps_saves_as_before():
     assert methods(store).count(VERSION) == 1
     assert result.steps == ()
     assert [w.name for w in result.written] == [DS]
+
+
+def rows_of_ref(held: Any) -> list[dict[str, Any]]:
+    """The rows of one ref name in a module's refs, which hold one row bare and several in a list."""
+    return held if isinstance(held, list) else [held]
+
+
+async def test_a_rebased_qos_write_keeps_its_backhaul_row():
+    state = await a_profile()
+    state.profile.device_settings.segments[0].vpn.conditional_backhaul = True
+    use_hub(state.profile.qos, HUB_A, SERVICE_A)
+    pipeline, store = hub_pipeline(state)
+    done: list[bool] = []
+
+    def another_writer(new: dict[str, Any], old: dict[str, Any] | None) -> None:
+        """After the device settings write, another writer changes a key of QoS nobody here edits."""
+        del old
+        if new["name"] != DS or done:
+            return
+        done.append(True)
+
+        def rate_enabled(row: dict[str, Any]) -> None:
+            row["data"]["serviceRateLimit"] = {
+                "enabled": True,
+                "inputType": "percent",
+                "value": 1,
+            }
+
+        store.other_writer(QOS_ID, rate_enabled)
+
+    store.on_store.append(another_writer)
+
+    result = await pipeline.save(state)
+
+    assert [w.name for w in result.written] == [DS, "QOS"]
+    (qos,) = [w for w in result.written if w.name == "QOS"]
+    assert qos.server_changes
+    assert all(c.merged for c in qos.server_changes)
+    # The rebased write sent the row once, with the data the other writer left.
+    held = store.rows[QOS_ID]
+    assert held["data"]["serviceRateLimit"]["enabled"] is True
+    (row,) = rows_of_ref(held["refs"][BACKHAUL_REF])
+    assert row["enterpriseObjectId"] == SERVICE_A_ID
+    assert row["segmentObjectId"] == GLOBAL[3]
+    (update,) = [p for m, p in store.requests if m == UPDATE and p["id"] == QOS_ID]
+    sent = rows_of_ref(update["_update"]["refs"][BACKHAUL_REF])
+    assert [r["enterpriseObjectId"] for r in sent] == [SERVICE_A_ID]
+    assert state.plan().changed == ()
 
 
 # -- the pieces ---------------------------------------------------------------

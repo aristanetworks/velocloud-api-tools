@@ -39,7 +39,7 @@ from pyvelo.config.resolvers.segment import SegmentResolver
 from pyvelo.config.validation import ValidationError as ValidatorError
 from pyvelo.config.validation import ValidationResult, ValidatorRegistry
 from pyvelo.core import ConfigContext, PatchError
-from pyvelo.core.base import IdentityResolver, VcoModel
+from pyvelo.core.base import IdentityLookup, IdentityResolver, VcoModel
 from pyvelo.core.identity import (
     EdgeName,
     HubIdentity,
@@ -1224,6 +1224,14 @@ class ConfigPipeline:
                         rebase=device_settings_stored,
                         # The steps' read of the version holds for this write.
                         version_checked=run is not None and is_device_settings(mod),
+                        resolvers=state.resolvers,
+                        # The module the state holds now: after the device
+                        # settings write, the one stored.
+                        profile_device_settings=(
+                            _profile_device_settings(state)
+                            if device_settings_stored
+                            else None
+                        ),
                     )
                 except ModuleWriteError as error:
                     stored = error.module
@@ -1829,8 +1837,14 @@ async def _write_module(
     if_absent: bool,
     rebase: bool,
     version_checked: bool,
+    resolvers: IdentityLookup,
+    profile_device_settings: DeviceSettingsConfigurationModule | None,
 ) -> ModuleWrite[Any]:
-    """``client.write_module`` with ``version_checked`` passed only when it is true: a save without steps calls it as it always did."""
+    """``client.write_module`` with ``version_checked`` passed only when it is true: a save without steps calls it as it always did.
+
+    *resolvers* and *profile_device_settings* are for the rebase's derivation
+    of the module's refs, and make no difference to a write that is not rebased.
+    """
     if version_checked:
         return await client.write_module(
             module,
@@ -1839,7 +1853,15 @@ async def _write_module(
             if_absent=if_absent,
             rebase=rebase,
             version_checked=True,
+            resolvers=resolvers,
+            profile_device_settings=profile_device_settings,
         )
     return await client.write_module(
-        module, plan, enterprise_id=enterprise_id, if_absent=if_absent, rebase=rebase
+        module,
+        plan,
+        enterprise_id=enterprise_id,
+        if_absent=if_absent,
+        rebase=rebase,
+        resolvers=resolvers,
+        profile_device_settings=profile_device_settings,
     )

@@ -247,8 +247,12 @@ true. When the module holds every change already, nothing is sent and the write
 is that module with operation `none`. A path the plan changes that also changed
 there, and a list the plan edits an item of that had items added or removed,
 raise `ConfigConflictError` with `error.sent` False and the module as it is now.
-A plan that adds or removes a ref row cannot be rebased (`ValueError`). An
-insert is not rebased.
+A plan that adds or removes a ref row is rebased too: its rows are derived
+again from your edits against the refs just read, so a row you add that is
+there already is not added twice and a row you remove that is gone is no
+clash. Pass the `resolvers` and `profile_device_settings` the plan was made
+with for the rows your edits add (a QoS rule's backhaul hub finds its service
+in the profile's device settings). An insert is not rebased.
 
 With `if_absent=True` an insert first reads the configuration, and a module of
 that name found there is taken as the insert's answer and checked like one, with

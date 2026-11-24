@@ -887,7 +887,10 @@ write is sent with the new version, and what changed beside your edits is in
 (`error.sent` False, `error.stated` False, nothing sent) only where the change
 reached a path you edited too, or a list you edit an item of had items added or
 removed; `error.lost_edits` lists your edits, to redo on `error.module`. When
-the module already holds every one of your changes, nothing is sent for it. The
+the module already holds every one of your changes, nothing is sent for it. A
+ref row your edit adds or removes (a QoS rule's backhaul hub) is derived again
+against the refs read, so a row already there is not added twice, and the hub's
+service is found in the device settings as that save stored them. The
 modules written before the device settings, and every module of an edge save,
 are not rebased: a changed version raises as above. The cost is one version
 read per module written after the device settings, and one full read of the

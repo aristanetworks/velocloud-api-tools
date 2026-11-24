@@ -1260,7 +1260,12 @@ def _defaults_without_segment(
 
 
 def rebase_onto[M: ConfigurationModuleBase](
-    module: M, plan: ModulePlan, fresh: ConfigurationModuleBase
+    module: M,
+    plan: ModulePlan,
+    fresh: ConfigurationModuleBase,
+    *,
+    resolvers: IdentityLookup | None = None,
+    profile_device_settings: ConfigurationModuleBase | None = None,
 ) -> tuple[M, ModulePlan, tuple[ServerChange, ...]]:
     """*plan*, made for *module* as read, applied to *fresh*, the module as the VCO holds it now.
 
@@ -1292,11 +1297,6 @@ def rebase_onto[M: ConfigurationModuleBase](
     # Imported here: module_check imports this module.
     from pyvelo.client.module_check import MODULE_REWRITES, data_model
 
-    if plan.ref_changes:
-        raise ValueError(
-            f"the plan for {plan.name} adds or removes ref rows, and a rebase "
-            "cannot carry them onto another version of the module"
-        )
     if not isinstance(fresh, type(module)):
         raise TypeError(
             f"the module read is a {type(fresh).__name__}, not a {type(module).__name__}"
@@ -1371,6 +1371,8 @@ def rebase_onto[M: ConfigurationModuleBase](
         via_pipeline=True,
         carried_repairs=carried_repairs,
         repair_defaults=plan.repair_defaults,
+        resolvers=resolvers,
+        profile_device_settings=profile_device_settings,
     )
     planned = {change.path for change in plan.changes}
     if any(change.path not in planned for change in rebased_plan.changes):

@@ -15,6 +15,7 @@ import httpx
 from pydantic import BaseModel
 
 from pyvelo.core import ConfigContext, PaginatedVcoModel, VcoModel
+from pyvelo.core.base import IdentityLookup
 
 if TYPE_CHECKING:
     from pyvelo.client.module_check import ModuleWrite
@@ -92,6 +93,8 @@ class VcoClientBaseProtocol(Protocol):
         if_absent: bool = False,
         rebase: bool = False,
         version_checked: bool = False,
+        resolvers: IdentityLookup | None = None,
+        profile_device_settings: ConfigurationModuleBase | None = None,
     ) -> ModuleWrite[M]: ...
 
     async def check_module_version[M: ConfigurationModuleBase](

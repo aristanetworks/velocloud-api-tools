@@ -599,6 +599,8 @@ class ConfigurationMixin(Protocol):
         if_absent: bool = False,
         rebase: bool = False,
         version_checked: bool = False,
+        resolvers: IdentityLookup | None = None,
+        profile_device_settings: ConfigurationModuleBase | None = None,
     ) -> ModuleWrite[M]:
         """Send *plan*, made by ``plan_module`` for *module*, and check what the VCO stored.
 
@@ -652,8 +654,14 @@ class ConfigurationMixin(Protocol):
         ``sent`` False when a path the plan changes was also changed there,
         or when a list the plan edits had items added or removed;
         ``error.module`` is the module as it is now and ``error.version`` the
-        version read. A plan that adds or removes a ref row cannot be rebased
-        (``ValueError``). An insert is not rebased.
+        version read. A plan that adds or removes a ref row is rebased too: its
+        rows are derived again from the caller's edits against the refs read
+        (a row already there is not added twice, a row already gone is no
+        clash). *resolvers* and *profile_device_settings* are what the plan
+        was made with (``plan_module``), passed to that derivation only: give
+        the ones the plan needs for the rows its edits add (a QoS rule's
+        backhaul hub needs its service in the profile's device settings). An
+        insert is not rebased.
 
         With *if_absent*, an insert first reads the configuration: a module of
         the plan's name found there (of several, the one with the highest ID)
@@ -766,7 +774,13 @@ class ConfigurationMixin(Protocol):
                     await _read_held(self, module, plan, enterprise_id),
                     answer="stale",
                 )
-                rebased, plan, merged = rebase_onto(module, plan, fresh)
+                rebased, plan, merged = rebase_onto(
+                    module,
+                    plan,
+                    fresh,
+                    resolvers=resolvers,
+                    profile_device_settings=profile_device_settings,
+                )
                 if plan.operation == "none":
                     return ModuleWrite(
                         plan.name,
