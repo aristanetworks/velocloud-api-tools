@@ -98,6 +98,22 @@ def test_localize_returns_the_stored_object_for_editing() -> None:
     assert _dump(p) == before
 
 
+def test_localize_of_what_a_bound_profile_does_not_store_marks_every_field_set() -> (
+    None
+):
+    # The profile is there and stores nothing at the key: what is copied in is
+    # its display default, whose fields were never set; once the edge stores it,
+    # each of them is the edge's, as for a model read from the edge's own data.
+    e, p = _bound()
+    copied = e.settings.localize()
+    assert copied.model_fields_set == {"a", "b"}
+    assert _dump(e)["settings"] == {"a": 1, "b": False}
+    assert "settings" not in p.model_fields_set
+    # Where the profile stores the key, the copy has the fields it was read with.
+    e, _ = _bound(profile={"settings": {"a": 5}})
+    assert e.settings.localize().model_fields_set == {"a"}
+
+
 def test_localize_keeps_a_local_value() -> None:
     e, _ = _bound({"settings": {"a": 3}}, {"settings": {"a": 5}})
     kept = e.settings.stored

@@ -242,7 +242,7 @@ class Owned[T]:
 
     def _parent_value(self) -> object:
         """A deep copy of what the profile gives this field, or the display default; ``UnboundError`` if unbound."""
-        from .layers import display_default
+        from .layers import display_default, profile_stores
 
         owner = self._owner
         binding = None if owner is None else owner._binding
@@ -250,10 +250,17 @@ class Owned[T]:
             raise _unbound(owner, self._field)
         info = type(owner).model_fields[self._field]
         parent = binding.parent
-        if parent is None:
-            return clear_server_owned(as_stored(display_default(info)))
-        value: object = getattr(parent, self._field)
-        return clear_server_owned(copy.deepcopy(value))
+        if parent is None or not profile_stores(parent, self._field):
+            # What the profile does not store is its display default, built
+            # from the model's defaults with most fields unset; once the edge
+            # stores it, each of them is the edge's.
+            value: object = (
+                display_default(info)
+                if parent is None
+                else getattr(parent, self._field)
+            )
+            return clear_server_owned(as_stored(copy.deepcopy(value)))
+        return clear_server_owned(copy.deepcopy(getattr(parent, self._field)))
 
     def _localize(self) -> object:
         if self.is_local:
