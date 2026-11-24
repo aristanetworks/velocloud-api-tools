@@ -149,6 +149,35 @@ def test_set_local_applies_the_value_validators_of_the_field() -> None:
     assert owner.flag.stored is True
 
 
+@pytest.mark.parametrize(
+    ("field", "bad", "cause"),
+    [("pair_on", "x", True), ("level", "x", True), ("level", True, False)],
+)
+def test_set_local_and_merge_patch_refuse_a_value_alike(
+    field: str, bad: object, cause: bool
+) -> None:
+    edge = _local_pair()
+    profile = Mod[Profile].model_validate(mod_json())
+    with pytest.raises(PatchError) as from_set_local:
+        getattr(edge, field).set_local(bad)
+    with pytest.raises(PatchError) as from_patch:
+        profile.merge_patch({field: bad})
+    mine, theirs = from_set_local.value, from_patch.value
+    assert mine.kind == theirs.kind == "invalid_value"
+    assert mine.path == theirs.path
+    assert mine.path.parts == (field,)  # the python name, not the wire key
+    assert str(mine) == str(theirs)
+    if cause:
+        assert isinstance(mine.__cause__, ValidationError)
+        assert isinstance(theirs.__cause__, ValidationError)
+        assert mine.__cause__.errors(include_input=False) == (
+            theirs.__cause__.errors(include_input=False)
+        )
+        assert "'x'" not in str(mine.__cause__)  # the cause quotes no input
+    else:
+        assert mine.__cause__ is theirs.__cause__ is None
+
+
 def test_set_local_refuses_a_null() -> None:
     e = _edge(level=3)
     with pytest.raises(PatchError, match=r'null.*\{"level": null\}'):

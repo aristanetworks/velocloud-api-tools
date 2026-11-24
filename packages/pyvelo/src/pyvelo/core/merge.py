@@ -458,18 +458,33 @@ def _validate_field(
 ) -> object:
     """*value* validated for field *name* of *model_cls*, with the patch context.
 
-    The patch context (``{"patch": True}``) stops ``DefaultingScalar`` and
-    ``DefaultingModel`` from turning a bad value into the default. A value that
-    fails raises ``PatchError`` at *path*, from the ``ValidationError``. A
-    boolean given for a value that is not one raises as well
-    (``_refuse_bool_as_number``).
+    See ``validate_patched_value``.
     """
-    validated = _validated(
-        _field_adapter(model_cls, name).validate_python,
+    return validate_patched_value(
+        _field_adapter(model_cls, name),
         value,
         field_models(model_cls.model_fields[name]),
         path,
     )
+
+
+def validate_patched_value(
+    adapter: TypeAdapter[object],
+    value: object,
+    models: Sequence[type[VcoModel]],
+    path: Path,
+) -> object:
+    """*value* validated by *adapter* the way a patched value is: the one place that does it.
+
+    The patch context (``{"patch": True}``) stops ``DefaultingScalar`` and
+    ``DefaultingModel`` from turning a bad value into the default. A value that
+    fails raises ``PatchError`` at *path* (a path in python names), from the
+    ``ValidationError``, which is its cause without the input; the places in its
+    message are in python names of the classes in *models*, the ones the value
+    is made of. A boolean given for a value that is not one raises as well
+    (``_refuse_bool_as_number``). ``Owned.set_local`` validates through this.
+    """
+    validated = _validated(adapter.validate_python, value, models, path)
     _refuse_bool_as_number(value, validated, path)
     return validated
 

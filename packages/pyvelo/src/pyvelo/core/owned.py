@@ -33,7 +33,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Self, cast, overload
 
-from pydantic import MISSING, ValidationError
+from pydantic import MISSING
 
 if TYPE_CHECKING:
     from .base import VcoModel
@@ -293,52 +293,26 @@ def _null_is_inherit(owner: Layered[Edge], field: str) -> PatchError:
         f"null is not a local value of {key}: a null at this key means the edge "
         + f"inherits it, so nothing would be overridden; call .{field}.inherit() "
         + f'or send {{"{key}": null}} to inherit, or give a value',
-        Path((key,)),
+        Path((field,)),
         "null",
     )
 
 
 def _validate_inner(owner: Layered[Edge], field: str, value: object) -> object:
-    """*value* validated as the inner type of *field* of *owner*, with the patch context; ``PatchError`` if refused.
+    """*value* validated as the inner type of *field* of *owner*, as ``merge_patch`` validates a patched value.
 
-    The context (``{"patch": True}``) stops a defaulting validator from
-    turning a bad value into the default, as it does in ``merge_patch``, and a
-    boolean is refused where the field holds no boolean.
+    ``validate_patched_value`` does it, so a refusal is the one a patch of the
+    field gives: the same ``PatchError``, at the python name of the field.
     """
+    from .base import field_models
     from .layers import inner_adapter
-    from .patch import PatchError
+    from .merge import validate_patched_value
     from .rebase import Path
 
-    key = _key(owner, field)
     info = type(owner).model_fields[field]
-    try:
-        checked = inner_adapter(info).validate_python(value, context={"patch": True})
-    except ValidationError as exc:
-        lines = "; ".join(
-            (
-                f"{'.'.join(str(part) for part in error['loc'])}: "
-                if error["loc"]
-                else ""
-            )
-            + error["msg"]
-            for error in exc.errors(include_url=False, include_input=False)
-        )
-        refusal = PatchError(
-            f"invalid value: {lines}; {key} is unchanged", Path((key,)), "invalid_value"
-        )
-    else:
-        if isinstance(value, bool) and not isinstance(checked, bool):
-            word = "true" if value else "false"
-            raise PatchError(
-                f"{word} is a boolean, which {key} does not take: it would be "
-                + f"read as {checked!r}; send a number",
-                Path((key,)),
-                "invalid_value",
-            )
-        return checked
-    # Raised outside the ``except`` block, so the error does not chain the
-    # ValidationError (it may quote the input).
-    raise refusal
+    return validate_patched_value(
+        inner_adapter(info), value, field_models(info), Path((field,))
+    )
 
 
 def _unbound(owner: Layered[Edge] | None, field: str) -> Exception:
