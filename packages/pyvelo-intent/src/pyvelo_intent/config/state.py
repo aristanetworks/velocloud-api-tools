@@ -74,6 +74,7 @@ from pyvelo.core.response_check import PlannedChange, ServerChange
 from pyvelo_intent.config.hub_steps import (
     HubStep,
     changed_segment_ids,
+    check_hub_lists,
     derive_steps,
     role_disagreements,
 )
@@ -841,6 +842,14 @@ class ConfigState:
         hub whose roles as read do not match its lists. An added hub is looked
         up in the hub resolver; a removal needs none.
 
+        Before the steps are derived, a profile's edit of the hub lists or the
+        ``vpn`` flags is checked against the UI's rules for them
+        (:func:`~pyvelo_intent.config.hub_steps.check_hub_lists`): ``HubListError``
+        for a hub list that would break one, with no request sent, and a
+        ``hub_list_as_read`` warning for one that was broken as read. The
+        checks of the hub lists come after the segment-set rule and before
+        the reference check.
+
         Raises ``ResolverNotLoadedError`` when a provider was set and the
         state's network services are not loaded (:meth:`plan_module`), or a
         hub was added and the state's hubs are not. A save, a dry run and
@@ -862,27 +871,30 @@ class ConfigState:
         warnings = (
             _check_segment_set(ordered, plans) if self.target_type == "profile" else ()
         )
+        steps, hub_warnings = self._hub_steps(ordered)
         check_warnings = self._check_references(ordered)
-        steps, disagreements = self._hub_steps(ordered)
         return ConfigPlan(
             modules=plans,
             target=target,
             segment_warnings=warnings,
-            check_warnings=(*check_warnings, *disagreements),
+            check_warnings=(*hub_warnings, *check_warnings),
             steps=steps,
         )
 
     def _hub_steps(
         self, modules: Sequence[AnyConfigurationModule]
     ) -> tuple[tuple[HubStep, ...], tuple[ValidationWarning, ...]]:
-        """The role steps of the hub list changes of a profile's device settings, and the warnings of its roles as read.
+        """The role steps of the hub list changes of a profile's device settings, and the warnings of its lists.
 
-        An edge has neither: its profile's lists are not its to change. A
-        segment's object ID is its ``deviceSettings:segment`` row's, and for a
-        segment the profile has no row for (one just assigned), the segment
-        resolver's. An added hub is looked up in the hub resolver, which
-        raises ``ResolverNotLoadedError`` when it is not loaded; a removal
-        needs none.
+        The lists are checked first
+        (:func:`~pyvelo_intent.config.hub_steps.check_hub_lists`, which raises
+        ``HubListError``), and the warnings are theirs, then those of the
+        roles as read. An edge has neither: its profile's lists are not its
+        to change. A segment's object ID is its ``deviceSettings:segment``
+        row's, and for a segment the profile has no row for (one just
+        assigned), the segment resolver's. An added hub is looked up in the
+        hub resolver, which raises ``ResolverNotLoadedError`` when it is not
+        loaded; a removal needs none.
         """
         if self.target_type != "profile":
             return (), ()
@@ -908,11 +920,13 @@ class ConfigState:
                 if object_id is not None:
                     object_ids[segment_id] = object_id
         resolver = self.resolvers.resolver_for(HubIdentity)
+        hubs = resolver if isinstance(resolver, HubResolver) else None
+        list_warnings = check_hub_lists(as_read, edited, hubs=hubs)
         steps = derive_steps(
             as_read,
             edited,
             segment_object_ids=object_ids,
-            hubs=resolver if isinstance(resolver, HubResolver) else None,
+            hubs=hubs,
         )
         configuration_id = self.target_config.id_
         disagreements = (
@@ -920,7 +934,7 @@ class ConfigState:
             if isinstance(configuration_id, int)
             else ()
         )
-        return steps, disagreements
+        return steps, (*list_warnings, *disagreements)
 
     def _segment_object_id(self, segment_id: int) -> int | None:
         """The object ID of segment *segment_id* in the segment resolver, or None when it does not know it.

@@ -577,6 +577,20 @@ firewall: update
   `HubListError` (from `pyvelo_intent`) for a payload that does, naming the
   segment, the lists and the hubs, and give the patch that makes the change
   through the pipeline.
+
+  `plan()` also checks a segment whose `vpn` an edit changes against the UI's
+  rules for its hub lists, and a save that breaks one raises `HubListError`
+  before it sends any request. The rules: the Branch-to-Hub list is non-empty
+  if and only if `edgeToEdgeHub.enabled` (so turning that or `vpn.enabled` off
+  needs the hubs removed first); no hub is listed twice in one list; with
+  `edgeToEdge` on and `useCloudGateway` off the bridge list is not empty; a hub
+  in the backhaul or bridge list is in the Branch-to-Hub list too (so a hub
+  that leaves that list leaves the others); a segment with hubs has
+  `vpn.enabled` on; and an added hub is an Edge or cluster of the enterprise,
+  no cluster member, whose `type` and name (compared without regard to case)
+  are those its logical ID names. A rule broken the same way as read is a
+  `hub_list_as_read` warning in `ConfigPlan.check_warnings`, and the save
+  leaves it.
 - A segment added to a profile module has an `added segments: Guest` line, and
   `get_field_changes()` lists it as one change at `segments["Guest"]`, from
   `MISSING` to the entry as written. A QoS segment that lacks template

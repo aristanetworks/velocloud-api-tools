@@ -265,7 +265,10 @@ async def test_removing_a_hub_a_rule_uses_raises_and_names_the_rule():
                 "Guest": {
                     "vpn": {
                         "backHaulEdges": {HUB_A.name: delete()},
-                        "edgeToEdgeHub": {"vpnHubs": {HUB_A.name: delete()}},
+                        "edgeToEdgeHub": {
+                            "enabled": False,
+                            "vpnHubs": {HUB_A.name: delete()},
+                        },
                     }
                 }
             }

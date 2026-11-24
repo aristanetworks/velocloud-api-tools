@@ -6,14 +6,17 @@ disable calls). A write of the device settings module cannot do that, so a save
 that changes the lists also sends one step per hub and list, after the module
 write, in the UI's order. ``derive_steps`` plans them from the module as read
 and as edited, and ``role_disagreements`` warns of a hub whose roles as read
-do not match the lists it is in.
+do not match the lists it is in. ``check_hub_lists`` refuses, before any call,
+a list edit that breaks the UI's rules for the lists.
 """
 
+import json
 import uuid
-from collections.abc import Iterator, Mapping
+from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Final, Literal
 
+from pyvelo.client.exceptions import HubListError
 from pyvelo.client.hub_services import (
     CLUSTER_HUB_REF,
     EDGE_HUB_REF,
@@ -22,6 +25,7 @@ from pyvelo.client.hub_services import (
 from pyvelo.client.models.configuration.device_settings.root import DeviceSettingsData
 from pyvelo.client.models.configuration.device_settings.segment import (
     DeviceSegment,
+    SegmentVpn,
     VpnHub,
 )
 from pyvelo.client.models.configuration.ref_owners import (
@@ -400,4 +404,358 @@ def role_disagreements(
                         code="hub_roles_disagree",
                     )
                 )
+    return tuple(warnings)
+
+
+# --- the UI's rules for the lists ------------------------------------------------
+
+_LIST_PATHS: Final[dict[Role, tuple[str, ...]]] = {
+    "hub": ("vpn", "edgeToEdgeHub", "vpnHubs"),
+    "bridge": ("vpn", "edgeToEdgeDetail", "vpnHubs"),
+    "backhaul": ("vpn", "backHaulEdges"),
+}
+"""The wire path of each role's list, from a segment."""
+_LIST_LABELS: Final[dict[Role, str]] = {
+    "hub": "Branch-to-Hub list",
+    "bridge": "bridge list",
+    "backhaul": "backhaul list",
+}
+_APPLY: Final = '(`pipeline.apply(state, module="deviceSettings", patch=...)`)'
+
+
+def _patch(segment: str, path: tuple[str, ...], change: object) -> str:
+    """The patch text of a ``deviceSettings`` edit that sets *change* at *path* of *segment*."""
+    node: object = change
+    for key in reversed(path):
+        node = {key: node}
+    return json.dumps({"segments": {segment: node}})
+
+
+def _list_text(role: Role) -> str:
+    """How a message names the list of *role*: its label and its wire path."""
+    return f"the {_LIST_LABELS[role]} (`{'.'.join(_LIST_PATHS[role])}`)"
+
+
+def _removal(segment: str, role: Role, hubs: Sequence[VpnHub]) -> str:
+    """The patch that removes *hubs* from the list of *role* of *segment*, with the helper beside it."""
+    change = {h.name: {"_op": "delete"} for h in hubs}
+    return (
+        f"{_patch(segment, _LIST_PATHS[role], change)} (`delete()` in Python) {_APPLY}"
+    )
+
+
+def _addition(segment: str, role: Role, hub_name: str) -> str:
+    """The patch that adds the hub named *hub_name* to the list of *role* of *segment*."""
+    change = {"+": {"_op": "add", "name": hub_name}}
+    return f"{_patch(segment, _LIST_PATHS[role], change)} {_APPLY}"
+
+
+def _flag(segment: str, path: tuple[str, ...], value: bool) -> str:
+    """The patch that sets the ``vpn`` flag at *path* of *segment*."""
+    return f"{_patch(segment, path, value)} {_APPLY}"
+
+
+def _names(hubs: Sequence[VpnHub]) -> str:
+    return ", ".join(repr(h.name) for h in hubs)
+
+
+@dataclass(frozen=True)
+class _Problem:
+    """One rule a segment's lists break.
+
+    *key* says how: the same key as read is the same rule broken the same way.
+    """
+
+    key: tuple[object, ...]
+    message: str
+    lists: tuple[str, ...]
+    hubs: tuple[str, ...]
+
+
+def _problem(
+    key: tuple[object, ...],
+    message: str,
+    roles: Sequence[Role],
+    hubs: Sequence[VpnHub] = (),
+) -> _Problem:
+    return _Problem(
+        key,
+        message,
+        tuple(".".join(_LIST_PATHS[r]) for r in roles),
+        tuple(dict.fromkeys(h.name for h in hubs)),
+    )
+
+
+def _broken_rules(
+    segment: DeviceSegment,
+    lists: Mapping[Role, list[VpnHub]],
+    read: SegmentVpn | None,
+) -> list[_Problem]:
+    """The rules about the lists and flags that *segment* breaks, as they stand.
+
+    *read* is the segment's ``vpn`` as read, or None: a flag turned off since
+    gets the message that says to remove the hubs first.
+    """
+    name = segment.segment.name
+    vpn = segment.vpn
+    hub_list = lists.get("hub", [])
+    bridges = lists.get("bridge", [])
+    problems: list[_Problem] = []
+    prefix = f"deviceSettings: segment {name!r}: "
+
+    # Rule 2: no logical ID twice in one list.
+    for role in _ROLES:
+        seen: set[_Key] = set()
+        for hub in lists.get(role, []):
+            if _key(hub) in seen:
+                problems.append(
+                    _problem(
+                        (2, role, _key(hub)),
+                        f"{prefix}{_list_text(role)} holds {hub.name!r} twice. The "
+                        "VCO keeps the list as given, so the hub would get its "
+                        "role set once for two entries and cleared once for two. "
+                        f"List each hub once: remove it with {_removal(name, role, [hub])}"
+                        f", then add it back once with {_addition(name, role, hub.name)}.",
+                        [role],
+                        [hub],
+                    )
+                )
+            seen.add(_key(hub))
+
+    # Rule 1: the Branch-to-Hub list is non-empty if and only if it is enabled.
+    enabled = vpn.hub_edges.enabled
+    flag_path = ("vpn", "edgeToEdgeHub", "enabled")
+    if hub_list and not enabled:
+        if read is not None and read.hub_edges.enabled:
+            how = (
+                f"The edit turns `{'.'.join(flag_path)}` off while the "
+                f"{_LIST_LABELS['hub']} still holds {_names(hub_list)}. The UI "
+                "turns it off only with an empty list, and the VCO would "
+                "keep hubs the segment no longer uses. Remove the hubs first: "
+                f"{_removal(name, 'hub', hub_list)}, then turn it off."
+            )
+        else:
+            how = (
+                f"{_list_text('hub')} holds {_names(hub_list)} while "
+                f"`{'.'.join(flag_path)}` is off, so the hubs would be listed "
+                "and unused. Turn it on with "
+                f"{_flag(name, flag_path, True)} or remove the hubs with "
+                f"{_removal(name, 'hub', hub_list)}."
+            )
+        problems.append(_problem((1, "filled"), prefix + how, ["hub"], hub_list))
+    if enabled and not hub_list:
+        problems.append(
+            _problem(
+                (1, "empty"),
+                f"{prefix}`{'.'.join(flag_path)}` is on but {_list_text('hub')} "
+                "is empty. The UI turns it on only with a hub, and the segment's "
+                "Edges would be told to use no hub. Add a hub with "
+                f"{_addition(name, 'hub', '<hub name>')}"
+                f" or turn it off with {_flag(name, flag_path, False)}.",
+                ["hub"],
+            )
+        )
+
+    # Rule 3: Edge to Edge through hubs needs a hub to go through.
+    through_hubs = vpn.edge_to_edge and not vpn.edge_to_edge_detail.use_cloud_gateway
+    if through_hubs and not bridges:
+        problems.append(
+            _problem(
+                (3,),
+                f"{prefix}`vpn.edgeToEdge` is on and "
+                "`vpn.edgeToEdgeDetail.useCloudGateway` is off, so its Edges "
+                f"reach one another through the hubs of {_list_text('bridge')}"
+                ", which is empty: they could not reach one another. Add a "
+                f"hub with {_addition(name, 'bridge', '<hub name>')}"
+                " or turn `useCloudGateway` on with "
+                f"{_flag(name, ('vpn', 'edgeToEdgeDetail', 'useCloudGateway'), True)}.",
+                ["bridge"],
+            )
+        )
+
+    # Rule 4: a backhaul or bridge hub is a hub of the segment.
+    hub_keys = {_key(h) for h in hub_list}
+    for role in ("bridge", "backhaul"):
+        for hub in lists.get(role, []):
+            if _key(hub) not in hub_keys:
+                problems.append(
+                    _problem(
+                        (4, role, _key(hub)),
+                        f"{prefix}{_list_text(role)} holds {hub.name!r}, which "
+                        f"{_list_text('hub')} does not. A hub works for backhaul "
+                        "or bridging only as a hub of the segment, and the UI "
+                        "offers only those, so no Edge could use it. Add it to "
+                        f"the {_LIST_LABELS['hub']} with "
+                        f"{_addition(name, 'hub', hub.name)} or remove it from the "
+                        f"{_LIST_LABELS[role]} too with {_removal(name, role, [hub])}.",
+                        ["hub", role],
+                        [hub],
+                    )
+                )
+
+    # Rule 5: a segment that uses hubs has its VPN on.
+    filled: list[Role] = [role for role in _ROLES if lists.get(role)]
+    if filled and not vpn.enabled:
+        listed = [h for role in filled for h in lists[role]]
+        if read is not None and read.enabled:
+            how = (
+                "The edit turns `vpn.enabled` off while its lists still hold "
+                f"{_names(listed)}. Turning the VPN off while hubs are listed "
+                "leaves hubs whose roles are set for a segment that does not "
+                "use them. Remove the hubs first (from "
+                + ", ".join(_list_text(r) for r in filled)
+                + f"), for example {_removal(name, filled[0], lists[filled[0]])}, "
+                "then turn it off."
+            )
+        else:
+            how = (
+                f"{' and '.join(_list_text(r) for r in filled)} hold "
+                f"{_names(listed)} while `vpn.enabled` is off, so the hubs would "
+                "be listed for a segment that does not use them. Turn it on with "
+                f"{_flag(name, ('vpn', 'enabled'), True)} or remove the hubs, for "
+                f"example {_removal(name, filled[0], lists[filled[0]])}."
+            )
+        problems.append(_problem((5,), prefix + how, filled, listed))
+    return problems
+
+
+def _hub_problems(
+    segment: DeviceSegment,
+    role: Role,
+    added: Sequence[VpnHub],
+    hubs: HubResolver,
+) -> list[_Problem]:
+    """The rule-6 problems of the hubs *added* to the list of *role* of *segment*, against the loaded *hubs*."""
+    name = segment.segment.name
+    prefix = f"deviceSettings: segment {name!r}: "
+    problems: list[_Problem] = []
+    identities = {i.logical_id: i for i in hubs.identities()}
+    for hub in added:
+        key: tuple[object, ...] = (6, role, _key(hub))
+        identity = identities.get(hub.logical_id)
+        entry = f"{_list_text(role)} entry {hub.name!r} ({hub.type_}, {hub.logical_id})"
+        if hubs.is_cluster_member(hub.logical_id):
+            cluster = hubs.member_name(hub.logical_id) or hub.name
+            message = (
+                f"{prefix}{entry} is a member of a hub cluster, and a member is "
+                "no hub of its own: the VCO makes the cluster the hub, so the "
+                "role call for it would fail or set a role nothing uses. Give "
+                f"the cluster instead ({cluster!r} is a member), with "
+                f"{_addition(name, role, '<cluster name>')}."
+            )
+        elif identity is None:
+            message = (
+                f"{prefix}{entry} is no Edge or hub cluster of the enterprise, "
+                "so no role can be set on a service it names. Give the name of "
+                f"an Edge or a hub cluster: {_addition(name, role, '<Edge or cluster name>')}."
+            )
+        elif identity.type_ != hub.type_:
+            kind = "an Edge" if identity.kind == "edge" else "a hub cluster"
+            message = (
+                f"{prefix}{entry} has the type {hub.type_!r}, but that logical "
+                f"ID is {kind}'s ({identity.name!r}), so the role call for it "
+                "would go to the wrong endpoint. Add the hub by its name, which "
+                f"fills the type: {_addition(name, role, identity.name)}."
+            )
+        elif identity.name.lower() != hub.name.lower():
+            message = (
+                f"{prefix}{entry} is named {hub.name!r}, but that logical ID is "
+                f"that of {identity.name!r}, so the entry would show one hub and "
+                "set the roles of another. Add the hub by its name, which fills "
+                f"the logical ID: {_addition(name, role, identity.name)}."
+            )
+        else:
+            continue
+        problems.append(_problem(key, message, [role], [hub]))
+    return problems
+
+
+def check_hub_lists(
+    as_read: DeviceSettingsData,
+    now: DeviceSettingsData,
+    *,
+    hubs: HubResolver | None,
+) -> tuple[ValidationWarning, ...]:
+    """Refuse a hub list edit that breaks the UI's rules, before any call; warn of a rule broken as read.
+
+    The segments checked are those whose ``vpn`` differs in value from the module as
+    read (the lists and the flags among it), matched by ``segment_id``, and
+    those the edit adds. That the segment exists in the profile holds by
+    construction: the steps come from the profile's own segments. The rules:
+
+    1. the Branch-to-Hub list is non-empty if and only if
+       ``vpn.hub_edges.enabled``; turning that or ``vpn.enabled`` off while it
+       lists hubs says to remove the hubs first;
+    2. no logical ID twice in one list;
+    3. with ``edge_to_edge`` on and ``use_cloud_gateway`` off, the bridge list
+       is non-empty;
+    4. every hub of the backhaul or bridge list is in the Branch-to-Hub list;
+    5. a segment whose lists are non-empty has ``vpn.enabled`` true;
+    6. an added Edge is no cluster member and every added hub is an identity
+       of *hubs*, whose type and name are those its logical ID names (name
+       compared without regard to case).
+
+    A rule broken the same way as read is a ``hub_list_as_read`` warning: the
+    save leaves it. Any other raises ``HubListError``, which names the
+    segments, the lists and the hubs and says what to do instead; all the
+    problems found are in one error. Rule 6 needs *hubs* only when hubs were
+    added: ``ResolverNotLoadedError(HubIdentity)`` when it is None or not
+    loaded.
+    """
+    lists_read, lists_now = _lists(as_read), _lists(now)
+    read_by_id = {_segment_id(s): s for s in as_read.segments}
+    changed = [
+        segment
+        for segment in now.segments
+        if (was := read_by_id.get(_segment_id(segment))) is None
+        or was.vpn.model_dump() != segment.vpn.model_dump()
+    ]
+    added_hubs: dict[tuple[int, Role], list[VpnHub]] = {}
+    for difference in _differences(as_read, now):
+        if difference.added:
+            added_hubs.setdefault(
+                (_segment_id(difference.segment), difference.role), []
+            ).extend(difference.added)
+    if added_hubs and (hubs is None or not hubs.loaded):
+        raise ResolverNotLoadedError(HubIdentity)
+
+    warnings: list[ValidationWarning] = []
+    errors: list[_Problem] = []
+    names: list[str] = []
+    for segment in changed:
+        segment_id = _segment_id(segment)
+        name = segment.segment.name
+        was = read_by_id.get(segment_id)
+        broken_before = (
+            {p.key for p in _broken_rules(was, lists_read.get(segment_id, {}), None)}
+            if was is not None
+            else set()
+        )
+        found = _broken_rules(
+            segment, lists_now.get(segment_id, {}), None if was is None else was.vpn
+        )
+        for role in _ROLES:
+            if hubs is not None and (added := added_hubs.get((segment_id, role))):
+                found.extend(_hub_problems(segment, role, added, hubs))
+        for problem in found:
+            if problem.key in broken_before:
+                warnings.append(
+                    ValidationWarning(
+                        path=f'deviceSettings: segments["{name}"].vpn',
+                        message=problem.message
+                        + " (It was so as read, and the save leaves it.)",
+                        code="hub_list_as_read",
+                    )
+                )
+            else:
+                errors.append(problem)
+                names.append(name)
+    if errors:
+        segments = list(dict.fromkeys(names))
+        raise HubListError(
+            "\n".join(p.message for p in errors),
+            segment=segments[0] if len(segments) == 1 else None,
+            lists=tuple(dict.fromkeys(path for p in errors for path in p.lists)),
+            hubs=tuple(dict.fromkeys(h for p in errors for h in p.hubs)),
+        )
     return tuple(warnings)
