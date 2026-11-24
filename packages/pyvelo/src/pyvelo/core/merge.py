@@ -2817,14 +2817,22 @@ def _auto_set_override_flags(model: VcoModel, before: Mapping[str, object]) -> N
 def _has_non_edge_local_changes(model: VcoModel, before: Mapping[str, object]) -> bool:
     """Check whether a field in *before* (field name -> old value) now differs.
 
-    OverrideFlag and EdgeLocal fields don't count. When both old and new
+    OverrideFlag and EdgeLocal fields don't count, and neither does an
+    ``Inheritable`` field: its kind declares who owns it, and a change of
+    that ownership (``null``, a value, a copy from the profile) is not an
+    edit of a section that the flag guards. When both old and new
     values are the same VcoModel type, the check recurses into them, so a
     change confined to EdgeLocal descendants doesn't count either.
     """
     fields = type(model).model_fields
     for name, old in before.items():
         fi = fields.get(name)
-        if fi is None or has_override_flag(fi) or is_edge_local(fi):
+        if (
+            fi is None
+            or has_override_flag(fi)
+            or is_edge_local(fi)
+            or field_kind(fi).kind is Kind.INHERITABLE
+        ):
             continue
         new = unwrap(_field_value(model, name))
         old = unwrap(old)

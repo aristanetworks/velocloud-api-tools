@@ -19,10 +19,13 @@ from pyvelo.core import (
     Inheritable,
     KeyField,
     Layered,
+    OverrideFlag,
     PatchError,
     Profile,
+    Unconverted,
     VcoModel,
     bind_layers,
+    kind_default,
 )
 from pyvelo.core.layers import L
 
@@ -398,3 +401,51 @@ def test_a_failed_patch_on_a_profile_list_does_not_mark_it_stored() -> None:
     with pytest.raises(PatchError):
         _ = profile.merge_patch({"items": {"nope": {"value": 1}}})
     assert "items" not in profile.model_fields_set
+
+
+# ---------------------------------------------------------------------------
+# A sibling OverrideFlag
+# ---------------------------------------------------------------------------
+
+
+class _Flagged(Layered[L]):
+    flag: Annotated[bool, OverrideFlag] = False
+    x: Annotated[Inheritable[int], ByPresence(), Default(0)] = Field(default=...)
+    plain: int = 0
+    legacy: Unconverted[int] = kind_default(0)
+
+
+def test_a_change_to_an_inheritable_does_not_turn_on_an_override_flag() -> None:
+    edge = _Flagged[Edge].model_validate({"x": 1})
+    _ = edge.merge_patch({"x": 3})
+    assert edge.flag is False
+    profile = _Flagged[Profile].model_validate({"x": 1})
+    _ = profile.merge_patch({"x": 3})
+    assert profile.flag is False
+
+
+def test_inheriting_does_not_turn_on_an_override_flag() -> None:
+    model = _Flagged[Edge].model_validate({"x": 1})
+    _ = model.merge_patch({"x": None})
+    assert model.x.stored is MISSING
+    assert model.flag is False
+
+
+def test_a_structural_or_unconverted_change_still_turns_on_the_override_flag() -> None:
+    for patch in ({"plain": 2}, {"legacy": 2}):
+        edge = _Flagged[Edge].model_validate({"x": 1})
+        _ = edge.merge_patch(patch)
+        assert edge.flag is True
+        profile = _Flagged[Profile].model_validate({"x": 1})
+        _ = profile.merge_patch(patch)
+        assert profile.flag is True
+
+
+def test_an_inheritable_change_beside_a_plain_one_leaves_the_flag_to_the_plain_one() -> (
+    None
+):
+    model = _Flagged[Edge].model_validate({})
+    _ = model.merge_patch({"x": 3})
+    assert model.flag is False
+    _ = model.merge_patch({"x": 4, "plain": 1})
+    assert model.flag is True
