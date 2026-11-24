@@ -426,6 +426,22 @@ change and has no line of its own. When the section as read has no `override`
 key, the flag cannot be written: the same patch is refused with
 `LossyFieldError`, which names the flag.
 
+The firewall's module-level values (`firewall_enabled`, `syslog_forwarding`,
+`services` and the rest) have no flag: the edge stores a key or inherits it.
+A patch on a value the edge inherits starts from the profile's value, or from
+the display default (the packaged profile template's) where the profile stores
+none, and the whole value becomes the edge's own and shows in `plan()`.
+`{"services": {"ssh": {"enabled": true}}}` stores the whole `services` object,
+with `ssh.enabled` true and the rest as the profile has it, and the plan shows
+one added key. A patch on a value the edge already stores merges into it, a
+scalar sets it, and `null` makes the edge inherit again (the plan shows the key
+removed): `{"syslog_forwarding": null}`. The keys of a group (`stateful`,
+`network_protection`, `atp`) change owner together, so
+`{"stateful_firewall_enabled": false}` on an edge that inherits the group adds
+its three keys, with the settings as the profile has them. A patch that raises
+leaves the group as it was. `state.effective` shows each value an edge uses and
+where it comes from; see "The effective view".
+
 ## What a save writes
 
 A save sends each changed module's `data` as it was read, with only your
@@ -575,9 +591,13 @@ firewall: update
   `segments` list in place, changes its place in the state only.
 - Deleting an edge segment that the profile also has leaves an empty entry for
   it in the write, as for a segment the edge never had.
-- A missing edge firewall or QoS module starts empty; nothing is copied from
-  the profile. It is inserted once it differs from that empty layer: patches
-  that cancel out leave nothing to insert.
+- A missing edge firewall or QoS module starts empty. It is inserted once it
+  differs from that empty layer: patches that cancel out leave nothing to
+  insert. The insert holds the segment entries the save reconciles and what the
+  patches made local: a patch on a firewall value the edge would inherit copies
+  that value from the profile (or the display default) into the insert, as it
+  does for a module the edge has (see "The patch format"); no other profile
+  value is copied.
 - A firewall segment has no `outboundOverride` key in the VCO or on the edge. If
   an older version of this library wrote one into a module, writing that module
   drops it from every segment entry and the plan lists each removal (`-

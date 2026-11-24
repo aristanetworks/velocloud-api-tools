@@ -56,13 +56,14 @@ from pyvelo.config.resolvers.hub import HubResolver
 from pyvelo.config.validation import ValidationError
 from pyvelo.core import ConfigContext, VcoModel
 from pyvelo.core.base import is_dict, is_list
+from pyvelo.core.effective import effective_view
 from pyvelo.core.identity import (
     HubIdentity,
     ResolutionError,
     ResolverNotLoadedError,
     SegmentIdentity,
 )
-from pyvelo.core.layers import Edge, Profile
+from pyvelo.core.layers import Edge, Effective, Profile
 from pyvelo.core.rebase import (
     ItemMove,
     ItemPlace,
@@ -312,6 +313,44 @@ class LayerView[X: (Edge, Profile)]:
         module = _module_of(self._config, ConfigurationModuleName.WAN, create=False)
         assert isinstance(module, WanConfigurationModule)
         return module.data
+
+
+class EffectiveView:
+    """Each module's effective data: what an edge uses, with where each value comes from.
+
+    Computed from the edge layer and the profile layer each time a property is
+    read, so it follows every edit. A value is a ``Resolved`` (its origin, the
+    value, and where in that layer it sits); see ``pyvelo.core.effective``.
+    Nothing is created: an edge that has no row for a module has the view of
+    the profile's.
+    """
+
+    def __init__(
+        self, edge: ConfigurationBase[Edge], profile: ConfigurationBase[Profile]
+    ) -> None:
+        self._edge: ConfigurationBase[Edge] = edge
+        self._profile: ConfigurationBase[Profile] = profile
+
+    @property
+    def firewall(self) -> FirewallData[Effective]:
+        """The firewall's effective data: the edge's local values over the profile's, then the display defaults."""
+        name = ConfigurationModuleName.FIREWALL
+        edge_module = _find_module(self._edge, name)
+        profile_module = _find_module(self._profile, name)
+        edge_data = None
+        if edge_module is not None:
+            assert isinstance(edge_module, FirewallConfigurationModule)
+            edge_data = edge_module.data
+        if profile_module is None:
+            profile_data = FirewallData[Profile].model_validate({"segments": []})
+        else:
+            assert isinstance(profile_module, FirewallConfigurationModule)
+            profile_data = profile_module.data
+        return effective_view(
+            cast("FirewallData[Edge] | None", edge_data),
+            cast("FirewallData[Profile]", profile_data),
+            FirewallData[Effective],
+        )
 
 
 type _Place = tuple[str | int, ...]
@@ -815,6 +854,18 @@ class ConfigState:
     def profile(self) -> LayerView[Profile]:
         """The profile layer's module data."""
         return LayerView(self.profile_config)
+
+    @property
+    def effective(self) -> EffectiveView:
+        """What the edge uses, with where each value comes from (read-only).
+
+        Computed from the edge and profile layers on each access, and never
+        creates a module: an edge with no row for one has the profile's values
+        and the display defaults. Raises ``ValueError`` without an edge layer.
+        """
+        if self.target_type != "edge" or self.edge_config is None:
+            raise ValueError("this state has no edge layer, so no effective view")
+        return EffectiveView(self.edge_config, self.profile_config)
 
     def plan(self, *, repair_defaults: bool = True) -> ConfigPlan:
         """Plan the write of every module of the target config, in order.
