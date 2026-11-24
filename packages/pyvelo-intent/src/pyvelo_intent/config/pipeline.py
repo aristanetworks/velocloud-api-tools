@@ -1,29 +1,26 @@
 """ConfigPipeline: orchestration layer for load → apply → save configuration workflow."""
 
 import copy
-from typing import Any, cast
+from typing import Any, Protocol, cast, runtime_checkable
 
 from pydantic import MISSING
 from pyvelo.client.enums.configuration import ConfigurationModuleName
 from pyvelo.client.enums.profiles import GetConfigurationWith
+from pyvelo.client.exceptions import UnboundError
+from pyvelo.client.module_write import ModulePlan, update_request
 from pyvelo.client.protocol import VcoClientProtocol
 from pyvelo.client.schemas.configuration import (
     AnyConfigurationModule,
     ConfigurationBase,
     DeviceSettingsConfigurationModule,
-    DeviceSettingsModuleUpdate,
     EdgeConfiguration,
     EnterpriseConfigurationProfile,
     FirewallConfigurationModule,
-    FirewallModuleUpdate,
     GetConfiguration,
     InsertFirewallConfigurationModule,
     InsertQosConfigurationModule,
     QosConfigurationModule,
-    QosModuleUpdate,
-    UpdateConfigurationModule,
     WanConfigurationModule,
-    WanModuleUpdate,
 )
 from pyvelo.client.schemas.edge import GetEdgeConfigurationStack
 from pyvelo.config.resolver import ResolverContext, ResolverRegistry
@@ -47,30 +44,7 @@ from pyvelo_intent.config.module_names import (
     resolve_module_name as _resolve_module_name,
 )
 from pyvelo_intent.config.state import ConfigState, SaveResult, ValidationWarning
-
-
-def _overlay_qos_from_profile(
-    template_mod: QosConfigurationModule,
-) -> QosConfigurationModule:
-    """Build an edge QOS overlay the way the VCO UI does.
-
-    Profile catalog rules become ``inheritedRules`` / ``inheritedDefaults``.
-    Edge ``rules`` start empty so later patches add overrides instead of
-    cloning the catalog onto the overlay.
-    """
-    new_mod = copy.deepcopy(template_mod)
-    for segment in new_mod.data.segments:
-        inherited_defaults = (
-            copy.deepcopy(segment.defaults)
-            if segment.defaults is not MISSING and segment.defaults is not None
-            else []
-        )
-        segment.inherited_rules = copy.deepcopy(segment.rules)
-        segment.inherited_defaults = inherited_defaults
-        segment.rules = []
-        segment.defaults = []
-        segment.cos_mapping_override = False
-    return new_mod
+from pyvelo_intent.errors import StateSpentError
 
 
 class ConfigPipeline:
@@ -198,11 +172,12 @@ class ConfigPipeline:
 
         config = await self.client.get_configuration(request)
 
-        # Wrap it as a profile
+        # Wrap it as a profile. Reuse the module objects: they hold the raw data
+        # that a save is planned against, which a dump and re-validate would lose.
         if not isinstance(config, EnterpriseConfigurationProfile):
-            profile_config = EnterpriseConfigurationProfile.model_validate(
-                config.model_dump()
-            )
+            profile_config = EnterpriseConfigurationProfile.model_construct(
+                _fields_set=config.model_fields_set, **dict(config)
+            ).for_profile()
         else:
             profile_config = config
 
@@ -236,32 +211,32 @@ class ConfigPipeline:
     ) -> ConfigState:
         """Apply a patch dict to a module.
 
-        1. Locate (or create from the profile template) the module on the
-           target config.
-        2. Call ``merge_patch()`` on the module's typed data.
-        3. Return the updated :class:`ConfigState`.
+        1. Locate the module on the target config. A ``firewall`` or ``QOS``
+           module that an edge lacks starts as an empty layer (nothing is
+           copied from the profile) and is inserted on save.
+        2. On an edge target, add from the profile each segment the patch
+           names that the edge lacks, so it carries the profile's descriptor.
+        3. Call ``merge_patch()`` on the module's typed data.
+        4. Return the updated :class:`ConfigState`.
 
         MISSING fields on the patch target are preserved as MISSING so callers
         downstream (reconciler, YAML export) can distinguish "unset" from
         "explicitly set". Use ``apply_aspect`` if you need template-fill
         semantics.
+
+        Raises :class:`StateSpentError` if the state has already written.
         """
+        _require_unspent(state)
         internal_name = _resolve_module_name(module)
+        mod = state.module(internal_name, create=True)
 
-        # Get the target config
-        if state.target_type == "edge" and state.edge_config is not None:
-            target_config = state.edge_config
-        else:
-            target_config = state.profile_config
-
-        # Find or create the module on the target config
-        mod = self._get_or_create_module(target_config, internal_name, state)
-
-        # Apply merge_patch to the module's data
+        # Apply merge_patch to the module's typed data
         if not isinstance(mod.data, VcoModel):
             raise TypeError(
                 f"Module '{internal_name}' has unstructured data; merge_patch requires a typed module"
             )
+        if state.target_type == "edge":
+            patch = _name_patched_segments(mod.data, patch)
         _ = mod.data.merge_patch(patch, resolvers=self._resolvers)
 
         return state
@@ -275,21 +250,27 @@ class ConfigPipeline:
     ) -> SaveResult:
         """Persist changes to VCO.
 
-        1. Diff current state against snapshot.
-        2. Run write-time validators. Errors block save.
-        3. Determine insert vs update per module.
-        4. Send API calls.
-        """
-        changed_modules = state.get_changed_modules()
-        result = SaveResult()
+        1. Plan the write of every module (:meth:`ConfigState.plan`).
+        2. Run write-time validators on the changed modules. Errors block save.
+        3. Send an update or insert for each changed module, in order. The
+           state is spent from the first request on, even if a request fails.
 
-        if not changed_modules:
+        ``dry_run`` stops after step 2 and leaves the state usable. Raises
+        :class:`StateSpentError` if the state has already written.
+        """
+        _require_unspent(state)
+        plan = state.plan()
+        result = SaveResult(plan=plan)
+
+        if not plan.changed:
             return result
 
         # Run write-time validators
         if validate:
             validation = self._validators.run(
-                state, phase="write", modules=changed_modules
+                state,
+                phase="write",
+                modules=[ConfigurationModuleName(m.name) for m in plan.changed],
             )
             if not validation.is_valid:
                 result.validation_errors = validation.errors
@@ -297,39 +278,26 @@ class ConfigPipeline:
             for warn in validation.warnings:
                 result.warnings.append(_validation_error_to_warning(warn))
 
+        for module_plan in plan.changed:
+            name = ConfigurationModuleName(module_plan.name)
+            if module_plan.operation == "insert":
+                result.modules_inserted.append(name)
+            else:
+                result.modules_updated.append(name)
+
         if dry_run:
-            result.modules_updated = changed_modules
             return result
 
-        # Get the target config
-        if state.target_type == "edge" and state.edge_config is not None:
-            target_config = state.edge_config
-        else:
-            target_config = state.profile_config
-
-        snapshot_config = state.snapshot_for_target()
-
-        for module_name in changed_modules:
-            mod = target_config.get_module(module_name)
-
-            # Determine if this is an insert or update
-            is_insert = snapshot_config is not None and not snapshot_config.has_module(
-                module_name
-            )
-
-            # Set config context so EdgeOnly/ProfileOnly fields serialize correctly
-            if isinstance(mod.data, VcoModel):
-                if state.target_type == "profile":
-                    _ = mod.data.for_profile()
-                else:
-                    _ = mod.data.for_edge()
-
-            if is_insert:
-                await self._insert_module(mod, target_config, state)
-                result.modules_inserted.append(module_name)
+        state.mark_spent()
+        enterprise_id = state.resolver_context.enterprise_id
+        for module_plan in plan.changed:
+            mod = state.module(module_plan.name)
+            if module_plan.operation == "insert":
+                await self._insert_module(
+                    mod, state.target_config, enterprise_id, module_plan, state
+                )
             else:
-                await self._update_module(mod, state.resolver_context.enterprise_id)
-                result.modules_updated.append(module_name)
+                await self._update_module(mod, enterprise_id, module_plan)
 
         return result
 
@@ -380,7 +348,10 @@ class ConfigPipeline:
         For segment-scoped aspects, the segment parameter is required.
         Navigates to the parent model and applies the patch at the
         aspect's final path component.
+
+        Raises :class:`StateSpentError` if the state has already written.
         """
+        _require_unspent(state)
         aspect = self._aspect_registry.get(name)
         parent, field_name = self._get_aspect_parent(state, aspect, segment)
         _ = parent.merge_patch({field_name: patch}, resolvers=self._resolvers)
@@ -398,7 +369,10 @@ class ConfigPipeline:
         save the state or run the pipeline validators.
         The dict maps aspect names to patch dicts. For segment-scoped aspects,
         use the format {"aspect_name": {"segment_name": patch_dict}}.
+
+        Raises :class:`StateSpentError` if the state has already written.
         """
+        _require_unspent(state)
         for name, patch in aspects.items():
             aspect = self._aspect_registry.get(name)
             if aspect.segment_scoped:
@@ -491,70 +465,32 @@ class ConfigPipeline:
         except LookupError:
             pass
 
-    def _get_or_create_module(
-        self,
-        config: ConfigurationBase,
-        module_name: ConfigurationModuleName,
-        state: ConfigState,
-    ) -> AnyConfigurationModule:
-        """Get existing module or prepare for creation."""
-        if config.has_module(module_name):
-            return config.get_module(module_name)
-
-        # Module doesn't exist on the target - create it from the profile template
-        if state.target_type == "edge" and state.profile_config.has_module(module_name):
-            template_mod = state.profile_config.get_module(module_name)
-            if module_name == ConfigurationModuleName.QOS and isinstance(
-                template_mod, QosConfigurationModule
-            ):
-                new_mod = _overlay_qos_from_profile(template_mod)
-            else:
-                new_mod = copy.deepcopy(template_mod)
-            if config.id_ is not MISSING and config.id_ is not None:
-                new_mod.configuration_id = config.id_
-            if config.modules is MISSING:
-                config.modules = []
-            config.modules.append(new_mod)
-            return new_mod
-
-        raise ValueError(
-            f"Module '{module_name}' not found on config and no template available"
-        )
-
     async def _update_module(
         self,
         mod: AnyConfigurationModule,
         enterprise_id: int | None,
+        plan: ModulePlan,
     ) -> None:
         """Send update_configuration_module API call."""
-        if isinstance(mod, DeviceSettingsConfigurationModule):
-            update = DeviceSettingsModuleUpdate(
-                data=mod.data,
-                refs=getattr(mod, "refs", MISSING),
-            )
-        elif isinstance(mod, QosConfigurationModule):
-            update = QosModuleUpdate(
-                data=mod.data,
-                refs=getattr(mod, "refs", MISSING),
-            )
-        elif isinstance(mod, WanConfigurationModule):
-            update = WanModuleUpdate(data=mod.data)
-        elif isinstance(mod, FirewallConfigurationModule):
-            update = FirewallModuleUpdate(data=mod.data)
-        else:
+        if not isinstance(
+            mod,
+            DeviceSettingsConfigurationModule
+            | QosConfigurationModule
+            | WanConfigurationModule
+            | FirewallConfigurationModule,
+        ):
             raise TypeError(f"Cannot update module type: {type(mod).__name__}")
 
-        request = UpdateConfigurationModule(
-            configuration_module_id=mod.id_,
-            enterprise_id=enterprise_id if enterprise_id is not None else MISSING,
-            update=update,
+        await self.client.update_configuration_module(
+            update_request(mod, plan, enterprise_id)
         )
-        await self.client.update_configuration_module(request)
 
     async def _insert_module(
         self,
         mod: AnyConfigurationModule,
         config: ConfigurationBase,
+        enterprise_id: int | None,
+        plan: ModulePlan,
         state: ConfigState,
     ) -> None:
         """Send insert_configuration_module API call."""
@@ -562,44 +498,31 @@ class ConfigPipeline:
         if config_id is MISSING or config_id is None:
             raise ValueError("Cannot insert module: configuration has no ID")
 
-        enterprise_id = state.resolver_context.enterprise_id
-        enterprise_arg = enterprise_id if enterprise_id is not None else MISSING
-
         if isinstance(mod, FirewallConfigurationModule):
             request = InsertFirewallConfigurationModule(
                 configuration_id=config_id,
-                data=mod.data,
-                enterprise_id=enterprise_arg,
+                data=plan.data,
+                enterprise_id=enterprise_id if enterprise_id is not None else MISSING,
             )
         elif isinstance(mod, QosConfigurationModule):
-            refs = mod.refs if mod.refs is not MISSING else MISSING
-            profile_data = MISSING
-            profile_configuration_id = MISSING
-            profile_module_id = MISSING
+            request = InsertQosConfigurationModule(
+                configuration_id=config_id,
+                data=plan.data,
+                refs=plan.refs if plan.refs is not None else MISSING,
+                enterprise_id=enterprise_id if enterprise_id is not None else MISSING,
+            )
             if state.target_type == "edge" and state.profile_config.has_module(
                 ConfigurationModuleName.QOS
             ):
                 profile_mod = state.profile_config.get_module(
                     ConfigurationModuleName.QOS
                 )
-                assert isinstance(profile_mod, QosConfigurationModule)
-                profile_payload = copy.deepcopy(profile_mod.data).for_profile()
-                profile_data = profile_payload
-                if (
-                    state.profile_config.id_ is not MISSING
-                    and state.profile_config.id_ is not None
-                ):
-                    profile_configuration_id = state.profile_config.id_
-                profile_module_id = profile_mod.id_
-            request = InsertQosConfigurationModule(
-                configuration_id=config_id,
-                data=mod.data,
-                refs=refs,
-                enterprise_id=enterprise_arg,
-                profile_data=profile_data,
-                profile_configuration_id=profile_configuration_id,
-                profile_module_id=profile_module_id,
-            )
+                if isinstance(profile_mod.raw_data, dict):
+                    request.profile_data = copy.deepcopy(profile_mod.raw_data)
+                profile_id = state.profile_config.id_
+                if profile_id is not MISSING and profile_id is not None:
+                    request.profile_configuration_id = profile_id
+                request.profile_module_id = profile_mod.id_
         else:
             raise TypeError(f"Cannot insert module type: {type(mod).__name__}")
 
@@ -621,6 +544,55 @@ def build_default_pipeline(client: VcoClientProtocol) -> ConfigPipeline:
     register_default_aspects(aspects)
 
     return ConfigPipeline(client, resolvers=resolvers, aspect_registry=aspects)
+
+
+class _SegmentMetadata(Protocol):
+    @property
+    def name(self) -> str: ...
+
+
+class _SegmentEntry(Protocol):
+    @property
+    def segment(self) -> _SegmentMetadata: ...
+
+
+@runtime_checkable
+class _SegmentLayer(Protocol):
+    def segment(self, name: str) -> _SegmentEntry: ...
+
+
+def _name_patched_segments(
+    data: VcoModel, patch: dict[str, object]
+) -> dict[str, object]:
+    """*patch*, with each segment it edits keyed by the name the layer has it under.
+
+    A segment the edge layer lacks is first added to it, from the profile
+    (``segment(name)``): it takes the profile's descriptor and IDs, so it does
+    not depend on a segment resolver having been loaded. A name that differs
+    from the profile's only in case finds it. A segment the profile does not
+    have is left to ``merge_patch``, which resolves or refuses it; so is a
+    deletion. Raises ``ValueError`` if two keys name the same segment.
+    """
+    segments = patch.get("segments")
+    if not isinstance(data, _SegmentLayer) or not isinstance(segments, dict):
+        return patch
+    named: dict[str, object] = {}
+    for key, segment_patch in cast(dict[str, object], segments).items():
+        name = key
+        if isinstance(segment_patch, dict):
+            try:
+                name = data.segment(key).segment.name
+            except (ValueError, UnboundError):
+                pass  # not a profile segment, or no profile: merge_patch decides
+        if name in named:
+            raise ValueError(f"the patch names segment {name!r} twice")
+        named[name] = segment_patch
+    return {**patch, "segments": named}
+
+
+def _require_unspent(state: ConfigState) -> None:
+    if state.spent:
+        raise StateSpentError
 
 
 def _validation_error_to_warning(err: ValidatorError) -> ValidationWarning:

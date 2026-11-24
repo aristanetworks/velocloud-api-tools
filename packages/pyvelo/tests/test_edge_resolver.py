@@ -122,15 +122,15 @@ class TestEdgeResolver:
         assert identity.name == "Branch-LAX"
         assert identity.id == 2
 
-    async def test_resolve_fuzzy_single_match(self, mock_client: FakeEdgeClient):
+    async def test_resolve_near_miss_raises(self, mock_client: FakeEdgeClient):
         mock_client.edges = [
             _edge(id_=1, name="Example-Edge", logical_id=EDGE1_UUID),
             _edge(id_=2, name="DC-Primary", logical_id=EDGE2_UUID),
         ]
         r = EdgeResolver(_client_protocol(mock_client))
         await r.load(ResolverContext())
-        identity = await r.resolve("Example-Edg")
-        assert identity.name == "Example-Edge"
+        with pytest.raises(KeyError, match="Did you mean"):
+            _ = await r.resolve("Example-Edg")
 
     async def test_resolve_fuzzy_ambiguous(self, resolver: EdgeResolver):
         with pytest.raises(KeyError, match="Did you mean"):

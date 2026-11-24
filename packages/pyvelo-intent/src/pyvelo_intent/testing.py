@@ -9,6 +9,7 @@ from typing import override
 
 from pyvelo.client.enums.configuration import ConfigurationModuleType
 from pyvelo.client.enums.enterprise import NetworkSegmentType
+from pyvelo.client.exceptions import ConfigConflictError
 from pyvelo.client.models.configuration.common import SegmentMetadata
 from pyvelo.client.models.configuration.firewall.root import FirewallData
 from pyvelo.client.models.configuration.firewall.rules import FirewallOutboundRule
@@ -76,6 +77,8 @@ class MockVcoClient(VcoClient):
         self,
         stack: GetEdgeConfigurationStackResult | None = None,
         edges: Sequence[GetEnterpriseEdgesItem] | None = None,
+        *,
+        conflict: bool = False,
     ) -> None:
         super().__init__("vco.example.invalid", "test-token")
         self.stack: GetEdgeConfigurationStackResult | None = stack
@@ -84,6 +87,8 @@ class MockVcoClient(VcoClient):
         )
         self.calls: list[tuple[str, object]] = []
         self.update_requests: list[UpdateConfigurationModule] = []
+        self.insert_requests: list[InsertConfigurationModule] = []
+        self.conflict: bool = conflict
 
     @override
     async def get_edge_configuration_stack(
@@ -136,10 +141,15 @@ class MockVcoClient(VcoClient):
     ) -> None:
         self.calls.append(("update_configuration_module", request))
         self.update_requests.append(request)
+        if self.conflict:
+            raise ConfigConflictError(
+                request.configuration_module_id, str(request.version), "simulated"
+            )
 
     @override
     async def insert_configuration_module(
         self, request: InsertConfigurationModule
     ) -> InsertConfigurationModuleResult:
         self.calls.append(("insert_configuration_module", request))
+        self.insert_requests.append(request)
         return InsertConfigurationModuleResult(id_=1)

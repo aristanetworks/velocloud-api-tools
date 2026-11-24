@@ -3,7 +3,7 @@
 All connection details are injected via environment variables:
 
     VCO_HOST            required — VCO FQDN (e.g. vco123.velocloud.net)
-    VCO_API_TOKEN       required — API token
+    VCO_TOKEN           required — API token
     VCO_ENTERPRISE_ID   required — enterprise ID
 """
 
@@ -23,6 +23,7 @@ from pyvelo.client import VcoClient
 from pyvelo.client.exceptions import VcoOperationError
 from pyvelo.core import ApiInterval
 
+from ._config_live import Lab, discover_lab
 from ._discovery import VcoTestContext, discover
 
 
@@ -44,7 +45,7 @@ def interval() -> ApiInterval:
 @pytest_asyncio.fixture(scope="session", loop_scope="session")
 async def vco_client() -> AsyncGenerator[VcoClient]:
     host = _env("VCO_HOST", required=True)
-    token = _env("VCO_API_TOKEN", required=True)
+    token = _env("VCO_TOKEN", required=True)
     assert host is not None
     assert token is not None
     async with VcoClient(vco_fqdn=host, token=token) as client:
@@ -56,6 +57,23 @@ def enterprise_id() -> int:
     val = _env("VCO_ENTERPRISE_ID", required=True)
     assert val is not None
     return int(val)
+
+
+@pytest.fixture(scope="session")
+def config_enterprise_id() -> int | None:
+    """The enterprise the configuration tests name in their requests, if one is set.
+
+    Unlike the analytics tests, these do not need VCO_ENTERPRISE_ID: a token that
+    belongs to one enterprise works without it.
+    """
+    val = _env("VCO_ENTERPRISE_ID")
+    return int(val) if val else None
+
+
+@pytest_asyncio.fixture(scope="session", loop_scope="session")
+async def lab(vco_client: VcoClient, config_enterprise_id: int | None) -> Lab:
+    """Every edge and profile the live configuration tests can use, read once."""
+    return await discover_lab(vco_client, config_enterprise_id)
 
 
 @pytest_asyncio.fixture(scope="session", loop_scope="session")

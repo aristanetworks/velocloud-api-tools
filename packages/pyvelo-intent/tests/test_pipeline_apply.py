@@ -122,7 +122,7 @@ class TestResolveModuleName:
         pipeline = ConfigPipeline(client=None)
         state = _make_state(include_device_settings=True)
         state = await pipeline.apply(
-            state, module="device_settings", patch={"ntp": {"enabled": True}}
+            state, module="device_settings", patch={"ha": {"enabled": True}}
         )
         assert ConfigurationModuleName.DEVICE_SETTINGS in state.get_changed_modules()
 
@@ -221,7 +221,7 @@ async def test_apply_camel_case_module_name():
     state = await pipeline.apply(
         state,
         module="deviceSettings",
-        patch={"ntp": {"enabled": True}},
+        patch={"ha": {"enabled": True}},
     )
 
     assert ConfigurationModuleName.DEVICE_SETTINGS in state.get_changed_modules()

@@ -1,3 +1,11 @@
+import importlib.util
+
+if importlib.util.find_spec("polars") is None:
+    raise ModuleNotFoundError(
+        "pyvelo.analytics requires polars; install it with: pip install 'pyvelo[analytics]'",
+        name="polars",
+    )
+
 from pyvelo.analytics.analytics import Analytics
 from pyvelo.analytics.enums import (
     EnterpriseFirewallType,

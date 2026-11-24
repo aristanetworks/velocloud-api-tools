@@ -324,7 +324,7 @@ class VcoWebSocket:
             except HTTPXWSException as exc:
                 if self._closing:
                     return
-                logger.exception("WebSocket transport error: %s", exc)
+                logger.exception("WebSocket transport error")
                 self._fail_pending(
                     VcoWebSocketConnectionError(f"WebSocket transport error: {exc}")
                 )

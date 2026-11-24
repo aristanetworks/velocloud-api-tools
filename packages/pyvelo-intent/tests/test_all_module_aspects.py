@@ -38,7 +38,7 @@ class TestAllAspectRegistration:
         )  # dns, vlans, interfaces, ntp, syslog + new ones
         assert len(QOS_ASPECTS) >= 1
         assert len(WAN_ASPECTS) >= 2
-        assert len(CONTROL_PLANE_ASPECTS) >= 2
+        assert len(CONTROL_PLANE_ASPECTS) >= 1
 
 
 class TestQosAspects:
@@ -71,18 +71,6 @@ class TestWanAspects:
 
 
 class TestControlPlaneAspects:
-    def test_bgp_is_segment_scoped(self):
-        """BGP aspect should be segment-scoped (under deviceSettings)."""
-        bgp = next(a for a in CONTROL_PLANE_ASPECTS if a.name == "bgp")
-        assert bgp.segment_scoped is True
-        assert bgp.module == "deviceSettings"
-
-    def test_ospf_is_segment_scoped(self):
-        """OSPF aspect should be segment-scoped (under deviceSettings)."""
-        ospf = next(a for a in CONTROL_PLANE_ASPECTS if a.name == "ospf")
-        assert ospf.segment_scoped is True
-        assert ospf.module == "deviceSettings"
-
     def test_gateway_selection_not_segment_scoped(self):
         """Gateway selection should not be segment-scoped."""
         gw = next(a for a in CONTROL_PLANE_ASPECTS if a.name == "gateway_selection")
@@ -107,6 +95,18 @@ class TestDeviceSettingsRefinedAspects:
         """VPN aspect should be segment-scoped."""
         vpn = next(a for a in DEVICE_SETTINGS_ASPECTS if a.name == "vpn")
         assert vpn.segment_scoped is True
+
+    def test_bgp_is_segment_scoped(self):
+        """BGP aspect should be segment-scoped (under deviceSettings)."""
+        bgp = next(a for a in DEVICE_SETTINGS_ASPECTS if a.name == "bgp")
+        assert bgp.segment_scoped is True
+        assert bgp.module == "deviceSettings"
+
+    def test_ospf_is_segment_scoped(self):
+        """OSPF aspect should be segment-scoped (under deviceSettings)."""
+        ospf = next(a for a in DEVICE_SETTINGS_ASPECTS if a.name == "ospf")
+        assert ospf.segment_scoped is True
+        assert ospf.module == "deviceSettings"
 
 
 class TestAspectSearch:

@@ -689,7 +689,6 @@ class CustomApp(VcoModel):
 
 
 class GetEnterprise(VcoModel):
-
     id_: Annotated[
         int | MISSING,
         Alias("id"),
@@ -720,7 +719,6 @@ class GetEnterprise(VcoModel):
 
 
 class EnterpriseResult(VcoModel):
-
     id_: Annotated[int, Alias("id")]
     created: VcoTimestamp
     name: str
@@ -752,7 +750,6 @@ class EnterpriseResult(VcoModel):
 
 
 class GetEnterpriseUsers(VcoModel):
-
     enterprise_id: Annotated[
         int | MISSING,
         Field(
@@ -770,7 +767,6 @@ class GetEnterpriseUsers(VcoModel):
 
 
 class EnterpriseUser(VcoModel):
-
     id_: Annotated[int, Alias("id")]
     created: VcoTimestamp
     enterprise_id: int | None | MISSING = MISSING
@@ -794,12 +790,10 @@ class EnterpriseUser(VcoModel):
 
 
 class GetEnterpriseGatewayHandoff(VcoModel):
-
     enterprise_id: int | MISSING = MISSING
 
 
 class EnterpriseGatewayHandoffResult(VcoModel):
-
     type_: Annotated[str | None | MISSING, Alias("type")] = MISSING
     data: dict[str, Any] | None | MISSING = MISSING
     logical_id: uuid.UUID | None | MISSING = MISSING
@@ -811,12 +805,10 @@ class EnterpriseGatewayHandoffResult(VcoModel):
 
 
 class GetEnterpriseServiceLicense(VcoModel):
-
     enterprise_id: int | MISSING = MISSING
 
 
 class EnterpriseServiceLicenseResult(VcoModel):
-
     id_: Annotated[int | None | MISSING, Alias("id")] = MISSING
     created: VcoTimestamp | None | MISSING = MISSING
     enterprise_id: int | None | MISSING = MISSING
@@ -1149,6 +1141,8 @@ class EnterpriseRouteTableExit(VcoModel):
     advertise: Tinyint | MISSING = MISSING
     area: int | MISSING = MISSING
     attributes: dict[str, Any] | MISSING = MISSING
+    cidr_ip: str | MISSING = MISSING
+    cidr_prefix: Annotated[int | MISSING, Ge(0), Le(32)] = MISSING
     cost: int
     created: VcoTimestamp | MISSING = MISSING
     edge_id: Annotated[int | MISSING, Resolvable(EdgeIdentity, "id")] = MISSING
@@ -1184,7 +1178,7 @@ class EnterpriseRouteTableExit(VcoModel):
 
 
 class EnterpriseRouteTableEntry(VcoModel):
-    eligable_exits: list[Any]
+    eligable_exits: list[EnterpriseRouteTableExit]
     ip_version: Literal["IPv4", "IPv6"]
     learned_route: EnterpriseRouteTableRoute | MISSING = MISSING
     preferred_exits: list[EnterpriseRouteTableExit]
@@ -1192,8 +1186,8 @@ class EnterpriseRouteTableEntry(VcoModel):
 
 
 class EnterpriseRouteTableResult(VcoModel):
-    profiles: list[EnterpriseRouteTableProfile] = []
-    subnets: list[EnterpriseRouteTableEntry] = []
+    profiles: list[EnterpriseRouteTableProfile] = Field(default_factory=list)
+    subnets: list[EnterpriseRouteTableEntry] = Field(default_factory=list)
 
 
 # --- get_enterprise_route_configuration ---

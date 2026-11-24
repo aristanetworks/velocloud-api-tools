@@ -5,13 +5,13 @@ deeply-nested configuration data models.
 """
 
 from typing import cast
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock
 
 import pytest
 from pydantic import MISSING
 from pyvelo.client import VcoClient
+from pyvelo.client.enums.configuration import ConfigurationModuleName
 from pyvelo.client.exceptions import VcoOperationError
-from pyvelo.client.models.configuration.device_settings.lan import LanSettings
 from pyvelo.client.models.configuration.device_settings.root import DeviceSettingsData
 from pyvelo.client.models.configuration.firewall.root import FirewallData
 from pyvelo.client.models.configuration.qos.root import QosData
@@ -19,30 +19,15 @@ from pyvelo.client.models.configuration.wan.root import WanData
 from pyvelo.client.schemas.configuration import (
     ConfigurationBase,
     ConfigurationModuleBase,
-    DeviceSettingsModuleUpdate,
-    FirewallModuleUpdate,
+    FirewallConfigurationModule,
     InsertConfigurationModuleResult,
-    QosModuleUpdate,
+    QosConfigurationModule,
     UpdateConfigurationModule,
-    WanModuleUpdate,
+    new_edge_module,
 )
 from pyvelo.core import RowsModifiedConfirmation
 from pyvelo.core.base import ConfigContext
-
-type ModuleUpdate = (
-    DeviceSettingsModuleUpdate
-    | QosModuleUpdate
-    | WanModuleUpdate
-    | FirewallModuleUpdate
-)
-
-
-def _module_update(request: UpdateConfigurationModule) -> ModuleUpdate:
-    return cast(ModuleUpdate, request.update)
-
-
-def _device_settings_data() -> DeviceSettingsData:
-    return DeviceSettingsData(lan=LanSettings(interfaces=[], networks=[]), segments=[])
+from pyvelo.testing import make_module_json
 
 
 class TestUpdateConfigurationModuleErrors:
@@ -106,13 +91,8 @@ class TestGetConfiguration:
         client.portal = AsyncMock(return_value=result)
 
         config = await client.get_configuration(AsyncMock())
-        assert (
-            cast(ConfigContext | None, getattr(config, "_config_context")) is not None
-        )
-        assert (
-            cast(ConfigContext | None, getattr(config, "_config_context"))
-            == ConfigContext.EDGE
-        )
+        assert cast(ConfigContext | None, config._config_context) is not None
+        assert cast(ConfigContext | None, config._config_context) == ConfigContext.EDGE
 
     async def test_profile_name_calls_for_profile(self):
         """get_configuration should call for_profile() for non-edge profiles."""
@@ -122,12 +102,9 @@ class TestGetConfiguration:
         client.portal = AsyncMock(return_value=result)
 
         config = await client.get_configuration(AsyncMock())
+        assert cast(ConfigContext | None, config._config_context) is not None
         assert (
-            cast(ConfigContext | None, getattr(config, "_config_context")) is not None
-        )
-        assert (
-            cast(ConfigContext | None, getattr(config, "_config_context"))
-            == ConfigContext.PROFILE
+            cast(ConfigContext | None, config._config_context) == ConfigContext.PROFILE
         )
 
     async def test_returns_same_instance(self):
@@ -142,7 +119,7 @@ class TestGetConfiguration:
 
 
 class TestUpdateModule:
-    """update_module dispatches to the correct ModuleUpdate type."""
+    """update_module sends the module's raw data with the caller's changes."""
 
     def _make_client(self) -> tuple[VcoClient, list[UpdateConfigurationModule]]:
         client = VcoClient("test.velocloud.net", "test-token")
@@ -170,51 +147,97 @@ class TestUpdateModule:
             }
         )
 
-    async def test_device_settings_dispatch(self):
-        """update_module should create DeviceSettingsModuleUpdate for DeviceSettingsData."""
-        client, mock = self._make_client()
-        module = self._make_module()
-        data = _device_settings_data()
+    def _fw(
+        self,
+        raw: dict[str, object],
+        *,
+        module_id: int = 1,
+        version: str | None = "v1",
+    ) -> FirewallConfigurationModule:
+        return FirewallConfigurationModule.model_validate(
+            make_module_json("firewall", raw, module_id=module_id, version=version)
+        )
 
+    async def test_sends_raw_payload_with_version(self):
+        client, calls = self._make_client()
+        module = self._fw({"segments": [], "future": 1}, module_id=42, version="1700")
+        data = module.mutable_data()
+        data.firewall_enabled = False
+        await client.update_module(module, data, enterprise_id=99)
+        (req,) = calls
+        assert (req.configuration_module_id, req.enterprise_id, req.version) == (
+            42,
+            99,
+            "1700",
+        )
+        assert req.update.data == {
+            "segments": [],
+            "future": 1,
+            "firewall_enabled": False,
+        }
+        assert req.update.refs is MISSING
+        assert req.model_dump(mode="json", by_alias=True) == {
+            "id": 42,
+            "enterpriseId": 99,
+            "version": "1700",
+            "_update": {
+                "data": {"segments": [], "future": 1, "firewall_enabled": False}
+            },
+        }
+
+    async def test_no_change_sends_nothing(self):
+        client, calls = self._make_client()
+        module = self._fw({"segments": []})
+        await client.update_module(module, module.mutable_data())
+        assert calls == []
+
+    async def test_null_version_and_enterprise_are_omitted(self):
+        client, calls = self._make_client()
+        module = self._fw({"segments": []}, version=None)
+        data = module.mutable_data()
+        data.firewall_enabled = False
         await client.update_module(module, data)
+        assert calls[0].version is MISSING and calls[0].enterprise_id is MISSING
 
-        assert len(mock) == 1
-        call_arg = mock[0]
-        assert isinstance(call_arg, UpdateConfigurationModule)
-        assert isinstance(_module_update(call_arg), DeviceSettingsModuleUpdate)
+    async def test_refs_forwarded_only_when_changed(self):
+        client, calls = self._make_client()
+        qos = QosConfigurationModule.model_validate(
+            make_module_json("QOS", {"segments": []}, refs={"a": 1})
+        )
+        await client.update_module(qos, qos.mutable_data(), refs={"a": 1})
+        assert calls == []
+        await client.update_module(qos, qos.mutable_data(), refs={"a": 2})
+        assert calls[0].update.refs == {"a": 2}
 
-    async def test_qos_dispatch(self):
-        """update_module should create QosModuleUpdate for QosData."""
-        client, mock = self._make_client()
-        module = self._make_module()
-        data = QosData()
+    async def test_profile_argument_reconciles_segments(self):
+        client, calls = self._make_client()
+        seg = {
+            "segment": {"segmentId": 2, "name": "Guest"},
+            "outbound": [
+                {"name": "p", "match": {}, "action": {"allow_or_deny": "allow"}}
+            ],
+        }
+        edge = self._fw({"segments": []})
+        data = edge.mutable_data().for_edge()
+        data.firewall_enabled = False
+        await client.update_module(
+            edge, data, profile=self._fw({"segments": [seg]}, module_id=2)
+        )
+        assert calls[0].update.data["segments"] == [
+            {"segment": {"segmentId": 2, "name": "Guest"}, "outbound": []}
+        ]
 
-        await client.update_module(module, data)
+    async def test_module_without_snapshot_sends_the_whole_dump(self):
+        client, calls = self._make_client()
+        data = FirewallData(segments=[])
+        await client.update_module(self._make_module(), data)
+        assert calls[0].update.data == data.model_dump(mode="json", by_alias=True)
 
-        call_arg = mock[0]
-        assert isinstance(_module_update(call_arg), QosModuleUpdate)
-
-    async def test_wan_dispatch(self):
-        """update_module should create WanModuleUpdate for WanData."""
-        client, mock = self._make_client()
-        module = self._make_module()
-        data = WanData()
-
-        await client.update_module(module, data)
-
-        call_arg = mock[0]
-        assert isinstance(_module_update(call_arg), WanModuleUpdate)
-
-    async def test_firewall_dispatch(self):
-        """update_module should create FirewallModuleUpdate for FirewallData."""
-        client, mock = self._make_client()
-        module = self._make_module()
-        data = FirewallData()
-
-        await client.update_module(module, data)
-
-        call_arg = mock[0]
-        assert isinstance(_module_update(call_arg), FirewallModuleUpdate)
+    async def test_new_module_is_rejected(self):
+        client, _ = self._make_client()
+        mod = new_edge_module(ConfigurationModuleName.FIREWALL, 10)
+        with pytest.raises(ValueError, match="insert"):
+            await client.update_module(mod, mod.data)
 
     async def test_unsupported_type_raises(self):
         """update_module should raise TypeError for unsupported data types."""
@@ -226,53 +249,6 @@ class TestUpdateModule:
                 module,
                 cast(DeviceSettingsData | QosData | WanData | FirewallData, object()),
             )
-
-    async def test_passes_module_id(self):
-        """update_module should use the module's id_ for configuration_module_id."""
-        client, mock = self._make_client()
-        module = self._make_module(module_id=42)
-        data = _device_settings_data()
-
-        await client.update_module(module, data)
-
-        call_arg = mock[0]
-        assert call_arg.configuration_module_id == 42
-
-    async def test_enterprise_id_passed_when_provided(self):
-        """update_module should forward enterprise_id when given."""
-        client, mock = self._make_client()
-        module = self._make_module()
-        data = _device_settings_data()
-
-        await client.update_module(module, data, enterprise_id=99)
-
-        call_arg = mock[0]
-        assert call_arg.enterprise_id == 99
-
-    async def test_enterprise_id_missing_when_not_provided(self):
-        """update_module should use MISSING for enterprise_id when not given."""
-        client, mock = self._make_client()
-        module = self._make_module()
-        data = _device_settings_data()
-
-        await client.update_module(module, data)
-
-        call_arg = mock[0]
-        assert call_arg.enterprise_id is MISSING
-
-    async def test_refs_forwarded_for_device_settings(self):
-        """update_module should pass refs to DeviceSettingsModuleUpdate when provided."""
-        client, mock = self._make_client()
-        module = self._make_module()
-        data = MagicMock(spec=DeviceSettingsData)
-        refs = {"deviceSettings": {"some": "ref"}}
-
-        await client.update_module(module, data, refs=refs)
-
-        call_arg = mock[0]
-        update = _module_update(call_arg)
-        assert isinstance(update, DeviceSettingsModuleUpdate)
-        assert update.refs is not MISSING
 
 
 class TestDeleteEdgeErrors:

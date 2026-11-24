@@ -124,8 +124,8 @@ async def test_full_e2e_load_apply_save():
     assert "allow-all" in rule_names
     assert "block-ssh" in rule_names
 
-    # Verify override flag was set
-    assert seg.outbound_override is True
+    # No override flag is set along with it: a firewall segment has none
+    assert "outboundOverride" not in seg.model_dump(mode="json", by_alias=True)
 
     # Verify the new rule has the correct properties
     block_ssh = next(r for r in seg.outbound if r.name == "block-ssh")

@@ -2,7 +2,8 @@
 
 The canonical entry points are re-exported here for convenience:
 
-- :class:`VcoClient` and :class:`VcoClientProtocol` for API access.
+- :class:`VcoClient` and :class:`VcoClientProtocol` for API access, and
+  :func:`get_vco_credentials` for reading ``VCO_HOST`` / ``VCO_TOKEN``.
 - :class:`VcoModel` plus the field markers and identity types from
   :mod:`pyvelo.core` for building/extending request and response schemas.
 - The resolver framework (:class:`Resolver`, :class:`BaseResolver`,
@@ -14,10 +15,14 @@ For configuration helpers (pipeline, aspects, state), see the ``pyvelo-intent`` 
 """
 
 from pyvelo.client import (
+    ConfigConflictError,
+    LossyFieldError,
+    UnboundError,
     VcoApiError,
     VcoAuth,
     VcoClient,
     VcoClientProtocol,
+    VcoCredentialsError,
     VcoEmptyResultError,
     VcoError,
     VcoHttpError,
@@ -28,6 +33,7 @@ from pyvelo.client import (
     VcoWebSocketError,
     VcoWebSocketTimeoutError,
     VcoWebSocketValidationError,
+    get_vco_credentials,
 )
 from pyvelo.config.resolver import (
     BaseResolver,
@@ -52,9 +58,11 @@ __all__ = [
     "ApplicationResolver",
     # Resolver framework
     "BaseResolver",
+    "ConfigConflictError",
     "EdgeResolver",
     "LicenseResolver",
     "LinkResolver",
+    "LossyFieldError",
     "ProfileResolver",
     "ResolutionError",
     "Resolver",
@@ -63,10 +71,12 @@ __all__ = [
     "SegmentResolver",
     "ServiceGroupResolver",
     # Client
+    "UnboundError",
     "VcoApiError",
     "VcoAuth",
     "VcoClient",
     "VcoClientProtocol",
+    "VcoCredentialsError",
     "VcoEmptyResultError",
     "VcoError",
     "VcoHttpError",
@@ -79,4 +89,5 @@ __all__ = [
     "VcoWebSocketError",
     "VcoWebSocketTimeoutError",
     "VcoWebSocketValidationError",
+    "get_vco_credentials",
 ]

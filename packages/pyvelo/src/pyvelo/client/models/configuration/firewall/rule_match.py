@@ -28,7 +28,7 @@ class OutboundRuleMatch(VcoModel):
     destination_ip_v6: Annotated[str | MISSING, Alias("dipV6")] = "any"
 
     @override
-    def model_post_init(self, __context: Any) -> None:
+    def model_post_init(self, __context: Any, /) -> None:
         """Strip IP fields that must be absent for the configured ip_version.
 
         VCO validation requires:
@@ -36,6 +36,7 @@ class OutboundRuleMatch(VcoModel):
         - IPv6: sip/dip must be undefined (absent)
         - IPv4v6: all four must be present as "any"
         """
+        super().model_post_init(__context)
         if self.ip_version == "IPv4":
             self.source_ip_v6 = MISSING
             self.destination_ip_v6 = MISSING

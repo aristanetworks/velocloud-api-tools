@@ -20,7 +20,7 @@ from ._type_support import JsonObject
 
 _get_context_defaults = cast(
     Callable[[FieldInfo], ContextDefaults | None],
-    getattr(core_fields, "_get_context_defaults"),
+    core_fields.get_context_defaults,
 )
 
 # ---------------------------------------------------------------------------
@@ -91,7 +91,7 @@ def _compact_alias(model: VcoModel, **extra_ctx: object) -> JsonObject:
 
 
 def _config_context(model: VcoModel) -> ConfigContext | None:
-    return cast(ConfigContext | None, getattr(model, "_config_context"))
+    return cast(ConfigContext | None, model._config_context)
 
 
 # ---------------------------------------------------------------------------

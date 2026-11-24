@@ -6,6 +6,7 @@ from typing import Any
 from unittest.mock import AsyncMock
 
 import httpx
+from pydantic import MISSING
 
 from pyvelo.client import VcoAuth, VcoClient
 from pyvelo.client.enums.enterprise import NetworkSegmentType
@@ -32,6 +33,38 @@ def make_transport(
 ) -> httpx.MockTransport:
     """Wrap a handler into a mock transport."""
     return httpx.MockTransport(handler)
+
+
+def make_module_json(
+    name: str,
+    data: object,
+    *,
+    module_id: int = 1,
+    configuration_id: int = 100,
+    version: str | None = "v1",
+    refs: object = MISSING,
+) -> dict[str, Any]:
+    """Build a configuration module row in wire form.
+
+    ``refs`` is included only when given.
+    """
+    row: dict[str, Any] = {
+        "id": module_id,
+        "type": "ENTERPRISE",
+        "created": "2024-01-01T00:00:00.000Z",
+        "modified": "2024-01-01T00:00:00.000Z",
+        "description": None,
+        "configurationId": configuration_id,
+        "enterpriseLogicalId": None,
+        "schemaVersion": None,
+        "version": version,
+        "metadata": None,
+        "name": name,
+        "data": data,
+    }
+    if refs is not MISSING:
+        row["refs"] = refs
+    return row
 
 
 class FakeSegmentData:

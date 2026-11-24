@@ -19,13 +19,15 @@ from pyvelo.client.models.configuration.qos.root import QosData
 from pyvelo.client.models.configuration.qos.rule import QosRule
 from pyvelo.client.models.configuration.qos.segment import CosMapping, QosSegment
 from pyvelo.client.schemas.configuration import (
+    AnyConfigurationModule,
     EdgeConfiguration,
     EnterpriseConfigurationProfile,
     InsertQosConfigurationModule,
     QosConfigurationModule,
 )
 from pyvelo.config.resolver import ResolverContext
-from pyvelo_intent.config.pipeline import ConfigPipeline, _overlay_qos_from_profile
+from pyvelo_intent.config.pipeline import ConfigPipeline
+from pyvelo_intent.config.qos_overlay import qos_overlay_data
 from pyvelo_intent.config.state import ConfigState
 from pyvelo_intent.testing import MockVcoClient, make_firewall_module
 
@@ -76,11 +78,24 @@ def _make_profile_qos_module() -> QosConfigurationModule:
 
 def _make_state(*, edge_has_qos: bool = False) -> ConfigState:
     profile_qos = _make_profile_qos_module()
-    edge_modules = [make_firewall_module(mod_id=1, config_id=11)]
+    edge_modules: list[AnyConfigurationModule] = [
+        make_firewall_module(mod_id=1, config_id=11)
+    ]
     if edge_has_qos:
-        overlay = _overlay_qos_from_profile(profile_qos)
-        overlay.id_ = 78
-        overlay.configuration_id = 11
+        row = profile_qos.model_dump(mode="json", by_alias=True)
+        profile_data = row["data"]
+        row["data"] = qos_overlay_data(
+            {
+                "segments": [
+                    {"segment": segment["segment"], "rules": []}
+                    for segment in profile_data["segments"]
+                ]
+            },
+            profile_data,
+        )
+        row["id"] = 78
+        row["configurationId"] = 11
+        overlay = QosConfigurationModule.model_validate(row).for_edge()
         edge_modules.append(overlay)
     edge_config = EdgeConfiguration(
         name="Edge Specific Profile",
@@ -140,14 +155,24 @@ _RTSP_PATCH = {
 
 def test_overlay_moves_catalog_out_of_rules():
     template = _make_profile_qos_module()
-    overlay = _overlay_qos_from_profile(template)
+    profile_data = template.data.model_dump(mode="json", by_alias=True)
+    profile_data["segments"][0]["futureField"] = {"rawValue": "1.00"}
+    overlay = qos_overlay_data(
+        {
+            "segments": [
+                {"segment": profile_data["segments"][0]["segment"], "rules": []}
+            ]
+        },
+        profile_data,
+    )
 
-    seg = overlay.data.get_segment(name="Global Segment")
-    assert [r.name for r in seg.rules] == []
-    assert [r.name for r in seg.inherited_rules] == ["Box", "Speedtest"]
-    assert [r.name for r in seg.inherited_defaults] == ["Default-Internet-UDP"]
-    assert seg.defaults == []
-    assert seg.cos_mapping_override is False
+    seg = overlay["segments"][0]
+    assert seg["rules"] == []
+    assert [r["name"] for r in seg["inheritedRules"]] == ["Box", "Speedtest"]
+    assert [r["name"] for r in seg["inheritedDefaults"]] == ["Default-Internet-UDP"]
+    assert seg["defaults"] == []
+    assert seg["cosMappingOverride"] is False
+    assert seg["futureField"] == {"rawValue": "1.00"}
     # Profile template is unchanged.
     profile_seg = template.data.get_segment(name="Global Segment")
     assert [r.name for r in profile_seg.rules] == ["Box", "Speedtest"]
@@ -164,6 +189,7 @@ async def test_save_inserts_overlay_not_cloned_catalog():
         module="qos",
         patch={"segments": {"Global Segment": {"rules": {"RTSP-RTP": _RTSP_PATCH}}}},
     )
+    planned = state.plan().changed[0].data
     result = await pipeline.save(state)
 
     assert ConfigurationModuleName.QOS in result.modules_inserted
@@ -175,14 +201,7 @@ async def test_save_inserts_overlay_not_cloned_catalog():
     assert request.profile_module_id == 63
     assert request.profile_data is not MISSING
 
-    seg = request.data.get_segment(name="Global Segment")
-    assert [r.name for r in seg.rules] == ["RTSP-RTP"]
-    assert [r.name for r in seg.inherited_rules] == ["Box", "Speedtest"]
-    assert [r.name for r in seg.inherited_defaults] == ["Default-Internet-UDP"]
-    assert seg.defaults == []
-    assert seg.rules[0].rule_logical_id is None
-    assert seg.rules[0].action.sla is not MISSING
-    assert seg.rules[0].action.sla.loss_percent == "0.0"
+    assert request.data == planned
 
     payload = request.model_dump(by_alias=True)
     wire_seg = payload["data"]["segments"][0]
@@ -224,4 +243,5 @@ async def test_existing_edge_qos_updates_without_recloning_catalog():
     assert state.edge_config is not None
     seg = state.edge_config.qos.data.get_segment(name="Global Segment")
     assert [r.name for r in seg.rules] == ["RTSP-RTP"]
+    assert seg.inherited_rules is not MISSING
     assert [r.name for r in seg.inherited_rules] == ["Box", "Speedtest"]

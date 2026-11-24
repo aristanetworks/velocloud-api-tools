@@ -49,14 +49,8 @@ class CosMapping(VcoModel):
     override: Annotated[bool, OverrideFlag] = False
 
 
-# Web Proxy Models
-
-
 class WebProxy(VcoModel):
     providers: list[Any] = Field(default_factory=list)
-
-
-# Complete Segment Model
 
 
 class QosSegment(VcoModel):
@@ -78,7 +72,6 @@ class QosSegment(VcoModel):
     ] = MISSING
     # Sibling of cosMapping in the UI insert payload. Not OverrideFlag: adding
     # a business-policy rule must not flip this to True.
-    cos_mapping_override: Annotated[bool, EdgeOnly] = False
+    cos_mapping_override: Annotated[bool | MISSING, EdgeOnly] = MISSING
 
-    name: str | None = None
-    web_proxy: WebProxy = Field(default_factory=WebProxy)
+    web_proxy: WebProxy | MISSING = MISSING

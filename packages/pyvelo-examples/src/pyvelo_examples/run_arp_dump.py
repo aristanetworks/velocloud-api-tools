@@ -15,7 +15,12 @@ from dataclasses import dataclass, field
 from typing import cast
 from uuid import UUID
 
-from pyvelo.client import VcoClient, VcoWebSocket, VcoWebSocketError
+from pyvelo.client import (
+    VcoClient,
+    VcoWebSocket,
+    VcoWebSocketError,
+    get_vco_credentials,
+)
 from pyvelo.client.enums import EdgeState
 from pyvelo.client.schemas.enterprise import (
     GetEnterprise,
@@ -25,8 +30,6 @@ from pyvelo.client.schemas.enterprise import (
 from rich.console import Console
 from rich.table import Table
 from rich.text import Text
-
-from .common import get_vco_credentials
 
 logger = logging.getLogger(__name__)
 

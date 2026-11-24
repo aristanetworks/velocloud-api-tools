@@ -10,7 +10,7 @@ from pyvelo.client.schemas.configuration import (
 )
 from pyvelo.client.schemas.edge import GetEdgeConfigurationStack
 from pyvelo.client.schemas.enterprise import GetEnterpriseEdgesItem
-from pyvelo.config.resolver import ResolverRegistry
+from pyvelo.config.resolver import ResolutionError, ResolverRegistry
 from pyvelo.config.resolvers.edge import EdgeResolver
 from pyvelo_intent.config.pipeline import ConfigPipeline
 from pyvelo_intent.config.state import ConfigState
@@ -100,6 +100,26 @@ async def test_load_by_edge_name():
     req = stack_calls[0][1]
     assert isinstance(req, GetEdgeConfigurationStack)
     assert req.edge_id == 42
+
+
+@pytest.mark.asyncio
+async def test_load_by_name_is_strict():
+    client = MockVcoClient(
+        stack=_make_stack(),
+        edges=[
+            GetEnterpriseEdgesItem.model_construct(
+                name="Branch-NYC", id_=42, logical_id=uuid.UUID(int=0)
+            )
+        ],
+    )
+    registry = ResolverRegistry()
+    registry.register(EdgeResolver(client))
+    pipeline = ConfigPipeline(client, resolvers=registry)
+    with pytest.raises(ResolutionError) as exc:
+        await pipeline.load("Branch-NY")
+    assert exc.value.candidates == ["Branch-NYC"]
+    assert not any(name == "get_edge_configuration_stack" for name, _ in client.calls)
+    assert (await pipeline.load("branch-nyc")).target_type == "edge"
 
 
 @pytest.mark.asyncio

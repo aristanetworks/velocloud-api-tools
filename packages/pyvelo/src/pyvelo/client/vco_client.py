@@ -41,17 +41,19 @@ class VcoClient(VcoClientProtocol):
         exchange_hook: ExchangeHook | None = None,
         request_observer: RequestObserver | None = None,
     ) -> None:
-        self._vco_fqdn = vco_fqdn
-        self._token = SecretStr(token)
-        self._verify_ssl = verify_ssl
-        self._timeout = timeout
-        self._max_retries = max_retries
-        self._exchange_hook = exchange_hook
-        self._request_observer = request_observer
+        self._vco_fqdn: str = vco_fqdn
+        self._token: SecretStr = SecretStr(token)
+        self._verify_ssl: bool = verify_ssl
+        self._timeout: float = timeout
+        self._max_retries: int = max_retries
+        self._exchange_hook: ExchangeHook | None = exchange_hook
+        self._request_observer: RequestObserver | None = request_observer
         self._ws_cleanup_tasks: set[asyncio.Task[None]] = set()
 
         if max_concurrent_requests is not None:
-            self._concurrency_semaphore = asyncio.Semaphore(max_concurrent_requests)
+            self._concurrency_semaphore: asyncio.Semaphore | None = asyncio.Semaphore(
+                max_concurrent_requests
+            )
             logger.debug(
                 "Concurrency semaphore configured: %d max in-flight requests",
                 max_concurrent_requests,
@@ -60,7 +62,7 @@ class VcoClient(VcoClientProtocol):
             self._concurrency_semaphore = None
 
         if max_requests_per_window is not None:
-            self._rate_limit = max_requests_per_window
+            self._rate_limit: int | None = max_requests_per_window
             logger.debug(
                 "Rate limiter configured: %d requests per %.0fs window",
                 max_requests_per_window,
@@ -69,9 +71,9 @@ class VcoClient(VcoClientProtocol):
         else:
             self._rate_limit = None
 
-        self._rate_lock = asyncio.Lock()
-        self._window_start = time.monotonic()
-        self._window_count = 0
+        self._rate_lock: asyncio.Lock = asyncio.Lock()
+        self._window_start: float = time.monotonic()
+        self._window_count: int = 0
 
     # -- Retry / rate-limit infrastructure ----------------------------------
 
@@ -176,14 +178,14 @@ class VcoClient(VcoClientProtocol):
                     if retry_after is not None:
                         try:
                             retry_after_delay = float(retry_after)
-                        except ValueError, TypeError:
+                        except (ValueError, TypeError):
                             retry_after_delay = None
                     if retry_after_delay is not None:
                         retry_after_delays.append(retry_after_delay)
                     delay = (
                         retry_after_delay
                         if retry_after_delay is not None
-                        else min(_RETRY_BASE_DELAY * (2**attempt), _RETRY_MAX_DELAY)
+                        else min(_RETRY_BASE_DELAY * (1 << attempt), _RETRY_MAX_DELAY)
                         + random.uniform(0, _RETRY_JITTER)
                     )
 
@@ -216,7 +218,7 @@ class VcoClient(VcoClientProtocol):
                         arguments = payload.get("params")
                         if isinstance(arguments, dict):
                             has_cursor = bool(arguments.get("nextPageLink"))
-                except ValueError, TypeError:
+                except (ValueError, TypeError):
                     pass
                 try:
                     observation = RequestObservation(
@@ -239,7 +241,9 @@ class VcoClient(VcoClientProtocol):
                         max_retries=self._max_retries,
                     )
                     self._request_observer(observation)
-                except Exception:
+                except Exception as exc:  # noqa: BLE001 - observer isolation: telemetry must not alter the request outcome
                     # Telemetry must not replace the source outcome or expose
                     # observer exceptions, payloads or credential values.
-                    logger.warning("VCO request observer failed")
+                    logger.warning(
+                        "VCO request observer failed (%s)", type(exc).__name__
+                    )

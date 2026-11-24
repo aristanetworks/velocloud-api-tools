@@ -208,7 +208,6 @@ class EnterpriseAppOtherMetrics(VcoModel):
 
 
 class EnterpriseFlowMetricsItem(VcoModel):
-
     application: int | MISSING = MISSING
     name: int | str
     category: int | MISSING = MISSING

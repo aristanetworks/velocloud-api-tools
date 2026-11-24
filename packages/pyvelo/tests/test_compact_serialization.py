@@ -1,6 +1,5 @@
 """Tests for compact serialization via model_dump(context={"compact": True})."""
 
-import warnings
 from typing import Annotated, cast
 
 from pydantic import MISSING, Field
@@ -255,27 +254,3 @@ class TestNormalize:
 
     def test_real_value_kept(self):
         assert _compact(NormalizedPort(port=8080))["port"] == 8080
-
-
-# ---------------------------------------------------------------------------
-# Deprecation warning on compact_dump
-# ---------------------------------------------------------------------------
-
-
-class TestDeprecationWarning:
-    def test_compact_dump_emits_warning(self):
-        m = Outer()
-        with warnings.catch_warnings(record=True) as w:
-            warnings.simplefilter("always")
-            _ = m.compact_dump()  # pyright: ignore[reportDeprecated] -- exercising the deprecated compatibility API
-            assert len(w) == 1
-            assert issubclass(w[0].category, DeprecationWarning)
-            assert "compact_dump" in str(w[0].message)
-
-    def test_compact_dump_still_works(self):
-        m = Outer(source_ip="10.0.0.1")
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore", DeprecationWarning)
-            d = m.compact_dump()  # pyright: ignore[reportDeprecated] -- exercising the deprecated compatibility API
-        assert d["source_ip"] == "10.0.0.1"
-        assert "hostname" not in d

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import typing
 import uuid
 from datetime import UTC, datetime
 from enum import StrEnum
@@ -795,7 +796,7 @@ class Analytics:
     # Group 14: Event Collection
     # -----------------------------------------------------------------------
 
-    _EVENT_COLUMNS = [
+    _EVENT_COLUMNS: typing.ClassVar[list[str]] = [
         "event_time",
         "event",
         "category",
@@ -876,7 +877,7 @@ class Analytics:
     # Group 15: Edge Collection
     # -----------------------------------------------------------------------
 
-    _EDGE_COLUMNS = [
+    _EDGE_COLUMNS: typing.ClassVar[list[str]] = [
         "id",
         "logical_id",
         "name",
@@ -979,7 +980,7 @@ class Analytics:
     # Group 16: Configuration Profile Collection
     # -----------------------------------------------------------------------
 
-    _CONFIGURATION_COLUMNS = [
+    _CONFIGURATION_COLUMNS: typing.ClassVar[list[str]] = [
         "id",
         "logical_id",
         "name",

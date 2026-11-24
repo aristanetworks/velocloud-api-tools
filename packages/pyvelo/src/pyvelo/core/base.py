@@ -2,9 +2,27 @@
 
 Provides:
 - VcoModel base class with compact and context-aware serialization
+- ``VcoModel.merge_patch``: recursive merge of a partial dict into a model
 - ContextView / ContextFieldInfo for field metadata introspection
 - JsonRpc request/response/error models
 - Pagination, API filters, and utility types
+
+Terminology:
+
+config level
+    The active :class:`ConfigContext` (EDGE or PROFILE). It comes from a
+    pydantic ``context={"config_level": ...}`` or from the model's own
+    ``config_context`` (set by ``for_context`` / ``for_edge`` / ``for_profile``).
+    Field markers (``EdgeOnly``, ``ContextDefault``, ...) make a field absent
+    or change its default at a given level.
+
+compact form
+    A dump (``model_dump(context={"compact": True})``) that leaves out fields
+    that are MISSING, absent at the config level, or equal to their default.
+
+patch
+    A JSON-like ``dict[str, object]`` merged into a model by ``merge_patch``.
+    Keys that start with ``_`` are merge directives (e.g. ``_position``).
 """
 
 from __future__ import annotations
@@ -12,19 +30,24 @@ from __future__ import annotations
 import copy
 import datetime
 import functools
+import math
 import types
+import warnings
+from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass
-from enum import IntEnum, StrEnum
+from enum import Enum, IntEnum, auto
 from typing import (
     Annotated,
-    Any,
+    ClassVar,
     Literal,
+    Protocol,
     Self,
+    TypeIs,
+    Union,  # pyright: ignore[reportDeprecated]
     get_args,
     get_origin,
     override,
 )
-from warnings import deprecated
 
 import annotated_types
 from pydantic import (
@@ -38,6 +61,7 @@ from pydantic import (
     Field,
     PrivateAttr,
     SerializationInfo,
+    SerializerFunctionWrapHandler,
     Tag,
     TypeAdapter,
     ValidationError,
@@ -48,81 +72,83 @@ from pydantic.fields import FieldInfo
 from pydantic_core import PydanticUndefined
 
 from .fields import (
-    _CONTEXT_NOT_SET,
+    CONTEXT_NOT_SET,
     Alias,
     ConfigContext,
-    _apply_vco_markers,
-    _get_context_defaults,
-    _get_normalizer,
-    _resolve_ctx_default,
+    NormalizerFn,
+    apply_vco_markers,
+    get_context_defaults,
+    get_key_field,
+    get_name_of,
+    get_normalizer,
+    get_resolvable,
+    has_override_flag,
+    is_edge_local,
+    resolve_ctx_default,
 )
+from .identity import ResolutionError
+
+type JsonObject = dict[str, object]
+"""A JSON object: a merge patch, a compact dump, a pydantic context, ..."""
 
 
-def _iter_alias_strings(alias: Any) -> list[str]:
-    """Flatten a Pydantic validation alias into plain strings.
+class IdentityResolver(Protocol):
+    """What ``merge_patch`` needs to turn names into IDs.
 
-    ``AliasChoices`` (and nested choices) are expanded so ``merge_patch`` can
-    accept every documented wire name, not just the serialization alias.
+    Satisfied by ``pyvelo.config.resolver.ResolverRegistry``.
     """
-    if alias is None:
-        return []
-    if isinstance(alias, str):
-        return [alias]
-    choices = getattr(alias, "choices", None)
-    if choices:
-        result: list[str] = []
-        for choice in choices:
-            result.extend(_iter_alias_strings(choice))
-        return result
-    return []
+
+    def resolve_sync[T](self, key: type[T], name: str, /) -> T: ...
+
+    def has_id_sync(
+        self, identity_type: type[object], id_attr: str, value: object, /
+    ) -> bool: ...
 
 
 # ---------------------------------------------------------------------------
-# Serialization helpers
+# Runtime narrowing helpers
 # ---------------------------------------------------------------------------
+# Patches, pydantic contexts and field values reach this module untyped. A
+# bare ``isinstance(x, dict)`` narrows to ``dict[Unknown, Unknown]``; these
+# helpers narrow to ``object`` elements instead, so code that uses the
+# elements still has to check their types.
 
 
-def _matches_field_default(value: Any, field_info: FieldInfo) -> bool:
-    """Check if value equals the field's default (static or factory-produced).
+def _is_list(value: object) -> TypeIs[list[object]]:
+    return isinstance(value, list)
 
-    When a normalizer is present, both the value and the default are
-    normalized before comparison (with ctx=None since this path has
-    no active config context).
 
-    For VcoModel instances, raw equality may fail when fields hold different
-    representations of the same state. In that case we fall back to comparing
-    compact_dump() outputs which normalise away variants.
-    """
-    norm = _get_normalizer(field_info)
-    if field_info.default is not PydanticUndefined:
-        try:
-            v = norm(value, None) if norm else value
-            d = norm(field_info.default, None) if norm else field_info.default
-            return v == d
-        except TypeError, ValueError:
-            return False
-    if field_info.default_factory is not None:
-        try:
-            default = (
-                field_info.default_factory()
-            )  # pyright: ignore[reportCallIssue]  # ty: ignore[missing-argument]
-            v = norm(value, None) if norm else value
-            d = norm(default, None) if norm else default
-            if v == d:
-                return True
-            if isinstance(value, VcoModel) and isinstance(default, VcoModel):
-                ctx = {"compact": True}
-                return value._compact_serialize(
-                    by_alias=False, context=ctx
-                ) == default._compact_serialize(by_alias=False, context=ctx)
-            return False
-        except TypeError, ValueError:
-            return False
-    return False
+def _is_dict(value: object) -> TypeIs[dict[object, object]]:
+    return isinstance(value, dict)
+
+
+def _is_mapping(value: object) -> TypeIs[Mapping[object, object]]:
+    return isinstance(value, Mapping)
+
+
+def _is_json_object(value: object) -> TypeIs[JsonObject]:
+    """True for a dict. Patch dicts come from JSON, so their keys are taken to be ``str``."""
+    return isinstance(value, dict)
+
+
+def _is_vco_model_type(tp: object) -> TypeIs[type[VcoModel]]:
+    return isinstance(tp, type) and issubclass(tp, VcoModel)
+
+
+def _field_value(obj: object, name: str) -> object:
+    """``getattr`` typed ``object`` instead of ``Any``."""
+    value: object = getattr(obj, name)
+    return value
+
+
+def _level_from_context(context: object) -> ConfigContext | None:
+    """Read ``config_level`` from a pydantic validation or serialization context."""
+    level = context.get("config_level") if _is_mapping(context) else None
+    return level if isinstance(level, ConfigContext) else None
 
 
 def _field_alias(field_info: FieldInfo, python_name: str) -> str:
-    """Get serialization alias for a field, falling back to alias_generator."""
+    """Get the field's serialization key. Falls back to the camelCase alias_generator."""
     if field_info.serialization_alias is not None:
         return field_info.serialization_alias
     if field_info.alias is not None:
@@ -130,134 +156,199 @@ def _field_alias(field_info: FieldInfo, python_name: str) -> str:
     return to_camel(python_name)
 
 
-def _resolve_config_level(
-    model: VcoModel, context: dict[str, Any] | None
-) -> tuple[ConfigContext | None, dict[str, Any] | None]:
-    """Determine the active config level from context or model state."""
-    config_level: ConfigContext | None = None
-    if context:
-        config_level = context.get("config_level")
-    if config_level is None:
-        config_level = model._config_context
-        if config_level is not None:
-            context = (context or {}) | {"config_level": config_level}
-    return config_level, context
+# ---------------------------------------------------------------------------
+# Defaults at a config level
+# ---------------------------------------------------------------------------
+
+
+class _DefaultSource(Enum):
+    ABSENT = auto()
+    """The field does not exist at this config level."""
+    CONTEXT = auto()
+    """A ContextDefault for this level overrides the field's default."""
+    FIELD = auto()
+    """The field's own default applies."""
+
+
+@dataclass(frozen=True, slots=True)
+class _EffectiveDefault:
+    source: _DefaultSource
+    value: object
+    """``MISSING`` for ABSENT, the resolved context default for CONTEXT, or
+    ``FieldInfo.default`` for FIELD (``PydanticUndefined`` if the field has none,
+    which includes fields that only have a default_factory)."""
+
+
+def _context_default_entry(
+    field_info: FieldInfo, level: ConfigContext | None
+) -> object:
+    """Get the field's raw ContextDefaults entry for *level*. Factories are not called.
+
+    Returns ``MISSING`` (absent at this level), a value or factory, or
+    ``CONTEXT_NOT_SET`` when there is no level, no marker, or no entry for it.
+    """
+    if level is None:
+        return CONTEXT_NOT_SET
+    ctx_defaults = get_context_defaults(field_info)
+    if ctx_defaults is None:
+        return CONTEXT_NOT_SET
+    return ctx_defaults.for_level(level)
+
+
+def _effective_default(
+    field_info: FieldInfo, level: ConfigContext | None
+) -> _EffectiveDefault:
+    """Work out what the field defaults to at *level*."""
+    entry = _context_default_entry(field_info, level)
+    if entry is MISSING:
+        return _EffectiveDefault(_DefaultSource.ABSENT, MISSING)
+    if entry is not CONTEXT_NOT_SET:
+        return _EffectiveDefault(_DefaultSource.CONTEXT, resolve_ctx_default(entry))
+    field_default: object = field_info.default
+    return _EffectiveDefault(_DefaultSource.FIELD, field_default)
 
 
 def _is_context_absent(
-    value: Any,
-    field_info: FieldInfo,
-    config_level: ConfigContext | None,
+    value: object, field_info: FieldInfo, level: ConfigContext | None
 ) -> bool:
-    """Check if a field should be excluded because it's MISSING or absent at the config level.
+    """True if the value is MISSING or the field does not exist at *level*."""
+    return value is MISSING or _context_default_entry(field_info, level) is MISSING
 
-    Returns True when:
-    1. value is MISSING
-    2. config_level present AND ContextDefaults says MISSING for level
+
+def _field_default(field_info: FieldInfo) -> object:
+    """Get the field's static default or a new default_factory value.
+
+    Returns ``PydanticUndefined`` if the field has neither, or if its
+    factory needs validated data.
     """
-    if value is MISSING:
+    static_default: object = field_info.default
+    if static_default is not PydanticUndefined:
+        return static_default
+    if (
+        field_info.default_factory is None
+        or field_info.default_factory_takes_validated_data
+    ):
+        return PydanticUndefined
+    produced: object = field_info.get_default(call_default_factory=True)
+    return produced
+
+
+def _equal_after_normalizing(
+    a: object, b: object, norm: NormalizerFn | None, level: ConfigContext | None
+) -> bool:
+    """Compare two values, running the normalizer on both first if there is one.
+
+    Values that cannot be normalized or compared count as not equal.
+    """
+    try:
+        if norm is not None:
+            return norm(a, level) == norm(b, level)
+        return a == b
+    except (TypeError, ValueError):
+        return False
+
+
+def _matches_field_default(value: object, field_info: FieldInfo) -> bool:
+    """Check if value equals the field's own default (static or factory-produced).
+
+    No config level is active on this path, so the normalizer gets ``None``.
+    """
+    default = _field_default(field_info)
+    if default is PydanticUndefined:
+        return False
+    if _equal_after_normalizing(value, default, get_normalizer(field_info), None):
         return True
-    if config_level is not None:
-        ctx_defaults = _get_context_defaults(field_info)
-        if ctx_defaults is not None:
-            ctx_default = ctx_defaults.for_level(config_level)
-            if ctx_default is MISSING:
-                return True
+    # VcoModels that store the same state in different forms can compare
+    # unequal. Their compact dumps remove those differences.
+    if isinstance(value, VcoModel) and isinstance(default, VcoModel):
+        return _compact_dump(
+            value, by_alias=False, inherited_level=None
+        ) == _compact_dump(default, by_alias=False, inherited_level=None)
     return False
-
-
-class _CtxDefaultStatus(StrEnum):
-    ABSENT = "absent"
-    CONTEXT_DEFAULT = "context"
-    FIELD_DEFAULT = "field"
-
-
-def _classify_context_default(
-    field_info: FieldInfo, config_level: ConfigContext | None
-) -> tuple[_CtxDefaultStatus, Any]:
-    """Classify how a field's default should be resolved in a given context.
-
-    Returns (status, resolved_default) where:
-    - ABSENT / MISSING: field not present at this level
-    - CONTEXT_DEFAULT / value: context-specific default exists
-    - FIELD_DEFAULT / field default or PydanticUndefined: use field's own default
-    """
-    ctx_defaults = _get_context_defaults(field_info)
-    if config_level is not None and ctx_defaults is not None:
-        ctx_val = ctx_defaults.for_level(config_level)
-        if ctx_val is MISSING:
-            return _CtxDefaultStatus.ABSENT, MISSING
-        if ctx_val is not _CONTEXT_NOT_SET:
-            return _CtxDefaultStatus.CONTEXT_DEFAULT, _resolve_ctx_default(ctx_val)
-    default = (
-        field_info.default
-        if field_info.default is not PydanticUndefined
-        else PydanticUndefined
-    )
-    return _CtxDefaultStatus.FIELD_DEFAULT, default
 
 
 def _should_omit_field(
-    value: Any,
-    field_info: FieldInfo,
-    config_level: ConfigContext | None,
+    value: object, field_info: FieldInfo, level: ConfigContext | None
 ) -> bool:
-    """Decide whether a field should be omitted during compact serialization.
+    """Decide whether compact serialization leaves a field out.
 
-    Omission rules (in order):
-    1. value is MISSING -> omit
-    2. config_level present AND ContextDefaults says MISSING for level -> omit
-    3. Value matches effective default (context-specific or field default) -> omit
-       (normalizer applied when present)
+    The field is left out if, checked in this order:
+    1. the value is MISSING
+    2. the field is absent at *level*
+    3. the value equals the effective default at *level* (normalizer applied
+       when present)
     """
-    # Rules 1 & 2
-    if _is_context_absent(value, field_info, config_level):
+    if value is MISSING:
         return True
-
-    # 3. Default matching
-    status, resolved_default = _classify_context_default(field_info, config_level)
-    if status is _CtxDefaultStatus.CONTEXT_DEFAULT:
-        norm = _get_normalizer(field_info)
-        try:
-            if norm:
-                if norm(value, config_level) == norm(resolved_default, config_level):
-                    return True
-            elif value == resolved_default:
-                return True
-        except TypeError, ValueError:
-            pass
-    else:
-        if _matches_field_default(value, field_info):
+    default = _effective_default(field_info, level)
+    match default.source:
+        case _DefaultSource.ABSENT:
             return True
+        case _DefaultSource.CONTEXT:
+            norm = get_normalizer(field_info)
+            return _equal_after_normalizing(value, default.value, norm, level)
+        case _DefaultSource.FIELD:
+            return _matches_field_default(value, field_info)
 
-    return False
+
+# ---------------------------------------------------------------------------
+# Compact serialization
+# ---------------------------------------------------------------------------
 
 
-def _compact_value_ctx(
-    value: Any, by_alias: bool, context: dict[str, Any] | None
-) -> Any:
-    """Recursively compact a value for serialization (context-aware)."""
+def _compact_dump(
+    model: VcoModel, *, by_alias: bool, inherited_level: ConfigContext | None
+) -> JsonObject:
+    """Dump *model* in compact form.
+
+    The config level is *inherited_level* (from the caller's context or an
+    enclosing model) if given, else the model's own. Nested models use the
+    same level.
+    """
+    level = inherited_level if inherited_level is not None else model.config_context
+
+    result: JsonObject = {}
+    for name, field_info in type(model).model_fields.items():
+        value = _field_value(model, name)
+        if _should_omit_field(value, field_info, level):
+            continue
+        key = _field_alias(field_info, name) if by_alias else name
+        result[key] = _compact_value(value, by_alias=by_alias, level=level)
+
+    extra: Mapping[str, object] = model.model_extra or {}
+    for key, value in extra.items():
+        result[key] = _compact_value(value, by_alias=by_alias, level=level)
+    return result
+
+
+def _compact_value(
+    value: object, *, by_alias: bool, level: ConfigContext | None
+) -> object:
+    """Compact a field value, recursing into VcoModels, lists and dicts."""
     if isinstance(value, VcoModel):
-        return value._compact_serialize(by_alias=by_alias, context=context)
+        return _compact_dump(value, by_alias=by_alias, inherited_level=level)
     if isinstance(value, BaseModel):
         return value.model_dump(by_alias=by_alias)
-    if isinstance(value, list):
-        return [_compact_value_ctx(item, by_alias, context) for item in value]
-    if isinstance(value, dict):
-        return {k: _compact_value_ctx(v, by_alias, context) for k, v in value.items()}
+    if _is_list(value):
+        return [_compact_value(v, by_alias=by_alias, level=level) for v in value]
+    if _is_dict(value):
+        return {
+            k: _compact_value(v, by_alias=by_alias, level=level)
+            for k, v in value.items()
+        }
     return value
 
 
-def _propagate_context(value: Any, ctx: ConfigContext) -> None:
-    """Recursively set _config_context on nested VcoModel instances."""
+def _propagate_context(value: object, level: ConfigContext) -> None:
+    """Set the config level on every VcoModel inside *value*, at any depth."""
     if isinstance(value, VcoModel):
-        value.for_context(ctx)
-    elif isinstance(value, list):
+        _ = value.for_context(level)
+    elif _is_list(value):
         for item in value:
-            _propagate_context(item, ctx)
-    elif isinstance(value, dict):
-        for v in value.values():
-            _propagate_context(v, ctx)
+            _propagate_context(item, level)
+    elif _is_dict(value):
+        for item in value.values():
+            _propagate_context(item, level)
 
 
 # ---------------------------------------------------------------------------
@@ -266,7 +357,7 @@ def _propagate_context(value: Any, ctx: ConfigContext) -> None:
 
 
 class VcoModel(BaseModel):
-    model_config = ConfigDict(
+    model_config: ClassVar[ConfigDict] = ConfigDict(
         alias_generator=to_camel,
         use_enum_values=True,
         serialize_by_alias=True,
@@ -277,30 +368,31 @@ class VcoModel(BaseModel):
     _config_context: ConfigContext | None = PrivateAttr(default=None)
 
     @override
-    def model_post_init(self, __context: Any) -> None:
-        if isinstance(__context, dict):
-            config_level = __context.get("config_level")
-            if config_level is not None:
-                self._config_context = config_level
+    def model_post_init(self, validation_context: object, /) -> None:
+        level = _level_from_context(validation_context)
+        if level is not None:
+            self._config_context = level
 
     @override
     @classmethod
     def __pydantic_on_complete__(cls) -> None:
         super().__pydantic_on_complete__()
         cls._alias_map.cache_clear()
-        _apply_vco_markers(cls)
+        apply_vco_markers(cls)
+
+    @property
+    def config_context(self) -> ConfigContext | None:
+        """The config level set on this instance, if any."""
+        return self._config_context
 
     def for_context(self, ctx: ConfigContext) -> Self:
         """Set config context on this model and all nested VcoModel instances."""
         self._config_context = ctx
         for name in type(self).model_fields:
-            value = getattr(self, name)
-            if value is MISSING:
-                continue
+            _propagate_context(_field_value(self, name), ctx)
+        extra: Mapping[str, object] = self.model_extra or {}
+        for value in extra.values():
             _propagate_context(value, ctx)
-        if hasattr(self, "model_extra") and self.model_extra:
-            for v in self.model_extra.values():
-                _propagate_context(v, ctx)
         return self
 
     def for_edge(self) -> Self:
@@ -311,63 +403,48 @@ class VcoModel(BaseModel):
         """Shorthand for ``for_context(ConfigContext.PROFILE)``."""
         return self.for_context(ConfigContext.PROFILE)
 
-    def _compact_serialize(
-        self, *, by_alias: bool, context: dict[str, Any] | None
-    ) -> dict[str, Any]:
-        """Core compact serialization with optional context awareness."""
-        config_level, context = _resolve_config_level(self, context)
-
-        result: dict[str, Any] = {}
-        for name, field_info in type(self).model_fields.items():
-            value = getattr(self, name)
-            if _should_omit_field(value, field_info, config_level):
-                continue
-            key = _field_alias(field_info, name) if by_alias else name
-            result[key] = _compact_value_ctx(value, by_alias, context)
-
-        if hasattr(self, "model_extra") and self.model_extra:
-            for k, v in self.model_extra.items():
-                result[k] = _compact_value_ctx(v, by_alias, context)
-        return result
-
     @model_serializer(mode="wrap")
-    def _serialize(self, handler: Any, info: SerializationInfo) -> dict[str, Any]:
-        ctx = info.context
-        if ctx and "compact" in ctx:
-            by_alias = info.by_alias if info.by_alias is not None else False
-            return self._compact_serialize(by_alias=by_alias, context=ctx)
+    def _serialize(
+        self, handler: SerializerFunctionWrapHandler, info: SerializationInfo
+    ) -> JsonObject:
+        context: object = info.context
+        context_level = _level_from_context(context)
+        # info.by_alias is typed bool, but pydantic passes None when the caller
+        # didn't set by_alias. The two modes treat None differently (see below).
+        if _is_mapping(context) and "compact" in context:
+            # Compact dumps use python names unless by_alias=True is passed.
+            return _compact_dump(
+                self,
+                by_alias=info.by_alias is True,
+                inherited_level=context_level,
+            )
 
-        import warnings
-
+        # merge_patch sets fields without validation, so a field can hold a
+        # value of an unexpected type. Hide pydantic's
+        # PydanticSerializationUnexpectedValue warnings for those.
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", UserWarning)
-            result = handler(self)
+            dumped: JsonObject = handler(self)
 
-        # Context-aware field exclusion (without compact default omission).
-        # Fields whose context_defaults mark them MISSING at the active level
-        # are removed, but all other values (including defaults) are kept.
-        config_level, _ = _resolve_config_level(self, ctx)
-        if config_level is None:
-            return result
+        # Full dump: drop fields that are absent at the active level, but keep
+        # every other value, defaults included. Unlike compact mode, nested
+        # models don't inherit this model's level; pydantic serializes them
+        # with the same context, and each one falls back to its own level.
+        level = context_level if context_level is not None else self.config_context
+        if level is None:
+            return dumped
 
-        # serialize_by_alias=True in model_config, so default is True
-        effective_by_alias = info.by_alias if info.by_alias is not None else True
+        # Full dumps follow model_config (serialize_by_alias=True) unless
+        # by_alias=False is passed.
+        by_alias = info.by_alias is not False
         for name, field_info in type(self).model_fields.items():
-            value = getattr(self, name)
-            if _is_context_absent(value, field_info, config_level):
-                key = _field_alias(field_info, name) if effective_by_alias else name
-                result.pop(key, None)
-
-        return result
-
-    @deprecated(
-        "compact_dump() is deprecated. Use model_dump(by_alias=False, context={'compact': True}) instead."
-    )
-    def compact_dump(self) -> dict[str, Any]:
-        return self._compact_serialize(by_alias=False, context={"compact": True})
+            if _is_context_absent(_field_value(self, name), field_info, level):
+                key = _field_alias(field_info, name) if by_alias else name
+                _ = dumped.pop(key, None)
+        return dumped
 
     @classmethod
-    def compact_load(cls, data: dict[str, Any]) -> Self:
+    def compact_load(cls, data: Mapping[str, object]) -> Self:
         """Hydrate a model from compact form, filling defaults."""
         return cls.model_validate(data)
 
@@ -379,22 +456,25 @@ class VcoModel(BaseModel):
     @classmethod
     @functools.cache
     def _alias_map(cls) -> dict[str, str]:
-        """Cached alias -> python_name mapping for camelCase input support."""
+        """Map each accepted input key to its python field name. Cached per class.
+
+        Accepted keys: the python name, its aliases, and its camelCase form.
+        """
         alias_map: dict[str, str] = {}
         for python_name, fi in cls.model_fields.items():
             alias_map[python_name] = python_name
             if fi.serialization_alias:
                 alias_map[fi.serialization_alias] = python_name
-            for alias in _iter_alias_strings(fi.validation_alias):
+            for alias in _input_keys(fi, python_name):
                 alias_map[alias] = python_name
             alias_map[to_camel(python_name)] = python_name
         return alias_map
 
     def merge_patch(
         self,
-        patch: dict[str, Any],
+        patch: Mapping[str, object],
         *,
-        resolvers: Any | None = None,
+        resolvers: IdentityResolver | None = None,
     ) -> Self:
         """Recursively merge a partial dict into this model instance.
 
@@ -407,560 +487,668 @@ class VcoModel(BaseModel):
 
         Mutates self in-place and returns self for chaining.
         """
-        from .fields import get_key_field
-
         fields = type(self).model_fields
         alias_map = type(self)._alias_map()
 
-        # Resolve patch keys to python field names for snapshot
-        patch_field_names: set[str] = set()
-        for key in patch:
-            if key.startswith("_"):
-                continue
-            resolved = alias_map.get(key)
-            if resolved and resolved in fields:
-                patch_field_names.add(resolved)
+        # (python_name, value) for each patch key that names a field here.
+        # Directives and unknown keys are dropped.
+        updates = [
+            (alias_map[key], value)
+            for key, value in patch.items()
+            if not key.startswith("_") and key in alias_map
+        ]
+        # Copy the touched fields first so OverrideFlag logic can see what changed.
+        before: JsonObject = {
+            name: copy.deepcopy(_field_value(self, name)) for name, _ in updates
+        }
 
-        # Snapshot values before merge for change detection
-        snapshot: dict[str, Any] = {}
-        for name in patch_field_names:
-            snapshot[name] = copy.deepcopy(getattr(self, name))
+        for name, value in updates:
+            _merge_field(self, name, fields[name], value, resolvers)
 
-        for key, value in patch.items():
-            # Skip merge directives
-            if key.startswith("_"):
-                continue
-
-            # Resolve alias to python field name
-            python_name = alias_map.get(key)
-            if python_name is None:
-                continue  # unknown field, skip
-
-            if python_name not in fields:
-                continue
-
-            fi = fields[python_name]
-
-            # null -> MISSING for MISSING-typed fields, None otherwise
-            if value is None:
-                if _field_accepts_missing(fi):
-                    setattr(self, python_name, MISSING)
-                else:
-                    setattr(self, python_name, None)
-                continue
-
-            current = getattr(self, python_name)
-
-            # Dict value + VcoModel field -> recursive merge
-            if isinstance(value, dict) and isinstance(current, VcoModel):
-                current.merge_patch(value, resolvers=resolvers)
-                continue
-
-            # Dict value + VcoModel field type, but current is MISSING/None ->
-            # construct a fresh instance and merge the patch into it.
-            # This preserves KeyField handling (which model_validate
-            # wouldn't do).  If the default constructor fails (e.g.
-            # required fields), fall back to model_validate.
-            if isinstance(value, dict) and (current is MISSING or current is None):
-                model_type = _get_field_vcomodel_type(fi)
-                if model_type is not None:
-                    try:
-                        new_instance = model_type()
-                    except ValidationError:
-                        setattr(self, python_name, model_type.model_validate(value))
-                        continue
-                    new_instance.merge_patch(value, resolvers=resolvers)
-                    setattr(self, python_name, new_instance)
-                    continue
-
-            # Dict value + KeyField list -> keyed merge
-            if isinstance(value, dict) and get_key_field(fi) is not None:
-                _merge_keyed_list(self, python_name, fi, value, resolvers=resolvers)
-                continue
-
-            # Dict value + plain list[VcoModel] field (no KeyField) ->
-            # coerce dict values to a list so we don't assign a dict to
-            # a list field (which would corrupt the data shape and break
-            # roundtrip deserialization).
-            if isinstance(value, dict) and _get_list_item_type(fi) is not None:
-                item_type = _get_list_item_type(fi)
-                assert item_type is not None  # for type narrowing
-                value = [
-                    item_type.model_validate(v) if isinstance(v, dict) else v
-                    for v in value.values()
-                ]
-
-            # Resolvable: string on an ID field -> resolve name to ID
-            if isinstance(value, str) and resolvers is not None:
-                resolved = _try_resolve(fi, value, resolvers)
-                if resolved is not _UNRESOLVED:
-                    value = resolved
-
-            # List of dicts + list[VcoModel] field -> validate items
-            if isinstance(value, list):
-                item_type = _get_list_item_type(fi)
-                if item_type is not None:
-                    value = [
-                        (
-                            item_type.model_validate(item)
-                            if isinstance(item, dict)
-                            else item
-                        )
-                        for item in value
-                    ]
-
-            # Scalar assignment
-            setattr(self, python_name, value)
-
-        # Post-merge: auto-set override flags
-        _auto_set_override_flags(self, snapshot, patch_field_names)
-
+        _auto_set_override_flags(self, before)
         return self
 
 
 # ---------------------------------------------------------------------------
-# Context introspection
+# merge_patch internals
 # ---------------------------------------------------------------------------
 
 
-def _iter_union_args(annotation: Any) -> tuple[Any, ...]:
-    """Extract type args from a Union/UnionType annotation, or return (annotation,)."""
-    if get_origin(annotation) is types.UnionType:
-        return get_args(annotation)
-    return (annotation,)
+def _merge_field(
+    model: VcoModel,
+    name: str,
+    field_info: FieldInfo,
+    value: object,
+    resolvers: IdentityResolver | None,
+) -> None:
+    """Merge one patch value into ``model.<name>``. See ``VcoModel.merge_patch``."""
+    # null deletes: MISSING if the field type allows it, otherwise None.
+    if value is None:
+        setattr(model, name, MISSING if _field_accepts_missing(field_info) else None)
+        return
+
+    if _is_json_object(value):
+        current = _field_value(model, name)
+
+        # Sub-model that already exists: merge into it.
+        if isinstance(current, VcoModel):
+            _ = current.merge_patch(value, resolvers=resolvers)
+            return
+
+        # Sub-model that is unset: build a new one from the patch.
+        model_type = _field_model_type(field_info)
+        if model_type is not None and (current is MISSING or current is None):
+            setattr(model, name, _new_model_from_patch(model_type, value, resolvers))
+            return
+
+        # KeyField list: dict keys pick list items by key path.
+        if get_key_field(field_info) is not None:
+            _merge_keyed_list(model, name, field_info, value, resolvers)
+            return
+
+        # Plain list[VcoModel] given as a dict: its values become the new list,
+        # so the field never ends up holding a dict.
+        if _list_item_type(field_info) is not None:
+            value = list(value.values())
+
+    # Resolvable: a name given where the field expects an ID.
+    if isinstance(value, str) and resolvers is not None:
+        value = _resolve_name(field_info, value, resolvers)
+
+    # list[VcoModel]: validate items given as dicts.
+    if _is_list(value) and (item_type := _list_item_type(field_info)) is not None:
+        value = [item_type.validate(v) if _is_json_object(v) else v for v in value]
+
+    setattr(model, name, value)
 
 
-def _field_accepts_missing(fi: FieldInfo) -> bool:
-    """Check if a field's type annotation includes MISSING."""
-    return MISSING in _iter_union_args(fi.annotation)
+def _new_model_from_patch(
+    model_type: type[VcoModel], patch: JsonObject, resolvers: IdentityResolver | None
+) -> VcoModel:
+    """Build a sub-model from a patch.
+
+    Prefers default-construct-then-merge, so KeyField and Resolvable handling
+    applies to the nested patch (``model_validate`` would skip it). Models
+    with required fields can't be built from defaults, so those fall back to
+    ``model_validate``.
+    """
+    try:
+        instance = model_type()
+    except ValidationError:
+        return model_type.model_validate(patch)
+    return instance.merge_patch(patch, resolvers=resolvers)
 
 
-def _get_field_vcomodel_type(fi: FieldInfo) -> type[VcoModel] | None:
-    """Extract the VcoModel subclass from a field annotation like ``T | MISSING``."""
-    for arg in _iter_union_args(fi.annotation):
-        if isinstance(arg, type) and issubclass(arg, VcoModel):
-            return arg
+def _resolve_name(
+    field_info: FieldInfo, name: str, resolvers: IdentityResolver
+) -> object:
+    """Turn the string *name* on a Resolvable field into the field's ID.
+
+    Returns *name* unchanged if the field is not Resolvable. Otherwise, in order:
+
+    1. If the field's ID type is not ``str`` and *name* parses as it (a UUID
+       string on a UUID field), that value is the ID.
+    2. An exact or case-insensitive name match gives the identity's ``id_attr``.
+    3. If the ID type is ``str`` and *name* equals a known ID, *name* is the ID.
+    4. Otherwise the ``ResolutionError`` propagates.
+
+    A missing resolver raises a ``LookupError`` that is not a ``ResolutionError``.
+    """
+    resolvable = get_resolvable(field_info)
+    if resolvable is None:
+        return name
+    id_type = _id_type(field_info)
+    if id_type is not None and id_type is not str:
+        try:
+            return _id_adapter(id_type).validate_strings(name)
+        except ValidationError:
+            pass
+    try:
+        identity = resolvers.resolve_sync(resolvable.identity_type, name)
+    except ResolutionError:
+        if id_type is str and resolvers.has_id_sync(
+            resolvable.identity_type, resolvable.id_attr, name
+        ):
+            return name
+        raise
+    return _field_value(identity, resolvable.id_attr)
+
+
+def _strip_directives(patch: Mapping[str, object]) -> JsonObject:
+    return {k: v for k, v in patch.items() if not k.startswith("_")}
+
+
+def _resolve_key_path(obj: object, key_path: str) -> object:
+    """Navigate a dotted path on an object (e.g. 'segment.name')."""
+    current = obj
+    for part in key_path.split("."):
+        current = _field_value(current, part)
+    return current
+
+
+def _find_by_key(items: Sequence[object], key_path: str, key: str) -> int | None:
+    """Get the index of the first item whose value at *key_path* equals *key* (as strings)."""
+    for idx, item in enumerate(items):
+        if str(_resolve_key_path(item, key_path)) == key:
+            return idx
     return None
 
 
-def _resolve_key_path(obj: Any, key_path: str) -> Any:
-    """Navigate a dotted path on an object (e.g. 'segment.name')."""
-    for part in key_path.split("."):
-        obj = getattr(obj, part)
-    return obj
+def _resolve_position(items: Sequence[object], key_path: str, position: object) -> int:
+    """Turn a ``_position`` directive into a list index.
+
+    Accepts an int (clamped to the list), ``"before:<key>"`` or
+    ``"after:<key>"``. Anything else, or an anchor key that isn't found,
+    means append.
+    """
+    if isinstance(position, int):
+        return max(0, min(position, len(items)))
+    if isinstance(position, str):
+        anchor, sep, key = position.partition(":")
+        if sep and anchor in ("before", "after"):
+            idx = _find_by_key(items, key_path, key)
+            if idx is not None:
+                return idx if anchor == "before" else idx + 1
+    return len(items)
 
 
 def _merge_keyed_list(
     model: VcoModel,
     field_name: str,
     field_info: FieldInfo,
-    patch: dict[str, Any],
-    *,
-    resolvers: Any | None = None,
+    patch: JsonObject,
+    resolvers: IdentityResolver | None,
 ) -> None:
-    """Merge a dict patch into a KeyField list.
+    """Merge a ``{key: item_patch}`` dict into a KeyField list, changing the list in place.
 
-    Dict keys are matched against the key_path value on existing list items.
+    Each dict key is compared with the value at the field's key path on the
+    existing items. When the key path ends at a ``NameOf`` field and there is a
+    resolver, a key that matches no item is first resolved, and the name the
+    resolver has for it (it matches ignoring case) takes its place: ``guest``
+    edits the ``Guest`` item, or adds ``Guest``. An unknown name raises
+    ``ResolutionError``.
     - Matched + dict value: recursive merge into matched item.
     - Matched + None: delete item from list.
-    - Unmatched + dict value: construct new item, append (or at _position).
+    - Unmatched + dict value: build a new item and insert it (appended unless
+      it has a ``_position``).
+    - A ``_position`` on a matched item moves it.
     """
-    from .fields import get_key_field
-
     key_path = get_key_field(field_info)
     if key_path is None:
         raise ValueError(f"KeyField key_path is None for field '{field_name}'")
 
-    current_list: list[Any] | MISSING = getattr(model, field_name)
-    missing_current_list = current_list is MISSING
-    if missing_current_list:
-        current_list = []
+    current = _field_value(model, field_name)
+    was_unset = current is MISSING or current is None
+    if was_unset:
+        items: list[object] = []
+    elif _is_list(current):
+        items = current
+    else:
+        raise TypeError(
+            f"KeyField '{field_name}' holds {type(current).__name__}, not a list"
+        )
 
-    # Get the list item type from the field annotation
-    item_type = _get_list_item_type(field_info)
+    item_type = _list_item_type(field_info)
+    name_identity = _key_name_of(item_type, key_path)
 
-    for key_value, item_patch in patch.items():
-        # Find existing item by key
-        existing_idx = None
-        for idx, item in enumerate(current_list):
-            if str(_resolve_key_path(item, key_path)) == str(key_value):
-                existing_idx = idx
-                break
+    for patch_key, item_patch in patch.items():
+        key = patch_key
+        idx = _find_by_key(items, key_path, key)
+        if idx is None and name_identity is not None and resolvers is not None:
+            key = _canonical_name(name_identity, key, resolvers)
+            idx = _find_by_key(items, key_path, key)
 
         if item_patch is None:
-            # Delete
-            if existing_idx is not None:
-                current_list.pop(existing_idx)
+            if idx is not None:
+                del items[idx]
+            continue
+        if not _is_json_object(item_patch):
             continue
 
-        if not isinstance(item_patch, dict):
-            continue
+        position = item_patch.get("_position")
+        fields_patch = _strip_directives(item_patch)
 
-        # Extract merge directives
-        position = item_patch.pop("_position", None)
-        # Strip other directives
-        item_patch = {k: v for k, v in item_patch.items() if not k.startswith("_")}
-
-        if existing_idx is not None:
-            # Update existing item
-            existing_item = current_list[existing_idx]
-            existing_item.merge_patch(item_patch, resolvers=resolvers)
-
-            # Handle position change
+        if idx is not None:
+            existing = items[idx]
+            if not isinstance(existing, VcoModel):
+                raise TypeError(
+                    f"KeyField '{field_name}' item {key!r} is "
+                    + f"{type(existing).__name__}, not a VcoModel"
+                )
+            _ = existing.merge_patch(fields_patch, resolvers=resolvers)
             if position is not None:
-                current_list.pop(existing_idx)
-                insert_idx = _resolve_position(current_list, key_path, position)
-                current_list.insert(insert_idx, existing_item)
-        else:
-            # Create new item — inject the key value into the patch
-            if item_type is not None:
-                item_patch = _inject_key_path(item_patch, key_path, key_value)
-                if resolvers is not None:
-                    item_patch = _pre_resolve(item_type, item_patch, resolvers)
-                new_item = item_type.model_validate(item_patch)
-                # Propagate parent's config context so context-aware fills
-                # can see the active level (EDGE vs PROFILE).
-                if model._config_context is not None:
-                    new_item.for_context(model._config_context)
-                # Fill MISSING fields whose ContextDefaults specify a
-                # non-MISSING default at the active config level (e.g.
-                # profile segments expect ospf/syslog present).
-                _fill_missing_submodels(new_item)
-            else:
-                continue
-            insert_idx = _resolve_position(current_list, key_path, position)
-            current_list.insert(insert_idx, new_item)
+                del items[idx]
+                items.insert(_resolve_position(items, key_path, position), existing)
+            continue
 
-    if len(current_list) > 0 and missing_current_list:
-        setattr(model, field_name, current_list)
+        if item_type is None:
+            continue  # can't build an item without a known model type
+        new_item = _new_keyed_item(
+            model, item_type, fields_patch, key_path, key, resolvers
+        )
+        items.insert(_resolve_position(items, key_path, position), new_item)
+
+    if was_unset and items:
+        setattr(model, field_name, items)
 
 
-def _fill_missing_submodels(item: VcoModel) -> None:
-    """Fill MISSING fields whose ContextDefaults specify a default at the active level.
+def _key_name_of(item_type: _ListItemType | None, key_path: str) -> type[object] | None:
+    """The identity type that the field at *key_path* of the list's items names (``NameOf``), or None."""
+    if item_type is None:
+        return None
+    fields: Mapping[str, FieldInfo] = item_type.fields
+    *parents, leaf = key_path.split(".")
+    for part in parents:
+        parent_info = fields.get(part)
+        sub_type = None if parent_info is None else _field_model_type(parent_info)
+        if sub_type is None:
+            return None
+        fields = sub_type.model_fields
+    leaf_info = fields.get(leaf)
+    identity_type: type[object] | None = (
+        None if leaf_info is None else get_name_of(leaf_info)
+    )
+    return identity_type
 
-    When a new keyed-list item is created via model_validate, fields typed
-    as ``SomeModel | MISSING`` default to MISSING.  Some contexts (e.g.
-    PROFILE-level segments) require certain sub-structures present (ospf,
-    syslog, ...).  We honour those requirements only when the field's
-    ContextDefaults explicitly declares a non-MISSING default for the
-    active config level — otherwise the declared MISSING is preserved so
-    EDGE-only patches don't leak unwanted sub-structures.
+
+def _canonical_name(
+    identity_type: type[object], name: str, resolvers: IdentityResolver
+) -> str:
+    """The name the resolver has for *name*, or *name* if it cannot say.
+
+    An unknown name raises ``ResolutionError``. No resolver for the type, or an
+    identity with no ``name``, leaves *name* as it is.
     """
-    config_level = item._config_context
-    if config_level is None:
+    try:
+        identity = resolvers.resolve_sync(identity_type, name)
+    except ResolutionError:
+        raise
+    except LookupError:
+        return name
+    canonical: object = getattr(identity, "name", None)
+    return canonical if isinstance(canonical, str) else name
+
+
+def _require_ids_for_name(
+    item: VcoModel, identity_type: type[object] | None, key_path: str, key: str
+) -> None:
+    """Refuse *item*, named *key*, if the IDs of that name were not set on it.
+
+    *identity_type* is what the field at *key_path* is the ``NameOf``. The IDs
+    are the ``Resolvable`` fields for that type next to it. One that was neither
+    in the patch nor filled from the name is still at its default.
+    """
+    if identity_type is None:
         return
-    for field_name, fi in type(item).model_fields.items():
-        if getattr(item, field_name) is not MISSING:
+    owner: object = item
+    for part in key_path.split(".")[:-1]:
+        owner = _field_value(owner, part)
+    if not isinstance(owner, VcoModel):
+        return
+    unset = [
+        name
+        for name, fi in type(owner).model_fields.items()
+        if (resolvable := get_resolvable(fi)) is not None
+        and resolvable.identity_type is identity_type
+        and name not in owner.model_fields_set
+    ]
+    if unset:
+        raise LookupError(
+            f"Cannot add {key!r} by name: no loaded {identity_type.__name__} "
+            + "resolver or profile entry has it, and the patch does not give "
+            + f"{', '.join(unset)}"
+        )
+
+
+def _new_keyed_item(
+    parent: VcoModel,
+    item_type: _ListItemType,
+    patch: JsonObject,
+    key_path: str,
+    key: str,
+    resolvers: IdentityResolver | None,
+) -> VcoModel:
+    """Build a new KeyField list item from its patch, with the key value written in.
+
+    Raises ``LookupError`` (not ``ResolutionError``) if the key is a name
+    (``NameOf``) and the IDs that go with it were neither in the patch nor found
+    by a resolver: the item would carry the model's defaults, which are another
+    item's IDs.
+    """
+    item_patch = _inject_key_path(patch, key_path, key)
+    if resolvers is not None:
+        item_patch = _pre_resolve(item_type.fields, item_patch, resolvers)
+    item = item_type.validate(item_patch)
+    _require_ids_for_name(item, _key_name_of(item_type, key_path), key_path, key)
+    # Give the item the parent's config level so context defaults resolve
+    # for the right level (EDGE vs PROFILE).
+    if parent.config_context is not None:
+        _ = item.for_context(parent.config_context)
+    _fill_context_defaults(item)
+    return item
+
+
+def _fill_context_defaults(item: VcoModel) -> None:
+    """Fill MISSING fields that have a ContextDefault at the item's config level.
+
+    A freshly validated item leaves ``SomeModel | MISSING`` fields as MISSING.
+    Some levels need those sub-structures present (e.g. PROFILE segments need
+    ospf, syslog, ...). We fill them only when the field's ContextDefaults
+    gives a non-MISSING default for the active level. Otherwise MISSING stays,
+    so patches at other levels don't pick up unwanted sub-structures.
+    """
+    level = item.config_context
+    if level is None:
+        return
+    for name, field_info in type(item).model_fields.items():
+        if _field_value(item, name) is not MISSING:
             continue
-        status, default = _classify_context_default(fi, config_level)
-        if status is not _CtxDefaultStatus.CONTEXT_DEFAULT:
-            continue
-        if default is MISSING or default is PydanticUndefined:
-            continue
-        setattr(item, field_name, default)
+        default = _effective_default(field_info, level)
+        if (
+            default.source is _DefaultSource.CONTEXT
+            and default.value is not MISSING
+            and default.value is not PydanticUndefined
+        ):
+            setattr(item, name, default.value)
 
 
 def _inject_key_path(
-    patch: dict[str, Any], key_path: str, key_value: str
-) -> dict[str, Any]:
-    """Inject the key value into a patch dict at the key path location.
+    patch: Mapping[str, object], key_path: str, key_value: str
+) -> JsonObject:
+    """Return a copy of *patch* with *key_value* set at the dotted *key_path*.
 
-    For simple keys like ``"name"``, sets ``patch["name"] = key_value``.
-    For dotted paths like ``"segment.name"``, builds nested dicts:
-    ``patch["segment"] = {"name": key_value, **existing}``.
+    For ``"name"``, sets ``patch["name"]`` unless the patch already has it.
+    For ``"segment.name"``, makes ``patch["segment"] = {**existing, "name": key_value}``,
+    keeping sibling keys and overriding any existing name.
     """
-    parts = key_path.split(".")
-    result = dict(patch)
-    if len(parts) == 1:
-        result.setdefault(parts[0], key_value)
-    else:
-        # Build nested dict from inside out
-        inner = {parts[-1]: key_value}
-        # Merge with any existing nested dict in the patch
-        for part in reversed(parts[:-1]):
-            existing = result.get(part, {})
-            if isinstance(existing, dict):
-                merged = dict(existing)
-                merged.update(inner)
-                inner = merged
-            result[part] = inner
+    *parents, leaf = key_path.split(".")
+    result: JsonObject = dict(patch)
+    if not parents:
+        _ = result.setdefault(leaf, key_value)
+        return result
+
+    node = result
+    for part in parents:
+        existing = node.get(part)
+        child: JsonObject = dict(existing) if _is_json_object(existing) else {}
+        node[part] = child
+        node = child
+    node[leaf] = key_value
     return result
 
 
-_UNRESOLVED = object()
-
-
-def _try_resolve(
-    fi: FieldInfo, value: str, resolvers: Any, *, suppress_errors: bool = False
-) -> Any:
-    """Resolve a string value to an ID via the field's Resolvable marker.
-
-    Returns the resolved ID, or ``_UNRESOLVED`` if the field has no
-    Resolvable marker.  When *suppress_errors* is True, LookupError
-    from the resolver is caught and ``_UNRESOLVED`` is returned;
-    otherwise the exception propagates.
-    """
-    from .fields import get_resolvable
-
-    resolvable = get_resolvable(fi)
-    if resolvable is None:
-        return _UNRESOLVED
-    try:
-        identity = resolvers.resolve_sync(resolvable.identity_type, value)
-        return getattr(identity, resolvable.id_attr)
-    except LookupError:
-        if suppress_errors:
-            return _UNRESOLVED
-        raise
+def _input_keys(field_info: FieldInfo, field_name: str) -> tuple[str, ...]:
+    """Patch keys that may hold this field, including validation alias choices."""
+    alias = field_info.validation_alias or field_info.alias
+    if isinstance(alias, AliasChoices):
+        return (field_name, *(key for key in alias.choices if isinstance(key, str)))
+    if isinstance(alias, str) and alias != field_name:
+        return (field_name, alias)
+    return (field_name,)
 
 
 def _pre_resolve(
-    item_type: type[VcoModel] | _DiscriminatedListItem,
-    patch: dict[str, Any],
-    resolvers: Any,
-) -> dict[str, Any]:
-    """Resolve Resolvable string values in *patch* before model_validate.
+    fields: Mapping[str, FieldInfo],
+    patch: Mapping[str, object],
+    resolvers: IdentityResolver,
+) -> JsonObject:
+    """Resolve names to IDs in a patch that will go to ``model_validate`` instead of ``merge_patch``.
 
-    When creating new keyed-list items, merge_patch isn't called so
-    Resolvable fields (e.g. segment_id: "Global Segment") would hit
-    Pydantic validation as raw strings.  This pre-resolves them.
+    New keyed-list items are built with ``model_validate``, so Resolvable
+    fields (e.g. ``segment_id: "Global Segment"``) would reach pydantic as
+    raw strings. This function walks *patch* against *fields* (the target
+    model's fields) and:
 
-    Also recurses into nested dicts that correspond to VcoModel sub-fields.
+    - resolves string values on Resolvable fields the way ``merge_patch``
+      does (see ``_resolve_name``): an unknown name raises ``ResolutionError``
+      and a missing resolver leaves the value for pydantic
+    - turns KeyField dict patches into ordered item lists
+    - recurses into list items and sub-model dicts
+    - fills Resolvable fields that are missing, but only from a sibling field
+      marked ``NameOf`` for the same identity type that holds a string (a key
+      ``segment.name`` written in by ``_inject_key_path`` gives
+      ``segment_id`` / ``segment_logical_id``). An unknown name raises
+      ``ResolutionError`` and a missing resolver skips the fill.
     """
-    from .fields import get_key_field
+    resolved: JsonObject = dict(patch)
 
-    resolved = dict(patch)
-    for field_name, fi in item_type.model_fields.items():
-        keys = [field_name, *_iter_alias_strings(fi.validation_alias)]
-        if isinstance(fi.alias, str):
-            keys.append(fi.alias)
-        for str_key in keys:
-            if str_key not in resolved:
+    for field_name, fi in fields.items():
+        for key in _input_keys(fi, field_name):
+            if key not in resolved:
                 continue
-            value = resolved[str_key]
-            # Resolvable: string on an ID field -> resolve name to ID
+            value = resolved[key]
             if isinstance(value, str):
-                result = _try_resolve(fi, value, resolvers, suppress_errors=True)
-                if result is not _UNRESOLVED:
-                    resolved[str_key] = result
-            # Dict on a KeyField list -> convert to list of items
-            elif (
-                isinstance(value, dict) and (key_path := get_key_field(fi)) is not None
-            ):
-                list_item_type = _get_list_item_type(fi)
-                items = []
-                for item_key, item_val in value.items():
-                    if not isinstance(item_val, dict):
-                        continue
-                    item_dict = _inject_key_path(dict(item_val), key_path, item_key)
-                    if list_item_type is not None:
-                        item_dict = _pre_resolve(list_item_type, item_dict, resolvers)
-                    items.append(item_dict)
-                # Sort by _position if present, then strip it
-                items.sort(key=lambda d: d.pop("_position", float("inf")))
-                resolved[str_key] = items
-            # List of dicts + list[VcoModel] field -> pre-resolve each item
-            elif isinstance(value, list):
-                list_item_type = _get_list_item_type(fi)
-                if list_item_type is not None:
-                    resolved[str_key] = [
-                        (
-                            _pre_resolve(list_item_type, item, resolvers)
-                            if isinstance(item, dict)
-                            else item
-                        )
+                try:
+                    resolved[key] = _resolve_name(fi, value, resolvers)
+                except ResolutionError:
+                    raise
+                except LookupError:
+                    pass  # no resolver: leave it for pydantic to accept or reject
+            elif _is_json_object(value) and (key_path := get_key_field(fi)):
+                resolved[key] = _keyed_patch_to_list(
+                    value, key_path, _list_item_type(fi), resolvers
+                )
+            elif _is_list(value):
+                if (item_type := _list_item_type(fi)) is not None:
+                    resolved[key] = [
+                        _pre_resolve(item_type.fields, item, resolvers)
+                        if _is_json_object(item)
+                        else item
                         for item in value
                     ]
-            # Recurse into nested VcoModel sub-fields
-            elif isinstance(value, dict):
-                sub_type = _get_field_model_type(fi)
-                if sub_type is not None:
-                    resolved[str_key] = _pre_resolve(sub_type, value, resolvers)
+            elif _is_json_object(value) and (sub_type := _field_model_type(fi)):
+                resolved[key] = _pre_resolve(sub_type.model_fields, value, resolvers)
 
-    # Auto-populate missing Resolvable fields using string values already
-    # in the dict as lookup keys.  E.g. SegmentMetadata has "name" injected
-    # by _inject_key_path; use it to resolve segment_id & segment_logical_id.
-    if resolvers is not None:
-        string_values = [v for v in resolved.values() if isinstance(v, str)]
-        if string_values:
-            for field_name, fi in item_type.model_fields.items():
-                alias_keys = _iter_alias_strings(fi.validation_alias)
-                if isinstance(fi.alias, str):
-                    alias_keys.append(fi.alias)
-                if field_name in resolved or any(a in resolved for a in alias_keys):
-                    continue
-                for sv in string_values:
-                    result = _try_resolve(fi, sv, resolvers, suppress_errors=True)
-                    if result is not _UNRESOLVED:
-                        resolved[field_name] = result
-                        break
-
+    _fill_from_names(fields, resolved, resolvers)
     return resolved
 
 
-def _get_field_model_type(fi: FieldInfo) -> type[VcoModel] | None:
-    """Extract the VcoModel subclass from a field's type annotation, or None."""
-    for arg in _iter_union_args(fi.annotation):
-        if isinstance(arg, type) and issubclass(arg, VcoModel):
-            return arg
-    return None
-
-
-class _DiscriminatedListItem:
-    """Stand-in item type for a list element typed as a discriminated union of VcoModels.
-
-    Exposes the two surfaces call sites use: ``model_validate`` (delegated to a
-    ``TypeAdapter`` so the pydantic discriminator runs) and ``model_fields``
-    (taken from the first variant — variants are expected to share a common base
-    for any ``Resolvable`` / ``KeyField`` markers ``_pre_resolve`` cares about).
-    """
-
-    __slots__ = ("_adapter", "_variants")
-
-    def __init__(self, annotation: Any, variants: tuple[type[VcoModel], ...]):
-        self._adapter = TypeAdapter(annotation)
-        self._variants = variants
-
-    def model_validate(self, value: Any) -> VcoModel:
-        return self._adapter.validate_python(value)
-
-    @property
-    def model_fields(self) -> dict[str, FieldInfo]:
-        return self._variants[0].model_fields
-
-
-def _unwrap_annotated(tp: Any) -> Any:
-    """Strip ``Annotated[...]`` wrappers, returning the underlying type."""
-    while hasattr(tp, "__metadata__"):
-        tp = tp.__origin__
-    return tp
-
-
-def _get_list_item_type(
-    field_info: FieldInfo,
-) -> type[VcoModel] | _DiscriminatedListItem | None:
-    """Extract the VcoModel item type T from a list[T] field annotation.
-
-    Handles plain ``list[VcoModel]`` and ``list[Annotated[Union[...], Discriminator]]``
-    (via :class:`_DiscriminatedListItem`).
-    """
-    for arg in _iter_union_args(field_info.annotation):
-        origin = getattr(arg, "__origin__", None)
-        if origin is not list:
+def _fill_from_names(
+    fields: Mapping[str, FieldInfo], resolved: JsonObject, resolvers: IdentityResolver
+) -> None:
+    """Fill, in *resolved*, the Resolvable fields it lacks from a ``NameOf`` sibling it has."""
+    for field_name, fi in fields.items():
+        identity_type: type[object] | None = get_name_of(fi)
+        if identity_type is None:
             continue
-        items = getattr(arg, "__args__", None)
-        if not items:
-            continue
-        elem = items[0]
-        unwrapped = _unwrap_annotated(elem)
-
-        if isinstance(unwrapped, type) and issubclass(unwrapped, VcoModel):
-            return unwrapped
-
-        variants = tuple(
-            v
-            for v in (_unwrap_annotated(a) for a in _iter_union_args(unwrapped))
-            if isinstance(v, type) and issubclass(v, VcoModel)
+        name = next(
+            (resolved[key] for key in _input_keys(fi, field_name) if key in resolved),
+            None,
         )
-        if len(variants) >= 2:
-            return _DiscriminatedListItem(elem, variants)
-        if len(variants) == 1:
-            return variants[0]
-    return None
+        if not isinstance(name, str):
+            continue
+        targets = [
+            (target_name, resolvable)
+            for target_name, target_fi in fields.items()
+            if (resolvable := get_resolvable(target_fi)) is not None
+            and resolvable.identity_type is identity_type
+            and not any(key in resolved for key in _input_keys(target_fi, target_name))
+        ]
+        if not targets:
+            continue
+        try:
+            identity = resolvers.resolve_sync(identity_type, name)
+        except ResolutionError:
+            raise
+        except LookupError:
+            continue  # no resolver: nothing to fill from
+        for target_name, resolvable in targets:
+            resolved[target_name] = _field_value(identity, resolvable.id_attr)
 
 
-def _resolve_position(
-    current_list: list[Any],
+def _keyed_patch_to_list(
+    patch: JsonObject,
     key_path: str,
-    position: int | str | None,
-) -> int:
-    """Resolve a _position directive to a numeric index."""
-    if position is None:
-        return len(current_list)  # append
+    item_type: _ListItemType | None,
+    resolvers: IdentityResolver,
+) -> list[JsonObject]:
+    """Turn a KeyField ``{key: item_patch}`` dict into a list of item dicts.
 
-    if isinstance(position, int):
-        return max(0, min(position, len(current_list)))
-
-    if isinstance(position, str):
-        if position == "end":
-            return len(current_list)
-        if position.startswith("before:"):
-            target = position[7:]
-            for idx, item in enumerate(current_list):
-                if str(_resolve_key_path(item, key_path)) == target:
-                    return idx
-            return len(current_list)
-        if position.startswith("after:"):
-            target = position[6:]
-            for idx, item in enumerate(current_list):
-                if str(_resolve_key_path(item, key_path)) == target:
-                    return idx + 1
-            return len(current_list)
-
-    return len(current_list)
-
-
-def _has_non_edge_local_changes(
-    current: VcoModel,
-    old: dict[str, Any] | VcoModel,
-    field_names: set[str] | None = None,
-) -> bool:
-    """Check if any non-EdgeLocal field was changed in this model or descendants.
-
-    *old* may be a snapshot dict (top-level call from merge_patch) or a
-    VcoModel (recursive sub-model comparison).  When *field_names* is
-    provided, only those fields are inspected; otherwise all fields are
-    checked.
+    Items are ordered by their numeric ``_position``. Items without one go last.
     """
-    from .fields import has_override_flag, is_edge_local
-
-    fields = type(current).model_fields
-    names = field_names if field_names is not None else fields.keys()
-    _get_old = old.get if isinstance(old, dict) else lambda n: getattr(old, n)
-
-    for name in names:
-        if name not in fields:
+    items: list[JsonObject] = []
+    for key, item_patch in patch.items():
+        if not _is_json_object(item_patch):
             continue
-        fi = fields[name]
+        item = _inject_key_path(item_patch, key_path, key)
+        if item_type is not None:
+            item = _pre_resolve(item_type.fields, item, resolvers)
+        items.append(item)
+    items.sort(key=_pop_sort_position)
+    return items
 
-        if has_override_flag(fi):
+
+def _pop_sort_position(item: JsonObject) -> float:
+    """Remove ``_position`` from *item* and return it as a sort key."""
+    position = item.pop("_position", None)
+    return position if isinstance(position, int | float) else math.inf
+
+
+def _auto_set_override_flags(model: VcoModel, before: Mapping[str, object]) -> None:
+    """Set OverrideFlag fields to True if a non-EdgeLocal field changed."""
+    fields = type(model).model_fields
+    flag_names = [name for name, fi in fields.items() if has_override_flag(fi)]
+    if flag_names and _has_non_edge_local_changes(model, before):
+        for name in flag_names:
+            setattr(model, name, True)
+
+
+def _has_non_edge_local_changes(model: VcoModel, before: Mapping[str, object]) -> bool:
+    """Check whether a field in *before* (field name -> old value) now differs.
+
+    OverrideFlag and EdgeLocal fields don't count. When both old and new
+    values are the same VcoModel type, the check recurses into them, so a
+    change confined to EdgeLocal descendants doesn't count either.
+    """
+    fields = type(model).model_fields
+    for name, old in before.items():
+        fi = fields.get(name)
+        if fi is None or has_override_flag(fi) or is_edge_local(fi):
             continue
-        if is_edge_local(fi):
-            continue
-
-        cur_val = getattr(current, name)
-        old_val = _get_old(name)
-
-        # Sub-model: recurse to check if changes are all EdgeLocal
-        if isinstance(cur_val, VcoModel) and isinstance(old_val, VcoModel):
-            if _has_non_edge_local_changes(cur_val, old_val):
+        new = _field_value(model, name)
+        if isinstance(new, VcoModel) and type(new) is type(old):
+            if _has_non_edge_local_changes(new, _all_field_values(new, old)):
                 return True
-            continue
-
-        # Scalar or other: any change counts
-        if cur_val != old_val:
+        elif new != old:
             return True
-
     return False
 
 
-def _auto_set_override_flags(
-    model: VcoModel, snapshot: dict[str, Any], patch_field_names: set[str]
-) -> None:
-    """Set OverrideFlag fields to True if non-EdgeLocal changes detected."""
-    from .fields import has_override_flag
+def _all_field_values(model: VcoModel, source: object) -> JsonObject:
+    """Read every one of *model*'s fields from *source*, an instance of the same class."""
+    return {name: _field_value(source, name) for name in type(model).model_fields}
 
-    fields = type(model).model_fields
 
-    # Check if any override flags exist in this model
-    has_any_override = any(has_override_flag(fi) for fi in fields.values())
-    if not has_any_override:
-        return
+# ---------------------------------------------------------------------------
+# Annotation introspection
+# ---------------------------------------------------------------------------
 
-    if _has_non_edge_local_changes(model, snapshot, patch_field_names):
-        for name, fi in fields.items():
-            if has_override_flag(fi):
-                setattr(model, name, True)
+_UNION_ORIGINS = (Union, types.UnionType)  # pyright: ignore[reportDeprecated]
+
+
+def _union_members(annotation: object) -> tuple[object, ...]:
+    """Get the members of a Union annotation, or ``(annotation,)`` if it isn't one."""
+    # On Python < 3.14, ``typing.Union[...]`` and PEP 604 ``X | Y`` have
+    # distinct origins. ``T | MISSING`` produces a ``typing.Union`` because
+    # MISSING is a sentinel instance rather than a class.
+    if get_origin(annotation) in _UNION_ORIGINS:
+        return get_args(annotation)
+    return (annotation,)
+
+
+def _unwrap_annotated(tp: object) -> object:
+    """Strip ``Annotated[...]`` wrappers, returning the underlying type."""
+    while get_origin(tp) is Annotated:
+        tp = get_args(tp)[0]
+    return tp
+
+
+def _field_accepts_missing(fi: FieldInfo) -> bool:
+    """Check if a field's type annotation includes MISSING."""
+    return MISSING in _union_members(fi.annotation)
+
+
+def _id_type(fi: FieldInfo) -> object | None:
+    """The ID type of a Resolvable field: its annotation without ``MISSING``, ``None`` and ``Annotated``.
+
+    None unless exactly one type is left.
+    """
+    members = (
+        _unwrap_annotated(m) for m in _union_members(_unwrap_annotated(fi.annotation))
+    )
+    kept = [m for m in members if m is not MISSING and m is not type(None)]
+    return kept[0] if len(kept) == 1 else None
+
+
+@functools.cache
+def _id_adapter(id_type: object) -> TypeAdapter[object]:
+    return TypeAdapter[object](id_type)  # pyright: ignore[reportArgumentType]
+
+
+def _field_model_type(fi: FieldInfo) -> type[VcoModel] | None:
+    """Get the VcoModel class from an annotation like ``T`` or ``T | MISSING | None``."""
+    return next(
+        (m for m in _union_members(fi.annotation) if _is_vco_model_type(m)), None
+    )
+
+
+@dataclass(frozen=True)
+class _ListItemType:
+    """The VcoModel element type of a ``list[...]`` field.
+
+    It is either a single model class or a discriminated union of them. In
+    the union case ``validate`` lets pydantic's discriminator pick the
+    variant. ``fields`` comes from the first variant. Variants are expected to
+    share the Resolvable / KeyField fields that ``_pre_resolve`` looks at.
+    """
+
+    annotation: object
+    """The element annotation as written, kept so the discriminator applies."""
+    variants: tuple[type[VcoModel], ...]
+
+    @functools.cached_property
+    def _union_adapter(self) -> TypeAdapter[VcoModel]:
+        return TypeAdapter[VcoModel](self.annotation)  # pyright: ignore[reportArgumentType]
+
+    def validate(self, value: object) -> VcoModel:
+        if len(self.variants) == 1:
+            return self.variants[0].model_validate(value)
+        return self._union_adapter.validate_python(value)
+
+    @property
+    def fields(self) -> dict[str, FieldInfo]:
+        return self.variants[0].model_fields
+
+
+def _list_item_type(fi: FieldInfo) -> _ListItemType | None:
+    """Get the VcoModel element type of a ``list[T]`` field, or None.
+
+    Handles plain ``list[Model]`` and
+    ``list[Annotated[A | B, Discriminator(...)]]``.
+    """
+    for member in _union_members(fi.annotation):
+        if get_origin(member) is not list or not (args := get_args(member)):
+            continue
+        element: object = args[0]
+        inner = _unwrap_annotated(element)
+        if _is_vco_model_type(inner):
+            return _ListItemType(inner, (inner,))
+
+        variants = tuple(
+            v
+            for v in map(_unwrap_annotated, _union_members(inner))
+            if _is_vco_model_type(v)
+        )
+        if len(variants) >= 2:
+            return _ListItemType(element, variants)
+        if len(variants) == 1:
+            return _ListItemType(variants[0], variants)
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Context introspection
+# ---------------------------------------------------------------------------
 
 
 @dataclass(frozen=True)
@@ -969,7 +1157,9 @@ class ContextFieldInfo:
 
     name: str
     is_present: bool
-    default: Any
+    default: object
+    """The context default, the field's own static default (``PydanticUndefined``
+    if it has none), or ``MISSING`` when the field is absent at this level."""
     field_info: FieldInfo
 
 
@@ -977,8 +1167,8 @@ class ContextView:
     """Attribute-access proxy for context-specific field metadata."""
 
     def __init__(self, model_cls: type[VcoModel], config_context: ConfigContext):
-        self._model_cls = model_cls
-        self._context = config_context
+        self._model_cls: type[VcoModel] = model_cls
+        self._context: ConfigContext = config_context
         self._cache: dict[str, ContextFieldInfo] = {}
 
     def _resolve(self, name: str) -> ContextFieldInfo:
@@ -988,11 +1178,11 @@ class ContextView:
         if name not in fields:
             raise AttributeError(f"{self._model_cls.__name__} has no field '{name}'")
         fi = fields[name]
-        status, default = _classify_context_default(fi, self._context)
+        default = _effective_default(fi, self._context)
         info = ContextFieldInfo(
             name=name,
-            is_present=status is not _CtxDefaultStatus.ABSENT,
-            default=default,
+            is_present=default.source is not _DefaultSource.ABSENT,
+            default=default.value,
             field_info=fi,
         )
         self._cache[name] = info
@@ -1003,7 +1193,7 @@ class ContextView:
             raise AttributeError(name)
         return self._resolve(name)
 
-    def __iter__(self):
+    def __iter__(self) -> Iterator[tuple[str, ContextFieldInfo]]:
         for name in self._model_cls.model_fields:
             yield name, self._resolve(name)
 
@@ -1014,9 +1204,7 @@ class ContextView:
 
 
 class PaginatedVcoModel(VcoModel):
-    next_page_link: str | MISSING = Field(
-        default=MISSING
-    )  # ty: ignore[invalid-type-form]
+    next_page_link: str | MISSING = Field(default=MISSING)  # ty: ignore[invalid-type-form]
 
     _max_pages: int = PrivateAttr(default=0)
     _page_has_more: bool = PrivateAttr(default=False)
@@ -1040,7 +1228,7 @@ class JsonRpcRequest[ParamsT](VcoModel):
 class JsonRpcError(VcoModel):
     code: int
     message: str
-    data: dict[str, Any] | str | list[Any] | None = Field(default=None)
+    data: dict[str, object] | str | list[object] | None = Field(default=None)
 
 
 class JsonRpcResponse[ResultT](VcoModel):
@@ -1103,7 +1291,7 @@ _BARE_FILTER_OP_KEYS = ("operator", "op")
 _GROUP_KEYS = ("and", "and_", "or", "or_")
 
 
-def _looks_like_bare_filter(v: dict[str, Any]) -> bool:
+def _looks_like_bare_filter(v: Mapping[object, object]) -> bool:
     """True if dict has a field-name key and an operator key but no group key."""
     return (
         any(k in v for k in _BARE_FILTER_FIELD_KEYS)
@@ -1112,8 +1300,8 @@ def _looks_like_bare_filter(v: dict[str, Any]) -> bool:
     )
 
 
-def _api_filters_discriminator(v: Any) -> str | None:
-    if isinstance(v, dict):
+def _api_filters_discriminator(v: object) -> str | None:
+    if _is_dict(v):
         if "and_" in v or "and" in v:
             return "and"
         if "or_" in v or "or" in v:
@@ -1126,6 +1314,7 @@ def _api_filters_discriminator(v: Any) -> str | None:
         return "and"
     if isinstance(v, ApiFiltersOr):
         return "or"
+    return None
 
 
 type ApiFilters = Annotated[
@@ -1138,7 +1327,7 @@ type ApiFilters = Annotated[
 ]
 
 
-def _wrap_bare_filter(v: Any) -> Any:
+def _wrap_bare_filter(v: object) -> object:
     """Wrap a bare single filter into an ApiFiltersAnd group.
 
     Some VCO endpoints reject bare single-filter payloads — they require an
@@ -1147,7 +1336,7 @@ def _wrap_bare_filter(v: Any) -> Any:
     """
     if isinstance(v, ApiFilter):
         return ApiFiltersAnd(and_=[v])
-    if isinstance(v, dict):
+    if _is_dict(v):
         if "anyOf" in v or "oneOf" in v:
             return {"or": v.get("anyOf") or v.get("oneOf")}
         if "allOf" in v:
@@ -1173,13 +1362,13 @@ class Tinyint(IntEnum):
     ONE = 1
 
 
-def check_time_is_never(timestamp: Any) -> Any:
-    @functools.cache
-    def epoch_start() -> datetime.datetime:
-        return datetime.datetime.fromtimestamp(0, datetime.UTC)
+_EPOCH = datetime.datetime.fromtimestamp(0, datetime.UTC)
 
+
+def check_time_is_never(timestamp: object) -> object:
+    """Map VCO's "never" timestamp (``0000-00-00 00:00:00``) to the Unix epoch."""
     if isinstance(timestamp, str) and timestamp.startswith("0000-00-00 00:00:00"):
-        return epoch_start()
+        return _EPOCH
 
     # VCO's shared js_date_formats schema also accepts the JavaScript/HTTP
     # representation, for example "Thu Sep 10 2026 21:40:51 GMT+0000 (UTC)".
@@ -1206,11 +1395,10 @@ class ApiInterval(VcoModel):
     end: VcoTimestamp | MISSING = MISSING  # ty: ignore[invalid-type-form]
 
 
-def missing_or(value: Any, default: Any) -> Any:
+def missing_or[T, D](value: T | MISSING, default: D) -> T | D:  # ty: ignore[invalid-type-form]
     """Return *value* unless it is MISSING, in which case return *default*."""
     return default if value is MISSING else value
 
 
-def value_or(value: Any, default: Any) -> Any:
-    """Return *value* unless it is MISSING, in which case return *default*."""
-    return default if value is MISSING else value
+value_or = missing_or
+"""Alias of :func:`missing_or`."""

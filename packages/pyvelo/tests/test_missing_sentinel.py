@@ -58,7 +58,7 @@ class TestMissingSentinel:
         assert copied.optional_field is MISSING
 
     def test_missing_sentinel_copy_pickle_identity(self):
-        """MISSING preserves identity across copying and pickling."""
+        """Pydantic's MISSING preserves identity across copying and pickling."""
         assert copy.copy(MISSING) is MISSING
         assert copy.deepcopy(MISSING) is MISSING
         assert pickle.loads(pickle.dumps(MISSING)) is MISSING

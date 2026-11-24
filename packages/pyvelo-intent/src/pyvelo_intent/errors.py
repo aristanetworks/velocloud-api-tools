@@ -11,12 +11,8 @@ class IntentError(Exception):
     """Base class for intent-layer errors."""
 
 
-class MissingEnvVarError(IntentError):
-    """Required environment variable is missing or empty."""
-
-
 class ConfigInputError(IntentError):
-    """User-supplied config (CLI args, YAML, env file path) is invalid."""
+    """User-supplied config (CLI args, YAML) is invalid."""
 
 
 class UnknownRegistryEntryError(LookupError):
@@ -35,4 +31,18 @@ class SaveValidationError(IntentError):
         summary = ", ".join(f"{e.path}: {e.message}" for e in self.errors)
         super().__init__(
             f"save blocked by {len(self.errors)} validator error(s): {summary}"
+        )
+
+
+class StateSpentError(IntentError):
+    """A ``ConfigState`` was used after it wrote to the VCO.
+
+    A write (even one that failed part-way) leaves the state's raw snapshots out
+    of date, so a further apply or save from it could overwrite what was just
+    written. Load a new state instead.
+    """
+
+    def __init__(self) -> None:
+        super().__init__(
+            "this ConfigState has already written to the VCO; load a new one"
         )
