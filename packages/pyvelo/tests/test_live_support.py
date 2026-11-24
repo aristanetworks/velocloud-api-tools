@@ -2591,6 +2591,29 @@ async def test_a_role_call_for_a_profile_that_is_not_the_blocks_is_refused(
     assert role_requests(fake) == []
 
 
+async def test_a_role_call_in_a_block_on_a_profile_that_is_not_a_target_is_refused(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    # Everything else holds (the opt-in, the hub, a profile, its device settings
+    # module, the profile and the module the call names): only the mark differs.
+    lab = await hub_opened(hub_lab(), monkeypatch)
+    hub = live.HubTarget("edge", EDGE_HUB_ID, uuid.UUID(EDGE_HUB_LOGICAL_ID))
+
+    def run_with(target: bool) -> live.LiveRun:
+        site = live.profile_site(lab.client, 20, DS, None, target=target)
+        return live.LiveRun(
+            access=live.WriteAccess(granted=True, refusal=""),
+            hub=hub,
+            open=[(site, DS_MODULE)],
+        )
+
+    with live.writer_test(True):
+        run_with(True).check_role_call("edge", 20, DS_MODULE, EDGE_HUB_ID)
+        with pytest.raises(live.WritesRefused) as refused:
+            run_with(False).check_role_call("edge", 20, DS_MODULE, EDGE_HUB_ID)
+    assert str(refused.value) == live.ROLE_CALL_NOT_COVERED
+
+
 async def test_a_role_call_in_a_block_on_another_module_or_an_edge_is_refused(
     monkeypatch: pytest.MonkeyPatch,
 ):

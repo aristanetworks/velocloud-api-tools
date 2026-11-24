@@ -20,6 +20,7 @@ from hub_helpers import (
     HUB_A,
     HUB_B,
     Hub,
+    backhaul_rule,
     ds_with_vpn,
     hub_row,
 )
@@ -61,6 +62,7 @@ from segment_helpers import GLOBAL, GUEST, ds_entry, firewall_entry, qos_entry
 from test_backhaul_refs_state import (  # pyright: ignore[reportImplicitRelativeImport]
     SERVICE_A,
     SERVICE_A_ID,
+    SERVICE_B_ID,
     a_profile,
     use_hub,
 )
@@ -563,6 +565,40 @@ async def test_a_module_write_after_a_step_fails_as_a_save_step_error():
     assert state.plan().changed == ()
 
 
+async def test_a_qos_write_after_a_step_and_the_device_settings_fails_as_a_save_step_error():
+    state = await two_lists_state()
+    _ = await ConfigPipeline(client=None).apply(
+        state,
+        module="QOS",
+        patch={
+            "segments": {
+                GLOBAL[1]: {
+                    "rules": {"+": {"_op": "add", **backhaul_rule("Web")}},
+                }
+            }
+        },
+    )
+    pipeline, store = hub_pipeline(state, vpn_check=True)
+    store.fail_writes.add(2)  # the device settings write is the first
+
+    with pytest.raises(SaveStepError) as failed:
+        _ = await pipeline.save(state)
+
+    error = failed.value
+    assert error.module_name == "QOS" and error.step is None
+    assert [s.role for s in error.steps_done] == ["hub", "backhaul"]
+    assert error.written == (DS,)
+    assert isinstance(error.__cause__, VcoError)
+    assert not isinstance(error.__cause__, SaveStepError)
+    progress = save_progress(error)
+    assert progress is not None
+    assert [w.name for w in progress.completed] == [DS]
+    assert (progress.failed, progress.pending) == ("QOS", ())
+    # The device settings are stored and in the state; the QoS edit is kept.
+    assert [p.name for p in state.plan().changed] == ["QOS"]
+    assert state.plan().steps == ()
+
+
 async def test_a_conflict_of_the_module_write_after_a_step_is_the_cause():
     state = await two_lists_state()
     pipeline, store = hub_pipeline(state, vpn_check=True)
@@ -942,6 +978,51 @@ async def test_a_rebased_qos_write_keeps_its_backhaul_row():
     sent = rows_of_ref(update["_update"]["refs"][BACKHAUL_REF])
     assert [r["enterpriseObjectId"] for r in sent] == [SERVICE_A_ID]
     assert state.plan().changed == ()
+
+
+async def test_a_rebased_qos_write_takes_its_backhaul_row_from_the_stored_device_settings():
+    state = await a_profile()
+    state.profile.device_settings.segments[0].vpn.conditional_backhaul = True
+    use_hub(state.profile.qos, HUB_A, SERVICE_A)
+    pipeline, store = hub_pipeline(state)
+    # The object the stored row points at: the same service identity, another object.
+    store.add_object(
+        SERVICE_B_ID,
+        logical_id=SERVICE_A,
+        name=HUB_A.name,
+        type_="edgeHub",
+        data={"logicalId": HUB_A.logical_id, "roles": {"edgeHub": True}},
+    )
+    done: list[bool] = []
+
+    def stores_another_service(new: dict[str, Any], old: dict[str, Any] | None) -> None:
+        """The device settings are stored with Hub-A's row on another object than the one read, and the QoS module is changed by another writer."""
+        del old
+        if new["name"] != DS or done:
+            return
+        done.append(True)
+        (hub_row_,) = rows_of_ref(new["refs"][EDGE_HUB_REF])
+        assert hub_row_["enterpriseObjectId"] == SERVICE_A_ID
+        hub_row_["enterpriseObjectId"] = SERVICE_B_ID
+
+        def rate_enabled(row: dict[str, Any]) -> None:
+            row["data"]["serviceRateLimit"] = {
+                "enabled": True,
+                "inputType": "percent",
+                "value": 1,
+            }
+
+        store.other_writer(QOS_ID, rate_enabled)
+
+    store.on_store.append(stores_another_service)
+
+    result = await pipeline.save(state)
+
+    assert [w.name for w in result.written] == [DS, "QOS"]
+    # The row the rebase derived is the stored device settings', not the one read.
+    (update,) = [p for m, p in store.requests if m == UPDATE and p["id"] == QOS_ID]
+    sent = rows_of_ref(update["_update"]["refs"][BACKHAUL_REF])
+    assert [r["enterpriseObjectId"] for r in sent] == [SERVICE_B_ID]
 
 
 # -- the pieces ---------------------------------------------------------------

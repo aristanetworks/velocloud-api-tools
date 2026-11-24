@@ -9,6 +9,7 @@ from pyvelo.config.resolver import ResolverRegistry
 from pyvelo.core import PatchError, VcoModel, add
 from pyvelo.core.fields import KeyField, NameOf, Resolvable
 from pyvelo.core.identity import (
+    ResolutionError,
     SegmentIdentity,
 )
 
@@ -173,10 +174,11 @@ class TestNewItemNamedByItsId:
 
     def test_an_unknown_id_raises_resolution_error(self, registry: ResolverRegistry):
         m = NamedSegments()
-        with pytest.raises(KeyError, match="99"):
+        with pytest.raises(ResolutionError, match="99") as unknown:
             _ = m.merge_patch(
                 {"segments": {"+": add({"segment_id": 99})}}, resolvers=registry
             )
+        assert unknown.value.identity_type is SegmentIdentity
         assert m.segments == []
 
     def test_with_no_resolver_for_the_type_nothing_is_filled(self):
