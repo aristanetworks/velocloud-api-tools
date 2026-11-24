@@ -465,16 +465,17 @@ class _Problem:
 
     *key* says how: the same key as read is the same rule broken the same way.
     A rule that is broken by the hubs a list holds (the list is off while it
-    has hubs) also has them in *listed*: it is the same break as read only
-    when every hub listed now was listed as read, so an edit that adds a hub
-    to a segment already broken is a new break.
+    has hubs) also has them in *listed*, each with the role of the list that
+    holds it: it is the same break as read only when every hub listed now was
+    listed in that list as read, so an edit that adds a hub to any list of a
+    segment already broken is a new break.
     """
 
     key: tuple[object, ...]
     message: str
     lists: tuple[str, ...]
     hubs: tuple[str, ...]
-    listed: frozenset[_Key] = frozenset()
+    listed: frozenset[tuple[Role, _Key]] = frozenset()
 
 
 def _problem(
@@ -483,14 +484,14 @@ def _problem(
     roles: Sequence[Role],
     hubs: Sequence[VpnHub] = (),
     *,
-    listed: Sequence[VpnHub] = (),
+    listed: Sequence[tuple[Role, VpnHub]] = (),
 ) -> _Problem:
     return _Problem(
         key,
         message,
         tuple(".".join(_LIST_PATHS[r]) for r in roles),
         tuple(dict.fromkeys(h.name for h in hubs)),
-        frozenset(_key(h) for h in listed),
+        frozenset((role, _key(h)) for role, h in listed),
     )
 
 
@@ -551,7 +552,13 @@ def _broken_rules(
                 f"{_removal(name, 'hub', hub_list)}."
             )
         problems.append(
-            _problem((1, "filled"), prefix + how, ["hub"], hub_list, listed=hub_list)
+            _problem(
+                (1, "filled"),
+                prefix + how,
+                ["hub"],
+                hub_list,
+                listed=[("hub", h) for h in hub_list],
+            )
         )
     if enabled and not hub_list:
         problems.append(
@@ -625,7 +632,15 @@ def _broken_rules(
                 f"{_flag(name, ('vpn', 'enabled'), True)} or remove the hubs, for "
                 f"example {_removal(name, filled[0], lists[filled[0]])}."
             )
-        problems.append(_problem((5,), prefix + how, filled, listed, listed=listed))
+        problems.append(
+            _problem(
+                (5,),
+                prefix + how,
+                filled,
+                listed,
+                listed=[(role, h) for role in filled for h in lists[role]],
+            )
+        )
     return problems
 
 
@@ -736,7 +751,7 @@ def check_hub_lists(
         segment_id = _segment_id(segment)
         name = segment.segment.name
         was = read_by_id.get(segment_id)
-        broken_before: dict[tuple[object, ...], frozenset[_Key]] = {}
+        broken_before: dict[tuple[object, ...], frozenset[tuple[Role, _Key]]] = {}
         if was is not None:
             for read_problem in _broken_rules(
                 was, lists_read.get(segment_id, {}), None

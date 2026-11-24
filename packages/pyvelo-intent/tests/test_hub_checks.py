@@ -433,6 +433,18 @@ async def test_adding_a_hub_to_a_segment_already_off_as_read_raises(
     assert_names(error, text, "Hub-B", lists=(HUB_LIST,))
 
 
+async def test_adding_a_listed_hub_to_another_list_of_a_segment_with_the_vpn_off_raises():
+    # Hub-A is in the hub list as read, with vpn.enabled off: the backhaul
+    # enable for it would be planned on a segment whose VPN is off.
+    ds = ds_with_vpn(GLOBAL, enabled=False, hubs=(HUB_A,))
+    state = await profile_of(ds, HUB_A)
+    await edit(state, {"backHaulEdges": add(HUB_A.name)})
+
+    error = await refused(state)
+
+    assert_names(error, "vpn.enabled", "Hub-A", lists=(BACKHAUL_LIST,))
+
+
 async def test_segments_with_no_vpn_change_are_not_checked():
     state = await profile_of(broken_as_read(), HUB_A, HUB_B)
     patch = {"segments": {GLOBAL[1]: {"ospf": {"enabled": True}}}}
