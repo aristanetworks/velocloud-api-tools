@@ -13,6 +13,7 @@ from pyvelo.config.validation import (
     ValidationResult,
     validator,
 )
+from pyvelo.core import Kind, field_kind, unwrap
 from pyvelo.core.fields import get_key_spec
 from pyvelo.core.rebase import KeyForm, item_key, item_key_text, key_form
 
@@ -38,7 +39,7 @@ def _walk_model_for_override(
     """
     # Recurse into sub-models
     for field_name in type(model).model_fields:
-        val = getattr(model, field_name)
+        val = unwrap(getattr(model, field_name))
         if isinstance(val, BaseModel):
             _walk_model_for_override(val, f"{path}.{field_name}", errors)
         elif isinstance(val, list):
@@ -71,7 +72,7 @@ def _walk_model_for_keys(
     """Check that KeyField lists have unique keys (every part, for a composite key)."""
     for field_name, field_info in type(model).model_fields.items():
         spec = get_key_spec(field_info)
-        val = getattr(model, field_name)
+        val = unwrap(getattr(model, field_name))
 
         if spec is not None and isinstance(val, list):
             # Keys compare in string form, part by part (24 and "24" are one).
@@ -126,9 +127,15 @@ def _walk_model_for_required(
 ) -> None:
     """Check that required fields (no default) have values."""
     for field_name, field_info in type(model).model_fields.items():
-        val = getattr(model, field_name)
+        val = unwrap(getattr(model, field_name))
 
-        if val is MISSING and field_info.is_required():
+        # An inheritable field is never required: the edge stores nothing where
+        # it inherits, and the profile reads its display default.
+        if (
+            val is MISSING
+            and field_info.is_required()
+            and field_kind(field_info).kind is not Kind.INHERITABLE
+        ):
             errors.append(
                 ValidationError(
                     path=f"{path}.{field_name}",

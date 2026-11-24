@@ -160,6 +160,7 @@ from .layers import (
     field_kind,
     kind_default,
     layer_for,
+    unwrap,
 )
 from .merge import item_selector, nest_patch, select_items
 from .owned import (
@@ -367,6 +368,7 @@ __all__ = [
     "select_items",
     "selector_of",
     "union",
+    "unwrap",
     "value_or",
     "walk_fields",
     "wire_name",

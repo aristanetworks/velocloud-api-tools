@@ -50,13 +50,17 @@ from typing import (
 
 from pydantic import (
     MISSING,
+    AfterValidator,
+    BeforeValidator,
     Discriminator,
     Field,
     GetCoreSchemaHandler,
     ModelWrapValidatorHandler,
+    PlainValidator,
     PrivateAttr,
     PydanticUserError,
     TypeAdapter,
+    WrapValidator,
     model_validator,
 )
 from pydantic.fields import FieldInfo
@@ -64,7 +68,15 @@ from pydantic_core import CoreSchema, core_schema
 
 from .base import JsonObject, VcoModel, wire_name
 from .fields import ConfigContext
-from .owned import Binding, ByFlag, ByPresence, Encoding, Owned, check_groups
+from .owned import (
+    Binding,
+    ByFlag,
+    ByPresence,
+    Encoding,
+    Owned,
+    check_groups,
+)
+from .owned import unwrap as unwrap  # noqa: PLC0414 (re-exported: it is defined beside Owned, which base imports)
 
 if TYPE_CHECKING:
     from .effective import Resolved
@@ -541,31 +553,51 @@ def display_default(field_info: FieldInfo) -> object:
     return default.make()
 
 
-@functools.cache
-def inner_adapter(field_info: FieldInfo) -> TypeAdapter[object]:
-    """A validator for the type a field holds, inside its kind, as pydantic validates it on parse.
+_FIELD_VALIDATOR_MARKERS = {
+    "before": BeforeValidator,
+    "after": AfterValidator,
+    "wrap": WrapValidator,
+    "plain": PlainValidator,
+}
 
-    It is the adapter of ``field_kind(field_info).inner_type`` with every marker
-    of the field, so value validators (``DefaultingScalar``) and constraints
-    apply to the value itself, and the discriminator of a union. It reads a
-    value and gives a value: on the edge layer the ``Owned`` around it is not
-    made. Use it with the context ``{"patch": True}``, which stops a defaulting
-    validator from turning a bad value into the default. ``Owned.set_local``
-    validates with it, so a patch and ``set_local`` take the same values.
-    The class's own ``@field_validator``s are not applied: the adapter belongs
-    to the field, not to the class that holds it.
+
+@functools.cache
+def inner_adapter(model_cls: type[VcoModel], name: str) -> TypeAdapter[object]:
+    """A validator for the value of field *name* of *model_cls*, as pydantic validates it on parse.
+
+    It validates the type the field holds (``field_kind(...).inner_type``: the
+    field's annotation for a plain field, the type inside its kind for a
+    carrier) with every marker of the field, so value validators
+    (``DefaultingScalar``) and constraints apply to the value itself, with the
+    discriminator of a union, the class's ``@field_validator``s for the field
+    (``"*"`` ones too) applied after the metadata in the order defined, as
+    pydantic does, and the class's config (``use_enum_values`` and the
+    rest). Model validators are not field validation and do not run here. When
+    a model instance is the value, as the merge gives one, the class's
+    ``after`` and ``wrap`` model validators do run on it.
+
+    It reads a value and gives a value: on the edge layer the ``Owned`` around
+    it is not made. Use it with the context ``{"patch": True}``, which stops a
+    defaulting validator from turning a bad value into the default.
+    ``merge_patch`` and ``Owned.set_local`` validate with it, so a patch and
+    ``set_local`` take the same values.
     """
+    field_info = model_cls.model_fields[name]
     found = field_kind(field_info)
     metadata: list[object] = list(found.metadata)
     if isinstance(field_info.discriminator, str):
         metadata.append(Discriminator(field_info.discriminator))
     elif field_info.discriminator is not None:
         metadata.append(field_info.discriminator)
+    for decorator in model_cls.__pydantic_decorators__.field_validators.values():
+        info = decorator.info
+        if name in info.fields or "*" in info.fields:
+            metadata.append(_FIELD_VALIDATOR_MARKERS[info.mode](decorator.func))
     annotation: object = (
         Annotated[found.inner_type, *metadata] if metadata else found.inner_type
     )
     try:
-        return TypeAdapter[object](annotation, config=VcoModel.model_config)  # pyright: ignore[reportArgumentType]
+        return TypeAdapter[object](annotation, config=model_cls.model_config)  # pyright: ignore[reportArgumentType]
     except PydanticUserError as exc:
         # A model type has its own config, and TypeAdapter refuses another.
         if exc.code != "type-adapter-config-unused":

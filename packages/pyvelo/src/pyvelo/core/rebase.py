@@ -42,6 +42,7 @@ from .base import (
     _field_alias,  # pyright: ignore[reportPrivateUsage]
     _field_model_type,  # pyright: ignore[reportPrivateUsage]
     _field_value,  # pyright: ignore[reportPrivateUsage]
+    _held_type,  # pyright: ignore[reportPrivateUsage]
     _is_mapping,  # pyright: ignore[reportPrivateUsage]
     _is_vco_model_type,  # pyright: ignore[reportPrivateUsage]
     _members_without_missing_and_none,  # pyright: ignore[reportPrivateUsage]
@@ -52,6 +53,8 @@ from .base import (
     ref_only_fields,
 )
 from .fields import ConfigContext, KeySpec, get_key_spec, has_override_flag
+from .layers import Kind, field_kind
+from .owned import unwrap
 
 type KeyScalar = str | int | float | bool
 """One part of a key."""
@@ -143,7 +146,7 @@ def item_key(item: object, paths: tuple[str, ...]) -> KeyValue | None:
         for name in path.split("."):
             if value is None or value is MISSING:
                 return None
-            value = getattr(value, name, None)
+            value = unwrap(getattr(value, name, None))
         if value is None or value is MISSING:
             return None
         parts.append(key_part(value))
@@ -450,7 +453,7 @@ def _map_value_type(field_info: FieldInfo) -> type[VcoModel] | None:
     Of a union with several ``dict[...]`` members the first is taken and the
     others are not looked at.
     """
-    for member in _members_without_missing_and_none(field_info.annotation):
+    for member in _members_without_missing_and_none(_held_type(field_info)):
         args = get_args(member)
         if get_origin(member) is not dict or len(args) != 2:
             continue
@@ -1145,7 +1148,9 @@ def _same_value(a: object, b: object) -> bool:
             type(a) is type(b)
             and _same_value(a.model_extra or {}, b.model_extra or {})
             and all(
-                _same_value(_field_value(a, name), _field_value(b, name))
+                _same_value(
+                    unwrap(_field_value(a, name)), unwrap(_field_value(b, name))
+                )
                 for name in type(a).model_fields
                 if not _is_unset_scalar(a, b, name)
             )
@@ -1176,13 +1181,27 @@ def _lossy_in_model(
         dump_key = _field_alias(field_info, name)
         before_value = _dump_get(before, dump_key)
         after_value = _dump_get(after, dump_key)
-        value = _field_value(current, name)
+        value = unwrap(_field_value(current, name))
+        held = unwrap(_field_value(baseline, name))
         field_path = path.child(name)
         if _context_default_entry(field_info, field_level) is MISSING:
-            if not has_override_flag(field_info) and not _same_value(
-                _field_value(baseline, name), value
-            ):
+            if not has_override_flag(field_info) and not _same_value(held, value):
                 out.append(field_path)  # the dump omits it, so the change is lost
+            continue
+        if field_kind(field_info).kind is Kind.INHERITABLE:
+            # It can always express "not stored" (the edge stores nothing, the
+            # profile leaves out a display default), so assigning it is never a
+            # loss; what it holds is walked as any value is.
+            _lossy_in_value(
+                out,
+                field_path,
+                held,
+                value,
+                before_value,
+                after_value,
+                node_child(type(current), dump_key),
+                level,
+            )
             continue
         if name not in baseline.model_fields_set:
             if before_value != after_value:
@@ -1197,7 +1216,7 @@ def _lossy_in_model(
         _lossy_in_value(
             out,
             field_path,
-            _field_value(baseline, name),
+            held,
             value,
             before_value,
             after_value,
@@ -1212,7 +1231,7 @@ def _was_read(item: object, path: str) -> bool:
     for name in path.split("."):
         if not isinstance(current, VcoModel) or name not in current.model_fields_set:
             return False
-        current = _field_value(current, name)
+        current = unwrap(_field_value(current, name))
     return True
 
 
@@ -1341,8 +1360,8 @@ def _carry_in_model(
             after[dump_key] = before[dump_key]
             continue
         _carry_in_value(
-            _field_value(baseline, name),
-            _field_value(current, name),
+            unwrap(_field_value(baseline, name)),
+            unwrap(_field_value(current, name)),
             before[dump_key],
             after[dump_key],
             node_child(type(current), dump_key),

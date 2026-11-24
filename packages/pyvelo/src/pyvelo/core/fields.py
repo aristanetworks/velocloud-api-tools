@@ -101,9 +101,16 @@ class _ProcessedCtxDefaults:
     defaults: ContextDefaults
 
 
+def _markers(field_info: FieldInfo) -> tuple[object, ...]:
+    """The markers of a field: its own, and those inside its kind (``field_kind``)."""
+    from .layers import field_kind  # layers imports this module
+
+    return field_kind(field_info).metadata
+
+
 def get_normalizer(field_info: FieldInfo) -> NormalizerFn | None:
     """Extract processed normalizer from FieldInfo.metadata."""
-    for m in field_info.metadata:
+    for m in _markers(field_info):
         if isinstance(m, _ProcessedNorm):
             return m.fn
     return None
@@ -111,7 +118,7 @@ def get_normalizer(field_info: FieldInfo) -> NormalizerFn | None:
 
 def get_context_defaults(field_info: FieldInfo) -> ContextDefaults | None:
     """Extract processed context defaults from FieldInfo.metadata."""
-    for m in field_info.metadata:
+    for m in _markers(field_info):
         if isinstance(m, _ProcessedCtxDefaults):
             return m.defaults
     return None
@@ -119,7 +126,7 @@ def get_context_defaults(field_info: FieldInfo) -> ContextDefaults | None:
 
 def get_key_spec(field_info: FieldInfo) -> KeySpec | None:
     """The ``KeySpec`` of a field marked ``KeyField``, or None."""
-    for m in field_info.metadata:
+    for m in _markers(field_info):
         if isinstance(m, KeySpec):
             return m
     return None
@@ -127,7 +134,7 @@ def get_key_spec(field_info: FieldInfo) -> KeySpec | None:
 
 def get_fixed_list(field_info: FieldInfo) -> FixedList | None:
     """The ``FixedList`` of a field marked with one, or None."""
-    for m in field_info.metadata:
+    for m in _markers(field_info):
         if isinstance(m, FixedList):
             return m
     return None
@@ -135,17 +142,17 @@ def get_fixed_list(field_info: FieldInfo) -> FixedList | None:
 
 def has_override_flag(field_info: FieldInfo) -> bool:
     """Check if a field is marked with OverrideFlag."""
-    return any(isinstance(m, _ProcessedOverrideFlag) for m in field_info.metadata)
+    return any(isinstance(m, _ProcessedOverrideFlag) for m in _markers(field_info))
 
 
 def is_edge_local(field_info: FieldInfo) -> bool:
     """Check if a field is marked with EdgeLocal."""
-    return any(isinstance(m, _ProcessedEdgeLocal) for m in field_info.metadata)
+    return any(isinstance(m, _ProcessedEdgeLocal) for m in _markers(field_info))
 
 
 def get_resolvable(field_info: FieldInfo) -> _ProcessedResolvable | None:
     """Extract Resolvable info from FieldInfo.metadata, or None."""
-    for m in field_info.metadata:
+    for m in _markers(field_info):
         if isinstance(m, _ProcessedResolvable):
             return m
     return None
@@ -153,12 +160,12 @@ def get_resolvable(field_info: FieldInfo) -> _ProcessedResolvable | None:
 
 def is_positional(field_info: FieldInfo) -> bool:
     """Check if a field is marked with ``Positional``."""
-    return any(isinstance(m, Positional) for m in field_info.metadata)
+    return any(isinstance(m, Positional) for m in _markers(field_info))
 
 
 def get_name_of(field_info: FieldInfo) -> type | None:
     """The identity type a field is marked ``NameOf`` for, or None."""
-    for m in field_info.metadata:
+    for m in _markers(field_info):
         if isinstance(m, NameOf):
             return m.identity_type
     return None
@@ -166,17 +173,17 @@ def get_name_of(field_info: FieldInfo) -> type | None:
 
 def is_server_owned(field_info: FieldInfo) -> bool:
     """Check if a field is marked with ``ServerOwned``."""
-    return any(isinstance(m, ServerOwned) for m in field_info.metadata)
+    return any(isinstance(m, ServerOwned) for m in _markers(field_info))
 
 
 def is_secret(field_info: FieldInfo) -> bool:
     """Check if a field is marked with ``Secret``."""
-    return any(isinstance(m, Secret) for m in field_info.metadata)
+    return any(isinstance(m, Secret) for m in _markers(field_info))
 
 
 def get_owns_ref(field_info: FieldInfo) -> OwnsRef | None:
     """The ``OwnsRef`` a field is marked with, or None."""
-    for m in field_info.metadata:
+    for m in _markers(field_info):
         if isinstance(m, OwnsRef):
             return m
     return None
@@ -184,7 +191,7 @@ def get_owns_ref(field_info: FieldInfo) -> OwnsRef | None:
 
 def get_ref_only(field_info: FieldInfo) -> RefOnly | None:
     """The ``RefOnly`` a field is marked with, or None."""
-    for m in field_info.metadata:
+    for m in _markers(field_info):
         if isinstance(m, RefOnly):
             return m
     return None
@@ -192,7 +199,7 @@ def get_ref_only(field_info: FieldInfo) -> RefOnly | None:
 
 def get_provides(field_info: FieldInfo) -> Provides | None:
     """The ``Provides`` a field is marked with, or None."""
-    for m in field_info.metadata:
+    for m in _markers(field_info):
         if isinstance(m, Provides):
             return m
     return None
@@ -200,7 +207,7 @@ def get_provides(field_info: FieldInfo) -> Provides | None:
 
 def get_refers_to(field_info: FieldInfo) -> RefersTo | None:
     """The ``RefersTo`` a field is marked with, or None."""
-    for m in field_info.metadata:
+    for m in _markers(field_info):
         if isinstance(m, RefersTo):
             return m
     return None
@@ -208,7 +215,7 @@ def get_refers_to(field_info: FieldInfo) -> RefersTo | None:
 
 def get_hub_role(field_info: FieldInfo) -> HubRole | None:
     """The ``HubRole`` a field is marked with, or None."""
-    for m in field_info.metadata:
+    for m in _markers(field_info):
         if isinstance(m, HubRole):
             return m
     return None
@@ -781,6 +788,18 @@ class _ProcessedResolvable:
     id_attr: str
 
 
+def _absent_at_other_level(field_info: FieldInfo) -> ContextDefaults | None:
+    """What makes a field of one layer (the kind ``EdgeOnly`` or ``ProfileOnly``) absent at the other level, as the bare markers do; None for any other field."""
+    from .layers import Kind, field_kind  # layers imports this module
+
+    kind = field_kind(field_info).kind
+    if kind is Kind.EDGE_ONLY:
+        return ContextDefaults(profile=MISSING)
+    if kind is Kind.PROFILE_ONLY:
+        return ContextDefaults(edge=MISSING)
+    return None
+
+
 def apply_vco_markers(cls: type[BaseModel]) -> None:
     """Scan FieldInfo.metadata for VCO markers and store processed results back in metadata."""
     needs_rebuild = False
@@ -796,8 +815,15 @@ def apply_vco_markers(cls: type[BaseModel]) -> None:
         if not fi.exclude and get_ref_only(fi) is not None:
             fi.exclude = True  # a dump leaves it out
             needs_rebuild = True
-        already = {type(m) for m in fi.metadata if isinstance(m, _processed_types)}
-        for m in fi.metadata:
+        # The markers inside a kind count as the field's own; what is processed
+        # is appended to the field's metadata, outside the kind.
+        markers = _markers(fi)
+        already = {type(m) for m in markers if isinstance(m, _processed_types)}
+        absent = _absent_at_other_level(fi)
+        if absent is not None and _ProcessedCtxDefaults not in already:
+            fi.metadata.append(_ProcessedCtxDefaults(absent))
+            already.add(_ProcessedCtxDefaults)
+        for m in markers:
             if isinstance(m, Alias):
                 fi.validation_alias = m.key
                 fi.serialization_alias = m.key

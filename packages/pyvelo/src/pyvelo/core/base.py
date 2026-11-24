@@ -87,7 +87,7 @@ from .fields import (
     ref_only_defaults,
     resolve_ctx_default,
 )
-from .owned import Owned
+from .owned import Owned, unwrap
 
 type JsonObject = dict[str, object]
 """A JSON object: a merge patch, a compact dump, a pydantic context, ..."""
@@ -325,7 +325,7 @@ def _compact_dump(
     for name, field_info in type(model).model_fields.items():
         if ref_only and name in ref_only:
             continue  # it stands for a ref row, not for data
-        value = _field_value(model, name)
+        value = unwrap(_field_value(model, name))
         if _should_omit_field(value, field_info, level):
             continue
         key = _field_alias(field_info, name) if by_alias else name
@@ -678,7 +678,7 @@ class VcoModel(BaseModel):
             return dumped
 
         for name, field_info in type(self).model_fields.items():
-            if _is_context_absent(_field_value(self, name), field_info, level):
+            if _is_context_absent(unwrap(_field_value(self, name)), field_info, level):
                 key = _field_alias(field_info, name) if by_alias else name
                 _ = dumped.pop(key, None)
         return dumped
@@ -918,6 +918,17 @@ def _unwrap_annotated(tp: object) -> object:
     return tp
 
 
+def _held_type(fi: FieldInfo) -> object:
+    """The type a field holds: its annotation, or the type inside its kind (``field_kind``).
+
+    ``FieldInfo.annotation`` of a converted field is the carrier, so every
+    reader of a field's type reads it here.
+    """
+    from .layers import field_kind  # layers imports this module
+
+    return field_kind(fi).inner_type
+
+
 def _field_names_by_key(fields: Mapping[str, FieldInfo]) -> dict[str, str]:
     """Map each input key that names one of *fields* to its python name.
 
@@ -936,12 +947,12 @@ def _field_names_by_key(fields: Mapping[str, FieldInfo]) -> dict[str, str]:
 
 def _field_accepts_missing(fi: FieldInfo) -> bool:
     """Check if a field's type annotation includes MISSING."""
-    return MISSING in _union_members(fi.annotation)
+    return MISSING in _union_members(_held_type(fi))
 
 
 def _field_accepts_none(fi: FieldInfo) -> bool:
     """Check if a field's type annotation includes None."""
-    return type(None) in _union_members(fi.annotation)
+    return type(None) in _union_members(_held_type(fi))
 
 
 def _id_type(fi: FieldInfo) -> object | None:
@@ -950,7 +961,7 @@ def _id_type(fi: FieldInfo) -> object | None:
     None unless exactly one type is left.
     """
     members = (
-        _unwrap_annotated(m) for m in _union_members(_unwrap_annotated(fi.annotation))
+        _unwrap_annotated(m) for m in _union_members(_unwrap_annotated(_held_type(fi)))
     )
     kept = [m for m in members if m is not MISSING and m is not type(None)]
     return kept[0] if len(kept) == 1 else None
@@ -964,7 +975,7 @@ def _id_adapter(id_type: object) -> TypeAdapter[object]:
 def _field_model_type(fi: FieldInfo) -> type[VcoModel] | None:
     """Get the VcoModel class from an annotation like ``T`` or ``T | MISSING | None``."""
     return next(
-        (m for m in _union_members(fi.annotation) if _is_vco_model_type(m)), None
+        (m for m in _union_members(_held_type(fi)) if _is_vco_model_type(m)), None
     )
 
 
@@ -975,7 +986,7 @@ def _field_model_types(fi: FieldInfo) -> tuple[type[VcoModel], ...]:
     inside ``Annotated``: ``Annotated[A | B, Discriminator(...)] | None``.
     """
     found: list[type[VcoModel]] = []
-    for member in _union_members(fi.annotation):
+    for member in _union_members(_held_type(fi)):
         for inner in _union_members(_unwrap_annotated(member)):
             model = _unwrap_annotated(inner)
             if _is_vco_model_type(model) and model not in found:
@@ -1040,7 +1051,7 @@ def list_item_type(fi: FieldInfo) -> ListItemType | None:
     Handles plain ``list[Model]`` and
     ``list[Annotated[A | B, Discriminator(...)]]``.
     """
-    for member in _union_members(fi.annotation):
+    for member in _union_members(_held_type(fi)):
         if get_origin(member) is not list or not (args := get_args(member)):
             continue
         element: object = args[0]
@@ -1115,7 +1126,7 @@ def field_models(field_info: FieldInfo) -> tuple[type[VcoModel], ...]:
     empty tuple.
     """
     found: dict[type[VcoModel], None] = {}
-    _collect_models(field_info.annotation, found)
+    _collect_models(_held_type(field_info), found)
     return tuple(found)
 
 
@@ -1141,7 +1152,7 @@ def list_kind(field_info: FieldInfo) -> ListKind | None:
     is_dict_of_models = False
     has_list = False
     element_kind: Literal["model", "value", "other"] = "other"
-    for member in _members_without_missing_and_none(field_info.annotation):
+    for member in _members_without_missing_and_none(_held_type(field_info)):
         origin = get_origin(member)
         args = get_args(member)
         if origin is dict and len(args) == 2:

@@ -125,9 +125,8 @@ def test_set_local_validates() -> None:
 
 
 def test_the_inner_adapter_validates_the_type_inside_the_kind() -> None:
-    info = Mod[Edge].model_fields["settings"]
-    adapter = inner_adapter(info)
-    assert inner_adapter(info) is adapter
+    adapter = inner_adapter(Mod[Edge], "settings")
+    assert inner_adapter(Mod[Edge], "settings") is adapter
     assert adapter.validate_python({"a": 3}) == Settings(a=3)
     with pytest.raises(ValidationError):
         adapter.validate_python({"a": "x"})

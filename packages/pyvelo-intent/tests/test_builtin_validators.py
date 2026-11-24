@@ -1,8 +1,11 @@
 """Tests for built-in validators: key_uniqueness, override_consistency, required_fields."""
 
 from datetime import UTC, datetime
-from typing import TypedDict
+from types import SimpleNamespace
+from typing import Annotated, TypedDict, cast
 
+from layered_models import Mod, Rule, mod_json
+from pydantic import Field
 from pyvelo.client.enums.configuration import ConfigurationModuleType
 from pyvelo.client.enums.enterprise import NetworkSegmentType
 from pyvelo.client.models.configuration.common import SegmentMetadata
@@ -25,6 +28,18 @@ from pyvelo.client.schemas.configuration import (
     FirewallConfigurationModule,
 )
 from pyvelo.config.resolver import ResolverContext
+from pyvelo.config.validation import ConfigStateLike
+from pyvelo.core import (
+    ByPresence,
+    Default,
+    Edge,
+    Inheritable,
+    KeyField,
+    Layered,
+    Profile,
+    VcoModel,
+)
+from pyvelo.core.layers import L
 from pyvelo_intent.config.state import ConfigState
 from pyvelo_intent.config.validators.builtin import (
     key_uniqueness,
@@ -269,3 +284,44 @@ class TestRequiredFields:
         state = _make_state([])
         result = required_fields.validate(state)
         assert result.is_valid
+
+
+class _Holder(VcoModel):
+    rules: Annotated[list[Rule], KeyField("name")] = Field(default_factory=list)
+
+
+class _Held(Layered[L]):
+    holder: Annotated[Inheritable[_Holder], ByPresence(), Default(factory=_Holder)] = (
+        Field(default=...)
+    )
+
+
+def _layered_state(data: object, target: str) -> ConfigStateLike:
+    """A state whose one module holds *data*, a model of the layer *target*."""
+    config = SimpleNamespace(modules=[SimpleNamespace(name="held", data=data)])
+    state = SimpleNamespace(
+        target_type=target,
+        edge_config=config if target == "edge" else None,
+        profile_config=config,
+    )
+    return cast(ConfigStateLike, cast(object, state))
+
+
+class TestLayeredModels:
+    def test_an_inheritable_field_is_not_required(self):
+        """Where the edge inherits (it stores nothing) or the profile reads its display default."""
+        for target, data in (
+            ("edge", Mod[Edge].model_validate(mod_json())),
+            ("profile", Mod[Profile].model_validate(mod_json())),
+        ):
+            assert required_fields.validate(_layered_state(data, target)).is_valid
+
+    def test_a_duplicate_key_inside_an_inheritable_value_is_found(self):
+        raw = {"holder": {"rules": [{"name": "r1"}, {"name": "r1"}]}}
+        for target, data in (
+            ("edge", _Held[Edge].model_validate(raw)),
+            ("profile", _Held[Profile].model_validate(raw)),
+        ):
+            result = key_uniqueness.validate(_layered_state(data, target))
+            assert [error.path for error in result.errors] == ["held.holder.rules[1]"]
+            assert result.errors[0].code == "key_uniqueness"

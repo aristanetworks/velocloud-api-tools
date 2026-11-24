@@ -19,6 +19,7 @@ from pydantic.fields import FieldInfo
 
 from .base import VcoModel, is_dict, is_list
 from .fields import get_key_spec
+from .owned import unwrap
 from .rebase import Key, Path, item_key
 
 
@@ -78,7 +79,8 @@ def walk_fields(
         if not wanted(model):
             return
         for name, field_info, asked in layout(model):
-            value: object = getattr(model, name)
+            held: object = getattr(model, name)
+            value = unwrap(held)
             below_model = isinstance(value, VcoModel)
             listed = not below_model and is_list(value)
             mapped = not below_model and not listed and is_dict(value)

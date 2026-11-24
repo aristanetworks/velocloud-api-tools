@@ -22,7 +22,7 @@ from typing import Annotated, Final, Literal, TypeAliasType, get_args, get_origi
 from pydantic import MISSING
 from pydantic.fields import FieldInfo
 
-from pyvelo.core import ConfigContext, OwnsRef, RefOnly, VcoModel
+from pyvelo.core import ConfigContext, OwnsRef, RefOnly, VcoModel, field_kind, unwrap
 from pyvelo.core.base import is_dict, is_list
 from pyvelo.core.fields import get_owns_ref, get_ref_only, get_resolvable
 from pyvelo.core.rebase import Path
@@ -131,7 +131,7 @@ def can_hold_owner(model_cls: type[VcoModel]) -> bool:
         for field_info in current.model_fields.values():
             if get_owns_ref(field_info) is not None or get_ref_only(field_info):
                 return True
-            pending.extend(_model_classes(field_info.annotation))
+            pending.extend(_model_classes(field_kind(field_info).inner_type))
     return False
 
 
@@ -161,7 +161,7 @@ def declared_ref_names(
                 names.add(owns.name)
             if ref_only is not None and ref_only.default is not None:
                 names.add(ref_only.default)
-            pending.extend(_model_classes(field_info.annotation))
+            pending.extend(_model_classes(field_kind(field_info).inner_type))
     return frozenset(names)
 
 
@@ -204,7 +204,8 @@ def _identity(value: object, path: str | None) -> object | None:
         for step in path.split("."):
             if value is None or value is MISSING:
                 return None
-            value = getattr(value, step, None)
+            held: object = getattr(value, step, None)
+            value = unwrap(held)
     if value is None or value is MISSING or value == "":
         return None
     parsed = _as_uuid(value)
@@ -219,7 +220,8 @@ def ref_owners(data: VcoModel, level: ConfigContext | None) -> tuple[RefOwner, .
     """
     owners: list[RefOwner] = []
     for site in _sites(data):
-        value: object = getattr(site.model, site.field)
+        stored: object = getattr(site.model, site.field)
+        value = unwrap(stored)
         owns = get_owns_ref(site.field_info)
         ref_only = get_ref_only(site.field_info)
         marker: OwnsRef | RefOnly
@@ -273,7 +275,8 @@ def ref_only_values(data: VcoModel) -> dict[Path, object]:
     for site in _sites(data):
         if get_ref_only(site.field_info) is None:
             continue
-        value: object = getattr(site.model, site.field)
+        stored: object = getattr(site.model, site.field)
+        value = unwrap(stored)
         parsed = _as_uuid(value)
         values[site.path] = value if parsed is None else parsed
     return values

@@ -39,6 +39,7 @@ from pyvelo.client.models.configuration.ref_owners import (
     segment_object_ids as object_ids_of,
 )
 from pyvelo.config.resolvers.hub import HubResolver
+from pyvelo.core import unwrap
 from pyvelo.core.base import is_dict, is_list
 from pyvelo.core.fields import get_hub_role
 from pyvelo.core.identity import (
@@ -133,7 +134,8 @@ def hub_lists_of(data: DeviceSettingsData) -> dict[int, dict[Role, list[VpnHub]]
         role = get_hub_role(site.field_info)
         if role is None or not isinstance(site.segment, DeviceSegment):
             continue  # the walk gives only marked fields, and those outside a segment are not its
-        held: object = getattr(site.model, site.name)
+        stored: object = getattr(site.model, site.name)
+        held = unwrap(stored)
         hubs = [h for h in held if isinstance(h, VpnHub)] if is_list(held) else []
         found.setdefault(_segment_id(site.segment), {})[role.role] = hubs
     return found

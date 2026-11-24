@@ -13,19 +13,13 @@ import functools
 import json
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Annotated, Literal, LiteralString, cast, get_args, get_origin
+from typing import Literal, LiteralString, cast, get_args, get_origin
 
 from pydantic import (
     MISSING,
-    AfterValidator,
-    BeforeValidator,
     ConfigDict,
-    Discriminator,
-    PlainValidator,
-    PydanticUserError,
     TypeAdapter,
     ValidationError,
-    WrapValidator,
 )
 from pydantic.fields import FieldInfo
 from pydantic_core import InitErrorDetails, PydanticCustomError, PydanticUndefined
@@ -45,6 +39,7 @@ from .base import (
     _field_model_types,  # pyright: ignore[reportPrivateUsage]
     _field_names_by_key,  # pyright: ignore[reportPrivateUsage]
     _field_value,  # pyright: ignore[reportPrivateUsage]
+    _held_type,  # pyright: ignore[reportPrivateUsage]
     _id_adapter,  # pyright: ignore[reportPrivateUsage]
     _id_type,  # pyright: ignore[reportPrivateUsage]
     _is_vco_model_type,  # pyright: ignore[reportPrivateUsage]
@@ -71,6 +66,8 @@ from .fields import (
     is_edge_local,
 )
 from .identity import ResolutionError
+from .layers import Kind, field_kind, inner_adapter
+from .owned import unwrap
 from .patch import (
     ItemOp,
     PatchError,
@@ -357,11 +354,15 @@ def _merge_field(
             _merge_model(current, value, resolvers, path, built=built)
             _check_merged(
                 current,
-                _field_adapter(model_cls, name).validate_python
+                inner_adapter(model_cls, name).validate_python
                 if len(_field_model_types(field_info)) > 1
                 else type(current).model_validate,
                 path,
             )
+            if field_kind(field_info).kind is Kind.INHERITABLE:
+                # The profile stores what a patch gave, a value equal to the
+                # display default too, as an assignment would.
+                model.model_fields_set.add(name)
             return
 
         # Sub-model that is unset: build a new one from the patch.
@@ -411,48 +412,6 @@ def _null_value(field_info: FieldInfo, name: str, path: Path, *, built: bool) ->
     )
 
 
-_FIELD_VALIDATOR_MARKERS = {
-    "before": BeforeValidator,
-    "after": AfterValidator,
-    "wrap": WrapValidator,
-    "plain": PlainValidator,
-}
-
-
-@functools.cache
-def _field_adapter(model_cls: type[VcoModel], name: str) -> TypeAdapter[object]:
-    """A validator for field *name* of *model_cls*, as pydantic validates it on parse.
-
-    The field's annotation and metadata, its discriminator, the class's
-    ``@field_validator``s for the field (``"*"`` ones too), applied after the
-    metadata in the order defined, as pydantic does, and the class's config
-    (``use_enum_values`` and the rest). Model validators are not field
-    validation and do not run here. When a model instance is the value, as
-    ``_merge_field`` gives one, the class's ``after`` and ``wrap`` model
-    validators do run on it.
-    """
-    fi = model_cls.model_fields[name]
-    metadata: list[object] = list(fi.metadata)
-    if isinstance(fi.discriminator, str):
-        metadata.append(Discriminator(fi.discriminator))
-    elif fi.discriminator is not None:
-        metadata.append(fi.discriminator)
-    for decorator in model_cls.__pydantic_decorators__.field_validators.values():
-        info = decorator.info
-        if name in info.fields or "*" in info.fields:
-            metadata.append(_FIELD_VALIDATOR_MARKERS[info.mode](decorator.func))
-    annotation: object = (
-        Annotated[fi.annotation, *metadata] if metadata else fi.annotation
-    )
-    try:
-        return TypeAdapter[object](annotation, config=model_cls.model_config)  # pyright: ignore[reportArgumentType]
-    except PydanticUserError as exc:
-        # A model type has its own config, and TypeAdapter refuses another.
-        if exc.code != "type-adapter-config-unused":
-            raise
-        return TypeAdapter[object](annotation)  # pyright: ignore[reportArgumentType]
-
-
 def _validate_field(
     model_cls: type[VcoModel], name: str, value: object, path: Path
 ) -> object:
@@ -461,7 +420,7 @@ def _validate_field(
     See ``validate_patched_value``.
     """
     return validate_patched_value(
-        _field_adapter(model_cls, name),
+        inner_adapter(model_cls, name),
         value,
         field_models(model_cls.model_fields[name]),
         path,
@@ -735,7 +694,7 @@ def _refuse_unread_keys(
     for key, value in data.items():
         name = _field_name(names, model_cls.__name__, key, path)
         child = path.child(name)
-        current = _field_value(model, name)
+        current = unwrap(_field_value(model, name))
         _refuse_bool_as_number(value, current, child)
         if is_dict(value) and isinstance(current, VcoModel):
             _refuse_unread_keys(current, value, child)
@@ -855,7 +814,7 @@ def _require_ids_for_name(
         return
     owner: object = item
     for part in key_path.split(".")[:-1]:
-        owner = _field_value(owner, part)
+        owner = unwrap(_field_value(owner, part))
     if not isinstance(owner, VcoModel):
         return
     unset = [
@@ -948,7 +907,7 @@ def _fill_context_defaults(item: VcoModel) -> None:
     if level is None:
         return
     for name, field_info in type(item).model_fields.items():
-        if _field_value(item, name) is not MISSING:
+        if unwrap(_field_value(item, name)) is not MISSING:
             continue
         default = _effective_default(field_info, level)
         if (
@@ -1237,7 +1196,7 @@ def _list_spec(field_info: FieldInfo) -> _ListSpec | None:
 
 def _type_args(field_info: FieldInfo, origin: type) -> tuple[object, ...]:
     """The arguments of the ``origin[...]`` member of the field's annotation (``list`` or ``dict``)."""
-    for member in _members_of(field_info.annotation):
+    for member in _members_of(_held_type(field_info)):
         if get_origin(member) is origin and (args := get_args(member)):
             return args
     return (object, object)
@@ -2751,7 +2710,8 @@ def _has_non_edge_local_changes(model: VcoModel, before: Mapping[str, object]) -
         fi = fields.get(name)
         if fi is None or has_override_flag(fi) or is_edge_local(fi):
             continue
-        new = _field_value(model, name)
+        new = unwrap(_field_value(model, name))
+        old = unwrap(old)
         if isinstance(new, VcoModel) and type(new) is type(old):
             if _has_non_edge_local_changes(new, _all_field_values(new, old)):
                 return True
@@ -2762,4 +2722,6 @@ def _has_non_edge_local_changes(model: VcoModel, before: Mapping[str, object]) -
 
 def _all_field_values(model: VcoModel, source: object) -> JsonObject:
     """Read every one of *model*'s fields from *source*, an instance of the same class."""
-    return {name: _field_value(source, name) for name in type(model).model_fields}
+    return {
+        name: unwrap(_field_value(source, name)) for name in type(model).model_fields
+    }

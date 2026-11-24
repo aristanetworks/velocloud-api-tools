@@ -109,7 +109,9 @@ class Owned[T]:
 
     A model of the edge layer attaches the ``Owned`` it holds to itself when it
     is validated, constructed or deep-copied, which is what gives *is_local* the
-    field's encoding and the intents the field to work on. An ``Owned`` that
+    field's encoding and the intents the field to work on. The first model to
+    attach it keeps it: a shallow copy holds the same ``Owned`` values as its
+    original, which stay the original's. An ``Owned`` that
     belongs to no model (one built by hand, or a deep copy of one taken from a
     model) reads *is_local* by presence, and its intents store what they are
     given without checking it.
@@ -132,6 +134,11 @@ class Owned[T]:
     def _attach(
         self, owner: Layered[Edge], field: str, encoding: Encoding | None
     ) -> None:
+        if self._owner is not None:
+            # The model that held it first keeps it: a shallow copy of a model
+            # (the merge validates one) holds the same Owned values, and
+            # validating it must not make them the copy's.
+            return
         self._owner = owner
         self._field = field
         self._encoding = encoding
@@ -273,6 +280,19 @@ class Owned[T]:
         return f"Owned({self.stored!r})"
 
 
+def unwrap(value: object) -> object:
+    """What a field's value holds: an ``Owned``'s ``stored``, anything else as it is.
+
+    A walk that reads field values from a model instance reads through this,
+    as one that reads field types goes through ``layers.field_kind``. What an
+    ``Owned`` stores is ``MISSING`` when the edge stores nothing.
+    """
+    if isinstance(value, Owned):
+        stored: object = value.stored  # pyright: ignore[reportUnknownMemberType]
+        return stored
+    return value
+
+
 # ---------------------------------------------------------------------------
 # Validation of a local value
 # ---------------------------------------------------------------------------
@@ -309,9 +329,12 @@ def _validate_inner(owner: Layered[Edge], field: str, value: object) -> object:
     from .merge import validate_patched_value
     from .rebase import Path
 
-    info = type(owner).model_fields[field]
+    cls = type(owner)
     return validate_patched_value(
-        inner_adapter(info), value, field_models(info), Path((field,))
+        inner_adapter(cls, field),
+        value,
+        field_models(cls.model_fields[field]),
+        Path((field,)),
     )
 
 
