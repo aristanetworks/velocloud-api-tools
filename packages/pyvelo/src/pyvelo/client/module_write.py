@@ -133,7 +133,8 @@ from pyvelo.core.base import (
     is_list,
 )
 from pyvelo.core.fixed_list import fixed_list_violations
-from pyvelo.core.layers import Edge, Profile
+from pyvelo.core.layers import Edge, Layered, Profile
+from pyvelo.core.owned import UnflaggedInUse, unflagged_in_use_at
 from pyvelo.core.rebase import (
     Key,
     Path,
@@ -865,6 +866,25 @@ def _defaults_path(name: str) -> str:
     return f"segments[{json.dumps(name)}].defaults"
 
 
+def _flag_off_warning(found: UnflaggedInUse) -> PlanWarning:
+    """The warning for an edge object the backend uses although its flag is off."""
+    segments = [(key, item) for key, item in found.steps if item is not None]
+    where = (
+        f" of segment {segments[0][1]!r}"
+        if len(segments) == 1 and segments[0][0] == "segments"
+        else f" at {found.path}"
+    )
+    return PlanWarning(
+        "flag_off_in_use",
+        found.path,
+        f"The edge stores {found.field}{where} with {found.flag} false. The VCO "
+        "uses an edge object that is present whatever its flag, so this edge runs "
+        "with it and not with the profile's, though is_local reads False. To "
+        f"inherit the profile's, send {json.dumps(found.inherit_patch())} "
+        "(inherit()); to keep it, make it local with set_local() or localize().",
+    )
+
+
 def _defaults_findings(
     payload: object,
 ) -> tuple[list[PlanWarning], list[tuple[str, object, tuple[str, ...]]], list[Any]]:
@@ -1163,6 +1183,17 @@ def plan_module(
                 ),
             )
         )
+    flag_off: list[PlanWarning] = []
+    layered = _document_model(model_type, module)
+    if (
+        level is ConfigContext.EDGE
+        and layered is not None
+        and issubclass(layered, Layered)
+    ):
+        held = payload if changed else cast(Mapping[str, object], raw)
+        flag_off = [
+            _flag_off_warning(found) for found in unflagged_in_use_at(layered, held)
+        ]
     in_payload = _segment_names(payload).keys()
     return ModulePlan(
         name=name,
@@ -1177,7 +1208,7 @@ def plan_module(
         overrides_turned_on=_overrides_turned_on(changes, model_type),
         model=_document_model(model_type, module),
         ref_changes=ref_changes,
-        warnings=(*warnings, *not_template, *repair_warnings),
+        warnings=(*warnings, *not_template, *repair_warnings, *flag_off),
         added_segments=tuple(
             a.name
             for a in additions

@@ -465,6 +465,13 @@ What disagrees in the refs as read is a `warning: <message>` line, and the
 write leaves it as it is. `ConfigPlan.warnings` holds the same warnings as
 data, each with its module's name before its path, and `save` and `dry_run`
 copy them to `SaveResult.warnings`.
+An edge module that stores an object the VCO uses although its flag says it
+inherits (a segment's `cosMapping` with `override` false: the composer takes a
+present edge object whatever its flag) has a `flag_off_in_use` warning, at the
+object's path, in the same list and in `render()`, also when nothing else in
+the module changes; its message gives the patch that inherits
+(`{"segments": {"Voice": {"cosMapping": null}}}`) and says to use
+`set_local()` or `localize()` to keep it.
 
 A DNS or authentication provider is set by assignment, with the service's
 logical ID (`provider.service = uuid.UUID(...)`), or by `apply`, with the

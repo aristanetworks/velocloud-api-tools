@@ -118,6 +118,31 @@ def test_plan_reports_missing_segments_without_changes():
     )
 
 
+def test_the_flag_off_warning_reaches_config_plan_warnings():
+    cos = {"lsInputType": "weight", "override": False}
+    edge_qos = make_module_json(
+        "QOS",
+        {
+            "segments": [
+                {"segment": desc(0, "Global Segment"), "rules": [], "cosMapping": cos}
+            ]
+        },
+        module_id=4,
+        configuration_id=10,
+        version="e2",
+    )
+    state = make_state(edge_modules=[edge_qos])
+    plan = state.plan()
+    qos = next(m for m in plan.modules if m.name == "QOS")
+    assert qos.operation == "none"
+    flagged = [w for w in plan.warnings if w.code == "flag_off_in_use"]
+    assert [w.path for w in flagged] == ['QOS: segments["Global Segment"].cosMapping']
+    assert (
+        '{"segments": {"Global Segment": {"cosMapping": null}}}' in flagged[0].message
+    )
+    assert f"warning: {flagged[0].message}" in plan.render()
+
+
 def test_plan_names_its_target():
     state = make_state()
     assert state.plan().target == "edge, enterprise 5, configuration 10"

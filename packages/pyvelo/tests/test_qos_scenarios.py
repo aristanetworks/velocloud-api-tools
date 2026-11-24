@@ -274,3 +274,39 @@ def test_an_unrelated_edit_writes_every_other_key_as_read(
     assert appended["name"] == "added"
     del written["segments"][0]["rules"][1:]
     assert written == raw
+
+
+def test_plan_warns_of_a_cos_mapping_the_backend_uses_with_its_flag_off():
+    stored = {**COS_PROFILE, "override": False}
+    raw = {"segments": [segment_of(cosMapping=stored)]}
+    edge, profile = bound(raw, {"segments": [segment_of()]})
+    assert edge.data.segments[0].cos_mapping.is_local is False
+
+    plan = plan_module(edge, level=EDGE, profile=profile)
+    assert plan.operation == "none"
+    assert [(w.code, w.path) for w in plan.warnings] == [
+        ("flag_off_in_use", 'segments["Global Segment"].cosMapping')
+    ]
+    message = plan.warnings[0].message
+    assert (
+        "The edge stores cosMapping of segment 'Global Segment' with override false."
+        in message
+    )
+    assert '{"segments": {"Global Segment": {"cosMapping": null}}}' in message
+    assert "inherit()" in message and "set_local()" in message
+
+    edge.data.segments[0].cos_mapping.inherit()
+    after = plan_module(edge, level=EDGE, profile=profile)
+    assert not [w for w in after.warnings if w.code == "flag_off_in_use"]
+
+    other, profile = bound(raw, {"segments": [segment_of()]})
+    other.data.segments[0].cos_mapping.set_local(CosMapping())
+    local = plan_module(other, level=EDGE, profile=profile)
+    assert not [w for w in local.warnings if w.code == "flag_off_in_use"]
+
+
+def test_a_profile_module_with_the_same_data_has_no_flag_off_warning():
+    stored = {**COS_PROFILE, "override": False}
+    profile = qos_mod({"segments": [segment_of(cosMapping=stored)]}, layer=Profile)
+    plan = plan_module(profile, level=PROFILE)
+    assert "flag_off_in_use" not in [w.code for w in plan.warnings]

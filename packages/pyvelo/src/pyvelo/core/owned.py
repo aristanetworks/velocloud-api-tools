@@ -29,7 +29,8 @@ from __future__ import annotations
 
 import copy
 import functools
-from collections.abc import Callable
+import json
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Self, cast, get_args, overload
 
@@ -786,3 +787,130 @@ def item_value_at(item: object, path: str) -> object:
     for part in path.split("."):
         value = getattr(value, part, None)
     return value
+
+
+# ---------------------------------------------------------------------------
+# An object the backend uses although its flag says it inherits
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class UnflaggedInUse:
+    """An object stored at a ``presence_wins`` field with its flag off (``unflagged_in_use_at``)."""
+
+    steps: tuple[tuple[str, str | None], ...]
+    """The route to the field in wire keys: each step is a key and, when it
+    names a keyed list, the key of the item the route goes into."""
+    flag: str
+    """The wire key of the flag inside the object."""
+
+    @property
+    def path(self) -> str:
+        """The route as ``segments["Voice"].cosMapping``: keys joined by ``.``, an item as ``[<json of its key>]``."""
+        return ".".join(
+            key if item is None else f"{key}[{json.dumps(item)}]"
+            for key, item in self.steps
+        )
+
+    @property
+    def field(self) -> str:
+        """The wire key of the field."""
+        return self.steps[-1][0]
+
+    def inherit_patch(self) -> dict[str, object]:
+        """The patch that makes the field inherit: ``{"segments": {"Voice": {"cosMapping": null}}}``."""
+        patch: object = None
+        for key, item in reversed(self.steps):
+            patch = {key: patch if item is None else {item: patch}}
+        return cast("dict[str, object]", patch)
+
+
+def _wire_value(model: type[VcoModel], item: object, path: str) -> object:
+    """The value at the python-name *path* below *item*, a raw dict of *model*, read under wire keys; None when a step is absent."""
+    from .base import field_models, is_dict, wire_name
+
+    value: object = item
+    current: type[VcoModel] | None = model
+    for name in path.split("."):
+        if current is None or not is_dict(value) or name not in current.model_fields:
+            return None
+        value = value.get(wire_name(current, name))
+        found = field_models(current.model_fields[name])
+        current = found[0] if found else None
+    return value
+
+
+def unflagged_in_use_at(
+    model: type[Layered[Any]], data: Mapping[str, object]
+) -> list[UnflaggedInUse]:
+    """Every object in raw *data* that the backend uses although its flag is off (``unflagged_in_use``)."""
+    from .base import field_models, is_dict, is_list, wire_name
+    from .fields import get_key_spec
+    from .layers import Kind, Layered, field_kind
+
+    found: list[UnflaggedInUse] = []
+
+    def walk(
+        cls: type[Layered[Any]],
+        raw: Mapping[object, object],
+        above: tuple[tuple[str, str | None], ...],
+    ) -> None:
+        for name, info in cls.model_fields.items():
+            kind = field_kind(info)
+            key = wire_name(cls, name)
+            value = raw.get(key)
+            if value is None:
+                continue
+            if kind.kind is Kind.INHERITABLE:
+                encoding = kind.encoding
+                if not (isinstance(encoding, ByFlag) and encoding.presence_wins):
+                    continue
+                if not is_dict(value):
+                    continue
+                inner = kind.inner_type
+                flag = (
+                    wire_name(inner, encoding.flag)
+                    if isinstance(inner, type) and hasattr(inner, "model_fields")
+                    else encoding.flag
+                )
+                if not value.get(flag):
+                    found.append(UnflaggedInUse((*above, (key, None)), flag))
+            elif kind.kind is Kind.STRUCTURAL:
+                nested = [m for m in field_models(info) if issubclass(m, Layered)]
+                if not nested:
+                    continue
+                if is_dict(value):
+                    walk(nested[0], value, (*above, (key, None)))
+                elif is_list(value):
+                    spec = get_key_spec(info)
+                    if spec is None:
+                        continue
+                    for entry in value:
+                        if not is_dict(entry):
+                            continue
+                        identity = _wire_value(nested[0], entry, spec.paths[0])
+                        if identity is None and spec.alt is not None:
+                            identity = _wire_value(nested[0], entry, spec.alt)
+                        if identity is None:
+                            continue
+                        walk(nested[0], entry, (*above, (key, str(identity))))
+
+    walk(model, cast("Mapping[object, object]", data), ())
+    return found
+
+
+def unflagged_in_use(
+    model: type[Layered[Any]], data: Mapping[str, object]
+) -> list[str]:
+    """The path of every object in raw *data* that the backend uses although its flag is off.
+
+    *data* is read as *model*'s wire keys. A field declared
+    ``ByFlag(..., presence_wins=True)`` is read by the backend composer
+    whenever the edge stores the object, so an object that is present, not
+    ``null``, and has its flag absent or false, is the one the edge runs with
+    although ``is_local`` reads False. It walks structural ``Layered`` fields
+    and keyed lists of ``Layered`` items; a path is wire keys joined by ``.``,
+    a keyed list item written ``[<json of its key>]`` as in
+    ``segments["Voice"].cosMapping``. An item with no key is not walked.
+    """
+    return [found.path for found in unflagged_in_use_at(model, data)]

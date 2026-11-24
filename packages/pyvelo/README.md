@@ -515,7 +515,10 @@ present and `override` is true, so `set_local(CosMapping(...))` writes it with
 refused), and `inherit()` removes the object. An edge object stored with
 `override: false` is kept as read and is not local, yet the VCO's composer takes
 a present edge object without reading its flag, so the effective view shows it
-as the edge's (`Origin.EDGE`). Remove it with `inherit()` for the profile's
+as the edge's (`Origin.EDGE`). `plan_module` on an edge module warns of each
+one (code `flag_off_in_use`, at `segments["Global Segment"].cosMapping`),
+whether or not the write changes anything, so nobody reads `is_local == False`
+and believes the edge inherits. Remove it with `inherit()` for the profile's
 mapping to apply. `localize()` copies the profile segment's mapping (or the
 display default, `CosMapping()`) in with `override: true`; on a segment
 `data.segment(name)` added it copies from the profile's segment of that name.

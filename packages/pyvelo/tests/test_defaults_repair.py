@@ -324,9 +324,11 @@ def test_carried_repairs_are_used_as_given():
 
 
 def test_the_edge_level_repairs_nothing():
+    entry = qos_entry(GUEST, defaults=MISSING, rules=rules_of_template())
+    del entry["cosMapping"]  # the template's is stored with its flag off
     row = make_module_json(
         "QOS",
-        {"segments": [qos_entry(GUEST, defaults=MISSING, rules=rules_of_template())]},
+        {"segments": [entry]},
         module_id=QOS_ID,
         configuration_id=200,
     )

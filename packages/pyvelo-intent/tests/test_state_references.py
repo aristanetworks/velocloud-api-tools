@@ -89,7 +89,7 @@ async def edge_over(
     """An edge state over *profile*'s profile: its device settings hold only the Global Segment and *networks*.
 
     With *with_qos* the edge also has a QoS module of its own, with the Global
-    Segment and no rule.
+    Segment, no rule and no `cosMapping` (it inherits the profile's).
     """
     modules = [
         make_module_json(
@@ -104,10 +104,12 @@ async def edge_over(
         )
     ]
     if with_qos:
+        inheriting = qos_entry(GLOBAL)
+        del inheriting["cosMapping"]  # the template's is stored with its flag off
         modules.append(
             make_module_json(
                 QOS,
-                {"segments": [qos_entry(GLOBAL)]},
+                {"segments": [inheriting]},
                 module_id=EDGE_QOS_ID,
                 configuration_id=EDGE_CONFIG,
             )

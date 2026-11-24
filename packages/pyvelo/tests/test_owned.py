@@ -31,6 +31,7 @@ from pyvelo.core import (
     kind_default,
 )
 from pyvelo.core.layers import L, inner_adapter
+from pyvelo.core.owned import unflagged_in_use
 
 # Fields that hold their plain default in every dump and say nothing about ownership.
 _PLAIN = {"legacy", "edge_note", "profile_note"}
@@ -702,3 +703,30 @@ def test_the_group_bundle_refusal_gives_the_patch() -> None:
         e.pair.set_local({"pair_a": {}})  # pyright: ignore[reportArgumentType]
     said = str(exc.value)
     assert '{"pairA": ..., "pairB": ..., "pairOn": ...}' in said
+
+
+def test_unflagged_in_use_finds_each_present_object_with_its_flag_off() -> None:
+    data = mod_json(
+        segments=[
+            _segment(0, "S", mapping={"override": False}),
+            _segment(1, "T", mapping={"override": True}),
+            _segment(2, "U"),
+            _segment(3, "V", mapping={}),
+            _segment(4, "W", mapping=None),
+        ]
+    )
+    assert unflagged_in_use(Mod, data) == [
+        'segments["S"].mapping',
+        'segments["V"].mapping',
+    ]
+
+
+def test_unflagged_in_use_names_a_segment_with_no_name_by_its_id() -> None:
+    data = mod_json(segments=[{"segment": {"segmentId": 7}, "mapping": {}}])
+    assert unflagged_in_use(Mod, data) == ['segments["7"].mapping']
+
+
+def test_unflagged_in_use_leaves_other_encodings_and_a_missing_list_alone() -> None:
+    assert unflagged_in_use(Mod, {}) == []
+    data = mod_json(affinity={"override": False}, settings={"a": 2})
+    assert unflagged_in_use(Mod, data) == []
