@@ -28,7 +28,12 @@ from hub_state import (  # pyright: ignore[reportImplicitRelativeImport]
     hub_profile_state,
     profile_hub_rows,
 )
-from pyvelo.client.exceptions import ConfigConflictError, HubListError, VcoError
+from pyvelo.client.exceptions import (
+    ConfigConflictError,
+    HubListError,
+    RefsDroppedError,
+    VcoError,
+)
 from pyvelo.client.hub_services import CLUSTER_HUB_REF, EDGE_HUB_REF
 from pyvelo.client.models.configuration.device_settings.root import DeviceSettingsData
 from pyvelo.client.schemas.enterprise import EdgeHubClusterService, EdgeHubService
@@ -712,6 +717,78 @@ async def test_a_module_the_version_read_finds_stored_is_not_written_again():
     assert result.written[0].module.version == stored_version
     assert [o.status for o in result.steps] == ["in_place", "in_place"]
     assert state.plan().changed == ()
+
+
+async def test_a_stored_write_the_version_read_finds_counts_as_done_before_the_steps():
+    state = await two_lists_state()
+    pipeline, store = hub_pipeline(state, vpn_check=True)
+    store.lose_answers.add(1)
+    with pytest.raises(SaveStepError):
+        _ = await pipeline.save(state)
+    original = pipeline.client.get_enterprise_services
+    reads = 0
+
+    async def third_read_fails(request: Any) -> Any:
+        nonlocal reads
+        reads += 1
+        if reads == 3:  # the first read after the steps
+            raise VcoError("the VCO is gone")
+        return await original(request)
+
+    pipeline.client.get_enterprise_services = third_read_fails  # pyright: ignore[reportAttributeAccessIssue]
+
+    with pytest.raises(VcoError) as failed:
+        _ = await pipeline.save(state)
+
+    # Every step was in place, so none was sent: the error is the VCO's own.
+    assert not isinstance(failed.value, SaveStepError)
+    progress = save_progress(failed.value)
+    assert progress is not None
+    assert [w.name for w in progress.completed] == [DS]
+    assert progress.pending == ()
+    # The state already holds the module as stored, and plans nothing.
+    assert state.module(DS).version == store.rows[DS_ID]["version"]
+    assert state.plan().changed == ()
+
+
+async def test_a_stored_write_found_before_a_failed_first_services_read_is_in_the_progress():
+    state = await two_lists_state()
+    pipeline, store = hub_pipeline(state, vpn_check=True)
+    store.lose_answers.add(1)
+    with pytest.raises(SaveStepError):
+        _ = await pipeline.save(state)
+    store.fail_calls.add(SERVICES)
+
+    with pytest.raises(VcoError) as failed:
+        _ = await pipeline.save(state)
+
+    assert not isinstance(failed.value, SaveStepError)
+    progress = save_progress(failed.value)
+    assert progress is not None
+    assert [w.name for w in progress.completed] == [DS]
+    assert state.plan().changed == ()
+
+
+async def test_a_hub_row_the_vco_leaves_out_of_the_stored_module_is_refused():
+    state = await two_lists_state()
+    pipeline, store = hub_pipeline(state, vpn_check=True)
+
+    def drop_the_hub_row(new: dict[str, Any], old: dict[str, Any] | None) -> None:
+        new["refs"].pop(EDGE_HUB_REF)
+
+    store.on_store.append(drop_the_hub_row)
+
+    with pytest.raises(SaveStepError) as failed:
+        _ = await pipeline.save(state)
+
+    error = failed.value
+    assert isinstance(error.__cause__, RefsDroppedError)
+    assert error.module_name == DS
+    assert [s.role for s in error.steps_done] == ["hub", "backhaul"]
+    assert EDGE_HUB_REF in str(error.__cause__)
+    assert [
+        str(c.path) for c in error.__cause__.lost_edits if EDGE_HUB_REF in str(c.path)
+    ]
 
 
 # -- the rows ------------------------------------------------------------------
