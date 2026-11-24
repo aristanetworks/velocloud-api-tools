@@ -420,7 +420,7 @@ module="firewall", patch=...)`, or `data.merge_patch(...)`):
 copy. `localize` needs the profile, so it works on objects taken from a loaded
 `ConfigState` (`state.edge.firewall`), which binds the edge layer to the profile
 layer; for a module read by hand, `module.data.bind_profile(profile.raw_data)`
-does the same. After a save or `update_module` replaced the module an `Owned`
+does the same. A segment `data.segment(name)` adds to a bound edge layer is bound to the profile's segment of that ID, so its keys localize from it too, and a copy made local carries no server-assigned ID of the profile's object. After a save or `update_module` replaced the module an `Owned`
 belongs to, its intents raise `DetachedObjectError`; reading `stored` does not.
 
 ### The firewall

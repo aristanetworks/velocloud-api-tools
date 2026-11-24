@@ -25,8 +25,10 @@ from pyvelo.core import (
     PatchError,
     Profile,
     ServerOwned,
+    Unconverted,
     VcoModel,
     bind_layers,
+    kind_default,
 )
 from pyvelo.core.layers import L, inner_adapter
 
@@ -625,6 +627,38 @@ def test_clear_server_owned_changes_the_model_in_place():
     item = _Item(name="a", rule_id="1")
     assert clear_server_owned(item) is item
     assert item.rule_id is MISSING
+
+
+class _Note(VcoModel):
+    name: str
+    rule_logical_id: Annotated[str | MISSING, ServerOwned()] = MISSING
+
+
+class _Kinded(Layered[L]):
+    # The default is not MISSING, so a field cleared to its default is told from one cleared to MISSING.
+    rid: Annotated[Unconverted[str | MISSING | None], ServerOwned()] = kind_default(
+        None
+    )
+    note: Annotated[
+        Inheritable[_Note],
+        ByPresence(),
+        Default(factory=lambda: _Note(name="x")),
+    ] = Field(default=...)
+
+
+def test_clear_server_owned_reads_the_kind_and_walks_into_owned() -> None:
+    from pyvelo.core.owned import clear_server_owned
+
+    instance = _Kinded[Edge].model_validate(
+        {"rid": "a", "note": {"name": "r", "ruleLogicalId": "b"}}
+    )
+    assert instance.rid == "a"
+    assert isinstance(instance.note.stored, _Note)
+    assert instance.note.stored.rule_logical_id == "b"
+    _ = clear_server_owned(instance)
+    assert instance.rid is MISSING
+    assert isinstance(instance.note.stored, _Note)
+    assert instance.note.stored.rule_logical_id is MISSING
 
 
 def test_an_owned_is_not_a_condition():

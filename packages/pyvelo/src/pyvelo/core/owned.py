@@ -321,25 +321,28 @@ def clear_server_owned(value: object) -> object:
     A field the VCO assigns (a rule's ``ruleLogicalId``) holds an ID that
     belongs to the profile's object, not to the copy the edge makes of it, so
     the copy carries none: the field becomes ``MISSING`` where its type
-    accepts that, else its default. Models, list items and dict values are
-    walked; *value* is changed in place and returned.
+    accepts that, else its default. The type is the one the field's kind holds
+    (``layers.field_kind``), not the carrier. Models, list items, dict values
+    and what an ``Owned`` stores are walked; *value* is changed in place and
+    returned.
     """
     from pydantic import BaseModel
 
     from .fields import is_server_owned
+    from .layers import field_kind
 
     if isinstance(value, BaseModel):
         cls = type(value)
         for name, info in cls.model_fields.items():
             if is_server_owned(info):
-                if MISSING in get_args(info.annotation):
+                if MISSING in get_args(field_kind(info).inner_type):
                     cleared: object = MISSING
                 else:
                     cleared = info.get_default(call_default_factory=True)
                 object.__setattr__(value, name, cleared)
                 value.__pydantic_fields_set__.discard(name)
             else:
-                _ = clear_server_owned(getattr(value, name, None))
+                _ = clear_server_owned(unwrap(getattr(value, name, None)))
     elif isinstance(value, list):
         for item in cast("list[object]", value):
             _ = clear_server_owned(item)
@@ -725,6 +728,36 @@ def bind_layers(edge: Layered[Edge], profile: Layered[Profile] | None) -> None:
                 bind_layers(
                     item, counterparts.get(item_identity(item, spec.paths, spec.alt))
                 )
+
+
+def bind_new_item(owner: Layered[Edge], field: str, item: Layered[Edge]) -> None:
+    """Bind *item*, an entry just added to *owner*'s keyed list *field*, to the profile's entry with the same identity.
+
+    ``bind_layers`` binds the entries a list holds when it runs; an entry added
+    after that is bound here, so ``localize`` in it copies from the profile's
+    entry (matched as ``bind_layers`` matches: the alt key, else the key), or
+    gives the display default when the profile has none. When *owner* is not
+    bound, nothing is done: *item* is as unbound as *owner*, and ``localize``
+    in it raises ``UnboundError``.
+    """
+    from .fields import get_key_spec
+
+    binding = owner._binding
+    if binding is None:
+        return
+    spec = get_key_spec(type(owner).model_fields[field])
+    counterpart: Layered[Profile] | None = None
+    if spec is not None and binding.parent is not None:
+        identity = item_identity(item, spec.paths, spec.alt)
+        counterpart = next(
+            (
+                model
+                for model in _profile_models(getattr(binding.parent, field, None))
+                if item_identity(model, spec.paths, spec.alt) == identity
+            ),
+            None,
+        )
+    bind_layers(item, counterpart)
 
 
 def _profile_models(value: object) -> list[Layered[Profile]]:

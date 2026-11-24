@@ -1,4 +1,5 @@
 import pytest
+from layered_models import Mod, Seg
 from pyvelo.client.exceptions import UnboundError
 from pyvelo.client.models.configuration import (
     DeviceSettingsData,
@@ -6,12 +7,13 @@ from pyvelo.client.models.configuration import (
     QosData,
 )
 from pyvelo.client.models.configuration.common import (
+    get_or_create_segment,
     profile_placeholder,
     profile_segment_id,
     profile_segment_name,
 )
-from pyvelo.core import ConfigContext
-from pyvelo.core.layers import Edge
+from pyvelo.core import ConfigContext, bind_layers
+from pyvelo.core.layers import Edge, Profile
 
 from ._type_support import require_present
 
@@ -197,3 +199,45 @@ def test_bind_tolerates_odd_profile_data():
     assert hasattr(DeviceSettingsData, "segment") and hasattr(
         DeviceSettingsData, "bind_profile"
     )
+
+
+_PROFILE_SEGMENTS = [{"segment": {"name": "S", "segmentId": 3}}]
+
+
+def _made_after_binding(*, bound: bool) -> Seg[Edge]:
+    edge = Mod[Edge].model_validate({"segments": []})
+    if bound:
+        profile = Mod[Profile].model_validate(
+            {
+                "segments": [
+                    {
+                        "segment": {"name": "S", "segmentId": 3},
+                        "mapping": {"override": False, "value": 7},
+                    }
+                ]
+            }
+        )
+        bind_layers(edge, profile)
+    return get_or_create_segment(
+        edge.segments,
+        "S",
+        _PROFILE_SEGMENTS,
+        "QOS",
+        Seg[Edge].model_validate,
+        ConfigContext.EDGE,
+        owner=edge,
+    )
+
+
+def test_a_placeholder_made_after_binding_localizes_from_the_profile_segment():
+    seg = _made_after_binding(bound=True)
+    assert not seg.mapping.is_local
+    mapping = seg.mapping.localize()
+    assert (mapping.value, mapping.override) == (7, True)
+    assert seg.mapping.is_local
+
+
+def test_a_placeholder_of_an_unbound_layer_refuses_localize():
+    seg = _made_after_binding(bound=False)
+    with pytest.raises(UnboundError):
+        seg.mapping.localize()
