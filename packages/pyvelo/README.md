@@ -401,7 +401,12 @@ edge overriding the profile (for the firewall: the key is present and not
 local and `MISSING` otherwise. A `null` is kept as read and does not count as
 local, so an unrelated edit still sends it as it was. An assignment to the
 field (`data.syslog_forwarding = True`) raises `TypeError`, because it would
-lose who owns the value. There are three intents, each with the patch a
+lose who owns the value. An `Owned` is not a condition: `if
+data.syslog_forwarding:` raises `TypeError` (it would be true whatever the edge
+holds), and `data.syslog_forwarding == True` is `False`, as an `Owned` equals
+only another `Owned`. Read `local`, `stored` or `is_local`; the value the edge
+runs with is `state.effective.firewall.syslog_forwarding.value`, and a
+`Resolved` is not a condition either. There are three intents, each with the patch a
 text-only caller sends for it (`ConfigPipeline.apply(state, module="firewall",
 patch=...)`, or `data.merge_patch(...)`):
 

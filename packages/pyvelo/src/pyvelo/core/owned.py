@@ -271,6 +271,18 @@ class Owned[T]:
         # The copy belongs to no model until the model that holds it attaches it.
         return Owned(copy.deepcopy(self.stored, memo))
 
+    def __bool__(self) -> bool:
+        key = f" ({self._field})" if self._field else ""
+        raise TypeError(
+            f"an Owned{key} is not a condition: it holds what the edge stores "
+            + "at the key, and a test of it would be true whatever that is, "
+            + "and a comparison with a plain value is always False. Read "
+            + ".local (the edge's own value, MISSING when it inherits), "
+            + ".stored (what the key holds) or .is_local (whether the edge "
+            + "overrides the profile); the value the edge runs with is "
+            + "state.effective.<module>.<field>.value"
+        )
+
     def __eq__(self, other: object) -> bool:
         return isinstance(other, Owned) and self.stored == other.stored  # pyright: ignore[reportUnknownMemberType]
 

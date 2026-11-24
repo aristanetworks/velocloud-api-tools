@@ -353,3 +353,9 @@ def test_a_value_localized_from_a_display_default_still_saves_as_before() -> Non
     edge.settings.localize()
     saved = edge.model_dump(mode="json", by_alias=True)["settings"]
     assert saved == {"a": 1, "b": False}
+
+
+def test_a_resolved_is_not_a_condition():
+    resolved = Resolved(Origin.EDGE, True, "enabled")
+    with pytest.raises(TypeError, match=r"\.value"):
+        bool(resolved)

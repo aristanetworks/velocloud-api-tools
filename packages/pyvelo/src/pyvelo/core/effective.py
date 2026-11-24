@@ -68,6 +68,14 @@ class Resolved[T]:
     value: T
     source: str
 
+    def __bool__(self) -> bool:
+        raise TypeError(
+            f"a Resolved ({self.source}) is not a condition: it holds the value "
+            + "with its origin and source, and a test of it would be true "
+            + "whatever the value is. Test .value (the value the edge runs "
+            + "with), or read .origin to see where it comes from"
+        )
+
 
 # ---------------------------------------------------------------------------
 # The view

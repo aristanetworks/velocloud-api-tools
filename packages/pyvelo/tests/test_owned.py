@@ -608,3 +608,19 @@ def test_clear_server_owned_changes_the_model_in_place():
     item = _Item(name="a", rule_id="1")
     assert clear_server_owned(item) is item
     assert item.rule_id is MISSING
+
+
+def test_an_owned_is_not_a_condition():
+    owned = Owned(True)
+    with pytest.raises(TypeError, match=r"\.local.*\.stored.*\.is_local") as caught:
+        bool(owned)
+    assert "state.effective" in str(caught.value)
+    assert ".value" in str(caught.value)
+    with pytest.raises(TypeError):
+        if owned:
+            pass
+
+
+def test_an_owned_equals_only_an_owned():
+    assert (Owned(True) == True) is False  # noqa: E712
+    assert Owned(True) == Owned(True)
