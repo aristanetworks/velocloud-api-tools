@@ -17,10 +17,11 @@ from pyvelo.client.models.configuration.wan.root import WanData
 from pyvelo.core import KeySpec, VcoModel
 from pyvelo.core.base import ListKind, list_kind
 from pyvelo.core.fields import get_key_spec
+from pyvelo.core.layers import Edge
 
 from .patch_models import Root
 
-ROOTS = (FirewallData, QosData, DeviceSettingsData, WanData, ControlPlaneData)
+ROOTS = (FirewallData[Edge], QosData, DeviceSettingsData, WanData, ControlPlaneData)
 
 # Lists of models with neither a KeyField nor Positional(): a patch names their
 # items by position, at(n), and adds under "+". Declaring one (or adding a new

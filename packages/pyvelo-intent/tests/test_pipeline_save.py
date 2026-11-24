@@ -11,6 +11,7 @@ from pyvelo.client.schemas.configuration import (
     UpdateConfigurationModule,
 )
 from pyvelo.config.resolver import ResolverContext
+from pyvelo.core.layers import Profile
 from pyvelo_intent.config.pipeline import ConfigPipeline
 from pyvelo_intent.config.state import ConfigState
 from pyvelo_intent.testing import MockVcoClient, make_firewall_module
@@ -25,7 +26,7 @@ def _make_state() -> ConfigState:
     profile_config = EnterpriseConfigurationProfile(
         name="Default Profile",
         id_=20,
-        modules=[make_firewall_module(mod_id=2, config_id=20)],
+        modules=[make_firewall_module(mod_id=2, config_id=20, layer=Profile)],
     )
     state = ConfigState(
         edge_config=edge_config,

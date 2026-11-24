@@ -38,6 +38,7 @@ from pyvelo.client.schemas.configuration import (
 )
 from pyvelo.core import ConfigContext, VcoModel
 from pyvelo.core.identity import HubService, HubServiceNotFoundError
+from pyvelo.core.layers import Profile
 from pyvelo.core.rebase import Path
 from pyvelo.testing import make_module_json, store_of
 from refs_helpers import (
@@ -641,11 +642,13 @@ def test_the_walk_reaches_rule_lists_and_skips_what_holds_no_owner(visits: _Visi
         {**template, "name": f"fw{n}", "ruleLogicalId": str(uuid.uuid4())}
         for n in range(3000)
     ]
-    firewall = FirewallData.model_validate({"segments": [firewall_entry]})
+    firewall = FirewallData[Profile].model_validate({"segments": [firewall_entry]})
 
     assert ref_owners(firewall, ConfigContext.PROFILE) == ()
 
-    assert visits.asked == [FirewallData]  # the root says no: no rule is looked at
+    assert visits.asked == [
+        FirewallData[Profile]
+    ]  # the root says no: no rule is looked at
     assert FirewallOutboundRule not in visits.walked
     assert visits.walked == []
 

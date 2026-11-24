@@ -54,6 +54,7 @@ from pyvelo.client.schemas.configuration import (
 from pyvelo.core import ConfigContext, OwnsRef, RefOnly
 from pyvelo.core.fields import get_owns_ref, get_ref_only, get_resolvable
 from pyvelo.core.identity import NetworkServiceIdentity, SegmentIdentity
+from pyvelo.core.layers import Profile
 from pyvelo.testing import make_module_json
 from refs_helpers import (
     AUTH,
@@ -602,7 +603,8 @@ async def test_get_configuration_modules_and_an_insert_answer_are_not_loaded(
     client = await mock_vco_client(store)
 
     listed = await client.get_configuration_modules(
-        GetConfigurationModules(configuration_id=CONFIG, no_data=False)
+        GetConfigurationModules(configuration_id=CONFIG, no_data=False),
+        layer=Profile,
     )
     (read,) = listed
     assert isinstance(read, DeviceSettingsConfigurationModule)
@@ -621,7 +623,8 @@ async def test_get_configuration_modules_and_an_insert_answer_are_not_loaded(
     inserted = await client.insert_configuration_module(
         InsertFirewallConfigurationModule(
             configuration_id=CONFIG, data={"segments": []}, return_data=True
-        )
+        ),
+        level=ConfigContext.PROFILE,
     )
     assert isinstance(inserted, FirewallConfigurationModule)
     assert inserted.refs_loaded is False
@@ -642,7 +645,7 @@ async def test_get_configuration_modules_and_an_insert_answer_are_not_loaded(
 
 def test_a_module_list_validated_with_the_flag_is_not_loaded():
     row = primary_module().model_dump(mode="json", by_alias=True)
-    parsed = ConfigurationModuleList.model_validate(
+    parsed = ConfigurationModuleList[Profile].model_validate(
         [row], context={"refs_loaded": False}
     )
     assert parsed.root[0].refs_loaded is False
@@ -672,7 +675,7 @@ def test_only_the_classes_that_can_hold_an_owner_are_walked():
 
 def test_the_data_of_a_module_that_holds_no_owner_has_none():
     row = make_module_json("firewall", {"segments": []}, configuration_id=CONFIG)
-    module = FirewallConfigurationModule.model_validate(row)
+    module = FirewallConfigurationModule[Profile].model_validate(row)
     assert ref_owners(module.data, ConfigContext.PROFILE) == ()
     assert ref_only_values(module.data) == {}
     fill_ref_only(module.data, {})

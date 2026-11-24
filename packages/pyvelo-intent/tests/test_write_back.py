@@ -26,6 +26,7 @@ from pyvelo.client.models.configuration.firewall.segment import FirewallSegment
 from pyvelo.client.models.configuration.qos.root import ServiceRateLimit
 from pyvelo.client.schemas.configuration import GenericConfigurationModule
 from pyvelo.core import VcoModel
+from pyvelo.core.layers import Edge
 from pyvelo.core.rebase import Key, Path, key_text
 from pyvelo.core.response_check import PlannedChange, ServerChange
 from pyvelo.testing import ModuleStore, make_module_json
@@ -141,10 +142,12 @@ def models_in(value: object) -> Iterator[VcoModel]:
 
 
 def assert_detached_and_replaced(
-    state: ConfigState, seg: FirewallSegment, old_data: object
+    state: ConfigState, seg: FirewallSegment[Edge], old_data: object
 ) -> None:
     """*seg* and *old_data*, held from before a save, are detached; the firewall module now in the state shares no model with them."""
-    with pytest.raises(DetachedObjectError, match="FirewallSegment.firewall_logging"):
+    with pytest.raises(
+        DetachedObjectError, match=r"FirewallSegment\[Edge\]\.firewall_logging"
+    ):
         seg.firewall_logging_enabled = True
     old = list(models_in(old_data))
     assert any(model is seg for model in old)
@@ -507,7 +510,7 @@ async def test_objects_of_an_unsaved_module_are_not_detached():
 async def test_in_place_edit_on_a_detached_object_is_reported_by_plan():
     held = Path(("data", "segments", Key("Global Segment"), "outbound", Key("new")))
 
-    async def saved() -> tuple[ConfigState, MockVcoClient, FirewallSegment]:
+    async def saved() -> tuple[ConfigState, MockVcoClient, FirewallSegment[Edge]]:
         """A state saved once with one edit, and a segment taken from it before, changed in place since."""
         state = make_state()
         client = MockVcoClient.for_state(state)

@@ -21,7 +21,10 @@ from pyvelo.client.models.configuration.profile_segments import (
 )
 from pyvelo.client.models.configuration.qos.rule import QosRule
 from pyvelo.client.module_write import ModulePlan
-from pyvelo.client.schemas.configuration import AnyConfigurationModule
+from pyvelo.client.schemas.configuration import (
+    AnyStoredModule,
+    QosConfigurationModule,
+)
 from pyvelo.config.resolver import ResolverRegistry
 from pyvelo.core.identity import ResolutionError
 from pyvelo_intent.config.pipeline import ConfigPipeline
@@ -241,6 +244,7 @@ async def test_an_edge_target_raises():
 async def test_a_profile_without_qos_raises():
     state = await global_only()
     qos = state.module(QOS)
+    assert isinstance(qos, QosConfigurationModule)
     modules = state.profile_config.modules
     assert isinstance(modules, list)
     modules.remove(qos)
@@ -414,7 +418,7 @@ async def test_the_trial_changes_nothing_and_raises_what_the_edit_raises():
     assignment = plan_assignment(state, identity(GUEST))
     seen: list[list[str]] = []
 
-    def edit(trial: Mapping[str, AnyConfigurationModule]) -> None:
+    def edit(trial: Mapping[str, AnyStoredModule]) -> None:
         seen.append([m.name for m in trial.values()])
         assert all(len(m.additions) == 1 for m in trial.values())
         raise KeyError("edit failed")

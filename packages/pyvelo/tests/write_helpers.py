@@ -1,29 +1,52 @@
 """Builders for the module write tests."""
 
 import copy
-from typing import Any
+from typing import Any, overload
 
 from pydantic import MISSING
 from pyvelo.client.schemas.configuration import FirewallConfigurationModule
+from pyvelo.core.layers import Edge, Profile
 from pyvelo.testing import make_module_json
 
 
+@overload
 def fw(
     raw: dict[str, Any],
     *,
+    layer: type[Edge],
+    module_id: int = ...,
+    configuration_id: int = ...,
+    version: str | None = ...,
+    refs: object = ...,
+) -> FirewallConfigurationModule[Edge]: ...
+@overload
+def fw(
+    raw: dict[str, Any],
+    *,
+    layer: type[Profile],
+    module_id: int = ...,
+    configuration_id: int = ...,
+    version: str | None = ...,
+    refs: object = ...,
+) -> FirewallConfigurationModule[Profile]: ...
+def fw(
+    raw: dict[str, Any],
+    *,
+    layer: type[Edge] | type[Profile],
     module_id: int = 1,
     configuration_id: int = 10,
     version: str | None = "v1",
     refs: object = MISSING,
-) -> FirewallConfigurationModule:
-    """A firewall module read with *raw* as its data."""
-    return FirewallConfigurationModule.model_validate(
-        make_module_json(
-            "firewall",
-            copy.deepcopy(raw),
-            module_id=module_id,
-            configuration_id=configuration_id,
-            version=version,
-            refs=copy.deepcopy(refs),
-        )
+) -> FirewallConfigurationModule[Edge] | FirewallConfigurationModule[Profile]:
+    """A firewall module of the layer *layer*, read with *raw* as its data."""
+    row = make_module_json(
+        "firewall",
+        copy.deepcopy(raw),
+        module_id=module_id,
+        configuration_id=configuration_id,
+        version=version,
+        refs=copy.deepcopy(refs),
     )
+    if layer is Edge:
+        return FirewallConfigurationModule[Edge].model_validate(row)
+    return FirewallConfigurationModule[Profile].model_validate(row)

@@ -26,9 +26,11 @@ from pyvelo.client.models.configuration.wan.root import WanData
 from pyvelo.client.module_check import ModuleWrite
 from pyvelo.client.module_write import ModulePlan
 from pyvelo.client.schemas.configuration import (
-    ConfigurationBase,
     ConfigurationModuleBase,
+    EdgeConfiguration,
+    EnterpriseConfigurationProfile,
     FirewallConfigurationModule,
+    GetConfiguration,
     InsertConfigurationModuleResult,
     UpdateConfigurationModule,
     new_edge_module,
@@ -36,6 +38,7 @@ from pyvelo.client.schemas.configuration import (
 from pyvelo.core import RowsModifiedConfirmation
 from pyvelo.core.base import ConfigContext
 from pyvelo.core.identity import NetworkServiceIdentity
+from pyvelo.core.layers import Edge, Profile
 from pyvelo.testing import ModuleStore, make_module_json, store_of
 from refs_helpers import (
     DNS_A,
@@ -104,41 +107,29 @@ class TestInsertConfigurationModuleErrors:
 
 
 class TestGetConfiguration:
-    """get_configuration branches on result.name to set config context."""
+    """get_configuration learns the layer from the name of the answer."""
 
-    async def test_edge_specific_profile_calls_for_edge(self):
-        """get_configuration should call for_edge() when name is 'Edge Specific Profile'."""
-        client = VcoClient("test.velocloud.net", "test-token")
+    async def test_edge_specific_profile_is_an_edge_configuration(
+        self, mock_vco_client: MockVcoClientFactory
+    ):
+        store = ModuleStore()
+        store.add_configuration({"id": 10, "name": "Edge Specific Profile"})
+        client = await mock_vco_client(store)
 
-        result = ConfigurationBase.model_validate({"name": "Edge Specific Profile"})
-        client.portal = AsyncMock(return_value=result)
+        config = await client.get_configuration(GetConfiguration(id_=10))
+        assert type(config) is EdgeConfiguration
+        assert config.config_context is ConfigContext.EDGE
 
-        config = await client.get_configuration(AsyncMock())
-        assert cast(ConfigContext | None, config._config_context) is not None
-        assert cast(ConfigContext | None, config._config_context) == ConfigContext.EDGE
+    async def test_profile_name_is_a_profile_configuration(
+        self, mock_vco_client: MockVcoClientFactory
+    ):
+        store = ModuleStore()
+        store.add_configuration({"id": 20, "name": "Quick Start Profile"})
+        client = await mock_vco_client(store)
 
-    async def test_profile_name_calls_for_profile(self):
-        """get_configuration should call for_profile() for non-edge profiles."""
-        client = VcoClient("test.velocloud.net", "test-token")
-
-        result = ConfigurationBase.model_validate({"name": "Quick Start Profile"})
-        client.portal = AsyncMock(return_value=result)
-
-        config = await client.get_configuration(AsyncMock())
-        assert cast(ConfigContext | None, config._config_context) is not None
-        assert (
-            cast(ConfigContext | None, config._config_context) == ConfigContext.PROFILE
-        )
-
-    async def test_returns_same_instance(self):
-        """for_edge/for_profile returns self, so result should be the same object."""
-        client = VcoClient("test.velocloud.net", "test-token")
-
-        result = ConfigurationBase.model_validate({"name": "Edge Specific Profile"})
-        client.portal = AsyncMock(return_value=result)
-
-        config = await client.get_configuration(AsyncMock())
-        assert config is result
+        config = await client.get_configuration(GetConfiguration(id_=20))
+        assert type(config) is EnterpriseConfigurationProfile
+        assert config.config_context is ConfigContext.PROFILE
 
 
 class TestUpdateModule:
@@ -178,17 +169,21 @@ class TestUpdateModule:
         self,
         raw: dict[str, object],
         *,
+        layer: type[Edge] | type[Profile],
         module_id: int = 1,
         version: str | None = "v1",
-    ) -> FirewallConfigurationModule:
-        return FirewallConfigurationModule.model_validate(
-            make_module_json("firewall", raw, module_id=module_id, version=version)
-        )
+    ) -> FirewallConfigurationModule[Edge] | FirewallConfigurationModule[Profile]:
+        row = make_module_json("firewall", raw, module_id=module_id, version=version)
+        if layer is Edge:
+            return FirewallConfigurationModule[Edge].model_validate(row)
+        return FirewallConfigurationModule[Profile].model_validate(row)
 
     async def test_sends_raw_payload_with_version(
         self, mock_vco_client: MockVcoClientFactory
     ):
-        module = self._fw({"segments": [], "future": 1}, module_id=42, version="1700")
+        module = self._fw(
+            {"segments": [], "future": 1}, layer=Edge, module_id=42, version="1700"
+        )
         client, store = await self._make_client(mock_vco_client, module)
         data = module.mutable_data()
         data.firewall_enabled = False
@@ -221,7 +216,7 @@ class TestUpdateModule:
         ]
 
     async def test_no_change_sends_nothing(self, mock_vco_client: MockVcoClientFactory):
-        module = self._fw({"segments": []})
+        module = self._fw({"segments": []}, layer=Edge)
         client, store = await self._make_client(mock_vco_client, module)
         _ = await client.update_module(module, module.mutable_data())
         assert store.requests == []
@@ -229,7 +224,7 @@ class TestUpdateModule:
     async def test_null_version_and_enterprise_are_omitted(
         self, mock_vco_client: MockVcoClientFactory
     ):
-        module = self._fw({"segments": []}, version=None)
+        module = self._fw({"segments": []}, layer=Edge, version=None)
         client, store = await self._make_client(mock_vco_client, module)
         data = module.mutable_data()
         data.firewall_enabled = False
@@ -282,12 +277,14 @@ class TestUpdateModule:
                 {"name": "p", "match": {}, "action": {"allow_or_deny": "allow"}}
             ],
         }
-        edge = self._fw({"segments": []})
+        edge = self._fw({"segments": []}, layer=Edge)
         client, store = await self._make_client(mock_vco_client, edge)
         data = edge.mutable_data().for_edge()
         data.firewall_enabled = False
         _ = await client.update_module(
-            edge, data, profile=self._fw({"segments": [seg]}, module_id=2)
+            edge,
+            data,
+            profile=self._fw({"segments": [seg]}, layer=Profile, module_id=2),
         )
         assert self._updates(store)[0].update.data["segments"] == [
             {"segment": {"segmentId": 2, "name": "Guest"}, "outbound": []}
@@ -307,7 +304,10 @@ class TestUpdateModule:
         with pytest.raises(TypeError, match="Unsupported data type"):
             _ = await client.update_module(
                 module,
-                cast(DeviceSettingsData | QosData | WanData | FirewallData, object()),
+                cast(
+                    DeviceSettingsData | QosData | WanData | FirewallData[Edge],
+                    object(),
+                ),
             )
 
 

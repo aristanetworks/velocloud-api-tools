@@ -26,6 +26,7 @@ from pyvelo.client.schemas.configuration import (
     new_edge_module,
 )
 from pyvelo.core.identity import NetworkServiceIdentity
+from pyvelo.core.layers import Edge
 from pyvelo.testing import (
     ModuleStore,
     make_jsonrpc_response,
@@ -224,7 +225,7 @@ async def test_a_retry_after_a_lost_answer_passes_without_a_second_update(
 async def test_a_write_that_sends_no_refs_has_no_version_read(
     mock_vco_client: MockVcoClientFactory,
 ):
-    module = fw({"segments": [], "firewall_enabled": True})
+    module = fw({"segments": [], "firewall_enabled": True}, layer=Edge)
     module.data.firewall_enabled = False
     store = store_of(module)
     client = await mock_vco_client(store)

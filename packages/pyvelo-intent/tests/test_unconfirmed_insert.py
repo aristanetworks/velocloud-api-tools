@@ -18,7 +18,7 @@ from pyvelo.client.exceptions import (
 )
 from pyvelo.client.models.configuration.qos.root import ServiceRateLimit
 from pyvelo.client.schemas.configuration import (
-    AnyConfigurationModule,
+    AnyStoredModule,
     InsertConfigurationModule,
     InsertConfigurationModuleResult,
     UpdateConfigurationModule,
@@ -316,7 +316,7 @@ class RemovesTheModuleDuringTheWrite(MockVcoClient):
     @override
     async def insert_configuration_module(
         self, request: InsertConfigurationModule, *, level: ConfigContext | None = None
-    ) -> InsertConfigurationModuleResult | AnyConfigurationModule:
+    ) -> InsertConfigurationModuleResult | AnyStoredModule:
         stored = await super().insert_configuration_module(request, level=level)
         self.state.drop_module(self.state.module("qos"))
         return stored
@@ -324,7 +324,7 @@ class RemovesTheModuleDuringTheWrite(MockVcoClient):
     @override
     async def update_configuration_module(
         self, request: UpdateConfigurationModule, *, level: ConfigContext | None = None
-    ) -> AnyConfigurationModule | None:
+    ) -> AnyStoredModule | None:
         stored = await super().update_configuration_module(request, level=level)
         assert self.state.edge_config is not None
         self.state.edge_config.modules = []

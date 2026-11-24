@@ -36,6 +36,7 @@ from pyvelo.client.schemas.configuration import (
     QosConfigurationModule,
     WanConfigurationModule,
 )
+from pyvelo.core.layers import Edge
 
 _NOW = datetime.datetime.now(tz=datetime.UTC)
 
@@ -88,8 +89,8 @@ def _make_qos_module() -> QosConfigurationModule:
     )
 
 
-def _make_firewall_module() -> FirewallConfigurationModule:
-    return FirewallConfigurationModule(
+def _make_firewall_module() -> FirewallConfigurationModule[Edge]:
+    return FirewallConfigurationModule[Edge](
         created=_NOW,
         modified=_NOW,
         id_=102,
@@ -100,7 +101,7 @@ def _make_firewall_module() -> FirewallConfigurationModule:
         schema_version="1.0",
         version="1.0",
         metadata=None,
-        data=FirewallData(),
+        data=FirewallData[Edge](),
     )
 
 
@@ -121,7 +122,7 @@ def _make_wan_module() -> WanConfigurationModule:
 
 
 def _make_edge_config(
-    modules: list[AnyConfigurationModule] | None = None,
+    modules: list[AnyConfigurationModule[Edge]] | None = None,
 ) -> EdgeConfiguration:
     return EdgeConfiguration(
         name="Edge Specific Profile",

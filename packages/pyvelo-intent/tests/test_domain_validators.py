@@ -22,6 +22,7 @@ from pyvelo.client.schemas.configuration import (
     FirewallConfigurationModule,
 )
 from pyvelo.config.resolver import ResolverContext
+from pyvelo.core.layers import Profile
 from pyvelo_intent.config.state import ConfigState
 from pyvelo_intent.config.validators.device_settings import (
     validate_no_overlapping_subnets,
@@ -64,7 +65,7 @@ def _mod_kwargs() -> _ModuleKwargs:
     )
 
 
-def _make_state(modules: list[AnyConfigurationModule]) -> ConfigState:
+def _make_state(modules: list[AnyConfigurationModule[Profile]]) -> ConfigState:
     return ConfigState(
         edge_config=None,
         profile_config=EnterpriseConfigurationProfile(
@@ -186,11 +187,11 @@ class TestOverlappingSubnets:
 class TestRuleNamesUnique:
     def test_unique_rule_names_pass(self):
         """Unique rule names should pass."""
-        fw_mod = FirewallConfigurationModule(
+        fw_mod = FirewallConfigurationModule[Profile](
             name="firewall",
-            data=FirewallData(
+            data=FirewallData[Profile](
                 segments=[
-                    FirewallSegment(
+                    FirewallSegment[Profile](
                         segment=_seg_meta(),
                         outbound=[
                             FirewallOutboundRule.model_validate(
@@ -220,11 +221,11 @@ class TestRuleNamesUnique:
 
     def test_duplicate_firewall_rule_names(self):
         """Duplicate firewall rule names should be flagged."""
-        fw_mod = FirewallConfigurationModule(
+        fw_mod = FirewallConfigurationModule[Profile](
             name="firewall",
-            data=FirewallData(
+            data=FirewallData[Profile](
                 segments=[
-                    FirewallSegment(
+                    FirewallSegment[Profile](
                         segment=_seg_meta(),
                         outbound=[
                             FirewallOutboundRule.model_validate(

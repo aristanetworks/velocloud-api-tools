@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import datetime
 import functools
+import sys
 import types
 from collections.abc import Callable, Iterable, Iterator, Mapping
 from dataclasses import dataclass
@@ -523,6 +524,22 @@ def _install_ref_filling(cls: type[VcoModel]) -> None:
 # ---------------------------------------------------------------------------
 
 
+def _register_parametrization(cls: type[BaseModel]) -> None:
+    """Make a parametrized generic model findable by pickle.
+
+    ``Data[Edge]`` is a class made when it is first written, named
+    ``Data[Edge]`` and found nowhere, so an instance of it, or a plan or an
+    error that holds the class, cannot be pickled. It is put in the module of
+    the generic class under that name, which is where pickle looks.
+    """
+    metadata = cls.__pydantic_generic_metadata__
+    if metadata["origin"] is None or metadata["parameters"]:
+        return
+    module = sys.modules.get(cls.__module__)
+    if module is not None:
+        _ = module.__dict__.setdefault(cls.__qualname__, cls)
+
+
 class VcoModel(BaseModel):
     model_config: ClassVar[ConfigDict] = ConfigDict(
         alias_generator=to_camel,
@@ -611,6 +628,7 @@ class VcoModel(BaseModel):
     @classmethod
     def __pydantic_on_complete__(cls) -> None:
         super().__pydantic_on_complete__()
+        _register_parametrization(cls)
         cls._alias_map.cache_clear()
         apply_vco_markers(cls)
         cls._ref_only_fields = types.MappingProxyType(ref_only_defaults(cls))

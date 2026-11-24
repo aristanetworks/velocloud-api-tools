@@ -2,8 +2,9 @@ from typing import Annotated, Any
 
 from pydantic import MISSING, Field, PrivateAttr
 
-from pyvelo.core import Alias, ContextDefaults, VcoModel
+from pyvelo.core import Alias, Layered, Unconverted, kind_default
 from pyvelo.core.fields import DefaultingScalar, KeyField
+from pyvelo.core.layers import L
 
 from ..common import (
     copy_profile_segments,
@@ -19,48 +20,61 @@ from .services import FirewallServices
 from .stateful import StatefulFirewallSettings
 
 
-class FirewallData(VcoModel):
-    # Common fields (Edge & Profile)
-    firewall_enabled: Annotated[bool, Alias("firewall_enabled")] = True
+class FirewallData(Layered[L]):
+    # Every direct field is structural or Unconverted: inheritance is declared
+    # field by field as each is converted.
+    firewall_enabled: Annotated[Unconverted[bool], Alias("firewall_enabled")] = (
+        kind_default(True)
+    )
     inbound: Annotated[
-        list[FirewallInboundRule],
+        Unconverted[list[FirewallInboundRule]],
         KeyField("name", alt="rule_logical_id"),
-        ContextDefaults(profile=lambda: list),
-    ] = Field(default_factory=list)
+    ] = kind_default(factory=list)
     inbound_v6: Annotated[
-        list[FirewallInboundRuleV6],
+        Unconverted[list[FirewallInboundRuleV6]],
         Alias("inboundV6"),
         KeyField("name", alt="rule_logical_id"),
-        ContextDefaults(profile=lambda: list),
-    ] = Field(default_factory=list)
+    ] = kind_default(factory=list)
     segments: Annotated[
-        list[FirewallSegment], KeyField("segment.name", alt="segment.segment_id")
+        list[FirewallSegment[L]], KeyField("segment.name", alt="segment.segment_id")
     ] = Field(default_factory=list)
     syslog_forwarding: Annotated[
-        bool, Alias("syslog_forwarding"), DefaultingScalar(bool, default=False)
-    ] = False
+        Unconverted[Annotated[bool, DefaultingScalar(bool, default=False)]],
+        Alias("syslog_forwarding"),
+    ] = kind_default(False)
 
     firewall_logging_enabled: Annotated[
-        bool, Alias("firewall_logging_enabled"), DefaultingScalar(bool, default=False)
-    ] = False
+        Unconverted[Annotated[bool, DefaultingScalar(bool, default=False)]],
+        Alias("firewall_logging_enabled"),
+    ] = kind_default(False)
     atp_enabled: Annotated[
-        bool, Alias("atp_enabled"), DefaultingScalar(bool, default=False)
-    ] = False
+        Unconverted[Annotated[bool, DefaultingScalar(bool, default=False)]],
+        Alias("atp_enabled"),
+    ] = kind_default(False)
     stateful_firewall_enabled: Annotated[
-        bool, Alias("stateful_firewall_enabled"), DefaultingScalar(bool, default=True)
-    ] = True
+        Unconverted[Annotated[bool, DefaultingScalar(bool, default=True)]],
+        Alias("stateful_firewall_enabled"),
+    ] = kind_default(True)
 
-    security_features: SecurityFeatureSettings = Field(
-        default_factory=SecurityFeatureSettings
+    security_features: Unconverted[SecurityFeatureSettings] = kind_default(
+        factory=SecurityFeatureSettings
     )
 
-    services: FirewallServices = Field(default_factory=FirewallServices)
+    services: Unconverted[FirewallServices] = kind_default(factory=FirewallServices)
 
-    network_protection_settings: NetworkProtectionSettings | MISSING = MISSING
-    network_protection_settings_v6: NetworkProtectionSettings | MISSING = MISSING
+    network_protection_settings: Unconverted[NetworkProtectionSettings | MISSING] = (
+        kind_default(factory=lambda: MISSING)
+    )
+    network_protection_settings_v6: Unconverted[NetworkProtectionSettings | MISSING] = (
+        kind_default(factory=lambda: MISSING)
+    )
 
-    stateful_firewall_settings: StatefulFirewallSettings | MISSING = MISSING
-    stateful_firewall_settings_v6: StatefulFirewallSettings | MISSING = MISSING
+    stateful_firewall_settings: Unconverted[StatefulFirewallSettings | MISSING] = (
+        kind_default(factory=lambda: MISSING)
+    )
+    stateful_firewall_settings_v6: Unconverted[StatefulFirewallSettings | MISSING] = (
+        kind_default(factory=lambda: MISSING)
+    )
 
     _profile_segments: list[dict[str, Any]] | None = PrivateAttr(default=None)
 
@@ -72,7 +86,7 @@ class FirewallData(VcoModel):
         """
         self._profile_segments = copy_profile_segments(profile_data)
 
-    def segment(self, name: str) -> FirewallSegment:
+    def segment(self, name: str) -> FirewallSegment[L]:
         """The segment called *name*; a layer that lacks it gets an empty entry.
 
         The new entry has the profile segment's descriptor and inherits all of
@@ -80,12 +94,15 @@ class FirewallData(VcoModel):
         profile (see :meth:`bind_profile`) and ``ValueError`` if the profile has
         no such segment. Use :meth:`get_segment` to look up without creating.
         """
+        # FirewallSegment[layer], where the layer is this data's own.
+        segment_class: Any = FirewallSegment
+        segment_type: type[FirewallSegment[L]] = segment_class[self.layer()]
         return get_or_create_segment(
             self.segments,
             name,
             self._profile_segments,
             "firewall",
-            FirewallSegment.model_validate,
+            segment_type.model_validate,
             self.config_context,
         )
 
@@ -107,5 +124,5 @@ class FirewallData(VcoModel):
 
     def get_segment(
         self, *, name: str | None = None, segment_id: int | None = None
-    ) -> FirewallSegment:
+    ) -> FirewallSegment[L]:
         return find_segment(self.segments, name=name, segment_id=segment_id)

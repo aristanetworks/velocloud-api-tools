@@ -1,6 +1,7 @@
 from pyvelo.client.schemas.configuration import (
     EMPTY_EDGE_MODULE_DATA,
     AnyConfigurationModule,
+    AnyStoredModule,
     Configuration,
     ConfigurationBase,
     ConfigurationModuleBase,
@@ -161,6 +162,7 @@ __all__ = [
     "AnyConfigurationModule",
     "AnyEnterpriseService",
     "AnyObjectGroup",
+    "AnyStoredModule",
     "AuthenticationService",
     "BgpFilterActionConfig",
     "BgpFilterActionValue",

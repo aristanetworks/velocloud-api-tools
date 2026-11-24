@@ -5,7 +5,7 @@ from typing import Any
 
 import pytest
 from pyvelo.client.exceptions import LossyFieldError
-from pyvelo.client.schemas.configuration import ConfigurationBase
+from pyvelo.client.schemas.configuration import EnterpriseConfigurationProfile
 from pyvelo.config.resolver import ResolverRegistry
 from pyvelo.testing import make_module_json, make_segment_resolver
 from pyvelo_intent import PatchError, add, delete
@@ -264,7 +264,9 @@ def profile_client(raw: dict[str, Any] = PROFILE_FW) -> MockVcoClient:
         "firewall", copy.deepcopy(raw), module_id=2, configuration_id=20, version="p1"
     )
     return MockVcoClient().seed(
-        ConfigurationBase.model_validate({"name": "P", "id": 20, "modules": [row]})
+        EnterpriseConfigurationProfile.model_validate(
+            {"name": "P", "id": 20, "modules": [row]}
+        )
     )
 
 

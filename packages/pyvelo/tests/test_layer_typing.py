@@ -10,6 +10,16 @@ error is itself an error. ``_cases`` is never called.
 from typing import assert_type
 
 from layered_models import Flagged, Mod, Reset, Rule, Seg, Settings
+from pyvelo.client.enums.configuration import ConfigurationModuleName
+from pyvelo.client.models.configuration import FirewallData
+from pyvelo.client.models.configuration.firewall.segment import FirewallSegment
+from pyvelo.client.schemas.configuration import (
+    AnyConfigurationModule,
+    EdgeConfiguration,
+    EnterpriseConfigurationProfile,
+    FirewallConfigurationModule,
+)
+from pyvelo.client.schemas.edge import CompositeFirewallModule
 from pyvelo.core import (
     Composed,
     Edge,
@@ -96,5 +106,27 @@ def _cases(e: Mod[Edge], p: Mod[Profile], v: Mod[Effective], c: Mod[Composed]) -
     _ = Mod[Profile](enabled="x")  # pyright: ignore[reportArgumentType]
 
 
+def _container_cases(
+    edge_cfg: EdgeConfiguration,
+    profile_cfg: EnterpriseConfigurationProfile,
+    composite: CompositeFirewallModule,
+    edge_module: AnyConfigurationModule[Edge],
+) -> None:
+    assert_type(edge_cfg.firewall, FirewallConfigurationModule[Edge])
+    assert_type(edge_cfg.firewall.data, FirewallData[Edge])
+    assert_type(edge_cfg.firewall.data.segments[0], FirewallSegment[Edge])
+    assert_type(profile_cfg.firewall, FirewallConfigurationModule[Profile])
+    assert_type(profile_cfg.firewall.data, FirewallData[Profile])
+    assert_type(composite.data, FirewallData[Composed])
+    assert_type(composite.raw_data, object)
+    assert_type(
+        edge_cfg.get_module(ConfigurationModuleName.FIREWALL),
+        FirewallConfigurationModule[Edge],
+    )
+    assert_type(edge_cfg.firewall.mutable_data(), FirewallData[Edge])
+    _ = edge_module
+
+
 def test_the_typing_cases_module_imports() -> None:
     assert callable(_cases)
+    assert callable(_container_cases)

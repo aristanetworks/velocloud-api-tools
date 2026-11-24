@@ -52,6 +52,7 @@ from pyvelo.client.schemas.enterprise import (
 )
 from pyvelo.client.schemas.profiles import GetEnterpriseConfigurations
 from pyvelo.core import PatchError, RowsModifiedConfirmation
+from pyvelo.core.layers import Edge
 from pyvelo.core.rebase import Key, Path, RawChange
 from pyvelo.core.response_check import PlannedChange, ServerChange
 from pyvelo.testing import (
@@ -303,8 +304,8 @@ def test_the_checks_fail_with_redacted_paths():
 
 
 def test_check_as_read_compares_version_and_raw_data():
-    def module(version: str, **data: object) -> FirewallConfigurationModule:
-        return FirewallConfigurationModule.model_validate(
+    def module(version: str, **data: object) -> FirewallConfigurationModule[Edge]:
+        return FirewallConfigurationModule[Edge].model_validate(
             make_module_json("firewall", {"segments": [], **data}, version=version)
         )
 
@@ -330,8 +331,8 @@ def client_over(
     return VcoClient(host, "test-token", transport=make_transport(handler))
 
 
-def firewall_disabled() -> FirewallConfigurationModule:
-    module = FirewallConfigurationModule.model_validate(
+def firewall_disabled() -> FirewallConfigurationModule[Edge]:
+    module = FirewallConfigurationModule[Edge].model_validate(
         make_module_json("firewall", copy.deepcopy(FIREWALL), configuration_id=10)
     )
     module.data.firewall_enabled = False

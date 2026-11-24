@@ -171,7 +171,7 @@ from pyvelo.client.models.configuration.qos.root import ServiceRateLimit
 from pyvelo.client.models.configuration.ref_owners import declared_ref_names
 from pyvelo.client.module_write import ModulePlan
 from pyvelo.client.schemas.configuration import (
-    AnyConfigurationModule,
+    AnyStoredModule,
     DeviceSettingsConfigurationModule,
     EdgeConfiguration,
     EnterpriseConfigurationProfile,
@@ -249,7 +249,7 @@ def writes(vco_client: VcoClient, monkeypatch: pytest.MonkeyPatch) -> Writes:
 
     async def spy_update(
         request: UpdateConfigurationModule, *, level: ConfigContext | None = None
-    ) -> AnyConfigurationModule | None:
+    ) -> AnyStoredModule | None:
         record.updates.append(request)
         return await update(request, level=level)
 
@@ -334,7 +334,7 @@ def _json_object(value: object) -> dict[str, Any]:
     return copy.deepcopy(expect(value, dict, "the JSON value"))
 
 
-def _raw(module: AnyConfigurationModule) -> dict[str, Any]:
+def _raw(module: AnyStoredModule) -> dict[str, Any]:
     return _json_object(module.raw_data)
 
 
@@ -402,7 +402,7 @@ async def test_no_edit_plans_nothing_and_sends_nothing(
 # ---------------------------------------------------------------------------
 
 
-def _profile_rule_source(module: AnyConfigurationModule) -> bool:
+def _profile_rule_source(module: AnyStoredModule) -> bool:
     return isinstance(module, FirewallConfigurationModule) and any(
         s.outbound for s in module.data.segments
     )
@@ -464,7 +464,7 @@ async def test_profile_rule_added_through_apply_reads_back_as_that_rule_only(
         check_no_override_flag("rule edit", original.data, plan.data, after.raw_data)
 
 
-def _profile_has_qoe(module: AnyConfigurationModule) -> bool:
+def _profile_has_qoe(module: AnyStoredModule) -> bool:
     return isinstance(module, QosConfigurationModule) and isinstance(
         module.data.qoe, QoeSettings
     )
@@ -954,7 +954,7 @@ async def test_an_insert_returns_its_row(
         check(await site.read() is None, "the inserted module is still there")
 
 
-def _firewall_that_comes_back_whole(module: AnyConfigurationModule) -> bool:
+def _firewall_that_comes_back_whole(module: AnyStoredModule) -> bool:
     """A firewall module that can be deleted and inserted again as it was.
 
     An insert takes no refs, and the Orchestrator issues new rule IDs for the
@@ -1042,7 +1042,7 @@ async def test_edge_firewall_deleted_and_inserted_again_reads_back_as_sent(
 # ---------------------------------------------------------------------------
 
 
-def _wan_link(module: AnyConfigurationModule) -> bool:
+def _wan_link(module: AnyStoredModule) -> bool:
     """Whether *module* is a WAN module whose first link has a key (an internal ID)."""
     if not isinstance(module, WanConfigurationModule):
         return False
@@ -1054,7 +1054,7 @@ VOICE_RED = Path(("qoe", "voice", "latency", "red"))
 VIDEO_RED = Path(("qoe", "video", "latency", "red"))
 
 
-def _qoe_red_thresholds(module: AnyConfigurationModule) -> bool:
+def _qoe_red_thresholds(module: AnyStoredModule) -> bool:
     """Whether *module* is a QoS module whose raw data has the red latency thresholds of voice and video."""
     return _profile_has_qoe(module) and all(
         isinstance(value_at(module.raw_data, path), int)
@@ -1176,7 +1176,7 @@ async def test_second_save_from_an_older_state_is_refused_and_refreshes_the_stat
 # ---------------------------------------------------------------------------
 
 
-def _device_settings_with_refs(module: AnyConfigurationModule) -> bool:
+def _device_settings_with_refs(module: AnyStoredModule) -> bool:
     return (
         isinstance(module, DeviceSettingsConfigurationModule)
         and isinstance(module.raw_refs, dict)
@@ -1224,7 +1224,7 @@ async def test_save_of_a_data_edit_sends_its_refs_as_read(
 # ---------------------------------------------------------------------------
 
 
-def _firewall_segment_with_letters(module: AnyConfigurationModule) -> bool:
+def _firewall_segment_with_letters(module: AnyStoredModule) -> bool:
     return isinstance(module, FirewallConfigurationModule) and any(
         s.segment.name.swapcase() != s.segment.name for s in module.data.segments
     )
@@ -1371,7 +1371,7 @@ async def test_save_then_edit_and_save_again_without_a_reload(
         )
 
 
-def _qos_rule_source(module: AnyConfigurationModule) -> bool:
+def _qos_rule_source(module: AnyStoredModule) -> bool:
     return isinstance(module, QosConfigurationModule) and any(
         rule.match.ip_version == "IPv4v6"
         for segment in module.data.segments
@@ -1379,7 +1379,7 @@ def _qos_rule_source(module: AnyConfigurationModule) -> bool:
     )
 
 
-def _lan_network(module: AnyConfigurationModule) -> bool:
+def _lan_network(module: AnyStoredModule) -> bool:
     return isinstance(module, DeviceSettingsConfigurationModule) and bool(
         module.data.lan.networks
     )
@@ -1420,7 +1420,7 @@ class Rewrite:
     id: str
     name: Name
     level: Literal["edge", "profile"]
-    suitable: Callable[[AnyConfigurationModule], bool]
+    suitable: Callable[[AnyStoredModule], bool]
     what: str
     edit: Callable[[ConfigPipeline, ConfigState], Awaitable[list[Path]]]
     """Makes the edit through the pipeline; returns where a server change must be."""
@@ -1632,11 +1632,11 @@ def _v6_route(data: object) -> tuple[str, StaticRoute] | None:
     return None
 
 
-def _v6_route_source(module: AnyConfigurationModule) -> bool:
+def _v6_route_source(module: AnyStoredModule) -> bool:
     return _v6_route(module.data) is not None
 
 
-def _v6_destinations(module: AnyConfigurationModule, description: str) -> list[str]:
+def _v6_destinations(module: AnyStoredModule, description: str) -> list[str]:
     """The destination of each IPv6 static route of *module* that has *description*."""
     data = expect(module.data, DeviceSettingsData, "the deviceSettings data")
     return [
@@ -1875,7 +1875,7 @@ def _stable_refs(refs: object) -> dict[str, Any]:
 
 
 def _check_state_holds_stored(
-    label: str, state: ConfigState, stored: AnyConfigurationModule
+    label: str, state: ConfigState, stored: AnyStoredModule
 ) -> None:
     """After a save the state's module is the module as stored: the version, data and refs of a read made right after."""
     held = state.module(Name.DEVICE_SETTINGS)
@@ -1922,7 +1922,7 @@ def _primary_rows(refs: object, segment_logical_id: str) -> list[dict[str, Any]]
     ]
 
 
-def _global_segment_without_provider(module: AnyConfigurationModule) -> bool:
+def _global_segment_without_provider(module: AnyStoredModule) -> bool:
     """A device settings module with refs read, whose Global Segment has a DNS section and no primary provider row."""
     if not isinstance(module, DeviceSettingsConfigurationModule):
         return False
@@ -2021,7 +2021,7 @@ def _check_provider_change(
 
 
 def _check_primary_row(
-    label: str, stored: AnyConfigurationModule, target: DnsTarget, *, set_: bool
+    label: str, stored: AnyStoredModule, target: DnsTarget, *, set_: bool
 ) -> None:
     """The stored refs hold the primary provider row of the Global Segment, for the service set, or none."""
     rows = _primary_rows(stored.raw_refs, target.segment_logical_id)
@@ -2361,9 +2361,7 @@ def _version_reads(answers: Sequence[Answer]) -> int:
     return sum(answer.method == VERSION_READ for answer in answers)
 
 
-def _update_of(
-    writes: Writes, module: AnyConfigurationModule
-) -> UpdateConfigurationModule:
+def _update_of(writes: Writes, module: AnyStoredModule) -> UpdateConfigurationModule:
     """The one update the test sent to *module*."""
     sent = [u for u in writes.updates if u.configuration_module_id == module.id_]
     check(len(sent) == 1, f"{len(sent)} update(s) sent to the {module.name} module")
@@ -2691,7 +2689,7 @@ def _remove_hub_patch(case: HubCase, holding: set[str]) -> dict[str, Any]:
     return {"segments": {case.segment: {"vpn": vpn}}}
 
 
-def _segment_vpn(module: AnyConfigurationModule, case: HubCase) -> dict[str, Any]:
+def _segment_vpn(module: AnyStoredModule, case: HubCase) -> dict[str, Any]:
     """The raw ``vpn`` of the case's segment in a device settings module; empty where the segment is gone."""
     for name, entry in _segment_entries(module.raw_data):
         vpn = entry.get("vpn")
@@ -2729,7 +2727,7 @@ async def _add_hub(
     writes: Writes,
     state: ConfigState,
     site: Site,
-) -> AnyConfigurationModule:
+) -> AnyStoredModule:
     """Add the hub to the segment's lists and save: two steps and one write; the module as stored."""
     run = run_of(lab.client)
     _ = await pipeline.apply(
@@ -2766,7 +2764,7 @@ async def _remove_hub(
     writes: Writes,
     state: ConfigState,
     site: Site,
-) -> AnyConfigurationModule:
+) -> AnyStoredModule:
     """Take the hub out of the segment's lists and save: one disable and one write; the module as stored."""
     run = run_of(lab.client)
     held = _holding(_segment_vpn(state.module(Name.DEVICE_SETTINGS), case), case.hub)

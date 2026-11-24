@@ -52,8 +52,9 @@ from pydantic import MISSING
 from pyvelo.client.derived_refs import APPEND_ONLY_REF_NAMES
 from pyvelo.client.exceptions import PRECONDITION_FAILED
 from pyvelo.client.schemas.configuration import (
-    ConfigurationBase,
     ConfigurationModuleBase,
+    EdgeConfiguration,
+    EnterpriseConfigurationProfile,
 )
 from pyvelo.core import ConfigContext
 from pyvelo.testing.fixtures import make_jsonrpc_response
@@ -1168,7 +1169,9 @@ def module_row(module: ConfigurationModuleBase) -> dict[str, Any]:
     return row
 
 
-def configuration_row(config: ConfigurationBase) -> dict[str, Any]:
+def configuration_row(
+    config: EdgeConfiguration | EnterpriseConfigurationProfile,
+) -> dict[str, Any]:
     """*config* as a row in wire form, without ``modules``."""
     return config.model_dump(mode="json", by_alias=True, exclude={"modules"})
 

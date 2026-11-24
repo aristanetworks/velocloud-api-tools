@@ -18,6 +18,7 @@ from pyvelo.client.schemas.configuration import (
     UpdateConfigurationModule,
 )
 from pyvelo.core import ConfigContext
+from pyvelo.core.layers import Edge
 from pyvelo.testing import make_module_json
 from pyvelo.testing.module_store import (
     ModuleStore,
@@ -297,9 +298,13 @@ async def test_as_an_httpx_handler(mock_vco_client: MockVcoClientFactory):
 
 
 def test_store_of_holds_the_rows_and_their_configurations():
-    m1 = FirewallConfigurationModule.model_validate(
-        make_module_json("firewall", RAW, module_id=1, configuration_id=10)
-    ).for_edge()
+    m1 = (
+        FirewallConfigurationModule[Edge]
+        .model_validate(
+            make_module_json("firewall", RAW, module_id=1, configuration_id=10)
+        )
+        .for_edge()
+    )
     m2 = QosConfigurationModule.model_validate(
         make_module_json(
             "QOS", {"segments": []}, module_id=2, configuration_id=20, refs=REFS
@@ -318,12 +323,16 @@ def test_store_of_holds_the_rows_and_their_configurations():
 
 
 def test_as_stored_is_the_module_validated_from_json():
-    module = FirewallConfigurationModule.model_validate(
-        make_module_json("firewall", copy.deepcopy(RAW), module_id=1, version="v1")
-    ).for_edge()
+    module = (
+        FirewallConfigurationModule[Edge]
+        .model_validate(
+            make_module_json("firewall", copy.deepcopy(RAW), module_id=1, version="v1")
+        )
+        .for_edge()
+    )
     data: dict[str, Any] = {**EDITED, "vendorKey": 1}
     stored = as_stored(module, data)
-    assert type(stored) is FirewallConfigurationModule
+    assert type(stored) is FirewallConfigurationModule[Edge]
     assert stored.config_context is ConfigContext.EDGE
     assert stored.data.config_context is ConfigContext.EDGE
     assert stored.raw_mode == "json"

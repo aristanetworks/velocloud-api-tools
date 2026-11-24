@@ -80,7 +80,7 @@ def _mod_kwargs() -> _ModuleKwargs:
     )
 
 
-def _make_state(modules: list[AnyConfigurationModule]) -> ConfigState:
+def _make_state(modules: list[AnyConfigurationModule[Profile]]) -> ConfigState:
     return ConfigState(
         edge_config=None,
         profile_config=EnterpriseConfigurationProfile(
@@ -94,11 +94,11 @@ def _make_state(modules: list[AnyConfigurationModule]) -> ConfigState:
 class TestKeyUniqueness:
     def test_unique_keys_pass(self):
         """No errors when all keys are unique."""
-        fw_mod = FirewallConfigurationModule(
+        fw_mod = FirewallConfigurationModule[Profile](
             name="firewall",
-            data=FirewallData(
+            data=FirewallData[Profile](
                 segments=[
-                    FirewallSegment(
+                    FirewallSegment[Profile](
                         segment=_seg_meta("Global Segment"),
                         outbound=[
                             FirewallOutboundRule.model_validate(
@@ -147,11 +147,11 @@ class TestKeyUniqueness:
 
     def test_duplicate_firewall_rule_names(self):
         """Detect duplicate outbound rule names via KeyField."""
-        fw_mod = FirewallConfigurationModule(
+        fw_mod = FirewallConfigurationModule[Profile](
             name="firewall",
-            data=FirewallData(
+            data=FirewallData[Profile](
                 segments=[
-                    FirewallSegment(
+                    FirewallSegment[Profile](
                         segment=_seg_meta(),
                         outbound=[
                             FirewallOutboundRule.model_validate(

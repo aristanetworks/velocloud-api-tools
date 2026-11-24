@@ -48,6 +48,7 @@ from pyvelo.core.identity import (
     ResolverNotLoadedError,
     SegmentIdentity,
 )
+from pyvelo.core.layers import Edge
 from pyvelo.testing import make_module_json
 from pyvelo.testing.fixtures import make_network_service_resolver
 from refs_helpers import (
@@ -357,7 +358,7 @@ def test_a_module_without_segments_and_no_change_sends_no_refs():
     row = make_module_json(
         "firewall", {"segments": []}, configuration_id=CONFIG, refs={"x": {}}
     )
-    firewall = FirewallConfigurationModule.model_validate(row)
+    firewall = FirewallConfigurationModule[Edge].model_validate(row)
     result = derive_refs(
         firewall,
         firewall.data,
@@ -804,7 +805,7 @@ def test_a_write_always_sends_its_refs_for_a_module_with_segments_that_is_not_ne
     assert sends_refs_always(module, {}) is False
     module._is_new = True  # pyright: ignore[reportPrivateUsage]
     assert sends_refs_always(module, {"segments": [{}]}) is False
-    firewall = FirewallConfigurationModule.model_validate(
+    firewall = FirewallConfigurationModule[Edge].model_validate(
         make_module_json("firewall", {"segments": []})
     )
     assert sends_refs_always(firewall, {"segments": [{}]}) is False

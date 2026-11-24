@@ -9,7 +9,7 @@ configuration 10.
 import copy
 import json
 from collections.abc import Callable, Iterable
-from typing import Any
+from typing import Any, cast
 
 import httpx
 import pytest
@@ -36,6 +36,7 @@ from pyvelo.client.schemas.configuration import (
     new_edge_module,
 )
 from pyvelo.core import ConfigContext
+from pyvelo.core.layers import Edge
 from pyvelo.core.response_check import PlannedChange, ServerChange
 from pyvelo.testing import (
     ModuleStore,
@@ -92,9 +93,9 @@ def methods(store: ModuleStore) -> list[str]:
     return [method.rsplit("/", 1)[-1] for method, _ in store.requests]
 
 
-def firewall_disabled() -> FirewallConfigurationModule:
+def firewall_disabled() -> FirewallConfigurationModule[Edge]:
     """The firewall module with one edit: ``firewall_enabled`` off."""
-    module = fw(RAW)
+    module = fw(RAW, layer=Edge)
     module.data.firewall_enabled = False
     return module
 
@@ -140,10 +141,10 @@ def reading(
     return handler
 
 
-def stored_module(error: ModuleWriteError) -> FirewallConfigurationModule:
+def stored_module(error: ModuleWriteError) -> FirewallConfigurationModule[Edge]:
     """The module *error* carries, which must be a firewall module."""
     assert isinstance(error.module, FirewallConfigurationModule)
-    return error.module
+    return cast(FirewallConfigurationModule[Edge], error.module)
 
 
 def assert_stale(error: ConfigConflictError, store: ModuleStore) -> None:
@@ -165,7 +166,7 @@ async def test_update_asks_for_data_and_returns_the_stored_module(
     assert params["version"] == "v1"
     assert write.module.version == store.rows[1]["version"] != "v1"
     assert write.module.raw_data == store.rows[1]["data"]
-    assert type(write.module) is FirewallConfigurationModule
+    assert type(write.module) is FirewallConfigurationModule[Edge]
     assert methods(store) == ["updateConfigurationModule"]
 
 
@@ -173,7 +174,7 @@ async def test_update_asks_for_data_and_returns_the_stored_module(
 async def test_the_stored_module_has_the_level_of_the_one_given(
     mock_vco_client: MockVcoClientFactory, return_data: bool
 ):
-    module = fw(RAW).for_edge()
+    module = fw(RAW, layer=Edge).for_edge()
     module.data.firewall_enabled = False
     store = store_of(module, return_data=return_data)
     # Not an edge configuration's name: the read puts the module at profile
@@ -188,7 +189,7 @@ async def test_the_stored_module_has_the_level_of_the_one_given(
 async def test_nothing_to_send_returns_the_module_itself(
     mock_vco_client: MockVcoClientFactory,
 ):
-    module = fw(RAW)
+    module = fw(RAW, layer=Edge)
     store = store_of(module)
     client = await mock_vco_client(store)
     write = await client.write_module(module, plan_module(module))
@@ -266,7 +267,7 @@ async def test_clash_with_another_writer(
         row["data"]["future"] = 3
         row["data"]["syslog_forwarding"] = True
 
-    module = fw(RAW)
+    module = fw(RAW, layer=Edge)
     plan = plan_module(module, {**RAW, "future": 2})
     store = store_of(module, conditional_check=conditional_check)
     store.other_writer(1, edit_both)
@@ -293,7 +294,7 @@ async def test_an_edit_another_writer_made_identically_counts_as_applied(
     def same_edit(row: dict[str, Any]) -> None:
         row["data"]["firewall_enabled"] = False
 
-    module = fw(RAW)
+    module = fw(RAW, layer=Edge)
     data = module.mutable_data()
     data.firewall_enabled = False
     data.syslog_forwarding = True
@@ -379,7 +380,7 @@ async def test_refs_only_write_meeting_a_changed_version_raises_before_sending(
 async def test_reorder_only_write_refused_raises(
     mock_vco_client: MockVcoClientFactory,
 ):
-    module = fw({**RAW, "inbound": [inbound_rule("a"), inbound_rule("b")]})
+    module = fw({**RAW, "inbound": [inbound_rule("a"), inbound_rule("b")]}, layer=Edge)
     module.data.inbound.reverse()
     store = store_of(module)
     store.other_writer(1, elsewhere)
@@ -449,7 +450,7 @@ def test_insert_request_refuses_what_it_cannot_insert():
 async def test_update_module_returns_the_stored_module(
     mock_vco_client: MockVcoClientFactory,
 ):
-    module = fw(RAW)
+    module = fw(RAW, layer=Edge)
     store = store_of(module)
     client = await mock_vco_client(store)
     data = module.mutable_data()
@@ -464,7 +465,7 @@ async def test_update_module_returns_the_stored_module(
 async def test_update_module_refuses_a_module_an_earlier_write_replaced(
     mock_vco_client: MockVcoClientFactory,
 ):
-    module = fw(RAW)
+    module = fw(RAW, layer=Edge)
     store = store_of(module)
     client = await mock_vco_client(store)
     data = module.mutable_data()
@@ -498,7 +499,7 @@ async def test_update_module_refuses_a_module_an_earlier_write_replaced(
 async def test_update_module_replaces_the_module_after_a_write_error_too(
     mock_vco_client: MockVcoClientFactory,
 ):
-    module = fw(RAW)
+    module = fw(RAW, layer=Edge)
     store = store_of(module)
     store.other_writer(1, elsewhere)
     client = await mock_vco_client(store)
@@ -516,7 +517,7 @@ async def test_update_module_keeps_the_module_when_the_outcome_is_unknown(
     def unreadable(new: dict[str, Any], _old: dict[str, Any] | None) -> None:
         new["data"]["segments"] = 5
 
-    module = fw(RAW)
+    module = fw(RAW, layer=Edge)
     store = store_of(module)
     store.on_store.append(unreadable)
     client = await mock_vco_client(store)
@@ -541,7 +542,7 @@ def syslog_on(row: dict[str, Any]) -> None:
 async def test_stale_removal_inside_a_list_item_raises(
     mock_vco_client: MockVcoClientFactory, conditional_check: bool
 ):
-    module = fw({**RAW, "items": ITEMS})
+    module = fw({**RAW, "items": ITEMS}, layer=Edge)
     plan = plan_module(module, {**RAW, "items": [{"a": 1}]})
     store = store_of(module, conditional_check=conditional_check)
     store.other_writer(1, syslog_on)
@@ -556,7 +557,7 @@ async def test_stale_removal_inside_a_list_item_raises(
 async def test_stale_removal_beside_another_edit_is_a_lost_edit_too(
     mock_vco_client: MockVcoClientFactory,
 ):
-    module = fw({**RAW, "items": ITEMS})
+    module = fw({**RAW, "items": ITEMS}, layer=Edge)
     plan = plan_module(module, {**RAW, "items": [{"a": 1}], "future": 2})
     store = store_of(module)
     store.other_writer(1, syslog_on)
@@ -650,11 +651,12 @@ async def test_a_stale_write_with_nothing_checkable_is_a_conflict(
 async def test_a_module_with_no_level_comes_back_with_none(
     mock_vco_client: MockVcoClientFactory, return_data: bool
 ):
-    module = firewall_disabled()
+    module = ds(DS_RAW)
     assert module.config_context is None
+    plan = plan_module(module, {**DS_RAW, "otherKey": 1})
     store = store_of(module, return_data=return_data)
     client = await mock_vco_client(store)
-    write = await client.write_module(module, plan_module(module))
+    write = await client.write_module(module, plan)
     assert write.module.config_context is None
     assert write.module.data.config_context is None
 
@@ -793,7 +795,7 @@ async def test_an_unknown_outcome_names_the_refs_it_sent(
 async def test_an_unknown_outcome_shows_a_place_and_an_order(
     mock_vco_client: MockVcoClientFactory,
 ):
-    module = fw({**RAW, "inbound": [inbound_rule("a"), inbound_rule("b")]})
+    module = fw({**RAW, "inbound": [inbound_rule("a"), inbound_rule("b")]}, layer=Edge)
     rule_type = type(module.data.inbound[0])
     module.data.inbound.reverse()
     module.data.inbound.insert(0, rule_type.model_validate(inbound_rule("c")))
@@ -968,7 +970,7 @@ async def test_a_module_held_as_another_class_is_an_unknown_outcome(
     assert exc.value.answer == "row"
     assert exc.value.detail == (
         "the VCO holds module 1 as a QosConfigurationModule, "
-        "not a FirewallConfigurationModule"
+        "not a FirewallConfigurationModule[Edge]"
     )
 
 
@@ -1277,11 +1279,11 @@ async def test_if_absent_cannot_use_a_configuration_that_does_not_parse(
     assert "sent" not in " ".join(lines[:3])
 
 
-def never_read() -> FirewallConfigurationModule:
+def never_read() -> FirewallConfigurationModule[Edge]:
     """Firewall module 1 of configuration 10, built without a read: it has no raw data."""
-    module = FirewallConfigurationModule.model_construct(
+    module = FirewallConfigurationModule[Edge].model_construct(
         name="firewall",
-        data=FirewallData(segments=[], firewall_enabled=False),
+        data=FirewallData[Edge](segments=[], firewall_enabled=False),
         id_=1,
         version="v1",
         configuration_id=10,
@@ -1294,7 +1296,7 @@ async def test_module_that_never_carried_data_is_written_whole(
     mock_vco_client: MockVcoClientFactory,
 ):
     module = never_read()
-    store = store_of(fw(RAW))
+    store = store_of(fw(RAW, layer=Edge))
     client = await mock_vco_client(store)
     plan = plan_module(module)
     write = await client.write_module(module, plan)

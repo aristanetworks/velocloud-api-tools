@@ -185,8 +185,7 @@ from pyvelo.client.exceptions import (
 )
 from pyvelo.client.module_check import data_model
 from pyvelo.client.schemas.configuration import (
-    AnyConfigurationModule,
-    ConfigurationBase,
+    AnyStoredModule,
     ConfigurationModuleBase,
     ConfigurationModuleUpdate,
     EdgeConfiguration,
@@ -370,9 +369,9 @@ class ProfileEntry:
 
 
 def find_module(
-    config: ConfigurationBase,
+    config: EdgeConfiguration | EnterpriseConfigurationProfile,
     name: ConfigurationModuleName | str,
-) -> AnyConfigurationModule | None:
+) -> AnyStoredModule | None:
     if config.modules is MISSING:
         return None
     return next((m for m in config.modules if m.name == name), None)
@@ -391,7 +390,7 @@ async def read_stack(
 
 async def read_profile(
     client: VcoClient, profile_id: int, enterprise_id: int | None
-) -> ConfigurationBase:
+) -> EdgeConfiguration | EnterpriseConfigurationProfile:
     request = GetConfiguration(id_=profile_id, with_=[GetConfigurationWith.MODULES])
     if enterprise_id is not None:
         request.enterprise_id = enterprise_id
@@ -532,7 +531,7 @@ class Lab:
     def edges_with(
         self,
         name: ConfigurationModuleName,
-        suitable: Callable[[AnyConfigurationModule], bool] = lambda _: True,
+        suitable: Callable[[AnyStoredModule], bool] = lambda _: True,
         *,
         replace_modules: bool = False,
     ) -> list[EdgeLayout]:
@@ -599,7 +598,7 @@ class Lab:
     async def pick_writable_edge(
         self,
         name: ConfigurationModuleName,
-        suitable: Callable[[AnyConfigurationModule], bool] = lambda _: True,
+        suitable: Callable[[AnyStoredModule], bool] = lambda _: True,
         what: str = "",
         *,
         replace_modules: bool = False,
@@ -620,7 +619,7 @@ class Lab:
     async def pick_writable_profile(
         self,
         name: ConfigurationModuleName,
-        suitable: Callable[[AnyConfigurationModule], bool] = lambda _: True,
+        suitable: Callable[[AnyStoredModule], bool] = lambda _: True,
         what: str = "",
     ) -> int:
         """The ID of the first marked profile with such a module that takes a write; skip the test where none is a candidate, fail it where all refuse."""
@@ -1246,7 +1245,7 @@ def run_of(client: VcoClient) -> LiveRun:
 
     async def guarded_update(
         request: UpdateConfigurationModule, *, level: ConfigContext | None = None
-    ) -> AnyConfigurationModule | None:
+    ) -> AnyStoredModule | None:
         module_id = request.configuration_module_id
         run.check_update(module_id)
         had, prior, sent = module_id in run.seen, run.seen.get(module_id), run.sent
@@ -1272,7 +1271,7 @@ def run_of(client: VcoClient) -> LiveRun:
 
     async def guarded_insert(
         request: InsertConfigurationModule, *, level: ConfigContext | None = None
-    ) -> InsertConfigurationModuleResult | AnyConfigurationModule:
+    ) -> InsertConfigurationModuleResult | AnyStoredModule:
         run.check_replace(request.configuration_id, request.name, "an insert")
         try:
             with _sends("configuration/insertConfigurationModule"):
@@ -1347,7 +1346,7 @@ class Site:
     enterprise_id: int | None
     configuration_id: int
     name: ConfigurationModuleName
-    layer: Callable[[], Awaitable[Sequence[AnyConfigurationModule]]]
+    layer: Callable[[], Awaitable[Sequence[AnyStoredModule]]]
     target: bool = False
     """Whether the owner marked the edge or profile as one the suite may write to."""
     replace_modules: bool = False
@@ -1355,11 +1354,11 @@ class Site:
     profile: bool = False
     """Whether the module is a profile's: only a profile's device settings takes a role call."""
 
-    async def read(self) -> AnyConfigurationModule | None:
+    async def read(self) -> AnyStoredModule | None:
         modules = await self.layer()
         return next((m for m in modules if m.name == self.name), None)
 
-    async def read_present(self) -> AnyConfigurationModule:
+    async def read_present(self) -> AnyStoredModule:
         module = await self.read()
         check(module is not None, f"the {self.name.value} module is gone")
         assert module is not None
@@ -1372,7 +1371,7 @@ def edge_site(
     name: ConfigurationModuleName,
     enterprise_id: int | None,
 ) -> Site:
-    async def layer() -> Sequence[AnyConfigurationModule]:
+    async def layer() -> Sequence[AnyStoredModule]:
         edge, _ = await read_stack(client, layout.edge_id, enterprise_id)
         return [] if edge.modules is MISSING else edge.modules
 
@@ -1395,7 +1394,7 @@ def profile_site(
     *,
     target: bool = False,
 ) -> Site:
-    async def layer() -> Sequence[AnyConfigurationModule]:
+    async def layer() -> Sequence[AnyStoredModule]:
         profile = await read_profile(client, profile_id, enterprise_id)
         return [] if profile.modules is MISSING else profile.modules
 
@@ -1700,7 +1699,7 @@ async def capture(site: Site) -> Original | None:
 
 
 def refs_as_read(
-    module: AnyConfigurationModule, document: Mapping[str, Any]
+    module: AnyStoredModule, document: Mapping[str, Any]
 ) -> dict[str, Any] | MISSING:
     """The refs a write of *document* to *module* carries: the module's refs as read, less the append-only names.
 
@@ -1718,7 +1717,7 @@ def refs_as_read(
     }
 
 
-async def write_data(site: Site, module: AnyConfigurationModule, data: object) -> None:
+async def write_data(site: Site, module: AnyStoredModule, data: object) -> None:
     """Send *data* to the module as it stands (its version), with the refs a library write of it carries (``refs_as_read``)."""
     document = expect(data, dict, "the data to write")
     _ = await site.client.update_configuration_module(
@@ -1732,7 +1731,8 @@ async def write_data(site: Site, module: AnyConfigurationModule, data: object) -
                 data=copy.deepcopy(document), refs=refs_as_read(module, document)
             ),
             return_data=True,
-        )
+        ),
+        level=module.config_context,
     )
 
 
@@ -2209,13 +2209,13 @@ def without_return_data(client: VcoClient, monkeypatch: pytest.MonkeyPatch) -> N
 
     async def update_without(
         request: UpdateConfigurationModule, *, level: ConfigContext | None = None
-    ) -> AnyConfigurationModule | None:
+    ) -> AnyStoredModule | None:
         request.return_data = MISSING
         return await update(request, level=level)
 
     async def insert_without(
         request: InsertConfigurationModule, *, level: ConfigContext | None = None
-    ) -> InsertConfigurationModuleResult | AnyConfigurationModule:
+    ) -> InsertConfigurationModuleResult | AnyStoredModule:
         request.return_data = MISSING
         return await insert(request, level=level)
 

@@ -19,7 +19,7 @@ from pyvelo.client.module_check import ModuleWrite
 from pyvelo.client.module_write import ModulePlan, with_hub_rows
 from pyvelo.client.protocol import VcoClientProtocol
 from pyvelo.client.schemas.configuration import (
-    AnyConfigurationModule,
+    AnyStoredModule,
     DeviceSettingsConfigurationModule,
     EdgeConfiguration,
     EnterpriseConfigurationProfile,
@@ -38,7 +38,7 @@ from pyvelo.config.resolvers.profile import ProfileResolver
 from pyvelo.config.resolvers.segment import SegmentResolver
 from pyvelo.config.validation import ValidationError as ValidatorError
 from pyvelo.config.validation import ValidationResult, ValidatorRegistry
-from pyvelo.core import ConfigContext, PatchError
+from pyvelo.core import PatchError
 from pyvelo.core.base import IdentityLookup, IdentityResolver, VcoModel
 from pyvelo.core.identity import (
     EdgeName,
@@ -50,6 +50,7 @@ from pyvelo.core.identity import (
     SegmentIdentity,
     SegmentName,
 )
+from pyvelo.core.layers import Edge, Profile
 from pyvelo.core.merge import nest_patch, select_items
 from pyvelo.core.patch import ItemOp, is_new, parse_item_op
 from pyvelo.core.rebase import Path, raw_changes
@@ -336,22 +337,15 @@ class ConfigPipeline:
 
         config = await self.client.get_configuration(request)
 
-        if config.config_context is ConfigContext.EDGE:
-            raise ValueError(
+        if isinstance(config, EdgeConfiguration):
+            raise ValueError(  # noqa: TRY004 (an edge configuration is a valid answer, which this call refuses)
                 f"configuration {profile_id} is the edge-specific configuration "
                 "of an edge, not a profile. Load that edge with load(), by its "
                 "ID or name; to edit its profile, give load_profile the "
                 "profile's ID"
             )
 
-        # Wrap it as a profile. Reuse the module objects: they hold the raw data
-        # that a save is planned against, which a dump and re-validate would lose.
-        if not isinstance(config, EnterpriseConfigurationProfile):
-            profile_config = EnterpriseConfigurationProfile.model_construct(
-                _fields_set=config.model_fields_set, **dict(config)
-            ).for_profile()
-        else:
-            profile_config = config
+        profile_config = config
 
         resolver_context = ResolverContext(
             enterprise_id=enterprise_id,
@@ -626,7 +620,7 @@ class ConfigPipeline:
     async def _prepare_profile_segments(
         self,
         state: ConfigState,
-        mod: AnyConfigurationModule,
+        mod: AnyStoredModule,
         nested: Mapping[str, object],
         loaded: set[type],
     ) -> ProfileSegmentPatch:
@@ -1199,7 +1193,7 @@ class ConfigPipeline:
             """
             stored = error.module
             if isinstance(stored, type(mod)) and state.find_module(mod.name) is mod:
-                state.replace_module(mod, stored)
+                state.replace_module(mod, cast(AnyStoredModule, stored))
                 return True
             return False
 
@@ -1736,7 +1730,7 @@ def _device_settings_as_read(state: ConfigState) -> object:
 
 def _try_assigning(
     state: ConfigState,
-    mod: AnyConfigurationModule,
+    mod: AnyStoredModule,
     prepared: ProfileSegmentPatch,
     unserved: Collection[Path],
 ) -> None:
@@ -1751,7 +1745,7 @@ def _try_assigning(
     ds_as_read = _device_settings_as_read(state)
     before = _require_writable(mod).data
 
-    def edit(copies: Mapping[str, AnyConfigurationModule]) -> None:
+    def edit(copies: Mapping[str, AnyStoredModule]) -> None:
         after = _require_writable(copies[name]).data
         _ = after.merge_patch(prepared.patch, resolvers=state.resolvers)
         check_profile_segments(before, after, mod, ds_as_read, prepared.assignments)
@@ -1765,7 +1759,8 @@ type _WritableModule = (
     DeviceSettingsConfigurationModule
     | QosConfigurationModule
     | WanConfigurationModule
-    | FirewallConfigurationModule
+    | FirewallConfigurationModule[Edge]
+    | FirewallConfigurationModule[Profile]
 )
 
 _WRITABLE_MODULES = (
@@ -1825,12 +1820,12 @@ def _to_load(error: ResolverNotLoadedError, loaded: set[type]) -> type:
     return kind
 
 
-def _dump(mod: AnyConfigurationModule) -> object:
+def _dump(mod: AnyStoredModule) -> object:
     """The JSON form of *mod*, to find an edit made while it was written."""
     return mod.model_dump(mode="json", by_alias=True)
 
 
-def _require_writable(mod: AnyConfigurationModule) -> _WritableModule:
+def _require_writable(mod: AnyStoredModule) -> _WritableModule:
     """*mod*, if it is a module a save writes; else ``TypeError``."""
     if not isinstance(mod, _WRITABLE_MODULES):
         raise TypeError(

@@ -11,7 +11,7 @@ import pytest
 from pydantic import MISSING
 from pyvelo.client.exceptions import DetachedObjectError
 from pyvelo.client.schemas.configuration import (
-    AnyConfigurationModule,
+    AnyStoredModule,
     InsertConfigurationModule,
     InsertConfigurationModuleResult,
     UpdateConfigurationModule,
@@ -57,14 +57,14 @@ class Gated(MockVcoClient):
     @override
     async def update_configuration_module(
         self, request: UpdateConfigurationModule, *, level: ConfigContext | None = None
-    ) -> AnyConfigurationModule | None:
+    ) -> AnyStoredModule | None:
         await self.hold()
         return await super().update_configuration_module(request, level=level)
 
     @override
     async def insert_configuration_module(
         self, request: InsertConfigurationModule, *, level: ConfigContext | None = None
-    ) -> InsertConfigurationModuleResult | AnyConfigurationModule:
+    ) -> InsertConfigurationModuleResult | AnyStoredModule:
         await self.hold()
         return await super().insert_configuration_module(request, level=level)
 

@@ -30,6 +30,7 @@ from pyvelo.client.schemas.edge import (
     GetHaInterfaces,
 )
 from pyvelo.core import PaginatedVcoModel, VcoModel
+from pyvelo.core.layers import Composed
 
 from ._type_support import JsonObject, require_present
 
@@ -217,7 +218,8 @@ class TestEdgeConfigurationModulesResult:
         assert isinstance(management_plane, CompositeManagementPlaneModule)
         assert image_update is not None
         assert isinstance(require_present(device_settings.data), DeviceSettingsData)
-        assert isinstance(require_present(firewall.data), FirewallData)
+        assert type(require_present(firewall.data)) is FirewallData[Composed]
+        assert firewall.raw_data == {}
         assert isinstance(require_present(qos.data), QosData)
         assert isinstance(require_present(wan.data), WanData)
         assert isinstance(require_present(control_plane.data), ControlPlaneData)

@@ -37,6 +37,7 @@ from pyvelo.client.schemas.configuration import (
 )
 from pyvelo.config.resolver import ResolverContext, ResolverRegistry
 from pyvelo.core.identity import ResolutionError
+from pyvelo.core.layers import Edge, Profile
 from pyvelo.core.rebase import Key, Path
 from pyvelo.testing import make_module_json, make_segment_resolver
 from pyvelo_intent import PatchError, add, delete, move
@@ -94,17 +95,19 @@ def _make_qos_module(mod_id: int, config_id: int) -> QosConfigurationModule:
 
 
 def _make_state(
-    edge_segments: list[FirewallSegment] | None = None,
-    profile_segments: list[FirewallSegment] | None = None,
+    edge_segments: list[FirewallSegment[Edge]] | None = None,
+    profile_segments: list[FirewallSegment[Profile]] | None = None,
     *,
     include_device_settings: bool = False,
     include_qos: bool = False,
 ) -> ConfigState:
-    edge_modules: list[AnyConfigurationModule] = [
+    edge_modules: list[AnyConfigurationModule[Edge]] = [
         make_firewall_module(mod_id=1, config_id=10, segments=edge_segments)
     ]
-    profile_modules: list[AnyConfigurationModule] = [
-        make_firewall_module(mod_id=2, config_id=20, segments=profile_segments)
+    profile_modules: list[AnyConfigurationModule[Profile]] = [
+        make_firewall_module(
+            mod_id=2, config_id=20, segments=profile_segments, layer=Profile
+        )
     ]
     if include_device_settings:
         edge_modules.append(_make_device_settings_module(mod_id=3, config_id=10))
@@ -192,8 +195,10 @@ async def test_apply_keyed_list_merge():
     """Apply a patch that merges into a KeyField list (segments by name)."""
     pipeline = ConfigPipeline(client=None)
 
-    global_seg = make_firewall_segment("Global Segment", 0)
-    state = _make_state(edge_segments=[global_seg], profile_segments=[global_seg])
+    state = _make_state(
+        edge_segments=[make_firewall_segment("Global Segment", 0)],
+        profile_segments=[make_firewall_segment("Global Segment", 0, layer=Profile)],
+    )
 
     # Add an outbound rule to the Global Segment
     state = await pipeline.apply(
@@ -262,7 +267,7 @@ async def test_apply_camel_case_module_name():
 # --- single-module patches on a profile target ------------------------------
 
 
-def _profile_state(*modules: AnyConfigurationModule) -> ConfigState:
+def _profile_state(*modules: AnyConfigurationModule[Profile]) -> ConfigState:
     return ConfigState(
         edge_config=None,
         profile_config=EnterpriseConfigurationProfile(
@@ -320,9 +325,9 @@ async def test_apply_ntp_enabled():
 
 @pytest.mark.asyncio
 async def test_apply_adds_a_firewall_rule_to_a_segment():
-    segment = make_firewall_segment("Global Segment", 0)
+    segment = make_firewall_segment("Global Segment", 0, layer=Profile)
     state = _profile_state(
-        make_firewall_module(mod_id=1, config_id=20, segments=[segment])
+        make_firewall_module(mod_id=1, config_id=20, segments=[segment], layer=Profile)
     )
     state = await ConfigPipeline(client=None).apply(
         state,
@@ -337,9 +342,9 @@ async def test_apply_adds_a_firewall_rule_to_a_segment():
 
 @pytest.mark.asyncio
 async def test_apply_to_a_segment_the_profile_lacks_changes_nothing():
-    segment = make_firewall_segment("Global Segment", 0)
+    segment = make_firewall_segment("Global Segment", 0, layer=Profile)
     state = _profile_state(
-        make_firewall_module(mod_id=1, config_id=20, segments=[segment])
+        make_firewall_module(mod_id=1, config_id=20, segments=[segment], layer=Profile)
     )
     # A segment is assigned to the three modules of a profile; this one has the
     # firewall only, and inserting a module into a profile is not supported.
@@ -360,10 +365,10 @@ async def test_apply_to_a_segment_the_profile_lacks_changes_nothing():
 
 @pytest.mark.asyncio
 async def test_two_applies_in_a_row():
-    segment = make_firewall_segment("Global Segment", 0)
+    segment = make_firewall_segment("Global Segment", 0, layer=Profile)
     state = _profile_state(
         _ds_module(ntp=Ntp(enabled=False)),
-        make_firewall_module(mod_id=1, config_id=20, segments=[segment]),
+        make_firewall_module(mod_id=1, config_id=20, segments=[segment], layer=Profile),
     )
     pipeline = ConfigPipeline(client=None)
     state = await pipeline.apply(

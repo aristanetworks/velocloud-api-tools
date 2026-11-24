@@ -20,6 +20,7 @@ from pyvelo.client.schemas.enterprise import (
 )
 from pyvelo.config.resolver import ResolutionError, ResolverRegistry
 from pyvelo.config.resolvers.edge import EdgeResolver
+from pyvelo.core.layers import Profile
 from pyvelo.testing import make_module_json
 from pyvelo_intent import add
 from pyvelo_intent.config.pipeline import ConfigPipeline
@@ -37,7 +38,7 @@ def _make_stack() -> GetEdgeConfigurationStackResult:
     profile_config = EnterpriseConfigurationProfile(
         name="Default Profile",
         id_=20,
-        modules=[make_firewall_module(mod_id=2, config_id=20)],
+        modules=[make_firewall_module(mod_id=2, config_id=20, layer=Profile)],
     )
     return (edge_config, profile_config)
 

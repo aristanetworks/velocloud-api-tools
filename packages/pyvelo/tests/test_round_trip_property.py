@@ -10,6 +10,7 @@ import pytest
 from pyvelo.client.module_write import plan_module
 from pyvelo.client.schemas.configuration import ConfigurationModuleList
 from pyvelo.core import ConfigContext
+from pyvelo.core.layers import Edge, Profile
 from pyvelo.testing import make_module_json
 
 SCALARS = [None, True, False, 0, 1, -3, 2.5, 1e3, "", "x", "0", "REGULAR"]
@@ -187,9 +188,14 @@ def test_no_edit_round_trip(
     raw = build(rng)
     sprinkle(rng, raw)
     row = make_module_json(name, copy.deepcopy(raw))
+    rows = (
+        ConfigurationModuleList[Edge]
+        if level is ConfigContext.EDGE
+        else ConfigurationModuleList[Profile]
+    )
     for module in (
-        ConfigurationModuleList.model_validate([copy.deepcopy(row)]).root[0],
-        ConfigurationModuleList.model_validate_json(json.dumps([row])).root[0],
+        rows.model_validate([copy.deepcopy(row)]).root[0],
+        rows.model_validate_json(json.dumps([row])).root[0],
     ):
         plan = plan_module(module, level=level)
         assert plan.operation == "none"

@@ -17,7 +17,6 @@ from pyvelo.client.exceptions import (
     WriteOutcomeUnknownError,
 )
 from pyvelo.client.schemas.configuration import (
-    ConfigurationBase,
     EdgeConfiguration,
     EnterpriseConfigurationProfile,
     GetConfiguration,
@@ -319,8 +318,8 @@ async def test_load_profile_keeps_raw_snapshots():
     class Client(MockVcoClient):
         async def get_configuration(
             self, request: GetConfiguration
-        ) -> ConfigurationBase:
-            return ConfigurationBase.model_validate(
+        ) -> EdgeConfiguration | EnterpriseConfigurationProfile:
+            return EnterpriseConfigurationProfile.model_validate(
                 {"name": "P", "id": 20, "modules": [raw]}
             ).for_profile()
 

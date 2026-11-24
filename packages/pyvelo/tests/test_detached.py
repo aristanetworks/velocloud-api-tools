@@ -13,6 +13,7 @@ from pyvelo.client.models.configuration.firewall.rules import FirewallOutboundRu
 from pyvelo.client.models.configuration.firewall.segment import FirewallSegment
 from pyvelo.client.schemas.configuration import DeviceSettingsConfigurationModule
 from pyvelo.core import ConfigContext, PatchError, VcoModel, add
+from pyvelo.core.layers import Edge
 from pyvelo.core.rebase import Path
 from pyvelo.testing import make_module_json
 
@@ -46,9 +47,11 @@ REPLACED = (
 )
 
 
-def firewall() -> tuple[FirewallData, FirewallSegment, FirewallOutboundRule]:
+def firewall() -> tuple[
+    FirewallData[Edge], FirewallSegment[Edge], FirewallOutboundRule
+]:
     """Firewall data with one segment and one outbound rule, and those two."""
-    data = FirewallData.model_validate(copy.deepcopy(FW_RAW))
+    data = FirewallData[Edge].model_validate(copy.deepcopy(FW_RAW))
     segment = data.segments[0]
     return data, segment, segment.outbound[0]
 
@@ -79,9 +82,11 @@ def test_assignment_on_a_detached_object_raises():
 
     with pytest.raises(DetachedObjectError) as exc:
         data.firewall_enabled = False
-    assert str(exc.value) == f"FirewallData.firewall_enabled: {REPLACED}"
+    assert str(exc.value) == f"FirewallData[Edge].firewall_enabled: {REPLACED}"
     assert exc.value.paths == []
-    with pytest.raises(DetachedObjectError, match="FirewallSegment.firewall_logging"):
+    with pytest.raises(
+        DetachedObjectError, match=r"FirewallSegment\[Edge\]\.firewall_logging"
+    ):
         segment.firewall_logging_enabled = True
     with pytest.raises(DetachedObjectError, match="FirewallOutboundRule.name") as exc:
         rule.name = "other"
@@ -134,8 +139,10 @@ def test_merge_patch_on_a_detached_object_raises():
 
     with pytest.raises(DetachedObjectError) as exc:
         _ = data.merge_patch(PATCH)
-    assert str(exc.value) == f"FirewallData.merge_patch: {REPLACED}"
-    with pytest.raises(DetachedObjectError, match="FirewallSegment.merge_patch"):
+    assert str(exc.value) == f"FirewallData[Edge].merge_patch: {REPLACED}"
+    with pytest.raises(
+        DetachedObjectError, match=r"FirewallSegment\[Edge\]\.merge_patch"
+    ):
         _ = segment.merge_patch({"outbound": {"+": NEW_RULE}})
     # Before anything else: a patch that names no field raises the same.
     with pytest.raises(DetachedObjectError):
@@ -224,7 +231,7 @@ def test_model_machinery_still_works():
     updated.syslog_forwarding = True
     assert (updated.firewall_enabled, updated.syslog_forwarding) == (False, True)
 
-    loaded = cast(FirewallData, pickle.loads(pickle.dumps(data)))
+    loaded = cast(FirewallData[Edge], pickle.loads(pickle.dumps(data)))
     loaded.firewall_enabled = False
     assert loaded.is_detached is False
 

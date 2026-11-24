@@ -24,6 +24,7 @@ from pyvelo.client.models.configuration.profile_segments import (
     new_segment_entry,
 )
 from pyvelo.client.module_write import ModulePlan
+from pyvelo.client.schemas.configuration import QosConfigurationModule
 from pyvelo.config.resolver import ResolverRegistry
 from pyvelo.core import PatchError, add, delete
 from pyvelo.core.identity import ResolutionError
@@ -42,6 +43,14 @@ from segment_helpers import (
 
 DS = "deviceSettings"
 QOS = "QOS"
+
+
+def qos_of(state: ConfigState) -> QosConfigurationModule:
+    module = state.module(QOS)
+    assert isinstance(module, QosConfigurationModule)
+    return module
+
+
 FIREWALL = "firewall"
 MODULES = (DS, QOS, FIREWALL)
 
@@ -414,7 +423,7 @@ async def test_a_profile_without_qos_refuses_an_add():
     state = await global_only()
     modules = state.profile_config.modules
     assert isinstance(modules, list)
-    modules.remove(state.module(QOS))
+    modules.remove(qos_of(state))
     before = state.plan().render()
 
     with pytest.raises(PatchError) as raised:
@@ -440,7 +449,7 @@ async def test_an_add_to_a_module_the_profile_lacks_raises_patch_error(form: str
     state = await global_only()
     modules = state.profile_config.modules
     assert isinstance(modules, list)
-    modules.remove(state.module(QOS))
+    modules.remove(qos_of(state))
     before = state.plan().render()
     call: dict[str, Any] = {
         "add": {"patch": {"segments": {"Guest": add({})}}},
@@ -465,7 +474,7 @@ async def test_a_patch_without_segment_ops_to_a_module_the_profile_lacks_keeps_i
     state = await global_only()
     modules = state.profile_config.modules
     assert isinstance(modules, list)
-    modules.remove(state.module(QOS))
+    modules.remove(qos_of(state))
 
     with pytest.raises(ValueError, match="not found") as raised:
         _ = await patch(state, QOS, {"Global Segment": {"rules": []}})

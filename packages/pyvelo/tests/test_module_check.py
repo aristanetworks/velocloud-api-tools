@@ -43,6 +43,7 @@ from pyvelo.client.schemas.configuration import (
     new_edge_module,
 )
 from pyvelo.core.identity import NetworkServiceIdentity, SegmentIdentity
+from pyvelo.core.layers import Edge
 from pyvelo.core.rebase import Key, Path
 from pyvelo.core.response_check import (
     PathPattern,
@@ -148,9 +149,9 @@ U1, U2, U3 = (str(uuid.UUID(int=n)) for n in (1, 2, 3))
 """WAN link ``internalId`` values."""
 
 
-def firewall_disabled() -> FirewallConfigurationModule:
+def firewall_disabled() -> FirewallConfigurationModule[Edge]:
     """The firewall module with one planned change: ``firewall_enabled`` off."""
-    module = fw(RAW)
+    module = fw(RAW, layer=Edge)
     module.data.firewall_enabled = False
     return module
 
@@ -190,7 +191,7 @@ def test_nothing_applied_and_as_read_is_a_conflict():
 
 
 def test_nothing_applied_but_moved_is_not_applied():
-    module = fw(RAW)
+    module = fw(RAW, layer=Edge)
     plan = plan_module(module, {**RAW, "future": 2})
     with pytest.raises(WriteNotAppliedError) as exc:
         _ = check_module_write(module, plan, as_stored(module, {**RAW, "future": 3}))
@@ -199,7 +200,7 @@ def test_nothing_applied_but_moved_is_not_applied():
 
 
 def test_partial_lists_applied_and_lost_apart():
-    module = fw(RAW)
+    module = fw(RAW, layer=Edge)
     plan = plan_module(module, {**RAW, "firewall_enabled": False, "future": 2})
     stored = as_stored(module, {**RAW, "firewall_enabled": False})
     with pytest.raises(WriteNotAppliedError) as exc:
@@ -215,7 +216,7 @@ def test_partial_lists_applied_and_lost_apart():
 
 
 def test_refused_with_a_change_missing_is_a_conflict():
-    module = fw(RAW)
+    module = fw(RAW, layer=Edge)
     plan = plan_module(module, {**RAW, "future": 2})
     stored = as_stored(module, {**RAW, "future": 3})
     with pytest.raises(ConfigConflictError) as exc:
@@ -260,7 +261,7 @@ def test_conflict_lists_what_another_writer_changed():
 
 
 def test_message_names_each_path_and_marks_a_clash():
-    module = fw(RAW)
+    module = fw(RAW, layer=Edge)
     plan = plan_module(module, {**RAW, "future": 2, "added": "x"})
     with pytest.raises(WriteNotAppliedError) as exc:
         _ = check_module_write(module, plan, as_stored(module, {**RAW, "future": 3}))
@@ -277,7 +278,7 @@ def test_message_names_each_path_and_marks_a_clash():
 
 
 def test_long_values_are_cut():
-    module = fw(RAW)
+    module = fw(RAW, layer=Edge)
     plan = plan_module(module, {**RAW, "future": "x" * 500})
     with pytest.raises(ModuleWriteError) as exc:
         _ = check_module_write(module, plan, as_stored(module, RAW))
@@ -288,7 +289,7 @@ def test_long_values_are_cut():
 
 def test_long_values_are_cut_where_they_differ():
     old, new = list(range(60)), [*range(55), 99, *range(56, 60)]
-    module = fw({**RAW, "future": old})
+    module = fw({**RAW, "future": old}, layer=Edge)
     plan = plan_module(module, {**RAW, "future": new})
     stored = as_stored(module, {**RAW, "future": old, "syslog_forwarding": True})
     with pytest.raises(ConfigConflictError) as exc:
@@ -315,7 +316,7 @@ def inbound_rows(*names: str) -> list[dict[str, Any]]:
 
 def test_message_shows_the_place_of_an_added_rule_and_the_order():
     rows = inbound_rows("a", "b")
-    module = fw({**RAW, "inbound": rows})
+    module = fw({**RAW, "inbound": rows}, layer=Edge)
     module.data.inbound.insert(0, inbound("c"))
     module.data.inbound.append(module.data.inbound.pop(1))  # c, b, a
     plan = plan_module(module)
@@ -338,7 +339,7 @@ def test_message_shows_the_place_of_an_added_rule_and_the_order():
 
 
 def test_message_names_a_stored_order():
-    module = fw({**RAW, "inbound": inbound_rows("a", "b")})
+    module = fw({**RAW, "inbound": inbound_rows("a", "b")}, layer=Edge)
     module.data.inbound.reverse()
     module.data.firewall_enabled = False
     plan = plan_module(module)
@@ -350,7 +351,7 @@ def test_message_names_a_stored_order():
 
 def test_redo_patch_rebuilds_a_place_and_a_move():
     rows = inbound_rows("a", "b")
-    module = fw({**RAW, "inbound": rows})
+    module = fw({**RAW, "inbound": rows}, layer=Edge)
     module.data.inbound.insert(0, inbound("c"))
     module.data.inbound.append(module.data.inbound.pop(1))  # c, b, a
     module.data.inbound[1].logging_enabled = True
@@ -523,7 +524,7 @@ def test_refs_the_vco_dropped_on_its_own():
 
 
 def test_firewall_rule_id_revised_passes():
-    module = fw(RAW)
+    module = fw(RAW, layer=Edge)
     module.data.inbound.append(inbound("a", ruleLogicalId="x"))
     plan = plan_module(module)
     stored_data = copy.deepcopy(plan.data)
@@ -537,7 +538,7 @@ def test_firewall_rule_id_revised_passes():
 
 def test_a_write_whose_only_changes_are_left_out_passes():
     rule = inbound("a", ruleLogicalId="x").model_dump(mode="json")
-    module = fw({**RAW, "inbound": [rule]})
+    module = fw({**RAW, "inbound": [rule]}, layer=Edge)
     module.data.inbound[0].rule_logical_id = "x2"
     plan = plan_module(module)
     stored_data = copy.deepcopy(plan.data)
@@ -550,7 +551,7 @@ def test_a_write_whose_only_changes_are_left_out_passes():
 
 def test_write_error_lists_what_is_left_out():
     rule = inbound("a", ruleLogicalId="x").model_dump(mode="json")
-    module = fw({**RAW, "inbound": [rule]})
+    module = fw({**RAW, "inbound": [rule]}, layer=Edge)
     plan = plan_module(
         module,
         {
@@ -625,7 +626,7 @@ def test_ipv6_in_another_form_passes_in_device_settings():
 
 
 def test_the_same_in_firewall_is_not_applied():
-    module = fw(RAW)
+    module = fw(RAW, layer=Edge)
     plan = plan_module(module, {**RAW, "note6": "2001:DB8::1"})
     stored = as_stored(module, {**RAW, "note6": "2001:db8::1"})
     with pytest.raises(WriteNotAppliedError) as exc:
@@ -665,7 +666,7 @@ def ecmp_removed() -> tuple[ConfigurationModuleBase, ModulePlan]:
 def owned_id_changed() -> tuple[ConfigurationModuleBase, ModulePlan]:
     """A firewall module whose only planned change is to a rule's ``ruleLogicalId``, which the VCO owns."""
     rule = inbound("a", ruleLogicalId="x").model_dump(mode="json")
-    module = fw({**RAW, "inbound": [rule]})
+    module = fw({**RAW, "inbound": [rule]}, layer=Edge)
     return module, plan_module(
         module, {**RAW, "inbound": [{**rule, "ruleLogicalId": "x2"}]}
     )
@@ -770,7 +771,7 @@ def test_refused_with_a_left_out_change_stored_otherwise_is_a_conflict_too():
 
 def test_refused_with_a_change_stored_and_one_left_out_as_read_is_a_conflict():
     rule = inbound("a", ruleLogicalId="x").model_dump(mode="json")
-    module = fw({**RAW, "inbound": [rule]})
+    module = fw({**RAW, "inbound": [rule]}, layer=Edge)
     plan = plan_module(
         module,
         {
@@ -789,7 +790,7 @@ def test_refused_with_a_change_stored_and_one_left_out_as_read_is_a_conflict():
 
 def test_a_row_with_nothing_stored_makes_a_left_out_change_as_read_a_lost_edit():
     rule = inbound("a", ruleLogicalId="x").model_dump(mode="json")
-    module = fw({**RAW, "inbound": [rule]})
+    module = fw({**RAW, "inbound": [rule]}, layer=Edge)
     plan = plan_module(
         module, {**RAW, "inbound": [{**rule, "ruleLogicalId": "x2"}], "future": 2}
     )

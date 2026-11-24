@@ -32,6 +32,7 @@ from pyvelo.client.schemas.configuration import (
     WanConfigurationModule,
 )
 from pyvelo.core import ConfigContext
+from pyvelo.core.layers import Profile
 from pyvelo.core.rebase import Path
 from pyvelo.testing import make_module_json, store_of
 from refs_helpers import SEG1_OBJECT, SEGMENT
@@ -57,7 +58,7 @@ def profile_modules(
 ) -> tuple[
     DeviceSettingsConfigurationModule,
     QosConfigurationModule,
-    FirewallConfigurationModule,
+    FirewallConfigurationModule[Profile],
 ]:
     """The three modules of a profile, read as a profile's are."""
     context = {"config_level": ConfigContext.PROFILE}
@@ -65,7 +66,7 @@ def profile_modules(
     return (
         DeviceSettingsConfigurationModule.model_validate(rows[0], context=context),
         QosConfigurationModule.model_validate(rows[1], context=context),
-        FirewallConfigurationModule.model_validate(rows[2], context=context),
+        FirewallConfigurationModule[Profile].model_validate(rows[2], context=context),
     )
 
 
