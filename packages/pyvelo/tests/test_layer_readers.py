@@ -14,7 +14,7 @@ from typing import Annotated, Any, cast
 
 import pytest
 from layered_models import Flagged, Mod, Rule, Seg, Settings, mod_json
-from pydantic import MISSING, Field, field_validator
+from pydantic import MISSING, AfterValidator, Field, ValidationError, field_validator
 from pydantic.fields import FieldInfo
 from pyvelo.client.exceptions import DetachedObjectError
 from pyvelo.client.models.configuration.ref_owners import ref_owners
@@ -606,6 +606,12 @@ def test_a_patch_never_stores_a_bare_value_in_place_of_an_owned(
     assert wire_dump(edge, EDGE_LEVEL) == before
 
 
+def _not_negative(value: int) -> int:
+    if value < 0:
+        raise ValueError("level must not be negative")
+    return value
+
+
 class _Guarded(Layered[L]):
     level: Annotated[Inheritable[int], ByPresence(), Default(0)] = Field(default=...)
 
@@ -645,6 +651,56 @@ def test_the_context_view_sees_the_kind_of_a_field() -> None:
         assert not at_edge.profile_note.is_present
         assert at_edge.settings.is_present
         assert at_profile.settings.field_info is model_type.model_fields["settings"]
+
+
+@pytest.mark.parametrize("mode", ["after", "wrap", "plain"])
+def test_a_validator_that_would_see_an_owned_is_refused_at_class_creation(
+    mode: str,
+) -> None:
+    def check(value: object) -> object:
+        return value
+
+    def check_wrapping(value: object, handler: object) -> object:
+        return value
+
+    function = check_wrapping if mode == "wrap" else check
+
+    with pytest.raises(TypeError, match=rf"Refused\.level.*{mode} field validator"):
+
+        class Refused(Layered[L]):  # pyright: ignore[reportUnusedClass]
+            level: Annotated[Inheritable[int], ByPresence(), Default(0)] = Field(
+                default=...
+            )
+            _check = field_validator("level", mode=mode)(function)  # pyright: ignore[reportArgumentType, reportCallIssue, reportUnknownVariableType]
+
+    # The fix it names, and a before validator, are accepted.
+    assert _Guarded[Edge].model_validate({"level": 1}).level.stored == 1
+
+
+class _AfterInside(Layered[L]):
+    level: Annotated[
+        Inheritable[Annotated[int, AfterValidator(_not_negative)]],
+        ByPresence(),
+        Default(0),
+    ] = Field(default=...)
+
+
+def test_an_after_validator_inside_the_kind_refuses_the_same_value_on_every_path() -> (
+    None
+):
+    with pytest.raises(ValidationError, match="must not be negative"):
+        _AfterInside[Edge].model_validate({"level": -1})
+    with pytest.raises(ValidationError, match="must not be negative"):
+        _AfterInside[Profile].model_validate({"level": -1})
+    edge = _AfterInside[Edge].model_validate({"level": 1})
+    profile = _AfterInside[Profile].model_validate({"level": 1})
+    with pytest.raises(PatchError, match="must not be negative") as from_set_local:
+        edge.level.set_local(-1)
+    with pytest.raises(PatchError, match="must not be negative") as from_patch:
+        _ = profile.merge_patch({"level": -1})
+    assert str(from_set_local.value) == str(from_patch.value)
+    assert edge.level.stored == 1
+    assert profile.level == 1
 
 
 # ---------------------------------------------------------------------------

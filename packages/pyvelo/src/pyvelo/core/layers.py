@@ -622,6 +622,27 @@ class _DumpRule(NamedTuple):
     default: Default | None
 
 
+def _refuse_validators_after_the_kind(cls: type[VcoModel], name: str) -> None:
+    """``TypeError`` if *cls* has an ``after``, ``wrap`` or ``plain`` ``@field_validator`` for the ``Inheritable`` field *name*.
+
+    Pydantic runs a class's field validators outside the field's type, so on an
+    edge parse one of those would be given the ``Owned`` and everywhere else
+    (profile, composed, ``set_local``, a patch) the value. A ``before`` one
+    runs ahead of the kind on the raw value on every path, and is allowed.
+    """
+    for function, decorator in cls.__pydantic_decorators__.field_validators.items():
+        info = decorator.info
+        if info.mode != "before" and (name in info.fields or "*" in info.fields):
+            raise TypeError(
+                f"{cls.__name__}.{name}: the {info.mode} field validator "
+                + f"{function!r} would be given an Owned when the edge layer is "
+                + "parsed and the value on every other path. Put the validation "
+                + "inside the kind's type argument, where every path runs it on "
+                + "the value: Inheritable[Annotated[T, AfterValidator(check)]]; "
+                + "a before validator is allowed"
+            )
+
+
 class Layered(VcoModel, Generic[L]):  # noqa: UP046 (one shared constrained L, as a TypeVar)
     """Base of the models whose fields depend on the layer: ``Data[Edge]``, ``Data[Profile]``, ...
 
@@ -630,6 +651,13 @@ class Layered(VcoModel, Generic[L]):  # noqa: UP046 (one shared constrained L, a
     and a ``[Effective]`` or ``[Composed]`` model refuses attribute
     assignment. On the edge layer an assignment to an ``Inheritable`` field
     raises too: it would replace who owns the value with a bare value.
+
+    A class may not declare an ``after``, ``wrap`` or ``plain``
+    ``@field_validator`` on an ``Inheritable`` field (``TypeError`` when the
+    class is created): it would see an ``Owned`` on an edge parse and the value
+    on every other path. Validate inside the kind's type argument instead,
+    ``Inheritable[Annotated[T, AfterValidator(check)]]``, which every path runs
+    on the value; a ``before`` validator is allowed.
     """
 
     _binding: Binding | None = PrivateAttr(default=None)
@@ -770,6 +798,7 @@ class Layered(VcoModel, Generic[L]):  # noqa: UP046 (one shared constrained L, a
                         + "one encoding, ByPresence() or ByFlag(...), which says "
                         + "how the edge stores an override"
                     )
+                _refuse_validators_after_the_kind(cls, name)
             elif defaults:
                 raise TypeError(
                     f"{cls.__name__}.{name}: only an Inheritable field has a display "
