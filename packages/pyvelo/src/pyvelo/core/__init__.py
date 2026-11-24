@@ -7,6 +7,9 @@ This package is split into these submodules:
 - patch: the patch helpers (add, delete, move, at) and PatchError
 - merge: applying a patch to a model, and selecting items of a list
 - rebase: the path and key types that locate a change
+- owned: Owned, the value an inheritable field holds on the edge layer, and its encodings
+- layers: the layers (Edge, Profile, Effective, Composed), Layered models, the field kinds, Default and field_kind
+- effective: Origin and Resolved, a value of the effective view
 - walk: walk_fields, the walk over the fields of a model and the models below it
 - references: the values that name a member of a set the configuration provides, and the check of them
 - secrets: hide_secrets, which shows a value without its secrets
@@ -45,6 +48,7 @@ from .base import (
     value_or,
     wire_name,
 )
+from .effective import Origin, Resolved
 from .fields import (
     Alias,
     CoerceInt,
@@ -139,7 +143,25 @@ from .identity import (
     ServiceGroupLogicalId,
     ServiceGroupName,
 )
+from .layers import (
+    Additive,
+    Composed,
+    Default,
+    Edge,
+    Effective,
+    FieldKind,
+    Inheritable,
+    Kind,
+    L,
+    Layer,
+    Layered,
+    Profile,
+    Unconverted,
+    field_kind,
+    layer_for,
+)
 from .merge import item_selector, nest_patch, select_items
+from .owned import ByFlag, ByPresence, Encoding, Owned
 from .patch import (
     PatchError,
     PatchErrorKind,
@@ -166,6 +188,7 @@ from .secrets import hide_secrets
 from .walk import FieldSite, walk_fields
 
 __all__ = [
+    "Additive",
     "AddressGroupId",
     "AddressGroupIdentity",
     "AddressGroupLogicalId",
@@ -181,20 +204,28 @@ __all__ = [
     "ApplicationId",
     "ApplicationIdentity",
     "ApplicationName",
+    "ByFlag",
+    "ByPresence",
     "CoerceInt",
+    "Composed",
     "ConfigContext",
     "ContextDefault",
     "ContextDefaults",
     "ContextFieldInfo",
     "ContextView",
+    "Default",
     "DefaultingModel",
     "DefaultingScalar",
+    "Edge",
     "EdgeId",
     "EdgeIdentity",
     "EdgeLocal",
     "EdgeLogicalId",
     "EdgeName",
     "EdgeOnly",
+    "Effective",
+    "Encoding",
+    "FieldKind",
     "FieldSite",
     "FixedList",
     "GatewayId",
@@ -208,6 +239,7 @@ __all__ = [
     "HubService",
     "HubServiceNotFoundError",
     "IdentityLookup",
+    "Inheritable",
     "InsertionConfirmation",
     "JsonRpcError",
     "JsonRpcRequest",
@@ -215,6 +247,10 @@ __all__ = [
     "Key",
     "KeyField",
     "KeySpec",
+    "Kind",
+    "L",
+    "Layer",
+    "Layered",
     "LicenseId",
     "LicenseIdentity",
     "LicenseName",
@@ -235,7 +271,9 @@ __all__ = [
     "NoneIsTrue",
     "NoneIsZero",
     "Normalizer",
+    "Origin",
     "OverrideFlag",
+    "Owned",
     "OwnsRef",
     "PaginatedResult",
     "PaginatedVcoModel",
@@ -244,6 +282,7 @@ __all__ = [
     "PatchErrorKind",
     "Path",
     "Positional",
+    "Profile",
     "ProfileId",
     "ProfileIdentity",
     "ProfileName",
@@ -254,6 +293,7 @@ __all__ = [
     "ReferenceFindings",
     "RefersTo",
     "Resolvable",
+    "Resolved",
     "ResolverNotLoadedError",
     "RowsModifiedConfirmation",
     "Secret",
@@ -269,6 +309,7 @@ __all__ = [
     "ServiceGroupName",
     "Sets",
     "Tinyint",
+    "Unconverted",
     "VcoModel",
     "VcoTimestamp",
     "add",
@@ -276,6 +317,7 @@ __all__ = [
     "check_references",
     "check_time_is_never",
     "delete",
+    "field_kind",
     "field_models",
     "get_fixed_list",
     "get_hub_role",
@@ -297,6 +339,7 @@ __all__ = [
     "item_selector",
     "key_selector",
     "key_text",
+    "layer_for",
     "list_kind",
     "missing_or",
     "move",

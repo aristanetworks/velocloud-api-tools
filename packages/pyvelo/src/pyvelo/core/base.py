@@ -333,7 +333,13 @@ def _compact_dump(
     extra: Mapping[str, object] = model.model_extra or {}
     for key, value in extra.items():
         result[key] = _compact_value(value, by_alias=by_alias, level=level)
-    return result
+    return model._finish_dump(  # pyright: ignore[reportPrivateUsage]
+        result,
+        by_alias=by_alias,
+        compact_value=lambda value: _compact_value(
+            value, by_alias=by_alias, level=level
+        ),
+    )
 
 
 def _compact_value(
@@ -650,16 +656,34 @@ class VcoModel(BaseModel):
         # models don't inherit this model's level; pydantic serializes them
         # with the same context, and each one falls back to its own level.
         level = context_level if context_level is not None else self.config_context
-        if level is None:
-            return dumped
-
         # Full dumps follow model_config (serialize_by_alias=True) unless
         # by_alias=False is passed.
         by_alias = info.by_alias is not False
+        dumped = self._finish_dump(dumped, by_alias=by_alias, compact_value=None)
+        if level is None:
+            return dumped
+
         for name, field_info in type(self).model_fields.items():
             if _is_context_absent(_field_value(self, name), field_info, level):
                 key = _field_alias(field_info, name) if by_alias else name
                 _ = dumped.pop(key, None)
+        return dumped
+
+    def _finish_dump(
+        self,
+        dumped: JsonObject,
+        *,
+        by_alias: bool,
+        compact_value: Callable[[object], object] | None,
+    ) -> JsonObject:
+        """The last step of a dump of this model, full or compact; a subclass changes *dumped* here.
+
+        *dumped* has the keys of the fields as ``by_alias`` says. A full dump
+        holds each field as pydantic serialized it. A compact one holds each
+        field as the model has it; *compact_value* compacts a value (nested
+        models, lists and dicts included) as the dump does, and is ``None``
+        for a full dump.
+        """
         return dumped
 
     @classmethod

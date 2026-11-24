@@ -10,6 +10,10 @@ Provides:
   OwnsRef, RefOnly, Provides, RefersTo, HubRole)
 """
 
+# EdgeOnly and ProfileOnly are the kinds of the layer models: their static
+# types and their runtime carriers are in layers.py, which imports this module.
+# pyright: reportImportCycles=false
+
 from __future__ import annotations
 
 import inspect
@@ -17,7 +21,7 @@ from collections.abc import Callable
 from dataclasses import KW_ONLY, dataclass
 from enum import StrEnum
 from types import UnionType
-from typing import Any, Literal, cast
+from typing import TYPE_CHECKING, Any, Literal, Self, cast, overload
 
 from pydantic import (
     MISSING,
@@ -364,12 +368,79 @@ class Alias:
         self.key = key
 
 
-class EdgeOnly:
-    """Annotated marker: field absent at profile level."""
+if TYPE_CHECKING:
+    from .effective import Resolved
+    from .layers import Composed, Edge, Effective, Layered, Profile
 
+    class EdgeOnly[T]:
+        """Annotated marker: field absent at profile level.
 
-class ProfileOnly:
-    """Annotated marker: field absent at edge level."""
+        Subscripted, ``EdgeOnly[T]`` is the field kind of a ``Layered`` model:
+        the field exists only in the edge layer (``T``), and the effective
+        view gives it with its origin (``Resolved[T]``).
+        """
+
+        @overload
+        def __get__(self, obj: None, owner: type) -> Self: ...
+        @overload
+        def __get__(self, obj: Layered[Edge], owner: type | None = None) -> T: ...
+        @overload
+        def __get__(
+            self, obj: Layered[Effective], owner: type | None = None
+        ) -> Resolved[T]: ...
+        @overload
+        def __get__(self, obj: Layered[Composed], owner: type | None = None) -> T: ...
+        def __get__(self, obj: object, owner: type | None = None) -> object: ...
+        def __set__(self, obj: object, value: T) -> None: ...
+
+    class ProfileOnly[T]:
+        """Annotated marker: field absent at edge level.
+
+        Subscripted, ``ProfileOnly[T]`` is the field kind of a ``Layered``
+        model: the field exists only in the profile layer (``T``), and the
+        effective view gives it with its origin (``Resolved[T]``).
+        """
+
+        @overload
+        def __get__(self, obj: None, owner: type) -> Self: ...
+        @overload
+        def __get__(self, obj: Layered[Profile], owner: type | None = None) -> T: ...
+        @overload
+        def __get__(
+            self, obj: Layered[Effective], owner: type | None = None
+        ) -> Resolved[T]: ...
+        @overload
+        def __get__(self, obj: Layered[Composed], owner: type | None = None) -> T: ...
+        def __get__(self, obj: object, owner: type | None = None) -> object: ...
+        def __set__(self, obj: object, value: T) -> None: ...
+
+else:
+
+    class EdgeOnly:
+        """Annotated marker: field absent at profile level.
+
+        Subscripted, ``EdgeOnly[T]`` is the field kind of a ``Layered`` model:
+        the field exists only in the edge layer (``T``), and the effective
+        view gives it with its origin (``Resolved[T]``).
+        """
+
+        def __class_getitem__(cls, item: object) -> object:
+            from .layers import Kind, carrier  # layers imports this module
+
+            return carrier(Kind.EDGE_ONLY, item)
+
+    class ProfileOnly:
+        """Annotated marker: field absent at edge level.
+
+        Subscripted, ``ProfileOnly[T]`` is the field kind of a ``Layered``
+        model: the field exists only in the profile layer (``T``), and the
+        effective view gives it with its origin (``Resolved[T]``).
+        """
+
+        def __class_getitem__(cls, item: object) -> object:
+            from .layers import Kind, carrier  # layers imports this module
+
+            return carrier(Kind.PROFILE_ONLY, item)
 
 
 class Normalizer:
