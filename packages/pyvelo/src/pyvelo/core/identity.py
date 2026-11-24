@@ -510,12 +510,18 @@ class HubServiceNotFoundError(ResolutionError):
         )
 
     def _service_message(self) -> str:
+        # *hub* is the hub's name, else its logical ID.
+        try:
+            _ = uuid.UUID(self.hub)
+            key = "logicalId"
+        except ValueError:
+            key = "name"
         add = {
             "segments": {
                 self.segment: {
                     "vpn": {
                         "edgeToEdgeHub": {
-                            "vpnHubs": {"+": {"_op": "add", "name": self.hub}}
+                            "vpnHubs": {"+": {"_op": "add", key: self.hub}}
                         }
                     }
                 }

@@ -16,7 +16,7 @@ is a ``per_segment`` one: the set of the segment the marked list sits in.
 import functools
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from collections.abc import Set as AbstractSet
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from pydantic import MISSING
 from pydantic.fields import FieldInfo
@@ -45,6 +45,10 @@ class Reference:
     """The name of the set the value is a member of."""
     segment_id: int | None
     """The ID of the segment the field sits in, for a ``per_segment`` reference; else ``None``."""
+    segment_name: str | None = field(default=None, compare=False)
+    """The name of that segment, when the segment has one."""
+    holder: VcoModel | None = field(default=None, compare=False, repr=False)
+    """The model that holds the field (a backhaul entry, for a hub), as the walk found it."""
 
 
 @dataclass(frozen=True)
@@ -101,6 +105,13 @@ def _segment_id(segment: VcoModel | None) -> int | None:
     return segment_id if isinstance(segment_id, int) else None
 
 
+def _segment_name(segment: VcoModel | None) -> str | None:
+    """The ``name`` of a segment entry, or ``None`` when it has none."""
+    metadata: object = getattr(segment, "segment", None)
+    name: object = getattr(metadata, "name", None)
+    return name if isinstance(name, str) else None
+
+
 def references(module: str, data: VcoModel) -> tuple[Reference, ...]:
     """Every ``RefersTo`` value in *data*, which is the data of the module named *module*.
 
@@ -122,7 +133,17 @@ def references(module: str, data: VcoModel) -> tuple[Reference, ...]:
         if value is None or value is MISSING or value in refers.none:
             continue
         segment_id = _segment_id(site.segment) if refers.per_segment else None
-        found.append(Reference(module, site.path, value, refers.name, segment_id))
+        found.append(
+            Reference(
+                module,
+                site.path,
+                value,
+                refers.name,
+                segment_id,
+                _segment_name(site.segment) if refers.per_segment else None,
+                site.model,
+            )
+        )
     return tuple(found)
 
 

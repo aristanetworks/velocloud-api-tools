@@ -52,6 +52,7 @@ from pyvelo_intent.config.hub_steps import (
     Role,
     hub_in_use_message,
     hub_lists_of,
+    list_path,
 )
 from pyvelo_intent.config.validation_warning import ValidationWarning
 
@@ -424,7 +425,7 @@ def report_hubs_in_use(
             segment=found[0][0].segment
             if len({step.segment for step, _, _ in found}) == 1
             else None,
-            lists=("vpn.edgeToEdgeHub.vpnHubs",),
+            lists=(list_path("hub"),),
             hubs=tuple(dict.fromkeys(step.hub.name for step, _, _ in found)),
             edges=tuple(dict.fromkeys(e for _, edges, _ in found for e in edges)),
         )

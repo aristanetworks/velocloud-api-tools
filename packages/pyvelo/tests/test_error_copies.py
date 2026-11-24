@@ -445,3 +445,24 @@ def test_a_patch_error_keeps_its_path_kind_and_notes_through_copies():
             "unknown_field",
         )
         assert copied.__notes__ == ["in the second patch"]
+
+
+def test_a_dangling_reference_error_for_an_edge_keeps_that_through_copies():
+    reference = Reference("QOS", Path(("x",)), uuid.UUID(int=5), "backhaul_hub", 2)
+    error = DanglingReferenceError([reference], on_edge=True)
+    for copied in copies(error):
+        assert copied.on_edge is True
+        assert str(copied) == str(error)
+
+
+def test_a_hub_service_message_names_the_hub_by_logical_id_when_it_has_no_name():
+    logical_id = str(uuid.UUID(int=7))
+    named = HubServiceNotFoundError(hub="Hub-A", segment="Global Segment", path="p")
+    unnamed = HubServiceNotFoundError(
+        hub=logical_id, segment="Global Segment", path="p"
+    )
+
+    assert '"name": "Hub-A"' in str(named)
+    assert '"logicalId"' not in str(named)
+    assert f'"logicalId": "{logical_id}"' in str(unnamed)
+    assert '"name"' not in str(unnamed)

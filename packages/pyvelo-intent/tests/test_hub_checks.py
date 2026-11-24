@@ -4,6 +4,7 @@
 refuses with no request sent: no version read, no services read.
 """
 
+import json
 from typing import Any
 
 import pytest
@@ -182,6 +183,47 @@ async def test_a_hub_listed_twice_raises(list_path: str, ds: dict[str, Any]):
     error = await refused(state)
 
     assert_names(error, "Hub-A", "twice", lists=(list_path,))
+
+
+@pytest.mark.parametrize(
+    ("list_path", "ds"),
+    [
+        (HUB_LIST, ds_with_vpn(GLOBAL, hubs=(HUB_A,))),
+        (BRIDGE_LIST, ds_with_vpn(GLOBAL, hubs=(HUB_A,), bridges=(HUB_A,))),
+        (BACKHAUL_LIST, ds_with_vpn(GLOBAL, hubs=(HUB_A,), backhaul=(HUB_A,))),
+    ],
+)
+async def test_the_advice_for_a_hub_listed_twice_is_accepted_and_mends_it(
+    list_path: str, ds: dict[str, Any]
+):
+    state = await profile_of(ds, HUB_A)
+    vpn = state.profile.device_settings.segments[0].vpn
+    holder = {
+        HUB_LIST: vpn.hub_edges.vpn_hubs,
+        BRIDGE_LIST: vpn.edge_to_edge_detail.vpn_hubs,
+        BACKHAUL_LIST: vpn.backhaul_edges,
+    }[list_path]
+    holder.append(VpnHub.model_validate(hub_entry(HUB_A)))
+    error = await refused(state)
+    text = str(error)
+
+    # The patch the message gives, as a text-only caller would send it.
+    patch, _ = json.JSONDecoder().raw_decode(text[text.index('{"segments"') :])
+    assert patch == {
+        "segments": {GLOBAL[1]: {"vpn": _nested(list_path, {"#1": {"_op": "delete"}})}}
+    }
+    _ = await ConfigPipeline(client=None).apply(state, module=DS, patch=patch)
+
+    assert state.plan().steps == ()
+    assert [h.name for h in holder] == [HUB_A.name]
+
+
+def _nested(list_path: str, change: dict[str, Any]) -> dict[str, Any]:
+    """*change* at the dotted *list_path* below ``vpn``."""
+    node: dict[str, Any] = change
+    for key in reversed(list_path.split(".")[1:]):
+        node = {key: node}
+    return node
 
 
 # --- rule 3: Edge to Edge through hubs needs a bridge hub ------------------------

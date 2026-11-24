@@ -22,6 +22,7 @@ from pyvelo.client.hub_services import (
     CLUSTER_HUB_REF,
     EDGE_HUB_REF,
     can_hold_hub_role,
+    hub_list_fields,
 )
 from pyvelo.client.models.configuration.device_settings.root import DeviceSettingsData
 from pyvelo.client.models.configuration.device_settings.segment import (
@@ -411,11 +412,9 @@ def role_disagreements(
 # --- the UI's rules for the lists ------------------------------------------------
 
 _LIST_PATHS: Final[dict[Role, tuple[str, ...]]] = {
-    "hub": ("vpn", "edgeToEdgeHub", "vpnHubs"),
-    "bridge": ("vpn", "edgeToEdgeDetail", "vpnHubs"),
-    "backhaul": ("vpn", "backHaulEdges"),
+    field.role: field.path for field in hub_list_fields()
 }
-"""The wire path of each role's list, from a segment."""
+"""The wire path of each role's list, from a segment: the fields marked ``HubRole``."""
 _LIST_LABELS: Final[dict[Role, str]] = {
     "hub": "Branch-to-Hub list",
     "bridge": "bridge list",
@@ -432,9 +431,14 @@ def _patch(segment: str, path: tuple[str, ...], change: object) -> str:
     return json.dumps({"segments": {segment: node}})
 
 
+def list_path(role: Role) -> str:
+    """The dotted wire path of the list of *role*, from a segment: ``vpn.edgeToEdgeHub.vpnHubs`` for the Branch-to-Hub list."""
+    return ".".join(_LIST_PATHS[role])
+
+
 def _list_text(role: Role) -> str:
     """How a message names the list of *role*: its label and its wire path."""
-    return f"the {_LIST_LABELS[role]} (`{'.'.join(_LIST_PATHS[role])}`)"
+    return f"the {_LIST_LABELS[role]} (`{list_path(role)}`)"
 
 
 def _removal(segment: str, role: Role, hubs: Sequence[VpnHub]) -> str:
@@ -442,6 +446,25 @@ def _removal(segment: str, role: Role, hubs: Sequence[VpnHub]) -> str:
     change = {h.name: {"_op": "delete"} for h in hubs}
     return (
         f"{_patch(segment, _LIST_PATHS[role], change)} (`delete()` in Python) {_APPLY}"
+    )
+
+
+def _repeats_removal(segment: str, role: Role, hubs: Sequence[VpnHub]) -> str:
+    """The patch that removes the repeats from the list *hubs* of *role* of *segment*: every entry after the first of a logical ID, by position.
+
+    A hub that is listed twice has no selector of its own (its name names both
+    entries), so each repeat is named by its place in the list as it is now
+    (``"#n"``, ``at(n)`` in Python).
+    """
+    seen: set[_Key] = set()
+    change: dict[str, object] = {}
+    for position, hub in enumerate(hubs):
+        if _key(hub) in seen:
+            change[f"#{position}"] = {"_op": "delete"}
+        seen.add(_key(hub))
+    return (
+        f"{_patch(segment, _LIST_PATHS[role], change)} (`delete()` under `at(n)` in "
+        f"Python) {_APPLY}"
     )
 
 
@@ -462,16 +485,19 @@ def hub_in_use_message(
     who = ", ".join(f"{name!r} (Edge ID {edge_id})" for edge_id, name in edges)
     edge_word = "the Edges" if len(edges) > 1 else "the Edge"
     keep = (
-        f"To keep the hub, put it back in the lists it left, with "
-        f"{_addition(segment, 'hub', hub)}"
+        "To keep the hub, put it back in the Branch-to-Hub list, with "
+        f"{_addition(segment, 'hub', hub)}. A hub that leaves that list leaves "
+        f"the bridge and backhaul lists too (`{list_path('bridge')}`, "
+        f"`{list_path('backhaul')}`), so add it to those again, if it was in "
+        "them"
     )
     return (
         f"deviceSettings: segment {segment!r}: the hub {hub!r} is used by the "
         f"backhaul rules of {edge_word} {who}. Taking it out of the "
-        "Branch-to-Hub list sends the call that disables its hub role, which deletes the hub's "
-        "service for this profile and segment and with it the backhaul refs of "
-        "those Edges' rules: the rules keep the hub in their data, and name a "
-        "hub the VCO has no service for. "
+        "Branch-to-Hub list sends the call that disables its hub role, which "
+        "deletes the hub's service for this profile and segment and with it "
+        "the backhaul refs of those Edges' rules: the rules keep the hub in "
+        "their data, and name a hub the VCO has no service for. "
         + (
             "The save stops before it sends any step, so that no service is "
             f"deleted under those rules. Take {hub!r} out of those rules first "
@@ -524,7 +550,7 @@ def _problem(
     return _Problem(
         key,
         message,
-        tuple(".".join(_LIST_PATHS[r]) for r in roles),
+        tuple(list_path(r) for r in roles),
         tuple(dict.fromkeys(h.name for h in hubs)),
         frozenset((role, _key(h)) for role, h in listed),
     )
@@ -558,8 +584,9 @@ def _broken_rules(
                         f"{prefix}{_list_text(role)} holds {hub.name!r} twice. The "
                         "VCO keeps the list as given, so the hub would get its "
                         "role set once for two entries and cleared once for two. "
-                        f"List each hub once: remove it with {_removal(name, role, [hub])}"
-                        f", then add it back once with {_addition(name, role, hub.name)}.",
+                        "List each hub once: its name names both entries, so "
+                        "remove the repeats by their position, "
+                        f"{_repeats_removal(name, role, lists.get(role, []))}.",
                         [role],
                         [hub],
                     )
@@ -768,6 +795,8 @@ def check_hub_lists(
         segment
         for segment in now.segments
         if (was := read_by_id.get(_segment_id(segment))) is None
+        # Not ``==``: the models differ in a private ``_config_context``
+        # between the module as read and as edited, whatever their values.
         or was.vpn.model_dump() != segment.vpn.model_dump()
     ]
     added_hubs: dict[tuple[int, Role], list[VpnHub]] = {}

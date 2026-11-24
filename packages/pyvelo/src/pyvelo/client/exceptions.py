@@ -361,6 +361,52 @@ class HubListError(VcoError):
         super().__init__(message)
 
 
+def _hub_advice(reference: Reference, *, on_edge: bool) -> str:
+    """What to do about *reference*, a backhaul entry whose hub the segment does not list: the patch that makes it a hub of its segment, as the segment's own sentence.
+
+    The patch is for the segment of the reference and names the hub as its
+    entry does (its name, else its logical ID). It adds the hub to the
+    Branch-to-Hub list as well as to the backhaul list, because the UI's
+    rules refuse a backhaul hub that is no hub of the segment, and turns on
+    what a segment with hubs needs.
+    """
+    name: object = getattr(reference.holder, "edge_name", None)
+    hub = (
+        {"_op": "add", "name": name}
+        if isinstance(name, str) and name
+        else {"_op": "add", "logicalId": str(reference.value)}
+    )
+    segment = reference.segment_name or "<segment name>"
+    patch = {
+        "segments": {
+            segment: {
+                "vpn": {
+                    "enabled": True,
+                    "edgeToEdgeHub": {"enabled": True, "vpnHubs": {"+": hub}},
+                    "backHaulEdges": {"+": hub},
+                }
+            }
+        }
+    }
+    text = (
+        f" To make the hub a backhaul hub of the segment {segment!r}, send "
+        f"{json.dumps(patch)} to the device settings (`pipeline.apply(state, "
+        'module="deviceSettings", patch=...)`; in Python, the `add` helper '
+        "builds each entry). A backhaul hub is a hub of the segment too, so "
+        "the patch adds it to the Branch-to-Hub list and turns on what a "
+        "segment with hubs needs; leave out `edgeToEdgeHub` when the hub is "
+        "in that list already."
+    )
+    if on_edge:
+        text += (
+            " This is an Edge, and the hub lists are its profile's: send the "
+            "patch to the profile's device settings (load the profile with "
+            "`pipeline.load_profile`, apply it there and save the profile), "
+            "not to the Edge's, and save the Edge after."
+        )
+    return text
+
+
 class DanglingReferenceError(VcoError):
     """Raised when a save would leave a value that names nothing the configuration has.
 
@@ -371,12 +417,18 @@ class DanglingReferenceError(VcoError):
     not exist, a rule that backhauls nowhere. ``references`` are the
     references found, each with its module, path and value. A reference the
     configuration already held as it was read is not one of them.
+    ``on_edge`` is whether the target is an Edge: the hub lists are its
+    profile's, and the advice says so.
     """
 
     references: tuple[Reference, ...]
+    on_edge: bool
 
-    def __init__(self, references: Sequence[Reference]) -> None:
+    def __init__(
+        self, references: Sequence[Reference], *, on_edge: bool = False
+    ) -> None:
         self.references = tuple(references)
+        self.on_edge = on_edge
         lines = "\n".join(f"  {reference_text(r)}" for r in self.references)
         names = {r.set_name for r in self.references}
         sources: list[str] = []
@@ -401,13 +453,11 @@ class DanglingReferenceError(VcoError):
         )
         if sources:
             message += f" Where each comes from: {'; '.join(sources)}."
-        if "backhaul_hub" in names:
-            message += (
-                " To make a hub a backhaul hub of a segment, send "
-                '{"segments": {"Global Segment": {"vpn": {"backHaulEdges": '
-                '{"+": {"_op": "add", "name": "Hub-A"}}}}}} to the '
-                "device settings (in Python, the `add` helper builds the entry)."
-            )
+        first_hub = next(
+            (r for r in self.references if r.set_name == "backhaul_hub"), None
+        )
+        if first_hub is not None:
+            message += _hub_advice(first_hub, on_edge=on_edge)
         super().__init__(message)
 
 

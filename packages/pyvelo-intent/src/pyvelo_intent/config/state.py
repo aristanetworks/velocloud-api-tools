@@ -167,8 +167,8 @@ class ConfigPlan:
       (``check_warnings``).
 
     A profile whose edit adds a hub to a segment's hub, bridge or backhaul
-    list, or removes one, has the role calls the save makes after it writes
-    the modules (``steps``). ``render()`` shows them first, after the target
+    list, or removes one, has the role calls the save makes before it writes
+    the device settings (``steps``). ``render()`` shows them first, after the target
     line, as a ``steps:`` line and a line for each, in the order they are
     made:
 
@@ -994,7 +994,9 @@ class ConfigState:
         )
         findings = check_references(targets, sets_now, sets_as_read)
         if findings.dangling:
-            raise DanglingReferenceError(findings.dangling)
+            raise DanglingReferenceError(
+                findings.dangling, on_edge=level is ConfigContext.EDGE
+            )
         return tuple(
             ValidationWarning(
                 path=f"{reference.module}: {reference.path}",

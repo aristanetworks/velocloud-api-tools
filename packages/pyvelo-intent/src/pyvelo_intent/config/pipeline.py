@@ -618,6 +618,8 @@ class ConfigPipeline:
                 resolvers=state.resolvers,
             )
             if isinstance(mod, QosConfigurationModule):
+                # Cannot fail after the trial passed: the hub table and the
+                # segments are the trial's, and the patch is the same.
                 state.fill_hub_services(data, skip=unserved)
             return state
 
@@ -780,32 +782,35 @@ class ConfigPipeline:
         A profile whose edit adds a hub to a segment's hub, bridge or backhaul
         list, or removes one, has role steps (``ConfigPlan.steps``), which a
         write of the modules cannot do. The save sends them before step 3, in
-        the UI's order: it reads the device settings module's version (a
-        module another writer changed stops the save here, with nothing
-        sent, and the state holds the module as stored, as after a refused
-        write), reads the hub services, decides every step (in place or not,
-        and the ID its call takes), so that a refusal such as a hub whose
-        service the VCO holds twice comes before the first call, sends each
-        step not already in place, reads the services again, and writes the
-        device settings with the hub
-        rows the steps made (a hub added to a Branch-to-Hub list has its
-        row, one removed from it loses its row), without a second version
-        read. An Edge hub removed from a Branch-to-Hub list that edge QoS
-        rules use (a ``deviceSettings:backHaulEdge`` row of an Edge's QoS
-        module) loses its service to the role call, and with it the backhaul
-        refs of those rules, which keep the hub in their data. The services
-        read says so (it asks for ``edgeQOSUsage`` only for such a removal):
-        with *on_hub_in_use* ``"warn"`` the save adds a ``hub_in_use``
-        warning per hub and segment to ``SaveResult.warnings``, naming the
-        Edges, and goes on; with ``"refuse"`` it raises ``HubListError``
-        (``edges`` are their IDs and names) before it sends any step. A dry
-        run warns or raises the same way. ``SaveResult.steps`` has an outcome per step: ``"sent"`` or
-        ``"in_place"``. An error before any step was sent propagates as it
-        is. Once one was, or when the call of one fails, an ``Exception``
-        (also that of a module write) is raised as ``SaveStepError``, from
-        the VCO's error: nothing is undone, the state keeps its edits, and a
-        second ``save`` plans the steps again, skips those now in place and
-        sends the rest. A cancellation propagates as it is.
+        the UI's order: it reads the device settings module's version (a module
+        another writer changed stops the save here, with nothing sent, and the
+        state holds the module as stored, as after a refused write), reads the
+        hub services, decides every step (in place or not, and the ID its call
+        takes), so that a refusal such as a hub whose service the VCO holds
+        twice comes before the first call, sends each step not already in
+        place, reads the services again, and writes the device settings with
+        the hub rows the steps made (a hub added to a Branch-to-Hub list has
+        its row, one removed from it loses its row), without a second version
+        read.
+
+        An Edge hub removed from a Branch-to-Hub list that edge QoS rules use
+        (a ``deviceSettings:backHaulEdge`` row of an Edge's QoS module) loses
+        its service to the role call, and with it the backhaul refs of those
+        rules, which keep the hub in their data. The services read says so (it
+        asks for ``edgeQOSUsage`` only for such a removal): with
+        *on_hub_in_use* ``"warn"`` the save adds a ``hub_in_use`` warning per
+        hub and segment to ``SaveResult.warnings``, naming the Edges, and goes
+        on; with ``"refuse"`` it raises ``HubListError`` (``edges`` are their
+        IDs and names) before it sends any step. A dry run warns or raises the
+        same way.
+
+        ``SaveResult.steps`` has an outcome per step: ``"sent"`` or
+        ``"in_place"``. An error before any step was sent propagates as it is.
+        Once one was, or when the call of one fails, an ``Exception`` (also
+        that of a module write) is raised as ``SaveStepError``, from the VCO's
+        error: nothing is undone, the state keeps its edits, and a second
+        ``save`` plans the steps again, skips those now in place and sends the
+        rest. A cancellation propagates as it is.
 
         A provider you set (a DNS or authentication provider) goes with a ref
         row, which needs the enterprise's network services: the first plan
@@ -823,8 +828,9 @@ class ConfigPipeline:
         holds the module as stored (they carry it, as ``error.module``; a
         ``ConfigConflictError`` for a module gone from its configuration has
         none, and the state keeps the module as read, with its edits), so the
-        edits in ``error.lost_edits`` are to be redone: apply ``error.redo_patch()`` (``apply(state,
-        module=error.module_name, patch=error.redo_patch())``) and save again;
+        edits in ``error.lost_edits`` are to be redone: apply
+        ``error.redo_patch()`` (``apply(state, module=error.module_name,
+        patch=error.redo_patch())``) and save again;
         ``error.not_redone()`` lists the lost edits it leaves out. After
         ``WriteOutcomeUnknownError`` (the write was sent, or an insert was
         about to be sent again, and the module as stored could not be read)
@@ -983,8 +989,10 @@ class ConfigPipeline:
 
         Reads the hub services, adds the ``hub_in_use`` warnings to the run
         (``HubListError`` with *on_hub_in_use* ``"refuse"``, before any step),
-        sends each step not in place, in order, reads the services again and puts the hub rows the steps made in the device
-        settings plan (``with_hub_rows``), at its place in *changed*, unless
+        decides every step with ``prepare_steps`` (a refusal comes before the
+        first call), sends each step not in place, in order, reads the services
+        again and puts the hub rows the steps made in the device settings plan
+        (``with_hub_rows``), at its place in *changed*, unless
         *device_settings_stored* (its write was found stored and is in *done*:
         it is not written again). Returns what the steps did. An ``Exception``
         once a step was sent, or in the call of one, is a ``SaveStepError``;

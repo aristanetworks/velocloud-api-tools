@@ -283,6 +283,7 @@ async def test_removing_a_hub_a_rule_uses_raises_and_names_the_rule():
     assert (reference.module, reference.set_name) == (QOS, "backhaul_hub")
     assert reference.segment_id == GUEST[0]
     assert "rules[Web]" in str(error.value)
+    assert not error.value.on_edge and "This is an Edge" not in str(error.value)
 
 
 async def test_an_edge_rule_must_name_a_backhaul_hub_of_the_profile():
@@ -315,6 +316,11 @@ async def test_an_edge_rule_must_name_a_backhaul_hub_of_the_profile():
 
     (reference,) = error.value.references
     assert (reference.module, reference.value) == (QOS, uuid.UUID(HUB_B.logical_id))
+    # The hub lists are the profile's: the advice names its segment and hub.
+    assert error.value.on_edge
+    assert "This is an Edge" in str(error.value)
+    assert f'"{GLOBAL[1]}": {{"vpn"' in str(error.value)
+    assert f'"name": "{HUB_B.name}"' in str(error.value)
 
 
 async def test_an_edge_rule_naming_a_backhaul_hub_of_the_profile_is_accepted():

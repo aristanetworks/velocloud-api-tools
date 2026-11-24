@@ -171,6 +171,21 @@ async def test_removing_a_hub_that_an_edge_uses_warns_and_names_the_edge_and_goe
     assert len(writes(store)) == 1
 
 
+async def test_the_advice_to_keep_the_hub_names_the_lists_the_patch_restores():
+    pipeline, _, state = await used_hub_save()
+
+    result = await pipeline.save(state)
+
+    (warning,) = in_use_warnings(result.warnings)
+    # The patch restores the Branch-to-Hub list only, and the text says so.
+    assert "put it back in the Branch-to-Hub list" in warning.message
+    assert '"edgeToEdgeHub": {"vpnHubs": {"+": {"_op": "add", "name": "Hub-A"}}}' in (
+        warning.message
+    )
+    assert "`vpn.edgeToEdgeDetail.vpnHubs`" in warning.message
+    assert "`vpn.backHaulEdges`" in warning.message
+
+
 async def test_with_refuse_a_hub_an_edge_uses_raises_before_any_step():
     pipeline, store, state = await used_hub_save()
 

@@ -1,5 +1,6 @@
 """``references``, ``provided`` and ``check_references``: what the data refers to, what it provides, and which references name nothing."""
 
+import json
 import uuid
 from typing import Any
 
@@ -393,3 +394,71 @@ def test_the_sources_are_a_sentence_of_their_own():
         "`vpn.backHaulEdges` in the profile's device settings." in str(both)
     )
     assert "reference; " not in str(both)
+
+
+# -- the advice for a hub that is no backhaul hub -----------------------------------
+
+
+def _advice(message: str) -> dict[str, Any]:
+    """The patch the message gives: the JSON object that starts at ``{"segments"``."""
+    start = message.index('{"segments"')
+    patch, _ = json.JSONDecoder().raw_decode(message[start:])
+    return patch
+
+
+def _dangling_hub(*, named: bool, segment: segment_helpers.Segment = GUEST):
+    entry = backhaul_entry(HUB_B, SERVICE)
+    if not named:
+        del entry["name"]
+    data = qos_data((segment, [backhaul_rule("Web", entry)]))
+    findings = _check(data, None, NOW_HUBS, NOW_HUBS, "QOS")
+    return findings.dangling
+
+
+def test_the_advice_for_a_hub_adds_it_to_the_hub_list_and_the_backhaul_list_of_its_segment():
+    (reference,) = _dangling_hub(named=True)
+
+    patch = _advice(str(DanglingReferenceError([reference])))
+
+    entry = {"_op": "add", "name": HUB_B.name}
+    assert patch == {
+        "segments": {
+            GUEST[1]: {
+                "vpn": {
+                    "enabled": True,
+                    "edgeToEdgeHub": {"enabled": True, "vpnHubs": {"+": entry}},
+                    "backHaulEdges": {"+": entry},
+                }
+            }
+        }
+    }
+
+
+def test_the_advice_for_a_hub_with_no_name_gives_its_logical_id():
+    (reference,) = _dangling_hub(named=False)
+
+    patch = _advice(str(DanglingReferenceError([reference])))
+
+    entry = {"_op": "add", "logicalId": HUB_B.logical_id}
+    vpn = patch["segments"][GUEST[1]]["vpn"]
+    assert vpn["backHaulEdges"] == {"+": entry}
+    assert vpn["edgeToEdgeHub"]["vpnHubs"] == {"+": entry}
+
+
+def test_the_advice_is_for_the_first_hub_reference_and_its_own_segment():
+    other = _dangling_hub(named=True, segment=GLOBAL)
+    (first,) = _dangling_hub(named=True)
+    message = str(DanglingReferenceError([first, *other]))
+
+    assert list(_advice(message)["segments"]) == [GUEST[1]]
+
+
+def test_the_advice_for_an_edge_says_the_profiles_device_settings_are_edited():
+    (reference,) = _dangling_hub(named=True)
+
+    on_profile = str(DanglingReferenceError([reference]))
+    on_edge = str(DanglingReferenceError([reference], on_edge=True))
+
+    assert "This is an Edge" in on_edge
+    assert "profile's device settings" in on_edge
+    assert "This is an Edge" not in on_profile

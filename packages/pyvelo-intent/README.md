@@ -775,10 +775,12 @@ edit needs, then writes the module.
   The same edit as JSON is `{"segments": {"Global Segment": {"vpn":
   {"edgeToEdgeHub": {"vpnHubs": {"+": {"_op": "add", "name": "Hub-A"}}}}}}}`.
   The resolver reads the enterprise's Edges and clusters on first use
-  (`HubIdentity`: three requests, once per state). A name that an Edge and a
-  cluster share needs the logical ID, and a member of a cluster is no hub of its
-  own: name the cluster. The hubs must exist: a hub, an Edge or a cluster is
-  made in the Orchestrator, not here.
+  (`HubIdentity`, once per state: the Edge list is paged at 200, so a VCO with
+  15,000 Edges takes about 75 requests, plus one for the clusters and one for
+  their members). A name that an Edge and a cluster share needs the logical ID,
+  and a member of a cluster is no hub of its own: name the cluster. The hubs
+  must exist: a hub, an Edge or a cluster is made in the Orchestrator, not
+  here.
 - **The steps.** `plan()` derives one role call per hub, list and segment that
   changed, from the module as read and as edited, and holds them in
   `ConfigPlan.steps` (`HubStep`: `action`, `role`, `hub`, `segment`). The order
@@ -804,14 +806,16 @@ edit needs, then writes the module.
   the hubs are loaded, which `apply` of a name and a save both do
   (`await pipeline.load_resolvers(state, HubIdentity)` does it now). A dry run
   reads the hub services (two `getEnterpriseServices` requests, the Edge hubs
-  and the clusters) to say which steps would be sent, and nothing else.
+  and the clusters) to say which steps would be sent, and nothing else beyond
+  loading the hub resolver.
 - **The checks.** `plan()` checks a segment whose `vpn` an edit changes against
   the UI's rules for its lists, before any call. A save that breaks one raises
   `HubListError` (from `pyvelo_intent`), which names the segment, the lists and
   the hubs, and gives the patch that mends it. The rules: the Branch-to-Hub
-  list is non-empty if and only if `edgeToEdgeHub.enabled` (so the first hub
-  added to a segment also sets it, and `vpn.enabled`, as above, and turning
-  either off needs the hubs removed first); no hub is listed twice in one list;
+  list is non-empty if and only if `edgeToEdgeHub.enabled` (so the patch that
+  adds the first hub to a segment must also set it, and `vpn.enabled`, as
+  above: the library sets neither; and turning either off needs the hubs
+  removed first); no hub is listed twice in one list;
   with `edgeToEdge` on and `useCloudGateway` off the bridge list is not empty;
   a hub in the backhaul or bridge list is in the Branch-to-Hub list too (so a
   hub that leaves that list leaves the others); a segment with hubs has
@@ -827,14 +831,18 @@ edit needs, then writes the module.
   raise `HubListError` for a payload that does.
 - **The save.** A save with steps does this, in order. It reads the version of
   the profile's device settings module (another writer's change stops the save
-  here with `ConfigConflictError`, and nothing is sent; a module that already
-  holds the planned changes, from a write whose answer was lost, counts as
-  written). It reads the hub services (two requests), sends each step the VCO
-  does not already have in place, reads the services again, and writes the
-  device settings with the hub rows the steps made, without reading the version
-  a second time. The write is the module as read with your edits and
-  `deviceSettings:vpn:edgeHub` (`edgeHubCluster` for a cluster) rows: a hub added
-  to the Branch-to-Hub list gets one, whose object is its service
+  here with `ConfigConflictError`, and nothing is sent; the state then holds
+  the module as stored, as after a refused write, and the edits it lost are in
+  `error.lost_edits`; a module that already holds the planned changes, from a
+  write whose answer was lost, counts as written). It reads the hub services
+  (two requests) and decides every step from them, which steps are in place and
+  the ID each call takes, so that a refusal (a hub whose service the VCO holds
+  twice is a `HubListError`) comes before the first call. It sends each step
+  the VCO does not already have in place, reads the services again, and writes
+  the device settings with the hub rows the steps made, without reading the
+  version a second time. The write is the module as read with your edits and
+  `deviceSettings:vpn:edgeHub` (`edgeHubCluster` for a cluster) rows: a hub
+  added to the Branch-to-Hub list gets one, whose object is its service
   (`+ refs deviceSettings:vpn:edgeHub (Global Segment): <service ID>` in
   `ModuleWrite.plan`), and a hub removed from it loses its row. A row of a hub
   that stays is never removed, and a hub the VCO has no service for after its
