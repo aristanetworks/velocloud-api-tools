@@ -11,7 +11,7 @@ Edge, ``deviceSettings:vpn:edgeHubCluster`` for a cluster).
 """
 
 import uuid
-from collections.abc import Iterator
+from collections.abc import Collection, Iterator, Mapping
 from typing import Final, Literal, Self
 
 from pydantic import MISSING
@@ -20,9 +20,15 @@ from pydantic.fields import FieldInfo
 from pyvelo.client.models.configuration.qos.rule import BackhaulEdge
 from pyvelo.client.models.configuration.ref_owners import can_hold_owner, rows_named
 from pyvelo.core import VcoModel
-from pyvelo.core.base import is_dict
+from pyvelo.core.base import IdentityLookup, is_dict
 from pyvelo.core.fields import get_owns_ref
-from pyvelo.core.identity import HubService, HubServiceNotFoundError
+from pyvelo.core.identity import (
+    HubService,
+    HubServiceNotFoundError,
+    ResolutionError,
+    ResolverNotLoadedError,
+    SegmentIdentity,
+)
 from pyvelo.core.rebase import Path
 from pyvelo.core.show import patch_text
 from pyvelo.core.walk import walk_fields
@@ -181,6 +187,78 @@ def missing_services(data: VcoModel) -> tuple[Path, ...]:
     Such an entry cannot have its row: the row points at the service.
     """
     return tuple(path for path, _, _ in _unserved(data))
+
+
+def _segment_name(segment: VcoModel | None) -> str:
+    metadata: object = getattr(segment, "segment", None)
+    name: object = getattr(metadata, "name", None)
+    return name if isinstance(name, str) else ""
+
+
+def _segment_object_id(
+    segment: VcoModel | None,
+    segment_object_ids: Mapping[int, int],
+    resolvers: IdentityLookup | None,
+) -> int | None:
+    """The object ID of the segment entry *segment*: from *segment_object_ids*, else the segment resolver; ``None`` when there is none.
+
+    Raises ``ResolverNotLoadedError`` when the resolver is needed and not loaded.
+    """
+    metadata: object = getattr(segment, "segment", None)
+    segment_id: object = getattr(metadata, "segment_id", None)
+    if not isinstance(segment_id, int):
+        return None
+    found = segment_object_ids.get(segment_id)
+    if found is not None or resolvers is None:
+        return found
+    try:
+        identity = resolvers.identity_sync(SegmentIdentity, "segment_id", segment_id)
+    except ResolverNotLoadedError:
+        raise
+    except ResolutionError:
+        return None
+    object_id: object = getattr(identity, "object_id", None)
+    return object_id if isinstance(object_id, int) else None
+
+
+def fill_services(
+    data: VcoModel,
+    table: HubServiceTable,
+    segment_object_ids: Mapping[int, int],
+    resolvers: IdentityLookup | None,
+    *,
+    skip: Collection[Path] = (),
+) -> None:
+    """Give each ``BackhaulEdge`` of *data* that names a hub and no service the hub's service for its segment.
+
+    The service is the one *table* holds for the hub (``edge_logical_id``)
+    in the entry's segment, found by the segment's object ID: *segment_object_ids*
+    (``segmentId`` to object ID) first, else the segment resolver of *resolvers*.
+    An entry at a path of *skip* is left as it is (one that lacked its
+    service as read, which an edit that does not touch it is no cause to
+    refuse). Raises ``HubServiceNotFoundError`` for the first entry whose hub
+    has no service in its segment, before any entry is changed, and
+    ``ResolverNotLoadedError`` when a segment's object ID needs the segment
+    resolver and it is not loaded.
+    """
+    found: list[tuple[BackhaulEdge, uuid.UUID]] = []
+    for path, entry, segment in _unserved(data):
+        if path in skip:
+            continue
+        object_id = _segment_object_id(segment, segment_object_ids, resolvers)
+        hub = entry.edge_logical_id
+        service = (
+            table.find_for_hub(object_id, hub)
+            if object_id is not None and isinstance(hub, uuid.UUID)
+            else None
+        )
+        if service is None:
+            raise HubServiceNotFoundError(
+                hub=hub_name(entry), segment=_segment_name(segment), path=str(path)
+            )
+        found.append((entry, service.logical_id))
+    for entry, logical_id in found:
+        entry.logical_id = logical_id
 
 
 def missing_service_error(

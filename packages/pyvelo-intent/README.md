@@ -176,7 +176,15 @@ A patch is strict and all or nothing:
   the entry (its name, `type`, logical ID and, in a rule, `edgeId`) come from
   the Edge or the hub cluster. A name that an Edge and a cluster share needs the
   logical ID. The hub resolver reads the enterprise's Edges and clusters once,
-  on first use.
+  on first use. In a rule's `backhaulEdges`, on an edge as on a profile, `apply`
+  also gives the entry its `logicalId`, the hub's service for the profile and
+  the rule's segment. The hub must be in the segment's lists and saved there
+  first: a hub that was added to the lists in the same unsaved edit has no
+  service yet, and `apply` raises `HubServiceNotFoundError`, whose message gives
+  the patch that adds the hub to the lists (`{"segments": {"Global Segment":
+  {"vpn": {"edgeToEdgeHub": {"vpnHubs": {"+": {"_op": "add", "name":
+  "Hub-A"}}}}}}}`). Save, then apply the rule. An entry built by assignment
+  without its `logicalId` raises the same error at `plan()`, naming its path.
 - A patch that cannot be applied raises `PatchError` (a `ValueError`). Its
   `path` is where in the patch it failed, its `message` the reason, and its
   `kind` one of the thirteen values below, for a caller that reacts to the

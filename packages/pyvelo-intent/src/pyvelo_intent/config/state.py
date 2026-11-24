@@ -4,7 +4,7 @@ import asyncio
 import copy
 import json
 import weakref
-from collections.abc import Mapping, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass, field, fields
 from typing import Any, Literal, Protocol, cast, override, runtime_checkable
 
@@ -15,12 +15,16 @@ from pyvelo.client.exceptions import (
     DetachedObjectError,
     SegmentSetError,
 )
+from pyvelo.client.hub_services import HubServiceTable, fill_services
 from pyvelo.client.models.configuration.common import segment_id_of
 from pyvelo.client.models.configuration.device_settings.root import DeviceSettingsData
 from pyvelo.client.models.configuration.firewall.root import FirewallData
 from pyvelo.client.models.configuration.profile_segments import AddedSegment
 from pyvelo.client.models.configuration.qos.root import QosData
-from pyvelo.client.models.configuration.ref_owners import ref_only_values
+from pyvelo.client.models.configuration.ref_owners import (
+    ref_only_values,
+    segment_object_ids,
+)
 from pyvelo.client.models.configuration.wan.root import WanData
 from pyvelo.client.module_check import ModuleWrite
 from pyvelo.client.module_write import (
@@ -971,6 +975,29 @@ class ConfigState:
             via_pipeline=True,
             repair_defaults=repair_defaults,
             conditional_backhaul=self.conditional_backhaul(module, level),
+        )
+
+    def fill_hub_services(self, data: VcoModel, *, skip: Collection[Path] = ()) -> None:
+        """Give each backhaul hub of the QoS *data* that names a hub and no service its service for the segment.
+
+        The service is the hub's in the profile's device settings module as
+        read (the target's own on a profile, the profile layer's on an edge),
+        as :meth:`plan_module` finds it (``pyvelo.client.hub_services.fill_services``).
+        ``HubServiceNotFoundError`` says a hub has none, and that the hub is
+        saved first and the rule after. An entry at a path of *skip* is left
+        as it is. ``ResolverNotLoadedError`` says the segment resolver is not
+        loaded.
+        """
+        held = _find_module(
+            self.profile_config, ConfigurationModuleName.DEVICE_SETTINGS
+        )
+        refs: object = MISSING if held is None else held.raw_refs
+        fill_services(
+            data,
+            HubServiceTable.from_refs(refs),
+            segment_object_ids(refs),
+            self.resolvers,
+            skip=skip,
         )
 
     def conditional_backhaul(

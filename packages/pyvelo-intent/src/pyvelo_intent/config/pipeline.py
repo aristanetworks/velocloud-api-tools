@@ -1,6 +1,6 @@
 """ConfigPipeline: orchestration layer for load → apply → save configuration workflow."""
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from typing import Any, Protocol, TypeIs, cast, runtime_checkable
 
 from pydantic import MISSING
@@ -11,6 +11,7 @@ from pyvelo.client.exceptions import (
     ModuleWriteError,
     UnboundError,
 )
+from pyvelo.client.hub_services import missing_services
 from pyvelo.client.models.configuration.qos.rule import QosRule
 from pyvelo.client.models.configuration.ref_owners import ref_only_values
 from pyvelo.client.module_check import ModuleWrite
@@ -386,6 +387,15 @@ class ConfigPipeline:
            does not write at the level of the target.
         5. Return the updated :class:`ConfigState`.
 
+        A QoS patch that names a hub in a rule's ``backhaulEdges`` entry (on a
+        profile or an edge) gives the entry its ``logicalId``, the hub's
+        service for the profile and the rule's segment
+        (:meth:`ConfigState.fill_hub_services`), on the copy and again on the
+        module's data, so the state and its dump hold it. A hub with no
+        service there (one that is not yet saved in the segment's lists)
+        raises ``HubServiceNotFoundError`` and leaves the state as it was; an
+        entry that lacked its service as read is left alone.
+
         A patch that gives a network service by name (a provider), or sets a
         provider, needs the enterprise's services loaded. The first such
         patch of a state reads them (:meth:`load_resolvers`), once, and goes
@@ -449,6 +459,11 @@ class ConfigPipeline:
                 )
                 prepared: ProfileSegmentPatch | None = None
                 loaded: set[type] = set()
+                unserved = (
+                    frozenset(missing_services(data))
+                    if isinstance(mod, QosConfigurationModule)
+                    else frozenset[Path]()
+                )
                 if profile_rules and holds_segment_ops(nested):
                     prepared = await self._prepare_profile_segments(
                         state, mod, nested, loaded
@@ -461,7 +476,7 @@ class ConfigPipeline:
                 while True:
                     try:
                         if prepared is not None:
-                            _try_assigning(state, mod, prepared)
+                            _try_assigning(state, mod, prepared, unserved)
                         else:
                             trial = data.model_copy(deep=True)
                             _ = trial.merge_patch(
@@ -480,6 +495,8 @@ class ConfigPipeline:
                                     _device_settings_as_read(state),
                                     (),
                                 )
+                            if isinstance(mod, QosConfigurationModule):
+                                state.fill_hub_services(trial, skip=unserved)
                             _ = state.plan_module(mod, trial)
                         break
                     except ResolverNotLoadedError as error:
@@ -502,6 +519,8 @@ class ConfigPipeline:
                 else nested,
                 resolvers=state.resolvers,
             )
+            if isinstance(mod, QosConfigurationModule):
+                state.fill_hub_services(data, skip=unserved)
             return state
 
     async def _prepare_profile_segments(
@@ -1346,7 +1365,10 @@ def _device_settings_as_read(state: ConfigState) -> object:
 
 
 def _try_assigning(
-    state: ConfigState, mod: AnyConfigurationModule, prepared: ProfileSegmentPatch
+    state: ConfigState,
+    mod: AnyConfigurationModule,
+    prepared: ProfileSegmentPatch,
+    unserved: Collection[Path],
 ) -> None:
     """Try *prepared*, the patch to profile module *mod* and the assignments it needs, on copies of the three modules.
 
@@ -1363,6 +1385,8 @@ def _try_assigning(
         after = _require_writable(copies[name]).data
         _ = after.merge_patch(prepared.patch, resolvers=state.resolvers)
         check_profile_segments(before, after, mod, ds_as_read, prepared.assignments)
+        if isinstance(mod, QosConfigurationModule):
+            state.fill_hub_services(after, skip=unserved)
 
     assign_on_trial(state, modules, prepared.assignments, edit)
 
