@@ -248,3 +248,17 @@ def test_a_new_outbound_rule_is_written_with_vlan_type_and_not_vlanType():
     (written,) = payload(edge, profile)["segments"][0]["outbound"]
     assert written["match"]["vlan_type"] == "end-to-end"
     assert "vlanType" not in written["match"]
+
+
+def test_a_rule_keeps_its_logging_flags_key_for_key():
+    base = {"name": "r", "action": {"allow_or_deny": "deny"}, "match": {}}
+    flagged = {**base, "hostedLoggingEnabled": True, "syslogForwardingEnabled": False}
+    for stored in (flagged, base):
+        written = FirewallOutboundRule.model_validate(stored).model_dump(
+            mode="json", by_alias=True, exclude_unset=True
+        )
+        assert written == stored
+    loaded = FirewallOutboundRule.model_validate(flagged)
+    assert loaded.hosted_logging_enabled is True
+    assert loaded.syslog_forwarding_enabled is False
+    assert FirewallOutboundRule.model_validate(base).hosted_logging_enabled is MISSING

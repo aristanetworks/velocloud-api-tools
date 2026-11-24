@@ -94,15 +94,7 @@ FINDINGS: frozenset[EffectiveCategory] = frozenset(
 CONVERTED_MODULES: tuple[str, ...] = ("firewall",)
 """The modules whose effective view exists: what ``compare_effective`` compares when it is given none."""
 
-UNMODELED_KEYS: Mapping[str, frozenset[str]] = {
-    "firewall": frozenset(
-        {
-            "etm",
-            "segments[*].outbound[*].hostedLoggingEnabled",
-            "segments[*].outbound[*].syslogForwardingEnabled",
-        }
-    )
-}
+UNMODELED_KEYS: Mapping[str, frozenset[str]] = {"firewall": frozenset({"etm"})}
 """Keys of a module that no model declares, as paths (``[*]`` for any one list item): reported as ``unconverted`` and not as ``server_only``."""
 
 

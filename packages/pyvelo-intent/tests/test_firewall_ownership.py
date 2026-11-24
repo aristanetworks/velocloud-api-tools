@@ -259,6 +259,25 @@ def test_a_profile_state_has_no_effective_view():
         _ = state.effective
 
 
+async def test_a_patch_sets_a_rules_logging_flags():
+    stored = {"name": "block", "match": {}, "action": {"allow_or_deny": "deny"}}
+    state = state_of({"segments": [global_segment(stored)]})
+    await ConfigPipeline(client=None).apply(
+        state,
+        module="firewall",
+        patch={
+            "segments": {
+                "Global Segment": {
+                    "outbound": {"block": {"hostedLoggingEnabled": True}}
+                }
+            }
+        },
+    )
+    path = 'segments["Global Segment"].outbound[block].hostedLoggingEnabled'
+    assert changed_paths(state) == [path]
+    assert change_after(firewall_plan(state), path) is True
+
+
 # --- a module the edge lacks ------------------------------------------------
 
 

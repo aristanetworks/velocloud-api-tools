@@ -707,7 +707,7 @@ There are six categories, and three of them are findings:
 | `server_only` | the server's answer has a value the view lacks | yes |
 | `factory` | the view gives a display default where the server has no value, or the same one | no, information |
 | `ignored` | the path is on the ignore list, is a secret, or is a segment the composer left out; reported with its reason | no |
-| `unconverted` | the path is not converted yet (`inbound`, `inboundV6`, a segment's `firewall_logging_enabled`, `etm`, and a rule's `hostedLoggingEnabled` and `syslogForwardingEnabled`), so the view has no value to compare | no, information |
+| `unconverted` | the path is not converted yet (`inbound`, `inboundV6`, a segment's `firewall_logging_enabled` and `etm`), so the view has no value to compare | no, information |
 
 `comparison.findings` is the entries that are findings, and `entries` all of
 them. A key is reported once, at the highest path that is absent from a side.

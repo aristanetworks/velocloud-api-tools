@@ -243,15 +243,7 @@ async def test_an_edge_with_no_firewall_row_compares_the_profiles_values():
 
 async def test_the_constants_say_what_is_converted_and_what_is_a_finding():
     assert CONVERTED_MODULES == ("firewall",)
-    assert UNMODELED_KEYS == {
-        "firewall": frozenset(
-            {
-                "etm",
-                "segments[*].outbound[*].hostedLoggingEnabled",
-                "segments[*].outbound[*].syslogForwardingEnabled",
-            }
-        )
-    }
+    assert UNMODELED_KEYS == {"firewall": frozenset({"etm"})}
     assert {(i.module, i.path) for i in EFFECTIVE_IGNORES} == {
         ("firewall", f"segments[*].outbound[*].{key}")
         for key in ("atp_action", "urlCategoryFiltering", "urlReputationFiltering")
@@ -489,23 +481,31 @@ async def test_unconverted():
     assert "unconverted" in line
 
 
-async def test_a_rule_key_the_stored_layers_carry_is_unconverted():
-    pipeline, state, client = await loaded()
-    for rule_ in composed_modules(client)["segments"][0]["outbound"]:
-        rule_["hostedLoggingEnabled"] = False
-        rule_["syslogForwardingEnabled"] = True
+async def test_a_stored_rules_logging_flags_match_the_server():
+    flags = {"hostedLoggingEnabled": False, "syslogForwardingEnabled": True}
+    edge = {**EDGE, "segments": [segment(0, "Global Segment", {**rule("e1"), **flags})]}
+    pipeline, state, _ = await loaded(edge)
     comparison = await pipeline.compare_effective(state)
 
     assert comparison.findings == ()
     found = by_path(comparison)
-    for path in (
-        "segments[0].outbound[0].hostedLoggingEnabled",
-        "segments[0].outbound[0].syslogForwardingEnabled",
-        "segments[0].outbound[1].hostedLoggingEnabled",
-    ):
-        assert found[path].category is EffectiveCategory.UNCONVERTED, path
-        assert found[path].client is MISSING
-        assert found[path].reason
+    for key in flags:
+        assert f"segments[0].outbound[0].{key}" not in found
+
+
+async def test_a_logging_flag_the_view_lacks_is_server_only():
+    pipeline, state, client = await loaded()
+    first = composed_modules(client)["segments"][0]["outbound"][0]
+    first["hostedLoggingEnabled"] = False
+    first["syslogForwardingEnabled"] = True
+    comparison = await pipeline.compare_effective(state)
+
+    found = by_path(comparison)
+    for key in ("hostedLoggingEnabled", "syslogForwardingEnabled"):
+        entry = found[f"segments[0].outbound[0].{key}"]
+        assert entry.category is EffectiveCategory.SERVER_ONLY, key
+        assert entry.client is MISSING
+    assert len(comparison.findings) == 2
 
 
 async def test_a_rule_key_only_the_composer_adds_is_ignored_with_its_reason():
