@@ -191,6 +191,27 @@ def test_effective_and_composed_are_read_only() -> None:
         Mod[Effective].model_validate({})
 
 
+def test_a_model_copy_update_cannot_replace_who_owns_an_edge_value() -> None:
+    edge = Mod[Edge].model_validate(mod_json())
+    with pytest.raises(TypeError, match=r"set_local.*\{\"enabled\": null\}") as raised:
+        edge.model_copy(update={"enabled": True})
+    assert "Mod[Edge].enabled" in str(raised.value)
+    assert edge.enabled == Owned(MISSING)
+    # What is not an Inheritable is copied with the update, as for any model.
+    assert edge.model_copy(update={"edge_note": "kept"}).edge_note == "kept"
+    assert edge.model_copy().enabled == Owned(MISSING)
+    profile = Mod[Profile].model_validate(mod_json())
+    assert profile.model_copy(update={"enabled": False}).enabled is False
+
+
+def test_a_model_copy_update_of_a_read_only_layer_raises() -> None:
+    composed = Mod[Composed].model_validate({"segments": []})
+    for key in ("enabled", "edge_note"):
+        with pytest.raises(TypeError, match="state.edge"):
+            composed.model_copy(update={key: False})
+    assert composed.model_copy().enabled == composed.enabled
+
+
 def test_every_kind_on_the_effective_layer_refuses_validation() -> None:
     for kind in (
         Kind.INHERITABLE,

@@ -881,28 +881,43 @@ class Layered(VcoModel, Generic[L]):  # noqa: UP046 (one shared constrained L, a
                 )
         check_groups(cls)
 
+    @classmethod
+    def _refuse_replacing(cls, name: str) -> None:
+        """``TypeError`` if replacing the value of field *name* of an instance would break the layer's rules."""
+        layer = cls.layer()
+        if layer is Effective or layer is Composed:
+            raise TypeError(
+                _READ_ONLY_MESSAGE.format(
+                    model=cls.__name__, name=name, layer=layer.__name__
+                )
+            )
+        if layer is Edge and name in cls._owned_fields():
+            key = wire_name(cls, name)
+            raise TypeError(
+                f"{cls.__name__}.{name}: the edge layer holds who owns this "
+                + "value, and assigning a plain value would lose that. Use "
+                + f".{name}.set_local(value) to override the profile, "
+                + f".{name}.inherit() to inherit it, .{name}.localize() to "
+                + "copy the profile's value in and edit it; in a patch, "
+                + f'{{"{key}": <value>}} overrides and {{"{key}": null}} inherits'
+            )
+
     @override
     def __setattr__(self, name: str, value: object) -> None:
         if not name.startswith("_"):
-            cls = type(self)
-            layer = cls.layer()
-            if layer is Effective or layer is Composed:
-                raise TypeError(
-                    _READ_ONLY_MESSAGE.format(
-                        model=cls.__name__, name=name, layer=layer.__name__
-                    )
-                )
-            if layer is Edge and name in cls._owned_fields():
-                key = wire_name(cls, name)
-                raise TypeError(
-                    f"{cls.__name__}.{name}: the edge layer holds who owns this "
-                    + "value, and assigning a plain value would lose that. Use "
-                    + f".{name}.set_local(value) to override the profile, "
-                    + f".{name}.inherit() to inherit it, .{name}.localize() to "
-                    + "copy the profile's value in and edit it; in a patch, "
-                    + f'{{"{key}": <value>}} overrides and {{"{key}": null}} inherits'
-                )
+            type(self)._refuse_replacing(name)
         super().__setattr__(name, value)
+
+    @override
+    def model_copy(
+        self, *, update: Mapping[str, Any] | None = None, deep: bool = False
+    ) -> Self:
+        # An update is stored without validation or the assignment guard, so
+        # it would put a bare value where the edge layer holds an Owned.
+        for name in update or ():
+            if not name.startswith("_"):
+                type(self)._refuse_replacing(name)
+        return super().model_copy(update=update, deep=deep)
 
     @classmethod
     @functools.cache
