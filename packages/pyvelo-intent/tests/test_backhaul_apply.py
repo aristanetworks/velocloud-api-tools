@@ -9,7 +9,8 @@ from typing import Any
 
 import pytest
 from hub_helpers import HUB_A, HUB_B, backhaul_entry, backhaul_rule
-from hub_state import hub_pipeline, hub_profile_state  # pyright: ignore[reportImplicitRelativeImport]
+from hub_state import EDGE_CONFIG, hub_pipeline, hub_profile_state  # pyright: ignore[reportImplicitRelativeImport]
+from pyvelo.client.enums.configuration import ConfigurationModuleName
 from pyvelo.client.hub_services import BACKHAUL_REF
 from pyvelo.client.models.configuration.qos.rule import BackhaulEdge
 from pyvelo.core.identity import HubServiceNotFoundError
@@ -157,7 +158,7 @@ async def test_an_edge_rule_on_a_new_qos_module_inserts_its_backhaul_row():
     assert isinstance(modules, list)
     modules[:] = [m for m in modules if m.name != "QOS"]
     state.take_snapshot()
-    pipeline, _ = hub_pipeline(state)
+    pipeline, store = hub_pipeline(state)
     rule = backhaul_rule("r2")
     rule["action"]["edge2EdgeRouteAction"]["routeCfg"]["backhaulEdges"] = [
         {"name": HUB_A.name}
@@ -171,15 +172,36 @@ async def test_an_edge_rule_on_a_new_qos_module_inserts_its_backhaul_row():
         patch={"+": add(rule)},
     )
 
-    (qos,) = [m for m in state.plan().modules if m.name == "QOS"]
-    assert qos.operation == "insert"
-    assert qos.refs is not None
-    (row,) = qos.refs[BACKHAUL_REF]
-    assert (row["enterpriseObjectId"], row["segmentObjectId"]) == (
-        SERVICE_A_ID,
-        GLOBAL[3],
-    )
-    assert "moduleId" not in row
+    (planned,) = [m for m in state.plan().modules if m.name == "QOS"]
+    assert planned.operation == "insert"
+
+    store.requests.clear()
+    result = await pipeline.save(state)
+
+    sent = list(store.requests)
+    methods = [method.rsplit("/", 1)[-1] for method, _ in sent]
+    assert methods == ["insertConfigurationModule", "getConfiguration"]
+    assert result.modules_inserted == [ConfigurationModuleName.QOS]
+    insert = sent[0][1]
+    assert insert["configurationId"] == EDGE_CONFIG
+    (row,) = insert["refs"][BACKHAUL_REF]
+    assert row == {
+        "configurationId": EDGE_CONFIG,
+        "enterpriseObjectId": SERVICE_A_ID,
+        "ref": BACKHAUL_REF,
+        "segmentObjectId": GLOBAL[3],
+    }
+    module = state.module("qos")
+    assert not module.is_new
+    (stored_id,) = [
+        i
+        for i, held in store.rows.items()
+        if held["name"] == "QOS" and held["configurationId"] == EDGE_CONFIG
+    ]
+    assert module.id_ == stored_id
+    (entry,) = backhaul_of(state.edge.qos, "r2")
+    assert str(entry.logical_id) == SERVICE_A
+    assert state.plan().changed == ()
 
 
 async def test_an_entry_built_by_assignment_without_its_service_is_refused_at_plan():
