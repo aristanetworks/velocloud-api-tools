@@ -33,6 +33,7 @@ from pyvelo.client.schemas.edge import (
     GetEdgeConfigurationModules,
     GetEdgeConfigurationStack,
 )
+from pyvelo.client.schemas.enterprise import GetEnterpriseSecurityObjects
 from pyvelo.config.resolver import Resolver, ResolverContext, ResolverRegistry
 from pyvelo.config.resolvers.application import ApplicationResolver
 from pyvelo.config.resolvers.edge import EdgeResolver
@@ -42,7 +43,7 @@ from pyvelo.config.resolvers.profile import ProfileResolver
 from pyvelo.config.resolvers.segment import SegmentResolver
 from pyvelo.config.validation import ValidationError as ValidatorError
 from pyvelo.config.validation import ValidationResult, ValidatorRegistry
-from pyvelo.core import PatchError
+from pyvelo.core import PatchError, effective_dump
 from pyvelo.core.base import IdentityLookup, IdentityResolver, VcoModel
 from pyvelo.core.identity import (
     EdgeName,
@@ -54,11 +55,16 @@ from pyvelo.core.identity import (
     SegmentIdentity,
     SegmentName,
 )
-from pyvelo.core.layers import Edge, Profile
+from pyvelo.core.layers import Edge, Effective, Layered, Profile
 from pyvelo.core.merge import nest_patch, select_items
 from pyvelo.core.patch import ItemOp, is_new, parse_item_op
 from pyvelo.core.rebase import Path, raw_changes
 
+from pyvelo_intent.config.composed_security import (
+    SECURITY_OBJECT_TYPES,
+    SecurityObjects,
+    rules_naming_a_group,
+)
 from pyvelo_intent.config.effective import (
     CONVERTED_MODULES,
     EFFECTIVE_IGNORES,
@@ -1317,6 +1323,12 @@ class ConfigPipeline:
         entry, and the ones that say the view and the VCO disagree are
         ``EffectiveComparison.findings``.
 
+        When a rule of the view names a security service group, the security
+        objects of the enterprise (the groups, and the URL category, URL
+        reputation and IDPS objects they name) are read too, one read for each
+        type, and the keys the composer adds to that rule are compared with
+        what those objects give: see ``composed_security``.
+
         Raises ``ValueError`` for a profile state (the VCO composes modules
         for edges), for a state with changes that are not saved (it differs
         from the VCO by design: save, or load the edge again), and for a
@@ -1369,6 +1381,7 @@ class ConfigPipeline:
 
         view = EffectiveView(edge_config, fresh)
         entries: list[EffectiveDifference] = []
+        objects: SecurityObjects | None = None
         for name in names:
             module: object = getattr(composed, name, None)
             data: object = getattr(module, "raw_data", MISSING)
@@ -1394,15 +1407,34 @@ class ConfigPipeline:
                     + "get_edge_configuration_modules to see what the VCO sent",
                     module=name,
                 )
+            module_view = cast("Layered[Effective]", getattr(view, name))
+            if objects is None and rules_naming_a_group(effective_dump(module_view)[0]):
+                objects = await self._read_security_objects(enterprise_id)
             entries.extend(
                 compare_module(
                     name,
-                    getattr(view, name),
+                    module_view,
                     cast("dict[str, Any]", data),
                     ignores=EFFECTIVE_IGNORES,
+                    security_objects=objects,
                 )
             )
         return EffectiveComparison(tuple(entries))
+
+    async def _read_security_objects(
+        self, enterprise_id: int | None
+    ) -> SecurityObjects:
+        """The enterprise's security service groups and the objects they name (``SECURITY_OBJECT_TYPES``), one read for each."""
+        rows: list[dict[str, object]] = []
+        for type_ in SECURITY_OBJECT_TYPES:
+            ask = GetEnterpriseSecurityObjects(type_=type_)
+            if enterprise_id is not None:
+                ask.enterprise_id = enterprise_id
+            rows.extend(
+                row.model_dump(mode="json", by_alias=True)
+                for row in await self.client.get_security_objects(ask)
+            )
+        return SecurityObjects.from_rows(rows)
 
     def validate(self, state: ConfigState) -> ValidationResult:
         """Run all write-time validators without saving (dry-run validation)."""

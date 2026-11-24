@@ -19,6 +19,7 @@ from pyvelo.core import (
     Inheritable,
     KeyField,
     Layered,
+    Origin,
     Profile,
     Secret,
     VcoModel,
@@ -53,14 +54,73 @@ from test_state_plan import desc  # pyright: ignore[reportImplicitRelativeImport
 EDGE_ID = 42
 ENTERPRISE_ID = 5
 PROFILE_MODULE_ID = 2
+Json = dict[str, Any]
+
 OMITTED = (
     "the composer keeps only the segments in use on the edge "
     + "(VLANs, routed interfaces, loopbacks and the Global Segment)"
 )
 SECRET = "a secret value is not compared"
-COMPOSER_ADDS = "the composer adds it to each rule; it is not stored in either layer"
-
-Json = dict[str, Any]
+UNRESOLVED = (
+    "the rule's security service group, or an object it names, "
+    + "is not among the enterprise's security objects"
+)
+GROUP = "6f1d2c3a-0b4e-4c55-9a77-1e2d3c4b5a69"
+CATEGORY: Json = {
+    "allowAndLogCategories": [11, 12],
+    "blockedCategories": [21],
+    "unknownCategoryAction": "allow",
+}
+REPUTATION: Json = {
+    "minReputationScore": 40,
+    "allowAndLogReputations": [3],
+    "unknownReputationAction": "block",
+}
+ATP: Json = {
+    "atp_enabled": True,
+    "ids_enabled": True,
+    "ips_enabled": False,
+    "atp_logging_enabled": True,
+}
+SECURITY_KEYS = ("atp_action", "urlCategoryFiltering", "urlReputationFiltering")
+SECURITY_OBJECTS: dict[str, list[Json]] = {
+    "securityServiceGroup": [
+        {
+            "type": "securityServiceGroup",
+            "id": 100,
+            "logicalId": GROUP.upper(),
+            "data": {
+                "urlCategoryFiltering": {"id": 7},
+                "urlReputationFiltering": {"id": 8},
+                "idps": {"id": 9},
+            },
+        }
+    ],
+    "urlCategoryFiltering": [
+        {
+            "type": "urlCategoryFiltering",
+            "id": 7,
+            "logicalId": "a0000000-0000-4000-8000-000000000000",
+            "data": CATEGORY,
+        }
+    ],
+    "urlReputationFiltering": [
+        {
+            "type": "urlReputationFiltering",
+            "id": 8,
+            "logicalId": "a1000000-0000-4000-8000-000000000000",
+            "data": REPUTATION,
+        }
+    ],
+    "idps": [
+        {
+            "type": "idps",
+            "id": 9,
+            "logicalId": "a2000000-0000-4000-8000-000000000000",
+            "data": {"idsEnabled": True, "ipsEnabled": False, "logEnabled": True},
+        }
+    ],
+}
 
 
 def rule(name: str, action: str = "allow") -> Json:
@@ -244,11 +304,7 @@ async def test_an_edge_with_no_firewall_row_compares_the_profiles_values():
 async def test_the_constants_say_what_is_converted_and_what_is_a_finding():
     assert CONVERTED_MODULES == ("firewall",)
     assert UNMODELED_KEYS == {"firewall": frozenset({"etm"})}
-    assert {(i.module, i.path) for i in EFFECTIVE_IGNORES} == {
-        ("firewall", f"segments[*].outbound[*].{key}")
-        for key in ("atp_action", "urlCategoryFiltering", "urlReputationFiltering")
-    }
-    assert all(i.reason == COMPOSER_ADDS for i in EFFECTIVE_IGNORES)
+    assert EFFECTIVE_IGNORES == ()
     assert FINDINGS == {
         EffectiveCategory.DIFFERS,
         EffectiveCategory.CLIENT_ONLY,
@@ -508,20 +564,155 @@ async def test_a_logging_flag_the_view_lacks_is_server_only():
     assert len(comparison.findings) == 2
 
 
-async def test_a_rule_key_only_the_composer_adds_is_ignored_with_its_reason():
-    pipeline, state, client = await loaded()
-    first = composed_modules(client)["segments"][0]["outbound"][0]
-    first["atp_action"] = {"a": 1}
-    first["urlCategoryFiltering"] = {"b": 2}
-    first["urlReputationFiltering"] = {"c": 3}
+# --- the keys the composer adds to a rule that names a security group ------------
+
+
+async def grouped(
+    *, composer_adds: bool = True, group: str | None = GROUP, seed: bool = True
+) -> tuple[ConfigPipeline, ConfigState, MockVcoClient]:
+    """An edge whose first rule names *group*, composed with the security keys the group's objects give it."""
+    edge_rule = {**rule("e1"), "securityServiceGroup": group}
+    edge = {**EDGE, "segments": [segment(0, "Global Segment", edge_rule)]}
+    pipeline, state, client = await loaded(edge)
+    if seed:
+        client.store.security_objects = copy.deepcopy(SECURITY_OBJECTS)
+    if composer_adds:
+        first = composed_modules(client)["segments"][0]["outbound"][0]
+        first.update(
+            atp_action=copy.deepcopy(ATP),
+            urlCategoryFiltering=copy.deepcopy(CATEGORY),
+            urlReputationFiltering=copy.deepcopy(REPUTATION),
+        )
+    return pipeline, state, client
+
+
+def security_reads(client: MockVcoClient) -> list[str]:
+    return [
+        p["type"]
+        for m, p in client.store.requests
+        if m == "enterprise/getSecurityObjects"
+    ]
+
+
+async def test_the_composers_security_keys_match_the_group():
+    pipeline, state, _ = await grouped()
     comparison = await pipeline.compare_effective(state)
 
     assert comparison.findings == ()
+    for key in SECURITY_KEYS:
+        assert not [e for e in comparison.entries if f"outbound[0].{key}" in e.path]
+
+
+async def test_a_security_key_that_differs_from_its_object_is_differs():
+    pipeline, state, client = await grouped()
+    first = composed_modules(client)["segments"][0]["outbound"][0]
+    first["urlCategoryFiltering"]["unknownCategoryAction"] = "block"
+    first["atp_action"]["ips_enabled"] = True
+    comparison = await pipeline.compare_effective(state)
+
     found = by_path(comparison)
-    for key in ("atp_action", "urlCategoryFiltering", "urlReputationFiltering"):
+    assert {e.path for e in comparison.findings} == {
+        "segments[0].outbound[0].urlCategoryFiltering.unknownCategoryAction",
+        "segments[0].outbound[0].atp_action.ips_enabled",
+    }
+    entry = found["segments[0].outbound[0].urlCategoryFiltering.unknownCategoryAction"]
+    assert entry.category is EffectiveCategory.DIFFERS
+    assert (entry.client, entry.server) == ("allow", "block")
+    # It is the rule's origin, and the key's source is the rule's group.
+    assert entry.origin is Origin.EDGE
+    assert entry.source == "segments[0].outbound[0].securityServiceGroup"
+    assert entry.reason is None
+
+
+async def test_an_expected_security_key_the_server_lacks_is_client_only():
+    pipeline, state, client = await grouped()
+    first = composed_modules(client)["segments"][0]["outbound"][0]
+    del first["urlReputationFiltering"]
+    comparison = await pipeline.compare_effective(state)
+
+    (finding,) = comparison.findings
+    assert finding.category is EffectiveCategory.CLIENT_ONLY
+    assert finding.path == "segments[0].outbound[0].urlReputationFiltering"
+    assert finding.client == REPUTATION
+    assert finding.server is MISSING
+    assert finding.origin is Origin.EDGE
+    assert finding.source == "segments[0].outbound[0].securityServiceGroup"
+
+
+async def test_a_profile_rules_security_keys_carry_the_profile_origin():
+    profile_rule = {**rule("p1"), "securityServiceGroup": GROUP}
+    profile = {**PROFILE, "segments": [segment(0, "Global Segment", profile_rule)]}
+    pipeline, state, client = await loaded(profile=profile)
+    client.store.security_objects = copy.deepcopy(SECURITY_OBJECTS)
+    server_rule = composed_modules(client)["segments"][0]["outbound"][1]
+    server_rule.update(
+        atp_action=copy.deepcopy(ATP),
+        urlCategoryFiltering={**CATEGORY, "unknownCategoryAction": "block"},
+        urlReputationFiltering=copy.deepcopy(REPUTATION),
+    )
+    comparison = await pipeline.compare_effective(state)
+
+    (finding,) = comparison.findings
+    assert (
+        finding.path
+        == "segments[0].outbound[1].urlCategoryFiltering.unknownCategoryAction"
+    )
+    assert finding.origin is Origin.PROFILE
+    assert finding.source == "segments[0].outbound[0].securityServiceGroup"
+
+
+async def test_a_security_key_on_a_rule_without_a_group_is_server_only():
+    pipeline, state, client = await grouped(group=None, composer_adds=False)
+    first = composed_modules(client)["segments"][0]["outbound"][0]
+    first["atp_action"] = copy.deepcopy(ATP)
+    comparison = await pipeline.compare_effective(state)
+
+    (finding,) = comparison.findings
+    assert finding.category is EffectiveCategory.SERVER_ONLY
+    assert finding.path == "segments[0].outbound[0].atp_action"
+    assert finding.client is MISSING
+    assert finding.reason is None
+
+
+async def test_an_unknown_group_reports_its_reason():
+    unknown = "00000000-0000-4000-8000-000000000000"
+    pipeline, state, _ = await grouped(group=unknown)
+    comparison = await pipeline.compare_effective(state)
+
+    found = by_path(comparison)
+    assert {e.path for e in comparison.findings} == {
+        f"segments[0].outbound[0].{key}" for key in SECURITY_KEYS
+    }
+    for key in SECURITY_KEYS:
         entry = found[f"segments[0].outbound[0].{key}"]
-        assert entry.category is EffectiveCategory.IGNORED, key
-        assert entry.reason == COMPOSER_ADDS
+        assert entry.category is EffectiveCategory.SERVER_ONLY, key
+        assert entry.reason == UNRESOLVED
+    assert UNRESOLVED in comparison.render()
+
+
+async def test_an_object_the_group_names_that_is_missing_reports_its_reason():
+    pipeline, state, client = await grouped()
+    client.store.security_objects["idps"] = []
+    comparison = await pipeline.compare_effective(state)
+
+    (finding,) = comparison.findings
+    assert finding.category is EffectiveCategory.SERVER_ONLY
+    assert finding.path == "segments[0].outbound[0].atp_action"
+    assert finding.reason == UNRESOLVED
+
+
+async def test_security_objects_are_read_only_when_a_rule_names_a_group():
+    pipeline, state, client = await loaded()
+    _ = await pipeline.compare_effective(state)
+    assert security_reads(client) == []
+
+    pipeline, state, client = await grouped()
+    _ = await pipeline.compare_effective(state)
+    assert sorted(security_reads(client)) == sorted(SECURITY_OBJECTS)
+    reads = [
+        p for m, p in client.store.requests if m == "enterprise/getSecurityObjects"
+    ]
+    assert {p["enterpriseId"] for p in reads} == {ENTERPRISE_ID}
 
 
 async def test_another_rule_key_the_view_lacks_is_still_a_finding():

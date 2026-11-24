@@ -732,12 +732,38 @@ The call does not ask the VCO for encrypted keys (`encryptKeys`), which a VCO
 may refuse. A secret is never compared: a path that holds one is `ignored` with
 that reason, and its value is shown as `***`.
 
+When a rule of the view names a security service group
+(`securityServiceGroup`), the composer adds three keys to it that neither layer
+stores: `urlCategoryFiltering`, `urlReputationFiltering` and `atp_action`. They
+are confirmed, not ignored. `compare_effective` reads the enterprise's security
+objects (`enterprise/getSecurityObjects` for `securityServiceGroup`,
+`urlCategoryFiltering`, `urlReputationFiltering` and `idps`: four reads, with
+the state's enterprise ID) only when a rule of a compared module names a group,
+and expects:
+
+- `urlCategoryFiltering` and `urlReputationFiltering`: the `data` of the object
+  of that type the group names (its `data` holds `{"id": ...}` for each);
+- `atp_action`: `atp_enabled` true, and `ids_enabled`, `ips_enabled` and
+  `atp_logging_enabled` from the `idps` object the group names (`idsEnabled`,
+  `ipsEnabled` and `logEnabled`).
+
+A group that names no object of a type expects no key for it. The expected
+values are compared like the rule's own keys, with the rule's origin and a
+source of its `securityServiceGroup`: a match makes no entry, a different value
+is `differs`, an expected key the server lacks is `client_only`, and a key on a
+rule that names no group is `server_only`. When the group, or an object it
+names, is not among the enterprise's security objects, nothing can be expected
+for the keys that depend on it, so the entries at the rule's security keys say
+so ("the rule's security service group, or an object it names, is not among the
+enterprise's security objects"): they are still findings, which a person can
+resolve by creating the object or fixing the rule's group. The composer's
+output for a `maliciousIpFiltering` object has not been seen, so none is
+expected: a key the composer adds for one is `server_only`.
+
 `pyvelo_intent.config.effective.EFFECTIVE_IGNORES` is the list of known
 divergences, each an `EffectiveIgnore` with its module, a path (whole parts,
 `*` for one part, `[*]` for one list item; it covers everything below it) and
-the reason. It holds the three keys the composer adds to each outbound rule
-without storing them in either layer (`atp_action`, `urlCategoryFiltering` and
-`urlReputationFiltering`): an entry is added only after a divergence is
+the reason. It is empty: an entry is added only after a divergence is
 understood, so that a divergence is visible in the comparison and never hidden.
 A finding you meet is either a wrong rule in the library, which gets fixed, or
 a divergence you have understood, which gets an entry with its reason.

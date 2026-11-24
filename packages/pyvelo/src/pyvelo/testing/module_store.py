@@ -3,10 +3,11 @@
 The store is an ``httpx`` handler, so a client built over it runs its own request
 building, parsing and error mapping. It serves module updates and inserts,
 ``configuration/getConfiguration``, ``configuration/getConfigurationModules``,
-``enterprise/getEnterpriseServices``, ``edge/getEdgeConfigurationModules`` for
-an edge whose composed modules it was given (``composed``) and, for an edge
-whose two configurations it was told (``add_stack``),
-``edge/getEdgeConfigurationStack``, and answers
+``enterprise/getEnterpriseServices``, ``enterprise/getSecurityObjects`` for the
+security objects it was given (``security_objects``),
+``edge/getEdgeConfigurationModules`` for an edge whose composed modules it was
+given (``composed``) and, for an edge whose two configurations it was told
+(``add_stack``), ``edge/getEdgeConfigurationStack``, and answers
 them the way a VCO does: a stale ``version`` is refused with the precondition
 error when the conditional check is on and updates nothing when it is off,
 ``returnData`` makes the answer the module row as stored, a request with a
@@ -197,6 +198,8 @@ class ModuleStore:
     """Edge ID, or None for every edge, to the IDs of its edge and profile configurations."""
     composed: dict[int, dict[str, object | None]]
     """Edge ID to the modules ``edge/getEdgeConfigurationModules`` composes for it: a module's wire name (``firewall``, ``QOS``) to its ``data``, or ``None`` for the ``null`` the VCO answers when a module does not compose. An edge with no entry is answered as an unknown edge."""
+    security_objects: dict[str, list[dict[str, Any]]]
+    """Security object type (``securityServiceGroup``, ``idps``) to the objects ``enterprise/getSecurityObjects`` answers for it, each as the VCO gives it: ``type``, ``id``, ``logicalId`` and ``data``. A type with no entry is answered with an empty list."""
     objects: dict[int, dict[str, Any]]
     """Object ID to enterprise object: ``id``, ``logicalId``, ``name``, ``type``, ``object`` and ``data``."""
     skipped_objects: set[int]
@@ -231,6 +234,7 @@ class ModuleStore:
         self.issue_rule_ids = issue_rule_ids
         self.stacks = {}
         self.composed = {}
+        self.security_objects = {}
         self.objects = {}
         self.skipped_objects = set()
         self.processor_refs = {}
@@ -249,6 +253,7 @@ class ModuleStore:
             "configuration/getConfigurationModules": self._get_configuration_modules,
             "edge/getEdgeConfigurationModules": self._get_edge_configuration_modules,
             "enterprise/getEnterpriseServices": self._get_enterprise_services,
+            "enterprise/getSecurityObjects": self._get_security_objects,
             "enterprise/getEnterpriseEdgeList": self._get_enterprise_edge_list,
         }
         for role, suffix in _ROLES.items():
@@ -528,6 +533,10 @@ class ModuleStore:
             for name, data in modules.items()
             if names is None or name in names
         }
+
+    def _get_security_objects(self, params: dict[str, Any]) -> object:
+        kind: str = _required(params, "type", "enterprise/getSecurityObjects")
+        return copy.deepcopy(self.security_objects.get(kind, []))
 
     def _get_enterprise_services(self, params: dict[str, Any]) -> object:
         kind = params.get("type")

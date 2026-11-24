@@ -20,6 +20,10 @@ How each part of a module is matched:
   first and the composer the edge's;
 - the items of any other list by position;
 - a scalar by value, where ``True`` is not ``1``.
+
+The keys the composer adds to a rule that names a security service group are
+expected from the enterprise's security objects (``composed_security``) when
+``compare_module`` is given them, and compared like the rule's own keys.
 """
 
 import json
@@ -37,6 +41,13 @@ from pyvelo.core.base import JsonObject, VcoModel, is_dict, is_list, wire_name
 from pyvelo.core.fields import get_key_spec, is_secret
 from pyvelo.core.layers import Effective, Kind, Layered, field_kind
 from pyvelo.core.rebase import KeyValue, key_text
+
+from pyvelo_intent.config.composed_security import (
+    SYNTHETIC_RULE_KEYS,
+    SecurityObjects,
+    expected_rule_keys,
+    rules_naming_a_group,
+)
 
 __all__ = [
     "CONVERTED_MODULES",
@@ -57,7 +68,6 @@ OMITTED_SEGMENT = (
 SECRET_NOT_COMPARED = "a secret value is not compared"
 UNCONVERTED_FIELD = "the library does not model this yet, so the view has no value"
 UNMODELED_KEY = "the library does not know this key yet, so the view has no value"
-COMPOSER_ADDS = "the composer adds it to each rule; it is not stored in either layer"
 FACTORY_ABSENT = "the view gives the display default and the server has no value"
 FACTORY_SAME = "the view gives the display default and the server has the same value"
 
@@ -113,10 +123,7 @@ class EffectiveIgnore:
     reason: str
 
 
-EFFECTIVE_IGNORES: tuple[EffectiveIgnore, ...] = tuple(
-    EffectiveIgnore("firewall", f"segments[*].outbound[*].{key}", COMPOSER_ADDS)
-    for key in ("atp_action", "urlCategoryFiltering", "urlReputationFiltering")
-)
+EFFECTIVE_IGNORES: tuple[EffectiveIgnore, ...] = ()
 """The known divergences, each with its reason. An entry is added only after the divergence is understood, so that none is hidden."""
 
 
@@ -202,16 +209,60 @@ def compare_module(
     server: JsonObject,
     *,
     ignores: Sequence[EffectiveIgnore],
+    security_objects: SecurityObjects | None = None,
 ) -> list[EffectiveDifference]:
     """The differences between *view* and *server*, the raw data the VCO composed for *module*.
 
     The ignores of other modules are not applied. See the module's text for how
     the two are matched.
+
+    With *security_objects*, each rule of the view that names a security
+    service group also has the keys the composer adds to it
+    (``composed_security``), expected from the objects the group names: they
+    are compared like the rule's own keys, with the rule's origin and a source
+    of its ``securityServiceGroup``. A key that cannot be expected because the
+    group, or an object it names, is not among the objects is reported with
+    that reason. Without *security_objects* those keys are not expected, and a
+    rule with a group has them as ``server_only``.
     """
     client, resolved = effective_dump(view)
-    run = _Comparison(module, ignores, resolved)
+    reasons: dict[str, str] = {}
+    if security_objects is not None:
+        resolved = dict(resolved)
+        _expect_security_keys(client, resolved, reasons, security_objects)
+    run = _Comparison(module, ignores, resolved, reasons)
     run.model(view, client, server, "")
     return run.entries
+
+
+def _expect_security_keys(
+    client: JsonObject,
+    resolved: dict[str, Resolved[object]],
+    reasons: dict[str, str],
+    objects: SecurityObjects,
+) -> None:
+    """Add the keys the composer adds to each rule of *client* that names a group, expected from *objects*.
+
+    The expected values go in the dump, and a ``Resolved`` for each in
+    *resolved* (the rule's origin, a source of its ``securityServiceGroup``).
+    Where something cannot be expected, the rule's other keys get a reason in
+    *reasons*.
+    """
+    for named in rules_naming_a_group(client):
+        rule = resolved.get(named.path)
+        if rule is None:
+            continue
+        expected = expected_rule_keys(named.group, objects)
+        for key, value in expected.values.items():
+            where = _join(named.path, key)
+            named.rule[key] = value
+            resolved[where] = Resolved(
+                rule.origin, value, _join(rule.source, "securityServiceGroup")
+            )
+        if expected.unresolved is not None:
+            for key in SYNTHETIC_RULE_KEYS:
+                if key not in expected.values:
+                    reasons[_join(named.path, key)] = expected.unresolved
 
 
 _PART = re.compile(r"[^.\[\]]+|\[[^\]]*\]")
@@ -300,12 +351,14 @@ class _Comparison:
         module: str,
         ignores: Sequence[EffectiveIgnore],
         resolved: Mapping[str, Resolved[object]],
+        reasons: Mapping[str, str],
     ) -> None:
         self.module: str = module
         self.ignores: list[tuple[list[str], str]] = [
             (_parts(i.path), i.reason) for i in ignores if i.module == module
         ]
         self.resolved: Mapping[str, Resolved[object]] = resolved
+        self.reasons: Mapping[str, str] = reasons
         self.entries: list[EffectiveDifference] = []
 
     def emit(
@@ -318,6 +371,8 @@ class _Comparison:
         cover: Resolved[object] | None = None,
         reason: str | None = None,
     ) -> None:
+        if reason is None:
+            reason = self.reasons.get(path)
         self.entries.append(
             EffectiveDifference(
                 self.module,
@@ -655,20 +710,25 @@ class _Comparison:
         cover: Resolved[object] | None,
         typ: type[VcoModel] | None,
     ) -> None:
-        """Both sides have a value: compare them down to the leaves, finding a secret by the model's field."""
+        """Both sides have a value: compare them down to the leaves, finding a secret by the model's field.
+
+        A key with a ``Resolved`` of its own (a key expected from the security
+        objects) is attributed to it, and what is below it too.
+        """
         if is_dict(client) and is_dict(server):
             mine = cast("dict[str, object]", client)
             theirs = cast("dict[str, object]", server)
             fields = {} if typ is None else _wire_fields(typ)
             for key in (*mine, *(k for k in theirs if k not in mine)):
                 where = _join(path, key)
+                here = self.resolved.get(where, cover)
                 found = mine.get(key, MISSING)
                 other = theirs.get(key, MISSING)
-                if self.ignored(where, found, other, cover):
+                if self.ignored(where, found, other, here):
                     continue
                 info = fields.get(key)
                 if info is not None and is_secret(info):
-                    self.secret(where, found, other, cover)
+                    self.secret(where, found, other, here)
                 elif found is MISSING and self.unmodeled(where):
                     self.unconverted(where, other, UNMODELED_KEY)
                 elif found is MISSING:
@@ -677,15 +737,15 @@ class _Comparison:
                         EffectiveCategory.SERVER_ONLY,
                         MISSING,
                         other,
-                        cover=cover,
+                        cover=here,
                     )
                 elif other is MISSING:
-                    self.absent_from_server(where, found, cover)
+                    self.absent_from_server(where, found, here)
                 else:
                     nested = (
                         None if info is None else _model_of(field_kind(info).inner_type)
                     )
-                    self.deep(where, found, other, cover, nested)
+                    self.deep(where, found, other, here, nested)
         elif is_list(client) and is_list(server):
             mine, theirs = client, server
             for position in range(max(len(mine), len(theirs))):
