@@ -3,6 +3,7 @@
 from pyvelo.client.enums.configuration import ConfigurationModuleName
 
 from .helpers import confirm_save, load_config
+from .hub_steps import HubStep
 from .pipeline import ConfigPipeline, build_default_pipeline
 from .state import (
     ConfigFieldChange,
@@ -20,6 +21,7 @@ __all__ = [
     "ConfigPlan",
     "ConfigState",
     "ConfigurationModuleName",
+    "HubStep",
     "SaveProgress",
     "SaveResult",
     "ValidationWarning",

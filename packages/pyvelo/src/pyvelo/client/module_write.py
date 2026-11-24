@@ -86,6 +86,7 @@ from pyvelo.client.derived_refs import (
 from pyvelo.client.exceptions import (
     ConfigConflictError,
     FixedListError,
+    HubListError,
     LossyFieldError,
     RefsNotLoadedError,
     SegmentSetError,
@@ -646,6 +647,112 @@ def _check_segment_set(module_name: str, as_read: object, payload: object) -> No
         raise _segment_set_error(module_name, added, removed)
 
 
+_HUB_LISTS: Final[tuple[tuple[str, ...], ...]] = (
+    ("vpn", "edgeToEdgeHub", "vpnHubs"),
+    ("vpn", "edgeToEdgeDetail", "vpnHubs"),
+    ("vpn", "backHaulEdges"),
+)
+"""The wire paths, below a device settings segment entry, of the lists that hold the hubs of a role: hub, bridge, backhaul."""
+
+
+def _hub_list(entry: object, path: tuple[str, ...]) -> dict[tuple[str, str], str]:
+    """The hubs of the list at *path* of the segment entry *entry*, by ``(type, logicalId)``, with their names, in order."""
+    node = entry
+    for key in path:
+        node = node.get(key) if is_dict(node) else None
+    hubs: dict[tuple[str, str], str] = {}
+    for item in node if is_list(node) else []:
+        if not is_dict(item):
+            continue
+        logical_id, kind, name = (
+            item.get("logicalId"),
+            item.get("type"),
+            item.get("name"),
+        )
+        hubs[(str(kind), str(logical_id).lower())] = (
+            name if isinstance(name, str) and name else str(logical_id)
+        )
+    return hubs
+
+
+def _hub_patch(segment: str, path: tuple[str, ...], change: dict[str, Any]) -> str:
+    """The patch text that makes *change* to the list at *path* of *segment*."""
+    node: dict[str, Any] = change
+    for key in reversed(path):
+        node = {key: node}
+    return json.dumps({"segments": {segment: node}})
+
+
+def _hub_list_error(
+    module_name: str, changes: list[tuple[str, tuple[str, ...], str, bool]]
+) -> HubListError:
+    """The refusal of a one-module plan that adds or removes the hubs of *changes*: ``(segment, list path, hub, added)``."""
+    segments = list(dict.fromkeys(segment for segment, _, _, _ in changes))
+    lists = list(dict.fromkeys(".".join(path) for _, path, _, _ in changes))
+    hubs = list(dict.fromkeys(hub for _, _, hub, _ in changes))
+    did = "; ".join(
+        f"{'adds' if added else 'removes'} {hub!r} "
+        f"{'to' if added else 'from'} {'.'.join(path)} of {segment!r}"
+        for segment, path, hub, added in changes
+    )
+    segment, path, hub, added = changes[0]
+    example = _hub_patch(
+        segment,
+        path,
+        {"+": {"_op": "add", "name": hub}} if added else {hub: {"_op": "delete"}},
+    )
+    message = (
+        f"{module_name}: the edit {did}. A hub added to or removed from these "
+        "lists needs its role set or cleared on the hub's service, which one "
+        "module write cannot do, so the VCO would list a hub no Edge can use "
+        "(or a hub whose roles are lost). The pipeline sets the roles as steps "
+        "of the save, in the order the UI does: send the change as a patch, for "
+        f"example {example} "
+        f'(pipeline.apply(state, module="{module_name}", patch=...)), then '
+        "pipeline.save(state)."
+    )
+    return HubListError(
+        message,
+        segment=segments[0] if len(segments) == 1 else None,
+        lists=lists,
+        hubs=hubs,
+    )
+
+
+def _check_hub_lists(module_name: str, as_read: object, payload: object) -> None:
+    """Raise ``HubListError`` when a segment of *payload* has other hubs in a hub list than *as_read*, by ``(type, logicalId)``.
+
+    A reorder is no change of members. Segments are matched by ``segmentId``.
+    """
+    held = as_read.get("segments") if is_dict(as_read) else None
+    read_by_id = (
+        {segment_id_of(entry): entry for entry in held if is_dict(entry)}
+        if is_list(held)
+        else {}
+    )
+    segments = payload.get("segments") if is_dict(payload) else None
+    changes: list[tuple[str, tuple[str, ...], str, bool]] = []
+    for entry in segments if is_list(segments) else []:
+        before = read_by_id.get(segment_id_of(entry))
+        if before is None or not is_dict(entry):
+            continue
+        name = _segment_name(cast(Mapping[str, Any], entry))
+        for path in _HUB_LISTS:
+            read, written = _hub_list(before, path), _hub_list(entry, path)
+            changes.extend(
+                (name, path, hub_name, True)
+                for key, hub_name in written.items()
+                if key not in read
+            )
+            changes.extend(
+                (name, path, hub_name, False)
+                for key, hub_name in read.items()
+                if key not in written
+            )
+    if changes:
+        raise _hub_list_error(module_name, changes)
+
+
 def _defaults_path(name: str) -> str:
     return f"segments[{json.dumps(name)}].defaults"
 
@@ -731,9 +838,12 @@ def plan_module(
     read, so an added device settings entry adds its ``deviceSettings:segment``
     row. The segments of a profile are the same in its three modules, so a
     plan of one module alone raises ``SegmentSetError`` for a payload whose
-    segments differ from the module as read; *via_pipeline* (the pipeline
-    plans the three together, which runs the rule that covers all three) turns
-    that off.
+    segments differ from the module as read, and ``HubListError`` for a device
+    settings payload that adds a hub to, or removes one from, the hub, bridge
+    or backhaul list of a segment (a hub in a list needs its role set on its
+    service, which one write cannot do); *via_pipeline* (the pipeline plans
+    the three together, which runs the rule that covers all three, and derives
+    the role steps) turns both off.
 
     The refs are derived from *data* (see the module text): *resolvers* finds
     the ``enterpriseObjectId`` of an identity the edit adds, and a plan that
@@ -836,6 +946,8 @@ def plan_module(
 
     if level is ConfigContext.PROFILE and not via_pipeline:
         _check_segment_set(name, raw, payload)
+        if name == "deviceSettings":
+            _check_hub_lists(name, raw, payload)
 
     fixed_model = _document_model(model_type, module)
     if fixed_model is not None and payload != planned_from:

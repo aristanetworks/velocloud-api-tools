@@ -325,6 +325,42 @@ class SegmentSetError(VcoError):
         super().__init__(message)
 
 
+class HubListError(VcoError):
+    """Raised when one module's plan would add a hub to a segment's hub lists, or remove one.
+
+    A hub in the ``vpn`` lists of a profile's segment (the hub list, the
+    bridge list and the backhaul list) needs its role set on the hub's
+    service, and a hub taken out needs it cleared. The pipeline does that as a
+    step of the save; one module write cannot, so the VCO would list a hub no
+    edge can use, or lose one's roles. ``segment`` is the segment's name (None
+    when the error is about several), ``lists`` the wire paths of the lists
+    whose members differ from the module as read (``vpn.backHaulEdges``),
+    ``hubs`` the names of the hubs added or removed, and ``edges`` the
+    Edges (their IDs and names) that the change would leave with a hub they
+    cannot use. The message says what happened and how to do it instead.
+    """
+
+    segment: str | None
+    lists: tuple[str, ...]
+    hubs: tuple[str, ...]
+    edges: tuple[tuple[int, str], ...]
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        segment: str | None = None,
+        lists: Sequence[str] = (),
+        hubs: Sequence[str] = (),
+        edges: Sequence[tuple[int, str]] = (),
+    ) -> None:
+        self.segment = segment
+        self.lists = tuple(lists)
+        self.hubs = tuple(hubs)
+        self.edges = tuple(edges)
+        super().__init__(message)
+
+
 class DanglingReferenceError(VcoError):
     """Raised when a save would leave a value that names nothing the configuration has.
 

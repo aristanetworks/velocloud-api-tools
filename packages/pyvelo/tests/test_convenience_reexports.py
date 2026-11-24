@@ -24,6 +24,7 @@ class TestSaveErrorReexports:
             "ConfigConflictError",
             "DanglingReferenceError",
             "FixedListError",
+            "HubListError",
             "LossyFieldError",
             "ModuleWriteError",
             "RefsDroppedError",

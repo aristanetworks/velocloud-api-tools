@@ -751,7 +751,7 @@ class ConfigPipeline:
                 plan=plan, dry_run=dry_run, warnings=list(plan.warnings)
             )
 
-            if not plan.changed:
+            if not plan.changed and not plan.steps:
                 return result
 
             for module_plan in plan.changed:

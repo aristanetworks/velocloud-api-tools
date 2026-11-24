@@ -96,6 +96,20 @@ read, so an added device settings entry adds its `deviceSettings:segment` row.
 `plan_module(..., via_pipeline=True)` skips the refusal, for the pipeline, which
 plans the three modules together.
 
+The hubs of a profile segment are in the same case. A hub in the hub, bridge or
+backhaul list of a device settings segment (`vpn.edgeToEdgeHub.vpnHubs`,
+`vpn.edgeToEdgeDetail.vpnHubs`, `vpn.backHaulEdges`) works only when its
+service has that role, which the VCO's role calls set and a module write does
+not. `plan_module` and `update_module` raise `HubListError` for a profile
+device settings payload whose members of one of those lists differ from the
+module as read, as `(type, logicalId)` pairs (a reorder is no change), and
+nothing is sent: the VCO would list a hub no Edge can use, or lose the roles of
+one taken out. The error names the segment, the lists and the hubs, and says how
+to do it instead: send the change as a patch (`{"segments": {"Global Segment":
+{"vpn": {"edgeToEdgeHub": {"vpnHubs": {"+": {"_op": "add", "name":
+"Hub-A"}}}}}}}`) through `pipeline.apply`, and `pipeline.save`, which sets the
+roles as steps of the save. `via_pipeline=True` skips this refusal too.
+
 The module you pass in is not updated: it keeps the data and the `version` from
 before the write. Continue from the module `update_module` returns (`module =
 await client.update_module(module, data)`), and after `ConfigConflictError` or

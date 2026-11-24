@@ -550,6 +550,33 @@ firewall: update
   `ConfigPlan.check_warnings` (also in `ConfigPlan.warnings` and
   `SaveResult.warnings`), and a `warning: <message>` line in `render()`.
   `client.update_module` writes one module and does not run the check.
+- A hub added to or removed from the hub, bridge or backhaul list of a profile
+  segment (`vpn.edgeToEdgeHub.vpnHubs`, `vpn.edgeToEdgeDetail.vpnHubs`,
+  `vpn.backHaulEdges`) needs its role set or cleared on the hub's service, which
+  a write of the device settings module does not do. `plan()` derives those
+  role calls from the module as read and as edited, in the order the UI makes
+  them (disable backhaul, bridge and hub, then enable hub, backhaul and
+  bridge; segments in the module's order, then hubs in their list's order), and
+  holds them in `ConfigPlan.steps` (`HubStep`, from `pyvelo_intent`; none for
+  an edge). `render()` shows them before the modules, after the target line:
+
+  ```text
+  steps:
+    disable backhaul for Hub-B on segment Global Segment
+    enable hub for Hub-A on segment Global Segment
+  ```
+
+  A hub removed from a segment's hub list gets no backhaul or bridge disable
+  there: disabling the hub clears its roles. A removal needs no hub lookup; an
+  added hub is looked up by logical ID, so `plan()` raises
+  `ResolverNotLoadedError` for one before the hubs are loaded, which a save
+  does (`await pipeline.load_resolvers(state, HubIdentity)` does it now). A
+  hub whose roles as read do not match the lists it is in is a
+  `hub_roles_disagree` warning in `ConfigPlan.check_warnings`. One module alone
+  cannot change these lists: `client.update_module` and `plan_module` raise
+  `HubListError` (from `pyvelo_intent`) for a payload that does, naming the
+  segment, the lists and the hubs, and give the patch that makes the change
+  through the pipeline.
 - A segment added to a profile module has an `added segments: Guest` line, and
   `get_field_changes()` lists it as one change at `segments["Guest"]`, from
   `MISSING` to the entry as written. A QoS segment that lacks template

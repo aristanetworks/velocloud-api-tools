@@ -45,9 +45,16 @@ from pyvelo.client.schemas.configuration import (
     new_edge_module,
 )
 from pyvelo.config.resolver import ResolverContext, ResolverRegistry
+from pyvelo.config.resolvers.hub import HubResolver
 from pyvelo.config.validation import ValidationError
 from pyvelo.core import ConfigContext, VcoModel
 from pyvelo.core.base import is_dict, is_list
+from pyvelo.core.identity import (
+    HubIdentity,
+    ResolutionError,
+    ResolverNotLoadedError,
+    SegmentIdentity,
+)
 from pyvelo.core.rebase import (
     ItemMove,
     ItemPlace,
@@ -64,7 +71,14 @@ from pyvelo.core.references import (
 )
 from pyvelo.core.response_check import PlannedChange, ServerChange
 
+from pyvelo_intent.config.hub_steps import (
+    HubStep,
+    changed_segment_ids,
+    derive_steps,
+    role_disagreements,
+)
 from pyvelo_intent.config.module_names import resolve_module_name
+from pyvelo_intent.config.validation_warning import ValidationWarning
 from pyvelo_intent.errors import LayerNotSavedError
 
 _DEVICE_SETTINGS = ConfigurationModuleName.DEVICE_SETTINGS.value
@@ -74,14 +88,6 @@ _SEGMENT_MODULES = (
     ConfigurationModuleName.FIREWALL.value,
 )
 """The three modules of a profile that hold its segments, in write order."""
-
-
-@dataclass
-class ValidationWarning:
-    path: str
-    message: str
-    code: str
-    severity: str = "warning"
 
 
 @dataclass(frozen=True)
@@ -154,8 +160,19 @@ class ConfigPlan:
       does not know, on a module with nothing else to write.
     - "warning: text", last and with no indent, is a segment of a profile that
       its three modules disagree about as read (``segment_warnings``), or a
-      reference that names nothing as it was read and the save leaves
+      reference that names nothing as it was read and the save leaves, or a
+      hub whose roles as read do not match the lists it is in
       (``check_warnings``).
+
+    A profile whose edit adds a hub to a segment's hub, bridge or backhaul
+    list, or removes one, has the role calls the save makes after it writes
+    the modules (``steps``). ``render()`` shows them first, after the target
+    line, as a ``steps:`` line and a line for each, in the order they are
+    made:
+
+        steps:
+          disable backhaul for Hub-B on segment Global Segment
+          enable hub for Hub-A on segment Global Segment
 
     A profile's device settings module is written first, then the others in
     the order the configuration lists them, and ``modules`` is in that order.
@@ -174,15 +191,23 @@ class ConfigPlan:
         segment_warnings: The segments of a profile that its three modules
             disagree about as read, which the edit does not settle: code
             ``segments_disagree``, at ``segments["<name>"]``. Empty for an edge.
-        check_warnings: The references that name nothing in the module as read
-            and still name nothing, which the save leaves as they are: code
-            ``reference_kept``, at ``"<module>: <path>"``.
+        check_warnings: What the cross-module checks warn of and the save
+            leaves as it is, at ``"<module>: <path>"``: the references that
+            name nothing in the module as read and still name nothing (code
+            ``reference_kept``), and the hubs whose roles as read do not match
+            the lists they are in (``hub_roles_disagree``).
+        steps: The role calls a hub added to or removed from a segment's hub
+            lists needs, in the order they are made (``derive_steps``); empty
+            for an edge, and for an edit that leaves the lists' members. A list
+            change is also a change of the device settings module, so
+            ``changed`` is not made longer by them.
     """
 
     modules: tuple[ModulePlan, ...]
     target: str = ""
     segment_warnings: tuple[ValidationWarning, ...] = ()
     check_warnings: tuple[ValidationWarning, ...] = ()
+    steps: tuple[HubStep, ...] = ()
 
     @property
     def changed(self) -> tuple[ModulePlan, ...]:
@@ -208,6 +233,8 @@ class ConfigPlan:
 
     def render(self) -> str:
         lines = [m.render() for m in self.modules]
+        if self.steps:
+            lines = ["steps:", *(f"  {step.render()}" for step in self.steps), *lines]
         lines.extend(
             f"warning: {w.message}"
             for w in (*self.segment_warnings, *self.check_warnings)
@@ -807,9 +834,17 @@ class ConfigState:
         a profile QoS segment lacks (:func:`~pyvelo.client.module_write.plan_module`);
         the plan warns either way.
 
+        A profile whose edit adds a hub to a segment's hub, bridge or backhaul
+        list, or removes one, has the role calls that go with it in
+        ``ConfigPlan.steps`` (:func:`~pyvelo_intent.config.hub_steps.derive_steps`),
+        and ``check_warnings`` has a ``hub_roles_disagree`` warning for each
+        hub whose roles as read do not match its lists. An added hub is looked
+        up in the hub resolver; a removal needs none.
+
         Raises ``ResolverNotLoadedError`` when a provider was set and the
-        state's network services are not loaded (:meth:`plan_module`). A
-        save, a dry run and ``apply`` load them first; this does not.
+        state's network services are not loaded (:meth:`plan_module`), or a
+        hub was added and the state's hubs are not. A save, a dry run and
+        ``apply`` load them first; this does not.
         """
         self._check_detached()
         self._check_unsaved_layer()
@@ -827,12 +862,80 @@ class ConfigState:
         warnings = (
             _check_segment_set(ordered, plans) if self.target_type == "profile" else ()
         )
+        check_warnings = self._check_references(ordered)
+        steps, disagreements = self._hub_steps(ordered)
         return ConfigPlan(
             modules=plans,
             target=target,
             segment_warnings=warnings,
-            check_warnings=self._check_references(ordered),
+            check_warnings=(*check_warnings, *disagreements),
+            steps=steps,
         )
+
+    def _hub_steps(
+        self, modules: Sequence[AnyConfigurationModule]
+    ) -> tuple[tuple[HubStep, ...], tuple[ValidationWarning, ...]]:
+        """The role steps of the hub list changes of a profile's device settings, and the warnings of its roles as read.
+
+        An edge has neither: its profile's lists are not its to change. A
+        segment's object ID is its ``deviceSettings:segment`` row's, and for a
+        segment the profile has no row for (one just assigned), the segment
+        resolver's. An added hub is looked up in the hub resolver, which
+        raises ``ResolverNotLoadedError`` when it is not loaded; a removal
+        needs none.
+        """
+        if self.target_type != "profile":
+            return (), ()
+        module = next(
+            (m for m in modules if m.name == ConfigurationModuleName.DEVICE_SETTINGS),
+            None,
+        )
+        edited: object = None if module is None else module.data
+        if (
+            not isinstance(module, DeviceSettingsConfigurationModule)
+            or not isinstance(edited, DeviceSettingsData)
+            or module.raw_data is MISSING
+        ):
+            return (), ()
+        as_read = read_data(module, level=ConfigContext.PROFILE).model(
+            DeviceSettingsData
+        )
+        refs: object = module.raw_refs
+        object_ids = segment_object_ids(refs)
+        for segment_id in changed_segment_ids(as_read, edited):
+            if segment_id not in object_ids:
+                object_id = self._segment_object_id(segment_id)
+                if object_id is not None:
+                    object_ids[segment_id] = object_id
+        resolver = self.resolvers.resolver_for(HubIdentity)
+        steps = derive_steps(
+            as_read,
+            edited,
+            segment_object_ids=object_ids,
+            hubs=resolver if isinstance(resolver, HubResolver) else None,
+        )
+        configuration_id = self.target_config.id_
+        disagreements = (
+            role_disagreements(as_read, refs, configuration_id)
+            if isinstance(configuration_id, int)
+            else ()
+        )
+        return steps, disagreements
+
+    def _segment_object_id(self, segment_id: int) -> int | None:
+        """The object ID of segment *segment_id* in the segment resolver, or None when it does not know it.
+
+        Raises ``ResolverNotLoadedError`` when the resolver is not loaded.
+        """
+        try:
+            identity = self.resolvers.identity_sync(
+                SegmentIdentity, "segment_id", segment_id
+            )
+        except ResolverNotLoadedError:
+            raise
+        except ResolutionError:
+            return None
+        return identity.object_id
 
     def _check_references(
         self, modules: Sequence[AnyConfigurationModule]

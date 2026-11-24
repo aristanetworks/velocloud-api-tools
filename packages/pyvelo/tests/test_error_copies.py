@@ -11,6 +11,7 @@ from pyvelo.client.exceptions import (
     DanglingReferenceError,
     DetachedObjectError,
     FixedListError,
+    HubListError,
     LossyFieldError,
     ModuleWriteError,
     RefsDroppedError,
@@ -144,6 +145,25 @@ def test_a_dangling_reference_error_keeps_its_references_and_message_through_cop
     for copied in copies(error):
         assert type(copied) is DanglingReferenceError
         assert copied.references == references
+        assert str(copied) == str(error)
+
+
+def test_a_hub_list_error_keeps_its_attributes_and_message_through_copies():
+    error = HubListError(
+        "a hub needs its role",
+        segment="Global Segment",
+        lists=("vpn.backHaulEdges", "vpn.edgeToEdgeHub.vpnHubs"),
+        hubs=("Hub-A",),
+        edges=((31, "Branch-1"),),
+    )
+    for copied in copies(error):
+        assert type(copied) is HubListError
+        assert (copied.segment, copied.lists, copied.hubs, copied.edges) == (
+            "Global Segment",
+            ("vpn.backHaulEdges", "vpn.edgeToEdgeHub.vpnHubs"),
+            ("Hub-A",),
+            ((31, "Branch-1"),),
+        )
         assert str(copied) == str(error)
 
 
@@ -284,6 +304,13 @@ def test_every_error_of_the_module_round_trips():
             module_name="QOS",
             segments=("Guest",),
             modules=("QOS",),
+        ),
+        HubListError(
+            "no",
+            segment="Global Segment",
+            lists=("vpn.backHaulEdges",),
+            hubs=("Hub-A",),
+            edges=((31, "Hub-A"),),
         ),
         DanglingReferenceError([Reference("deviceSettings", path, 7, "segment", None)]),
         RefsDroppedError(
