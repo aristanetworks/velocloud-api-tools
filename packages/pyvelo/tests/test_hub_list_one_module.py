@@ -14,10 +14,11 @@ from typing import Any
 import pytest
 from hub_helpers import CLUSTER, HUB_A, HUB_B, Hub, ds_with_vpn, hub_entry
 from pyvelo.client.exceptions import HubListError
+from pyvelo.client.hub_services import hub_list_fields
 from pyvelo.client.module_write import plan_module
 from pyvelo.client.schemas.configuration import DeviceSettingsConfigurationModule
 from pyvelo.core import ConfigContext
-from segment_helpers import GLOBAL, profile_rows
+from segment_helpers import GLOBAL, GUEST, profile_rows
 
 LIST_PATHS = {
     "hub": ("edgeToEdgeHub", "vpnHubs"),
@@ -75,6 +76,37 @@ def test_a_hub_added_to_a_list_is_refused(role: str, added: Hub):
     assert WIRE_LISTS[role] in message
     assert "pipeline.apply" in message and "pipeline.save" in message
     assert '"_op": "add"' in message
+
+
+@pytest.mark.parametrize("field", hub_list_fields(), ids=lambda f: f.role)
+def test_the_refusal_covers_each_field_marked_hub_role(field: Any):
+    module = ds_module()
+    raw = edited_raw(module)
+    node: Any = raw["segments"][0]
+    for key in field.path:
+        node = node[key]
+    node.append(hub_entry(HUB_A))
+    with pytest.raises(HubListError) as caught:
+        plan_module(module, raw)
+    assert caught.value.lists == (".".join(field.path),)
+
+
+def test_a_hub_added_to_a_second_segment_is_refused_and_names_it():
+    row = profile_rows(
+        [ds_with_vpn(GLOBAL, hubs=(HUB_B,)), ds_with_vpn(GUEST, hubs=(HUB_B,))],
+        [],
+        [],
+    )[0]
+    module = DeviceSettingsConfigurationModule.model_validate(
+        row, context={"config_level": ConfigContext.PROFILE}
+    )
+    raw = edited_raw(module)
+    raw["segments"][1]["vpn"]["backHaulEdges"].append(hub_entry(HUB_A))
+    with pytest.raises(HubListError) as caught:
+        plan_module(module, raw)
+    assert caught.value.segment == "Guest"
+    assert caught.value.lists == (WIRE_LISTS["backhaul"],)
+    assert "Guest" in str(caught.value)
 
 
 @pytest.mark.parametrize("role", ["hub", "bridge", "backhaul"])
@@ -165,7 +197,7 @@ def test_an_edge_level_module_is_not_refused():
     raw = edited_raw(edge_module)
     raw_list(raw, "hub").append(hub_entry(HUB_B))
     plan = plan_module(edge_module, raw, level=ConfigContext.EDGE)
-    assert plan.operation in ("update", "none")
+    assert plan.operation == "update"
 
 
 def test_a_hub_list_error_keeps_its_attributes_through_a_pickle():

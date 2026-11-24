@@ -10,18 +10,27 @@ Edge, ``deviceSettings:vpn:edgeHubCluster`` for a cluster).
 (``pyvelo.client.derived_refs``) finds the service a new entry points at.
 """
 
+import functools
 import uuid
 from collections.abc import Collection, Iterator, Mapping
+from dataclasses import dataclass
 from typing import Final, Literal, Self
 
 from pydantic import MISSING
 from pydantic.fields import FieldInfo
 
+from pyvelo.client.models.configuration.device_settings.segment import DeviceSegment
 from pyvelo.client.models.configuration.qos.rule import BackhaulEdge
 from pyvelo.client.models.configuration.ref_owners import can_hold_owner, rows_named
 from pyvelo.core import VcoModel
-from pyvelo.core.base import IdentityLookup, is_dict
-from pyvelo.core.fields import get_owns_ref
+from pyvelo.core.base import (
+    IdentityLookup,
+    field_models,
+    is_dict,
+    list_kind,
+    wire_name,
+)
+from pyvelo.core.fields import get_hub_role, get_owns_ref
 from pyvelo.core.identity import (
     HubService,
     HubServiceNotFoundError,
@@ -39,6 +48,63 @@ EDGE_HUB_REF: Final = "deviceSettings:vpn:edgeHub"
 """The ref name of an Edge hub's row in the profile's device settings."""
 CLUSTER_HUB_REF: Final = "deviceSettings:vpn:edgeHubCluster"
 """The ref name of a cluster's row in the profile's device settings."""
+
+
+@functools.cache
+def can_hold_hub_role(model_cls: type[VcoModel]) -> bool:
+    """Whether a model of *model_cls* can hold a field marked ``HubRole``, at any depth.
+
+    True when one of its fields carries the marker, or the type of a field
+    (through ``Annotated``, unions, ``list``, ``dict`` and ``tuple``) is a
+    model class that can. It is computed from the declared field types, once
+    per class.
+    """
+    seen: set[type[VcoModel]] = set()
+    pending = [model_cls]
+    while pending:
+        current = pending.pop()
+        if current in seen:
+            continue
+        seen.add(current)
+        for field_info in current.model_fields.values():
+            if get_hub_role(field_info) is not None:
+                return True
+            pending.extend(field_models(field_info))
+    return False
+
+
+@dataclass(frozen=True)
+class HubListField:
+    """A list of a device settings segment entry that holds the hubs of one role."""
+
+    role: Literal["hub", "bridge", "backhaul"]
+    path: tuple[str, ...]
+    """The wire keys from the segment entry to the list: ``("vpn", "backHaulEdges")``."""
+
+
+@functools.cache
+def hub_list_fields() -> tuple[HubListField, ...]:
+    """The fields of a device settings segment entry marked ``HubRole``: their role and wire path, in field order.
+
+    This is the one declaration of which lists hold hubs; the planner of the
+    role steps walks the models for the same marker, and the one-module
+    refusal reads the raw JSON at these paths. A marked field below a list or a
+    map is not found: the lists of a segment's ``vpn`` are below plain models.
+    """
+    found: list[HubListField] = []
+
+    def visit(model_cls: type[VcoModel], prefix: tuple[str, ...]) -> None:
+        for name, field_info in model_cls.model_fields.items():
+            here = (*prefix, wire_name(model_cls, name))
+            role = get_hub_role(field_info)
+            if role is not None:
+                found.append(HubListField(role.role, here))
+            elif list_kind(field_info) is None:
+                for below in field_models(field_info):
+                    visit(below, here)
+
+    visit(DeviceSegment, ())
+    return tuple(found)
 
 
 def _uuid(value: object) -> uuid.UUID | None:

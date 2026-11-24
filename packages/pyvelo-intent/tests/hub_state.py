@@ -176,9 +176,9 @@ def _seed_services(store: ModuleStore, state: ConfigState) -> None:
     for name, row in _hub_rows(state):
         object_id: int = row["enterpriseObjectId"]
         if name == CLUSTER_HUB_REF:
-            store.objects[object_id]["data"][str(row["configurationId"])] = (
-                copy.deepcopy(row["data"])
-            )
+            held = store.objects[object_id]["data"]
+            for configuration, by_segment in row["data"].items():
+                held.setdefault(configuration, {}).update(copy.deepcopy(by_segment))
             continue
         store.add_object(
             object_id,

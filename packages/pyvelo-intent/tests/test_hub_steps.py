@@ -447,8 +447,7 @@ async def test_a_clusters_roles_are_read_from_its_data_for_the_segment():
 async def test_role_disagreements_reads_a_clusters_data_by_configuration():
     ds = ds_with_vpn(GLOBAL, hubs=(CLUSTER,), bridges=(CLUSTER,))
     row = service_row(CLUSTER, 2, "hub", "bridge")
-    by_segment = row["data"]
-    row["data"] = {str(CONFIG): by_segment}  # the cluster's own data
+    by_segment = row["data"][str(CONFIG)]  # the cluster's own data: by configuration
     all_refs = {"deviceSettings:vpn:edgeHubCluster": row}
 
     assert role_disagreements(settings(ds), all_refs, CONFIG) == ()

@@ -792,7 +792,7 @@ class ModuleStore:
                 obj["id"],
                 segment_object_id,
             ):
-                row["data"] = _row_data(obj, configuration_id)
+                row["data"] = _row_data(obj)
                 _set_refs(module, pairs)
                 return
         stored = self._stored_row(
@@ -814,7 +814,7 @@ class ModuleStore:
             changed = False
             for _, row in pairs:
                 if row.get("enterpriseObjectId") == obj["id"]:
-                    row["data"] = _row_data(obj, row["configurationId"])
+                    row["data"] = _row_data(obj)
                     changed = True
             if changed:
                 _set_refs(module, pairs)
@@ -978,7 +978,7 @@ class ModuleStore:
         }
         for key in ("logicalId", "name", "type", "object"):
             stored[key] = copy.deepcopy(target[key])
-        stored["data"] = _row_data(target, sent["configurationId"])
+        stored["data"] = _row_data(target)
         segment_id = sent.get("segmentObjectId")
         segment = self.objects.get(segment_id) if segment_id is not None else None
         if segment is not None:
@@ -1064,10 +1064,8 @@ def _all_pairs(refs: object) -> list[tuple[str, dict[str, Any]]]:
     ]
 
 
-def _row_data(obj: dict[str, Any], configuration_id: int) -> dict[str, Any]:
-    """The ``data`` a ref row shows of *obj*: a cluster's role data of that profile, else the object's data."""
-    if obj["type"] == _CLUSTER:
-        return copy.deepcopy(obj["data"].get(str(configuration_id), {}))
+def _row_data(obj: dict[str, Any]) -> dict[str, Any]:
+    """The ``data`` a ref row shows of *obj*: the object's own data, as the VCO does (a cluster's is by configuration and then segment)."""
     return copy.deepcopy(obj["data"])
 
 

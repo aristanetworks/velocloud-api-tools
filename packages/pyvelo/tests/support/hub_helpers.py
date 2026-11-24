@@ -113,8 +113,9 @@ def hub_row(
     and segment (the cluster itself for a cluster). Any of the *roles* makes
     the row's ``edgeHub`` role true, as an enable call does. For an Edge the
     row's ``data`` is the service's: the Edge's ``logicalId`` and the roles; for
-    a cluster ``logicalId`` is the cluster's and ``data`` is its role data for
-    the profile, from the segment ID to the roles.
+    a cluster ``logicalId`` is the cluster's and ``data`` is the cluster's own
+    data, as the VCO shows it: from the configuration ID to the segment ID to
+    the roles.
     """
     held = {
         "edgeHub": bool(roles),
@@ -123,7 +124,7 @@ def hub_row(
     }
     cluster = hub.kind == "cluster"
     data: dict[str, Any] = (
-        {str(segment[0]): {"roles": held}}
+        {str(configuration_id): {str(segment[0]): {"roles": held}}}
         if cluster
         else {"logicalId": hub.logical_id, "roles": held}
     )

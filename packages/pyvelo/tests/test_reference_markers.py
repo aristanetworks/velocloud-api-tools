@@ -165,6 +165,23 @@ def test_the_hub_roles():
     assert HubRole("hub") == get_hub_role(EdgeToEdgeHub.model_fields["vpn_hubs"])
 
 
+def test_the_hub_list_fields_are_the_marked_fields_with_their_wire_paths():
+    from pyvelo.client.hub_services import hub_list_fields
+
+    marked = [
+        f"{cls.__name__}.{name}"
+        for cls, name, fi in _fields((DeviceSettingsData,))
+        if get_hub_role(fi) is not None
+    ]
+    declared = {(f.role, ".".join(f.path)) for f in hub_list_fields()}
+    assert declared == {
+        ("hub", "vpn.edgeToEdgeHub.vpnHubs"),
+        ("bridge", "vpn.edgeToEdgeDetail.vpnHubs"),
+        ("backhaul", "vpn.backHaulEdges"),
+    }
+    assert len(hub_list_fields()) == len(marked)
+
+
 def test_the_hub_lists_are_keyed_by_logical_id_and_labelled_by_name():
     for model, name in (
         (EdgeToEdgeHub, "vpn_hubs"),

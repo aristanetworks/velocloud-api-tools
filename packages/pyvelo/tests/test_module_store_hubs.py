@@ -380,7 +380,9 @@ def test_a_cluster_enable_sets_the_segment_roles_the_row_and_bumps_the_version()
     assert row["enterpriseObjectId"] == CLUSTER.id
     assert row["logicalId"] == CLUSTER.logical_id
     assert row["segmentObjectId"] == SEGMENT_OBJECT
-    assert row["data"] == {segment: {"roles": roles}}
+    assert row["data"] == {
+        str(CONFIG): {segment: {"roles": roles}}
+    }  # the cluster's own data
     parsed = EdgeHubClusterService.model_validate(
         {**answer, "created": "2024-01-01T00:00:00.000Z"}
     )
@@ -403,7 +405,7 @@ def test_a_cluster_bridge_or_backhaul_enable_and_disable_set_and_clear_its_flag(
     held = cluster(store)["data"][str(CONFIG)][str(GLOBAL[0])]["roles"]
     assert held == {"edgeHub": True, "edgeToEdgeBridge": False, "backHaulEdge": False}
     (row,) = rows_of(store, CLUSTER_REF)
-    assert row["data"][str(GLOBAL[0])]["roles"] == held
+    assert row["data"][str(CONFIG)][str(GLOBAL[0])]["roles"] == held
 
 
 def test_a_cluster_hub_disable_clears_the_segment_roles_and_leaves_the_row():

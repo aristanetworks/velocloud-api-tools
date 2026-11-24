@@ -91,7 +91,11 @@ from pyvelo.client.exceptions import (
     RefsNotLoadedError,
     SegmentSetError,
 )
-from pyvelo.client.hub_services import HubServiceTable, missing_service_error
+from pyvelo.client.hub_services import (
+    HubServiceTable,
+    hub_list_fields,
+    missing_service_error,
+)
 from pyvelo.client.models.configuration.common import (
     SEGMENT_LISTS,
     placeholder_segment,
@@ -647,14 +651,6 @@ def _check_segment_set(module_name: str, as_read: object, payload: object) -> No
         raise _segment_set_error(module_name, added, removed)
 
 
-_HUB_LISTS: Final[tuple[tuple[str, ...], ...]] = (
-    ("vpn", "edgeToEdgeHub", "vpnHubs"),
-    ("vpn", "edgeToEdgeDetail", "vpnHubs"),
-    ("vpn", "backHaulEdges"),
-)
-"""The wire paths, below a device settings segment entry, of the lists that hold the hubs of a role: hub, bridge, backhaul."""
-
-
 def _hub_list(entry: object, path: tuple[str, ...]) -> dict[tuple[str, str], str]:
     """The hubs of the list at *path* of the segment entry *entry*, by ``(type, logicalId)``, with their names, in order."""
     node = entry
@@ -733,11 +729,14 @@ def _check_hub_lists(module_name: str, as_read: object, payload: object) -> None
     segments = payload.get("segments") if is_dict(payload) else None
     changes: list[tuple[str, tuple[str, ...], str, bool]] = []
     for entry in segments if is_list(segments) else []:
+        if not is_dict(entry):
+            continue
         before = read_by_id.get(segment_id_of(entry))
-        if before is None or not is_dict(entry):
+        if before is None:
             continue
         name = _segment_name(cast(Mapping[str, Any], entry))
-        for path in _HUB_LISTS:
+        for field in hub_list_fields():
+            path = field.path
             read, written = _hub_list(before, path), _hub_list(entry, path)
             changes.extend(
                 (name, path, hub_name, True)

@@ -14,7 +14,11 @@ from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
 from typing import Final, Literal
 
-from pyvelo.client.hub_services import CLUSTER_HUB_REF, EDGE_HUB_REF
+from pyvelo.client.hub_services import (
+    CLUSTER_HUB_REF,
+    EDGE_HUB_REF,
+    can_hold_hub_role,
+)
 from pyvelo.client.models.configuration.device_settings.root import DeviceSettingsData
 from pyvelo.client.models.configuration.device_settings.segment import (
     DeviceSegment,
@@ -29,13 +33,15 @@ from pyvelo.client.models.configuration.ref_owners import (
     segment_object_ids as object_ids_of,
 )
 from pyvelo.config.resolvers.hub import HubResolver
-from pyvelo.core.base import is_dict
+from pyvelo.core.base import is_dict, is_list
+from pyvelo.core.fields import get_hub_role
 from pyvelo.core.identity import (
     HubIdentity,
     ResolutionError,
     ResolverNotLoadedError,
     SegmentIdentity,
 )
+from pyvelo.core.walk import walk_fields
 
 from pyvelo_intent.config.validation_warning import ValidationWarning
 
@@ -110,14 +116,21 @@ def _key(hub: VpnHub) -> _Key:
     return (hub.type_, hub.logical_id)
 
 
-def _lists(segment: DeviceSegment) -> dict[Role, list[VpnHub]]:
-    """The three hub lists of *segment*, by role."""
-    vpn = segment.vpn
-    return {
-        "hub": vpn.hub_edges.vpn_hubs,
-        "bridge": vpn.edge_to_edge_detail.vpn_hubs,
-        "backhaul": vpn.backhaul_edges,
-    }
+def _lists(data: DeviceSettingsData) -> dict[int, dict[Role, list[VpnHub]]]:
+    """The hub lists of each segment of *data*, by segment ID and role: the fields marked ``HubRole``."""
+    found: dict[int, dict[Role, list[VpnHub]]] = {}
+    for site in walk_fields(
+        data,
+        holds=can_hold_hub_role,
+        fields=lambda field_info: get_hub_role(field_info) is not None,
+    ):
+        role = get_hub_role(site.field_info)
+        if role is None or not isinstance(site.segment, DeviceSegment):
+            continue  # the walk gives only marked fields, and those outside a segment are not its
+        held: object = getattr(site.model, site.name)
+        hubs = [h for h in held if isinstance(h, VpnHub)] if is_list(held) else []
+        found.setdefault(_segment_id(site.segment), {})[role.role] = hubs
+    return found
 
 
 def _segment_id(segment: DeviceSegment) -> int:
@@ -138,11 +151,10 @@ def _differences(
     as_read: DeviceSettingsData, now: DeviceSettingsData
 ) -> Iterator[_Difference]:
     """The changes of each hub list, segment by segment in the order of *now*, by ``(type, logical ID)``."""
-    read_by_id = {_segment_id(s): s for s in as_read.segments}
+    lists_read, lists_now = _lists(as_read), _lists(now)
     for segment in now.segments:
-        before = read_by_id.get(_segment_id(segment))
-        was = {} if before is None else _lists(before)
-        for role, edited in _lists(segment).items():
+        was = lists_read.get(_segment_id(segment), {})
+        for role, edited in lists_now.get(_segment_id(segment), {}).items():
             read = was.get(role, [])
             kept = {_key(h) for h in edited}
             held = {_key(h) for h in read}
@@ -286,16 +298,13 @@ def derive_steps(
 def _cluster_roles(
     data: object, configuration_id: int, segment_id: int | None
 ) -> object:
-    """The ``roles`` a cluster's row data holds for a segment, or None.
+    """The ``roles`` a cluster's row data holds for a segment of the profile, or None.
 
-    The data is the cluster's own, by configuration and then segment, or that
-    slice for the profile: by segment alone.
+    A ref row's ``data`` is the enterprise object's own: for a cluster, its
+    roles by configuration ID and then segment ID.
     """
-    if not is_dict(data):
-        return None
-    held = data.get(str(configuration_id))
-    by_segment = held if is_dict(held) and "roles" not in held else data
-    entry = by_segment.get(str(segment_id)) if is_dict(by_segment) else None
+    held = data.get(str(configuration_id)) if is_dict(data) else None
+    entry = held.get(str(segment_id)) if is_dict(held) else None
     return entry.get("roles") if is_dict(entry) else None
 
 
@@ -347,17 +356,18 @@ def role_disagreements(
     hub list). A hub with no row is not reported here.
     """
     object_ids = object_ids_of(raw_refs)
+    lists_of_segments = _lists(as_read)
     warnings: list[ValidationWarning] = []
     for segment in as_read.segments:
         descriptor = segment.segment
         ref = SegmentRef(
             descriptor.segment_id, descriptor.name, descriptor.segment_logical_id
         )
-        lists = _lists(segment)
+        lists = lists_of_segments.get(descriptor.segment_id, {})
         members = {role: {_key(h) for h in hubs} for role, hubs in lists.items()}
         seen: dict[_Key, VpnHub] = {}
         for role in _ROLES:
-            for hub in lists[role]:
+            for hub in lists.get(role, []):
                 seen.setdefault(_key(hub), hub)
         for key, hub in seen.items():
             roles = _hub_roles(hub, ref, raw_refs, configuration_id, object_ids)
@@ -365,7 +375,7 @@ def role_disagreements(
                 continue
             problems: list[str] = []
             for role in _ROLES:
-                listed = key in members[role]
+                listed = key in members.get(role, set())
                 has = roles.get(_ROLE_FLAGS[role]) is True
                 if listed and not has:
                     problems.append(
