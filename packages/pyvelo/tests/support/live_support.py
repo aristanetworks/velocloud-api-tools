@@ -33,6 +33,12 @@ that write are skipped and say so. Set and not matching, they fail, and
 nothing is written. Set them for a lab, and never in a file that also serves
 a production tenant.
 
+The tests that make a hub of an Edge or a cluster need one more:
+
+    PYVELO_IT_HUB                   the logical ID of the Edge or the hub cluster
+                                    the suite may make a hub of a marked profile
+                                    and remove again; unset, those tests skip
+
     uv run --env-file .env pytest -m "integration and not live_write"   # reads only
     uv run --env-file .env pytest -m integration                        # everything
 
@@ -57,14 +63,26 @@ A test that writes is marked ``live_write``. The client the suite connects
 
 * every portal call that is not a read, except the three writes the suite
   makes itself: ``update_configuration_module`` and
-  ``insert_configuration_module`` of the client, and ``delete_module``. A read
-  is a method whose name starts with ``get``, ``list`` or ``is``. This covers a
-  raw ``client.portal(...)`` and every other write method of the client
-  (``create_edge``, ``delete_edge``, the enterprise, object-group and
-  network-segment writes, the diagnostic bundles and the rest);
+  ``insert_configuration_module`` of the client, and ``delete_module``, and
+  the twelve role calls of a hub (``enable_edge_hub``, ``disable_cluster_backhaul``
+  and the rest, below). A read is a method whose name starts with ``get``,
+  ``list`` or ``is``. This covers a raw ``client.portal(...)`` and every other
+  write method of the client (``create_edge``, ``delete_edge``, the enterprise,
+  object-group and network-segment writes, the diagnostic bundles and the
+  rest);
 * those three writes from a test that is not marked ``live_write``, outside a
   ``restoring`` block, or to a module no open block found or inserted: the
-  suite can only write what it will put back.
+  suite can only write what it will put back;
+* a role call of a hub unless the test is marked ``live_write``, a
+  ``restoring`` block is open on the device settings module of a marked
+  profile that the call's ``configurationId`` and ``moduleId`` name, and the
+  call's ``id`` is the Edge or the cluster ``admit_hub`` found for
+  ``PYVELO_IT_HUB`` (an Edge's role call takes an Edge ID, a cluster's a
+  cluster ID: one for the wrong kind is refused).
+
+The restore of a module does not undo a role call: a cluster keeps its role
+data and a deleted Edge hub service is not made again. A test that makes a hub
+removes it again itself, in a ``finally``.
 
 One hole is left: a second client that a test builds itself is not guarded
 (nor are the websocket calls of the client, remote diagnostics). A live test
@@ -140,7 +158,7 @@ from collections.abc import (
 from contextlib import aclosing, asynccontextmanager, contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
-from typing import Annotated, Any, NoReturn, cast
+from typing import Annotated, Any, Literal, NoReturn, cast
 
 import httpx
 import pytest
@@ -186,6 +204,8 @@ from pyvelo.client.schemas.edge import (
 )
 from pyvelo.client.schemas.enterprise import GetEnterprise, GetEnterpriseEdges
 from pyvelo.client.schemas.profiles import GetEnterpriseConfigurations
+from pyvelo.config.resolver import ResolverContext
+from pyvelo.config.resolvers.hub import HubResolver
 from pyvelo.core import (
     Alias,
     ConfigContext,
@@ -195,6 +215,7 @@ from pyvelo.core import (
     RowsModifiedConfirmation,
     VcoModel,
 )
+from pyvelo.core.identity import HubLogicalId, ResolutionError
 from pyvelo.core.rebase import Key, Path, RawChange, raw_changes
 from pyvelo.core.response_check import PlannedChange, ServerChange
 
@@ -727,6 +748,7 @@ def refusal_codes(exc: VcoOperationError) -> str:
 
 WRITE_HOST_ENV = "PYVELO_IT_WRITE_HOST"
 WRITE_ENTERPRISE_ENV = "PYVELO_IT_WRITE_ENTERPRISE_ID"
+HUB_ENV = "PYVELO_IT_HUB"
 
 WRITES_OFF = (
     "live write tests are off: set PYVELO_IT_WRITE_HOST to the host name of the "
@@ -744,6 +766,37 @@ OUTSIDE_RESTORING = (
 NOT_COVERED = (
     "that no open restoring block covers; nothing was sent; open "
     "`restoring(site)` on the module's own site and write inside it"
+)
+
+
+NO_HUB = (
+    f"no hub is named for this suite: set {HUB_ENV} to the logical ID of an Edge "
+    "or a hub cluster of the enterprise that this suite may make a hub of a "
+    "marked profile, and remove again"
+)
+HUB_NOT_A_LOGICAL_ID = (
+    f"{HUB_ENV} is not a logical ID; nothing was written; set it to the logical "
+    "ID of the Edge or the hub cluster, in the form 8-4-4-4-12 hexadecimal digits"
+)
+HUB_NOT_FOUND = (
+    f"{HUB_ENV} names no Edge and no hub cluster of the enterprise this run "
+    "addresses (an Edge that is a member of a cluster is no hub of its own: name "
+    "the cluster); nothing was written; set it to the logical ID of one that exists"
+)
+ROLE_CALL_NOT_ADMITTED = (
+    "a role call of a hub, which is not a write the suite may send here; nothing "
+    f"was sent; call admit_hub first, which reads {HUB_ENV}, inside the test"
+)
+ROLE_CALL_NOT_COVERED = (
+    "a role call of a hub for a profile and module that no open restoring block "
+    "covers, or whose profile is not marked "
+    f"{TARGET_MARK}; nothing was sent; open `restoring(site)` on the device "
+    "settings module of a marked profile and send the call inside it"
+)
+ROLE_CALL_NOT_THE_HUB = (
+    f"a role call of a hub for an Edge or a cluster that {HUB_ENV} does not "
+    "name; nothing was sent; the suite makes only that hub, and an Edge's role "
+    "call takes an Edge ID, a cluster's a cluster ID"
 )
 
 
@@ -888,11 +941,24 @@ type Block = tuple[Site, int | None]
 """An open ``restoring`` block: its site, and the ID of the module it found there."""
 
 
+@dataclass(frozen=True)
+class HubTarget:
+    """The hub ``PYVELO_IT_HUB`` names: its kind and the ID a role call takes."""
+
+    kind: Literal["edge", "cluster"]
+    id_: int
+    """The Edge ID or the cluster ID: the ``id`` of the hub's role calls."""
+    logical_id: uuid.UUID
+    """The logical ID the variable holds: how a patch names the hub."""
+
+
 @dataclass
 class LiveRun:
     """What one client may write, and what it has open to write: the guard's state."""
 
     access: WriteAccess = field(default_factory=WriteAccess)
+    hub: HubTarget | None = None
+    """The hub the role calls may be sent for, set by ``admit_hub``."""
     open: list[Block] = field(default_factory=lambda: list[Block]())
     """The open ``restoring`` blocks, the innermost last."""
     inserted: dict[int, Block] = field(default_factory=lambda: dict[int, Block]())
@@ -962,6 +1028,35 @@ class LiveRun:
                 f"{REPLACE_MODULES_MARK}; nothing was sent; {REPLACE_MODULES_REMEDY}"
             )
 
+    def check_role_call(
+        self,
+        kind: Literal["edge", "cluster"],
+        configuration_id: int,
+        module_id: int,
+        target_id: int,
+    ) -> None:
+        """Raise ``WritesRefused`` unless the role call is for the named hub on a marked profile a block covers.
+
+        *kind* is the kind of hub the call is for, *target_id* its ``id``, and
+        *configuration_id* and *module_id* the profile and its device settings
+        module. A block must be open on that module of a profile marked as a
+        target (``Site.profile``), found by ID.
+        """
+        self._check_may_write()
+        if self.hub is None:
+            raise WritesRefused(ROLE_CALL_NOT_ADMITTED)
+        if not any(
+            site.profile
+            and site.target
+            and site.name == ConfigurationModuleName.DEVICE_SETTINGS
+            and site.configuration_id == configuration_id
+            and found == module_id
+            for site, found in self.open
+        ):
+            raise WritesRefused(ROLE_CALL_NOT_COVERED)
+        if (kind, target_id) != (self.hub.kind, self.hub.id_):
+            raise WritesRefused(ROLE_CALL_NOT_THE_HUB)
+
     def check_delete(self, configuration_id: int, name: str, module_id: int) -> None:
         """Raise ``WritesRefused`` unless a block is on that module and *module_id* is one it found or inserted."""
         self.check_replace(configuration_id, name, "a delete")
@@ -1001,16 +1096,18 @@ def check_call(method: str) -> None:
     A read is a method whose name, after its namespace, starts with ``get``,
     ``list`` or ``is``. A write passes only from the code that checked it:
     ``update_configuration_module`` and ``insert_configuration_module`` as
-    ``run_of`` guards them, and ``delete_module``.
+    ``run_of`` guards them, ``delete_module``, and the twelve role calls of a
+    hub as ``run_of`` guards them (``ROLE_CALLS``).
     """
     if _READ.match(method.rsplit("/", 1)[-1]) or _sending.get() == method:
         return
     raise WritesRefused(
         f"a call to {method}, which is not a read and is not a write the suite "
         "checks; nothing was sent; the live suite writes only module updates and "
-        "inserts through the client's own methods, and deletes through "
-        "delete_module, each inside a restoring block, so leave this call out of "
-        "a live test"
+        "inserts through the client's own methods, deletes through "
+        "delete_module, and the role calls of the hub it admitted through the "
+        "client's own methods, each inside a restoring block, so leave this call "
+        "out of a live test"
     )
 
 
@@ -1034,6 +1131,92 @@ def _checked_call(
     return checked
 
 
+ROLE_CALLS: dict[str, tuple[str, Literal["edge", "cluster"]]] = {
+    "enable_edge_hub": ("edge/enableEdgeForEdgeHub", "edge"),
+    "enable_edge_to_edge_bridge": ("edge/enableEdgeForEdgeToEdgeBridge", "edge"),
+    "enable_edge_backhaul": ("edge/enableEdgeForBackHaul", "edge"),
+    "disable_edge_hub": ("edge/disableEdgeForEdgeHub", "edge"),
+    "disable_edge_to_edge_bridge": ("edge/disableEdgeForEdgeToEdgeBridge", "edge"),
+    "disable_edge_backhaul": ("edge/disableEdgeForBackHaul", "edge"),
+    "enable_cluster_hub": ("enterprise/enableClusterForEdgeHub", "cluster"),
+    "enable_cluster_to_edge_bridge": (
+        "enterprise/enableClusterForEdgeToEdgeBridge",
+        "cluster",
+    ),
+    "enable_cluster_backhaul": ("enterprise/enableClusterForBackHaul", "cluster"),
+    "disable_cluster_hub": ("enterprise/disableClusterForEdgeHub", "cluster"),
+    "disable_cluster_to_edge_bridge": (
+        "enterprise/disableClusterForEdgeToEdgeBridge",
+        "cluster",
+    ),
+    "disable_cluster_backhaul": ("enterprise/disableClusterForBackHaul", "cluster"),
+}
+"""The twelve role calls of a hub: each client method, with its portal method and the kind of hub it is for."""
+
+
+def _guarded_role_call(
+    run: LiveRun,
+    original: Callable[..., Awaitable[Any]],
+    method: str,
+    kind: Literal["edge", "cluster"],
+) -> Callable[..., Awaitable[Any]]:
+    """*original*, a role call of the client, checked by ``LiveRun.check_role_call`` before it is sent.
+
+    A call that passes may send *method* (``_sends``), and the portal counts
+    the send in ``run.sent``. A refusal of the Orchestrator carries its codes
+    alone.
+    """
+
+    async def guarded(request: Any) -> Any:
+        run.check_role_call(
+            kind, request.configuration_id, request.module_id, request.id_
+        )
+        try:
+            with _sends(method):
+                return await original(request)
+        except VcoOperationError as exc:
+            raise _redacted(exc) from None
+
+    return guarded
+
+
+async def admit_hub(
+    client: VcoClient,
+    enterprise_id: int | None,
+    environ: Mapping[str, str] | None = None,
+) -> HubTarget:
+    """Admit the role calls of the hub ``PYVELO_IT_HUB`` names, and return it.
+
+    The test may write (``require_writes``) before anything else is checked;
+    the variable unset skips the test and says what to set. The logical ID is
+    looked up among the Edges and clusters of the enterprise the run
+    addresses, as ``HubResolver`` finds a hub, and the run's guard then admits
+    the role calls for that Edge or cluster alone (``LiveRun.check_role_call``).
+    No message holds the ID.
+    """
+    run = run_of(client)
+    require_writes(run)
+    variables = os.environ if environ is None else environ
+    named = variables.get(HUB_ENV, "").strip()
+    if not named:
+        pytest.skip(NO_HUB)
+    try:
+        logical_id = uuid.UUID(named)
+    except ValueError:
+        pytest.fail(HUB_NOT_A_LOGICAL_ID, pytrace=False)
+    resolver = HubResolver(client)
+    await resolver.load(ResolverContext(enterprise_id=enterprise_id))
+    try:
+        identity = await resolver.resolve_key(HubLogicalId(logical_id))
+    except ResolutionError:
+        pytest.fail(HUB_NOT_FOUND, pytrace=False)
+    target_id = identity.edge_id if identity.kind == "edge" else identity.cluster_id
+    check(target_id is not None, "the hub the variable names has no ID")
+    assert target_id is not None
+    run.hub = HubTarget(identity.kind, target_id, logical_id)
+    return run.hub
+
+
 def run_of(client: VcoClient) -> LiveRun:
     """The run of *client*, made on the first call, which also puts the guard on the client.
 
@@ -1042,8 +1225,10 @@ def run_of(client: VcoClient) -> LiveRun:
     (``portal``, ``portal_list``, ``portal_paginated`` and
     ``portal_paginated_list``): a read passes, and a write passes only from
     ``update_configuration_module`` or ``insert_configuration_module`` (inside
-    a ``restoring`` block, to a module that block covers) or from
-    ``delete_module``. A refused write carries its codes alone: the
+    a ``restoring`` block, to a module that block covers), from
+    ``delete_module``, or from a role call of the hub ``admit_hub`` admitted
+    (inside a ``restoring`` block on the device settings module of a marked
+    profile). A refused write carries its codes alone: the
     Orchestrator's validation text quotes the names of what it refuses, and a
     refused write in a test would put them in the test output.
 
@@ -1118,6 +1303,8 @@ def run_of(client: VcoClient) -> LiveRun:
     attributes["update_configuration_module"] = guarded_update
     attributes["insert_configuration_module"] = guarded_insert
     attributes["portal_paginated"] = guarded_paginated
+    for name, (method, kind) in ROLE_CALLS.items():
+        attributes[name] = _guarded_role_call(run, getattr(client, name), method, kind)
     for name in ("portal", "portal_list", "portal_paginated_list"):
         attributes[name] = _checked_call(getattr(client, name), run)
     return run
@@ -1165,6 +1352,8 @@ class Site:
     """Whether the owner marked the edge or profile as one the suite may write to."""
     replace_modules: bool = False
     """Whether the suite may also delete and insert modules of the edge."""
+    profile: bool = False
+    """Whether the module is a profile's: only a profile's device settings takes a role call."""
 
     async def read(self) -> AnyConfigurationModule | None:
         modules = await self.layer()
@@ -1210,7 +1399,9 @@ def profile_site(
         profile = await read_profile(client, profile_id, enterprise_id)
         return [] if profile.modules is MISSING else profile.modules
 
-    return Site(client, enterprise_id, profile_id, name, layer, target=target)
+    return Site(
+        client, enterprise_id, profile_id, name, layer, target=target, profile=True
+    )
 
 
 RawJson = RootModel[dict[str, Any]]

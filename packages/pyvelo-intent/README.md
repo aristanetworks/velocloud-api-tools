@@ -80,7 +80,7 @@ lines.
 
 `dry_run=True` skips write API calls; loading still reads live configuration,
 and a dry run of a plan with hub role steps also reads the hub services (see
-"What a save writes").
+"Hubs").
 Calling `save(state)` sends configuration writes, and the state then continues
 from what the VCO stored (see "After a save"). A save that is not a dry run
 raises `SaveValidationError` when a write-time validator reports an error, and
@@ -174,19 +174,9 @@ A patch is strict and all or nothing:
 - A hub is added to a `vpn` list (`edgeToEdgeHub.vpnHubs`,
   `edgeToEdgeDetail.vpnHubs`, `backHaulEdges`) or to a QoS rule's
   `backhaulEdges` by its name, `{"+": add({"name": "Hub-A"})}`, or by its
-  logical ID, `{"+": add({"logicalId": "<logical ID>"})}`: the other fields of
-  the entry (its name, `type`, logical ID and, in a rule, `edgeId`) come from
-  the Edge or the hub cluster. A name that an Edge and a cluster share needs the
-  logical ID. The hub resolver reads the enterprise's Edges and clusters once,
-  on first use. In a rule's `backhaulEdges`, on an edge as on a profile, `apply`
-  also gives the entry its `logicalId`, the hub's service for the profile and
-  the rule's segment. The hub must be in the segment's lists and saved there
-  first: a hub that was added to the lists in the same unsaved edit has no
-  service yet, and `apply` raises `HubServiceNotFoundError`, whose message gives
-  the patch that adds the hub to the lists (`{"segments": {"Global Segment":
-  {"vpn": {"edgeToEdgeHub": {"vpnHubs": {"+": {"_op": "add", "name":
-  "Hub-A"}}}}}}}`). Save, then apply the rule. An entry built by assignment
-  without its `logicalId` raises the same error at `plan()`, naming its path.
+  logical ID, `{"+": add({"logicalId": "<logical ID>"})}` (in a rule,
+  `edgeLogicalId`): the other fields of the entry come from the Edge or the hub
+  cluster. A hub added to a rule must be saved first: see "Hubs".
 - A patch that cannot be applied raises `PatchError` (a `ValueError`). Its
   `path` is where in the patch it failed, its `message` the reason, and its
   `kind` one of the thirteen values below, for a caller that reacts to the
@@ -451,6 +441,10 @@ removes the row; `state.plan().render()` lists each as `+ refs <name>
 segment for a row of the module, and a module that sends its refs with no row
 changed says `refs: sent as read`. A device settings or QoS write with segments
 always carries its refs, because the VCO's processors run on every such write.
+The row of a hub added to or removed from a Branch-to-Hub list is the one
+exception: it points at the hub's service, which exists only once the role
+steps have run, so the plan shows `refs: sent as read` and the save adds or
+removes the row for the write that follows the steps (see "Hubs").
 What disagrees in the refs as read is a `warning: <message>` line, and the
 write leaves it as it is. `ConfigPlan.warnings` holds the same warnings as
 data, each with its module's name before its path, and `save` and `dry_run`
@@ -485,7 +479,7 @@ A QoS rule's backhaul hub adds a `deviceSettings:backHaulEdge` row the same
 way, on a profile and on an edge. The row points at the hub's service for the
 profile and segment, which the profile's device settings rows hold, so a hub
 that has no service there raises `HubServiceNotFoundError`: the hub is saved
-first and the rule after.
+first and the rule after (see "Hubs").
 
 This is `state.plan().render()` for the firewall patch of "The patch format",
 with `firewall_enabled` set as well, on an edge whose profile has a segment the
@@ -552,80 +546,10 @@ firewall: update
   `ConfigPlan.check_warnings` (also in `ConfigPlan.warnings` and
   `SaveResult.warnings`), and a `warning: <message>` line in `render()`.
   `client.update_module` writes one module and does not run the check.
-- A hub added to or removed from the hub, bridge or backhaul list of a profile
-  segment (`vpn.edgeToEdgeHub.vpnHubs`, `vpn.edgeToEdgeDetail.vpnHubs`,
-  `vpn.backHaulEdges`) needs its role set or cleared on the hub's service, which
-  a write of the device settings module does not do. `plan()` derives those
-  role calls from the module as read and as edited, in the order the UI makes
-  them (disable backhaul, bridge and hub, then enable hub, backhaul and
-  bridge; segments in the module's order, then hubs in their list's order), and
-  holds them in `ConfigPlan.steps` (`HubStep`, from `pyvelo_intent`; none for
-  an edge). `render()` shows them before the modules, after the target line:
-
-  ```text
-  steps:
-    disable backhaul for Hub-B on segment Global Segment
-    enable hub for Hub-A on segment Global Segment
-  ```
-
-  A hub removed from a segment's hub list gets no backhaul or bridge disable
-  there: disabling the hub clears its roles. A removal needs no hub lookup; an
-  added hub is looked up by logical ID, so `plan()` raises
-  `ResolverNotLoadedError` for one before the hubs are loaded, which a save
-  does (`await pipeline.load_resolvers(state, HubIdentity)` does it now). A
-  hub whose roles as read do not match the lists it is in is a
-  `hub_roles_disagree` warning in `ConfigPlan.check_warnings`. One module alone
-  cannot change these lists: `client.update_module` and `plan_module` raise
-  `HubListError` (from `pyvelo_intent`) for a payload that does, naming the
-  segment, the lists and the hubs, and give the patch that makes the change
-  through the pipeline.
-
-  `plan()` also checks a segment whose `vpn` an edit changes against the UI's
-  rules for its hub lists, and a save that breaks one raises `HubListError`
-  before it sends any request. The rules: the Branch-to-Hub list is non-empty
-  if and only if `edgeToEdgeHub.enabled` (so turning that or `vpn.enabled` off
-  needs the hubs removed first); no hub is listed twice in one list; with
-  `edgeToEdge` on and `useCloudGateway` off the bridge list is not empty; a hub
-  in the backhaul or bridge list is in the Branch-to-Hub list too (so a hub
-  that leaves that list leaves the others); a segment with hubs has
-  `vpn.enabled` on; and an added hub is an Edge or cluster of the enterprise,
-  no cluster member, whose `type` and name (compared without regard to case)
-  are those its logical ID names. A rule broken the same way as read is a
-  `hub_list_as_read` warning in `ConfigPlan.check_warnings`, and the save
-  leaves it.
-
-  A save with steps sends them before it writes the modules, in this order:
-  it reads the version of the profile's device settings module (a module
-  another writer changed stops the save here, with `ConfigConflictError` and
-  nothing sent), reads the hub services (two `getEnterpriseServices`
-  requests), sends each step the VCO does not already have in place, reads the
-  services again, and then writes the device settings carrying the hub rows the
-  steps made, without reading the version a second time. A hub added to the
-  Branch-to-Hub list gets its row in the module's refs (`+ refs
-  deviceSettings:vpn:edgeHub (Global Segment): <service ID>` in the module's
-  plan), and a hub removed from it loses its row. `SaveResult.steps` has a
-  `StepOutcome` for each step, `"sent"` or `"in_place"`; with `dry_run=True` it
-  says `"would_send"` or `"in_place"`, and a dry run of a plan with steps makes
-  the two services requests and no other.
-
-  An Edge hub removed from a Branch-to-Hub list that edge QoS rules use loses
-  its service to the role call, and with it the backhaul refs of those rules,
-  which keep the hub in their data. `save` finds the Edges from the services
-  read and says so: a `hub_in_use` warning per hub and segment in
-  `SaveResult.warnings` naming them, with `on_hub_in_use="warn"` (the default),
-  or, with `on_hub_in_use="refuse"`, `HubListError` (`edges` holds their IDs
-  and names) before any step is sent. A dry run does the same.
-
-  A request that fails once a step may have been sent is raised as
-  `SaveStepError` (from `pyvelo_intent`), from the VCO's error: `step` is the
-  step whose call failed, or `None` when a module write failed (`module_name`
-  names it), `steps_done` and `steps_in_place` list the others, and
-  `written` the modules stored; `save_progress(error)` gives the modules not
-  written. A failure before any step was sent (the version read, the services
-  read, a module write when every step was in place) propagates as it is. A
-  cancellation propagates as it is. Nothing a step did is undone, and the
-  state keeps its edits: a second `save(state)` plans the same steps, finds
-  the ones sent in place, sends the rest and writes the modules.
+- A hub added to or removed from a profile segment's hub, bridge or backhaul
+  list has role steps (`ConfigPlan.steps`), which `render()` shows first and a
+  save sends before it writes the modules, and a hub row that the device
+  settings write carries. "Hubs", below, has all of it.
 - A segment added to a profile module has an `added segments: Guest` line, and
   `get_field_changes()` lists it as one change at `segments["Guest"]`, from
   `MISSING` to the entry as written. A QoS segment that lacks template
@@ -801,6 +725,161 @@ result = await pipeline.save(state)
   repairs them again. After a `WriteOutcomeUnknownError`, or an error of the
   request, the modules keep their entries, and saving again completes the
   assignment.
+
+## Hubs
+
+A hub is an Edge or a hub cluster that the Edges of a profile connect to. A
+profile's device settings list the hubs of each segment in three lists, one for
+each role a hub plays there:
+
+| Role | List (under the segment's `vpn`) | In Python |
+|---|---|---|
+| `hub` (Branch-to-Hub) | `edgeToEdgeHub.vpnHubs` | `hub_edges.vpn_hubs` |
+| `bridge` (Edge to Edge through the hub) | `edgeToEdgeDetail.vpnHubs` | `edge_to_edge_detail.vpn_hubs` |
+| `backhaul` | `backHaulEdges` | `backhaul_edges` |
+
+An entry is `{"name", "type", "logicalId"}`, with `type` `edgeHub` for an Edge
+and `edgeHubCluster` for a cluster. A list is keyed by `logicalId`, with the
+name as its label, so a plan names an entry by logical ID, a patch selects one
+by either, and a reorder is no change. A hub is in a list only if its network
+service has the role, and a role is set by a role call to the VCO, which a
+write of the module does not make: so a save of a profile makes the calls an
+edit needs, then writes the module.
+
+- **Adding and removing.** A hub is added to a list by its name or its logical
+  ID and removed by either, through `apply`, as JSON or with the helpers:
+
+  ```python
+  state = await pipeline.load_profile("Branch profile", enterprise_id=1)
+  await pipeline.apply(
+      state,
+      module="device_settings",
+      patch={
+          "segments": {
+              "Global Segment": {
+                  "vpn": {
+                      "enabled": True,
+                      "edgeToEdgeHub": {
+                          "enabled": True,
+                          "vpnHubs": {"+": add({"name": "Hub-A"})},
+                      },
+                      "backHaulEdges": {"+": add({"logicalId": "<logical ID>"})},
+                  }
+              }
+          }
+      },
+  )
+  # removing: {"Hub-A": delete()} in a list, {"Hub-A": {"_op": "delete"}} as JSON
+  ```
+
+  The same edit as JSON is `{"segments": {"Global Segment": {"vpn":
+  {"edgeToEdgeHub": {"vpnHubs": {"+": {"_op": "add", "name": "Hub-A"}}}}}}}`.
+  The resolver reads the enterprise's Edges and clusters on first use
+  (`HubIdentity`: three requests, once per state). A name that an Edge and a
+  cluster share needs the logical ID, and a member of a cluster is no hub of its
+  own: name the cluster. The hubs must exist: a hub, an Edge or a cluster is
+  made in the Orchestrator, not here.
+- **The steps.** `plan()` derives one role call per hub, list and segment that
+  changed, from the module as read and as edited, and holds them in
+  `ConfigPlan.steps` (`HubStep`: `action`, `role`, `hub`, `segment`). The order
+  is the UI's: disable backhaul, disable bridge, disable hub, enable hub, enable
+  backhaul, enable bridge; within one kind, the segments in the order of the
+  module's `segments`, then the hubs in the order of their list. A hub removed
+  from a segment's hub list gets no backhaul or bridge disable there: disabling
+  the hub clears its roles. `render()` shows them first, after the target line:
+
+  ```text
+  profile "Branch profile", configuration 100
+  steps:
+    disable hub for Hub-A on segment Global Segment
+    enable hub for Hub-B on segment Global Segment
+    enable backhaul for Hub-B on segment Global Segment
+  deviceSettings: update
+    - segments["Global Segment"].vpn.edgeToEdgeHub.vpnHubs[a1a1a1a1-...]
+    + segments["Global Segment"].vpn.edgeToEdgeHub.vpnHubs[b2b2b2b2-...] (first): {...
+  ```
+
+  A plan with steps is for a profile; an edge has none. An added hub is looked
+  up by logical ID, so `plan()` raises `ResolverNotLoadedError` for one before
+  the hubs are loaded, which `apply` of a name and a save both do
+  (`await pipeline.load_resolvers(state, HubIdentity)` does it now). A dry run
+  reads the hub services (two `getEnterpriseServices` requests, the Edge hubs
+  and the clusters) to say which steps would be sent, and nothing else.
+- **The checks.** `plan()` checks a segment whose `vpn` an edit changes against
+  the UI's rules for its lists, before any call. A save that breaks one raises
+  `HubListError` (from `pyvelo_intent`), which names the segment, the lists and
+  the hubs, and gives the patch that mends it. The rules: the Branch-to-Hub
+  list is non-empty if and only if `edgeToEdgeHub.enabled` (so the first hub
+  added to a segment also sets it, and `vpn.enabled`, as above, and turning
+  either off needs the hubs removed first); no hub is listed twice in one list;
+  with `edgeToEdge` on and `useCloudGateway` off the bridge list is not empty;
+  a hub in the backhaul or bridge list is in the Branch-to-Hub list too (so a
+  hub that leaves that list leaves the others); a segment with hubs has
+  `vpn.enabled` on; and an added hub is an Edge or cluster of the enterprise,
+  no cluster member, whose `type` and name (compared without regard to case)
+  are those its logical ID names. The warnings, in `ConfigPlan.check_warnings`
+  (also in `ConfigPlan.warnings` and `SaveResult.warnings`, and as `warning:`
+  lines in `render()`): `hub_list_as_read` for a rule that is broken the same
+  way as read (the save leaves it), `hub_roles_disagree` for a hub whose roles
+  as read do not match the lists it is in, `reference_kept` for a value that
+  names nothing as read and still does not, and `hub_in_use` (below). One module
+  alone cannot change these lists: `client.update_module` and `plan_module`
+  raise `HubListError` for a payload that does.
+- **The save.** A save with steps does this, in order. It reads the version of
+  the profile's device settings module (another writer's change stops the save
+  here with `ConfigConflictError`, and nothing is sent; a module that already
+  holds the planned changes, from a write whose answer was lost, counts as
+  written). It reads the hub services (two requests), sends each step the VCO
+  does not already have in place, reads the services again, and writes the
+  device settings with the hub rows the steps made, without reading the version
+  a second time. The write is the module as read with your edits and
+  `deviceSettings:vpn:edgeHub` (`edgeHubCluster` for a cluster) rows: a hub added
+  to the Branch-to-Hub list gets one, whose object is its service
+  (`+ refs deviceSettings:vpn:edgeHub (Global Segment): <service ID>` in
+  `ModuleWrite.plan`), and a hub removed from it loses its row. A row of a hub
+  that stays is never removed, and a hub the VCO has no service for after its
+  enable raises `HubServiceNotFoundError`. `SaveResult.steps` has a
+  `StepOutcome` for each step: `"sent"`, `"in_place"` (the VCO already had the
+  roles, so nothing was sent), or, for `dry_run=True`, `"would_send"` or
+  `"in_place"`.
+- **When a step fails.** A request that fails once a step may have been sent is
+  raised as `SaveStepError` (from `pyvelo_intent`), from the VCO's error: `step`
+  is the step whose call failed, or `None` when a module write failed
+  (`module_name` names it), `steps_done` and `steps_in_place` list the others,
+  and `written` the modules stored; `save_progress(error)` gives the modules
+  not written. A failure before any step was sent (the version read, the
+  services read, a write when every step was in place) propagates as it is, and
+  so does a cancellation. Nothing a step did is undone and the state keeps its
+  edits: a second `save(state)` plans the steps again, finds the ones sent in
+  place, sends the rest and writes the modules.
+- **The removal window.** Once a hub's disable has run, its service, its row
+  and the refs that point at it are gone, so if the module write then fails the
+  stored profile still lists the hub while the VCO drops it for every Edge,
+  until a second `save` finishes. The Orchestrator UI has the same window.
+- **A hub that rules use.** An Edge hub removed from a Branch-to-Hub list that
+  edge QoS rules use loses its service to the role call, and with it the
+  backhaul refs of those rules, which keep the hub in their data. The services
+  read says so (it asks for `edgeQOSUsage` only for such a removal): with
+  `save(state, on_hub_in_use="warn")`, the default, the save adds a `hub_in_use`
+  warning per hub and segment to `SaveResult.warnings`, naming the Edges, and
+  goes on; with `on_hub_in_use="refuse"` it raises `HubListError` (`edges` holds
+  their IDs and names) before any step is sent. A dry run does the same.
+- **A hub in a QoS rule.** A rule's `edge2EdgeRouteAction.routeCfg.backhaulEdges`
+  names its hubs, by name or `edgeLogicalId`, on a profile and on an edge. `apply`
+  gives the entry its `logicalId`, the hub's service for the profile and the
+  rule's segment, and the save adds the `deviceSettings:backHaulEdge` row that
+  points at it. A hub that is not saved there has no service: it is saved first
+  and the rule after, in two saves, and `apply` raises `HubServiceNotFoundError`
+  for a hub added to the lists in the same unsaved edit, with the patch that
+  adds it. An entry built by assignment without its `logicalId` raises the same
+  error at `plan()`. The rule's hub must be in the segment's `backHaulEdges`,
+  and a value that names a segment or a hub the configuration does not have is a
+  `DanglingReferenceError` (see "What a save writes"), so a hub that a rule of
+  the profile still names cannot be taken out of `backHaulEdges`: remove the
+  rule's use in the same edit, or before.
+- **Not supported.** Creating a hub, an Edge or a cluster, or a cluster's
+  members; and role calls from an edge (an edge state has no steps: its QoS
+  rules name the hubs of its profile).
 
 ## After a save
 
