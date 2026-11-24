@@ -89,8 +89,8 @@ def three_module_state() -> ConfigState:
 def edit_all(state: ConfigState) -> None:
     """One edit in each module of ``three_module_state``, each shown by ``plan()``."""
     state.edge.firewall.firewall_enabled.set_local(False)
-    state.edge.qos.service_rate_limit = ServiceRateLimit(
-        enabled=True, input_type="percent", value=50
+    state.edge.qos.service_rate_limit.set_local(
+        ServiceRateLimit(enabled=True, input_type="percent", value=50)
     )
     links = state.edge.wan.links
     assert links is not MISSING
@@ -386,8 +386,8 @@ async def test_a_conflict_found_before_sending_puts_the_module_as_read_in_the_st
     state = three_module_state()
     client = MockVcoClient.for_state(state)
     client.store.other_writer(4, lambda row: row["data"].update(futureKey=1))
-    state.edge.qos.service_rate_limit = ServiceRateLimit(
-        enabled=True, input_type="percent", value=50
+    state.edge.qos.service_rate_limit.set_local(
+        ServiceRateLimit(enabled=True, input_type="percent", value=50)
     )
 
     with pytest.raises(ConfigConflictError) as exc:
@@ -408,8 +408,8 @@ async def test_a_module_gone_from_its_configuration_keeps_the_state_as_it_was():
     client = MockVcoClient.for_state(state)
     qos = state.module("QOS")
     del client.store.rows[4]
-    state.edge.qos.service_rate_limit = ServiceRateLimit(
-        enabled=True, input_type="percent", value=50
+    state.edge.qos.service_rate_limit.set_local(
+        ServiceRateLimit(enabled=True, input_type="percent", value=50)
     )
 
     with pytest.raises(ConfigConflictError) as exc:
@@ -569,8 +569,8 @@ async def test_insert_refreshes_and_is_no_longer_new():
 
 async def test_a_module_inserted_is_updated_by_the_next_save():
     state, client, pipeline, inserted = await saved_insert()
-    state.edge.qos.service_rate_limit = ServiceRateLimit(
-        enabled=True, input_type="percent", value=50
+    state.edge.qos.service_rate_limit.set_local(
+        ServiceRateLimit(enabled=True, input_type="percent", value=50)
     )
     version = client.store.rows[inserted]["version"]
     second = await pipeline.save(state)

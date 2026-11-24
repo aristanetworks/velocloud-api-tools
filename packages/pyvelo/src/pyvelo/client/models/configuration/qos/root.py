@@ -1,18 +1,19 @@
 from typing import Annotated, Any
 
-from pydantic import MISSING, Field, PrivateAttr
+from pydantic import Field, PrivateAttr
 
-from pyvelo.core import Layered, Unconverted, VcoModel, kind_default
+from pyvelo.core import ByPresence, Default, Inheritable, Layered, VcoModel
 from pyvelo.core.fields import KeyField
-from pyvelo.core.layers import L
+from pyvelo.core.layers import L, Profile
 
 from ..common import (
-    copy_profile_segments,
+    bind_profile_layers,
     find_segment,
     get_or_create_segment,
     profile_segment_id,
     profile_segment_name,
 )
+from ..profile_segments import template_default
 from .common import ServiceRateLimitInputType
 from .qoe import QoeSettings
 from .segment import QosSegment
@@ -30,24 +31,51 @@ class QosClientConnector(VcoModel):
 
 
 class QosData(Layered[L]):
+    """The QoS module's data.
+
+    The three module-level values are ``Inheritable`` and stored by presence:
+    the edge may store its own, and a layer that stores none displays the
+    value the packaged profile template holds (``None`` for
+    ``qos_client_connector``).
+    """
+
     segments: Annotated[
         list[QosSegment[L]], KeyField("segment.name", alt="segment.segment_id")
     ] = Field(default_factory=list)
-    service_rate_limit: Unconverted[ServiceRateLimit | MISSING] = kind_default(MISSING)
-    qoe: Unconverted[QoeSettings | MISSING] = kind_default(MISSING)
-    qos_client_connector: Unconverted[QosClientConnector | MISSING] = kind_default(
-        MISSING
-    )
+    service_rate_limit: Annotated[
+        Inheritable[ServiceRateLimit],
+        ByPresence(),
+        Default(factory=template_default(ServiceRateLimit, "QOS", "serviceRateLimit")),
+    ] = Field(default=...)
+    qoe: Annotated[
+        Inheritable[QoeSettings],
+        ByPresence(),
+        Default(factory=template_default(QoeSettings, "QOS", "qoe")),
+    ] = Field(default=...)
+    qos_client_connector: Annotated[
+        Inheritable[QosClientConnector | None],
+        ByPresence(),
+        Default(None),
+    ] = Field(default=...)
 
     _profile_segments: list[dict[str, Any]] | None = PrivateAttr(default=None)
 
     def bind_profile(self, profile_data: object) -> None:
-        """Remember the segments of the profile module this layer inherits from.
+        """Remember the profile module this layer inherits from.
 
-        *profile_data* is that module's raw ``data``. It is what :meth:`segment`
-        copies a missing segment's descriptor from.
+        *profile_data* is that module's raw ``data`` (anything else, as for an
+        edge whose profile has no QoS module, is a profile with no segments).
+        Its segments are what :meth:`segment` copies a missing segment's
+        descriptor from. On the edge layer the data, and the segments in it,
+        are also bound to the profile layer read from it (a ``QosData[Profile]``),
+        which is where ``localize`` copies from: see
+        ``pyvelo.core.owned.bind_layers``. A segment :meth:`segment` adds
+        afterwards is bound as well. Raises ``ValidationError`` for a profile
+        module that does not parse.
         """
-        self._profile_segments = copy_profile_segments(profile_data)
+        self._profile_segments = bind_profile_layers(
+            self, profile_data, QosData[Profile]
+        )
 
     def segment(self, name: str) -> QosSegment[L]:
         """The segment called *name*; a layer that lacks it gets an empty entry.

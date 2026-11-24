@@ -30,6 +30,7 @@ from pyvelo.core.identity import (
     ResolverNotLoadedError,
 )
 from pyvelo.core.layers import Edge, Profile
+from pyvelo.core.owned import Owned
 from pyvelo.core.rebase import Path
 from pyvelo.testing import ModuleStore, make_module_json
 from pyvelo_intent import LayerNotSavedError
@@ -568,6 +569,8 @@ def edge_with_qos() -> ConfigState:
 
 def rate_limit(data: QosData[Edge] | QosData[Profile]) -> ServiceRateLimit:
     rate = data.service_rate_limit
+    if isinstance(rate, Owned):
+        rate = rate.local
     assert isinstance(rate, ServiceRateLimit)
     return rate
 

@@ -384,8 +384,8 @@ is applied, and `FirewallData[Composed]` what the VCO composes for an edge
 (`edge/getEdgeConfigurationModules`, read-only). The firewall and QoS modules
 are layered so far: `QosData[Edge]`, `QosData[Profile]` and
 `QosData[Composed]`, with `QosSegment` and `QosConfigurationModule` typed the
-same way, and every QoS field other than `segments` and a segment's `segment`
-is `Unconverted` until its kind is declared. A model needs its layer: a class
+same way; a segment's `web_proxy` is the one QoS field still `Unconverted`
+(see "QoS"). A model needs its layer: a class
 without one raises `TypeError` when it is validated or built. Each field of
 such a model has a kind, which says what it is at each layer:
 
@@ -486,6 +486,52 @@ displays `stateful_firewall_enabled` and `firewall_logging_enabled` as `false`
 and `networkProtectionSettings.icmpBasedAttacks.enablePingOfDeath` as `true`.
 A `FACTORY` value is never written: nothing is sent for a key the caller did
 not set, whatever it displays.
+
+### QoS
+
+The module-level values of QoS are `Inheritable` and stored by presence, as the
+firewall's are, with the template's display defaults
+(`module_template_value("QOS", key)`); none of them is in a group. Their wire
+keys are `serviceRateLimit`, `qoe` and `qosClientConnector`.
+
+| Field | Display default |
+|---|---|
+| `service_rate_limit` | the template's: disabled, `percent`, `1`. A disabled limit the edge stores is local |
+| `qoe` | the template's latency thresholds |
+| `qos_client_connector` | `None` (nothing stored); a stored `null` is kept and is not local |
+
+A segment's fields are these kinds:
+
+| Field | Kind | Meaning |
+|---|---|---|
+| `rules` | `Additive` | the edge's own rules, in the order the caller gives them; the profile's are not copied in, and the effective view lists the edge's first, then the profile's |
+| `defaults` | `ProfileOnly` | the profile's four fixed rules (see "Writing a configuration module"); an edge segment holds none, and a write keeps the `defaults` the edge's data had as read |
+| `cos_mapping` | `Inheritable`, by flag | see below |
+| `web_proxy` | `Unconverted` | as it has always been |
+
+`cos_mapping` is stored by its flag, `override`. The object is local when it is
+present and `override` is true, so `set_local(CosMapping(...))` writes it with
+`override: true` (the flag follows the value; a patch that names `override` is
+refused), and `inherit()` removes the object. An edge object stored with
+`override: false` is kept as read and is not local, yet the VCO's composer takes
+a present edge object without reading its flag, so the effective view shows it
+as the edge's (`Origin.EDGE`). Remove it with `inherit()` for the profile's
+mapping to apply. `localize()` copies the profile segment's mapping (or the
+display default, `CosMapping()`) in with `override: true`; on a segment
+`data.segment(name)` added it copies from the profile's segment of that name.
+
+| Python | Patch |
+|---|---|
+| `segment.cos_mapping.set_local(CosMapping(...))` | `{"segments": {"Global Segment": {"cosMapping": {...}}}}` |
+| `segment.cos_mapping.inherit()` | `{"segments": {"Global Segment": {"cosMapping": null}}}` |
+| `data.qos_client_connector.inherit()` | `{"qosClientConnector": null}`: the key is removed, whatever it held |
+| `data.service_rate_limit.localize()` | `{"serviceRateLimit": {"value": 50}}`: the profile's limit, or the display default when the profile stores none, is copied in whole and then edited |
+
+A value made local from a display default is written whole: the edge stores
+every key the template has (`enabled`, `inputType` and `value`), not only the
+one the caller changed. A profile that stores no `serviceRateLimit` reads the
+display default, and a profile layer writes only the keys it read or the caller
+set.
 
 ## Portal list and pagination methods
 

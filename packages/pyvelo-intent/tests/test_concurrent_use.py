@@ -230,7 +230,7 @@ async def test_the_error_names_the_modules_written_and_those_left():
     saving = asyncio.create_task(pipeline.save(state))
     _ = await client.started.wait()  # the firewall write is out; QoS is planned
 
-    rate = state.edge.qos.service_rate_limit
+    rate = state.edge.qos.service_rate_limit.local
     assert rate is not MISSING
     rate.value = 60
     client.release.set()

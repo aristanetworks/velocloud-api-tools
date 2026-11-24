@@ -35,7 +35,18 @@ PROFILE = {
             "outbound": [
                 {"name": "p", "match": {}, "action": {"allow_or_deny": "allow"}}
             ],
-            "rules": [{"name": "p"}],
+            "rules": [
+                {
+                    "name": "p",
+                    "match": {},
+                    "action": {
+                        "edge2EdgeRouteAction": {},
+                        "edge2DataCenterRouteAction": {},
+                        "edge2CloudRouteAction": {},
+                        "QoS": {},
+                    },
+                }
+            ],
         },
         {"segment": desc(2, "Guest"), "outbound": [], "rules": []},
     ]

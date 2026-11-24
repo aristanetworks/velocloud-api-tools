@@ -1,4 +1,3 @@
-from collections.abc import Callable
 from typing import Annotated, Any, ClassVar
 
 from pydantic import Field, PrivateAttr
@@ -26,7 +25,7 @@ from ..common import (
     profile_segment_id,
     profile_segment_name,
 )
-from ..profile_segments import module_template_value
+from ..profile_segments import template_default
 from .rules import FirewallInboundRule, FirewallInboundRuleV6
 from .security_features import NetworkProtectionSettings, SecurityFeatureSettings
 from .segment import FirewallSegment
@@ -37,15 +36,6 @@ from .stateful import StatefulFirewallSettings
 def profile_false_wins(profile_value: object) -> bool:
     """The VCO's rule for ``firewall_enabled``: a profile that has it off turns it off for every edge."""
     return profile_value is False
-
-
-def _template[M: VcoModel](model: type[M], key: str) -> Callable[[], M]:
-    """A factory of the display default of *key*: the packaged template's value, read as *model*."""
-
-    def make() -> M:
-        return model.model_validate(module_template_value("firewall", key))
-
-    return make
 
 
 class StatefulLocal(VcoModel):
@@ -133,13 +123,17 @@ class FirewallData(Layered[L]):
         Inheritable[SecurityFeatureSettings],
         ByPresence(),
         MemberOf("atp"),
-        Default(factory=_template(SecurityFeatureSettings, "securityFeatures")),
+        Default(
+            factory=template_default(
+                SecurityFeatureSettings, "firewall", "securityFeatures"
+            )
+        ),
     ] = Field(default=...)
 
     services: Annotated[
         Inheritable[FirewallServices],
         ByPresence(),
-        Default(factory=_template(FirewallServices, "services")),
+        Default(factory=template_default(FirewallServices, "firewall", "services")),
     ] = Field(default=...)
 
     network_protection_settings: Annotated[
@@ -147,7 +141,9 @@ class FirewallData(Layered[L]):
         ByPresence(),
         MemberOf("network_protection"),
         Default(
-            factory=_template(NetworkProtectionSettings, "networkProtectionSettings")
+            factory=template_default(
+                NetworkProtectionSettings, "firewall", "networkProtectionSettings"
+            )
         ),
     ] = Field(default=...)
     network_protection_settings_v6: Annotated[
@@ -155,7 +151,9 @@ class FirewallData(Layered[L]):
         ByPresence(),
         MemberOf("network_protection"),
         Default(
-            factory=_template(NetworkProtectionSettings, "networkProtectionSettingsV6")
+            factory=template_default(
+                NetworkProtectionSettings, "firewall", "networkProtectionSettingsV6"
+            )
         ),
     ] = Field(default=...)
 
@@ -164,7 +162,9 @@ class FirewallData(Layered[L]):
         ByPresence(),
         MemberOf("stateful"),
         Default(
-            factory=_template(StatefulFirewallSettings, "statefulFirewallSettings")
+            factory=template_default(
+                StatefulFirewallSettings, "firewall", "statefulFirewallSettings"
+            )
         ),
     ] = Field(default=...)
     stateful_firewall_settings_v6: Annotated[
@@ -172,7 +172,9 @@ class FirewallData(Layered[L]):
         ByPresence(),
         MemberOf("stateful"),
         Default(
-            factory=_template(StatefulFirewallSettings, "statefulFirewallSettingsV6")
+            factory=template_default(
+                StatefulFirewallSettings, "firewall", "statefulFirewallSettingsV6"
+            )
         ),
     ] = Field(default=...)
 

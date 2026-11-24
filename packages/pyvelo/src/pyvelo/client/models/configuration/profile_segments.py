@@ -17,7 +17,7 @@ those additions: the baseline a plan compares the module with.
 import copy
 import json
 import uuid
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from functools import cache
 from importlib.resources import files
@@ -25,7 +25,7 @@ from typing import Any, Final
 
 from pydantic import MISSING
 
-from pyvelo.core.base import is_dict, is_list
+from pyvelo.core.base import VcoModel, is_dict, is_list
 from pyvelo.core.identity import SegmentIdentity
 
 from .common import segment_id_of
@@ -86,6 +86,22 @@ def module_template_value(module_name: str, key: str) -> object:
         )
     module: dict[str, Any] = _template()[template_key].get("module", {})
     return copy.deepcopy(module[key])
+
+
+def template_default[M: VcoModel](
+    model: type[M], module_name: str, key: str
+) -> Callable[[], M]:
+    """A factory of the display default of *key* of *module_name*: the template's value, read as *model*.
+
+    It is the ``Default(factory=...)`` of an ``Inheritable`` field whose value
+    an untouched profile holds as the template has it
+    (:func:`module_template_value`).
+    """
+
+    def make() -> M:
+        return model.model_validate(module_template_value(module_name, key))
+
+    return make
 
 
 def default_rules() -> list[dict[str, Any]]:

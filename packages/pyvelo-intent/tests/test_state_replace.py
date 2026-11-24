@@ -183,8 +183,8 @@ def test_replace_binds_the_new_module_to_the_profile():
 def test_replace_leaves_the_other_modules_edits():
     state = make_state([fw_row(), qos_row()])
     state.edge.firewall.firewall_enabled.set_local(False)
-    state.edge.qos.service_rate_limit = ServiceRateLimit(
-        enabled=True, input_type="percent", value=50
+    state.edge.qos.service_rate_limit.set_local(
+        ServiceRateLimit(enabled=True, input_type="percent", value=50)
     )
 
     _ = replace_firewall(state, {**copy.deepcopy(EDGE_FW), "firewall_enabled": False})
