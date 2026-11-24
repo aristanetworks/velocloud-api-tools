@@ -11,6 +11,7 @@ from .state import (
     ConfigState,
     SaveProgress,
     SaveResult,
+    StepOutcome,
     ValidationWarning,
     save_progress,
 )
@@ -24,6 +25,7 @@ __all__ = [
     "HubStep",
     "SaveProgress",
     "SaveResult",
+    "StepOutcome",
     "ValidationWarning",
     "build_default_pipeline",
     "confirm_save",

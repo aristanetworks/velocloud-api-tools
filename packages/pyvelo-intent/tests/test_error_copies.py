@@ -2,16 +2,26 @@
 
 import copy
 import pickle
+import uuid
 from typing import Any
 
 from pyvelo.config.validation import ValidationError
+from pyvelo_intent.config.hub_steps import HubRef, HubStep
 from pyvelo_intent.errors import (
     ConfigInputError,
     IntentError,
     LayerNotSavedError,
+    SaveStepError,
     SaveValidationError,
     UnknownRegistryEntryError,
 )
+
+
+def a_step(action: str = "enable", name: str = "Hub-A") -> HubStep:
+    hub = HubRef(
+        "edge", uuid.UUID(int=7), name, 31 if action == "enable" else None, None
+    )
+    return HubStep(action, "backhaul", hub, "Global Segment", 0, 501)  # pyright: ignore[reportArgumentType]
 
 
 def copies(error: Exception) -> list[Any]:
@@ -33,6 +43,13 @@ def test_every_error_of_the_module_round_trips():
         SaveValidationError([ValidationError("a.b", "too long", "too_long")]),
         LayerNotSavedError(
             "profile", "edge", {"firewall": ["segments[a].name"]}, profile_id=20
+        ),
+        SaveStepError(
+            "VcoOperationError: boom",
+            step=a_step(),
+            steps_done=(a_step("disable", "Hub-B"),),
+            steps_in_place=(a_step("enable", "Hub-C"),),
+            written=("deviceSettings",),
         ),
     ]
     for error in errors:
@@ -59,6 +76,25 @@ def test_the_attributes_of_the_save_errors_are_kept():
         ]
     for copied in copies(layer):
         assert (copied.layer, copied.fields) == ("edge", {"qos": ["rate", "burst"]})
+
+
+def test_the_attributes_of_a_save_step_error_are_kept():
+    failed, done, in_place = a_step(), a_step("disable", "Hub-B"), a_step("enable", "C")
+    error = SaveStepError(
+        "VcoOperationError: boom",
+        step=failed,
+        module_name=None,
+        steps_done=[done],
+        steps_in_place=[in_place],
+        written=["deviceSettings", "QOS"],
+    )
+    for copied in copies(error):
+        assert copied.step == failed
+        assert copied.module_name is None
+        assert copied.steps_done == (done,)
+        assert copied.steps_in_place == (in_place,)
+        assert copied.written == ("deviceSettings", "QOS")
+        assert str(copied) == str(error)
 
 
 def test_an_attribute_that_refers_back_to_the_error_survives():

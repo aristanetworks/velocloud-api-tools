@@ -389,6 +389,32 @@ def test_a_cluster_enable_sets_the_segment_roles_the_row_and_bumps_the_version()
     assert parsed.name == CLUSTER.name
 
 
+def test_a_cluster_enable_in_a_second_segment_refreshes_the_rows_of_the_first():
+    store = make_store()
+    second_object = SEGMENT_OBJECT + 1
+    store.add_object(
+        second_object,
+        logical_id="00000000-0000-4000-8000-0000000000ff",
+        name="Second Segment",
+        type_="REGULAR",
+        object_="NETWORK_SEGMENT",
+        data={"segmentId": GLOBAL[0] + 100},
+    )
+    _ = call(store, ENABLE_CLUSTER["hub"], CLUSTER.id)
+    _ = store.handle(
+        ENABLE_CLUSTER["backhaul"],
+        {**params(CLUSTER.id), "segmentObjectId": second_object},
+    )
+    rows = rows_of(store, CLUSTER_REF)
+    assert {r["segmentObjectId"] for r in rows} == {SEGMENT_OBJECT, second_object}
+    assert set(cluster(store)["data"][str(CONFIG)]) == {
+        str(GLOBAL[0]),
+        str(GLOBAL[0] + 100),
+    }
+    for row in rows:
+        assert row["data"] == cluster(store)["data"]
+
+
 @pytest.mark.parametrize("role", ["bridge", "backhaul"])
 def test_a_cluster_bridge_or_backhaul_enable_and_disable_set_and_clear_its_flag(
     role: str,

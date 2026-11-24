@@ -1428,6 +1428,19 @@ def save_progress(error: BaseException) -> SaveProgress | None:
     return None
 
 
+@dataclass(frozen=True)
+class StepOutcome:
+    """What a save did with one role step (``ConfigPlan.steps``).
+
+    *status* is ``"sent"`` for a call the save made, ``"in_place"`` for a step
+    whose roles the VCO already had, which the save did not send, and
+    ``"would_send"`` for a step a dry run would send.
+    """
+
+    step: HubStep
+    status: Literal["sent", "in_place", "would_send"]
+
+
 @dataclass
 class SaveResult:
     """Outcome of ``ConfigPipeline.save``.
@@ -1467,6 +1480,10 @@ class SaveResult:
     compared whole (a keyed list read with an item that has no key): there an
     owned field is part of the list's change, and a value stored there
     otherwise than sent is a server change with ``as_read`` ``MISSING``."""
+    steps: tuple[StepOutcome, ...] = ()
+    """What the save did with each role step of the plan, in order; empty for a plan without steps.
+
+    A dry run says ``"would_send"`` or ``"in_place"``, and sends none."""
     warnings: list[ValidationWarning] = field(default_factory=list)
     validation_errors: list[ValidationError] = field(default_factory=list)
     # Optional count for downstream integrations managing enterprise objects.

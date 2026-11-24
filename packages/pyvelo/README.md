@@ -226,6 +226,15 @@ with nothing sent. The read narrows the race and does not close it, and a
 module with no `version` is written unconditionally. A write that sends no refs
 makes no extra request.
 
+`check_module_version(module, plan)` makes that read on its own, for a caller
+that changes other objects before it writes the module (a save that sends hub
+role calls): it answers `None` when the version is the one read, the
+`ModuleWrite` when the module there already holds the plan's changes, and
+raises `ConfigConflictError` with nothing sent otherwise; it answers `None`
+without a request for a module with no `version`, and for a plan that sends no
+refs. The write then passes `version_checked=True` and makes no read of its own
+(`rebase` still reads, because that read decides the rebase).
+
 `write_module(..., rebase=True)` is for a module written after a profile's
 device settings, which can change the profile's other modules (QoS rule flags,
 and the versions of every module when a segment becomes in use). It reads the

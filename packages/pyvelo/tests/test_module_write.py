@@ -1,4 +1,5 @@
 import copy
+import dataclasses
 import inspect
 import json
 import uuid
@@ -12,7 +13,12 @@ from pyvelo.client.models.configuration import DeviceSettingsData, FirewallData
 from pyvelo.client.models.configuration.firewall.rules import FirewallOutboundRule
 from pyvelo.client.models.configuration.firewall.segment import FirewallSegment
 from pyvelo.client.models.configuration.qos.root import ServiceRateLimit
-from pyvelo.client.module_write import missing_segments, plan_module
+from pyvelo.client.module_write import (
+    ModulePlan,
+    missing_segments,
+    plan_module,
+    with_hub_rows,
+)
 from pyvelo.client.schemas.configuration import (
     ConfigurationModuleBase,
     ConfigurationModuleList,
@@ -1712,3 +1718,78 @@ def test_plan_module_has_no_refs_parameter():
     parameters = inspect.signature(plan_module).parameters
     assert "refs" not in parameters
     assert "resolvers" in parameters
+
+
+# -- with_hub_rows --------------------------------------------------------------
+
+HUB_ROW_REF = "deviceSettings:vpn:edgeHub"
+
+
+def hub_ref_row(object_id: int, segment_object_id: int = SEG0_OBJECT) -> dict[str, Any]:
+    return {
+        "configurationId": 1,
+        "moduleId": 2,
+        "enterpriseObjectId": object_id,
+        "ref": HUB_ROW_REF,
+        "segmentObjectId": segment_object_id,
+    }
+
+
+async def plan_with_refs(refs: dict[str, Any] | None) -> ModulePlan:
+    module = unset_provider_module()
+    current = copy_of_data(module)
+    _ = current.merge_patch({"ntp": {"enabled": True}})
+    return dataclasses.replace(plan_module(module, current), refs=refs)
+
+
+async def test_with_hub_rows_puts_an_added_row_in_the_refs_and_lists_it_as_a_change():
+    existing = hub_ref_row(601)
+    plan = await plan_with_refs({HUB_ROW_REF: existing})
+    new = hub_ref_row(602)
+    result = with_hub_rows(
+        plan, added=[new], removed=[], segments={SEG0_OBJECT: "Global Segment"}
+    )
+    assert result.refs == {HUB_ROW_REF: [existing, new]}
+    assert plan.refs == {HUB_ROW_REF: existing}
+    (change,) = result.ref_changes
+    assert (change.added, change.name, change.segment) == (
+        True,
+        HUB_ROW_REF,
+        "Global Segment",
+    )
+    assert (change.match, change.value, change.segment_object_id) == (
+        "enterpriseObjectId",
+        602,
+        SEG0_OBJECT,
+    )
+    assert change.row == new
+    assert f"  + refs {HUB_ROW_REF} (Global Segment): 602" in result.render()
+
+
+async def test_with_hub_rows_takes_a_removed_row_out_and_drops_a_name_left_empty():
+    gone = hub_ref_row(601)
+    kept = hub_ref_row(602)
+    plan = await plan_with_refs({HUB_ROW_REF: [gone, kept]})
+    one = with_hub_rows(plan, added=[], removed=[gone])
+    assert one.refs == {HUB_ROW_REF: [kept]}
+    assert [(c.added, c.value) for c in one.ref_changes] == [(False, 601)]
+    both = with_hub_rows(plan, added=[], removed=[gone, kept])
+    assert both.refs == {}
+    assert "  - refs " + HUB_ROW_REF + ": 601" in both.render()
+
+
+async def test_with_hub_rows_matches_a_removed_row_by_object_and_segment():
+    same_object_other_segment = hub_ref_row(601, SEG0_OBJECT + 1)
+    gone = hub_ref_row(601)
+    plan = await plan_with_refs({HUB_ROW_REF: [same_object_other_segment, gone]})
+    result = with_hub_rows(plan, added=[], removed=[gone])
+    assert result.refs == {HUB_ROW_REF: [same_object_other_segment]}
+
+
+async def test_with_hub_rows_refuses_a_row_to_remove_that_the_refs_lack_and_a_plan_with_no_refs():
+    plan = await plan_with_refs({HUB_ROW_REF: hub_ref_row(601)})
+    with pytest.raises(ValueError, match="there is none to remove"):
+        _ = with_hub_rows(plan, added=[], removed=[hub_ref_row(699)])
+    bare = await plan_with_refs(None)
+    with pytest.raises(ValueError, match="hub rows go with an update that sends refs"):
+        _ = with_hub_rows(bare, added=[hub_ref_row(601)], removed=[])

@@ -78,7 +78,9 @@ shows as `firewall: insert`; `preview.modules_inserted` and
 `preview.modules_updated` hold the names. "What a save writes" explains the
 lines.
 
-`dry_run=True` skips write API calls; loading still reads live configuration.
+`dry_run=True` skips write API calls; loading still reads live configuration,
+and a dry run of a plan with hub role steps also reads the hub services (see
+"What a save writes").
 Calling `save(state)` sends configuration writes, and the state then continues
 from what the VCO stored (see "After a save"). A save that is not a dry run
 raises `SaveValidationError` when a write-time validator reports an error, and
@@ -591,6 +593,31 @@ firewall: update
   are those its logical ID names. A rule broken the same way as read is a
   `hub_list_as_read` warning in `ConfigPlan.check_warnings`, and the save
   leaves it.
+
+  A save with steps sends them before it writes the modules, in this order:
+  it reads the version of the profile's device settings module (a module
+  another writer changed stops the save here, with `ConfigConflictError` and
+  nothing sent), reads the hub services (two `getEnterpriseServices`
+  requests), sends each step the VCO does not already have in place, reads the
+  services again, and then writes the device settings carrying the hub rows the
+  steps made, without reading the version a second time. A hub added to the
+  Branch-to-Hub list gets its row in the module's refs (`+ refs
+  deviceSettings:vpn:edgeHub (Global Segment): <service ID>` in the module's
+  plan), and a hub removed from it loses its row. `SaveResult.steps` has a
+  `StepOutcome` for each step, `"sent"` or `"in_place"`; with `dry_run=True` it
+  says `"would_send"` or `"in_place"`, and a dry run of a plan with steps makes
+  the two services requests and no other.
+
+  A request that fails once a step may have been sent is raised as
+  `SaveStepError` (from `pyvelo_intent`), from the VCO's error: `step` is the
+  step whose call failed, or `None` when a module write failed (`module_name`
+  names it), `steps_done` and `steps_in_place` list the others, and
+  `written` the modules stored; `save_progress(error)` gives the modules not
+  written. A failure before any step was sent (the version read, the services
+  read, a module write when every step was in place) propagates as it is. A
+  cancellation propagates as it is. Nothing a step did is undone, and the
+  state keeps its edits: a second `save(state)` plans the same steps, finds
+  the ones sent in place, sends the rest and writes the modules.
 - A segment added to a profile module has an `added segments: Guest` line, and
   `get_field_changes()` lists it as one change at `segments["Guest"]`, from
   `MISSING` to the entry as written. A QoS segment that lacks template
@@ -835,6 +862,10 @@ the state continues from that module. Otherwise the save raises
 nothing was sent: `error.module` is the module as it is now, with your edits in
 `lost_edits` to redo on it. A module its configuration no longer holds raises it
 too, with `error.module` None: read the configuration again.
+A save with role steps makes this read before its first step instead
+(`client.check_module_version`), so that a module another writer changed stops
+it with nothing sent, and the device settings write that follows does not read
+again.
 
 A save of a profile that writes its device settings rebases the modules it
 writes after them. Writing device settings can change the profile's other
@@ -1152,14 +1183,14 @@ Known limits:
 
 | Module | What it provides |
 |---|---|
-| `pyvelo_intent` | Re-exports the public surface: `ConfigPipeline`, `ConfigState`, `SaveResult`, `ConfigPlan`, the types a save hands back (`ModulePlan` in `ConfigPlan.modules`, `ModuleWrite` in `SaveResult.written`, `ConfigFieldChange` from `get_field_changes()`), the entries a save reports (`PlannedChange`, `ServerChange`), `SaveProgress` and `save_progress`, the patch helpers (`add`, `delete`, `move`, `at`), `PatchError` and `PatchErrorKind` (the type of its `kind`), diff types (`DiffResult`, `Added`, `Removed`, `Modified`, `Unchanged`, `FieldChange`), the intent error types, the write errors `ModuleWriteError` (the base of the next three), `ConfigConflictError`, `WriteNotAppliedError`, `WriteOutcomeUnknownError` and `DetachedObjectError` (from `pyvelo.client.exceptions`), `LossyFieldError` and `ResolutionError`, helpers (`build_default_pipeline`, `confirm_save`, `load_config`) |
+| `pyvelo_intent` | Re-exports the public surface: `ConfigPipeline`, `ConfigState`, `SaveResult`, `ConfigPlan`, the types a save hands back (`ModulePlan` in `ConfigPlan.modules`, `ModuleWrite` in `SaveResult.written`, `ConfigFieldChange` from `get_field_changes()`), the entries a save reports (`PlannedChange`, `ServerChange`), `SaveProgress` and `save_progress`, `StepOutcome` (in `SaveResult.steps`) and `HubStep` (in `ConfigPlan.steps`), the patch helpers (`add`, `delete`, `move`, `at`), `PatchError` and `PatchErrorKind` (the type of its `kind`), diff types (`DiffResult`, `Added`, `Removed`, `Modified`, `Unchanged`, `FieldChange`), the intent error types, the write errors `ModuleWriteError` (the base of the next three), `ConfigConflictError`, `WriteNotAppliedError`, `WriteOutcomeUnknownError` and `DetachedObjectError` (from `pyvelo.client.exceptions`), `LossyFieldError` and `ResolutionError`, helpers (`build_default_pipeline`, `confirm_save`, `load_config`) |
 | `pyvelo_intent.config.pipeline` | `ConfigPipeline` (load/load_profile → apply → save), `build_default_pipeline` |
-| `pyvelo_intent.config.state` | `ConfigState`, `StateLock`, `SaveResult`, `ConfigPlan`, `SaveProgress`, `save_progress`, `ConfigFieldChange`, `ValidationWarning` |
+| `pyvelo_intent.config.state` | `ConfigState`, `StateLock`, `SaveResult`, `StepOutcome`, `ConfigPlan`, `SaveProgress`, `save_progress`, `ConfigFieldChange`, `ValidationWarning` |
 | `pyvelo_intent.config.helpers` | `load_config` (a YAML file validated against a model; `ConfigInputError` for a file it cannot use, a key given twice included), `confirm_save` (a yes or no prompt, which prints the plan it is given: `confirm_save(plan=preview.plan)`) |
 | `pyvelo_intent.config.validators.*` | Structural built-ins (`key_uniqueness`, `override_consistency`, `required_fields`) + domain validators (firewall, device settings) |
 | `pyvelo_intent.config.(firewall\|device_settings\|qos\|wan\|control_plane)` | Per-module configuration helpers |
 | `pyvelo_intent.diff` | Generic keyed-list diff engine: `diff_intents`, `DiffResult`, `Added`, `Removed`, `Modified`, `Unchanged`, `FieldChange`. Each side must have each key once (`ValueError` otherwise). |
-| `pyvelo_intent.errors` | `IntentError`, `ConfigInputError`, `LayerNotSavedError`, `SaveValidationError`, `UnknownRegistryEntryError` |
+| `pyvelo_intent.errors` | `IntentError`, `ConfigInputError`, `LayerNotSavedError`, `SaveStepError`, `SaveValidationError`, `UnknownRegistryEntryError` |
 | `pyvelo_intent.testing` | Test fixtures: `MockVcoClient`, which holds a `ModuleStore` (`pyvelo.testing`) as `store` that serves an edge's configuration stack, module reads and module writes, so a second `load` sees what a save stored (`MockVcoClient.for_state(state)` seeds it from a state), `make_firewall_module`, `make_firewall_segment` |
 
 ## Tests

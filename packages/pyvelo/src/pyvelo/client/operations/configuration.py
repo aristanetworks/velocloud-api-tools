@@ -547,6 +547,49 @@ class ConfigurationMixin(Protocol):
             )
         return None
 
+    async def check_module_version[M: ConfigurationModuleBase](
+        self: VcoClientBaseProtocol,
+        module: M,
+        plan: ModulePlan,
+        *,
+        enterprise_id: int | None = None,
+    ) -> ModuleWrite[M] | None:
+        """The version read that ``write_module`` makes before an update that sends refs, made on its own.
+
+        A save that changes the VCO's other objects before it writes *module*
+        (the role calls of a hub list edit) calls this first: a module that
+        changed under it then stops the save before anything is sent. The
+        write that follows passes ``version_checked=True`` and does not read
+        again.
+
+        Answers ``None`` when the VCO's ``version`` of the module is the one
+        read, after one request (``_read_version``). It answers ``None``
+        without a request for a module with no ``version`` or no
+        ``configuration_id``, and for a plan that is not an update or sends no
+        refs (``plan.refs`` is None): ``write_module`` reads none for those
+        either. When the version differs, the module is read with its refs
+        and checked as after a refusal (``check_module_write`` with
+        ``"stale"``): the answer is the write, a ``ModuleWrite``, when the
+        module there already holds the plan's changes (a retry of a write
+        whose first copy was stored), and otherwise ``ConfigConflictError`` is
+        raised with ``sent`` False. Nothing is sent either way; an error of a
+        read propagates. Raises ``ValueError`` when *plan* is for a module of
+        another name.
+        """
+        module_name = str(getattr(module, "name", MISSING))
+        if plan.name != module_name:
+            raise ValueError(f"the plan is for {plan.name}, not {module_name}")
+        if (
+            plan.operation != "update"
+            or plan.refs is None
+            or not module.version
+            or module.configuration_id is None
+        ):
+            return None
+        if await _read_version(self, module, enterprise_id) == module.version:
+            return None
+        return await _check_stale(self, module, plan, enterprise_id)
+
     async def write_module[M: ConfigurationModuleBase](
         self: VcoClientBaseProtocol,
         module: M,
@@ -555,6 +598,7 @@ class ConfigurationMixin(Protocol):
         enterprise_id: int | None = None,
         if_absent: bool = False,
         rebase: bool = False,
+        version_checked: bool = False,
     ) -> ModuleWrite[M]:
         """Send *plan*, made by ``plan_module`` for *module*, and check what the VCO stored.
 
@@ -589,7 +633,10 @@ class ConfigurationMixin(Protocol):
         ``ConfigConflictError`` is raised with ``sent`` False. Neither read
         sends anything, and an error of either propagates. A write that sends
         no refs has no extra request. The read narrows the race and does not
-        close it.
+        close it. With *version_checked*, the caller has made that read
+        itself (:meth:`check_module_version`) and found the version the one
+        read, so the write makes none; *rebase* still reads, because that
+        read decides the rebase.
 
         With *rebase*, every update with a ``version`` reads that version
         first, refs or none, and a changed one does not end in the check
@@ -706,7 +753,7 @@ class ConfigurationMixin(Protocol):
                 )
         else:
             if (
-                (rebase or plan.refs is not None)
+                (rebase or (plan.refs is not None and not version_checked))
                 and module.version
                 and module.configuration_id is not None
                 and await _read_version(self, module, enterprise_id) != module.version

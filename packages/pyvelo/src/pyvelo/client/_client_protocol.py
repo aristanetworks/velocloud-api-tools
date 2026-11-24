@@ -91,6 +91,15 @@ class VcoClientBaseProtocol(Protocol):
         enterprise_id: int | None = None,
         if_absent: bool = False,
         rebase: bool = False,
+        version_checked: bool = False,
     ) -> ModuleWrite[M]: ...
+
+    async def check_module_version[M: ConfigurationModuleBase](
+        self,
+        module: M,
+        plan: ModulePlan,
+        *,
+        enterprise_id: int | None = None,
+    ) -> ModuleWrite[M] | None: ...
 
     def _on_stale_websocket_closed(self, task: asyncio.Task[None]) -> None: ...

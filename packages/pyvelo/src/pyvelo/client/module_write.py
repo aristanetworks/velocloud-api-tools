@@ -355,6 +355,93 @@ class ModulePlan:
         return lines
 
 
+def with_hub_rows(
+    plan: ModulePlan,
+    *,
+    added: Sequence[Mapping[str, object]],
+    removed: Sequence[Mapping[str, object]],
+    segments: Mapping[int, str] | None = None,
+) -> ModulePlan:
+    """*plan* with the hub ref rows of a save's role steps: the *removed* rows out of its refs and the *added* rows in.
+
+    The role calls make a hub's service and its row, which the plan of the
+    device settings module, made before them, cannot know. A row is told by its
+    ``ref``, ``enterpriseObjectId`` and ``segmentObjectId``; each *removed*
+    one is a row of the refs, and the refs hold it no more. A name with a
+    change is a list, and is left out when it has no row. Each row also
+    becomes a ``RefChange`` of the plan, matched by its ``enterpriseObjectId``
+    and ``segmentObjectId``, so that the write holds the VCO to it
+    (``check_refs``) and ``render()`` lists it. *segments* names a segment by
+    its object ID, for the line of ``render()``.
+
+    Raises ``ValueError`` for a plan that is no update with refs, and for a
+    removed row the refs do not hold.
+    """
+    if plan.operation != "update" or plan.refs is None:
+        raise ValueError(
+            f"{plan.name}: hub rows go with an update that sends refs, and this "
+            f"plan is {'an update with no refs' if plan.operation == 'update' else plan.operation}"
+        )
+    names = segments or {}
+    refs = copy.deepcopy(plan.refs)
+    changes: list[RefChange] = []
+
+    def change(row: Mapping[str, object], *, adding: bool) -> RefChange:
+        segment_object_id = row.get("segmentObjectId")
+        return RefChange(
+            added=adding,
+            name=str(row["ref"]),
+            segment=names.get(segment_object_id)
+            if isinstance(segment_object_id, int)
+            else None,
+            row=copy.deepcopy(dict(row)),
+            match="enterpriseObjectId",
+            value=row.get("enterpriseObjectId"),
+            segment_object_id=segment_object_id
+            if isinstance(segment_object_id, int)
+            else None,
+            owner=None,
+        )
+
+    def held(name: str) -> list[dict[str, Any]]:
+        value = refs.get(name)
+        if is_list(value):
+            return [cast(dict[str, Any], row) for row in value]
+        return [] if value is None else [cast(dict[str, Any], value)]
+
+    for row in removed:
+        name = str(row["ref"])
+        rows = held(name)
+        index = next(
+            (
+                i
+                for i, r in enumerate(rows)
+                if is_dict(r)
+                and r.get("enterpriseObjectId") == row.get("enterpriseObjectId")
+                and r.get("segmentObjectId") == row.get("segmentObjectId")
+            ),
+            None,
+        )
+        if index is None:
+            raise ValueError(
+                f"{plan.name}: the refs hold no {name} row for object "
+                f"{row.get('enterpriseObjectId')} in segment object "
+                f"{row.get('segmentObjectId')}, so there is none to remove"
+            )
+        change_made = change(rows[index], adding=False)
+        del rows[index]
+        if rows:
+            refs[name] = rows
+        else:
+            del refs[name]
+        changes.append(change_made)
+    for row in added:
+        name = str(row["ref"])
+        refs[name] = [*held(name), copy.deepcopy(dict(row))]
+        changes.append(change(row, adding=True))
+    return replace(plan, refs=refs, ref_changes=(*plan.ref_changes, *changes))
+
+
 def update_request(
     module: ConfigurationModuleBase,
     plan: ModulePlan,

@@ -152,9 +152,11 @@ class ModuleStore:
     answers the service; with no service each answers ``null``. A cluster call
     changes ``data["<configurationId>"]["<segmentId>"].roles`` (``segmentId``
     is the ``segmentId`` in the data of the segment object), adds the
-    ``deviceSettings:vpn:edgeHubCluster`` row once, and bumps the cluster's
-    ``version``; a cluster hub disable for a profile the cluster has no data for
-    is answered with the error the VCO gives and changes nothing. A service's
+    ``deviceSettings:vpn:edgeHubCluster`` row once, has every row of the
+    cluster (in any module and segment) show its data as it is now, and bumps
+    the cluster's ``version``; a cluster hub disable for a profile the cluster
+    has no data for is answered with the error the VCO gives and changes
+    nothing. A service's
     ``configuration`` (with ``configuration``) lists the ref rows that point at
     it; its ``edgeQOSUsage`` (with ``configuration`` and ``edgeQOSUsage``) the
     ``deviceSettings:backHaulEdge`` rows of the QoS module of an Edge
@@ -780,32 +782,30 @@ class ModuleStore:
         module_id: int,
         segment_object_id: int,
     ) -> None:
-        """Have module *module_id* hold a *ref* row for *obj* in that segment, once; the row shows the object as it is now.
+        """Have module *module_id* hold a *ref* row for *obj* in that segment, once; every row of *obj* shows it as it is now.
 
         The module's data and ``version`` stay as they are.
         """
         module = self.rows[module_id]
         pairs = _ref_pairs(module)
-        for name, row in pairs:
-            if (name, row.get("enterpriseObjectId"), row.get("segmentObjectId")) == (
-                ref,
-                obj["id"],
-                segment_object_id,
-            ):
-                row["data"] = _row_data(obj)
-                _set_refs(module, pairs)
-                return
-        stored = self._stored_row(
-            {
-                "configurationId": configuration_id,
-                "moduleId": module_id,
-                "enterpriseObjectId": obj["id"],
-                "ref": ref,
-                "segmentObjectId": segment_object_id,
-            }
+        held = any(
+            (name, row.get("enterpriseObjectId"), row.get("segmentObjectId"))
+            == (ref, obj["id"], segment_object_id)
+            for name, row in pairs
         )
-        if stored is not None:
-            _set_refs(module, [*pairs, (ref, stored)])
+        if not held:
+            stored = self._stored_row(
+                {
+                    "configurationId": configuration_id,
+                    "moduleId": module_id,
+                    "enterpriseObjectId": obj["id"],
+                    "ref": ref,
+                    "segmentObjectId": segment_object_id,
+                }
+            )
+            if stored is not None:
+                _set_refs(module, [*pairs, (ref, stored)])
+        self._refresh_hub_rows(obj)
 
     def _refresh_hub_rows(self, obj: dict[str, Any]) -> None:
         """Have every ref row that points at *obj* show its roles as they are now."""

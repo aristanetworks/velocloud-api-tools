@@ -7,9 +7,12 @@ codes. Library code raises them rather than calling ``sys.exit()``.
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from typing import Any, cast, override
+from typing import TYPE_CHECKING, Any, cast, override
 
 from pyvelo.config.validation import ValidationError
+
+if TYPE_CHECKING:
+    from pyvelo_intent.config.hub_steps import HubStep
 
 
 def _rebuild_error(cls: type[IntentError], args: tuple[Any, ...]) -> IntentError:
@@ -95,4 +98,80 @@ class LayerNotSavedError(IntentError):
             + f"was edited: {edited}. Those edits are not saved. To change the "
             + f"{layer}, load it with {load} and make the edits there. They are "
             + "reported this once: the next plan or save goes ahead without them."
+        )
+
+
+class SaveStepError(IntentError):
+    """A save that sends role steps failed after it may have sent one.
+
+    The save of a profile whose edit adds or removes hubs sends the role calls
+    (``ConfigPlan.steps``) before it writes the modules, and nothing it sent
+    is undone when a later request fails. ``step`` is the step whose call
+    failed (it may have reached the VCO), or None when a module write failed
+    after at least one step was sent, and ``module_name`` then names that
+    module. ``steps_done`` are the steps sent before the failure and
+    ``steps_in_place`` those found already in place and not sent, in the order
+    of the plan; ``written`` are the names of the modules stored, in order.
+    The error is raised ``from`` the error of the VCO, and
+    ``save_progress(error)`` gives the modules not written. The state keeps
+    its edits: a second ``save`` plans the steps again, skips those in place
+    and sends the rest.
+    """
+
+    def __init__(
+        self,
+        reason: str,
+        *,
+        step: HubStep | None = None,
+        module_name: str | None = None,
+        steps_done: Sequence[HubStep] = (),
+        steps_in_place: Sequence[HubStep] = (),
+        written: Sequence[str] = (),
+    ) -> None:
+        self.step: HubStep | None = step
+        self.module_name: str | None = module_name
+        self.steps_done: tuple[HubStep, ...] = tuple(steps_done)
+        self.steps_in_place: tuple[HubStep, ...] = tuple(steps_in_place)
+        self.written: tuple[str, ...] = tuple(written)
+        super().__init__(self._message(reason))
+
+    def _message(self, reason: str) -> str:
+        if self.step is not None:
+            what = (
+                f"the save stopped at the step '{self.step.render()}', which "
+                f"failed ({reason}); it may have reached the VCO"
+            )
+        elif self.module_name is not None:
+            what = (
+                f"the save stopped at the write of the module {self.module_name}, "
+                f"which failed ({reason})"
+            )
+        else:
+            what = (
+                "the save stopped after its steps, before it wrote any module, "
+                f"at a request that failed ({reason})"
+            )
+        sent = (
+            "steps sent: " + "; ".join(step.render() for step in self.steps_done)
+            if self.steps_done
+            else "no step was sent before it"
+        )
+        in_place = (
+            "; steps found in place and not sent: "
+            + "; ".join(step.render() for step in self.steps_in_place)
+            if self.steps_in_place
+            else ""
+        )
+        stored = (
+            "; modules known to be written: " + ", ".join(self.written)
+            if self.written
+            else "; no module is known to be written"
+        )
+        return (
+            f"{what}. At that point {sent}{in_place}{stored}. Nothing is undone: "
+            "the roles the sent steps set stay on the VCO, so a hub may have a "
+            "role for a list that the device settings do not hold yet. The "
+            "state keeps your edits. Save again with the same state: the next "
+            "save plans the steps again, skips those already in place, sends "
+            "the rest, and then writes the modules."
         )
