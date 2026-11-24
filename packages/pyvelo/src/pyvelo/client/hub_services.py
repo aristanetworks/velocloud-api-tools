@@ -15,11 +15,13 @@ from collections.abc import Iterator
 from typing import Final, Literal, Self
 
 from pydantic import MISSING
+from pydantic.fields import FieldInfo
 
 from pyvelo.client.models.configuration.qos.rule import BackhaulEdge
 from pyvelo.client.models.configuration.ref_owners import can_hold_owner, rows_named
 from pyvelo.core import VcoModel
 from pyvelo.core.base import is_dict
+from pyvelo.core.fields import get_owns_ref
 from pyvelo.core.identity import HubService, HubServiceNotFoundError
 from pyvelo.core.rebase import Path
 from pyvelo.core.show import patch_text
@@ -156,13 +158,17 @@ def hub_name(entry: object) -> str:
     return str(getattr(entry, "edge_logical_id", None))
 
 
+def _is_backhaul_service(field_info: FieldInfo) -> bool:
+    owns = get_owns_ref(field_info)
+    return owns is not None and owns.name == BACKHAUL_REF
+
+
 def _unserved(data: VcoModel) -> Iterator[tuple[Path, BackhaulEdge, VcoModel | None]]:
     """Each entry of *data* that names a hub and no service, with its path and its segment entry."""
-    for site in walk_fields(data, holds=can_hold_owner):
+    for site in walk_fields(data, holds=can_hold_owner, fields=_is_backhaul_service):
         model = site.model
         if (
             isinstance(model, BackhaulEdge)
-            and site.name == "logical_id"
             and _set(model.edge_logical_id)
             and not _set(model.logical_id)
         ):
@@ -187,10 +193,12 @@ def missing_service_error(
     refuse. The message says to give the entry its ``logicalId``, or to add
     the hub through ``apply``, which fills it.
     """
-    known: frozenset[Path] = (
-        frozenset() if as_read is None else frozenset(missing_services(as_read))
-    )
+    known: frozenset[Path] | None = None
     for path, entry, segment in _unserved(data):
+        if known is None:  # as read is walked only when there is something to compare
+            known = (
+                frozenset() if as_read is None else frozenset(missing_services(as_read))
+            )
         if path in known:
             continue
         hub = hub_name(entry)

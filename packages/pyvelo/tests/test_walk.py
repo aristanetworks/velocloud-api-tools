@@ -195,3 +195,36 @@ def test_a_list_of_items_that_hold_nothing_costs_no_key_lookups(
     assert looked_up == []
     assert Path(("leaf", "value")) in [s.path for s in sites]
     assert not any(s.name == "name" for s in sites)
+
+
+def test_a_field_filter_gives_only_the_wanted_fields_and_still_reaches_below_the_others():
+    asked: list[str] = []
+
+    def wants(field_info: object) -> bool:
+        asked.append(str(field_info))
+        return getattr(field_info, "annotation", None) is int
+
+    sites = list(walk_fields(_root(), holds=_holds_leaf, fields=wants))
+
+    assert {s.name for s in sites} == {"value", "segment_id"}
+    assert Path(("segments", Key("Guest"), "by_name", "x", "value")) in [
+        s.path for s in sites
+    ]
+    assert Path(("segments", Key("Guest"), "entries", Key("e1"), "leaf", "value")) in [
+        s.path for s in sites
+    ]
+    assert all(s.segment is not None for s in sites if s.path.parts[0] == "segments")
+
+
+def test_the_field_filter_is_asked_once_for_each_field_of_a_class():
+    asked: list[str] = []
+
+    def wants(field_info: object) -> bool:
+        asked.append(str(field_info))
+        return True
+
+    data = Root.model_validate({"other": [{"value": n} for n in range(50)]})
+    _ = list(walk_fields(data, holds=_holds_leaf, fields=wants))
+
+    # Root's three fields and Leaf's one, however many leaves there are.
+    assert len(asked) == len(Root.model_fields) + len(Leaf.model_fields)

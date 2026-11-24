@@ -616,8 +616,8 @@ def visits(monkeypatch: pytest.MonkeyPatch) -> _Visits:
         seen.asked.append(model_cls)
         return real_holds(model_cls)
 
-    def walk(data: VcoModel, *, holds: Any) -> Iterator[Any]:
-        for site in real_walk(data, holds=holds):
+    def walk(data: VcoModel, **asked: Any) -> Iterator[Any]:
+        for site in real_walk(data, **asked):
             seen.walked.append(type(site.model))
             yield site
 
@@ -663,11 +663,9 @@ def test_the_walk_reaches_rule_lists_and_skips_what_holds_no_owner(visits: _Visi
     assert visits.asked.count(QosRule) == 1
     assert visits.asked.count(QosRuleMatch) == 1
     assert QosRuleMatch not in visits.walked  # a class that holds no owner
-    defaults = qos.segments[0].defaults
-    assert isinstance(defaults, list)
-    rule_models = 3000 + len(defaults)  # each rule and default, once
-    assert visits.walked.count(QosRule) == rule_models * len(QosRule.model_fields)
-    assert visits.walked.count(BackhaulEdge) == len(BackhaulEdge.model_fields)
+    # Sites are the marked fields only: the one field of the one entry, and
+    # no field of the 3,000 rules and their defaults.
+    assert visits.walked == [BackhaulEdge]
 
 
 def test_the_owner_of_a_backhaul_entry_is_found_below_a_rule_with_its_segment():

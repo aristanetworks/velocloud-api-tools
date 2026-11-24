@@ -165,16 +165,19 @@ def declared_ref_names(
     return frozenset(names)
 
 
+def _is_marked(field_info: FieldInfo) -> bool:
+    return get_owns_ref(field_info) is not None or bool(get_ref_only(field_info))
+
+
 def _sites(data: VcoModel) -> Iterator[_Site]:
-    for site in walk_fields(data, holds=can_hold_owner):
-        if get_owns_ref(site.field_info) is not None or get_ref_only(site.field_info):
-            yield _Site(
-                site.model,
-                site.name,
-                site.field_info,
-                site.path,
-                None if site.segment is None else _segment_of(site.segment),
-            )
+    for site in walk_fields(data, holds=can_hold_owner, fields=_is_marked):
+        yield _Site(
+            site.model,
+            site.name,
+            site.field_info,
+            site.path,
+            None if site.segment is None else _segment_of(site.segment),
+        )
 
 
 def data_segments(data: VcoModel) -> tuple[SegmentRef, ...]:

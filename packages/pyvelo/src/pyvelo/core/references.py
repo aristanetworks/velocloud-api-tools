@@ -98,9 +98,13 @@ def references(module: str, data: VcoModel) -> tuple[Reference, ...]:
     and are left out.
     """
     found: list[Reference] = []
-    for site in walk_fields(data, holds=can_hold_reference):
+    for site in walk_fields(
+        data,
+        holds=can_hold_reference,
+        fields=lambda field_info: get_refers_to(field_info) is not None,
+    ):
         refers = get_refers_to(site.field_info)
-        if refers is None:
+        if refers is None:  # pragma: no cover - the walk gives only these
             continue
         value: object = getattr(site.model, site.name)
         if value is None or value is MISSING or value in refers.none:
@@ -139,9 +143,13 @@ def provided(data: VcoModel) -> dict[SetKey, set[object]]:
     ``per_segment`` field outside a segment with an ID gives no set.
     """
     found: dict[SetKey, set[object]] = {}
-    for site in walk_fields(data, holds=can_hold_reference):
+    for site in walk_fields(
+        data,
+        holds=can_hold_reference,
+        fields=lambda field_info: get_provides(field_info) is not None,
+    ):
         provides = get_provides(site.field_info)
-        if provides is None:
+        if provides is None:  # pragma: no cover - the walk gives only these
             continue
         segment_id = _segment_id(site.segment) if provides.per_segment else None
         if provides.per_segment and segment_id is None:
