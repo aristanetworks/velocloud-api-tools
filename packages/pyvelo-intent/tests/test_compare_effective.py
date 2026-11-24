@@ -548,6 +548,21 @@ async def test_a_segment_the_composer_omits_is_ignored():
     assert OMITTED in comparison.render()
 
 
+async def test_an_answer_with_no_segments_key_omits_every_segment():
+    pipeline, state, client = await loaded()
+    del composed_modules(client)["segments"]
+    comparison = await pipeline.compare_effective(state)
+
+    assert comparison.findings == ()
+    found = by_path(comparison)
+    assert set(found) >= {"segments[0]", "segments[2]"}
+    for path in ("segments[0]", "segments[2]"):
+        assert found[path].category is EffectiveCategory.IGNORED
+        assert found[path].reason == OMITTED
+        assert found[path].server is MISSING
+    assert "segments" not in found
+
+
 async def test_a_segment_only_the_server_has_is_server_only():
     pipeline, state, client = await loaded()
     extra = segment(9, "Extra", rule("x"))

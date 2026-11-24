@@ -504,6 +504,10 @@ class _Comparison:
             return
         if self.ignored(path, client, server, None):
             return
+        if server is MISSING and is_list(client):
+            # An answer with no list at all omitted every segment: each of the
+            # view's is the composer's omission, not one finding for the list.
+            server = []
         if not is_list(client) or not is_list(server):
             if server is MISSING:
                 self.emit(path, EffectiveCategory.CLIENT_ONLY, client, MISSING)
