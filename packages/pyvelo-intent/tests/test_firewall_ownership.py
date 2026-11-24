@@ -283,6 +283,30 @@ async def test_a_missing_edge_module_inserts_only_local_content():
     assert "allow-all" not in str(plan.data)
 
 
+async def test_a_patch_on_an_inherited_object_of_a_missing_module_copies_it_into_the_insert():
+    profile_segments = copy.deepcopy(PROFILE_FW["segments"])
+    profile_segments[0]["outbound"][0]["ruleLogicalId"] = str(uuid.UUID(int=0x55))
+    state = state_of(
+        None,
+        {**PROFILE_FW, "segments": profile_segments, "services": PROFILE_SERVICES},
+    )
+    await ConfigPipeline(client=None).apply(
+        state, module="firewall", patch={"services": {"ssh": {"enabled": True}}}
+    )
+    (plan,) = state.plan().changed
+    assert plan.operation == "insert"
+    assert set(plan.data) == {"segments", "services"}
+    # The profile's services, with the edit.
+    assert plan.data["services"] == {**PROFILE_SERVICES, "ssh": {"enabled": True}}
+    # The reconciled placeholders, with nothing the profile assigned.
+    names = [s["segment"]["name"] for s in plan.data["segments"]]
+    assert names == ["Global Segment", "Guest"]
+    assert [s["outbound"] for s in plan.data["segments"]] == [[], []]
+    assert "ruleLogicalId" not in str(plan.data)
+    # The profile is as it was.
+    assert state.profile.firewall.services.ssh.enabled is False  # pyright: ignore[reportOptionalMemberAccess, reportAttributeAccessIssue, reportUnknownMemberType]
+
+
 # --- names resolve through the converted firewall ---------------------------
 
 PRINTERS = uuid.UUID(int=0x77)
