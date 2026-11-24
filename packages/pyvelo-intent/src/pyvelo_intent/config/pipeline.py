@@ -58,7 +58,7 @@ from pyvelo_intent.config.hub_calls import (
     HubServices,
     hub_rows,
     hubs_in_use,
-    in_place,
+    prepare_steps,
     read_services,
     report_hubs_in_use,
     send_step,
@@ -782,8 +782,12 @@ class ConfigPipeline:
         write of the modules cannot do. The save sends them before step 3, in
         the UI's order: it reads the device settings module's version (a
         module another writer changed stops the save here, with nothing
-        sent), reads the hub services, sends each step not already in place,
-        reads the services again, and writes the device settings with the hub
+        sent, and the state holds the module as stored, as after a refused
+        write), reads the hub services, decides every step (in place or not,
+        and the ID its call takes), so that a refusal such as a hub whose
+        service the VCO holds twice comes before the first call, sends each
+        step not already in place, reads the services again, and writes the
+        device settings with the hub
         rows the steps made (a hub added to a Branch-to-Hub list has its
         row, one removed from it loses its row), without a second version
         read. An Edge hub removed from a Branch-to-Hub list that edge QoS
@@ -955,17 +959,14 @@ class ConfigPipeline:
         )
         return tuple(
             StepOutcome(
-                step,
-                "in_place"
-                if in_place(
-                    step,
-                    services,
-                    configuration_id=_configuration_id(module),
-                    module_id=module.id_,
-                )
-                else "would_send",
+                prepared.step, "in_place" if prepared.in_place else "would_send"
             )
-            for step in plan.steps
+            for prepared in prepare_steps(
+                plan.steps,
+                services,
+                configuration_id=_configuration_id(module),
+                module_id=module.id_,
+            )
         )
 
     async def _run_steps(
@@ -1003,13 +1004,15 @@ class ConfigPipeline:
             run.warnings = _hubs_in_use_warnings(
                 plan.steps, services, module, on_hub_in_use
             )
-            for step in plan.steps:
-                if in_place(
-                    step,
-                    services,
-                    configuration_id=configuration_id,
-                    module_id=module.id_,
-                ):
+            # Decided, with each call's ID, before the first call is sent.
+            for prepared in prepare_steps(
+                plan.steps,
+                services,
+                configuration_id=configuration_id,
+                module_id=module.id_,
+            ):
+                step = prepared.step
+                if prepared.in_place:
                     run.in_place.append(step)
                     run.outcomes.append(StepOutcome(step, "in_place"))
                     continue
@@ -1022,6 +1025,7 @@ class ConfigPipeline:
                         configuration_id=configuration_id,
                         module_id=module.id_,
                         enterprise_id=enterprise_id,
+                        target_id=prepared.target_id,
                     )
                 except Exception as error:
                     raise run.error(error, step=step) from error
@@ -1177,6 +1181,20 @@ class ConfigPipeline:
                 error.add_note(note)
                 raise error
 
+        def put_stored(mod: _WritableModule, error: ModuleWriteError) -> bool:
+            """Put the module *error* carries in the state in place of *mod*, and say whether it did.
+
+            The module is of the class of *mod* (``write_module`` checks it), or
+            None when it could not be read: then the state keeps *mod*. It is
+            also kept when the state no longer holds *mod*, so that the write
+            error is not hidden behind the ValueError of ``replace_module``.
+            """
+            stored = error.module
+            if isinstance(stored, type(mod)) and state.find_module(mod.name) is mod:
+                state.replace_module(mod, stored)
+                return True
+            return False
+
         run: _StepRun | None = None
         stored_already: ModuleWrite[Any] | None = None
         device_settings_at = -1
@@ -1186,9 +1204,16 @@ class ConfigPipeline:
                 i for i, p in enumerate(changed) if p.name == module.name
             )
             # Before anything is sent: another writer's change stops the save here.
-            stored_already = await self.client.check_module_version(
-                module, changed[device_settings_at], enterprise_id=enterprise_id
-            )
+            try:
+                stored_already = await self.client.check_module_version(
+                    module, changed[device_settings_at], enterprise_id=enterprise_id
+                )
+            except ModuleWriteError as error:
+                # As a write refused for a stale version does: the state holds
+                # the module as stored, so that a second save does not meet
+                # the same conflict. No step was sent, so it propagates as it is.
+                _ = put_stored(modules[device_settings_at], error)
+                raise
             if stored_already is not None:
                 # A write whose answer was lost: it is done, before the steps.
                 try:
@@ -1234,17 +1259,7 @@ class ConfigPipeline:
                         ),
                     )
                 except ModuleWriteError as error:
-                    stored = error.module
-                    # Of the class of mod (write_module checks it), or None when
-                    # the module could not be read: then the state keeps mod. It
-                    # is also kept when the state no longer holds mod, so that the
-                    # write error is not hidden behind the ValueError of replace_module.
-                    if (
-                        isinstance(stored, type(mod))
-                        and state.find_module(mod.name) is mod
-                    ):
-                        state.replace_module(mod, stored)
-                    elif insert:
+                    if not put_stored(mod, error) and insert:
                         state.unconfirmed_inserts.add(mod.name)
                     error.completed = tuple(done)
                     raise

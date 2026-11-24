@@ -627,6 +627,72 @@ async def test_a_stale_version_stops_before_the_first_step():
     assert services_of(store, "edgeHub") == []
 
 
+async def test_a_stale_version_refreshes_the_state_as_a_write_without_steps_does():
+    state = await two_lists_state()
+    pipeline, store = hub_pipeline(state, vpn_check=True)
+    held = state.module(DS)
+
+    def elsewhere(row: dict[str, Any]) -> None:
+        row["data"]["future"] = 2
+
+    store.other_writer(DS_ID, elsewhere)
+
+    with pytest.raises(ConfigConflictError) as failed:
+        _ = await pipeline.save(state)
+
+    error = failed.value
+    assert error.module is not None
+    assert state.module(DS) is error.module and state.module(DS) is not held
+    assert error.lost_edits
+    assert save_progress(error) is None
+    store.requests.clear()
+
+    # The edits are lost with the module as read: the second save has nothing
+    # to plan, so it sends nothing and meets no conflict.
+    result = await pipeline.save(state)
+
+    assert methods(store) == [] and calls(store) == []
+    assert result.steps == ()
+
+
+async def test_a_duplicate_service_of_a_later_step_is_refused_before_the_first_step_is_sent():
+    # Hub-B's service is held twice in the segment: the second step cannot be
+    # told apart, and the first (Hub-A, enabled) is not sent before it is known.
+    state = await profile_of(
+        [ds_entry(GLOBAL), ds_entry(GUEST)],
+        service_row(HUB_B, "bridge"),
+        hub_row(
+            HUB_B,
+            service_id=700,
+            service_logical_id=str(uuid.UUID(int=700)),
+            segment=GLOBAL,
+            roles=("bridge",),
+        ),
+    )
+    await edit(
+        state,
+        "hub",
+        {"+": {"_op": "add", "name": HUB_A.name}},
+        hub_list=True,
+        vpn=True,
+    )
+    await edit(state, "hub", {"+": {"_op": "add", "name": HUB_B.name}})
+    pipeline, store = hub_pipeline(state, vpn_check=True)
+    assert [s.hub.name for s in state.plan().steps] == [HUB_A.name, HUB_B.name]
+
+    with pytest.raises(HubListError) as failed:
+        _ = await pipeline.save(state)
+
+    assert not isinstance(failed.value, SaveStepError)
+    assert "632, 700" in str(failed.value)
+    assert calls(store) == []
+    assert UPDATE not in methods(store)
+    assert save_progress(failed.value) is None
+    with pytest.raises(HubListError):
+        _ = await pipeline.save(state, dry_run=True)
+    assert calls(store) == []
+
+
 async def test_a_failure_of_the_services_read_before_any_step_propagates_unchanged():
     state = await two_lists_state()
     pipeline, store = hub_pipeline(state, vpn_check=True)

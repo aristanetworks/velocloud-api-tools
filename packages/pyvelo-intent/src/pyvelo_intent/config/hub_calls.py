@@ -2,7 +2,7 @@
 
 ``hub_steps`` plans the steps from the module as read and as edited. The save
 reads the hub services (``read_services``), sends each step not already in
-place (``in_place``, ``send_step``) and writes the rows the steps made
+place (``prepare_steps``, ``send_step``) and writes the rows the steps made
 (``hub_rows``). ``hubs_in_use`` finds, from the services read, the Edge hubs a
 step removes whose service edge QoS rules use (``report_hubs_in_use`` says so).
 """
@@ -263,6 +263,45 @@ _CALLS: Final[dict[tuple[Action, Role, str], tuple[type[_RoleRequest], str]]] = 
 """Each role call: its request and the method of the client that sends it, by action, role and kind of hub."""
 
 
+@dataclass(frozen=True)
+class PreparedStep:
+    """A step with what the services say about it: whether it is in place and, if not, the ID its call takes."""
+
+    step: HubStep
+    in_place: bool
+    target_id: int | None
+    """The Edge ID or cluster ID the call takes; None for a step in place."""
+
+
+def prepare_steps(
+    steps: Sequence[HubStep],
+    services: HubServices,
+    *,
+    configuration_id: int,
+    module_id: int,
+) -> tuple[PreparedStep, ...]:
+    """Every step of *steps* with its ``in_place`` decision and, for a step to send, the ID of its call, all from *services*.
+
+    The save sends from these, so that everything the library can refuse
+    (``HubListError`` for a hub whose service the VCO holds twice,
+    ``HubServiceNotFoundError`` for a removal with no service to call, a
+    ``ValueError`` for an enable planned with no ID) is refused before the
+    first call, not between two steps.
+    """
+    prepared: list[PreparedStep] = []
+    for step in steps:
+        if in_place(
+            step, services, configuration_id=configuration_id, module_id=module_id
+        ):
+            prepared.append(PreparedStep(step, True, None))
+            continue
+        target = _target_id(
+            step, services, configuration_id=configuration_id, module_id=module_id
+        )
+        prepared.append(PreparedStep(step, False, target))
+    return tuple(prepared)
+
+
 def _target_id(
     step: HubStep, services: HubServices, *, configuration_id: int, module_id: int
 ) -> int:
@@ -312,15 +351,18 @@ async def send_step(
     configuration_id: int,
     module_id: int,
     enterprise_id: int | None,
+    target_id: int | None = None,
 ) -> None:
-    """Make the one role call of *step*: a removal's Edge or cluster ID comes from *services*.
+    """Make the one role call of *step*: a removal's Edge or cluster ID comes from *services*, or is *target_id* (``prepare_steps`` found it).
 
     An Edge disable the VCO answers with ``null`` counts as done. Any other
     error of the call propagates.
     """
     request_type, method = _CALLS[step.action, step.role, step.hub.kind]
     request = request_type(
-        id_=_target_id(
+        id_=target_id
+        if target_id is not None
+        else _target_id(
             step, services, configuration_id=configuration_id, module_id=module_id
         ),
         configuration_id=configuration_id,
