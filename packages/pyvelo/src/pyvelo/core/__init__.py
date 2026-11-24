@@ -158,6 +158,7 @@ from .layers import (
     Profile,
     Unconverted,
     field_kind,
+    kind_default,
     layer_for,
 )
 from .merge import item_selector, nest_patch, select_items
@@ -339,6 +340,7 @@ __all__ = [
     "item_selector",
     "key_selector",
     "key_text",
+    "kind_default",
     "layer_for",
     "list_kind",
     "missing_or",

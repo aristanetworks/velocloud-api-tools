@@ -50,6 +50,7 @@ from typing import (
 
 from pydantic import (
     MISSING,
+    Field,
     GetCoreSchemaHandler,
     ModelWrapValidatorHandler,
     model_validator,
@@ -176,6 +177,28 @@ class Default:
         if self._factory is not None:
             return f"Default(factory={self._factory!r})"
         return f"Default({self._value!r})"
+
+
+def kind_default(
+    value: object = MISSING, *, factory: Callable[[], object] | None = None
+) -> Any:
+    """The default of a field of the kind ``EdgeOnly``, ``ProfileOnly``, ``Additive`` or ``Unconverted``.
+
+    ``kind_default("")`` or ``kind_default(factory=list)``: exactly one of the
+    two. It is ``Field(default=value)`` or ``Field(default_factory=factory)``
+    typed ``Any``, because the checker takes a plain default for a value that
+    is not the field's declared kind (``EdgeOnly[str] = ""`` is an error) and
+    still treats the field as optional. An ``Inheritable`` field has no use
+    for it: it is ``= Field(default=...)`` and its default is the ``Default``.
+    """
+    if (value is MISSING) == (factory is None):
+        raise TypeError(
+            "kind_default takes a value or a factory, not both and not neither: "
+            + 'kind_default("") or kind_default(factory=list)'
+        )
+    if factory is not None:
+        return Field(default_factory=factory)
+    return Field(default=value)
 
 
 # ---------------------------------------------------------------------------

@@ -4,7 +4,7 @@ from typing import Annotated, Any, get_origin
 
 import pytest
 from layered_models import Mod, Rule, Seg, Settings, mod_json
-from pydantic import MISSING, TypeAdapter
+from pydantic import MISSING, Field, TypeAdapter
 from pyvelo.core import (
     ByPresence,
     Composed,
@@ -19,7 +19,9 @@ from pyvelo.core import (
     Owned,
     Profile,
     Resolvable,
+    Unconverted,
     field_kind,
+    kind_default,
     layer_for,
 )
 from pyvelo.core.identity import SegmentIdentity
@@ -273,7 +275,7 @@ def test_field_kind_finds_a_marker_inside_the_kind() -> None:
             Inheritable[Annotated[int, Resolvable(SegmentIdentity, "segment_id")]],
             ByPresence(),
             Default(0),
-        ] = ...  # pyright: ignore[reportAssignmentType]
+        ] = Field(default=...)
 
     found = field_kind(Holder.model_fields["port"])
     assert found.inner_type is int
@@ -299,26 +301,26 @@ def test_every_inheritable_needs_one_default_and_one_encoding() -> None:
     with pytest.raises(TypeError, match=r"Bad\.flag.*Default"):
 
         class Bad(Layered[Edge]):  # pyright: ignore[reportUnusedClass]
-            flag: Annotated[Inheritable[bool], ByPresence()] = ...  # pyright: ignore[reportAssignmentType]
+            flag: Annotated[Inheritable[bool], ByPresence()] = Field(default=...)
 
     with pytest.raises(TypeError, match=r"Bad2\.flag.*encoding"):
 
         class Bad2(Layered[Edge]):  # pyright: ignore[reportUnusedClass]
-            flag: Annotated[Inheritable[bool], Default(True)] = ...  # pyright: ignore[reportAssignmentType]
+            flag: Annotated[Inheritable[bool], Default(True)] = Field(default=...)
 
     with pytest.raises(TypeError, match=r"Bad3\.flag.*Default"):
 
         class Bad3(Layered[Edge]):  # pyright: ignore[reportUnusedClass]
             flag: Annotated[
                 Inheritable[bool], ByPresence(), Default(True), Default(False)
-            ] = ...  # pyright: ignore[reportAssignmentType]
+            ] = Field(default=...)
 
 
 def test_only_an_inheritable_may_carry_a_default() -> None:
     with pytest.raises(TypeError, match=r"Bad\.note.*Default"):
 
         class Bad(Layered[Edge]):  # pyright: ignore[reportUnusedClass]
-            note: Annotated[EdgeOnly[str], Default("")] = ""  # pyright: ignore[reportAssignmentType]
+            note: Annotated[EdgeOnly[str], Default("")] = kind_default("")
 
 
 def test_construction_by_keyword() -> None:
@@ -333,3 +335,20 @@ def test_construction_by_keyword() -> None:
 def test_json_schema_generation_succeeds() -> None:
     for model in (Mod[Edge], Mod[Profile], Mod[Composed]):
         assert "enabled" in model.model_json_schema()["properties"]
+
+
+def test_kind_default_gives_a_value_or_a_factory() -> None:
+    class Holder(Layered[Edge]):
+        note: EdgeOnly[str] = kind_default("x")
+        items: Unconverted[list[int]] = kind_default(factory=list)
+        nothing: Unconverted[int | None] = kind_default(None)
+
+    first = Holder.model_validate({})
+    second = Holder.model_validate({})
+    assert (first.note, first.items, first.nothing) == ("x", [], None)
+    assert first.items is not second.items
+    assert Holder.model_fields["note"].is_required() is False
+    with pytest.raises(TypeError, match="kind_default"):
+        _ = kind_default()
+    with pytest.raises(TypeError, match="kind_default"):
+        _ = kind_default(1, factory=int)

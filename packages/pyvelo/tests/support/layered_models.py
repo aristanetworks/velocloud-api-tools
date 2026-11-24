@@ -21,6 +21,7 @@ from pyvelo.core import (
     ServerOwned,
     Unconverted,
     VcoModel,
+    kind_default,
 )
 from pyvelo.core.layers import L
 
@@ -39,9 +40,9 @@ class Rule(VcoModel):
 class Seg(Layered[L]):
     segment: SegmentMetadata
     rules: Annotated[Additive[list[Rule]], KeyField("name", alt="rule_logical_id")] = (
-        Field(default_factory=list)  # pyright: ignore[reportAssignmentType]
+        kind_default(factory=list)
     )
-    legacy: Unconverted[int | None] = None  # pyright: ignore[reportAssignmentType]
+    legacy: Unconverted[int | None] = kind_default(None)
 
 
 class Mod(Layered[L]):
@@ -57,9 +58,9 @@ class Mod(Layered[L]):
     settings: Annotated[
         Inheritable[Settings], ByPresence(), Default(factory=Settings)
     ] = Field(default=...)
-    edge_note: EdgeOnly[str] = ""  # pyright: ignore[reportAssignmentType]
-    profile_note: ProfileOnly[str] = ""  # pyright: ignore[reportAssignmentType]
-    legacy: Unconverted[list[int]] = Field(default_factory=list)  # pyright: ignore[reportAssignmentType]
+    edge_note: EdgeOnly[str] = kind_default("")
+    profile_note: ProfileOnly[str] = kind_default("")
+    legacy: Unconverted[list[int]] = kind_default(factory=list)
 
 
 def mod_json(**keys: object) -> dict[str, object]:

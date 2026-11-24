@@ -67,6 +67,8 @@ def _cases(e: Mod[Edge], p: Mod[Profile], v: Mod[Effective], c: Mod[Composed]) -
     _ = Mod[Profile](enabled=True)
     _ = Mod[Edge](enabled=Owned(True))
     _ = Mod[Edge]()
+    _ = Mod[Edge](edge_note="x")  # a kind_default field is optional, and takes its type
+    _ = Mod[Edge](edge_note=1)  # pyright: ignore[reportArgumentType]
     _ = Mod[Profile](enabled="x")  # pyright: ignore[reportArgumentType]
 
 
