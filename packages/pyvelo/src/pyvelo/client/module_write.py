@@ -1289,10 +1289,17 @@ def rebase_onto[M: ConfigurationModuleBase](
     *fresh* holds already, which is checked first: its entry in *fresh* is the
     clash. Raises ``ConfigConflictError`` (not ``stated``, not ``sent``) for
     any of them, with *fresh* as its module, the planned changes *fresh* does
-    not hold as the lost edits, and nothing sent. Raises ``ValueError`` for a
-    plan that adds or removes a ref row: the rebase has no owner to carry it
-    (a QoS rule's backhaul hub declares one, so a QoS plan that adds or
-    removes a hub is not rebased).
+    not hold as the lost edits, and nothing sent.
+
+    The ref rows are rebased with the data: the rebased module holds *fresh*
+    as its raw data and refs, so its plan derives its refs again from the
+    caller's edits against the refs *fresh* holds, not from the rows the
+    original plan sent. A row the edits add that *fresh* holds already is not
+    added twice, and a row the edits remove that *fresh* no longer holds is no
+    clash. *resolvers* and *profile_device_settings* are what ``plan_module``
+    takes to build the rows the edits add (a QoS rule's backhaul hub finds its
+    service in the profile's device settings); the plan's ``ref_changes`` are
+    those of the rebased plan.
     """
     # Imported here: module_check imports this module.
     from pyvelo.client.module_check import MODULE_REWRITES, data_model
