@@ -46,14 +46,14 @@ from pyvelo_intent import (
     StepOutcome,
     save_progress,
 )
-from pyvelo_intent.config.hub_steps import (
-    HubRef,
+from pyvelo_intent.config.hub_calls import (
     HubServices,
     hub_rows,
     in_place,
     read_services,
     send_step,
 )
+from pyvelo_intent.config.hub_steps import HubRef
 from pyvelo_intent.config.pipeline import ConfigPipeline
 from pyvelo_intent.config.state import ConfigState
 from refs_helpers import CONFIG, DS_ID, segment_row

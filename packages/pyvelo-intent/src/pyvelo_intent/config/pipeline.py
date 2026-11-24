@@ -54,13 +54,13 @@ from pyvelo.core.merge import nest_patch, select_items
 from pyvelo.core.patch import ItemOp, is_new, parse_item_op
 from pyvelo.core.rebase import Path, raw_changes
 
-from pyvelo_intent.config.hub_steps import (
-    HubStep,
+from pyvelo_intent.config.hub_calls import (
     hub_rows,
     in_place,
     read_services,
     send_step,
 )
+from pyvelo_intent.config.hub_steps import HubStep
 from pyvelo_intent.config.module_names import (
     resolve_module_name as _resolve_module_name,
 )
