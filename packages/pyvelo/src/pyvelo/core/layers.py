@@ -67,7 +67,7 @@ from pydantic import (
 from pydantic.fields import FieldInfo
 from pydantic_core import CoreSchema, core_schema
 
-from .base import JsonObject, VcoModel, wire_name
+from .base import JsonObject, VcoModel, same_state, wire_name
 from .fields import ConfigContext
 from .owned import (
     Binding,
@@ -573,7 +573,9 @@ def display_default(field_info: FieldInfo) -> object:
 
 
 def _is_stored(model: VcoModel, name: str, default: Default) -> bool:
-    return name in model.model_fields_set or getattr(model, name) != default.make()
+    return name in model.model_fields_set or not same_state(
+        getattr(model, name), default.make()
+    )
 
 
 def profile_stores(model: "Layered[Profile]", name: str) -> bool:

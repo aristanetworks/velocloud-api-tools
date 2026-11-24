@@ -338,7 +338,7 @@ def test_the_composed_read_asks_for_encrypted_keys_only_when_told_to():
 
 
 def disable(module: Any) -> None:
-    module.data.firewall_enabled = False
+    module.data.firewall_enabled.set_local(False)
 
 
 def block_a_rule(module: Any) -> None:

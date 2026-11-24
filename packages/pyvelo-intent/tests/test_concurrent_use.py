@@ -73,7 +73,7 @@ async def test_apply_during_a_save_waits_and_its_edit_stays_planned():
     state = make_state()
     client = Gated.over(state)
     pipeline = ConfigPipeline(client)
-    state.edge.firewall.firewall_enabled = False
+    state.edge.firewall.firewall_enabled.set_local(False)
     saving = asyncio.create_task(pipeline.save(state))
     _ = await client.started.wait()
 
@@ -82,13 +82,13 @@ async def test_apply_during_a_save_waits_and_its_edit_stays_planned():
     )
     await asyncio.sleep(0)
     assert not applying.done()
-    assert state.edge.firewall.syslog_forwarding is False
+    assert state.edge.firewall.syslog_forwarding.local is False
     client.release.set()
     result = await saving
     _ = await applying
 
     assert result.modules_updated == [FIREWALL]
-    assert state.edge.firewall.syslog_forwarding is True
+    assert state.edge.firewall.syslog_forwarding.local is True
     (plan,) = state.plan().changed
     assert [str(c.path) for c in plan.changes] == ["syslog_forwarding"]
     _ = await pipeline.save(state)
@@ -101,7 +101,7 @@ async def test_two_saves_at_once_write_each_module_once():
     client = Gated.over(state)
     client.release.set()  # a write only yields to the loop
     pipeline = ConfigPipeline(client)
-    state.edge.firewall.firewall_enabled = False
+    state.edge.firewall.firewall_enabled.set_local(False)
 
     first, second = await asyncio.gather(pipeline.save(state), pipeline.save(state))
 
@@ -135,7 +135,7 @@ async def test_a_cancelled_save_releases_the_state():
     state = make_state()
     client = Gated.over(state)
     pipeline = ConfigPipeline(client)
-    state.edge.firewall.firewall_enabled = False
+    state.edge.firewall.firewall_enabled.set_local(False)
     saving = asyncio.create_task(pipeline.save(state))
     _ = await client.started.wait()
 
@@ -155,11 +155,11 @@ async def test_an_assignment_during_a_save_is_reported_by_the_save():
     state = make_state()
     client = Gated.over(state)
     pipeline = ConfigPipeline(client)
-    state.edge.firewall.firewall_enabled = False
+    state.edge.firewall.firewall_enabled.set_local(False)
     saving = asyncio.create_task(pipeline.save(state))
     _ = await client.started.wait()
 
-    state.edge.firewall.syslog_forwarding = True  # no lock, no apply
+    state.edge.firewall.syslog_forwarding.set_local(True)  # no lock, no apply
     client.release.set()
     with pytest.raises(DetachedObjectError) as exc:
         _ = await saving
@@ -170,7 +170,7 @@ async def test_an_assignment_during_a_save_is_reported_by_the_save():
     )
     stored = data_of(client.store, 1)
     assert (stored["firewall_enabled"], stored["syslog_forwarding"]) == (False, False)
-    assert state.edge.firewall.syslog_forwarding is False
+    assert state.edge.firewall.syslog_forwarding.local is False
     assert state.module("firewall").version == client.store.rows[1]["version"]
     assert state.plan().changed == ()
 
@@ -179,7 +179,7 @@ async def test_a_lookup_during_a_save_is_reported_as_no_edit():
     state = make_state()  # the profile has a Guest segment the edge only inherits
     client = Gated.over(state)
     pipeline = ConfigPipeline(client)
-    state.edge.firewall.firewall_enabled = False
+    state.edge.firewall.firewall_enabled.set_local(False)
     saving = asyncio.create_task(pipeline.save(state))
     _ = await client.started.wait()
 
@@ -203,7 +203,7 @@ async def test_an_edit_of_a_later_module_during_a_save_is_reported_too():
     state = three_module_state()
     client = Gated.over(state)
     pipeline = ConfigPipeline(client)
-    state.edge.firewall.firewall_enabled = False
+    state.edge.firewall.firewall_enabled.set_local(False)
     links = state.edge.wan.links
     assert links is not MISSING
     links[0].description = "first"
@@ -252,13 +252,13 @@ async def test_an_assignment_under_the_lock_waits_for_the_save():
     state = make_state()
     client = Gated.over(state)
     pipeline = ConfigPipeline(client)
-    state.edge.firewall.firewall_enabled = False
+    state.edge.firewall.firewall_enabled.set_local(False)
     saving = asyncio.create_task(pipeline.save(state))
     _ = await client.started.wait()
 
     async def edit() -> None:
         async with state.lock:
-            state.edge.firewall.syslog_forwarding = True
+            state.edge.firewall.syslog_forwarding.set_local(True)
 
     editing = asyncio.create_task(edit())
     await asyncio.sleep(0)
@@ -267,7 +267,7 @@ async def test_an_assignment_under_the_lock_waits_for_the_save():
     await editing
 
     assert changed(state) == ["firewall"]
-    assert state.edge.firewall.syslog_forwarding is True
+    assert state.edge.firewall.syslog_forwarding.local is True
 
 
 async def test_apply_and_save_by_the_task_that_holds_the_lock_raise():
@@ -277,7 +277,7 @@ async def test_apply_and_save_by_the_task_that_holds_the_lock_raise():
     held = "this task already holds the lock of this state"
 
     async with state.lock:
-        state.edge.firewall.firewall_enabled = False
+        state.edge.firewall.firewall_enabled.set_local(False)
         with pytest.raises(RuntimeError, match=held):
             _ = await pipeline.apply(
                 state, module="firewall", patch={"syslog_forwarding": True}
@@ -291,7 +291,7 @@ async def test_apply_and_save_by_the_task_that_holds_the_lock_raise():
 
     assert not state.lock.locked()
     assert client.store.requests == []
-    assert state.edge.firewall.syslog_forwarding is False
+    assert state.edge.firewall.syslog_forwarding.local is False
     result = await pipeline.save(state)
     assert result.modules_updated == [FIREWALL]
 
@@ -308,4 +308,4 @@ async def test_another_task_still_waits_for_the_lock():
         assert not applying.done()
     _ = await applying
 
-    assert state.edge.firewall.syslog_forwarding is True
+    assert state.edge.firewall.syslog_forwarding.local is True

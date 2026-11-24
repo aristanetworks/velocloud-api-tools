@@ -60,12 +60,12 @@ class TestConfigState:
         state.take_snapshot()
 
         # Mutate the edge config
-        edge_config.firewall.data.firewall_enabled = False
+        edge_config.firewall.data.firewall_enabled.set_local(False)
 
         # Snapshot should still have original value
         snap = state.snapshot_for_target()
         assert isinstance(snap, EdgeConfiguration)
-        assert snap.firewall.data.firewall_enabled is True
+        assert snap.firewall.data.firewall_enabled.is_local is False
 
     def test_get_changed_modules_detects_change(self):
         edge_config = _make_config("Edge Specific Profile")
@@ -82,7 +82,7 @@ class TestConfigState:
         state.take_snapshot()
 
         # Mutate the firewall module
-        edge_config.firewall.data.firewall_enabled = False
+        edge_config.firewall.data.firewall_enabled.set_local(False)
 
         changed = state.get_changed_modules()
         assert "firewall" in changed
@@ -147,20 +147,20 @@ class TestGetFieldChanges:
         from pyvelo_intent.config.state import ConfigFieldChange
 
         state, edge_config = self._state_with_snapshot()
-        edge_config.firewall.data.firewall_enabled = False
+        edge_config.firewall.data.firewall_enabled.set_local(False)
         changes = state.get_field_changes()
         assert any(
             isinstance(c, ConfigFieldChange)
             and c.module == "firewall"
             and c.path == "firewall_enabled"
-            and c.before is True
+            and c.before is MISSING
             and c.after is False
             for c in changes
         )
 
     def test_filter_by_module_name(self):
         state, edge_config = self._state_with_snapshot()
-        edge_config.firewall.data.firewall_enabled = False
+        edge_config.firewall.data.firewall_enabled.set_local(False)
         # Only ask about a different module - should be empty
         assert state.get_field_changes(module_name="qos") == []
         # Ask about the actual mutated module - should be non-empty

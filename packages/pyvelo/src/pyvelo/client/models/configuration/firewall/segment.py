@@ -1,6 +1,6 @@
 from typing import Annotated
 
-from pyvelo.core import Alias, Layered, Unconverted, kind_default
+from pyvelo.core import Additive, Alias, Layered, Unconverted, kind_default
 from pyvelo.core.fields import KeyField
 from pyvelo.core.layers import L
 
@@ -14,6 +14,6 @@ class FirewallSegment(Layered[L]):
         Unconverted[bool | None], Alias("firewall_logging_enabled")
     ] = kind_default(None)
     outbound: Annotated[
-        Unconverted[list[FirewallOutboundRule]],
+        Additive[list[FirewallOutboundRule]],
         KeyField("name", alt="rule_logical_id"),
     ] = kind_default(factory=list)

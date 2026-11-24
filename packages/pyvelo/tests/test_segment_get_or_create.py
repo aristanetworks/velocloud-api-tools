@@ -30,7 +30,9 @@ PROFILE = {
     "segments": [
         {
             "segment": desc(0, "Global Segment"),
-            "outbound": [{"name": "p"}],
+            "outbound": [
+                {"name": "p", "match": {}, "action": {"allow_or_deny": "allow"}}
+            ],
             "rules": [{"name": "p"}],
         },
         {"segment": desc(2, "Guest"), "outbound": [], "rules": []},
@@ -165,7 +167,9 @@ def test_a_placeholder_is_empty_in_each_module_and_has_what_the_orchestrator_nee
     profile_segments = [
         {
             "segment": desc(2, "Guest"),
-            "outbound": [{"name": "p"}],
+            "outbound": [
+                {"name": "p", "match": {}, "action": {"allow_or_deny": "allow"}}
+            ],
             "rules": [{"name": "p"}],
             "routes": {"static": [{"destination": "192.0.2.0"}], "staticV6": []},
         }

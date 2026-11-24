@@ -251,7 +251,7 @@ async def test_a_client_seeded_from_a_state_serves_that_edges_stack():
     client = MockVcoClient.for_state(first)
     loaded = await ConfigPipeline(client).load(42)
     assert loaded.edge_config is not first.edge_config
-    assert loaded.edge.firewall.firewall_enabled is True
+    assert loaded.edge.firewall.firewall_enabled.local is True
     assert loaded.profile_config.id_ == 20
 
 

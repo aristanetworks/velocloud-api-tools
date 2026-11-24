@@ -335,7 +335,7 @@ def firewall_disabled() -> FirewallConfigurationModule[Edge]:
     module = FirewallConfigurationModule[Edge].model_validate(
         make_module_json("firewall", copy.deepcopy(FIREWALL), configuration_id=10)
     )
-    module.data.firewall_enabled = False
+    module.data.firewall_enabled.set_local(False)
     return module
 
 

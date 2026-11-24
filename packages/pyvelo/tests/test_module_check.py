@@ -152,7 +152,7 @@ U1, U2, U3 = (str(uuid.UUID(int=n)) for n in (1, 2, 3))
 def firewall_disabled() -> FirewallConfigurationModule[Edge]:
     """The firewall module with one planned change: ``firewall_enabled`` off."""
     module = fw(RAW, layer=Edge)
-    module.data.firewall_enabled = False
+    module.data.firewall_enabled.set_local(False)
     return module
 
 
@@ -341,7 +341,7 @@ def test_message_shows_the_place_of_an_added_rule_and_the_order():
 def test_message_names_a_stored_order():
     module = fw({**RAW, "inbound": inbound_rows("a", "b")}, layer=Edge)
     module.data.inbound.reverse()
-    module.data.firewall_enabled = False
+    module.data.firewall_enabled.set_local(False)
     plan = plan_module(module)
     stored = as_stored(module, {**plan.data, "firewall_enabled": True})
     with pytest.raises(WriteNotAppliedError) as exc:

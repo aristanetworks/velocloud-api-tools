@@ -998,7 +998,9 @@ async def test_edge_firewall_deleted_and_inserted_again_reads_back_as_sent(
         writes.updates.clear()
 
         state = await pipeline.load(layout.edge_id, enterprise_id=lab.enterprise_id)
-        state.edge.firewall.syslog_forwarding = True  # forward logs; none are collected
+        state.edge.firewall.syslog_forwarding.set_local(
+            True
+        )  # forward logs; none are collected
         plan = _planned(state, Name.FIREWALL)
         check(plan.operation == "insert", f"planned {plan.operation}, expected insert")
         result = await _save(pipeline, state)

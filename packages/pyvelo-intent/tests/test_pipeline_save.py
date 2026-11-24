@@ -62,7 +62,7 @@ async def test_save_updates_changed_module():
 
     # Mutate the firewall module
     assert state.edge_config is not None
-    state.edge_config.firewall.data.firewall_enabled = False
+    state.edge_config.firewall.data.firewall_enabled.set_local(False)
 
     result = await pipeline.save(state)
 
@@ -83,7 +83,7 @@ async def test_save_dry_run():
 
     # Mutate the firewall module
     assert state.edge_config is not None
-    state.edge_config.firewall.data.firewall_enabled = False
+    state.edge_config.firewall.data.firewall_enabled.set_local(False)
 
     result = await pipeline.save(state, dry_run=True)
 
@@ -97,7 +97,7 @@ async def test_keyword_built_module_saves_only_the_change():
     client = MockVcoClient.for_state(state)
     assert state.edge_config is not None
     before = cast(dict[str, object], state.edge_config.firewall.raw_data)
-    state.edge_config.firewall.data.firewall_enabled = False
+    state.edge_config.firewall.data.firewall_enabled.set_local(False)
     await ConfigPipeline(client).save(state)
     assert client.update_requests[0].update.data == {
         **before,
@@ -112,7 +112,7 @@ async def test_mock_client_seeds_from_a_state_and_records_requests():
     assert set(client.store.rows) == {1, 2}
     assert set(client.store.configurations) == {10, 20}
     assert state.edge_config is not None
-    state.edge_config.firewall.data.firewall_enabled = False
+    state.edge_config.firewall.data.firewall_enabled.set_local(False)
     await ConfigPipeline(client).save(state)
     (request,) = client.update_requests
     assert request.configuration_module_id == 1
@@ -132,7 +132,7 @@ async def test_mock_client_under_async_with_still_talks_to_its_store():
         http = client._http_client()  # pyright: ignore[reportPrivateUsage]
         assert isinstance(http._transport, httpx.MockTransport)  # pyright: ignore[reportPrivateUsage]
         assert state.edge_config is not None
-        state.edge_config.firewall.data.firewall_enabled = False
+        state.edge_config.firewall.data.firewall_enabled.set_local(False)
         _ = await ConfigPipeline(client).save(state)
     assert [method for method, _ in client.store.requests] == [
         "configuration/updateConfigurationModule"

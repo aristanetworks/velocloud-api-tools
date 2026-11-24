@@ -25,6 +25,7 @@ GLOBAL: dict[str, Any] = {
 }
 FW_RAW: dict[str, Any] = {
     "firewall_enabled": True,
+    "securityFeatures": {"idpsEnabled": True},
     "segments": [
         {
             "segment": GLOBAL,
@@ -81,8 +82,10 @@ def test_assignment_on_a_detached_object_raises():
     _ = data.mark_detached()
 
     with pytest.raises(DetachedObjectError) as exc:
-        data.firewall_enabled = False
-    assert str(exc.value) == f"FirewallData[Edge].firewall_enabled: {REPLACED}"
+        data.firewall_enabled.set_local(False)
+    assert (
+        str(exc.value) == f"FirewallData[Edge].firewall_enabled.set_local(): {REPLACED}"
+    )
     assert exc.value.paths == []
     with pytest.raises(
         DetachedObjectError, match=r"FirewallSegment\[Edge\]\.firewall_logging"
@@ -91,7 +94,11 @@ def test_assignment_on_a_detached_object_raises():
     with pytest.raises(DetachedObjectError, match="FirewallOutboundRule.name") as exc:
         rule.name = "other"
     assert "take it again from the module as stored" in str(exc.value)
-    assert data.firewall_enabled is True
+    # The other intents are refused too; reading what the edge stores is not.
+    for intent in (data.firewall_enabled.inherit, data.firewall_enabled.localize):
+        with pytest.raises(DetachedObjectError, match=r"firewall_enabled\.\w+\(\)"):
+            _ = intent()
+    assert data.firewall_enabled.stored is True
     assert segment.firewall_logging_enabled is None
     assert rule.name == "allow-all"
 
@@ -109,7 +116,7 @@ def test_reading_a_detached_object_is_fine():
     compact = data.model_dump(context={"compact": True})
     _ = data.mark_detached()
 
-    assert data.firewall_enabled is True
+    assert data.firewall_enabled.local is True
     assert segment.segment.name == "Global Segment"
     assert rule.name == "allow-all"
     assert rule.action.allow_or_deny == "allow"
@@ -120,11 +127,11 @@ def test_reading_a_detached_object_is_fine():
 def test_an_object_that_is_not_marked_is_unaffected():
     data, segment, rule = firewall()
 
-    data.firewall_enabled = False
+    data.firewall_enabled.set_local(False)
     segment.firewall_logging_enabled = True
     rule.name = "other"
 
-    assert data.firewall_enabled is False
+    assert data.firewall_enabled.local is False
     assert segment.firewall_logging_enabled is True
     assert rule.name == "other"
     assert data.is_detached is False
@@ -161,7 +168,8 @@ def test_mark_detached_lists_every_model_with_its_place():
     assert places[()] is data
     assert places[("segments", 0)] is segment
     assert places[("segments", 0, "outbound", 0)] is rule
-    assert places[("securityFeatures",)] is data.security_features  # the dump key
+    # The dump key; the model is what the Owned stores.
+    assert places[("securityFeatures",)] is data.security_features.stored
     assert all(node.is_detached for _, node in marked if isinstance(node, VcoModel))
     # Each place leads to the node's own dump in the dump of the whole.
     for place, node in marked:
@@ -221,18 +229,18 @@ def test_model_machinery_still_works():
     assert (built.name, built.is_detached) == ("renamed", False)
 
     copied = data.model_copy(deep=True)
-    copied.firewall_enabled = False
+    copied.firewall_enabled.set_local(False)
     copied.segments[0].outbound[0].name = "copied"
     assert (copied.is_detached, copied.segments[0].outbound[0].is_detached) == (
         False,
         False,
     )
-    updated = data.model_copy(update={"firewall_enabled": False})
-    updated.syslog_forwarding = True
-    assert (updated.firewall_enabled, updated.syslog_forwarding) == (False, True)
+    updated = data.model_copy(update={"segments": []})
+    updated.syslog_forwarding.set_local(True)
+    assert (updated.segments, updated.syslog_forwarding.local) == ([], True)
 
     loaded = cast(FirewallData[Edge], pickle.loads(pickle.dumps(data)))
-    loaded.firewall_enabled = False
+    loaded.firewall_enabled.set_local(False)
     assert loaded.is_detached is False
 
     assert Filled.model_validate({"name": "a"}).upper == "A"
@@ -251,7 +259,7 @@ def test_model_machinery_still_works():
     _ = trial.merge_patch(PATCH)
     _ = data.merge_patch(PATCH)
     for merged in (trial, data):
-        assert merged.firewall_enabled is False
+        assert merged.firewall_enabled.local is False
         assert [r.name for r in merged.segments[0].outbound] == ["allow-all", "new"]
     with pytest.raises(PatchError):
         _ = data.merge_patch({"no_such_field": 1})
@@ -314,7 +322,7 @@ def test_a_deep_copy_of_a_detached_object_is_not_detached():
         assert copied.is_detached is False
         assert copied.segments[0].is_detached is False
         assert copied.segments[0].outbound[0].is_detached is False
-        copied.firewall_enabled = False
+        copied.firewall_enabled.set_local(False)
         copied.segments[0].outbound[0].name = "copied"
         _ = copied.merge_patch({"firewall_enabled": True})
     again = copy.deepcopy(rule)
@@ -323,7 +331,7 @@ def test_a_deep_copy_of_a_detached_object_is_not_detached():
     assert [r.is_detached for r in copy.deepcopy(data.segments[0].outbound)] == [False]
     # The objects copied are as they were.
     assert (rule.name, rule.is_detached, data.is_detached) == ("allow-all", True, True)
-    assert data.firewall_enabled is True
+    assert data.firewall_enabled.local is True
 
 
 def test_a_shallow_copy_of_a_detached_object_is_detached():

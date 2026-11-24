@@ -212,7 +212,7 @@ async def test_an_update_whose_answer_was_lost_is_found_stored_by_the_next_save(
     client = MockVcoClient.for_state(state, conditional_check=conditional_check)
     client.store.lose_answers = {1}
     pipeline = ConfigPipeline(client)
-    state.edge.firewall.firewall_enabled = False
+    state.edge.firewall.firewall_enabled.set_local(False)
 
     with pytest.raises(httpx.ReadTimeout):
         _ = await pipeline.save(state)
@@ -253,7 +253,7 @@ async def test_an_update_retried_with_a_change_the_vco_stores_its_own_way(
     client.store.on_store.append(keep_the_id)
     client.store.lose_answers = {1}
     pipeline = ConfigPipeline(client)
-    state.edge.firewall.firewall_enabled = False
+    state.edge.firewall.firewall_enabled.set_local(False)
     state.edge.firewall.segments[0].outbound[0].rule_logical_id = "l2"
     owned = 'segments["Global Segment"].outbound[web].ruleLogicalId'
 
@@ -353,7 +353,7 @@ async def test_a_stored_update_the_state_could_not_take_back_is_written():
     state = make_state()
     client = RemovesTheModuleDuringTheWrite.for_state(state)
     client.state = state
-    state.edge.firewall.firewall_enabled = False
+    state.edge.firewall.firewall_enabled.set_local(False)
 
     with pytest.raises(ValueError, match="not in the target config") as exc:
         _ = await ConfigPipeline(client).save(state)

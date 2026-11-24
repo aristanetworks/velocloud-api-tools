@@ -54,7 +54,7 @@ async def test_a_save_blocked_by_a_validator_raises_and_sends_nothing():
     state = make_state()
     client = MockVcoClient.for_state(state)
     pipeline = ConfigPipeline(client, validator_registry=failing_registry())
-    state.edge.firewall.firewall_enabled = False
+    state.edge.firewall.firewall_enabled.set_local(False)
 
     with pytest.raises(SaveValidationError) as exc:
         _ = await pipeline.save(state)
@@ -71,7 +71,7 @@ async def test_a_dry_run_returns_the_validator_errors_with_what_it_would_write()
     state = make_state()
     client = MockVcoClient.for_state(state)
     pipeline = ConfigPipeline(client, validator_registry=failing_registry())
-    state.edge.firewall.firewall_enabled = False
+    state.edge.firewall.firewall_enabled.set_local(False)
 
     result = await pipeline.save(state, dry_run=True)
 
@@ -87,7 +87,7 @@ async def test_the_result_says_whether_it_was_a_dry_run_and_what_was_written():
     state = three_module_state()
     client = MockVcoClient.for_state(state)
     pipeline = ConfigPipeline(client)
-    state.edge.firewall.firewall_enabled = False
+    state.edge.firewall.firewall_enabled.set_local(False)
 
     nothing = await ConfigPipeline(client).save(make_state())
     preview = await pipeline.save(state, dry_run=True)
@@ -178,7 +178,7 @@ async def test_an_edit_during_the_save_counts_its_module_as_written():
     edit_all(state)
     saving = asyncio.create_task(ConfigPipeline(client).save(state))
     _ = await client.started.wait()
-    state.edge.firewall.syslog_forwarding = True
+    state.edge.firewall.syslog_forwarding.set_local(True)
     client.release.set()
 
     with pytest.raises(DetachedObjectError) as exc:

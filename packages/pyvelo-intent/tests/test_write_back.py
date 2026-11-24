@@ -88,7 +88,7 @@ def three_module_state() -> ConfigState:
 
 def edit_all(state: ConfigState) -> None:
     """One edit in each module of ``three_module_state``, each shown by ``plan()``."""
-    state.edge.firewall.firewall_enabled = False
+    state.edge.firewall.firewall_enabled.set_local(False)
     state.edge.qos.service_rate_limit = ServiceRateLimit(
         enabled=True, input_type="percent", value=50
     )
@@ -180,7 +180,7 @@ async def test_three_modules_three_updates_and_a_version_read_for_the_one_with_s
 async def test_plan_after_a_save_is_empty():
     state = make_state()
     client = MockVcoClient.for_state(state)
-    state.edge.firewall.firewall_enabled = False
+    state.edge.firewall.firewall_enabled.set_local(False)
 
     _ = await ConfigPipeline(client).save(state)
 
@@ -192,11 +192,11 @@ async def test_second_edit_and_save_carries_the_returned_version():
     state = make_state()
     client = MockVcoClient.for_state(state)
     pipeline = ConfigPipeline(client)
-    state.edge.firewall.firewall_enabled = False
+    state.edge.firewall.firewall_enabled.set_local(False)
     _ = await pipeline.save(state)
     answered = client.store.rows[1]["version"]
 
-    state.edge.firewall.syslog_forwarding = True
+    state.edge.firewall.syslog_forwarding.set_local(True)
     _ = await pipeline.save(state)
 
     first, second = client.update_requests
@@ -229,7 +229,7 @@ async def test_added_keys_are_reported_and_not_planned_again():
     state = make_state()
     client = MockVcoClient.for_state(state)
     client.store.on_store.append(lambda new, _: new["data"].update(added=1))
-    state.edge.firewall.firewall_enabled = False
+    state.edge.firewall.firewall_enabled.set_local(False)
 
     result = await ConfigPipeline(client).save(state)
 
@@ -289,7 +289,7 @@ async def test_a_module_a_save_cannot_write_raises_before_any_request():
         ]
     )
     client = MockVcoClient.for_state(state)
-    state.edge.firewall.firewall_enabled = False
+    state.edge.firewall.firewall_enabled.set_local(False)
     analytics = state.module("analyticsSettings")
     assert isinstance(analytics, GenericConfigurationModule)
     analytics.data["enabled"] = True
@@ -345,7 +345,7 @@ async def test_conflict_refreshes_the_state_and_carries_the_plan(
     state = make_state()
     client = MockVcoClient.for_state(state, conditional_check=conditional_check)
     client.store.other_writer(1, other_writer_edit)
-    state.edge.firewall.firewall_enabled = False
+    state.edge.firewall.firewall_enabled.set_local(False)
 
     with pytest.raises(ConfigConflictError) as exc:
         _ = await ConfigPipeline(client).save(state)
@@ -365,11 +365,11 @@ async def test_redo_after_a_conflict_saves_without_a_reload(conditional_check: b
     client = MockVcoClient.for_state(state, conditional_check=conditional_check)
     client.store.other_writer(1, other_writer_edit)
     pipeline = ConfigPipeline(client)
-    state.edge.firewall.firewall_enabled = False
+    state.edge.firewall.firewall_enabled.set_local(False)
     with pytest.raises(ConfigConflictError):
         _ = await pipeline.save(state)
 
-    state.edge.firewall.firewall_enabled = False
+    state.edge.firewall.firewall_enabled.set_local(False)
     _ = await pipeline.save(state)
 
     stored = data_of(client.store, 1)
@@ -449,8 +449,8 @@ async def test_not_applied_refreshes_the_state_too():
         new["data"]["syslog_forwarding"] = old["data"]["syslog_forwarding"]
 
     client.store.on_store.append(put_back)
-    state.edge.firewall.firewall_enabled = False
-    state.edge.firewall.syslog_forwarding = True
+    state.edge.firewall.firewall_enabled.set_local(False)
+    state.edge.firewall.syslog_forwarding.set_local(True)
 
     with pytest.raises(WriteNotAppliedError) as exc:
         _ = await ConfigPipeline(client).save(state)
@@ -466,7 +466,7 @@ async def test_objects_are_detached_after_a_save():
     client = MockVcoClient.for_state(state)
     seg = state.edge.firewall.segments[0]
     old_data = state.module("firewall").data
-    state.edge.firewall.firewall_enabled = False
+    state.edge.firewall.firewall_enabled.set_local(False)
 
     _ = await ConfigPipeline(client).save(state)
 
@@ -481,7 +481,7 @@ async def test_objects_are_detached_after_a_save_that_raised(conditional_check: 
     client.store.other_writer(1, other_writer_edit)
     seg = state.edge.firewall.segments[0]
     old_data = state.module("firewall").data
-    state.edge.firewall.firewall_enabled = False
+    state.edge.firewall.firewall_enabled.set_local(False)
 
     with pytest.raises(ConfigConflictError):
         _ = await ConfigPipeline(client).save(state)
@@ -495,7 +495,7 @@ async def test_objects_of_an_unsaved_module_are_not_detached():
     links = state.edge.wan.links
     assert links is not MISSING
     link = links[0]
-    state.edge.firewall.firewall_enabled = False
+    state.edge.firewall.firewall_enabled.set_local(False)
 
     _ = await ConfigPipeline(client).save(state)
 
@@ -515,7 +515,7 @@ async def test_in_place_edit_on_a_detached_object_is_reported_by_plan():
         state = make_state()
         client = MockVcoClient.for_state(state)
         seg = state.edge.firewall.segments[0]
-        state.edge.firewall.firewall_enabled = False
+        state.edge.firewall.firewall_enabled.set_local(False)
         _ = await ConfigPipeline(client).save(state)
         seg.outbound.insert(0, rule("new"))
         return state, client, seg
@@ -585,7 +585,7 @@ async def test_dry_run_sends_nothing_and_detaches_nothing():
     state = make_state()
     client = MockVcoClient.for_state(state)
     seg = state.edge.firewall.segments[0]
-    state.edge.firewall.firewall_enabled = False
+    state.edge.firewall.firewall_enabled.set_local(False)
 
     result = await ConfigPipeline(client).save(state, dry_run=True)
 
@@ -604,7 +604,7 @@ async def test_a_save_whose_answer_does_not_parse_keeps_the_edits_in_the_state()
     state = make_state()
     client = MockVcoClient.for_state(state)
     client.store.on_store.append(without_an_action)
-    state.edge.firewall.firewall_enabled = False
+    state.edge.firewall.firewall_enabled.set_local(False)
 
     with pytest.raises(WriteOutcomeUnknownError) as exc:
         _ = await ConfigPipeline(client).save(state)
@@ -654,7 +654,7 @@ async def test_the_repr_of_a_save_result_holds_no_module_data():
             ),
         ]
     )
-    state.edge.firewall.firewall_enabled = False
+    state.edge.firewall.firewall_enabled.set_local(False)
     bgp = state.edge.device_settings.segments[0].bgp
     assert isinstance(bgp, SegmentBgp)
     bgp.asn = "65010"

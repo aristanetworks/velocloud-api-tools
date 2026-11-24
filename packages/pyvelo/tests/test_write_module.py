@@ -96,7 +96,7 @@ def methods(store: ModuleStore) -> list[str]:
 def firewall_disabled() -> FirewallConfigurationModule[Edge]:
     """The firewall module with one edit: ``firewall_enabled`` off."""
     module = fw(RAW, layer=Edge)
-    module.data.firewall_enabled = False
+    module.data.firewall_enabled.set_local(False)
     return module
 
 
@@ -175,7 +175,7 @@ async def test_the_stored_module_has_the_level_of_the_one_given(
     mock_vco_client: MockVcoClientFactory, return_data: bool
 ):
     module = fw(RAW, layer=Edge).for_edge()
-    module.data.firewall_enabled = False
+    module.data.firewall_enabled.set_local(False)
     store = store_of(module, return_data=return_data)
     # Not an edge configuration's name: the read puts the module at profile
     # level, so a module read back is at edge level only as the one given is.
@@ -218,7 +218,7 @@ async def test_ignored_path_is_not_applied(mock_vco_client: MockVcoClientFactory
         new["data"]["syslog_forwarding"] = old["data"]["syslog_forwarding"]
 
     module = firewall_disabled()
-    module.data.syslog_forwarding = True
+    module.data.syslog_forwarding.set_local(True)
     store = store_of(module)
     store.on_store.append(keep_syslog_forwarding)
     client = await mock_vco_client(store)
@@ -296,8 +296,8 @@ async def test_an_edit_another_writer_made_identically_counts_as_applied(
 
     module = fw(RAW, layer=Edge)
     data = module.mutable_data()
-    data.firewall_enabled = False
-    data.syslog_forwarding = True
+    data.firewall_enabled.set_local(False)
+    data.syslog_forwarding.set_local(True)
     store = store_of(module, conditional_check=conditional_check)
     store.other_writer(1, same_edit)
     client = await mock_vco_client(store)
@@ -454,7 +454,7 @@ async def test_update_module_returns_the_stored_module(
     store = store_of(module)
     client = await mock_vco_client(store)
     data = module.mutable_data()
-    data.firewall_enabled = False
+    data.firewall_enabled.set_local(False)
     stored = await client.update_module(module, data)
     assert stored.version == store.rows[1]["version"] != "v1"
     # Nothing to write: the module given is returned, and stays usable.
@@ -469,10 +469,10 @@ async def test_update_module_refuses_a_module_an_earlier_write_replaced(
     store = store_of(module)
     client = await mock_vco_client(store)
     data = module.mutable_data()
-    data.firewall_enabled = False
+    data.firewall_enabled.set_local(False)
     stored = await client.update_module(module, data)
     assert stored is not module and module.is_detached
-    data.syslog_forwarding = True
+    data.syslog_forwarding.set_local(True)
     with pytest.raises(DetachedObjectError) as exc:
         _ = await client.update_module(module, data)
     assert str(exc.value) == (
@@ -483,10 +483,10 @@ async def test_update_module_refuses_a_module_an_earlier_write_replaced(
     assert len(store.requests) == 1
     # An edit through the old module's own data says where the module is now.
     with pytest.raises(DetachedObjectError) as exc:
-        module.data.firewall_enabled = True
+        module.data.firewall_enabled.set_local(True)
     assert "after update_module: the module it returned" in str(exc.value)
     again = stored.mutable_data()
-    again.syslog_forwarding = True
+    again.syslog_forwarding.set_local(True)
     final = await client.update_module(stored, again)
     assert store.rows[1]["data"] == {
         **RAW,
@@ -504,7 +504,7 @@ async def test_update_module_replaces_the_module_after_a_write_error_too(
     store.other_writer(1, elsewhere)
     client = await mock_vco_client(store)
     data = module.mutable_data()
-    data.firewall_enabled = False
+    data.firewall_enabled.set_local(False)
     with pytest.raises(ModuleWriteError) as exc:
         _ = await client.update_module(module, data)
     assert exc.value.module is not None and not exc.value.module.is_detached
@@ -522,7 +522,7 @@ async def test_update_module_keeps_the_module_when_the_outcome_is_unknown(
     store.on_store.append(unreadable)
     client = await mock_vco_client(store)
     data = module.mutable_data()
-    data.firewall_enabled = False
+    data.firewall_enabled.set_local(False)
     with pytest.raises(WriteOutcomeUnknownError) as exc:
         _ = await client.update_module(module, data)
     assert exc.value.module is None
@@ -717,7 +717,7 @@ async def test_counted_update_that_cannot_be_read_back_is_an_unknown_outcome(
     mock_vco_client: MockVcoClientFactory,
 ):
     module = firewall_disabled()
-    module.data.syslog_forwarding = True
+    module.data.syslog_forwarding.set_local(True)
     plan = plan_module(module)
     store = store_of(module, return_data=False)
     client = await mock_vco_client(reading(store, []))

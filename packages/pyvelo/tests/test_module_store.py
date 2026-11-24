@@ -339,7 +339,7 @@ def test_as_stored_is_the_module_validated_from_json():
     assert stored.raw_data == data
     assert stored.version == "v2"
     assert (module.version, module.raw_data) == ("v1", RAW)
-    assert module.data.firewall_enabled is True
+    assert module.data.firewall_enabled.local is True
 
 
 def test_a_store_of_one_enterprise_refuses_a_request_that_does_not_name_it():

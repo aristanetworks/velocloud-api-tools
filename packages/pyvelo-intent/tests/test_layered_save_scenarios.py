@@ -4,8 +4,11 @@ import copy
 from typing import Any
 
 import pytest
-from pyvelo.client.exceptions import LossyFieldError
-from pyvelo.client.schemas.configuration import EnterpriseConfigurationProfile
+from pyvelo.client.exceptions import GroupOwnershipError, LossyFieldError
+from pyvelo.client.schemas.configuration import (
+    EdgeConfiguration,
+    EnterpriseConfigurationProfile,
+)
 from pyvelo.config.resolver import ResolverRegistry
 from pyvelo.testing import make_module_json, make_segment_resolver
 from pyvelo_intent import PatchError, add, delete
@@ -247,15 +250,29 @@ async def test_deleting_an_edge_segment_the_profile_has_leaves_an_empty_one():
     ]
 
 
-async def test_setting_a_default_on_an_inherited_key_is_refused():
+async def test_setting_a_default_on_a_key_the_edge_lacks_is_refused():
     raw: dict[str, Any] = {"segments": [global_segment()]}
     state = edge_state(raw)
     client = MockVcoClient.for_state(state)
-    state.edge.firewall.atp_enabled = False
+    state.edge.firewall.inbound = []
     with pytest.raises(LossyFieldError) as refused:
         await ConfigPipeline(client).save(state)
-    assert refused.value.fields == ["atp_enabled"]
+    assert refused.value.fields == ["inbound"]
     assert client.calls == []
+
+
+async def test_setting_one_member_of_an_inherited_group_is_refused_at_once():
+    raw: dict[str, Any] = {"segments": [global_segment()]}
+    state = edge_state(raw)
+    with pytest.raises(GroupOwnershipError, match="atp"):
+        state.edge.firewall.atp_enabled.set_local(False)
+    assert state.plan().changed == ()
+    # The group, made local, writes every member: the settings as the profile
+    # (here the display default) has them.
+    state.edge.firewall.atp.localize()
+    state.edge.firewall.atp_enabled.set_local(False)
+    (plan,) = state.plan().changed
+    assert [str(c.path) for c in plan.changes] == ["atp_enabled", "securityFeatures"]
 
 
 def profile_client(raw: dict[str, Any] = PROFILE_FW) -> MockVcoClient:
@@ -327,10 +344,89 @@ async def test_profile_target_apply_adds_a_rule():
 
 async def test_dry_run_reports_the_plan():
     client, state = MockVcoClient(), make_state()
-    state.edge.firewall.firewall_enabled = False
+    state.edge.firewall.firewall_enabled.set_local(False)
     result = await ConfigPipeline(client).save(state, dry_run=True)
     assert result.plan is not None
     rendered = result.plan.render()
     assert "+ firewall_enabled: false" in rendered
     assert "reconciled segments: Guest" in rendered
     assert client.calls == []
+
+
+# --- the edge layer is bound to the profile's firewall data ------------------
+
+PROFILE_SERVICES: dict[str, Any] = {"loggingEnabled": True, "ssh": {"enabled": True}}
+
+
+def state_over_profile_with_services(
+    edge_modules: list[dict[str, Any]],
+) -> ConfigState:
+    """An edge state with *edge_modules*, whose profile's firewall stores ``services``."""
+    state = make_state(edge_modules=edge_modules)
+    profile_row = make_module_json(
+        "firewall",
+        {**copy.deepcopy(PROFILE_FW), "services": PROFILE_SERVICES},
+        module_id=2,
+        configuration_id=20,
+    )
+    profile = EnterpriseConfigurationProfile.model_validate(
+        {"name": "P", "id": 20, "modules": [profile_row]}
+    )
+    state = ConfigState(
+        edge_config=state.edge_config,
+        profile_config=profile,
+        target_type="edge",
+        resolver_context=state.resolver_context,
+    )
+    state.take_snapshot()
+    return state
+
+
+async def test_a_loaded_edge_localizes_from_the_profiles_firewall_data():
+    state = state_over_profile_with_services(
+        [
+            make_module_json(
+                "firewall",
+                {"segments": [global_segment()]},
+                module_id=1,
+                configuration_id=10,
+                version="e1",
+            )
+        ]
+    )
+    services = state.edge.firewall.services.localize()
+    assert services.logging_enabled is True  # pyright: ignore[reportOptionalMemberAccess]
+    assert state.profile.firewall.services.logging_enabled is True  # pyright: ignore[reportOptionalMemberAccess]
+    (plan,) = state.plan().changed
+    assert [str(c.path) for c in plan.changes] == ["services"]
+
+
+async def test_a_created_module_localizes_from_the_profiles_firewall_data():
+    state = state_over_profile_with_services([])
+    client = MockVcoClient.for_state(state)
+    await ConfigPipeline(client).apply(
+        state, module="firewall", patch={"services": {"ssh": {"enabled": False}}}
+    )
+    (plan,) = state.plan().changed
+    assert plan.operation == "insert"
+    services = plan.data["services"]
+    # The profile's services, with the edit: not the display default.
+    assert services["loggingEnabled"] is True
+    assert services["ssh"]["enabled"] is False
+
+
+async def test_a_replaced_module_localizes_from_the_profiles_firewall_data():
+    row = make_module_json(
+        "firewall",
+        {"segments": [global_segment()]},
+        module_id=1,
+        configuration_id=10,
+        version="e1",
+    )
+    state = state_over_profile_with_services([row])
+    stored = EdgeConfiguration.model_validate(
+        {"name": "Edge Specific Profile", "id": 10, "modules": [row]}
+    ).firewall
+    state.replace_module(state.module("firewall"), stored)
+    services = state.edge.firewall.services.localize()
+    assert services.logging_enabled is True  # pyright: ignore[reportOptionalMemberAccess]

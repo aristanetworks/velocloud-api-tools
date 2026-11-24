@@ -226,7 +226,7 @@ async def test_a_write_that_sends_no_refs_has_no_version_read(
     mock_vco_client: MockVcoClientFactory,
 ):
     module = fw({"segments": [], "firewall_enabled": True}, layer=Edge)
-    module.data.firewall_enabled = False
+    module.data.firewall_enabled.set_local(False)
     store = store_of(module)
     client = await mock_vco_client(store)
     _ = await client.write_module(module, plan_module(module))

@@ -59,7 +59,7 @@ from .write_helpers import fw
 def lost_write() -> ConfigConflictError:
     """The conflict of a write that stored nothing, with one earlier write of the same save."""
     module = fw({"segments": [], "firewall_enabled": True}, layer=Edge)
-    module.data.firewall_enabled = False
+    module.data.firewall_enabled.set_local(False)
     plan = plan_module(module)
     stored = as_stored(module, {"segments": [], "firewall_enabled": True})
     with pytest.raises(ConfigConflictError) as exc:

@@ -28,7 +28,7 @@ from pyvelo.client.schemas.configuration import (
     QosConfigurationModule,
     new_edge_module,
 )
-from pyvelo.core import ConfigContext, add, at, delete
+from pyvelo.core import ConfigContext, Owned, add, at, delete
 from pyvelo.core.identity import (
     NetworkServiceIdentity,
     ResolverNotLoadedError,
@@ -128,7 +128,7 @@ def test_no_edit_plans_nothing_and_keeps_raw():
 
 def test_unrelated_edit_leaves_inherited_keys_absent_and_local_false_present():
     mod = fw(EDGE_RAW, layer=Edge)
-    mod.data.firewall_enabled = False
+    mod.data.firewall_enabled.set_local(False)
     plan = plan_module(mod, level=EDGE)
     assert plan.operation == "update"
     assert plan.data == {**EDGE_RAW, "firewall_enabled": False}
@@ -139,7 +139,7 @@ def test_unrelated_edit_leaves_inherited_keys_absent_and_local_false_present():
 
 def test_edit_is_written_to_the_snake_case_key_as_read():
     mod = fw(EDGE_RAW, layer=Edge)
-    mod.data.firewall_logging_enabled = True
+    mod.data.firewall_logging_enabled.set_local(True)
     plan = plan_module(mod, level=EDGE)
     assert plan.data["firewall_logging_enabled"] is True
     assert "firewallLoggingEnabled" not in plan.data
@@ -165,7 +165,11 @@ def test_the_logging_flag_is_written_in_snake_case_where_the_key_was_absent():
 
 
 def test_the_logging_flag_dumps_in_snake_case():
-    assert "firewall_logging_enabled" in FirewallData[Edge]().model_dump(by_alias=True)
+    for data in (
+        FirewallData[Edge](firewall_logging_enabled=Owned(False)),
+        FirewallData[Profile](firewall_logging_enabled=False),
+    ):
+        assert data.model_dump(by_alias=True)["firewall_logging_enabled"] is False
     segment = FirewallSegment[Edge].model_validate(
         {"segment": desc(0, "Global Segment"), "firewall_logging_enabled": True}
     )
@@ -186,15 +190,26 @@ def test_inserted_rules_keep_order_and_unknown_segment_keys():
 
 def test_lossy_assignment_raises():
     mod = fw(EDGE_RAW, layer=Edge)
-    mod.data.atp_enabled = False  # absent in raw, equals the model default
-    with pytest.raises(LossyFieldError, match="atp_enabled") as exc:
+    mod.data.inbound = []  # absent in raw, equals the model default
+    with pytest.raises(LossyFieldError, match="inbound") as exc:
         plan_module(mod, level=EDGE)
-    assert exc.value.fields == ["atp_enabled"]
+    assert exc.value.fields == ["inbound"]
+
+
+def test_a_profile_assigns_the_display_default_of_an_inheritable_and_it_is_written():
+    # An Inheritable field of a profile has a display default, not a model
+    # default: assigning that value stores it, where an unconverted field
+    # would raise LossyFieldError.
+    mod = fw({"segments": []}, layer=Profile)
+    mod.data.atp_enabled = False
+    plan = plan_module(mod, level=ConfigContext.PROFILE)
+    assert plan.data == {"segments": [], "atp_enabled": False}
+    assert [str(c.path) for c in plan.changes] == ["atp_enabled"]
 
 
 def test_reconciliation_rides_along_with_a_write():
     mod, profile = fw(EDGE_RAW, layer=Edge), fw(PROFILE_RAW, module_id=2, layer=Profile)
-    mod.data.firewall_enabled = False
+    mod.data.firewall_enabled.set_local(False)
     plan = plan_module(mod, level=EDGE, profile=profile)
     assert plan.reconciled_segments == ("Guest",)
     assert plan.data["segments"][0] == EDGE_RAW["segments"][0]
@@ -222,7 +237,7 @@ def test_edge_only_segment_is_kept_and_profile_level_never_reconciles():
     raw = copy.deepcopy(EDGE_RAW)
     raw["segments"].append({"segment": desc(9, "EdgeOnly"), "outbound": []})
     mod = fw(raw, layer=Edge)
-    mod.data.firewall_enabled = False
+    mod.data.firewall_enabled.set_local(False)
     plan = plan_module(
         mod, level=EDGE, profile=fw(PROFILE_RAW, module_id=2, layer=Profile)
     )
@@ -287,7 +302,7 @@ def test_insert_from_an_empty_layer_has_only_local_content_plus_placeholders():
     assert isinstance(mod, FirewallConfigurationModule)
     profile = fw(PROFILE_RAW, module_id=2, layer=Profile)
     assert plan_module(mod, level=EDGE, profile=profile).operation == "none"
-    mod.data.firewall_enabled = False
+    mod.data.firewall_enabled.set_local(False)
     plan = plan_module(mod, level=EDGE, profile=profile)
     assert plan.operation == "insert"
     assert plan.data == {
@@ -339,10 +354,13 @@ def test_reconcile_tolerates_malformed_segments():
 
 
 def test_unparseable_shapes_do_not_cause_a_write():
-    # DefaultingScalar turns both of these into False on parse.
+    # A null is kept as stored and is not local; DefaultingScalar turns the
+    # other into False on parse.
     raw = {"segments": [], "syslog_forwarding": None, "atp_enabled": "not-a-bool"}
     mod = fw(raw, layer=Edge)
-    assert (mod.data.syslog_forwarding, mod.data.atp_enabled) == (False, False)
+    assert mod.data.syslog_forwarding.stored is None
+    assert mod.data.syslog_forwarding.is_local is False
+    assert mod.data.atp_enabled.stored is False
     plan = plan_module(mod, level=EDGE)
     assert (plan.operation, plan.data) == ("none", raw)
 
@@ -380,15 +398,15 @@ def test_refs_are_sent_only_with_a_ref_change_or_segments_and_then_whole():
 def test_explicit_data_argument_leaves_module_data_out_of_it():
     mod = fw(EDGE_RAW, layer=Edge)
     data = mod.mutable_data()
-    data.firewall_enabled = False
+    data.firewall_enabled.set_local(False)
     assert plan_module(mod, data, level=EDGE).data["firewall_enabled"] is False
     assert plan_module(mod, level=EDGE).operation == "none"
 
 
 def test_render():
     mod = fw(EDGE_RAW, layer=Edge)
-    mod.data.firewall_enabled = False
-    mod.data.syslog_forwarding = True
+    mod.data.firewall_enabled.set_local(False)
+    mod.data.syslog_forwarding.set_local(True)
     text = plan_module(
         mod, level=EDGE, profile=fw(PROFILE_RAW, module_id=2, layer=Profile)
     ).render()
@@ -559,7 +577,7 @@ def test_a_module_without_a_segments_key_gets_one_for_reconciliation():
     mod = fw({}, layer=Edge)
     profile = fw(PROFILE_RAW, module_id=2, layer=Profile)
     assert plan_module(mod, level=EDGE, profile=profile).operation == "none"
-    mod.data.firewall_enabled = False
+    mod.data.firewall_enabled.set_local(False)
     plan = plan_module(mod, level=EDGE, profile=profile)
     assert plan.data == {
         "segments": [
@@ -591,7 +609,7 @@ def test_json_mode_module_plans_none_and_then_only_the_edit():
     assert isinstance(mod, FirewallConfigurationModule)
     plan = plan_module(mod, level=EDGE)
     assert (plan.operation, plan.data) == ("none", raw)
-    mod.data.syslog_forwarding = True
+    mod.data.syslog_forwarding.set_local(True)
     plan = plan_module(mod, level=EDGE)
     assert plan.data == {**raw, "syslog_forwarding": True}
 
@@ -1689,7 +1707,7 @@ def test_a_module_whose_refs_were_not_read_plans_any_other_write_without_refs():
         make_module_json("firewall", copy.deepcopy(EDGE_RAW)),
         context={"refs_loaded": False},
     )
-    firewall.data.firewall_enabled = False
+    firewall.data.firewall_enabled.set_local(False)
     plan = plan_module(firewall, level=EDGE)
     assert (plan.operation, plan.refs) == ("update", None)
 

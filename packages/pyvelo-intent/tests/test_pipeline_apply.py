@@ -144,7 +144,7 @@ class TestResolveModuleName:
             state, module="firewall", patch={"firewall_enabled": False}
         )
         assert state.edge_config is not None
-        assert state.edge_config.firewall.data.firewall_enabled is False
+        assert state.edge_config.firewall.data.firewall_enabled.local is False
 
     @pytest.mark.asyncio
     async def test_device_settings_snake_case(self):
@@ -187,7 +187,7 @@ async def test_apply_simple_patch():
     )
 
     assert state.edge_config is not None
-    assert state.edge_config.firewall.data.firewall_enabled is False
+    assert state.edge_config.firewall.data.firewall_enabled.local is False
 
 
 @pytest.mark.asyncio
@@ -1210,11 +1210,7 @@ async def test_non_mapping_patch_without_an_address_raises_type_error():
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("patch", "field"),
-    [
-        ({"atp_enabled": False}, "atp_enabled"),
-        ({"firewall_enabled": True}, "firewall_enabled"),
-        ({"stateful_firewall_enabled": True}, "stateful_firewall_enabled"),
-    ],
+    [({"inbound": []}, "inbound"), ({"inbound_v6": []}, "inbound_v6")],
 )
 async def test_apply_refuses_a_default_for_a_key_the_edge_layer_lacks(
     patch: dict[str, object], field: str
@@ -1232,6 +1228,33 @@ async def test_apply_refuses_a_default_for_a_key_the_edge_layer_lacks(
         state, module="firewall", patch={"firewall_enabled": False}
     )
     assert [m.name for m in state.plan().changed] == ["firewall"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("patch", "paths"),
+    [
+        ({"firewall_enabled": True}, ["firewall_enabled"]),
+        # A group is made local whole, the other members copied from the profile
+        # (here the display default: the profile stores neither).
+        ({"atp_enabled": False}, ["atp_enabled", "securityFeatures"]),
+        (
+            {"stateful_firewall_enabled": True},
+            [
+                "stateful_firewall_enabled",
+                "statefulFirewallSettings",
+                "statefulFirewallSettingsV6",
+            ],
+        ),
+    ],
+)
+async def test_apply_of_a_value_for_an_inheritable_key_the_edge_lacks_makes_it_local(
+    patch: dict[str, object], paths: list[str]
+):
+    state = make_raw_state()
+    _ = await ConfigPipeline(client=None).apply(state, module="firewall", patch=patch)
+    (plan,) = state.plan().changed
+    assert [str(c.path) for c in plan.changes] == paths
 
 
 @pytest.mark.asyncio
@@ -1268,9 +1291,9 @@ async def test_a_refused_edit_removes_the_module_apply_created():
     state = make_raw_state(edge_modules=[])
     with pytest.raises(LossyFieldError) as exc:
         _ = await ConfigPipeline(client=None).apply(
-            state, module="firewall", patch={"firewall_enabled": True}
+            state, module="firewall", patch={"inbound": []}
         )
-    assert exc.value.fields == ["firewall_enabled"]
+    assert exc.value.fields == ["inbound"]
     assert state.find_module("firewall") is None
     assert state.plan().modules == ()
 
@@ -1287,11 +1310,11 @@ async def test_the_same_patches_apply_on_a_profile():
 
 def test_lossy_error_says_why_and_what_to_do():
     state = make_raw_state()
-    state.edge.firewall.atp_enabled = False
+    state.edge.firewall.inbound = []
     with pytest.raises(LossyFieldError) as exc:
         _ = state.plan()
     assert str(exc.value) == (
-        "firewall: a save cannot write these edits: atp_enabled. A save sends "
+        "firewall: a save cannot write these edits: inbound. A save sends "
         "what differs from the module as read, and at these fields nothing would. "
         "Either this library does not write the field at this configuration level "
         "(some sections are written for a profile only, or for an edge only: make "

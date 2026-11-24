@@ -6,7 +6,7 @@ deeply-nested configuration data models. ``update_module`` runs over a
 """
 
 import inspect
-from typing import cast
+from typing import cast, overload
 from unittest.mock import AsyncMock
 from uuid import UUID
 
@@ -165,6 +165,24 @@ class TestUpdateModule:
             }
         )
 
+    @overload
+    def _fw(
+        self,
+        raw: dict[str, object],
+        *,
+        layer: type[Edge],
+        module_id: int = ...,
+        version: str | None = ...,
+    ) -> FirewallConfigurationModule[Edge]: ...
+    @overload
+    def _fw(
+        self,
+        raw: dict[str, object],
+        *,
+        layer: type[Profile],
+        module_id: int = ...,
+        version: str | None = ...,
+    ) -> FirewallConfigurationModule[Profile]: ...
     def _fw(
         self,
         raw: dict[str, object],
@@ -186,7 +204,7 @@ class TestUpdateModule:
         )
         client, store = await self._make_client(mock_vco_client, module)
         data = module.mutable_data()
-        data.firewall_enabled = False
+        data.firewall_enabled.set_local(False)
         _ = await client.update_module(module, data, enterprise_id=99)
         (req,) = self._updates(store)
         assert (req.configuration_module_id, req.enterprise_id, req.version) == (
@@ -227,7 +245,7 @@ class TestUpdateModule:
         module = self._fw({"segments": []}, layer=Edge, version=None)
         client, store = await self._make_client(mock_vco_client, module)
         data = module.mutable_data()
-        data.firewall_enabled = False
+        data.firewall_enabled.set_local(False)
         _ = await client.update_module(module, data)
         (req,) = self._updates(store)
         assert req.version is MISSING and req.enterprise_id is MISSING
@@ -280,7 +298,7 @@ class TestUpdateModule:
         edge = self._fw({"segments": []}, layer=Edge)
         client, store = await self._make_client(mock_vco_client, edge)
         data = edge.mutable_data().for_edge()
-        data.firewall_enabled = False
+        data.firewall_enabled.set_local(False)
         _ = await client.update_module(
             edge,
             data,

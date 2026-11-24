@@ -27,12 +27,14 @@ def test_plan_refuses_an_edit_of_the_profile_layer_of_an_edge_state():
         _ = state.plan()
 
     assert exc.value.layer == "profile"
+    # firewall_enabled is a key the profile layer did not store: it is added
+    # after the keys that were there.
     assert exc.value.fields == {
-        "firewall": ["firewall_enabled", "segments[Guest].firewall_logging_enabled"]
+        "firewall": ["segments[Guest].firewall_logging_enabled", "firewall_enabled"]
     }
     assert str(exc.value) == (
         "this state saves its edge layer only, and its profile layer was edited: "
-        "firewall (firewall_enabled, segments[Guest].firewall_logging_enabled). "
+        "firewall (segments[Guest].firewall_logging_enabled, firewall_enabled). "
         "Those edits are not saved. To change the profile, load it with "
         "load_profile(20) and make the edits there. They are reported this once: "
         "the next plan or save goes ahead without them."
@@ -43,7 +45,7 @@ def test_plan_refuses_an_edit_of_the_profile_layer_of_an_edge_state():
 async def test_save_sends_nothing_when_the_profile_layer_was_edited():
     state = make_state()
     client = MockVcoClient.for_state(state)
-    state.edge.firewall.firewall_enabled = False
+    state.edge.firewall.firewall_enabled.set_local(False)
     state.profile.firewall.firewall_enabled = False
 
     with pytest.raises(LayerNotSavedError):

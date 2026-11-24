@@ -362,6 +362,18 @@ def _compact_value(
     return value
 
 
+def same_state(a: object, b: object) -> bool:
+    """Whether *a* and *b* hold the same state: equal, or equal once compacted.
+
+    Models compare unequal by their private state, the config level among it
+    (``for_profile()`` sets it on a model and every model inside), and by the
+    form they hold the same state in; the compact dump removes those.
+    """
+    return a == b or _compact_value(a, by_alias=False, level=None) == _compact_value(
+        b, by_alias=False, level=None
+    )
+
+
 def _propagate_context(value: object, level: ConfigContext) -> None:
     """Set the config level on every VcoModel inside *value*, at any depth."""
     if isinstance(value, VcoModel):

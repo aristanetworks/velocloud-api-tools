@@ -1,10 +1,24 @@
-from typing import Annotated, Any
+from collections.abc import Callable
+from typing import Annotated, Any, ClassVar, cast
 
-from pydantic import MISSING, Field, PrivateAttr
+from pydantic import Field, PrivateAttr
 
-from pyvelo.core import Alias, Layered, Unconverted, kind_default
+from pyvelo.core import (
+    Alias,
+    Authority,
+    ByPresence,
+    Default,
+    Inheritable,
+    Layered,
+    MemberOf,
+    Unconverted,
+    VcoModel,
+    kind_default,
+)
+from pyvelo.core.base import is_dict
 from pyvelo.core.fields import DefaultingScalar, KeyField
-from pyvelo.core.layers import L
+from pyvelo.core.layers import Edge, L, Profile
+from pyvelo.core.owned import OwnedGroup, bind_layers
 
 from ..common import (
     copy_profile_segments,
@@ -13,6 +27,7 @@ from ..common import (
     profile_segment_id,
     profile_segment_name,
 )
+from ..profile_segments import module_template_value
 from .rules import FirewallInboundRule, FirewallInboundRuleV6
 from .security_features import NetworkProtectionSettings, SecurityFeatureSettings
 from .segment import FirewallSegment
@@ -20,12 +35,59 @@ from .services import FirewallServices
 from .stateful import StatefulFirewallSettings
 
 
+def profile_false_wins(profile_value: object) -> bool:
+    """The VCO's rule for ``firewall_enabled``: a profile that has it off turns it off for every edge."""
+    return profile_value is False
+
+
+def _template[M: VcoModel](model: type[M], key: str) -> Callable[[], M]:
+    """A factory of the display default of *key*: the packaged template's value, read as *model*."""
+
+    def make() -> M:
+        return model.model_validate(module_template_value("firewall", key))
+
+    return make
+
+
+class StatefulLocal(VcoModel):
+    """What the group ``stateful`` stores when it is local: every member, all required."""
+
+    stateful_firewall_settings: StatefulFirewallSettings
+    stateful_firewall_settings_v6: StatefulFirewallSettings
+    stateful_firewall_enabled: bool
+
+
+class NetworkProtectionLocal(VcoModel):
+    """What the group ``network_protection`` stores when it is local: every member, all required."""
+
+    network_protection_settings: NetworkProtectionSettings
+    network_protection_settings_v6: NetworkProtectionSettings
+
+
+class AtpLocal(VcoModel):
+    """What the group ``atp`` stores when it is local: every member, all required."""
+
+    atp_enabled: bool
+    security_features: SecurityFeatureSettings
+
+
 class FirewallData(Layered[L]):
-    # Every direct field is structural or Unconverted: inheritance is declared
-    # field by field as each is converted.
-    firewall_enabled: Annotated[Unconverted[bool], Alias("firewall_enabled")] = (
-        kind_default(True)
-    )
+    """The firewall module's data.
+
+    The module-level values are ``Inheritable``: the edge may store its own, in
+    three groups whose members change ownership together (``stateful``,
+    ``network_protection`` and ``atp``). Each has a display default, read from
+    the packaged profile template, for a layer that stores nothing. ``inbound``
+    and ``inbound_v6`` are not declared yet.
+    """
+
+    firewall_enabled: Annotated[
+        Inheritable[bool],
+        Alias("firewall_enabled"),
+        ByPresence(),
+        Default(True),
+        Authority(profile_false_wins),
+    ] = Field(default=...)
     inbound: Annotated[
         Unconverted[list[FirewallInboundRule]],
         KeyField("name", alt="rule_logical_id"),
@@ -39,52 +101,116 @@ class FirewallData(Layered[L]):
         list[FirewallSegment[L]], KeyField("segment.name", alt="segment.segment_id")
     ] = Field(default_factory=list)
     syslog_forwarding: Annotated[
-        Unconverted[Annotated[bool, DefaultingScalar(bool, default=False)]],
+        Inheritable[Annotated[bool, DefaultingScalar(bool, default=False)]],
         Alias("syslog_forwarding"),
-    ] = kind_default(False)
+        ByPresence(),
+        Default(False),
+    ] = Field(default=...)
 
     firewall_logging_enabled: Annotated[
-        Unconverted[Annotated[bool, DefaultingScalar(bool, default=False)]],
+        Inheritable[
+            Annotated[bool | None, DefaultingScalar(bool | None, default=None)]
+        ],
         Alias("firewall_logging_enabled"),
-    ] = kind_default(False)
+        ByPresence(),
+        Default(False),
+    ] = Field(default=...)
     atp_enabled: Annotated[
-        Unconverted[Annotated[bool, DefaultingScalar(bool, default=False)]],
+        Inheritable[Annotated[bool, DefaultingScalar(bool, default=False)]],
         Alias("atp_enabled"),
-    ] = kind_default(False)
+        ByPresence(),
+        MemberOf("atp"),
+        Default(False),
+    ] = Field(default=...)
     stateful_firewall_enabled: Annotated[
-        Unconverted[Annotated[bool, DefaultingScalar(bool, default=True)]],
+        Inheritable[Annotated[bool, DefaultingScalar(bool, default=True)]],
         Alias("stateful_firewall_enabled"),
-    ] = kind_default(True)
+        ByPresence(),
+        MemberOf("stateful"),
+        Default(False),
+    ] = Field(default=...)
 
-    security_features: Unconverted[SecurityFeatureSettings] = kind_default(
-        factory=SecurityFeatureSettings
-    )
+    security_features: Annotated[
+        Inheritable[SecurityFeatureSettings],
+        ByPresence(),
+        MemberOf("atp"),
+        Default(factory=_template(SecurityFeatureSettings, "securityFeatures")),
+    ] = Field(default=...)
 
-    services: Unconverted[FirewallServices] = kind_default(factory=FirewallServices)
+    services: Annotated[
+        Inheritable[FirewallServices],
+        ByPresence(),
+        Default(factory=_template(FirewallServices, "services")),
+    ] = Field(default=...)
 
-    network_protection_settings: Unconverted[NetworkProtectionSettings | MISSING] = (
-        kind_default(factory=lambda: MISSING)
-    )
-    network_protection_settings_v6: Unconverted[NetworkProtectionSettings | MISSING] = (
-        kind_default(factory=lambda: MISSING)
-    )
+    network_protection_settings: Annotated[
+        Inheritable[NetworkProtectionSettings],
+        ByPresence(),
+        MemberOf("network_protection"),
+        Default(
+            factory=_template(NetworkProtectionSettings, "networkProtectionSettings")
+        ),
+    ] = Field(default=...)
+    network_protection_settings_v6: Annotated[
+        Inheritable[NetworkProtectionSettings],
+        ByPresence(),
+        MemberOf("network_protection"),
+        Default(
+            factory=_template(NetworkProtectionSettings, "networkProtectionSettingsV6")
+        ),
+    ] = Field(default=...)
 
-    stateful_firewall_settings: Unconverted[StatefulFirewallSettings | MISSING] = (
-        kind_default(factory=lambda: MISSING)
+    stateful_firewall_settings: Annotated[
+        Inheritable[StatefulFirewallSettings],
+        ByPresence(),
+        MemberOf("stateful"),
+        Default(
+            factory=_template(StatefulFirewallSettings, "statefulFirewallSettings")
+        ),
+    ] = Field(default=...)
+    stateful_firewall_settings_v6: Annotated[
+        Inheritable[StatefulFirewallSettings],
+        ByPresence(),
+        MemberOf("stateful"),
+        Default(
+            factory=_template(StatefulFirewallSettings, "statefulFirewallSettingsV6")
+        ),
+    ] = Field(default=...)
+
+    stateful: ClassVar[OwnedGroup] = OwnedGroup(
+        "stateful", anchor="stateful_firewall_settings", bundle=StatefulLocal
     )
-    stateful_firewall_settings_v6: Unconverted[StatefulFirewallSettings | MISSING] = (
-        kind_default(factory=lambda: MISSING)
+    network_protection: ClassVar[OwnedGroup] = OwnedGroup(
+        "network_protection",
+        anchor="network_protection_settings",
+        bundle=NetworkProtectionLocal,
     )
+    atp: ClassVar[OwnedGroup] = OwnedGroup("atp", anchor="atp_enabled", bundle=AtpLocal)
 
     _profile_segments: list[dict[str, Any]] | None = PrivateAttr(default=None)
 
     def bind_profile(self, profile_data: object) -> None:
-        """Remember the segments of the profile module this layer inherits from.
+        """Remember the profile module this layer inherits from.
 
-        *profile_data* is that module's raw ``data``. It is what :meth:`segment`
-        copies a missing segment's descriptor from.
+        *profile_data* is that module's raw ``data`` (anything else, as for an
+        edge whose profile has no firewall module, is a profile with no
+        segments). Its segments are what :meth:`segment` copies a missing
+        segment's descriptor from. On the edge layer the data, and the segments
+        in it, are also bound to the profile layer read from it (a
+        ``FirewallData[Profile]``), which is where ``localize`` copies from: see
+        ``pyvelo.core.owned.bind_layers``. Raises ``ValidationError`` for a
+        profile module that does not parse.
         """
-        self._profile_segments = copy_profile_segments(profile_data)
+        segments = copy_profile_segments(profile_data)
+        self._profile_segments = segments
+        if self.layer() is not Edge:
+            return
+        raw: dict[str, Any] = {"segments": []}
+        if is_dict(profile_data):
+            raw = {**cast(dict[str, Any], profile_data), "segments": segments}
+        bind_layers(
+            cast(Layered[Edge], self), FirewallData[Profile].model_validate(raw)
+        )
 
     def segment(self, name: str) -> FirewallSegment[L]:
         """The segment called *name*; a layer that lacks it gets an empty entry.

@@ -229,7 +229,7 @@ async def test_e2e_multiple_patches():
 
     # Both changes should be present
     assert state.edge_config is not None
-    assert state.edge_config.firewall.data.firewall_enabled is False
+    assert state.edge_config.firewall.data.firewall_enabled.local is False
     seg = state.edge_config.firewall.data.get_segment(name="Global Segment")
     assert any(r.name == "new-rule" for r in seg.outbound)
 

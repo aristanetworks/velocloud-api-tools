@@ -863,16 +863,17 @@ class ConfigPipeline:
         and is then applied to the state as stored. Raises ``RuntimeError``
         when the calling task already holds ``state.lock``.
 
-        An edit made by assignment (``state.edge.firewall.syslog_forwarding =
-        True``) while a save is writing is not waited for: it lands in the
-        module that is about to be replaced. Once that module is stored, the
-        save puts it in the state without the edit and raises
-        ``DetachedObjectError`` with the paths of such edits; redo them. So does
-        a lookup that adds a placeholder to a module being written
+        An edit made directly on the models, by assignment or by an intent
+        (``state.edge.firewall.syslog_forwarding.set_local(True)``), while a
+        save is writing is not waited for: it lands in the module that is about
+        to be replaced. Once that module is stored, the save puts it in the
+        state without the edit and raises ``DetachedObjectError`` with the
+        paths of such edits; redo them. So does a lookup that adds a
+        placeholder to a module being written
         (``state.edge.firewall.segment("Guest")``, for a segment the edge only
-        inherits). To edit by assignment from another task while a save may
-        run, use ``apply``, or hold ``state.lock`` around the edit; do not wait,
-        inside that block, for another task that calls ``apply`` or ``save``,
+        inherits). To edit from another task while a save may run, use
+        ``apply``, or hold ``state.lock`` around the edit; do not wait, inside
+        that block, for another task that calls ``apply`` or ``save``,
         which would wait for the lock without end.
         """
         if on_hub_in_use not in ("warn", "refuse"):

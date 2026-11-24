@@ -16,6 +16,7 @@ from pyvelo.client.schemas.configuration import (
     QosConfigurationModule,
     new_edge_module,
 )
+from pyvelo.core import Owned
 from pyvelo.core.layers import Edge
 from pyvelo.testing import make_module_json
 
@@ -57,12 +58,12 @@ def test_capture_from_python_dicts_is_a_copy():
 
 
 def test_keyword_construction_snapshots_its_own_dump():
-    data = FirewallData[Edge](segments=[])
+    data = FirewallData[Edge](segments=[], firewall_enabled=Owned(True))
     mod = FirewallConfigurationModule[Edge].model_validate(
         {**make_module_json("firewall", {}), "data": data}
     )
     assert mod.raw_data == data.model_dump(mode="json", by_alias=True)
-    data.firewall_enabled = False
+    data.firewall_enabled.set_local(False)
     assert isinstance(mod.raw_data, dict)
     assert mod.raw_data["firewall_enabled"] is True
 

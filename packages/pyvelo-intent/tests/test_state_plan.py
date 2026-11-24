@@ -134,7 +134,7 @@ def test_plan_names_its_target():
 async def test_save_sends_raw_payload_version_and_reconciles():
     state = make_state()
     client = MockVcoClient.for_state(state)
-    state.edge.firewall.firewall_enabled = False
+    state.edge.firewall.firewall_enabled.set_local(False)
     result = await ConfigPipeline(client).save(state)
     (req,) = client.update_requests
     assert (req.configuration_module_id, req.version, req.enterprise_id) == (1, "e1", 5)
@@ -154,7 +154,7 @@ async def test_state_keeps_working_after_a_write():
     state = make_state()
     client = MockVcoClient.for_state(state)
     pipeline = ConfigPipeline(client)
-    state.edge.firewall.firewall_enabled = False
+    state.edge.firewall.firewall_enabled.set_local(False)
     dry = await pipeline.save(state, dry_run=True)
     assert client.calls == []
     assert dry.modules_updated == [ConfigurationModuleName.FIREWALL]
@@ -262,7 +262,7 @@ async def test_conflict_propagates(
     state = make_state()
     client = MockVcoClient.for_state(state, conditional_check=conditional_check)
     client.store.other_writer(1, lambda row: row["data"].update(firewall_enabled=True))
-    state.edge.firewall.firewall_enabled = False
+    state.edge.firewall.firewall_enabled.set_local(False)
     with pytest.raises(raised) as exc:
         await ConfigPipeline(client).save(state)
     (clash,) = [c for c in exc.value.lost_edits if str(c.path) == "firewall_enabled"]
