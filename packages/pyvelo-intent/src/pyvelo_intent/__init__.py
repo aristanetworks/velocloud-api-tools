@@ -17,6 +17,7 @@ from pyvelo.client.module_check import ModuleWrite
 from pyvelo.client.module_write import ModulePlan
 from pyvelo.core import PatchError, PatchErrorKind, add, at, delete, move
 from pyvelo.core.identity import (
+    HubIdentity,
     NetworkServiceIdentity,
     ResolutionError,
     ResolverNotLoadedError,
@@ -68,6 +69,7 @@ __all__ = [
     "DiffResult",
     "FieldChange",
     "FixedListError",
+    "HubIdentity",
     "IntentError",
     "LayerNotSavedError",
     "LossyFieldError",

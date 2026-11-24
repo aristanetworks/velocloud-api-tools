@@ -169,6 +169,14 @@ A patch is strict and all or nothing:
 - A key that names no field raises, at every depth, and so do two keys that
   name one field (`rule_id` and `ruleId`). Keys that start with `_` are
   directives: `_op` and `_position`, on a list item only.
+- A hub is added to a `vpn` list (`edgeToEdgeHub.vpnHubs`,
+  `edgeToEdgeDetail.vpnHubs`, `backHaulEdges`) or to a QoS rule's
+  `backhaulEdges` by its name, `{"+": add({"name": "Hub-A"})}`, or by its
+  logical ID, `{"+": add({"logicalId": "<logical ID>"})}`: the other fields of
+  the entry (its name, `type`, logical ID and, in a rule, `edgeId`) come from
+  the Edge or the hub cluster. A name that an Edge and a cluster share needs the
+  logical ID. The hub resolver reads the enterprise's Edges and clusters once,
+  on first use.
 - A patch that cannot be applied raises `PatchError` (a `ValueError`). Its
   `path` is where in the patch it failed, its `message` the reason, and its
   `kind` one of the thirteen values below, for a caller that reacts to the

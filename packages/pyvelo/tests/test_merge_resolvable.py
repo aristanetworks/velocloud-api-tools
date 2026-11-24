@@ -4,9 +4,10 @@ import uuid
 from typing import Annotated
 
 import pytest
+from pydantic import Field
 from pyvelo.config.resolver import ResolverRegistry
-from pyvelo.core import VcoModel
-from pyvelo.core.fields import Resolvable
+from pyvelo.core import PatchError, VcoModel, add
+from pyvelo.core.fields import KeyField, NameOf, Resolvable
 from pyvelo.core.identity import (
     SegmentIdentity,
 )
@@ -28,6 +29,18 @@ class SegmentMeta(VcoModel):
 class Config(VcoModel):
     segment: SegmentMeta = SegmentMeta()
     enabled: bool = True
+
+
+class NamedSegment(VcoModel):
+    name: Annotated[str, NameOf(SegmentIdentity)]
+    segment_id: Annotated[int, Resolvable(SegmentIdentity, "segment_id")]
+    logical_id: Annotated[uuid.UUID, Resolvable(SegmentIdentity, "logical_id")]
+
+
+class NamedSegments(VcoModel):
+    segments: Annotated[list[NamedSegment], KeyField("segment_id", label="name")] = (
+        Field(default_factory=list)
+    )
 
 
 @pytest.fixture
@@ -118,3 +131,58 @@ class TestMergeResolvable:
         )
         assert m.segment.segment_id == 0
         assert m.segment.logical_id == PCI_UUID
+
+
+class TestNewItemNamedByItsId:
+    """A new item that gives an ID of an identity and no name takes the name and the other IDs."""
+
+    def test_a_segment_given_by_its_id_takes_its_name_and_logical_id(
+        self, registry: ResolverRegistry
+    ):
+        m = NamedSegments()
+        _ = m.merge_patch(
+            {"segments": {"+": add({"segment_id": 1})}}, resolvers=registry
+        )
+        assert [(s.name, s.segment_id, s.logical_id) for s in m.segments] == [
+            ("PCI", 1, PCI_UUID)
+        ]
+
+    def test_a_segment_given_by_its_logical_id_text_takes_its_name_and_id(
+        self, registry: ResolverRegistry
+    ):
+        m = NamedSegments()
+        _ = m.merge_patch(
+            {"segments": {"+": add({"logical_id": str(PCI_UUID)})}},
+            resolvers=registry,
+        )
+        assert [(s.name, s.segment_id) for s in m.segments] == [("PCI", 1)]
+
+    def test_a_name_that_is_given_is_not_replaced(self, registry: ResolverRegistry):
+        m = NamedSegments()
+        _ = m.merge_patch(
+            {
+                "segments": {
+                    "+": add(
+                        {"name": "Mine", "segment_id": 1, "logical_id": str(PCI_UUID)}
+                    )
+                }
+            },
+            resolvers=registry,
+        )
+        assert [s.name for s in m.segments] == ["Mine"]
+
+    def test_an_unknown_id_raises_resolution_error(self, registry: ResolverRegistry):
+        m = NamedSegments()
+        with pytest.raises(KeyError, match="99"):
+            _ = m.merge_patch(
+                {"segments": {"+": add({"segment_id": 99})}}, resolvers=registry
+            )
+        assert m.segments == []
+
+    def test_with_no_resolver_for_the_type_nothing_is_filled(self):
+        m = NamedSegments()
+        with pytest.raises(PatchError, match="name"):
+            _ = m.merge_patch(
+                {"segments": {"+": add({"segment_id": 1})}},
+                resolvers=ResolverRegistry(),
+            )

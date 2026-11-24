@@ -29,6 +29,7 @@ from pyvelo.client.schemas.edge import GetEdgeConfigurationStack
 from pyvelo.config.resolver import Resolver, ResolverContext, ResolverRegistry
 from pyvelo.config.resolvers.application import ApplicationResolver
 from pyvelo.config.resolvers.edge import EdgeResolver
+from pyvelo.config.resolvers.hub import HubResolver
 from pyvelo.config.resolvers.network_service import NetworkServiceResolver
 from pyvelo.config.resolvers.profile import ProfileResolver
 from pyvelo.config.resolvers.segment import SegmentResolver
@@ -38,6 +39,7 @@ from pyvelo.core import ConfigContext, PatchError
 from pyvelo.core.base import IdentityResolver, VcoModel
 from pyvelo.core.identity import (
     EdgeName,
+    HubIdentity,
     NetworkServiceIdentity,
     ProfileName,
     ResolutionError,
@@ -916,15 +918,16 @@ class ConfigPipeline:
         a cache: the state gets an unloaded copy of the pipeline's resolvers,
         loaded for ``state.resolver_context``. This replaces the state's whole
         registry, so a resolver registered on ``state.resolvers`` is dropped.
-        The network-service resolver in that copy is not loaded: the table is
-        read when a plan or a patch first needs it.
+        The network-service and hub resolvers in that copy are not loaded: the
+        tables are read when a plan or a patch first needs them.
 
         With *identities* (``NetworkServiceIdentity``, ``SegmentIdentity``,
         ...), it sets ``state.resolver_context`` on the state's registry and
         loads the resolver of each type in it, whether it was loaded before or
         not. A state that has none for a type gets one first: an unloaded copy
         of the pipeline's, or, for ``NetworkServiceIdentity``, a new
-        ``NetworkServiceResolver`` on the pipeline's client. This is what
+        ``NetworkServiceResolver`` and, for ``HubIdentity``, a new
+        ``HubResolver``, on the pipeline's client. This is what
         ``save``, ``dry_run`` and ``apply`` do when they meet a resolver that is
         not loaded; call it to load a table at a time of your choosing. Raises
         ``ValueError`` for a type that neither the state nor the pipeline has a
@@ -944,7 +947,8 @@ class ConfigPipeline:
         """The resolver of *state* for *identity*, registered first when the state has none.
 
         The state's own, else an unloaded copy of the pipeline's, else, for
-        ``NetworkServiceIdentity``, a new ``NetworkServiceResolver``.
+        ``NetworkServiceIdentity``, a new ``NetworkServiceResolver`` and, for
+        ``HubIdentity``, a new ``HubResolver``.
         """
         held = state.resolvers.resolver_for(identity)
         if held is not None:
@@ -952,6 +956,8 @@ class ConfigPipeline:
         resolver = self._resolvers.unloaded().resolver_for(identity)
         if resolver is None and identity is NetworkServiceIdentity:
             resolver = NetworkServiceResolver(self.client)
+        if resolver is None and identity is HubIdentity:
+            resolver = HubResolver(self.client)
         if resolver is None:
             raise ValueError(
                 f"neither this pipeline nor the state has a resolver for "
@@ -983,14 +989,19 @@ class ConfigPipeline:
         """Set *context* on *resolvers*, then load the segment resolver, adding
         one if there is none, and the application resolver if there is one.
 
-        A network-service resolver is added, and left unloaded, if there is
-        none: a plan or a patch that needs the services loads it.
+        A network-service resolver and a hub resolver are added, and left
+        unloaded, if there are none: a plan or a patch that needs the services
+        or the hubs loads them.
         """
         resolvers.set_context(context)
         try:
             _ = resolvers.get_resolver(NetworkServiceResolver)
         except LookupError:
             resolvers.register(NetworkServiceResolver(self.client))
+        try:
+            _ = resolvers.get_resolver(HubResolver)
+        except LookupError:
+            resolvers.register(HubResolver(self.client))
         try:
             segments = resolvers.get_resolver(SegmentResolver)
         except LookupError:

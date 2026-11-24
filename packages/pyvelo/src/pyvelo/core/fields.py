@@ -512,8 +512,12 @@ class NameOf:
     """Annotated marker: this string field holds the name of an identity.
 
     ``merge_patch`` fills the sibling ``Resolvable(identity_type, ...)`` fields
-    that a new item's patch leaves out from this field's value. No other
-    string in a patch is tried as a name.
+    that a new item's patch leaves out from this field's value. A new item that
+    gives an ID of the identity (a ``Resolvable`` field of the type whose values
+    are not a fixed set, as a ``Literal`` is) and not this name takes the name,
+    and the other fields it lacks, from the identity that ID finds. An unknown
+    ID raises ``ResolutionError``. No other string in a patch is tried as a
+    name.
 
     Usage: ``name: Annotated[str, NameOf(SegmentIdentity)]``
     """
