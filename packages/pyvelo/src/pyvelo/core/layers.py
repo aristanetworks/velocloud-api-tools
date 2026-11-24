@@ -794,6 +794,13 @@ class Layered(VcoModel, Generic[L]):  # noqa: UP046 (one shared constrained L, a
                 if name not in model.__dict__:
                     object.__setattr__(model, name, Owned(MISSING))
             model._attach_owned()
+        elif cls.layer() is Profile or cls.layer() is Composed:
+            # A key that was not given reads as its display default, as it does
+            # on a parse, and is not a field the model holds as set.
+            for name, info in cls.model_fields.items():
+                default = _default_of(info)
+                if default is not None and name not in model.__dict__:
+                    object.__setattr__(model, name, default.make())
         return model
 
     @override

@@ -14,6 +14,7 @@ from pyvelo.client.models.configuration.firewall import (
 from pyvelo.client.models.configuration.profile_segments import module_template_value
 from pyvelo.core import (
     ByPresence,
+    Composed,
     Default,
     Edge,
     Kind,
@@ -188,3 +189,19 @@ def test_module_template_value_is_a_copy():
         "udpFlowTimeout": 300,
         "otherFlowTimeout": 60,
     }
+
+
+@pytest.mark.parametrize("layer", [Profile, Composed])
+def test_a_constructed_model_reads_a_missing_inheritable_as_its_display_default(layer):
+    built = FirewallData[layer].model_construct()
+    parsed = FirewallData[layer].model_validate({})
+    assert built.atp_enabled is False
+    assert built.services.ssh.enabled is False  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType]
+    assert built.model_fields_set == set()
+    # Nothing was given, so nothing is written, as for a parse.
+    assert built.model_dump(mode="json", by_alias=True) == parsed.model_dump(
+        mode="json", by_alias=True
+    )
+    given = FirewallData[layer].model_construct(atp_enabled=True)
+    assert given.model_fields_set == {"atp_enabled"}
+    assert given.atp_enabled is True
