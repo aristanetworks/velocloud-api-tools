@@ -451,15 +451,28 @@ def _refuse_member(
             + f'send {{"{anchor_key}": null}}'
         )
     else:
-        keys = ", ".join(f'"{_key(owner, name)}": ...' for name in group.members(cls))
+        member_key = _key(owner, field)
         message = (
             f'{where} is a member of the group "{group.name}", which the edge '
-            + "inherits, so setting one member would leave the others behind: "
-            + "a group with some members inherited and others local is a state "
-            + "the VCO UI does not recognize. Make the group local first, with "
-            + f".{handle}.set_local(bundle) or .{handle}.localize(), or in a "
-            + f"patch send every member: {{{keys}}}"
+            + "inherits, and a group with some members inherited and others "
+            + "local is a state the VCO UI does not recognize, so "
         )
+        if intent == "set_local":
+            message += (
+                "setting one member would leave the others behind. Make the "
+                + f"group local first, with .{handle}.set_local(bundle) or "
+                + f".{handle}.localize(), or in a patch send the member "
+                + f'alone, {{"{member_key}": <value>}}, which copies the '
+                + "group from the profile and then sets that member"
+            )
+        else:
+            message += (
+                "localizing one member would leave the others behind. "
+                + f"Localize the whole group with .{handle}.localize(), or in a "
+                + f'patch send the member alone, {{"{member_key}": <value>}}, '
+                + "which copies the group from the profile and then sets "
+                + "that member"
+            )
     raise GroupOwnershipError(message, group=group.name, field=field)
 
 
@@ -616,7 +629,13 @@ class GroupHandle:
             raise TypeError(
                 f"{self._group.attribute}.set_local takes a {self._group.bundle.__name__} "
                 + f"with every member of the group, not a {type(bundle).__name__}; "
-                + "a text-driven caller sends the members in a patch"
+                + "a text-driven caller sends every member in a patch: "
+                + "{"
+                + ", ".join(
+                    f'"{_key(self._owner, name)}": ...'
+                    for name in self._group.members(type(self._owner))
+                )
+                + "}"
             )
         members = self._group.members(type(self._owner))
         values = {

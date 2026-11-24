@@ -180,9 +180,10 @@ def test_set_local_and_merge_patch_refuse_a_value_alike(
 
 def test_set_local_refuses_a_null() -> None:
     e = _edge(level=3)
-    with pytest.raises(PatchError, match=r'null.*\{"level": null\}'):
+    with pytest.raises(PatchError, match=r'null.*\{"level": null\}') as exc:
         e.level.set_local(None)
     assert e.level.stored == 3
+    assert (exc.value.kind, exc.value.path) == ("null", "level")
 
 
 def test_set_local_does_not_alias_the_callers_object() -> None:
@@ -624,3 +625,30 @@ def test_an_owned_is_not_a_condition():
 def test_an_owned_equals_only_an_owned():
     assert (Owned(True) == True) is False  # noqa: E712
     assert Owned(True) == Owned(True)
+
+
+def test_each_intent_on_a_member_has_its_own_refusal() -> None:
+    e, _ = _bound()
+    with pytest.raises(GroupOwnershipError) as exc:
+        e.pair_b.set_local(Settings())
+    said = str(exc.value)
+    assert "setting one member" in said
+    assert '{"pairB": <value>}' in said
+    assert "every member" not in said
+    with pytest.raises(GroupOwnershipError) as exc:
+        e.pair_b.localize()
+    said = str(exc.value)
+    # Localizing one member localizes the group first, then the member: the
+    # patch for it is the member alone.
+    assert "setting one member" not in said
+    assert "pair.localize()" in said
+    assert '{"pairB": <value>}' in said
+    assert "every member" not in said
+
+
+def test_the_group_bundle_refusal_gives_the_patch() -> None:
+    e = _edge()
+    with pytest.raises(TypeError) as exc:
+        e.pair.set_local({"pair_a": {}})  # pyright: ignore[reportArgumentType]
+    said = str(exc.value)
+    assert '{"pairA": ..., "pairB": ..., "pairOn": ...}' in said
