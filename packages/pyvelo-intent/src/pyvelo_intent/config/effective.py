@@ -12,7 +12,9 @@ position in the view (the edge's entries, then the profile's).
 How each part of a module is matched:
 
 - keys by key; a key either side lacks is reported once, at the highest path
-  that is absent, and an empty list and an absent list are the same;
+  that is absent; under a display default (``FACTORY``) a key the server lacks
+  is ``factory``, and an empty list the view builds itself (an ``Additive``
+  list, ``segments``) equals an absent one while a stored one does not;
 - the items of a keyed list of ``Layered`` models (the ``segments``) by their
   key, the alt key first, in any order: the view puts the profile's segments
   first and the composer the edge's;
@@ -235,9 +237,14 @@ def _same(client: object, server: object) -> bool:
     return type(client) is type(server) and client == server
 
 
-def _both_empty(client: object, server: object) -> bool:
-    """One side has an empty list and the other has none: no difference."""
-    return (client is MISSING and server == []) or (server is MISSING and client == [])
+def _built_empty(client: object, server: object) -> bool:
+    """The view holds an empty list it built itself and the server has none: no difference.
+
+    Only where the view materialises the list (an ``Additive`` list, which is
+    always there, and ``segments``); a stored empty list the server lacks is
+    ``client_only``.
+    """
+    return client == [] and server is MISSING
 
 
 def _model_of(annotation: object) -> type[VcoModel] | None:
@@ -473,7 +480,7 @@ class _Comparison:
         *items* are the view's, in the dump's order, and a view item the server
         lacks is the composer's omission of a segment not in use.
         """
-        if _both_empty(client, server) or (client is MISSING and server is MISSING):
+        if _built_empty(client, server) or (client is MISSING and server is MISSING):
             return
         if self.ignored(path, client, server, None):
             return
@@ -554,7 +561,7 @@ class _Comparison:
         self, typ: type[VcoModel] | None, path: str, client: object, server: object
     ) -> None:
         """The entries of an ``Additive`` list, by position."""
-        if _both_empty(client, server) or (client is MISSING and server is MISSING):
+        if _built_empty(client, server) or (client is MISSING and server is MISSING):
             return
         if self.ignored(path, client, server, None):
             return
@@ -588,20 +595,13 @@ class _Comparison:
         typ: type[VcoModel] | None,
     ) -> None:
         """A resolved value, or a plain one: *cover* says where the view's came from."""
-        if (client is MISSING and server is MISSING) or _both_empty(client, server):
+        if client is MISSING and server is MISSING:
             return
         if self.ignored(path, client, server, cover):
             return
         display = cover is not None and cover.origin is Origin.FACTORY
         if server is MISSING:
-            self.emit(
-                path,
-                EffectiveCategory.FACTORY if display else EffectiveCategory.CLIENT_ONLY,
-                client,
-                MISSING,
-                cover=cover,
-                reason=FACTORY_ABSENT if display else None,
-            )
+            self.absent_from_server(path, client, cover)
         elif client is MISSING:
             self.emit(path, EffectiveCategory.SERVER_ONLY, MISSING, server, cover=cover)
         else:
@@ -616,6 +616,20 @@ class _Comparison:
                     cover=cover,
                     reason=FACTORY_SAME,
                 )
+
+    def absent_from_server(
+        self, path: str, client: object, cover: Resolved[object] | None
+    ) -> None:
+        """The view has a value the server lacks: information under a display default, else a finding."""
+        display = cover is not None and cover.origin is Origin.FACTORY
+        self.emit(
+            path,
+            EffectiveCategory.FACTORY if display else EffectiveCategory.CLIENT_ONLY,
+            client,
+            MISSING,
+            cover=cover,
+            reason=FACTORY_ABSENT if display else None,
+        )
 
     def deep(
         self,
@@ -634,9 +648,7 @@ class _Comparison:
                 where = _join(path, key)
                 found = mine.get(key, MISSING)
                 other = theirs.get(key, MISSING)
-                if _both_empty(found, other) or self.ignored(
-                    where, found, other, cover
-                ):
+                if self.ignored(where, found, other, cover):
                     continue
                 info = fields.get(key)
                 if info is not None and is_secret(info):
@@ -650,13 +662,7 @@ class _Comparison:
                         cover=cover,
                     )
                 elif other is MISSING:
-                    self.emit(
-                        where,
-                        EffectiveCategory.CLIENT_ONLY,
-                        found,
-                        MISSING,
-                        cover=cover,
-                    )
+                    self.absent_from_server(where, found, cover)
                 else:
                     nested = (
                         None if info is None else _model_of(field_kind(info).inner_type)
@@ -667,13 +673,7 @@ class _Comparison:
             for position in range(max(len(mine), len(theirs))):
                 where = f"{path}[{position}]"
                 if position >= len(theirs):
-                    self.emit(
-                        where,
-                        EffectiveCategory.CLIENT_ONLY,
-                        mine[position],
-                        MISSING,
-                        cover=cover,
-                    )
+                    self.absent_from_server(where, mine[position], cover)
                 elif position >= len(mine):
                     self.emit(
                         where,

@@ -710,8 +710,11 @@ There are six categories, and three of them are findings:
 | `unconverted` | the path is not converted yet (`inbound`, `inboundV6`, a segment's `firewall_logging_enabled`, `etm`), so the view has no value to compare | no, information |
 
 `comparison.findings` is the entries that are findings, and `entries` all of
-them. A key is reported once, at the highest path that is absent from a side,
-and an empty list and an absent one are the same. Segments are matched by
+them. A key is reported once, at the highest path that is absent from a side.
+Under a display default, a key the server lacks is `factory` (information),
+and a value it has that differs is `differs`. A list the view builds itself
+(a segment's rules, or `segments`) that is empty equals an absent one; a stored
+empty list the server lacks is `client_only`. Segments are matched by
 `segmentId` in any order (the view puts the profile's first and the composer
 the edge's), and the rules of a segment, edge entries then profile entries, by
 position.

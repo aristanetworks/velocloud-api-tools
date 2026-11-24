@@ -308,6 +308,62 @@ async def test_a_wrong_display_default_is_differs():
     assert str(finding.origin) == "factory"
 
 
+async def test_a_nested_key_the_server_lacks_under_a_display_default_is_information():
+    pipeline, state, client = await loaded()
+    services = copy.deepcopy(defaults(state)["services"])
+    del services["ssh"]["allowSelectedIp"]
+    composed_modules(client)["services"] = services
+    comparison = await pipeline.compare_effective(state)
+
+    assert comparison.findings == ()
+    entry = by_path(comparison)["services.ssh.allowSelectedIp"]
+    assert entry.category is EffectiveCategory.FACTORY
+    assert entry.server is MISSING
+    assert str(entry.origin) == "factory"
+    assert entry.reason and "display default" in entry.reason
+
+
+async def test_a_nested_value_that_differs_under_a_display_default_is_differs():
+    pipeline, state, client = await loaded()
+    services = copy.deepcopy(defaults(state)["services"])
+    services["ssh"]["enabled"] = True
+    composed_modules(client)["services"] = services
+    comparison = await pipeline.compare_effective(state)
+
+    (finding,) = comparison.findings
+    assert finding.category is EffectiveCategory.DIFFERS
+    assert finding.path == "services.ssh.enabled"
+    assert str(finding.origin) == "factory"
+
+
+async def test_a_stored_empty_list_the_server_lacks_is_client_only():
+    profile = {
+        **PROFILE,
+        "services": {"ssh": {"enabled": False, "allowSelectedIp": []}},
+    }
+    pipeline, state, client = await loaded(EDGE, profile)
+    del composed_modules(client)["services"]["ssh"]["allowSelectedIp"]
+    comparison = await pipeline.compare_effective(state)
+
+    (finding,) = comparison.findings
+    assert finding.category is EffectiveCategory.CLIENT_ONLY
+    assert finding.path == "services.ssh.allowSelectedIp"
+    assert finding.client == []
+    assert str(finding.origin) == "profile"
+
+
+async def test_an_empty_list_only_the_server_has_is_server_only():
+    profile = {**PROFILE, "services": {"ssh": {"enabled": False}}}
+    pipeline, state, client = await loaded(EDGE, profile)
+    composed_modules(client)["services"]["ssh"]["allowSelectedIp"] = []
+    comparison = await pipeline.compare_effective(state)
+
+    (finding,) = comparison.findings
+    assert finding.category is EffectiveCategory.SERVER_ONLY
+    assert finding.path == "services.ssh.allowSelectedIp"
+    assert finding.server == []
+
+
 async def test_an_ignored_path_is_reported_with_its_reason():
     _, state, client = await loaded()
     server = composed_modules(client)

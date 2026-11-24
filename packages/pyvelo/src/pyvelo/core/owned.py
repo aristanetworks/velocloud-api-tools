@@ -251,7 +251,7 @@ class Owned[T]:
         info = type(owner).model_fields[self._field]
         parent = binding.parent
         if parent is None:
-            return clear_server_owned(display_default(info))
+            return clear_server_owned(as_stored(display_default(info)))
         value: object = getattr(parent, self._field)
         return clear_server_owned(copy.deepcopy(value))
 
@@ -278,6 +278,22 @@ class Owned[T]:
 
     def __repr__(self) -> str:
         return f"Owned({self.stored!r})"
+
+
+def as_stored(value: object) -> object:
+    """*value* as a stored one: a model has every field set, recursively, as a model read from its own JSON has.
+
+    A display default is built from the model's defaults, so most of its
+    fields are not *set*, and a dump that leaves out what was never set would
+    write ``{}``. Once the edge stores the value, each of its fields is the
+    edge's. A value that is not a model is returned as it is.
+    """
+    from pydantic import BaseModel, TypeAdapter
+
+    if isinstance(value, BaseModel):
+        dumped = TypeAdapter(object).dump_python(value, mode="json", by_alias=True)
+        return type(value).model_validate(dumped)
+    return value
 
 
 def clear_server_owned(value: object) -> object:

@@ -22,6 +22,7 @@ from pyvelo.core import (
     Owned,
     Profile,
     Resolved,
+    bind_layers,
     effective_dump,
     effective_view,
     kind_default,
@@ -310,3 +311,45 @@ def test_authority_on_a_field_that_is_not_inheritable_is_refused() -> None:
             note: Annotated[EdgeOnly[bool], Authority(lambda value: True)] = (
                 kind_default(True)
             )
+
+
+def _local_view(edge: Mod[Edge]) -> Mod[Effective]:
+    profile = Mod[Profile].model_validate(mod_json())
+    return effective_view(edge, profile, Mod[Effective])
+
+
+def _unbound_edge() -> Mod[Edge]:
+    edge = Mod[Edge].model_validate(mod_json())
+    bind_layers(edge, None)  # no profile: localize copies the display default
+    return edge
+
+
+def test_a_value_localized_from_a_display_default_dumps_whole() -> None:
+    edge = _unbound_edge()
+    assert edge.settings.localize() == Settings()
+    view = _local_view(edge)
+    assert view.settings.origin is Origin.EDGE
+    data, found = effective_dump(view)
+    assert data["settings"] == {"a": 1, "b": False}
+    assert found["settings"].origin is Origin.EDGE
+
+
+def test_an_edit_after_localizing_a_display_default_keeps_the_other_fields() -> None:
+    edge = _unbound_edge()
+    edge.settings.localize().b = True
+    data, _ = effective_dump(_local_view(edge))
+    assert data["settings"] == {"a": 1, "b": True}
+
+
+def test_a_value_set_local_is_dumped_as_given() -> None:
+    edge = _unbound_edge()
+    edge.settings.set_local(Settings(a=3, b=True))
+    data, _ = effective_dump(_local_view(edge))
+    assert data["settings"] == {"a": 3, "b": True}
+
+
+def test_a_value_localized_from_a_display_default_still_saves_as_before() -> None:
+    edge = _unbound_edge()
+    edge.settings.localize()
+    saved = edge.model_dump(mode="json", by_alias=True)["settings"]
+    assert saved == {"a": 1, "b": False}
