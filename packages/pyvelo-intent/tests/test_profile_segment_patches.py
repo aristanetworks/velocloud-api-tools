@@ -110,15 +110,8 @@ def rule(name: str) -> dict[str, Any]:
 
 
 def kept(state: ConfigState, module: str, position: int = 0) -> dict[str, Any]:
-    """The entry at *position* of *module* as read, as a list value can give it.
-
-    A firewall rule of a template carries two keys the VCO issues and the model
-    does not read; a list value takes only keys the model reads.
-    """
+    """The entry at *position* of *module* as read, as a list value can give it."""
     entry = copy.deepcopy(state.module(module).raw_data["segments"][position])  # pyright: ignore[reportIndexIssue, reportUnknownMemberType, reportUnknownVariableType]
-    for found in entry.get("outbound", []):
-        for key in ("hostedLoggingEnabled", "syslogForwardingEnabled"):
-            found.pop(key, None)
     return entry
 
 
