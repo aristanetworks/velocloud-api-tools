@@ -1331,7 +1331,7 @@ class ConfigPipeline:
                 "for edges only, and this state is not one loaded for an edge. "
                 "Load the edge with load(edge_id) and compare that state"
             )
-        if state.plan().changed:
+        if (await self._plan_loading(state)).changed:
             raise ValueError(
                 "compare_effective: this state has changes that are not saved, so "
                 "it differs from the VCO by design and every change would be "

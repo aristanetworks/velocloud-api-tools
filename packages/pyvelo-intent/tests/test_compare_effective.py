@@ -26,6 +26,7 @@ from pyvelo.core import (
     effective_view,
     kind_default,
 )
+from pyvelo.core.identity import NetworkServiceIdentity, ResolverNotLoadedError
 from pyvelo.core.layers import L
 from pyvelo.testing import make_module_json
 from pyvelo_intent import (
@@ -188,6 +189,50 @@ async def test_a_matching_view_has_no_findings():
     assert comparison.findings == ()
     assert comparison.entries  # the display defaults are reported as information
     assert {e.category for e in comparison.entries} == {EffectiveCategory.FACTORY}
+
+
+async def test_the_comparison_loads_a_resolver_the_plan_needs_as_a_save_does(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    pipeline, state, _ = await loaded()
+    plan = state.plan
+    asked: list[type] = []
+
+    def needs_the_services(*args: Any, **kwargs: Any):
+        if NetworkServiceIdentity not in asked:
+            raise ResolverNotLoadedError(NetworkServiceIdentity)
+        return plan(*args, **kwargs)
+
+    async def load_resolvers(_state: ConfigState, *identities: type) -> None:
+        asked.extend(identities)
+
+    monkeypatch.setattr(state, "plan", needs_the_services)
+    monkeypatch.setattr(pipeline, "load_resolvers", load_resolvers)
+
+    comparison = await pipeline.compare_effective(state)
+
+    assert comparison.findings == ()
+    assert asked == [NetworkServiceIdentity]
+
+
+async def test_a_resolver_that_stays_not_loaded_stops_the_comparison(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    pipeline, state, _ = await loaded()
+    loads: list[type] = []
+
+    def needs_the_services(*args: Any, **kwargs: Any):
+        raise ResolverNotLoadedError(NetworkServiceIdentity)
+
+    async def load_resolvers(_state: ConfigState, *identities: type) -> None:
+        loads.extend(identities)
+
+    monkeypatch.setattr(state, "plan", needs_the_services)
+    monkeypatch.setattr(pipeline, "load_resolvers", load_resolvers)
+
+    with pytest.raises(ResolverNotLoadedError):
+        _ = await pipeline.compare_effective(state)
+    assert loads == [NetworkServiceIdentity]  # one load, never two
 
 
 async def test_an_edge_with_no_firewall_row_compares_the_profiles_values():
