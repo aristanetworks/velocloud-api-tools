@@ -8,6 +8,7 @@ from pyvelo.client.models.configuration import FirewallData
 from pyvelo.client.models.configuration.firewall import (
     ConsoleService,
     FirewallOutboundRule,
+    OutboundRuleMatch,
     StatefulFirewallSettings,
     StatefulLocal,
 )
@@ -231,3 +232,19 @@ def test_a_stored_null_id_is_kept_as_read():
         "syslog_forwarding": True,
     }
     assert plan_module(profile, level=ConfigContext.PROFILE).operation == "none"
+
+
+def test_a_rule_match_keeps_the_vco_s_vlan_type_key_for_key():
+    stored = {"vlan_type": "local", "svlan": 3}
+    match = OutboundRuleMatch.model_validate(stored)
+    assert match.vlan_type == "local"
+    written = match.model_dump(mode="json", by_alias=True, exclude_unset=True)
+    assert written == stored
+
+
+def test_a_new_outbound_rule_is_written_with_vlan_type_and_not_vlanType():
+    edge, profile = bound({"segments": [{"segment": desc(0, "Global Segment")}]})
+    edge.data.segments[0].outbound.append(rule("new"))
+    (written,) = payload(edge, profile)["segments"][0]["outbound"]
+    assert written["match"]["vlan_type"] == "end-to-end"
+    assert "vlanType" not in written["match"]

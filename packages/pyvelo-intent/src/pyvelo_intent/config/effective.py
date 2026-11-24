@@ -54,9 +54,10 @@ OMITTED_SEGMENT = (
     "the composer keeps only the segments in use on the edge "
     + "(VLANs, routed interfaces, loopbacks and the Global Segment)"
 )
-ENCRYPTED_SECRET = "the composed read encrypts secrets with a fresh IV on each read"
+SECRET_NOT_COMPARED = "a secret value is not compared"
 UNCONVERTED_FIELD = "the library does not model this yet, so the view has no value"
 UNMODELED_KEY = "the library does not know this key yet, so the view has no value"
+COMPOSER_ADDS = "the composer adds it to each rule; it is not stored in either layer"
 FACTORY_ABSENT = "the view gives the display default and the server has no value"
 FACTORY_SAME = "the view gives the display default and the server has the same value"
 
@@ -93,8 +94,16 @@ FINDINGS: frozenset[EffectiveCategory] = frozenset(
 CONVERTED_MODULES: tuple[str, ...] = ("firewall",)
 """The modules whose effective view exists: what ``compare_effective`` compares when it is given none."""
 
-UNMODELED_KEYS: Mapping[str, frozenset[str]] = {"firewall": frozenset({"etm"})}
-"""Keys a module has at its top level that no model declares: reported as ``unconverted`` and not as ``server_only``."""
+UNMODELED_KEYS: Mapping[str, frozenset[str]] = {
+    "firewall": frozenset(
+        {
+            "etm",
+            "segments[*].outbound[*].hostedLoggingEnabled",
+            "segments[*].outbound[*].syslogForwardingEnabled",
+        }
+    )
+}
+"""Keys of a module that no model declares, as paths (``[*]`` for any one list item): reported as ``unconverted`` and not as ``server_only``."""
 
 
 @dataclass(frozen=True)
@@ -112,7 +121,10 @@ class EffectiveIgnore:
     reason: str
 
 
-EFFECTIVE_IGNORES: tuple[EffectiveIgnore, ...] = ()
+EFFECTIVE_IGNORES: tuple[EffectiveIgnore, ...] = tuple(
+    EffectiveIgnore("firewall", f"segments[*].outbound[*].{key}", COMPOSER_ADDS)
+    for key in ("atp_action", "urlCategoryFiltering", "urlReputationFiltering")
+)
 """The known divergences, each with its reason. An entry is added only after the divergence is understood, so that none is hidden."""
 
 
@@ -365,7 +377,15 @@ class _Comparison:
             MISSING if client is MISSING else _HIDDEN,
             MISSING if server is MISSING else _HIDDEN,
             cover=cover,
-            reason=ENCRYPTED_SECRET,
+            reason=SECRET_NOT_COMPARED,
+        )
+
+    def unmodeled(self, path: str) -> bool:
+        """Whether *path* is a key of this module that no model declares (``UNMODELED_KEYS``)."""
+        where = _parts(path)
+        return any(
+            len(pattern) == len(where) and _matches(pattern, where)
+            for pattern in map(_parts, UNMODELED_KEYS.get(self.module, frozenset()))
         )
 
     def unconverted(self, path: str, server: object, reason: str) -> None:
@@ -408,7 +428,7 @@ class _Comparison:
             if key in known:
                 continue
             where = _join(path, key)
-            if path == "" and key in UNMODELED_KEYS.get(self.module, frozenset()):
+            if self.unmodeled(where):
                 self.unconverted(where, theirs, UNMODELED_KEY)
             elif not self.ignored(where, MISSING, theirs, None):
                 self.emit(where, EffectiveCategory.SERVER_ONLY, MISSING, theirs)
@@ -653,6 +673,8 @@ class _Comparison:
                 info = fields.get(key)
                 if info is not None and is_secret(info):
                     self.secret(where, found, other, cover)
+                elif found is MISSING and self.unmodeled(where):
+                    self.unconverted(where, other, UNMODELED_KEY)
                 elif found is MISSING:
                     self.emit(
                         where,

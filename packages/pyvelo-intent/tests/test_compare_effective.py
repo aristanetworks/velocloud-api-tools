@@ -56,7 +56,8 @@ OMITTED = (
     "the composer keeps only the segments in use on the edge "
     + "(VLANs, routed interfaces, loopbacks and the Global Segment)"
 )
-ENCRYPTED = "the composed read encrypts secrets with a fresh IV on each read"
+SECRET = "a secret value is not compared"
+COMPOSER_ADDS = "the composer adds it to each rule; it is not stored in either layer"
 
 Json = dict[str, Any]
 
@@ -197,8 +198,20 @@ async def test_an_edge_with_no_firewall_row_compares_the_profiles_values():
 
 async def test_the_constants_say_what_is_converted_and_what_is_a_finding():
     assert CONVERTED_MODULES == ("firewall",)
-    assert UNMODELED_KEYS == {"firewall": frozenset({"etm"})}
-    assert EFFECTIVE_IGNORES == ()
+    assert UNMODELED_KEYS == {
+        "firewall": frozenset(
+            {
+                "etm",
+                "segments[*].outbound[*].hostedLoggingEnabled",
+                "segments[*].outbound[*].syslogForwardingEnabled",
+            }
+        )
+    }
+    assert {(i.module, i.path) for i in EFFECTIVE_IGNORES} == {
+        ("firewall", f"segments[*].outbound[*].{key}")
+        for key in ("atp_action", "urlCategoryFiltering", "urlReputationFiltering")
+    }
+    assert all(i.reason == COMPOSER_ADDS for i in EFFECTIVE_IGNORES)
     assert FINDINGS == {
         EffectiveCategory.DIFFERS,
         EffectiveCategory.CLIENT_ONLY,
@@ -431,6 +444,51 @@ async def test_unconverted():
     assert "unconverted" in line
 
 
+async def test_a_rule_key_the_stored_layers_carry_is_unconverted():
+    pipeline, state, client = await loaded()
+    for rule_ in composed_modules(client)["segments"][0]["outbound"]:
+        rule_["hostedLoggingEnabled"] = False
+        rule_["syslogForwardingEnabled"] = True
+    comparison = await pipeline.compare_effective(state)
+
+    assert comparison.findings == ()
+    found = by_path(comparison)
+    for path in (
+        "segments[0].outbound[0].hostedLoggingEnabled",
+        "segments[0].outbound[0].syslogForwardingEnabled",
+        "segments[0].outbound[1].hostedLoggingEnabled",
+    ):
+        assert found[path].category is EffectiveCategory.UNCONVERTED, path
+        assert found[path].client is MISSING
+        assert found[path].reason
+
+
+async def test_a_rule_key_only_the_composer_adds_is_ignored_with_its_reason():
+    pipeline, state, client = await loaded()
+    first = composed_modules(client)["segments"][0]["outbound"][0]
+    first["atp_action"] = {"a": 1}
+    first["urlCategoryFiltering"] = {"b": 2}
+    first["urlReputationFiltering"] = {"c": 3}
+    comparison = await pipeline.compare_effective(state)
+
+    assert comparison.findings == ()
+    found = by_path(comparison)
+    for key in ("atp_action", "urlCategoryFiltering", "urlReputationFiltering"):
+        entry = found[f"segments[0].outbound[0].{key}"]
+        assert entry.category is EffectiveCategory.IGNORED, key
+        assert entry.reason == COMPOSER_ADDS
+
+
+async def test_another_rule_key_the_view_lacks_is_still_a_finding():
+    pipeline, state, client = await loaded()
+    composed_modules(client)["segments"][0]["outbound"][0]["somethingNew"] = 1
+    comparison = await pipeline.compare_effective(state)
+
+    (finding,) = comparison.findings
+    assert finding.category is EffectiveCategory.SERVER_ONLY
+    assert finding.path == "segments[0].outbound[0].somethingNew"
+
+
 class Credentials(VcoModel):
     user: str = ""
     password: Annotated[str, Secret()] = ""
@@ -463,14 +521,12 @@ def test_a_secret_is_ignored_with_its_reason():
     assert set(found) == {"login.password", "logins[0].password"}
     for entry in found.values():
         assert entry.category is EffectiveCategory.IGNORED
-        assert entry.reason == ENCRYPTED
+        assert entry.reason == SECRET
         assert (entry.client, entry.server) == ("***", "***")
         for secret in ("s3cret-a", "s3cret-b", "other-iv", "another-iv"):
             assert secret not in repr(entry)
     assert str(found["login.password"].origin) == "profile"
-    assert "iv" not in EffectiveComparison(tuple(entries)).render().replace(
-        ENCRYPTED, ""
-    )
+    assert "iv" not in EffectiveComparison(tuple(entries)).render().replace(SECRET, "")
 
 
 # --- how items are matched --------------------------------------------------
@@ -659,14 +715,14 @@ async def test_an_edge_the_store_has_no_answer_for_is_an_error():
 # --- what is sent -----------------------------------------------------------------
 
 
-async def test_the_request_asks_for_encrypted_keys():
+async def test_the_request_does_not_ask_for_encrypted_keys():
     pipeline, state, client = await loaded()
     _ = await pipeline.compare_effective(state)
 
     (params,) = [
         p for m, p in client.store.requests if m == "edge/getEdgeConfigurationModules"
     ]
-    assert params["encryptKeys"] is True
+    assert "encryptKeys" not in params
     assert params["edgeId"] == EDGE_ID
     assert params["enterpriseId"] == ENTERPRISE_ID
     assert params["modules"] == ["firewall"]

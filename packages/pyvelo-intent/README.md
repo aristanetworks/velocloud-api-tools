@@ -707,7 +707,7 @@ There are six categories, and three of them are findings:
 | `server_only` | the server's answer has a value the view lacks | yes |
 | `factory` | the view gives a display default where the server has no value, or the same one | no, information |
 | `ignored` | the path is on the ignore list, is a secret, or is a segment the composer left out; reported with its reason | no |
-| `unconverted` | the path is not converted yet (`inbound`, `inboundV6`, a segment's `firewall_logging_enabled`, `etm`), so the view has no value to compare | no, information |
+| `unconverted` | the path is not converted yet (`inbound`, `inboundV6`, a segment's `firewall_logging_enabled`, `etm`, and a rule's `hostedLoggingEnabled` and `syslogForwardingEnabled`), so the view has no value to compare | no, information |
 
 `comparison.findings` is the entries that are findings, and `entries` all of
 them. A key is reported once, at the highest path that is absent from a side.
@@ -728,14 +728,16 @@ composed read also returns `null` for a module it could not compose, which it
 does without saying why: that is `ComposedModuleError` (its `module` is the
 module's name), not a finding.
 
-The call asks the VCO to encrypt keys (`encryptKeys: true`), with a fresh IV on
-each read, so the value of a secret differs between reads. A path that holds
-one is `ignored` with that reason, and its value is shown as `***`.
+The call does not ask the VCO for encrypted keys (`encryptKeys`), which a VCO
+may refuse. A secret is never compared: a path that holds one is `ignored` with
+that reason, and its value is shown as `***`.
 
 `pyvelo_intent.config.effective.EFFECTIVE_IGNORES` is the list of known
 divergences, each an `EffectiveIgnore` with its module, a path (whole parts,
 `*` for one part, `[*]` for one list item; it covers everything below it) and
-the reason. It is empty: an entry is added only after a divergence is
+the reason. It holds the three keys the composer adds to each outbound rule
+without storing them in either layer (`atp_action`, `urlCategoryFiltering` and
+`urlReputationFiltering`): an entry is added only after a divergence is
 understood, so that a divergence is visible in the comparison and never hidden.
 A finding you meet is either a wrong rule in the library, which gets fixed, or
 a divergence you have understood, which gets an entry with its reason.

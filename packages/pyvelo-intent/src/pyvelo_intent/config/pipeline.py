@@ -1308,11 +1308,11 @@ class ConfigPipeline:
         """Check the client's effective view of an edge against the modules the VCO composes for it.
 
         Reads ``edge/getEdgeConfigurationModules`` for the edge *state* was
-        loaded for, asking for encrypted keys, and compares each of *modules*
-        (by default every converted one, ``CONVERTED_MODULES``) with
-        ``state.effective``. The profile half of the state is read again
-        first, so a profile changed since the load is not a finding; *state*
-        is not changed. Every difference is an entry, and the ones that say the
+        loaded for, without ``encryptKeys`` (a VCO may refuse the parameter),
+        and compares each of *modules* (by default every converted one,
+        ``CONVERTED_MODULES``) with ``state.effective``. The profile half of
+        the state is read again first, so a profile changed since the load is
+        not a finding; *state* is not changed. Every difference is an entry, and the ones that say the
         view and the VCO disagree are ``EffectiveComparison.findings``.
 
         Raises ``ValueError`` for a profile state (the VCO composes modules
@@ -1360,7 +1360,6 @@ class ConfigPipeline:
         ask = GetEdgeConfigurationModules(
             edge_id=edge_id,
             modules=[ConfigurationModuleName(name) for name in names],
-            encrypt_keys=True,
         )
         if enterprise_id is not None:
             ask.enterprise_id = enterprise_id
