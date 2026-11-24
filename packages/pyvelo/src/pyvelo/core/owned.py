@@ -211,7 +211,7 @@ class Owned[T]:
         if owner is None:
             return
         owner.check_not_detached(f"{self._field}.{intent}()")
-        found = groups_of(type(owner)).get(_group_name(owner, self._field) or "")
+        found = group_of(owner, self._field)
         if found is None:
             return
         if intent == "inherit" or not found.handle(owner).is_local:
@@ -364,6 +364,11 @@ def _group_name(owner: Layered[Edge], field: str) -> str | None:
     return next(
         (m.group for m in field_kind(info).metadata if isinstance(m, MemberOf)), None
     )
+
+
+def group_of(owner: Layered[Edge], field: str) -> OwnedGroup | None:
+    """The coupled group that field *field* of *owner* is a member of, or ``None``."""
+    return groups_of(type(owner)).get(_group_name(owner, field) or "")
 
 
 def _refuse_member(

@@ -622,13 +622,19 @@ class _DumpRule(NamedTuple):
     default: Default | None
 
 
-def _refuse_validators_after_the_kind(cls: type[VcoModel], name: str) -> None:
-    """``TypeError`` if *cls* has an ``after``, ``wrap`` or ``plain`` ``@field_validator`` for the ``Inheritable`` field *name*.
+_OUTSIDE_VALIDATOR_MARKERS = (AfterValidator, WrapValidator, PlainValidator)
 
-    Pydantic runs a class's field validators outside the field's type, so on an
-    edge parse one of those would be given the ``Owned`` and everywhere else
-    (profile, composed, ``set_local``, a patch) the value. A ``before`` one
-    runs ahead of the kind on the raw value on every path, and is allowed.
+
+def _refuse_validators_after_the_kind(cls: type[VcoModel], name: str) -> None:
+    """``TypeError`` if the ``Inheritable`` field *name* of *cls* has a validator that would see an ``Owned``.
+
+    Pydantic runs a class's field validators, and the validator markers in the
+    field's own ``Annotated`` (``AfterValidator``, ``WrapValidator``,
+    ``PlainValidator``), outside the field's type, so on an edge parse one of
+    those would be given the ``Owned`` and everywhere else (profile, composed,
+    ``set_local``, a patch) the value. A ``before`` one, ``BeforeValidator``
+    included, runs ahead of the kind on the raw value on every path, and is
+    allowed.
     """
     for function, decorator in cls.__pydantic_decorators__.field_validators.items():
         info = decorator.info
@@ -640,6 +646,17 @@ def _refuse_validators_after_the_kind(cls: type[VcoModel], name: str) -> None:
                 + "inside the kind's type argument, where every path runs it on "
                 + "the value: Inheritable[Annotated[T, AfterValidator(check)]]; "
                 + "a before validator is allowed"
+            )
+    for marker in cls.model_fields[name].metadata:
+        if isinstance(marker, _OUTSIDE_VALIDATOR_MARKERS):
+            kind = type(marker).__name__
+            raise TypeError(
+                f"{cls.__name__}.{name}: the {kind} in the field's Annotated, "
+                + "outside the kind, would be given an Owned when the edge layer "
+                + "is parsed and the value on every other path. Put it inside "
+                + "the kind's type argument, where every path runs it on the "
+                + f"value: Inheritable[Annotated[T, {kind}(check)]]; a "
+                + "BeforeValidator is allowed there"
             )
 
 

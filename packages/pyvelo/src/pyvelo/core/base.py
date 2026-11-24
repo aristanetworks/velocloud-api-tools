@@ -761,6 +761,33 @@ class VcoModel(BaseModel):
           writes ``null`` for ``None``;
         - anything else: replaces the value.
 
+        **Inheritable fields.** On an edge layer (``Data[Edge]``) an
+        ``Inheritable`` field holds an ``Owned``, and a patch changes who owns
+        the value:
+
+        - ``null``: inherits (``Owned.inherit``), whatever the inner type
+          takes; the edge stores nothing, or the reset object of a ``ByFlag``
+          field that declares one;
+        - a value that is not an object: sets the value local
+          (``Owned.set_local``), validated as above;
+        - an object, on a field that is local: merged into the local value;
+        - an object, on a field that is not local: the profile's value, or
+          the field's display default where the profile stores none, is
+          copied in as the edge's own (``Owned.localize``) and the object
+          merged into the copy (``UnboundError`` on a model that was not
+          read from a loaded state, which does not know its profile);
+        - a member of a coupled group: ``null`` inherits the whole group,
+          and any other value first makes the group local, copying every
+          member from the profile, then applies as above to that member;
+        - the flag of a ``ByFlag`` field (``override``) is not patchable: it
+          follows the value, set when an object is given, and ``null``
+          inherits.
+
+        The profile layer (``Data[Profile]``) holds a plain value: the rows
+        above this one apply, with ``null`` as its inner type takes it. A
+        patch that changes it, in place or not, marks it stored, so a value
+        equal to the display default is written all the same.
+
         Every value assigned is first validated as pydantic validates the
         field when it parses a response: the same coercions and constraints,
         the field's validators and the model's config. The one difference: a

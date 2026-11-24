@@ -14,7 +14,16 @@ from typing import Annotated, Any, cast
 
 import pytest
 from layered_models import Flagged, Mod, Rule, Seg, Settings, mod_json
-from pydantic import MISSING, AfterValidator, Field, ValidationError, field_validator
+from pydantic import (
+    MISSING,
+    AfterValidator,
+    BeforeValidator,
+    Field,
+    PlainValidator,
+    ValidationError,
+    WrapValidator,
+    field_validator,
+)
 from pydantic.fields import FieldInfo
 from pyvelo.client.exceptions import DetachedObjectError
 from pyvelo.client.models.configuration.ref_owners import ref_owners
@@ -591,21 +600,6 @@ def test_merge_into_the_children_of_an_edge_layer() -> None:
             )
 
 
-@pytest.mark.parametrize("patch", [{"level": 4}, {"settings": {"a": 5}}])
-def test_a_patch_never_stores_a_bare_value_in_place_of_an_owned(
-    patch: dict[str, object],
-) -> None:
-    # Reaching an edge Inheritable by a patch is the next step; until then it is
-    # refused loudly and the model is as it was.
-    edge = _edge(level=3, settings={"a": 1})
-    before = wire_dump(edge, EDGE_LEVEL)
-    with pytest.raises(TypeError, match="set_local"):
-        _ = edge.merge_patch(patch)
-    assert isinstance(edge.level, Owned)
-    assert isinstance(edge.settings, Owned)
-    assert wire_dump(edge, EDGE_LEVEL) == before
-
-
 def _not_negative(value: int) -> int:
     if value < 0:
         raise ValueError("level must not be negative")
@@ -675,6 +669,39 @@ def test_a_validator_that_would_see_an_owned_is_refused_at_class_creation(
 
     # The fix it names, and a before validator, are accepted.
     assert _Guarded[Edge].model_validate({"level": 1}).level.stored == 1
+
+
+@pytest.mark.parametrize("marker", [AfterValidator, WrapValidator, PlainValidator])
+def test_a_validator_marker_outside_the_kind_is_refused_at_class_creation(
+    marker: type[Any],
+) -> None:
+    def check(value: object) -> object:
+        return value
+
+    def check_wrapping(value: object, handler: object) -> object:
+        return value
+
+    function = check_wrapping if marker is WrapValidator else check
+    name = marker.__name__
+
+    with pytest.raises(TypeError, match=rf"Refused\.level.*{name}.*inside the kind"):
+
+        class Refused(Layered[L]):  # pyright: ignore[reportUnusedClass]
+            level: Annotated[
+                Inheritable[int],
+                ByPresence(),
+                Default(0),
+                marker(function),  # pyright: ignore[reportArgumentType]
+            ] = Field(default=...)
+
+    # A before validator is allowed there, and runs on the raw value on every layer.
+    class Allowed(Layered[L]):
+        level: Annotated[
+            Inheritable[int], ByPresence(), Default(0), BeforeValidator(int)
+        ] = Field(default=...)
+
+    assert Allowed[Edge].model_validate({"level": "3"}).level.stored == 3
+    assert Allowed[Profile].model_validate({"level": "3"}).level == 3
 
 
 class _AfterInside(Layered[L]):
