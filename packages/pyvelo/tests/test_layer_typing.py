@@ -10,7 +10,15 @@ error is itself an error. ``_cases`` is never called.
 from typing import assert_type
 
 from layered_models import Flagged, Mod, Reset, Rule, Seg, Settings
-from pyvelo.core import Composed, Edge, Effective, Owned, OwnedGroup, Profile
+from pyvelo.core import (
+    Composed,
+    Edge,
+    Effective,
+    Owned,
+    OwnedGroup,
+    Profile,
+    effective_view,
+)
 from pyvelo.core.effective import Resolved
 from pyvelo.core.owned import GroupHandle
 
@@ -74,6 +82,10 @@ def _cases(e: Mod[Edge], p: Mod[Profile], v: Mod[Effective], c: Mod[Composed]) -
 
     # Class access gives the descriptor, not a value.
     _ = Mod.enabled
+
+    # The view
+    assert_type(effective_view(e, p, Mod[Effective]), Mod[Effective])
+    assert_type(effective_view(None, p, Mod[Effective]), Mod[Effective])
 
     # Constructors
     _ = Mod[Profile](enabled=True)

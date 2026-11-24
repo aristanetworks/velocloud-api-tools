@@ -9,7 +9,7 @@ This package is split into these submodules:
 - rebase: the path and key types that locate a change
 - owned: Owned, the value an inheritable field holds on the edge layer, its encodings, the ownership intents, coupled groups and the binding of an edge layer to its profile
 - layers: the layers (Edge, Profile, Effective, Composed), Layered models, the field kinds, Default and field_kind
-- effective: Origin and Resolved, a value of the effective view
+- effective: Origin and Resolved, a value of the effective view, and effective_view and effective_dump, which compute and write the view
 - walk: walk_fields, the walk over the fields of a model and the models below it
 - references: the values that name a member of a set the configuration provides, and the check of them
 - secrets: hide_secrets, which shows a value without its secrets
@@ -48,7 +48,7 @@ from .base import (
     value_or,
     wire_name,
 )
-from .effective import Origin, Resolved
+from .effective import Origin, Resolved, effective_dump, effective_view
 from .fields import (
     Alias,
     CoerceInt,
@@ -145,6 +145,7 @@ from .identity import (
 )
 from .layers import (
     Additive,
+    Authority,
     Composed,
     Default,
     Edge,
@@ -215,6 +216,7 @@ __all__ = [
     "ApplicationId",
     "ApplicationIdentity",
     "ApplicationName",
+    "Authority",
     "ByFlag",
     "ByPresence",
     "CoerceInt",
@@ -332,6 +334,8 @@ __all__ = [
     "check_references",
     "check_time_is_never",
     "delete",
+    "effective_dump",
+    "effective_view",
     "field_kind",
     "field_models",
     "get_fixed_list",

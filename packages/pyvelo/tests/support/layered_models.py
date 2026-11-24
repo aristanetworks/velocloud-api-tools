@@ -11,6 +11,7 @@ from pydantic import MISSING, Field
 from pyvelo.client.models.configuration.common import SegmentMetadata
 from pyvelo.core import (
     Additive,
+    Authority,
     ByFlag,
     ByPresence,
     Default,
@@ -27,6 +28,11 @@ from pyvelo.core import (
     kind_default,
 )
 from pyvelo.core.layers import L
+
+
+def profile_false_wins(profile_value: object) -> bool:
+    """The firewall's authority rule: a profile that has the setting off turns it off for every edge."""
+    return profile_value is False
 
 
 class Settings(VcoModel):
@@ -75,9 +81,9 @@ class Mod(Layered[L]):
     segments: Annotated[
         list[Seg[L]], KeyField("segment.name", alt="segment.segment_id")
     ] = Field(default_factory=list)
-    enabled: Annotated[Inheritable[bool], ByPresence(), Default(True)] = Field(
-        default=...
-    )
+    enabled: Annotated[
+        Inheritable[bool], ByPresence(), Default(True), Authority(profile_false_wins)
+    ] = Field(default=...)
     level: Annotated[Inheritable[int | None], ByPresence(), Default(None)] = Field(
         default=...
     )

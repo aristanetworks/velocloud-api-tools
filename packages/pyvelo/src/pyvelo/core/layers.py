@@ -31,6 +31,7 @@ the kind's type argument: ``Inheritable[Annotated[bool, DefaultingScalar(...)]]`
 import copy
 import functools
 from collections.abc import Callable, Mapping
+from dataclasses import dataclass
 from enum import StrEnum
 from typing import (
     TYPE_CHECKING,
@@ -193,6 +194,24 @@ class Default:
         if self._factory is not None:
             return f"Default(factory={self._factory!r})"
         return f"Default({self._value!r})"
+
+
+@final
+@dataclass(frozen=True)
+class Authority:
+    """Annotated marker: the profile's value replaces the effective value of an ``Inheritable`` field when *rule* holds.
+
+    ``rule`` is called with the profile layer's value of the field (what it
+    stores, or the display default), and when it returns true the effective
+    value is that value with the origin ``PROFILE``, whatever the edge holds.
+    It is the VCO's own rule for a few fields: the effective ``firewall_enabled``
+    is ``false`` whenever the profile's is. Only the effective view reads it.
+
+    Usage: ``Annotated[Inheritable[bool], ByPresence(), Default(True),
+    Authority(lambda profile_value: profile_value is False)]``
+    """
+
+    rule: Callable[[object], bool]
 
 
 def kind_default(
@@ -553,6 +572,27 @@ def display_default(field_info: FieldInfo) -> object:
     return default.make()
 
 
+def _is_stored(model: VcoModel, name: str, default: Default) -> bool:
+    return name in model.model_fields_set or getattr(model, name) != default.make()
+
+
+def profile_stores(model: "Layered[Profile]", name: str) -> bool:
+    """Whether the profile layer stores the ``Inheritable`` field *name* of *model*.
+
+    It does when the field is in ``model_fields_set`` (read from data or
+    assigned) or its value differs from the display default (changed in
+    place). The profile dump writes exactly the fields that are stored, and
+    the effective view takes a value from the profile only when it is.
+    """
+    default = _default_of(type(model).model_fields[name])
+    if default is None:
+        raise TypeError(
+            f"{type(model).__name__}.{name} is not an Inheritable field: only that "
+            + "kind has a display default, which says whether a profile stores it"
+        )
+    return _is_stored(model, name, default)
+
+
 _FIELD_VALIDATOR_MARKERS = {
     "before": BeforeValidator,
     "after": AfterValidator,
@@ -821,6 +861,15 @@ class Layered(VcoModel, Generic[L]):  # noqa: UP046 (one shared constrained L, a
                     f"{cls.__name__}.{name}: only an Inheritable field has a display "
                     + "Default; the other kinds use the field's own default"
                 )
+            if found.kind is not Kind.INHERITABLE and any(
+                isinstance(m, Authority) for m in found.metadata
+            ):
+                raise TypeError(
+                    f"{cls.__name__}.{name}: Authority replaces the effective value "
+                    + "of an Inheritable field with the profile's; this field is "
+                    + f"{found.kind.value}, which has no profile value to replace it "
+                    + "with"
+                )
         check_groups(cls)
 
     @override
@@ -889,10 +938,8 @@ class Layered(VcoModel, Generic[L]):  # noqa: UP046 (one shared constrained L, a
                     _ = dumped.pop(key, None)
                 elif compact_value is not None:
                     dumped[key] = compact_value(owned.stored)  # pyright: ignore[reportUnknownMemberType]
-            elif (
-                rule.default is not None
-                and rule.name not in self.model_fields_set
-                and getattr(self, rule.name) == rule.default.make()
+            elif rule.default is not None and not _is_stored(
+                self, rule.name, rule.default
             ):
                 _ = dumped.pop(key, None)
         return dumped

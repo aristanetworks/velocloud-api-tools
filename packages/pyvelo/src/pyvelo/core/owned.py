@@ -630,12 +630,12 @@ def bind_layers(edge: Layered[Edge], profile: Layered[Profile] | None) -> None:
             if not items or spec is None:
                 continue
             counterparts = {
-                _identity(model, spec.paths, spec.alt): model
+                item_identity(model, spec.paths, spec.alt): model
                 for model in _profile_models(other)
             }
             for item in items:
                 bind_layers(
-                    item, counterparts.get(_identity(item, spec.paths, spec.alt))
+                    item, counterparts.get(item_identity(item, spec.paths, spec.alt))
                 )
 
 
@@ -649,16 +649,18 @@ def _profile_models(value: object) -> list[Layered[Profile]]:
     ]
 
 
-def _identity(item: object, paths: tuple[str, ...], alt: str | None) -> object:
+def item_identity(
+    item: object, paths: tuple[str, ...], alt: str | None
+) -> tuple[str, object]:
     """What names *item* in its list: its alt key if the list has one and it has a value, else its key."""
     if alt is not None:
-        found = _at(item, alt)
+        found = item_value_at(item, alt)
         if found not in (None, MISSING):
             return ("alt", found)
-    return ("key", tuple(_at(item, path) for path in paths))
+    return ("key", tuple(item_value_at(item, path) for path in paths))
 
 
-def _at(item: object, path: str) -> object:
+def item_value_at(item: object, path: str) -> object:
     value = item
     for part in path.split("."):
         value = getattr(value, part, None)
