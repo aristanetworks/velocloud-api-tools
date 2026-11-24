@@ -7,6 +7,7 @@ import uuid
 from collections.abc import Callable
 
 import pytest
+from pyvelo.client.models.configuration.profile_segments import module_template_value
 from pyvelo.client.module_write import plan_module
 from pyvelo.client.schemas.configuration import ConfigurationModuleList
 from pyvelo.core import ConfigContext
@@ -66,14 +67,55 @@ def firewall(rng: random.Random) -> dict[str, object]:
         ]
     }
     for key, values in {
-        "firewall_enabled": [True, False],
+        "firewall_enabled": [True, False, None],
         "syslog_forwarding": [True, False, None],
-        "firewall_logging_enabled": [True, False],
-        "stateful_firewall_enabled": [False],
+        "firewall_logging_enabled": [True, False, None],
+        "stateful_firewall_enabled": [False, None],
+        "atp_enabled": [True, False, None],
     }.items():
         if rng.random() < 0.5:
             doc[key] = rng.choice(values)
+    for key in OBJECT_KEYS:
+        roll = rng.random()
+        if roll < 0.25:
+            doc[key] = vary(rng, module_template_value("firewall", key))
+        elif roll < 0.4:
+            doc[key] = None
     return doc
+
+
+# The firewall's objects, which the edge inherits or stores whole.
+OBJECT_KEYS = (
+    "services",
+    "statefulFirewallSettings",
+    "statefulFirewallSettingsV6",
+    "networkProtectionSettings",
+    "networkProtectionSettingsV6",
+    "securityFeatures",
+)
+
+# The keys whose null is read at the edge only (``syslog_forwarding`` takes one
+# at the profile too).
+INHERITED_ON_NULL = (
+    *OBJECT_KEYS,
+    "firewall_enabled",
+    "firewall_logging_enabled",
+    "stateful_firewall_enabled",
+    "atp_enabled",
+)
+
+
+def vary(rng: random.Random, node: object) -> object:
+    """A copy of a valid object with some of its booleans flipped and numbers changed."""
+    if isinstance(node, dict):
+        return {key: vary(rng, value) for key, value in node.items()}
+    if isinstance(node, list):
+        return [vary(rng, item) for item in node]
+    if isinstance(node, bool):
+        return node if rng.random() < 0.7 else not node
+    if isinstance(node, int) and rng.random() < 0.3:
+        return node + rng.randint(1, 5)
+    return node
 
 
 def uuid_text(rng: random.Random) -> str:
@@ -186,6 +228,12 @@ def test_no_edit_round_trip(
 ):
     rng = random.Random(seed)
     raw = build(rng)
+    if level is ConfigContext.PROFILE:
+        # A null at one of these keys is the edge's way to inherit; a profile
+        # has nothing to inherit from, and does not read one.
+        for key in INHERITED_ON_NULL:
+            if raw.get(key, 0) is None:
+                del raw[key]
     sprinkle(rng, raw)
     row = make_module_json(name, copy.deepcopy(raw))
     rows = (
