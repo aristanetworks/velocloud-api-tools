@@ -192,6 +192,7 @@ def test_write_errors_are_exported_from_the_package():
         "RefsDroppedError",
         "RefsNotLoadedError",
         "FixedListError",
+        "GroupOwnershipError",
         "SegmentSetError",
         "HubListError",
     } <= set(pyvelo_intent.__all__)

@@ -7,7 +7,7 @@ This package is split into these submodules:
 - patch: the patch helpers (add, delete, move, at) and PatchError
 - merge: applying a patch to a model, and selecting items of a list
 - rebase: the path and key types that locate a change
-- owned: Owned, the value an inheritable field holds on the edge layer, and its encodings
+- owned: Owned, the value an inheritable field holds on the edge layer, its encodings, the ownership intents, coupled groups and the binding of an edge layer to its profile
 - layers: the layers (Edge, Profile, Effective, Composed), Layered models, the field kinds, Default and field_kind
 - effective: Origin and Resolved, a value of the effective view
 - walk: walk_fields, the walk over the fields of a model and the models below it
@@ -162,7 +162,16 @@ from .layers import (
     layer_for,
 )
 from .merge import item_selector, nest_patch, select_items
-from .owned import ByFlag, ByPresence, Encoding, Owned
+from .owned import (
+    ByFlag,
+    ByPresence,
+    Encoding,
+    GroupHandle,
+    MemberOf,
+    Owned,
+    OwnedGroup,
+    bind_layers,
+)
 from .patch import (
     PatchError,
     PatchErrorKind,
@@ -233,6 +242,7 @@ __all__ = [
     "GatewayIdentity",
     "GatewayLogicalId",
     "GatewayName",
+    "GroupHandle",
     "HubIdentity",
     "HubLogicalId",
     "HubName",
@@ -262,6 +272,7 @@ __all__ = [
     "LinkLogicalId",
     "LinkName",
     "ListKind",
+    "MemberOf",
     "NameOf",
     "NetworkServiceIdentity",
     "NetworkServiceLogicalId",
@@ -275,6 +286,7 @@ __all__ = [
     "Origin",
     "OverrideFlag",
     "Owned",
+    "OwnedGroup",
     "OwnsRef",
     "PaginatedResult",
     "PaginatedVcoModel",
@@ -315,6 +327,7 @@ __all__ = [
     "VcoTimestamp",
     "add",
     "at",
+    "bind_layers",
     "check_references",
     "check_time_is_never",
     "delete",

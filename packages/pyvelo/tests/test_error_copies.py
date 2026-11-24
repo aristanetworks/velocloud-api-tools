@@ -11,6 +11,7 @@ from pyvelo.client.exceptions import (
     DanglingReferenceError,
     DetachedObjectError,
     FixedListError,
+    GroupOwnershipError,
     HubListError,
     LossyFieldError,
     ModuleWriteError,
@@ -296,6 +297,9 @@ def test_every_error_of_the_module_round_trips():
         ),
         ModuleWriteError(1, "v1"),
         UnboundError("not bound"),
+        GroupOwnershipError(
+            "one member", group="stateful", field="stateful_firewall_enabled"
+        ),
         DetachedObjectError("changed", (path,)),
         RefsNotLoadedError("deviceSettings", (path,)),
         FixedListError("QOS", [(path, "the list is gone")]),

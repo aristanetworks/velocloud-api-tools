@@ -1441,11 +1441,34 @@ class WriteOutcomeUnknownError(ModuleWriteError):
 
 
 class UnboundError(VcoError):
-    """Raised when a segment a layer lacks is asked for, with no profile to copy it from.
+    """Raised when a layer is asked for something that only its profile can give, and it has none.
 
-    The layer data has not been bound to a profile (see ``bind_profile``), which
-    happens when it is built outside ``ConfigState``.
+    A segment a layer lacks is asked for with no profile to copy it from, or an
+    edge-layer value is asked to ``localize`` (copy the profile's value in)
+    with no profile to copy from. The layer data has not been bound to a
+    profile (see ``bind_profile`` and ``bind_layers``), which happens when it
+    is built outside ``ConfigState``.
     """
+
+
+class GroupOwnershipError(VcoError):
+    """Raised by an edit of one member of a coupled group that would leave the group half inherited.
+
+    The members of a group (the stateful firewall's settings, its IPv6
+    settings and its enabled flag, say) change ownership together: the UI does
+    not recognize a group with some members local and the others inherited.
+    ``group`` is the group's name and ``field`` the python name of the member
+    the edit was made through. The message says to edit the group as a whole,
+    and gives the patch that does the same.
+    """
+
+    group: str
+    field: str
+
+    def __init__(self, message: str, *, group: str, field: str) -> None:
+        self.group = group
+        self.field = field
+        super().__init__(message)
 
 
 class DetachedObjectError(VcoError):

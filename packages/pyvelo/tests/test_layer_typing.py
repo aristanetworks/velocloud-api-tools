@@ -9,9 +9,10 @@ error is itself an error. ``_cases`` is never called.
 
 from typing import assert_type
 
-from layered_models import Mod, Rule, Seg, Settings
-from pyvelo.core import Composed, Edge, Effective, Owned, Profile
+from layered_models import Flagged, Mod, Reset, Rule, Seg, Settings
+from pyvelo.core import Composed, Edge, Effective, Owned, OwnedGroup, Profile
 from pyvelo.core.effective import Resolved
+from pyvelo.core.owned import GroupHandle
 
 
 def _cases(e: Mod[Edge], p: Mod[Profile], v: Mod[Effective], c: Mod[Composed]) -> None:
@@ -33,6 +34,17 @@ def _cases(e: Mod[Edge], p: Mod[Profile], v: Mod[Effective], c: Mod[Composed]) -
     assert_type(p.settings, Settings)
     assert_type(v.settings, Resolved[Settings])
     assert_type(c.settings, Settings)
+
+    # ByFlag fields, and the coupled group, whose handle is on the edge layer only
+    assert_type(e.affinity, Owned[Reset])
+    assert_type(p.affinity, Reset)
+    assert_type(e.segments[0].mapping, Owned[Flagged])
+    assert_type(v.segments[0].mapping, Resolved[Flagged])
+    assert_type(e.pair, GroupHandle)
+    assert_type(Mod.pair, OwnedGroup)
+    _ = p.pair  # pyright: ignore[reportAttributeAccessIssue]
+    _ = v.pair  # pyright: ignore[reportAttributeAccessIssue]
+    _ = c.pair  # pyright: ignore[reportAttributeAccessIssue]
 
     # EdgeOnly
     assert_type(e.edge_note, str)

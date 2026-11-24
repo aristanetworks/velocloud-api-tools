@@ -5,18 +5,21 @@
 ``pyvelo`` only.
 """
 
-from typing import Annotated
+from typing import Annotated, ClassVar
 
 from pydantic import MISSING, Field
 from pyvelo.client.models.configuration.common import SegmentMetadata
 from pyvelo.core import (
     Additive,
+    ByFlag,
     ByPresence,
     Default,
     EdgeOnly,
     Inheritable,
     KeyField,
     Layered,
+    MemberOf,
+    OwnedGroup,
     ProfileOnly,
     ServerOwned,
     Unconverted,
@@ -31,6 +34,24 @@ class Settings(VcoModel):
     b: bool = False
 
 
+class Flagged(VcoModel):
+    override: bool = False
+    value: int = 0
+
+
+class Reset(VcoModel):
+    override: bool = False
+    affinity: list[str] = Field(default_factory=list)
+
+
+class PairLocal(VcoModel):
+    """What the group ``pair`` stores when it is local: every member, all required."""
+
+    pair_a: Settings
+    pair_b: Settings
+    pair_on: bool
+
+
 class Rule(VcoModel):
     name: str
     action: str = "allow"
@@ -42,6 +63,11 @@ class Seg(Layered[L]):
     rules: Annotated[Additive[list[Rule]], KeyField("name", alt="rule_logical_id")] = (
         kind_default(factory=list)
     )
+    mapping: Annotated[
+        Inheritable[Flagged],
+        ByFlag("override", presence_wins=True),
+        Default(factory=Flagged),
+    ] = Field(default=...)
     legacy: Unconverted[int | None] = kind_default(None)
 
 
@@ -57,6 +83,21 @@ class Mod(Layered[L]):
     )
     settings: Annotated[
         Inheritable[Settings], ByPresence(), Default(factory=Settings)
+    ] = Field(default=...)
+    pair_a: Annotated[
+        Inheritable[Settings], ByPresence(), MemberOf("pair"), Default(factory=Settings)
+    ] = Field(default=...)
+    pair_b: Annotated[
+        Inheritable[Settings], ByPresence(), MemberOf("pair"), Default(factory=Settings)
+    ] = Field(default=...)
+    pair_on: Annotated[
+        Inheritable[bool], ByPresence(), MemberOf("pair"), Default(False)
+    ] = Field(default=...)
+    pair: ClassVar[OwnedGroup] = OwnedGroup("pair", anchor="pair_a", bundle=PairLocal)
+    affinity: Annotated[
+        Inheritable[Reset],
+        ByFlag("override", inherit_as=lambda: Reset(override=False)),
+        Default(factory=Reset),
     ] = Field(default=...)
     edge_note: EdgeOnly[str] = kind_default("")
     profile_note: ProfileOnly[str] = kind_default("")

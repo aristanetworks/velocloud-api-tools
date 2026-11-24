@@ -87,6 +87,7 @@ from .fields import (
     ref_only_defaults,
     resolve_ctx_default,
 )
+from .owned import Owned
 
 type JsonObject = dict[str, object]
 """A JSON object: a merge patch, a compact dump, a pydantic context, ..."""
@@ -364,6 +365,8 @@ def _propagate_context(value: object, level: ConfigContext) -> None:
     """Set the config level on every VcoModel inside *value*, at any depth."""
     if isinstance(value, VcoModel):
         _ = value.for_context(level)
+    elif isinstance(value, Owned):
+        _propagate_context(value.stored, level)  # pyright: ignore[reportUnknownMemberType]
     elif is_list(value):
         for item in value:
             _propagate_context(item, level)
@@ -394,6 +397,8 @@ def _models_inside(value: object, place: _Place) -> Iterator[tuple[_Place, BaseM
         extra: Mapping[str, object] = value.model_extra or {}
         for key, item in extra.items():
             yield from _models_inside(item, (*place, key))
+    elif isinstance(value, Owned):
+        yield from _models_inside(value.stored, place)  # pyright: ignore[reportUnknownMemberType]
     elif is_list(value):
         for index, item in enumerate(value):
             yield from _models_inside(item, (*place, index))
@@ -568,6 +573,15 @@ class VcoModel(BaseModel):
         except AttributeError:  # not set yet: in __new__, or while unpickling
             return False
         return private is not None and private.get("_detached") is True
+
+    def check_not_detached(self, name: str) -> None:
+        """Raise ``DetachedObjectError`` naming *name* if a write replaced this object (``is_detached``).
+
+        For an edit that is not an assignment to a field of this model, such
+        as an ``Owned`` intent, which has to refuse as an assignment does.
+        """
+        if self.is_detached:
+            _raise_detached(self, name)
 
     def mark_detached(self) -> list[tuple[tuple[str | int, ...], BaseModel]]:
         """Mark this model and every VcoModel inside it as replaced by a write.

@@ -50,9 +50,13 @@ from typing import (
 
 from pydantic import (
     MISSING,
+    Discriminator,
     Field,
     GetCoreSchemaHandler,
     ModelWrapValidatorHandler,
+    PrivateAttr,
+    PydanticUserError,
+    TypeAdapter,
     model_validator,
 )
 from pydantic.fields import FieldInfo
@@ -60,7 +64,7 @@ from pydantic_core import CoreSchema, core_schema
 
 from .base import JsonObject, VcoModel, wire_name
 from .fields import ConfigContext
-from .owned import ByFlag, ByPresence, Encoding, Owned
+from .owned import Binding, ByFlag, ByPresence, Encoding, Owned, check_groups
 
 if TYPE_CHECKING:
     from .effective import Resolved
@@ -289,8 +293,12 @@ class _InheritableCarrier(_Carrier[L, T]):
 
         def to_owned(value: object, validate: Callable[[object], object]) -> Owned[Any]:
             if isinstance(value, Owned):
+                # A copy of what the caller's Owned stores: a model is
+                # validated as the same object, and the two must not share it.
                 stored: object = value.stored  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
-                return Owned(stored if stored is MISSING else validate(stored))
+                if stored is MISSING:
+                    return Owned(MISSING)
+                return Owned(validate(copy.deepcopy(stored)))
             return Owned(validate(value))
 
         def stored_of(value: Owned[Any], dump: Callable[[object], object]) -> object:
@@ -519,6 +527,52 @@ def _default_of(field_info: FieldInfo) -> Default | None:
     )
 
 
+def display_default(field_info: FieldInfo) -> object:
+    """A fresh display default of an ``Inheritable`` field: what the profile layer reads at an absent key.
+
+    ``TypeError`` for a field that has none.
+    """
+    default = _default_of(field_info)
+    if default is None:
+        raise TypeError(
+            f"{field_info!r} is not an Inheritable field: only that kind has a "
+            + "display default"
+        )
+    return default.make()
+
+
+@functools.cache
+def inner_adapter(field_info: FieldInfo) -> TypeAdapter[object]:
+    """A validator for the type a field holds, inside its kind, as pydantic validates it on parse.
+
+    It is the adapter of ``field_kind(field_info).inner_type`` with every marker
+    of the field, so value validators (``DefaultingScalar``) and constraints
+    apply to the value itself, and the discriminator of a union. It reads a
+    value and gives a value: on the edge layer the ``Owned`` around it is not
+    made. Use it with the context ``{"patch": True}``, which stops a defaulting
+    validator from turning a bad value into the default. ``Owned.set_local``
+    validates with it, so a patch and ``set_local`` take the same values.
+    The class's own ``@field_validator``s are not applied: the adapter belongs
+    to the field, not to the class that holds it.
+    """
+    found = field_kind(field_info)
+    metadata: list[object] = list(found.metadata)
+    if isinstance(field_info.discriminator, str):
+        metadata.append(Discriminator(field_info.discriminator))
+    elif field_info.discriminator is not None:
+        metadata.append(field_info.discriminator)
+    annotation: object = (
+        Annotated[found.inner_type, *metadata] if metadata else found.inner_type
+    )
+    try:
+        return TypeAdapter[object](annotation, config=VcoModel.model_config)  # pyright: ignore[reportArgumentType]
+    except PydanticUserError as exc:
+        # A model type has its own config, and TypeAdapter refuses another.
+        if exc.code != "type-adapter-config-unused":
+            raise
+        return TypeAdapter[object](annotation)  # pyright: ignore[reportArgumentType]
+
+
 # ---------------------------------------------------------------------------
 # Layered
 # ---------------------------------------------------------------------------
@@ -545,6 +599,9 @@ class Layered(VcoModel, Generic[L]):  # noqa: UP046 (one shared constrained L, a
     assignment. On the edge layer an assignment to an ``Inheritable`` field
     raises too: it would replace who owns the value with a bare value.
     """
+
+    _binding: Binding | None = PrivateAttr(default=None)
+    """The profile layer this edge-layer model inherits from (``bind_layers``); ``None`` until bound."""
 
     @classmethod
     @functools.cache
@@ -593,7 +650,40 @@ class Layered(VcoModel, Generic[L]):  # noqa: UP046 (one shared constrained L, a
         for name in cls._other_layer_fields():
             object.__setattr__(model, name, MISSING)
             model.__pydantic_fields_set__.discard(name)
+        model._attach_owned()
         return model
+
+    def _attach_owned(self) -> None:
+        """Make each ``Owned`` this edge-layer model holds know the model and the field it belongs to."""
+        cls = type(self)
+        if cls.layer() is not Edge:
+            return
+        for name, encoding in cls._owned_encodings().items():
+            owned: object = self.__dict__.get(name)
+            if isinstance(owned, Owned):
+                owned._attach(self, name, encoding)  # pyright: ignore[reportUnknownMemberType, reportArgumentType, reportPrivateUsage]
+
+    @classmethod
+    @override
+    def model_construct(
+        cls, _fields_set: set[str] | None = None, **values: Any
+    ) -> Self:
+        model = super().model_construct(_fields_set, **values)
+        if cls.layer() is Edge:
+            # The required Inheritable fields have no default to construct.
+            for name in cls._owned_fields():
+                if name not in model.__dict__:
+                    object.__setattr__(model, name, Owned(MISSING))
+            model._attach_owned()
+        return model
+
+    @override
+    def __deepcopy__(self, memo: dict[int, Any] | None = None) -> Self:
+        # The copy's Owned values are copies without an owner (the binding is
+        # shared, not copied); the copy attaches them to itself.
+        copied = super().__deepcopy__(memo)
+        copied._attach_owned()
+        return copied
 
     @classmethod
     @functools.cache
@@ -616,11 +706,17 @@ class Layered(VcoModel, Generic[L]):  # noqa: UP046 (one shared constrained L, a
     @functools.cache
     def _owned_fields(cls) -> frozenset[str]:
         """The ``Inheritable`` fields, which hold an ``Owned`` on the edge layer."""
-        return frozenset(
-            name
+        return frozenset(cls._owned_encodings())
+
+    @classmethod
+    @functools.cache
+    def _owned_encodings(cls) -> dict[str, Encoding | None]:
+        """The ``Inheritable`` fields, each with its encoding."""
+        return {
+            name: found.encoding
             for name, info in cls.model_fields.items()
-            if field_kind(info).kind is Kind.INHERITABLE
-        )
+            if (found := field_kind(info)).kind is Kind.INHERITABLE
+        }
 
     @override
     @classmethod
@@ -647,6 +743,7 @@ class Layered(VcoModel, Generic[L]):  # noqa: UP046 (one shared constrained L, a
                     f"{cls.__name__}.{name}: only an Inheritable field has a display "
                     + "Default; the other kinds use the field's own default"
                 )
+        check_groups(cls)
 
     @override
     def __setattr__(self, name: str, value: object) -> None:
