@@ -24,6 +24,7 @@ from pyvelo.core import (
     OwnedGroup,
     PatchError,
     Profile,
+    ServerOwned,
     VcoModel,
     bind_layers,
 )
@@ -545,3 +546,65 @@ def test_detach_marking_reaches_inside_owned() -> None:
     with pytest.raises(DetachedObjectError):
         inside.a = 3
     assert inside.a == 2
+
+
+# ---------------------------------------------------------------------------
+# localize clears the profile's server-assigned IDs
+# ---------------------------------------------------------------------------
+
+
+class _Item(VcoModel):
+    name: str
+    rule_id: Annotated[str | MISSING, ServerOwned()] = MISSING
+    counter: Annotated[int, ServerOwned()] = 7
+
+
+class _Holder(VcoModel):
+    rule_id: Annotated[str | None | MISSING, ServerOwned()] = MISSING
+    items: list[_Item] = Field(default_factory=list)
+    by_name: dict[str, _Item] = Field(default_factory=dict)
+    inner: _Item | None = None
+
+
+class _IdMod(Layered[L]):
+    segments: list[Any] = Field(default_factory=list)
+    holder: Annotated[Inheritable[_Holder], ByPresence(), Default(factory=_Holder)] = (
+        Field(default=...)
+    )
+
+
+def test_localize_clears_server_owned_fields_at_every_depth():
+    profile = _IdMod[Profile].model_validate(
+        {
+            "segments": [],
+            "holder": {
+                "rule_id": "p",
+                "items": [{"name": "a", "rule_id": "1", "counter": 9}],
+                "by_name": {"k": {"name": "b", "rule_id": "2"}},
+                "inner": {"name": "c", "rule_id": "3", "counter": 4},
+            },
+        }
+    )
+    edge = _IdMod[Edge].model_validate({"segments": []})
+    bind_layers(edge, profile)
+    holder = edge.holder.localize()
+    assert holder.rule_id is MISSING
+    (item,) = holder.items
+    # MISSING where the field accepts it, else the field's default.
+    assert (item.name, item.rule_id, item.counter) == ("a", MISSING, 7)
+    assert holder.by_name["k"].rule_id is MISSING
+    assert holder.inner is not None
+    assert (holder.inner.rule_id, holder.inner.counter) == (MISSING, 7)
+    assert "rule_id" not in holder.items[0].model_fields_set
+    # The profile is a copy away, and keeps them.
+    assert profile.holder.rule_id == "p"
+    assert profile.holder.items[0].rule_id == "1"
+    assert profile.holder.items[0].counter == 9
+
+
+def test_clear_server_owned_changes_the_model_in_place():
+    from pyvelo.core.owned import clear_server_owned
+
+    item = _Item(name="a", rule_id="1")
+    assert clear_server_owned(item) is item
+    assert item.rule_id is MISSING

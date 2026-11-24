@@ -150,8 +150,7 @@ def test_each_default_equals_the_template_value():
         ("security_features", "securityFeatures"),
     ):
         value = getattr(profile, attribute)
-        # ruleLogicalId is the server's: absent from the template, None in a model.
-        dumped = value.model_dump(mode="json", by_alias=True, exclude_none=True)
+        dumped = value.model_dump(mode="json", by_alias=True)
         assert dumped == module_template_value("firewall", key)
 
 

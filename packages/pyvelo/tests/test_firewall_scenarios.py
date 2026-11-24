@@ -51,12 +51,6 @@ def bound(edge_raw: dict[str, Any], profile_raw: dict[str, Any] | None = None):
     return edge, profile
 
 
-def without_nulls(value: Any) -> Any:
-    if isinstance(value, dict):
-        return {k: without_nulls(v) for k, v in value.items() if v is not None}
-    return value
-
-
 def payload(edge: Any, profile: Any) -> dict[str, Any]:
     return plan_module(edge, level=EDGE, profile=profile).data
 
@@ -194,10 +188,46 @@ def test_localize_starts_from_the_profile():
     services = edge.data.services.localize()
     services.post = ConsoleService(enabled=True)
     data = payload(edge, profile)
-    # ruleLogicalId is the server's: a model that has none dumps it as null.
-    assert without_nulls(data["services"]) == {
-        **profile_services,
-        "post": {"enabled": True},
-    }
+    assert data["services"] == {**profile_services, "post": {"enabled": True}}
     assert isinstance(profile.raw_data, dict)
     assert profile.raw_data["services"] == profile_services  # the profile is unchanged
+
+
+def test_a_value_made_local_carries_none_of_the_profiles_server_assigned_ids():
+    profile_services = {
+        "ssh": {"enabled": True},
+        "console": {"enabled": False, "ruleLogicalId": "xyz"},
+    }
+    edge, profile = bound({}, {"services": profile_services})
+    _ = edge.data.services.localize()
+    services = payload(edge, profile)["services"]
+    assert services == {"ssh": {"enabled": True}, "console": {"enabled": False}}
+    assert "ruleLogicalId" not in services["ssh"]
+    assert "ruleLogicalId" not in services["console"]
+    # The profile keeps its own.
+    assert isinstance(profile.raw_data, dict)
+    assert profile.raw_data["services"]["console"]["ruleLogicalId"] == "xyz"
+    assert profile.data.services.console.rule_logical_id == "xyz"  # pyright: ignore[reportOptionalMemberAccess, reportAttributeAccessIssue, reportUnknownMemberType]
+
+
+def test_a_patch_into_an_inherited_section_carries_none_of_the_profiles_ids():
+    profile_services = {"console": {"enabled": False, "ruleLogicalId": "xyz"}}
+    edge, profile = bound({}, {"services": profile_services})
+    _ = edge.data.merge_patch({"services": {"ssh": {"enabled": True}}})
+    services = payload(edge, profile)["services"]
+    assert services["console"] == {"enabled": False}
+    assert services["ssh"] == {"enabled": True}
+
+
+def test_a_stored_null_id_is_kept_as_read():
+    # A services object the edge stores with a null ID round-trips unchanged,
+    # as does a profile's.
+    raw = {"ssh": {"enabled": True, "ruleLogicalId": None}}
+    edge, profile = bound({"services": raw}, {"services": raw})
+    edge.data.syslog_forwarding.set_local(True)
+    assert payload(edge, profile) == {
+        "segments": [],
+        "services": raw,
+        "syslog_forwarding": True,
+    }
+    assert plan_module(profile, level=ConfigContext.PROFILE).operation == "none"

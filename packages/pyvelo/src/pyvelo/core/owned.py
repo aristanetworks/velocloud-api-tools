@@ -31,7 +31,7 @@ import copy
 import functools
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Self, cast, overload
+from typing import TYPE_CHECKING, Any, Self, cast, get_args, overload
 
 from pydantic import MISSING
 
@@ -251,9 +251,9 @@ class Owned[T]:
         info = type(owner).model_fields[self._field]
         parent = binding.parent
         if parent is None:
-            return display_default(info)
+            return clear_server_owned(display_default(info))
         value: object = getattr(parent, self._field)
-        return copy.deepcopy(value)
+        return clear_server_owned(copy.deepcopy(value))
 
     def _localize(self) -> object:
         if self.is_local:
@@ -278,6 +278,40 @@ class Owned[T]:
 
     def __repr__(self) -> str:
         return f"Owned({self.stored!r})"
+
+
+def clear_server_owned(value: object) -> object:
+    """*value*, a copy the caller owns, with every ``ServerOwned`` field of every model inside it cleared.
+
+    A field the VCO assigns (a rule's ``ruleLogicalId``) holds an ID that
+    belongs to the profile's object, not to the copy the edge makes of it, so
+    the copy carries none: the field becomes ``MISSING`` where its type
+    accepts that, else its default. Models, list items and dict values are
+    walked; *value* is changed in place and returned.
+    """
+    from pydantic import BaseModel
+
+    from .fields import is_server_owned
+
+    if isinstance(value, BaseModel):
+        cls = type(value)
+        for name, info in cls.model_fields.items():
+            if is_server_owned(info):
+                if MISSING in get_args(info.annotation):
+                    cleared: object = MISSING
+                else:
+                    cleared = info.get_default(call_default_factory=True)
+                object.__setattr__(value, name, cleared)
+                value.__pydantic_fields_set__.discard(name)
+            else:
+                _ = clear_server_owned(getattr(value, name, None))
+    elif isinstance(value, list):
+        for item in cast("list[object]", value):
+            _ = clear_server_owned(item)
+    elif isinstance(value, dict):
+        for item in cast("dict[object, object]", value).values():
+            _ = clear_server_owned(item)
+    return value
 
 
 def unwrap(value: object) -> object:
