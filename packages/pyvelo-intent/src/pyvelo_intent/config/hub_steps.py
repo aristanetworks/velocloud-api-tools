@@ -451,6 +451,40 @@ def _addition(segment: str, role: Role, hub_name: str) -> str:
     return f"{_patch(segment, _LIST_PATHS[role], change)} {_APPLY}"
 
 
+def hub_in_use_message(
+    segment: str, hub: str, edges: Sequence[tuple[int, str]], refuse: bool
+) -> str:
+    """What a removal of the Edge hub *hub* from the Branch-to-Hub list of *segment* does to the *edges* whose QoS rules use it, and what to do.
+
+    *refuse* is the message of the error (the save sends no step), else that
+    of the warning (the save goes on).
+    """
+    who = ", ".join(f"{name!r} (Edge ID {edge_id})" for edge_id, name in edges)
+    edge_word = "the Edges" if len(edges) > 1 else "the Edge"
+    keep = (
+        f"To keep the hub, put it back in the lists it left, with "
+        f"{_addition(segment, 'hub', hub)}"
+    )
+    return (
+        f"deviceSettings: segment {segment!r}: the hub {hub!r} is used by the "
+        f"backhaul rules of {edge_word} {who}. Taking it out of the "
+        "Branch-to-Hub list sends the call that disables its hub role, which deletes the hub's "
+        "service for this profile and segment and with it the backhaul refs of "
+        "those Edges' rules: the rules keep the hub in their data, and name a "
+        "hub the VCO has no service for. "
+        + (
+            "The save stops before it sends any step, so that no service is "
+            f"deleted under those rules. Take {hub!r} out of those rules first "
+            f"(in the Orchestrator, the Edges' QoS), or remove the hub anyway "
+            'with `on_hub_in_use="warn"` (the default). '
+            if refuse
+            else "The save goes on. To stop instead when a hub is in use, "
+            'save with `on_hub_in_use="refuse"`. '
+        )
+        + f"{keep}."
+    )
+
+
 def _flag(segment: str, path: tuple[str, ...], value: bool) -> str:
     """The patch that sets the ``vpn`` flag at *path* of *segment*."""
     return f"{_patch(segment, path, value)} {_APPLY}"

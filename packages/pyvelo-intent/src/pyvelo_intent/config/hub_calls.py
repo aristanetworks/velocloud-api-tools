@@ -3,11 +3,12 @@
 ``hub_steps`` plans the steps from the module as read and as edited. The save
 reads the hub services (``read_services``), sends each step not already in
 place (``in_place``, ``send_step``) and writes the rows the steps made
-(``hub_rows``).
+(``hub_rows``). ``hubs_in_use`` finds, from the services read, the Edge hubs a
+step removes whose service edge QoS rules use (``report_hubs_in_use`` says so).
 """
 
 import uuid
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Final, cast
 
@@ -17,7 +18,7 @@ from pyvelo.client.enums.enterprise import (
     EnterpriseServiceType,
 )
 from pyvelo.client.exceptions import HubListError
-from pyvelo.client.hub_services import CLUSTER_HUB_REF, EDGE_HUB_REF
+from pyvelo.client.hub_services import BACKHAUL_REF, CLUSTER_HUB_REF, EDGE_HUB_REF
 from pyvelo.client.models.configuration.device_settings.root import DeviceSettingsData
 from pyvelo.client.models.configuration.ref_owners import rows_named
 from pyvelo.client.models.enterprise.service_data import EdgeRoles
@@ -49,8 +50,10 @@ from pyvelo_intent.config.hub_steps import (
     HubRef,
     HubStep,
     Role,
+    hub_in_use_message,
     hub_lists_of,
 )
+from pyvelo_intent.config.validation_warning import ValidationWarning
 
 _ROLE_FIELDS: Final[dict[Role, str]] = {
     "hub": "edge_hub",
@@ -327,6 +330,70 @@ async def send_step(
     )
     send = cast(Callable[[_RoleRequest], Awaitable[object]], getattr(client, method))
     _ = await send(request)
+
+
+def hubs_in_use(
+    steps: Sequence[HubStep],
+    services: HubServices,
+    *,
+    configuration_id: int,
+    module_id: int,
+) -> dict[HubStep, tuple[tuple[int, str], ...]]:
+    """For each disable-hub step of an Edge hub, the ``(edgeId, name)`` of the edges whose QoS rules use the hub's service.
+
+    The hub's service is the one for *configuration_id*, *module_id* and the
+    step's segment (``HubServices.edge_service``), read with ``edgeQOSUsage``
+    (``read_services(..., qos_usage=True)``). An edge counts once, for any
+    number of rules, and only for rows whose ``ref`` is the name
+    ``deviceSettings:backHaulEdge``. A step whose hub nothing uses, and one
+    whose service the read has no usage for, is not in the result.
+    """
+    found: dict[HubStep, tuple[tuple[int, str], ...]] = {}
+    for step in steps:
+        if step.action != "disable" or step.role != "hub" or step.hub.kind != "edge":
+            continue
+        service = services.edge_service(
+            step.hub.logical_id, configuration_id, module_id, step.segment_object_id
+        )
+        usage = service.edge_qos_usage if service is not None else MISSING
+        if not isinstance(usage, list):
+            continue
+        edges = dict.fromkeys(
+            (row.edge_id, row.name or "")
+            for row in usage
+            if row.ref == BACKHAUL_REF and isinstance(row.edge_id, int)
+        )
+        if edges:
+            found[step] = tuple(edges)
+    return found
+
+
+def report_hubs_in_use(
+    in_use: Mapping[HubStep, tuple[tuple[int, str], ...]], *, refuse: bool
+) -> list[ValidationWarning]:
+    """The ``hub_in_use`` warnings for *in_use*, one per hub and segment; with *refuse*, raise ``HubListError`` for all of them instead."""
+    found = [
+        (step, edges, hub_in_use_message(step.segment, step.hub.name, edges, refuse))
+        for step, edges in in_use.items()
+    ]
+    if refuse and found:
+        raise HubListError(
+            "\n".join(message for _, _, message in found),
+            segment=found[0][0].segment
+            if len({step.segment for step, _, _ in found}) == 1
+            else None,
+            lists=("vpn.edgeToEdgeHub.vpnHubs",),
+            hubs=tuple(dict.fromkeys(step.hub.name for step, _, _ in found)),
+            edges=tuple(dict.fromkeys(e for _, edges, _ in found for e in edges)),
+        )
+    return [
+        ValidationWarning(
+            path=f'deviceSettings: segments["{step.segment}"].vpn',
+            message=message,
+            code="hub_in_use",
+        )
+        for step, _, message in found
+    ]
 
 
 def _hub_ref_name(hub: HubRef) -> str:

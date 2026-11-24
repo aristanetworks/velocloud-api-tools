@@ -2,7 +2,7 @@
 
 from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import Any, Protocol, TypeIs, cast, runtime_checkable
+from typing import Any, Literal, Protocol, TypeIs, cast, runtime_checkable
 
 from pydantic import MISSING
 from pyvelo.client.enums.configuration import ConfigurationModuleName
@@ -55,9 +55,12 @@ from pyvelo.core.patch import ItemOp, is_new, parse_item_op
 from pyvelo.core.rebase import Path, raw_changes
 
 from pyvelo_intent.config.hub_calls import (
+    HubServices,
     hub_rows,
+    hubs_in_use,
     in_place,
     read_services,
+    report_hubs_in_use,
     send_step,
 )
 from pyvelo_intent.config.hub_steps import HubStep
@@ -101,6 +104,8 @@ class _StepRun:
     sent: list[HubStep] = field(default_factory=list)
     in_place: list[HubStep] = field(default_factory=list)
     outcomes: list[StepOutcome] = field(default_factory=list)
+    warnings: list[ValidationWarning] = field(default_factory=list)
+    """The ``hub_in_use`` warnings: the edges whose QoS rules use a hub a step removes."""
     calling: bool = False
     """Whether a call was made, which may have reached the VCO."""
 
@@ -131,6 +136,24 @@ def _leaves_a_hub_list(steps: Sequence[HubStep]) -> bool:
     return any(
         s.action == "disable" and s.role == "hub" and s.hub.kind == "edge"
         for s in steps
+    )
+
+
+def _hubs_in_use_warnings(
+    steps: Sequence[HubStep],
+    services: HubServices,
+    module: DeviceSettingsConfigurationModule,
+    on_hub_in_use: Literal["warn", "refuse"],
+) -> list[ValidationWarning]:
+    """The ``hub_in_use`` warnings for the hubs *steps* remove that edge QoS rules use, or, with ``"refuse"``, ``HubListError`` for them."""
+    return report_hubs_in_use(
+        hubs_in_use(
+            steps,
+            services,
+            configuration_id=_configuration_id(module),
+            module_id=module.id_,
+        ),
+        refuse=on_hub_in_use == "refuse",
     )
 
 
@@ -708,6 +731,7 @@ class ConfigPipeline:
         dry_run: bool = False,
         validate: bool = True,
         repair_defaults: bool = True,
+        on_hub_in_use: Literal["warn", "refuse"] = "warn",
     ) -> SaveResult:
         """Persist changes to VCO.
 
@@ -762,7 +786,16 @@ class ConfigPipeline:
         reads the services again, and writes the device settings with the hub
         rows the steps made (a hub added to a Branch-to-Hub list has its
         row, one removed from it loses its row), without a second version
-        read. ``SaveResult.steps`` has an outcome per step: ``"sent"`` or
+        read. An Edge hub removed from a Branch-to-Hub list that edge QoS
+        rules use (a ``deviceSettings:backHaulEdge`` row of an Edge's QoS
+        module) loses its service to the role call, and with it the backhaul
+        refs of those rules, which keep the hub in their data. The services
+        read says so (it asks for ``edgeQOSUsage`` only for such a removal):
+        with *on_hub_in_use* ``"warn"`` the save adds a ``hub_in_use``
+        warning per hub and segment to ``SaveResult.warnings``, naming the
+        Edges, and goes on; with ``"refuse"`` it raises ``HubListError``
+        (``edges`` are their IDs and names) before it sends any step. A dry
+        run warns or raises the same way. ``SaveResult.steps`` has an outcome per step: ``"sent"`` or
         ``"in_place"``. An error before any step was sent propagates as it
         is. Once one was, or when the call of one fails, an ``Exception``
         (also that of a module write) is raised as ``SaveStepError``, from
@@ -838,6 +871,12 @@ class ConfigPipeline:
         inside that block, for another task that calls ``apply`` or ``save``,
         which would wait for the lock without end.
         """
+        if on_hub_in_use not in ("warn", "refuse"):
+            raise ValueError(
+                f"on_hub_in_use is {on_hub_in_use!r}; give 'warn' to remove a "
+                "hub that edge QoS rules use and say so in the result's "
+                "warnings, or 'refuse' to stop before any step"
+            )
         async with state.lock:
             plan = await self._plan_loading(state, repair_defaults=repair_defaults)
             result = SaveResult(
@@ -887,19 +926,32 @@ class ConfigPipeline:
                     if module_plan.name in state.unconfirmed_inserts
                 )
                 if plan.steps:
-                    result.steps = await self._dry_steps(state, plan)
+                    result.steps = await self._dry_steps(
+                        state, plan, result.warnings, on_hub_in_use
+                    )
                 return result
-            return await self._send(state, plan, result)
+            return await self._send(state, plan, result, on_hub_in_use)
 
     async def _dry_steps(
-        self, state: ConfigState, plan: ConfigPlan
+        self,
+        state: ConfigState,
+        plan: ConfigPlan,
+        warnings: list[ValidationWarning],
+        on_hub_in_use: Literal["warn", "refuse"],
     ) -> tuple[StepOutcome, ...]:
-        """What a save would do with each step of *plan*, from one read of the hub services: sends nothing."""
+        """What a save would do with each step of *plan*, from one read of the hub services: sends nothing.
+
+        The ``hub_in_use`` warnings are added to *warnings*, or ``HubListError``
+        is raised for *on_hub_in_use* ``"refuse"``.
+        """
         module = _profile_device_settings(state)
         services = await read_services(
             self.client,
             state.resolver_context.enterprise_id,
             qos_usage=_leaves_a_hub_list(plan.steps),
+        )
+        warnings.extend(
+            _hubs_in_use_warnings(plan.steps, services, module, on_hub_in_use)
         )
         return tuple(
             StepOutcome(
@@ -924,11 +976,13 @@ class ConfigPipeline:
         done: list[ModuleWrite[Any]],
         *,
         device_settings_stored: bool,
+        on_hub_in_use: Literal["warn", "refuse"],
     ) -> _StepRun:
         """Send the role steps of *plan*, and have the device settings plan in *changed* carry the rows they made.
 
-        Reads the hub services, sends each step not in place, in order, reads
-        the services again and puts the hub rows the steps made in the device
+        Reads the hub services, adds the ``hub_in_use`` warnings to the run
+        (``HubListError`` with *on_hub_in_use* ``"refuse"``, before any step),
+        sends each step not in place, in order, reads the services again and puts the hub rows the steps made in the device
         settings plan (``with_hub_rows``), at its place in *changed*, unless
         *device_settings_stored* (its write was found stored and is in *done*:
         it is not written again). Returns what the steps did. An ``Exception``
@@ -945,6 +999,9 @@ class ConfigPipeline:
         try:
             services = await read_services(
                 self.client, enterprise_id, qos_usage=_leaves_a_hub_list(plan.steps)
+            )
+            run.warnings = _hubs_in_use_warnings(
+                plan.steps, services, module, on_hub_in_use
             )
             for step in plan.steps:
                 if in_place(
@@ -1002,7 +1059,11 @@ class ConfigPipeline:
         return run
 
     async def _send(
-        self, state: ConfigState, plan: ConfigPlan, result: SaveResult
+        self,
+        state: ConfigState,
+        plan: ConfigPlan,
+        result: SaveResult,
+        on_hub_in_use: Literal["warn", "refuse"],
     ) -> SaveResult:
         """Send the role steps of *plan*, if it has any, then write each changed module, in order, and put the module as stored in *state*.
 
@@ -1141,8 +1202,10 @@ class ConfigPipeline:
                 changed,
                 done,
                 device_settings_stored=stored_already is not None,
+                on_hub_in_use=on_hub_in_use,
             )
             result.steps = tuple(run.outcomes)
+            result.warnings.extend(run.warnings)
         try:
             for position, (module_plan, mod) in enumerate(
                 zip(changed, modules, strict=True)

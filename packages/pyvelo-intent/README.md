@@ -608,6 +608,14 @@ firewall: update
   says `"would_send"` or `"in_place"`, and a dry run of a plan with steps makes
   the two services requests and no other.
 
+  An Edge hub removed from a Branch-to-Hub list that edge QoS rules use loses
+  its service to the role call, and with it the backhaul refs of those rules,
+  which keep the hub in their data. `save` finds the Edges from the services
+  read and says so: a `hub_in_use` warning per hub and segment in
+  `SaveResult.warnings` naming them, with `on_hub_in_use="warn"` (the default),
+  or, with `on_hub_in_use="refuse"`, `HubListError` (`edges` holds their IDs
+  and names) before any step is sent. A dry run does the same.
+
   A request that fails once a step may have been sent is raised as
   `SaveStepError` (from `pyvelo_intent`), from the VCO's error: `step` is the
   step whose call failed, or `None` when a module write failed (`module_name`
