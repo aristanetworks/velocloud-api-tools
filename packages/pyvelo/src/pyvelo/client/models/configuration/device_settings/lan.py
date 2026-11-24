@@ -18,6 +18,7 @@ from pyvelo.core.fields import (
     KeyField,
     Lenient,
     OverrideFlag,
+    RefersTo,
     Resolvable,
 )
 from pyvelo.core.identity import SegmentIdentity
@@ -265,7 +266,9 @@ class LanNetwork(VcoModel):
     radius_authentication: RadiusAuthentication = Field(
         default_factory=RadiusAuthentication
     )
-    segment_id: Annotated[int, Resolvable(SegmentIdentity, "segment_id")] = 0
+    segment_id: Annotated[
+        int, Resolvable(SegmentIdentity, "segment_id"), RefersTo("segment")
+    ] = 0
     static_reserved: int = 10
     tag_logical_id: uuid.UUID | None = None
     ipv6_details: Annotated[LanV6Details, Alias("v6Detail")] = Field(

@@ -3,9 +3,9 @@ from typing import Annotated, Any, Literal, override
 
 from pydantic import MISSING, Field
 
-from pyvelo.core import Alias, Normalizer, VcoModel
-from pyvelo.core.fields import KeyField, Resolvable
-from pyvelo.core.identity import ApplicationIdentity
+from pyvelo.core import Alias, NameOf, Normalizer, VcoModel
+from pyvelo.core.fields import KeyField, RefersTo, Resolvable
+from pyvelo.core.identity import ApplicationIdentity, HubIdentity
 
 from ..common import (
     AddressGroupRef,
@@ -121,10 +121,19 @@ class QosRuleMatch(VcoModel):
 
 
 class BackhaulEdge(VcoModel):
-    type_: Annotated[BackhaulEdgeType, Alias("type")] = "edgeHub"
-    logical_id: uuid.UUID
-    edge_logical_id: uuid.UUID | MISSING = MISSING
-    edge_name: Annotated[str | MISSING, Alias("name")] = MISSING
+    type_: Annotated[
+        BackhaulEdgeType, Alias("type"), Resolvable(HubIdentity, "type_")
+    ] = "edgeHub"
+    logical_id: uuid.UUID | MISSING = MISSING
+    edge_logical_id: Annotated[
+        uuid.UUID | MISSING,
+        Resolvable(HubIdentity, "logical_id"),
+        RefersTo("backhaul_hub", per_segment=True),
+    ] = MISSING
+    edge_id: Annotated[int | None | MISSING, Resolvable(HubIdentity, "edge_id")] = (
+        MISSING
+    )
+    edge_name: Annotated[str | MISSING, Alias("name"), NameOf(HubIdentity)] = MISSING
 
 
 class RouteConfig(VcoModel):
@@ -132,9 +141,10 @@ class RouteConfig(VcoModel):
     name: str | None = None
     logical_id: uuid.UUID | None = None
     bypass_gateway: bool = False
-    backhaul_edges: Annotated[list[BackhaulEdge] | MISSING, KeyField("logical_id")] = (
-        MISSING
-    )
+    backhaul_edges: Annotated[
+        list[BackhaulEdge] | MISSING,
+        KeyField("edge_logical_id", alt="logical_id", label="edge_name"),
+    ] = MISSING
     backhaul_edges_auto_selection: bool = False
 
 

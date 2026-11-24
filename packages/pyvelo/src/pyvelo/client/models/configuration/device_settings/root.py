@@ -14,7 +14,15 @@ from pyvelo.core import (
     Secret,
     VcoModel,
 )
-from pyvelo.core.fields import KeyField, Lenient, OverrideFlag
+from pyvelo.core.fields import (
+    KeyField,
+    Lenient,
+    OverrideFlag,
+    Provides,
+    RefersTo,
+    Resolvable,
+)
+from pyvelo.core.identity import SegmentIdentity
 
 from ..common import (
     copy_profile_segments,
@@ -87,7 +95,9 @@ class LoopbackInterface(VcoModel):
     cidr_prefix: Literal[32] = 32
     advertise: bool = True
     ping_response: bool = True
-    segment_id: int = 0
+    segment_id: Annotated[
+        int, Resolvable(SegmentIdentity, "segment_id"), RefersTo("segment")
+    ] = 0
     ospf: LoopbackOspf = Field(default_factory=LoopbackOspf)
     disable_ipv4: Annotated[bool, Alias("disableV4")] = False
     disable_ipv6: Annotated[bool, Alias("disableV6")] = True
@@ -339,7 +349,9 @@ class DeviceSettingsData(VcoModel):
         default_factory=dict
     )
     segments: Annotated[
-        list[DeviceSegment], KeyField("segment.name", alt="segment.segment_id")
+        list[DeviceSegment],
+        KeyField("segment.name", alt="segment.segment_id"),
+        Provides("segment", key="segment.segment_id"),
     ]
     snmp: Annotated[
         EdgeSnmp | MISSING, ContextDefault(edge=MISSING, profile=EdgeSnmp)

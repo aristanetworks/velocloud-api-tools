@@ -18,6 +18,7 @@ from pyvelo.core import (
     ConfigContext,
     EdgeOnly,
     GatewayLogicalId,
+    NameOf,
     NoneIsFalse,
     OwnsRef,
     Positional,
@@ -28,14 +29,16 @@ from pyvelo.core import (
 from pyvelo.core.fields import (
     DefaultingModel,
     DefaultingScalar,
+    HubRole,
     KeyField,
     Lenient,
     NoneIsTrue,
     OverrideFlag,
     ProfileOnly,
+    Provides,
     Resolvable,
 )
-from pyvelo.core.identity import NetworkServiceIdentity, SegmentIdentity
+from pyvelo.core.identity import HubIdentity, NetworkServiceIdentity, SegmentIdentity
 
 from ..common import SegmentMetadata
 from .common import (
@@ -116,9 +119,13 @@ SegmentVrrp = RootModel[dict[str, Any] | None]
 
 
 class VpnHub(VcoModel):
-    name: str
-    type_: Annotated[Literal["edgeHub", "edgeHubCluster"], Alias("type")]
-    logical_id: uuid.UUID
+    name: Annotated[str, NameOf(HubIdentity)]
+    type_: Annotated[
+        Literal["edgeHub", "edgeHubCluster"],
+        Alias("type"),
+        Resolvable(HubIdentity, "type_"),
+    ]
+    logical_id: Annotated[uuid.UUID, Resolvable(HubIdentity, "logical_id")]
 
 
 class IsolationConfig(VcoModel):
@@ -139,7 +146,9 @@ class EdgeToEdgeDetail(VcoModel):
         "GROUP_IPSEC"
     )
     dynamic: DynamicVpnConfig = Field(default_factory=DynamicVpnConfig)
-    vpn_hubs: list[VpnHub] = Field(default_factory=list)
+    vpn_hubs: Annotated[
+        list[VpnHub], KeyField("logical_id", label="name"), HubRole("bridge")
+    ] = Field(default_factory=list)
     auto_select_vpn_hubs: bool = False
     isolation_group_id: None = None
     isolation_groups: list[Any] = Field(default_factory=list)
@@ -148,7 +157,9 @@ class EdgeToEdgeDetail(VcoModel):
 class EdgeToEdgeHub(VcoModel):
     enabled: bool = False
     ref: DeviceSettingsRef = "deviceSettings:vpn:edgeHub"
-    vpn_hubs: list[VpnHub] = Field(default_factory=list)
+    vpn_hubs: Annotated[
+        list[VpnHub], KeyField("logical_id", label="name"), HubRole("hub")
+    ] = Field(default_factory=list)
 
 
 class SegmentVpn(VcoModel):
@@ -161,9 +172,13 @@ class SegmentVpn(VcoModel):
     )
     edge_to_edge: bool = False
     edge_to_edge_detail: EdgeToEdgeDetail = Field(default_factory=EdgeToEdgeDetail)
-    backhaul_edges: Annotated[list[VpnHub], Alias("backHaulEdges")] = Field(
-        default_factory=list
-    )
+    backhaul_edges: Annotated[
+        list[VpnHub],
+        Alias("backHaulEdges"),
+        KeyField("logical_id", label="name"),
+        HubRole("backhaul"),
+        Provides("backhaul_hub", key="logical_id", per_segment=True),
+    ] = Field(default_factory=list)
 
 
 class SegmentStaticGroup(VcoModel):
