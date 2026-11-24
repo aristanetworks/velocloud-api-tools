@@ -14,11 +14,12 @@ is a ``per_segment`` one: the set of the segment the marked list sits in.
 """
 
 import functools
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from collections.abc import Set as AbstractSet
 from dataclasses import dataclass
 
 from pydantic import MISSING
+from pydantic.fields import FieldInfo
 
 from .base import VcoModel, field_models, is_dict, is_list
 from .fields import get_provides, get_refers_to
@@ -56,15 +57,12 @@ class ReferenceFindings:
     """References to a value that is not a member, held as the module was read."""
 
 
-@functools.cache
-def can_hold_reference(model_cls: type[VcoModel]) -> bool:
-    """Whether a model of *model_cls* can hold a ``RefersTo`` or a ``Provides``, at any depth.
+def _can_hold(model_cls: type[VcoModel], marked: Callable[[FieldInfo], bool]) -> bool:
+    """Whether a model of *model_cls* has a field *marked* accepts, or a model below it does, at any depth.
 
-    True when one of its fields carries either marker, or the type of a field
-    (through ``Annotated``, unions, ``list``, ``dict`` and ``tuple``) is a
-    model class that can. It is computed from the declared field types, once
-    per class: a subclass that adds a marker below a field declared with a
-    class that has none is not found.
+    It follows the declared field types (through ``Annotated``, unions,
+    ``list``, ``dict`` and ``tuple``): a subclass that adds a marker below a
+    field declared with a class that has none is not found.
     """
     seen: set[type[VcoModel]] = set()
     pending = [model_cls]
@@ -74,12 +72,26 @@ def can_hold_reference(model_cls: type[VcoModel]) -> bool:
             continue
         seen.add(current)
         for field_info in current.model_fields.values():
-            if get_refers_to(field_info) is not None:
-                return True
-            if get_provides(field_info) is not None:
+            if marked(field_info):
                 return True
             pending.extend(field_models(field_info))
     return False
+
+
+@functools.cache
+def can_refer(model_cls: type[VcoModel]) -> bool:
+    """Whether a model of *model_cls* can hold a ``RefersTo`` value, at any depth; computed once per class."""
+    return _can_hold(model_cls, lambda info: get_refers_to(info) is not None)
+
+
+@functools.cache
+def can_provide(model_cls: type[VcoModel]) -> bool:
+    """Whether a model of *model_cls* can hold a ``Provides`` list, at any depth; computed once per class.
+
+    The walk for the sets (``provided``) goes by this, so it passes over the
+    rules of a QoS module, which refer to hubs and provide nothing.
+    """
+    return _can_hold(model_cls, lambda info: get_provides(info) is not None)
 
 
 def _segment_id(segment: VcoModel | None) -> int | None:
@@ -100,7 +112,7 @@ def references(module: str, data: VcoModel) -> tuple[Reference, ...]:
     found: list[Reference] = []
     for site in walk_fields(
         data,
-        holds=can_hold_reference,
+        holds=can_refer,
         fields=lambda field_info: get_refers_to(field_info) is not None,
     ):
         refers = get_refers_to(site.field_info)
@@ -145,7 +157,7 @@ def provided(data: VcoModel) -> dict[SetKey, set[object]]:
     found: dict[SetKey, set[object]] = {}
     for site in walk_fields(
         data,
-        holds=can_hold_reference,
+        holds=can_provide,
         fields=lambda field_info: get_provides(field_info) is not None,
     ):
         provides = get_provides(site.field_info)
@@ -194,10 +206,17 @@ def check_references(
     dangling: list[Reference] = []
     kept: list[Reference] = []
     for module, edited, read in targets:
-        held = {r.path: r for r in references(module, read)} if read is not None else {}
+        # The references as read are looked up only for a value that names nothing.
+        held: dict[Path, Reference] | None = None
         for reference in references(module, edited):
             if _is_member(reference, sets_now):
                 continue
+            if held is None:
+                held = (
+                    {r.path: r for r in references(module, read)}
+                    if read is not None
+                    else {}
+                )
             before = held.get(reference.path)
             if (
                 before is not None

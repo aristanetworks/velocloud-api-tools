@@ -64,6 +64,7 @@ from pyvelo.core.rebase import (
     raw_changes,
 )
 from pyvelo.core.references import (
+    can_provide,
     check_references,
     provided,
     reference_text,
@@ -871,8 +872,9 @@ class ConfigState:
         warnings = (
             _check_segment_set(ordered, plans) if self.target_type == "profile" else ()
         )
-        steps, hub_warnings = self._hub_steps(ordered)
-        check_warnings = self._check_references(ordered)
+        as_read = {p.name: p.as_read for p in plans}
+        steps, hub_warnings = self._hub_steps(ordered, as_read)
+        check_warnings = self._check_references(ordered, as_read)
         return ConfigPlan(
             modules=plans,
             target=target,
@@ -882,9 +884,15 @@ class ConfigState:
         )
 
     def _hub_steps(
-        self, modules: Sequence[AnyConfigurationModule]
+        self,
+        modules: Sequence[AnyConfigurationModule],
+        as_read: Mapping[str, VcoModel | None],
     ) -> tuple[tuple[HubStep, ...], tuple[ValidationWarning, ...]]:
         """The role steps of the hub list changes of a profile's device settings, and the warnings of its lists.
+
+        *as_read* is each module's data as the plan parsed it
+        (``ModulePlan.as_read``, by module name); the device settings are not
+        parsed again.
 
         The lists are checked first
         (:func:`~pyvelo_intent.config.hub_steps.check_hub_lists`, which raises
@@ -909,28 +917,28 @@ class ConfigState:
             or module.raw_data is MISSING
         ):
             return (), ()
-        as_read = read_data(module, level=ConfigContext.PROFILE).model(
-            DeviceSettingsData
-        )
+        parsed = as_read.get(str(module.name))
+        if not isinstance(parsed, DeviceSettingsData):
+            return (), ()
         refs: object = module.raw_refs
         object_ids = segment_object_ids(refs)
-        for segment_id in changed_segment_ids(as_read, edited):
+        for segment_id in changed_segment_ids(parsed, edited):
             if segment_id not in object_ids:
                 object_id = self._segment_object_id(segment_id)
                 if object_id is not None:
                     object_ids[segment_id] = object_id
         resolver = self.resolvers.resolver_for(HubIdentity)
         hubs = resolver if isinstance(resolver, HubResolver) else None
-        list_warnings = check_hub_lists(as_read, edited, hubs=hubs)
+        list_warnings = check_hub_lists(parsed, edited, hubs=hubs)
         steps = derive_steps(
-            as_read,
+            parsed,
             edited,
             segment_object_ids=object_ids,
             hubs=hubs,
         )
         configuration_id = self.target_config.id_
         disagreements = (
-            role_disagreements(as_read, refs, configuration_id)
+            role_disagreements(parsed, refs, configuration_id)
             if isinstance(configuration_id, int)
             else ()
         )
@@ -952,16 +960,19 @@ class ConfigState:
         return identity.object_id
 
     def _check_references(
-        self, modules: Sequence[AnyConfigurationModule]
+        self,
+        modules: Sequence[AnyConfigurationModule],
+        as_read: Mapping[str, VcoModel | None],
     ) -> tuple[ValidationWarning, ...]:
         """Refuse a value of the target that names nothing the configuration provides; warn of one that did as read.
 
         Each module of the target is a target of the check, as edited
-        (``module.data``) and as read (its raw data parsed again with an edge's
-        placeholders and a profile's additions). The sets the values are
-        looked up in are those of the target's modules as edited and, for an
-        edge, the profile's modules as read; the sets as read are those of the
-        modules as read. Raises ``DanglingReferenceError`` for a value that is
+        (``module.data``) and as read (*as_read*, by module name: the data as
+        the plan parsed it, with an edge's placeholders and a profile's
+        additions; ``ModulePlan.as_read``). The sets the values are looked up
+        in are those of the target's modules as edited and, for an edge, the
+        profile's modules as read that can provide a set (parsed here); the
+        sets as read are those of the modules as read. Raises ``DanglingReferenceError`` for a value that is
         new, or was a member and no longer is; returns a ``reference_kept``
         warning for one that named nothing as read and does still.
         """
@@ -972,17 +983,7 @@ class ConfigState:
             edited: object = module.data
             if not isinstance(edited, VcoModel):
                 continue
-            read: VcoModel | None = None
-            if module.raw_data is not MISSING:
-                profile_mod = (
-                    _find_module(self.profile_config, module.name)
-                    if level is ConfigContext.EDGE
-                    else None
-                )
-                read = read_data(module, level=level, profile=profile_mod).model(
-                    type(edited)
-                )
-            targets.append((str(module.name), edited, read))
+            targets.append((str(module.name), edited, as_read.get(str(module.name))))
         sets_now = union(
             *(provided(edited) for _, edited, _ in targets),
             *(provided(model) for model in profile_models),
@@ -1014,14 +1015,23 @@ class ConfigState:
         )
 
     def _profile_as_read(self) -> list[VcoModel]:
-        """The data of each module of the profile layer as read, with the profile's additions."""
+        """The data of each module of the profile layer as read, with the profile's additions, for the modules that can provide a set.
+
+        A module that provides none (QoS, firewall) is not parsed: its rules
+        are the bulk of a profile, and the sets of its modules as read are
+        empty.
+        """
         config = self.profile_config
         if config.modules is MISSING:
             return []
         models: list[VcoModel] = []
         for module in config.modules:
             held: object = module.data
-            if isinstance(held, VcoModel) and module.raw_data is not MISSING:
+            if (
+                isinstance(held, VcoModel)
+                and can_provide(type(held))
+                and module.raw_data is not MISSING
+            ):
                 models.append(
                     read_data(module, level=ConfigContext.PROFILE).model(type(held))
                 )

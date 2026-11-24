@@ -8,11 +8,14 @@ import segment_helpers
 from hub_helpers import HUB_A, HUB_B, backhaul_entry, backhaul_rule, ds_with_vpn
 from pyvelo.client.exceptions import DanglingReferenceError
 from pyvelo.client.models.configuration.device_settings.root import DeviceSettingsData
+from pyvelo.client.models.configuration.firewall.root import FirewallData
 from pyvelo.client.models.configuration.qos.root import QosData
 from pyvelo.core import Key, Path, VcoModel
 from pyvelo.core.references import (
     Reference,
     Sets,
+    can_provide,
+    can_refer,
     check_references,
     provided,
     reference_text,
@@ -122,6 +125,19 @@ def test_a_value_that_is_missing_or_none_is_left_out():
     del entry["edgeLogicalId"]
     data = qos_data((GUEST, [backhaul_rule("Web", entry)]))
     assert references("QOS", data) == ()
+
+
+def test_a_module_is_walked_for_what_it_can_provide_or_refer_to_only():
+    # A QoS module refers to hubs and provides nothing, so the walk for the
+    # sets skips its rules; a firewall module does neither.
+    assert (can_provide(QosData), can_refer(QosData)) == (False, True)
+    assert (can_provide(DeviceSettingsData), can_refer(DeviceSettingsData)) == (
+        True,
+        True,
+    )
+    assert (can_provide(FirewallData), can_refer(FirewallData)) == (False, False)
+    qos = hub_rule_data(GLOBAL, HUB_A.logical_id)
+    assert provided(qos) == {} and references("QOS", qos)
 
 
 def test_provided_sets():

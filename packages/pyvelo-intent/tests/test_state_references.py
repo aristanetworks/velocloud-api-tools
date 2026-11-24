@@ -31,6 +31,7 @@ from profile_state import (  # pyright: ignore[reportImplicitRelativeImport]
 from pydantic import MISSING
 from pyvelo.client.exceptions import DanglingReferenceError
 from pyvelo.client.hub_services import BACKHAUL_REF
+from pyvelo.client.module_write import ReadData
 from pyvelo.client.schemas.configuration import (
     DeviceSettingsConfigurationModule,
     EdgeConfiguration,
@@ -365,3 +366,55 @@ async def test_update_module_does_not_run_it():
     _ = await client.update_module(module, data)
 
     assert [m for m, _ in client.store.requests if m == UPDATE] == [UPDATE]
+
+
+# -- what a plan parses -------------------------------------------------------
+
+
+def count_parses(monkeypatch: pytest.MonkeyPatch) -> list[type]:
+    """Record the class of every module as read that ``ReadData.model`` parses from now on."""
+    parsed: list[type] = []
+    original = ReadData.model
+
+    def counting(self: ReadData, model_type: type) -> Any:
+        parsed.append(model_type)
+        return original(self, model_type)
+
+    monkeypatch.setattr(ReadData, "model", counting)
+    return parsed
+
+
+async def test_a_profile_plan_parses_each_module_as_read_once(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    state = await profile_of()
+    await patch(state, DS, {"lan": {"networks": {"+": add(network(GUEST[0]))}}})
+    parsed = count_parses(monkeypatch)
+
+    plan = state.plan()
+
+    assert plan.changed
+    assert sorted(t.__name__ for t in parsed) == [
+        "DeviceSettingsData",
+        "FirewallData",
+        "QosData",
+    ]
+
+
+async def test_an_edge_plan_parses_only_the_profile_modules_that_provide(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    # The profile's QoS and firewall provide nothing a reference names: their
+    # rules are not parsed again for the sets.
+    state = await edge_over(await profile_of(), with_qos=True)
+    await patch(state, DS, add_network(GUEST[0]))
+    parsed = count_parses(monkeypatch)
+
+    plan = state.plan()
+
+    assert plan.warnings == ()
+    assert sorted(t.__name__ for t in parsed) == [
+        "DeviceSettingsData",  # the edge's, once
+        "DeviceSettingsData",  # the profile's, for the sets
+        "QosData",  # the edge's, once
+    ]

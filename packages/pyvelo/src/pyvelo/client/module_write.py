@@ -71,6 +71,7 @@ import copy
 import json
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
+from dataclasses import field as dataclass_field
 from typing import Any, Final, Literal, cast, override
 
 from pydantic import MISSING
@@ -271,6 +272,16 @@ class ModulePlan:
     """The segments of a profile QoS module that lack template ``defaults``, one entry each.
 
     ``repaired`` says whether the payload has the missing entries.
+    """
+    as_read: VcoModel | None = dataclass_field(default=None, repr=False, compare=False)
+    """The module as read, parsed: the baseline this plan compared the data with.
+
+    It is the raw data with an edge's placeholders and a profile's additions
+    (``read_data(...).model``), so a check of the same module as read (the
+    references of a ``ConfigState`` plan) takes it and parses nothing again.
+    None for a plan of a module with no raw data, and for one planned from a
+    mapping. It is the one object the plan used: do not change it. A plan made
+    from this one (a rebase, the hub rows) keeps it.
     """
 
     @override
@@ -1163,6 +1174,7 @@ def plan_module(
         ),
         repair_defaults=repair_defaults,
         missing_defaults=tuple(missing_defaults),
+        as_read=baseline,
     )
 
 
