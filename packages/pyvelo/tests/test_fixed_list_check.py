@@ -5,8 +5,9 @@ from typing import Any, overload
 
 import pytest
 from pydantic import MISSING
-from pyvelo.client.exceptions import FixedListError
+from pyvelo.client.exceptions import FixedListError, LossyFieldError
 from pyvelo.client.models.configuration.qos.root import QosData
+from pyvelo.client.models.configuration.qos.rule import QosRule
 from pyvelo.client.module_write import plan_module
 from pyvelo.client.schemas.configuration import QosConfigurationModule
 from pyvelo.core import ConfigContext, Edge, Profile
@@ -224,3 +225,40 @@ def test_a_plain_dict_data_that_leaves_the_defaults_alone_passes():
         plan_module(module, data(entry), level=ConfigContext.PROFILE).operation
         == "none"
     )
+
+
+# --- the edge layer has no `defaults` ------------------------------------------
+
+
+def test_an_edge_segment_holds_no_defaults_and_a_write_keeps_the_raw_ones():
+    entry = qos_entry(GUEST)
+    raw_defaults = copy.deepcopy(entry["defaults"])
+    module = qos_module(entry, layer=Edge)
+    segment = module.data.segments[0]
+
+    # The edge layer reads no `defaults` and dumps none.
+    assert segment.defaults is MISSING  # pyright: ignore[reportAttributeAccessIssue]
+    assert "defaults" not in segment.model_dump(by_alias=True, mode="json")
+
+    # Nothing is planned from the unedited segment, and the raw `defaults` stay.
+    plan = plan_module(module, level=ConfigContext.EDGE)
+    assert (plan.operation, plan.data) == ("none", data(entry))
+
+    # An edit through the model is refused as lossy, never written.
+    segment.defaults = []  # pyright: ignore[reportAttributeAccessIssue]
+    with pytest.raises(LossyFieldError, match="defaults"):
+        plan_module(module, level=ConfigContext.EDGE)
+    segment.defaults = MISSING  # pyright: ignore[reportAttributeAccessIssue]
+
+    # A write for another edit sends the raw `defaults` as read.
+    segment.rules.append(QosRule.model_validate({**entry["defaults"][0], "name": "r1"}))
+    plan = plan_module(module, level=ConfigContext.EDGE)
+    assert plan.operation == "update"
+    assert guest_defaults(plan.data) == raw_defaults
+    assert module.raw_data == data(entry)
+
+    # The profile layer holds them.
+    profile = qos_module(qos_entry(GUEST), layer=Profile)
+    held = profile.data.segments[0].defaults
+    assert isinstance(held, list) and len(held) == len(raw_defaults)
+    assert "defaults" in profile.data.segments[0].model_dump(by_alias=True, mode="json")

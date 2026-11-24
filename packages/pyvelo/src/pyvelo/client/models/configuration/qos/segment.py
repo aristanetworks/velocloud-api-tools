@@ -2,7 +2,7 @@ from typing import Annotated, Any
 
 from pydantic import MISSING, Field
 
-from pyvelo.core import Layered, Unconverted, VcoModel, kind_default
+from pyvelo.core import Layered, ProfileOnly, Unconverted, VcoModel, kind_default
 from pyvelo.core.fields import FixedList, KeyField, OverrideFlag
 from pyvelo.core.layers import L
 
@@ -60,7 +60,7 @@ class QosSegment(Layered[L]):
         Unconverted[list[QosRule]], KeyField("name", alt="rule_logical_id")
     ] = kind_default(factory=list)
     defaults: Annotated[
-        Unconverted[list[QosRule] | MISSING],
+        ProfileOnly[list[QosRule] | MISSING],
         KeyField("name", alt="rule_logical_id"),
         FixedList(editable=("action",)),
     ] = kind_default(MISSING)
