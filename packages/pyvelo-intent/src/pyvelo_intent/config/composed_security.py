@@ -20,7 +20,7 @@ not known, so none is expected for it.
 
 import copy
 import uuid
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from typing import cast
 
@@ -38,30 +38,56 @@ __all__ = [
     "rules_naming_a_group",
 ]
 
-SYNTHETIC_RULE_KEYS: tuple[str, ...] = (
-    "atp_action",
-    "urlCategoryFiltering",
-    "urlReputationFiltering",
+
+@dataclass(frozen=True)
+class _SyntheticKey:
+    """A key the composer adds to a rule: the kind of object that gives it, and how it is built from that object's ``data``."""
+
+    key: str
+    type_: SecurityObjectType
+    build: Callable[[JsonObject], JsonObject]
+
+
+def _atp_action(idps: JsonObject) -> JsonObject:
+    action: JsonObject = {"atp_enabled": True}
+    for key, flag in _ATP_FLAGS:
+        if flag in idps:
+            action[key] = idps[flag]
+    return action
+
+
+_ATP_FLAGS: tuple[tuple[str, str], ...] = (
+    ("ids_enabled", "idsEnabled"),
+    ("ips_enabled", "ipsEnabled"),
+    ("atp_logging_enabled", "logEnabled"),
 )
+
+_SYNTHETIC: tuple[_SyntheticKey, ...] = (
+    _SyntheticKey(
+        "urlCategoryFiltering",
+        SecurityObjectType.URL_CATEGORY_FILTERING,
+        copy.deepcopy,
+    ),
+    _SyntheticKey(
+        "urlReputationFiltering",
+        SecurityObjectType.URL_REPUTATION_FILTERING,
+        copy.deepcopy,
+    ),
+    _SyntheticKey("atp_action", SecurityObjectType.IDPS, _atp_action),
+)
+
+SYNTHETIC_RULE_KEYS: tuple[str, ...] = tuple(sorted(row.key for row in _SYNTHETIC))
 """The keys the composer adds to a rule that names a security service group."""
 
 SECURITY_OBJECT_TYPES: tuple[SecurityObjectType, ...] = (
     SecurityObjectType.SECURITY_SERVICE_GROUP,
-    SecurityObjectType.URL_CATEGORY_FILTERING,
-    SecurityObjectType.URL_REPUTATION_FILTERING,
-    SecurityObjectType.IDPS,
+    *(row.type_ for row in _SYNTHETIC),
 )
 """The types of security object read to expect those keys."""
 
 UNRESOLVED = (
     "the rule's security service group, or an object it names, "
     + "is not among the enterprise's security objects"
-)
-
-_ATP_FLAGS: tuple[tuple[str, str], ...] = (
-    ("ids_enabled", "idsEnabled"),
-    ("ips_enabled", "ipsEnabled"),
-    ("atp_logging_enabled", "logEnabled"),
 )
 
 
@@ -118,35 +144,29 @@ class ExpectedKeys:
 
     values: Mapping[str, object]
     """The expected value of each of ``SYNTHETIC_RULE_KEYS`` the group gives the rule."""
-    unresolved: str | None
-    """``UNRESOLVED`` when the group, or an object it names, is not among the security objects."""
+    unresolved: frozenset[str]
+    """The keys that cannot be expected because the object that gives them is not among the security objects (all of ``SYNTHETIC_RULE_KEYS`` when the group itself is not); the reason is ``UNRESOLVED``."""
 
 
 def expected_rule_keys(group_logical_id: str, objects: SecurityObjects) -> ExpectedKeys:
     """The keys the composer adds to a rule that names the group *group_logical_id*."""
     group = objects.group(group_logical_id)
     if group is None:
-        return ExpectedKeys({}, UNRESOLVED)
+        return ExpectedKeys({}, frozenset(SYNTHETIC_RULE_KEYS))
     named = _object(group.get("data")) or {}
     values: dict[str, object] = {}
-    unresolved = False
+    unresolved: set[str] = set()
 
-    for key, type_ in (
-        ("urlCategoryFiltering", SecurityObjectType.URL_CATEGORY_FILTERING),
-        ("urlReputationFiltering", SecurityObjectType.URL_REPUTATION_FILTERING),
-        ("atp_action", SecurityObjectType.IDPS),
-    ):
-        reference = _object(named.get(type_.value))
+    for row in _SYNTHETIC:
+        reference = _object(named.get(row.type_.value))
         if reference is None:
             continue
-        found = _lookup(objects, type_, reference.get("id"))
+        found = _lookup(objects, row.type_, reference.get("id"))
         if found is None:
-            unresolved = True
-        elif key == "atp_action":
-            values[key] = _atp_action(found)
+            unresolved.add(row.key)
         else:
-            values[key] = copy.deepcopy(found)
-    return ExpectedKeys(values, UNRESOLVED if unresolved else None)
+            values[row.key] = row.build(found)
+    return ExpectedKeys(values, frozenset(unresolved))
 
 
 def _lookup(
@@ -157,14 +177,6 @@ def _lookup(
         return None
     row = objects.named(type_.value, id_)
     return None if row is None else _object(row.get("data"))
-
-
-def _atp_action(idps: JsonObject) -> JsonObject:
-    action: JsonObject = {"atp_enabled": True}
-    for key, flag in _ATP_FLAGS:
-        if flag in idps:
-            action[key] = idps[flag]
-    return action
 
 
 @dataclass(frozen=True)
@@ -188,7 +200,7 @@ def rules_naming_a_group(dump: JsonObject) -> list[RuleGroup]:
         if segment is None:
             continue
         descriptor = _object(segment.get("segment")) or {}
-        text = descriptor.get("segmentId", position)
+        text = descriptor.get("segmentId", descriptor.get("name", position))
         outbound = segment.get("outbound")
         for index, item in enumerate(outbound if is_list(outbound) else []):
             rule = _object(item)

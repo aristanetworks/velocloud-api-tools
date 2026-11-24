@@ -1,11 +1,13 @@
 """``ConfigPipeline.compare_effective``: the effective view against the VCO's composed modules, offline."""
 
 import copy
+import uuid
 from typing import Annotated, Any
 
 import pytest
 from pydantic import MISSING, Field
 from pyvelo.client.exceptions import ComposedModuleError, VcoError
+from pyvelo.client.models.configuration.common import SegmentMetadata
 from pyvelo.client.schemas.configuration import (
     EdgeConfiguration,
     EnterpriseConfigurationProfile,
@@ -13,6 +15,7 @@ from pyvelo.client.schemas.configuration import (
 from pyvelo.config.resolver import ResolverContext
 from pyvelo.core import (
     Additive,
+    Alias,
     ByPresence,
     Default,
     Effective,
@@ -38,6 +41,7 @@ from pyvelo_intent import (
     EffectiveComparison,
     EffectiveDifference,
 )
+from pyvelo_intent.config.composed_security import SecurityObjects
 from pyvelo_intent.config.effective import (
     CONVERTED_MODULES,
     EFFECTIVE_IGNORES,
@@ -65,7 +69,7 @@ UNRESOLVED = (
     "the rule's security service group, or an object it names, "
     + "is not among the enterprise's security objects"
 )
-GROUP = "6f1d2c3a-0b4e-4c55-9a77-1e2d3c4b5a69"
+GROUP = "a9000000-0000-4000-8000-000000000000"
 CATEGORY: Json = {
     "allowAndLogCategories": [11, 12],
     "blockedCategories": [21],
@@ -713,6 +717,120 @@ async def test_security_objects_are_read_only_when_a_rule_names_a_group():
         p for m, p in client.store.requests if m == "enterprise/getSecurityObjects"
     ]
     assert {p["enterpriseId"] for p in reads} == {ENTERPRISE_ID}
+
+
+async def test_only_the_key_of_a_missing_object_carries_the_reason():
+    pipeline, state, client = await grouped()
+    client.store.security_objects["securityServiceGroup"][0]["data"] = {
+        "urlCategoryFiltering": {"id": 99}
+    }
+    comparison = await pipeline.compare_effective(state)
+
+    found = by_path(comparison)
+    assert {e.path for e in comparison.findings} == {
+        f"segments[0].outbound[0].{key}" for key in SECURITY_KEYS
+    }
+    reasons = {
+        key: found[f"segments[0].outbound[0].{key}"].reason for key in SECURITY_KEYS
+    }
+    assert reasons == {
+        "atp_action": None,
+        "urlCategoryFiltering": UNRESOLVED,
+        "urlReputationFiltering": None,
+    }
+    for entry in comparison.findings:
+        assert entry.category is EffectiveCategory.SERVER_ONLY
+
+
+async def test_a_rule_in_a_segment_with_another_id_than_its_position_is_compared():
+    group_rule = {**rule("p2"), "securityServiceGroup": GROUP}
+    profile = {
+        **PROFILE,
+        "segments": [segment(0, "Global Segment"), segment(3, "Guest", group_rule)],
+    }
+    pipeline, state, client = await loaded(profile=profile)
+    client.store.security_objects = copy.deepcopy(SECURITY_OBJECTS)
+    server_rule = composed_modules(client)["segments"][1]["outbound"][0]
+    server_rule.update(
+        atp_action=copy.deepcopy(ATP),
+        urlCategoryFiltering={**CATEGORY, "unknownCategoryAction": "block"},
+        urlReputationFiltering=copy.deepcopy(REPUTATION),
+    )
+    comparison = await pipeline.compare_effective(state)
+
+    (finding,) = comparison.findings
+    assert (
+        finding.path
+        == "segments[3].outbound[0].urlCategoryFiltering.unknownCategoryAction"
+    )
+    assert finding.origin is Origin.PROFILE
+
+
+class StoredRule(VcoModel):
+    name: str
+    security_service_group: uuid.UUID | None = None
+    atp_action: Annotated[dict[str, Any] | None, Alias("atp_action")] = None
+
+
+class StoredSegment(Layered[L]):
+    segment: SegmentMetadata
+    outbound: Annotated[
+        Additive[list[StoredRule]], KeyField("name", alt="rule_logical_id")
+    ] = kind_default(factory=list)
+
+
+class StoredFirewall(Layered[L]):
+    segments: Annotated[
+        list[StoredSegment[L]], KeyField("segment.name", alt="segment.segment_id")
+    ] = Field(default_factory=list)
+
+
+def test_a_security_key_a_layer_stores_is_compared_as_stored():
+    stored: Json = {"atp_enabled": False}
+    profile = StoredFirewall[Profile].model_validate(
+        {
+            "segments": [
+                {
+                    "segment": desc(0, "Global Segment"),
+                    "outbound": [
+                        {
+                            "name": "p1",
+                            "securityServiceGroup": GROUP,
+                            "atp_action": stored,
+                        }
+                    ],
+                }
+            ]
+        }
+    )
+    view = effective_view(None, profile, StoredFirewall[Effective])
+    objects = SecurityObjects.from_rows(
+        [row for rows in SECURITY_OBJECTS.values() for row in rows]
+    )
+    server: Json = {
+        "segments": [
+            {
+                "segment": desc(0, "Global Segment"),
+                "outbound": [
+                    {
+                        "name": "p1",
+                        "securityServiceGroup": GROUP,
+                        "atp_action": copy.deepcopy(ATP),
+                    }
+                ],
+            }
+        ]
+    }
+    entries = compare_module(
+        "firewall", view, server, ignores=(), security_objects=objects
+    )
+
+    found = {e.path: e for e in entries}
+    entry = found["segments[0].outbound[0].atp_action.atp_enabled"]
+    assert entry.category is EffectiveCategory.DIFFERS
+    assert (entry.client, entry.server) == (False, True)
+    # The layer's own value, not the group's.
+    assert entry.source == "segments[0].outbound[0]"
 
 
 async def test_another_rule_key_the_view_lacks_is_still_a_finding():

@@ -43,7 +43,7 @@ from pyvelo.core.layers import Effective, Kind, Layered, field_kind
 from pyvelo.core.rebase import KeyValue, key_text
 
 from pyvelo_intent.config.composed_security import (
-    SYNTHETIC_RULE_KEYS,
+    UNRESOLVED,
     SecurityObjects,
     expected_rule_keys,
     rules_naming_a_group,
@@ -254,15 +254,15 @@ def _expect_security_keys(
             continue
         expected = expected_rule_keys(named.group, objects)
         for key, value in expected.values.items():
+            if key in named.rule:
+                continue
             where = _join(named.path, key)
             named.rule[key] = value
             resolved[where] = Resolved(
                 rule.origin, value, _join(rule.source, "securityServiceGroup")
             )
-        if expected.unresolved is not None:
-            for key in SYNTHETIC_RULE_KEYS:
-                if key not in expected.values:
-                    reasons[_join(named.path, key)] = expected.unresolved
+        for key in expected.unresolved:
+            reasons[_join(named.path, key)] = UNRESOLVED
 
 
 _PART = re.compile(r"[^.\[\]]+|\[[^\]]*\]")
