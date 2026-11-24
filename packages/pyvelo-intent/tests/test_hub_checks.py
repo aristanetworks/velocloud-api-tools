@@ -392,6 +392,47 @@ async def test_another_hub_broken_the_same_way_is_an_error():
     assert "Hub-A" not in str(error)  # as read, so only a warning
 
 
+@pytest.mark.parametrize(
+    ("ds", "text"),
+    [
+        (
+            ds_with_vpn(GLOBAL, hubs=(HUB_A,), hub_list_enabled=False),
+            "edgeToEdgeHub.enabled",
+        ),
+        (ds_with_vpn(GLOBAL, enabled=False, hubs=(HUB_A,)), "vpn.enabled"),
+    ],
+    ids=["hub-list-off", "vpn-off"],
+)
+async def test_a_segment_with_its_hub_list_or_vpn_off_as_read_warns_for_an_unrelated_edit(
+    ds: dict[str, Any], text: str
+):
+    state = await profile_of(ds, HUB_A)
+    await edit(state, {"conditionalBackhaul": True})
+
+    (warning,) = as_read_warnings(state)
+
+    assert text in warning.message and "Hub-A" in warning.message
+
+
+@pytest.mark.parametrize(
+    ("ds", "text"),
+    [
+        (ds_with_vpn(GLOBAL, hubs=(HUB_A,), hub_list_enabled=False), "edgeToEdgeHub"),
+        (ds_with_vpn(GLOBAL, enabled=False, hubs=(HUB_A,)), "vpn.enabled"),
+    ],
+    ids=["hub-list-off", "vpn-off"],
+)
+async def test_adding_a_hub_to_a_segment_already_off_as_read_raises(
+    ds: dict[str, Any], text: str
+):
+    state = await profile_of(ds, HUB_A, HUB_B)
+    await edit(state, {"edgeToEdgeHub": {"vpnHubs": add(HUB_B.name)}})
+
+    error = await refused(state)
+
+    assert_names(error, text, "Hub-B", lists=(HUB_LIST,))
+
+
 async def test_segments_with_no_vpn_change_are_not_checked():
     state = await profile_of(broken_as_read(), HUB_A, HUB_B)
     patch = {"segments": {GLOBAL[1]: {"ospf": {"enabled": True}}}}
