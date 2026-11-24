@@ -515,6 +515,19 @@ firewall: update
   `ConfigPlan.warnings` and `SaveResult.warnings`), and `render()` ends with a
   `warning: <message>` line for it. A profile that lacks one of the three
   modules has nothing to compare.
+- A value that names a segment (a LAN network's or an interface's `segmentId`)
+  or a backhaul hub (a QoS rule's backhaul entry) must name one the
+  configuration has: a segment of the device settings `segments`, a hub in the
+  `vpn.backHaulEdges` of the rule's segment. `plan()` checks every module of
+  the target, on every save and with `validate=False` too, and raises
+  `DanglingReferenceError` (from `pyvelo_intent`), naming each value, its
+  module and its path, for a value the edit adds, or one whose segment or hub
+  the edit removes. An edge's values are checked against its profile's device
+  settings as read as well as its own. A value that named nothing as read, at
+  the same path, is left as it is: a `reference_kept` warning in
+  `ConfigPlan.check_warnings` (also in `ConfigPlan.warnings` and
+  `SaveResult.warnings`), and a `warning: <message>` line in `render()`.
+  `client.update_module` writes one module and does not run the check.
 - A segment added to a profile module has an `added segments: Guest` line, and
   `get_field_changes()` lists it as one change at `segments["Guest"]`, from
   `MISSING` to the entry as written. A QoS segment that lacks template

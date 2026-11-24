@@ -475,6 +475,60 @@ def _reparse[M: VcoModel](
     return model_type.model_validate(raw)
 
 
+@dataclass(frozen=True)
+class ReadData:
+    """A module's raw data, as ``plan_module`` compares it with an edit."""
+
+    module: ConfigurationModuleBase
+    extra: list[dict[str, Any]]
+    """The profile's segment entries the edge module lacks (none at the profile level)."""
+    reconciled: Any
+    """The raw data plus *extra*: the module as read, as the VCO would store it reconciled."""
+    planned_from: Any
+    """*reconciled* plus the entries added to a profile module (``module.additions``)."""
+
+    def model[M: VcoModel](self, model_type: type[M]) -> M:
+        """``planned_from`` parsed as *model_type*, the way the module was first parsed.
+
+        The refs as read are filled in when the module has them. This is the
+        baseline of the plan: the module as read, with an edge's placeholders
+        and a profile's additions.
+        """
+        parsed = _reparse(model_type, self.planned_from, self.module.raw_mode)
+        if self.module.refs_loaded:
+            fill_ref_only(parsed, self.module.raw_refs)
+        return parsed
+
+
+def read_data(
+    module: ConfigurationModuleBase,
+    *,
+    level: ConfigContext | None,
+    profile: ConfigurationModuleBase | None = None,
+) -> ReadData:
+    """The data of *module* as read, ready to parse: the one baseline of a plan.
+
+    An edge module (any *level* but the profile's) gets the placeholders of
+    the segments the *profile*'s module of the same name has and it lacks; a
+    profile module gets the entries the pipeline added to it. ``plan_module``
+    builds its baseline from this, and so does the reference check of a
+    ``ConfigState`` plan. *module* must carry raw data.
+    """
+    raw = module.raw_data
+    extra: list[dict[str, Any]] = []
+    if profile is not None and level is not ConfigContext.PROFILE:
+        extra = missing_segments(raw, profile.raw_data, str(_attribute(module, "name")))
+    reconciled = copy.deepcopy(raw)
+    _add_segments(reconciled, extra)
+    # What the pipeline added to a profile module is part of what the plan
+    # compares with (R'), but not of the data as read: only that is what is
+    # stored, so it decides whether there is anything to write and what the
+    # refs compare with.
+    additions = module.additions if level is ConfigContext.PROFILE else ()
+    planned_from = with_additions(reconciled, additions) if additions else reconciled
+    return ReadData(module, extra, reconciled, planned_from)
+
+
 def _segment_name(placeholder: Mapping[str, Any]) -> str:
     descriptor = cast(Mapping[str, object], placeholder["segment"])
     name = descriptor.get("name")
@@ -733,25 +787,15 @@ def plan_module(
         )
 
     inherited = profile if level is not ConfigContext.PROFILE else None
-    extra: list[dict[str, Any]] = []
-    if inherited is not None:
-        extra = missing_segments(raw, inherited.raw_data, name)
-    reconciled = copy.deepcopy(raw)
-    _add_segments(reconciled, extra)
-    # What the pipeline added to a profile module is part of what the plan
-    # compares with (R'), but not of the data as read: only that is what is
-    # stored, so it decides whether there is anything to write and what the
-    # refs compare with.
+    read = read_data(module, level=level, profile=profile)
+    extra, reconciled, planned_from = read.extra, read.reconciled, read.planned_from
     additions = module.additions if level is ConfigContext.PROFILE else ()
-    planned_from = with_additions(reconciled, additions) if additions else reconciled
 
     baseline: VcoModel | None
     ref_baseline: VcoModel | None
     if isinstance(current, VcoModel):
         model_type = type(current)
-        baseline = _reparse(model_type, planned_from, module.raw_mode)
-        if module.refs_loaded:
-            fill_ref_only(baseline, module.raw_refs)
+        baseline = read.model(model_type)
         ref_baseline = baseline
         if additions:
             ref_baseline = _reparse(model_type, reconciled, module.raw_mode)

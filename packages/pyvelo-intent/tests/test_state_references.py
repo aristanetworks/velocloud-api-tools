@@ -1,0 +1,291 @@
+"""``ConfigState.plan`` refuses a value that names a segment or a backhaul hub the configuration lacks.
+
+A profile state is built by ``profile_state``; an edge state is an edge whose
+device settings (or QoS) hold the edit, over that profile. A reference that
+already named nothing as read is a ``reference_kept`` warning, not an error.
+"""
+
+import copy
+import uuid
+from typing import Any
+
+import pytest
+from hub_helpers import HUB_A, HUB_B, backhaul_entry, backhaul_rule, ds_with_vpn
+from profile_state import (  # pyright: ignore[reportImplicitRelativeImport]
+    module_store_pipeline,
+    profile_state,
+)
+from pydantic import MISSING
+from pyvelo.client.exceptions import DanglingReferenceError
+from pyvelo.client.schemas.configuration import (
+    DeviceSettingsConfigurationModule,
+    EdgeConfiguration,
+)
+from pyvelo.config.resolver import ResolverContext
+from pyvelo.core import add, delete
+from pyvelo.testing import make_module_json
+from pyvelo_intent.config.pipeline import ConfigPipeline
+from pyvelo_intent.config.state import ConfigState
+from pyvelo_intent.testing import MockVcoClient
+from segment_helpers import GLOBAL, GUEST, ds_entry, firewall_entry, qos_entry
+
+DS = "deviceSettings"
+QOS = "QOS"
+EDGE_CONFIG = 50
+EDGE_DS_ID = 51
+EDGE_QOS_ID = 52
+SERVICE = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+UPDATE = "configuration/updateConfigurationModule"
+USERS = {"vlanId": 100, "name": "users", "segmentId": GLOBAL[0], "override": True}
+
+
+def network(segment_id: int, vlan_id: int = 200) -> dict[str, Any]:
+    """A LAN network on segment *segment_id*."""
+    return {
+        **USERS,
+        "vlanId": vlan_id,
+        "name": f"vlan{vlan_id}",
+        "segmentId": segment_id,
+    }
+
+
+async def profile_of(
+    *,
+    ds: list[dict[str, Any]] | None = None,
+    qos: list[dict[str, Any]] | None = None,
+    networks: list[dict[str, Any]] | None = None,
+) -> ConfigState:
+    """A profile with Global and Guest in its three modules, unless *ds* or *qos* say otherwise."""
+    return await profile_state(
+        ds if ds is not None else [ds_entry(GLOBAL), ds_entry(GUEST)],
+        qos if qos is not None else [qos_entry(GLOBAL), qos_entry(GUEST)],
+        [firewall_entry(GLOBAL), firewall_entry(GUEST)],
+        networks=networks or [],
+    )
+
+
+async def edge_over(
+    profile: ConfigState,
+    *,
+    networks: list[dict[str, Any]] = [],  # noqa: B006 -- copied, never changed
+    with_qos: bool = False,
+) -> ConfigState:
+    """An edge state over *profile*'s profile: its device settings hold only the Global Segment and *networks*.
+
+    With *with_qos* the edge also has a QoS module of its own, with the Global
+    Segment and no rule.
+    """
+    modules = [
+        make_module_json(
+            DS,
+            {
+                "lan": {"networks": copy.deepcopy(networks), "interfaces": []},
+                "segments": [ds_entry(GLOBAL)],
+            },
+            module_id=EDGE_DS_ID,
+            configuration_id=EDGE_CONFIG,
+            refs={},
+        )
+    ]
+    if with_qos:
+        modules.append(
+            make_module_json(
+                QOS,
+                {"segments": [qos_entry(GLOBAL)]},
+                module_id=EDGE_QOS_ID,
+                configuration_id=EDGE_CONFIG,
+            )
+        )
+    edge = EdgeConfiguration.model_validate(
+        {"name": "Edge Specific Profile", "id": EDGE_CONFIG, "modules": modules}
+    )
+    state = ConfigState(
+        edge_config=edge,
+        profile_config=profile.profile_config,
+        target_type="edge",
+        resolver_context=ResolverContext(),
+        resolvers=profile.resolvers,
+    )
+    state.take_snapshot()
+    return state
+
+
+async def patch(state: ConfigState, module: str, patch: dict[str, Any]) -> None:
+    _ = await ConfigPipeline(client=None).apply(state, module=module, patch=patch)
+
+
+def add_network(segment_id: int, vlan_id: int = 200) -> dict[str, Any]:
+    return {"lan": {"networks": {"+": add(network(segment_id, vlan_id))}}}
+
+
+async def test_an_edge_vlan_naming_a_profile_only_segment_is_accepted():
+    profile = await profile_of()
+    state = await edge_over(profile, networks=[network(GUEST[0])])
+
+    plan = state.plan()
+
+    assert plan.warnings == ()
+
+
+async def test_a_new_vlan_naming_no_segment_raises():
+    state = await profile_of()
+    await patch(state, DS, add_network(9))
+
+    with pytest.raises(DanglingReferenceError) as error:
+        _ = state.plan()
+
+    (reference,) = error.value.references
+    assert (reference.module, reference.value, reference.set_name) == (DS, 9, "segment")
+    assert "lan.networks" in str(error.value)
+
+
+async def test_a_new_vlan_on_an_edge_naming_no_segment_raises():
+    state = await edge_over(await profile_of())
+    await patch(state, DS, add_network(9))
+
+    with pytest.raises(DanglingReferenceError) as error:
+        _ = state.plan()
+
+    assert [r.value for r in error.value.references] == [9]
+
+
+async def test_a_vlan_left_as_read_on_a_missing_segment_warns():
+    state = await profile_of(networks=[network(9, 100)])
+    state.profile.device_settings.lan.networks[0].name = "renamed"
+
+    plan = state.plan()
+
+    (warning,) = plan.warnings
+    assert warning.code == "reference_kept"
+    assert warning.path.startswith("deviceSettings: lan.networks")
+    assert "9 is not a segment" in warning.message
+    assert "it was so as read" in warning.message
+    assert f"warning: {warning.message}" in plan.render()
+    assert [m.name for m in plan.changed] == [DS]  # the save goes ahead
+
+
+async def test_a_vlan_moved_onto_a_missing_segment_raises():
+    state = await profile_of(networks=[network(9, 100)])
+    state.profile.device_settings.lan.networks[0].segment_id = 8
+
+    with pytest.raises(DanglingReferenceError) as error:
+        _ = state.plan()
+
+    assert [r.value for r in error.value.references] == [8]
+
+
+def hub_profile_ds() -> list[dict[str, Any]]:
+    """Global, and Guest (segment 2) with ``HUB_A`` as hub and backhaul hub."""
+    return [
+        ds_entry(GLOBAL),
+        ds_with_vpn(GUEST, hubs=(HUB_A,), backhaul=(HUB_A,)),
+    ]
+
+
+def guest_rule_qos(hub: Any) -> list[dict[str, Any]]:
+    """QoS entries: Global, and Guest with rule ``Web`` that backhauls to *hub*."""
+    rule = backhaul_rule("Web", backhaul_entry(hub, SERVICE))
+    return [qos_entry(GLOBAL), qos_entry(GUEST, rules=[rule])]
+
+
+async def test_removing_a_hub_a_rule_uses_raises_and_names_the_rule():
+    state = await profile_of(ds=hub_profile_ds(), qos=guest_rule_qos(HUB_A))
+    assert state.plan().warnings == ()
+
+    await patch(
+        state,
+        DS,
+        {
+            "segments": {
+                "Guest": {
+                    "vpn": {
+                        "backHaulEdges": {HUB_A.name: delete()},
+                        "edgeToEdgeHub": {"vpnHubs": {HUB_A.name: delete()}},
+                    }
+                }
+            }
+        },
+    )
+
+    with pytest.raises(DanglingReferenceError) as error:
+        _ = state.plan()
+
+    (reference,) = error.value.references
+    assert (reference.module, reference.set_name) == (QOS, "backhaul_hub")
+    assert reference.segment_id == GUEST[0]
+    assert "rules[Web]" in str(error.value)
+
+
+async def test_an_edge_rule_must_name_a_backhaul_hub_of_the_profile():
+    profile = await profile_of(
+        ds=[ds_with_vpn(GLOBAL, hubs=(HUB_A,), backhaul=(HUB_A,)), ds_entry(GUEST)]
+    )
+    state = await edge_over(profile, with_qos=True)
+    await patch(
+        state,
+        QOS,
+        {
+            "segments": {
+                "Global Segment": {
+                    "rules": {
+                        "+": add(backhaul_rule("Web", backhaul_entry(HUB_B, SERVICE)))
+                    }
+                }
+            }
+        },
+    )
+
+    with pytest.raises(DanglingReferenceError) as error:
+        _ = state.plan()
+
+    (reference,) = error.value.references
+    assert (reference.module, reference.value) == (QOS, uuid.UUID(HUB_B.logical_id))
+
+
+async def test_an_edge_rule_naming_a_backhaul_hub_of_the_profile_is_accepted():
+    profile = await profile_of(
+        ds=[ds_with_vpn(GLOBAL, hubs=(HUB_A,), backhaul=(HUB_A,)), ds_entry(GUEST)]
+    )
+    state = await edge_over(profile, with_qos=True)
+    await patch(
+        state,
+        QOS,
+        {
+            "segments": {
+                "Global Segment": {
+                    "rules": {
+                        "+": add(backhaul_rule("Web", backhaul_entry(HUB_A, SERVICE)))
+                    }
+                }
+            }
+        },
+    )
+
+    assert state.plan().warnings == ()
+
+
+async def test_validate_false_does_not_skip_it():
+    state = await profile_of()
+    await patch(state, DS, add_network(9))
+    pipeline, store = module_store_pipeline(state)
+
+    with pytest.raises(DanglingReferenceError):
+        _ = await pipeline.save(state, validate=False)
+
+    assert [m for m, _ in store.requests if m == UPDATE] == []
+
+
+async def test_update_module_does_not_run_it():
+    state = await profile_of(networks=[network(GLOBAL[0], 100)])
+    client = MockVcoClient.for_state(state)
+    modules = state.profile_config.modules
+    assert modules is not MISSING
+    module = next(
+        m for m in modules if isinstance(m, DeviceSettingsConfigurationModule)
+    )
+    data = module.mutable_data()
+    data.lan.networks.append(type(data.lan.networks[0]).model_validate(network(9)))
+
+    _ = await client.update_module(module, data)
+
+    assert [m for m, _ in client.store.requests if m == UPDATE] == [UPDATE]

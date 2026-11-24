@@ -32,18 +32,20 @@ async def profile_state(
     *,
     segments: tuple[Segment, ...] = (GLOBAL, GUEST, VOICE),
     ds_refs: dict[str, Any] | MISSING | None = None,
+    networks: list[dict[str, Any]] = [],  # noqa: B006 -- copied, never changed
 ) -> ConfigState:
     """A profile state of configuration ``CONFIG`` with the given segment lists, and a snapshot.
 
     The rows are those of ``profile_rows`` (*ds_refs* is its argument, given
-    only when it is not None). The modules are at the profile level, as a
-    load leaves them, so ``add_segment_entry`` takes them. The state's segment
-    resolver is loaded with *segments*.
+    only when it is not None), and the device settings ``lan.networks`` are
+    *networks*. The modules are at the profile level, as a load leaves them,
+    so ``add_segment_entry`` takes them. The state's segment resolver is
+    loaded with *segments*.
     """
     rows = (
-        profile_rows(ds, qos, firewall)
+        profile_rows(ds, qos, firewall, networks=networks)
         if ds_refs is None
-        else profile_rows(ds, qos, firewall, ds_refs=ds_refs)
+        else profile_rows(ds, qos, firewall, ds_refs=ds_refs, networks=networks)
     )
     profile = EnterpriseConfigurationProfile.model_validate(
         {"name": "P", "id": CONFIG, "modules": rows}

@@ -349,3 +349,31 @@ def test_the_error_lists_every_reference():
     assert "segments" in text
     with pytest.raises(DanglingReferenceError):
         raise error
+
+
+def test_the_message_names_a_rule_that_backhauls_nowhere_only_for_a_hub():
+    segment = DanglingReferenceError(
+        [Reference("deviceSettings", Path(("x",)), 7, "segment", None)]
+    )
+    hub = DanglingReferenceError(
+        [Reference("QOS", Path(("x",)), "x", "backhaul_hub", 0)]
+    )
+
+    assert "backhauls nowhere" not in str(segment)
+    assert "backhauls nowhere" in str(hub)
+
+
+def test_the_sources_are_a_sentence_of_their_own():
+    both = DanglingReferenceError(
+        [
+            Reference("deviceSettings", Path(("x",)), 7, "segment", None),
+            Reference("QOS", Path(("x",)), "x", "backhaul_hub", 0),
+        ]
+    )
+
+    assert (
+        ". Where each comes from: a segment is one of the device settings "
+        "`segments` of the profile; a backhaul hub is one of the segment's "
+        "`vpn.backHaulEdges` in the profile's device settings." in str(both)
+    )
+    assert "reference; " not in str(both)

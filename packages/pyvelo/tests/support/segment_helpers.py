@@ -118,12 +118,14 @@ def profile_rows(
     firewall: list[dict[str, Any]],
     *,
     ds_refs: dict[str, Any] | MISSING = _ONE_ROW_PER_ENTRY,
+    networks: list[dict[str, Any]] = [],  # noqa: B006 -- copied, never changed
 ) -> list[dict[str, Any]]:
     """The three module rows of a profile of configuration ``CONFIG``, with the given segment lists.
 
     The device settings module has *ds_refs*, by default one
     ``deviceSettings:segment`` row per entry of *ds* (of one of the three
-    segments of this module); ``MISSING`` gives it no refs at all.
+    segments of this module); ``MISSING`` gives it no refs at all. The device
+    settings ``lan.networks`` are *networks*.
     """
     if ds_refs is _ONE_ROW_PER_ENTRY:
         # A ref held by one row is a bare row, by several a list, as the VCO sends it.
@@ -143,7 +145,10 @@ def profile_rows(
     return [
         make_module_json(
             "deviceSettings",
-            {"lan": {"networks": [], "interfaces": []}, "segments": copy.deepcopy(ds)},
+            {
+                "lan": {"networks": copy.deepcopy(networks), "interfaces": []},
+                "segments": copy.deepcopy(ds),
+            },
             module_id=DS_ID,
             configuration_id=CONFIG,
             refs=copy.deepcopy(refs),

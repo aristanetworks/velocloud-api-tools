@@ -353,12 +353,18 @@ class DanglingReferenceError(VcoError):
                 "a backhaul hub is one of the segment's `vpn.backHaulEdges` in the "
                 "profile's device settings"
             )
+        nowhere = (
+            " (for a hub, a rule that backhauls nowhere)"
+            if "backhaul_hub" in names
+            else ""
+        )
         message = (
             f"{len(self.references)} reference(s) name nothing:\n{lines}\n"
             "The save is refused because the VCO would store a value that names "
-            "nothing (for a hub, a rule that backhauls nowhere). Give a value "
-            "that exists, or remove the reference; " + "; ".join(sources) + "."
+            f"nothing{nowhere}. Give a value that exists, or remove the reference."
         )
+        if sources:
+            message += f" Where each comes from: {'; '.join(sources)}."
         if "backhaul_hub" in names:
             message += (
                 " To make a hub a backhaul hub of a segment, send "

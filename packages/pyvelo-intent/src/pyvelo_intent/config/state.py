@@ -10,7 +10,11 @@ from typing import Any, Literal, Protocol, cast, override, runtime_checkable
 
 from pydantic import MISSING, BaseModel
 from pyvelo.client.enums.configuration import ConfigurationModuleName
-from pyvelo.client.exceptions import DetachedObjectError, SegmentSetError
+from pyvelo.client.exceptions import (
+    DanglingReferenceError,
+    DetachedObjectError,
+    SegmentSetError,
+)
 from pyvelo.client.models.configuration.common import segment_id_of
 from pyvelo.client.models.configuration.device_settings.root import DeviceSettingsData
 from pyvelo.client.models.configuration.firewall.root import FirewallData
@@ -19,7 +23,12 @@ from pyvelo.client.models.configuration.qos.root import QosData
 from pyvelo.client.models.configuration.ref_owners import ref_only_values
 from pyvelo.client.models.configuration.wan.root import WanData
 from pyvelo.client.module_check import ModuleWrite
-from pyvelo.client.module_write import ModulePlan, missing_segments, plan_module
+from pyvelo.client.module_write import (
+    ModulePlan,
+    missing_segments,
+    plan_module,
+    read_data,
+)
 from pyvelo.client.schemas.configuration import (
     AnyConfigurationModule,
     ConfigurationBase,
@@ -42,6 +51,12 @@ from pyvelo.core.rebase import (
     Path,
     python_path,
     raw_changes,
+)
+from pyvelo.core.references import (
+    check_references,
+    provided,
+    reference_text,
+    union,
 )
 from pyvelo.core.response_check import PlannedChange, ServerChange
 
@@ -134,7 +149,9 @@ class ConfigPlan:
     - "legacy keys (dropped when the module is written): ..." are keys the VCO
       does not know, on a module with nothing else to write.
     - "warning: text", last and with no indent, is a segment of a profile that
-      its three modules disagree about as read (``segment_warnings``).
+      its three modules disagree about as read (``segment_warnings``), or a
+      reference that names nothing as it was read and the save leaves
+      (``check_warnings``).
 
     A profile's device settings module is written first, then the others in
     the order the configuration lists them, and ``modules`` is in that order.
@@ -149,15 +166,19 @@ class ConfigPlan:
         warnings: What each module's plan warns of, one entry per warning,
             with the module's name before the warning's path
             (``"deviceSettings: refs deviceSettings:dns:primaryProvider"``),
-            then ``segment_warnings``.
+            then ``segment_warnings``, then ``check_warnings``.
         segment_warnings: The segments of a profile that its three modules
             disagree about as read, which the edit does not settle: code
             ``segments_disagree``, at ``segments["<name>"]``. Empty for an edge.
+        check_warnings: The references that name nothing in the module as read
+            and still name nothing, which the save leaves as they are: code
+            ``reference_kept``, at ``"<module>: <path>"``.
     """
 
     modules: tuple[ModulePlan, ...]
     target: str = ""
     segment_warnings: tuple[ValidationWarning, ...] = ()
+    check_warnings: tuple[ValidationWarning, ...] = ()
 
     @property
     def changed(self) -> tuple[ModulePlan, ...]:
@@ -166,7 +187,7 @@ class ConfigPlan:
 
     @property
     def warnings(self) -> tuple[ValidationWarning, ...]:
-        """The warnings of every module's plan, then the segment warnings, as data; ``render()`` shows them in their blocks."""
+        """The warnings of every module's plan, then the segment and check warnings, as data; ``render()`` shows them in their blocks."""
         return (
             *(
                 ValidationWarning(
@@ -178,11 +199,15 @@ class ConfigPlan:
                 for warning in module.warnings
             ),
             *self.segment_warnings,
+            *self.check_warnings,
         )
 
     def render(self) -> str:
         lines = [m.render() for m in self.modules]
-        lines.extend(f"warning: {w.message}" for w in self.segment_warnings)
+        lines.extend(
+            f"warning: {w.message}"
+            for w in (*self.segment_warnings, *self.check_warnings)
+        )
         return "\n".join([self.target, *lines] if self.target else lines)
 
 
@@ -798,7 +823,88 @@ class ConfigState:
         warnings = (
             _check_segment_set(ordered, plans) if self.target_type == "profile" else ()
         )
-        return ConfigPlan(modules=plans, target=target, segment_warnings=warnings)
+        return ConfigPlan(
+            modules=plans,
+            target=target,
+            segment_warnings=warnings,
+            check_warnings=self._check_references(ordered),
+        )
+
+    def _check_references(
+        self, modules: Sequence[AnyConfigurationModule]
+    ) -> tuple[ValidationWarning, ...]:
+        """Refuse a value of the target that names nothing the configuration provides; warn of one that did as read.
+
+        Each module of the target is a target of the check, as edited
+        (``module.data``) and as read (its raw data parsed again with an edge's
+        placeholders and a profile's additions). The sets the values are
+        looked up in are those of the target's modules as edited and, for an
+        edge, the profile's modules as read; the sets as read are those of the
+        modules as read. Raises ``DanglingReferenceError`` for a value that is
+        new, or was a member and no longer is; returns a ``reference_kept``
+        warning for one that named nothing as read and does still.
+        """
+        level = self._level()
+        profile_models = self._profile_as_read() if level is ConfigContext.EDGE else []
+        targets: list[tuple[str, VcoModel, VcoModel | None]] = []
+        for module in modules:
+            edited: object = module.data
+            if not isinstance(edited, VcoModel):
+                continue
+            read: VcoModel | None = None
+            if module.raw_data is not MISSING:
+                profile_mod = (
+                    _find_module(self.profile_config, module.name)
+                    if level is ConfigContext.EDGE
+                    else None
+                )
+                read = read_data(module, level=level, profile=profile_mod).model(
+                    type(edited)
+                )
+            targets.append((str(module.name), edited, read))
+        sets_now = union(
+            *(provided(edited) for _, edited, _ in targets),
+            *(provided(model) for model in profile_models),
+        )
+        sets_as_read = union(
+            *(provided(read) for _, _, read in targets if read is not None),
+            *(provided(model) for model in profile_models),
+        )
+        findings = check_references(targets, sets_now, sets_as_read)
+        if findings.dangling:
+            raise DanglingReferenceError(findings.dangling)
+        return tuple(
+            ValidationWarning(
+                path=f"{reference.module}: {reference.path}",
+                message=(
+                    f"{reference_text(reference)} (it was so as read; the save "
+                    "leaves it)"
+                ),
+                code="reference_kept",
+            )
+            for reference in findings.kept
+        )
+
+    def _level(self) -> ConfigContext:
+        return (
+            ConfigContext.PROFILE
+            if self.target_type == "profile"
+            else ConfigContext.EDGE
+        )
+
+    def _profile_as_read(self) -> list[VcoModel]:
+        """The data of each module of the profile layer as read, with the profile's additions."""
+        config = self.profile_config
+        if config.modules is MISSING:
+            return []
+        models: list[VcoModel] = []
+        for module in config.modules:
+            held: object = module.data
+            if isinstance(held, VcoModel) and module.raw_data is not MISSING:
+                models.append(
+                    read_data(module, level=ConfigContext.PROFILE).model(type(held))
+                )
+        return models
 
     def _target_text(self) -> str:
         """What a plan is for: ``edge 101, enterprise 1, configuration 10``."""
@@ -841,11 +947,7 @@ class ConfigState:
         again; ``await pipeline.load_resolvers(state, NetworkServiceIdentity)``
         loads them now.
         """
-        level = (
-            ConfigContext.PROFILE
-            if self.target_type == "profile"
-            else ConfigContext.EDGE
-        )
+        level = self._level()
         profile_mod = (
             _find_module(self.profile_config, module.name)
             if level is ConfigContext.EDGE
