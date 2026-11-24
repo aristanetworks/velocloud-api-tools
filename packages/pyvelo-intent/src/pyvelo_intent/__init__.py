@@ -1,6 +1,7 @@
 """Helper library for VeloCloud Orchestrator configuration APIs."""
 
 from pyvelo.client.exceptions import (
+    ComposedModuleError,
     ConfigConflictError,
     DanglingReferenceError,
     DetachedObjectError,
@@ -42,6 +43,11 @@ from pyvelo_intent.config import (
     load_config,
     save_progress,
 )
+from pyvelo_intent.config.effective import (
+    EffectiveCategory,
+    EffectiveComparison,
+    EffectiveDifference,
+)
 from pyvelo_intent.diff import (
     Added,
     Change,
@@ -64,6 +70,7 @@ from pyvelo_intent.errors import (
 __all__ = [
     "Added",
     "Change",
+    "ComposedModuleError",
     "ConfigConflictError",
     "ConfigFieldChange",
     "ConfigInputError",
@@ -73,6 +80,9 @@ __all__ = [
     "DanglingReferenceError",
     "DetachedObjectError",
     "DiffResult",
+    "EffectiveCategory",
+    "EffectiveComparison",
+    "EffectiveDifference",
     "FieldChange",
     "FixedListError",
     "GroupOwnershipError",

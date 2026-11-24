@@ -24,8 +24,8 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any, cast
 
-from pydantic import MISSING
-from pydantic_core import PydanticUndefined, to_jsonable_python
+from pydantic import MISSING, TypeAdapter
+from pydantic_core import PydanticUndefined
 
 from .base import JsonObject, wire_name
 from .fields import KeySpec, get_key_spec
@@ -376,7 +376,10 @@ def effective_dump(
 
     The JSON has the wire keys (aliases) and the values as JSON mode writes
     them; a key is absent where the view has ``MISSING`` (an ``Unconverted``
-    field). Each ``Resolved`` is written as its value. The map has an entry for
+    field). A stored value (``EDGE`` or ``PROFILE``) is written as stored: the
+    fields of a model it was not given are left out, which is what the server
+    composes from the same data. A display default (``FACTORY``) is written
+    whole. Each ``Resolved`` is written as its value. The map has an entry for
     each ``Resolved`` of the view, an item of an ``Additive`` list included,
     under its path in the view: dotted wire keys, a keyed ``Layered`` child as
     ``segments[<segmentId>]`` (the alt key; the key where the list has none)
@@ -401,7 +404,7 @@ def _dump_model(
         if isinstance(value, Resolved):
             resolved = cast("Resolved[object]", value)
             found[path] = resolved
-            data[key] = _json(resolved.value)
+            data[key] = _json(resolved.value, full=resolved.origin is Origin.FACTORY)
         elif isinstance(value, Layered):
             data[key] = _dump_model(cast("Layered[Effective]", value), path, found)
         elif isinstance(value, list):
@@ -424,7 +427,7 @@ def _dump_list(
         if isinstance(item, Resolved):
             resolved = cast("Resolved[object]", item)
             found[f"{path}[{position}]"] = resolved
-            dumped.append(_json(resolved.value))
+            dumped.append(_json(resolved.value, full=resolved.origin is Origin.FACTORY))
         elif isinstance(item, Layered):
             child = cast("Layered[Effective]", item)
             text = None if spec is None else _identity_text(child, spec)
@@ -443,5 +446,9 @@ def _identity_text(item: object, spec: KeySpec) -> str | None:
     return item_key_text(item, spec.paths)
 
 
-def _json(value: object) -> object:
-    return to_jsonable_python(value, by_alias=True)
+_ANY: TypeAdapter[object] = TypeAdapter(object)
+
+
+def _json(value: object, *, full: bool = False) -> object:
+    """*value* as JSON mode writes it; unless *full*, a model leaves out the fields it was not given (the stored data, not the defaults the model fills in)."""
+    return _ANY.dump_python(value, mode="json", by_alias=True, exclude_unset=not full)

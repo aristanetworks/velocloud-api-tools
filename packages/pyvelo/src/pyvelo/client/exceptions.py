@@ -1494,6 +1494,25 @@ class GroupOwnershipError(VcoError):
         super().__init__(message)
 
 
+class ComposedModuleError(VcoError):
+    """Raised by ``compare_effective`` for a module the VCO's composed read gave no data for.
+
+    ``edge/getEdgeConfigurationModules`` hides a composition error by
+    returning ``null`` for the module, and a module it was asked for may be
+    left out of the answer. Either way there is nothing to check the effective
+    view against, so the comparison of that module stops with this error
+    instead of reporting every key as missing. ``module`` is the module's
+    wire name. Open the edge in the VCO to see why its modules do not compose,
+    or compare the other modules.
+    """
+
+    module: str
+
+    def __init__(self, message: str, *, module: str) -> None:
+        self.module = module
+        super().__init__(message)
+
+
 class DetachedObjectError(VcoError):
     """Raised by an edit through an object that a write replaced.
 

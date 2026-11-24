@@ -7,6 +7,7 @@ from typing import Any
 
 import pytest
 from pyvelo.client.exceptions import (
+    ComposedModuleError,
     ConfigConflictError,
     DanglingReferenceError,
     DetachedObjectError,
@@ -310,6 +311,7 @@ def test_every_error_of_the_module_round_trips():
         GroupOwnershipError(
             "one member", group="stateful", field="stateful_firewall_enabled"
         ),
+        ComposedModuleError("no data", module="firewall"),
         DetachedObjectError("changed", (path,)),
         RefsNotLoadedError("deviceSettings", (path,)),
         FixedListError("QOS", [(path, "the list is gone")]),
@@ -365,6 +367,14 @@ def test_an_attribute_that_refers_back_to_the_error_survives():
     assert shallow.me is error  # pyright: ignore[reportAttributeAccessIssue]
     shallow.add_note("two")
     assert error.__notes__ == ["one"]
+
+
+def test_a_composed_module_error_keeps_its_module_through_copies():
+    error = ComposedModuleError("the firewall module is null", module="firewall")
+    for copied in copies(error):
+        assert type(copied) is ComposedModuleError
+        assert copied.module == "firewall"
+        assert str(copied) == "the firewall module is null"
 
 
 def test_the_stored_parts_of_a_write_error_survive_a_deep_copy():

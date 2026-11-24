@@ -4,6 +4,7 @@ from typing import Any
 import pytest
 from pyvelo.client.enums.configuration import ConfigurationModuleName
 from pyvelo.client.exceptions import (
+    ComposedModuleError,
     ConfigConflictError,
     DanglingReferenceError,
     DetachedObjectError,
@@ -171,6 +172,7 @@ def test_write_errors_are_exported_from_the_package():
     import pyvelo_intent
 
     assert pyvelo_intent.ModuleWriteError is ModuleWriteError
+    assert pyvelo_intent.ComposedModuleError is ComposedModuleError
     assert pyvelo_intent.ConfigConflictError is ConfigConflictError
     assert pyvelo_intent.DanglingReferenceError is DanglingReferenceError
     assert pyvelo_intent.WriteNotAppliedError is WriteNotAppliedError
@@ -183,6 +185,7 @@ def test_write_errors_are_exported_from_the_package():
     assert pyvelo_intent.HubListError is HubListError
     assert {
         "ModuleWriteError",
+        "ComposedModuleError",
         "ConfigConflictError",
         "DanglingReferenceError",
         "WriteNotAppliedError",

@@ -21,6 +21,7 @@ class TestSaveErrorReexports:
         from pyvelo.client import exceptions
 
         for name in (
+            "ComposedModuleError",
             "ConfigConflictError",
             "DanglingReferenceError",
             "FixedListError",

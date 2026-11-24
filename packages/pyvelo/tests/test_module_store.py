@@ -844,3 +844,55 @@ def test_get_enterprise_services_lists_the_network_service_objects():
             "enterpriseId": 7,
         }
     ]
+
+
+COMPOSED = "edge/getEdgeConfigurationModules"
+
+
+def test_the_store_serves_the_modules_it_composes_for_an_edge():
+    store = ModuleStore()
+    store.composed[42] = {"firewall": copy.deepcopy(RULES), "QOS": None}
+    answer = cast(dict[str, Any], store.handle(COMPOSED, {"edgeId": 42}))
+    assert set(answer) == {"firewall", "QOS"}
+    assert answer["QOS"] is None  # a module that does not compose is null
+    assert answer["firewall"]["data"] == RULES
+    assert {"version", "schemaVersion", "type"} <= set(answer["firewall"])
+    assert "refs" not in answer["firewall"]
+
+    only = cast(
+        dict[str, Any], store.handle(COMPOSED, {"edgeId": 42, "modules": ["QOS"]})
+    )
+    assert set(only) == {"QOS"}
+    answer["firewall"]["data"]["segments"].clear()
+    assert store.composed[42]["firewall"] == RULES  # the answer is a copy
+
+
+def test_an_edge_with_no_composed_modules_is_unknown():
+    store = ModuleStore()
+    with pytest.raises(RpcError) as unknown:
+        _ = store.handle(COMPOSED, {"edgeId": 7})
+    assert unknown.value.code == -32003
+    with pytest.raises(RpcError) as missing:
+        _ = store.handle(COMPOSED, {})
+    assert "edgeId" in str(missing.value.data)
+
+
+async def test_the_client_reads_the_composed_modules_and_the_store_records_the_request(
+    mock_vco_client: MockVcoClientFactory,
+):
+    from pyvelo.client.enums.configuration import ConfigurationModuleName
+    from pyvelo.client.schemas.edge import GetEdgeConfigurationModules
+
+    store = ModuleStore()
+    store.composed[42] = {"firewall": copy.deepcopy(RULES)}
+    client = await mock_vco_client(store)
+    result = await client.get_edge_configuration_modules(
+        GetEdgeConfigurationModules(
+            edge_id=42, modules=[ConfigurationModuleName.FIREWALL], encrypt_keys=True
+        )
+    )
+    assert result.firewall is not None and result.firewall is not MISSING
+    assert result.firewall.raw_data == RULES
+    ((method, params),) = store.requests
+    assert method == COMPOSED
+    assert params == {"edgeId": 42, "modules": ["firewall"], "encryptKeys": True}

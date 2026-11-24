@@ -242,6 +242,16 @@ def test_effective_view_refuses_a_class_of_another_layer() -> None:
         _ = effective_view(None, profile, Mod[Edge])
 
 
+def test_effective_dump_writes_a_stored_value_as_stored_and_a_default_whole() -> None:
+    # The server composes the stored data: the fields a model was not given
+    # (its own defaults) are not in it, so they are not in the dump either.
+    # A display default is written whole.
+    data, _ = effective_dump(_view({}, {"settings": {"a": 9}}))
+    assert data["settings"] == {"a": 9}
+    data, _ = effective_dump(_view({}, {}))
+    assert data["settings"] == {"a": 1, "b": False}
+
+
 def test_effective_dump_gives_values_and_origins() -> None:
     profile = mod_json(
         level=2,

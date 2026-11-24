@@ -8,6 +8,7 @@ from pydantic import MISSING
 from pyvelo.client.enums.configuration import ConfigurationModuleName
 from pyvelo.client.enums.profiles import GetConfigurationWith
 from pyvelo.client.exceptions import (
+    ComposedModuleError,
     DetachedObjectError,
     ModuleWriteError,
     UnboundError,
@@ -28,7 +29,10 @@ from pyvelo.client.schemas.configuration import (
     QosConfigurationModule,
     WanConfigurationModule,
 )
-from pyvelo.client.schemas.edge import GetEdgeConfigurationStack
+from pyvelo.client.schemas.edge import (
+    GetEdgeConfigurationModules,
+    GetEdgeConfigurationStack,
+)
 from pyvelo.config.resolver import Resolver, ResolverContext, ResolverRegistry
 from pyvelo.config.resolvers.application import ApplicationResolver
 from pyvelo.config.resolvers.edge import EdgeResolver
@@ -55,6 +59,13 @@ from pyvelo.core.merge import nest_patch, select_items
 from pyvelo.core.patch import ItemOp, is_new, parse_item_op
 from pyvelo.core.rebase import Path, raw_changes
 
+from pyvelo_intent.config.effective import (
+    CONVERTED_MODULES,
+    EFFECTIVE_IGNORES,
+    EffectiveComparison,
+    EffectiveDifference,
+    compare_module,
+)
 from pyvelo_intent.config.hub_calls import (
     HubServices,
     hub_rows,
@@ -85,6 +96,7 @@ from pyvelo_intent.config.profile_segments import (
 from pyvelo_intent.config.state import (
     ConfigPlan,
     ConfigState,
+    EffectiveView,
     SaveProgress,
     SaveResult,
     StepOutcome,
@@ -1290,6 +1302,107 @@ class ConfigPipeline:
             raise
         return result
 
+    async def compare_effective(
+        self, state: ConfigState, *, modules: Sequence[str] | None = None
+    ) -> EffectiveComparison:
+        """Check the client's effective view of an edge against the modules the VCO composes for it.
+
+        Reads ``edge/getEdgeConfigurationModules`` for the edge *state* was
+        loaded for, asking for encrypted keys, and compares each of *modules*
+        (by default every converted one, ``CONVERTED_MODULES``) with
+        ``state.effective``. The profile half of the state is read again
+        first, so a profile changed since the load is not a finding; *state*
+        is not changed. Every difference is an entry, and the ones that say the
+        view and the VCO disagree are ``EffectiveComparison.findings``.
+
+        Raises ``ValueError`` for a profile state (the VCO composes modules
+        for edges), for a state with changes that are not saved (it differs
+        from the VCO by design: save, or load the edge again), and for a
+        module that is not converted. Raises ``ComposedModuleError`` for a
+        module the VCO answers with ``null`` or leaves out: it hides a
+        composition error that way, and there is nothing to compare with.
+        """
+        names = _converted(modules)
+        edge_config = state.edge_config
+        edge_id = state.resolver_context.edge_id
+        if state.target_type != "edge" or edge_config is None or edge_id is None:
+            raise ValueError(
+                "compare_effective checks an edge, because the VCO composes modules "
+                "for edges only, and this state is not one loaded for an edge. "
+                "Load the edge with load(edge_id) and compare that state"
+            )
+        if state.plan().changed:
+            raise ValueError(
+                "compare_effective: this state has changes that are not saved, so "
+                "it differs from the VCO by design and every change would be "
+                "reported as a difference. Save the changes with save(state), or "
+                "load the edge again, and compare then"
+            )
+        enterprise_id = state.resolver_context.enterprise_id
+        profile_id = state.profile_config.id_
+        if profile_id is None or profile_id is MISSING:
+            raise ValueError(
+                "compare_effective: the state's profile configuration has no ID to "
+                "read it again with; load the edge with load(edge_id)"
+            )
+
+        read = GetConfiguration(id_=profile_id, with_=[GetConfigurationWith.MODULES])
+        if enterprise_id is not None:
+            read.enterprise_id = enterprise_id
+        fresh = await self.client.get_configuration(read)
+        if not isinstance(fresh, EnterpriseConfigurationProfile):
+            raise ValueError(  # noqa: TRY004 (an edge configuration is a valid answer, which this call refuses)
+                f"configuration {profile_id} is no longer a profile's: the VCO "
+                "answers it as an edge's configuration. Load the edge again with "
+                "load(edge_id)"
+            )
+
+        ask = GetEdgeConfigurationModules(
+            edge_id=edge_id,
+            modules=[ConfigurationModuleName(name) for name in names],
+            encrypt_keys=True,
+        )
+        if enterprise_id is not None:
+            ask.enterprise_id = enterprise_id
+        composed = await self.client.get_edge_configuration_modules(ask)
+
+        view = EffectiveView(edge_config, fresh)
+        entries: list[EffectiveDifference] = []
+        for name in names:
+            module: object = getattr(composed, name, None)
+            data: object = getattr(module, "raw_data", MISSING)
+            if module is None or module is MISSING:
+                said = (
+                    f"answered null for the {name} module"
+                    if module is None
+                    else f"gave no {name} module"
+                )
+                raise ComposedModuleError(
+                    f"edge/getEdgeConfigurationModules {said} of edge {edge_id}. "
+                    + "The VCO hides a composition error that way, so there is "
+                    + "nothing to compare the view with. Open the edge in the VCO "
+                    + "to see why its modules do not compose, or compare the other "
+                    + f"modules with modules=[...] (not {name!r})",
+                    module=name,
+                )
+            if not isinstance(data, dict):
+                raise ComposedModuleError(
+                    f"edge/getEdgeConfigurationModules gave the {name} module of "
+                    + f"edge {edge_id} no data object, so there is nothing to "
+                    + "compare the view with. Read the module with "
+                    + "get_edge_configuration_modules to see what the VCO sent",
+                    module=name,
+                )
+            entries.extend(
+                compare_module(
+                    name,
+                    getattr(view, name),
+                    cast("dict[str, Any]", data),
+                    ignores=EFFECTIVE_IGNORES,
+                )
+            )
+        return EffectiveComparison(tuple(entries))
+
     def validate(self, state: ConfigState) -> ValidationResult:
         """Run all write-time validators without saving (dry-run validation)."""
         return self._validators.run(state, phase="write")
@@ -1418,6 +1531,23 @@ def build_default_pipeline(
     return ConfigPipeline(
         client, resolvers=resolvers, validator_registry=validator_registry
     )
+
+
+def _converted(modules: Sequence[str] | None) -> tuple[str, ...]:
+    """The converted modules *modules* names (all of them for ``None``); ``ValueError`` for another."""
+    if modules is None:
+        return CONVERTED_MODULES
+    names: list[str] = []
+    for module in modules:
+        name = _resolve_module_name(module).value
+        if name not in CONVERTED_MODULES:
+            raise ValueError(
+                f"compare_effective: {module!r} has no effective view yet, so "
+                "every key the VCO composes for it would be reported as "
+                f"server_only. Converted modules: {', '.join(CONVERTED_MODULES)}"
+            )
+        names.append(name)
+    return tuple(names)
 
 
 class _SegmentMetadata(Protocol):

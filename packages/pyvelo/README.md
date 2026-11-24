@@ -290,7 +290,10 @@ read already holds the refs, so the module found is not read again.
 `pyvelo.testing.ModuleStore` is an `httpx` handler that holds module rows as
 JSON and answers module updates, inserts, `getConfiguration` and, for an edge
 whose two configurations it was told (`add_stack`), `getEdgeConfigurationStack`,
-as a VCO does. Its knobs are the conditional version check, a VCO that ignores
+as a VCO does. For an edge whose composed modules it holds (`composed[edge_id] =
+{"firewall": data}`, or `None` for the `null` of a module that does not
+compose) it answers `getEdgeConfigurationModules` and records the request, so a
+test can check `encryptKeys`. Its knobs are the conditional version check, a VCO that ignores
 `returnData`, the enterprise a request has to name, writes that fail, writes
 that are stored and whose answer is lost (`lose_answers`), rule IDs issued as a
 VCO issues them (`issue_rule_ids`), hooks that change what is stored
