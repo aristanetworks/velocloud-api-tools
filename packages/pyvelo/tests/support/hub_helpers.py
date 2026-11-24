@@ -9,6 +9,8 @@ from typing import Any, Final, Literal, NamedTuple
 
 import segment_helpers
 from pyvelo.client.models.configuration.profile_segments import segment_template
+from pyvelo.testing.module_store import ModuleStore
+from segment_helpers import CONFIG, DS_ID
 
 
 class Hub(NamedTuple):
@@ -93,3 +95,70 @@ def ds_with_vpn(
         "conditionalBackhaul": False,
     }
     return entry
+
+
+def hub_row(
+    hub: Hub,
+    *,
+    service_id: int,
+    service_logical_id: str,
+    segment: segment_helpers.Segment,
+    configuration_id: int = CONFIG,
+    module_id: int = DS_ID,
+    roles: tuple[Literal["hub", "bridge", "backhaul"], ...] = ("hub",),
+) -> dict[str, Any]:
+    """A device settings hub row for *hub* in *segment*, as the VCO stores it.
+
+    *service_id* and *service_logical_id* are the hub's service in the profile
+    and segment (the cluster itself for a cluster). Any of the *roles* makes
+    the row's ``edgeHub`` role true, as an enable call does. For an Edge the
+    row's ``data`` is the service's: the Edge's ``logicalId`` and the roles; for
+    a cluster ``logicalId`` is the cluster's and ``data`` is its role data for
+    the profile, from the segment ID to the roles.
+    """
+    held = {
+        "edgeHub": bool(roles),
+        "edgeToEdgeBridge": "bridge" in roles,
+        "backHaulEdge": "backhaul" in roles,
+    }
+    cluster = hub.kind == "cluster"
+    data: dict[str, Any] = (
+        {str(segment[0]): {"roles": held}}
+        if cluster
+        else {"logicalId": hub.logical_id, "roles": held}
+    )
+    return {
+        "id": 8000 + service_id,
+        "enterpriseObjectId": service_id,
+        "configurationId": configuration_id,
+        "moduleId": module_id,
+        "segmentObjectId": segment[3],
+        "ref": "deviceSettings:vpn:edgeHubCluster"
+        if cluster
+        else "deviceSettings:vpn:edgeHub",
+        "logicalId": hub.logical_id if cluster else service_logical_id,
+        "name": hub.name,
+        "type": hub.type_,
+        "object": "NETWORK_SERVICE",
+        "data": data,
+        "segmentLogicalId": segment[2],
+    }
+
+
+def hub_store(*hubs: Hub, **knobs: Any) -> ModuleStore:
+    """A ``ModuleStore`` (with *knobs*) that holds the Edges and clusters of *hubs*.
+
+    ``MEMBER`` is held as a member of ``CLUSTER``.
+    """
+    store = ModuleStore(**knobs)
+    for hub in hubs:
+        if hub.kind == "cluster":
+            store.add_cluster(hub.id, logical_id=hub.logical_id, name=hub.name)
+        else:
+            store.add_edge(
+                hub.id,
+                logical_id=hub.logical_id,
+                name=hub.name,
+                cluster=CLUSTER.id if hub == MEMBER else None,
+            )
+    return store

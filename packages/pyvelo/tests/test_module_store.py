@@ -831,6 +831,7 @@ def test_get_enterprise_services_lists_the_network_service_objects():
             "name": "dns-a",
             "type": "dnsService",
             "data": {},
+            "created": "2024-01-01T00:00:00.000Z",
             "enterpriseId": 7,
         }
     ]

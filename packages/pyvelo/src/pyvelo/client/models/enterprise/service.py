@@ -27,7 +27,7 @@ class ServiceQosUsage(VcoModel):
     name: str | None = None
     logical_id: uuid.UUID | None = None
     profile_id: int | None = None
-    ref: dict[str, Any] | None = None
+    ref: str | dict[str, Any] | None = None
 
 
 class ServiceEdgeUsage(VcoModel):

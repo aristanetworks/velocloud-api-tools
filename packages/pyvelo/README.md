@@ -245,6 +245,18 @@ request building, parsing and error mapping against the store. A client given a
 `transport` is connected from the start and needs no `async with`; inside one it
 keeps the transport, and after it the client is closed.
 
+The store also holds hubs: `add_edge` an Edge (optionally a member of a cluster)
+and `add_cluster` a hub cluster. It lists the Edges
+(`getEnterpriseEdgeList`), lists the services with the `configuration` and
+`edgeQOSUsage` lists, and answers the twelve hub role calls as a VCO does: an
+Edge enable makes the `edgeHub` service and its device settings row once, an
+Edge hub disable deletes the service and every row that points at it, and an
+Edge disable that finds no service answers `null` (the three Edge disable
+wrappers return `None` for it; the cluster ones raise `VcoEmptyResultError`).
+With `vpn_check` on, a profile device settings update whose Branch-to-Hub list
+and hub rows disagree is refused with `DS00000010`, `DS00000011` or
+`DS00000020`; `fail_calls` fails a named method once.
+
 ### Device settings fields that stand for ref rows
 
 A ref row sits beside a module's `data`, keyed by ref name, and associates the

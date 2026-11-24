@@ -28,9 +28,18 @@ refs sent the rows stay, except for an update of a ``deviceSettings`` or
 ``QOS`` module with segments and an entry in ``processor_refs``: an inline
 processor then returns its own rows, which replace the ordinary ones as given.
 A kept append-only row keeps its ``id``.
+
+The store also holds hubs. ``add_edge`` adds an Edge of the enterprise (served
+by ``enterprise/getEnterpriseEdgeList``) and ``add_cluster`` an
+``edgeHubCluster`` service object. The twelve role calls (``edge/enableEdgeFor...``,
+``edge/disableEdgeFor...``, ``enterprise/enableClusterFor...`` and
+``enterprise/disableClusterFor...``) change the services and the device
+settings refs as the VCO does, and ``enterprise/getEnterpriseServices`` answers
+them; see ``ModuleStore``.
 """
 
 import copy
+import functools
 import itertools
 import json
 import uuid
@@ -63,6 +72,21 @@ _SERVICE_OBJECT = "NETWORK_SERVICE"
 _REQUIRED_ROW_IDS = ("configurationId", "moduleId", "enterpriseObjectId")
 _RULE_ID = "ruleLogicalId"
 _QOS_LISTS = ("rules", "defaults")
+_HUB_REF = "deviceSettings:vpn:edgeHub"
+_CLUSTER_REF = "deviceSettings:vpn:edgeHubCluster"
+_BACKHAUL_REF = "deviceSettings:backHaulEdge"
+_EDGE_HUB = "edgeHub"
+_CLUSTER = "edgeHubCluster"
+_CLUSTER_MEMBER = "edgeHubClusterMember"
+_SEGMENT_OBJECT = "NETWORK_SEGMENT"
+_FIRST_GENERATED_ID = 90_000
+_EDGE_LIST_PATH = "enterprise.getEnterpriseEdgeList"
+_ROLES = {
+    "hub": "EdgeHub",
+    "bridge": "EdgeToEdgeBridge",
+    "backhaul": "BackHaul",
+}
+_ROLE_KEY = {"hub": "edgeHub", "bridge": "edgeToEdgeBridge", "backhaul": "backHaulEdge"}
 
 
 class RpcError(Exception):
@@ -113,6 +137,37 @@ class ModuleStore:
     firewall rule gets one when it has none, and a new one when its content
     changes (a rename keeps it); a QoS rule gets one only when it has none.
     A hook sees the IDs. A refused or failed write issues none.
+
+    **Hubs.** ``add_edge`` holds an Edge, ``add_cluster`` a cluster; both are
+    enterprise objects the services read answers. ``enterprise/getEnterpriseEdgeList``
+    answers the Edges as one page. The twelve role calls take ``id`` (the Edge
+    ID or the cluster ID), ``configurationId``, ``moduleId`` and
+    ``segmentObjectId``. An Edge enable finds or makes the ``edgeHub`` service
+    of that Edge, profile, module and segment, sets its role and ``edgeHub``,
+    adds its ``deviceSettings:vpn:edgeHub`` row to the module's refs once, and
+    changes neither the module's data nor its ``version``; an Edge that is a
+    cluster member is refused with the ``validationError``. An Edge hub disable
+    deletes the service and every ref row that points at it and answers
+    ``{"rows": 1}``, an Edge bridge or backhaul disable clears its role and
+    answers the service; with no service each answers ``null``. A cluster call
+    changes ``data["<configurationId>"]["<segmentId>"].roles`` (``segmentId``
+    is the ``segmentId`` in the data of the segment object), adds the
+    ``deviceSettings:vpn:edgeHubCluster`` row once, and bumps the cluster's
+    ``version``; a cluster hub disable for a profile the cluster has no data for
+    is answered with the error the VCO gives and changes nothing. A service's
+    ``configuration`` (with ``configuration``) lists the ref rows that point at
+    it; its ``edgeQOSUsage`` (with ``configuration`` and ``edgeQOSUsage``) the
+    ``deviceSettings:backHaulEdge`` rows of the QoS module of an Edge
+    configuration (one an ``add_stack`` named an Edge for).
+
+    ``vpn_check`` makes a device settings update of a profile refuse what the
+    VCO refuses: ``DS00000020`` when a segment with ``vpn.enabled`` has a
+    Branch-to-Hub list and hub rows (in the refs after the write) that differ,
+    ``DS00000010`` when the list is enabled and there is no hub row, and
+    ``DS00000011`` when it is not and there is an Edge hub row. An update
+    whose refs leave out the row of an Edge hub service deletes that service,
+    whatever ``vpn_check`` is. ``fail_calls`` holds method names: a call to one
+    answers ``simulated failure`` once.
     """
 
     rows: dict[int, dict[str, Any]]
@@ -140,6 +195,12 @@ class ModuleStore:
     """Objects a sent ref row points at in vain: the row is skipped, as the VCO skips a row whose insert fails."""
     processor_refs: dict[int, dict[str, Any]]
     """Module ID to the refs an inline processor returns, which replace the ordinary rows of an update that sends none."""
+    edges: dict[int, dict[str, Any]]
+    """Edge ID to Edge: ``id``, ``logicalId``, ``name`` and ``cluster`` (the cluster ID, or None)."""
+    vpn_check: bool
+    """Whether a profile device settings update is checked against the hub rows of its refs."""
+    fail_calls: set[str]
+    """Method names whose next call is answered with ``simulated failure``, and then removed."""
 
     def __init__(
         self,
@@ -148,6 +209,7 @@ class ModuleStore:
         return_data: bool = True,
         enterprise_id: int | None = None,
         issue_rule_ids: bool = False,
+        vpn_check: bool = False,
     ) -> None:
         self.rows = {}
         self.configurations = {}
@@ -163,6 +225,9 @@ class ModuleStore:
         self.objects = {}
         self.skipped_objects = set()
         self.processor_refs = {}
+        self.edges = {}
+        self.vpn_check = vpn_check
+        self.fail_calls = set()
         self._ref_ids: itertools.count[int] = itertools.count(1)
         self._writes: int = 0
         self._rule_count: int = 0
@@ -174,7 +239,19 @@ class ModuleStore:
             "edge/getEdgeConfigurationStack": self._get_edge_configuration_stack,
             "configuration/getConfigurationModules": self._get_configuration_modules,
             "enterprise/getEnterpriseServices": self._get_enterprise_services,
+            "enterprise/getEnterpriseEdgeList": self._get_enterprise_edge_list,
         }
+        for role, suffix in _ROLES.items():
+            for enable in (True, False):
+                verb = "enable" if enable else "disable"
+                edge_path = f"edge/{verb}EdgeFor{suffix}"
+                cluster_path = f"enterprise/{verb}ClusterFor{suffix}"
+                self._methods[edge_path] = functools.partial(
+                    self._edge_role, edge_path, role, enable
+                )
+                self._methods[cluster_path] = functools.partial(
+                    self._cluster_role, cluster_path, role, enable
+                )
 
     def add_configuration(self, row: Mapping[str, Any]) -> None:
         """Hold the configuration *row*; the module rows under its ``modules``, if any, too.
@@ -244,6 +321,42 @@ class ModuleStore:
             "data": copy.deepcopy(data) if data is not None else {},
         }
 
+    def add_edge(
+        self,
+        edge_id: int,
+        *,
+        logical_id: str,
+        name: str,
+        cluster: int | None = None,
+    ) -> None:
+        """Hold an Edge of the enterprise.
+
+        With *cluster*, the ID of a cluster, the Edge is a member of it: an
+        ``edgeHubClusterMember`` service object points at the Edge, and the
+        Edge cannot be made a hub of its own.
+        """
+        self.edges[edge_id] = {
+            "id": edge_id,
+            "logicalId": logical_id,
+            "name": name,
+            "cluster": cluster,
+        }
+        if cluster is not None:
+            member_id = self._new_object_id()
+            self.add_object(
+                member_id,
+                logical_id=_generated_logical_id(member_id),
+                name=name,
+                type_=_CLUSTER_MEMBER,
+                data={"logicalId": logical_id},
+            )
+            self.objects[member_id]["edgeId"] = edge_id
+
+    def add_cluster(self, cluster_id: int, *, logical_id: str, name: str) -> None:
+        """Hold a hub cluster: an ``edgeHubCluster`` service object with no data, at ``version`` 1."""
+        self.add_object(cluster_id, logical_id=logical_id, name=name, type_=_CLUSTER)
+        self.objects[cluster_id]["version"] = 1
+
     def other_writer(
         self, module_id: int, edit: Callable[[dict[str, Any]], None]
     ) -> None:
@@ -260,6 +373,9 @@ class ModuleStore:
         serve = self._methods.get(method)
         if serve is None:
             raise RpcError(-32601, f"Method not found: {method}")
+        if method in self.fail_calls:
+            self.fail_calls.remove(method)
+            raise RpcError(-32603, "simulated failure")
         named = params.get("enterpriseId")
         if self.enterprise_id is not None and named != self.enterprise_id:
             raise RpcError(
@@ -315,9 +431,12 @@ class ModuleStore:
             self._replace_refs(new, update["refs"])
         elif self._processor_applies(row, data):
             self._replace_refs_by_processor(new)
+        if self.vpn_check and self._is_profile_device_settings(new):
+            self._check_hub_lists(new)
         self._prepare(new, row)
         new["version"] = self._new_version()
         self.rows[module_id] = new
+        self._delete_dropped_edge_hubs(row, new)
         return copy.deepcopy(new) if self._returns_data(params) else {"rows": 1}
 
     def _insert(self, params: dict[str, Any]) -> object:
@@ -380,19 +499,119 @@ class ModuleStore:
         return answer
 
     def _get_enterprise_services(self, params: dict[str, Any]) -> object:
-        del params
+        kind = params.get("type")
+        with_ = params.get("with") or ()
         return [
-            {
-                "id": obj["id"],
-                "logicalId": obj["logicalId"],
-                "name": obj["name"],
-                "type": obj["type"],
-                "data": copy.deepcopy(obj["data"]),
-                "enterpriseId": self.enterprise_id,
-            }
+            self._service(obj, with_)
             for obj in self.objects.values()
-            if obj["object"] == _SERVICE_OBJECT
+            if obj["object"] == _SERVICE_OBJECT and kind in (None, obj["type"])
         ]
+
+    def _get_enterprise_edge_list(self, params: dict[str, Any]) -> object:
+        return {
+            "metaData": {"more": False, "limit": params.get("limit")},
+            "data": [
+                {
+                    key: edge[key]
+                    for key in ("id", "logicalId", "name")
+                    if edge[key] is not None
+                }
+                | self._enterprise_key()
+                for edge in self.edges.values()
+            ],
+        }
+
+    # -- hub role calls -----------------------------------------------------
+
+    def _edge_role(
+        self, path: str, role: str, enable: bool, params: dict[str, Any]
+    ) -> object:
+        """An Edge role call: *role* of the Edge ``id`` on a profile, module and segment, enabled or disabled."""
+        path = path.replace("/", ".")
+        edge_id: int = _required(params, "id", path)
+        configuration_id: int = _required(params, "configurationId", path)
+        module_id: int = _required(params, "moduleId", path)
+        segment_object_id: int = _required(params, "segmentObjectId", path)
+        service = self._edge_service(
+            edge_id, configuration_id, module_id, segment_object_id
+        )
+        if not enable:
+            if service is None:
+                return None
+            if role == "hub":
+                self._delete_object(service["id"])
+                return {"rows": 1}
+            service["data"]["roles"][_ROLE_KEY[role]] = False
+            self._refresh_hub_rows(service)
+            return self._service(service, ())
+        edge = self.edges.get(edge_id)
+        if edge is None:
+            raise _validation_error(path, f"edge not found with ID: {edge_id}")
+        if edge["cluster"] is not None:
+            raise _validation_error(
+                path,
+                f"edge {edge_id} is a member of cluster {edge['cluster']}; "
+                f"enable the cluster, not the member",
+            )
+        module = self.rows.get(module_id)
+        if module is None:
+            raise _validation_error(path, f"module not found with ID: {module_id}")
+        if service is None:
+            service = self._new_edge_service(
+                edge, configuration_id, module_id, segment_object_id
+            )
+        roles = service["data"]["roles"]
+        roles[_ROLE_KEY["hub"]] = True
+        roles[_ROLE_KEY[role]] = True
+        self._ensure_hub_row(
+            service, _HUB_REF, configuration_id, module_id, segment_object_id
+        )
+        return self._service(service, ())
+
+    def _cluster_role(
+        self, path: str, role: str, enable: bool, params: dict[str, Any]
+    ) -> object:
+        """A cluster role call: *role* of the cluster ``id`` on a profile, module and segment, enabled or disabled."""
+        path = path.replace("/", ".")
+        cluster_id: int = _required(params, "id", path)
+        configuration_id: int = _required(params, "configurationId", path)
+        module_id: int = _required(params, "moduleId", path)
+        segment_object_id: int = _required(params, "segmentObjectId", path)
+        cluster = self.objects.get(cluster_id)
+        if cluster is None or cluster["type"] != _CLUSTER:
+            raise _validation_error(path, f"cluster not found with ID: {cluster_id}")
+        segment = self.objects.get(segment_object_id)
+        segment_id = None if segment is None else segment["data"].get("segmentId")
+        if segment_id is None:
+            raise _validation_error(
+                path, f"segment not found with object ID: {segment_object_id}"
+            )
+        data: dict[str, Any] = cluster["data"]
+        key = str(configuration_id)
+        if enable:
+            module = self.rows.get(module_id)
+            if module is None:
+                raise _validation_error(path, f"module not found with ID: {module_id}")
+            held = data.setdefault(key, {}).setdefault(
+                str(segment_id), {"roles": _no_roles()}
+            )
+            held["roles"][_ROLE_KEY["hub"]] = True
+            held["roles"][_ROLE_KEY[role]] = True
+            self._ensure_hub_row(
+                cluster, _CLUSTER_REF, configuration_id, module_id, segment_object_id
+            )
+        else:
+            if role == "hub" and key not in data:
+                raise RpcError(-32603, "Cannot convert undefined or null to object")
+            held = data.get(key, {}).get(str(segment_id))
+            if held is not None:
+                if role == "hub":
+                    held["roles"] = _no_roles()
+                else:
+                    held["roles"][_ROLE_KEY[role]] = False
+                self._refresh_hub_rows(cluster)
+        cluster["version"] += 1
+        return self._service(cluster, ())
 
     # -- helpers ------------------------------------------------------------
 
@@ -413,6 +632,292 @@ class ModuleStore:
                 if row.get("configurationId") == config_id
             ]
         return answer
+
+    def _enterprise_key(self) -> dict[str, int]:
+        """``{"enterpriseId": ...}`` when the store knows its enterprise; else nothing."""
+        if self.enterprise_id is None:
+            return {}
+        return {"enterpriseId": self.enterprise_id}
+
+    def _new_object_id(self) -> int:
+        """An object ID that no object has, from ``_FIRST_GENERATED_ID`` up."""
+        return max(max(self.objects, default=0) + 1, _FIRST_GENERATED_ID)
+
+    def _service(self, obj: dict[str, Any], with_: object) -> dict[str, Any]:
+        """Service object *obj* as ``getEnterpriseServices`` answers it, with the *with_* lists asked for."""
+        answer: dict[str, Any] = {
+            "id": obj["id"],
+            "logicalId": obj["logicalId"],
+            "name": obj["name"],
+            "type": obj["type"],
+            "data": copy.deepcopy(obj["data"]),
+            "created": _FIXED_TIME,
+            **self._enterprise_key(),
+        }
+        if "edgeId" in obj:
+            answer["edgeId"] = obj["edgeId"]
+        if "version" in obj:
+            answer["version"] = str(obj["version"])
+        requested = cast(list[str], with_)
+        if "configuration" in requested:
+            answer["configuration"] = self._configuration_usage(obj)
+            if "edgeQOSUsage" in requested:
+                answer["edgeQOSUsage"] = self._qos_usage(obj)
+        return answer
+
+    def _pointing_rows(
+        self, obj: dict[str, Any]
+    ) -> list[tuple[dict[str, Any], str, dict[str, Any]]]:
+        """Every ref row, in any module, that points at *obj*: the module row, the ref name and the row."""
+        found: list[tuple[dict[str, Any], str, dict[str, Any]]] = []
+        for module in self.rows.values():
+            for name, row in _ref_pairs(module):
+                if row.get("enterpriseObjectId") == obj["id"]:
+                    found.append((module, name, row))
+        return found
+
+    def _configuration_usage(self, obj: dict[str, Any]) -> list[dict[str, Any]]:
+        """The ``configuration`` entries of service *obj*: one for each ref row that points at it."""
+        return [
+            {
+                "enterpriseObjectId": obj["id"],
+                "id": row["configurationId"],
+                "name": self.configurations.get(row["configurationId"], {}).get("name"),
+                "moduleId": row["moduleId"],
+                "segmentObjectId": row.get("segmentObjectId"),
+            }
+            for _, _, row in self._pointing_rows(obj)
+        ]
+
+    def _qos_usage(self, obj: dict[str, Any]) -> list[dict[str, Any]]:
+        """The ``edgeQOSUsage`` entries of service *obj*: one for each backhaul row of an Edge configuration's QoS module."""
+        owners = self._edge_configuration_owners()
+        usage: list[dict[str, Any]] = []
+        for module, name, row in self._pointing_rows(obj):
+            edge = self.edges.get(owners.get(module["configurationId"], -1))
+            if name != _BACKHAUL_REF or module.get("name") != "QOS" or edge is None:
+                continue
+            usage.append(
+                {
+                    "enterpriseObjectId": obj["id"],
+                    "segmentObjectId": row.get("segmentObjectId"),
+                    "ref": name,
+                    "edgeId": edge["id"],
+                    "name": edge["name"],
+                    "logicalId": edge["logicalId"],
+                    "profileId": module["configurationId"],
+                }
+            )
+        return usage
+
+    def _edge_configuration_owners(self) -> dict[int, int]:
+        """Edge configuration ID to the ID of the Edge it belongs to, for the stacks added for an Edge."""
+        return {
+            configs[0]: edge_id
+            for edge_id, configs in self.stacks.items()
+            if edge_id is not None
+        }
+
+    def _edge_service(
+        self,
+        edge_id: int,
+        configuration_id: int,
+        module_id: int,
+        segment_object_id: int,
+    ) -> dict[str, Any] | None:
+        """The ``edgeHub`` service of Edge *edge_id* on that profile, module and segment, or None.
+
+        A service belongs there when it was made there, or when a row of that
+        module and segment points at it.
+        """
+        module = self.rows.get(module_id)
+        for obj in self.objects.values():
+            if obj["type"] != _EDGE_HUB or obj.get("edgeId") != edge_id:
+                continue
+            made = (obj.get("configurationId"), obj.get("moduleId")) == (
+                configuration_id,
+                module_id,
+            ) and obj.get("segmentObjectId") == segment_object_id
+            held = module is not None and any(
+                row.get("enterpriseObjectId") == obj["id"]
+                and row.get("segmentObjectId") == segment_object_id
+                for _, row in _ref_pairs(module)
+            )
+            if made or held:
+                return obj
+        return None
+
+    def _new_edge_service(
+        self,
+        edge: dict[str, Any],
+        configuration_id: int,
+        module_id: int,
+        segment_object_id: int,
+    ) -> dict[str, Any]:
+        """Hold a new ``edgeHub`` service of *edge* with no roles on that profile, module and segment."""
+        object_id = self._new_object_id()
+        self.add_object(
+            object_id,
+            logical_id=_generated_logical_id(object_id),
+            name=edge["name"],
+            type_=_EDGE_HUB,
+            data={"logicalId": edge["logicalId"], "roles": _no_roles()},
+        )
+        service = self.objects[object_id]
+        service.update(
+            edgeId=edge["id"],
+            configurationId=configuration_id,
+            moduleId=module_id,
+            segmentObjectId=segment_object_id,
+        )
+        return service
+
+    def _ensure_hub_row(
+        self,
+        obj: dict[str, Any],
+        ref: str,
+        configuration_id: int,
+        module_id: int,
+        segment_object_id: int,
+    ) -> None:
+        """Have module *module_id* hold a *ref* row for *obj* in that segment, once; the row shows the object as it is now.
+
+        The module's data and ``version`` stay as they are.
+        """
+        module = self.rows[module_id]
+        pairs = _ref_pairs(module)
+        for name, row in pairs:
+            if (name, row.get("enterpriseObjectId"), row.get("segmentObjectId")) == (
+                ref,
+                obj["id"],
+                segment_object_id,
+            ):
+                row["data"] = _row_data(obj, configuration_id)
+                _set_refs(module, pairs)
+                return
+        stored = self._stored_row(
+            {
+                "configurationId": configuration_id,
+                "moduleId": module_id,
+                "enterpriseObjectId": obj["id"],
+                "ref": ref,
+                "segmentObjectId": segment_object_id,
+            }
+        )
+        if stored is not None:
+            _set_refs(module, [*pairs, (ref, stored)])
+
+    def _refresh_hub_rows(self, obj: dict[str, Any]) -> None:
+        """Have every ref row that points at *obj* show its roles as they are now."""
+        for module in self.rows.values():
+            pairs = _ref_pairs(module)
+            changed = False
+            for _, row in pairs:
+                if row.get("enterpriseObjectId") == obj["id"]:
+                    row["data"] = _row_data(obj, row["configurationId"])
+                    changed = True
+            if changed:
+                _set_refs(module, pairs)
+
+    def _delete_object(self, object_id: int) -> None:
+        """Delete object *object_id* and every ref row, in any module, that points at it."""
+        _ = self.objects.pop(object_id, None)
+        for module in self.rows.values():
+            pairs = _ref_pairs(module)
+            kept = [p for p in pairs if p[1].get("enterpriseObjectId") != object_id]
+            if len(kept) != len(pairs):
+                _set_refs(module, kept)
+
+    def _delete_dropped_edge_hubs(
+        self, old: dict[str, Any], new: dict[str, Any]
+    ) -> None:
+        """Delete the Edge hub services whose row *old* had and *new* leaves out, as the VCO's cleanup does."""
+        kept = {row.get("enterpriseObjectId") for _, row in _ref_pairs(new)}
+        for name, row in _ref_pairs(old):
+            target = self.objects.get(row.get("enterpriseObjectId", -1))
+            if (
+                name == _HUB_REF
+                and target is not None
+                and target["type"] == _EDGE_HUB
+                and target["id"] not in kept
+            ):
+                self._delete_object(target["id"])
+
+    def _is_profile_device_settings(self, row: dict[str, Any]) -> bool:
+        """Whether *row* is the device settings module of a configuration that is no Edge's own."""
+        return (
+            row.get("name") == "deviceSettings"
+            and row.get("configurationId") not in self._edge_configuration_owners()
+        )
+
+    def _check_hub_lists(self, new: dict[str, Any]) -> None:
+        """Refuse the device settings row *new* as the VCO does when a segment's hub list and hub rows disagree."""
+        data = new.get("data")
+        entries: list[Any] = []
+        if isinstance(data, dict):
+            entries = cast(list[Any], cast(dict[str, Any], data).get("segments") or [])
+        hub_rows = [
+            (name, row)
+            for name, row in _ref_pairs(new)
+            if name in (_HUB_REF, _CLUSTER_REF)
+        ]
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            entry = cast(dict[str, Any], entry)
+            mine = [
+                (name, row)
+                for name, row in hub_rows
+                if row.get("segmentObjectId") in self._segment_objects(entry)
+            ]
+            vpn: dict[str, Any] = entry.get("vpn") or {}
+            hub_list: dict[str, Any] = vpn.get("edgeToEdgeHub") or {}
+            edge_rows = [row for name, row in mine if name == _HUB_REF]
+            if hub_list.get("enabled") and not mine:
+                raise _validation_error(
+                    _UPDATE_PATH,
+                    "the Branch-to-Hub list is enabled and the segment has no hub",
+                    code="DS00000010",
+                )
+            if not hub_list.get("enabled") and edge_rows:
+                raise _validation_error(
+                    _UPDATE_PATH,
+                    "the Branch-to-Hub list is not enabled and the segment has "
+                    "an Edge hub",
+                    code="DS00000011",
+                )
+            if vpn.get("enabled"):
+                listed = {
+                    str(hub.get("logicalId")).lower()
+                    for hub in cast(list[dict[str, Any]], hub_list.get("vpnHubs") or [])
+                }
+                held = {
+                    str(
+                        row["data"]["logicalId"]
+                        if name == _HUB_REF
+                        else row["logicalId"]
+                    ).lower()
+                    for name, row in mine
+                }
+                if listed != held:
+                    raise _validation_error(
+                        _UPDATE_PATH,
+                        "the Branch-to-Hub list and the hubs of the segment differ",
+                        code="DS00000020",
+                    )
+
+    def _segment_objects(self, entry: dict[str, Any]) -> set[int]:
+        """The IDs of the segment objects that device settings segment *entry* is."""
+        segment: dict[str, Any] = entry.get("segment") or {}
+        return {
+            obj["id"]
+            for obj in self.objects.values()
+            if obj["object"] == _SEGMENT_OBJECT
+            and (
+                obj["data"].get("segmentId") == segment.get("segmentId")
+                or obj["logicalId"] == segment.get("segmentLogicalId")
+            )
+        }
 
     def _processor_applies(self, row: dict[str, Any], data: object) -> bool:
         """Whether an update of *row* to *data*, sending no refs, has a processor return its own rows."""
@@ -471,8 +976,9 @@ class ModuleStore:
             "ref": sent.get("ref"),
             "segmentObjectId": sent.get("segmentObjectId"),
         }
-        for key in ("logicalId", "name", "type", "object", "data"):
+        for key in ("logicalId", "name", "type", "object"):
             stored[key] = copy.deepcopy(target[key])
+        stored["data"] = _row_data(target, sent["configurationId"])
         segment_id = sent.get("segmentObjectId")
         segment = self.objects.get(segment_id) if segment_id is not None else None
         if segment is not None:
@@ -530,6 +1036,39 @@ class ModuleStore:
 
     def _returns_data(self, params: Mapping[str, Any]) -> bool:
         return bool(params.get("returnData")) and self.return_data
+
+
+def _no_roles() -> dict[str, bool]:
+    """The roles of a hub that has none."""
+    return {"edgeHub": False, "edgeToEdgeBridge": False, "backHaulEdge": False}
+
+
+def _generated_logical_id(object_id: int) -> str:
+    """The logical ID the store gives the service object *object_id* it makes."""
+    return f"00000000-0000-4000-8000-{object_id:012d}"
+
+
+def _ref_pairs(module: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]:
+    """The rows of *module*'s refs, each with its ref name; copies, to be given back with ``_set_refs``."""
+    refs = module.get("refs")
+    return [(name, row) for name, row in _all_pairs(refs)]
+
+
+def _all_pairs(refs: object) -> list[tuple[str, dict[str, Any]]]:
+    if not isinstance(refs, dict):
+        return []
+    return [
+        (name, row)
+        for name, value in cast(dict[str, Any], refs).items()
+        for row in _flatten({name: value})
+    ]
+
+
+def _row_data(obj: dict[str, Any], configuration_id: int) -> dict[str, Any]:
+    """The ``data`` a ref row shows of *obj*: a cluster's role data of that profile, else the object's data."""
+    if obj["type"] == _CLUSTER:
+        return copy.deepcopy(obj["data"].get(str(configuration_id), {}))
+    return copy.deepcopy(obj["data"])
 
 
 def _rule_lists(row: dict[str, Any] | None, module: str) -> list[list[dict[str, Any]]]:
