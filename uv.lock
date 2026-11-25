@@ -6,7 +6,6 @@ requires-python = ">=3.13"
 members = [
     "pyvelo",
     "pyvelo-examples",
-    "pyvelo-intent",
 ]
 
 [manifest.dependency-groups]
@@ -806,6 +805,7 @@ dependencies = [
     { name = "httpx-ws" },
     { name = "pydantic" },
     { name = "pydantic-core" },
+    { name = "pyyaml" },
 ]
 
 [package.optional-dependencies]
@@ -824,6 +824,7 @@ requires-dist = [
     { name = "pydantic", specifier = ">=2.14.1" },
     { name = "pydantic-core", specifier = ">=2.50.1" },
     { name = "python-dotenv", marker = "extra == 'dotenv'", specifier = ">=1.2.2" },
+    { name = "pyyaml", specifier = ">=6.0.3" },
 ]
 provides-extras = ["analytics", "dotenv"]
 
@@ -846,21 +847,6 @@ requires-dist = [
     { name = "pydantic", specifier = ">=2.14.1" },
     { name = "pyvelo", extras = ["dotenv"], editable = "packages/pyvelo" },
     { name = "rich", specifier = ">=13.7" },
-]
-
-[[package]]
-name = "pyvelo-intent"
-version = "0.1.0"
-source = { editable = "packages/pyvelo-intent" }
-dependencies = [
-    { name = "pyvelo" },
-    { name = "pyyaml" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "pyvelo", editable = "packages/pyvelo" },
-    { name = "pyyaml", specifier = ">=6.0.3" },
 ]
 
 [[package]]

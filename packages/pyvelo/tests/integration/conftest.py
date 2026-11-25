@@ -23,6 +23,7 @@ from pyvelo.analytics import Analytics
 from pyvelo.analytics.frame import MetricFrame
 from pyvelo.client import VcoClient
 from pyvelo.client.exceptions import VcoOperationError
+from pyvelo.config import ConfigPipeline, build_default_pipeline
 from pyvelo.core import ApiInterval
 
 from ._discovery import VcoTestContext, discover
@@ -93,6 +94,12 @@ def config_enterprise_id() -> int | None:
 async def lab(vco_client: VcoClient, config_enterprise_id: int | None) -> Lab:
     """Every edge and profile the live configuration tests can use, read once."""
     return await discover_lab(vco_client, config_enterprise_id)
+
+
+@pytest.fixture
+def pipeline(vco_client: VcoClient) -> ConfigPipeline:
+    """A pipeline with the default resolvers; one per test."""
+    return build_default_pipeline(vco_client)
 
 
 @pytest_asyncio.fixture(scope="session", loop_scope="session")

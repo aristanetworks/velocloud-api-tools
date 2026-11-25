@@ -1,5 +1,5 @@
 [tool.uv.workspace]
-members = ["packages/pyvelo", "packages/pyvelo-intent", "packages/pyvelo-examples"]
+members = ["packages/pyvelo", "packages/pyvelo-examples"]
 
 [dependency-groups]
 dev = [
@@ -12,7 +12,6 @@ dev = [
 
 [tool.uv.sources]
 pyvelo = { workspace = true }
-pyvelo-intent = { workspace = true }
 
 [tool.ruff]
 target-version = "py313"
@@ -21,7 +20,7 @@ target-version = "py313"
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 addopts = ["-ra", "-q", "-m", "not integration"]
-testpaths = ["packages/pyvelo/tests", "packages/pyvelo-intent/tests"]
+testpaths = ["packages/pyvelo/tests"]
 pythonpath = ["packages/pyvelo/tests/support"]
 markers = [
     "integration: live tests against a real Orchestrator (VCO_HOST and VCO_TOKEN); deselected by default",
@@ -30,7 +29,7 @@ markers = [
 
 [tool.basedpyright]
 enableExperimentalFeatures = true
-include = ["packages/pyvelo", "packages/pyvelo-intent"]
+include = ["packages/pyvelo"]
 extraPaths = ["packages/pyvelo/tests/support"]
 defineConstant = { DEBUG = true }
 reportMissingImports = "error"

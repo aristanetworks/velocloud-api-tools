@@ -1068,7 +1068,7 @@ class ConfigurationMixin(Protocol):
         and nothing was sent). ``WriteOutcomeUnknownError`` says the write was
         sent and the module as stored could not be read. The rules that need
         more than this one module are not run here: they need a state
-        (``ConfigState``, in pyvelo-intent).
+        (``ConfigState``, in ``pyvelo.config``).
         """
         if not isinstance(data, DeviceSettingsData | WanData | QosData | FirewallData):
             raise TypeError(f"Unsupported data type: {type(data).__name__}")
