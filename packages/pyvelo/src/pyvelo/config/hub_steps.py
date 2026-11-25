@@ -184,7 +184,7 @@ class _AddedHubs:
     """The identity of each hub the edit adds, found by logical ID in a loaded ``HubResolver``."""
 
     def __init__(self, hubs: HubResolver | None) -> None:
-        self._hubs = hubs
+        self._hubs: HubResolver | None = hubs
         self._found: dict[uuid.UUID, HubIdentity] | None = None
 
     def ref(self, hub: VpnHub) -> HubRef:

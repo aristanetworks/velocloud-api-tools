@@ -24,7 +24,7 @@ class ApplicationResolver(BaseResolver[ApplicationIdentity]):
     Loads via ``configuration/getIdentifiableApplications``.
     """
 
-    identity_type = ApplicationIdentity
+    identity_type: type[ApplicationIdentity] = ApplicationIdentity
 
     @override
     def lookup_key(self, key: IdentityKey[ApplicationIdentity]) -> ApplicationIdentity:

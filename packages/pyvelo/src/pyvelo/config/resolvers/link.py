@@ -31,7 +31,7 @@ class LinkResolver(BaseResolver[LinkIdentity]):
     ResolverContext.
     """
 
-    identity_type = LinkIdentity
+    identity_type: type[LinkIdentity] = LinkIdentity
 
     @override
     def lookup_key(self, key: IdentityKey[LinkIdentity]) -> LinkIdentity:

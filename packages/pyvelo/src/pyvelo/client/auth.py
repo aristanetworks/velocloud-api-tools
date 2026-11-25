@@ -37,7 +37,7 @@ class VcoAuth(httpx.Auth):
     def __init__(self, token: str) -> None:
         token = clean_token(token)
         if len(token.split()) > 1:
-            self._auth_header = token
+            self._auth_header: str = token
         else:
             self._auth_header = f"Token {token}"
 

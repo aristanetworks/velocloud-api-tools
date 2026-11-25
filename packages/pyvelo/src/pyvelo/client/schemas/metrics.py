@@ -1,5 +1,5 @@
 import uuid
-from typing import Annotated, Any
+from typing import Annotated, Any, ClassVar
 
 from pydantic import (
     MISSING,
@@ -704,7 +704,7 @@ class EdgeStatusSeriesPoint(VcoModel):
     format used by getEdgeStatusSeries.
     """
 
-    model_config = ConfigDict(extra="allow")
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="allow")
 
     start_time: VcoTimestamp
     cpu_pct: float | None | MISSING = MISSING
@@ -1345,7 +1345,7 @@ class GatewayStatusSeriesItem(VcoModel):
     like cpuPct, memoryPct, connectedEdges, etc.
     """
 
-    model_config = ConfigDict(extra="allow")
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="allow")
     start_time: VcoTimestamp | MISSING = MISSING
 
 

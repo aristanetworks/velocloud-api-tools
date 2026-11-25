@@ -2,7 +2,7 @@
 
 import copy
 import uuid
-from typing import Any
+from typing import Any, ClassVar
 
 import pytest
 from pydantic import BaseModel, ConfigDict
@@ -279,7 +279,7 @@ async def test_load_by_name_without_a_resolver_says_what_to_register():
 class ServiceRow(BaseModel):
     """A row of ``enterprise/getEnterpriseServices`` as the store answers it."""
 
-    model_config = ConfigDict(extra="allow")
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="allow")
     id: int
     logicalId: str
     name: str

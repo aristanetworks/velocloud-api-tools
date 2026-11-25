@@ -50,7 +50,6 @@ reportImplicitStringConcatenation = false
 # its line here.
 reportUnknownVariableType = false
 reportUnknownArgumentType = false
-reportUnannotatedClassAttribute = false
 reportUnusedCallResult = false
 reportUnknownMemberType = false
 reportUnnecessaryTypeIgnoreComment = false

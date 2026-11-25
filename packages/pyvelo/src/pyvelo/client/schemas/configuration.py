@@ -8,6 +8,7 @@ from collections.abc import Mapping, Sequence
 from typing import (
     Annotated,
     Any,
+    ClassVar,
     Generic,
     Literal,
     Self,
@@ -432,7 +433,7 @@ type AnyStoredModule = AnyConfigurationModule[Edge] | AnyConfigurationModule[Pro
 class ConfigurationModuleList(RootModel[list[AnyConfigurationModule[L]]], Generic[L]):  # noqa: UP046 (one shared constrained L, as a TypeVar)
     """A list of module rows of one layer; a row that does not parse is refused without quoting it."""
 
-    model_config = ConfigDict(hide_input_in_errors=True)
+    model_config: ClassVar[ConfigDict] = ConfigDict(hide_input_in_errors=True)
 
 
 # The configurations come after ``AnyConfigurationModule`` on purpose: a

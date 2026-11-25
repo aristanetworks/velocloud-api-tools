@@ -1,6 +1,6 @@
 """NetworkServiceResolver: resolves a network service of an enterprise by name or ID."""
 
-from typing import Self, override
+from typing import ClassVar, Self, override
 
 from pyvelo.client.protocol import VcoClientProtocol
 from pyvelo.client.schemas.enterprise import GetEnterpriseServices
@@ -33,8 +33,8 @@ class NetworkServiceResolver(BaseResolver[NetworkServiceIdentity]):
     and ``identities()`` returns them all.
     """
 
-    identity_type = NetworkServiceIdentity
-    requires_load = True
+    identity_type: type[NetworkServiceIdentity] = NetworkServiceIdentity
+    requires_load: ClassVar[bool] = True
 
     def __init__(self, client: VcoClientProtocol) -> None:
         super().__init__(client)
@@ -102,7 +102,7 @@ class NetworkServiceResolver(BaseResolver[NetworkServiceIdentity]):
                 logical_id=summary.logical_id,
                 object_id=summary.id_,
             )
-        self.loaded = True
+        self.loaded: bool = True
 
     @override
     def identities(self) -> list[NetworkServiceIdentity]:

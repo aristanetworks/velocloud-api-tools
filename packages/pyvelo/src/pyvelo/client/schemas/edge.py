@@ -1,6 +1,6 @@
 import uuid
 from collections.abc import Mapping
-from typing import Annotated, Any, Literal, Self, cast
+from typing import Annotated, Any, ClassVar, Literal, Self, cast
 
 from pydantic import (
     MISSING,
@@ -460,7 +460,7 @@ class GatewayHandOffs(VcoModel):
 class EdgeGatewayAssignmentResult(VcoModel):
     """Edge gateway assignment view showing primary, secondary, and data-center gateways."""
 
-    model_config = ConfigDict(extra="allow")
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="allow")
 
     primary: GatewayAssignmentsEntry | None | MISSING = MISSING
     secondary: GatewayAssignmentsEntry | None | MISSING = MISSING
@@ -638,7 +638,7 @@ class GetHaInterfaces(VcoModel):
 class HaInterfaceItem(VcoModel):
     """A single HA interface entry."""
 
-    model_config = ConfigDict(extra="allow")
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="allow")
 
     id_: Annotated[int | None | MISSING, Alias("id")] = MISSING
     edge_logical_id: Annotated[
@@ -675,11 +675,11 @@ class GetSecureDeviceSecretsOption(VcoModel):
 
 
 class SecureDeviceSecretsOptionResult(VcoModel):
-    model_config = ConfigDict(extra="allow")
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="allow")
 
 
 class EdgeSdwanPeersResult(VcoModel):
-    model_config = ConfigDict(extra="allow")
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="allow")
 
     @model_validator(mode="before")
     @classmethod

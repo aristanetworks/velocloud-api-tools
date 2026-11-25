@@ -1,6 +1,6 @@
 import uuid
 from collections.abc import Sequence
-from typing import Annotated, Any, Literal, Self
+from typing import Annotated, Any, ClassVar, Literal, Self
 
 import annotated_types
 from pydantic import (
@@ -142,7 +142,7 @@ class EventSorting(VcoModel):
 class EnterpriseEventTypeFilter(VcoModel):
     """Filter by event type. Scalar value for is/isNot; list for in/notIn."""
 
-    model_config = ConfigDict(
+    model_config: ClassVar[ConfigDict] = ConfigDict(
         json_schema_extra=_filter_cardinality_json_schema(("is", "isNot"))
     )
 
@@ -161,7 +161,7 @@ class EnterpriseEventTypeFilter(VcoModel):
 class EnterpriseEventSeverityFilter(VcoModel):
     """Filter by severity. Scalar value for is/isNot; list for in/notIn."""
 
-    model_config = ConfigDict(
+    model_config: ClassVar[ConfigDict] = ConfigDict(
         json_schema_extra=_filter_cardinality_json_schema(("is", "isNot"))
     )
 
@@ -182,7 +182,7 @@ class EnterpriseEventSeverityFilter(VcoModel):
 class EnterpriseEventStringValueFilter(VcoModel):
     """Filter a string field using a scalar or list-valued operator."""
 
-    model_config = ConfigDict(
+    model_config: ClassVar[ConfigDict] = ConfigDict(
         json_schema_extra=_filter_cardinality_json_schema(
             (
                 "is",
@@ -452,7 +452,7 @@ class GetOperatorEvents(PaginatedVcoModel):
 
 
 class OperatorEventItem(VcoModel):
-    model_config = ConfigDict(extra="allow")
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="allow")
 
 
 # ---------------------------------------------------------------------------
@@ -469,4 +469,4 @@ class GetProxyEvents(PaginatedVcoModel):
 
 
 class ProxyEventItem(VcoModel):
-    model_config = ConfigDict(extra="allow")
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="allow")

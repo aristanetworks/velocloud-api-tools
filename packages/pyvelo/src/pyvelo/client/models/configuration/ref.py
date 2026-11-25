@@ -1,5 +1,5 @@
 import uuid
-from typing import Annotated
+from typing import Annotated, ClassVar
 
 from pydantic import MISSING, ConfigDict
 
@@ -7,7 +7,7 @@ from pyvelo.core import Alias, VcoModel
 
 
 class ConfigurationRef(VcoModel):
-    model_config = ConfigDict(frozen=True)
+    model_config: ClassVar[ConfigDict] = ConfigDict(frozen=True)
 
     id_: Annotated[int | MISSING, Alias("id")] = MISSING
     configuration_id: int

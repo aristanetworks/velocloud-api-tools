@@ -1,5 +1,5 @@
 import uuid
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, ClassVar, Literal
 
 from annotated_types import Ge, Le
 from pydantic import MISSING, ConfigDict, Discriminator, Field, model_validator
@@ -868,7 +868,7 @@ class GetEnterpriseCapabilities(VcoModel):
 
 
 class EnterpriseCapabilitiesResult(VcoModel):
-    model_config = ConfigDict(extra="allow")
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="allow")
 
 
 # --- get_enterprise_addresses (enterprise/getEnterpriseAddresses) ---
@@ -879,7 +879,7 @@ class GetEnterpriseAddresses(VcoModel):
 
 
 class EnterpriseAddressResult(VcoModel):
-    model_config = ConfigDict(extra="allow")
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="allow")
 
 
 # --- get_enterprise_all_alerts_recipients (enterprise/getEnterpriseAllAlertsRecipients) ---
@@ -890,7 +890,7 @@ class GetEnterpriseAllAlertsRecipients(VcoModel):
 
 
 class EnterpriseAllAlertsRecipientsResult(VcoModel):
-    model_config = ConfigDict(extra="allow")
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="allow")
 
 
 # --- get_enterprise_rate_limits (enterprise/getEnterpriseRateLimits) ---
@@ -901,7 +901,7 @@ class GetEnterpriseRateLimits(VcoModel):
 
 
 class EnterpriseRateLimitsResult(VcoModel):
-    model_config = ConfigDict(extra="allow")
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="allow")
 
 
 # --- get_enterprise_property (enterprise/getEnterpriseProperty) ---
@@ -914,7 +914,7 @@ class GetEnterpriseProperty(VcoModel):
 
 
 class EnterprisePropertyResult(VcoModel):
-    model_config = ConfigDict(extra="allow")
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="allow")
 
 
 # --- get_enterprise_default_operator_configuration ---
@@ -925,7 +925,7 @@ class GetEnterpriseDefaultOperatorConfiguration(VcoModel):
 
 
 class EnterpriseDefaultOperatorConfigurationResult(VcoModel):
-    model_config = ConfigDict(extra="allow")
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="allow")
 
 
 # --- get_enterprise_distributed_cost_calculation ---
@@ -936,7 +936,7 @@ class GetEnterpriseDistributedCostCalculation(VcoModel):
 
 
 class EnterpriseDistributedCostCalculationResult(VcoModel):
-    model_config = ConfigDict(extra="allow")
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="allow")
 
 
 # --- get_enterprise_maximum_segments ---
@@ -947,7 +947,7 @@ class GetEnterpriseMaximumSegments(VcoModel):
 
 
 class EnterpriseMaximumSegmentsResult(VcoModel):
-    model_config = ConfigDict(extra="allow")
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="allow")
 
 
 # --- get_enterprise_network_allocation ---
@@ -964,7 +964,7 @@ class GetEnterpriseNetworkAllocation(VcoModel):
 
 
 class EnterpriseNetworkAllocationResult(VcoModel):
-    model_config = ConfigDict(extra="allow")
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="allow")
 
 
 # --- get_enterprise_network_allocations ---
@@ -981,7 +981,7 @@ class GetEnterpriseNetworkAllocations(VcoModel):
 
 
 class EnterpriseNetworkAllocationsResult(VcoModel):
-    model_config = ConfigDict(extra="allow")
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="allow")
 
 
 # --- get_enterprise_operator_configuration ---
@@ -996,7 +996,7 @@ class GetEnterpriseOperatorConfiguration(VcoModel):
 
 
 class EnterpriseOperatorConfigurationResult(VcoModel):
-    model_config = ConfigDict(extra="allow")
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="allow")
 
 
 # --- get_enterprise_specific_operator_configurations ---
@@ -1009,7 +1009,7 @@ class GetEnterpriseSpecificOperatorConfigurations(VcoModel):
 
 
 class EnterpriseSpecificOperatorConfigurationsResult(VcoModel):
-    model_config = ConfigDict(extra="allow")
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="allow")
 
 
 # --- get_enterprises_missing_gateway ---
@@ -1020,7 +1020,7 @@ class GetEnterprisesMissingGateway(VcoModel):
 
 
 class EnterprisesMissingGatewayResult(VcoModel):
-    model_config = ConfigDict(extra="allow")
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="allow")
 
 
 # --- get_enterprises_with_property ---
@@ -1033,7 +1033,7 @@ class GetEnterprisesWithProperty(VcoModel):
 
 
 class EnterprisesWithPropertyResult(VcoModel):
-    model_config = ConfigDict(extra="allow")
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="allow")
 
 
 # --- get_auth_migration_status ---
@@ -1044,7 +1044,7 @@ class GetAuthMigrationStatus(VcoModel):
 
 
 class AuthMigrationStatusResult(VcoModel):
-    model_config = ConfigDict(extra="allow")
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="allow")
 
 
 # --- get_user_export_status ---
@@ -1055,7 +1055,7 @@ class GetUserExportStatus(VcoModel):
 
 
 class UserExportStatusResult(VcoModel):
-    model_config = ConfigDict(extra="allow")
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="allow")
 
 
 # --- get_enterprise_api_tokens (enterprise/getApiTokens) ---
@@ -1066,7 +1066,7 @@ class GetEnterpriseApiTokens(VcoModel):
 
 
 class EnterpriseApiTokenResult(VcoModel):
-    model_config = ConfigDict(extra="allow")
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="allow")
 
 
 # --- get_enterprise_security_objects (enterprise/getSecurityObjects) ---
@@ -1083,7 +1083,7 @@ class GetEnterpriseSecurityObjects(VcoModel):
 class EnterpriseSecurityObjectResult(VcoModel):
     """A security object (EFS property) associated with an enterprise."""
 
-    model_config = ConfigDict(extra="allow")
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="allow")
 
     id_: Annotated[int | None | MISSING, Alias("id")] = MISSING
     created: VcoTimestamp | None | MISSING = MISSING
@@ -1118,7 +1118,7 @@ class GetEnterpriseAlertConfigurations(VcoModel):
 
 
 class EnterpriseAlertConfigurationResult(VcoModel):
-    model_config = ConfigDict(extra="allow")
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="allow")
 
 
 # --- get_enterprise_route_table ---
@@ -1227,7 +1227,7 @@ class GetEnterpriseRouteConfiguration(VcoModel):
 
 
 class EnterpriseRouteConfigurationResult(VcoModel):
-    model_config = ConfigDict(extra="allow")
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="allow")
 
 
 # --- get_enterprise_use_nsd_policy ---
@@ -1238,7 +1238,7 @@ class GetEnterpriseUseNsdPolicy(VcoModel):
 
 
 class EnterpriseUseNsdPolicyResult(VcoModel):
-    model_config = ConfigDict(extra="allow")
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="allow")
 
 
 # --- Cluster Hub Enable/Disable ---

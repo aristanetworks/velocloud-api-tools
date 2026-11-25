@@ -1,6 +1,6 @@
 import uuid
 from collections.abc import Generator
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, ClassVar, Literal
 
 from pydantic import MISSING, ConfigDict, Discriminator, Field
 
@@ -284,7 +284,7 @@ class EdgeClusterConfig(VcoModel):
 
 
 class EdgeHubClusterServiceData(VcoModel):
-    model_config = ConfigDict(extra="allow")
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="allow")
 
     auto_rebalance: bool | MISSING = MISSING
     route_summary_v4: list[Any] | MISSING = MISSING
@@ -560,7 +560,7 @@ class GenericIkev2RouterServiceData(VcoModel):
 
 
 class GenericNvsViaEdgeServiceData(VcoModel):
-    model_config = ConfigDict(extra="allow")
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="allow")
 
     provider: Literal["symantecSase", "microsoftAzureVirtualWan"]
 

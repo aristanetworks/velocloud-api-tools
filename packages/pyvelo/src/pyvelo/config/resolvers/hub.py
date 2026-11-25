@@ -1,7 +1,7 @@
 """HubResolver: resolves an Edge or a hub cluster of an enterprise, by name or logical ID."""
 
 import uuid
-from typing import Self, override
+from typing import ClassVar, Self, override
 
 from pydantic import MISSING
 
@@ -54,8 +54,8 @@ class HubResolver(BaseResolver[HubIdentity]):
     returns them all, shared names included.
     """
 
-    identity_type = HubIdentity
-    requires_load = True
+    identity_type: type[HubIdentity] = HubIdentity
+    requires_load: ClassVar[bool] = True
 
     def __init__(self, client: VcoClientProtocol) -> None:
         super().__init__(client)
@@ -203,7 +203,7 @@ class HubResolver(BaseResolver[HubIdentity]):
                     cluster_logical_id=cluster.logical_id,
                 )
             )
-        self.loaded = True
+        self.loaded: bool = True
 
     @override
     def identities(self) -> list[HubIdentity]:

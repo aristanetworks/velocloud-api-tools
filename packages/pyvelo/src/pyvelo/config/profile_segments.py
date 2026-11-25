@@ -362,12 +362,12 @@ class _SegmentReader:
     def __init__(
         self, state: ConfigState, module: AnyStoredModule, resolve: Resolve
     ) -> None:
-        self.state = state
-        self.module = module
-        self.module_name = str(module.name)
-        self.resolve = resolve
+        self.state: ConfigState = state
+        self.module: AnyStoredModule = module
+        self.module_name: str = str(module.name)
+        self.resolve: Resolve = resolve
         self.data: object = getattr(module, "data", MISSING)
-        self.as_read = _raw_segment_ids(module.raw_data)
+        self.as_read: set[int] = _raw_segment_ids(module.raw_data)
         self.assignments: list[Assignment] = []
         self.assigned: dict[int, Assignment] = {}
 

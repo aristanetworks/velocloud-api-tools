@@ -83,9 +83,9 @@ class VcoApiError(VcoError):
         message: str,
         data: Any = None,
     ) -> None:
-        self.code = code
-        self.message = message
-        self.data = data
+        self.code: int = code
+        self.message: str = message
+        self.data: Any = data
         detail = f"VCO API error {code}: {message}"
         if data:
             if isinstance(data, dict):
@@ -99,7 +99,7 @@ class VcoEmptyResultError(VcoError):
     """Raised when the VCO API returns a null result."""
 
     def __init__(self, method: str | None = None) -> None:
-        self.method = method
+        self.method: str | None = method
         msg = "VCO API returned an empty result"
         if method:
             msg += f" for {method}"
@@ -117,10 +117,10 @@ class VcoOperationError(VcoError):
         code: int | None = None,
         data: Any = None,
     ) -> None:
-        self.operation = operation
-        self.error = error
-        self.code = code
-        self.data = data
+        self.operation: str = operation
+        self.error: str = error
+        self.code: int | None = code
+        self.data: Any = data
         detail = f"{operation} failed: {error}"
         if data:
             if isinstance(data, dict):
@@ -160,9 +160,9 @@ class VcoHttpError(VcoError):
     """
 
     def __init__(self, status_code: int, body: str) -> None:
-        self.status_code = status_code
-        self.text = body
-        self.body = body[:500]
+        self.status_code: int = status_code
+        self.text: str = body
+        self.body: str = body[:500]
         super().__init__(f"HTTP {status_code}: {self.body}")
 
 
@@ -170,7 +170,7 @@ class VcoRateLimitError(VcoError):
     """Raised when 429 retries are exhausted."""
 
     def __init__(self, attempts: int) -> None:
-        self.attempts = attempts
+        self.attempts: int = attempts
         super().__init__(f"Rate limited: retries exhausted after {attempts} attempts")
 
 
@@ -178,7 +178,7 @@ class VcoWebSocketError(VcoError):
     """Raised when a WebSocket operation fails (connection, send, or receive)."""
 
     def __init__(self, message: str) -> None:
-        self.message = message
+        self.message: str = message
         super().__init__(message)
 
 
@@ -193,7 +193,7 @@ class VcoWebSocketTimeoutError(VcoWebSocketError):
     """Raised when a WebSocket request or diagnostic times out."""
 
     def __init__(self, message: str, *, timeout: float) -> None:
-        self.timeout = timeout
+        self.timeout: float = timeout
         super().__init__(message)
 
 
@@ -241,10 +241,10 @@ class LossyFieldError(VcoError):
         paths: Sequence[Path],
         override_flags: Sequence[Path] = (),
     ) -> None:
-        self.module = module
-        self.paths = list(paths)
-        self.fields = [str(path) for path in self.paths]
-        self.override_flags = list(override_flags)
+        self.module: str = module
+        self.paths: list[Path] = list(paths)
+        self.fields: list[str] = [str(path) for path in self.paths]
+        self.override_flags: list[Path] = list(override_flags)
         message = (
             f"{module}: a save cannot write these edits: {', '.join(self.fields)}. "
             "A save sends what differs from the module as read, and at these "

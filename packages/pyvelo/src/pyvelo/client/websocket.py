@@ -74,14 +74,16 @@ class PendingDiagnostic[T]:
             Callable[[], Coroutine[Any, Any, asyncio.Future[dict[str, Any]]]] | None
         ),
     ) -> None:
-        self._future = future
-        self.test = test
-        self.logical_id = logical_id
-        self.context = context
-        self._timeout = timeout
-        self._max_retries = max_retries
-        self._on_timeout = _on_timeout
-        self._resubmit = _resubmit
+        self._future: asyncio.Future[dict[str, Any]] = future
+        self.test: str = test
+        self.logical_id: uuid.UUID = logical_id
+        self.context: T = context
+        self._timeout: float = timeout
+        self._max_retries: int = max_retries
+        self._on_timeout: Callable[[], object] = _on_timeout
+        self._resubmit: (
+            Callable[[], Coroutine[Any, Any, asyncio.Future[dict[str, Any]]]] | None
+        ) = _resubmit
 
     @property
     def done(self) -> bool:
@@ -142,15 +144,15 @@ class VcoWebSocket:
         vco_fqdn: str,
         http_client: httpx.AsyncClient,
     ) -> None:
-        self._vco_fqdn = vco_fqdn
-        self._http = http_client
+        self._vco_fqdn: str = vco_fqdn
+        self._http: httpx.AsyncClient = http_client
 
         self._ws: AsyncWebSocketSession | None = None
         self._ws_cm: Any = None  # contextmanager handle for aconnect_ws
         self._token: str | None = None
         self._reader_task: asyncio.Task[None] | None = None
         self._pending: dict[_Key, asyncio.Future[dict[str, Any]]] = {}
-        self._closing = False
+        self._closing: bool = False
         self._recent_sends: collections.deque[_Key] = collections.deque(maxlen=64)
         self._send_times: dict[str, float] = {}
 

@@ -4,7 +4,7 @@ import typing
 import uuid
 from datetime import UTC, datetime
 from enum import StrEnum
-from typing import Any
+from typing import Any, ClassVar
 
 from pydantic import MISSING
 
@@ -116,13 +116,13 @@ if __builtins__:  # type: ignore[truthy-bool]
 
 
 class Analytics:
-    __slots__ = ("_client", "_enterprise_id")
+    __slots__: ClassVar[tuple[str, ...]] = ("_client", "_enterprise_id")
 
     def __init__(
         self, client: VcoClientProtocol, *, enterprise_id: int | None = None
     ) -> None:
-        self._client = client
-        self._enterprise_id = enterprise_id
+        self._client: VcoClientProtocol = client
+        self._enterprise_id: int | None = enterprise_id
 
     # -----------------------------------------------------------------------
     # Group 1: Edge Flow (14 methods → 2)

@@ -25,7 +25,7 @@ class ServiceGroupResolver(BaseResolver[ServiceGroupIdentity]):
     Loads via ``enterprise/getObjectGroups`` with type ``port_group``.
     """
 
-    identity_type = ServiceGroupIdentity
+    identity_type: type[ServiceGroupIdentity] = ServiceGroupIdentity
 
     @override
     def lookup_key(

@@ -27,6 +27,7 @@ from typing import (
     TYPE_CHECKING,
     Annotated,
     Any,
+    ClassVar,
     Literal,
     Self,
     TypeAliasType,
@@ -384,10 +385,10 @@ class Alias:
     Usage: dh_group: Annotated[int, Alias("DHGroup")] = 0
     """
 
-    __slots__ = ("key",)
+    __slots__: ClassVar[tuple[str, ...]] = ("key",)
 
     def __init__(self, key: str):
-        self.key = key
+        self.key: str = key
 
 
 if TYPE_CHECKING:
@@ -468,20 +469,20 @@ else:
 class Normalizer:
     """Annotated marker: normalizer for compact serialization equivalence."""
 
-    __slots__ = ("fn",)
+    __slots__: ClassVar[tuple[str, ...]] = ("fn",)
 
     def __init__(self, fn: Callable[..., Any]):
-        self.fn = fn
+        self.fn: Callable[..., Any] = fn
 
 
 class ContextDefault:
     """Annotated marker: context-specific defaults."""
 
-    __slots__ = ("edge", "profile")
+    __slots__: ClassVar[tuple[str, ...]] = ("edge", "profile")
 
     def __init__(self, *, edge: Any = CONTEXT_NOT_SET, profile: Any = CONTEXT_NOT_SET):
-        self.edge = edge
-        self.profile = profile
+        self.edge: Any = edge
+        self.profile: Any = profile
 
 
 class KeyField:
@@ -498,7 +499,7 @@ class KeyField:
     ``KeySpec`` (``get_key_spec``).
     """
 
-    __slots__ = ("alt", "key_paths", "label")
+    __slots__: ClassVar[tuple[str, ...]] = ("alt", "key_paths", "label")
 
     def __init__(
         self, *key_paths: str, alt: str | None = None, label: str | None = None
@@ -587,7 +588,7 @@ class Resolvable[IdentityT]:
     field whose type cannot hold what the accessor returns.
     """
 
-    __slots__ = ("accessor", "attribute", "identity_type")
+    __slots__: ClassVar[tuple[str, ...]] = ("accessor", "attribute", "identity_type")
 
     def __init__(
         self, identity_type: type[IdentityT], accessor: Callable[[IdentityT], object]
@@ -607,7 +608,7 @@ def _identity_field_names(identity_type: type) -> list[str]:
 class _ProbeAnswer:
     """What the probe answers for each attribute read: it cannot be tested for truth, so an accessor that falls back to another value for a falsy one (``i.segment_id or None``) is refused."""
 
-    __slots__ = ()
+    __slots__: ClassVar[tuple[str, ...]] = ()
 
     def __bool__(self) -> bool:
         raise TypeError("the value read was tested for truth")

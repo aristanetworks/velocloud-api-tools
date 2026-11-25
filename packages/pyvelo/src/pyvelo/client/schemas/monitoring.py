@@ -96,7 +96,7 @@ class MetricSummary(VcoModel):
 
 
 class EdgeHealthStats(VcoModel):
-    model_config = ConfigDict(extra="allow")
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="allow")
 
     cpu_pct: MetricSummary | MISSING = MISSING
     memory_pct: MetricSummary | MISSING = MISSING
@@ -113,7 +113,7 @@ class EdgeHealthStats(VcoModel):
 
 
 class GatewayHealthStats(VcoModel):
-    model_config = ConfigDict(extra="allow")
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="allow")
 
     cpu_pct: MetricSummary | MISSING = MISSING
     memory_pct: MetricSummary | MISSING = MISSING
@@ -131,14 +131,14 @@ class TunnelStateCounts(VcoModel):
 
 
 class NvsDataCenter(VcoModel):
-    model_config = ConfigDict(extra="allow")
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="allow")
 
     name: str | None | MISSING = MISSING
     public_ip: str | None | MISSING = MISSING
 
 
 class AggregateEventItem(VcoModel):
-    model_config = ConfigDict(extra="allow")
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="allow")
 
     event: str | None | MISSING = MISSING
     category: str | None | MISSING = MISSING
@@ -150,7 +150,7 @@ class AggregateEventItem(VcoModel):
 
 
 class EventAggregateMetadata(VcoModel):
-    model_config = ConfigDict(extra="allow")
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="allow")
 
     limit: int | None | MISSING = MISSING
     more: bool | None | MISSING = MISSING
@@ -439,7 +439,7 @@ class GetEnterpriseEdgeClusterStatus(VcoModel):
 class ClusterEdgeEntry(VcoModel):
     """Health metrics for an edge member of a cluster."""
 
-    model_config = ConfigDict(extra="allow")
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="allow")
 
     edge_id: Annotated[
         int | None | MISSING, Resolvable(EdgeIdentity, lambda i: i.id)
@@ -462,7 +462,7 @@ class ClusterEdgeEntry(VcoModel):
 class GetEnterpriseEdgeClusterStatusResultItem(VcoModel):
     """Status of a single edge cluster within an enterprise."""
 
-    model_config = ConfigDict(extra="allow")
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="allow")
 
     cluster_id: int | None | MISSING = MISSING
     cluster_name: str | None | MISSING = MISSING
@@ -482,7 +482,7 @@ class GetEnterpriseEdgeNvsTunnelStatus(VcoModel):
 
 
 class GetEnterpriseEdgeNvsTunnelStatusResultItemData(VcoModel):
-    model_config = ConfigDict(extra="allow")
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="allow")
 
     name: str | None | MISSING = MISSING
     link: uuid.UUID | None | MISSING = MISSING
@@ -777,7 +777,7 @@ class RouteTableSegmentEntry(VcoModel):
 class EnterpriseGatewayRouteTableConfigResult(VcoModel):
     """Gateway route table configuration showing available gateways and segments."""
 
-    model_config = ConfigDict(extra="allow")
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="allow")
 
     gateways: list[RouteTableGatewayEntry] | None | MISSING = MISSING
     segments: list[RouteTableSegmentEntry] | None | MISSING = MISSING
@@ -961,7 +961,7 @@ class DegradationDetailsSortItem(VcoModel):
 
 
 class GetLinkDegradationDetails(_LinkInsightsRequest):
-    model_config = ConfigDict(
+    model_config: ClassVar[ConfigDict] = ConfigDict(
         json_schema_extra={
             "oneOf": [
                 {

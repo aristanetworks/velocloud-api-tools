@@ -6,7 +6,7 @@ holds the services ``dns-a`` (701) and ``dns-b`` (702) beside it.
 """
 
 import uuid
-from typing import Any, cast, override
+from typing import Any, ClassVar, cast, override
 
 import pytest
 from pydantic import MISSING
@@ -306,7 +306,7 @@ def test_a_direct_plan_lets_the_not_loaded_error_through():
 
 async def test_a_second_not_loaded_error_for_the_same_type_propagates():
     class NeverLoads(NetworkServiceResolver):
-        loads = 0
+        loads: ClassVar[int] = 0
 
         @override
         async def load(self, context: ResolverContext) -> None:

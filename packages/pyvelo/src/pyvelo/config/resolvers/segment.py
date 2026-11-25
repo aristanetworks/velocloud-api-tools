@@ -27,7 +27,7 @@ class SegmentResolver(BaseResolver[SegmentIdentity]):
     when ``load()`` is called, scoped to the enterprise from ResolverContext.
     """
 
-    identity_type = SegmentIdentity
+    identity_type: type[SegmentIdentity] = SegmentIdentity
 
     @override
     def lookup_key(self, key: IdentityKey[SegmentIdentity]) -> SegmentIdentity:

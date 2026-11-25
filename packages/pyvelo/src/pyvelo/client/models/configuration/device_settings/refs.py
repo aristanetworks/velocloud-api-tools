@@ -1,4 +1,4 @@
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, ClassVar, Literal
 
 from pydantic import MISSING, ConfigDict
 
@@ -214,7 +214,7 @@ class DeviceSettingsZscalerSubLocationRef(ConfigurationRef):
 
 # Container class for all DeviceSettings refs
 class DeviceSettingsRefs(VcoModel):
-    model_config = ConfigDict(frozen=True)
+    model_config: ClassVar[ConfigDict] = ConfigDict(frozen=True)
 
     # Authentication
     authentication: Annotated[

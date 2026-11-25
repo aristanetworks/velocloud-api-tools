@@ -39,9 +39,9 @@ class ResolutionError(KeyError):
         candidates: list[str],
         message: str | None = None,
     ) -> None:
-        self.name = name
-        self.identity_type = identity_type
-        self.candidates = candidates
+        self.name: str = name
+        self.identity_type: type | str = identity_type
+        self.candidates: list[str] = candidates
         super().__init__(message or self._default_message())
 
     @override
@@ -496,9 +496,9 @@ class HubServiceNotFoundError(ResolutionError):
     def __init__(
         self, *, hub: str, segment: str, path: str, message: str | None = None
     ) -> None:
-        self.hub = hub
-        self.segment = segment
-        self.path = path
+        self.hub: str = hub
+        self.segment: str = segment
+        self.path: str = path
         super().__init__(
             name=hub,
             identity_type=HubService,

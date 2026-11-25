@@ -34,7 +34,16 @@ import functools
 import json
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Self, cast, get_args, overload, override
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    ClassVar,
+    Self,
+    cast,
+    get_args,
+    overload,
+    override,
+)
 
 from pydantic import MISSING
 
@@ -89,7 +98,7 @@ class Binding:
     and shares the profile: the copy inherits from the same profile.
     """
 
-    __slots__ = ("parent",)
+    __slots__: ClassVar[tuple[str, ...]] = ("parent",)
     parent: Layered[Profile] | None
 
     def __init__(self, parent: Layered[Profile] | None) -> None:
@@ -322,7 +331,7 @@ class Owned[T]:
     def __eq__(self, other: object) -> bool:
         return isinstance(other, Owned) and self.stored == other.stored  # pyright: ignore[reportUnknownMemberType]
 
-    __hash__ = None  # pyright: ignore[reportAssignmentType]
+    __hash__: ClassVar[None] = None  # pyright: ignore[reportIncompatibleMethodOverride]
 
     @override
     def __repr__(self) -> str:
@@ -533,10 +542,10 @@ class OwnedGroup:
     """
 
     def __init__(self, name: str, *, anchor: str, bundle: type[VcoModel]) -> None:
-        self.name = name
-        self.anchor = anchor
-        self.bundle = bundle
-        self.attribute = name
+        self.name: str = name
+        self.anchor: str = anchor
+        self.bundle: type[VcoModel] = bundle
+        self.attribute: str = name
 
     def __set_name__(self, owner: type, name: str) -> None:
         self.attribute = name
@@ -637,8 +646,8 @@ class GroupHandle:
     """The coupled group *group* of one edge-layer model: ``is_local``, ``inherit``, ``set_local`` and ``localize`` for every member at once."""
 
     def __init__(self, group: OwnedGroup, owner: Layered[Edge]) -> None:
-        self._group = group
-        self._owner = owner
+        self._group: OwnedGroup = group
+        self._owner: Layered[Edge] = owner
 
     def _members(self) -> list[Owned[Any]]:
         names = self._group.members(type(self._owner))

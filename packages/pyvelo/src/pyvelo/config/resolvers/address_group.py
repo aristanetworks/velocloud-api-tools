@@ -25,7 +25,7 @@ class AddressGroupResolver(BaseResolver[AddressGroupIdentity]):
     Loads via ``enterprise/getObjectGroups`` with type ``address_group``.
     """
 
-    identity_type = AddressGroupIdentity
+    identity_type: type[AddressGroupIdentity] = AddressGroupIdentity
 
     @override
     def lookup_key(

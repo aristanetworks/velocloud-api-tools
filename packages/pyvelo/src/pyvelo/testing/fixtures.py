@@ -80,7 +80,7 @@ def make_module_json(
 
 class FakeSegmentData:
     def __init__(self, segment_id: int):
-        self.segment_id = segment_id
+        self.segment_id: int = segment_id
 
 
 class FakeSegment:
@@ -94,20 +94,20 @@ class FakeSegment:
         segment_id: int,
         type_: NetworkSegmentType = NetworkSegmentType.REGULAR,
     ):
-        self.id_ = id_
-        self.name = name
-        self.logical_id = logical_id
-        self.type_ = type_
-        self.data = FakeSegmentData(segment_id)
+        self.id_: int = id_
+        self.name: str = name
+        self.logical_id: uuid.UUID = logical_id
+        self.type_: NetworkSegmentType = type_
+        self.data: FakeSegmentData = FakeSegmentData(segment_id)
 
 
 class FakeEdge:
     """Minimal edge object for EdgeResolver tests."""
 
     def __init__(self, name: str, id_: int, logical_id: uuid.UUID):
-        self.name = name
-        self.id_ = id_
-        self.logical_id = logical_id
+        self.name: str = name
+        self.id_: int = id_
+        self.logical_id: uuid.UUID = logical_id
 
 
 async def make_segment_resolver(segments: list[dict[str, Any]]) -> SegmentResolver:

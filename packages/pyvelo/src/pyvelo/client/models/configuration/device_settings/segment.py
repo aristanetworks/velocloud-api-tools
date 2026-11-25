@@ -1,5 +1,5 @@
 import uuid
-from typing import Annotated, Any, Literal, Self
+from typing import Annotated, Any, ClassVar, Literal, Self
 
 from pydantic import (
     MISSING,
@@ -537,7 +537,7 @@ NsdRoute = Annotated[
 
 
 class SegmentRoutes(VcoModel):
-    model_config = ConfigDict(extra="allow")
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="allow")
 
     icmp_probes: Annotated[list[ICMPProbe], KeyField("name", alt="logical_id")] = Field(
         default_factory=list
@@ -712,7 +712,7 @@ class SegmentSyslog(VcoModel):
 class DnsProvider(VcoModel):
     # Effective configurations may expand a provider inline rather than return
     # its configuration ref. Preserve those VCO-specific fields for callers.
-    model_config = ConfigDict(extra="allow")
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="allow")
 
     ref: DeviceSettingsRef | MISSING = MISSING
 

@@ -19,7 +19,7 @@ class ProfileResolver(BaseResolver[ProfileIdentity]):
     Loads via ``enterprise/getEnterpriseConfigurations``.
     """
 
-    identity_type = ProfileIdentity
+    identity_type: type[ProfileIdentity] = ProfileIdentity
 
     @override
     def lookup_key(self, key: IdentityKey[ProfileIdentity]) -> ProfileIdentity:

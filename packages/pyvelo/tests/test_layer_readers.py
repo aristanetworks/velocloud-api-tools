@@ -667,7 +667,7 @@ def test_a_validator_that_would_see_an_owned_is_refused_at_class_creation(
             level: Annotated[Inheritable[int], ByPresence(), Default(0)] = Field(
                 default=...
             )
-            _check = field_validator("level", mode=mode)(function)  # pyright: ignore[reportArgumentType, reportCallIssue, reportUnknownVariableType]
+            _check = field_validator("level", mode=mode)(function)  # pyright: ignore[reportArgumentType, reportCallIssue, reportUnknownVariableType, reportUnannotatedClassAttribute]
 
     # The fix it names, and a before validator, are accepted.
     assert _Guarded[Edge].model_validate({"level": 1}).level.stored == 1

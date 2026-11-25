@@ -60,9 +60,9 @@ class VcoClient(VcoClientProtocol):
         self._exchange_hook: ExchangeHook | None = exchange_hook
         self._request_observer: RequestObserver | None = request_observer
         self._ws_cleanup_tasks: set[asyncio.Task[None]] = set()
-        self._transport = transport
+        self._transport: httpx.AsyncBaseTransport | None = transport
         if transport is not None:
-            self._http = self._new_http_client()
+            self._http: httpx.AsyncClient | None = self._new_http_client()
 
         if max_concurrent_requests is not None:
             self._concurrency_semaphore: asyncio.Semaphore | None = asyncio.Semaphore(

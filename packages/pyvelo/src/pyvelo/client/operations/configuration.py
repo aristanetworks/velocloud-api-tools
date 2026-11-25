@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from collections.abc import Mapping, Sequence
 from dataclasses import replace
-from typing import TYPE_CHECKING, Annotated, Any, Protocol, cast, overload
+from typing import TYPE_CHECKING, Annotated, Any, ClassVar, Protocol, cast, overload
 
 from pydantic import (
     MISSING,
@@ -142,7 +142,7 @@ class _UnleveledAnswer(
 ):
     """An update's answer when the layer of a row is not known: a firewall row stays the JSON object it came as, as its layer cannot be told; anything else is read as it is for an update."""
 
-    model_config = ConfigDict(hide_input_in_errors=True)
+    model_config: ClassVar[ConfigDict] = ConfigDict(hide_input_in_errors=True)
 
 
 def _unleveled_firewall_row(answer: dict[str, Any]) -> LayerUnknownError:  # pyright: ignore[reportExplicitAny]

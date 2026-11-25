@@ -2,6 +2,7 @@
 
 import io
 from pathlib import Path
+from typing import ClassVar
 
 import pytest
 import yaml
@@ -48,7 +49,7 @@ def test_load_config_refuses_a_nested_key_given_twice(tmp_path: Path):
 
 
 class Loose(BaseModel):
-    model_config = ConfigDict(extra="allow")
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="allow")
 
 
 @pytest.mark.parametrize(

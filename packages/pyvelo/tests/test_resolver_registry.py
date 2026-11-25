@@ -77,7 +77,7 @@ FOO = FooIdentity(name="foo", id=1, logical_id=uuid.UUID(int=1))
 class MockFooResolver(BaseResolver[FooIdentity]):
     """Overrides ``lookup`` and ``lookup_key`` only, over a table ``load`` fills."""
 
-    identity_type = FooIdentity
+    identity_type: type[FooIdentity] = FooIdentity
 
     def __init__(self) -> None:
         super().__init__(_no_client())
@@ -111,7 +111,7 @@ class MockFooResolver(BaseResolver[FooIdentity]):
 
 
 class MockBarResolver(BaseResolver[BarIdentity]):
-    identity_type = BarIdentity
+    identity_type: type[BarIdentity] = BarIdentity
 
     def __init__(self) -> None:
         super().__init__(_no_client())
@@ -168,7 +168,7 @@ class NoCopyResolver:
 class WrongIdentityResolver(BaseResolver[FooIdentity]):
     """The type checker refuses an ``identity_type`` that is not the resolver's identity."""
 
-    identity_type = BarIdentity  # pyright: ignore[reportAssignmentType]
+    identity_type = BarIdentity  # pyright: ignore[reportAssignmentType, reportUnannotatedClassAttribute]
 
     @override
     async def load(self, context: ResolverContext) -> None:
@@ -178,7 +178,7 @@ class WrongIdentityResolver(BaseResolver[FooIdentity]):
 class OnlyLookupsResolver(BaseResolver[FooIdentity]):
     """A resolver that defines the two lookups and nothing awaitable."""
 
-    identity_type = FooIdentity
+    identity_type: type[FooIdentity] = FooIdentity
 
     def __init__(self) -> None:
         super().__init__(_no_client())
@@ -309,7 +309,7 @@ class TestResolverRegistry:
     async def test_context_manager_clears_caches(self, registry: ResolverRegistry):
         # Register a real BaseResolver-style resolver so _clear is exercised.
         class CountedResolver(BaseResolver[FooIdentity]):
-            identity_type = FooIdentity
+            identity_type: type[FooIdentity] = FooIdentity
 
             def __init__(self) -> None:
                 super().__init__(client=_no_client())

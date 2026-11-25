@@ -1,5 +1,5 @@
 import uuid
-from typing import Annotated, Any, Self
+from typing import Annotated, Any, ClassVar, Self
 
 from pydantic import MISSING, ConfigDict, RootModel, model_validator
 
@@ -57,7 +57,7 @@ class GetEnterpriseFirewallLogsList(PaginatedVcoModel):
 
 
 class GetEnterpriseFirewallLogsListItem(VcoModel):
-    model_config = ConfigDict(extra="allow")
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="allow")
 
 
 class GetEnterpriseFirewallRules(VcoModel):

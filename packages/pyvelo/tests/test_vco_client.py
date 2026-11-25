@@ -3,7 +3,7 @@
 import asyncio
 from collections.abc import Awaitable, Callable
 from types import CoroutineType
-from typing import cast, override
+from typing import ClassVar, cast, override
 from unittest.mock import patch
 
 import httpx
@@ -935,7 +935,7 @@ class TestVcoAuth:
             "test/getStuff", SampleRequest(enterprise_id=1), SampleResult
         )
 
-    REFUSED = (
+    REFUSED: ClassVar[str] = (
         "The API token has a character that cannot be sent in an HTTP header: a "
         "line break, a tab, another control character or a character that is not "
         "ASCII. The token is not shown here. Check where it comes from, for "

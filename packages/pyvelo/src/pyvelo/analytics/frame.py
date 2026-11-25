@@ -1,17 +1,17 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
-from typing import Any, override
+from typing import Any, ClassVar, override
 
 import polars as pl
 
 
 class GroupByProxy:
-    __slots__ = ("_df", "_keys")
+    __slots__: ClassVar[tuple[str, ...]] = ("_df", "_keys")
 
     def __init__(self, df: pl.DataFrame, keys: list[str]) -> None:
-        self._df = df
-        self._keys = keys
+        self._df: pl.DataFrame = df
+        self._keys: list[str] = keys
 
     def agg(
         self,
@@ -41,7 +41,7 @@ class GroupByProxy:
 
 
 class MetricFrame:
-    __slots__ = ("_df",)
+    __slots__: ClassVar[tuple[str, ...]] = ("_df",)
 
     def __init__(
         self,
@@ -50,7 +50,7 @@ class MetricFrame:
     ) -> None:
         if rows:
             data = {c: [row.get(c) for row in rows] for c in columns}
-            self._df = pl.DataFrame(data)
+            self._df: pl.DataFrame = pl.DataFrame(data)
         else:
             self._df = pl.DataFrame(schema={c: pl.Utf8 for c in columns})
 

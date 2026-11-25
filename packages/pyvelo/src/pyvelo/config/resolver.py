@@ -96,7 +96,7 @@ class BaseResolver[IdentityT]:
     requires_load: ClassVar[bool] = False
 
     def __init__(self, client: VcoClientProtocol) -> None:
-        self._client = client
+        self._client: VcoClientProtocol = client
         self.loaded: bool = False
         self._by_name: dict[str, IdentityT] = {}
         self._reverse: dict[str, dict[int | str | uuid.UUID, str]] = {}
