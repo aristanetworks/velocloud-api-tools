@@ -538,7 +538,7 @@ def test_a_request_without_a_required_key_is_answered_with_an_error(
 def test_a_hook_cannot_change_the_stored_row_through_old():
     store = stack_store()
 
-    def hook(row: dict[str, Any], old: dict[str, Any] | None) -> None:
+    def hook(_row: dict[str, Any], old: dict[str, Any] | None) -> None:
         assert old is not None
         old["data"]["touched"] = True
 

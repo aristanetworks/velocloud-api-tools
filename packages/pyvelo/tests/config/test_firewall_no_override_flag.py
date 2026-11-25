@@ -12,7 +12,7 @@ written, and reported (never written just to strip it).
 """
 
 import copy
-from typing import Any
+from typing import Any, override
 
 import pytest
 from pyvelo.client.schemas.configuration import (
@@ -99,6 +99,7 @@ async def profile_state() -> ConfigState:
     )
 
     class Client(MockVcoClient):
+        @override
         async def get_configuration(
             self, request: GetConfiguration
         ) -> EdgeConfiguration | EnterpriseConfigurationProfile:

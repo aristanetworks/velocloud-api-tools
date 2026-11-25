@@ -34,7 +34,7 @@ import functools
 import json
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Self, cast, get_args, overload
+from typing import TYPE_CHECKING, Any, Self, cast, get_args, overload, override
 
 from pydantic import MISSING
 
@@ -318,11 +318,13 @@ class Owned[T]:
             + "state.effective.<module>.<field>.value"
         )
 
+    @override
     def __eq__(self, other: object) -> bool:
         return isinstance(other, Owned) and self.stored == other.stored  # pyright: ignore[reportUnknownMemberType]
 
     __hash__ = None  # pyright: ignore[reportAssignmentType]
 
+    @override
     def __repr__(self) -> str:
         return f"Owned({self.stored!r})"
 

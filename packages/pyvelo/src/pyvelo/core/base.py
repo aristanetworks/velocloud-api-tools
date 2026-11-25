@@ -724,6 +724,7 @@ class VcoModel(BaseModel):
         models, lists and dicts included) as the dump does, and is ``None``
         for a full dump.
         """
+        del by_alias, compact_value
         return dumped
 
     @classmethod

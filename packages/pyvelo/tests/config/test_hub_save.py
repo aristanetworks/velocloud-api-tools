@@ -58,7 +58,7 @@ from pyvelo.core import ConfigContext, delete
 from pyvelo.core.identity import HubServiceNotFoundError
 from pyvelo.testing import ModuleStore
 from refs_helpers import CONFIG, DS_ID, QOS_ID, segment_row
-from segment_helpers import GLOBAL, GUEST, ds_entry, firewall_entry, qos_entry
+from segment_helpers import GLOBAL, GUEST, Segment, ds_entry, firewall_entry, qos_entry
 from test_backhaul_refs_state import (  # pyright: ignore[reportImplicitRelativeImport]
     SERVICE_A,
     SERVICE_A_ID,
@@ -108,7 +108,7 @@ def refs(*rows: dict[str, Any]) -> dict[str, Any]:
     )
 
 
-def service_row(hub: Hub, *roles: Role, segment=GLOBAL) -> dict[str, Any]:
+def service_row(hub: Hub, *roles: Role, segment: Segment = GLOBAL) -> dict[str, Any]:
     """The row of *hub*'s service for *segment*: the Edge's own service, the cluster itself."""
     service_id = hub.id if hub.kind == "cluster" else 600 + hub.id
     return hub_row(
@@ -771,7 +771,7 @@ async def test_a_cancellation_of_a_step_propagates_unchanged():
     pipeline, _ = hub_pipeline(state, vpn_check=True)
     cancelled = asyncio.CancelledError()
 
-    async def cancelled_call(request: Any) -> Any:
+    async def cancelled_call(_request: Any) -> Any:
         raise cancelled
 
     pipeline.client.enable_edge_hub = cancelled_call  # pyright: ignore[reportAttributeAccessIssue]
@@ -791,7 +791,7 @@ def test_a_keyboard_interrupt_of_a_step_propagates_unchanged():
         state = await two_lists_state()
         pipeline, _ = hub_pipeline(state, vpn_check=True)
 
-        async def interrupted_call(request: Any) -> Any:
+        async def interrupted_call(_request: Any) -> Any:
             raise interrupt
 
         pipeline.client.enable_edge_hub = interrupted_call  # pyright: ignore[reportAttributeAccessIssue]
@@ -881,7 +881,7 @@ async def test_a_hub_row_the_vco_leaves_out_of_the_stored_module_is_refused():
     state = await two_lists_state()
     pipeline, store = hub_pipeline(state, vpn_check=True)
 
-    def drop_the_hub_row(new: dict[str, Any], old: dict[str, Any] | None) -> None:
+    def drop_the_hub_row(new: dict[str, Any], _old: dict[str, Any] | None) -> None:
         new["refs"].pop(EDGE_HUB_REF)
 
     store.on_store.append(drop_the_hub_row)

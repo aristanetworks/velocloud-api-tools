@@ -107,6 +107,7 @@ class BaseResolver[IdentityT]:
         return identity
 
     def lookup_key(self, key: IdentityKey[IdentityT]) -> IdentityT:
+        del key
         raise NotImplementedError
 
     @final
@@ -118,6 +119,7 @@ class BaseResolver[IdentityT]:
         return self.lookup_key(key)
 
     async def load(self, context: ResolverContext) -> None:
+        del context
         raise NotImplementedError
 
     def identities(self) -> Collection[IdentityT]:

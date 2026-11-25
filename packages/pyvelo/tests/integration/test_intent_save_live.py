@@ -226,14 +226,16 @@ def refused_writes(vco_client: VcoClient, monkeypatch: pytest.MonkeyPatch) -> li
     attempts: list[str] = []
 
     async def refuse_update(
-        request: UpdateConfigurationModule, *, level: ConfigContext | None = None
+        _request: UpdateConfigurationModule, *, level: ConfigContext | None = None
     ) -> None:
+        del level
         attempts.append("update")
         raise WriteRefused
 
     async def refuse_insert(
-        request: InsertConfigurationModule, *, level: ConfigContext | None = None
+        _request: InsertConfigurationModule, *, level: ConfigContext | None = None
     ) -> Any:
+        del level
         attempts.append("insert")
         raise WriteRefused
 

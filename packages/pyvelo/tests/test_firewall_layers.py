@@ -192,7 +192,9 @@ def test_module_template_value_is_a_copy():
 
 
 @pytest.mark.parametrize("layer", [Profile, Composed])
-def test_a_constructed_model_reads_a_missing_inheritable_as_its_display_default(layer):
+def test_a_constructed_model_reads_a_missing_inheritable_as_its_display_default(
+    layer: Any,  # Profile or Composed: a union cannot fill FirewallData's constrained L
+):
     built = FirewallData[layer].model_construct()
     parsed = FirewallData[layer].model_validate({})
     assert built.atp_enabled is False

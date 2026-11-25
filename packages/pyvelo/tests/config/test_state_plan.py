@@ -1,5 +1,5 @@
 import copy
-from typing import Any
+from typing import Any, override
 
 import pytest
 from pyvelo.client.enums.configuration import ConfigurationModuleName
@@ -338,6 +338,7 @@ async def test_load_profile_keeps_raw_snapshots():
     )
 
     class Client(MockVcoClient):
+        @override
         async def get_configuration(
             self, request: GetConfiguration
         ) -> EdgeConfiguration | EnterpriseConfigurationProfile:

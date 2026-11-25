@@ -82,7 +82,7 @@ async def profile_of(
 async def edge_over(
     profile: ConfigState,
     *,
-    networks: list[dict[str, Any]] = [],  # noqa: B006 -- copied, never changed
+    networks: list[dict[str, Any]] | None = None,
     with_qos: bool = False,
 ) -> ConfigState:
     """An edge state over *profile*'s profile: its device settings hold only the Global Segment and *networks*.
@@ -94,7 +94,7 @@ async def edge_over(
         make_module_json(
             DS,
             {
-                "lan": {"networks": copy.deepcopy(networks), "interfaces": []},
+                "lan": {"networks": copy.deepcopy(networks or []), "interfaces": []},
                 "segments": [ds_entry(GLOBAL)],
             },
             module_id=EDGE_DS_ID,

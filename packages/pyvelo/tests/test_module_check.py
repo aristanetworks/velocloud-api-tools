@@ -5,7 +5,7 @@ import dataclasses
 import json
 import uuid
 from collections.abc import Callable, Iterable
-from typing import Any, cast
+from typing import Any, cast, override
 
 import pytest
 from pydantic import MISSING
@@ -849,9 +849,11 @@ def test_an_inferred_conflict_does_not_state_that_the_module_changed():
 
 def test_str_of_a_write_error_never_raises():
     class Odd:
+        @override
         def __repr__(self) -> str:
             return "<odd>"
 
+        @override
         def __str__(self) -> str:
             raise RuntimeError("no text")
 
@@ -1227,7 +1229,7 @@ async def test_a_change_of_a_processor_row_is_reported_and_is_not_a_lost_edit(
         mock_vco_client
     )
 
-    def processor(new: dict[str, Any], old: dict[str, Any] | None) -> None:
+    def processor(new: dict[str, Any], _old: dict[str, Any] | None) -> None:
         new["refs"][CSS_SITE]["logicalId"] = DNS_A  # the processor chose another site
 
     store.on_store.append(processor)
@@ -1252,7 +1254,7 @@ async def test_a_data_and_a_ref_failure_is_write_not_applied_listing_both(
     store.objects.update(store_with_services().objects)
     store.skipped_objects.add(701)
 
-    def revert(new: dict[str, Any], old: dict[str, Any] | None) -> None:
+    def revert(new: dict[str, Any], _old: dict[str, Any] | None) -> None:
         del new["data"]["ntp"]["sourceInterface"]
 
     store.on_store.append(revert)

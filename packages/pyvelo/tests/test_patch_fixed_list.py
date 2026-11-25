@@ -2,6 +2,7 @@
 
 import copy
 import uuid
+from collections.abc import Callable
 from typing import Annotated, Any
 
 import pytest
@@ -226,7 +227,9 @@ def _other_alt_key() -> list[dict[str, Any]]:
     [_reordered, _dropped, _added, _renamed, _match_changed, _other_alt_key],
     ids=["reorders", "drops", "adds", "renames", "match", "alt-key"],
 )
-def test_a_list_value_that_reorders_drops_adds_or_changes_a_match_is_refused(build):  # pyright: ignore[reportMissingParameterType]
+def test_a_list_value_that_reorders_drops_adds_or_changes_a_match_is_refused(
+    build: Callable[[], list[dict[str, Any]]],
+):
     error = refusal(segment(), {"defaults": build()})
     assert error.path.startswith("defaults")
     assert "action" in error.message

@@ -32,7 +32,7 @@ async def profile_state(
     segments: tuple[Segment, ...] = (GLOBAL, GUEST, VOICE),
     ds_refs: dict[str, Any] | MISSING | None = None,
     qos_refs: dict[str, Any] | MISSING = MISSING,
-    networks: list[dict[str, Any]] = [],  # noqa: B006 -- copied, never changed
+    networks: list[dict[str, Any]] | None = None,
 ) -> ConfigState:
     """A profile state of configuration ``CONFIG`` with the given segment lists, and a snapshot.
 

@@ -838,6 +838,7 @@ class TestTransport:
                 self.closings: int = 0
                 self.sent: int = 0
 
+            @override
             async def __aenter__(self):
                 self.closed = False
                 return self

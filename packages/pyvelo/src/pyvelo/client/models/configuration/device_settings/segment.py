@@ -599,7 +599,7 @@ class NatRule(VcoModel):
 
     @field_validator("dest_cidr_prefix", "src_cidr_prefix", mode="before")
     @classmethod
-    def empty_str_to_none(cls, v):
+    def empty_str_to_none(cls, v: object) -> object:
         return None if v == "" else v
 
 

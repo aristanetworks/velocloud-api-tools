@@ -627,6 +627,7 @@ class ModuleWriteError(VcoError):
 
     def _notes(self, limit: int | None) -> list[str]:
         """Lines between the headline and the lists; a list in them shows at most *limit* entries."""
+        del limit
         return []
 
     def _document(self) -> type[VcoModel] | None:

@@ -1,6 +1,7 @@
 """How a plan line and a write error show a value."""
 
 import uuid
+from typing import override
 
 from pydantic import MISSING
 from pyvelo.core.rebase import ItemMove, ItemPlace, Key
@@ -13,14 +14,17 @@ def test_value_text_is_json_with_sorted_keys():
 
 
 class Odd:
+    @override
     def __repr__(self) -> str:
         return "<odd>"
 
+    @override
     def __str__(self) -> str:
         raise RuntimeError("no text")
 
 
 class Mute:
+    @override
     def __repr__(self) -> str:
         raise RuntimeError("no repr")
 

@@ -1658,7 +1658,7 @@ def test_marks_are_whole_words_of_a_description():
         "prod/pyvelo-it-target",
     ],
 )
-def test_a_mark_inside_a_longer_token_is_none(description):
+def test_a_mark_inside_a_longer_token_is_none(description: str):
     assert live.marks_in(description) == frozenset()
 
 
@@ -1672,7 +1672,7 @@ def test_a_mark_inside_a_longer_token_is_none(description):
         "(pyvelo-it-target)",
     ],
 )
-def test_a_mark_bounded_by_spaces_or_punctuation_counts(description):
+def test_a_mark_bounded_by_spaces_or_punctuation_counts(description: str):
     assert live.marks_in(description) == {live.TARGET_MARK}
 
 

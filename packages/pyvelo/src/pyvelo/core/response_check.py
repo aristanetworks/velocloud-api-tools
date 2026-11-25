@@ -61,7 +61,7 @@ a changed list is one change.
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from ipaddress import IPv6Interface
-from typing import Literal
+from typing import Final, Literal
 
 from pydantic import MISSING
 
@@ -115,6 +115,10 @@ class Rewrites:
     """Two strings that parse as one ``IPv6Interface`` are the same value."""
     own_order: tuple[PathPattern, ...] = ()
     """Keyed lists whose order the VCO sets itself."""
+
+
+_NO_REWRITES: Final = Rewrites()
+"""The default of ``check_response``: the VCO stores every value as sent."""
 
 
 def matches(path: Path, pattern: PathPattern) -> bool:
@@ -245,7 +249,7 @@ def check_response(
     stored: object,
     model: type[VcoModel] | None = None,
     *,
-    rewrites: Rewrites = Rewrites(),
+    rewrites: Rewrites = _NO_REWRITES,
 ) -> ResponseCheck:
     """Compare what the VCO stored with what a write meant to change.
 

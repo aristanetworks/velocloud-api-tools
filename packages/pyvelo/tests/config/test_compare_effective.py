@@ -368,7 +368,7 @@ async def test_a_resolver_that_stays_not_loaded_stops_the_comparison(
     pipeline, state, _ = await loaded()
     loads: list[type] = []
 
-    def needs_the_services(*args: Any, **kwargs: Any):
+    def needs_the_services(*_args: Any, **_kwargs: Any):
         raise ResolverNotLoadedError(NetworkServiceIdentity)
 
     async def load_resolvers(_state: ConfigState, *identities: type) -> None:

@@ -656,7 +656,7 @@ def test_a_validator_that_would_see_an_owned_is_refused_at_class_creation(
     def check(value: object) -> object:
         return value
 
-    def check_wrapping(value: object, handler: object) -> object:
+    def check_wrapping(value: object, _handler: object) -> object:
         return value
 
     function = check_wrapping if mode == "wrap" else check
@@ -680,7 +680,7 @@ def test_a_validator_marker_outside_the_kind_is_refused_at_class_creation(
     def check(value: object) -> object:
         return value
 
-    def check_wrapping(value: object, handler: object) -> object:
+    def check_wrapping(value: object, _handler: object) -> object:
         return value
 
     function = check_wrapping if marker is WrapValidator else check

@@ -73,14 +73,14 @@ def qos_entry(
     segment: Segment,
     *,
     defaults: list[dict[str, Any]] | None | MISSING = _FACTORY_DEFAULTS,
-    rules: list[dict[str, Any]] = [],  # noqa: B006 -- copied, never changed
+    rules: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """A QoS segment entry for *segment*: the template's parts, the given *rules* and *defaults*.
 
     *defaults* is the template's four, with IDs, unless given: ``None`` puts
     ``"defaults": null`` in the entry and ``MISSING`` leaves the key out.
     """
-    entry = new_segment_entry("QOS", identity(segment), qos_rules=rules)
+    entry = new_segment_entry("QOS", identity(segment), qos_rules=rules or [])
     if defaults is MISSING:
         del entry["defaults"]
     elif defaults is _FACTORY_DEFAULTS:
@@ -119,7 +119,7 @@ def profile_rows(
     *,
     ds_refs: dict[str, Any] | MISSING = _ONE_ROW_PER_ENTRY,
     qos_refs: dict[str, Any] | MISSING = MISSING,
-    networks: list[dict[str, Any]] = [],  # noqa: B006 -- copied, never changed
+    networks: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     """The three module rows of a profile of configuration ``CONFIG``, with the given segment lists.
 
@@ -147,7 +147,7 @@ def profile_rows(
         make_module_json(
             "deviceSettings",
             {
-                "lan": {"networks": copy.deepcopy(networks), "interfaces": []},
+                "lan": {"networks": copy.deepcopy(networks or []), "interfaces": []},
                 "segments": copy.deepcopy(ds),
             },
             module_id=DS_ID,

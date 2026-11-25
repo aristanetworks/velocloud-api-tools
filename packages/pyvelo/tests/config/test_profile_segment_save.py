@@ -105,7 +105,7 @@ def after_device_settings(
     return versions
 
 
-def a_new_version(row: dict[str, Any]) -> None:
+def a_new_version(_row: dict[str, Any]) -> None:
     """Another writer's change that leaves the data as it is."""
 
 

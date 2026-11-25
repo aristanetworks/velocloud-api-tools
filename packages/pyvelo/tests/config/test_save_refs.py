@@ -6,7 +6,7 @@ holds the services ``dns-a`` (701) and ``dns-b`` (702) beside it.
 """
 
 import uuid
-from typing import Any, cast
+from typing import Any, cast, override
 
 import pytest
 from pydantic import MISSING
@@ -308,7 +308,9 @@ async def test_a_second_not_loaded_error_for_the_same_type_propagates():
     class NeverLoads(NetworkServiceResolver):
         loads = 0
 
+        @override
         async def load(self, context: ResolverContext) -> None:
+            del context
             type(self).loads += 1
 
     pipeline, client, state = await loaded_profile()
@@ -457,7 +459,7 @@ async def test_a_provider_assigned_during_its_write_is_reported():
     primary_provider(state).service = uuid.UUID(DNS_A)
     during = primary_provider(state)
 
-    def assign_while_writing(new: dict[str, Any], old: dict[str, Any] | None) -> None:
+    def assign_while_writing(new: dict[str, Any], _old: dict[str, Any] | None) -> None:
         if new.get("name") == "deviceSettings":
             during.service = uuid.UUID(DNS_B)
 

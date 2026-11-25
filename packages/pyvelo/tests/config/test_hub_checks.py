@@ -488,15 +488,12 @@ async def test_adding_a_listed_hub_to_another_list_of_a_segment_with_the_vpn_off
 
 
 @pytest.mark.parametrize(
-    ("path", "list_path"),
-    [
-        (("edgeToEdgeDetail", "vpnHubs"), BRIDGE_LIST),
-        (("backHaulEdges",), BACKHAUL_LIST),
-    ],
+    "path",
+    [("edgeToEdgeDetail", "vpnHubs"), ("backHaulEdges",)],
     ids=["bridge", "backhaul"],
 )
 async def test_adding_a_listed_hub_to_another_list_of_a_segment_with_the_hub_list_off_raises(
-    path: tuple[str, ...], list_path: str
+    path: tuple[str, ...],
 ):
     # Enabling a bridge or backhaul sets the hub role too, on a segment whose
     # Branch-to-Hub list is off.

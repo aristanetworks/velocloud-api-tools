@@ -110,7 +110,7 @@ class WanLink(VcoModel):
 
     @field_validator("last_active", mode="before")
     @classmethod
-    def handle_empty_last_active(cls, v):
+    def handle_empty_last_active(cls, v: object) -> object:
         if v == "":
             return None
         return v

@@ -42,7 +42,7 @@ from pyvelo.config.state import ConfigState
 from pyvelo.core import ConfigContext, delete
 from pyvelo.core.identity import HubIdentity, ResolverNotLoadedError
 from refs_helpers import CONFIG, segment_row
-from segment_helpers import GLOBAL, GUEST, ds_entry, firewall_entry, qos_entry
+from segment_helpers import GLOBAL, GUEST, Segment, ds_entry, firewall_entry, qos_entry
 
 DS = "deviceSettings"
 SERVICE = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
@@ -64,7 +64,9 @@ def refs(*rows: dict[str, Any]) -> dict[str, Any]:
     )
 
 
-def service_row(hub: Hub, n: int, *roles: Role, segment=GLOBAL) -> dict[str, Any]:
+def service_row(
+    hub: Hub, n: int, *roles: Role, segment: Segment = GLOBAL
+) -> dict[str, Any]:
     return hub_row(
         hub,
         service_id=600 + n,
@@ -135,7 +137,7 @@ def step(
     action: Literal["enable", "disable"],
     role: Role,
     hub: Hub,
-    segment=GLOBAL,
+    segment: Segment = GLOBAL,
 ) -> HubStep:
     return HubStep(
         action=action,
