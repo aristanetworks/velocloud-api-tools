@@ -9,7 +9,7 @@ from pyvelo.client.protocol import VcoClientProtocol
 from pyvelo.client.schemas.enterprise import GetEnterpriseEdges, GetEnterpriseEdgesItem
 from pyvelo.config.resolver import ResolverContext
 from pyvelo.config.resolvers.edge import EdgeResolver
-from pyvelo.core.identity import EdgeIdentity
+from pyvelo.core.identity import EdgeId, EdgeIdentity, EdgeLogicalId
 
 EDGE1_UUID = uuid.UUID("11111111-1111-1111-1111-111111111111")
 EDGE2_UUID = uuid.UUID("22222222-2222-2222-2222-222222222222")
@@ -73,17 +73,11 @@ class TestEdgeResolver:
         with pytest.raises(KeyError, match="Unknown edge.*nonexistent"):
             _ = await resolver.resolve("nonexistent")
 
-    async def test_reverse_by_id(self, resolver: EdgeResolver):
-        name = await resolver.reverse_by("id", 1)
-        assert name == "Branch-NYC"
+    async def test_lookup_key_by_id(self, resolver: EdgeResolver):
+        assert resolver.lookup_key(EdgeId(1)).name == "Branch-NYC"
 
-    async def test_reverse_by_logical_id(self, resolver: EdgeResolver):
-        name = await resolver.reverse_by("logical_id", EDGE2_UUID)
-        assert name == "Branch-LAX"
-
-    async def test_reverse_unknown(self, resolver: EdgeResolver):
-        with pytest.raises(KeyError, match="No edge with"):
-            _ = await resolver.reverse_by("id", 999)
+    async def test_lookup_key_by_logical_id(self, resolver: EdgeResolver):
+        assert resolver.lookup_key(EdgeLogicalId(EDGE2_UUID)).name == "Branch-LAX"
 
     def test_identity_type(self, mock_client: FakeEdgeClient):
         assert EdgeResolver(_client_protocol(mock_client)).identity_type is EdgeIdentity

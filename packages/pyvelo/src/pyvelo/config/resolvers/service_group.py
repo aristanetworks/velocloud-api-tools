@@ -6,16 +6,15 @@ from pyvelo.client.enums.enterprise import ObjectGroupType
 from pyvelo.client.schemas.enterprise import GetObjectGroups
 from pyvelo.config.resolver import BaseResolver, ResolverContext
 from pyvelo.core.identity import (
+    IdentityKey,
     ServiceGroupId,
     ServiceGroupIdentity,
     ServiceGroupLogicalId,
     ServiceGroupName,
 )
 
-ServiceGroupKey = ServiceGroupName | ServiceGroupId | ServiceGroupLogicalId
 
-
-class ServiceGroupResolver(BaseResolver[ServiceGroupKey, ServiceGroupIdentity]):
+class ServiceGroupResolver(BaseResolver[ServiceGroupIdentity]):
     """Resolves a service-group (port-group) identifier to a :class:`ServiceGroupIdentity`.
 
     Accepts:
@@ -29,16 +28,16 @@ class ServiceGroupResolver(BaseResolver[ServiceGroupKey, ServiceGroupIdentity]):
     identity_type = ServiceGroupIdentity
 
     @override
-    async def resolve_key(self, key: ServiceGroupKey) -> ServiceGroupIdentity:
+    def lookup_key(
+        self, key: IdentityKey[ServiceGroupIdentity]
+    ) -> ServiceGroupIdentity:
         match key:
             case ServiceGroupName(value=name):
-                return await self.resolve(name)
+                return self.lookup(name)
             case ServiceGroupId(value=v):
-                name = self._reverse["id"][v]
-                return self._by_name[name]
+                return self._by_key("id", v)
             case ServiceGroupLogicalId(value=v):
-                name = self._reverse["logical_id"][v]
-                return self._by_name[name]
+                return self._by_key("logical_id", v)
             case _:
                 raise TypeError(f"Unsupported key type: {type(key).__name__}")
 

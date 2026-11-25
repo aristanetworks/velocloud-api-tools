@@ -88,21 +88,19 @@ async def test_an_edge_that_is_no_member_is_an_edge_identity(
 ):
     registry, _ = await loaded(mock_vco_client, store_with_hubs())
 
-    found = registry.resolve_sync(HubIdentity, "Hub-A")
+    found = registry.lookup(HubIdentity, "Hub-A")
 
     assert found == edge_identity(HUB_A)
     assert found.logical_id == found.edge_logical_id == uuid.UUID(HUB_A.logical_id)
     assert (found.edge_id, found.type_) == (HUB_A.id, "edgeHub")
     # Any Edge can be a hub, so the Edge of no hub list is one too.
-    assert registry.resolve_sync(HubIdentity, NOT_A_HUB.name) == edge_identity(
-        NOT_A_HUB
-    )
+    assert registry.lookup(HubIdentity, NOT_A_HUB.name) == edge_identity(NOT_A_HUB)
 
 
 async def test_a_cluster_is_a_cluster_identity(mock_vco_client: MockVcoClientFactory):
     registry, _ = await loaded(mock_vco_client, store_with_hubs())
 
-    found = registry.resolve_sync(HubIdentity, "Cluster-1")
+    found = registry.lookup(HubIdentity, "Cluster-1")
 
     assert found == cluster_identity(CLUSTER)
     assert found.logical_id == found.cluster_logical_id == uuid.UUID(CLUSTER.logical_id)
@@ -116,17 +114,15 @@ async def test_lookups_by_name_logical_id_and_edge_id(
     registry, _ = await loaded(mock_vco_client, store_with_hubs())
     expected = edge_identity(HUB_B)
 
-    assert registry.resolve_sync(HubName("Hub-B")) == expected
-    assert registry.resolve_sync(HubName("hub-b")) == expected
-    assert registry.resolve_sync(HubLogicalId(uuid.UUID(HUB_B.logical_id))) == expected
+    assert registry.lookup(HubName("Hub-B")) == expected
+    assert registry.lookup(HubName("hub-b")) == expected
+    assert registry.lookup(HubLogicalId(uuid.UUID(HUB_B.logical_id))) == expected
     assert registry.identity_sync(HubIdentity, "edge_id", HUB_B.id) == expected
     assert registry.identity_sync(
         HubIdentity, "cluster_id", CLUSTER.id
     ) == cluster_identity(CLUSTER)
-    assert await registry.reverse(HubIdentity, "edge_id", HUB_B.id) == "Hub-B"
     assert (
-        await registry.reverse(HubIdentity, "logical_id", uuid.UUID(CLUSTER.logical_id))
-        == "Cluster-1"
+        registry.lookup(HubLogicalId(uuid.UUID(CLUSTER.logical_id))).name == "Cluster-1"
     )
     assert registry.has_id_sync(HubIdentity, "logical_id", expected.logical_id)
     assert sorted(i.name for i in registry.get_resolver(HubResolver).identities()) == [
@@ -148,9 +144,9 @@ async def test_a_cluster_member_is_no_identity(mock_vco_client: MockVcoClientFac
     assert MEMBER.name not in [i.name for i in resolver.identities()]
     assert not registry.has_id_sync(HubIdentity, "logical_id", member)
     with pytest.raises(ResolutionError, match="member of a hub cluster"):
-        _ = registry.resolve_sync(HubIdentity, "Member-1")
+        _ = registry.lookup(HubIdentity, "Member-1")
     with pytest.raises(ResolutionError, match="member of a hub cluster"):
-        _ = registry.resolve_sync(HubLogicalId(member))
+        _ = registry.lookup(HubLogicalId(member))
 
 
 async def test_an_unknown_name_lists_the_close_ones(
@@ -159,10 +155,10 @@ async def test_an_unknown_name_lists_the_close_ones(
     registry, _ = await loaded(mock_vco_client, store_with_hubs())
 
     with pytest.raises(ResolutionError, match="Hub-A") as caught:
-        _ = registry.resolve_sync(HubIdentity, "Hub-C")
+        _ = registry.lookup(HubIdentity, "Hub-C")
     assert "Unknown hub: 'Hub-C'" in str(caught.value)
     with pytest.raises(ResolutionError, match="No Edge or hub cluster"):
-        _ = registry.resolve_sync(HubLogicalId(SHARED))
+        _ = registry.lookup(HubLogicalId(SHARED))
 
 
 async def test_a_shared_hub_name_asks_for_the_logical_id(
@@ -173,14 +169,14 @@ async def test_a_shared_hub_name_asks_for_the_logical_id(
     registry, _ = await loaded(mock_vco_client, store)
 
     with pytest.raises(ResolutionError) as caught:
-        _ = registry.resolve_sync(HubIdentity, "Hub-A")
+        _ = registry.lookup(HubIdentity, "Hub-A")
 
     message = str(caught.value)
     assert HUB_A.logical_id in message and str(SHARED) in message
     assert "logical ID" in message
     assert sorted(caught.value.candidates) == sorted([HUB_A.logical_id, str(SHARED)])
-    by_edge = registry.resolve_sync(HubLogicalId(uuid.UUID(HUB_A.logical_id)))
-    by_cluster = registry.resolve_sync(HubLogicalId(SHARED))
+    by_edge = registry.lookup(HubLogicalId(uuid.UUID(HUB_A.logical_id)))
+    by_cluster = registry.lookup(HubLogicalId(SHARED))
     assert (by_edge.kind, by_cluster.kind) == ("edge", "cluster")
     assert sorted(
         i.kind
@@ -198,7 +194,7 @@ async def test_before_its_load_the_resolver_says_it_is_not_loaded(
     registry.register(resolver)
 
     with pytest.raises(ResolverNotLoadedError) as caught:
-        _ = registry.resolve_sync(HubIdentity, "Hub-A")
+        _ = registry.lookup(HubIdentity, "Hub-A")
     assert caught.value.identity_type is HubIdentity
     assert "load_resolvers(state, HubIdentity)" in str(caught.value)
     with pytest.raises(ResolverNotLoadedError):
@@ -208,7 +204,7 @@ async def test_before_its_load_the_resolver_says_it_is_not_loaded(
     assert not resolver.loaded
 
     await resolver.load(ResolverContext(enterprise_id=1))
-    assert registry.resolve_sync(HubIdentity, "Hub-A").edge_id == HUB_A.id
+    assert registry.lookup(HubIdentity, "Hub-A").edge_id == HUB_A.id
 
 
 async def test_an_unloaded_copy_holds_nothing_and_loads_on_its_own(
@@ -250,7 +246,7 @@ async def test_the_fixture_builds_a_loaded_resolver():
     registry.register(resolver)
 
     assert resolver.loaded
-    assert registry.resolve_sync(HubIdentity, "Hub-A") == edge_identity(HUB_A)
-    assert registry.resolve_sync(HubIdentity, "Cluster-1") == cluster_identity(CLUSTER)
+    assert registry.lookup(HubIdentity, "Hub-A") == edge_identity(HUB_A)
+    assert registry.lookup(HubIdentity, "Cluster-1") == cluster_identity(CLUSTER)
     assert resolver.is_cluster_member(uuid.UUID(MEMBER.logical_id))
     assert len(resolver.identities()) == 2

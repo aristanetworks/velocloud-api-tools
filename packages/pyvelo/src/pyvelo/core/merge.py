@@ -890,7 +890,7 @@ def _resolve_name(
         except ValidationError:
             pass
     try:
-        identity = resolvers.resolve_sync(resolvable.identity_type, name)
+        identity = resolvers.lookup(resolvable.identity_type, name)
     except ResolutionError:
         if id_type is str and resolvers.has_id_sync(
             resolvable.identity_type, resolvable.id_attr, name
@@ -938,7 +938,7 @@ def _canonical_name(
     identity with no ``name``, leaves *name* as it is.
     """
     try:
-        identity = resolvers.resolve_sync(identity_type, name)
+        identity = resolvers.lookup(identity_type, name)
     except ResolutionError:
         raise
     except LookupError:
@@ -1213,7 +1213,7 @@ def _fill_from_names(
             if not targets:
                 continue
             try:
-                identity = resolvers.resolve_sync(identity_type, name)
+                identity = resolvers.lookup(identity_type, name)
             except ResolutionError:
                 raise
             except LookupError:

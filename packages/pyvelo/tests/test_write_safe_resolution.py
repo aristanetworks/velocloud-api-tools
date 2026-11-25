@@ -50,7 +50,7 @@ class Fake:
         LinkIdentity: LINK,
     }
 
-    def resolve_sync[T](self, key: type[T], name: str, /) -> T:
+    def lookup[T](self, key: type[T], name: str, /) -> T:
         if key not in self.tables:
             raise LookupError(f"No resolver registered for {key.__name__}")
         return cast(T, resolve_name(name, dict(self.tables[key]), key.__name__)[1])

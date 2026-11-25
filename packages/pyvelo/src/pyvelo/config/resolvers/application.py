@@ -6,12 +6,15 @@ from pydantic import MISSING
 
 from pyvelo.client.schemas.configuration import GetRoutableApplications
 from pyvelo.config.resolver import BaseResolver, ResolverContext
-from pyvelo.core.identity import ApplicationId, ApplicationIdentity, ApplicationName
+from pyvelo.core.identity import (
+    ApplicationId,
+    ApplicationIdentity,
+    ApplicationName,
+    IdentityKey,
+)
 
-ApplicationKey = ApplicationName | ApplicationId
 
-
-class ApplicationResolver(BaseResolver[ApplicationKey, ApplicationIdentity]):
+class ApplicationResolver(BaseResolver[ApplicationIdentity]):
     """Resolves an application identifier to an :class:`ApplicationIdentity`.
 
     Accepts:
@@ -24,13 +27,12 @@ class ApplicationResolver(BaseResolver[ApplicationKey, ApplicationIdentity]):
     identity_type = ApplicationIdentity
 
     @override
-    async def resolve_key(self, key: ApplicationKey) -> ApplicationIdentity:
+    def lookup_key(self, key: IdentityKey[ApplicationIdentity]) -> ApplicationIdentity:
         match key:
             case ApplicationName(value=name):
-                return await self.resolve(name)
+                return self.lookup(name)
             case ApplicationId(value=v):
-                name = self._reverse["id"][v]
-                return self._by_name[name]
+                return self._by_key("id", v)
             case _:
                 raise TypeError(f"Unsupported key type: {type(key).__name__}")
 

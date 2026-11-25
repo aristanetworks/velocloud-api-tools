@@ -100,7 +100,7 @@ class IdentityResolver(Protocol):
     Satisfied by ``pyvelo.config.resolver.ResolverRegistry``.
     """
 
-    def resolve_sync[T](self, key: type[T], name: str, /) -> T: ...
+    def lookup[T](self, key: type[T], name: str, /) -> T: ...
 
     def has_id_sync(
         self, identity_type: type[object], id_attr: str, value: object, /

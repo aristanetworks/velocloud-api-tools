@@ -10,7 +10,10 @@ from pyvelo.client.schemas.enterprise import GetEnterpriseNetworkSegments
 from pyvelo.config.resolver import ResolverContext
 from pyvelo.config.resolvers.segment import SegmentResolver
 from pyvelo.core.identity import (
+    SegmentId,
     SegmentIdentity,
+    SegmentLogicalId,
+    SegmentObjectId,
 )
 from pyvelo.testing import FakeSegment
 
@@ -71,25 +74,16 @@ class TestSegmentResolver:
         with pytest.raises(KeyError, match="Unknown segment.*nonexistent"):
             _ = await resolver.resolve("nonexistent")
 
-    async def test_reverse_by_segment_id(self, resolver: SegmentResolver):
-        name = await resolver.reverse_by("segment_id", 0)
-        assert name == "Global Segment"
+    async def test_lookup_key_by_segment_id(self, resolver: SegmentResolver):
+        assert resolver.lookup_key(SegmentId(0)).name == "Global Segment"
 
-    async def test_reverse_by_object_id(self, resolver: SegmentResolver):
-        name = await resolver.reverse_by("object_id", 101)
-        assert name == "PCI"
+    async def test_lookup_key_by_object_id(self, resolver: SegmentResolver):
+        assert resolver.lookup_key(SegmentObjectId(101)).name == "PCI"
 
-    async def test_reverse_by_logical_id(self, resolver: SegmentResolver):
-        name = await resolver.reverse_by("logical_id", GLOBAL_UUID)
-        assert name == "Global Segment"
-
-    async def test_reverse_unknown_id(self, resolver: SegmentResolver):
-        with pytest.raises(KeyError, match="No segment with"):
-            _ = await resolver.reverse_by("segment_id", 999)
-
-    async def test_reverse_unknown_attr(self, resolver: SegmentResolver):
-        with pytest.raises(KeyError, match="No reverse index"):
-            _ = await resolver.reverse_by("bad_attr", 0)
+    async def test_lookup_key_by_logical_id(self, resolver: SegmentResolver):
+        assert resolver.lookup_key(SegmentLogicalId(GLOBAL_UUID)).name == (
+            "Global Segment"
+        )
 
     def test_identity_type(self, mock_client: FakeSegmentClient):
         assert (

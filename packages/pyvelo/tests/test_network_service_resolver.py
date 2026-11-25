@@ -66,20 +66,16 @@ async def test_loads_services_by_name_logical_id_and_object_id(
     registry = await loaded_registry(mock_vco_client, store_with_services())
     expected = NetworkServiceIdentity("dns-a", uuid.UUID(DNS_A), 701, "dns")
 
-    assert registry.resolve_sync(NetworkServiceIdentity, "dns-a") == expected
-    assert registry.resolve_sync(NetworkServiceName("dns-a")) == expected
-    assert registry.resolve_sync(NetworkServiceObjectId(701)) == expected
-    assert registry.resolve_sync(NetworkServiceLogicalId(uuid.UUID(DNS_A))) == expected
+    assert registry.lookup(NetworkServiceIdentity, "dns-a") == expected
+    assert registry.lookup(NetworkServiceName("dns-a")) == expected
+    assert registry.lookup(NetworkServiceObjectId(701)) == expected
+    assert registry.lookup(NetworkServiceLogicalId(uuid.UUID(DNS_A))) == expected
     found = registry.identity_sync(
         NetworkServiceIdentity, "logical_id", uuid.UUID(DNS_A)
     )
     assert found.object_id == 701
-    assert await registry.reverse(NetworkServiceIdentity, "object_id", 702) == (
-        "radius-a"
-    )
-    assert await registry.reverse(
-        NetworkServiceIdentity, "logical_id", uuid.UUID(CSS_A)
-    ) == ("zs-a")
+    assert registry.lookup(NetworkServiceObjectId(702)).name == "radius-a"
+    assert registry.lookup(NetworkServiceLogicalId(uuid.UUID(CSS_A))).name == "zs-a"
     resolver = registry.get_resolver(NetworkServiceResolver)
     assert sorted(i.name for i in resolver.identities()) == [
         "dns-a",
@@ -96,7 +92,7 @@ async def test_a_service_of_a_type_the_models_do_not_know_still_loads(
     store.add_object(704, logical_id=TACACS, name="tacacs-a", type_="tacacs")
     registry = await loaded_registry(mock_vco_client, store)
 
-    found = registry.resolve_sync(NetworkServiceIdentity, "tacacs-a")
+    found = registry.lookup(NetworkServiceIdentity, "tacacs-a")
 
     assert found == NetworkServiceIdentity("tacacs-a", uuid.UUID(TACACS), 704, "tacacs")
     resolver = registry.get_resolver(NetworkServiceResolver)
@@ -112,20 +108,20 @@ async def test_before_its_load_the_resolver_says_it_is_not_loaded(
     registry.register(resolver)
 
     with pytest.raises(ResolverNotLoadedError) as caught:
-        _ = registry.resolve_sync(NetworkServiceIdentity, "dns-a")
+        _ = registry.lookup(NetworkServiceIdentity, "dns-a")
     assert caught.value.identity_type is NetworkServiceIdentity
     assert "load_resolvers(state, NetworkServiceIdentity)" in str(caught.value)
     assert not resolver.loaded
     with pytest.raises(ResolverNotLoadedError):
-        _ = registry.resolve_sync(NetworkServiceName("dns-a"))
+        _ = registry.lookup(NetworkServiceName("dns-a"))
     with pytest.raises(ResolverNotLoadedError):
-        _ = await resolver.reverse_by("object_id", 701)
+        _ = resolver.lookup_key(NetworkServiceObjectId(701))
     with pytest.raises(ResolverNotLoadedError):
         _ = registry.identity_sync(NetworkServiceIdentity, "object_id", 701)
 
     await resolver.load(ResolverContext(enterprise_id=1))
     assert resolver.loaded
-    assert registry.resolve_sync(NetworkServiceIdentity, "dns-a").object_id == 701
+    assert registry.lookup(NetworkServiceIdentity, "dns-a").object_id == 701
 
 
 def test_the_not_loaded_message_names_the_type_and_the_label():
@@ -172,12 +168,12 @@ async def test_a_service_unknown_by_name_is_a_resolution_error(
     registry = await loaded_registry(mock_vco_client, store_with_services())
 
     with pytest.raises(ResolutionError) as caught:
-        _ = registry.resolve_sync(NetworkServiceIdentity, "dns-b")
+        _ = registry.lookup(NetworkServiceIdentity, "dns-b")
     assert "dns-a" in str(caught.value)
     with pytest.raises(ResolutionError):
-        _ = registry.resolve_sync(NetworkServiceObjectId(999))
+        _ = registry.lookup(NetworkServiceObjectId(999))
     with pytest.raises(ResolutionError):
-        _ = registry.resolve_sync(NetworkServiceLogicalId(uuid.UUID(int=1)))
+        _ = registry.lookup(NetworkServiceLogicalId(uuid.UUID(int=1)))
 
 
 async def test_a_name_matches_without_regard_to_case(
@@ -185,7 +181,7 @@ async def test_a_name_matches_without_regard_to_case(
 ):
     registry = await loaded_registry(mock_vco_client, store_with_services())
 
-    assert registry.resolve_sync(NetworkServiceIdentity, "DNS-A").object_id == 701
+    assert registry.lookup(NetworkServiceIdentity, "DNS-A").object_id == 701
 
 
 async def test_a_shared_name_asks_for_the_logical_id(
@@ -197,7 +193,7 @@ async def test_a_shared_name_asks_for_the_logical_id(
     registry = await loaded_registry(mock_vco_client, store)
 
     with pytest.raises(ResolutionError) as caught:
-        _ = registry.resolve_sync(NetworkServiceIdentity, "dup")
+        _ = registry.lookup(NetworkServiceIdentity, "dup")
     message = str(caught.value)
     assert f"a service of type 'dns' ({DUP_DNS})" in message
     assert f"a service of type 'authentication' ({DUP_AUTH})" in message
@@ -206,9 +202,9 @@ async def test_a_shared_name_asks_for_the_logical_id(
     assert DUP_DNS in message
     assert DUP_AUTH in message
 
-    by_logical = registry.resolve_sync(NetworkServiceLogicalId(uuid.UUID(DUP_AUTH)))
+    by_logical = registry.lookup(NetworkServiceLogicalId(uuid.UUID(DUP_AUTH)))
     assert by_logical.object_id == 712
-    assert registry.resolve_sync(NetworkServiceObjectId(711)).type_ == "dns"
+    assert registry.lookup(NetworkServiceObjectId(711)).type_ == "dns"
     resolver = registry.get_resolver(NetworkServiceResolver)
     assert sorted(i.object_id for i in resolver.identities()) == [
         701,
@@ -232,12 +228,12 @@ async def test_an_unloaded_copy_must_be_loaded_again(
     with pytest.raises(ResolverNotLoadedError):
         _ = await twin.resolve("dns-a")
     assert resolver.loaded
-    assert registry.resolve_sync(NetworkServiceIdentity, "dns-a").object_id == 701
+    assert registry.lookup(NetworkServiceIdentity, "dns-a").object_id == 701
     await twin.load(ResolverContext(enterprise_id=1))
     assert (await twin.resolve("dns-a")).object_id == 701
     copied = registry.unloaded()
     with pytest.raises(ResolverNotLoadedError):
-        _ = copied.resolve_sync(NetworkServiceIdentity, "dns-a")
+        _ = copied.lookup(NetworkServiceIdentity, "dns-a")
 
 
 async def test_clearing_the_registry_context_unloads_the_resolver(
@@ -249,7 +245,7 @@ async def test_clearing_the_registry_context_unloads_the_resolver(
         registry.context(ResolverContext(enterprise_id=2)),
         pytest.raises(ResolverNotLoadedError),
     ):
-        _ = registry.resolve_sync(NetworkServiceIdentity, "dns-a")
+        _ = registry.lookup(NetworkServiceIdentity, "dns-a")
     resolver = registry.get_resolver(NetworkServiceResolver)
     assert not resolver.loaded
     assert list(resolver.identities()) == []
@@ -267,8 +263,8 @@ async def test_a_reload_replaces_what_was_loaded(
     )
 
     with pytest.raises(ResolutionError):
-        _ = registry.resolve_sync(NetworkServiceIdentity, "dns-a")
-    assert registry.resolve_sync(NetworkServiceIdentity, "zs-a").object_id == 703
+        _ = registry.lookup(NetworkServiceIdentity, "dns-a")
+    assert registry.lookup(NetworkServiceIdentity, "zs-a").object_id == 703
 
 
 async def test_a_resolver_that_needs_no_load_answers_identity_sync_as_loaded():
@@ -295,4 +291,4 @@ async def test_the_fixture_resolver_is_loaded_with_the_services_given():
 
     assert resolver.loaded
     assert sorted(resolver.identities(), key=lambda i: i.object_id) == services
-    assert registry.resolve_sync(NetworkServiceObjectId(704)).type_ == "tacacs"
+    assert registry.lookup(NetworkServiceObjectId(704)).type_ == "tacacs"

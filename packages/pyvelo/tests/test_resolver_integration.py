@@ -9,7 +9,9 @@ from pyvelo.config.resolver import ResolverRegistry
 from pyvelo.core import VcoModel, add
 from pyvelo.core.fields import EdgeLocal, KeyField, OverrideFlag, Resolvable
 from pyvelo.core.identity import (
+    SegmentId,
     SegmentIdentity,
+    SegmentLogicalId,
 )
 
 from ._type_support import SegmentResolverFactory
@@ -196,12 +198,10 @@ class TestResolverMergeIntegration:
         )
         assert config.segments[0].override is False
 
-    async def test_reverse_resolution(self, registry: ResolverRegistry):
-        """Test reverse resolution for YAML export scenario."""
-        name = await registry.reverse(SegmentIdentity, "segment_id", 1)
-        assert name == "PCI"
-        name = await registry.reverse(SegmentIdentity, "logical_id", GLOBAL_UUID)
-        assert name == "Global Segment"
+    def test_lookup_by_id_key(self, registry: ResolverRegistry):
+        """An ID key looks up the segment, for the YAML export scenario."""
+        assert registry.lookup(SegmentId(1)).name == "PCI"
+        assert registry.lookup(SegmentLogicalId(GLOBAL_UUID)).name == "Global Segment"
 
     def test_unknown_segment_name_clear_error(self, registry: ResolverRegistry):
         """Resolution failure produces a clear error message."""
