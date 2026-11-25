@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING, Protocol
 
 from pydantic import RootModel
 
-from pyvelo.client.exceptions import VcoOperationError
+from pyvelo.client.exceptions import VcoEmptyResultError, VcoOperationError
 from pyvelo.client.operations._tagging import CONFIG, EDGE, PM_QOE, domain_tag
 from pyvelo.client.schemas.configuration import (
     EdgeConfiguration,
@@ -344,23 +344,42 @@ class EdgeMixin(Protocol):
     async def disable_edge_hub(
         self: VcoClientBaseProtocol, request: DisableEdgeHub
     ) -> None:
-        """Remove VPN hub designation from an edge on a profile segment."""
-        await self.portal(
-            "edge/disableEdgeForEdgeHub", request, RowsModifiedConfirmation
-        )
+        """Remove VPN hub designation from an edge on a profile segment.
+
+        An Edge that is not a hub there is answered with ``null``; that is
+        returned as ``None`` too.
+        """
+        try:
+            await self.portal(
+                "edge/disableEdgeForEdgeHub", request, RowsModifiedConfirmation
+            )
+        except VcoEmptyResultError:
+            return
 
     async def disable_edge_to_edge_bridge(
         self: VcoClientBaseProtocol, request: DisableEdgeToEdgeBridge
-    ) -> EnterpriseServiceBase:
-        """Remove site-to-site bridge designation from an edge on a profile segment."""
-        return await self.portal(
-            "edge/disableEdgeForEdgeToEdgeBridge", request, EnterpriseServiceBase
-        )
+    ) -> EnterpriseServiceBase | None:
+        """Remove site-to-site bridge designation from an edge on a profile segment.
+
+        ``None`` when the VCO answers ``null``: the Edge has no hub service there.
+        """
+        try:
+            return await self.portal(
+                "edge/disableEdgeForEdgeToEdgeBridge", request, EnterpriseServiceBase
+            )
+        except VcoEmptyResultError:
+            return None
 
     async def disable_edge_backhaul(
         self: VcoClientBaseProtocol, request: DisableEdgeBackHaul
-    ) -> EnterpriseServiceBase:
-        """Remove backhaul designation from an edge on a profile segment."""
-        return await self.portal(
-            "edge/disableEdgeForBackHaul", request, EnterpriseServiceBase
-        )
+    ) -> EnterpriseServiceBase | None:
+        """Remove backhaul designation from an edge on a profile segment.
+
+        ``None`` when the VCO answers ``null``: the Edge has no hub service there.
+        """
+        try:
+            return await self.portal(
+                "edge/disableEdgeForBackHaul", request, EnterpriseServiceBase
+            )
+        except VcoEmptyResultError:
+            return None

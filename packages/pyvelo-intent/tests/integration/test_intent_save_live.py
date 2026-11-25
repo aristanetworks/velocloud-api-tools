@@ -70,9 +70,23 @@ also marked ``pyvelo-it-with-edges``, records whether the QoS and firewall
 writes are sent with the version read before the save. Each skips where no
 marked profile lacks a segment of the enterprise.
 
+The cases of section 16 (hub roles) make an Edge or a hub cluster a hub of a
+marked profile's segment, and remove it again. They need PYVELO_IT_HUB, the
+logical ID of an Edge or a cluster of the enterprise that is no hub of the
+segment they use, and skip without it. The first adds the hub to the segment's
+Branch-to-Hub and backhaul lists (two role steps and one device settings
+write) and removes it (one disable and one write); the second, with the hub
+saved, adds it to a copy of a QoS rule of the segment and removes the rule and
+the hub. A role call is not undone by the restore of a module, so each case
+removes the hub in a ``finally`` as well: it sends the disable steps, and a hub
+whose roles are set while its lists lack it (a save that stopped after its
+steps) is added to the lists first so that the removal has steps to derive.
+Each skips where no marked profile has a segment that lacks the hub (and, for
+the second case, has a QoS rule in it).
+
 Requires VCO_HOST and VCO_TOKEN (VCO_ENTERPRISE_ID if the token needs one), and
-to write, PYVELO_IT_WRITE_HOST and PYVELO_IT_WRITE_ENTERPRISE_ID: see
-``live_support``.
+to write, PYVELO_IT_WRITE_HOST and PYVELO_IT_WRITE_ENTERPRISE_ID, and for the
+hub cases PYVELO_IT_HUB: see ``live_support``.
 
 Run:
     uv run --env-file .env pytest -m integration packages/pyvelo-intent/tests/integration
@@ -97,8 +111,10 @@ from live_support import (
     Answer,
     DataRefused,
     EdgeLayout,
+    HubTarget,
     Lab,
     Site,
+    admit_hub,
     changes_between,
     check,
     check_as_read,
@@ -142,6 +158,7 @@ from pyvelo.client import (
 )
 from pyvelo.client.derived_refs import APPEND_ONLY_REF_NAMES, PROCESSOR_REF_NAMES
 from pyvelo.client.enums.configuration import ConfigurationModuleName as Name
+from pyvelo.client.hub_services import BACKHAUL_REF, CLUSTER_HUB_REF, EDGE_HUB_REF
 from pyvelo.client.models.configuration import (
     DeviceSettingsData,
     FirewallData,
@@ -178,7 +195,14 @@ from pyvelo.core.response_check import (
     ServerChange,
     matches,
 )
-from pyvelo_intent import ConfigPipeline, ConfigState, PatchError, SaveResult, add
+from pyvelo_intent import (
+    ConfigPipeline,
+    ConfigState,
+    PatchError,
+    SaveResult,
+    add,
+    delete,
+)
 
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio(loop_scope="session")]
 
@@ -265,10 +289,12 @@ def stack_reads(vco_client: VcoClient, monkeypatch: pytest.MonkeyPatch) -> list[
 # ---------------------------------------------------------------------------
 
 
-async def _save(pipeline: ConfigPipeline, state: ConfigState) -> SaveResult:
+async def _save(
+    pipeline: ConfigPipeline, state: ConfigState, *, dry_run: bool = False
+) -> SaveResult:
     """``pipeline.save``; a write error fails the test with ``outcome`` alone."""
     try:
-        return await pipeline.save(state)
+        return await pipeline.save(state, dry_run=dry_run)
     except ModuleWriteError as error:
         # Failed outside the handler: the error must not be chained to the report.
         message = outcome(error)
@@ -2487,3 +2513,600 @@ async def test_record_versions_around_the_device_settings_write(
                 )
             )
         record(capsys, "\n".join(lines))
+
+
+# ---------------------------------------------------------------------------
+# 16. Hub roles
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class HubCase:
+    """A marked profile's segment that lacks the hub in all three lists, with the flags of its VPN as read."""
+
+    profile_id: int
+    segment: str
+    hub: HubTarget
+    vpn_enabled: bool
+    hub_list_enabled: bool
+
+
+def _vpn_lists(vpn: dict[str, Any]) -> dict[str, list[Any]]:
+    """The three role lists of a segment's raw ``vpn``, by the name they are patched under: ``hub``, ``bridge`` and ``backhaul``."""
+
+    def listed(section: object, key: str) -> list[Any]:
+        held = (
+            cast("dict[str, Any]", section).get(key)
+            if isinstance(section, dict)
+            else None
+        )
+        return cast("list[Any]", held) if isinstance(held, list) else []
+
+    backhaul = vpn.get("backHaulEdges")
+    return {
+        "hub": listed(vpn.get("edgeToEdgeHub"), "vpnHubs"),
+        "bridge": listed(vpn.get("edgeToEdgeDetail"), "vpnHubs"),
+        "backhaul": cast("list[Any]", backhaul) if isinstance(backhaul, list) else [],
+    }
+
+
+def _holding(vpn: dict[str, Any], hub: HubTarget) -> set[str]:
+    """The role lists of *vpn* that hold *hub*, by their entry's logical ID."""
+    return {
+        role
+        for role, entries in _vpn_lists(vpn).items()
+        if any(
+            isinstance(entry, dict)
+            and str(cast("dict[str, Any]", entry).get("logicalId")).lower()
+            == str(hub.logical_id)
+            for entry in entries
+        )
+    }
+
+
+def _segment_entries(raw: object) -> list[tuple[str, dict[str, Any]]]:
+    """The ``(name, entry)`` of each segment entry of raw module data."""
+    entries = (
+        cast("dict[str, Any]", raw).get("segments") if isinstance(raw, dict) else None
+    )
+    found: list[tuple[str, dict[str, Any]]] = []
+    for entry in cast("list[Any]", entries) if isinstance(entries, list) else []:
+        held = (
+            cast("dict[str, Any]", entry).get("segment")
+            if isinstance(entry, dict)
+            else None
+        )
+        name = (
+            cast("dict[str, Any]", held).get("name") if isinstance(held, dict) else None
+        )
+        if isinstance(name, str):
+            found.append((name, cast("dict[str, Any]", entry)))
+    return found
+
+
+def _free_segment(raw: object, hub: HubTarget) -> tuple[str, bool, bool] | None:
+    """The first segment of device settings *raw* whose three lists lack *hub*, with its ``vpn.enabled`` and hub list ``enabled`` as read."""
+    for name, entry in _segment_entries(raw):
+        vpn = entry.get("vpn")
+        if not isinstance(vpn, dict):
+            continue
+        vpn = cast("dict[str, Any]", vpn)
+        if _holding(vpn, hub):
+            continue
+        section = vpn.get("edgeToEdgeHub")
+        hub_list = (
+            cast("dict[str, Any]", section).get("enabled")
+            if isinstance(section, dict)
+            else None
+        )
+        return name, vpn.get("enabled") is True, hub_list is True
+    return None
+
+
+def _qos_rules(raw: object, segment: str) -> list[Any]:
+    """The rules of the QoS segment *segment* in raw module data."""
+    for name, entry in _segment_entries(raw):
+        rules = entry.get("rules")
+        if name == segment and isinstance(rules, list):
+            return cast("list[Any]", rules)
+    return []
+
+
+async def _hub_case(lab: Lab, hub: HubTarget, *, with_rule: bool) -> HubCase:
+    """The first marked profile with a segment that lacks the hub (and, with *with_rule*, has a QoS rule), whose modules take a write.
+
+    Skip where there is none, fail where each refuses a write of its own
+    data. The modules are tried last: trying one writes it back.
+    """
+    names = (Name.DEVICE_SETTINGS, Name.QOS) if with_rule else (Name.DEVICE_SETTINGS,)
+    marked = [entry.profile_id for entry in lab.profiles if entry.target]
+    if not marked:
+        pytest.skip(f"no profile is marked {TARGET_MARK}")
+    refusals: list[str] = []
+    for profile_id in marked:
+        modules = {
+            name: await lab.profile_site(profile_id, name).read() for name in names
+        }
+        device_settings = modules[Name.DEVICE_SETTINGS]
+        if (
+            any(module is None for module in modules.values())
+            or device_settings is None
+        ):
+            continue
+        free = _free_segment(device_settings.raw_data, hub)
+        if free is None:
+            continue
+        qos = modules.get(Name.QOS)
+        if with_rule and (qos is None or not _qos_rules(qos.raw_data, free[0])):
+            continue
+        for name in names:
+            refusal = await own_data_refusal(lab.profile_site(profile_id, name))
+            if refusal is not None:
+                refusals.append(f"{name.value}: {refusal}")
+                break
+        else:
+            return HubCase(profile_id, free[0], hub, free[1], free[2])
+    if refusals:
+        pytest.fail(
+            f"none of the {len(refusals)} marked profile(s) with a segment that "
+            f"lacks the hub takes a write of its own modules ({'; '.join(refusals)}): "
+            "the modules are not valid as they stand, or the update path is broken",
+            pytrace=False,
+        )
+    pytest.skip(
+        "no marked profile has a segment whose Branch-to-Hub, bridge and backhaul "
+        "lists lack the hub" + (" and that has a QoS rule" if with_rule else "")
+    )
+
+
+def _add_hub_patch(case: HubCase) -> dict[str, Any]:
+    """The patch that adds the hub to the segment's Branch-to-Hub and backhaul lists, with the flags the UI's rules need on."""
+    entry = {"+": add({"logicalId": str(case.hub.logical_id)})}
+    return {
+        "segments": {
+            case.segment: {
+                "vpn": {
+                    "enabled": True,
+                    "edgeToEdgeHub": {"enabled": True, "vpnHubs": entry},
+                    "backHaulEdges": entry,
+                }
+            }
+        }
+    }
+
+
+def _remove_hub_patch(case: HubCase, holding: set[str]) -> dict[str, Any]:
+    """The patch that takes the hub out of the lists in *holding* and puts the flags back as read."""
+    key = str(case.hub.logical_id)
+    vpn: dict[str, Any] = {
+        "enabled": case.vpn_enabled,
+        "edgeToEdgeHub": {"enabled": case.hub_list_enabled},
+    }
+    if "hub" in holding:
+        vpn["edgeToEdgeHub"]["vpnHubs"] = {key: delete()}
+    if "bridge" in holding:
+        vpn["edgeToEdgeDetail"] = {"vpnHubs": {key: delete()}}
+    if "backhaul" in holding:
+        vpn["backHaulEdges"] = {key: delete()}
+    return {"segments": {case.segment: {"vpn": vpn}}}
+
+
+def _segment_vpn(module: AnyConfigurationModule, case: HubCase) -> dict[str, Any]:
+    """The raw ``vpn`` of the case's segment in a device settings module; empty where the segment is gone."""
+    for name, entry in _segment_entries(module.raw_data):
+        vpn = entry.get("vpn")
+        if name == case.segment and isinstance(vpn, dict):
+            return cast("dict[str, Any]", vpn)
+    return {}
+
+
+def _steps(state: ConfigState) -> list[tuple[str, str]]:
+    """The ``(action, role)`` of each role step the state's plan has."""
+    return [(step.action, step.role) for step in state.plan().steps]
+
+
+def _hub_rows(refs: object, hub: HubTarget) -> list[dict[str, Any]]:
+    """The device settings rows of *hub*: an Edge's row holds its logical ID in ``data``, a cluster's in the row."""
+    found: list[dict[str, Any]] = []
+    for row in _rows_named(
+        refs, EDGE_HUB_REF if hub.kind == "edge" else CLUSTER_HUB_REF
+    ):
+        held = row.get("data")
+        logical_id = (
+            cast("dict[str, Any]", held).get("logicalId")
+            if hub.kind == "edge" and isinstance(held, dict)
+            else row.get("logicalId")
+        )
+        if str(logical_id).lower() == str(hub.logical_id):
+            found.append(row)
+    return found
+
+
+async def _add_hub(
+    pipeline: ConfigPipeline,
+    lab: Lab,
+    case: HubCase,
+    writes: Writes,
+    state: ConfigState,
+    site: Site,
+) -> AnyConfigurationModule:
+    """Add the hub to the segment's lists and save: two steps and one write; the module as stored."""
+    run = run_of(lab.client)
+    _ = await pipeline.apply(
+        state, module="device_settings", patch=_add_hub_patch(case)
+    )
+    check(
+        _steps(state) == [("enable", "hub"), ("enable", "backhaul")],
+        f"the plan has the steps {_steps(state)}, expected enable hub then enable backhaul",
+    )
+    dry = await _save(pipeline, state, dry_run=True)
+    check(
+        [outcome.status for outcome in dry.steps] == ["would_send"] * 2,
+        "a dry run does not say that both steps would be sent",
+    )
+    writes.updates.clear()
+    sent = run.sent
+    result = await _save(pipeline, state)
+    check(
+        [outcome.status for outcome in result.steps] == ["sent"] * 2,
+        "the save did not send both steps",
+    )
+    check(
+        len(writes.updates) == 1 and run.sent == sent + 3,
+        f"{len(writes.updates)} update(s) and {run.sent - sent} write(s) sent, "
+        "expected two role calls and one update",
+    )
+    return await site.read_present()
+
+
+async def _remove_hub(
+    pipeline: ConfigPipeline,
+    lab: Lab,
+    case: HubCase,
+    writes: Writes,
+    state: ConfigState,
+    site: Site,
+) -> AnyConfigurationModule:
+    """Take the hub out of the segment's lists and save: one disable and one write; the module as stored."""
+    run = run_of(lab.client)
+    held = _holding(_segment_vpn(state.module(Name.DEVICE_SETTINGS), case), case.hub)
+    _ = await pipeline.apply(
+        state, module="device_settings", patch=_remove_hub_patch(case, held)
+    )
+    check(
+        _steps(state) == [("disable", "hub")],
+        f"the plan has the steps {_steps(state)}, expected one disable of the hub",
+    )
+    writes.updates.clear()
+    sent = run.sent
+    result = await _save(pipeline, state)
+    check(
+        [outcome.status for outcome in result.steps] == ["sent"],
+        "the save did not send the disable",
+    )
+    check(
+        len(writes.updates) == 1 and run.sent == sent + 2,
+        f"{len(writes.updates)} update(s) and {run.sent - sent} write(s) sent, "
+        "expected one role call and one update",
+    )
+    return await site.read_present()
+
+
+async def _clear_hub(pipeline: ConfigPipeline, lab: Lab, case: HubCase) -> None:
+    """However a case ended, take the hub out of the segment's lists and send its disable.
+
+    It reads the profile fresh and saves a fresh state, so it needs nothing
+    the case held. A hub in no list may still have its roles set (a save that
+    stopped after its steps): it is added to the lists to find out, by a dry
+    run, and when a step is in place the save is made, which sends the rest,
+    so that the removal has steps to derive.
+    """
+    state = await pipeline.load_profile(
+        case.profile_id, enterprise_id=lab.enterprise_id
+    )
+    held = _holding(_segment_vpn(state.module(Name.DEVICE_SETTINGS), case), case.hub)
+    if not held:
+        _ = await pipeline.apply(
+            state, module="device_settings", patch=_add_hub_patch(case)
+        )
+        dry = await _save(pipeline, state, dry_run=True)
+        if not any(outcome.status == "in_place" for outcome in dry.steps):
+            return
+        _ = await _save(pipeline, state)
+        held = _holding(
+            _segment_vpn(state.module(Name.DEVICE_SETTINGS), case), case.hub
+        )
+    _ = await pipeline.apply(
+        state, module="device_settings", patch=_remove_hub_patch(case, held)
+    )
+    _ = await _save(pipeline, state)
+    after = await lab.profile_site(case.profile_id, Name.DEVICE_SETTINGS).read_present()
+    check(
+        not _holding(_segment_vpn(after, case), case.hub),
+        "removing the hub afterwards left it in a list",
+    )
+
+
+@asynccontextmanager
+async def _cleaned_up(
+    what: str, clear: Callable[[], Awaitable[None]]
+) -> AsyncGenerator[None]:
+    """However the block ends, run *clear*; the block's own failure is never hidden by it, and a clearing that fails is reported too."""
+    try:
+        yield
+    except BaseException as case:
+        try:
+            await clear()
+        except (Exception, pytest.fail.Exception) as cleanup:  # noqa: BLE001 - both are reported
+            pytest.fail(
+                f"{_what(case)}; and {what} afterwards failed: {_what(cleanup)}; "
+                "the lab may still hold it",
+                pytrace=False,
+            )
+        raise
+    else:
+        await clear()
+
+
+@pytest.mark.live_write
+async def test_add_a_hub_then_remove_it(
+    lab: Lab, pipeline: ConfigPipeline, writes: Writes
+) -> None:
+    """A hub added to a segment's Branch-to-Hub and backhaul lists is two steps and one write; removed, one disable and one write.
+
+    A read after each save holds the row and the lists, then neither, and the
+    profile is restored as read. The restore of the module does not undo a
+    role call, so the hub is removed in a ``finally`` too.
+    """
+    hub = await admit_hub(lab.client, lab.enterprise_id)
+    case = await _hub_case(lab, hub, with_rule=False)
+    site = lab.profile_site(case.profile_id, Name.DEVICE_SETTINGS)
+    async with (
+        restoring(site) as original,
+        _cleaned_up("removing the hub", lambda: _clear_hub(pipeline, lab, case)),
+    ):
+        assert original is not None
+        rows_before = len(_hub_rows(original.refs, hub))
+        state = await pipeline.load_profile(
+            case.profile_id, enterprise_id=lab.enterprise_id
+        )
+
+        stored = await _add_hub(pipeline, lab, case, writes, state, site)
+        check(
+            _holding(_segment_vpn(stored, case), hub) == {"hub", "backhaul"},
+            "a read after the save does not show the hub in the Branch-to-Hub and "
+            "backhaul lists alone",
+        )
+        check(
+            len(_hub_rows(stored.raw_refs, hub)) == rows_before + 1,
+            "a read after the save does not hold the one new row of the hub",
+        )
+        ref = EDGE_HUB_REF if hub.kind == "edge" else CLUSTER_HUB_REF
+        check(
+            len(_rows_named(writes.updates[0].update.refs, ref))
+            == len(_rows_named(original.refs, ref)) + 1,
+            "the write does not carry the rows as read and the row of the hub",
+        )
+        _check_state_holds_stored("add hub", state, stored)
+
+        stored = await _remove_hub(pipeline, lab, case, writes, state, site)
+        check(
+            not _holding(_segment_vpn(stored, case), hub),
+            "a read after the removal still shows the hub in a list",
+        )
+        check(
+            len(_hub_rows(stored.raw_refs, hub)) == rows_before,
+            "a read after the removal holds a row of the hub",
+        )
+        _check_state_holds_stored("remove hub", state, stored)
+        fresh = await pipeline.load_profile(
+            case.profile_id, enterprise_id=lab.enterprise_id
+        )
+        check(
+            not fresh.plan().changed and not fresh.plan().steps,
+            "a profile read after the removal plans a change",
+        )
+        check(
+            _segment_vpn(stored, case).get("enabled") is case.vpn_enabled,
+            "the flags of the segment's VPN were not put back as read",
+        )
+
+
+def _rule_patch(case: HubCase, name: str, change: object) -> dict[str, Any]:
+    return {"segments": {case.segment: {"rules": {name: change}}}}
+
+
+def _rule_uses_hub(raw: object, case: HubCase, name: str) -> bool:
+    """Whether the rule *name* of the case's QoS segment holds the hub as a backhaul hub."""
+    for rule in _qos_rules(raw, case.segment):
+        if (
+            not isinstance(rule, dict)
+            or cast("dict[str, Any]", rule).get("name") != name
+        ):
+            continue
+        action = cast("dict[str, Any]", rule).get("action")
+        route = (
+            cast("dict[str, Any]", action).get("edge2EdgeRouteAction")
+            if isinstance(action, dict)
+            else None
+        )
+        config = (
+            cast("dict[str, Any]", route).get("routeCfg")
+            if isinstance(route, dict)
+            else None
+        )
+        entries = (
+            cast("dict[str, Any]", config).get("backhaulEdges")
+            if isinstance(config, dict)
+            else None
+        )
+        return any(
+            isinstance(entry, dict)
+            and str(cast("dict[str, Any]", entry).get("edgeLogicalId")).lower()
+            == str(case.hub.logical_id)
+            for entry in (
+                cast("list[Any]", entries) if isinstance(entries, list) else []
+            )
+        )
+    return False
+
+
+def _has_rule(raw: object, case: HubCase, name: str) -> bool:
+    return any(
+        isinstance(rule, dict) and cast("dict[str, Any]", rule).get("name") == name
+        for rule in _qos_rules(raw, case.segment)
+    )
+
+
+async def _clear_rule(
+    pipeline: ConfigPipeline, lab: Lab, case: HubCase, name: str
+) -> None:
+    """However a case ended, delete the rule it added to the QoS segment if one is stored."""
+    site = lab.profile_site(case.profile_id, Name.QOS)
+    if not _has_rule((await site.read_present()).raw_data, case, name):
+        return
+    state = await pipeline.load_profile(
+        case.profile_id, enterprise_id=lab.enterprise_id
+    )
+    _ = await pipeline.apply(
+        state, module="qos", patch=_rule_patch(case, name, delete())
+    )
+    _ = await _save(pipeline, state)
+    check(
+        not _has_rule((await site.read_present()).raw_data, case, name),
+        "deleting the rule afterwards left it stored",
+    )
+
+
+@pytest.mark.live_write
+async def test_a_rule_backhauls_to_the_hub(
+    lab: Lab, pipeline: ConfigPipeline, writes: Writes
+) -> None:
+    """With the hub saved, a QoS rule that names it as a backhaul hub has the row whose object is the hub's service.
+
+    The rule is a copy of a rule of the segment. It is deleted, then the hub is
+    removed, the order a caller must follow: a hub that rules use is removed
+    last. Both are also done in a ``finally``.
+    """
+    hub = await admit_hub(lab.client, lab.enterprise_id)
+    case = await _hub_case(lab, hub, with_rule=True)
+    sites = {
+        name: lab.profile_site(case.profile_id, name)
+        for name in (Name.DEVICE_SETTINGS, Name.QOS)
+    }
+    rule = synthetic_name()
+    async with (
+        restoring(sites[Name.DEVICE_SETTINGS]),
+        restoring(sites[Name.QOS]) as qos_original,
+        _cleaned_up("removing the hub", lambda: _clear_hub(pipeline, lab, case)),
+        _cleaned_up(
+            "deleting the rule", lambda: _clear_rule(pipeline, lab, case, rule)
+        ),
+    ):
+        assert qos_original is not None
+        state = await pipeline.load_profile(
+            case.profile_id, enterprise_id=lab.enterprise_id
+        )
+        stored = await _add_hub(
+            pipeline, lab, case, writes, state, sites[Name.DEVICE_SETTINGS]
+        )
+        (row,) = _hub_rows(stored.raw_refs, hub)
+        service_id = row.get("enterpriseObjectId")
+        check(
+            isinstance(service_id, int),
+            "the hub's row in the device settings refs names no service",
+        )
+
+        # A state read now knows the hub's service for the segment: the rule is
+        # added to it, and the hub is named in the rule.
+        state = await pipeline.load_profile(
+            case.profile_id, enterprise_id=lab.enterprise_id
+        )
+        segment = next(
+            s for s in state.profile.qos.segments if s.segment.name == case.segment
+        )
+        added = {
+            **expect(
+                segment.rules[0].model_dump(
+                    mode="json", by_alias=False, context={"compact": True}
+                ),
+                dict,
+                "a rule",
+            ),
+            "name": rule,
+        }
+        added.pop("rule_logical_id", None)
+        _ = await pipeline.apply(
+            state, module="qos", patch=_rule_patch(case, rule, add(added))
+        )
+        _ = await pipeline.apply(
+            state,
+            module="qos",
+            patch=_rule_patch(
+                case,
+                rule,
+                {
+                    "action": {
+                        "edge2EdgeRouteAction": {
+                            "routeCfg": {
+                                "backhaulEdges": {
+                                    "+": add({"edgeLogicalId": str(hub.logical_id)})
+                                }
+                            }
+                        }
+                    }
+                },
+            ),
+        )
+        writes.updates.clear()
+        result = await _save(pipeline, state)
+        check(
+            result.modules_updated == [Name.QOS]
+            and not result.steps
+            and len(writes.updates) == 1,
+            f"saved {result.modules_updated} with {len(result.steps)} step(s) and "
+            f"{len(writes.updates)} update(s), expected the QoS module alone",
+        )
+        sent = _rows_named(writes.updates[0].update.refs, BACKHAUL_REF)
+        check(
+            len(sent) == len(_rows_named(qos_original.refs, BACKHAUL_REF)) + 1
+            and any(r.get("enterpriseObjectId") == service_id for r in sent),
+            "the QoS write does not carry the rows as read and the row whose "
+            "object is the hub's service",
+        )
+        qos = await sites[Name.QOS].read_present()
+        check(
+            _rule_uses_hub(qos.raw_data, case, rule)
+            and any(
+                r.get("enterpriseObjectId") == service_id
+                for r in _rows_named(qos.raw_refs, BACKHAUL_REF)
+            ),
+            "a read after the save does not hold the rule with the hub and the row "
+            "whose object is the hub's service",
+        )
+
+        # The rule's use goes first, then the hub.
+        _ = await pipeline.apply(
+            state, module="qos", patch=_rule_patch(case, rule, delete())
+        )
+        _ = await _save(pipeline, state)
+        qos = await sites[Name.QOS].read_present()
+        check(
+            not _has_rule(qos.raw_data, case, rule)
+            and not any(
+                r.get("enterpriseObjectId") == service_id
+                for r in _rows_named(qos.raw_refs, BACKHAUL_REF)
+            ),
+            "a read after deleting the rule still holds it or its backhaul row",
+        )
+        state = await pipeline.load_profile(
+            case.profile_id, enterprise_id=lab.enterprise_id
+        )
+        stored = await _remove_hub(
+            pipeline, lab, case, writes, state, sites[Name.DEVICE_SETTINGS]
+        )
+        check(
+            not _holding(_segment_vpn(stored, case), hub)
+            and not _hub_rows(stored.raw_refs, hub),
+            "a read after the removal still holds the hub",
+        )

@@ -4,22 +4,35 @@ import asyncio
 import copy
 import json
 import weakref
-from collections.abc import Mapping, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass, field, fields
 from typing import Any, Literal, Protocol, cast, override, runtime_checkable
 
 from pydantic import MISSING, BaseModel
 from pyvelo.client.enums.configuration import ConfigurationModuleName
-from pyvelo.client.exceptions import DetachedObjectError, SegmentSetError
+from pyvelo.client.exceptions import (
+    DanglingReferenceError,
+    DetachedObjectError,
+    SegmentSetError,
+)
+from pyvelo.client.hub_services import HubServiceTable, fill_services
 from pyvelo.client.models.configuration.common import segment_id_of
 from pyvelo.client.models.configuration.device_settings.root import DeviceSettingsData
 from pyvelo.client.models.configuration.firewall.root import FirewallData
 from pyvelo.client.models.configuration.profile_segments import AddedSegment
 from pyvelo.client.models.configuration.qos.root import QosData
-from pyvelo.client.models.configuration.ref_owners import ref_only_values
+from pyvelo.client.models.configuration.ref_owners import (
+    ref_only_values,
+    segment_object_ids,
+)
 from pyvelo.client.models.configuration.wan.root import WanData
 from pyvelo.client.module_check import ModuleWrite
-from pyvelo.client.module_write import ModulePlan, missing_segments, plan_module
+from pyvelo.client.module_write import (
+    ModulePlan,
+    missing_segments,
+    plan_module,
+    read_data,
+)
 from pyvelo.client.schemas.configuration import (
     AnyConfigurationModule,
     ConfigurationBase,
@@ -32,9 +45,16 @@ from pyvelo.client.schemas.configuration import (
     new_edge_module,
 )
 from pyvelo.config.resolver import ResolverContext, ResolverRegistry
+from pyvelo.config.resolvers.hub import HubResolver
 from pyvelo.config.validation import ValidationError
 from pyvelo.core import ConfigContext, VcoModel
 from pyvelo.core.base import is_dict, is_list
+from pyvelo.core.identity import (
+    HubIdentity,
+    ResolutionError,
+    ResolverNotLoadedError,
+    SegmentIdentity,
+)
 from pyvelo.core.rebase import (
     ItemMove,
     ItemPlace,
@@ -43,9 +63,24 @@ from pyvelo.core.rebase import (
     python_path,
     raw_changes,
 )
+from pyvelo.core.references import (
+    can_provide,
+    check_references,
+    provided,
+    reference_text,
+    union,
+)
 from pyvelo.core.response_check import PlannedChange, ServerChange
 
+from pyvelo_intent.config.hub_steps import (
+    HubStep,
+    changed_segment_ids,
+    check_hub_lists,
+    derive_steps,
+    role_disagreements,
+)
 from pyvelo_intent.config.module_names import resolve_module_name
+from pyvelo_intent.config.validation_warning import ValidationWarning
 from pyvelo_intent.errors import LayerNotSavedError
 
 _DEVICE_SETTINGS = ConfigurationModuleName.DEVICE_SETTINGS.value
@@ -55,14 +90,6 @@ _SEGMENT_MODULES = (
     ConfigurationModuleName.FIREWALL.value,
 )
 """The three modules of a profile that hold its segments, in write order."""
-
-
-@dataclass
-class ValidationWarning:
-    path: str
-    message: str
-    code: str
-    severity: str = "warning"
 
 
 @dataclass(frozen=True)
@@ -134,7 +161,20 @@ class ConfigPlan:
     - "legacy keys (dropped when the module is written): ..." are keys the VCO
       does not know, on a module with nothing else to write.
     - "warning: text", last and with no indent, is a segment of a profile that
-      its three modules disagree about as read (``segment_warnings``).
+      its three modules disagree about as read (``segment_warnings``), or a
+      reference that names nothing as it was read and the save leaves, or a
+      hub whose roles as read do not match the lists it is in
+      (``check_warnings``).
+
+    A profile whose edit adds a hub to a segment's hub, bridge or backhaul
+    list, or removes one, has the role calls the save makes before it writes
+    the device settings (``steps``). ``render()`` shows them first, after the target
+    line, as a ``steps:`` line and a line for each, in the order they are
+    made:
+
+        steps:
+          disable backhaul for Hub-B on segment Global Segment
+          enable hub for Hub-A on segment Global Segment
 
     A profile's device settings module is written first, then the others in
     the order the configuration lists them, and ``modules`` is in that order.
@@ -149,15 +189,27 @@ class ConfigPlan:
         warnings: What each module's plan warns of, one entry per warning,
             with the module's name before the warning's path
             (``"deviceSettings: refs deviceSettings:dns:primaryProvider"``),
-            then ``segment_warnings``.
+            then ``segment_warnings``, then ``check_warnings``.
         segment_warnings: The segments of a profile that its three modules
             disagree about as read, which the edit does not settle: code
             ``segments_disagree``, at ``segments["<name>"]``. Empty for an edge.
+        check_warnings: What the cross-module checks warn of and the save
+            leaves as it is, at ``"<module>: <path>"``: the references that
+            name nothing in the module as read and still name nothing (code
+            ``reference_kept``), and the hubs whose roles as read do not match
+            the lists they are in (``hub_roles_disagree``).
+        steps: The role calls a hub added to or removed from a segment's hub
+            lists needs, in the order they are made (``derive_steps``); empty
+            for an edge, and for an edit that leaves the lists' members. A list
+            change is also a change of the device settings module, so
+            ``changed`` is not made longer by them.
     """
 
     modules: tuple[ModulePlan, ...]
     target: str = ""
     segment_warnings: tuple[ValidationWarning, ...] = ()
+    check_warnings: tuple[ValidationWarning, ...] = ()
+    steps: tuple[HubStep, ...] = ()
 
     @property
     def changed(self) -> tuple[ModulePlan, ...]:
@@ -166,7 +218,7 @@ class ConfigPlan:
 
     @property
     def warnings(self) -> tuple[ValidationWarning, ...]:
-        """The warnings of every module's plan, then the segment warnings, as data; ``render()`` shows them in their blocks."""
+        """The warnings of every module's plan, then the segment and check warnings, as data; ``render()`` shows them in their blocks."""
         return (
             *(
                 ValidationWarning(
@@ -178,11 +230,17 @@ class ConfigPlan:
                 for warning in module.warnings
             ),
             *self.segment_warnings,
+            *self.check_warnings,
         )
 
     def render(self) -> str:
         lines = [m.render() for m in self.modules]
-        lines.extend(f"warning: {w.message}" for w in self.segment_warnings)
+        if self.steps:
+            lines = ["steps:", *(f"  {step.render()}" for step in self.steps), *lines]
+        lines.extend(
+            f"warning: {w.message}"
+            for w in (*self.segment_warnings, *self.check_warnings)
+        )
         return "\n".join([self.target, *lines] if self.target else lines)
 
 
@@ -778,9 +836,25 @@ class ConfigState:
         a profile QoS segment lacks (:func:`~pyvelo.client.module_write.plan_module`);
         the plan warns either way.
 
+        A profile whose edit adds a hub to a segment's hub, bridge or backhaul
+        list, or removes one, has the role calls that go with it in
+        ``ConfigPlan.steps`` (:func:`~pyvelo_intent.config.hub_steps.derive_steps`),
+        and ``check_warnings`` has a ``hub_roles_disagree`` warning for each
+        hub whose roles as read do not match its lists. An added hub is looked
+        up in the hub resolver; a removal needs none.
+
+        Before the steps are derived, a profile's edit of the hub lists or the
+        ``vpn`` flags is checked against the UI's rules for them
+        (:func:`~pyvelo_intent.config.hub_steps.check_hub_lists`): ``HubListError``
+        for a hub list that would break one, with no request sent, and a
+        ``hub_list_as_read`` warning for one that was broken as read. The
+        checks of the hub lists come after the segment-set rule and before
+        the reference check.
+
         Raises ``ResolverNotLoadedError`` when a provider was set and the
-        state's network services are not loaded (:meth:`plan_module`). A
-        save, a dry run and ``apply`` load them first; this does not.
+        state's network services are not loaded (:meth:`plan_module`), or a
+        hub was added and the state's hubs are not. A save, a dry run and
+        ``apply`` load them first; this does not.
         """
         self._check_detached()
         self._check_unsaved_layer()
@@ -798,7 +872,172 @@ class ConfigState:
         warnings = (
             _check_segment_set(ordered, plans) if self.target_type == "profile" else ()
         )
-        return ConfigPlan(modules=plans, target=target, segment_warnings=warnings)
+        as_read = {p.name: p.as_read for p in plans}
+        steps, hub_warnings = self._hub_steps(ordered, as_read)
+        check_warnings = self._check_references(ordered, as_read)
+        return ConfigPlan(
+            modules=plans,
+            target=target,
+            segment_warnings=warnings,
+            check_warnings=(*hub_warnings, *check_warnings),
+            steps=steps,
+        )
+
+    def _hub_steps(
+        self,
+        modules: Sequence[AnyConfigurationModule],
+        as_read: Mapping[str, VcoModel | None],
+    ) -> tuple[tuple[HubStep, ...], tuple[ValidationWarning, ...]]:
+        """The role steps of the hub list changes of a profile's device settings, and the warnings of its lists.
+
+        *as_read* is each module's data as the plan parsed it
+        (``ModulePlan.as_read``, by module name); the device settings are not
+        parsed again.
+
+        The lists are checked first
+        (:func:`~pyvelo_intent.config.hub_steps.check_hub_lists`, which raises
+        ``HubListError``), and the warnings are theirs, then those of the
+        roles as read. An edge has neither: its profile's lists are not its
+        to change. A segment's object ID is its ``deviceSettings:segment``
+        row's, and for a segment the profile has no row for (one just
+        assigned), the segment resolver's. An added hub is looked up in the
+        hub resolver, which raises ``ResolverNotLoadedError`` when it is not
+        loaded; a removal needs none.
+        """
+        if self.target_type != "profile":
+            return (), ()
+        module = next(
+            (m for m in modules if m.name == ConfigurationModuleName.DEVICE_SETTINGS),
+            None,
+        )
+        edited: object = None if module is None else module.data
+        if (
+            not isinstance(module, DeviceSettingsConfigurationModule)
+            or not isinstance(edited, DeviceSettingsData)
+            or module.raw_data is MISSING
+        ):
+            return (), ()
+        parsed = as_read.get(str(module.name))
+        if not isinstance(parsed, DeviceSettingsData):
+            return (), ()
+        refs: object = module.raw_refs
+        object_ids = segment_object_ids(refs)
+        for segment_id in changed_segment_ids(parsed, edited):
+            if segment_id not in object_ids:
+                object_id = self._segment_object_id(segment_id)
+                if object_id is not None:
+                    object_ids[segment_id] = object_id
+        resolver = self.resolvers.resolver_for(HubIdentity)
+        hubs = resolver if isinstance(resolver, HubResolver) else None
+        list_warnings = check_hub_lists(parsed, edited, hubs=hubs)
+        steps = derive_steps(
+            parsed,
+            edited,
+            segment_object_ids=object_ids,
+            hubs=hubs,
+        )
+        configuration_id = self.target_config.id_
+        disagreements = (
+            role_disagreements(parsed, refs, configuration_id)
+            if isinstance(configuration_id, int)
+            else ()
+        )
+        return steps, (*list_warnings, *disagreements)
+
+    def _segment_object_id(self, segment_id: int) -> int | None:
+        """The object ID of segment *segment_id* in the segment resolver, or None when it does not know it.
+
+        Raises ``ResolverNotLoadedError`` when the resolver is not loaded.
+        """
+        try:
+            identity = self.resolvers.identity_sync(
+                SegmentIdentity, "segment_id", segment_id
+            )
+        except ResolverNotLoadedError:
+            raise
+        except ResolutionError:
+            return None
+        return identity.object_id
+
+    def _check_references(
+        self,
+        modules: Sequence[AnyConfigurationModule],
+        as_read: Mapping[str, VcoModel | None],
+    ) -> tuple[ValidationWarning, ...]:
+        """Refuse a value of the target that names nothing the configuration provides; warn of one that did as read.
+
+        Each module of the target is a target of the check, as edited
+        (``module.data``) and as read (*as_read*, by module name: the data as
+        the plan parsed it, with an edge's placeholders and a profile's
+        additions; ``ModulePlan.as_read``). The sets the values are looked up
+        in are those of the target's modules as edited and, for an edge, the
+        profile's modules as read that can provide a set (parsed here); the
+        sets as read are those of the modules as read. Raises ``DanglingReferenceError`` for a value that is
+        new, or was a member and no longer is; returns a ``reference_kept``
+        warning for one that named nothing as read and does still.
+        """
+        level = self._level()
+        profile_models = self._profile_as_read() if level is ConfigContext.EDGE else []
+        targets: list[tuple[str, VcoModel, VcoModel | None]] = []
+        for module in modules:
+            edited: object = module.data
+            if not isinstance(edited, VcoModel):
+                continue
+            targets.append((str(module.name), edited, as_read.get(str(module.name))))
+        sets_now = union(
+            *(provided(edited) for _, edited, _ in targets),
+            *(provided(model) for model in profile_models),
+        )
+        sets_as_read = union(
+            *(provided(read) for _, _, read in targets if read is not None),
+            *(provided(model) for model in profile_models),
+        )
+        findings = check_references(targets, sets_now, sets_as_read)
+        if findings.dangling:
+            raise DanglingReferenceError(
+                findings.dangling, on_edge=level is ConfigContext.EDGE
+            )
+        return tuple(
+            ValidationWarning(
+                path=f"{reference.module}: {reference.path}",
+                message=(
+                    f"{reference_text(reference)} (it was so as read; the save "
+                    "leaves it)"
+                ),
+                code="reference_kept",
+            )
+            for reference in findings.kept
+        )
+
+    def _level(self) -> ConfigContext:
+        return (
+            ConfigContext.PROFILE
+            if self.target_type == "profile"
+            else ConfigContext.EDGE
+        )
+
+    def _profile_as_read(self) -> list[VcoModel]:
+        """The data of each module of the profile layer as read, with the profile's additions, for the modules that can provide a set.
+
+        A module that provides none (QoS, firewall) is not parsed: its rules
+        are the bulk of a profile, and the sets of its modules as read are
+        empty.
+        """
+        config = self.profile_config
+        if config.modules is MISSING:
+            return []
+        models: list[VcoModel] = []
+        for module in config.modules:
+            held: object = module.data
+            if (
+                isinstance(held, VcoModel)
+                and can_provide(type(held))
+                and module.raw_data is not MISSING
+            ):
+                models.append(
+                    read_data(module, level=ConfigContext.PROFILE).model(type(held))
+                )
+        return models
 
     def _target_text(self) -> str:
         """What a plan is for: ``edge 101, enterprise 1, configuration 10``."""
@@ -835,17 +1074,19 @@ class ConfigState:
         ``defaults`` entry it repairs takes it as ``allowConditionalBh``.
         *repair_defaults* is as for :meth:`plan`.
 
+        A QoS rule's new backhaul hub takes the hub's service for its segment
+        from the profile's device settings module as read (the target's own on
+        a profile, the profile layer's on an edge): ``HubServiceNotFoundError``
+        says a hub has none, and that the hub is saved first and the rule
+        after.
+
         A provider the edit sets needs the network services loaded
         (``state.resolvers``): ``ResolverNotLoadedError`` says they are not.
         ``ConfigPipeline.save``, ``dry_run`` and ``apply`` load them and plan
         again; ``await pipeline.load_resolvers(state, NetworkServiceIdentity)``
         loads them now.
         """
-        level = (
-            ConfigContext.PROFILE
-            if self.target_type == "profile"
-            else ConfigContext.EDGE
-        )
+        level = self._level()
         profile_mod = (
             _find_module(self.profile_config, module.name)
             if level is ConfigContext.EDGE
@@ -856,10 +1097,36 @@ class ConfigState:
             data,
             level=level,
             profile=profile_mod,
+            profile_device_settings=_find_module(
+                self.profile_config, ConfigurationModuleName.DEVICE_SETTINGS
+            ),
             resolvers=self.resolvers,
             via_pipeline=True,
             repair_defaults=repair_defaults,
             conditional_backhaul=self.conditional_backhaul(module, level),
+        )
+
+    def fill_hub_services(self, data: VcoModel, *, skip: Collection[Path] = ()) -> None:
+        """Give each backhaul hub of the QoS *data* that names a hub and no service its service for the segment.
+
+        The service is the hub's in the profile's device settings module as
+        read (the target's own on a profile, the profile layer's on an edge),
+        as :meth:`plan_module` finds it (``pyvelo.client.hub_services.fill_services``).
+        ``HubServiceNotFoundError`` says a hub has none, and that the hub is
+        saved first and the rule after. An entry at a path of *skip* is left
+        as it is. ``ResolverNotLoadedError`` says the segment resolver is not
+        loaded.
+        """
+        held = _find_module(
+            self.profile_config, ConfigurationModuleName.DEVICE_SETTINGS
+        )
+        refs: object = MISSING if held is None else held.raw_refs
+        fill_services(
+            data,
+            HubServiceTable.from_refs(refs),
+            segment_object_ids(refs),
+            self.resolvers,
+            skip=skip,
         )
 
     def conditional_backhaul(
@@ -1173,6 +1440,19 @@ def save_progress(error: BaseException) -> SaveProgress | None:
     return None
 
 
+@dataclass(frozen=True)
+class StepOutcome:
+    """What a save did with one role step (``ConfigPlan.steps``).
+
+    *status* is ``"sent"`` for a call the save made, ``"in_place"`` for a step
+    whose roles the VCO already had, which the save did not send, and
+    ``"would_send"`` for a step a dry run would send.
+    """
+
+    step: HubStep
+    status: Literal["sent", "in_place", "would_send"]
+
+
 @dataclass
 class SaveResult:
     """Outcome of ``ConfigPipeline.save``.
@@ -1212,6 +1492,10 @@ class SaveResult:
     compared whole (a keyed list read with an item that has no key): there an
     owned field is part of the list's change, and a value stored there
     otherwise than sent is a server change with ``as_read`` ``MISSING``."""
+    steps: tuple[StepOutcome, ...] = ()
+    """What the save did with each role step of the plan, in order; empty for a plan without steps.
+
+    A dry run says ``"would_send"`` or ``"in_place"``, and sends none."""
     warnings: list[ValidationWarning] = field(default_factory=list)
     validation_errors: list[ValidationError] = field(default_factory=list)
     # Optional count for downstream integrations managing enterprise objects.

@@ -1,7 +1,7 @@
 """Reusable fakes and factories for tests."""
 
 import uuid
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Sequence
 from typing import Any
 from unittest.mock import AsyncMock
 
@@ -9,12 +9,20 @@ import httpx
 from pydantic import MISSING
 
 from pyvelo.client import VcoClient
-from pyvelo.client.enums.enterprise import NetworkSegmentType
-from pyvelo.client.schemas.enterprise import EnterpriseServiceSummary
+from pyvelo.client.enums.enterprise import EnterpriseServiceType, NetworkSegmentType
+from pyvelo.client.schemas.enterprise import (
+    AnyEnterpriseService,
+    EdgeHubClusterMemberService,
+    EdgeHubClusterService,
+    EnterpriseServiceSummary,
+    GetEnterpriseEdgeListItem,
+    GetEnterpriseServices,
+)
 from pyvelo.config.resolver import ResolverContext
+from pyvelo.config.resolvers.hub import HubResolver
 from pyvelo.config.resolvers.network_service import NetworkServiceResolver
 from pyvelo.config.resolvers.segment import SegmentResolver
-from pyvelo.core.identity import NetworkServiceIdentity
+from pyvelo.core.identity import HubIdentity, NetworkServiceIdentity
 
 
 def make_jsonrpc_response(
@@ -143,6 +151,77 @@ async def make_network_service_resolver(
         for service in services
     ]
     resolver = NetworkServiceResolver(client)
+    await resolver.load(ResolverContext())
+    return resolver
+
+
+async def make_hub_resolver(
+    hubs: Sequence[HubIdentity],
+    *,
+    members: Sequence[tuple[uuid.UUID, str]] = (),
+) -> HubResolver:
+    """Build a ``HubResolver`` loaded with *hubs*, over a mock answer.
+
+    An ``edge`` hub is an Edge of the enterprise, a ``cluster`` hub a hub
+    cluster. Each of *members*, a logical ID and a name, is an Edge that is a
+    member of a hub cluster: no hub, and known to ``is_cluster_member``.
+    """
+    edges = [
+        GetEnterpriseEdgeListItem(
+            id_=hub.edge_id, logical_id=hub.logical_id, name=hub.name
+        )
+        for hub in hubs
+        if hub.kind == "edge" and hub.edge_id is not None
+    ]
+    member_edges = {logical_id: 9000 + i for i, (logical_id, _) in enumerate(members)}
+    edges += [
+        GetEnterpriseEdgeListItem(
+            id_=member_edges[logical_id], logical_id=logical_id, name=name
+        )
+        for logical_id, name in members
+    ]
+    clusters = [
+        EdgeHubClusterService.model_validate(
+            {
+                "id": hub.cluster_id,
+                "logicalId": str(hub.logical_id),
+                "name": hub.name,
+                "type": "edgeHubCluster",
+                "data": {},
+                "created": "2024-01-01T00:00:00.000Z",
+            }
+        )
+        for hub in hubs
+        if hub.kind == "cluster"
+    ]
+    member_services = [
+        EdgeHubClusterMemberService.model_validate(
+            {
+                "id": 8000 + member_edges[logical_id],
+                "logicalId": str(uuid.uuid5(logical_id, "member")),
+                "name": name,
+                "type": "edgeHubClusterMember",
+                "edgeId": member_edges[logical_id],
+                "data": {"logicalId": str(logical_id)},
+                "created": "2024-01-01T00:00:00.000Z",
+            }
+        )
+        for logical_id, name in members
+    ]
+
+    async def services(
+        request: GetEnterpriseServices,
+    ) -> Sequence[AnyEnterpriseService]:
+        if request.type_ == EnterpriseServiceType.EDGE_HUB_CLUSTER:
+            return clusters
+        if request.type_ == EnterpriseServiceType.EDGE_HUB_CLUSTER_MEMBER:
+            return member_services
+        return []
+
+    client = AsyncMock()
+    client.get_enterprise_edge_list.return_value = edges
+    client.get_enterprise_services.side_effect = services
+    resolver = HubResolver(client)
     await resolver.load(ResolverContext())
     return resolver
 

@@ -104,6 +104,12 @@ class IdentityResolver(Protocol):
         self, identity_type: type[object], id_attr: str, value: object, /
     ) -> bool: ...
 
+    def resolver_for(self, identity_type: type[object], /) -> object | None: ...
+
+    def identity_sync[T](
+        self, identity_type: type[T], id_attr: str, value: object, /
+    ) -> T: ...
+
 
 class IdentityLookup(Protocol):
     """What a derived ref needs to find a loaded identity by one of its IDs.

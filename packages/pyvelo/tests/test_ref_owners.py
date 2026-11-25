@@ -30,6 +30,8 @@ from pyvelo.client.models.configuration.device_settings.segment import (
     SegmentAuthentication,
     SegmentDns,
 )
+from pyvelo.client.models.configuration.firewall.rules import FirewallOutboundRule
+from pyvelo.client.models.configuration.qos.rule import BackhaulEdge, QosRule
 from pyvelo.client.models.configuration.ref_owners import (
     RefOwner,
     can_hold_owner,
@@ -658,8 +660,12 @@ def test_only_the_classes_that_can_hold_an_owner_are_walked():
     assert can_hold_owner(SegmentDns) is True
     assert can_hold_owner(DnsPrimaryProvider) is True
     assert can_hold_owner(CssProviderRef) is True
-    for data_class in (FirewallData, QosData, WanData, ControlPlaneData):
+    for data_class in (FirewallData, WanData, ControlPlaneData):
         assert can_hold_owner(data_class) is False
+    assert can_hold_owner(QosData) is True  # the backhaul hub of a rule
+    assert can_hold_owner(QosRule) is True
+    assert can_hold_owner(BackhaulEdge) is True
+    assert can_hold_owner(FirewallOutboundRule) is False
     assert can_hold_owner(DnsProvider) is False
     assert can_hold_owner(SegmentMetadata) is False
 

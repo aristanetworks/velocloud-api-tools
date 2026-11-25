@@ -5,8 +5,10 @@ import pytest
 from pyvelo.client.enums.configuration import ConfigurationModuleName
 from pyvelo.client.exceptions import (
     ConfigConflictError,
+    DanglingReferenceError,
     DetachedObjectError,
     FixedListError,
+    HubListError,
     ModuleWriteError,
     RefsDroppedError,
     RefsNotLoadedError,
@@ -171,6 +173,7 @@ def test_write_errors_are_exported_from_the_package():
 
     assert pyvelo_intent.ModuleWriteError is ModuleWriteError
     assert pyvelo_intent.ConfigConflictError is ConfigConflictError
+    assert pyvelo_intent.DanglingReferenceError is DanglingReferenceError
     assert pyvelo_intent.WriteNotAppliedError is WriteNotAppliedError
     assert pyvelo_intent.WriteOutcomeUnknownError is WriteOutcomeUnknownError
     assert pyvelo_intent.DetachedObjectError is DetachedObjectError
@@ -178,9 +181,11 @@ def test_write_errors_are_exported_from_the_package():
     assert pyvelo_intent.RefsNotLoadedError is RefsNotLoadedError
     assert pyvelo_intent.FixedListError is FixedListError
     assert pyvelo_intent.SegmentSetError is SegmentSetError
+    assert pyvelo_intent.HubListError is HubListError
     assert {
         "ModuleWriteError",
         "ConfigConflictError",
+        "DanglingReferenceError",
         "WriteNotAppliedError",
         "WriteOutcomeUnknownError",
         "DetachedObjectError",
@@ -188,6 +193,7 @@ def test_write_errors_are_exported_from_the_package():
         "RefsNotLoadedError",
         "FixedListError",
         "SegmentSetError",
+        "HubListError",
     } <= set(pyvelo_intent.__all__)
     assert not hasattr(pyvelo_intent, "StateSpentError")
 

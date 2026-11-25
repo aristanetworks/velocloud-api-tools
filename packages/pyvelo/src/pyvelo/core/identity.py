@@ -8,10 +8,11 @@ Identity dataclasses (SegmentIdentity, etc.) hold all resolved fields
 for an entity, using plain int/uuid.UUID types.
 """
 
+import json
 import re
 import uuid
 from dataclasses import dataclass
-from typing import Annotated, Any, ClassVar, NewType, cast, override
+from typing import Annotated, Any, ClassVar, Literal, NewType, cast, override
 
 from pydantic import BeforeValidator, PlainSerializer
 
@@ -428,3 +429,110 @@ class NetworkServiceLogicalId:
 class NetworkServiceObjectId:
     value: int
     identity_type: ClassVar[type[NetworkServiceIdentity]] = NetworkServiceIdentity
+
+
+# ---------------------------------------------------------------------------
+# Hub
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class HubIdentity:
+    """An Edge or a cluster that can be a hub, as a hub list entry names it.
+
+    *kind* is ``"edge"`` or ``"cluster"`` and *type_* the entry's ``type`` text
+    that goes with it. *logical_id* is the Edge's or the cluster's own. The
+    Edge fields are set for an Edge, the cluster fields for a cluster; the
+    others are None.
+    """
+
+    name: str
+    kind: Literal["edge", "cluster"]
+    type_: Literal["edgeHub", "edgeHubCluster"]
+    logical_id: uuid.UUID
+    edge_id: int | None
+    edge_logical_id: uuid.UUID | None
+    cluster_id: int | None
+    cluster_logical_id: uuid.UUID | None
+
+
+@dataclass(frozen=True)
+class HubName:
+    value: str
+    identity_type: ClassVar[type[HubIdentity]] = HubIdentity
+
+
+@dataclass(frozen=True)
+class HubLogicalId:
+    value: uuid.UUID
+    identity_type: ClassVar[type[HubIdentity]] = HubIdentity
+
+
+@dataclass(frozen=True)
+class HubService:
+    """The network service that stands for a hub in one profile and segment.
+
+    *object_id* and *logical_id* are the service's own; *data_logical_id* is
+    the logical ID its data holds, when that differs, and *segment_object_id*
+    the segment it is kept for. *kind* and *name* are the hub's.
+    """
+
+    object_id: int
+    logical_id: uuid.UUID
+    data_logical_id: uuid.UUID | None
+    segment_object_id: int | None
+    kind: Literal["edge", "cluster"]
+    name: str
+
+
+class HubServiceNotFoundError(ResolutionError):
+    """A QoS rule names a hub that has no service for its profile and segment.
+
+    The row that goes with the rule's hub points at the hub's service for the
+    profile and segment, and only a role call makes one (a save of the
+    profile's device settings that adds the hub to the segment's lists does).
+    *hub* is the hub's name, else its logical ID; *segment* the segment's name
+    and *path* the entry of the rule. It is a ``ResolutionError`` and pickles
+    and copies as one does, with its three attributes.
+    """
+
+    def __init__(
+        self, *, hub: str, segment: str, path: str, message: str | None = None
+    ) -> None:
+        self.hub = hub
+        self.segment = segment
+        self.path = path
+        super().__init__(
+            name=hub,
+            identity_type=HubService,
+            candidates=[],
+            message=message or self._service_message(),
+        )
+
+    def _service_message(self) -> str:
+        # *hub* is the hub's name, else its logical ID.
+        try:
+            _ = uuid.UUID(self.hub)
+            key = "logicalId"
+        except ValueError:
+            key = "name"
+        add = {
+            "segments": {
+                self.segment: {
+                    "vpn": {
+                        "edgeToEdgeHub": {
+                            "vpnHubs": {"+": {"_op": "add", key: self.hub}}
+                        }
+                    }
+                }
+            }
+        }
+        return (
+            f"{self.path} names the hub {self.hub!r}, which has no service for "
+            + f"this profile in the segment {self.segment!r}, so the row that "
+            + "goes with the rule cannot be added: the VCO would store a row "
+            + "that points at nothing. A hub gets its service when a save of "
+            + "the profile's device settings adds it to the segment's "
+            + "Branch-to-Hub list, so save the hub first and the rule after. "
+            + f"To add the hub to the list, send the patch {json.dumps(add)}."
+        )

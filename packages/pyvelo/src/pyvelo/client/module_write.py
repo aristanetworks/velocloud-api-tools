@@ -71,6 +71,7 @@ import copy
 import json
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
+from dataclasses import field as dataclass_field
 from typing import Any, Final, Literal, cast, override
 
 from pydantic import MISSING
@@ -86,9 +87,15 @@ from pyvelo.client.derived_refs import (
 from pyvelo.client.exceptions import (
     ConfigConflictError,
     FixedListError,
+    HubListError,
     LossyFieldError,
     RefsNotLoadedError,
     SegmentSetError,
+)
+from pyvelo.client.hub_services import (
+    HubServiceTable,
+    hub_list_fields,
+    missing_service_error,
 )
 from pyvelo.client.models.configuration.common import (
     SEGMENT_LISTS,
@@ -105,7 +112,10 @@ from pyvelo.client.models.configuration.profile_segments import (
     repaired_entry,
     with_additions,
 )
-from pyvelo.client.models.configuration.ref_owners import fill_ref_only
+from pyvelo.client.models.configuration.ref_owners import (
+    fill_ref_only,
+    segment_object_ids,
+)
 from pyvelo.client.schemas.configuration import (
     ConfigurationModuleBase,
     ConfigurationModuleUpdate,
@@ -263,6 +273,16 @@ class ModulePlan:
 
     ``repaired`` says whether the payload has the missing entries.
     """
+    as_read: VcoModel | None = dataclass_field(default=None, repr=False, compare=False)
+    """The module as read, parsed: the baseline this plan compared the data with.
+
+    It is the raw data with an edge's placeholders and a profile's additions
+    (``read_data(...).model``), so a check of the same module as read (the
+    references of a ``ConfigState`` plan) takes it and parses nothing again.
+    None for a plan of a module with no raw data, and for one planned from a
+    mapping. It is the one object the plan used: do not change it. A plan made
+    from this one (a rebase, the hub rows) keeps it.
+    """
 
     @override
     def __repr__(self) -> str:
@@ -344,6 +364,93 @@ class ModulePlan:
         if self.refs is not None and not self.ref_changes:
             lines.append("  refs: sent as read")
         return lines
+
+
+def with_hub_rows(
+    plan: ModulePlan,
+    *,
+    added: Sequence[Mapping[str, object]],
+    removed: Sequence[Mapping[str, object]],
+    segments: Mapping[int, str] | None = None,
+) -> ModulePlan:
+    """*plan* with the hub ref rows of a save's role steps: the *removed* rows out of its refs and the *added* rows in.
+
+    The role calls make a hub's service and its row, which the plan of the
+    device settings module, made before them, cannot know. A row is told by its
+    ``ref``, ``enterpriseObjectId`` and ``segmentObjectId``; each *removed*
+    one is a row of the refs, and the refs hold it no more. A name with a
+    change is a list, and is left out when it has no row. Each row also
+    becomes a ``RefChange`` of the plan, matched by its ``enterpriseObjectId``
+    and ``segmentObjectId``, so that the write holds the VCO to it
+    (``check_refs``) and ``render()`` lists it. *segments* names a segment by
+    its object ID, for the line of ``render()``.
+
+    Raises ``ValueError`` for a plan that is no update with refs, and for a
+    removed row the refs do not hold.
+    """
+    if plan.operation != "update" or plan.refs is None:
+        raise ValueError(
+            f"{plan.name}: hub rows go with an update that sends refs, and this "
+            f"plan is {'an update with no refs' if plan.operation == 'update' else plan.operation}"
+        )
+    names = segments or {}
+    refs = copy.deepcopy(plan.refs)
+    changes: list[RefChange] = []
+
+    def change(row: Mapping[str, object], *, adding: bool) -> RefChange:
+        segment_object_id = row.get("segmentObjectId")
+        return RefChange(
+            added=adding,
+            name=str(row["ref"]),
+            segment=names.get(segment_object_id)
+            if isinstance(segment_object_id, int)
+            else None,
+            row=copy.deepcopy(dict(row)),
+            match="enterpriseObjectId",
+            value=row.get("enterpriseObjectId"),
+            segment_object_id=segment_object_id
+            if isinstance(segment_object_id, int)
+            else None,
+            owner=None,
+        )
+
+    def held(name: str) -> list[dict[str, Any]]:
+        value = refs.get(name)
+        if is_list(value):
+            return [cast(dict[str, Any], row) for row in value]
+        return [] if value is None else [cast(dict[str, Any], value)]
+
+    for row in removed:
+        name = str(row["ref"])
+        rows = held(name)
+        index = next(
+            (
+                i
+                for i, r in enumerate(rows)
+                if is_dict(r)
+                and r.get("enterpriseObjectId") == row.get("enterpriseObjectId")
+                and r.get("segmentObjectId") == row.get("segmentObjectId")
+            ),
+            None,
+        )
+        if index is None:
+            raise ValueError(
+                f"{plan.name}: the refs hold no {name} row for object "
+                f"{row.get('enterpriseObjectId')} in segment object "
+                f"{row.get('segmentObjectId')}, so there is none to remove"
+            )
+        change_made = change(rows[index], adding=False)
+        del rows[index]
+        if rows:
+            refs[name] = rows
+        else:
+            del refs[name]
+        changes.append(change_made)
+    for row in added:
+        name = str(row["ref"])
+        refs[name] = [*held(name), copy.deepcopy(dict(row))]
+        changes.append(change(row, adding=True))
+    return replace(plan, refs=refs, ref_changes=(*plan.ref_changes, *changes))
 
 
 def update_request(
@@ -475,6 +582,60 @@ def _reparse[M: VcoModel](
     return model_type.model_validate(raw)
 
 
+@dataclass(frozen=True)
+class ReadData:
+    """A module's raw data, as ``plan_module`` compares it with an edit."""
+
+    module: ConfigurationModuleBase
+    extra: list[dict[str, Any]]
+    """The profile's segment entries the edge module lacks (none at the profile level)."""
+    reconciled: Any
+    """The raw data plus *extra*: the module as read, as the VCO would store it reconciled."""
+    planned_from: Any
+    """*reconciled* plus the entries added to a profile module (``module.additions``)."""
+
+    def model[M: VcoModel](self, model_type: type[M]) -> M:
+        """``planned_from`` parsed as *model_type*, the way the module was first parsed.
+
+        The refs as read are filled in when the module has them. This is the
+        baseline of the plan: the module as read, with an edge's placeholders
+        and a profile's additions.
+        """
+        parsed = _reparse(model_type, self.planned_from, self.module.raw_mode)
+        if self.module.refs_loaded:
+            fill_ref_only(parsed, self.module.raw_refs)
+        return parsed
+
+
+def read_data(
+    module: ConfigurationModuleBase,
+    *,
+    level: ConfigContext | None,
+    profile: ConfigurationModuleBase | None = None,
+) -> ReadData:
+    """The data of *module* as read, ready to parse: the one baseline of a plan.
+
+    An edge module (any *level* but the profile's) gets the placeholders of
+    the segments the *profile*'s module of the same name has and it lacks; a
+    profile module gets the entries the pipeline added to it. ``plan_module``
+    builds its baseline from this, and so does the reference check of a
+    ``ConfigState`` plan. *module* must carry raw data.
+    """
+    raw = module.raw_data
+    extra: list[dict[str, Any]] = []
+    if profile is not None and level is not ConfigContext.PROFILE:
+        extra = missing_segments(raw, profile.raw_data, str(_attribute(module, "name")))
+    reconciled = copy.deepcopy(raw)
+    _add_segments(reconciled, extra)
+    # What the pipeline added to a profile module is part of what the plan
+    # compares with (R'), but not of the data as read: only that is what is
+    # stored, so it decides whether there is anything to write and what the
+    # refs compare with.
+    additions = module.additions if level is ConfigContext.PROFILE else ()
+    planned_from = with_additions(reconciled, additions) if additions else reconciled
+    return ReadData(module, extra, reconciled, planned_from)
+
+
 def _segment_name(placeholder: Mapping[str, Any]) -> str:
     descriptor = cast(Mapping[str, object], placeholder["segment"])
     name = descriptor.get("name")
@@ -588,6 +749,107 @@ def _check_segment_set(module_name: str, as_read: object, payload: object) -> No
         raise _segment_set_error(module_name, added, removed)
 
 
+def _hub_list(entry: object, path: tuple[str, ...]) -> dict[tuple[str, str], str]:
+    """The hubs of the list at *path* of the segment entry *entry*, by ``(type, logicalId)``, with their names, in order."""
+    node = entry
+    for key in path:
+        node = node.get(key) if is_dict(node) else None
+    hubs: dict[tuple[str, str], str] = {}
+    for item in node if is_list(node) else []:
+        if not is_dict(item):
+            continue
+        logical_id, kind, name = (
+            item.get("logicalId"),
+            item.get("type"),
+            item.get("name"),
+        )
+        hubs[(str(kind), str(logical_id).lower())] = (
+            name if isinstance(name, str) and name else str(logical_id)
+        )
+    return hubs
+
+
+def _hub_patch(segment: str, path: tuple[str, ...], change: dict[str, Any]) -> str:
+    """The patch text that makes *change* to the list at *path* of *segment*."""
+    node: dict[str, Any] = change
+    for key in reversed(path):
+        node = {key: node}
+    return json.dumps({"segments": {segment: node}})
+
+
+def _hub_list_error(
+    module_name: str, changes: list[tuple[str, tuple[str, ...], str, bool]]
+) -> HubListError:
+    """The refusal of a one-module plan that adds or removes the hubs of *changes*: ``(segment, list path, hub, added)``."""
+    segments = list(dict.fromkeys(segment for segment, _, _, _ in changes))
+    lists = list(dict.fromkeys(".".join(path) for _, path, _, _ in changes))
+    hubs = list(dict.fromkeys(hub for _, _, hub, _ in changes))
+    did = "; ".join(
+        f"{'adds' if added else 'removes'} {hub!r} "
+        f"{'to' if added else 'from'} {'.'.join(path)} of {segment!r}"
+        for segment, path, hub, added in changes
+    )
+    segment, path, hub, added = changes[0]
+    example = _hub_patch(
+        segment,
+        path,
+        {"+": {"_op": "add", "name": hub}} if added else {hub: {"_op": "delete"}},
+    )
+    message = (
+        f"{module_name}: the edit {did}. A hub added to or removed from these "
+        "lists needs its role set or cleared on the hub's service, which one "
+        "module write cannot do, so the VCO would list a hub no Edge can use "
+        "(or a hub whose roles are lost). The pipeline sets the roles as steps "
+        "of the save, in the order the UI does: send the change as a patch, for "
+        f"example {example} "
+        f'(pipeline.apply(state, module="{module_name}", patch=...)), then '
+        "pipeline.save(state)."
+    )
+    return HubListError(
+        message,
+        segment=segments[0] if len(segments) == 1 else None,
+        lists=lists,
+        hubs=hubs,
+    )
+
+
+def _check_hub_lists(module_name: str, as_read: object, payload: object) -> None:
+    """Raise ``HubListError`` when a segment of *payload* has other hubs in a hub list than *as_read*, by ``(type, logicalId)``.
+
+    A reorder is no change of members. Segments are matched by ``segmentId``.
+    """
+    held = as_read.get("segments") if is_dict(as_read) else None
+    read_by_id = (
+        {segment_id_of(entry): entry for entry in held if is_dict(entry)}
+        if is_list(held)
+        else {}
+    )
+    segments = payload.get("segments") if is_dict(payload) else None
+    changes: list[tuple[str, tuple[str, ...], str, bool]] = []
+    for entry in segments if is_list(segments) else []:
+        if not is_dict(entry):
+            continue
+        before = read_by_id.get(segment_id_of(entry))
+        if before is None:
+            continue
+        name = _segment_name(cast(Mapping[str, Any], entry))
+        for field in hub_list_fields():
+            path = field.path
+            read, written = _hub_list(before, path), _hub_list(entry, path)
+            changes.extend(
+                (name, path, hub_name, True)
+                for key, hub_name in written.items()
+                if key not in read
+            )
+            changes.extend(
+                (name, path, hub_name, False)
+                for key, hub_name in read.items()
+                if key not in written
+            )
+    if changes:
+        raise _hub_list_error(module_name, changes)
+
+
 def _defaults_path(name: str) -> str:
     return f"segments[{json.dumps(name)}].defaults"
 
@@ -652,6 +914,7 @@ def plan_module(
     *,
     level: ConfigContext | None = None,
     profile: ConfigurationModuleBase | None = None,
+    profile_device_settings: ConfigurationModuleBase | None = None,
     resolvers: IdentityLookup | None = None,
     via_pipeline: bool = False,
     repair_defaults: bool = True,
@@ -672,9 +935,12 @@ def plan_module(
     read, so an added device settings entry adds its ``deviceSettings:segment``
     row. The segments of a profile are the same in its three modules, so a
     plan of one module alone raises ``SegmentSetError`` for a payload whose
-    segments differ from the module as read; *via_pipeline* (the pipeline
-    plans the three together, which runs the rule that covers all three) turns
-    that off.
+    segments differ from the module as read, and ``HubListError`` for a device
+    settings payload that adds a hub to, or removes one from, the hub, bridge
+    or backhaul list of a segment (a hub in a list needs its role set on its
+    service, which one write cannot do); *via_pipeline* (the pipeline plans
+    the three together, which runs the rule that covers all three, and derives
+    the role steps) turns both off.
 
     The refs are derived from *data* (see the module text): *resolvers* finds
     the ``enterpriseObjectId`` of an identity the edit adds, and a plan that
@@ -733,25 +999,15 @@ def plan_module(
         )
 
     inherited = profile if level is not ConfigContext.PROFILE else None
-    extra: list[dict[str, Any]] = []
-    if inherited is not None:
-        extra = missing_segments(raw, inherited.raw_data, name)
-    reconciled = copy.deepcopy(raw)
-    _add_segments(reconciled, extra)
-    # What the pipeline added to a profile module is part of what the plan
-    # compares with (R'), but not of the data as read: only that is what is
-    # stored, so it decides whether there is anything to write and what the
-    # refs compare with.
+    read = read_data(module, level=level, profile=profile)
+    extra, reconciled, planned_from = read.extra, read.reconciled, read.planned_from
     additions = module.additions if level is ConfigContext.PROFILE else ()
-    planned_from = with_additions(reconciled, additions) if additions else reconciled
 
     baseline: VcoModel | None
     ref_baseline: VcoModel | None
     if isinstance(current, VcoModel):
         model_type = type(current)
-        baseline = _reparse(model_type, planned_from, module.raw_mode)
-        if module.refs_loaded:
-            fill_ref_only(baseline, module.raw_refs)
+        baseline = read.model(model_type)
         ref_baseline = baseline
         if additions:
             ref_baseline = _reparse(model_type, reconciled, module.raw_mode)
@@ -787,6 +1043,8 @@ def plan_module(
 
     if level is ConfigContext.PROFILE and not via_pipeline:
         _check_segment_set(name, raw, payload)
+        if name == "deviceSettings":
+            _check_hub_lists(name, raw, payload)
 
     fixed_model = _document_model(model_type, module)
     if fixed_model is not None and payload != planned_from:
@@ -809,6 +1067,16 @@ def plan_module(
     derived_refs: dict[str, Any] | None = None
     ref_changes: tuple[RefChange, ...] = ()
     warnings: tuple[PlanWarning, ...] = ()
+    hub_services: HubServiceTable | None = None
+    segment_ids: dict[int, int] | None = None
+    if profile_device_settings is not None:
+        hub_refs: object = profile_device_settings.raw_refs
+        hub_services = HubServiceTable.from_refs(hub_refs)
+        segment_ids = segment_object_ids(hub_refs)
+    if name == "QOS" and isinstance(current, VcoModel):
+        unserved = missing_service_error(current, as_read=ref_baseline)
+        if unserved is not None:
+            raise unserved
     if module.refs_loaded:
         derived = derive_refs(
             module,
@@ -817,6 +1085,8 @@ def plan_module(
             payload,
             level=level,
             resolvers=resolvers,
+            hub_services=hub_services,
+            segment_object_ids=segment_ids,
         )
         derived_refs, ref_changes, warnings = (
             derived.refs,
@@ -904,6 +1174,7 @@ def plan_module(
         ),
         repair_defaults=repair_defaults,
         missing_defaults=tuple(missing_defaults),
+        as_read=baseline,
     )
 
 
@@ -1001,7 +1272,12 @@ def _defaults_without_segment(
 
 
 def rebase_onto[M: ConfigurationModuleBase](
-    module: M, plan: ModulePlan, fresh: ConfigurationModuleBase
+    module: M,
+    plan: ModulePlan,
+    fresh: ConfigurationModuleBase,
+    *,
+    resolvers: IdentityLookup | None = None,
+    profile_device_settings: ConfigurationModuleBase | None = None,
 ) -> tuple[M, ModulePlan, tuple[ServerChange, ...]]:
     """*plan*, made for *module* as read, applied to *fresh*, the module as the VCO holds it now.
 
@@ -1025,18 +1301,21 @@ def rebase_onto[M: ConfigurationModuleBase](
     *fresh* holds already, which is checked first: its entry in *fresh* is the
     clash. Raises ``ConfigConflictError`` (not ``stated``, not ``sent``) for
     any of them, with *fresh* as its module, the planned changes *fresh* does
-    not hold as the lost edits, and nothing sent. Raises ``ValueError`` for a
-    plan that adds or removes a ref row: the rebase has no owner to carry it,
-    and nothing a profile writes after its device settings declares one.
+    not hold as the lost edits, and nothing sent.
+
+    The ref rows are rebased with the data: the rebased module holds *fresh*
+    as its raw data and refs, so its plan derives its refs again from the
+    caller's edits against the refs *fresh* holds, not from the rows the
+    original plan sent. A row the edits add that *fresh* holds already is not
+    added twice, and a row the edits remove that *fresh* no longer holds is no
+    clash. *resolvers* and *profile_device_settings* are what ``plan_module``
+    takes to build the rows the edits add (a QoS rule's backhaul hub finds its
+    service in the profile's device settings); the plan's ``ref_changes`` are
+    those of the rebased plan.
     """
     # Imported here: module_check imports this module.
     from pyvelo.client.module_check import MODULE_REWRITES, data_model
 
-    if plan.ref_changes:
-        raise ValueError(
-            f"the plan for {plan.name} adds or removes ref rows, and a rebase "
-            "cannot carry them onto another version of the module"
-        )
     if not isinstance(fresh, type(module)):
         raise TypeError(
             f"the module read is a {type(fresh).__name__}, not a {type(module).__name__}"
@@ -1111,6 +1390,8 @@ def rebase_onto[M: ConfigurationModuleBase](
         via_pipeline=True,
         carried_repairs=carried_repairs,
         repair_defaults=plan.repair_defaults,
+        resolvers=resolvers,
+        profile_device_settings=profile_device_settings,
     )
     planned = {change.path for change in plan.changes}
     if any(change.path not in planned for change in rebased_plan.changes):

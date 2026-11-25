@@ -2,13 +2,16 @@
 
 import copy
 import pickle
+import uuid
 from typing import Any
 
 import pytest
 from pyvelo.client.exceptions import (
     ConfigConflictError,
+    DanglingReferenceError,
     DetachedObjectError,
     FixedListError,
+    HubListError,
     LossyFieldError,
     ModuleWriteError,
     RefsDroppedError,
@@ -35,6 +38,8 @@ from pyvelo.client.exceptions import (
 from pyvelo.client.module_check import ModuleWrite, check_module_write
 from pyvelo.client.module_write import plan_module
 from pyvelo.core.identity import (
+    HubService,
+    HubServiceNotFoundError,
     NetworkServiceIdentity,
     ResolutionError,
     ResolverNotLoadedError,
@@ -42,6 +47,7 @@ from pyvelo.core.identity import (
 )
 from pyvelo.core.patch import PatchError
 from pyvelo.core.rebase import Key, Path
+from pyvelo.core.references import Reference
 from pyvelo.testing import as_stored
 
 from .write_helpers import fw
@@ -119,6 +125,45 @@ def test_a_fixed_list_error_keeps_its_module_paths_and_message_through_copies():
     for copied in copies(error):
         assert type(copied) is FixedListError
         assert (copied.module_name, copied.paths) == ("QOS", paths)
+        assert str(copied) == str(error)
+
+
+def test_a_dangling_reference_error_keeps_its_references_and_message_through_copies():
+    references = (
+        Reference(
+            "deviceSettings",
+            Path(("lan", "networks", Key(100), "segment_id")),
+            7,
+            "segment",
+            None,
+        ),
+        Reference(
+            "QOS", Path(("segments", Key("Guest"))), uuid.UUID(int=5), "backhaul_hub", 2
+        ),
+    )
+    error = DanglingReferenceError(references)
+    for copied in copies(error):
+        assert type(copied) is DanglingReferenceError
+        assert copied.references == references
+        assert str(copied) == str(error)
+
+
+def test_a_hub_list_error_keeps_its_attributes_and_message_through_copies():
+    error = HubListError(
+        "a hub needs its role",
+        segment="Global Segment",
+        lists=("vpn.backHaulEdges", "vpn.edgeToEdgeHub.vpnHubs"),
+        hubs=("Hub-A",),
+        edges=((31, "Branch-1"),),
+    )
+    for copied in copies(error):
+        assert type(copied) is HubListError
+        assert (copied.segment, copied.lists, copied.hubs, copied.edges) == (
+            "Global Segment",
+            ("vpn.backHaulEdges", "vpn.edgeToEdgeHub.vpnHubs"),
+            ("Hub-A",),
+            ((31, "Branch-1"),),
+        )
         assert str(copied) == str(error)
 
 
@@ -260,6 +305,14 @@ def test_every_error_of_the_module_round_trips():
             segments=("Guest",),
             modules=("QOS",),
         ),
+        HubListError(
+            "no",
+            segment="Global Segment",
+            lists=("vpn.backHaulEdges",),
+            hubs=("Hub-A",),
+            edges=((31, "Hub-A"),),
+        ),
+        DanglingReferenceError([Reference("deviceSettings", path, 7, "segment", None)]),
         RefsDroppedError(
             1,
             "v1",
@@ -345,6 +398,31 @@ def test_a_resolver_not_loaded_error_keeps_its_class_message_and_identity_type_t
         assert copied.__notes__ == ["while resolving a ref"]
 
 
+def test_a_hub_service_not_found_error_keeps_its_class_message_and_attributes_through_copies():
+    error = HubServiceNotFoundError(
+        hub="Hub-A",
+        segment="Global Segment",
+        path='segments["Global Segment"].rules["r1"].action.route_cfg',
+    )
+    error.add_note("while planning QOS")
+    for copied in copies(error):
+        assert type(copied) is HubServiceNotFoundError
+        assert copied.args == error.args
+        assert str(copied) == str(error)
+        assert (copied.hub, copied.segment, copied.path) == (
+            "Hub-A",
+            "Global Segment",
+            'segments["Global Segment"].rules["r1"].action.route_cfg',
+        )
+        assert (copied.name, copied.identity_type, copied.candidates) == (
+            "Hub-A",
+            HubService,
+            [],
+        )
+        assert copied.__notes__ == ["while planning QOS"]
+    assert isinstance(error, ResolutionError)
+
+
 def test_a_resolution_error_given_its_own_message_keeps_it():
     error = ResolutionError(
         name="x", identity_type="thing", candidates=[], message="no such thing"
@@ -367,3 +445,24 @@ def test_a_patch_error_keeps_its_path_kind_and_notes_through_copies():
             "unknown_field",
         )
         assert copied.__notes__ == ["in the second patch"]
+
+
+def test_a_dangling_reference_error_for_an_edge_keeps_that_through_copies():
+    reference = Reference("QOS", Path(("x",)), uuid.UUID(int=5), "backhaul_hub", 2)
+    error = DanglingReferenceError([reference], on_edge=True)
+    for copied in copies(error):
+        assert copied.on_edge is True
+        assert str(copied) == str(error)
+
+
+def test_a_hub_service_message_names_the_hub_by_logical_id_when_it_has_no_name():
+    logical_id = str(uuid.UUID(int=7))
+    named = HubServiceNotFoundError(hub="Hub-A", segment="Global Segment", path="p")
+    unnamed = HubServiceNotFoundError(
+        hub=logical_id, segment="Global Segment", path="p"
+    )
+
+    assert '"name": "Hub-A"' in str(named)
+    assert '"logicalId"' not in str(named)
+    assert f'"logicalId": "{logical_id}"' in str(unnamed)
+    assert '"name"' not in str(unnamed)

@@ -7,7 +7,7 @@ Provides:
 - Annotated validators (NoneIsFalse, NoneIsTrue, NoneIsZero, NoneIsMissing, CoerceInt)
 - DefaultingModel for fallback-to-default validation
 - Composable Annotated markers (Alias, EdgeOnly, ProfileOnly, Normalizer, ContextDefault,
-  OwnsRef, RefOnly)
+  OwnsRef, RefOnly, Provides, RefersTo, HubRole)
 """
 
 from __future__ import annotations
@@ -17,7 +17,7 @@ from collections.abc import Callable
 from dataclasses import KW_ONLY, dataclass
 from enum import StrEnum
 from types import UnionType
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 from pydantic import (
     MISSING,
@@ -182,6 +182,30 @@ def get_ref_only(field_info: FieldInfo) -> RefOnly | None:
     """The ``RefOnly`` a field is marked with, or None."""
     for m in field_info.metadata:
         if isinstance(m, RefOnly):
+            return m
+    return None
+
+
+def get_provides(field_info: FieldInfo) -> Provides | None:
+    """The ``Provides`` a field is marked with, or None."""
+    for m in field_info.metadata:
+        if isinstance(m, Provides):
+            return m
+    return None
+
+
+def get_refers_to(field_info: FieldInfo) -> RefersTo | None:
+    """The ``RefersTo`` a field is marked with, or None."""
+    for m in field_info.metadata:
+        if isinstance(m, RefersTo):
+            return m
+    return None
+
+
+def get_hub_role(field_info: FieldInfo) -> HubRole | None:
+    """The ``HubRole`` a field is marked with, or None."""
+    for m in field_info.metadata:
+        if isinstance(m, HubRole):
             return m
     return None
 
@@ -488,8 +512,12 @@ class NameOf:
     """Annotated marker: this string field holds the name of an identity.
 
     ``merge_patch`` fills the sibling ``Resolvable(identity_type, ...)`` fields
-    that a new item's patch leaves out from this field's value. No other
-    string in a patch is tried as a name.
+    that a new item's patch leaves out from this field's value. A new item that
+    gives an ID of the identity (a ``Resolvable`` field of the type whose values
+    are not a fixed set, as a ``Literal`` is) and not this name takes the name,
+    and the other fields it lacks, from the identity that ID finds. An unknown
+    ID raises ``ResolutionError``. No other string in a patch is tried as a
+    name.
 
     Usage: ``name: Annotated[str, NameOf(SegmentIdentity)]``
     """
@@ -570,6 +598,60 @@ class OwnsRef:
                     f"{self.identity.__name__} has no field '{self.by}'. "
                     + f"Available: {', '.join(sorted(field_names))}"
                 )
+
+
+@dataclass(frozen=True, slots=True)
+class Provides:
+    """Annotated marker: the items of this list (or map) are the things a set of names refers to.
+
+    *name* is the name of the set (``"segment"``); *key* is the dotted
+    python path in an item to the value a ``RefersTo`` of the same name holds
+    (as a ``KeyField`` path is). *per_segment* is true when the set is that
+    of one segment's entries, not of the whole module: the ``RefersTo`` fields
+    are then read inside the segment that holds them.
+
+    Usage: ``segments: Annotated[list[DeviceSegment], KeyField("segment.name"),
+    Provides("segment", key="segment.segment_id")]``
+    """
+
+    name: str
+    _: KW_ONLY
+    key: str
+    per_segment: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class RefersTo:
+    """Annotated marker: this scalar field holds a value that a ``Provides`` of the same name lists.
+
+    A value that no item of the set has is a dangling reference. *none* lists
+    the values that say "no reference" (``-1`` for an interface that is in no
+    segment) and are never looked up. *per_segment* is true when the set is
+    the one of the segment the field sits in; it agrees with the
+    ``Provides`` of the same name.
+
+    Usage: ``segment_id: Annotated[int, RefersTo("segment", none=(-1,))] = -1``
+    """
+
+    name: str
+    _: KW_ONLY
+    none: tuple[object, ...] = ()
+    per_segment: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class HubRole:
+    """Annotated marker: this list holds the hubs that play a role for its segment.
+
+    *role* is ``"hub"`` (the Edges and clusters the segment's Edges connect
+    to as a hub), ``"bridge"`` (those that bridge Edge to Edge traffic) or
+    ``"backhaul"`` (those that carry the segment's backhauled traffic).
+
+    Usage: ``vpn_hubs: Annotated[list[VpnHub], KeyField("logical_id"),
+    HubRole("hub")]``
+    """
+
+    role: Literal["hub", "bridge", "backhaul"]
 
 
 def _ref_only_is_not_read(value: Any, info: ValidationInfo) -> Any:

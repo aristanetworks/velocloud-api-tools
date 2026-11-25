@@ -27,10 +27,10 @@ pyvelo = { git = "https://github.com/aristanetworks/velocloud-api-tools.git", su
 | Module | What it provides |
 |---|---|
 | `pyvelo.client` | `VcoClient` (async JSON-RPC), `VcoClientProtocol`, `VcoAuth`, `get_vco_credentials` (reads `VCO_HOST` / `VCO_TOKEN`, optionally from a `.env` file with the `dotenv` extra), `VcoWebSocket` / `PendingDiagnostic`, `ExchangeHook`, request/response schemas, enums, operations, VCO data models |
-| `pyvelo.core` | `VcoModel` base class (with `.merge_patch()`), field markers (`KeyField`, `FixedList`, `Resolvable`, `NameOf`, `OverrideFlag`, `Alias`, `Normalizer`, `ConfigContext`, `ContextDefault`), defaulting helpers (`DefaultingModel`, `DefaultingScalar`), `Secret` (marks a field that holds a secret), `OwnsRef` and `RefOnly` (mark the data field a ref row goes with, and a field that stands for a ref row and is never dumped or read from data), `get_owns_ref`, `get_ref_only` and `get_fixed_list`, `is_secret` and `hide_secrets(model, path, value)` (the value with its secrets shown as `***`), identity types (`EdgeId`, `SegmentId`, `ProfileId`, …); the patch helpers (`add`, `delete`, `move`, `at`), `PatchError` and `PatchErrorKind` (the type of its `kind`); for a tool that works over patches, `Path` and `Key` (the parts of a change's location), `key_text` and `item_key_text`, `list_kind` and `ListKind`, `select_items` and `item_selector`, `key_selector` and `selector_of`, `nest_patch`, `position_of`, `is_positional` and `get_name_of`; facts about a field for a schema view: `wire_name` (the JSON key it is written under), `python_name` (the field a key names; `python_path` in `pyvelo.core.rebase` does the same for the path of a change), `field_models` (the model classes its value, its list items or its map values can be), and `Model.context(level)`, whose entries say whether a field exists at edge or at profile level (`is_present`) |
+| `pyvelo.core` | `VcoModel` base class (with `.merge_patch()`), field markers (`KeyField`, `FixedList`, `Resolvable`, `NameOf`, `OverrideFlag`, `Alias`, `Normalizer`, `ConfigContext`, `ContextDefault`), defaulting helpers (`DefaultingModel`, `DefaultingScalar`), `Secret` (marks a field that holds a secret), `OwnsRef` and `RefOnly` (mark the data field a ref row goes with, and a field that stands for a ref row and is never dumped or read from data), `Provides` and `RefersTo` (mark a list whose items a set of names refers to, and a field that holds one of them), `HubRole` (marks a list of hubs by the role it gives), `get_owns_ref`, `get_ref_only`, `get_provides`, `get_refers_to`, `get_hub_role` and `get_fixed_list`, `is_secret` and `hide_secrets(model, path, value)` (the value with its secrets shown as `***`), identity types (`EdgeId`, `SegmentId`, `ProfileId`, …; for a hub `HubIdentity`, `HubName`, `HubLogicalId` and `HubService`, with `HubServiceNotFoundError`); the patch helpers (`add`, `delete`, `move`, `at`), `PatchError` and `PatchErrorKind` (the type of its `kind`); for a tool that works over patches, `Path` and `Key` (the parts of a change's location), `key_text` and `item_key_text`, `list_kind` and `ListKind`, `select_items` and `item_selector`, `key_selector` and `selector_of`, `nest_patch`, `position_of`, `is_positional` and `get_name_of`; facts about a field for a schema view: `wire_name` (the JSON key it is written under), `python_name` (the field a key names; `python_path` in `pyvelo.core.rebase` does the same for the path of a change), `field_models` (the model classes its value, its list items or its map values can be), and `Model.context(level)`, whose entries say whether a field exists at edge or at profile level (`is_present`) |
 | `pyvelo.client.module_write`, `pyvelo.client.module_check` | `plan_module` and `ModulePlan` (what a write of a module changes), `check_module_write` and `ModuleWrite` (a write that was stored: the module as stored, the changes `applied`, `left_out` and `server_changes`) |
 | `pyvelo.config.resolver` | `Resolver` Protocol, `BaseResolver`, `ResolverRegistry`, `ResolverContext`, `ResolutionError` |
-| `pyvelo.config.resolvers.*` | Concrete resolvers: edge, segment, profile, address_group, application, service_group, license |
+| `pyvelo.config.resolvers.*` | Concrete resolvers: edge, segment, profile, address_group, application, service_group, license, link, network_service, hub |
 | `pyvelo.config.validation` | `Validator` Protocol, `ValidatorRegistry`, `@validator` decorator, `ConfigStateLike` Protocol, `ValidationError`, `ValidationResult` |
 | `pyvelo.testing` | Test fixtures: `FakeEdge`, `FakeSegment`, `mock_vco_client_factory`, `make_jsonrpc_response`, `make_transport`; `ModuleStore`, a fake VCO that holds configuration module rows and serves their reads and writes (`store_of`, `as_stored`) |
 
@@ -95,6 +95,48 @@ to it is a change from that entry. The refs still compare with the module as
 read, so an added device settings entry adds its `deviceSettings:segment` row.
 `plan_module(..., via_pipeline=True)` skips the refusal, for the pipeline, which
 plans the three modules together.
+
+The hubs of a profile segment are in the same case. A hub in the hub, bridge or
+backhaul list of a device settings segment (`vpn.edgeToEdgeHub.vpnHubs`,
+`vpn.edgeToEdgeDetail.vpnHubs`, `vpn.backHaulEdges`) works only when its
+service has that role, which the VCO's role calls set and a module write does
+not. `plan_module` and `update_module` raise `HubListError` for a profile
+device settings payload whose members of one of those lists differ from the
+module as read, as `(type, logicalId)` pairs (a reorder is no change), and
+nothing is sent: the VCO would list a hub no Edge can use, or lose the roles of
+one taken out. The error names the segment, the lists and the hubs, and says how
+to do it instead: send the change as a patch (`{"segments": {"Global Segment":
+{"vpn": {"edgeToEdgeHub": {"vpnHubs": {"+": {"_op": "add", "name":
+"Hub-A"}}}}}}}`) through `pipeline.apply`, and `pipeline.save`, which sets the
+roles as steps of the save. `via_pipeline=True` skips this refusal too.
+
+What a hub is, and what names it, is declared on the models, as the segment
+set is, so that the pipeline needs no list of paths of its own:
+
+- `HubRole("hub" | "bridge" | "backhaul")` marks a list of hubs by the role it
+  gives (`vpn.edgeToEdgeHub.vpnHubs`, `vpn.edgeToEdgeDetail.vpnHubs`,
+  `vpn.backHaulEdges`). Each is keyed by the entry's `logicalId`, with its name
+  as the label, so a patch or a plan names a hub by logical ID, and by name as
+  well where the name is unique. `get_hub_role(field_info)` reads the marker
+  of a field.
+- `Provides(name, key=...)` marks a list whose items are the things a set of
+  names stands for: the device settings `segments` (`segment`), and a segment's
+  `vpn.backHaulEdges` (`backhaul_hub`, per segment). `RefersTo(name)` marks a
+  field that holds one of them: a LAN network's or an interface's `segmentId`,
+  and a QoS rule's backhaul entry. A value that names nothing is a dangling
+  reference, which the pipeline's `plan()` refuses (`DanglingReferenceError`,
+  in `pyvelo.client.exceptions`).
+- `HubResolver` (`pyvelo.config.resolvers.hub`) finds an Edge or a hub cluster
+  by `HubName` or `HubLogicalId` and gives a `HubIdentity`: its kind (`edge` or
+  `cluster`), the `type` of a list entry that goes with it (`edgeHub` or
+  `edgeHubCluster`), its logical ID, and its Edge ID or cluster ID. It reads the
+  enterprise's Edges and clusters once, with `load()`. A member of a cluster is
+  no hub of its own, and a name that an Edge and a cluster share is refused.
+  The network service that stands for a hub in one profile and segment, which a
+  QoS rule's backhaul row points at, is a `HubService`
+  (`pyvelo.client.hub_services` names the three ref rows,
+  `deviceSettings:vpn:edgeHub`, `deviceSettings:vpn:edgeHubCluster` and
+  `deviceSettings:backHaulEdge`).
 
 The module you pass in is not updated: it keeps the data and the `version` from
 before the write. Continue from the module `update_module` returns (`module =
@@ -212,6 +254,15 @@ with nothing sent. The read narrows the race and does not close it, and a
 module with no `version` is written unconditionally. A write that sends no refs
 makes no extra request.
 
+`check_module_version(module, plan)` makes that read on its own, for a caller
+that changes other objects before it writes the module (a save that sends hub
+role calls): it answers `None` when the version is the one read, the
+`ModuleWrite` when the module there already holds the plan's changes, and
+raises `ConfigConflictError` with nothing sent otherwise; it answers `None`
+without a request for a module with no `version`, and for a plan that sends no
+refs. The write then passes `version_checked=True` and makes no read of its own
+(`rebase` still reads, because that read decides the rebase).
+
 `write_module(..., rebase=True)` is for a module written after a profile's
 device settings, which can change the profile's other modules (QoS rule flags,
 and the versions of every module when a segment becomes in use). It reads the
@@ -224,8 +275,12 @@ true. When the module holds every change already, nothing is sent and the write
 is that module with operation `none`. A path the plan changes that also changed
 there, and a list the plan edits an item of that had items added or removed,
 raise `ConfigConflictError` with `error.sent` False and the module as it is now.
-A plan that adds or removes a ref row cannot be rebased (`ValueError`). An
-insert is not rebased.
+A plan that adds or removes a ref row is rebased too: its rows are derived
+again from your edits against the refs just read, so a row you add that is
+there already is not added twice and a row you remove that is gone is no
+clash. Pass the `resolvers` and `profile_device_settings` the plan was made
+with for the rows your edits add (a QoS rule's backhaul hub finds its service
+in the profile's device settings). An insert is not rebased.
 
 With `if_absent=True` an insert first reads the configuration, and a module of
 that name found there is taken as the insert's answer and checked like one, with
@@ -244,6 +299,18 @@ VCO issues them (`issue_rule_ids`), hooks that change what is stored
 request building, parsing and error mapping against the store. A client given a
 `transport` is connected from the start and needs no `async with`; inside one it
 keeps the transport, and after it the client is closed.
+
+The store also holds hubs: `add_edge` an Edge (optionally a member of a cluster)
+and `add_cluster` a hub cluster. It lists the Edges
+(`getEnterpriseEdgeList`), lists the services with the `configuration` and
+`edgeQOSUsage` lists, and answers the twelve hub role calls as a VCO does: an
+Edge enable makes the `edgeHub` service and its device settings row once, an
+Edge hub disable deletes the service and every row that points at it, and an
+Edge disable that finds no service answers `null` (the three Edge disable
+wrappers return `None` for it; the cluster ones raise `VcoEmptyResultError`).
+With `vpn_check` on, a profile device settings update whose Branch-to-Hub list
+and hub rows disagree is refused with `DS00000010`, `DS00000011` or
+`DS00000020`; `fail_calls` fails a named method once.
 
 ### Device settings fields that stand for ref rows
 
@@ -285,11 +352,15 @@ adds the row it goes with, and one that clears it removes the row; every other
 row is sent as read, and `plan.ref_changes` lists the rows added and removed
 (`plan.render()` shows them as `+ refs <name> (<segment>): <value>` and `- refs
 ...`). A new row needs the object's ID, which the `resolvers=` argument finds
-(`ResolverNotLoadedError` when it is missing). A device settings or QoS update
-with segments always carries its refs, as read when nothing in them changed,
-because the VCO runs its processors on every such write. A module read without
-its refs (`refs_loaded` is `False`) cannot be written that way, nor with an edit
-to one of these fields: `RefsNotLoadedError` says to read it with
+(`ResolverNotLoadedError` when it is missing). A QoS rule's new backhaul hub
+adds a `deviceSettings:backHaulEdge` row that points at the hub's service for
+the profile and segment, which the profile's device settings module holds: give
+it as `profile_device_settings=` (`HubServiceNotFoundError` when the hub has no
+service there, or none is given). A device settings or QoS update with segments
+always carries its refs, as read when nothing in them changed, because the VCO
+runs its processors on every such write. A module read without its refs
+(`refs_loaded` is `False`) cannot be written that way, nor with an edit to one
+of these fields: `RefsNotLoadedError` says to read it with
 `configuration/getConfiguration` and `modules`, or from the edge stack. The ref
 names that are not derived are written with `update_configuration_module`, the
 low-level request.

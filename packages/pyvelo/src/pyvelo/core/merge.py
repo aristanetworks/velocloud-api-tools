@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import copy
 import difflib
+import enum
 import functools
 import json
 from collections.abc import Callable, Mapping, Sequence
@@ -1010,7 +1011,9 @@ def _build_input(
     - fills Resolvable fields that are missing, but only from a sibling field
       marked ``NameOf`` for the same identity type that holds a string (a key
       ``segment.name`` written in by ``_inject_key_path`` gives
-      ``segment_id`` / ``segment_logical_id``). An unknown name raises
+      ``segment_id`` / ``segment_logical_id``), or, when the item gives an ID
+      of the identity and not the name, from the identity that ID finds, which
+      also gives the name (``_fill_from_names``). An unknown name or ID raises
       ``ResolutionError`` and a missing resolver skips the fill.
 
     With no *resolvers*, names are left as they are.
@@ -1049,16 +1052,24 @@ def _build_input(
 def _fill_from_names(
     fields: Mapping[str, FieldInfo], resolved: JsonObject, resolvers: IdentityResolver
 ) -> None:
-    """Fill, in *resolved*, the Resolvable fields it lacks from a ``NameOf`` sibling it has."""
+    """Fill, in *resolved*, what the identity a ``NameOf`` field names, or an ID of it, says.
+
+    For each ``NameOf`` field: with its name given, the ``Resolvable`` fields
+    of that identity type that *resolved* lacks are filled from the identity
+    the name finds. With no name given, but an ID of the identity (another
+    ``Resolvable`` field of the type), the identity that ID finds gives the
+    name and the other fields *resolved* lacks. An unknown name or ID raises
+    ``ResolutionError``; with no resolver for the type nothing is filled.
+    """
     for field_name, fi in fields.items():
         identity_type: type[object] | None = get_name_of(fi)
         if identity_type is None:
             continue
-        name = next(
-            (resolved[key] for key in _input_keys(fi, field_name) if key in resolved),
-            None,
+        name_key = next(
+            (key for key in _input_keys(fi, field_name) if key in resolved), None
         )
-        if not isinstance(name, str):
+        name = None if name_key is None else resolved[name_key]
+        if name_key is not None and not isinstance(name, str):
             continue
         targets = [
             (target_name, resolvable)
@@ -1067,16 +1078,77 @@ def _fill_from_names(
             and resolvable.identity_type is identity_type
             and not any(key in resolved for key in _input_keys(target_fi, target_name))
         ]
-        if not targets:
-            continue
-        try:
-            identity = resolvers.resolve_sync(identity_type, name)
-        except ResolutionError:
-            raise
-        except LookupError:
-            continue  # no resolver: nothing to fill from
+        identity: object
+        if isinstance(name, str):
+            if not targets:
+                continue
+            try:
+                identity = resolvers.resolve_sync(identity_type, name)
+            except ResolutionError:
+                raise
+            except LookupError:
+                continue  # no resolver: nothing to fill from
+        else:
+            found = _identity_of_given_id(fields, resolved, identity_type, resolvers)
+            if found is None:
+                continue
+            identity = found
+            given_name: object = getattr(identity, "name", None)
+            if isinstance(given_name, str):
+                resolved[field_name] = given_name
         for target_name, resolvable in targets:
             resolved[target_name] = _field_value(identity, resolvable.id_attr)
+
+
+def _identity_of_given_id(
+    fields: Mapping[str, FieldInfo],
+    resolved: JsonObject,
+    identity_type: type[object],
+    resolvers: IdentityResolver,
+) -> object | None:
+    """The identity of *identity_type* that the first ID given in *resolved* finds, or None if none is given.
+
+    An ID is a ``Resolvable`` field of the type that *resolved* gives a value
+    other than ``null``, and whose type is not a fixed set of values: a
+    ``Literal`` or an enum says what kind of identity it is, not which. A value
+    that is not an ID of the field's type is left for the validation of the
+    item to refuse. With no resolver registered for the type there is nothing to
+    find the identity in, so None; an unknown ID raises ``ResolutionError``
+    and a resolver not loaded ``ResolverNotLoadedError``.
+    """
+    if resolvers.resolver_for(identity_type) is None:
+        return None
+    for target_name, target_fi in fields.items():
+        resolvable = get_resolvable(target_fi)
+        if resolvable is None or resolvable.identity_type is not identity_type:
+            continue
+        key = next(
+            (k for k in _input_keys(target_fi, target_name) if k in resolved), None
+        )
+        id_type = _id_type(target_fi)
+        if key is None or id_type is None or _is_value_set(id_type):
+            continue
+        given = resolved[key]
+        if given is None or given is MISSING:
+            continue
+        adapter = _id_adapter(id_type)
+        try:
+            value = (
+                adapter.validate_strings(given)
+                if isinstance(given, str)
+                else adapter.validate_python(given)
+            )
+        except ValidationError:
+            continue
+        return resolvers.identity_sync(identity_type, resolvable.id_attr, value)
+    return None
+
+
+def _is_value_set(tp: object) -> bool:
+    """True if *tp* is a ``Literal`` or an enum: a field of it holds one of a few values, not an ID."""
+    return get_origin(tp) is Literal or (
+        isinstance(tp, type) and issubclass(tp, enum.Enum)
+    )
 
 
 # ---------------------------------------------------------------------------

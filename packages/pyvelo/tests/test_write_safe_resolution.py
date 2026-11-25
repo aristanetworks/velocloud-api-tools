@@ -62,6 +62,19 @@ class Fake:
             for i in self.tables.get(identity_type, {}).values()
         )
 
+    def resolver_for(self, identity_type: type[object], /) -> object | None:
+        return self if identity_type in self.tables else None
+
+    def identity_sync[T](
+        self, identity_type: type[T], id_attr: str, value: object, /
+    ) -> T:
+        for identity in self.tables[identity_type].values():
+            if getattr(identity, id_attr) == value:
+                return cast(T, identity)
+        raise ResolutionError(
+            name=str(value), identity_type=identity_type, candidates=[]
+        )
+
 
 def fresh() -> FirewallData:
     return FirewallData.model_validate(

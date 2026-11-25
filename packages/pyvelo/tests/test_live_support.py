@@ -14,6 +14,7 @@ import json
 import pathlib
 import re
 import signal
+import uuid
 from collections.abc import Callable, Generator
 from typing import Any, ClassVar, Literal
 
@@ -34,6 +35,8 @@ from pyvelo.client import (
 from pyvelo.client.enums.configuration import ConfigurationModuleName as Name
 from pyvelo.client.exceptions import PRECONDITION_FAILED, LossyFieldError, WriteAnswer
 from pyvelo.client.module_write import plan_module
+from pyvelo.client.schemas import edge as edge_schemas
+from pyvelo.client.schemas import enterprise as enterprise_schemas
 from pyvelo.client.schemas.configuration import (
     ConfigurationModuleUpdate,
     EnterpriseConfigurationProfile,
@@ -2417,3 +2420,368 @@ async def test_the_helpers_sit_behind_the_write_guard(
         ]
         assert live.read_backs(answers) == 0
     assert fake.data(1) == QOS
+
+
+EDGE_HUB_LOGICAL_ID = "a1a1a1a1-a1a1-4a1a-8a1a-a1a1a1a1a1a1"
+CLUSTER_LOGICAL_ID = "c1c1c1c1-c1c1-4c1c-8c1c-c1c1c1c1c1c1"
+OTHER_LOGICAL_ID = "b2b2b2b2-b2b2-4b2b-8b2b-b2b2b2b2b2b2"
+EDGE_HUB_ID, CLUSTER_ID, OTHER_EDGE_ID = 31, 41, 32
+DS_MODULE = 4
+"""The device settings module of profile 20 in ``ds_lab``."""
+
+
+def hub_lab() -> FakeLab:
+    """``ds_lab`` with an Edge, a cluster and another Edge; the Global Segment's object is known to the store."""
+    fake = ds_lab()
+    fake.store.add_object(
+        SEG0_OBJECT,
+        logical_id=SEG0,
+        name="Global Segment",
+        type_="segment",
+        data={"segmentId": 0},
+    )
+    fake.store.add_edge(EDGE_HUB_ID, logical_id=EDGE_HUB_LOGICAL_ID, name="Hub-A")
+    fake.store.add_edge(OTHER_EDGE_ID, logical_id=OTHER_LOGICAL_ID, name="Hub-B")
+    fake.store.add_cluster(CLUSTER_ID, logical_id=CLUSTER_LOGICAL_ID, name="Cluster-1")
+    return fake
+
+
+def role_requests(fake: FakeLab) -> list[str]:
+    """The role calls the fake was sent, by portal method."""
+    return [
+        method
+        for method, _ in fake.requests
+        if method in {wire for wire, _ in live.ROLE_CALLS.values()}
+    ]
+
+
+def role_request(
+    method: str,
+    target_id: int,
+    *,
+    configuration_id: int = 20,
+    module_id: int = DS_MODULE,
+) -> Any:
+    """The request of the client method *method* for *target_id* on that profile and module."""
+    module = (
+        edge_schemas if live.ROLE_CALLS[method][1] == "edge" else enterprise_schemas
+    )
+    name = "".join(part.capitalize() for part in method.split("_"))
+    return getattr(module, name.replace("Backhaul", "BackHaul"))(
+        id_=target_id,
+        configuration_id=configuration_id,
+        module_id=module_id,
+        segment_object_id=SEG0_OBJECT,
+    )
+
+
+async def hub_opened(
+    fake: FakeLab,
+    monkeypatch: pytest.MonkeyPatch,
+    hub: str | None = EDGE_HUB_LOGICAL_ID,
+) -> live.Lab:
+    lab = await opened(fake, monkeypatch)
+    if hub is not None:
+        monkeypatch.setenv(live.HUB_ENV, hub)
+    return lab
+
+
+EDGE_ROLE_CALLS = [m for m, (_, kind) in live.ROLE_CALLS.items() if kind == "edge"]
+CLUSTER_ROLE_CALLS = [
+    m for m, (_, kind) in live.ROLE_CALLS.items() if kind == "cluster"
+]
+
+
+def test_the_role_calls_are_the_twelve_methods_of_the_client():
+    assert len(live.ROLE_CALLS) == 12
+    assert len(EDGE_ROLE_CALLS) == len(CLUSTER_ROLE_CALLS) == 6
+    for method, (wire, kind) in live.ROLE_CALLS.items():
+        assert callable(getattr(VcoClient, method))
+        assert wire.startswith("edge/" if kind == "edge" else "enterprise/")
+        assert not live._READ.match(wire.rsplit("/", 1)[-1])  # pyright: ignore[reportPrivateUsage]
+        with pytest.raises(live.WritesRefused, match="^a call to "):
+            live.check_call(wire)
+
+
+@pytest.mark.parametrize("method", EDGE_ROLE_CALLS)
+async def test_a_role_call_for_the_named_edge_on_a_marked_profile_is_sent(
+    method: str, monkeypatch: pytest.MonkeyPatch
+):
+    fake = hub_lab()
+    lab = await hub_opened(fake, monkeypatch)
+    hub = await live.admit_hub(lab.client, None)
+    assert (hub.kind, hub.id_) == ("edge", EDGE_HUB_ID)
+    run = live.run_of(lab.client)
+    site = lab.profile_site(20, DS)
+    async with live.restoring(site):
+        sent = run.sent
+        _ = await getattr(lab.client, method)(role_request(method, EDGE_HUB_ID))
+        assert run.sent == sent + 1
+    assert role_requests(fake) == [live.ROLE_CALLS[method][0]]
+
+
+@pytest.mark.parametrize("method", CLUSTER_ROLE_CALLS)
+async def test_a_role_call_for_the_named_cluster_on_a_marked_profile_is_sent(
+    method: str, monkeypatch: pytest.MonkeyPatch
+):
+    fake = hub_lab()
+    lab = await hub_opened(fake, monkeypatch, CLUSTER_LOGICAL_ID)
+    hub = await live.admit_hub(lab.client, None)
+    assert (hub.kind, hub.id_) == ("cluster", CLUSTER_ID)
+    site = lab.profile_site(20, DS)
+    async with live.restoring(site):
+        # A disable of a cluster that was never enabled is failed by the Orchestrator:
+        # enable first, as a test would.
+        _ = await lab.client.enable_cluster_hub(
+            role_request("enable_cluster_hub", CLUSTER_ID)
+        )
+        _ = await getattr(lab.client, method)(role_request(method, CLUSTER_ID))
+    assert role_requests(fake)[-1] == live.ROLE_CALLS[method][0]
+
+
+@pytest.mark.parametrize("method", list(live.ROLE_CALLS))
+async def test_a_role_call_is_refused_before_a_hub_is_admitted(
+    method: str, monkeypatch: pytest.MonkeyPatch
+):
+    fake = hub_lab()
+    lab = await hub_opened(fake, monkeypatch)
+    kind = live.ROLE_CALLS[method][1]
+    async with live.restoring(lab.profile_site(20, DS)):
+        with pytest.raises(live.WritesRefused) as refused:
+            _ = await getattr(lab.client, method)(
+                role_request(method, EDGE_HUB_ID if kind == "edge" else CLUSTER_ID)
+            )
+    assert str(refused.value) == live.ROLE_CALL_NOT_ADMITTED
+    assert role_requests(fake) == []
+
+
+@pytest.mark.parametrize("method", list(live.ROLE_CALLS))
+async def test_a_role_call_outside_a_block_is_refused(
+    method: str, monkeypatch: pytest.MonkeyPatch
+):
+    fake = hub_lab()
+    lab = await hub_opened(fake, monkeypatch)
+    _ = await live.admit_hub(lab.client, None)
+    target = EDGE_HUB_ID if live.ROLE_CALLS[method][1] == "edge" else CLUSTER_ID
+    with pytest.raises(live.WritesRefused) as refused:
+        _ = await getattr(lab.client, method)(role_request(method, target))
+    assert str(refused.value) == live.OUTSIDE_RESTORING
+    assert role_requests(fake) == []
+
+
+async def test_a_role_call_for_a_profile_that_is_not_the_blocks_is_refused(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    fake = hub_lab()
+    fake.add_profile(21)  # no mark: the suite never opens a block on it
+    lab = await hub_opened(fake, monkeypatch)
+    _ = await live.admit_hub(lab.client, None)
+    async with live.restoring(lab.profile_site(20, DS)):
+        for configuration_id, module_id in ((21, DS_MODULE), (10, DS_MODULE), (20, 3)):
+            with pytest.raises(live.WritesRefused) as refused:
+                _ = await lab.client.enable_edge_hub(
+                    role_request(
+                        "enable_edge_hub",
+                        EDGE_HUB_ID,
+                        configuration_id=configuration_id,
+                        module_id=module_id,
+                    )
+                )
+            assert str(refused.value) == live.ROLE_CALL_NOT_COVERED
+    assert role_requests(fake) == []
+
+
+async def test_a_role_call_in_a_block_on_a_profile_that_is_not_a_target_is_refused(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    # Everything else holds (the opt-in, the hub, a profile, its device settings
+    # module, the profile and the module the call names): only the mark differs.
+    lab = await hub_opened(hub_lab(), monkeypatch)
+    hub = live.HubTarget("edge", EDGE_HUB_ID, uuid.UUID(EDGE_HUB_LOGICAL_ID))
+
+    def run_with(target: bool) -> live.LiveRun:
+        site = live.profile_site(lab.client, 20, DS, None, target=target)
+        return live.LiveRun(
+            access=live.WriteAccess(granted=True, refusal=""),
+            hub=hub,
+            open=[(site, DS_MODULE)],
+        )
+
+    with live.writer_test(True):
+        run_with(True).check_role_call("edge", 20, DS_MODULE, EDGE_HUB_ID)
+        with pytest.raises(live.WritesRefused) as refused:
+            run_with(False).check_role_call("edge", 20, DS_MODULE, EDGE_HUB_ID)
+    assert str(refused.value) == live.ROLE_CALL_NOT_COVERED
+
+
+async def test_a_role_call_in_a_block_on_another_module_or_an_edge_is_refused(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    fake = hub_lab()
+    lab = await hub_opened(fake, monkeypatch)
+    _ = await live.admit_hub(lab.client, None)
+    for site in (
+        lab.profile_site(20, Name.QOS),
+        lab.edge_site(lab.layouts[0], Name.QOS),
+    ):
+        async with live.restoring(site):
+            for configuration_id, module_id in ((20, DS_MODULE), (10, DS_MODULE)):
+                with pytest.raises(live.WritesRefused) as refused:
+                    _ = await lab.client.enable_edge_hub(
+                        role_request(
+                            "enable_edge_hub",
+                            EDGE_HUB_ID,
+                            configuration_id=configuration_id,
+                            module_id=module_id,
+                        )
+                    )
+                assert str(refused.value) == live.ROLE_CALL_NOT_COVERED
+    assert role_requests(fake) == []
+
+
+@pytest.mark.parametrize(
+    ("method", "target"),
+    [
+        ("enable_edge_hub", OTHER_EDGE_ID),  # another Edge
+        ("disable_edge_backhaul", OTHER_EDGE_ID),
+        ("enable_cluster_hub", EDGE_HUB_ID),  # the Edge's ID, for a cluster call
+        ("enable_cluster_hub", CLUSTER_ID),  # a cluster, where an Edge is named
+        ("enable_edge_hub", CLUSTER_ID),
+    ],
+)
+async def test_a_role_call_for_another_hub_is_refused(
+    method: str, target: int, monkeypatch: pytest.MonkeyPatch
+):
+    fake = hub_lab()
+    lab = await hub_opened(fake, monkeypatch)
+    _ = await live.admit_hub(lab.client, None)
+    async with live.restoring(lab.profile_site(20, DS)):
+        with pytest.raises(live.WritesRefused) as refused:
+            _ = await getattr(lab.client, method)(role_request(method, target))
+    assert str(refused.value) == live.ROLE_CALL_NOT_THE_HUB
+    assert role_requests(fake) == []
+
+
+async def test_a_role_call_of_a_test_that_is_not_marked_is_refused(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    fake = hub_lab()
+    lab = await hub_opened(fake, monkeypatch)
+    _ = await live.admit_hub(lab.client, None)
+    async with live.restoring(lab.profile_site(20, DS)):
+        with live.writer_test(False), pytest.raises(live.WritesRefused) as refused:
+            _ = await lab.client.enable_edge_hub(
+                role_request("enable_edge_hub", EDGE_HUB_ID)
+            )
+    assert str(refused.value) == live.NOT_MARKED
+    assert role_requests(fake) == []
+
+
+async def test_a_role_call_without_the_opt_in_is_refused(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    fake = hub_lab()
+    monkeypatch.setenv(live.HUB_ENV, EDGE_HUB_LOGICAL_ID)
+    lab = await live.discover_lab(client_over(fake), None)
+    with pytest.raises(live.WritesRefused, match="live write tests are off"):
+        _ = await lab.client.enable_edge_hub(
+            role_request("enable_edge_hub", EDGE_HUB_ID)
+        )
+    with pytest.raises(pytest.skip.Exception, match="live write tests are off"):
+        _ = await live.admit_hub(lab.client, None)
+    assert role_requests(fake) == []
+
+
+async def test_a_refused_role_call_carries_its_codes_and_not_the_names_in_its_text(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    fake = hub_lab()
+    fake.refused_methods.add("edge/enableEdgeForEdgeHub")
+    lab = await hub_opened(fake, monkeypatch)
+    _ = await live.admit_hub(lab.client, None)
+    async with live.restoring(lab.profile_site(20, DS)):
+        with pytest.raises(VcoOperationError) as caught:
+            _ = await lab.client.enable_edge_hub(
+                role_request("enable_edge_hub", EDGE_HUB_ID)
+            )
+    assert live.refusal_codes(caught.value) == "DS00000001 lan.networks"
+    assert "secret-lab-name" not in str(caught.value)
+    assert caught.value.__cause__ is None and caught.value.__suppress_context__
+
+
+async def test_the_role_calls_are_still_refused_when_sent_by_hand(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    fake = hub_lab()
+    lab = await hub_opened(fake, monkeypatch)
+    _ = await live.admit_hub(lab.client, None)
+    async with live.restoring(lab.profile_site(20, DS)):
+        with pytest.raises(live.WritesRefused, match="^a call to edge/enableEdge"):
+            _ = await lab.client.portal(
+                "edge/enableEdgeForEdgeHub",
+                role_request("enable_edge_hub", EDGE_HUB_ID),
+                RowsModifiedConfirmation,
+            )
+    assert role_requests(fake) == []
+
+
+class TestAdmitHub:
+    async def test_an_unset_variable_skips_and_says_what_to_set(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        lab = await hub_opened(hub_lab(), monkeypatch, None)
+        monkeypatch.delenv(live.HUB_ENV, raising=False)
+        with pytest.raises(pytest.skip.Exception, match=live.HUB_ENV):
+            _ = await live.admit_hub(lab.client, None)
+        assert live.run_of(lab.client).hub is None
+
+    async def test_a_value_that_is_no_logical_id_fails(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        lab = await hub_opened(hub_lab(), monkeypatch, "Hub-A")
+        with pytest.raises(pytest.fail.Exception) as caught:
+            _ = await live.admit_hub(lab.client, None)
+        assert str(caught.value) == live.HUB_NOT_A_LOGICAL_ID
+        assert "Hub-A" not in str(caught.value)
+
+    async def test_an_id_that_names_nothing_fails_without_quoting_it(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        unknown = "d4d4d4d4-d4d4-4d4d-8d4d-d4d4d4d4d4d4"
+        lab = await hub_opened(hub_lab(), monkeypatch, unknown)
+        with pytest.raises(pytest.fail.Exception) as caught:
+            _ = await live.admit_hub(lab.client, None)
+        assert str(caught.value) == live.HUB_NOT_FOUND
+        assert unknown not in str(caught.value)
+        assert live.run_of(lab.client).hub is None
+
+    async def test_a_member_of_a_cluster_is_no_hub(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        member = "e5e5e5e5-e5e5-4e5e-8e5e-e5e5e5e5e5e5"
+        fake = hub_lab()
+        fake.store.add_edge(33, logical_id=member, name="Member-1", cluster=CLUSTER_ID)
+        lab = await hub_opened(fake, monkeypatch, member)
+        with pytest.raises(pytest.fail.Exception) as caught:
+            _ = await live.admit_hub(lab.client, None)
+        assert str(caught.value) == live.HUB_NOT_FOUND
+
+    async def test_the_hub_is_found_by_logical_id_in_any_case(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        lab = await hub_opened(hub_lab(), monkeypatch, EDGE_HUB_LOGICAL_ID.upper())
+        hub = await live.admit_hub(lab.client, None)
+        assert hub == live.HubTarget(
+            "edge", EDGE_HUB_ID, uuid.UUID(EDGE_HUB_LOGICAL_ID)
+        )
+        assert live.run_of(lab.client).hub == hub
+
+    async def test_the_opt_in_is_checked_before_the_hub(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        monkeypatch.setenv(live.WRITE_HOST_ENV, "other.example.invalid")
+        monkeypatch.setenv(live.WRITE_ENTERPRISE_ENV, str(ENTERPRISE))
+        monkeypatch.setenv(live.HUB_ENV, "not a logical id")
+        lab = await live.discover_lab(client_over(hub_lab()), None)
+        with pytest.raises(pytest.fail.Exception, match="^writes refused: "):
+            _ = await live.admit_hub(lab.client, None)

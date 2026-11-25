@@ -547,6 +547,49 @@ class ConfigurationMixin(Protocol):
             )
         return None
 
+    async def check_module_version[M: ConfigurationModuleBase](
+        self: VcoClientBaseProtocol,
+        module: M,
+        plan: ModulePlan,
+        *,
+        enterprise_id: int | None = None,
+    ) -> ModuleWrite[M] | None:
+        """The version read that ``write_module`` makes before an update that sends refs, made on its own.
+
+        A save that changes the VCO's other objects before it writes *module*
+        (the role calls of a hub list edit) calls this first: a module that
+        changed under it then stops the save before anything is sent. The
+        write that follows passes ``version_checked=True`` and does not read
+        again.
+
+        Answers ``None`` when the VCO's ``version`` of the module is the one
+        read, after one request (``_read_version``). It answers ``None``
+        without a request for a module with no ``version`` or no
+        ``configuration_id``, and for a plan that is not an update or sends no
+        refs (``plan.refs`` is None): ``write_module`` reads none for those
+        either. When the version differs, the module is read with its refs
+        and checked as after a refusal (``check_module_write`` with
+        ``"stale"``): the answer is the write, a ``ModuleWrite``, when the
+        module there already holds the plan's changes (a retry of a write
+        whose first copy was stored), and otherwise ``ConfigConflictError`` is
+        raised with ``sent`` False. Nothing is sent either way; an error of a
+        read propagates. Raises ``ValueError`` when *plan* is for a module of
+        another name.
+        """
+        module_name = str(getattr(module, "name", MISSING))
+        if plan.name != module_name:
+            raise ValueError(f"the plan is for {plan.name}, not {module_name}")
+        if (
+            plan.operation != "update"
+            or plan.refs is None
+            or not module.version
+            or module.configuration_id is None
+        ):
+            return None
+        if await _read_version(self, module, enterprise_id) == module.version:
+            return None
+        return await _check_stale(self, module, plan, enterprise_id)
+
     async def write_module[M: ConfigurationModuleBase](
         self: VcoClientBaseProtocol,
         module: M,
@@ -555,6 +598,9 @@ class ConfigurationMixin(Protocol):
         enterprise_id: int | None = None,
         if_absent: bool = False,
         rebase: bool = False,
+        version_checked: bool = False,
+        resolvers: IdentityLookup | None = None,
+        profile_device_settings: ConfigurationModuleBase | None = None,
     ) -> ModuleWrite[M]:
         """Send *plan*, made by ``plan_module`` for *module*, and check what the VCO stored.
 
@@ -589,7 +635,10 @@ class ConfigurationMixin(Protocol):
         ``ConfigConflictError`` is raised with ``sent`` False. Neither read
         sends anything, and an error of either propagates. A write that sends
         no refs has no extra request. The read narrows the race and does not
-        close it.
+        close it. With *version_checked*, the caller has made that read
+        itself (:meth:`check_module_version`) and found the version the one
+        read, so the write makes none; *rebase* still reads, because that
+        read decides the rebase.
 
         With *rebase*, every update with a ``version`` reads that version
         first, refs or none, and a changed one does not end in the check
@@ -605,8 +654,14 @@ class ConfigurationMixin(Protocol):
         ``sent`` False when a path the plan changes was also changed there,
         or when a list the plan edits had items added or removed;
         ``error.module`` is the module as it is now and ``error.version`` the
-        version read. A plan that adds or removes a ref row cannot be rebased
-        (``ValueError``). An insert is not rebased.
+        version read. A plan that adds or removes a ref row is rebased too: its
+        rows are derived again from the caller's edits against the refs read
+        (a row already there is not added twice, a row already gone is no
+        clash). *resolvers* and *profile_device_settings* are what the plan
+        was made with (``plan_module``), passed to that derivation only: give
+        the ones the plan needs for the rows its edits add (a QoS rule's
+        backhaul hub needs its service in the profile's device settings). An
+        insert is not rebased.
 
         With *if_absent*, an insert first reads the configuration: a module of
         the plan's name found there (of several, the one with the highest ID)
@@ -706,7 +761,7 @@ class ConfigurationMixin(Protocol):
                 )
         else:
             if (
-                (rebase or plan.refs is not None)
+                (rebase or (plan.refs is not None and not version_checked))
                 and module.version
                 and module.configuration_id is not None
                 and await _read_version(self, module, enterprise_id) != module.version
@@ -719,7 +774,13 @@ class ConfigurationMixin(Protocol):
                     await _read_held(self, module, plan, enterprise_id),
                     answer="stale",
                 )
-                rebased, plan, merged = rebase_onto(module, plan, fresh)
+                rebased, plan, merged = rebase_onto(
+                    module,
+                    plan,
+                    fresh,
+                    resolvers=resolvers,
+                    profile_device_settings=profile_device_settings,
+                )
                 if plan.operation == "none":
                     return ModuleWrite(
                         plan.name,
@@ -784,6 +845,7 @@ class ConfigurationMixin(Protocol):
         *,
         enterprise_id: int | None = None,
         profile: ConfigurationModuleBase | None = None,
+        profile_device_settings: ConfigurationModuleBase | None = None,
         resolvers: IdentityLookup | None = None,
         repair_defaults: bool = True,
     ) -> M:
@@ -799,7 +861,12 @@ class ConfigurationMixin(Protocol):
         finds the ``enterpriseObjectId`` of an identity it adds. A device
         settings or QoS module with segments is always written with its
         refs. ``RefsNotLoadedError`` is raised for a module read without its
-        refs when the edit needs them.
+        refs when the edit needs them. A QoS rule's new backhaul hub adds a row
+        that points at the hub's service for the profile and segment, which
+        only the profile's device settings module knows: give it as
+        *profile_device_settings* (the profile's own on a profile, the
+        profile's on an edge), and ``HubServiceNotFoundError`` says what is
+        missing when the hub has no service there.
 
         A profile's segments are the same in its device settings, QoS and
         firewall modules, so one module alone cannot change them: *data* that
@@ -866,6 +933,7 @@ class ConfigurationMixin(Protocol):
                     module,
                     data,
                     profile=profile,
+                    profile_device_settings=profile_device_settings,
                     resolvers=resolvers,
                     repair_defaults=repair_defaults,
                 ),

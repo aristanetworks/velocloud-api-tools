@@ -210,7 +210,9 @@ class EnterpriseServiceBase(VcoModel):
     profile_count: int | MISSING = MISSING
     gateways: list[Gateway] | MISSING = MISSING
     configuration: list[ServiceConfiguration] | MISSING = MISSING
-    edge_qos_usage: list[ServiceQosUsage] | MISSING = MISSING
+    edge_qos_usage: Annotated[
+        list[ServiceQosUsage] | MISSING, Alias("edgeQOSUsage")
+    ] = MISSING
     edge_usage: list[ServiceEdgeUsage] | MISSING = MISSING
     wss_usage: list[SymantecWssLocationUsage] | SymantecWssLocationUsage | MISSING = (
         MISSING
