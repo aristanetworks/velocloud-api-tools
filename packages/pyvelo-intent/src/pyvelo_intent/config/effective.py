@@ -21,9 +21,10 @@ How each part of a module is matched:
 - the items of any other list by position;
 - a scalar by value, where ``True`` is not ``1``.
 
-The keys the composer adds to a rule that names a security service group are
-expected from the enterprise's security objects (``composed_security``) when
-``compare_module`` is given them, and compared like the rule's own keys.
+The keys the composer adds to a firewall rule that names a security service
+group are expected from the enterprise's security objects
+(``composed_security``) when ``compare_module`` is given them, and compared like
+the rule's own keys.
 """
 
 import json
@@ -59,6 +60,7 @@ __all__ = [
     "EffectiveDifference",
     "EffectiveIgnore",
     "compare_module",
+    "module_attribute",
 ]
 
 OMITTED_SEGMENT = (
@@ -101,11 +103,19 @@ FINDINGS: frozenset[EffectiveCategory] = frozenset(
 )
 """The categories that say the view and the VCO disagree."""
 
-CONVERTED_MODULES: tuple[str, ...] = ("firewall",)
+CONVERTED_MODULES: tuple[str, ...] = ("firewall", "QOS")
 """The modules whose effective view exists: what ``compare_effective`` compares when it is given none."""
 
-UNMODELED_KEYS: Mapping[str, frozenset[str]] = {"firewall": frozenset({"etm"})}
+UNMODELED_KEYS: Mapping[str, frozenset[str]] = {
+    "firewall": frozenset({"etm"}),
+    "QOS": frozenset(),
+}
 """Keys of a module that no model declares, as paths (``[*]`` for any one list item): reported as ``unconverted`` and not as ``server_only``."""
+
+
+def module_attribute(name: str) -> str:
+    """The attribute of ``EffectiveView`` and of the VCO's composed-modules answer that holds the module *name* (a wire name): ``QOS`` is ``qos``, any other is its own."""
+    return "qos" if name == "QOS" else name
 
 
 @dataclass(frozen=True)

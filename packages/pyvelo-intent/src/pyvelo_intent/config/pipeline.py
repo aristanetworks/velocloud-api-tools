@@ -71,6 +71,7 @@ from pyvelo_intent.config.effective import (
     EffectiveComparison,
     EffectiveDifference,
     compare_module,
+    module_attribute,
 )
 from pyvelo_intent.config.hub_calls import (
     HubServices,
@@ -1323,10 +1324,10 @@ class ConfigPipeline:
         entry, and the ones that say the view and the VCO disagree are
         ``EffectiveComparison.findings``.
 
-        When a rule of the view names a security service group, the security
-        objects of the enterprise (the groups, and the URL category, URL
-        reputation and IDPS objects they name) are read too, one read for each
-        type, and the keys the composer adds to that rule are compared with
+        When a rule of the firewall view names a security service group, the
+        security objects of the enterprise (the groups, and the URL category,
+        URL reputation and IDPS objects they name) are read too, one read for
+        each type, and the keys the composer adds to that rule are compared with
         what those objects give: see ``composed_security``.
 
         Raises ``ValueError`` for a profile state (the VCO composes modules
@@ -1383,7 +1384,8 @@ class ConfigPipeline:
         entries: list[EffectiveDifference] = []
         objects: SecurityObjects | None = None
         for name in names:
-            module: object = getattr(composed, name, None)
+            attribute = module_attribute(name)
+            module: object = getattr(composed, attribute, None)
             data: object = getattr(module, "raw_data", MISSING)
             if module is None or module is MISSING:
                 said = (
@@ -1407,8 +1409,12 @@ class ConfigPipeline:
                     + "get_edge_configuration_modules to see what the VCO sent",
                     module=name,
                 )
-            module_view = cast("Layered[Effective]", getattr(view, name))
-            if objects is None and rules_naming_a_group(effective_dump(module_view)[0]):
+            module_view = cast("Layered[Effective]", getattr(view, attribute))
+            if (
+                name == "firewall"
+                and objects is None
+                and rules_naming_a_group(effective_dump(module_view)[0])
+            ):
                 objects = await self._read_security_objects(enterprise_id)
             entries.extend(
                 compare_module(
@@ -1416,7 +1422,7 @@ class ConfigPipeline:
                     module_view,
                     cast("dict[str, Any]", data),
                     ignores=EFFECTIVE_IGNORES,
-                    security_objects=objects,
+                    security_objects=objects if name == "firewall" else None,
                 )
             )
         return EffectiveComparison(tuple(entries))

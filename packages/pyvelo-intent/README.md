@@ -707,7 +707,8 @@ state.effective.qos.service_rate_limit.origin  # the same, for QoS
 The view is the client's reading of rules the VCO applies on its own, so
 `pipeline.compare_effective(state)` checks it against the VCO's answer. It reads
 the modules the library has converted (`modules=None`, which is the firewall
-now; another module raises `ValueError`) with
+and QoS; name one with `modules=["QOS"]`, and another module raises
+`ValueError`) with
 `edge/getEdgeConfigurationModules` for the edge the state was loaded for, and
 compares each with `state.effective`, by wire path and by value only, since the
 VCO's answer has no origins. Before it compares, it reads the state's profile
@@ -733,7 +734,7 @@ There are six categories, and three of them are findings:
 | `server_only` | the server's answer has a value the view lacks | yes |
 | `factory` | the view gives a display default where the server has no value, or the same one | no, information |
 | `ignored` | the path is on the ignore list, is a secret, or is a segment the composer left out; reported with its reason | no |
-| `unconverted` | the path is not converted yet (`inbound`, `inboundV6`, a segment's `firewall_logging_enabled` and `etm`), so the view has no value to compare | no, information |
+| `unconverted` | the path is not converted yet (the firewall's `inbound`, `inboundV6`, a segment's `firewall_logging_enabled` and `etm`, and a QoS segment's `webProxy`), so the view has no value to compare | no, information |
 
 `comparison.findings` is the entries that are findings, and `entries` all of
 them. A key is reported once, at the highest path that is absent from a side.
@@ -743,7 +744,12 @@ and a value it has that differs is `differs`. A list the view builds itself
 empty list the server lacks is `client_only`. Segments are matched by
 `segmentId` in any order (the view puts the profile's first and the composer
 the edge's), and the rules of a segment, edge entries then profile entries, by
-position.
+position. For QoS the segments' `rules` are compared the same way, and a
+segment's `cosMapping` is the edge's stored object even when its `override` flag
+is off, because that is the object the composer takes; the module's
+`serviceRateLimit`, `qoe` and `qosClientConnector` and a segment's `cosMapping`
+are display defaults (`factory`) where neither layer stores one and the server
+has none.
 
 The VCO's composer keeps only the segments in use on the edge (an enabled
 network with an interface, an enabled routed interface or subinterface, a
@@ -764,8 +770,8 @@ stores: `urlCategoryFiltering`, `urlReputationFiltering` and `atp_action`. They
 are confirmed, not ignored. `compare_effective` reads the enterprise's security
 objects (`enterprise/getSecurityObjects` for `securityServiceGroup`,
 `urlCategoryFiltering`, `urlReputationFiltering` and `idps`: four reads, with
-the state's enterprise ID) only when a rule of a compared module names a group,
-and expects:
+the state's enterprise ID) only when a rule of the firewall names a group (QoS
+rules are not searched), and expects:
 
 - `urlCategoryFiltering` and `urlReputationFiltering`: the `data` of the object
   of that type the group names (its `data` holds `{"id": ...}` for each);
