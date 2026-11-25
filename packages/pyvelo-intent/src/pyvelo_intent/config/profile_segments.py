@@ -31,7 +31,7 @@ from pyvelo.client.models.configuration.profile_segments import (
     repaired_entry,
     with_additions,
 )
-from pyvelo.client.schemas.configuration import AnyConfigurationModule
+from pyvelo.client.schemas.configuration import AnyStoredModule
 from pyvelo.core import ConfigContext, PatchError
 from pyvelo.core.base import VcoModel, field_models, is_dict, is_list
 from pyvelo.core.identity import (
@@ -49,7 +49,7 @@ PROFILE_SEGMENT_MODULES: Final = ("deviceSettings", "QOS", "firewall")
 """The modules of a profile that hold its segments, by wire name, in the order a save writes them."""
 
 
-def segment_modules(state: ConfigState) -> dict[str, AnyConfigurationModule]:
+def segment_modules(state: ConfigState) -> dict[str, AnyStoredModule]:
     """The three modules of *state*'s profile that hold segments, by wire name.
 
     Raises ``ValueError`` for an edge target (an edge has the segments of its
@@ -63,7 +63,7 @@ def segment_modules(state: ConfigState) -> dict[str, AnyConfigurationModule]:
             "An edge has the segments of its profile, so a segment is assigned "
             "to a profile: load the profile with pipeline.load_profile(...)."
         )
-    modules: dict[str, AnyConfigurationModule] = {}
+    modules: dict[str, AnyStoredModule] = {}
     for name in PROFILE_SEGMENT_MODULES:
         module = state.find_module(name)
         if module is None:
@@ -95,7 +95,7 @@ class Assignment:
     """The template ``defaults`` an existing QoS entry of the segment lacks, with their IDs and ``allowConditionalBh``."""
 
 
-def _held_segment_ids(module: AnyConfigurationModule) -> set[int]:
+def _held_segment_ids(module: AnyStoredModule) -> set[int]:
     segments: object = getattr(getattr(module, "data", MISSING), "segments", None)
     if not isinstance(segments, list):
         return set()
@@ -106,7 +106,7 @@ def _held_segment_ids(module: AnyConfigurationModule) -> set[int]:
     }
 
 
-def _raw_defaults(module: AnyConfigurationModule, segment_id: int) -> object:
+def _raw_defaults(module: AnyStoredModule, segment_id: int) -> object:
     """The ``defaults`` of segment *segment_id* in *module*'s raw data plus its additions, as raw JSON; ``MISSING`` when it has none."""
     raw = with_additions(module.raw_data, module.additions)
     entries = raw.get("segments") if is_dict(raw) else None
@@ -159,7 +159,7 @@ def plan_assignment(
 
 
 def _missing_defaults(
-    state: ConfigState, qos: AnyConfigurationModule, identity: SegmentIdentity
+    state: ConfigState, qos: AnyStoredModule, identity: SegmentIdentity
 ) -> tuple[Mapping[str, Any], ...]:
     pairing = pair_defaults(_raw_defaults(qos, identity.segment_id))
     if not pairing.missing or pairing.unknown or pairing.clash:
@@ -176,7 +176,7 @@ def _missing_defaults(
 
 
 def apply_assignment(
-    modules: Mapping[str, AnyConfigurationModule], assignment: Assignment
+    modules: Mapping[str, AnyStoredModule], assignment: Assignment
 ) -> None:
     """Add *assignment*'s entries and defaults to *modules*, each a deep copy.
 
@@ -193,9 +193,9 @@ def apply_assignment(
 
 def assign_on_trial(
     state: ConfigState,
-    modules: Mapping[str, AnyConfigurationModule],
+    modules: Mapping[str, AnyStoredModule],
     assignments: Sequence[Assignment],
-    edit: Callable[[Mapping[str, AnyConfigurationModule]], None] | None = None,
+    edit: Callable[[Mapping[str, AnyStoredModule]], None] | None = None,
 ) -> None:
     """Try *assignments*, then *edit*, on copies of *modules*, and plan each copy.
 
@@ -299,7 +299,7 @@ type Resolve = Callable[[str], Awaitable[SegmentIdentity]]
 
 async def prepare_profile_segments(
     state: ConfigState,
-    module: AnyConfigurationModule,
+    module: AnyStoredModule,
     nested: Mapping[str, object],
     *,
     resolve: Resolve,
@@ -360,7 +360,7 @@ class _SegmentReader:
     """What ``prepare_profile_segments`` reads of one module, and what it makes."""
 
     def __init__(
-        self, state: ConfigState, module: AnyConfigurationModule, resolve: Resolve
+        self, state: ConfigState, module: AnyStoredModule, resolve: Resolve
     ) -> None:
         self.state = state
         self.module = module
@@ -629,7 +629,7 @@ def _agreeing(
 def check_profile_segments(
     before: VcoModel,
     after: VcoModel,
-    module: AnyConfigurationModule,
+    module: AnyStoredModule,
     ds_as_read: object,
     assignments: Sequence[Assignment],
 ) -> None:

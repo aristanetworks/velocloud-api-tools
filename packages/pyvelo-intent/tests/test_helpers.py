@@ -134,7 +134,7 @@ def test_confirm_save_shows_the_plan_it_is_given(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ):
     state = make_state()
-    state.edge.firewall.firewall_enabled = False
+    state.edge.firewall.firewall_enabled.set_local(False)
     plan = state.plan()
     monkeypatch.setattr("sys.stdin", io.StringIO("y\n"))
 

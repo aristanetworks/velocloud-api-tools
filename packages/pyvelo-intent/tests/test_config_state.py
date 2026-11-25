@@ -18,7 +18,6 @@ from pyvelo.client.models.configuration.device_settings.segment import (
 from pyvelo.client.models.configuration.firewall.root import FirewallData
 from pyvelo.client.models.configuration.wan.root import WanData
 from pyvelo.client.schemas.configuration import (
-    AnyConfigurationModule,
     DeviceSettingsConfigurationModule,
     EdgeConfiguration,
     EnterpriseConfigurationProfile,
@@ -27,38 +26,21 @@ from pyvelo.client.schemas.configuration import (
 )
 from pyvelo.config.resolver import ResolverContext
 from pyvelo.core import at
+from pyvelo.core.layers import Edge, Profile
 from pyvelo.core.rebase import ItemMove, ItemPlace, Key
 from pyvelo_intent.config.state import ConfigState, SaveResult, ValidationWarning
+from pyvelo_intent.testing import make_firewall_module
 
 
-def _make_config(
-    name: str, modules: list[AnyConfigurationModule] | None = None
-) -> EdgeConfiguration | EnterpriseConfigurationProfile:
+def _make_config(name: str) -> EdgeConfiguration | EnterpriseConfigurationProfile:
     """Build a minimal typed configuration for testing."""
-    fw_data = FirewallData()
-    fw_mod = FirewallConfigurationModule(
-        name="firewall",
-        data=fw_data,
-        created=datetime(2024, 1, 1, tzinfo=UTC),
-        modified=datetime(2024, 1, 1, tzinfo=UTC),
-        id_=1,
-        type_=ConfigurationModuleType.ENTERPRISE,
-        description=None,
-        configuration_id=100,
-        enterprise_logical_id=None,
-        schema_version=None,
-        version=None,
-        metadata=None,
-    )
-
     if name == "Edge Specific Profile":
         return EdgeConfiguration(
-            name=name,
-            modules=[fw_mod] if modules is None else modules,
+            name=name, modules=[make_firewall_module(mod_id=1, config_id=100)]
         )
     return EnterpriseConfigurationProfile(
         name=name,
-        modules=[fw_mod] if modules is None else modules,
+        modules=[make_firewall_module(mod_id=1, config_id=100, layer=Profile)],
     )
 
 
@@ -78,12 +60,12 @@ class TestConfigState:
         state.take_snapshot()
 
         # Mutate the edge config
-        edge_config.firewall.data.firewall_enabled = False
+        edge_config.firewall.data.firewall_enabled.set_local(False)
 
         # Snapshot should still have original value
         snap = state.snapshot_for_target()
         assert isinstance(snap, EdgeConfiguration)
-        assert snap.firewall.data.firewall_enabled is True
+        assert snap.firewall.data.firewall_enabled.is_local is False
 
     def test_get_changed_modules_detects_change(self):
         edge_config = _make_config("Edge Specific Profile")
@@ -100,7 +82,7 @@ class TestConfigState:
         state.take_snapshot()
 
         # Mutate the firewall module
-        edge_config.firewall.data.firewall_enabled = False
+        edge_config.firewall.data.firewall_enabled.set_local(False)
 
         changed = state.get_changed_modules()
         assert "firewall" in changed
@@ -165,20 +147,20 @@ class TestGetFieldChanges:
         from pyvelo_intent.config.state import ConfigFieldChange
 
         state, edge_config = self._state_with_snapshot()
-        edge_config.firewall.data.firewall_enabled = False
+        edge_config.firewall.data.firewall_enabled.set_local(False)
         changes = state.get_field_changes()
         assert any(
             isinstance(c, ConfigFieldChange)
             and c.module == "firewall"
             and c.path == "firewall_enabled"
-            and c.before is True
+            and c.before is MISSING
             and c.after is False
             for c in changes
         )
 
     def test_filter_by_module_name(self):
         state, edge_config = self._state_with_snapshot()
-        edge_config.firewall.data.firewall_enabled = False
+        edge_config.firewall.data.firewall_enabled.set_local(False)
         # Only ask about a different module - should be empty
         assert state.get_field_changes(module_name="qos") == []
         # Ask about the actual mutated module - should be non-empty
@@ -191,31 +173,29 @@ class TestGetFieldChanges:
         from pyvelo.client.enums.configuration import ConfigurationModuleType
         from pyvelo.client.enums.enterprise import NetworkSegmentType
         from pyvelo.client.models.configuration.common import SegmentMetadata
-        from pyvelo.client.models.configuration.firewall.root import FirewallData
         from pyvelo.client.models.configuration.firewall.segment import (
             FirewallSegment,
         )
         from pyvelo.client.schemas.configuration import (
             EdgeConfiguration,
             EnterpriseConfigurationProfile,
-            FirewallConfigurationModule,
         )
 
-        seg_a = FirewallSegment(
+        seg_a = FirewallSegment[Edge](
             segment=SegmentMetadata(
                 name="A", segment_id=0, type_=NetworkSegmentType.REGULAR
             ),
             outbound=[],
         )
-        seg_b = FirewallSegment(
+        seg_b = FirewallSegment[Edge](
             segment=SegmentMetadata(
                 name="B", segment_id=1, type_=NetworkSegmentType.REGULAR
             ),
             outbound=[],
         )
-        fw = FirewallConfigurationModule(
+        fw = FirewallConfigurationModule[Edge](
             name="firewall",
-            data=FirewallData(segments=[seg_a, seg_b]),
+            data=FirewallData[Edge](segments=[seg_a, seg_b]),
             created=datetime(2024, 1, 1, tzinfo=UTC),
             modified=datetime(2024, 1, 1, tzinfo=UTC),
             id_=1,

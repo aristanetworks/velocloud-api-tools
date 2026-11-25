@@ -27,7 +27,7 @@ pyvelo = { git = "https://github.com/aristanetworks/velocloud-api-tools.git", su
 | Module | What it provides |
 |---|---|
 | `pyvelo.client` | `VcoClient` (async JSON-RPC), `VcoClientProtocol`, `VcoAuth`, `get_vco_credentials` (reads `VCO_HOST` / `VCO_TOKEN`, optionally from a `.env` file with the `dotenv` extra), `VcoWebSocket` / `PendingDiagnostic`, `ExchangeHook`, request/response schemas, enums, operations, VCO data models |
-| `pyvelo.core` | `VcoModel` base class (with `.merge_patch()`), field markers (`KeyField`, `FixedList`, `Resolvable`, `NameOf`, `OverrideFlag`, `Alias`, `Normalizer`, `ConfigContext`, `ContextDefault`), defaulting helpers (`DefaultingModel`, `DefaultingScalar`), `Secret` (marks a field that holds a secret), `OwnsRef` and `RefOnly` (mark the data field a ref row goes with, and a field that stands for a ref row and is never dumped or read from data), `Provides` and `RefersTo` (mark a list whose items a set of names refers to, and a field that holds one of them), `HubRole` (marks a list of hubs by the role it gives), `get_owns_ref`, `get_ref_only`, `get_provides`, `get_refers_to`, `get_hub_role` and `get_fixed_list`, `is_secret` and `hide_secrets(model, path, value)` (the value with its secrets shown as `***`), identity types (`EdgeId`, `SegmentId`, `ProfileId`, …; for a hub `HubIdentity`, `HubName`, `HubLogicalId` and `HubService`, with `HubServiceNotFoundError`); the patch helpers (`add`, `delete`, `move`, `at`), `PatchError` and `PatchErrorKind` (the type of its `kind`); for a tool that works over patches, `Path` and `Key` (the parts of a change's location), `key_text` and `item_key_text`, `list_kind` and `ListKind`, `select_items` and `item_selector`, `key_selector` and `selector_of`, `nest_patch`, `position_of`, `is_positional` and `get_name_of`; facts about a field for a schema view: `wire_name` (the JSON key it is written under), `python_name` (the field a key names; `python_path` in `pyvelo.core.rebase` does the same for the path of a change), `field_models` (the model classes its value, its list items or its map values can be), and `Model.context(level)`, whose entries say whether a field exists at edge or at profile level (`is_present`) |
+| `pyvelo.core` | `VcoModel` base class (with `.merge_patch()`), layer models (`Layered`, generic over a layer: `Edge`, `Profile`, `Effective` or `Composed`) and their field kinds (`Inheritable`, `Additive`, `Unconverted`, and `EdgeOnly` / `ProfileOnly` subscripted), `Default` (the display default of an `Inheritable` field), `Owned` with its encodings `ByPresence` and `ByFlag` (`Encoding` is either) and its intents `set_local`, `inherit` and `localize`, coupled groups (`MemberOf`, `OwnedGroup`, `GroupHandle`), `bind_layers` (links an edge layer to its profile, which `localize` copies from), `effective_view` (computes `Data[Effective]` from an edge layer and its profile layer: each value a `Resolved` with its `Origin` `EDGE`, `PROFILE` or `FACTORY` and its `source`, read-only), `effective_dump` (the view as wire JSON, and the `Resolved` of each wire path in it) and `Authority` (marks an `Inheritable` field whose effective value is the profile's whenever a rule on the profile's value holds), `field_kind`, `FieldKind` and `Kind` (what a field of such a model is, and the names of its kinds), `kind_default` (the default of an `EdgeOnly`, `ProfileOnly`, `Additive` or `Unconverted` field), `layer_for` (the stored layer a `ConfigContext` level reads and writes) and `unwrap` (the value an `Owned` stores; any other value as it is), field markers (`KeyField`, `FixedList`, `Resolvable`, `NameOf`, `OverrideFlag`, `Alias`, `Normalizer`, `ConfigContext`, `ContextDefault`), defaulting helpers (`DefaultingModel`, `DefaultingScalar`), `Secret` (marks a field that holds a secret), `OwnsRef` and `RefOnly` (mark the data field a ref row goes with, and a field that stands for a ref row and is never dumped or read from data), `Provides` and `RefersTo` (mark a list whose items a set of names refers to, and a field that holds one of them), `HubRole` (marks a list of hubs by the role it gives), `get_owns_ref`, `get_ref_only`, `get_provides`, `get_refers_to`, `get_hub_role` and `get_fixed_list`, `is_secret` and `hide_secrets(model, path, value)` (the value with its secrets shown as `***`), identity types (`EdgeId`, `SegmentId`, `ProfileId`, …; for a hub `HubIdentity`, `HubName`, `HubLogicalId` and `HubService`, with `HubServiceNotFoundError`); the patch helpers (`add`, `delete`, `move`, `at`), `PatchError` and `PatchErrorKind` (the type of its `kind`); for a tool that works over patches, `Path` and `Key` (the parts of a change's location), `key_text` and `item_key_text`, `list_kind` and `ListKind`, `select_items` and `item_selector`, `key_selector` and `selector_of`, `nest_patch`, `position_of`, `is_positional` and `get_name_of`; facts about a field for a schema view: `wire_name` (the JSON key it is written under), `python_name` (the field a key names; `python_path` in `pyvelo.core.rebase` does the same for the path of a change), `field_models` (the model classes its value, its list items or its map values can be), and `Model.context(level)`, whose entries say whether a field exists at edge or at profile level (`is_present`) |
 | `pyvelo.client.module_write`, `pyvelo.client.module_check` | `plan_module` and `ModulePlan` (what a write of a module changes), `check_module_write` and `ModuleWrite` (a write that was stored: the module as stored, the changes `applied`, `left_out` and `server_changes`) |
 | `pyvelo.config.resolver` | `Resolver` Protocol, `BaseResolver`, `ResolverRegistry`, `ResolverContext`, `ResolutionError` |
 | `pyvelo.config.resolvers.*` | Concrete resolvers: edge, segment, profile, address_group, application, service_group, license, link, network_service, hub |
@@ -290,10 +290,13 @@ read already holds the refs, so the module found is not read again.
 `pyvelo.testing.ModuleStore` is an `httpx` handler that holds module rows as
 JSON and answers module updates, inserts, `getConfiguration` and, for an edge
 whose two configurations it was told (`add_stack`), `getEdgeConfigurationStack`,
-as a VCO does. Its knobs are the conditional version check, a VCO that ignores
-`returnData`, the enterprise a request has to name, writes that fail, writes
-that are stored and whose answer is lost (`lose_answers`), rule IDs issued as a
-VCO issues them (`issue_rule_ids`), hooks that change what is stored
+as a VCO does. For an edge whose composed modules it holds (`composed[edge_id] =
+{"firewall": data}`, or `None` for the `null` of a module that does not
+compose) it answers `getEdgeConfigurationModules` and records the request, so a
+test can check `encryptKeys`. Its knobs are the conditional version check, a VCO
+that ignores `returnData`, the enterprise a request has to name, writes that
+fail, writes that are stored and whose answer is lost (`lose_answers`), rule IDs
+issued as a VCO issues them (`issue_rule_ids`), hooks that change what is stored
 (`on_store`) and another writer's change (`other_writer`). A client over it is
 `VcoClient(host, token, transport=make_transport(store))`: it runs its own
 request building, parsing and error mapping against the store. A client given a
@@ -371,6 +374,115 @@ subclasses) and the device settings refs container are frozen: assigning to
 one raises, and a ref name that holds several rows holds a tuple of them. Edit
 the fields that own the refs instead.
 
+## Layers and ownership
+
+A configuration module is read at two stored layers, and a model that is
+`Layered` has one class for each: `FirewallData[Edge]` holds what an edge
+stores, `FirewallData[Profile]` what a profile stores, `FirewallData[Effective]`
+(computed by `effective_view`, read-only) what the edge shows once its profile
+is applied, and `FirewallData[Composed]` what the VCO composes for an edge
+(`edge/getEdgeConfigurationModules`, read-only). A model needs its layer: a
+class without one raises `TypeError` when it is validated or built. Each field
+of such a model has a kind, which says what it is at each layer:
+
+| Kind | Edge | Profile | Meaning |
+|---|---|---|---|
+| none (structural) | the value | the value | the same at both layers (`segments`, a segment's `segment`) |
+| `Inheritable[T]` | `Owned[T]` | `T` | the edge may override what the profile provides |
+| `Additive[list[T]]` | `list[T]` | `list[T]` | the edge's items come ahead of the profile's, which are not copied into the edge |
+| `EdgeOnly[T]`, `ProfileOnly[T]` | `T` or absent | absent or `T` | the field belongs to one layer |
+| `Unconverted[T]` | `T` | `T` | inheritance not declared yet: as the field has always been |
+
+`Owned[T]` is what an `Inheritable` field holds on the edge layer. `stored` is
+what the edge holds at the key (a value, `None` for a stored JSON `null`, or
+`MISSING` when the key is absent); `is_local` says whether that counts as the
+edge overriding the profile (for the firewall: the key is present and not
+`null`, so `false`, `0` and `{}` are local); `local` is `stored` when it is
+local and `MISSING` otherwise. A `null` is kept as read and does not count as
+local, so an unrelated edit still sends it as it was. An assignment to the
+field (`data.syslog_forwarding = True`) raises `TypeError`, because it would
+lose who owns the value. An `Owned` is not a condition: a test of it
+(`if data.syslog_forwarding:`) raises `TypeError`, as it would be true whatever
+the edge holds, and `data.syslog_forwarding == True` is `False`, as an `Owned`
+equals only another `Owned`. Read `local`, `stored` or `is_local`; the value
+the edge runs with is `state.effective.firewall.syslog_forwarding.value`, and a
+`Resolved` is not a condition either. There are three intents, each with the
+patch a text-only caller sends for it (`ConfigPipeline.apply(state,
+module="firewall", patch=...)`, or `data.merge_patch(...)`):
+
+| Python | Patch | What it does |
+|---|---|---|
+| `data.syslog_forwarding.set_local(True)` | `{"syslog_forwarding": true}` | the edge overrides the profile with this value (`false` too); a `null` is refused: it means inherit |
+| `data.syslog_forwarding.inherit()` | `{"syslog_forwarding": null}` | the edge stores nothing, so the profile's value applies |
+| `services = data.services.localize()` | `{"services": {"ssh": {"enabled": true}}}` | the profile's value (or the display default, when the profile stores none) is copied in as the edge's own and returned to be edited in place; a patch into a section the edge inherits does this first, then applies the patch |
+
+`set_local` validates the value as a patch value is validated and stores a
+copy. `localize` needs the profile, so it works on objects taken from a loaded
+`ConfigState` (`state.edge.firewall`), which binds the edge layer to the profile
+layer; for a module read by hand, `module.data.bind_profile(profile.raw_data)`
+does the same. After a save or `update_module` replaced the module an `Owned`
+belongs to, its intents raise `DetachedObjectError`; reading `stored` does not.
+
+### The firewall
+
+The module-level values of the firewall are `Inheritable` and stored by
+presence. Their wire keys are as they have always been (`firewall_enabled`,
+`firewall_logging_enabled`, `syslog_forwarding`, `stateful_firewall_enabled` and
+`atp_enabled` in snake case; the rest in camel case).
+
+| Field | Group | Display default |
+|---|---|---|
+| `firewall_enabled` | | `true`; the effective value is `false` whenever the profile's is |
+| `firewall_logging_enabled` | | `false` (`null` is a stored value that is not local) |
+| `syslog_forwarding` | | `false` |
+| `services` | | the template's `services`; the whole object is local or inherited, its children are never filled from the profile |
+| `stateful_firewall_settings`, `stateful_firewall_settings_v6`, `stateful_firewall_enabled` | `stateful` | the template's settings; `false` |
+| `network_protection_settings`, `network_protection_settings_v6` | `network_protection` | the template's settings |
+| `atp_enabled`, `security_features` | `atp` | `false`; the template's features |
+
+`inbound` and `inbound_v6` are `Unconverted`, as is a segment's
+`firewall_logging_enabled`. A segment's `outbound` is `Additive`: the edge's
+own rules, in the order the caller gives them, with no profile rule copied in.
+
+The fields of a group change ownership together, because a group with some
+members inherited and others local is a state the VCO UI does not recognize.
+On the edge layer `data.stateful`, `data.network_protection` and `data.atp` are
+handles with `is_local` (the group's anchor member is local), `inherit()`,
+`set_local(bundle)` and `localize()`, each for every member at once:
+
+- `data.stateful.inherit()` removes the three keys; the patch is
+  `{"statefulFirewallSettings": null}` (the anchor; the others follow).
+- `data.stateful.set_local(StatefulLocal(...))` makes all three local from a
+  bundle that names every member (`StatefulLocal`, `NetworkProtectionLocal`,
+  `AtpLocal`, from `pyvelo.client.models.configuration`); the patch names every
+  member.
+- `data.stateful.localize()` makes all three local, copied from the profile; a
+  patch that sets one member of a group the edge inherits does the same first,
+  and then sets that member (`{"stateful_firewall_enabled": false}` stores the
+  profile's settings with `stateful_firewall_enabled` false). Other members are
+  then edited through their own `Owned`.
+- A member alone refuses `inherit()`, and refuses `set_local()` while the group
+  is inherited, with `GroupOwnershipError`, which says to use the group. Once
+  the group is local, `data.stateful_firewall_enabled.set_local(False)` keeps
+  the settings as they are.
+
+The profile layer has plain values and no group handles. A key it does not
+store reads as its display default and is not written: the profile's dump
+writes a field only when it was read from data, assigned, or changed in place
+to something other than the default. So `profile.data.atp_enabled = False`
+on a profile whose raw data lacks the key writes `"atp_enabled": false`.
+
+A display default is what a value is when nothing stores it: the profile
+layer's reading of an absent key, and the `FACTORY` origin of an effective
+value. It comes from the profile template the library ships
+(`new_segment_templates.json`, its `firewall.module` part, read by
+`module_template_value("firewall", key)` in
+`pyvelo.client.models.configuration.profile_segments`), so an untouched profile
+displays `stateful_firewall_enabled` and `firewall_logging_enabled` as `false`
+and `networkProtectionSettings.icmpBasedAttacks.enablePingOfDeath` as `true`.
+A `FACTORY` value is never written: nothing is sent for a key the caller did
+not set, whatever it displays.
+
 ## Portal list and pagination methods
 
 | Method | Use for | Source requests |
@@ -404,4 +516,15 @@ callback errors are logged without their contents and preserve the source result
 
 ```bash
 uv run --package pyvelo pytest packages/pyvelo/tests
+uv run basedpyright packages/pyvelo
 ```
+
+`packages/pyvelo/tests/test_layer_typing.py` is a typing module: its `_cases`
+function is never called, and basedpyright is its test. Each `assert_type` is a
+cell of the kind table in "Layers and ownership" (what a field gives on each
+layer), and each `# pyright: ignore` marks an access the table forbids. The
+module turns on `reportUnnecessaryTypeIgnoreComment`, so an ignore that hides
+no error is an error too, and a change that makes a forbidden access legal
+fails the check.
+`packages/pyvelo-intent/tests/test_layer_typing.py` does the same for the layer
+a `ConfigState` gives (`state.edge`, `state.profile`).

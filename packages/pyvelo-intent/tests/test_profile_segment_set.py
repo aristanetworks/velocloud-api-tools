@@ -20,6 +20,7 @@ from pyvelo.client.models.configuration.profile_segments import (
     new_segment_entry,
 )
 from pyvelo.client.schemas.configuration import AnyConfigurationModule
+from pyvelo.core.layers import Profile
 from pyvelo.core.rebase import Path
 from pyvelo.testing import make_module_json
 from pyvelo_intent.config.state import ConfigPlan, ConfigState
@@ -64,7 +65,7 @@ def add_guest(state: ConfigState, *modules: str) -> None:
         )
 
 
-def modules_of(state: ConfigState) -> list[AnyConfigurationModule]:
+def modules_of(state: ConfigState) -> list[AnyConfigurationModule[Profile]]:
     modules = state.profile_config.modules
     assert isinstance(modules, list)
     return modules

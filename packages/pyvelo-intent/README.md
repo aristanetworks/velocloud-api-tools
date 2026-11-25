@@ -426,6 +426,22 @@ change and has no line of its own. When the section as read has no `override`
 key, the flag cannot be written: the same patch is refused with
 `LossyFieldError`, which names the flag.
 
+The firewall's module-level values (`firewall_enabled`, `syslog_forwarding`,
+`services` and the rest) have no flag: the edge stores a key or inherits it.
+A patch on a value the edge inherits starts from the profile's value, or from
+the display default (the packaged profile template's) where the profile stores
+none, and the whole value becomes the edge's own and shows in `plan()`.
+`{"services": {"ssh": {"enabled": true}}}` stores the whole `services` object,
+with `ssh.enabled` true and the rest as the profile has it, and the plan shows
+one added key. A patch on a value the edge already stores merges into it, a
+scalar sets it, and `null` makes the edge inherit again (the plan shows the key
+removed): `{"syslog_forwarding": null}`. The keys of a group (`stateful`,
+`network_protection`, `atp`) change owner together, so
+`{"stateful_firewall_enabled": false}` on an edge that inherits the group adds
+its three keys, with the settings as the profile has them. A patch that raises
+leaves the group as it was. `state.effective` shows each value an edge uses and
+where it comes from; see "The effective view".
+
 ## What a save writes
 
 A save sends each changed module's `data` as it was read, with only your
@@ -575,9 +591,13 @@ firewall: update
   `segments` list in place, changes its place in the state only.
 - Deleting an edge segment that the profile also has leaves an empty entry for
   it in the write, as for a segment the edge never had.
-- A missing edge firewall or QoS module starts empty; nothing is copied from
-  the profile. It is inserted once it differs from that empty layer: patches
-  that cancel out leave nothing to insert.
+- A missing edge firewall or QoS module starts empty. It is inserted once it
+  differs from that empty layer: patches that cancel out leave nothing to
+  insert. The insert holds the segment entries the save reconciles and what the
+  patches made local: a patch on a firewall value the edge would inherit copies
+  that value from the profile (or the display default) into the insert, as it
+  does for a module the edge has (see "The patch format"); no other profile
+  value is copied.
 - A firewall segment has no `outboundOverride` key in the VCO or on the edge. If
   an older version of this library wrote one into a module, writing that module
   drops it from every segment entry and the plan lists each removal (`-
@@ -632,6 +652,121 @@ firewall: update
 - A cache of loaded modules must keep the JSON rows or `module.raw_data`. A
   `model_validate(module.model_dump())` round trip loses the raw snapshot, and
   with it the "as read" guarantee above.
+
+## The effective view
+
+`state.effective.firewall` is what an edge uses, computed on the client from the
+edge layer and the profile layer it inherits from. Each value is a `Resolved`
+with the value itself, its `origin` and its `source`:
+
+| Origin | The value is |
+|---|---|
+| `Origin.EDGE` | the edge's own: it stores the key (or, for a `presence_wins` object, the object) |
+| `Origin.PROFILE` | the profile's, because the edge inherits it |
+| `Origin.FACTORY` | a display default, because neither layer stores one; it is never written |
+
+`source` is where the value sits in the layer it came from (for a rule,
+`segments[1].outbound[0]`). The view is read-only, is computed again on each
+read so it follows your edits, and creates nothing: an edge with no row for a
+module has the profile's view. A value the profile has turned off for every
+edge (`firewall_enabled: false`) is shown as the profile's, whatever the edge
+stores.
+
+```python
+fw = state.effective.firewall
+fw.syslog_forwarding.origin  # Origin.EDGE, Origin.PROFILE or Origin.FACTORY
+fw.syslog_forwarding.value  # the value the edge uses
+```
+
+The view is the client's reading of rules the VCO applies on its own, so
+`pipeline.compare_effective(state)` checks it against the VCO's answer. It reads
+the modules the library has converted (`modules=None`, which is the firewall
+now; another module raises `ValueError`) with
+`edge/getEdgeConfigurationModules` for the edge the state was loaded for, and
+compares each with `state.effective`, by wire path and by value only, since the
+VCO's answer has no origins. Before it compares, it reads the state's profile
+configuration again, so a profile that changed since the load is not a finding;
+the state itself is not changed. It raises `ValueError` for a profile state and
+for a state with changes that are not saved (those differ from the VCO by
+design; save, or load the edge again).
+
+```python
+comparison = await pipeline.compare_effective(state)
+print(comparison.render())  # by module, then path
+assert not comparison.findings
+```
+
+Each difference is an `EffectiveDifference` (module, path, the two values,
+the view's origin and source, a category, and a reason where there is one).
+There are six categories, and three of them are findings:
+
+| Category | Meaning | A finding? |
+|---|---|---|
+| `differs` | both sides have a value and they differ; a display default the server contradicts is one | yes |
+| `client_only` | the view gives an edge or profile value the server's answer lacks | yes |
+| `server_only` | the server's answer has a value the view lacks | yes |
+| `factory` | the view gives a display default where the server has no value, or the same one | no, information |
+| `ignored` | the path is on the ignore list, is a secret, or is a segment the composer left out; reported with its reason | no |
+| `unconverted` | the path is not converted yet (`inbound`, `inboundV6`, a segment's `firewall_logging_enabled` and `etm`), so the view has no value to compare | no, information |
+
+`comparison.findings` is the entries that are findings, and `entries` all of
+them. A key is reported once, at the highest path that is absent from a side.
+Under a display default, a key the server lacks is `factory` (information),
+and a value it has that differs is `differs`. A list the view builds itself
+(a segment's rules, or `segments`) that is empty equals an absent one; a stored
+empty list the server lacks is `client_only`. Segments are matched by
+`segmentId` in any order (the view puts the profile's first and the composer
+the edge's), and the rules of a segment, edge entries then profile entries, by
+position.
+
+The VCO's composer keeps only the segments in use on the edge (an enabled
+network with an interface, an enabled routed interface or subinterface, a
+loopback, and the Global Segment) in its device settings, QoS and firewall. A
+segment the view has and the composed module lacks is `ignored` with that
+reason; one the composed module has and the view lacks is `server_only`. The
+composed read also returns `null` for a module it could not compose, which it
+does without saying why: that is `ComposedModuleError` (its `module` is the
+module's name), not a finding.
+
+The call does not ask the VCO for encrypted keys (`encryptKeys`), which a VCO
+may refuse. A secret is never compared: a path that holds one is `ignored` with
+that reason, and its value is shown as `***`.
+
+When a rule of the view names a security service group
+(`securityServiceGroup`), the composer adds three keys to it that neither layer
+stores: `urlCategoryFiltering`, `urlReputationFiltering` and `atp_action`. They
+are confirmed, not ignored. `compare_effective` reads the enterprise's security
+objects (`enterprise/getSecurityObjects` for `securityServiceGroup`,
+`urlCategoryFiltering`, `urlReputationFiltering` and `idps`: four reads, with
+the state's enterprise ID) only when a rule of a compared module names a group,
+and expects:
+
+- `urlCategoryFiltering` and `urlReputationFiltering`: the `data` of the object
+  of that type the group names (its `data` holds `{"id": ...}` for each);
+- `atp_action`: `atp_enabled` true, and `ids_enabled`, `ips_enabled` and
+  `atp_logging_enabled` from the `idps` object the group names (`idsEnabled`,
+  `ipsEnabled` and `logEnabled`).
+
+A group that names no object of a type expects no key for it. The expected
+values are compared like the rule's own keys, with the rule's origin and a
+source of its `securityServiceGroup`: a match makes no entry, a different value
+is `differs`, an expected key the server lacks is `client_only`, and a key on a
+rule that names no group is `server_only`. When the group, or an object it
+names, is not among the enterprise's security objects, nothing can be expected
+for the keys that depend on it, so the entries at the rule's security keys say
+so ("the rule's security service group, or an object it names, is not among the
+enterprise's security objects"): they are still findings, which a person can
+resolve by creating the object or fixing the rule's group. The composer's
+output for a `maliciousIpFiltering` object has not been seen, so none is
+expected: a key the composer adds for one is `server_only`.
+
+`pyvelo_intent.config.effective.EFFECTIVE_IGNORES` is the list of known
+divergences, each an `EffectiveIgnore` with its module, a path (whole parts,
+`*` for one part, `[*]` for one list item; it covers everything below it) and
+the reason. It is empty: an entry is added only after a divergence is
+understood, so that a divergence is visible in the comparison and never hidden.
+A finding you meet is either a wrong rule in the library, which gets fixed, or
+a divergence you have understood, which gets an entry with its reason.
 
 ## Assigning a segment to a profile
 
@@ -1281,7 +1416,7 @@ Known limits:
 
 | Module | What it provides |
 |---|---|
-| `pyvelo_intent` | Re-exports the public surface: `ConfigPipeline`, `ConfigState`, `SaveResult`, `ConfigPlan`, the types a save hands back (`ModulePlan` in `ConfigPlan.modules`, `ModuleWrite` in `SaveResult.written`, `ConfigFieldChange` from `get_field_changes()`), the entries a save reports (`PlannedChange`, `ServerChange`), `SaveProgress` and `save_progress`, `StepOutcome` (in `SaveResult.steps`) and `HubStep` (in `ConfigPlan.steps`), the patch helpers (`add`, `delete`, `move`, `at`), `PatchError` and `PatchErrorKind` (the type of its `kind`), diff types (`DiffResult`, `Added`, `Removed`, `Modified`, `Unchanged`, `FieldChange`), the intent error types, the write errors `ModuleWriteError` (the base of the next three), `ConfigConflictError`, `WriteNotAppliedError`, `WriteOutcomeUnknownError` and `DetachedObjectError` (from `pyvelo.client.exceptions`), `LossyFieldError` and `ResolutionError`, helpers (`build_default_pipeline`, `confirm_save`, `load_config`) |
+| `pyvelo_intent` | Re-exports the public surface: `ConfigPipeline`, `ConfigState`, `SaveResult`, `ConfigPlan`, the types a save hands back (`ModulePlan` in `ConfigPlan.modules`, `ModuleWrite` in `SaveResult.written`, `ConfigFieldChange` from `get_field_changes()`), the entries a save reports (`PlannedChange`, `ServerChange`), `SaveProgress` and `save_progress`, `StepOutcome` (in `SaveResult.steps`) and `HubStep` (in `ConfigPlan.steps`), the patch helpers (`add`, `delete`, `move`, `at`), `PatchError` and `PatchErrorKind` (the type of its `kind`), diff types (`DiffResult`, `Added`, `Removed`, `Modified`, `Unchanged`, `FieldChange`), the intent error types, the write errors `ModuleWriteError` (the base of the next three), `ConfigConflictError`, `WriteNotAppliedError`, `WriteOutcomeUnknownError` and `DetachedObjectError` (from `pyvelo.client.exceptions`), `GroupOwnershipError` (an edit through one member of a coupled group), `ComposedModuleError` (`compare_effective` found a module the VCO composed as `null`), the comparison types `EffectiveComparison`, `EffectiveDifference` and `EffectiveCategory`, `LossyFieldError` and `ResolutionError`, helpers (`build_default_pipeline`, `confirm_save`, `load_config`) |
 | `pyvelo_intent.config.pipeline` | `ConfigPipeline` (load/load_profile → apply → save), `build_default_pipeline` |
 | `pyvelo_intent.config.state` | `ConfigState`, `StateLock`, `SaveResult`, `StepOutcome`, `ConfigPlan`, `SaveProgress`, `save_progress`, `ConfigFieldChange`, `ValidationWarning` |
 | `pyvelo_intent.config.helpers` | `load_config` (a YAML file validated against a model; `ConfigInputError` for a file it cannot use, a key given twice included), `confirm_save` (a yes or no prompt, which prints the plan it is given: `confirm_save(plan=preview.plan)`) |
@@ -1289,7 +1424,7 @@ Known limits:
 | `pyvelo_intent.config.(firewall\|device_settings\|qos\|wan\|control_plane)` | Per-module configuration helpers |
 | `pyvelo_intent.diff` | Generic keyed-list diff engine: `diff_intents`, `DiffResult`, `Added`, `Removed`, `Modified`, `Unchanged`, `FieldChange`. Each side must have each key once (`ValueError` otherwise). |
 | `pyvelo_intent.errors` | `IntentError`, `ConfigInputError`, `LayerNotSavedError`, `SaveStepError`, `SaveValidationError`, `UnknownRegistryEntryError` |
-| `pyvelo_intent.testing` | Test fixtures: `MockVcoClient`, which holds a `ModuleStore` (`pyvelo.testing`) as `store` that serves an edge's configuration stack, module reads and module writes, so a second `load` sees what a save stored (`MockVcoClient.for_state(state)` seeds it from a state), `make_firewall_module`, `make_firewall_segment` |
+| `pyvelo_intent.testing` | Test fixtures: `MockVcoClient`, which holds a `ModuleStore` (`pyvelo.testing`) as `store` that serves an edge's configuration stack, module reads and module writes, so a second `load` sees what a save stored (`MockVcoClient.for_state(state)` seeds it from a state), `make_firewall_module`, `make_firewall_segment` (both build an edge-layer object unless given `layer=Profile`) |
 
 ## Tests
 
@@ -1298,3 +1433,14 @@ uv run --package pyvelo-intent pytest packages/pyvelo-intent/tests
 uv run basedpyright packages/pyvelo-intent
 uv run ruff check packages/pyvelo-intent
 ```
+
+`packages/pyvelo-intent/tests/test_layer_typing.py` is checked by basedpyright
+with `reportUnnecessaryTypeIgnoreComment` on (see pyvelo's "Tests"): it fixes
+the layer each `ConfigState` view gives (`state.edge.firewall` is
+`FirewallData[Edge]`, `state.profile.firewall` is `FirewallData[Profile]`).
+
+The live comparison of "The effective view" is
+`packages/pyvelo-intent/tests/integration/test_effective_live.py`. It only
+reads, runs under `-m integration` with `VCO_HOST` and `VCO_TOKEN` set, and
+prints the comparison of every edge (run it with `-s`), whose `factory`,
+`ignored` and `unconverted` entries it records; a finding fails it.

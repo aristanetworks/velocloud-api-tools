@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import datetime
 import functools
+import sys
 import types
 from collections.abc import Callable, Iterable, Iterator, Mapping
 from dataclasses import dataclass
@@ -87,6 +88,7 @@ from .fields import (
     ref_only_defaults,
     resolve_ctx_default,
 )
+from .owned import Owned, unwrap
 
 type JsonObject = dict[str, object]
 """A JSON object: a merge patch, a compact dump, a pydantic context, ..."""
@@ -324,7 +326,7 @@ def _compact_dump(
     for name, field_info in type(model).model_fields.items():
         if ref_only and name in ref_only:
             continue  # it stands for a ref row, not for data
-        value = _field_value(model, name)
+        value = unwrap(_field_value(model, name))
         if _should_omit_field(value, field_info, level):
             continue
         key = _field_alias(field_info, name) if by_alias else name
@@ -333,7 +335,13 @@ def _compact_dump(
     extra: Mapping[str, object] = model.model_extra or {}
     for key, value in extra.items():
         result[key] = _compact_value(value, by_alias=by_alias, level=level)
-    return result
+    return model._finish_dump(  # pyright: ignore[reportPrivateUsage]
+        result,
+        by_alias=by_alias,
+        compact_value=lambda value: _compact_value(
+            value, by_alias=by_alias, level=level
+        ),
+    )
 
 
 def _compact_value(
@@ -354,10 +362,24 @@ def _compact_value(
     return value
 
 
+def same_state(a: object, b: object) -> bool:
+    """Whether *a* and *b* hold the same state: equal, or equal once compacted.
+
+    Models compare unequal by their private state, the config level among it
+    (``for_profile()`` sets it on a model and every model inside), and by the
+    form they hold the same state in; the compact dump removes those.
+    """
+    return a == b or _compact_value(a, by_alias=False, level=None) == _compact_value(
+        b, by_alias=False, level=None
+    )
+
+
 def _propagate_context(value: object, level: ConfigContext) -> None:
     """Set the config level on every VcoModel inside *value*, at any depth."""
     if isinstance(value, VcoModel):
         _ = value.for_context(level)
+    elif isinstance(value, Owned):
+        _propagate_context(value.stored, level)  # pyright: ignore[reportUnknownMemberType]
     elif is_list(value):
         for item in value:
             _propagate_context(item, level)
@@ -388,6 +410,8 @@ def _models_inside(value: object, place: _Place) -> Iterator[tuple[_Place, BaseM
         extra: Mapping[str, object] = value.model_extra or {}
         for key, item in extra.items():
             yield from _models_inside(item, (*place, key))
+    elif isinstance(value, Owned):
+        yield from _models_inside(value.stored, place)  # pyright: ignore[reportUnknownMemberType]
     elif is_list(value):
         for index, item in enumerate(value):
             yield from _models_inside(item, (*place, index))
@@ -512,6 +536,22 @@ def _install_ref_filling(cls: type[VcoModel]) -> None:
 # ---------------------------------------------------------------------------
 
 
+def _register_parametrization(cls: type[BaseModel]) -> None:
+    """Make a parametrized generic model findable by pickle.
+
+    ``Data[Edge]`` is a class made when it is first written, named
+    ``Data[Edge]`` and found nowhere, so an instance of it, or a plan or an
+    error that holds the class, cannot be pickled. It is put in the module of
+    the generic class under that name, which is where pickle looks.
+    """
+    metadata = cls.__pydantic_generic_metadata__
+    if metadata["origin"] is None or metadata["parameters"]:
+        return
+    module = sys.modules.get(cls.__module__)
+    if module is not None:
+        _ = module.__dict__.setdefault(cls.__qualname__, cls)
+
+
 class VcoModel(BaseModel):
     model_config: ClassVar[ConfigDict] = ConfigDict(
         alias_generator=to_camel,
@@ -563,6 +603,15 @@ class VcoModel(BaseModel):
             return False
         return private is not None and private.get("_detached") is True
 
+    def check_not_detached(self, name: str) -> None:
+        """Raise ``DetachedObjectError`` naming *name* if a write replaced this object (``is_detached``).
+
+        For an edit that is not an assignment to a field of this model, such
+        as an ``Owned`` intent, which has to refuse as an assignment does.
+        """
+        if self.is_detached:
+            _raise_detached(self, name)
+
     def mark_detached(self) -> list[tuple[tuple[str | int, ...], BaseModel]]:
         """Mark this model and every VcoModel inside it as replaced by a write.
 
@@ -591,6 +640,7 @@ class VcoModel(BaseModel):
     @classmethod
     def __pydantic_on_complete__(cls) -> None:
         super().__pydantic_on_complete__()
+        _register_parametrization(cls)
         cls._alias_map.cache_clear()
         apply_vco_markers(cls)
         cls._ref_only_fields = types.MappingProxyType(ref_only_defaults(cls))
@@ -650,16 +700,34 @@ class VcoModel(BaseModel):
         # models don't inherit this model's level; pydantic serializes them
         # with the same context, and each one falls back to its own level.
         level = context_level if context_level is not None else self.config_context
-        if level is None:
-            return dumped
-
         # Full dumps follow model_config (serialize_by_alias=True) unless
         # by_alias=False is passed.
         by_alias = info.by_alias is not False
+        dumped = self._finish_dump(dumped, by_alias=by_alias, compact_value=None)
+        if level is None:
+            return dumped
+
         for name, field_info in type(self).model_fields.items():
-            if _is_context_absent(_field_value(self, name), field_info, level):
+            if _is_context_absent(unwrap(_field_value(self, name)), field_info, level):
                 key = _field_alias(field_info, name) if by_alias else name
                 _ = dumped.pop(key, None)
+        return dumped
+
+    def _finish_dump(
+        self,
+        dumped: JsonObject,
+        *,
+        by_alias: bool,
+        compact_value: Callable[[object], object] | None,
+    ) -> JsonObject:
+        """The last step of a dump of this model, full or compact; a subclass changes *dumped* here.
+
+        *dumped* has the keys of the fields as ``by_alias`` says. A full dump
+        holds each field as pydantic serialized it. A compact one holds each
+        field as the model has it; *compact_value* compacts a value (nested
+        models, lists and dicts included) as the dump does, and is ``None``
+        for a full dump.
+        """
         return dumped
 
     @classmethod
@@ -722,6 +790,33 @@ class VcoModel(BaseModel):
           leaving the key out leaves it unset, and the item's own JSON dump
           writes ``null`` for ``None``;
         - anything else: replaces the value.
+
+        **Inheritable fields.** On an edge layer (``Data[Edge]``) an
+        ``Inheritable`` field holds an ``Owned``, and a patch changes who owns
+        the value:
+
+        - ``null``: inherits (``Owned.inherit``), whatever the inner type
+          takes; the edge stores nothing, or the reset object of a ``ByFlag``
+          field that declares one;
+        - a value that is not an object: sets the value local
+          (``Owned.set_local``), validated as above;
+        - an object, on a field that is local: merged into the local value;
+        - an object, on a field that is not local: the profile's value, or
+          the field's display default where the profile stores none, is
+          copied in as the edge's own (``Owned.localize``) and the object
+          merged into the copy (``UnboundError`` on a model that was not
+          read from a loaded state, which does not know its profile);
+        - a member of a coupled group: ``null`` inherits the whole group,
+          and any other value first makes the group local, copying every
+          member from the profile, then applies as above to that member;
+        - the flag of a ``ByFlag`` field (``override``) is not patchable: it
+          follows the value, set when an object is given, and ``null``
+          inherits.
+
+        The profile layer (``Data[Profile]``) holds a plain value: the rows
+        above this one apply, with ``null`` as its inner type takes it. A
+        patch that changes it, in place or not, marks it stored, so a value
+        equal to the display default is written all the same.
 
         Every value assigned is first validated as pydantic validates the
         field when it parses a response: the same coercions and constraints,
@@ -880,6 +975,17 @@ def _unwrap_annotated(tp: object) -> object:
     return tp
 
 
+def _held_type(fi: FieldInfo) -> object:
+    """The type a field holds: its annotation, or the type inside its kind (``field_kind``).
+
+    ``FieldInfo.annotation`` of a converted field is the carrier, so every
+    reader of a field's type reads it here.
+    """
+    from .layers import field_kind  # layers imports this module
+
+    return field_kind(fi).inner_type
+
+
 def _field_names_by_key(fields: Mapping[str, FieldInfo]) -> dict[str, str]:
     """Map each input key that names one of *fields* to its python name.
 
@@ -898,12 +1004,12 @@ def _field_names_by_key(fields: Mapping[str, FieldInfo]) -> dict[str, str]:
 
 def _field_accepts_missing(fi: FieldInfo) -> bool:
     """Check if a field's type annotation includes MISSING."""
-    return MISSING in _union_members(fi.annotation)
+    return MISSING in _union_members(_held_type(fi))
 
 
 def _field_accepts_none(fi: FieldInfo) -> bool:
     """Check if a field's type annotation includes None."""
-    return type(None) in _union_members(fi.annotation)
+    return type(None) in _union_members(_held_type(fi))
 
 
 def _id_type(fi: FieldInfo) -> object | None:
@@ -912,7 +1018,7 @@ def _id_type(fi: FieldInfo) -> object | None:
     None unless exactly one type is left.
     """
     members = (
-        _unwrap_annotated(m) for m in _union_members(_unwrap_annotated(fi.annotation))
+        _unwrap_annotated(m) for m in _union_members(_unwrap_annotated(_held_type(fi)))
     )
     kept = [m for m in members if m is not MISSING and m is not type(None)]
     return kept[0] if len(kept) == 1 else None
@@ -926,7 +1032,7 @@ def _id_adapter(id_type: object) -> TypeAdapter[object]:
 def _field_model_type(fi: FieldInfo) -> type[VcoModel] | None:
     """Get the VcoModel class from an annotation like ``T`` or ``T | MISSING | None``."""
     return next(
-        (m for m in _union_members(fi.annotation) if _is_vco_model_type(m)), None
+        (m for m in _union_members(_held_type(fi)) if _is_vco_model_type(m)), None
     )
 
 
@@ -937,7 +1043,7 @@ def _field_model_types(fi: FieldInfo) -> tuple[type[VcoModel], ...]:
     inside ``Annotated``: ``Annotated[A | B, Discriminator(...)] | None``.
     """
     found: list[type[VcoModel]] = []
-    for member in _union_members(fi.annotation):
+    for member in _union_members(_held_type(fi)):
         for inner in _union_members(_unwrap_annotated(member)):
             model = _unwrap_annotated(inner)
             if _is_vco_model_type(model) and model not in found:
@@ -1002,7 +1108,7 @@ def list_item_type(fi: FieldInfo) -> ListItemType | None:
     Handles plain ``list[Model]`` and
     ``list[Annotated[A | B, Discriminator(...)]]``.
     """
-    for member in _union_members(fi.annotation):
+    for member in _union_members(_held_type(fi)):
         if get_origin(member) is not list or not (args := get_args(member)):
             continue
         element: object = args[0]
@@ -1077,7 +1183,7 @@ def field_models(field_info: FieldInfo) -> tuple[type[VcoModel], ...]:
     empty tuple.
     """
     found: dict[type[VcoModel], None] = {}
-    _collect_models(field_info.annotation, found)
+    _collect_models(_held_type(field_info), found)
     return tuple(found)
 
 
@@ -1103,7 +1209,7 @@ def list_kind(field_info: FieldInfo) -> ListKind | None:
     is_dict_of_models = False
     has_list = False
     element_kind: Literal["model", "value", "other"] = "other"
-    for member in _members_without_missing_and_none(field_info.annotation):
+    for member in _members_without_missing_and_none(_held_type(field_info)):
         origin = get_origin(member)
         args = get_args(member)
         if origin is dict and len(args) == 2:

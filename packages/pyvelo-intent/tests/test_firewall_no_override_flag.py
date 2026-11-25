@@ -16,7 +16,6 @@ from typing import Any
 
 import pytest
 from pyvelo.client.schemas.configuration import (
-    ConfigurationBase,
     EdgeConfiguration,
     EnterpriseConfigurationProfile,
     GetConfiguration,
@@ -103,8 +102,8 @@ async def profile_state() -> ConfigState:
     class Client(MockVcoClient):
         async def get_configuration(
             self, request: GetConfiguration
-        ) -> ConfigurationBase:
-            return ConfigurationBase.model_validate(
+        ) -> EdgeConfiguration | EnterpriseConfigurationProfile:
+            return EnterpriseConfigurationProfile.model_validate(
                 {"name": "P", "id": 20, "modules": [row]}
             ).for_profile()
 

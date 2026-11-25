@@ -15,11 +15,14 @@ For configuration helpers (pipeline, state), see the ``pyvelo-intent`` package.
 """
 
 from pyvelo.client import (
+    ComposedModuleError,
     ConfigConflictError,
     DanglingReferenceError,
     DetachedObjectError,
     FixedListError,
+    GroupOwnershipError,
     HubListError,
+    LayerUnknownError,
     LossyFieldError,
     ModuleWriteError,
     RefsDroppedError,
@@ -68,12 +71,15 @@ __all__ = [
     "ApplicationResolver",
     # Resolver framework
     "BaseResolver",
+    "ComposedModuleError",
     "ConfigConflictError",
     "DanglingReferenceError",
     "DetachedObjectError",
     "EdgeResolver",
     "FixedListError",
+    "GroupOwnershipError",
     "HubListError",
+    "LayerUnknownError",
     "LicenseResolver",
     "LinkResolver",
     "LossyFieldError",

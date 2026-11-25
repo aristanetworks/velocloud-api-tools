@@ -15,6 +15,8 @@ class FirewallOutboundRule(VcoModel):
     action: OutboundRuleAction
     rule_logical_id: Annotated[str | MISSING, ServerOwned()] = MISSING
     logging_enabled: bool = False
+    hosted_logging_enabled: bool | MISSING = MISSING
+    syslog_forwarding_enabled: bool | MISSING = MISSING
 
     security_service_group: uuid.UUID | None = None
 

@@ -6,7 +6,14 @@ import json
 import weakref
 from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass, field, fields
-from typing import Any, Literal, Protocol, cast, override, runtime_checkable
+from typing import (
+    Any,
+    Literal,
+    Protocol,
+    cast,
+    override,
+    runtime_checkable,
+)
 
 from pydantic import MISSING, BaseModel
 from pyvelo.client.enums.configuration import ConfigurationModuleName
@@ -34,7 +41,7 @@ from pyvelo.client.module_write import (
     read_data,
 )
 from pyvelo.client.schemas.configuration import (
-    AnyConfigurationModule,
+    AnyStoredModule,
     ConfigurationBase,
     DeviceSettingsConfigurationModule,
     EdgeConfiguration,
@@ -49,12 +56,14 @@ from pyvelo.config.resolvers.hub import HubResolver
 from pyvelo.config.validation import ValidationError
 from pyvelo.core import ConfigContext, VcoModel
 from pyvelo.core.base import is_dict, is_list
+from pyvelo.core.effective import effective_view
 from pyvelo.core.identity import (
     HubIdentity,
     ResolutionError,
     ResolverNotLoadedError,
     SegmentIdentity,
 )
+from pyvelo.core.layers import Edge, Effective, Profile
 from pyvelo.core.rebase import (
     ItemMove,
     ItemPlace,
@@ -244,7 +253,11 @@ class ConfigPlan:
         return "\n".join([self.target, *lines] if self.target else lines)
 
 
-class LayerView:
+type _AnyConfiguration = ConfigurationBase[Any]  # pyright: ignore[reportExplicitAny]
+"""A configuration of either stored layer, for the helpers that read both."""
+
+
+class LayerView[X: (Edge, Profile)]:
     """Read-only access to the data of one config layer's modules.
 
     Each property is the module's ``data``, ready to read or edit in place. An
@@ -256,13 +269,15 @@ class LayerView:
     """
 
     def __init__(
-        self, config: ConfigurationBase, profile: ConfigurationBase | None = None
+        self,
+        config: ConfigurationBase[X],
+        profile: ConfigurationBase[Profile] | None = None,
     ) -> None:
-        self._config: ConfigurationBase = config
-        self._profile: ConfigurationBase | None = profile
+        self._config: ConfigurationBase[X] = config
+        self._profile: ConfigurationBase[Profile] | None = profile
 
     @property
-    def firewall(self) -> FirewallData:
+    def firewall(self) -> FirewallData[X]:
         """The firewall data; an edge layer that has none starts it empty."""
         module = _module_of(
             self._config,
@@ -271,7 +286,7 @@ class LayerView:
             profile=self._profile,
         )
         assert isinstance(module, FirewallConfigurationModule)
-        return module.data
+        return cast(FirewallData[X], module.data)  # the module is of this layer
 
     @property
     def qos(self) -> QosData:
@@ -298,6 +313,44 @@ class LayerView:
         module = _module_of(self._config, ConfigurationModuleName.WAN, create=False)
         assert isinstance(module, WanConfigurationModule)
         return module.data
+
+
+class EffectiveView:
+    """Each module's effective data: what an edge uses, with where each value comes from.
+
+    Computed from the edge layer and the profile layer each time a property is
+    read, so it follows every edit. A value is a ``Resolved`` (its origin, the
+    value, and where in that layer it sits); see ``pyvelo.core.effective``.
+    Nothing is created: an edge that has no row for a module has the view of
+    the profile's.
+    """
+
+    def __init__(
+        self, edge: ConfigurationBase[Edge], profile: ConfigurationBase[Profile]
+    ) -> None:
+        self._edge: ConfigurationBase[Edge] = edge
+        self._profile: ConfigurationBase[Profile] = profile
+
+    @property
+    def firewall(self) -> FirewallData[Effective]:
+        """The firewall's effective data: the edge's local values over the profile's, then the display defaults."""
+        name = ConfigurationModuleName.FIREWALL
+        edge_module = _find_module(self._edge, name)
+        profile_module = _find_module(self._profile, name)
+        edge_data = None
+        if edge_module is not None:
+            assert isinstance(edge_module, FirewallConfigurationModule)
+            edge_data = edge_module.data
+        if profile_module is None:
+            profile_data = FirewallData[Profile].model_validate({"segments": []})
+        else:
+            assert isinstance(profile_module, FirewallConfigurationModule)
+            profile_data = profile_module.data
+        return effective_view(
+            cast("FirewallData[Edge] | None", edge_data),
+            cast("FirewallData[Profile]", profile_data),
+            FirewallData[Effective],
+        )
 
 
 type _Place = tuple[str | int, ...]
@@ -523,7 +576,7 @@ class ConfigState:
     """The new modules an insert was sent for whose answer was not read: the VCO
     may hold them. The next save reads the configuration before it inserts one
     of them."""
-    _made_into_unset: list[tuple[AnyConfigurationModule, bool]] = field(
+    _made_into_unset: list[tuple[AnyStoredModule, bool]] = field(
         default_factory=list, repr=False
     )
     """Each module ``module(create=True)`` made where ``modules`` was unset, and
@@ -566,7 +619,7 @@ class ConfigState:
 
     def module(
         self, name: ConfigurationModuleName | str, *, create: bool = False
-    ) -> AnyConfigurationModule:
+    ) -> AnyStoredModule:
         """The target config's module called *name* (an intent-level name works).
 
         With ``create=True``, an edge target that has no ``firewall`` or ``QOS``
@@ -587,7 +640,7 @@ class ConfigState:
             self._made_into_unset.append((module, was_set))
         return module
 
-    def inherited_segment_ids(self, module: AnyConfigurationModule) -> frozenset[str]:
+    def inherited_segment_ids(self, module: AnyStoredModule) -> frozenset[str]:
         """The ``segmentId``, in string form, of each segment *module* only inherits.
 
         *module* is an edge module of this state. These are the segments of
@@ -616,11 +669,11 @@ class ConfigState:
 
     def find_module(
         self, name: ConfigurationModuleName | str
-    ) -> AnyConfigurationModule | None:
+    ) -> AnyStoredModule | None:
         """The target config's module called *name* (an intent-level name works), or None."""
         return _find_module(self.target_config, resolve_module_name(name))
 
-    def drop_module(self, module: AnyConfigurationModule) -> None:
+    def drop_module(self, module: AnyStoredModule) -> None:
         """Remove *module*, one that ``module(create=True)`` made, from the target config.
 
         A ``modules`` list that the creation set, where it was unset, is unset
@@ -633,7 +686,7 @@ class ConfigState:
                 f"module {module.name!r} was read from the VCO; only a new one is dropped"
             )
         self.unconfirmed_inserts.discard(module.name)
-        config = self.target_config
+        config = cast(_AnyConfiguration, self.target_config)
         if config.modules is MISSING:
             return
         config.modules[:] = [m for m in config.modules if m is not module]
@@ -648,9 +701,7 @@ class ConfigState:
             if not made[1]:
                 config.model_fields_set.discard("modules")
 
-    def replace_module(
-        self, old: AnyConfigurationModule, new: AnyConfigurationModule
-    ) -> None:
+    def replace_module(self, old: AnyStoredModule, new: AnyStoredModule) -> None:
         """Put *new*, the module as the VCO stored it, where *old* is in the target config.
 
         An edge module is bound to the profile layer. The snapshot takes a
@@ -674,7 +725,7 @@ class ConfigState:
         assignment to it does not raise. The state keeps no strong reference to
         *old*. Raises ``ValueError`` if *old* is not in the target config.
         """
-        config = self.target_config
+        config = cast(_AnyConfiguration, self.target_config)
         modules = [] if config.modules is MISSING else config.modules
         index = next((i for i, m in enumerate(modules) if m is old), None)
         if index is None:
@@ -683,7 +734,7 @@ class ConfigState:
         self.unconfirmed_inserts.discard(old.name)
         if config is self.edge_config:
             _bind_to_profile(new, self.profile_config)
-        snapshot = self.snapshot_for_target()
+        snapshot = cast(_AnyConfiguration | None, self.snapshot_for_target())
         if snapshot is not None:
             stored = copy.deepcopy(new)
             if snapshot.modules is MISSING:
@@ -759,7 +810,7 @@ class ConfigState:
             layer, current = "edge", self.edge_config
         else:
             return
-        snapshot = self._snapshot.get(layer)
+        snapshot = cast(_AnyConfiguration | None, self._snapshot.get(layer))
         if snapshot is None or snapshot.modules is MISSING:
             return
         if current.modules is MISSING:
@@ -793,16 +844,28 @@ class ConfigState:
         )
 
     @property
-    def edge(self) -> LayerView:
+    def edge(self) -> LayerView[Edge]:
         """The edge layer's module data. Raises ``ValueError`` without an edge layer."""
         if self.target_type != "edge" or self.edge_config is None:
             raise ValueError("this state has no edge layer")
         return LayerView(self.edge_config, self.profile_config)
 
     @property
-    def profile(self) -> LayerView:
+    def profile(self) -> LayerView[Profile]:
         """The profile layer's module data."""
         return LayerView(self.profile_config)
+
+    @property
+    def effective(self) -> EffectiveView:
+        """What the edge uses, with where each value comes from (read-only).
+
+        Computed from the edge and profile layers on each access, and never
+        creates a module: an edge with no row for one has the profile's values
+        and the display defaults. Raises ``ValueError`` without an edge layer.
+        """
+        if self.target_type != "edge" or self.edge_config is None:
+            raise ValueError("this state has no edge layer, so no effective view")
+        return EffectiveView(self.edge_config, self.profile_config)
 
     def plan(self, *, repair_defaults: bool = True) -> ConfigPlan:
         """Plan the write of every module of the target config, in order.
@@ -885,7 +948,7 @@ class ConfigState:
 
     def _hub_steps(
         self,
-        modules: Sequence[AnyConfigurationModule],
+        modules: Sequence[AnyStoredModule],
         as_read: Mapping[str, VcoModel | None],
     ) -> tuple[tuple[HubStep, ...], tuple[ValidationWarning, ...]]:
         """The role steps of the hub list changes of a profile's device settings, and the warnings of its lists.
@@ -961,7 +1024,7 @@ class ConfigState:
 
     def _check_references(
         self,
-        modules: Sequence[AnyConfigurationModule],
+        modules: Sequence[AnyStoredModule],
         as_read: Mapping[str, VcoModel | None],
     ) -> tuple[ValidationWarning, ...]:
         """Refuse a value of the target that names nothing the configuration provides; warn of one that did as read.
@@ -1055,7 +1118,7 @@ class ConfigState:
 
     def plan_module(
         self,
-        module: AnyConfigurationModule,
+        module: AnyStoredModule,
         data: VcoModel | None = None,
         *,
         repair_defaults: bool = True,
@@ -1130,7 +1193,7 @@ class ConfigState:
         )
 
     def conditional_backhaul(
-        self, module: AnyConfigurationModule, level: ConfigContext
+        self, module: AnyStoredModule, level: ConfigContext
     ) -> dict[int, bool] | None:
         """For a profile QoS *module*, each segment's ``vpn.conditionalBackhaul`` in the profile's device settings now; else None."""
         if (
@@ -1208,7 +1271,7 @@ class ConfigState:
 
 
 def _added_segment_changes(
-    module: ModulePlan, held: AnyConfigurationModule | None
+    module: ModulePlan, held: AnyStoredModule | None
 ) -> list[ConfigFieldChange]:
     """One change for each segment added to *held*, a profile module, with the entry as the plan writes it."""
     if held is None:
@@ -1262,7 +1325,7 @@ def _add_hint(name: str, modules: Sequence[str]) -> str:
 
 
 def _check_segment_set(
-    modules: Sequence[AnyConfigurationModule], plans: Sequence[ModulePlan]
+    modules: Sequence[AnyStoredModule], plans: Sequence[ModulePlan]
 ) -> tuple[ValidationWarning, ...]:
     """Run the segment-set rule of a profile on the payloads of *plans* and the modules as read.
 
@@ -1535,7 +1598,7 @@ class SaveResult:
 # ---------------------------------------------------------------------------
 
 
-def _find_module(config: ConfigurationBase, name: str) -> AnyConfigurationModule | None:
+def _find_module(config: _AnyConfiguration, name: str) -> AnyStoredModule | None:
     if config.modules is MISSING:
         return None
     return next((m for m in config.modules if m.name == name), None)
@@ -1547,7 +1610,7 @@ class _ProfileBindable(Protocol):
 
 
 def _bind_to_profile(
-    module: AnyConfigurationModule, profile_config: ConfigurationBase
+    module: AnyStoredModule, profile_config: _AnyConfiguration
 ) -> None:
     """Bind *module*'s data to the raw data of the profile module of the same name."""
     data: object = module.data
@@ -1558,12 +1621,12 @@ def _bind_to_profile(
 
 
 def _module_of(
-    config: ConfigurationBase,
+    config: _AnyConfiguration,
     name: ConfigurationModuleName,
     *,
     create: bool,
-    profile: ConfigurationBase | None = None,
-) -> AnyConfigurationModule:
+    profile: _AnyConfiguration | None = None,
+) -> AnyStoredModule:
     """*config*'s module *name*; with *create*, an empty edge one if it has none.
 
     A module that is created is bound to *profile* (see :func:`_bind_to_profile`).

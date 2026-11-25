@@ -23,6 +23,7 @@ from pyvelo.config.validation import (
     ValidatorRegistry,
     validator,
 )
+from pyvelo.core.layers import Profile
 from pyvelo_intent.config.pipeline import ConfigPipeline, build_default_pipeline
 from pyvelo_intent.config.state import ConfigState
 from pyvelo_intent.errors import SaveValidationError
@@ -57,7 +58,7 @@ def _mod_kwargs() -> _ModuleKwargs:
     )
 
 
-def _make_state(modules: list[AnyConfigurationModule]) -> ConfigState:
+def _make_state(modules: list[AnyConfigurationModule[Profile]]) -> ConfigState:
     return ConfigState(
         edge_config=None,
         profile_config=EnterpriseConfigurationProfile(
@@ -317,9 +318,9 @@ class TestPipelineValidation:
             )
 
         assert always_fail.phases == ["write"]
-        fw_mod = FirewallConfigurationModule(
+        fw_mod = FirewallConfigurationModule[Profile](
             name="firewall",
-            data=FirewallData(segments=[]),
+            data=FirewallData[Profile](segments=[]),
             id_=1,
             **_mod_kwargs(),
         )
@@ -346,9 +347,9 @@ class TestPipelineValidation:
         assert always_fail.phases == ["write"]
         pipeline = ConfigPipeline(client=None, validator_registry=registry)
 
-        fw_mod = FirewallConfigurationModule(
+        fw_mod = FirewallConfigurationModule[Profile](
             name="firewall",
-            data=FirewallData(segments=[]),
+            data=FirewallData[Profile](segments=[]),
             id_=1,
             **_mod_kwargs(),
         )
@@ -380,9 +381,9 @@ class TestPipelineValidation:
         assert always_fail.phases == ["write"]
         pipeline = ConfigPipeline(client=None, validator_registry=registry)
 
-        fw_mod = FirewallConfigurationModule(
+        fw_mod = FirewallConfigurationModule[Profile](
             name="firewall",
-            data=FirewallData(segments=[]),
+            data=FirewallData[Profile](segments=[]),
             id_=1,
             **_mod_kwargs(),
         )

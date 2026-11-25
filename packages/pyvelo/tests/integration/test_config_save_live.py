@@ -118,7 +118,7 @@ from pyvelo.client.models.configuration.qos.rule import QosRule
 from pyvelo.client.module_check import has_checkable_change
 from pyvelo.client.module_write import plan_module, update_request, wire_dump
 from pyvelo.client.schemas.configuration import (
-    AnyConfigurationModule,
+    AnyStoredModule,
     ConfigurationModuleBase,
     DeviceSettingsConfigurationModule,
     FirewallConfigurationModule,
@@ -127,18 +127,20 @@ from pyvelo.client.schemas.configuration import (
     WanConfigurationModule,
 )
 from pyvelo.core import ConfigContext, VcoModel
+from pyvelo.core.layers import Edge, Profile
 from pyvelo.core.rebase import Key, Path, RawChange, raw_changes
 
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio(loop_scope="session")]
 
-type EditableData = DeviceSettingsData | WanData | QosData | FirewallData
+type AnyFirewallData = FirewallData[Edge] | FirewallData[Profile]
+type EditableData = DeviceSettingsData | WanData | QosData | AnyFirewallData
 
 
 def data_of(module: ConfigurationModuleBase) -> EditableData:
     data: object = getattr(module, "data", None)
     if not isinstance(data, DeviceSettingsData | WanData | QosData | FirewallData):
         pytest.fail(f"the data of a module is a {type(data).__name__}", pytrace=False)
-    return data
+    return cast(EditableData, data)
 
 
 # ---------------------------------------------------------------------------
@@ -148,9 +150,9 @@ def data_of(module: ConfigurationModuleBase) -> EditableData:
 
 def _plan_nothing(
     label: str,
-    module: AnyConfigurationModule,
+    module: AnyStoredModule,
     level: ConfigContext,
-    profile: AnyConfigurationModule | None,
+    profile: AnyStoredModule | None,
     failures: list[str],
 ) -> None:
     plan = plan_module(module, level=level, profile=profile)
@@ -214,7 +216,7 @@ class Case:
     id: str
     name: Name
     model: type[VcoModel]
-    suitable: Callable[[AnyConfigurationModule], bool]
+    suitable: Callable[[AnyStoredModule], bool]
     steps: Callable[[Any], list[Step]]
     what: str
 
@@ -283,24 +285,24 @@ async def apply_steps(
 # -- firewall ---------------------------------------------------------------
 
 
-def _firewall_usable(module: AnyConfigurationModule) -> bool:
+def _firewall_usable(module: AnyStoredModule) -> bool:
     return isinstance(module, FirewallConfigurationModule) and any(
         s.outbound for s in module.data.segments
     )
 
 
-def _firewall_steps(data: FirewallData) -> list[Step]:
+def _firewall_steps(data: AnyFirewallData) -> list[Step]:
     segment_name = next(s.segment.name for s in data.segments if s.outbound)
     first, second = synthetic_name(), synthetic_name()
     outbound = Path(("segments", Key(segment_name), "outbound"))
 
-    def rules(d: FirewallData) -> list[FirewallOutboundRule]:
+    def rules(d: AnyFirewallData) -> list[FirewallOutboundRule]:
         return next(s for s in d.segments if s.segment.name == segment_name).outbound
 
-    def append_copy(name: str) -> Callable[[FirewallData], list[Path]]:
+    def append_copy(name: str) -> Callable[[AnyFirewallData], list[Path]]:
         # A copy of the last rule, after it: the rule it copies matches first, so
         # the copy never decides anything.
-        def apply(d: FirewallData) -> list[Path]:
+        def apply(d: AnyFirewallData) -> list[Path]:
             items = rules(d)
             added = items[-1].model_copy(deep=True)
             added.name = name
@@ -310,7 +312,7 @@ def _firewall_steps(data: FirewallData) -> list[Step]:
 
         return apply
 
-    def swap(d: FirewallData) -> list[Path]:
+    def swap(d: AnyFirewallData) -> list[Path]:
         # The two copies are identical but for their names, so either order is inert.
         items = rules(d)
         i, j = (
@@ -319,8 +321,8 @@ def _firewall_steps(data: FirewallData) -> list[Step]:
         items[i], items[j] = items[j], items[i]
         return [outbound]
 
-    def delete(name: str) -> Callable[[FirewallData], list[Path]]:
-        def apply(d: FirewallData) -> list[Path]:
+    def delete(name: str) -> Callable[[AnyFirewallData], list[Path]]:
+        def apply(d: AnyFirewallData) -> list[Path]:
             items = rules(d)
             del items[next(k for k, r in enumerate(items) if r.name == name)]
             return [outbound.child(Key(name))]
@@ -339,7 +341,7 @@ def _firewall_steps(data: FirewallData) -> list[Step]:
 # -- QoS --------------------------------------------------------------------
 
 
-def _qoe_usable(module: AnyConfigurationModule) -> bool:
+def _qoe_usable(module: AnyStoredModule) -> bool:
     return isinstance(module, QosConfigurationModule) and isinstance(
         module.data.qoe, QoeSettings
     )
@@ -354,7 +356,7 @@ def _qoe_steps(_: QosData) -> list[Step]:
     return [Step("raise the voice latency threshold", apply)]
 
 
-def _qos_rule_usable(module: AnyConfigurationModule) -> bool:
+def _qos_rule_usable(module: AnyStoredModule) -> bool:
     return (
         isinstance(module, QosConfigurationModule)
         and _qos_source(module.data) is not None
@@ -402,7 +404,7 @@ def _qos_rule_steps(data: QosData, version: str = "IPv4v6") -> list[Step]:
 # -- deviceSettings and WAN --------------------------------------------------
 
 
-def _lan_usable(module: AnyConfigurationModule) -> bool:
+def _lan_usable(module: AnyStoredModule) -> bool:
     return isinstance(module, DeviceSettingsConfigurationModule) and bool(
         module.data.lan.networks
     )
@@ -418,7 +420,7 @@ def _lan_steps(data: DeviceSettingsData) -> list[Step]:
     return [Step("raise a LAN network's cost", apply)]
 
 
-def _wan_usable(module: AnyConfigurationModule) -> bool:
+def _wan_usable(module: AnyStoredModule) -> bool:
     """Whether *module* is a WAN module whose first link has a key (an internal ID)."""
     if not isinstance(module, WanConfigurationModule):
         return False
@@ -506,7 +508,7 @@ def _unrelated(a: Path, b: Path) -> bool:
     return a.parts[:n] != b.parts[:n]
 
 
-def _uncarried_keys(module: AnyConfigurationModule) -> list[Path]:
+def _uncarried_keys(module: AnyStoredModule) -> list[Path]:
     """Where the raw data has keys that the typed data does not write back."""
     data = data_of(module)
     dump = wire_dump(data, data.config_context)
@@ -616,7 +618,7 @@ VOICE_RED = Path(("qoe", "voice", "latency", "red"))
 VIDEO_RED = Path(("qoe", "video", "latency", "red"))
 
 
-def _qoe_thresholds_usable(module: AnyConfigurationModule) -> bool:
+def _qoe_thresholds_usable(module: AnyStoredModule) -> bool:
     """Whether *module* is a QoS module whose raw data has the QoE thresholds ``_raised`` raises."""
     return _qoe_usable(module) and all(
         isinstance(value_at(module.raw_data, path), int)
@@ -624,7 +626,7 @@ def _qoe_thresholds_usable(module: AnyConfigurationModule) -> bool:
     )
 
 
-def _raised(module: AnyConfigurationModule, path: Path) -> QosData:
+def _raised(module: AnyStoredModule, path: Path) -> QosData:
     """A copy of the module's QoS data with the QoE threshold at *path* one higher.
 
     A reporting threshold, which steers nothing; a red one raised stays above
@@ -732,7 +734,7 @@ async def test_a_request_without_a_version_is_not_checked(lab: Lab) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _has_refs(module: AnyConfigurationModule) -> bool:
+def _has_refs(module: AnyStoredModule) -> bool:
     return (
         isinstance(module, DeviceSettingsConfigurationModule)
         and isinstance(module.raw_refs, dict)
@@ -753,7 +755,7 @@ async def test_a_data_edit_sends_its_refs_as_read(
 
     async def spy(
         request: UpdateConfigurationModule, *, level: ConfigContext | None = None
-    ) -> AnyConfigurationModule | None:
+    ) -> AnyStoredModule | None:
         sent.append(request)
         return await send(request, level=level)
 
@@ -786,7 +788,7 @@ async def test_a_data_edit_sends_its_refs_as_read(
         )
 
 
-def _firewall_with_refs(module: AnyConfigurationModule) -> bool:
+def _firewall_with_refs(module: AnyStoredModule) -> bool:
     return (
         _firewall_usable(module)
         and isinstance(module.raw_refs, dict)
@@ -1029,7 +1031,7 @@ async def test_a_write_with_no_checkable_change_asks_for_a_count(
 
         async def spy(
             request: UpdateConfigurationModule, *, level: ConfigContext | None = None
-        ) -> AnyConfigurationModule | None:
+        ) -> AnyStoredModule | None:
             requests.append(request)
             return await send(request, level=level)
 

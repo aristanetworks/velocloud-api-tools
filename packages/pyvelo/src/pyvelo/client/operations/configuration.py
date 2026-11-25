@@ -1,17 +1,25 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import replace
-from typing import TYPE_CHECKING, Any, Protocol, cast
+from typing import TYPE_CHECKING, Annotated, Any, Protocol, cast, overload
 
-from pydantic import MISSING, ValidationError
+from pydantic import (
+    MISSING,
+    ConfigDict,
+    Discriminator,
+    RootModel,
+    Tag,
+    ValidationError,
+)
 
 from pyvelo.client.enums.configuration import ConfigurationModuleName
 from pyvelo.client.enums.profiles import GetConfigurationWith
 from pyvelo.client.exceptions import (
     ConfigConflictError,
     DetachedObjectError,
+    LayerUnknownError,
     ModuleWriteError,
     VcoHttpError,
     VcoOperationError,
@@ -40,11 +48,13 @@ from pyvelo.client.module_write import (
 from pyvelo.client.operations._tagging import CONFIG, PM_FLOW, domain_tag
 from pyvelo.client.schemas.configuration import (
     AnyConfigurationModule,
-    ConfigurationBase,
+    AnyStoredModule,
     ConfigurationModuleBase,
     ConfigurationModuleList,
     ConfigurationModuleVersion,
     DeleteConfiguration,
+    EdgeConfiguration,
+    EnterpriseConfigurationProfile,
     GetAllApplicationsResult,
     GetApplicationsResult,
     GetConfiguration,
@@ -63,6 +73,7 @@ from pyvelo.client.schemas.profiles import (
 )
 from pyvelo.core import ConfigContext, RowsModifiedConfirmation, VcoModel
 from pyvelo.core.base import IdentityLookup
+from pyvelo.core.layers import Edge, Profile, layer_for
 from pyvelo.core.response_check import ServerChange
 
 if TYPE_CHECKING:
@@ -82,6 +93,78 @@ def _level_context(
     if not refs_loaded:
         context["refs_loaded"] = False
     return context or None
+
+
+def _module_layer(level: ConfigContext | None) -> type[Edge | Profile]:
+    """The stored layer a module at config level *level* is read as.
+
+    A module with no level is not a firewall module (that class takes its
+    level from its layer), and the others do not depend on the layer, so the
+    edge layer stands for it.
+    """
+    return layer_for(level) if level is not None else Edge
+
+
+def _require_level_for_a_firewall_row(
+    request: InsertConfigurationModule, level: ConfigContext | None
+) -> None:
+    """``TypeError`` when the insert *request* is for a firewall module, asks for its row back and names no *level*; nothing has been sent.
+
+    A firewall row is of the edge layer or the profile layer and the answer
+    does not say which; reading it as the wrong one would not raise.
+    """
+    if request.return_data is True and level is None and request.name == "firewall":
+        raise TypeError(
+            "the insert asks for the firewall module row back (return_data), and "
+            + "that row is read as a module of the edge layer or of the profile "
+            + "layer, which the answer does not say: pass "
+            + "level=ConfigContext.EDGE or level=ConfigContext.PROFILE. Nothing "
+            + "was sent"
+        )
+
+
+def _is_firewall_row(value: object) -> str:
+    return (
+        "firewall"
+        if isinstance(value, Mapping) and value.get("name") == "firewall"  # pyright: ignore[reportUnknownMemberType]
+        else "other"
+    )
+
+
+class _UnleveledAnswer(
+    RootModel[
+        Annotated[
+            Annotated[dict[str, Any], Tag("firewall")]  # pyright: ignore[reportExplicitAny]
+            | Annotated[UpdateConfigurationModuleResult[Edge], Tag("other")],
+            Discriminator(_is_firewall_row),
+        ]
+    ]
+):
+    """An update's answer when the layer of a row is not known: a firewall row stays the JSON object it came as, as its layer cannot be told; anything else is read as it is for an update."""
+
+    model_config = ConfigDict(hide_input_in_errors=True)
+
+
+def _unleveled_firewall_row(answer: dict[str, Any]) -> LayerUnknownError:  # pyright: ignore[reportExplicitAny]
+    """The ``LayerUnknownError`` for *answer*, the firewall row an update was answered with when it was given no level.
+
+    The request of an update does not name its module, so this cannot be known
+    before it is sent. The error carries the row as the VCO answered it.
+    """
+    module_id = answer.get("id")
+    return LayerUnknownError(
+        "the update was sent and the VCO answered with the module's row, so the "
+        + "write is most likely stored; the row could not be read without its "
+        + "layer, which it does not say. Read the module again, or call with "
+        + "level=ConfigContext.EDGE or level=ConfigContext.PROFILE; the row is "
+        + "on .answer",
+        module_id=module_id if isinstance(module_id, int) else None,
+        answer=dict(answer),
+    )
+
+
+class _RawConfiguration(RootModel[dict[str, Any]]):
+    """A configuration as the JSON object it came as: its layer is not known until its ``name`` is read."""
 
 
 class _ConfigurationRows(VcoModel):
@@ -131,13 +214,20 @@ async def _read_rows(
 
 def _parse_row(
     module: ConfigurationModuleBase, row: dict[str, Any]
-) -> AnyConfigurationModule:
+) -> ConfigurationModuleBase:
     """The module row *row* as a module at the config level of *module*, or at none when it has none.
 
+    Of the layer of *module* (a firewall module's class is chosen by it).
     Raises ``ValidationError`` when the row does not parse.
     """
-    return ConfigurationModuleList.model_validate_json(
-        json.dumps([row]), context=_level_context(module.config_context)
+    level = module.config_context
+    rows = (
+        ConfigurationModuleList[Edge]
+        if _module_layer(level) is Edge
+        else ConfigurationModuleList[Profile]
+    )
+    return rows.model_validate_json(
+        json.dumps([row]), context=_level_context(level)
     ).root[0]
 
 
@@ -173,7 +263,7 @@ async def _read_held(
     module: ConfigurationModuleBase,
     plan: ModulePlan,
     enterprise_id: int | None,
-) -> AnyConfigurationModule:
+) -> ConfigurationModuleBase:
     """*module* as the VCO holds it now, read with its refs from its configuration, before anything is sent.
 
     Raises ``ConfigConflictError`` with nothing sent and no module when the
@@ -229,7 +319,7 @@ async def _read_stored(
     *,
     answer: WriteAnswer,
     module_id: int | None = None,
-) -> AnyConfigurationModule:
+) -> ConfigurationModuleBase:
     """*module* as the VCO holds it, read from its configuration after a write that returned no row.
 
     It is the module with *module_id*, by default the ID of *module* (for an
@@ -287,7 +377,7 @@ async def _read_named(
     module: ConfigurationModuleBase,
     plan: ModulePlan,
     enterprise_id: int | None,
-) -> AnyConfigurationModule | None:
+) -> ConfigurationModuleBase | None:
     """The module of the name of *plan* that the configuration of *module* already holds, or None.
 
     Of several rows of that name it is the one with the highest ID, the last
@@ -397,16 +487,20 @@ class ConfigurationMixin(Protocol):
     @domain_tag(CONFIG)
     async def get_configuration(
         self: VcoClientBaseProtocol, request: GetConfiguration
-    ) -> ConfigurationBase:
-        """Retrieve a configuration by ID, optionally with its modules. The ID can be for an enterprise profile or for an edge configuration. Edge configuration IDs can be retrieved in the edge's configuration stack and subsequently passed to this tool."""
-        result = await self.portal(
-            "configuration/getConfiguration", request, ConfigurationBase
-        )
+    ) -> EdgeConfiguration | EnterpriseConfigurationProfile:
+        """Retrieve a configuration by ID, optionally with its modules. The ID can be for an enterprise profile or for an edge configuration. Edge configuration IDs can be retrieved in the edge's configuration stack and subsequently passed to this tool.
 
-        if result.name == "Edge Specific Profile":
-            return result.for_edge()
-        else:
-            return result.for_profile()
+        The layer comes from the answer: a configuration named ``Edge Specific
+        Profile`` is an ``EdgeConfiguration``, any other an
+        ``EnterpriseConfigurationProfile``, and its modules are of that layer.
+        """
+        raw = await self.portal(
+            "configuration/getConfiguration", request, _RawConfiguration
+        )
+        text = json.dumps(raw.root)
+        if raw.root.get("name") == "Edge Specific Profile":
+            return EdgeConfiguration.model_validate_json(text).for_edge()
+        return EnterpriseConfigurationProfile.model_validate_json(text).for_profile()
 
     @domain_tag(CONFIG)
     async def delete_enterprise_profile(
@@ -419,21 +513,51 @@ class ConfigurationMixin(Protocol):
             RowsModifiedConfirmation,
         )
 
+    @overload
+    async def get_configuration_modules(
+        self: VcoClientBaseProtocol,
+        request: GetConfigurationModules,
+        *,
+        layer: type[Edge],
+    ) -> Sequence[AnyConfigurationModule[Edge]]: ...
+    @overload
+    async def get_configuration_modules(
+        self: VcoClientBaseProtocol,
+        request: GetConfigurationModules,
+        *,
+        layer: type[Profile],
+    ) -> Sequence[AnyConfigurationModule[Profile]]: ...
     @domain_tag(CONFIG)
     async def get_configuration_modules(
-        self: VcoClientBaseProtocol, request: GetConfigurationModules
-    ) -> Sequence[AnyConfigurationModule]:
+        self: VcoClientBaseProtocol,
+        request: GetConfigurationModules,
+        *,
+        layer: type[Edge | Profile],
+    ) -> (
+        Sequence[AnyConfigurationModule[Edge]]
+        | Sequence[AnyConfigurationModule[Profile]]
+    ):
         """Get configuration modules for a specific configuration.
 
         Returns typed configuration modules associated with the specified
         configuration. Each module is parsed through the discriminated
         ``AnyConfigurationModule`` union so callers receive strongly-typed
         data (``DeviceSettingsData``, ``QosData``, etc.).
+
+        *layer* (``Edge`` or ``Profile``) says which layer the configuration
+        is, and is required: the answer does not say, and reading an edge's
+        modules as a profile's would not raise. A firewall module comes back as
+        ``FirewallConfigurationModule[layer]``.
         """
+        rows = (
+            ConfigurationModuleList[Edge]
+            if layer is Edge
+            else ConfigurationModuleList[Profile]
+        )
         result = await self.portal(
             "configuration/getConfigurationModules",
             request,
-            ConfigurationModuleList,
+            rows,
             validation_context=_level_context(None, refs_loaded=False),
         )
         return result.root
@@ -444,19 +568,27 @@ class ConfigurationMixin(Protocol):
         request: InsertConfigurationModule,
         *,
         level: ConfigContext | None = None,
-    ) -> InsertConfigurationModuleResult | AnyConfigurationModule:
+    ) -> InsertConfigurationModuleResult | AnyStoredModule:
         """Insert a new configuration module into a profile or edge-specific configuration.
 
         With ``return_data`` the result is the module row as stored, validated
-        as a module at config level *level*; otherwise, or from a VCO that
-        ignores ``returnData``, it is the new module's ID.
+        as a module at config level *level* and of the layer it names. A
+        firewall module needs *level* then (``TypeError`` before anything is
+        sent); otherwise, or from a VCO that ignores ``returnData``, the result
+        is the new module's ID.
         """
-        result: InsertConfigurationModuleResult | AnyConfigurationModule
+        _require_level_for_a_firewall_row(request, level)
+        result: InsertConfigurationModuleResult | AnyStoredModule
         if request.return_data is True:
+            inserted = (
+                InsertedConfigurationModule[Edge]
+                if _module_layer(level) is Edge
+                else InsertedConfigurationModule[Profile]
+            )
             answer = await self.portal(
                 "configuration/insertConfigurationModule",
                 request,
-                InsertedConfigurationModule,
+                inserted,
                 validation_context=_level_context(level, refs_loaded=False),
             )
             result = answer.root
@@ -478,7 +610,7 @@ class ConfigurationMixin(Protocol):
         request: UpdateConfigurationModule,
         *,
         level: ConfigContext | None = None,
-    ) -> AnyConfigurationModule | None:
+    ) -> AnyStoredModule | None:
         """Update an existing configuration module's data and, optionally, refs.
 
         Raises ``ConfigConflictError`` if the request carries a ``version`` that
@@ -489,24 +621,44 @@ class ConfigurationMixin(Protocol):
         without a version is not checked.
 
         With ``return_data`` the result is the module row as stored, validated
-        as a module at config level *level*, with its raw data and refs
-        captured as on any read; a row that does not validate raises as a read
-        does. At this level a stale ``version`` cannot be told from a write: a
-        VCO with the check off answers both with a row, the stale one with the
-        current row unchanged. ``write_module`` compares the row with what was
-        sent. Without ``return_data``, or from a VCO that ignores it and
-        answers with a row count, the result is None.
+        as a module at config level *level* and of the layer it names, with
+        its raw data and refs captured as on any read; a row that does not
+        validate raises as a read does. A firewall row needs *level*: the
+        request does not name its module, so ``LayerUnknownError`` (carrying
+        the row as answered) is raised after it was sent when the answer is a
+        firewall module and there is none. At this level a stale ``version``
+        cannot be told from a write: a VCO with the check off answers both
+        with a row, the stale one with the current row unchanged.
+        ``write_module`` compares the row with what was sent. Without
+        ``return_data``, or from a VCO that ignores it and answers with a row
+        count, the result is None.
         """
         version = request.version
-        result: AnyConfigurationModule | RowsModifiedConfirmation
+        result: AnyStoredModule | RowsModifiedConfirmation
         try:
             if request.return_data is True:
-                answer = await self.portal(
-                    "configuration/updateConfigurationModule",
-                    request,
-                    UpdateConfigurationModuleResult,
-                    validation_context=_level_context(level),
+                updated = (
+                    UpdateConfigurationModuleResult[Edge]
+                    if _module_layer(level) is Edge
+                    else UpdateConfigurationModuleResult[Profile]
                 )
+                if level is None:
+                    unleveled = await self.portal(
+                        "configuration/updateConfigurationModule",
+                        request,
+                        _UnleveledAnswer,
+                        validation_context=_level_context(None),
+                    )
+                    if isinstance(unleveled.root, dict):
+                        raise _unleveled_firewall_row(unleveled.root)
+                    answer = unleveled.root
+                else:
+                    answer = await self.portal(
+                        "configuration/updateConfigurationModule",
+                        request,
+                        updated,
+                        validation_context=_level_context(level),
+                    )
                 result = answer.root
             else:
                 result = await self.portal(
@@ -841,7 +993,11 @@ class ConfigurationMixin(Protocol):
     async def update_module[M: ConfigurationModuleBase](
         self: VcoClientBaseProtocol,
         module: M,
-        data: DeviceSettingsData | WanData | QosData | FirewallData,
+        data: DeviceSettingsData
+        | WanData
+        | QosData
+        | FirewallData[Edge]
+        | FirewallData[Profile],
         *,
         enterprise_id: int | None = None,
         profile: ConfigurationModuleBase | None = None,

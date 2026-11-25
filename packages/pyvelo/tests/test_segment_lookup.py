@@ -24,6 +24,7 @@ from pyvelo.client.models.configuration.qos.segment import (
 from pyvelo.client.models.configuration.qos.segment import (
     SegmentMetadata as QosSegmentMetadata,
 )
+from pyvelo.core.layers import Edge
 
 
 def _make_device_segments() -> list[DeviceSegment]:
@@ -68,9 +69,9 @@ def _make_qos_segments() -> list[QosSegment]:
     ]
 
 
-def _make_fw_segments() -> list[FirewallSegment]:
+def _make_fw_segments() -> list[FirewallSegment[Edge]]:
     return [
-        FirewallSegment(
+        FirewallSegment[Edge](
             segment=FwSegmentMetadata(
                 segment_id=0, name="Global Segment", type_=NetworkSegmentType.REGULAR
             )
@@ -123,11 +124,11 @@ class TestQosDataGetSegment:
 
 class TestFirewallDataGetSegment:
     def test_lookup_by_name(self):
-        data = FirewallData(segments=_make_fw_segments())
+        data = FirewallData[Edge](segments=_make_fw_segments())
         seg = data.get_segment(name="Global Segment")
         assert seg.segment.segment_id == 0
 
     def test_not_found(self):
-        data = FirewallData(segments=_make_fw_segments())
+        data = FirewallData[Edge](segments=_make_fw_segments())
         with pytest.raises(ValueError, match="Segment not found"):
             _ = data.get_segment(name="Missing")

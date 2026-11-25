@@ -1,7 +1,18 @@
 import uuid
-from typing import Annotated, Any, Literal, Self
+from collections.abc import Mapping
+from typing import Annotated, Any, Literal, Self, cast
 
-from pydantic import MISSING, AwareDatetime, ConfigDict, Field, model_validator
+from pydantic import (
+    MISSING,
+    AwareDatetime,
+    ConfigDict,
+    Field,
+    ModelWrapValidatorHandler,
+    PrivateAttr,
+    ValidationInfo,
+    model_validator,
+)
+from pydantic_core import PydanticSerializationError
 
 from pyvelo.client.enums.configuration import (
     ConfigurationModuleName,
@@ -36,9 +47,7 @@ from pyvelo.client.models.configuration import (
     WanData,
 )
 from pyvelo.client.models.configuration.control_plane.root import ControlPlaneData
-from pyvelo.client.schemas.configuration import (
-    Configuration,
-)
+from pyvelo.client.schemas.configuration import Configuration, capture_key
 from pyvelo.core import (
     Alias,
     NoneIsMissing,
@@ -54,6 +63,7 @@ from pyvelo.core.identity import (
     ProfileIdentity,
     SegmentIdentity,
 )
+from pyvelo.core.layers import Composed
 
 
 class EdgeHaClusterData(VcoModel):
@@ -471,6 +481,7 @@ class GetEdgeConfigurationModules(VcoModel):
     enterprise_id: int | MISSING = MISSING
     enterprise_logical_id: uuid.UUID | MISSING = MISSING
     modules: list[ConfigurationModuleName] | MISSING = MISSING
+    encrypt_keys: bool | MISSING = MISSING
 
     @model_validator(mode="after")
     def _require_edge_identifier(self) -> Self:
@@ -484,13 +495,46 @@ class CompositeModuleBase(VcoModel):
     schema_version: str
     type_: Annotated[ConfigurationModuleType, Alias("type")]
 
+    _raw_data: object = PrivateAttr(default=MISSING)
+
+    @model_validator(mode="wrap")
+    @classmethod
+    def _capture_raw(
+        cls,
+        value: object,
+        handler: ModelWrapValidatorHandler[Self],
+        info: ValidationInfo,
+    ) -> Self:
+        if not isinstance(value, Mapping):
+            # An existing instance keeps the snapshot it already has.
+            return handler(value)
+        source = cast(Mapping[object, object], value)
+        try:
+            raw_data = capture_key(source, "data", info.mode)
+        except PydanticSerializationError:
+            # As a module row does: let validation report its own error first.
+            _ = handler(value)
+            raise
+        module = handler(value)
+        module._raw_data = raw_data
+        return module
+
+    @property
+    def raw_data(self) -> object:
+        """``data`` exactly as the server composed it, as validated; ``MISSING`` if the input had none.
+
+        The models drop a key they do not know, so this is what a comparison
+        with the composed data reads.
+        """
+        return self._raw_data
+
 
 class CompositeDeviceSettingsModule(CompositeModuleBase):
     data: DeviceSettingsData
 
 
 class CompositeFirewallModule(CompositeModuleBase):
-    data: FirewallData
+    data: FirewallData[Composed]
 
 
 class CompositeQosModule(CompositeModuleBase):

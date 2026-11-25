@@ -1441,11 +1441,76 @@ class WriteOutcomeUnknownError(ModuleWriteError):
 
 
 class UnboundError(VcoError):
-    """Raised when a segment a layer lacks is asked for, with no profile to copy it from.
+    """Raised when a layer is asked for something that only its profile can give, and it has none.
 
-    The layer data has not been bound to a profile (see ``bind_profile``), which
-    happens when it is built outside ``ConfigState``.
+    A segment a layer lacks is asked for with no profile to copy it from, or an
+    edge-layer value is asked to ``localize`` (copy the profile's value in)
+    with no profile to copy from. The layer data has not been bound to a
+    profile (see ``bind_profile`` and ``bind_layers``), which happens when it
+    is built outside ``ConfigState``.
     """
+
+
+class LayerUnknownError(VcoError):
+    """Raised by an update that asked for the module row back, was given no layer, and was answered with a firewall row.
+
+    A firewall module is of the edge layer or the profile layer, and the row
+    the VCO answers with does not say which; reading it as the wrong one would
+    not raise. The update was sent and the VCO answered with the module's row,
+    so the write is most likely stored. ``module_id`` is the row's ``id`` and
+    ``answer`` the row as the VCO returned it, as JSON, so that nothing it said
+    is lost. Read the module again, or call with ``level=ConfigContext.EDGE`` or
+    ``level=ConfigContext.PROFILE``.
+    """
+
+    module_id: int | None
+    answer: dict[str, object]
+
+    def __init__(
+        self, message: str, *, module_id: int | None, answer: dict[str, object]
+    ) -> None:
+        self.module_id = module_id
+        self.answer = answer
+        super().__init__(message)
+
+
+class GroupOwnershipError(VcoError):
+    """Raised by an edit of one member of a coupled group that would leave the group half inherited.
+
+    The members of a group (the stateful firewall's settings, its IPv6
+    settings and its enabled flag, say) change ownership together: the UI does
+    not recognize a group with some members local and the others inherited.
+    ``group`` is the group's name and ``field`` the python name of the member
+    the edit was made through. The message says to edit the group as a whole,
+    and gives the patch that does the same.
+    """
+
+    group: str
+    field: str
+
+    def __init__(self, message: str, *, group: str, field: str) -> None:
+        self.group = group
+        self.field = field
+        super().__init__(message)
+
+
+class ComposedModuleError(VcoError):
+    """Raised by ``compare_effective`` for a module the VCO's composed read gave no data for.
+
+    ``edge/getEdgeConfigurationModules`` hides a composition error by
+    returning ``null`` for the module, and a module it was asked for may be
+    left out of the answer. Either way there is nothing to check the effective
+    view against, so the comparison of that module stops with this error
+    instead of reporting every key as missing. ``module`` is the module's
+    wire name. Open the edge in the VCO to see why its modules do not compose,
+    or compare the other modules.
+    """
+
+    module: str
+
+    def __init__(self, message: str, *, module: str) -> None:
+        self.module = module
+        super().__init__(message)
 
 
 class DetachedObjectError(VcoError):

@@ -7,11 +7,14 @@ from typing import Any
 
 import pytest
 from pyvelo.client.exceptions import (
+    ComposedModuleError,
     ConfigConflictError,
     DanglingReferenceError,
     DetachedObjectError,
     FixedListError,
+    GroupOwnershipError,
     HubListError,
+    LayerUnknownError,
     LossyFieldError,
     ModuleWriteError,
     RefsDroppedError,
@@ -45,6 +48,7 @@ from pyvelo.core.identity import (
     ResolverNotLoadedError,
     SegmentIdentity,
 )
+from pyvelo.core.layers import Edge
 from pyvelo.core.patch import PatchError
 from pyvelo.core.rebase import Key, Path
 from pyvelo.core.references import Reference
@@ -55,8 +59,8 @@ from .write_helpers import fw
 
 def lost_write() -> ConfigConflictError:
     """The conflict of a write that stored nothing, with one earlier write of the same save."""
-    module = fw({"segments": [], "firewall_enabled": True})
-    module.data.firewall_enabled = False
+    module = fw({"segments": [], "firewall_enabled": True}, layer=Edge)
+    module.data.firewall_enabled.set_local(False)
     plan = plan_module(module)
     stored = as_stored(module, {"segments": [], "firewall_enabled": True})
     with pytest.raises(ConfigConflictError) as exc:
@@ -94,7 +98,7 @@ def test_a_conflict_survives_pickling_and_copying():
 
 
 def test_the_other_write_errors_survive_pickling():
-    module = fw({"segments": [], "future": 1})
+    module = fw({"segments": [], "future": 1}, layer=Edge)
     plan = plan_module(module, {"segments": [], "future": 2})
     stored = as_stored(module, {"segments": [], "future": 3})
     with pytest.raises(WriteNotAppliedError) as exc:
@@ -213,13 +217,13 @@ def test_a_refs_not_loaded_error_keeps_its_module_paths_and_message_through_copi
 
 
 def test_a_refs_dropped_error_keeps_the_refs_as_read_through_copies():
-    plan = plan_module(fw({"segments": []}))
+    plan = plan_module(fw({"segments": []}, layer=Edge))
     error = RefsDroppedError(
         1,
         "v1",
         module_name="firewall",
         plan=plan,
-        module=fw({}),
+        module=fw({}, layer=Edge),
         lost_edits=[],
         refs_as_read={"a": [{"logicalId": "x"}]},
     )
@@ -261,7 +265,7 @@ def all_subclasses(cls: type) -> set[type]:
 
 def test_every_error_of_the_module_round_trips():
     path = Path(("segments", 0))
-    plan = plan_module(fw({"segments": []}))
+    plan = plan_module(fw({"segments": []}, layer=Edge))
     errors: list[VcoError] = [
         VcoError("plain"),
         VcoClientNotInitializedError(),
@@ -289,13 +293,25 @@ def test_every_error_of_the_module_round_trips():
             plan=plan,
         ),
         WriteNotAppliedError(
-            1, "v1", module_name="firewall", plan=plan, module=fw({}), lost_edits=[]
+            1,
+            "v1",
+            module_name="firewall",
+            plan=plan,
+            module=fw({}, layer=Edge),
+            lost_edits=[],
         ),
         WriteOutcomeUnknownError(
             1, "v1", "unreadable", answer="row", module_name="firewall", plan=plan
         ),
         ModuleWriteError(1, "v1"),
         UnboundError("not bound"),
+        LayerUnknownError(
+            "the row has no layer", module_id=1, answer={"id": 1, "data": {}}
+        ),
+        GroupOwnershipError(
+            "one member", group="stateful", field="stateful_firewall_enabled"
+        ),
+        ComposedModuleError("no data", module="firewall"),
         DetachedObjectError("changed", (path,)),
         RefsNotLoadedError("deviceSettings", (path,)),
         FixedListError("QOS", [(path, "the list is gone")]),
@@ -318,7 +334,7 @@ def test_every_error_of_the_module_round_trips():
             "v1",
             module_name="firewall",
             plan=plan,
-            module=fw({}),
+            module=fw({}, layer=Edge),
             lost_edits=[],
             refs_as_read={"a": []},
         ),
@@ -351,6 +367,14 @@ def test_an_attribute_that_refers_back_to_the_error_survives():
     assert shallow.me is error  # pyright: ignore[reportAttributeAccessIssue]
     shallow.add_note("two")
     assert error.__notes__ == ["one"]
+
+
+def test_a_composed_module_error_keeps_its_module_through_copies():
+    error = ComposedModuleError("the firewall module is null", module="firewall")
+    for copied in copies(error):
+        assert type(copied) is ComposedModuleError
+        assert copied.module == "firewall"
+        assert str(copied) == "the firewall module is null"
 
 
 def test_the_stored_parts_of_a_write_error_survive_a_deep_copy():

@@ -10,10 +10,13 @@ from pyvelo.client.models.configuration.firewall.rules import FirewallOutboundRu
 from pyvelo.client.models.configuration.firewall.segment import FirewallSegment
 from pyvelo.core import ConfigContext, KeySpec, add, delete
 from pyvelo.core.fields import get_key_spec, has_override_flag
+from pyvelo.core.layers import Edge
 
 
-def _make_segment(name: str = "Global Segment", segment_id: int = 0) -> FirewallSegment:
-    return FirewallSegment(
+def _make_segment(
+    name: str = "Global Segment", segment_id: int = 0
+) -> FirewallSegment[Edge]:
+    return FirewallSegment[Edge](
         segment=SegmentMetadata(
             name=name, segment_id=segment_id, type_=NetworkSegmentType.REGULAR
         ),
@@ -71,7 +74,7 @@ class TestMergeWithMarkers:
         seg = _make_segment()
         seg.outbound.append(_make_rule("existing-rule"))
 
-        fw = FirewallData(segments=[seg])
+        fw = FirewallData[Edge](segments=[seg])
         _ = fw.merge_patch(
             {
                 "segments": {
@@ -102,7 +105,7 @@ class TestMergeWithMarkers:
         seg.outbound.append(_make_rule("delete-me"))
         seg.outbound.append(_make_rule("keep-me"))
 
-        fw = FirewallData(segments=[seg])
+        fw = FirewallData[Edge](segments=[seg])
         _ = fw.merge_patch(
             {
                 "segments": {

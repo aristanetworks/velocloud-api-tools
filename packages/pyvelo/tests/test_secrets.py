@@ -38,6 +38,7 @@ from pyvelo.core import (
     is_secret,
     list_kind,
 )
+from pyvelo.core.layers import Edge, field_kind
 from pyvelo.core.merge import (
     _list_spec,  # pyright: ignore[reportPrivateUsage]
     _validate_field,  # pyright: ignore[reportPrivateUsage]
@@ -49,7 +50,7 @@ from pyvelo.testing import ModuleStore, as_stored, make_module_json, store_of
 from ._type_support import MockVcoClientFactory, require_present
 
 OLD, NEW, OTHER = "OLD-md5-made-up", "NEW-md5-made-up", "THIRD-md5-made-up"
-ROOTS = (FirewallData, QosData, DeviceSettingsData, WanData, ControlPlaneData)
+ROOTS = (FirewallData[Edge], QosData, DeviceSettingsData, WanData, ControlPlaneData)
 
 
 def _models_in(annotation: object) -> Iterator[type[VcoModel]]:
@@ -70,7 +71,7 @@ def reachable_classes() -> list[type[VcoModel]]:
             continue
         seen.append(cls)
         for fi in cls.model_fields.values():
-            todo.extend(_models_in(fi.annotation))
+            todo.extend(_models_in(field_kind(fi).inner_type))
     return seen
 
 
@@ -622,8 +623,8 @@ def firewall(n: int) -> dict[str, Any]:
     }
 
 
-def logging_on_500_rules() -> FirewallConfigurationModule:
-    module = FirewallConfigurationModule.model_validate(
+def logging_on_500_rules() -> FirewallConfigurationModule[Edge]:
+    module = FirewallConfigurationModule[Edge].model_validate(
         make_module_json("firewall", firewall(500), configuration_id=10)
     )
     for item in module.data.segments[0].outbound:

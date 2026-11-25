@@ -133,6 +133,7 @@ from pyvelo.core.base import (
     is_list,
 )
 from pyvelo.core.fixed_list import fixed_list_violations
+from pyvelo.core.layers import Edge, Profile
 from pyvelo.core.rebase import (
     Key,
     Path,
@@ -162,8 +163,16 @@ LEGACY_SEGMENT_KEYS: Final[dict[str, tuple[str, ...]]] = {
 A write drops them (``drop_legacy_keys``); a plan reports them either way.
 """
 
-_LEGACY_MODELS: Final[dict[str, type[VcoModel]]] = {"firewall": FirewallData}
-"""The model of each module in ``LEGACY_SEGMENT_KEYS``, to address a path by its keys."""
+
+def _legacy_model(
+    module_name: str, level: ConfigContext | None
+) -> type[VcoModel] | None:
+    """The data model of a module in ``LEGACY_SEGMENT_KEYS`` at config level *level* (an edge's but for the profile's), to address a path by its keys; None for another module."""
+    if module_name != "firewall":
+        return None
+    return (
+        FirewallData[Profile] if level is ConfigContext.PROFILE else FirewallData[Edge]
+    )
 
 
 def wire_dump(model: VcoModel, level: ConfigContext | None) -> dict[str, Any]:
@@ -522,9 +531,11 @@ def drop_legacy_keys(data: object, module_name: str) -> None:
                 _ = entry.pop(key, None)
 
 
-def legacy_key_paths(data: object, module_name: str) -> tuple[Path, ...]:
-    """Where *data* has keys that ``drop_legacy_keys`` would remove."""
-    model = _LEGACY_MODELS.get(module_name)
+def legacy_key_paths(
+    data: object, module_name: str, level: ConfigContext | None
+) -> tuple[Path, ...]:
+    """Where *data*, a module's data at config level *level*, has keys that ``drop_legacy_keys`` would remove."""
+    model = _legacy_model(module_name, level)
     if model is None:
         return ()
     stripped = copy.deepcopy(data)
@@ -1104,7 +1115,7 @@ def plan_module(
     operation: _Operation = (
         "none" if not changed else "insert" if module.is_new else "update"
     )
-    legacy = legacy_key_paths(reconciled, name)
+    legacy = legacy_key_paths(reconciled, name, level)
     if changed:  # never a write just to strip them
         drop_legacy_keys(payload, name)
     changes = tuple(raw_changes(planned_from, payload, model_type))

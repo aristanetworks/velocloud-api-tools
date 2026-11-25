@@ -30,6 +30,7 @@ from pyvelo.client.models.configuration.qos.root import QosData
 from pyvelo.client.models.configuration.qos.rule import QosRule
 from pyvelo.client.models.configuration.qos.segment import QosSegment
 from pyvelo.core import add, delete
+from pyvelo.core.layers import Edge
 
 from ._type_support import require_present
 
@@ -216,11 +217,11 @@ class TestRoutedInterfaceMerge:
 class TestFirewallMerge:
     """Test merge_patch on firewall models (concatenation, no override)."""
 
-    def _make_firewall(self) -> FirewallData:
+    def _make_firewall(self) -> FirewallData[Edge]:
         action = OutboundRuleAction(allow_or_deny="allow")
-        return FirewallData(
+        return FirewallData[Edge](
             segments=[
-                FirewallSegment(
+                FirewallSegment[Edge](
                     segment=_make_segment_metadata("Global Segment", 0),
                     outbound=[
                         FirewallOutboundRule(

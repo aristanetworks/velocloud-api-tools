@@ -37,6 +37,7 @@ from pyvelo.client.schemas.configuration import (
 )
 from pyvelo.config.resolver import ResolverContext, ResolverRegistry
 from pyvelo.core.identity import ResolutionError
+from pyvelo.core.layers import Edge, Profile
 from pyvelo.core.rebase import Key, Path
 from pyvelo.testing import make_module_json, make_segment_resolver
 from pyvelo_intent import PatchError, add, delete, move
@@ -94,17 +95,19 @@ def _make_qos_module(mod_id: int, config_id: int) -> QosConfigurationModule:
 
 
 def _make_state(
-    edge_segments: list[FirewallSegment] | None = None,
-    profile_segments: list[FirewallSegment] | None = None,
+    edge_segments: list[FirewallSegment[Edge]] | None = None,
+    profile_segments: list[FirewallSegment[Profile]] | None = None,
     *,
     include_device_settings: bool = False,
     include_qos: bool = False,
 ) -> ConfigState:
-    edge_modules: list[AnyConfigurationModule] = [
+    edge_modules: list[AnyConfigurationModule[Edge]] = [
         make_firewall_module(mod_id=1, config_id=10, segments=edge_segments)
     ]
-    profile_modules: list[AnyConfigurationModule] = [
-        make_firewall_module(mod_id=2, config_id=20, segments=profile_segments)
+    profile_modules: list[AnyConfigurationModule[Profile]] = [
+        make_firewall_module(
+            mod_id=2, config_id=20, segments=profile_segments, layer=Profile
+        )
     ]
     if include_device_settings:
         edge_modules.append(_make_device_settings_module(mod_id=3, config_id=10))
@@ -141,7 +144,7 @@ class TestResolveModuleName:
             state, module="firewall", patch={"firewall_enabled": False}
         )
         assert state.edge_config is not None
-        assert state.edge_config.firewall.data.firewall_enabled is False
+        assert state.edge_config.firewall.data.firewall_enabled.local is False
 
     @pytest.mark.asyncio
     async def test_device_settings_snake_case(self):
@@ -184,7 +187,7 @@ async def test_apply_simple_patch():
     )
 
     assert state.edge_config is not None
-    assert state.edge_config.firewall.data.firewall_enabled is False
+    assert state.edge_config.firewall.data.firewall_enabled.local is False
 
 
 @pytest.mark.asyncio
@@ -192,8 +195,10 @@ async def test_apply_keyed_list_merge():
     """Apply a patch that merges into a KeyField list (segments by name)."""
     pipeline = ConfigPipeline(client=None)
 
-    global_seg = make_firewall_segment("Global Segment", 0)
-    state = _make_state(edge_segments=[global_seg], profile_segments=[global_seg])
+    state = _make_state(
+        edge_segments=[make_firewall_segment("Global Segment", 0)],
+        profile_segments=[make_firewall_segment("Global Segment", 0, layer=Profile)],
+    )
 
     # Add an outbound rule to the Global Segment
     state = await pipeline.apply(
@@ -262,7 +267,7 @@ async def test_apply_camel_case_module_name():
 # --- single-module patches on a profile target ------------------------------
 
 
-def _profile_state(*modules: AnyConfigurationModule) -> ConfigState:
+def _profile_state(*modules: AnyConfigurationModule[Profile]) -> ConfigState:
     return ConfigState(
         edge_config=None,
         profile_config=EnterpriseConfigurationProfile(
@@ -320,9 +325,9 @@ async def test_apply_ntp_enabled():
 
 @pytest.mark.asyncio
 async def test_apply_adds_a_firewall_rule_to_a_segment():
-    segment = make_firewall_segment("Global Segment", 0)
+    segment = make_firewall_segment("Global Segment", 0, layer=Profile)
     state = _profile_state(
-        make_firewall_module(mod_id=1, config_id=20, segments=[segment])
+        make_firewall_module(mod_id=1, config_id=20, segments=[segment], layer=Profile)
     )
     state = await ConfigPipeline(client=None).apply(
         state,
@@ -337,9 +342,9 @@ async def test_apply_adds_a_firewall_rule_to_a_segment():
 
 @pytest.mark.asyncio
 async def test_apply_to_a_segment_the_profile_lacks_changes_nothing():
-    segment = make_firewall_segment("Global Segment", 0)
+    segment = make_firewall_segment("Global Segment", 0, layer=Profile)
     state = _profile_state(
-        make_firewall_module(mod_id=1, config_id=20, segments=[segment])
+        make_firewall_module(mod_id=1, config_id=20, segments=[segment], layer=Profile)
     )
     # A segment is assigned to the three modules of a profile; this one has the
     # firewall only, and inserting a module into a profile is not supported.
@@ -360,10 +365,10 @@ async def test_apply_to_a_segment_the_profile_lacks_changes_nothing():
 
 @pytest.mark.asyncio
 async def test_two_applies_in_a_row():
-    segment = make_firewall_segment("Global Segment", 0)
+    segment = make_firewall_segment("Global Segment", 0, layer=Profile)
     state = _profile_state(
         _ds_module(ntp=Ntp(enabled=False)),
-        make_firewall_module(mod_id=1, config_id=20, segments=[segment]),
+        make_firewall_module(mod_id=1, config_id=20, segments=[segment], layer=Profile),
     )
     pipeline = ConfigPipeline(client=None)
     state = await pipeline.apply(
@@ -1205,11 +1210,7 @@ async def test_non_mapping_patch_without_an_address_raises_type_error():
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("patch", "field"),
-    [
-        ({"atp_enabled": False}, "atp_enabled"),
-        ({"firewall_enabled": True}, "firewall_enabled"),
-        ({"stateful_firewall_enabled": True}, "stateful_firewall_enabled"),
-    ],
+    [({"inbound": []}, "inbound"), ({"inbound_v6": []}, "inbound_v6")],
 )
 async def test_apply_refuses_a_default_for_a_key_the_edge_layer_lacks(
     patch: dict[str, object], field: str
@@ -1227,6 +1228,33 @@ async def test_apply_refuses_a_default_for_a_key_the_edge_layer_lacks(
         state, module="firewall", patch={"firewall_enabled": False}
     )
     assert [m.name for m in state.plan().changed] == ["firewall"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("patch", "paths"),
+    [
+        ({"firewall_enabled": True}, ["firewall_enabled"]),
+        # A group is made local whole, the other members copied from the profile
+        # (here the display default: the profile stores neither).
+        ({"atp_enabled": False}, ["atp_enabled", "securityFeatures"]),
+        (
+            {"stateful_firewall_enabled": True},
+            [
+                "stateful_firewall_enabled",
+                "statefulFirewallSettings",
+                "statefulFirewallSettingsV6",
+            ],
+        ),
+    ],
+)
+async def test_apply_of_a_value_for_an_inheritable_key_the_edge_lacks_makes_it_local(
+    patch: dict[str, object], paths: list[str]
+):
+    state = make_raw_state()
+    _ = await ConfigPipeline(client=None).apply(state, module="firewall", patch=patch)
+    (plan,) = state.plan().changed
+    assert [str(c.path) for c in plan.changes] == paths
 
 
 @pytest.mark.asyncio
@@ -1263,9 +1291,9 @@ async def test_a_refused_edit_removes_the_module_apply_created():
     state = make_raw_state(edge_modules=[])
     with pytest.raises(LossyFieldError) as exc:
         _ = await ConfigPipeline(client=None).apply(
-            state, module="firewall", patch={"firewall_enabled": True}
+            state, module="firewall", patch={"inbound": []}
         )
-    assert exc.value.fields == ["firewall_enabled"]
+    assert exc.value.fields == ["inbound"]
     assert state.find_module("firewall") is None
     assert state.plan().modules == ()
 
@@ -1282,11 +1310,11 @@ async def test_the_same_patches_apply_on_a_profile():
 
 def test_lossy_error_says_why_and_what_to_do():
     state = make_raw_state()
-    state.edge.firewall.atp_enabled = False
+    state.edge.firewall.inbound = []
     with pytest.raises(LossyFieldError) as exc:
         _ = state.plan()
     assert str(exc.value) == (
-        "firewall: a save cannot write these edits: atp_enabled. A save sends "
+        "firewall: a save cannot write these edits: inbound. A save sends "
         "what differs from the module as read, and at these fields nothing would. "
         "Either this library does not write the field at this configuration level "
         "(some sections are written for a profile only, or for an edge only: make "

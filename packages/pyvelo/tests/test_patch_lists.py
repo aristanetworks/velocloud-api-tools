@@ -26,6 +26,7 @@ from pyvelo.core import (
     selector_of,
 )
 from pyvelo.core.fields import KeyField
+from pyvelo.core.layers import Edge
 from pyvelo.core.merge import (
     _merge_model,  # pyright: ignore[reportPrivateUsage]
 )
@@ -906,7 +907,7 @@ def test_add_by_name_without_a_resolver_does_not_take_another_segments_ids(
     assert fw.model_dump() == dump
 
 
-def global_and(fw: FirewallData, new: dict[str, object]) -> dict[str, object]:
+def global_and(fw: FirewallData[Edge], new: dict[str, object]) -> dict[str, object]:
     """A list value for ``segments``: the Global Segment as dumped, then *new*."""
     return {"segments": [fw.segments[0].model_dump(by_alias=True), new]}
 

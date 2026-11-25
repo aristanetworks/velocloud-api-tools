@@ -4,6 +4,7 @@ from typing import Any
 import pytest
 from pyvelo.client.enums.configuration import ConfigurationModuleName
 from pyvelo.client.exceptions import (
+    ComposedModuleError,
     ConfigConflictError,
     DanglingReferenceError,
     DetachedObjectError,
@@ -17,7 +18,6 @@ from pyvelo.client.exceptions import (
     WriteOutcomeUnknownError,
 )
 from pyvelo.client.schemas.configuration import (
-    ConfigurationBase,
     EdgeConfiguration,
     EnterpriseConfigurationProfile,
     GetConfiguration,
@@ -135,7 +135,7 @@ def test_plan_names_its_target():
 async def test_save_sends_raw_payload_version_and_reconciles():
     state = make_state()
     client = MockVcoClient.for_state(state)
-    state.edge.firewall.firewall_enabled = False
+    state.edge.firewall.firewall_enabled.set_local(False)
     result = await ConfigPipeline(client).save(state)
     (req,) = client.update_requests
     assert (req.configuration_module_id, req.version, req.enterprise_id) == (1, "e1", 5)
@@ -155,7 +155,7 @@ async def test_state_keeps_working_after_a_write():
     state = make_state()
     client = MockVcoClient.for_state(state)
     pipeline = ConfigPipeline(client)
-    state.edge.firewall.firewall_enabled = False
+    state.edge.firewall.firewall_enabled.set_local(False)
     dry = await pipeline.save(state, dry_run=True)
     assert client.calls == []
     assert dry.modules_updated == [ConfigurationModuleName.FIREWALL]
@@ -172,6 +172,7 @@ def test_write_errors_are_exported_from_the_package():
     import pyvelo_intent
 
     assert pyvelo_intent.ModuleWriteError is ModuleWriteError
+    assert pyvelo_intent.ComposedModuleError is ComposedModuleError
     assert pyvelo_intent.ConfigConflictError is ConfigConflictError
     assert pyvelo_intent.DanglingReferenceError is DanglingReferenceError
     assert pyvelo_intent.WriteNotAppliedError is WriteNotAppliedError
@@ -184,6 +185,7 @@ def test_write_errors_are_exported_from_the_package():
     assert pyvelo_intent.HubListError is HubListError
     assert {
         "ModuleWriteError",
+        "ComposedModuleError",
         "ConfigConflictError",
         "DanglingReferenceError",
         "WriteNotAppliedError",
@@ -192,6 +194,7 @@ def test_write_errors_are_exported_from_the_package():
         "RefsDroppedError",
         "RefsNotLoadedError",
         "FixedListError",
+        "GroupOwnershipError",
         "SegmentSetError",
         "HubListError",
     } <= set(pyvelo_intent.__all__)
@@ -262,7 +265,7 @@ async def test_conflict_propagates(
     state = make_state()
     client = MockVcoClient.for_state(state, conditional_check=conditional_check)
     client.store.other_writer(1, lambda row: row["data"].update(firewall_enabled=True))
-    state.edge.firewall.firewall_enabled = False
+    state.edge.firewall.firewall_enabled.set_local(False)
     with pytest.raises(raised) as exc:
         await ConfigPipeline(client).save(state)
     (clash,) = [c for c in exc.value.lost_edits if str(c.path) == "firewall_enabled"]
@@ -318,8 +321,8 @@ async def test_load_profile_keeps_raw_snapshots():
     class Client(MockVcoClient):
         async def get_configuration(
             self, request: GetConfiguration
-        ) -> ConfigurationBase:
-            return ConfigurationBase.model_validate(
+        ) -> EdgeConfiguration | EnterpriseConfigurationProfile:
+            return EnterpriseConfigurationProfile.model_validate(
                 {"name": "P", "id": 20, "modules": [raw]}
             ).for_profile()
 

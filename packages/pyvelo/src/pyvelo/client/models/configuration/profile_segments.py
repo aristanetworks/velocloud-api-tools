@@ -68,6 +68,26 @@ def segment_template(module_name: str) -> dict[str, Any]:
     return copy.deepcopy(_template()[key]["segment"])
 
 
+def module_template_value(module_name: str, key: str) -> object:
+    """A deep copy of the template's value at *key* of the module-level part of *module_name*.
+
+    *module_name* is a module's name on the wire (see :func:`segment_template`)
+    and *key* a raw key of its ``data``, as the file spells it
+    (``"statefulFirewallSettings"``, ``"syslog_forwarding"``). This is what an
+    untouched profile holds at a key of the module that belongs to no segment,
+    and so what a layer that does not store the key displays. A key the file
+    lacks raises ``KeyError``; a module name with no template ``ValueError``.
+    """
+    template_key = _TEMPLATE_KEYS.get(module_name)
+    if template_key is None:
+        raise ValueError(
+            f"A module has a template for {', '.join(map(repr, _TEMPLATE_KEYS))} "
+            f"only, not for {module_name!r}."
+        )
+    module: dict[str, Any] = _template()[template_key].get("module", {})
+    return copy.deepcopy(module[key])
+
+
 def default_rules() -> list[dict[str, Any]]:
     """A copy of the template's four QoS ``defaults``, without IDs, in ``DEFAULT_NAMES`` order."""
     return copy.deepcopy(_template()["qos"]["segment"]["defaults"])

@@ -21,9 +21,10 @@ if TYPE_CHECKING:
     from pyvelo.client.module_check import ModuleWrite
     from pyvelo.client.module_write import ModulePlan
     from pyvelo.client.schemas.configuration import (
-        AnyConfigurationModule,
-        ConfigurationBase,
+        AnyStoredModule,
         ConfigurationModuleBase,
+        EdgeConfiguration,
+        EnterpriseConfigurationProfile,
         GetConfiguration,
         InsertConfigurationModule,
         InsertConfigurationModuleResult,
@@ -71,18 +72,18 @@ class VcoClientBaseProtocol(Protocol):
         request: UpdateConfigurationModule,
         *,
         level: ConfigContext | None = None,
-    ) -> AnyConfigurationModule | None: ...
+    ) -> AnyStoredModule | None: ...
 
     async def insert_configuration_module(
         self,
         request: InsertConfigurationModule,
         *,
         level: ConfigContext | None = None,
-    ) -> InsertConfigurationModuleResult | AnyConfigurationModule: ...
+    ) -> InsertConfigurationModuleResult | AnyStoredModule: ...
 
     async def get_configuration(
         self, request: GetConfiguration
-    ) -> ConfigurationBase: ...
+    ) -> EdgeConfiguration | EnterpriseConfigurationProfile: ...
 
     async def write_module[M: ConfigurationModuleBase](
         self,

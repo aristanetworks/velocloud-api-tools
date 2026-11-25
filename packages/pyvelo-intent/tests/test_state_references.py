@@ -402,7 +402,7 @@ async def test_a_profile_plan_parses_each_module_as_read_once(
     assert plan.changed
     assert sorted(t.__name__ for t in parsed) == [
         "DeviceSettingsData",
-        "FirewallData",
+        "FirewallData[Profile]",
         "QosData",
     ]
 

@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 from collections.abc import Sequence
 from datetime import UTC, datetime
-from typing import Self, override
+from typing import Self, cast, overload, override
 
 from pydantic import MISSING
 from pyvelo.client.enums.configuration import ConfigurationModuleType
@@ -17,8 +17,8 @@ from pyvelo.client.models.configuration.firewall.segment import FirewallSegment
 from pyvelo.client.models.enterprise.network_segment import NetworkSegmentData
 from pyvelo.client.operations.edge import GetEdgeConfigurationStackResult
 from pyvelo.client.schemas.configuration import (
-    AnyConfigurationModule,
-    ConfigurationBase,
+    AnyStoredModule,
+    EdgeConfiguration,
     EnterpriseConfigurationProfile,
     FirewallConfigurationModule,
     GetConfiguration,
@@ -36,6 +36,7 @@ from pyvelo.client.schemas.enterprise import (
 from pyvelo.client.schemas.profiles import GetEnterpriseConfigurations
 from pyvelo.client.vco_client import VcoClient
 from pyvelo.core import ConfigContext
+from pyvelo.core.layers import Edge, Profile
 from pyvelo.testing import (
     ModuleStore,
     configuration_row,
@@ -50,12 +51,32 @@ _GLOBAL_SEGMENT_OBJECT_ID = 1
 _GLOBAL_SEGMENT_LOGICAL_ID = uuid.UUID(int=0)
 
 
+@overload
+def make_firewall_segment(
+    name: str = ...,
+    segment_id: int = ...,
+    rules: list[FirewallOutboundRule] | None = ...,
+    *,
+    layer: type[Edge] = ...,
+) -> FirewallSegment[Edge]: ...
+@overload
+def make_firewall_segment(
+    name: str = ...,
+    segment_id: int = ...,
+    rules: list[FirewallOutboundRule] | None = ...,
+    *,
+    layer: type[Profile],
+) -> FirewallSegment[Profile]: ...
 def make_firewall_segment(
     name: str = "Global Segment",
     segment_id: int = 0,
     rules: list[FirewallOutboundRule] | None = None,
-) -> FirewallSegment:
-    return FirewallSegment(
+    *,
+    layer: type[Edge | Profile] = Edge,
+) -> FirewallSegment[Edge] | FirewallSegment[Profile]:
+    """A firewall segment of the layer *layer* (``Edge`` unless said otherwise)."""
+    segment_type = FirewallSegment[Edge] if layer is Edge else FirewallSegment[Profile]
+    return segment_type(
         segment=SegmentMetadata(
             name=name, segment_id=segment_id, type_=NetworkSegmentType.REGULAR
         ),
@@ -63,29 +84,69 @@ def make_firewall_segment(
     )
 
 
+def _firewall_row(
+    mod_id: int, config_id: int, data: FirewallData[Edge] | FirewallData[Profile]
+) -> dict[str, object]:
+    """The row of a firewall module as read, with *data* as its data."""
+    return {
+        "name": "firewall",
+        "data": data,
+        "created": datetime(2024, 1, 1, tzinfo=UTC),
+        "modified": datetime(2024, 1, 1, tzinfo=UTC),
+        "id": mod_id,
+        "type": ConfigurationModuleType.ENTERPRISE,
+        "description": None,
+        "configurationId": config_id,
+        "enterpriseLogicalId": None,
+        "schemaVersion": None,
+        "version": None,
+        "metadata": None,
+    }
+
+
+@overload
+def make_firewall_module(
+    mod_id: int = ...,
+    config_id: int = ...,
+    segments: list[FirewallSegment[Edge]] | None = ...,
+    *,
+    layer: type[Edge] = ...,
+) -> FirewallConfigurationModule[Edge]: ...
+@overload
+def make_firewall_module(
+    mod_id: int = ...,
+    config_id: int = ...,
+    segments: list[FirewallSegment[Profile]] | None = ...,
+    *,
+    layer: type[Profile],
+) -> FirewallConfigurationModule[Profile]: ...
 def make_firewall_module(
     mod_id: int = 1,
     config_id: int = 100,
-    segments: list[FirewallSegment] | None = None,
-) -> FirewallConfigurationModule:
-    return FirewallConfigurationModule(
-        name="firewall",
-        data=FirewallData(segments=segments or []),
-        created=datetime(2024, 1, 1, tzinfo=UTC),
-        modified=datetime(2024, 1, 1, tzinfo=UTC),
-        id_=mod_id,
-        type_=ConfigurationModuleType.ENTERPRISE,
-        description=None,
-        configuration_id=config_id,
-        enterprise_logical_id=None,
-        schema_version=None,
-        version=None,
-        metadata=None,
+    segments: list[FirewallSegment[Edge]]
+    | list[FirewallSegment[Profile]]
+    | None = None,
+    *,
+    layer: type[Edge | Profile] = Edge,
+) -> FirewallConfigurationModule[Edge] | FirewallConfigurationModule[Profile]:
+    """A firewall module of the layer *layer* (``Edge`` unless said otherwise), with *segments*."""
+    if layer is Edge:
+        data = FirewallData[Edge](
+            segments=cast(list[FirewallSegment[Edge]], segments or [])
+        )
+        return FirewallConfigurationModule[Edge].model_validate(
+            _firewall_row(mod_id, config_id, data)
+        )
+    profile_data = FirewallData[Profile](
+        segments=cast(list[FirewallSegment[Profile]], segments or [])
+    )
+    return FirewallConfigurationModule[Profile].model_validate(
+        _firewall_row(mod_id, config_id, profile_data)
     )
 
 
 def _register_stack(
-    store: ModuleStore, edge: ConfigurationBase, profile: ConfigurationBase
+    store: ModuleStore, edge: EdgeConfiguration, profile: EnterpriseConfigurationProfile
 ) -> None:
     """Have *store* answer the stack of every edge with the two configurations."""
     match (edge.id_, profile.id_):
@@ -143,7 +204,9 @@ class MockVcoClient(VcoClient):
             _ = self.seed(*stack)
             _register_stack(self.store, *stack)
 
-    def seed(self, *configs: ConfigurationBase) -> Self:
+    def seed(
+        self, *configs: EdgeConfiguration | EnterpriseConfigurationProfile
+    ) -> Self:
         """Put *configs* and their modules in the store, as the VCO holds them.
 
         A module not inserted yet (``is_new``) is left out.
@@ -187,7 +250,9 @@ class MockVcoClient(VcoClient):
         return await super().get_edge_configuration_stack(request)
 
     @override
-    async def get_configuration(self, request: GetConfiguration) -> ConfigurationBase:
+    async def get_configuration(
+        self, request: GetConfiguration
+    ) -> EdgeConfiguration | EnterpriseConfigurationProfile:
         """The configuration from the store when it holds it; else the stack's profile."""
         self.calls.append(("get_configuration", request))
         if request.id_ in self.store.configurations:
@@ -231,7 +296,7 @@ class MockVcoClient(VcoClient):
         request: UpdateConfigurationModule,
         *,
         level: ConfigContext | None = None,
-    ) -> AnyConfigurationModule | None:
+    ) -> AnyStoredModule | None:
         self.calls.append(("update_configuration_module", request))
         self.update_requests.append(request)
         return await super().update_configuration_module(request, level=level)
@@ -242,7 +307,7 @@ class MockVcoClient(VcoClient):
         request: InsertConfigurationModule,
         *,
         level: ConfigContext | None = None,
-    ) -> InsertConfigurationModuleResult | AnyConfigurationModule:
+    ) -> InsertConfigurationModuleResult | AnyStoredModule:
         self.calls.append(("insert_configuration_module", request))
         self.insert_requests.append(request)
         return await super().insert_configuration_module(request, level=level)

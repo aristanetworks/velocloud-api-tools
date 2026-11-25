@@ -23,6 +23,7 @@ from pydantic.fields import FieldInfo
 
 from .base import VcoModel, field_models, is_dict, is_list
 from .fields import get_provides, get_refers_to
+from .owned import unwrap
 from .rebase import Path
 from .walk import walk_fields
 
@@ -129,7 +130,8 @@ def references(module: str, data: VcoModel) -> tuple[Reference, ...]:
         refers = get_refers_to(site.field_info)
         if refers is None:  # pragma: no cover - the walk gives only these
             continue
-        value: object = getattr(site.model, site.name)
+        held_value: object = getattr(site.model, site.name)
+        value = unwrap(held_value)
         if value is None or value is MISSING or value in refers.none:
             continue
         segment_id = _segment_id(site.segment) if refers.per_segment else None
@@ -153,7 +155,8 @@ def _key_value(item: object, path: str) -> object | None:
     for name in path.split("."):
         if value is None or value is MISSING:
             return None
-        value = getattr(value, name, None)
+        step: object = getattr(value, name, None)
+        value = unwrap(step)
     return None if value is MISSING else value
 
 
@@ -187,7 +190,8 @@ def provided(data: VcoModel) -> dict[SetKey, set[object]]:
         segment_id = _segment_id(site.segment) if provides.per_segment else None
         if provides.per_segment and segment_id is None:
             continue
-        held: object = getattr(site.model, site.name)
+        stored: object = getattr(site.model, site.name)
+        held = unwrap(stored)
         for item in _items(held):
             key = _key_value(item, provides.key)
             if key is not None:

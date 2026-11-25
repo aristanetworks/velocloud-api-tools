@@ -91,7 +91,7 @@ class OutboundRuleMatch(VcoModel):
     source_port_group: Annotated[ServiceGroupRef, Alias("sPortGroup")] = MISSING
     destination_port_group: Annotated[ServiceGroupRef, Alias("dPortGroup")] = MISSING
 
-    vlan_type: VlanType = "end-to-end"
+    vlan_type: Annotated[VlanType, Alias("vlan_type")] = "end-to-end"
 
 
 class InboundRuleMatch(VcoModel):

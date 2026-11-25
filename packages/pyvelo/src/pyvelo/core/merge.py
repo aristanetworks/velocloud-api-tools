@@ -13,19 +13,13 @@ import functools
 import json
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Annotated, Literal, LiteralString, cast, get_args, get_origin
+from typing import Literal, LiteralString, cast, get_args, get_origin
 
 from pydantic import (
     MISSING,
-    AfterValidator,
-    BeforeValidator,
     ConfigDict,
-    Discriminator,
-    PlainValidator,
-    PydanticUserError,
     TypeAdapter,
     ValidationError,
-    WrapValidator,
 )
 from pydantic.fields import FieldInfo
 from pydantic_core import InitErrorDetails, PydanticCustomError, PydanticUndefined
@@ -45,6 +39,7 @@ from .base import (
     _field_model_types,  # pyright: ignore[reportPrivateUsage]
     _field_names_by_key,  # pyright: ignore[reportPrivateUsage]
     _field_value,  # pyright: ignore[reportPrivateUsage]
+    _held_type,  # pyright: ignore[reportPrivateUsage]
     _id_adapter,  # pyright: ignore[reportPrivateUsage]
     _id_type,  # pyright: ignore[reportPrivateUsage]
     _is_vco_model_type,  # pyright: ignore[reportPrivateUsage]
@@ -71,6 +66,8 @@ from .fields import (
     is_edge_local,
 )
 from .identity import ResolutionError
+from .layers import Kind, field_kind, inner_adapter
+from .owned import ByFlag, Owned, group_of, unwrap
 from .patch import (
     ItemOp,
     PatchError,
@@ -332,6 +329,12 @@ def _merge_field(
     """
     model_cls = type(model)
 
+    # An edge layer's Inheritable: the patch changes who owns the value.
+    held = _field_value(model, name)
+    if isinstance(held, Owned):
+        _merge_owned(model, name, field_info, held, value, resolvers, path, built=built)
+        return
+
     # null: what the field takes it as (``_null_value``).
     if value is None:
         value = _null_value(field_info, name, path, built=built)
@@ -357,11 +360,15 @@ def _merge_field(
             _merge_model(current, value, resolvers, path, built=built)
             _check_merged(
                 current,
-                _field_adapter(model_cls, name).validate_python
+                inner_adapter(model_cls, name).validate_python
                 if len(_field_model_types(field_info)) > 1
                 else type(current).model_validate,
                 path,
             )
+            if field_kind(field_info).kind is Kind.INHERITABLE:
+                # The profile stores what a patch gave, a value equal to the
+                # display default too, as an assignment would.
+                model.model_fields_set.add(name)
             return
 
         # Sub-model that is unset: build a new one from the patch.
@@ -379,6 +386,102 @@ def _merge_field(
         value = _resolve_name(field_info, value, resolvers, path)
 
     setattr(model, name, _validate_field(model_cls, name, value, path))
+
+
+def _merge_owned(
+    model: VcoModel,
+    name: str,
+    field_info: FieldInfo,
+    owned: Owned[object],
+    value: object,
+    resolvers: IdentityResolver | None,
+    path: Path,
+    *,
+    built: bool,
+) -> None:
+    """Merge one patch value into the ``Owned`` that the edge layer holds at ``model.<name>``.
+
+    ``null`` inherits (``Owned.inherit``). A value that is not an object sets
+    the value local (``Owned.set_local``). An object is merged into the local
+    value; when the field is not local the profile's value is copied in first
+    (``Owned.localize``) and the object merged into the copy, so ``{"a": 7}``
+    on an inherited ``{"a": 4, "b": true}`` gives a local ``{"a": 7, "b": true}``.
+    A member of a coupled group is never changed alone: ``null`` inherits the
+    whole group, and any other value localizes the group first, when it is
+    not local, and then applies as above.
+
+    The flag of a ``ByFlag`` field is not patchable (``_refuse_flag_key``).
+    """
+    group = group_of(model, name)  # pyright: ignore[reportArgumentType]
+    if value is None:
+        if group is None:
+            owned.inherit()
+        else:
+            group.handle(model).inherit()  # pyright: ignore[reportArgumentType]
+        return
+    if group is not None and not group.handle(model).is_local:  # pyright: ignore[reportArgumentType]
+        group.handle(model).localize()  # pyright: ignore[reportArgumentType]
+
+    model_cls = type(model)
+    spec = _list_spec(field_info)
+    model_types = _field_model_types(field_info)
+    if spec is not None and not is_dict(value):
+        _merge_list(model, name, field_info, value, resolvers, path)
+        return
+    if is_dict(value) and (spec is not None or model_types):
+        _refuse_flag_key(field_info, value, path)
+        local = owned.localize()
+        if spec is not None and not (model_types and not isinstance(local, list)):
+            _merge_list(model, name, field_info, value, resolvers, path)
+            return
+        if isinstance(local, VcoModel):
+            _merge_model(local, value, resolvers, path, built=built)
+            _check_merged(
+                local,
+                inner_adapter(model_cls, name).validate_python
+                if len(model_types) > 1
+                else type(local).model_validate,
+                path,
+            )
+            return
+        # The profile gives ``null`` here, which cannot be copied: build a value.
+        if len(model_types) == 1:
+            new = _new_model_from_patch(model_types[0], value, resolvers, path)
+        else:
+            new = _new_variant_from_patch(model_cls, name, value, resolvers, path)
+        owned.set_local(_validate_field(model_cls, name, new, path))
+        return
+
+    if isinstance(value, str) and resolvers is not None:
+        value = _resolve_name(field_info, value, resolvers, path)
+    owned.set_local(_validate_field(model_cls, name, value, path))
+
+
+def _refuse_flag_key(
+    field_info: FieldInfo, patch: Mapping[object, object], path: Path
+) -> None:
+    """``PatchError`` if *patch*, an object for a ``ByFlag`` field, names the flag that the encoding is made of.
+
+    The flag says whether the edge overrides the profile. A patch that set it
+    to false would leave a local value stored but not local, and one that set
+    it to true would make the profile's value the edge's own without a copy:
+    ownership changes by ``null`` and by a value only.
+    """
+    encoding = field_kind(field_info).encoding
+    if not isinstance(encoding, ByFlag):
+        return
+    for model_type in _field_model_types(field_info):
+        names = model_type._alias_map()  # pyright: ignore[reportPrivateUsage]
+        for key in patch:
+            if isinstance(key, str) and names.get(key) == encoding.flag:
+                raise PatchError(
+                    f"{key!r} is the flag that says whether the edge overrides the "
+                    + "profile here, and it follows the value: an object given "
+                    + "overrides it (the flag is set for you) and null inherits "
+                    + f"it. Leave {key!r} out, and send null for the field to inherit",
+                    path.child(encoding.flag),
+                    "invalid_value",
+                )
 
 
 def _null_value(field_info: FieldInfo, name: str, path: Path, *, built: bool) -> object:
@@ -411,65 +514,38 @@ def _null_value(field_info: FieldInfo, name: str, path: Path, *, built: bool) ->
     )
 
 
-_FIELD_VALIDATOR_MARKERS = {
-    "before": BeforeValidator,
-    "after": AfterValidator,
-    "wrap": WrapValidator,
-    "plain": PlainValidator,
-}
-
-
-@functools.cache
-def _field_adapter(model_cls: type[VcoModel], name: str) -> TypeAdapter[object]:
-    """A validator for field *name* of *model_cls*, as pydantic validates it on parse.
-
-    The field's annotation and metadata, its discriminator, the class's
-    ``@field_validator``s for the field (``"*"`` ones too), applied after the
-    metadata in the order defined, as pydantic does, and the class's config
-    (``use_enum_values`` and the rest). Model validators are not field
-    validation and do not run here. When a model instance is the value, as
-    ``_merge_field`` gives one, the class's ``after`` and ``wrap`` model
-    validators do run on it.
-    """
-    fi = model_cls.model_fields[name]
-    metadata: list[object] = list(fi.metadata)
-    if isinstance(fi.discriminator, str):
-        metadata.append(Discriminator(fi.discriminator))
-    elif fi.discriminator is not None:
-        metadata.append(fi.discriminator)
-    for decorator in model_cls.__pydantic_decorators__.field_validators.values():
-        info = decorator.info
-        if name in info.fields or "*" in info.fields:
-            metadata.append(_FIELD_VALIDATOR_MARKERS[info.mode](decorator.func))
-    annotation: object = (
-        Annotated[fi.annotation, *metadata] if metadata else fi.annotation
-    )
-    try:
-        return TypeAdapter[object](annotation, config=model_cls.model_config)  # pyright: ignore[reportArgumentType]
-    except PydanticUserError as exc:
-        # A model type has its own config, and TypeAdapter refuses another.
-        if exc.code != "type-adapter-config-unused":
-            raise
-        return TypeAdapter[object](annotation)  # pyright: ignore[reportArgumentType]
-
-
 def _validate_field(
     model_cls: type[VcoModel], name: str, value: object, path: Path
 ) -> object:
     """*value* validated for field *name* of *model_cls*, with the patch context.
 
-    The patch context (``{"patch": True}``) stops ``DefaultingScalar`` and
-    ``DefaultingModel`` from turning a bad value into the default. A value that
-    fails raises ``PatchError`` at *path*, from the ``ValidationError``. A
-    boolean given for a value that is not one raises as well
-    (``_refuse_bool_as_number``).
+    See ``validate_patched_value``.
     """
-    validated = _validated(
-        _field_adapter(model_cls, name).validate_python,
+    return validate_patched_value(
+        inner_adapter(model_cls, name),
         value,
         field_models(model_cls.model_fields[name]),
         path,
     )
+
+
+def validate_patched_value(
+    adapter: TypeAdapter[object],
+    value: object,
+    models: Sequence[type[VcoModel]],
+    path: Path,
+) -> object:
+    """*value* validated by *adapter* the way a patched value is: the one place that does it.
+
+    The patch context (``{"patch": True}``) stops ``DefaultingScalar`` and
+    ``DefaultingModel`` from turning a bad value into the default. A value that
+    fails raises ``PatchError`` at *path* (a path in python names), from the
+    ``ValidationError``, which is its cause without the input; the places in its
+    message are in python names of the classes in *models*, the ones the value
+    is made of. A boolean given for a value that is not one raises as well
+    (``_refuse_bool_as_number``). ``Owned.set_local`` validates through this.
+    """
+    validated = _validated(adapter.validate_python, value, models, path)
     _refuse_bool_as_number(value, validated, path)
     return validated
 
@@ -720,7 +796,7 @@ def _refuse_unread_keys(
     for key, value in data.items():
         name = _field_name(names, model_cls.__name__, key, path)
         child = path.child(name)
-        current = _field_value(model, name)
+        current = unwrap(_field_value(model, name))
         _refuse_bool_as_number(value, current, child)
         if is_dict(value) and isinstance(current, VcoModel):
             _refuse_unread_keys(current, value, child)
@@ -840,7 +916,7 @@ def _require_ids_for_name(
         return
     owner: object = item
     for part in key_path.split(".")[:-1]:
-        owner = _field_value(owner, part)
+        owner = unwrap(_field_value(owner, part))
     if not isinstance(owner, VcoModel):
         return
     unset = [
@@ -933,7 +1009,7 @@ def _fill_context_defaults(item: VcoModel) -> None:
     if level is None:
         return
     for name, field_info in type(item).model_fields.items():
-        if _field_value(item, name) is not MISSING:
+        if unwrap(_field_value(item, name)) is not MISSING:
             continue
         default = _effective_default(field_info, level)
         if (
@@ -1222,7 +1298,7 @@ def _list_spec(field_info: FieldInfo) -> _ListSpec | None:
 
 def _type_args(field_info: FieldInfo, origin: type) -> tuple[object, ...]:
     """The arguments of the ``origin[...]`` member of the field's annotation (``list`` or ``dict``)."""
-    for member in _members_of(field_info.annotation):
+    for member in _members_of(_held_type(field_info)):
         if get_origin(member) is origin and (args := get_args(member)):
             return args
     return (object, object)
@@ -1605,6 +1681,15 @@ def _merge_list(
     spec = _list_spec(field_info)
     assert spec is not None  # _merge_field checked
     model_cls = type(model)
+    held = _field_value(model, name)
+    owned = held if isinstance(held, Owned) else None
+
+    def store(new: object) -> None:
+        if owned is not None:
+            owned.set_local(new)
+        else:
+            setattr(model, name, new)
+
     if not is_dict(value):
         if spec.kind == "map":
             raise PatchError(
@@ -1617,15 +1702,16 @@ def _merge_list(
         if is_list(data) and is_list(built):
             _check_list_value(spec, data, built, path)
             if spec.fixed is not None and is_list(value):
-                _check_fixed_value(spec, value, built, _field_value(model, name), path)
-        setattr(model, name, built)
+                _check_fixed_value(spec, value, built, unwrap(held), path)
+        store(built)
         return
     if spec.kind == "untyped":
         raise PatchError(
             f"{name} is a list of untyped items: give a list value", path, "operation"
         )
 
-    current = _field_value(model, name)
+    # An inherited list starts from the profile's.
+    current = held if owned is None else owned.localize()
     unset = current is MISSING or current is None
     entries: list[object] | dict[object, object]
     if spec.kind == "map":
@@ -1651,7 +1737,11 @@ def _merge_list(
             entries, spec, value, resolvers, path, model.config_context, new_only=False
         )
     if unset and entries:
-        setattr(model, name, _validate_field(model_cls, name, entries, path))
+        store(_validate_field(model_cls, name, entries, path))
+    elif owned is None and field_kind(field_info).kind is Kind.INHERITABLE:
+        # The profile stores what a patch changed in place, a value equal to
+        # the display default too, as an assignment would.
+        model.model_fields_set.add(name)
 
 
 def _new_list_input(
@@ -2727,16 +2817,25 @@ def _auto_set_override_flags(model: VcoModel, before: Mapping[str, object]) -> N
 def _has_non_edge_local_changes(model: VcoModel, before: Mapping[str, object]) -> bool:
     """Check whether a field in *before* (field name -> old value) now differs.
 
-    OverrideFlag and EdgeLocal fields don't count. When both old and new
+    OverrideFlag and EdgeLocal fields don't count, and neither does an
+    ``Inheritable`` field: its kind declares who owns it, and a change of
+    that ownership (``null``, a value, a copy from the profile) is not an
+    edit of a section that the flag guards. When both old and new
     values are the same VcoModel type, the check recurses into them, so a
     change confined to EdgeLocal descendants doesn't count either.
     """
     fields = type(model).model_fields
     for name, old in before.items():
         fi = fields.get(name)
-        if fi is None or has_override_flag(fi) or is_edge_local(fi):
+        if (
+            fi is None
+            or has_override_flag(fi)
+            or is_edge_local(fi)
+            or field_kind(fi).kind is Kind.INHERITABLE
+        ):
             continue
-        new = _field_value(model, name)
+        new = unwrap(_field_value(model, name))
+        old = unwrap(old)
         if isinstance(new, VcoModel) and type(new) is type(old):
             if _has_non_edge_local_changes(new, _all_field_values(new, old)):
                 return True
@@ -2747,4 +2846,6 @@ def _has_non_edge_local_changes(model: VcoModel, before: Mapping[str, object]) -
 
 def _all_field_values(model: VcoModel, source: object) -> JsonObject:
     """Read every one of *model*'s fields from *source*, an instance of the same class."""
-    return {name: _field_value(source, name) for name in type(model).model_fields}
+    return {
+        name: unwrap(_field_value(source, name)) for name in type(model).model_fields
+    }

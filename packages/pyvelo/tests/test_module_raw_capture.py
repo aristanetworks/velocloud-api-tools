@@ -16,6 +16,8 @@ from pyvelo.client.schemas.configuration import (
     QosConfigurationModule,
     new_edge_module,
 )
+from pyvelo.core import Owned
+from pyvelo.core.layers import Edge
 from pyvelo.testing import make_module_json
 
 FW_RAW = {
@@ -36,7 +38,7 @@ def test_capture_from_json_through_the_discriminated_union():
         make_module_json("firewall", FW_RAW),
         make_module_json("QOS", {"segments": []}, module_id=2),
     ]
-    modules = ConfigurationModuleList.model_validate_json(json.dumps(rows)).root
+    modules = ConfigurationModuleList[Edge].model_validate_json(json.dumps(rows)).root
     assert isinstance(modules[0], FirewallConfigurationModule)
     assert modules[0].raw_data == FW_RAW
     assert modules[0].raw_mode == "json"
@@ -56,20 +58,20 @@ def test_capture_from_python_dicts_is_a_copy():
 
 
 def test_keyword_construction_snapshots_its_own_dump():
-    data = FirewallData(segments=[])
-    mod = FirewallConfigurationModule.model_validate(
+    data = FirewallData[Edge](segments=[], firewall_enabled=Owned(True))
+    mod = FirewallConfigurationModule[Edge].model_validate(
         {**make_module_json("firewall", {}), "data": data}
     )
     assert mod.raw_data == data.model_dump(mode="json", by_alias=True)
-    data.firewall_enabled = False
+    data.firewall_enabled.set_local(False)
     assert isinstance(mod.raw_data, dict)
     assert mod.raw_data["firewall_enabled"] is True
 
 
 def test_models_nested_in_plain_containers_are_dumped_to_json():
-    segment = FirewallSegment(segment=SegmentMetadata(name="Global Segment"))
+    segment = FirewallSegment[Edge](segment=SegmentMetadata(name="Global Segment"))
     dumped = segment.model_dump(mode="json", by_alias=True)
-    mod = FirewallConfigurationModule.model_validate(
+    mod = FirewallConfigurationModule[Edge].model_validate(
         make_module_json("firewall", {"segments": [segment]})
     )
     assert mod.raw_data == {"segments": [dumped]}
@@ -79,7 +81,7 @@ def test_models_nested_in_plain_containers_are_dumped_to_json():
 
 def test_unserializable_input_still_reports_the_field_error():
     with pytest.raises(ValidationError) as exc:
-        FirewallConfigurationModule.model_validate(
+        FirewallConfigurationModule[Edge].model_validate(
             make_module_json("firewall", {"segments": [object()]})
         )
     (error,) = exc.value.errors()
@@ -105,7 +107,7 @@ def test_round_trip_through_dict_of_a_module_keeps_raw_data():
 
 
 def test_existing_instance_keeps_its_snapshot():
-    mod = FirewallConfigurationModule.model_validate(
+    mod = FirewallConfigurationModule[Edge].model_validate(
         make_module_json("firewall", FW_RAW)
     )
     cfg = EdgeConfiguration(name="Edge Specific Profile", modules=[mod])

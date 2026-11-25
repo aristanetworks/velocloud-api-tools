@@ -8,6 +8,7 @@ from pydantic import MISSING
 from pyvelo.client.enums.configuration import ConfigurationModuleName
 from pyvelo.client.enums.profiles import GetConfigurationWith
 from pyvelo.client.exceptions import (
+    ComposedModuleError,
     DetachedObjectError,
     ModuleWriteError,
     UnboundError,
@@ -19,7 +20,7 @@ from pyvelo.client.module_check import ModuleWrite
 from pyvelo.client.module_write import ModulePlan, with_hub_rows
 from pyvelo.client.protocol import VcoClientProtocol
 from pyvelo.client.schemas.configuration import (
-    AnyConfigurationModule,
+    AnyStoredModule,
     DeviceSettingsConfigurationModule,
     EdgeConfiguration,
     EnterpriseConfigurationProfile,
@@ -28,7 +29,11 @@ from pyvelo.client.schemas.configuration import (
     QosConfigurationModule,
     WanConfigurationModule,
 )
-from pyvelo.client.schemas.edge import GetEdgeConfigurationStack
+from pyvelo.client.schemas.edge import (
+    GetEdgeConfigurationModules,
+    GetEdgeConfigurationStack,
+)
+from pyvelo.client.schemas.enterprise import GetEnterpriseSecurityObjects
 from pyvelo.config.resolver import Resolver, ResolverContext, ResolverRegistry
 from pyvelo.config.resolvers.application import ApplicationResolver
 from pyvelo.config.resolvers.edge import EdgeResolver
@@ -38,7 +43,7 @@ from pyvelo.config.resolvers.profile import ProfileResolver
 from pyvelo.config.resolvers.segment import SegmentResolver
 from pyvelo.config.validation import ValidationError as ValidatorError
 from pyvelo.config.validation import ValidationResult, ValidatorRegistry
-from pyvelo.core import ConfigContext, PatchError
+from pyvelo.core import PatchError, effective_dump
 from pyvelo.core.base import IdentityLookup, IdentityResolver, VcoModel
 from pyvelo.core.identity import (
     EdgeName,
@@ -50,10 +55,23 @@ from pyvelo.core.identity import (
     SegmentIdentity,
     SegmentName,
 )
+from pyvelo.core.layers import Edge, Effective, Layered, Profile
 from pyvelo.core.merge import nest_patch, select_items
 from pyvelo.core.patch import ItemOp, is_new, parse_item_op
 from pyvelo.core.rebase import Path, raw_changes
 
+from pyvelo_intent.config.composed_security import (
+    SECURITY_OBJECT_TYPES,
+    SecurityObjects,
+    rules_naming_a_group,
+)
+from pyvelo_intent.config.effective import (
+    CONVERTED_MODULES,
+    EFFECTIVE_IGNORES,
+    EffectiveComparison,
+    EffectiveDifference,
+    compare_module,
+)
 from pyvelo_intent.config.hub_calls import (
     HubServices,
     hub_rows,
@@ -84,6 +102,7 @@ from pyvelo_intent.config.profile_segments import (
 from pyvelo_intent.config.state import (
     ConfigPlan,
     ConfigState,
+    EffectiveView,
     SaveProgress,
     SaveResult,
     StepOutcome,
@@ -336,22 +355,15 @@ class ConfigPipeline:
 
         config = await self.client.get_configuration(request)
 
-        if config.config_context is ConfigContext.EDGE:
-            raise ValueError(
+        if isinstance(config, EdgeConfiguration):
+            raise ValueError(  # noqa: TRY004 (an edge configuration is a valid answer, which this call refuses)
                 f"configuration {profile_id} is the edge-specific configuration "
                 "of an edge, not a profile. Load that edge with load(), by its "
                 "ID or name; to edit its profile, give load_profile the "
                 "profile's ID"
             )
 
-        # Wrap it as a profile. Reuse the module objects: they hold the raw data
-        # that a save is planned against, which a dump and re-validate would lose.
-        if not isinstance(config, EnterpriseConfigurationProfile):
-            profile_config = EnterpriseConfigurationProfile.model_construct(
-                _fields_set=config.model_fields_set, **dict(config)
-            ).for_profile()
-        else:
-            profile_config = config
+        profile_config = config
 
         resolver_context = ResolverContext(
             enterprise_id=enterprise_id,
@@ -626,7 +638,7 @@ class ConfigPipeline:
     async def _prepare_profile_segments(
         self,
         state: ConfigState,
-        mod: AnyConfigurationModule,
+        mod: AnyStoredModule,
         nested: Mapping[str, object],
         loaded: set[type],
     ) -> ProfileSegmentPatch:
@@ -869,16 +881,17 @@ class ConfigPipeline:
         and is then applied to the state as stored. Raises ``RuntimeError``
         when the calling task already holds ``state.lock``.
 
-        An edit made by assignment (``state.edge.firewall.syslog_forwarding =
-        True``) while a save is writing is not waited for: it lands in the
-        module that is about to be replaced. Once that module is stored, the
-        save puts it in the state without the edit and raises
-        ``DetachedObjectError`` with the paths of such edits; redo them. So does
-        a lookup that adds a placeholder to a module being written
+        An edit made directly on the models, by assignment or by an intent
+        (``state.edge.firewall.syslog_forwarding.set_local(True)``), while a
+        save is writing is not waited for: it lands in the module that is about
+        to be replaced. Once that module is stored, the save puts it in the
+        state without the edit and raises ``DetachedObjectError`` with the
+        paths of such edits; redo them. So does a lookup that adds a
+        placeholder to a module being written
         (``state.edge.firewall.segment("Guest")``, for a segment the edge only
-        inherits). To edit by assignment from another task while a save may
-        run, use ``apply``, or hold ``state.lock`` around the edit; do not wait,
-        inside that block, for another task that calls ``apply`` or ``save``,
+        inherits). To edit from another task while a save may run, use
+        ``apply``, or hold ``state.lock`` around the edit; do not wait, inside
+        that block, for another task that calls ``apply`` or ``save``,
         which would wait for the lock without end.
         """
         if on_hub_in_use not in ("warn", "refuse"):
@@ -1199,7 +1212,7 @@ class ConfigPipeline:
             """
             stored = error.module
             if isinstance(stored, type(mod)) and state.find_module(mod.name) is mod:
-                state.replace_module(mod, stored)
+                state.replace_module(mod, cast(AnyStoredModule, stored))
                 return True
             return False
 
@@ -1294,6 +1307,134 @@ class ConfigPipeline:
                 raise step_error from error
             raise
         return result
+
+    async def compare_effective(
+        self, state: ConfigState, *, modules: Sequence[str] | None = None
+    ) -> EffectiveComparison:
+        """Check the client's effective view of an edge against the modules the VCO composes for it.
+
+        Reads ``edge/getEdgeConfigurationModules`` for the edge *state* was
+        loaded for, without ``encryptKeys`` (a VCO may refuse the parameter),
+        and compares each of *modules* (by default every converted one,
+        ``CONVERTED_MODULES``) with ``state.effective``. The profile half of
+        the state is read again first, so a profile changed since the load is
+        not a finding; *state* is not changed, except that a resolver the plan
+        needs is loaded into it, as ``save`` does. Every difference is an
+        entry, and the ones that say the view and the VCO disagree are
+        ``EffectiveComparison.findings``.
+
+        When a rule of the view names a security service group, the security
+        objects of the enterprise (the groups, and the URL category, URL
+        reputation and IDPS objects they name) are read too, one read for each
+        type, and the keys the composer adds to that rule are compared with
+        what those objects give: see ``composed_security``.
+
+        Raises ``ValueError`` for a profile state (the VCO composes modules
+        for edges), for a state with changes that are not saved (it differs
+        from the VCO by design: save, or load the edge again), and for a
+        module that is not converted. Raises ``ComposedModuleError`` for a
+        module the VCO answers with ``null`` or leaves out: it hides a
+        composition error that way, and there is nothing to compare with.
+        """
+        names = _converted(modules)
+        edge_config = state.edge_config
+        edge_id = state.resolver_context.edge_id
+        if state.target_type != "edge" or edge_config is None or edge_id is None:
+            raise ValueError(
+                "compare_effective checks an edge, because the VCO composes modules "
+                "for edges only, and this state is not one loaded for an edge. "
+                "Load the edge with load(edge_id) and compare that state"
+            )
+        if (await self._plan_loading(state)).changed:
+            raise ValueError(
+                "compare_effective: this state has changes that are not saved, so "
+                "it differs from the VCO by design and every change would be "
+                "reported as a difference. Save the changes with save(state), or "
+                "load the edge again, and compare then"
+            )
+        enterprise_id = state.resolver_context.enterprise_id
+        profile_id = state.profile_config.id_
+        if profile_id is None or profile_id is MISSING:
+            raise ValueError(
+                "compare_effective: the state's profile configuration has no ID to "
+                "read it again with; load the edge with load(edge_id)"
+            )
+
+        read = GetConfiguration(id_=profile_id, with_=[GetConfigurationWith.MODULES])
+        if enterprise_id is not None:
+            read.enterprise_id = enterprise_id
+        fresh = await self.client.get_configuration(read)
+        if not isinstance(fresh, EnterpriseConfigurationProfile):
+            raise ValueError(  # noqa: TRY004 (an edge configuration is a valid answer, which this call refuses)
+                f"configuration {profile_id} is no longer a profile's: the VCO "
+                "answers it as an edge's configuration. Load the edge again with "
+                "load(edge_id)"
+            )
+
+        ask = GetEdgeConfigurationModules(
+            edge_id=edge_id,
+            modules=[ConfigurationModuleName(name) for name in names],
+        )
+        if enterprise_id is not None:
+            ask.enterprise_id = enterprise_id
+        composed = await self.client.get_edge_configuration_modules(ask)
+
+        view = EffectiveView(edge_config, fresh)
+        entries: list[EffectiveDifference] = []
+        objects: SecurityObjects | None = None
+        for name in names:
+            module: object = getattr(composed, name, None)
+            data: object = getattr(module, "raw_data", MISSING)
+            if module is None or module is MISSING:
+                said = (
+                    f"answered null for the {name} module"
+                    if module is None
+                    else f"gave no {name} module"
+                )
+                raise ComposedModuleError(
+                    f"edge/getEdgeConfigurationModules {said} of edge {edge_id}. "
+                    + "The VCO hides a composition error that way, so there is "
+                    + "nothing to compare the view with. Open the edge in the VCO "
+                    + "to see why its modules do not compose, or compare the other "
+                    + f"modules with modules=[...] (not {name!r})",
+                    module=name,
+                )
+            if not isinstance(data, dict):
+                raise ComposedModuleError(
+                    f"edge/getEdgeConfigurationModules gave the {name} module of "
+                    + f"edge {edge_id} no data object, so there is nothing to "
+                    + "compare the view with. Read the module with "
+                    + "get_edge_configuration_modules to see what the VCO sent",
+                    module=name,
+                )
+            module_view = cast("Layered[Effective]", getattr(view, name))
+            if objects is None and rules_naming_a_group(effective_dump(module_view)[0]):
+                objects = await self._read_security_objects(enterprise_id)
+            entries.extend(
+                compare_module(
+                    name,
+                    module_view,
+                    cast("dict[str, Any]", data),
+                    ignores=EFFECTIVE_IGNORES,
+                    security_objects=objects,
+                )
+            )
+        return EffectiveComparison(tuple(entries))
+
+    async def _read_security_objects(
+        self, enterprise_id: int | None
+    ) -> SecurityObjects:
+        """The enterprise's security service groups and the objects they name (``SECURITY_OBJECT_TYPES``), one read for each."""
+        rows: list[dict[str, object]] = []
+        for type_ in SECURITY_OBJECT_TYPES:
+            ask = GetEnterpriseSecurityObjects(type_=type_)
+            if enterprise_id is not None:
+                ask.enterprise_id = enterprise_id
+            rows.extend(
+                row.model_dump(mode="json", by_alias=True)
+                for row in await self.client.get_security_objects(ask)
+            )
+        return SecurityObjects.from_rows(rows)
 
     def validate(self, state: ConfigState) -> ValidationResult:
         """Run all write-time validators without saving (dry-run validation)."""
@@ -1423,6 +1564,23 @@ def build_default_pipeline(
     return ConfigPipeline(
         client, resolvers=resolvers, validator_registry=validator_registry
     )
+
+
+def _converted(modules: Sequence[str] | None) -> tuple[str, ...]:
+    """The converted modules *modules* names (all of them for ``None``); ``ValueError`` for another."""
+    if modules is None:
+        return CONVERTED_MODULES
+    names: list[str] = []
+    for module in modules:
+        name = _resolve_module_name(module).value
+        if name not in CONVERTED_MODULES:
+            raise ValueError(
+                f"compare_effective: {module!r} has no effective view yet, so "
+                "every key the VCO composes for it would be reported as "
+                f"server_only. Converted modules: {', '.join(CONVERTED_MODULES)}"
+            )
+        names.append(name)
+    return tuple(names)
 
 
 class _SegmentMetadata(Protocol):
@@ -1736,7 +1894,7 @@ def _device_settings_as_read(state: ConfigState) -> object:
 
 def _try_assigning(
     state: ConfigState,
-    mod: AnyConfigurationModule,
+    mod: AnyStoredModule,
     prepared: ProfileSegmentPatch,
     unserved: Collection[Path],
 ) -> None:
@@ -1751,7 +1909,7 @@ def _try_assigning(
     ds_as_read = _device_settings_as_read(state)
     before = _require_writable(mod).data
 
-    def edit(copies: Mapping[str, AnyConfigurationModule]) -> None:
+    def edit(copies: Mapping[str, AnyStoredModule]) -> None:
         after = _require_writable(copies[name]).data
         _ = after.merge_patch(prepared.patch, resolvers=state.resolvers)
         check_profile_segments(before, after, mod, ds_as_read, prepared.assignments)
@@ -1765,7 +1923,8 @@ type _WritableModule = (
     DeviceSettingsConfigurationModule
     | QosConfigurationModule
     | WanConfigurationModule
-    | FirewallConfigurationModule
+    | FirewallConfigurationModule[Edge]
+    | FirewallConfigurationModule[Profile]
 )
 
 _WRITABLE_MODULES = (
@@ -1825,12 +1984,12 @@ def _to_load(error: ResolverNotLoadedError, loaded: set[type]) -> type:
     return kind
 
 
-def _dump(mod: AnyConfigurationModule) -> object:
+def _dump(mod: AnyStoredModule) -> object:
     """The JSON form of *mod*, to find an edit made while it was written."""
     return mod.model_dump(mode="json", by_alias=True)
 
 
-def _require_writable(mod: AnyConfigurationModule) -> _WritableModule:
+def _require_writable(mod: AnyStoredModule) -> _WritableModule:
     """*mod*, if it is a module a save writes; else ``TypeError``."""
     if not isinstance(mod, _WRITABLE_MODULES):
         raise TypeError(

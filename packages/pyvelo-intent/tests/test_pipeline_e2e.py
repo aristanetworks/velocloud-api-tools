@@ -15,6 +15,7 @@ from pyvelo.client.schemas.configuration import (
 from pyvelo.client.schemas.enterprise import GetEnterpriseEdgesItem
 from pyvelo.config.resolver import ResolverRegistry
 from pyvelo.config.resolvers.edge import EdgeResolver
+from pyvelo.core.layers import Profile
 from pyvelo_intent import add
 from pyvelo_intent.config import ConfigPipeline, SaveResult
 from pyvelo_intent.config.firewall import (
@@ -44,12 +45,16 @@ def _make_realistic_stack() -> GetEdgeConfigurationStackResult:
         action=OutboundRuleAction(allow_or_deny="allow"),
         match=OutboundRuleMatch(),
     )
-    profile_segments = [make_firewall_segment("Global Segment", 0, [profile_rule])]
+    profile_segments = [
+        make_firewall_segment("Global Segment", 0, [profile_rule], layer=Profile)
+    ]
     profile_config = EnterpriseConfigurationProfile(
         name="Default Profile",
         id_=200,
         modules=[
-            make_firewall_module(mod_id=20, config_id=200, segments=profile_segments)
+            make_firewall_module(
+                mod_id=20, config_id=200, segments=profile_segments, layer=Profile
+            )
         ],
     )
 
@@ -224,7 +229,7 @@ async def test_e2e_multiple_patches():
 
     # Both changes should be present
     assert state.edge_config is not None
-    assert state.edge_config.firewall.data.firewall_enabled is False
+    assert state.edge_config.firewall.data.firewall_enabled.local is False
     seg = state.edge_config.firewall.data.get_segment(name="Global Segment")
     assert any(r.name == "new-rule" for r in seg.outbound)
 

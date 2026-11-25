@@ -16,6 +16,7 @@ from pyvelo.core.identity import (
     SegmentIdentity,
     ServiceGroupIdentity,
 )
+from pyvelo.core.layers import Edge
 
 from ._type_support import SegmentResolverFactory
 
@@ -76,17 +77,24 @@ class Fake:
         )
 
 
-def fresh() -> FirewallData:
-    return FirewallData.model_validate(
-        {
-            "segments": [
-                {"segment": {"segmentId": 0, "name": "Global Segment"}, "outbound": []}
-            ]
-        }
-    ).for_edge()
+def fresh() -> FirewallData[Edge]:
+    return (
+        FirewallData[Edge]
+        .model_validate(
+            {
+                "segments": [
+                    {
+                        "segment": {"segmentId": 0, "name": "Global Segment"},
+                        "outbound": [],
+                    }
+                ]
+            }
+        )
+        .for_edge()
+    )
 
 
-def add_rule(fw: FirewallData, match: dict[str, object]) -> None:
+def add_rule(fw: FirewallData[Edge], match: dict[str, object]) -> None:
     _ = fw.merge_patch(
         {
             "segments": {

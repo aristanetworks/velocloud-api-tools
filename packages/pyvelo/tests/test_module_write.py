@@ -3,7 +3,7 @@ import dataclasses
 import inspect
 import json
 import uuid
-from typing import Any, cast
+from typing import Any, cast, overload
 
 import pytest
 from pydantic import MISSING
@@ -28,12 +28,13 @@ from pyvelo.client.schemas.configuration import (
     QosConfigurationModule,
     new_edge_module,
 )
-from pyvelo.core import ConfigContext, add, at, delete
+from pyvelo.core import ConfigContext, Owned, add, at, delete
 from pyvelo.core.identity import (
     NetworkServiceIdentity,
     ResolverNotLoadedError,
     SegmentIdentity,
 )
+from pyvelo.core.layers import Edge, Profile, layer_for
 from pyvelo.core.rebase import Key
 from pyvelo.testing import make_module_json
 from refs_helpers import (
@@ -91,10 +92,22 @@ PROFILE_RAW: dict[str, Any] = {
 }
 
 
-def fw(raw: dict[str, Any], *, module_id: int = 1) -> FirewallConfigurationModule:
-    return FirewallConfigurationModule.model_validate(
-        make_module_json("firewall", copy.deepcopy(raw), module_id=module_id)
-    )
+@overload
+def fw(
+    raw: dict[str, Any], *, layer: type[Edge], module_id: int = ...
+) -> FirewallConfigurationModule[Edge]: ...
+@overload
+def fw(
+    raw: dict[str, Any], *, layer: type[Profile], module_id: int = ...
+) -> FirewallConfigurationModule[Profile]: ...
+def fw(
+    raw: dict[str, Any], *, layer: type[Edge] | type[Profile], module_id: int = 1
+) -> FirewallConfigurationModule[Edge] | FirewallConfigurationModule[Profile]:
+    """A firewall module of the layer *layer*, read with *raw* as its data."""
+    row = make_module_json("firewall", copy.deepcopy(raw), module_id=module_id)
+    if layer is Edge:
+        return FirewallConfigurationModule[Edge].model_validate(row)
+    return FirewallConfigurationModule[Profile].model_validate(row)
 
 
 def rule(name: str) -> FirewallOutboundRule:
@@ -104,7 +117,7 @@ def rule(name: str) -> FirewallOutboundRule:
 
 
 def test_no_edit_plans_nothing_and_keeps_raw():
-    plan = plan_module(fw(EDGE_RAW), level=EDGE)
+    plan = plan_module(fw(EDGE_RAW, layer=Edge), level=EDGE)
     assert (plan.operation, plan.data, plan.changes, plan.refs) == (
         "none",
         EDGE_RAW,
@@ -114,8 +127,8 @@ def test_no_edit_plans_nothing_and_keeps_raw():
 
 
 def test_unrelated_edit_leaves_inherited_keys_absent_and_local_false_present():
-    mod = fw(EDGE_RAW)
-    mod.data.firewall_enabled = False
+    mod = fw(EDGE_RAW, layer=Edge)
+    mod.data.firewall_enabled.set_local(False)
     plan = plan_module(mod, level=EDGE)
     assert plan.operation == "update"
     assert plan.data == {**EDGE_RAW, "firewall_enabled": False}
@@ -125,8 +138,8 @@ def test_unrelated_edit_leaves_inherited_keys_absent_and_local_false_present():
 
 
 def test_edit_is_written_to_the_snake_case_key_as_read():
-    mod = fw(EDGE_RAW)
-    mod.data.firewall_logging_enabled = True
+    mod = fw(EDGE_RAW, layer=Edge)
+    mod.data.firewall_logging_enabled.set_local(True)
     plan = plan_module(mod, level=EDGE)
     assert plan.data["firewall_logging_enabled"] is True
     assert "firewallLoggingEnabled" not in plan.data
@@ -137,7 +150,7 @@ def test_the_logging_flag_is_written_in_snake_case_where_the_key_was_absent():
         "firewall_enabled": True,
         "segments": [{"segment": desc(0, "Global Segment"), "outbound": []}],
     }
-    mod = fw(raw)
+    mod = fw(raw, layer=Profile)
     mod.data.firewall_logging_enabled = True
     mod.data.segments[0].firewall_logging_enabled = True
     plan = plan_module(mod, level=ConfigContext.PROFILE)
@@ -152,8 +165,12 @@ def test_the_logging_flag_is_written_in_snake_case_where_the_key_was_absent():
 
 
 def test_the_logging_flag_dumps_in_snake_case():
-    assert "firewall_logging_enabled" in FirewallData().model_dump(by_alias=True)
-    segment = FirewallSegment.model_validate(
+    for data in (
+        FirewallData[Edge](firewall_logging_enabled=Owned(False)),
+        FirewallData[Profile](firewall_logging_enabled=False),
+    ):
+        assert data.model_dump(by_alias=True)["firewall_logging_enabled"] is False
+    segment = FirewallSegment[Edge].model_validate(
         {"segment": desc(0, "Global Segment"), "firewall_logging_enabled": True}
     )
     dumped = segment.model_dump(by_alias=True, mode="json")
@@ -161,7 +178,7 @@ def test_the_logging_flag_dumps_in_snake_case():
 
 
 def test_inserted_rules_keep_order_and_unknown_segment_keys():
-    mod = fw(EDGE_RAW)
+    mod = fw(EDGE_RAW, layer=Edge)
     seg = mod.data.segments[0]
     seg.outbound.insert(0, rule("b"))
     seg.outbound.insert(0, rule("a"))
@@ -172,16 +189,27 @@ def test_inserted_rules_keep_order_and_unknown_segment_keys():
 
 
 def test_lossy_assignment_raises():
-    mod = fw(EDGE_RAW)
-    mod.data.atp_enabled = False  # absent in raw, equals the model default
-    with pytest.raises(LossyFieldError, match="atp_enabled") as exc:
+    mod = fw(EDGE_RAW, layer=Edge)
+    mod.data.inbound = []  # absent in raw, equals the model default
+    with pytest.raises(LossyFieldError, match="inbound") as exc:
         plan_module(mod, level=EDGE)
-    assert exc.value.fields == ["atp_enabled"]
+    assert exc.value.fields == ["inbound"]
+
+
+def test_a_profile_assigns_the_display_default_of_an_inheritable_and_it_is_written():
+    # An Inheritable field of a profile has a display default, not a model
+    # default: assigning that value stores it, where an unconverted field
+    # would raise LossyFieldError.
+    mod = fw({"segments": []}, layer=Profile)
+    mod.data.atp_enabled = False
+    plan = plan_module(mod, level=ConfigContext.PROFILE)
+    assert plan.data == {"segments": [], "atp_enabled": False}
+    assert [str(c.path) for c in plan.changes] == ["atp_enabled"]
 
 
 def test_reconciliation_rides_along_with_a_write():
-    mod, profile = fw(EDGE_RAW), fw(PROFILE_RAW, module_id=2)
-    mod.data.firewall_enabled = False
+    mod, profile = fw(EDGE_RAW, layer=Edge), fw(PROFILE_RAW, module_id=2, layer=Profile)
+    mod.data.firewall_enabled.set_local(False)
     plan = plan_module(mod, level=EDGE, profile=profile)
     assert plan.reconciled_segments == ("Guest",)
     assert plan.data["segments"][0] == EDGE_RAW["segments"][0]
@@ -193,7 +221,11 @@ def test_reconciliation_rides_along_with_a_write():
 
 
 def test_no_edit_does_not_write_just_to_reconcile():
-    plan = plan_module(fw(EDGE_RAW), level=EDGE, profile=fw(PROFILE_RAW, module_id=2))
+    plan = plan_module(
+        fw(EDGE_RAW, layer=Edge),
+        level=EDGE,
+        profile=fw(PROFILE_RAW, module_id=2, layer=Profile),
+    )
     assert (plan.operation, plan.data, plan.reconciled_segments) == (
         "none",
         EDGE_RAW,
@@ -204,19 +236,21 @@ def test_no_edit_does_not_write_just_to_reconcile():
 def test_edge_only_segment_is_kept_and_profile_level_never_reconciles():
     raw = copy.deepcopy(EDGE_RAW)
     raw["segments"].append({"segment": desc(9, "EdgeOnly"), "outbound": []})
-    mod = fw(raw)
-    mod.data.firewall_enabled = False
-    plan = plan_module(mod, level=EDGE, profile=fw(PROFILE_RAW, module_id=2))
+    mod = fw(raw, layer=Edge)
+    mod.data.firewall_enabled.set_local(False)
+    plan = plan_module(
+        mod, level=EDGE, profile=fw(PROFILE_RAW, module_id=2, layer=Profile)
+    )
     assert [s["segment"]["name"] for s in plan.data["segments"]] == [
         "Global Segment",
         "EdgeOnly",
         "Guest",
     ]
-    prof = fw(PROFILE_RAW)
+    prof = fw(PROFILE_RAW, layer=Profile)
     prof.data.firewall_enabled = False
     assert (
         plan_module(
-            prof, level=ConfigContext.PROFILE, profile=fw(PROFILE_RAW)
+            prof, level=ConfigContext.PROFILE, profile=fw(PROFILE_RAW, layer=Profile)
         ).reconciled_segments
         == ()
     )
@@ -229,7 +263,7 @@ def guest_rule() -> dict[str, Any]:
 def test_deleting_an_edge_segment_the_profile_has_leaves_its_placeholder():
     raw = copy.deepcopy(EDGE_RAW)
     raw["segments"].append({"segment": desc(2, "Guest"), "outbound": [guest_rule()]})
-    mod, profile = fw(raw), fw(PROFILE_RAW, module_id=2)
+    mod, profile = fw(raw, layer=Edge), fw(PROFILE_RAW, module_id=2, layer=Profile)
     del mod.data.segments[1]
     plan = plan_module(mod, level=EDGE, profile=profile)
     assert plan.operation == "update"
@@ -243,14 +277,14 @@ def test_deleting_an_edge_segment_the_profile_has_leaves_its_placeholder():
 def test_deleting_a_segment_that_is_only_a_placeholder_is_no_change():
     raw = copy.deepcopy(EDGE_RAW)
     raw["segments"].append(missing_segments(EDGE_RAW, PROFILE_RAW, "firewall")[0])
-    mod, profile = fw(raw), fw(PROFILE_RAW, module_id=2)
+    mod, profile = fw(raw, layer=Edge), fw(PROFILE_RAW, module_id=2, layer=Profile)
     del mod.data.segments[1]
     plan = plan_module(mod, level=EDGE, profile=profile)
     assert (plan.operation, plan.data) == ("none", raw)
 
 
 def test_edit_inside_a_missing_segment_is_relative_to_its_placeholder():
-    mod, profile = fw(EDGE_RAW), fw(PROFILE_RAW, module_id=2)
+    mod, profile = fw(EDGE_RAW, layer=Edge), fw(PROFILE_RAW, module_id=2, layer=Profile)
     guest = type(mod.data.segments[0]).model_validate(
         {"segment": desc(2, "Guest", vendorKey="x"), "outbound": []}
     )
@@ -266,9 +300,9 @@ def test_edit_inside_a_missing_segment_is_relative_to_its_placeholder():
 def test_insert_from_an_empty_layer_has_only_local_content_plus_placeholders():
     mod = new_edge_module(ConfigurationModuleName.FIREWALL, 10)
     assert isinstance(mod, FirewallConfigurationModule)
-    profile = fw(PROFILE_RAW, module_id=2)
+    profile = fw(PROFILE_RAW, module_id=2, layer=Profile)
     assert plan_module(mod, level=EDGE, profile=profile).operation == "none"
-    mod.data.firewall_enabled = False
+    mod.data.firewall_enabled.set_local(False)
     plan = plan_module(mod, level=EDGE, profile=profile)
     assert plan.operation == "insert"
     assert plan.data == {
@@ -320,10 +354,13 @@ def test_reconcile_tolerates_malformed_segments():
 
 
 def test_unparseable_shapes_do_not_cause_a_write():
-    # DefaultingScalar turns both of these into False on parse.
+    # A null is kept as stored and is not local; DefaultingScalar turns the
+    # other into False on parse.
     raw = {"segments": [], "syslog_forwarding": None, "atp_enabled": "not-a-bool"}
-    mod = fw(raw)
-    assert (mod.data.syslog_forwarding, mod.data.atp_enabled) == (False, False)
+    mod = fw(raw, layer=Edge)
+    assert mod.data.syslog_forwarding.stored is None
+    assert mod.data.syslog_forwarding.is_local is False
+    assert mod.data.atp_enabled.stored is False
     plan = plan_module(mod, level=EDGE)
     assert (plan.operation, plan.data) == ("none", raw)
 
@@ -359,18 +396,20 @@ def test_refs_are_sent_only_with_a_ref_change_or_segments_and_then_whole():
 
 
 def test_explicit_data_argument_leaves_module_data_out_of_it():
-    mod = fw(EDGE_RAW)
+    mod = fw(EDGE_RAW, layer=Edge)
     data = mod.mutable_data()
-    data.firewall_enabled = False
+    data.firewall_enabled.set_local(False)
     assert plan_module(mod, data, level=EDGE).data["firewall_enabled"] is False
     assert plan_module(mod, level=EDGE).operation == "none"
 
 
 def test_render():
-    mod = fw(EDGE_RAW)
-    mod.data.firewall_enabled = False
-    mod.data.syslog_forwarding = True
-    text = plan_module(mod, level=EDGE, profile=fw(PROFILE_RAW, module_id=2)).render()
+    mod = fw(EDGE_RAW, layer=Edge)
+    mod.data.firewall_enabled.set_local(False)
+    mod.data.syslog_forwarding.set_local(True)
+    text = plan_module(
+        mod, level=EDGE, profile=fw(PROFILE_RAW, module_id=2, layer=Profile)
+    ).render()
     assert text.splitlines() == [
         "firewall: update",
         "  ~ syslog_forwarding: false -> true",
@@ -380,7 +419,7 @@ def test_render():
 
 
 def test_change_paths_quote_keys_with_special_characters():
-    mod = fw(EDGE_RAW)
+    mod = fw(EDGE_RAW, layer=Edge)
     mod.data.segments[0].outbound.append(rule("b"))
     plan = plan_module(mod, level=EDGE)
     (change,) = plan.changes
@@ -415,7 +454,7 @@ OUTBOUND = 'segments["Global Segment"].outbound'
 
 
 def test_render_shows_where_an_added_rule_goes():
-    first, last = fw(RULES_RAW), fw(RULES_RAW)
+    first, last = fw(RULES_RAW, layer=Edge), fw(RULES_RAW, layer=Edge)
     first.data.segments[0].outbound.insert(0, rule("x"))
     last.data.segments[0].outbound.append(rule("x"))
     at_first = plan_module(first, level=EDGE).render().splitlines()
@@ -426,7 +465,7 @@ def test_render_shows_where_an_added_rule_goes():
 
 
 def test_render_of_a_move_is_one_short_line_beside_the_edit():
-    mod = fw(RULES_RAW)
+    mod = fw(RULES_RAW, layer=Edge)
     rules = mod.data.segments[0].outbound
     rules.insert(0, rules.pop())
     rules[1].logging_enabled = True
@@ -440,7 +479,7 @@ def test_render_of_a_move_is_one_short_line_beside_the_edit():
 def test_render_names_five_moves_and_counts_the_rest():
     raw = copy.deepcopy(RULES_RAW)
     raw["segments"][0]["outbound"] = [raw_rule(f"r{n}") for n in range(9)]
-    mod = fw(raw)
+    mod = fw(raw, layer=Edge)
     mod.data.segments[0].outbound.reverse()
     assert plan_module(mod, level=EDGE).render().splitlines()[1] == (
         f"  ~ {OUTBOUND}: order: r8 first; r7 after r8; r6 after r7; r5 after r6; "
@@ -450,7 +489,7 @@ def test_render_names_five_moves_and_counts_the_rest():
 
 def test_render_cuts_two_long_values_where_they_differ():
     old, new = list(range(60)), [*range(55), 99, *range(56, 60)]
-    mod = fw({**EDGE_RAW, "futureTopLevel": old})
+    mod = fw({**EDGE_RAW, "futureTopLevel": old}, layer=Edge)
     plan = plan_module(mod, {**EDGE_RAW, "futureTopLevel": new}, level=EDGE)
     assert plan.render().splitlines() == [
         "firewall: update",
@@ -466,7 +505,7 @@ def test_lossy_error_carries_structured_paths():
     raw["segments"][0]["outbound"] = [
         {"name": "r1", "action": {"allow_or_deny": "allow"}, "match": {}}
     ]
-    mod = fw(raw)
+    mod = fw(raw, layer=Edge)
     mod.data.segments[0].outbound[
         0
     ].logging_enabled = False  # absent in raw, the default
@@ -520,8 +559,8 @@ async def test_a_module_that_had_no_refs_gets_only_the_new_row():
 
 
 def test_module_that_never_carried_data_sends_the_whole_dump():
-    mod = FirewallConfigurationModule.model_construct(
-        name="firewall", data=FirewallData(segments=[], firewall_enabled=False)
+    mod = FirewallConfigurationModule[Edge].model_construct(
+        name="firewall", data=FirewallData[Edge](segments=[], firewall_enabled=False)
     )
     assert mod.raw_data is MISSING
     plan = plan_module(mod, level=EDGE)
@@ -535,10 +574,10 @@ def test_module_that_never_carried_data_sends_the_whole_dump():
 
 
 def test_a_module_without_a_segments_key_gets_one_for_reconciliation():
-    mod = fw({})
-    profile = fw(PROFILE_RAW, module_id=2)
+    mod = fw({}, layer=Edge)
+    profile = fw(PROFILE_RAW, module_id=2, layer=Profile)
     assert plan_module(mod, level=EDGE, profile=profile).operation == "none"
-    mod.data.firewall_enabled = False
+    mod.data.firewall_enabled.set_local(False)
     plan = plan_module(mod, level=EDGE, profile=profile)
     assert plan.data == {
         "segments": [
@@ -565,18 +604,18 @@ def test_edge_segments_that_are_not_a_list_are_left_alone():
 def test_json_mode_module_plans_none_and_then_only_the_edit():
     raw = {"segments": [], "syslog_forwarding": None, "futureKey": [1]}
     rows = [make_module_json("firewall", copy.deepcopy(raw))]
-    mod = ConfigurationModuleList.model_validate_json(json.dumps(rows)).root[0]
+    mod = ConfigurationModuleList[Edge].model_validate_json(json.dumps(rows)).root[0]
     assert mod.raw_mode == "json"
     assert isinstance(mod, FirewallConfigurationModule)
     plan = plan_module(mod, level=EDGE)
     assert (plan.operation, plan.data) == ("none", raw)
-    mod.data.syslog_forwarding = True
+    mod.data.syslog_forwarding.set_local(True)
     plan = plan_module(mod, level=EDGE)
     assert plan.data == {**raw, "syslog_forwarding": True}
 
 
 def test_plan_data_does_not_alias_the_module_snapshot():
-    mod = fw(EDGE_RAW)
+    mod = fw(EDGE_RAW, layer=Edge)
     plan = plan_module(mod, level=EDGE)
     plan.data["segments"].clear()
     assert mod.raw_data == EDGE_RAW
@@ -586,14 +625,14 @@ def test_plan_data_does_not_alias_the_module_snapshot():
 
 
 def test_dict_data_with_no_edit_does_not_write_just_to_reconcile():
-    mod, profile = fw(EDGE_RAW), fw(PROFILE_RAW, module_id=2)
+    mod, profile = fw(EDGE_RAW, layer=Edge), fw(PROFILE_RAW, module_id=2, layer=Profile)
     plan = plan_module(mod, copy.deepcopy(EDGE_RAW), level=EDGE, profile=profile)
     assert (plan.operation, plan.data, plan.changes) == ("none", EDGE_RAW, ())
     assert plan.reconciled_segments == ("Guest",)
 
 
 def test_dict_data_edit_carries_the_reconciled_segments_along():
-    mod, profile = fw(EDGE_RAW), fw(PROFILE_RAW, module_id=2)
+    mod, profile = fw(EDGE_RAW, layer=Edge), fw(PROFILE_RAW, module_id=2, layer=Profile)
     data = copy.deepcopy(EDGE_RAW)
     data["firewall_enabled"] = False
     plan = plan_module(mod, data, level=EDGE, profile=profile)
@@ -616,7 +655,7 @@ def test_dict_data_edit_carries_the_reconciled_segments_along():
 
 
 def test_dict_data_without_a_segments_list_gets_the_reconciled_segments():
-    mod, profile = fw({}), fw(PROFILE_RAW, module_id=2)
+    mod, profile = fw({}, layer=Edge), fw(PROFILE_RAW, module_id=2, layer=Profile)
     assert plan_module(mod, {}, level=EDGE, profile=profile).operation == "none"
     plan = plan_module(mod, {"firewall_enabled": False}, level=EDGE, profile=profile)
     assert [s["segment"]["name"] for s in plan.data["segments"]] == [
@@ -627,7 +666,7 @@ def test_dict_data_without_a_segments_list_gets_the_reconciled_segments():
 
 
 def test_dict_data_keeps_its_own_version_of_a_reconciled_segment():
-    mod, profile = fw(EDGE_RAW), fw(PROFILE_RAW, module_id=2)
+    mod, profile = fw(EDGE_RAW, layer=Edge), fw(PROFILE_RAW, module_id=2, layer=Profile)
     data = copy.deepcopy(EDGE_RAW)
     guest = {"segment": desc(2, "Guest", vendorKey="x"), "outbound": [{"name": "b"}]}
     data["segments"].append(guest)
@@ -649,9 +688,9 @@ THREE_SEGMENTS_RAW: dict[str, Any] = {
 
 def bound(
     raw: dict[str, Any], profile_raw: dict[str, Any]
-) -> tuple[FirewallConfigurationModule, FirewallConfigurationModule]:
+) -> tuple[FirewallConfigurationModule[Edge], FirewallConfigurationModule[Profile]]:
     """An edge module of *raw* bound to a profile module of *profile_raw*, and that one."""
-    mod, profile = fw(raw), fw(profile_raw, module_id=2)
+    mod, profile = fw(raw, layer=Edge), fw(profile_raw, module_id=2, layer=Profile)
     mod.data.bind_profile(profile.raw_data)
     return mod, profile
 
@@ -684,7 +723,7 @@ def test_an_edit_in_a_later_missing_segment_is_planned_at_the_item():
 def test_a_created_module_has_its_segments_in_the_profiles_order():
     mod = new_edge_module(ConfigurationModuleName.FIREWALL, 10)
     assert isinstance(mod, FirewallConfigurationModule)
-    profile = fw(PROFILE_RAW, module_id=2)
+    profile = fw(PROFILE_RAW, module_id=2, layer=Profile)
     mod.data.bind_profile(profile.raw_data)
     guest = mod.data.segment("Guest")  # the model now holds Guest alone
     assert plan_module(mod, level=EDGE, profile=profile).operation == "none"
@@ -718,7 +757,10 @@ def test_a_reconciled_segment_is_written_after_the_edges_own_wherever_the_model_
 
 
 def test_dict_data_with_its_reconciled_segments_in_another_order_plans_nothing():
-    mod, profile = fw(EDGE_RAW), fw(THREE_SEGMENTS_RAW, module_id=2)
+    mod, profile = (
+        fw(EDGE_RAW, layer=Edge),
+        fw(THREE_SEGMENTS_RAW, module_id=2, layer=Profile),
+    )
     data = copy.deepcopy(EDGE_RAW)
     data["segments"].append(copy.deepcopy(THREE_SEGMENTS_RAW["segments"][2]))
     plan = plan_module(mod, data, level=EDGE, profile=profile)
@@ -743,7 +785,7 @@ DS_RAW: dict[str, Any] = {
 
 
 def test_profile_outbound_patch_is_saved_as_the_rule_alone():
-    mod = fw(PROFILE_RAW, module_id=2)
+    mod = fw(PROFILE_RAW, module_id=2, layer=Profile)
     _ = mod.data.for_profile()
     _ = mod.data.merge_patch(
         {
@@ -1247,7 +1289,7 @@ GLOBAL_OUTBOUND = 'segments["Global Segment"].outbound'
 def test_an_outbound_rule_patch_writes_the_rule_and_no_override_flag(
     level: ConfigContext, rule_patch: dict[str, Any], path: str
 ):
-    mod = fw(FW_OUTBOUND_RAW)
+    mod = fw(FW_OUTBOUND_RAW, layer=layer_for(level))
     _ = mod.data.for_context(level)
     _ = mod.data.merge_patch({"segments": {"Global Segment": {"outbound": rule_patch}}})
     plan = plan_module(mod, level=level)
@@ -1262,7 +1304,7 @@ def test_an_outbound_rule_patch_writes_the_rule_and_no_override_flag(
 
 def test_a_firewall_segment_dumps_no_override_key_even_when_new():
     raw = copy.deepcopy(FW_OUTBOUND_RAW)
-    mod = fw(raw)
+    mod = fw(raw, layer=Edge)
     assert not _has_key(
         mod.data.model_dump(mode="json", by_alias=True), "outboundOverride"
     )
@@ -1296,7 +1338,7 @@ STRAY_RAW: dict[str, Any] = {
 def test_a_stray_override_key_with_no_edit_is_reported_and_not_written(
     level: ConfigContext,
 ):
-    mod = fw(STRAY_RAW)
+    mod = fw(STRAY_RAW, layer=layer_for(level))
     plan = plan_module(mod, level=level)
     assert (plan.operation, plan.changes) == ("none", ())
     assert plan.data == STRAY_RAW  # the raw data as read
@@ -1313,7 +1355,7 @@ def test_a_stray_override_key_with_no_edit_is_reported_and_not_written(
 def test_a_stray_override_key_is_dropped_and_listed_when_a_rule_is_edited(
     level: ConfigContext,
 ):
-    mod = fw(STRAY_RAW)
+    mod = fw(STRAY_RAW, layer=layer_for(level))
     _ = mod.data.for_context(level)
     _ = mod.data.merge_patch(
         {
@@ -1339,7 +1381,7 @@ def test_a_stray_override_key_is_dropped_and_listed_when_a_rule_is_edited(
 def test_a_stray_override_key_is_dropped_from_every_segment_entry():
     raw = copy.deepcopy(STRAY_RAW)
     raw["segments"][1]["outboundOverride"] = False
-    mod = fw(raw)
+    mod = fw(raw, layer=Edge)
     mod.data.segments[1].firewall_logging_enabled = True
     plan = plan_module(mod, level=EDGE)
     assert not _has_key(plan.data, "outboundOverride")
@@ -1347,7 +1389,7 @@ def test_a_stray_override_key_is_dropped_from_every_segment_entry():
 
 
 def test_a_stray_override_key_is_dropped_from_an_insert_too():
-    mod = fw(STRAY_RAW)
+    mod = fw(STRAY_RAW, layer=Edge)
     mod._is_new = True  # pyright: ignore[reportPrivateUsage]
     mod.data.segments[0].outbound[0].name = "other"
     plan = plan_module(mod, level=EDGE)
@@ -1620,8 +1662,8 @@ def test_a_data_edit_of_a_module_without_segments_sends_no_refs():
 
 
 def test_a_module_that_never_carried_data_sends_no_refs():
-    mod = FirewallConfigurationModule.model_construct(
-        name="firewall", data=FirewallData(segments=[], firewall_enabled=False)
+    mod = FirewallConfigurationModule[Edge].model_construct(
+        name="firewall", data=FirewallData[Edge](segments=[], firewall_enabled=False)
     )
     plan = plan_module(mod, level=EDGE)
     assert (plan.operation, plan.refs, plan.ref_changes) == ("update", None, ())
@@ -1661,11 +1703,11 @@ def test_a_module_whose_refs_were_not_read_plans_any_other_write_without_refs():
     plan = plan_module(module, current)
     assert (plan.operation, plan.refs, plan.ref_changes) == ("update", None, ())
 
-    firewall = FirewallConfigurationModule.model_validate(
+    firewall = FirewallConfigurationModule[Edge].model_validate(
         make_module_json("firewall", copy.deepcopy(EDGE_RAW)),
         context={"refs_loaded": False},
     )
-    firewall.data.firewall_enabled = False
+    firewall.data.firewall_enabled.set_local(False)
     plan = plan_module(firewall, level=EDGE)
     assert (plan.operation, plan.refs) == ("update", None)
 

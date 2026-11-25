@@ -5,7 +5,18 @@ import datetime
 import json
 import uuid
 from collections.abc import Mapping, Sequence
-from typing import Annotated, Any, Literal, Self, TypeIs, cast, get_args, overload
+from typing import (
+    Annotated,
+    Any,
+    Generic,
+    Literal,
+    Self,
+    TypeIs,
+    cast,
+    get_args,
+    overload,
+    override,
+)
 
 from pydantic import (
     MISSING,
@@ -61,110 +72,14 @@ from pyvelo.core import (
 from pyvelo.core.base import field_models
 from pyvelo.core.fields import Resolvable
 from pyvelo.core.identity import EdgeIdentity, ProfileIdentity
-
-
-class ConfigurationBase(VcoModel):
-    name: str
-    configuration_type: ConfigurationType = ConfigurationType.SEGMENT_BASED
-    bastion_state: ConfigurationBastionState | None | MISSING = MISSING
-    created: VcoTimestamp | None | MISSING = MISSING
-    description: str | None | MISSING = MISSING
-    edge_count: int | None | MISSING = MISSING
-    effective: VcoTimestamp | None | MISSING = MISSING
-    id_: Annotated[int | None | MISSING, Alias("id")] = MISSING
-    logical_id: uuid.UUID | None | MISSING = MISSING
-    enterprise_logical_id: uuid.UUID | None | MISSING = MISSING
-    modified: VcoTimestamp | None | MISSING = MISSING
-    schema_version: str | None | MISSING = MISSING
-    version: str | None | MISSING = MISSING
-    is_staging: Tinyint | None | MISSING = MISSING
-    modules: list[AnyConfigurationModule] | MISSING = MISSING
-
-    def _get_module(
-        self, module_name: ConfigurationModuleName
-    ) -> AnyConfigurationModule:
-        if self.modules is MISSING:
-            raise ValueError("Configuration has no modules")
-        for m in self.modules:
-            if m.name == module_name:
-                return m
-        raise ValueError(f"Module '{module_name}' not found in configuration")
-
-    @overload
-    def get_module(
-        self, name: Literal[ConfigurationModuleName.DEVICE_SETTINGS]
-    ) -> DeviceSettingsConfigurationModule: ...
-    @overload
-    def get_module(
-        self, name: Literal[ConfigurationModuleName.QOS]
-    ) -> QosConfigurationModule: ...
-    @overload
-    def get_module(
-        self, name: Literal[ConfigurationModuleName.FIREWALL]
-    ) -> FirewallConfigurationModule: ...
-    @overload
-    def get_module(
-        self, name: Literal[ConfigurationModuleName.WAN]
-    ) -> WanConfigurationModule: ...
-    @overload
-    def get_module(
-        self, name: Literal[ConfigurationModuleName.CONTROL_PLANE]
-    ) -> ControlPlaneConfigurationModule: ...
-    @overload
-    def get_module(self, name: ConfigurationModuleName) -> AnyConfigurationModule: ...
-
-    def get_module(self, name: ConfigurationModuleName) -> AnyConfigurationModule:
-        return self._get_module(name)
-
-    def has_module(self, name: ConfigurationModuleName) -> bool:
-        if self.modules is MISSING:
-            return False
-        return any(m.name == name for m in self.modules)
-
-    @property
-    def device_settings(self) -> DeviceSettingsConfigurationModule:
-        m = self._get_module(ConfigurationModuleName.DEVICE_SETTINGS)
-        assert isinstance(m, DeviceSettingsConfigurationModule)
-        return m
-
-    @property
-    def qos(self) -> QosConfigurationModule:
-        m = self._get_module(ConfigurationModuleName.QOS)
-        assert isinstance(m, QosConfigurationModule)
-        return m
-
-    @property
-    def firewall(self) -> FirewallConfigurationModule:
-        m = self._get_module(ConfigurationModuleName.FIREWALL)
-        assert isinstance(m, FirewallConfigurationModule)
-        return m
-
-    @property
-    def wan(self) -> WanConfigurationModule:
-        m = self._get_module(ConfigurationModuleName.WAN)
-        assert isinstance(m, WanConfigurationModule)
-        return m
-
-    @property
-    def control_plane(self) -> ControlPlaneConfigurationModule:
-        m = self._get_module(ConfigurationModuleName.CONTROL_PLANE)
-        assert isinstance(m, ControlPlaneConfigurationModule)
-        return m
-
-
-class EdgeConfiguration(ConfigurationBase):
-    _config_context: ConfigContext | None = PrivateAttr(default=ConfigContext.EDGE)
-
-
-class EnterpriseConfigurationProfile(ConfigurationBase):
-    _config_context: ConfigContext | None = PrivateAttr(default=ConfigContext.PROFILE)
+from pyvelo.core.layers import Composed, Edge, Effective, L, Profile
 
 
 def _is_mapping(value: object) -> TypeIs[Mapping[object, object]]:
     return isinstance(value, Mapping)
 
 
-def _capture(
+def capture_key(
     source: Mapping[object, object], key: str, mode: Literal["python", "json"]
 ) -> object:
     """Snapshot ``source[key]`` as pure JSON, before validation touches it.
@@ -216,8 +131,8 @@ class ConfigurationModuleBase(VcoModel):
             # An existing instance keeps the snapshot it already has.
             return handler(value)
         try:
-            raw_data = _capture(value, "data", info.mode)
-            raw_refs = _capture(value, "refs", info.mode)
+            raw_data = capture_key(value, "data", info.mode)
+            raw_refs = capture_key(value, "refs", info.mode)
         except PydanticSerializationError:
             # Input that cannot become JSON is usually input that does not
             # validate. Let validation report that field-level error first; if
@@ -470,11 +385,17 @@ class QosConfigurationModule(ConfigurationModuleBase):
         return copy.deepcopy(self.data)
 
 
-class FirewallConfigurationModule(ConfigurationModuleBase):
+class FirewallConfigurationModule(ConfigurationModuleBase, Generic[L]):  # noqa: UP046 (one shared constrained L, as a TypeVar)
     name: Literal["firewall"] = "firewall"
-    data: FirewallData
+    data: FirewallData[L]
 
-    def mutable_data(self) -> FirewallData:
+    @property
+    @override
+    def config_context(self) -> ConfigContext | None:
+        """The level of the layer this module is for: ``EDGE`` or ``PROFILE``, none for the others."""
+        return self.data.config_context
+
+    def mutable_data(self) -> FirewallData[L]:
         return copy.deepcopy(self.data)
 
 
@@ -483,21 +404,132 @@ class GenericConfigurationModule(ConfigurationModuleBase):
     data: dict[str, Any]
 
 
-type AnyConfigurationModule = Annotated[
+type AnyConfigurationModule[X: (Edge, Profile, Effective, Composed)] = Annotated[
     ControlPlaneConfigurationModule
     | DeviceSettingsConfigurationModule
     | WanConfigurationModule
     | QosConfigurationModule
-    | FirewallConfigurationModule
+    | FirewallConfigurationModule[X]
     | GenericConfigurationModule,
     Discriminator(discriminator="name"),
 ]
+"""A module row of the layer ``X``.
+
+Only the firewall module class depends on the layer so far; each of the others
+joins when its data is converted.
+"""
+
+type AnyStoredModule = AnyConfigurationModule[Edge] | AnyConfigurationModule[Profile]
+"""A module row of either stored layer, for code that handles both."""
 
 
-class ConfigurationModuleList(RootModel[list[AnyConfigurationModule]]):
-    """A list of module rows; a row that does not parse is refused without quoting it."""
+class ConfigurationModuleList(RootModel[list[AnyConfigurationModule[L]]], Generic[L]):  # noqa: UP046 (one shared constrained L, as a TypeVar)
+    """A list of module rows of one layer; a row that does not parse is refused without quoting it."""
 
     model_config = ConfigDict(hide_input_in_errors=True)
+
+
+# The configurations come after ``AnyConfigurationModule`` on purpose: a
+# parametrized base such as ``ConfigurationBase[Edge]`` takes its module list
+# from the alias when it is made, and one made before the alias exists would
+# keep it unresolved, with the layer still a type variable.
+class ConfigurationBase(VcoModel, Generic[L]):  # noqa: UP046 (one shared constrained L, as a TypeVar)
+    name: str
+    configuration_type: ConfigurationType = ConfigurationType.SEGMENT_BASED
+    bastion_state: ConfigurationBastionState | None | MISSING = MISSING
+    created: VcoTimestamp | None | MISSING = MISSING
+    description: str | None | MISSING = MISSING
+    edge_count: int | None | MISSING = MISSING
+    effective: VcoTimestamp | None | MISSING = MISSING
+    id_: Annotated[int | None | MISSING, Alias("id")] = MISSING
+    logical_id: uuid.UUID | None | MISSING = MISSING
+    enterprise_logical_id: uuid.UUID | None | MISSING = MISSING
+    modified: VcoTimestamp | None | MISSING = MISSING
+    schema_version: str | None | MISSING = MISSING
+    version: str | None | MISSING = MISSING
+    is_staging: Tinyint | None | MISSING = MISSING
+    modules: list[AnyConfigurationModule[L]] | MISSING = MISSING
+
+    def _get_module(
+        self, module_name: ConfigurationModuleName
+    ) -> AnyConfigurationModule[L]:
+        if self.modules is MISSING:
+            raise ValueError("Configuration has no modules")
+        for m in self.modules:
+            if m.name == module_name:
+                return m
+        raise ValueError(f"Module '{module_name}' not found in configuration")
+
+    @overload
+    def get_module(
+        self, name: Literal[ConfigurationModuleName.DEVICE_SETTINGS]
+    ) -> DeviceSettingsConfigurationModule: ...
+    @overload
+    def get_module(
+        self, name: Literal[ConfigurationModuleName.QOS]
+    ) -> QosConfigurationModule: ...
+    @overload
+    def get_module(
+        self, name: Literal[ConfigurationModuleName.FIREWALL]
+    ) -> FirewallConfigurationModule[L]: ...
+    @overload
+    def get_module(
+        self, name: Literal[ConfigurationModuleName.WAN]
+    ) -> WanConfigurationModule: ...
+    @overload
+    def get_module(
+        self, name: Literal[ConfigurationModuleName.CONTROL_PLANE]
+    ) -> ControlPlaneConfigurationModule: ...
+    @overload
+    def get_module(
+        self, name: ConfigurationModuleName
+    ) -> AnyConfigurationModule[L]: ...
+
+    def get_module(self, name: ConfigurationModuleName) -> AnyConfigurationModule[L]:
+        return self._get_module(name)
+
+    def has_module(self, name: ConfigurationModuleName) -> bool:
+        if self.modules is MISSING:
+            return False
+        return any(m.name == name for m in self.modules)
+
+    @property
+    def device_settings(self) -> DeviceSettingsConfigurationModule:
+        m = self._get_module(ConfigurationModuleName.DEVICE_SETTINGS)
+        assert isinstance(m, DeviceSettingsConfigurationModule)
+        return m
+
+    @property
+    def qos(self) -> QosConfigurationModule:
+        m = self._get_module(ConfigurationModuleName.QOS)
+        assert isinstance(m, QosConfigurationModule)
+        return m
+
+    @property
+    def firewall(self) -> FirewallConfigurationModule[L]:
+        m = self._get_module(ConfigurationModuleName.FIREWALL)
+        assert isinstance(m, FirewallConfigurationModule)
+        return m
+
+    @property
+    def wan(self) -> WanConfigurationModule:
+        m = self._get_module(ConfigurationModuleName.WAN)
+        assert isinstance(m, WanConfigurationModule)
+        return m
+
+    @property
+    def control_plane(self) -> ControlPlaneConfigurationModule:
+        m = self._get_module(ConfigurationModuleName.CONTROL_PLANE)
+        assert isinstance(m, ControlPlaneConfigurationModule)
+        return m
+
+
+class EdgeConfiguration(ConfigurationBase[Edge]):
+    _config_context: ConfigContext | None = PrivateAttr(default=ConfigContext.EDGE)
+
+
+class EnterpriseConfigurationProfile(ConfigurationBase[Profile]):
+    _config_context: ConfigContext | None = PrivateAttr(default=ConfigContext.PROFILE)
 
 
 EMPTY_EDGE_MODULE_DATA: dict[ConfigurationModuleName, dict[str, Any]] = {
@@ -508,7 +540,7 @@ EMPTY_EDGE_MODULE_DATA: dict[ConfigurationModuleName, dict[str, Any]] = {
 
 def new_edge_module(
     name: ConfigurationModuleName, configuration_id: int
-) -> FirewallConfigurationModule | QosConfigurationModule:
+) -> FirewallConfigurationModule[Edge] | QosConfigurationModule:
     """Build an empty edge-layer module that does not exist on the VCO yet."""
     if name not in EMPTY_EDGE_MODULE_DATA:
         raise ValueError(
@@ -530,23 +562,12 @@ def new_edge_module(
         "data": copy.deepcopy(EMPTY_EDGE_MODULE_DATA[name]),
     }
     module = (
-        FirewallConfigurationModule
+        FirewallConfigurationModule[Edge]
         if name is ConfigurationModuleName.FIREWALL
         else QosConfigurationModule
     ).model_validate(row)
     module._is_new = True  # pyright: ignore[reportPrivateUsage]
     return module
-
-
-# Rebuild models that forward-reference AnyConfigurationModule.  These classes
-# are defined above before AnyConfigurationModule exists; Pydantic cannot
-# resolve the forward reference at class-creation time, leaving a MockValSer
-# placeholder instead of a real SchemaSerializer.  Rebuilding here (after the
-# type alias exists) replaces the placeholder so that both model_dump_json()
-# *and* pydantic_core.to_json() work correctly.
-ConfigurationBase.model_rebuild(force=True)
-EdgeConfiguration.model_rebuild(force=True)
-EnterpriseConfigurationProfile.model_rebuild(force=True)
 
 
 class OperatorConfigurationModule(VcoModel):
@@ -604,7 +625,12 @@ class InsertConfigurationModuleResult(VcoModel):
 
 
 def _module_names() -> frozenset[str]:
-    """The ``name`` of each module class of ``AnyConfigurationModule``."""
+    """The ``name`` of each module class of ``AnyConfigurationModule``, whatever the layer.
+
+    The alias stays a plain union with a layer variable in its firewall member
+    (``FirewallConfigurationModule[X]``), and that class has its ``name`` as
+    any other.
+    """
     union = cast(object, get_args(cast(object, AnyConfigurationModule.__value__))[0])
     modules = cast(tuple[type[ConfigurationModuleBase], ...], get_args(union))
     return frozenset(
@@ -634,29 +660,36 @@ def _module_or_count(value: object) -> str:
     return "count"
 
 
-UpdateConfigurationModuleResult = RootModel[
-    Annotated[
-        Annotated[AnyConfigurationModule, Tag("module")]
-        | Annotated[RowsModifiedConfirmation, Tag("count")],
-        Discriminator(_module_or_count),
-    ]
-]
-"""An update's answer when it asks for data: the module row as stored.
+class UpdateConfigurationModuleResult(
+    RootModel[
+        Annotated[
+            Annotated[AnyConfigurationModule[L], Tag("module")]
+            | Annotated[RowsModifiedConfirmation, Tag("count")],
+            Discriminator(_module_or_count),
+        ]
+    ],
+    Generic[L],  # noqa: UP046 (one shared constrained L, as a TypeVar)
+):
+    """An update's answer when it asks for data: the module row as stored, of the layer ``L``.
 
-A VCO that ignores ``returnData`` answers with a row count.
-"""
+    A VCO that ignores ``returnData`` answers with a row count.
+    """
 
-InsertedConfigurationModule = RootModel[
-    Annotated[
-        Annotated[AnyConfigurationModule, Tag("module")]
-        | Annotated[InsertConfigurationModuleResult, Tag("count")],
-        Discriminator(_module_or_count),
-    ]
-]
-"""An insert's answer when it asks for data: the module row as stored.
 
-A VCO that ignores ``returnData`` answers with the new ID and a row count.
-"""
+class InsertedConfigurationModule(
+    RootModel[
+        Annotated[
+            Annotated[AnyConfigurationModule[L], Tag("module")]
+            | Annotated[InsertConfigurationModuleResult, Tag("count")],
+            Discriminator(_module_or_count),
+        ]
+    ],
+    Generic[L],  # noqa: UP046 (one shared constrained L, as a TypeVar)
+):
+    """An insert's answer when it asks for data: the module row as stored, of the layer ``L``.
+
+    A VCO that ignores ``returnData`` answers with the new ID and a row count.
+    """
 
 
 class InsertConfigurationModuleBase(VcoModel):
@@ -783,6 +816,7 @@ class DeleteConfiguration(VcoModel):
 __all__ = [
     "EMPTY_EDGE_MODULE_DATA",
     "AnyConfigurationModule",
+    "AnyStoredModule",
     "Configuration",
     "ConfigurationBase",
     "ConfigurationModuleBase",

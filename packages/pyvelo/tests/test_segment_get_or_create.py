@@ -11,6 +11,7 @@ from pyvelo.client.models.configuration.common import (
     profile_segment_name,
 )
 from pyvelo.core import ConfigContext
+from pyvelo.core.layers import Edge
 
 from ._type_support import require_present
 
@@ -29,7 +30,9 @@ PROFILE = {
     "segments": [
         {
             "segment": desc(0, "Global Segment"),
-            "outbound": [{"name": "p"}],
+            "outbound": [
+                {"name": "p", "match": {}, "action": {"allow_or_deny": "allow"}}
+            ],
             "rules": [{"name": "p"}],
         },
         {"segment": desc(2, "Guest"), "outbound": [], "rules": []},
@@ -37,10 +40,14 @@ PROFILE = {
 }
 
 
-def edge_fw() -> FirewallData:
-    return FirewallData.model_validate(
-        {"segments": [{"segment": desc(0, "Global Segment"), "outbound": []}]}
-    ).for_edge()
+def edge_fw() -> FirewallData[Edge]:
+    return (
+        FirewallData[Edge]
+        .model_validate(
+            {"segments": [{"segment": desc(0, "Global Segment"), "outbound": []}]}
+        )
+        .for_edge()
+    )
 
 
 def test_existing_segment_is_returned_without_binding():
@@ -67,7 +74,7 @@ def test_placeholder_is_created_once_and_inherits_everything():
 
 
 def test_same_id_under_another_name_is_reused():
-    fw = FirewallData.model_validate(
+    fw = FirewallData[Edge].model_validate(
         {"segments": [{"segment": desc(2, "Old Guest Name"), "outbound": []}]}
     )
     fw.bind_profile(PROFILE)
@@ -160,7 +167,9 @@ def test_a_placeholder_is_empty_in_each_module_and_has_what_the_orchestrator_nee
     profile_segments = [
         {
             "segment": desc(2, "Guest"),
-            "outbound": [{"name": "p"}],
+            "outbound": [
+                {"name": "p", "match": {}, "action": {"allow_or_deny": "allow"}}
+            ],
             "rules": [{"name": "p"}],
             "routes": {"static": [{"destination": "192.0.2.0"}], "staticV6": []},
         }

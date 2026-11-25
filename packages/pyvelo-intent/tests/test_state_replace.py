@@ -3,7 +3,7 @@
 import copy
 import gc
 import weakref
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from pydantic import MISSING
@@ -19,6 +19,7 @@ from pyvelo.client.schemas.configuration import (
 )
 from pyvelo.config.resolver import ResolverContext
 from pyvelo.core import VcoModel
+from pyvelo.core.layers import Edge
 from pyvelo.core.rebase import Key, Path
 from pyvelo.testing import as_stored, make_module_json
 from pyvelo_intent.config.state import ConfigPlan, ConfigState
@@ -129,10 +130,11 @@ def make_state(
 
 def replace_firewall(
     state: ConfigState, data: dict[str, Any] | None = None
-) -> tuple[FirewallConfigurationModule, FirewallConfigurationModule]:
+) -> tuple[FirewallConfigurationModule[Edge], FirewallConfigurationModule[Edge]]:
     """Replace the edge firewall module by it as stored with *data* (EDGE_FW by default)."""
     old = state.module("firewall")
     assert isinstance(old, FirewallConfigurationModule)
+    old = cast(FirewallConfigurationModule[Edge], old)  # the state's edge layer
     new = as_stored(old, copy.deepcopy(EDGE_FW) if data is None else data)
     state.replace_module(old, new)
     return old, new
@@ -154,7 +156,7 @@ def outbound_path(name: str) -> Path:
 
 def test_replace_puts_the_stored_module_in_the_state():
     state = make_state()
-    state.edge.firewall.firewall_enabled = False
+    state.edge.firewall.firewall_enabled.set_local(False)
 
     _, new = replace_firewall(
         state, {**copy.deepcopy(EDGE_FW), "firewall_enabled": False}
@@ -180,7 +182,7 @@ def test_replace_binds_the_new_module_to_the_profile():
 
 def test_replace_leaves_the_other_modules_edits():
     state = make_state([fw_row(), qos_row()])
-    state.edge.firewall.firewall_enabled = False
+    state.edge.firewall.firewall_enabled.set_local(False)
     state.edge.qos.service_rate_limit = ServiceRateLimit(
         enabled=True, input_type="percent", value=50
     )
@@ -199,7 +201,9 @@ def test_objects_taken_before_are_detached():
 
     old, new = replace_firewall(state)
 
-    with pytest.raises(DetachedObjectError, match="FirewallSegment.firewall_logging"):
+    with pytest.raises(
+        DetachedObjectError, match=r"FirewallSegment\[Edge\]\.firewall_logging"
+    ):
         segment.firewall_logging_enabled = True
     assert old.is_detached and old.data.is_detached and segment.is_detached
     assert new.is_detached is False
@@ -276,7 +280,7 @@ def test_an_object_moved_by_an_in_place_edit_is_not_reported_again():
     state = make_state()
     segment = state.edge.firewall.segment("Global Segment")
     old, _ = replace_firewall(state)
-    guest = FirewallSegment.model_validate({"segment": desc(2, "Guest")})
+    guest = FirewallSegment[Edge].model_validate({"segment": desc(2, "Guest")})
     old.data.segments.insert(0, guest)  # the segment held is at position 1 now
     with pytest.raises(DetachedObjectError) as exc:
         _ = state.plan()

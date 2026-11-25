@@ -18,6 +18,7 @@ from pyvelo.client.schemas.configuration import (
     UpdateConfigurationModule,
 )
 from pyvelo.core import ConfigContext
+from pyvelo.core.layers import Edge
 from pyvelo.testing import make_module_json
 from pyvelo.testing.module_store import (
     ModuleStore,
@@ -297,9 +298,13 @@ async def test_as_an_httpx_handler(mock_vco_client: MockVcoClientFactory):
 
 
 def test_store_of_holds_the_rows_and_their_configurations():
-    m1 = FirewallConfigurationModule.model_validate(
-        make_module_json("firewall", RAW, module_id=1, configuration_id=10)
-    ).for_edge()
+    m1 = (
+        FirewallConfigurationModule[Edge]
+        .model_validate(
+            make_module_json("firewall", RAW, module_id=1, configuration_id=10)
+        )
+        .for_edge()
+    )
     m2 = QosConfigurationModule.model_validate(
         make_module_json(
             "QOS", {"segments": []}, module_id=2, configuration_id=20, refs=REFS
@@ -318,19 +323,23 @@ def test_store_of_holds_the_rows_and_their_configurations():
 
 
 def test_as_stored_is_the_module_validated_from_json():
-    module = FirewallConfigurationModule.model_validate(
-        make_module_json("firewall", copy.deepcopy(RAW), module_id=1, version="v1")
-    ).for_edge()
+    module = (
+        FirewallConfigurationModule[Edge]
+        .model_validate(
+            make_module_json("firewall", copy.deepcopy(RAW), module_id=1, version="v1")
+        )
+        .for_edge()
+    )
     data: dict[str, Any] = {**EDITED, "vendorKey": 1}
     stored = as_stored(module, data)
-    assert type(stored) is FirewallConfigurationModule
+    assert type(stored) is FirewallConfigurationModule[Edge]
     assert stored.config_context is ConfigContext.EDGE
     assert stored.data.config_context is ConfigContext.EDGE
     assert stored.raw_mode == "json"
     assert stored.raw_data == data
     assert stored.version == "v2"
     assert (module.version, module.raw_data) == ("v1", RAW)
-    assert module.data.firewall_enabled is True
+    assert module.data.firewall_enabled.local is True
 
 
 def test_a_store_of_one_enterprise_refuses_a_request_that_does_not_name_it():
@@ -835,3 +844,55 @@ def test_get_enterprise_services_lists_the_network_service_objects():
             "enterpriseId": 7,
         }
     ]
+
+
+COMPOSED = "edge/getEdgeConfigurationModules"
+
+
+def test_the_store_serves_the_modules_it_composes_for_an_edge():
+    store = ModuleStore()
+    store.composed[42] = {"firewall": copy.deepcopy(RULES), "QOS": None}
+    answer = cast(dict[str, Any], store.handle(COMPOSED, {"edgeId": 42}))
+    assert set(answer) == {"firewall", "QOS"}
+    assert answer["QOS"] is None  # a module that does not compose is null
+    assert answer["firewall"]["data"] == RULES
+    assert {"version", "schemaVersion", "type"} <= set(answer["firewall"])
+    assert "refs" not in answer["firewall"]
+
+    only = cast(
+        dict[str, Any], store.handle(COMPOSED, {"edgeId": 42, "modules": ["QOS"]})
+    )
+    assert set(only) == {"QOS"}
+    answer["firewall"]["data"]["segments"].clear()
+    assert store.composed[42]["firewall"] == RULES  # the answer is a copy
+
+
+def test_an_edge_with_no_composed_modules_is_unknown():
+    store = ModuleStore()
+    with pytest.raises(RpcError) as unknown:
+        _ = store.handle(COMPOSED, {"edgeId": 7})
+    assert unknown.value.code == -32003
+    with pytest.raises(RpcError) as missing:
+        _ = store.handle(COMPOSED, {})
+    assert "edgeId" in str(missing.value.data)
+
+
+async def test_the_client_reads_the_composed_modules_and_the_store_records_the_request(
+    mock_vco_client: MockVcoClientFactory,
+):
+    from pyvelo.client.enums.configuration import ConfigurationModuleName
+    from pyvelo.client.schemas.edge import GetEdgeConfigurationModules
+
+    store = ModuleStore()
+    store.composed[42] = {"firewall": copy.deepcopy(RULES)}
+    client = await mock_vco_client(store)
+    result = await client.get_edge_configuration_modules(
+        GetEdgeConfigurationModules(
+            edge_id=42, modules=[ConfigurationModuleName.FIREWALL], encrypt_keys=True
+        )
+    )
+    assert result.firewall is not None and result.firewall is not MISSING
+    assert result.firewall.raw_data == RULES
+    ((method, params),) = store.requests
+    assert method == COMPOSED
+    assert params == {"edgeId": 42, "modules": ["firewall"], "encryptKeys": True}
