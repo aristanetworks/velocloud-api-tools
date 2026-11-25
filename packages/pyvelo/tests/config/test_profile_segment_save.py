@@ -1,4 +1,6 @@
-"""The save of a segment assigned to a profile: three writes, device settings first, on a ``ModuleStore``.
+"""The save of a segment assigned to a profile, on a ``ModuleStore``.
+
+It is three writes, device settings first.
 
 Each state is built by ``profile_state`` and written through
 ``module_store_pipeline``. A change another writer makes after the device
@@ -11,7 +13,7 @@ from collections.abc import Callable
 from typing import Any
 
 import pytest
-from profile_state import (  # pyright: ignore[reportImplicitRelativeImport]
+from profile_state import (
     module_store_pipeline,
     profile_state,
 )
@@ -45,7 +47,10 @@ GUEST_ID = GUEST[0]
 
 
 async def global_only(*, with_defaults: bool = True) -> ConfigState:
-    """A profile with the Global Segment in each module; its QoS ``defaults`` are the template's unless *with_defaults* is false."""
+    """A profile with the Global Segment in each module.
+
+    Its QoS ``defaults`` are the template's unless *with_defaults* is false.
+    """
     entry = qos_entry(GLOBAL) if with_defaults else qos_entry(GLOBAL, defaults=MISSING)
     return await profile_state([ds_entry(GLOBAL)], [entry], [firewall_entry(GLOBAL)])
 
@@ -85,7 +90,9 @@ def planned_guest(state: ConfigState, module: str) -> dict[str, Any]:
 def after_device_settings(
     store: ModuleStore, *writes: tuple[int, Callable[[dict[str, Any]], None]]
 ) -> dict[int, str]:
-    """Have *writes* (module ID, edit) made once, by another writer, when the device settings row is stored.
+    """Have *writes* (module ID, edit) made once, by another writer.
+
+    They are made when the device settings row is stored.
 
     Returns the versions the modules have after them, by module ID, once made.
     """
@@ -105,7 +112,7 @@ def after_device_settings(
     return versions
 
 
-def a_new_version(row: dict[str, Any]) -> None:
+def a_new_version(_row: dict[str, Any]) -> None:
     """Another writer's change that leaves the data as it is."""
 
 
@@ -127,7 +134,7 @@ def guest_stripped(new: dict[str, Any], old: dict[str, Any] | None) -> None:
         ]
 
 
-async def test_assign_and_save_sends_three_updates_device_settings_first():
+async def test_assign_and_save_sends_three_updates_device_settings_first() -> None:
     state = await global_only()
     pipeline, store = module_store_pipeline(state)
     _ = await pipeline.assign_segment(state, "Guest")
@@ -156,14 +163,15 @@ async def test_assign_and_save_sends_three_updates_device_settings_first():
     ]
 
 
-async def test_a_rebased_module_keeps_its_added_segment_and_repairs():
+async def test_a_rebased_module_keeps_its_added_segment_and_repairs() -> None:
     state = await global_only(with_defaults=False)
     pipeline, store = module_store_pipeline(state)
     _ = await pipeline.assign_segment(state, "Guest")
     plan = state.plan()
     (qos_plan,) = [m for m in plan.modules if m.name == QOS]
     (repair,) = qos_plan.missing_defaults
-    assert repair.repaired and len(repair.names) == 4
+    assert repair.repaired
+    assert len(repair.names) == 4
     planned = copy.deepcopy(qos_plan.data["segments"])
     versions = after_device_settings(
         store, (QOS_ID, rate_enabled), (FW_ID, a_new_version)
@@ -173,7 +181,8 @@ async def test_a_rebased_module_keeps_its_added_segment_and_repairs():
     result = await pipeline.save(state)
 
     assert [str(m) for m in result.modules_updated] == [DS, QOS, FIREWALL]
-    assert versions[QOS_ID] != read[QOS_ID] and versions[FW_ID] != read[FW_ID]
+    assert versions[QOS_ID] != read[QOS_ID]
+    assert versions[FW_ID] != read[FW_ID]
     _, qos_sent, fw_sent = updates(store)
     assert (qos_sent["version"], fw_sent["version"]) == (
         versions[QOS_ID],
@@ -190,7 +199,7 @@ async def test_a_rebased_module_keeps_its_added_segment_and_repairs():
     assert state.plan().changed == ()
 
 
-async def test_a_fresh_module_that_already_has_the_segment_is_a_conflict():
+async def test_a_fresh_module_that_already_has_the_segment_is_a_conflict() -> None:
     state = await global_only()
     pipeline, store = module_store_pipeline(state)
     _ = await pipeline.assign_segment(state, "Guest")
@@ -222,9 +231,9 @@ LOST_SEGMENT = [
 
 
 @pytest.mark.parametrize(("with_defaults", "expected"), LOST_SEGMENT)
-async def test_a_qos_write_that_lost_the_segment_leaves_a_plan_that_raises_segment_set_error(
-    with_defaults: bool, expected: type[ModuleWriteError]
-):
+async def test_a_qos_write_that_lost_the_segment_leaves_a_plan_that_raises_segment_set_error(  # noqa: E501 (a test's name)
+    *, with_defaults: bool, expected: type[ModuleWriteError]
+) -> None:
     state = await global_only(with_defaults=with_defaults)
     pipeline, store = module_store_pipeline(state)
     _ = await pipeline.assign_segment(state, "Guest")
@@ -243,8 +252,8 @@ async def test_a_qos_write_that_lost_the_segment_leaves_a_plan_that_raises_segme
 
 @pytest.mark.parametrize(("with_defaults", "expected"), LOST_SEGMENT)
 async def test_the_redo_of_a_lost_added_segment_assigns_it_again(
-    with_defaults: bool, expected: type[ModuleWriteError]
-):
+    *, with_defaults: bool, expected: type[ModuleWriteError]
+) -> None:
     state = await global_only(with_defaults=with_defaults)
     pipeline, store = module_store_pipeline(state)
     _ = await pipeline.apply(

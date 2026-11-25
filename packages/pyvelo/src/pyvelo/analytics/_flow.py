@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from pydantic import MISSING
 
@@ -40,10 +40,10 @@ from pyvelo.client.schemas.metrics import (
     GetEdgeSegmentMetrics,
     GetEdgeSegmentSeries,
 )
-from pyvelo.core import ApiInterval
 
-if __builtins__:  # type: ignore[truthy-bool]
+if TYPE_CHECKING:
     from pyvelo.client.protocol import VcoClientProtocol
+    from pyvelo.core import ApiInterval
 
 type _FlowMetricsItems = (
     Sequence[EdgeAppMetricsItem]
@@ -102,7 +102,7 @@ def _convert_sort(
     return enum_cls(sort.value)
 
 
-async def get_edge_flow_metrics(
+async def get_edge_flow_metrics(  # noqa: PLR0913 (existing: split it when it next changes)
     client: VcoClientProtocol,
     edge_id: int,
     interval: ApiInterval,
@@ -132,7 +132,7 @@ async def get_edge_flow_metrics(
         return MetricFrame(columns=["name", *_METRICS_FIELDS], rows=[])
 
 
-async def _get_edge_flow_metrics(
+async def _get_edge_flow_metrics(  # noqa: PLR0913 (existing: split it when it next changes)
     client: VcoClientProtocol,
     edge_id: int,
     interval: ApiInterval,
@@ -149,7 +149,7 @@ async def _get_edge_flow_metrics(
     converted_sort = _convert_sort(group_by, sort)
     limit_val = limit if limit is not None else MISSING
     eid = enterprise_id if enterprise_id is not None else MISSING
-    filters_val = filters if filters else MISSING
+    filters_val = filters or MISSING
 
     match group_by:
         case FlowGroupBy.APP:
@@ -239,10 +239,10 @@ async def _get_edge_flow_metrics(
             result = await client.get_edge_app_link_metrics(request)
             return _items_to_frame(result)
 
-    raise ValueError(f"Unknown group_by: {group_by}")
+    raise ValueError(f"Unknown group_by: {group_by}")  # pyright: ignore[reportUnreachable]  # a caller may pass a value outside the enum
 
 
-async def get_edge_flow_series(
+async def get_edge_flow_series(  # noqa: PLR0913 (existing: split it when it next changes)
     client: VcoClientProtocol,
     edge_id: int,
     interval: ApiInterval,
@@ -274,7 +274,7 @@ async def get_edge_flow_series(
         return MetricFrame(columns=["name", *_METRICS_FIELDS], rows=[])
 
 
-async def _get_edge_flow_series(
+async def _get_edge_flow_series(  # noqa: PLR0913 (existing: split it when it next changes)
     client: VcoClientProtocol,
     edge_id: int,
     interval: ApiInterval,
@@ -293,7 +293,7 @@ async def _get_edge_flow_series(
     limit_val = limit if limit is not None else MISSING
     max_samples_val = max_samples if max_samples is not None else MISSING
     eid = enterprise_id if enterprise_id is not None else MISSING
-    filters_val = filters if filters else MISSING
+    filters_val = filters or MISSING
 
     match group_by:
         case FlowGroupBy.APP:
@@ -388,7 +388,7 @@ async def _get_edge_flow_series(
             result = await client.get_edge_app_link_series(request)
             return denormalize_timeseries(list(result), "name")
 
-    raise ValueError(f"Unknown group_by: {group_by}")
+    raise ValueError(f"Unknown group_by: {group_by}")  # pyright: ignore[reportUnreachable]  # a caller may pass a value outside the enum
 
 
 def _items_to_frame(items: _FlowMetricsItems) -> MetricFrame:

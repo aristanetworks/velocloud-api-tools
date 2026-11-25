@@ -1,5 +1,12 @@
+"""A segment of ``deviceSettings``: its routing, VPN and service settings.
+
+``DeviceSegment`` holds a segment's BGP, OSPF, BFD, multicast, VPN hubs and
+Edge-to-Edge, handoff Gateways, Edge Direct, ECMP, NetFlow, syslog, DNS and cloud
+security settings.
+"""
+
 import uuid
-from typing import Annotated, Any, Literal, Self
+from typing import Annotated, Any, ClassVar, Literal, Self
 
 from pydantic import (
     MISSING,
@@ -13,6 +20,7 @@ from pydantic import (
     model_validator,
 )
 
+from pyvelo.client.models.configuration.common import SegmentMetadata
 from pyvelo.core import (
     Alias,
     ConfigContext,
@@ -40,7 +48,6 @@ from pyvelo.core.fields import (
 )
 from pyvelo.core.identity import HubIdentity, NetworkServiceIdentity, SegmentIdentity
 
-from ..common import SegmentMetadata
 from .common import (
     AdvertiseDefaultRoutes,
     AdvertiseDefaultRoutesMethod,
@@ -537,7 +544,7 @@ NsdRoute = Annotated[
 
 
 class SegmentRoutes(VcoModel):
-    model_config = ConfigDict(extra="allow")
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="allow")
 
     icmp_probes: Annotated[list[ICMPProbe], KeyField("name", alt="logical_id")] = Field(
         default_factory=list
@@ -599,7 +606,7 @@ class NatRule(VcoModel):
 
     @field_validator("dest_cidr_prefix", "src_cidr_prefix", mode="before")
     @classmethod
-    def empty_str_to_none(cls, v):
+    def empty_str_to_none(cls, v: object) -> object:
         return None if v == "" else v
 
 
@@ -712,7 +719,7 @@ class SegmentSyslog(VcoModel):
 class DnsProvider(VcoModel):
     # Effective configurations may expand a provider inline rather than return
     # its configuration ref. Preserve those VCO-specific fields for callers.
-    model_config = ConfigDict(extra="allow")
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="allow")
 
     ref: DeviceSettingsRef | MISSING = MISSING
 

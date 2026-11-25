@@ -1,4 +1,6 @@
-"""The data fields that own ref rows: finding them, and filling the ``RefOnly`` ones from the refs read.
+"""The data fields that own ref rows.
+
+Finding them, and filling the ``RefOnly`` ones from the refs read.
 
 A ref row goes with an identity the data holds (``OwnsRef``) or stands for a
 value only the row says (``RefOnly``). This module walks a module's
@@ -37,19 +39,24 @@ class RefOwner:
     """A field that holds an identity a ref row goes with."""
 
     name: str
-    """The ref name: the stub's ``ref``, else the marker's default, else the ``OwnsRef`` name."""
+    """The ref name: the stub's ``ref``, else the marker's default, else the ``OwnsRef``
+    name."""
     marker: OwnsRef | RefOnly
     identity_type: type
     value: object
-    """The identity: a ``uuid.UUID`` (text that parses as one is made one) or an ``int``."""
+    """The identity: a ``uuid.UUID`` (text that parses as one is made one) or an
+    ``int``."""
     segment_id: int | None
-    """The ``segmentId`` of the segment the owner sits in; for a ``RefOnly`` owner and an ``OwnsRef`` with ``per_segment``, else ``None``."""
+    """The ``segmentId`` of the segment the owner sits in; for a ``RefOnly`` owner and
+    an ``OwnsRef`` with ``per_segment``, else ``None``."""
     segment_name: str | None
     """That segment's name, under the same rule."""
     path: Path
-    """The field's path in python names: ``segments["Global Segment"].dns.primary_provider.service``."""
+    """The field's path in python names:
+    ``segments["Global Segment"].dns.primary_provider.service``."""
     holder: VcoModel | None = field(default=None, compare=False, repr=False)
-    """The model that holds the field, for a message that names more than the identity (the hub of a backhaul entry)."""
+    """The model that holds the field, for a message that names more than the identity
+    (the hub of a backhaul entry)."""
 
 
 @dataclass(frozen=True)
@@ -99,7 +106,10 @@ def _segment_of(item: object) -> SegmentRef | None:
 
 
 def _model_classes(annotation: object) -> Iterator[type[VcoModel]]:
-    """The model classes a field type can hold, through ``Annotated``, unions, ``list``, ``dict`` and ``tuple``."""
+    """The model classes a field type can hold.
+
+    Found through ``Annotated``, unions, ``list``, ``dict`` and ``tuple``.
+    """
     if isinstance(annotation, TypeAliasType):
         yield from _model_classes(annotation.__value__)
     elif isinstance(annotation, type):
@@ -199,7 +209,10 @@ def _ref_name(site: _Site, fallback: str | None) -> str | None:
 
 
 def _identity(value: object, path: str | None) -> object | None:
-    """The identity *value* holds (at the dotted *path* below it), or ``None`` when it holds none."""
+    """The identity *value* holds, or ``None`` when it holds none.
+
+    The identity is at the dotted *path* below it.
+    """
     if path is not None:
         for step in path.split("."):
             if value is None or value is MISSING:
@@ -240,7 +253,7 @@ def ref_owners(data: VcoModel, level: ConfigContext | None) -> tuple[RefOwner, .
             if resolvable is None:
                 raise TypeError(
                     f"the RefOnly field {site.path} has no Resolvable; "
-                    + "declare the identity type that gives the object_id of a new row"
+                    "declare the identity type that gives the object_id of a new row"
                 )
             identity_type = resolvable.identity_type
             name = _ref_name(site, ref_only.default)
@@ -266,7 +279,9 @@ def ref_owners(data: VcoModel, level: ConfigContext | None) -> tuple[RefOwner, .
 
 
 def ref_only_values(data: VcoModel) -> dict[Path, object]:
-    """The value of every ``RefOnly`` field the walk reaches, by its path in python names.
+    """The value of every ``RefOnly`` field the walk reaches.
+
+    Each is keyed by its path in python names.
 
     ``MISSING`` (the refs were not read) and ``None`` (no row) are values here.
     A value given as UUID text is the ``UUID``.
@@ -283,7 +298,10 @@ def ref_only_values(data: VcoModel) -> dict[Path, object]:
 
 
 def rows_named(raw_refs: object, name: str) -> list[dict[object, object]]:
-    """The rows of ref *name* in *raw_refs*: a bare object or a list, each as a ``dict``."""
+    """The rows of ref *name* in *raw_refs*, each as a ``dict``.
+
+    The ref holds a bare object or a list.
+    """
     if not is_dict(raw_refs):
         return []
     held = raw_refs.get(name)
@@ -293,7 +311,10 @@ def rows_named(raw_refs: object, name: str) -> list[dict[object, object]]:
 
 
 def segment_object_ids(raw_refs: object) -> dict[int, int]:
-    """``data.segmentId`` to ``enterpriseObjectId`` of the ``deviceSettings:segment`` rows."""
+    """``data.segmentId`` to ``enterpriseObjectId``.
+
+    Both are of the ``deviceSettings:segment`` rows.
+    """
     found: dict[int, int] = {}
     for row in rows_named(raw_refs, SEGMENT_REF):
         data = row.get("data")
@@ -319,7 +340,9 @@ def row_is_of_segment(
 
 
 def fill_ref_only(data: VcoModel, raw_refs: object) -> None:
-    """Set each ``RefOnly`` field of *data* from the row of its name that is of its segment.
+    """Set each ``RefOnly`` field of *data* from the row of its name.
+
+    The row is the one of the field's segment.
 
     The row's segment is found by its ``segmentObjectId`` among the module's
     own ``deviceSettings:segment`` rows, and failing that by its

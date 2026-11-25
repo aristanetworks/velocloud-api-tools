@@ -1,6 +1,7 @@
+"""The client's ``license/`` method: the Edge licenses of an enterprise."""
+
 from __future__ import annotations
 
-from collections.abc import Sequence
 from typing import TYPE_CHECKING, Protocol
 
 from pyvelo.client.operations._tagging import ADMIN, EDGE, domain_tag
@@ -10,6 +11,8 @@ from pyvelo.client.schemas.license import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from pyvelo.client._client_protocol import VcoClientBaseProtocol
 
 

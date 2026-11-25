@@ -1,4 +1,7 @@
-"""Tests for ``Owned``: the encodings, the ownership intents, coupled groups and the binding of an edge layer to its profile."""
+"""Tests for ``Owned``: the encodings, the ownership intents and coupled groups.
+
+And the binding of an edge layer to its profile.
+"""
 
 import copy
 from typing import Annotated, Any, ClassVar
@@ -31,7 +34,7 @@ from pyvelo.core import (
     kind_default,
 )
 from pyvelo.core.layers import L, inner_adapter
-from pyvelo.core.owned import unflagged_in_use
+from pyvelo.core.owned import clear_server_owned, unflagged_in_use
 
 # Fields that hold their plain default in every dump and say nothing about ownership.
 _PLAIN = {"legacy", "edge_note", "profile_note"}
@@ -65,9 +68,12 @@ def _bound(
 
 def test_by_presence_counts_false_zero_and_empty_as_local() -> None:
     e = _edge(enabled=False, level=0, settings={})
-    assert e.enabled.is_local and e.enabled.local is False
-    assert e.level.is_local and e.level.local == 0
-    assert e.settings.is_local and e.settings.local == Settings()
+    assert e.enabled.is_local
+    assert e.enabled.local is False
+    assert e.level.is_local
+    assert e.level.local == 0
+    assert e.settings.is_local
+    assert e.settings.local == Settings()
     for name in ("enabled", "level", "settings"):
         assert getattr(_edge(**{name: None}), name).is_local is False
         assert getattr(_edge(), name).is_local is False
@@ -173,7 +179,7 @@ def test_set_local_applies_the_value_validators_of_the_field() -> None:
     [("pair_on", "x", True), ("level", "x", True), ("level", True, False)],
 )
 def test_set_local_and_merge_patch_refuse_a_value_alike(
-    field: str, bad: object, cause: bool
+    field: str, bad: object, *, cause: bool
 ) -> None:
     edge = _local_pair()
     profile = Mod[Profile].model_validate(mod_json())
@@ -288,7 +294,7 @@ def test_by_flag_localize_forces_the_flag() -> None:
     assert _dump(e)["affinity"] == {"override": True, "affinity": ["a"]}
 
 
-def test_localize_keeps_a_present_object_of_a_presence_wins_field_with_its_flag_off() -> (
+def test_localize_keeps_a_present_object_of_a_presence_wins_field_with_its_flag_off() -> (  # noqa: E501 (a test's name)
     None
 ):
     # The backend runs with the object the edge stores, so localizing it keeps
@@ -307,7 +313,7 @@ def test_localize_keeps_a_present_object_of_a_presence_wins_field_with_its_flag_
     assert p.segments[0].mapping.value == 9
 
 
-def test_localize_of_a_presence_wins_object_with_its_flag_absent_sets_only_the_flag() -> (
+def test_localize_of_a_presence_wins_object_with_its_flag_absent_sets_only_the_flag() -> (  # noqa: E501 (a test's name)
     None
 ):
     e, _ = _bound(
@@ -333,7 +339,7 @@ def test_localize_of_a_presence_wins_field_with_nothing_stored_copies_the_profil
     assert e.segments[0].mapping.localize() == Flagged(override=True, value=9)
 
 
-def test_localize_of_a_by_flag_field_without_presence_wins_still_copies_the_profile() -> (
+def test_localize_of_a_by_flag_field_without_presence_wins_still_copies_the_profile() -> (  # noqa: E501 (a test's name)
     None
 ):
     e, _ = _bound(
@@ -455,7 +461,7 @@ def test_a_group_checks_its_declaration() -> None:
 
     assert declare()
 
-    with pytest.raises(TypeError, match="anchor.*nope"):
+    with pytest.raises(TypeError, match=r"anchor.*nope"):
         declare(anchor="nope")
 
     class Short(VcoModel):
@@ -579,12 +585,12 @@ def test_intents_on_a_detached_owner_raise() -> None:
     e.mark_detached()
     for call in (
         lambda: e.level.set_local(2),
-        lambda: e.level.inherit(),
-        lambda: e.level.localize(),
-        lambda: e.settings.localize(),
+        e.level.inherit,
+        e.level.localize,
+        e.settings.localize,
         lambda: e.segments[0].mapping.set_local(Flagged()),
-        lambda: e.pair.inherit(),
-        lambda: e.pair.localize(),
+        e.pair.inherit,
+        e.pair.localize,
         lambda: e.pair.set_local(
             PairLocal(pair_a=Settings(), pair_b=Settings(), pair_on=True)
         ),
@@ -648,7 +654,7 @@ class _IdMod(Layered[L]):
     )
 
 
-def test_localize_clears_server_owned_fields_at_every_depth():
+def test_localize_clears_server_owned_fields_at_every_depth() -> None:
     profile = _IdMod[Profile].model_validate(
         {
             "segments": [],
@@ -677,9 +683,7 @@ def test_localize_clears_server_owned_fields_at_every_depth():
     assert profile.holder.items[0].counter == 9
 
 
-def test_clear_server_owned_changes_the_model_in_place():
-    from pyvelo.core.owned import clear_server_owned
-
+def test_clear_server_owned_changes_the_model_in_place() -> None:
     item = _Item(name="a", rule_id="1")
     assert clear_server_owned(item) is item
     assert item.rule_id is MISSING
@@ -691,7 +695,8 @@ class _Note(VcoModel):
 
 
 class _Kinded(Layered[L]):
-    # The default is not MISSING, so a field cleared to its default is told from one cleared to MISSING.
+    # The default is not MISSING, so a field cleared to its default is told from one
+    # cleared to MISSING.
     rid: Annotated[Unconverted[str | MISSING | None], ServerOwned()] = kind_default(
         None
     )
@@ -703,8 +708,6 @@ class _Kinded(Layered[L]):
 
 
 def test_clear_server_owned_reads_the_kind_and_walks_into_owned() -> None:
-    from pyvelo.core.owned import clear_server_owned
-
     instance = _Kinded[Edge].model_validate(
         {"rid": "a", "note": {"name": "r", "ruleLogicalId": "b"}}
     )
@@ -717,19 +720,19 @@ def test_clear_server_owned_reads_the_kind_and_walks_into_owned() -> None:
     assert instance.note.stored.rule_logical_id is MISSING
 
 
-def test_an_owned_is_not_a_condition():
+def test_an_owned_is_not_a_condition() -> None:
     owned = Owned(True)
     with pytest.raises(TypeError, match=r"\.local.*\.stored.*\.is_local") as caught:
         bool(owned)
     assert "state.effective" in str(caught.value)
     assert ".value" in str(caught.value)
-    with pytest.raises(TypeError):
+    with pytest.raises(TypeError):  # noqa: PT012  # the test is that an if statement on an Owned is refused
         if owned:
             pass
 
 
-def test_an_owned_equals_only_an_owned():
-    assert (Owned(True) == True) is False
+def test_an_owned_equals_only_an_owned() -> None:
+    assert (Owned(True) == True) is False  # noqa: E712 (the == is what this checks)
     assert Owned(True) == Owned(True)
 
 

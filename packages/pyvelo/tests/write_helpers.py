@@ -32,7 +32,7 @@ def fw(
     version: str | None = ...,
     refs: object = ...,
 ) -> FirewallConfigurationModule[Profile]: ...
-def fw(
+def fw(  # noqa: PLR0913 (existing: split it when it next changes)
     raw: dict[str, Any],
     *,
     layer: type[Edge] | type[Profile],

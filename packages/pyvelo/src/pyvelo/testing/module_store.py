@@ -63,7 +63,8 @@ from pyvelo.core import ConfigContext
 from pyvelo.testing.fixtures import make_jsonrpc_response
 
 type StoreHook = Callable[[dict[str, Any], dict[str, Any] | None], None]
-"""Called with the row about to be stored and the row it replaces (None for an insert); changes the first in place."""
+"""Called with the row about to be stored and the row it replaces (None for an insert);
+changes the first in place."""
 
 _FIRST_VERSION = 1_700_000_000_000
 _FIXED_TIME = "2024-01-01T00:00:00.000Z"
@@ -98,6 +99,7 @@ class RpcError(Exception):
     """A JSON-RPC error the store answers with."""
 
     def __init__(self, code: int, message: str, data: object = None) -> None:
+        """The error *code*, *message* and *data* of the JSON-RPC answer."""
         self.code: int = code
         self.message: str = message
         self.data: object = data
@@ -105,14 +107,20 @@ class RpcError(Exception):
 
 
 def _required(params: Mapping[str, Any], key: str, path: str) -> Any:
-    """``params[key]``; the VCO's ``validationError`` naming *key* when it is missing."""
+    """``params[key]``.
+
+    The VCO's ``validationError`` naming *key* when it is missing.
+    """
     if key not in params:
         raise _validation_error(path, f"missing required property: {key}")
     return params[key]
 
 
 def _validation_error(path: str, message: str, *, code: str | None = None) -> RpcError:
-    """The VCO's ``validationError``, with one entry; it has a ``code`` when given one."""
+    """The VCO's ``validationError``, with one entry.
+
+    It has a ``code`` when given one.
+    """
     entry: dict[str, str] = {"message": message, "path": path}
     if code is not None:
         entry = {"code": code, **entry}
@@ -187,31 +195,46 @@ class ModuleStore:
     fail_writes: set[int]
     """The 1-based numbers of the writes answered with an error."""
     lose_answers: set[int]
-    """The 1-based numbers of the writes that are handled and then not answered: the request raises ``httpx.ReadTimeout``."""
+    """The 1-based numbers of the writes that are handled and then not answered: the
+    request raises ``httpx.ReadTimeout``."""
     conditional_check: bool
     return_data: bool
     enterprise_id: int | None
-    """The enterprise every request has to name; None when requests need not name one."""
+    """The enterprise every request has to name; None when requests need not name
+    one."""
     issue_rule_ids: bool
     """Whether a stored write gives its rules the IDs a VCO gives them."""
     stacks: dict[int | None, tuple[int, int]]
-    """Edge ID, or None for every edge, to the IDs of its edge and profile configurations."""
+    """Edge ID, or None for every edge, to the IDs of its edge and profile
+    configurations."""
     composed: dict[int, dict[str, object | None]]
-    """Edge ID to the modules ``edge/getEdgeConfigurationModules`` composes for it: a module's wire name (``firewall``, ``QOS``) to its ``data``, or ``None`` for the ``null`` the VCO answers when a module does not compose. An edge with no entry is answered as an unknown edge."""
+    """Edge ID to the modules ``edge/getEdgeConfigurationModules`` composes for it: a
+    module's wire name (``firewall``, ``QOS``) to its ``data``, or ``None`` for the
+    ``null`` the VCO answers when a module does not compose. An edge with no entry is
+    answered as an unknown edge."""
     security_objects: dict[str, list[dict[str, Any]]]
-    """Security object type (``securityServiceGroup``, ``idps``) to the objects ``enterprise/getSecurityObjects`` answers for it, each as the VCO gives it: ``type``, ``id``, ``logicalId`` and ``data``. A type with no entry is answered with an empty list."""
+    """Security object type (``securityServiceGroup``, ``idps``) to the objects
+    ``enterprise/getSecurityObjects`` answers for it, each as the VCO gives it:
+    ``type``, ``id``, ``logicalId`` and ``data``. A type with no entry is answered with
+    an empty list."""
     objects: dict[int, dict[str, Any]]
-    """Object ID to enterprise object: ``id``, ``logicalId``, ``name``, ``type``, ``object`` and ``data``."""
+    """Object ID to enterprise object: ``id``, ``logicalId``, ``name``, ``type``,
+    ``object`` and ``data``."""
     skipped_objects: set[int]
-    """Objects a sent ref row points at in vain: the row is skipped, as the VCO skips a row whose insert fails."""
+    """Objects a sent ref row points at in vain: the row is skipped, as the VCO skips a
+    row whose insert fails."""
     processor_refs: dict[int, dict[str, Any]]
-    """Module ID to the refs an inline processor returns, which replace the ordinary rows of an update that sends none."""
+    """Module ID to the refs an inline processor returns, which replace the ordinary
+    rows of an update that sends none."""
     edges: dict[int, dict[str, Any]]
-    """Edge ID to Edge: ``id``, ``logicalId``, ``name`` and ``cluster`` (the cluster ID, or None)."""
+    """Edge ID to Edge: ``id``, ``logicalId``, ``name`` and ``cluster`` (the cluster ID,
+    or None)."""
     vpn_check: bool
-    """Whether a profile device settings update is checked against the hub rows of its refs."""
+    """Whether a profile device settings update is checked against the hub rows of its
+    refs."""
     fail_calls: set[str]
-    """Method names whose next call is answered with ``simulated failure``, and then removed."""
+    """Method names whose next call is answered with ``simulated failure``, and then
+    removed."""
 
     def __init__(
         self,
@@ -222,6 +245,7 @@ class ModuleStore:
         issue_rule_ids: bool = False,
         vpn_check: bool = False,
     ) -> None:
+        """An empty store; the flags are those the class docstring describes."""
         self.rows = {}
         self.configurations = {}
         self.requests = []
@@ -262,14 +286,16 @@ class ModuleStore:
                 edge_path = f"edge/{verb}EdgeFor{suffix}"
                 cluster_path = f"enterprise/{verb}ClusterFor{suffix}"
                 self._methods[edge_path] = functools.partial(
-                    self._edge_role, edge_path, role, enable
+                    self._edge_role, edge_path, role, enable=enable
                 )
                 self._methods[cluster_path] = functools.partial(
-                    self._cluster_role, cluster_path, role, enable
+                    self._cluster_role, cluster_path, role, enable=enable
                 )
 
     def add_configuration(self, row: Mapping[str, Any]) -> None:
-        """Hold the configuration *row*; the module rows under its ``modules``, if any, too.
+        """Hold the configuration *row*.
+
+        The module rows under its ``modules``, if any, too.
 
         A module without a ``configurationId`` gets the configuration's;
         ``ValueError`` for a row without an ``id``, for a module row without
@@ -318,7 +344,9 @@ class ModuleStore:
         *,
         edge_id: int | None = None,
     ) -> None:
-        """Answer ``edge/getEdgeConfigurationStack`` for *edge_id* with these two configurations.
+        """Answer ``edge/getEdgeConfigurationStack`` for *edge_id*.
+
+        The answer is these two configurations.
 
         The configurations are read as the store holds them at each request,
         with their module rows; ``edge_id=None`` answers for every edge that
@@ -326,7 +354,7 @@ class ModuleStore:
         """
         self.stacks[edge_id] = (edge_configuration_id, profile_configuration_id)
 
-    def add_object(
+    def add_object(  # noqa: PLR0913 (existing: split it when it next changes)
         self,
         object_id: int,
         *,
@@ -378,14 +406,19 @@ class ModuleStore:
             self.objects[member_id]["edgeId"] = edge_id
 
     def add_cluster(self, cluster_id: int, *, logical_id: str, name: str) -> None:
-        """Hold a hub cluster: an ``edgeHubCluster`` service object with no data, at ``version`` 1."""
+        """Hold a hub cluster.
+
+        An ``edgeHubCluster`` service object with no data, at ``version`` 1.
+        """
         self.add_object(cluster_id, logical_id=logical_id, name=name, type_=_CLUSTER)
         self.objects[cluster_id]["version"] = 1
 
     def other_writer(
         self, module_id: int, edit: Callable[[dict[str, Any]], None]
     ) -> None:
-        """Change module *module_id* as another writer would: *edit* the row, then a new ``version``.
+        """Change module *module_id* as another writer would.
+
+        *edit* the row, then a new ``version``.
 
         No hook runs.
         """
@@ -410,6 +443,11 @@ class ModuleStore:
         return serve(params)
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
+        """Record and answer one JSON-RPC *request*, as an ``httpx`` handler.
+
+        A write whose number is in ``lose_answers`` is stored and its answer
+        lost, as a ``ReadTimeout``.
+        """
         body: dict[str, Any] = json.loads(request.content)
         method: str = body["method"]
         params: dict[str, Any] = body.get("params") or {}
@@ -574,9 +612,12 @@ class ModuleStore:
     # -- hub role calls -----------------------------------------------------
 
     def _edge_role(
-        self, path: str, role: str, enable: bool, params: dict[str, Any]
+        self, path: str, role: str, params: dict[str, Any], *, enable: bool
     ) -> object:
-        """An Edge role call: *role* of the Edge ``id`` on a profile, module and segment, enabled or disabled."""
+        """An Edge role call.
+
+        *role* of the Edge ``id`` on a profile, module and segment, enabled or disabled.
+        """
         path = path.replace("/", ".")
         edge_id: int = _required(params, "id", path)
         configuration_id: int = _required(params, "configurationId", path)
@@ -619,9 +660,13 @@ class ModuleStore:
         return self._service(service, ())
 
     def _cluster_role(
-        self, path: str, role: str, enable: bool, params: dict[str, Any]
+        self, path: str, role: str, params: dict[str, Any], *, enable: bool
     ) -> object:
-        """A cluster role call: *role* of the cluster ``id`` on a profile, module and segment, enabled or disabled."""
+        """A cluster role call.
+
+        *role* of the cluster ``id`` on a profile, module and segment, enabled
+        or disabled.
+        """
         path = path.replace("/", ".")
         cluster_id: int = _required(params, "id", path)
         configuration_id: int = _required(params, "configurationId", path)
@@ -668,7 +713,10 @@ class ModuleStore:
     def _configuration(
         self, config_id: int, path: str, *, with_modules: bool
     ) -> dict[str, Any]:
-        """A copy of configuration *config_id*, with copies of its module rows when asked."""
+        """A copy of configuration *config_id*.
+
+        With copies of its module rows when asked.
+        """
         config = self.configurations.get(config_id)
         if config is None:
             raise _validation_error(
@@ -684,7 +732,10 @@ class ModuleStore:
         return answer
 
     def _enterprise_key(self) -> dict[str, int]:
-        """``{"enterpriseId": ...}`` when the store knows its enterprise; else nothing."""
+        """``{"enterpriseId": ...}`` when the store knows its enterprise.
+
+        Else nothing.
+        """
         if self.enterprise_id is None:
             return {}
         return {"enterpriseId": self.enterprise_id}
@@ -694,7 +745,10 @@ class ModuleStore:
         return max(max(self.objects, default=0) + 1, _FIRST_GENERATED_ID)
 
     def _service(self, obj: dict[str, Any], with_: object) -> dict[str, Any]:
-        """Service object *obj* as ``getEnterpriseServices`` answers it, with the *with_* lists asked for."""
+        """Service object *obj* as ``getEnterpriseServices`` answers it.
+
+        With the *with_* lists asked for.
+        """
         answer: dict[str, Any] = {
             "id": obj["id"],
             "logicalId": obj["logicalId"],
@@ -708,7 +762,7 @@ class ModuleStore:
             answer["edgeId"] = obj["edgeId"]
         if "version" in obj:
             answer["version"] = str(obj["version"])
-        requested = cast(list[str], with_)
+        requested = cast("list[str]", with_)
         if "configuration" in requested:
             answer["configuration"] = self._configuration_usage(obj)
             if "edgeQOSUsage" in requested:
@@ -718,7 +772,10 @@ class ModuleStore:
     def _pointing_rows(
         self, obj: dict[str, Any]
     ) -> list[tuple[dict[str, Any], str, dict[str, Any]]]:
-        """Every ref row, in any module, that points at *obj*: the module row, the ref name and the row."""
+        """Every ref row, in any module, that points at *obj*.
+
+        Each as the module row, the ref name and the row.
+        """
         found: list[tuple[dict[str, Any], str, dict[str, Any]]] = []
         for module in self.rows.values():
             for name, row in _ref_pairs(module):
@@ -727,7 +784,10 @@ class ModuleStore:
         return found
 
     def _configuration_usage(self, obj: dict[str, Any]) -> list[dict[str, Any]]:
-        """The ``configuration`` entries of service *obj*: one for each ref row that points at it."""
+        """The ``configuration`` entries of service *obj*.
+
+        One for each ref row that points at it.
+        """
         return [
             {
                 "enterpriseObjectId": obj["id"],
@@ -740,7 +800,10 @@ class ModuleStore:
         ]
 
     def _qos_usage(self, obj: dict[str, Any]) -> list[dict[str, Any]]:
-        """The ``edgeQOSUsage`` entries of service *obj*: one for each backhaul row of an Edge configuration's QoS module."""
+        """The ``edgeQOSUsage`` entries of service *obj*.
+
+        One for each backhaul row of an Edge configuration's QoS module.
+        """
         owners = self._edge_configuration_owners()
         usage: list[dict[str, Any]] = []
         for module, name, row in self._pointing_rows(obj):
@@ -761,7 +824,10 @@ class ModuleStore:
         return usage
 
     def _edge_configuration_owners(self) -> dict[int, int]:
-        """Edge configuration ID to the ID of the Edge it belongs to, for the stacks added for an Edge."""
+        """Edge configuration ID to the ID of the Edge it belongs to.
+
+        For the stacks added for an Edge.
+        """
         return {
             configs[0]: edge_id
             for edge_id, configs in self.stacks.items()
@@ -775,7 +841,9 @@ class ModuleStore:
         module_id: int,
         segment_object_id: int,
     ) -> dict[str, Any] | None:
-        """The ``edgeHub`` service of Edge *edge_id* on that profile, module and segment, or None.
+        """The ``edgeHub`` service of Edge *edge_id*, or None.
+
+        The one on that profile, module and segment.
 
         A service belongs there when it was made there, or when a row of that
         module and segment points at it.
@@ -804,7 +872,10 @@ class ModuleStore:
         module_id: int,
         segment_object_id: int,
     ) -> dict[str, Any]:
-        """Hold a new ``edgeHub`` service of *edge* with no roles on that profile, module and segment."""
+        """Hold a new ``edgeHub`` service of *edge*.
+
+        It has no roles on that profile, module and segment.
+        """
         object_id = self._new_object_id()
         self.add_object(
             object_id,
@@ -830,7 +901,9 @@ class ModuleStore:
         module_id: int,
         segment_object_id: int,
     ) -> None:
-        """Have module *module_id* hold a *ref* row for *obj* in that segment, once; every row of *obj* shows it as it is now.
+        """Have module *module_id* hold a *ref* row for *obj* in that segment, once.
+
+        Every row of *obj* shows it as it is now.
 
         The module's data and ``version`` stay as they are.
         """
@@ -868,7 +941,10 @@ class ModuleStore:
                 _set_refs(module, pairs)
 
     def _delete_object(self, object_id: int) -> None:
-        """Delete object *object_id* and every ref row, in any module, that points at it."""
+        """Delete object *object_id* and every ref row that points at it.
+
+        That is every such row, in any module.
+        """
         _ = self.objects.pop(object_id, None)
         for module in self.rows.values():
             pairs = _ref_pairs(module)
@@ -879,7 +955,10 @@ class ModuleStore:
     def _delete_dropped_edge_hubs(
         self, old: dict[str, Any], new: dict[str, Any]
     ) -> None:
-        """Delete the Edge hub services whose row *old* had and *new* leaves out, as the VCO's cleanup does."""
+        """Delete the Edge hub services whose row *old* had and *new* leaves out.
+
+        The VCO's cleanup does the same.
+        """
         kept = {row.get("enterpriseObjectId") for _, row in _ref_pairs(new)}
         for name, row in _ref_pairs(old):
             target = self.objects.get(row.get("enterpriseObjectId", -1))
@@ -892,18 +971,26 @@ class ModuleStore:
                 self._delete_object(target["id"])
 
     def _is_profile_device_settings(self, row: dict[str, Any]) -> bool:
-        """Whether *row* is the device settings module of a configuration that is no Edge's own."""
+        """Whether *row* is the device settings module of a configuration.
+
+        The configuration is no Edge's own.
+        """
         return (
             row.get("name") == "deviceSettings"
             and row.get("configurationId") not in self._edge_configuration_owners()
         )
 
     def _check_hub_lists(self, new: dict[str, Any]) -> None:
-        """Refuse the device settings row *new* as the VCO does when a segment's hub list and hub rows disagree."""
+        """Refuse the device settings row *new* as the VCO does.
+
+        The VCO refuses it when a segment's hub list and hub rows disagree.
+        """
         data = new.get("data")
         entries: list[Any] = []
         if isinstance(data, dict):
-            entries = cast(list[Any], cast(dict[str, Any], data).get("segments") or [])
+            entries = cast(
+                "list[Any]", cast("dict[str, Any]", data).get("segments") or []
+            )
         hub_rows = [
             (name, row)
             for name, row in _ref_pairs(new)
@@ -912,7 +999,7 @@ class ModuleStore:
         for entry in entries:
             if not isinstance(entry, dict):
                 continue
-            entry = cast(dict[str, Any], entry)
+            entry = cast("dict[str, Any]", entry)
             mine = [
                 (name, row)
                 for name, row in hub_rows
@@ -937,7 +1024,9 @@ class ModuleStore:
             if vpn.get("enabled"):
                 listed = {
                     str(hub.get("logicalId")).lower()
-                    for hub in cast(list[dict[str, Any]], hub_list.get("vpnHubs") or [])
+                    for hub in cast(
+                        "list[dict[str, Any]]", hub_list.get("vpnHubs") or []
+                    )
                 }
                 held = {
                     str(
@@ -968,18 +1057,23 @@ class ModuleStore:
         }
 
     def _processor_applies(self, row: dict[str, Any], data: object) -> bool:
-        """Whether an update of *row* to *data*, sending no refs, has a processor return its own rows."""
+        """Whether an update of *row* to *data* has a processor return its own rows.
+
+        The update sends no refs.
+        """
         if row.get("name") not in _PROCESSOR_MODULES:
             return False
         if row["id"] not in self.processor_refs or not isinstance(data, dict):
             return False
-        segments = cast(dict[str, Any], data).get("segments")
+        segments = cast("dict[str, Any]", data).get("segments")
         return isinstance(segments, list) and bool(segments)
 
     def _replace_refs(
         self, row: dict[str, Any], sent: object, *, module_id: int | None = None
     ) -> None:
-        """Replace the ordinary rows of *row* by the rows in *sent*, completing and skipping them.
+        """Replace the ordinary rows of *row* by the rows in *sent*.
+
+        It completes and skips them.
 
         With *module_id*, every sent row gets it as its ``moduleId`` first.
         """
@@ -997,14 +1091,19 @@ class ModuleStore:
         _set_refs(row, [*ordinary, *pairs])
 
     def _replace_refs_by_processor(self, row: dict[str, Any]) -> None:
-        """Replace the ordinary rows of *row* by the processor's, as given; the append-only rows stay."""
+        """Replace the ordinary rows of *row* by the processor's, as given.
+
+        The append-only rows stay.
+        """
         given = copy.deepcopy(self.processor_refs[row["id"]])
         kept = _append_only_rows(row.get("refs"))
         kept += _append_only_rows(given)
         _set_refs(row, kept, base=given)
 
     def _stored_row(self, sent: dict[str, Any]) -> dict[str, Any] | None:
-        """The row to store for *sent*, new ``id`` and all; None for a row the VCO skips.
+        """The row to store for *sent*, new ``id`` and all.
+
+        None for a row the VCO skips.
 
         A row of a known object is stored as five fields and what the object
         completes; one of an unknown object, as sent.
@@ -1097,7 +1196,10 @@ def _generated_logical_id(object_id: int) -> str:
 
 
 def _ref_pairs(module: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]:
-    """The rows of *module*'s refs, each with its ref name; copies, to be given back with ``_set_refs``."""
+    """The rows of *module*'s refs, each with its ref name.
+
+    They are copies, to be given back with ``_set_refs``.
+    """
     refs = module.get("refs")
     return [(name, row) for name, row in _all_pairs(refs)]
 
@@ -1107,25 +1209,32 @@ def _all_pairs(refs: object) -> list[tuple[str, dict[str, Any]]]:
         return []
     return [
         (name, row)
-        for name, value in cast(dict[str, Any], refs).items()
+        for name, value in cast("dict[str, Any]", refs).items()
         for row in _flatten({name: value})
     ]
 
 
 def _row_data(obj: dict[str, Any]) -> dict[str, Any]:
-    """The ``data`` a ref row shows of *obj*: the object's own data, as the VCO does (a cluster's is by configuration and then segment)."""
+    """The ``data`` a ref row shows of *obj*.
+
+    The object's own data, as the VCO does (a cluster's is by configuration and
+    then segment).
+    """
     return copy.deepcopy(obj["data"])
 
 
 def _rule_lists(row: dict[str, Any] | None, module: str) -> list[list[dict[str, Any]]]:
-    """The lists of rules a VCO gives IDs to in the data of *row*, a module named *module*."""
+    """The lists of rules a VCO gives IDs to in the data of *row*.
+
+    *row* is a module named *module*.
+    """
     data = None if row is None else row.get("data")
     if not isinstance(data, dict):
         return []
-    data = cast(dict[str, Any], data)
+    data = cast("dict[str, Any]", data)
     segments = [
-        cast(dict[str, Any], s)
-        for s in cast(list[Any], data.get("segments") or [])
+        cast("dict[str, Any]", s)
+        for s in cast("list[Any]", data.get("segments") or [])
         if isinstance(s, dict)
     ]
     if module == "firewall":
@@ -1139,8 +1248,8 @@ def _rule_lists(row: dict[str, Any] | None, module: str) -> list[list[dict[str, 
         if isinstance(rules, list):
             found.append(
                 [
-                    cast(dict[str, Any], r)
-                    for r in cast(list[Any], rules)
+                    cast("dict[str, Any]", r)
+                    for r in cast("list[Any]", rules)
                     if isinstance(r, dict)
                 ]
             )
@@ -1148,7 +1257,10 @@ def _rule_lists(row: dict[str, Any] | None, module: str) -> list[list[dict[str, 
 
 
 def _content(rule: dict[str, Any]) -> dict[str, Any]:
-    """*rule* without its name and ID: what a VCO compares to tell an edited rule from a renamed one."""
+    """*rule* without its name and ID.
+
+    That is what a VCO compares to tell an edited rule from a renamed one.
+    """
     return {k: v for k, v in rule.items() if k not in ("name", _RULE_ID)}
 
 
@@ -1159,12 +1271,12 @@ def _flatten(refs: object) -> list[dict[str, Any]]:
     """
     if not isinstance(refs, dict):
         return []
-    found: list[dict[str, Any]] = []
-    for value in cast(dict[str, Any], refs).values():
-        for entry in cast(list[Any], value) if isinstance(value, list) else [value]:
-            if isinstance(entry, dict):
-                found.append(copy.deepcopy(cast(dict[str, Any], entry)))
-    return found
+    return [
+        copy.deepcopy(cast("dict[str, Any]", entry))
+        for value in cast("dict[str, Any]", refs).values()
+        for entry in (cast("list[Any]", value) if isinstance(value, list) else [value])
+        if isinstance(entry, dict)
+    ]
 
 
 def _append_only_rows(refs: object) -> list[tuple[str, dict[str, Any]]]:
@@ -1173,7 +1285,7 @@ def _append_only_rows(refs: object) -> list[tuple[str, dict[str, Any]]]:
         return []
     return [
         (name, row)
-        for name, value in cast(dict[str, Any], refs).items()
+        for name, value in cast("dict[str, Any]", refs).items()
         if name in APPEND_ONLY_REF_NAMES
         for row in _flatten({name: value})
     ]
@@ -1185,7 +1297,9 @@ def _set_refs(
     *,
     base: dict[str, Any] | None = None,
 ) -> None:
-    """Give *row* the refs of *pairs* (name and row), grouped by name; none removes them.
+    """Give *row* the refs of *pairs* (name and row), grouped by name.
+
+    None removes them.
 
     *base* is refs kept as given, but for the append-only names.
     """
@@ -1206,7 +1320,10 @@ def _set_refs(
 
 
 def module_row(module: ConfigurationModuleBase) -> dict[str, Any]:
-    """*module* as a row in wire form: its data and refs as read, no ``refs`` key when it had none."""
+    """*module* as a row in wire form.
+
+    Its data and refs as read, no ``refs`` key when it had none.
+    """
     if module.raw_data is MISSING:
         raise ValueError(f"module {module.id_} has no raw data to store")
     row = module.model_dump(mode="json", by_alias=True, exclude={"data", "refs"})
@@ -1242,7 +1359,9 @@ def as_stored[M: ConfigurationModuleBase](
 
 
 def store_of(*modules: ConfigurationModuleBase, **knobs: Any) -> ModuleStore:
-    """A store that holds the rows of *modules*, and a configuration row for each ``configuration_id``.
+    """A store that holds the rows of *modules*.
+
+    It holds a configuration row for each ``configuration_id`` too.
 
     *knobs* are the keyword arguments of ``ModuleStore``. A module not inserted
     yet (``is_new``) has no row; its configuration has one. The configuration

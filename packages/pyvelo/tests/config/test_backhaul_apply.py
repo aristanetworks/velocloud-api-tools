@@ -1,4 +1,6 @@
-"""``apply`` gives a QoS rule's new backhaul hub its service for the segment, and refuses a hub that has none yet.
+"""``apply`` gives a QoS rule's new backhaul hub its service for the segment.
+
+It refuses a hub that has none yet.
 
 The states are those of ``test_backhaul_refs_state``: a profile whose Global
 Segment lists ``HUB_A`` for backhaul with a service row, and an edge over it.
@@ -9,7 +11,7 @@ from typing import Any
 
 import pytest
 from hub_helpers import HUB_A, HUB_B, backhaul_entry, backhaul_rule
-from hub_state import EDGE_CONFIG, hub_pipeline, hub_profile_state  # pyright: ignore[reportImplicitRelativeImport]
+from hub_state import EDGE_CONFIG, hub_pipeline, hub_profile_state
 from pyvelo.client.enums.configuration import ConfigurationModuleName
 from pyvelo.client.hub_services import BACKHAUL_REF
 from pyvelo.client.models.configuration.qos.rule import BackhaulEdge
@@ -27,7 +29,10 @@ from test_backhaul_refs_state import (  # pyright: ignore[reportImplicitRelative
 
 
 def hub_in_rule(name: str, *, rule: str = "r1") -> dict[str, Any]:
-    """The patch to the rules of a segment that adds the hub *name* to the backhaul hubs of *rule*."""
+    """The patch to the rules of a segment that adds a backhaul hub to *rule*.
+
+    The hub added is the hub *name*.
+    """
     return {
         rule: {
             "action": {
@@ -55,7 +60,7 @@ def add_hub_b_to_the_lists() -> dict[str, Any]:
     }
 
 
-async def test_a_hub_named_in_a_profile_rule_gets_its_service():
+async def test_a_hub_named_in_a_profile_rule_gets_its_service() -> None:
     state = await a_profile()
     pipeline, _ = hub_pipeline(state)
 
@@ -82,7 +87,7 @@ async def test_a_hub_named_in_a_profile_rule_gets_its_service():
     assert row["segmentObjectId"] == GLOBAL[3]
 
 
-async def test_a_hub_named_in_an_edge_rule_gets_the_profiles_service():
+async def test_a_hub_named_in_an_edge_rule_gets_the_profiles_service() -> None:
     state = await an_edge()
     pipeline, _ = hub_pipeline(state)
 
@@ -101,7 +106,7 @@ async def test_a_hub_named_in_an_edge_rule_gets_the_profiles_service():
     assert qos.refs[BACKHAUL_REF][0]["enterpriseObjectId"] == SERVICE_A_ID
 
 
-async def test_a_hub_and_its_rule_in_one_save_is_refused():
+async def test_a_hub_and_its_rule_in_one_save_is_refused() -> None:
     state = await a_profile()
     pipeline, _ = hub_pipeline(state)
     _ = await pipeline.apply(
@@ -133,7 +138,9 @@ async def test_a_hub_and_its_rule_in_one_save_is_refused():
     ]
 
 
-async def test_an_edge_rule_on_a_hub_the_profile_has_no_service_for_is_refused():
+async def test_an_edge_rule_on_a_hub_the_profile_has_no_service_for_is_refused() -> (
+    None
+):
     state = await an_edge(backhaul=(HUB_A, HUB_B), hubs=(HUB_A, HUB_B))
     pipeline, _ = hub_pipeline(state)
 
@@ -150,7 +157,7 @@ async def test_an_edge_rule_on_a_hub_the_profile_has_no_service_for_is_refused()
     assert backhaul_of(state.edge.qos) == []
 
 
-async def test_an_edge_rule_on_a_new_qos_module_inserts_its_backhaul_row():
+async def test_an_edge_rule_on_a_new_qos_module_inserts_its_backhaul_row() -> None:
     state = await an_edge()
     edge = state.edge_config
     assert edge is not None
@@ -204,7 +211,9 @@ async def test_an_edge_rule_on_a_new_qos_module_inserts_its_backhaul_row():
     assert state.plan().changed == ()
 
 
-async def test_an_entry_built_by_assignment_without_its_service_is_refused_at_plan():
+async def test_an_entry_built_by_assignment_without_its_service_is_refused_at_plan() -> (  # noqa: E501 (a test's name)
+    None
+):
     state = await a_profile()
     (segment,) = state.profile.qos.segments
     route = segment.rules[0].action.edge_to_edge_route_action.route_cfg
@@ -223,7 +232,9 @@ async def test_an_entry_built_by_assignment_without_its_service_is_refused_at_pl
     assert "backhaul_edges" in error.value.path
 
 
-async def test_a_segment_added_with_a_rule_on_a_hub_it_has_no_service_for_is_refused():
+async def test_a_segment_added_with_a_rule_on_a_hub_it_has_no_service_for_is_refused() -> (  # noqa: E501 (a test's name)
+    None
+):
     state = await a_profile()
     pipeline, _ = hub_pipeline(state)
     rule = backhaul_rule("r2")
@@ -242,7 +253,9 @@ async def test_a_segment_added_with_a_rule_on_a_hub_it_has_no_service_for_is_ref
     assert state.profile.qos.model_dump() == before
 
 
-async def test_an_entry_that_lacked_its_service_as_read_does_not_stop_another_edit():
+async def test_an_entry_that_lacked_its_service_as_read_does_not_stop_another_edit() -> (  # noqa: E501 (a test's name)
+    None
+):
     unserved = {
         key: value
         for key, value in backhaul_entry(HUB_B, "unused").items()

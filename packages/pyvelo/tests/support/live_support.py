@@ -58,7 +58,7 @@ passed over. Everything unmarked is read and never written. With nothing
 marked, each test that writes is skipped and says which mark it wants.
 
 A test that writes is marked ``live_write``. The client the suite connects
-(``connect``) refuses, with ``WritesRefused`` and before anything is sent:
+(``connect``) refuses, with ``WritesRefusedError`` and before anything is sent:
 
 * every portal call that is not a read, except the three writes the suite
   makes itself: ``update_configuration_module`` and
@@ -145,21 +145,11 @@ import tempfile
 import threading
 import uuid
 import weakref
-from collections.abc import (
-    AsyncGenerator,
-    Awaitable,
-    Callable,
-    Generator,
-    Iterable,
-    Mapping,
-    Sequence,
-)
-from contextlib import aclosing, asynccontextmanager, contextmanager
+from contextlib import aclosing, asynccontextmanager, contextmanager, suppress
 from contextvars import ContextVar
 from dataclasses import dataclass, field
-from typing import Annotated, Any, Literal, NoReturn, cast
+from typing import TYPE_CHECKING, Annotated, Any, Literal, NoReturn, cast
 
-import httpx
 import pytest
 from pydantic import MISSING, BaseModel, RootModel, ValidationError
 from pyvelo.client import (
@@ -217,13 +207,28 @@ from pyvelo.core.identity import HubLogicalId, ResolutionError
 from pyvelo.core.rebase import Key, Path, RawChange, raw_changes
 from pyvelo.core.response_check import PlannedChange, ServerChange
 
+if TYPE_CHECKING:
+    from collections.abc import (
+        AsyncGenerator,
+        Awaitable,
+        Callable,
+        Generator,
+        Iterable,
+        Mapping,
+        Sequence,
+    )
+
+    import httpx
+
 SYNTHETIC_PREFIX = "pyvelo-it-"
 """Every rule, description and the like these tests add starts with this."""
 
 TARGET_MARK = "pyvelo-it-target"
 WITH_EDGES_MARK = "pyvelo-it-with-edges"
 REPLACE_MODULES_MARK = "pyvelo-it-replace-modules"
-"""The words an owner puts in the description of an edge or profile (see the docstring)."""
+"""The words an owner puts in the description of an edge or profile (see the
+docstring).
+"""
 
 _MARKS = (TARGET_MARK, WITH_EDGES_MARK, REPLACE_MODULES_MARK)
 
@@ -257,7 +262,9 @@ def synthetic_name() -> str:
 
 
 def marks_in(description: object) -> frozenset[str]:
-    """The marks that are whole tokens of *description*; a mark inside a longer token is none.
+    """The marks that are whole tokens of *description*.
+
+    A mark inside a longer token is none.
 
     A token is a run of letters, digits, underscores, hyphens and slashes, so
     ``pyvelo-it-target_old`` and ``pyvelo-it-target/prod`` hold no mark. Anything
@@ -300,20 +307,29 @@ def redact(path: Path) -> str:
 def describe(changes: Sequence[RawChange]) -> str:
     """The changes as ``+ added``, ``- removed`` and ``~ changed`` redacted paths."""
     marks = [
-        f"{'+' if c.before is MISSING else '-' if c.after is MISSING else '~'} {redact(c.path)}"
+        (
+            f"{'+' if c.before is MISSING else '-' if c.after is MISSING else '~'} "
+            f"{redact(c.path)}"
+        )
         for c in changes
     ]
     return "; ".join(marks) if marks else "no changes"
 
 
-def check(condition: bool, message: str) -> None:
-    """Fail with *message* alone (an ``assert`` would print the operands, names included)."""
+def check(condition: bool, message: str) -> None:  # noqa: FBT001 (an assert as a function: the condition is what it checks, not a flag)
+    """Fail with *message* alone.
+
+    An ``assert`` would print the operands, names included.
+    """
     if not condition:
         pytest.fail(message, pytrace=False)
 
 
 def expect[T](value: object, kind: type[T], what: str) -> T:
-    """*value* as a *kind*; fail with *what* alone (an ``isinstance`` assert prints the value)."""
+    """*value* as a *kind*; fail with *what* alone.
+
+    An ``isinstance`` assert prints the value.
+    """
     if not isinstance(value, kind):
         pytest.fail(f"{what} is a {type(value).__name__}", pytrace=False)
     return value
@@ -352,7 +368,10 @@ class EdgeLayout:
 
 @dataclass(frozen=True)
 class ProfileEntry:
-    """One profile of the lab: its ID, its marks and how many edges are assigned to it."""
+    """One profile of the lab.
+
+    Its ID, its marks and how many edges are assigned to it.
+    """
 
     profile_id: int
     marks: frozenset[str] = frozenset()
@@ -361,7 +380,10 @@ class ProfileEntry:
 
     @property
     def target(self) -> bool:
-        """Marked, and either with no edge assigned or marked to be written with edges."""
+        """Whether the profile is a target: marked, and fit to be written.
+
+        Fit means either with no edge assigned or marked to be written with edges.
+        """
         return TARGET_MARK in self.marks and (
             self.edge_count == 0 or WITH_EDGES_MARK in self.marks
         )
@@ -405,7 +427,7 @@ async def list_edges(
 ) -> list[tuple[int, frozenset[str]]]:
     """The ID of each edge, with the marks in its description."""
     edges = await client.get_enterprise_edges(
-        GetEnterpriseEdges(enterprise_id=enterprise_id if enterprise_id else MISSING)
+        GetEnterpriseEdges(enterprise_id=enterprise_id or MISSING)
     )
     return [(e.id_, marks_in(e.description)) for e in edges if isinstance(e.id_, int)][
         :LAB_LIMIT
@@ -415,10 +437,13 @@ async def list_edges(
 async def list_profiles(
     client: VcoClient, enterprise_id: int | None
 ) -> list[ProfileEntry]:
-    """Each profile, with the marks in its description and the number of edges assigned."""
+    """Each profile, with the marks in its description.
+
+    And the number of edges assigned.
+    """
     profiles = await client.get_enterprise_configurations(
         GetEnterpriseConfigurations(
-            enterprise_id=enterprise_id if enterprise_id else MISSING,
+            enterprise_id=enterprise_id or MISSING,
             with_=[GetEnterpriseConfigurationsWith.EDGE_COUNT],
         )
     )
@@ -434,17 +459,20 @@ async def list_profiles(
 
 
 class LiveSuiteError(Exception):
-    """The base of the suite's own errors: a message of one names no entity of the lab."""
+    """The base of the suite's own errors.
+
+    A message of one names no entity of the lab.
+    """
 
 
-class LabUnreadable(LiveSuiteError):
+class LabUnreadableError(LiveSuiteError):
     """An edge of the lab does not load; the message names no entity."""
 
 
-def _unreadable(index: int, exc: ValidationError) -> LabUnreadable:
+def _unreadable(index: int, exc: ValidationError) -> LabUnreadableError:
     """A ``ValidationError`` as the error types alone: its input is lab data."""
     kinds = sorted({str(error["type"]) for error in exc.errors()})
-    return LabUnreadable(
+    return LabUnreadableError(
         f"edge #{index} does not load: {exc.error_count()} validation error(s) "
         f"of type {', '.join(kinds)}"
     )
@@ -455,7 +483,7 @@ async def discover_layouts(
 ) -> list[EdgeLayout]:
     """Every edge, with its configuration stack as the models read it.
 
-    An edge that does not load raises ``LabUnreadable``: a lab that this suite
+    An edge that does not load raises ``LabUnreadableError``: a lab that this suite
     cannot read is not a lab it can test.
     """
     layouts: list[EdgeLayout] = []
@@ -513,7 +541,9 @@ class Lab:
     def require_edge_targets(
         self, *, replace_modules: bool = False
     ) -> list[EdgeLayout]:
-        """The marked edges, once the test may write; else fail or skip the test, saying which mark is missing.
+        """The marked edges, once the test may write.
+
+        Else fail or skip the test, saying which mark is missing.
 
         The opt-in is checked first, so a run that may not write fails or skips
         for that and never for an unmarked lab. With *replace_modules*, some
@@ -534,7 +564,9 @@ class Lab:
         *,
         replace_modules: bool = False,
     ) -> list[EdgeLayout]:
-        """The marked edges whose own configuration has a *name* module that is *suitable*.
+        """The marked edges whose own configuration has a *name* module.
+
+        One that is *suitable*.
 
         With *replace_modules*, only those marked for deleting and inserting modules.
         """
@@ -548,7 +580,10 @@ class Lab:
         return found
 
     def edges_lacking(self, name: ConfigurationModuleName) -> list[EdgeLayout]:
-        """The edges marked for deleting and inserting modules whose own configuration has no *name* module."""
+        """The edges marked for deleting and inserting modules.
+
+        Their own configuration has no *name* module.
+        """
         return [
             layout
             for layout in self.targets
@@ -558,7 +593,10 @@ class Lab:
     async def _first_that_takes_a_write(
         self, layouts: Sequence[EdgeLayout], name: ConfigurationModuleName
     ) -> tuple[EdgeLayout | None, list[str]]:
-        """The first marked one of *layouts* whose *name* module takes a write, and the refusal of each one tried before it."""
+        """The first marked one of *layouts* whose *name* module takes a write.
+
+        And the refusal of each one tried before it.
+        """
         refusals: list[str] = []
         for layout in layouts:
             if not layout.target:
@@ -584,7 +622,9 @@ class Lab:
     async def first_writable_or_fail(
         self, layouts: Sequence[EdgeLayout], name: ConfigurationModuleName
     ) -> EdgeLayout | None:
-        """``first_writable``, but the test fails where *layouts* has marked edges and every one refuses.
+        """``first_writable``, but the test fails where every marked edge refuses.
+
+        That is where *layouts* has marked edges and every one refuses.
 
         ``None`` only when none of *layouts* is marked: there was nothing to try.
         """
@@ -602,7 +642,9 @@ class Lab:
         *,
         replace_modules: bool = False,
     ) -> EdgeLayout:
-        """The first marked edge whose module takes a write; skip the test where none is a candidate, fail it where all refuse.
+        """The first marked edge whose module takes a write.
+
+        Skip the test where none is a candidate, fail it where all refuse.
 
         With *replace_modules*, the edge must also be marked for deleting and
         inserting modules.
@@ -621,7 +663,10 @@ class Lab:
         suitable: Callable[[AnyStoredModule], bool] = lambda _: True,
         what: str = "",
     ) -> int:
-        """The ID of the first marked profile with such a module that takes a write; skip the test where none is a candidate, fail it where all refuse."""
+        """The ID of the first marked profile with such a module that takes a write.
+
+        Skip the test where none is a candidate, fail it where all refuse.
+        """
         require_writes(run_of(self.client))
         targets = [entry.profile_id for entry in self.profiles if entry.target]
         if not targets:
@@ -644,7 +689,10 @@ class Lab:
 def _none_takes_a_write(
     kind: str, name: ConfigurationModuleName, refusals: Sequence[str]
 ) -> NoReturn:
-    """Fail the test: each marked *kind* it could write to refused a write of its own data."""
+    """Fail the test: each marked *kind* it could write to refused a write.
+
+    Each refused a write of its own data.
+    """
     pytest.fail(
         f"none of the {len(refusals)} marked {kind}(s) with a suitable {name.value} "
         f"module takes a write of its own data ({'; '.join(refusals)}): the modules "
@@ -654,7 +702,10 @@ def _none_takes_a_write(
 
 
 def _shown_field(path: str) -> str:
-    """*path* of a refusal with every bracket but an index hidden: names in brackets are the lab's."""
+    """*path* of a refusal with every bracket but an index hidden.
+
+    Names in brackets are the lab's.
+    """
     shown = re.sub(
         r"\[([^\]]*)\]", lambda m: m.group(0) if m.group(1).isdigit() else "[*]", path
     )
@@ -662,7 +713,9 @@ def _shown_field(path: str) -> str:
 
 
 def _found_codes(exc: VcoOperationError) -> list[tuple[str, str]]:
-    """The code and the field of each error in the refusal's data, and nothing of its text or messages.
+    """The code and the field of each error in the refusal's data.
+
+    Nothing of its text or messages.
 
     A refusal with no such data has none: its text can hold names of the lab in
     any form, brackets included.
@@ -670,34 +723,40 @@ def _found_codes(exc: VcoOperationError) -> list[tuple[str, str]]:
     data: object = exc.data
     if not isinstance(data, dict):
         return []
-    entries = cast(dict[str, object], data).get("error")
+    entries = cast("dict[str, object]", data).get("error")
     if not isinstance(entries, list):
         return []
     found: list[tuple[str, str]] = []
-    for entry in cast(list[object], entries):
+    for entry in cast("list[object]", entries):
         if not isinstance(entry, dict):
             continue
-        fields = cast(dict[str, object], entry)
+        fields = cast("dict[str, object]", entry)
         code, path = fields.get("code"), fields.get("path")
         if isinstance(code, str) and re.fullmatch(r"[A-Z][A-Z0-9_]*", code):
             found.append((code, _shown_field(path) if isinstance(path, str) else ""))
     return found
 
 
-class DataRefused(VcoOperationError):
-    """A write the Orchestrator refused with a validation error: its message is the codes alone."""
+class DataRefusedError(VcoOperationError):
+    """A write the Orchestrator refused with a validation error.
+
+    Its message is the codes alone.
+    """
 
 
 def _states_errors(exc: VcoOperationError) -> bool:
-    """Whether the data of *exc* has a non-empty ``error`` list: the Orchestrator's validation error."""
+    """Whether the data of *exc* has a non-empty ``error`` list.
+
+    That is the Orchestrator's validation error.
+    """
     data: object = exc.data
     if not isinstance(data, dict):
         return False
-    entries = cast(dict[str, object], data).get("error")
+    entries = cast("dict[str, object]", data).get("error")
     return isinstance(entries, list) and bool(entries)
 
 
-def _stored_nothing(exc: BaseException, unsent: bool) -> bool:
+def _stored_nothing(exc: BaseException, *, unsent: bool) -> bool:
     """Whether a write that raised *exc* is known to have stored nothing.
 
     So it is where nothing was sent, where the version was refused, and where
@@ -714,9 +773,11 @@ def _stored_nothing(exc: BaseException, unsent: bool) -> bool:
 
 
 def _redacted(exc: VcoOperationError) -> VcoOperationError:
-    """*exc* with each error code and field kept and no message; ``refusal_codes`` reads it as it reads *exc*.
+    """*exc* with each error code and field kept and no message.
 
-    A refusal that states its errors in its data is a ``DataRefused``; any other
+    ``refusal_codes`` reads it as it reads *exc*.
+
+    A refusal that states its errors in its data is a ``DataRefusedError``; any other
     error stays a plain ``VcoOperationError``.
     """
     errors = [
@@ -724,7 +785,7 @@ def _redacted(exc: VcoOperationError) -> VcoOperationError:
         for code, field in _found_codes(exc)
     ]
     if _states_errors(exc):
-        return DataRefused(
+        return DataRefusedError(
             exc.operation, refusal_codes(exc), code=exc.code, data={"error": errors}
         )
     return VcoOperationError(
@@ -733,7 +794,10 @@ def _redacted(exc: VcoOperationError) -> VcoOperationError:
 
 
 def refusal_codes(exc: VcoOperationError) -> str:
-    """The error codes and fields of a refusal, from its data; its text and messages name lab entities."""
+    """The error codes and fields of a refusal, from its data.
+
+    Its text and messages name lab entities.
+    """
     found = _found_codes(exc)
     return (
         "; ".join(f"{code} {field}".strip() for code, field in found) or "no error code"
@@ -798,7 +862,7 @@ ROLE_CALL_NOT_THE_HUB = (
 )
 
 
-class WritesRefused(LiveSuiteError):
+class WritesRefusedError(LiveSuiteError):
     """A write the suite will not send; the message says why and names no entity."""
 
 
@@ -828,11 +892,13 @@ def _host_name(host: str) -> str:
 
 def _refused(reason: str, remedy: str) -> WriteAccess:
     return WriteAccess(
-        False, f"writes refused: {reason}; nothing was written; {remedy}", True
+        granted=False,
+        refusal=f"writes refused: {reason}; nothing was written; {remedy}",
+        misconfigured=True,
     )
 
 
-async def check_write_access(
+async def check_write_access(  # noqa: C901, PLR0911 (existing: split it when it next changes)
     client: VcoClient,
     enterprise_id: int | None,
     environ: Mapping[str, str] | None = None,
@@ -915,24 +981,37 @@ async def check_write_access(
     return WriteAccess(granted=True, refusal="")
 
 
-_marked: bool = False
-"""Whether the test now running is marked ``live_write``; false outside ``writer_test``."""
+@dataclass
+class _Writer:
+    """Whether the test running is a writer, set by ``writer_test``."""
+
+    marked: bool = False
+    """Whether the test now running is marked ``live_write``; false outside
+    ``writer_test``.
+    """
+
+
+_writer = _Writer()
 
 
 @contextmanager
-def writer_test(marked: bool) -> Generator[None]:
-    """For the length of the block, the test running is a writer (*marked*) or is not."""
-    global _marked
-    before = _marked
-    _marked = marked
+def writer_test(*, marked: bool) -> Generator[None]:
+    """For the length of the block, the test running is a writer or is not.
+
+    *marked* says which.
+    """
+    before = _writer.marked
+    _writer.marked = marked
     try:
         yield
     finally:
-        _marked = before
+        _writer.marked = before
 
 
 _UNKNOWN: object = object()
-"""In ``LiveRun.seen``: the Orchestrator answered a write without the module row, or the answer is lost."""
+"""In ``LiveRun.seen``: the Orchestrator answered a write without the module row, or the
+answer is lost.
+"""
 
 
 type Block = tuple[Site, int | None]
@@ -957,24 +1036,30 @@ class LiveRun:
     access: WriteAccess = field(default_factory=WriteAccess)
     hub: HubTarget | None = None
     """The hub the role calls may be sent for, set by ``admit_hub``."""
-    open: list[Block] = field(default_factory=lambda: list[Block]())
+    open: list[Block] = field(default_factory=list[Block])
     """The open ``restoring`` blocks, the innermost last."""
-    inserted: dict[int, Block] = field(default_factory=lambda: dict[int, Block]())
-    """The ID of each module a block's test inserted, with the block that was open for it."""
-    deleted: set[int] = field(default_factory=lambda: set[int]())
+    inserted: dict[int, Block] = field(default_factory=dict[int, Block])
+    """The ID of each module a block's test inserted, with the block that was open for
+    it.
+    """
+    deleted: set[int] = field(default_factory=set[int])
     """The ID of each module this run deleted."""
     sent: int = 0
-    """How many portal calls that are not reads the client has begun: a write that raised with this unchanged sent nothing."""
-    seen: dict[int, object] = field(default_factory=lambda: dict[int, object]())
-    """Each module's raw data as the Orchestrator last answered this run's write with, or ``_UNKNOWN``."""
+    """How many portal calls that are not reads the client has begun: a write that
+    raised with this unchanged sent nothing.
+    """
+    seen: dict[int, object] = field(default_factory=dict[int, object])
+    """Each module's raw data as the Orchestrator last answered this run's write with,
+    or ``_UNKNOWN``.
+    """
 
     def _check_may_write(self) -> None:
-        if not _marked:
-            raise WritesRefused(NOT_MARKED)
+        if not _writer.marked:
+            raise WritesRefusedError(NOT_MARKED)
         if not self.access.granted:
-            raise WritesRefused(self.access.refusal)
+            raise WritesRefusedError(self.access.refusal)
         if not self.open:
-            raise WritesRefused(OUTSIDE_RESTORING)
+            raise WritesRefusedError(OUTSIDE_RESTORING)
 
     def _covers(self, module_id: int) -> bool:
         """Whether an open block found module *module_id* or inserted it."""
@@ -1000,13 +1085,18 @@ class LiveRun:
             del self.inserted[module_id]
 
     def check_update(self, module_id: int) -> None:
-        """Raise ``WritesRefused`` unless the update of *module_id* is one a block will put back."""
+        """Raise ``WritesRefusedError`` unless the update of *module_id* is allowed.
+
+        It is allowed where a block will put it back.
+        """
         self._check_may_write()
         if not self._covers(module_id):
-            raise WritesRefused(f"an update of a module {NOT_COVERED}")
+            raise WritesRefusedError(f"an update of a module {NOT_COVERED}")
 
     def check_replace(self, configuration_id: int, name: str, what: str) -> None:
-        """Raise ``WritesRefused`` unless an open block is on that configuration's *name* module.
+        """Raise ``WritesRefusedError`` unless an open block is on that module.
+
+        The module is that configuration's *name* module.
 
         *what* is ``"an insert"`` or ``"a delete"``. The block's site must also
         be one marked for deleting and inserting modules.
@@ -1019,9 +1109,9 @@ class LiveRun:
             and block[0].name.value == name
         ]
         if not blocks:
-            raise WritesRefused(f"{what} of a {name} module {NOT_COVERED}")
+            raise WritesRefusedError(f"{what} of a {name} module {NOT_COVERED}")
         if not any(site.replace_modules for site, _ in blocks):
-            raise WritesRefused(
+            raise WritesRefusedError(
                 f"{what} of a {name} module of an edge that is not marked "
                 f"{REPLACE_MODULES_MARK}; nothing was sent; {REPLACE_MODULES_REMEDY}"
             )
@@ -1033,7 +1123,9 @@ class LiveRun:
         module_id: int,
         target_id: int,
     ) -> None:
-        """Raise ``WritesRefused`` unless the role call is for the named hub on a marked profile a block covers.
+        """Raise ``WritesRefusedError`` unless a block covers the role call.
+
+        The call must be for the named hub on a marked profile a block covers.
 
         *kind* is the kind of hub the call is for, *target_id* its ``id``, and
         *configuration_id* and *module_id* the profile and its device settings
@@ -1042,7 +1134,7 @@ class LiveRun:
         """
         self._check_may_write()
         if self.hub is None:
-            raise WritesRefused(ROLE_CALL_NOT_ADMITTED)
+            raise WritesRefusedError(ROLE_CALL_NOT_ADMITTED)
         if not any(
             site.profile
             and site.target
@@ -1051,20 +1143,23 @@ class LiveRun:
             and found == module_id
             for site, found in self.open
         ):
-            raise WritesRefused(ROLE_CALL_NOT_COVERED)
+            raise WritesRefusedError(ROLE_CALL_NOT_COVERED)
         if (kind, target_id) != (self.hub.kind, self.hub.id_):
-            raise WritesRefused(ROLE_CALL_NOT_THE_HUB)
+            raise WritesRefusedError(ROLE_CALL_NOT_THE_HUB)
 
     def check_delete(self, configuration_id: int, name: str, module_id: int) -> None:
-        """Raise ``WritesRefused`` unless a block is on that module and *module_id* is one it found or inserted."""
+        """Raise ``WritesRefusedError`` unless a block is on that module.
+
+        *module_id* must be one it found or inserted, too.
+        """
         self.check_replace(configuration_id, name, "a delete")
         if not self._covers(module_id):
-            raise WritesRefused(f"a delete of a {name} module {NOT_COVERED}")
+            raise WritesRefusedError(f"a delete of a {name} module {NOT_COVERED}")
 
 
 def require_writes(run: LiveRun) -> None:
     """Fail where the test may not write, skip where this run may not, else return."""
-    if not _marked:
+    if not _writer.marked:
         pytest.fail(NOT_MARKED, pytrace=False)
     if run.access.misconfigured:
         pytest.fail(run.access.refusal, pytrace=False)
@@ -1080,7 +1175,10 @@ _sending: ContextVar[str | None] = ContextVar("live_support_sending", default=No
 
 @contextmanager
 def _sends(method: str) -> Generator[None]:
-    """For the length of the block, the client may send *method*: the caller has checked the write."""
+    """For the length of the block, the client may send *method*.
+
+    The caller has checked the write.
+    """
     token = _sending.set(method)
     try:
         yield
@@ -1089,7 +1187,9 @@ def _sends(method: str) -> Generator[None]:
 
 
 def check_call(method: str) -> None:
-    """Raise ``WritesRefused`` for a portal call that is neither a read nor a write already checked.
+    """Raise ``WritesRefusedError`` for a portal call that is not a read.
+
+    A write already checked is not refused either.
 
     A read is a method whose name, after its namespace, starts with ``get``,
     ``list`` or ``is``. A write passes only from the code that checked it:
@@ -1099,7 +1199,7 @@ def check_call(method: str) -> None:
     """
     if _READ.match(method.rsplit("/", 1)[-1]) or _sending.get() == method:
         return
-    raise WritesRefused(
+    raise WritesRefusedError(
         f"a call to {method}, which is not a read and is not a write the suite "
         "checks; nothing was sent; the live suite writes only module updates and "
         "inserts through the client's own methods, deletes through "
@@ -1115,7 +1215,9 @@ _RUNS: weakref.WeakKeyDictionary[VcoClient, LiveRun] = weakref.WeakKeyDictionary
 def _checked_call(
     original: Callable[..., Awaitable[Any]], run: LiveRun
 ) -> Callable[..., Awaitable[Any]]:
-    """*original*, a portal method that takes the method string first, with ``check_call`` before it.
+    """*original*, a portal method that takes the method string first.
+
+    ``check_call`` runs before it.
 
     A write that passes is counted in ``run.sent``.
     """
@@ -1149,7 +1251,9 @@ ROLE_CALLS: dict[str, tuple[str, Literal["edge", "cluster"]]] = {
     ),
     "disable_cluster_backhaul": ("enterprise/disableClusterForBackHaul", "cluster"),
 }
-"""The twelve role calls of a hub: each client method, with its portal method and the kind of hub it is for."""
+"""The twelve role calls of a hub: each client method, with its portal method and the
+kind of hub it is for.
+"""
 
 
 def _guarded_role_call(
@@ -1158,7 +1262,9 @@ def _guarded_role_call(
     method: str,
     kind: Literal["edge", "cluster"],
 ) -> Callable[..., Awaitable[Any]]:
-    """*original*, a role call of the client, checked by ``LiveRun.check_role_call`` before it is sent.
+    """*original*, a role call of the client, checked before it is sent.
+
+    ``LiveRun.check_role_call`` checks it.
 
     A call that passes may send *method* (``_sends``), and the portal counts
     the send in ``run.sent``. A refusal of the Orchestrator carries its codes
@@ -1215,8 +1321,10 @@ async def admit_hub(
     return run.hub
 
 
-def run_of(client: VcoClient) -> LiveRun:
-    """The run of *client*, made on the first call, which also puts the guard on the client.
+def run_of(client: VcoClient) -> LiveRun:  # noqa: C901 (existing: split it when it next changes)
+    """The run of *client*, made on the first call.
+
+    That call also puts the guard on the client.
 
     The guard is on the client's own methods, so a test that forgets every
     helper is refused too. It covers every portal call the client makes
@@ -1255,7 +1363,7 @@ def run_of(client: VcoClient) -> LiveRun:
             with _sends("configuration/updateConfigurationModule"):
                 stored = await update(request, level=level)
         except BaseException as exc:
-            if _stored_nothing(exc, run.sent == sent):
+            if _stored_nothing(exc, unsent=run.sent == sent):
                 if had:
                     run.seen[module_id] = prior
                 else:
@@ -1288,10 +1396,10 @@ def run_of(client: VcoClient) -> LiveRun:
         return inserted
 
     async def guarded_paginated[T: BaseModel](
-        method: str, request: PaginatedVcoModel, ItemType: type[T]
+        method: str, request: PaginatedVcoModel, item_type: type[T]
     ) -> AsyncGenerator[list[T]]:
         check_call(method)
-        async with aclosing(paginated(method, request, ItemType)) as pages:
+        async with aclosing(paginated(method, request, item_type)) as pages:
             async for page in pages:
                 yield page
 
@@ -1310,7 +1418,10 @@ def run_of(client: VcoClient) -> LiveRun:
 
 @asynccontextmanager
 async def connect() -> AsyncGenerator[VcoClient]:
-    """A client for the Orchestrator ``VCO_HOST`` and ``VCO_TOKEN`` name, with the write guard on it."""
+    """A client for the Orchestrator ``VCO_HOST`` and ``VCO_TOKEN`` name.
+
+    It has the write guard on it.
+    """
     host = os.environ.get("VCO_HOST")
     if not host:
         pytest.skip("VCO_HOST not set")
@@ -1351,7 +1462,9 @@ class Site:
     replace_modules: bool = False
     """Whether the suite may also delete and insert modules of the edge."""
     profile: bool = False
-    """Whether the module is a profile's: only a profile's device settings takes a role call."""
+    """Whether the module is a profile's: only a profile's device settings takes a role
+    call.
+    """
 
     async def read(self) -> AnyStoredModule | None:
         modules = await self.layer()
@@ -1436,7 +1549,10 @@ async def effective_data(
 
 
 class DeleteConfigurationModule(VcoModel):
-    """``configuration/deleteConfigurationModule``; the library has no wrapper for it."""
+    """``configuration/deleteConfigurationModule``.
+
+    The library has no wrapper for it.
+    """
 
     id_: Annotated[int, Alias("id")]
     enterprise_id: Annotated[int | MISSING, NoneIsMissing] = MISSING
@@ -1504,9 +1620,9 @@ SEGMENT_DRIFT_KEY = "routeMapsVersion"
 
 def _segment_key(entry: object) -> object:
     if isinstance(entry, dict):
-        descriptor = cast(dict[str, object], entry).get("segment")
+        descriptor = cast("dict[str, object]", entry).get("segment")
         if isinstance(descriptor, dict):
-            return cast(dict[str, object], descriptor).get("segmentId")
+            return cast("dict[str, object]", descriptor).get("segmentId")
     return None
 
 
@@ -1522,15 +1638,15 @@ def settle(name: ConfigurationModuleName, before: object, after: object) -> obje
         or not isinstance(after, dict)
     ):
         return after
-    settled = copy.deepcopy(cast(dict[str, Any], after))
+    settled = copy.deepcopy(cast("dict[str, Any]", after))
     had = {
-        _segment_key(entry): SEGMENT_DRIFT_KEY in cast(dict[str, object], entry)
-        for entry in cast(dict[str, Any], before).get("segments") or []
+        _segment_key(entry): SEGMENT_DRIFT_KEY in cast("dict[str, object]", entry)
+        for entry in cast("dict[str, Any]", before).get("segments") or []
         if isinstance(entry, dict)
     }
     for entry in settled.get("segments") or []:
         if isinstance(entry, dict) and not had.get(_segment_key(entry), False):
-            _ = cast(dict[str, object], entry).pop(SEGMENT_DRIFT_KEY, None)
+            _ = cast("dict[str, object]", entry).pop(SEGMENT_DRIFT_KEY, None)
     return settled
 
 
@@ -1540,7 +1656,10 @@ def changes_between(
     after: object,
     model: type[VcoModel] | None = None,
 ) -> list[RawChange]:
-    """``raw_changes`` from *before* to *after*, without the accepted drift (``settle``)."""
+    """``raw_changes`` from *before* to *after*.
+
+    Without the accepted drift (``settle``).
+    """
     return raw_changes(before, settle(name, before, after), model)
 
 
@@ -1549,10 +1668,10 @@ def has_key(value: object, key: str) -> bool:
     if isinstance(value, dict):
         return any(
             k == key or has_key(v, key)
-            for k, v in cast(dict[str, object], value).items()
+            for k, v in cast("dict[str, object]", value).items()
         )
     if isinstance(value, list):
-        return any(has_key(v, key) for v in cast(list[object], value))
+        return any(has_key(v, key) for v in cast("list[object]", value))
     return False
 
 
@@ -1563,7 +1682,9 @@ OVERRIDE_KEY = "outboundOverride"
 def check_no_override_flag(
     label: str, before: object, payload: object, read_back: object
 ) -> None:
-    """No firewall payload and no read-back carries the key; say whose it is if one does.
+    """No firewall payload and no read-back carries the key.
+
+    Say whose it is if one does.
 
     *before* is the module as it was read before the write (None if there was
     none). A key it already had is a stray of the lab's data (an older library
@@ -1607,7 +1728,7 @@ def _backups() -> pathlib.Path:
     A backup holds lab configuration, so the directory must be outside the
     repository: one inside it is refused.
     """
-    global _backup_dir
+    global _backup_dir  # noqa: PLW0603 (tests reset it with monkeypatch.setattr(live, "_backup_dir", None))
     if _backup_dir is None:
         root = os.environ.get(BACKUP_DIR_ENV)
         if root:
@@ -1621,17 +1742,19 @@ def _backups() -> pathlib.Path:
             _backup_dir = pathlib.Path(tempfile.mkdtemp(prefix="pyvelo-it-backups-"))
 
             def remove_if_empty(path: pathlib.Path = _backup_dir) -> None:
-                try:
+                with suppress(
+                    OSError
+                ):  # a backup is still there: that is the point of it
                     path.rmdir()
-                except OSError:
-                    pass  # a backup is still there: that is the point of it
 
             _ = atexit.register(remove_if_empty)
     return _backup_dir
 
 
 def _backup_refs(name: ConfigurationModuleName, refs: object) -> object:
-    """The refs a restore may need: only a QoS insert takes any, and none is a client connector's.
+    """The refs a restore may need.
+
+    Only a QoS insert takes any, and none is a client connector's.
 
     The client-connector ref carries a login token, so it is never stored.
     """
@@ -1639,13 +1762,16 @@ def _backup_refs(name: ConfigurationModuleName, refs: object) -> object:
         return None
     return {
         key: value
-        for key, value in cast(dict[str, object], refs).items()
+        for key, value in cast("dict[str, object]", refs).items()
         if "clientConnector" not in key
     }
 
 
 def save_backup(site: Site, original: Original) -> pathlib.Path:
-    """Write *original* to a private file, so that a restore that fails is not the end of it."""
+    """Write *original* to a private file.
+
+    Then a restore that fails is not the end of it.
+    """
     path = _backups() / f"{uuid.uuid4().hex}-{site.name.value}.json"
     document = {
         "module": site.name.value,
@@ -1679,7 +1805,7 @@ def report_leftover_backups(write: Callable[[str], object]) -> None:
 
 
 def _print_to_stderr(line: str) -> None:
-    print(line, file=sys.stderr)
+    print(line, file=sys.stderr)  # noqa: T201  # runs at exit, after logging may have been shut down
 
 
 _ = atexit.register(report_leftover_backups, _print_to_stderr)
@@ -1700,7 +1826,9 @@ async def capture(site: Site) -> Original | None:
 def refs_as_read(
     module: AnyStoredModule, document: Mapping[str, Any]
 ) -> dict[str, Any] | MISSING:
-    """The refs a write of *document* to *module* carries: the module's refs as read, less the append-only names.
+    """The refs a write of *document* to *module* carries.
+
+    The module's refs as read, less the append-only names.
 
     Only a deviceSettings or QoS module whose data has segments carries them
     (``sends_refs_always``), and only where the refs were read; any other write
@@ -1717,7 +1845,10 @@ def refs_as_read(
 
 
 async def write_data(site: Site, module: AnyStoredModule, data: object) -> None:
-    """Send *data* to the module as it stands (its version), with the refs a library write of it carries (``refs_as_read``)."""
+    """Send *data* to the module as it stands (its version).
+
+    Send it with the refs a library write of it carries (``refs_as_read``).
+    """
     document = expect(data, dict, "the data to write")
     _ = await site.client.update_configuration_module(
         UpdateConfigurationModule(
@@ -1736,7 +1867,9 @@ async def write_data(site: Site, module: AnyStoredModule, data: object) -> None:
 
 
 async def restore(site: Site, original: Original | None) -> None:
-    """Put the module back as *original* and check that it is, undoing only what this run did.
+    """Put the module back as *original* and check that it is.
+
+    Undo only what this run did.
 
     The raw data goes back as written, under the module's current version. A
     module this run inserted is deleted; one it deleted is inserted again; one
@@ -1803,7 +1936,7 @@ async def restore(site: Site, original: Original | None) -> None:
 
 def ref_names(refs: object) -> list[str]:
     """The names of the refs; their content (IDs, login tokens) is not stable."""
-    return sorted(cast(dict[str, object], refs)) if isinstance(refs, dict) else []
+    return sorted(cast("dict[str, object]", refs)) if isinstance(refs, dict) else []
 
 
 @contextmanager
@@ -1820,7 +1953,7 @@ def interrupts_held() -> Generator[None]:
     def note(_signal: int, _frame: object) -> None:
         nonlocal noted
         if not noted:
-            print(
+            print(  # noqa: T201  # a signal handler tells the person who pressed Ctrl-C
                 "live suite: holding Ctrl-C until the module is put back",
                 file=sys.stderr,
             )
@@ -1882,7 +2015,9 @@ async def restoring(site: Site) -> AsyncGenerator[Original | None]:
 
 
 async def own_data_refusal(site: Site) -> str | None:
-    """Why the Orchestrator does not take the module's own data back, or ``None`` where it does.
+    """Why the Orchestrator does not take the module's own data back.
+
+    ``None`` where it does.
 
     Some modules of a lab are not valid as they stand (an address missing from a
     LAN network, say) and every write to them is refused, whatever it holds: the
@@ -1900,13 +2035,16 @@ async def own_data_refusal(site: Site) -> str | None:
             return "the module is not there"
         try:
             await write_data(site, module, original.data)
-        except DataRefused as refusal:
+        except DataRefusedError as refusal:
             return refusal.error
     return None
 
 
 async def accepts_a_write(site: Site) -> bool:
-    """Whether the Orchestrator takes the module's own data back (``own_data_refusal``)."""
+    """Whether the Orchestrator takes the module's own data back.
+
+    As ``own_data_refusal`` says.
+    """
     return await own_data_refusal(site) is None
 
 
@@ -1920,7 +2058,10 @@ SERVER_ASSIGNED_KEYS = frozenset({"ruleLogicalId"})
 
 
 def where(changes: Iterable[PlannedChange | ServerChange]) -> str:
-    """The paths of *changes*, redacted: ``refs`` before a refs entry, ``order of`` before the order entry of a list."""
+    """The paths of *changes*, redacted.
+
+    ``refs`` before a refs entry, ``order of`` before the order entry of a list.
+    """
 
     def shown(change: PlannedChange | ServerChange) -> str:
         if change.part == "refs":
@@ -1933,7 +2074,10 @@ def where(changes: Iterable[PlannedChange | ServerChange]) -> str:
 
 
 def stored_otherwise(lost_edits: Iterable[PlannedChange]) -> list[Path]:
-    """Where in each lost edit the value stored is not the value sent, at the deepest path."""
+    """Where in each lost edit the value stored is not the value sent.
+
+    Each is at the deepest path.
+    """
     return [
         Path((*change.path.parts, *inner.path.parts))
         for change in lost_edits
@@ -1973,7 +2117,9 @@ def outcome(error: ModuleWriteError) -> str:
 
 
 def _stated_refusal(error: ModuleWriteError) -> str:
-    """How the Orchestrator stated a refusal, read from the conflict ``update_configuration_module`` raised.
+    """How the Orchestrator stated a refusal.
+
+    It is read from the conflict ``update_configuration_module`` raised.
 
     ``write_module`` raises its error from that conflict, or while handling it
     when the module could not be read back. The conflict is found by walking
@@ -2025,9 +2171,12 @@ def refusal_form(error: ModuleWriteError) -> str:
 
 
 def record(capsys: pytest.CaptureFixture[str], line: str) -> None:
-    """Print *line* on a line of its own, past the capture, so a passing test shows it."""
+    """Print *line* on a line of its own, past the capture.
+
+    So a passing test shows it.
+    """
     with capsys.disabled():
-        print(f"\n{line}")
+        print(f"\n{line}")  # noqa: T201  # record prints past the capture, so a passing test shows the line
 
 
 def record_refusal(
@@ -2055,7 +2204,10 @@ def check_entries(
 def check_as_read(
     label: str, held: ConfigurationModuleBase, read: ConfigurationModuleBase
 ) -> None:
-    """*held* is the module as a read made right after shows it: its version and raw data."""
+    """*held* is the module as a read made right after shows it.
+
+    Its version and raw data.
+    """
     check(
         held.version == read.version,
         f"{label}: the module held has another version than a read made right after",
@@ -2068,12 +2220,15 @@ def check_as_read(
 
 
 def value_at(document: object, path: Path) -> object:
-    """The value at *path*, a path of names only, in a JSON document; ``MISSING`` if there is none."""
+    """The value at *path*, a path of names only, in a JSON document.
+
+    ``MISSING`` if there is none.
+    """
     value = document
     for part in path.parts:
         if not isinstance(value, dict) or not isinstance(part, str):
             return MISSING
-        value = cast(dict[str, object], value).get(part, MISSING)
+        value = cast("dict[str, object]", value).get(part, MISSING)
     return value
 
 
@@ -2125,12 +2280,12 @@ class Answer:
 def _method_of(content: str | None) -> str:
     """The JSON-RPC method of a request body, or ``""`` where it cannot be read."""
     try:
-        request = cast(object, json.loads(content or ""))
+        request = cast("object", json.loads(content or ""))
     except ValueError:
         return ""
     if not isinstance(request, dict):
         return ""
-    method = cast(dict[str, object], request).get("method")
+    method = cast("dict[str, object]", request).get("method")
     return method if isinstance(method, str) else ""
 
 
@@ -2165,7 +2320,9 @@ def record_answers(client: VcoClient, monkeypatch: pytest.MonkeyPatch) -> list[A
 
 
 def answer_form(answer: Answer) -> str:
-    """How *answer* answers a module update, with its HTTP status and nothing of its body.
+    """How *answer* answers a module update, with its HTTP status.
+
+    Nothing of its body.
 
     The body holds names and IDs of the lab, so only its form is said: a
     refusal by the precondition error, another error, the module row, or a
@@ -2176,16 +2333,16 @@ def answer_form(answer: Answer) -> str:
     if is_precondition_answer(text):
         return f"refused with the precondition error ({status})"
     try:
-        document = cast(object, json.loads(text))
+        document = cast("object", json.loads(text))
     except ValueError:
         return f"an answer that is not JSON ({status})"
     if isinstance(document, dict):
-        fields = cast(dict[str, object], document)
+        fields = cast("dict[str, object]", document)
         if isinstance(fields.get("error"), dict):
             return f"refused with another error ({status})"
         result = fields.get("result")
         if isinstance(result, dict):
-            row = cast(dict[str, object], result)
+            row = cast("dict[str, object]", result)
             if "data" in row:
                 return f"not refused: the module row ({status})"
             rows = row.get("rows")
@@ -2223,7 +2380,9 @@ def without_return_data(client: VcoClient, monkeypatch: pytest.MonkeyPatch) -> N
 
 
 def read_backs(answers: Sequence[Answer]) -> int:
-    """How many of *answers* are to ``getConfiguration``, the request ``write_module`` reads a module back with.
+    """How many of *answers* are to ``getConfiguration``.
+
+    That is the request ``write_module`` reads a module back with.
 
     An edge site and an edge load of the pipeline read the configuration stack
     and are not counted. Whichever method of the client sent the request, it
@@ -2237,7 +2396,7 @@ def read_backs(answers: Sequence[Answer]) -> int:
 # ---------------------------------------------------------------------------
 
 
-def failure_text(error: BaseException) -> str | None:
+def failure_text(error: BaseException) -> str | None:  # noqa: PLR0911 (existing: split it when it next changes)
     """*error* as what holds no lab data, or ``None`` where the report is left as it is.
 
     It keeps the class, error codes and types, redacted paths and the
@@ -2269,7 +2428,7 @@ def failure_text(error: BaseException) -> str | None:
         )
     entries = getattr(error, "errors", None)
     if isinstance(entries, list):
-        listed = cast(list[object], entries)
+        listed = cast("list[object]", entries)
         codes = sorted(
             {
                 code
@@ -2286,7 +2445,9 @@ def failure_text(error: BaseException) -> str | None:
 def redact_report(
     item: pytest.Item, call: pytest.CallInfo[None], report: pytest.TestReport
 ) -> None:
-    """Replace the report of a failed live configuration test by ``failure_text`` and the line that raised.
+    """Replace the report of a failed live configuration test by ``failure_text``.
+
+    And by the line that raised.
 
     A test is a live configuration test if it is marked ``integration`` and
     uses the ``lab`` fixture; the analytics tests assert on values and are left
@@ -2299,7 +2460,7 @@ def redact_report(
     if item.get_closest_marker("integration") is None:
         return
     # Only a test function has fixtures; ``Item`` is the signature the hook has.
-    if "lab" not in cast(list[str], getattr(item, "fixturenames", [])):
+    if "lab" not in cast("list[str]", getattr(item, "fixturenames", [])):
         return
     text = failure_text(call.excinfo.value)
     if text is None:

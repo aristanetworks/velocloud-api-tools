@@ -31,7 +31,7 @@ from bisect import bisect_left
 from collections import Counter
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Self, get_args, get_origin, override
+from typing import ClassVar, Self, get_args, get_origin, override
 
 from pydantic import MISSING
 from pydantic.fields import FieldInfo
@@ -64,7 +64,10 @@ type KeyValue = KeyScalar | tuple[KeyScalar, ...]
 
 @dataclass(frozen=True, slots=True)
 class Key:
-    """A keyed-list item, identified by its ``KeyField`` value (a tuple for a composite key)."""
+    """A keyed-list item, identified by its ``KeyField`` value.
+
+    The value is a tuple for a composite key.
+    """
 
     value: KeyValue
 
@@ -128,7 +131,10 @@ def key_form(key: KeyValue | None) -> KeyForm | None:
 
 
 def key_part(value: object) -> KeyScalar:
-    """One part of a key: a scalar as it is, anything else (a ``UUID``) in string form."""
+    """One part of a key: a scalar as it is.
+
+    Anything else (a ``UUID``) is in string form.
+    """
     return value if isinstance(value, (str, int, float)) else str(value)
 
 
@@ -195,7 +201,8 @@ def _decode_string(text: str, index: int, what: str = "path") -> tuple[str, int]
     except ValueError:
         raise _malformed(text, index, "bad quoted string", what) from None
     value, end = decoded
-    assert isinstance(value, str)  # it starts with a double quote
+    if not isinstance(value, str):  # the caller found a double quote here
+        raise _malformed(text, index, "not a quoted string", what)
     return value, end
 
 
@@ -247,7 +254,9 @@ def _parse_key_parts(
 
 
 def parse_key_text(text: str) -> tuple[KeyScalar, ...]:
-    """The parts of the key that ``key_text`` writes as *text*; one part for a single key.
+    """The parts of the key that ``key_text`` writes as *text*.
+
+    There is one part for a single key.
 
     Raises ``ValueError`` if *text* is not what ``key_text`` writes.
     """
@@ -286,9 +295,11 @@ class Path(str):
     ``segments["Corp.Guest v2"].rules[r1].port``.
     """
 
+    __slots__: ClassVar[tuple[str, ...]] = ("parts",)
     parts: tuple[PathPart, ...]
 
     def __new__(cls, parts: Iterable[PathPart]) -> Self:
+        """The path of *parts*; ``TypeError`` for text, which ``Path.parse`` reads."""
         if isinstance(parts, str):
             raise TypeError("Path takes parts; use Path.parse() for text")
         parts = tuple(parts)
@@ -318,6 +329,7 @@ class Path(str):
         return cls(parts)
 
     def child(self, part: PathPart) -> Self:
+        """This path with *part* appended."""
         return type(self)((*self.parts, part))
 
 
@@ -327,11 +339,17 @@ def _name(key: object) -> str:
 
 
 type ItemPart = Key | int
-"""How a keyed-list item is named: by its key, or by its position where the key repeats or is absent."""
+"""How a keyed-list item is named.
+
+It is named by its key, or by its position where the key repeats or is absent.
+"""
 
 
 def item_text(part: ItemPart) -> str:
-    """An item's name as text: the key as ``Path`` writes it, or ``#n`` for a position."""
+    """An item's name as text.
+
+    It is the key as ``Path`` writes it, or ``#n`` for a position.
+    """
     if isinstance(part, Key):
         return key_text(part.value)
     return f"#{part}"
@@ -389,6 +407,7 @@ class RawChange:
         place: ItemPlace | None = None,
         moves: tuple[ItemMove, ...] | None = None,
     ) -> None:
+        """*path* may be a ``Path`` or its text, which is parsed."""
         object.__setattr__(
             self, "path", path if isinstance(path, Path) else Path.parse(path)
         )
@@ -420,7 +439,10 @@ class ModelMap:
 
 
 type Node = type[VcoModel] | KeyedList | ModelMap | None
-"""What a JSON value is known to be: a model, a keyed list, a map of models, or nothing (untyped)."""
+"""What a JSON value is known to be.
+
+It is a model, a keyed list, a map of models, or nothing (untyped).
+"""
 
 
 # ---------------------------------------------------------------------------
@@ -455,7 +477,7 @@ def _map_value_type(field_info: FieldInfo) -> type[VcoModel] | None:
     """
     for member in _members_without_missing_and_none(_held_type(field_info)):
         args = get_args(member)
-        if get_origin(member) is not dict or len(args) != 2:
+        if get_origin(member) is not dict or len(args) != 2:  # noqa: PLR2004  # dict[K, V] has two type arguments
             continue
         models = [
             m
@@ -588,7 +610,10 @@ def _unique(keys: list[KeyForm | None]) -> set[KeyForm]:
 
 @dataclass(frozen=True, slots=True)
 class Pairing:
-    """How the items of a keyed list *old* became the items of *new* (``pair_items``)."""
+    """How the items of a keyed list *old* became the items of *new*.
+
+    It is what ``pair_items`` gives.
+    """
 
     pairs: tuple[tuple[int, int], ...]
     """(index in *old*, index in *new*) of each item on both sides, in *new* order."""
@@ -626,7 +651,9 @@ def pair_items(
     *,
     old_alt_read: Sequence[bool] | None = None,
 ) -> Pairing | None:
-    """Pair the items of keyed list *old* with those of *new*, or None to replace it whole.
+    """Pair the items of keyed list *old* with those of *new*.
+
+    None means the list is replaced whole.
 
     First by alt key, for each alt-key value that occurs once on each side;
     then the items left by key, for each key that occurs once on each side
@@ -755,9 +782,13 @@ def _rebase_object(
             out[key] = _rebase(
                 value, before[dump_key], after[dump_key], node_child(node, dump_key)
             )
-    for key, value in after.items():
-        if key not in handled and (key not in before or before[key] != value):
-            out[key] = value
+    out.update(
+        {
+            key: value
+            for key, value in after.items()
+            if key not in handled and (key not in before or before[key] != value)
+        }
+    )
     return out
 
 
@@ -848,6 +879,10 @@ def raw_changes(
 def collect_changes(
     out: list[RawChange], path: Path, old: object, new: object, node: Node
 ) -> None:
+    """Append to *out* the changes from *old* to *new* under *path*.
+
+    *node* is the model's shape at *path*; ``raw_changes`` describes the walk.
+    """
     if old == new:
         return
     if is_dict(old) and is_dict(new):
@@ -907,10 +942,12 @@ def item_names(
 
 
 def staying(order: Sequence[int]) -> set[int]:
-    """The positions in *order* of a longest increasing run: the items that need not move."""
-    tails: list[
-        int
-    ] = []  # tails[k]: the position in order of the last value of the run of length k + 1
+    """The positions in *order* of a longest increasing run.
+
+    They are the items that need not move.
+    """
+    # tails[k]: the position in order of the last value of the run of length k + 1
+    tails: list[int] = []
     values: list[int] = []  # order[tails[k]]
     before: list[
         int
@@ -1058,7 +1095,9 @@ def python_path(path: Path, model: type[VcoModel] | None) -> Path:
 
 
 def is_override_flag(model: type[VcoModel], path: Path) -> bool:
-    """Whether *path*, as ``find_lossy_assignments`` gives it, ends at an ``OverrideFlag`` of *model*.
+    """Whether *path* ends at an ``OverrideFlag`` of *model*.
+
+    *path* is as ``find_lossy_assignments`` gives it.
 
     A path of ``raw_changes`` is accepted too: its names are keys as written
     (``bgp``, ``loopbackInterfaces``), and each is read through the model's
@@ -1084,7 +1123,7 @@ def _dump_get(dump: object, key: str) -> object:
     return dump[key] if _is_mapping(dump) and key in dump else MISSING
 
 
-def _lossy_in_value(
+def _lossy_in_value(  # noqa: PLR0913, PLR0917 (existing: split it when it next changes)
     out: list[Path],
     path: Path,
     baseline: object,
@@ -1164,7 +1203,7 @@ def _same_value(a: object, b: object) -> bool:
     return a == b
 
 
-def _lossy_in_model(
+def _lossy_in_model(  # noqa: PLR0913, PLR0917 (existing: split it when it next changes)
     out: list[Path],
     path: Path,
     baseline: VcoModel,
@@ -1238,7 +1277,9 @@ def _was_read(item: object, path: str) -> bool:
 def _keyed_pairs(
     baseline: list[object], before: list[object], after: list[object], node: Node
 ) -> list[tuple[PathPart, int, int]] | None:
-    """The items a keyed list has on both sides, as (part, index in *before*, index in *after*).
+    """The items a keyed list has on both sides.
+
+    Each is (part, index in *before*, index in *after*).
 
     The part is the item's key in *before*, or its position there where that
     key is not unique. None unless *node* is a keyed list that ``pair_items``
@@ -1256,7 +1297,7 @@ def _keyed_pairs(
     return [(parts[i], i, j) for i, j in pairing.pairs]
 
 
-def _lossy_in_list(
+def _lossy_in_list(  # noqa: PLR0913, PLR0917 (existing: split it when it next changes)
     out: list[Path],
     path: Path,
     baseline: list[object],

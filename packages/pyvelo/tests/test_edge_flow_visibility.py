@@ -1,6 +1,6 @@
 """Request, row and pagination contract for metrics/getEdgeFlowVisibilityMetrics."""
 
-import datetime
+import datetime as dt
 from typing import cast
 
 import httpx
@@ -65,7 +65,7 @@ def request_with(
 
 
 class TestFilters:
-    def test_serializes_api_filter_shape(self):
+    def test_serializes_api_filter_shape(self) -> None:
         request = request_with(
             filters=FlowVisibilityFilters(
                 conditions=[
@@ -86,19 +86,19 @@ class TestFilters:
             ]
         }
 
-    def test_accepts_op_as_input_alias(self):
+    def test_accepts_op_as_input_alias(self) -> None:
         condition = FlowVisibilityFilter.model_validate(
             {"field": "transport", "op": "is", "value": 6}
         )
         assert condition.operator == FilterFieldOperator.IS
 
-    def test_accepts_substring_operator_on_fqdn(self):
+    def test_accepts_substring_operator_on_fqdn(self) -> None:
         condition = FlowVisibilityFilter.model_validate(
             {"field": "destFqdn", "operator": "contains", "value": "example.com"}
         )
         assert condition.model_dump(by_alias=True)["operator"] == "contains"
 
-    def test_rejects_unknown_field(self):
+    def test_rejects_unknown_field(self) -> None:
         with pytest.raises(ValidationError):
             _ = FlowVisibilityFilter.model_validate(
                 {"field": "notAField", "operator": "is", "value": "x"}
@@ -108,13 +108,13 @@ class TestFilters:
 class TestOperation:
     async def test_follows_pages_and_drops_summary_rows(
         self, mock_vco_client: MockVcoClientFactory
-    ):
+    ) -> None:
         sent: list[str | None] = []
 
         def handler(request: httpx.Request) -> httpx.Response:
             body = parse_json_object(request.content)
             assert body["method"] == "metrics/getEdgeFlowVisibilityMetrics"
-            params = cast(JsonObject, body["params"])
+            params = cast("JsonObject", body["params"])
             cursor = params.get("nextPageLink")
             assert cursor is None or isinstance(cursor, str)
             sent.append(cursor)
@@ -152,18 +152,16 @@ class TestOperation:
         assert first.transport == 6
         assert first.flow_count == 4
         assert first.isp is None
-        assert first.end_time == datetime.datetime(
-            2026, 10, 9, 0, 1, tzinfo=datetime.UTC
-        )
+        assert first.end_time == dt.datetime(2026, 10, 9, 0, 1, tzinfo=dt.UTC)
 
     async def test_single_page_records_continuation(
         self, mock_vco_client: MockVcoClientFactory
-    ):
+    ) -> None:
         sent: list[str | None] = []
 
         def handler(request: httpx.Request) -> httpx.Response:
             body = parse_json_object(request.content)
-            params = cast(JsonObject, body["params"])
+            params = cast("JsonObject", body["params"])
             cursor = params.get("nextPageLink")
             assert cursor is None or isinstance(cursor, str)
             sent.append(cursor)
@@ -179,18 +177,18 @@ class TestOperation:
 
         client = await mock_vco_client(handler)
         request = request_with(limit=1)
-        request._max_pages = 1
+        request.max_pages = 1
 
         rows = await client.get_edge_flow_visibility_metrics(request)
 
         assert len(rows) == 1
         assert sent == [None]
-        assert cast(bool, request._page_has_more) is True
-        assert cast(str | None, request._page_next_link) == "flow-cursor"
+        assert request.page_has_more is True
+        assert request.page_next_link == "flow-cursor"
 
     async def test_no_filter_fallback_returns_no_flows(
         self, mock_vco_client: MockVcoClientFactory
-    ):
+    ) -> None:
         def handler(_request: httpx.Request) -> httpx.Response:
             return httpx.Response(
                 200,

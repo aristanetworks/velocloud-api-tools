@@ -1,3 +1,5 @@
+"""The requests and results of the system property reads and the version info read."""
+
 from typing import Annotated, Any
 
 from pydantic import MISSING

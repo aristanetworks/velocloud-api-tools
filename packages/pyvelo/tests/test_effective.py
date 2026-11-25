@@ -222,9 +222,9 @@ def _owned_in(model: object) -> list[object]:
 
 def test_the_view_is_read_only() -> None:
     view = _view({"level": 1}, {"segments": [_seg(1)]})
-    with pytest.raises(TypeError, match="state.edge or state.profile"):
+    with pytest.raises(TypeError, match=r"state\.edge or state\.profile"):
         view.level = Resolved(Origin.EDGE, 3, "level")  # pyright: ignore[reportAttributeAccessIssue]
-    with pytest.raises(TypeError, match="state.edge or state.profile"):
+    with pytest.raises(TypeError, match=r"state\.edge or state\.profile"):
         view.segments[0].rules = []
     assert _owned_in(view) == []
 
@@ -308,8 +308,8 @@ def test_authority_on_a_field_that_is_not_inheritable_is_refused() -> None:
     with pytest.raises(TypeError, match=r"Bad2\.note.*Authority"):
 
         class Bad2(Layered[Edge]):  # pyright: ignore[reportUnusedClass]
-            note: Annotated[EdgeOnly[bool], Authority(lambda value: True)] = (
-                kind_default(True)
+            note: Annotated[EdgeOnly[bool], Authority(lambda _: True)] = kind_default(
+                True
             )
 
 
@@ -355,7 +355,7 @@ def test_a_value_localized_from_a_display_default_still_saves_as_before() -> Non
     assert saved == {"a": 1, "b": False}
 
 
-def test_a_resolved_is_not_a_condition():
+def test_a_resolved_is_not_a_condition() -> None:
     resolved = Resolved(Origin.EDGE, True, "enabled")
     with pytest.raises(TypeError, match=r"\.value"):
         bool(resolved)

@@ -1,3 +1,9 @@
+"""The types the parts of ``deviceSettings`` share.
+
+Radio, OSPF, multicast, DHCP option, port speed and duplex, RADIUS and sub-interface
+types, the Edge model names, and the ref names of ``ProviderRef``.
+"""
+
 from typing import Annotated, Literal
 
 from pydantic import MISSING, Field

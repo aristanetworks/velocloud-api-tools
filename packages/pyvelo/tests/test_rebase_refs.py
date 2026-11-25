@@ -43,7 +43,10 @@ def qos_at(
     *,
     enabled: bool = False,
 ) -> QosConfigurationModule[Profile]:
-    """A profile QoS module at *version* with *rules* in the Global Segment and *refs*; its rate limit is *enabled* or not."""
+    """A profile QoS module at *version* with *rules* in the Global Segment and *refs*.
+
+    Its rate limit is *enabled* or not.
+    """
     data = {
         "segments": [qos_entry(GLOBAL, rules=rules)],
         "serviceRateLimit": {**RATE, "enabled": enabled},
@@ -77,14 +80,17 @@ def rebased(
     plan: ModulePlan,
     fresh: QosConfigurationModule[Profile],
 ) -> tuple[QosConfigurationModule[Profile], ModulePlan]:
-    """*plan* rebased onto *fresh*, with the profile's device settings as the plan was made with."""
+    """*plan* rebased onto *fresh*.
+
+    With the profile's device settings as the plan was made with.
+    """
     onto, onto_plan, _ = rebase_onto(
         module, plan, fresh, profile_device_settings=profile_services()
     )
     return onto, onto_plan
 
 
-def test_a_rebased_plan_adds_its_row_to_the_fresh_refs():
+def test_a_rebased_plan_adds_its_row_to_the_fresh_refs() -> None:
     row_b = qos_row(HUB_B, SERVICE_B_ID, SERVICE_B)
     module = qos_at(
         "q1",
@@ -115,7 +121,7 @@ def test_a_rebased_plan_adds_its_row_to_the_fresh_refs():
     assert onto_plan.data["serviceRateLimit"]["enabled"] is True
 
 
-def test_a_row_the_fresh_refs_hold_already_is_sent_once():
+def test_a_row_the_fresh_refs_hold_already_is_sent_once() -> None:
     row_a = qos_row(HUB_A, SERVICE_A_ID, SERVICE_A)
     module = qos_at("q1", [rule("r1"), rule("r2")], {OTHER_REF: OTHER_ROW})
     plan = planned(module, edited(module, r1=[backhaul_entry(HUB_A, SERVICE_A)]))
@@ -135,7 +141,7 @@ def test_a_row_the_fresh_refs_hold_already_is_sent_once():
     assert rows_of(onto_plan) == [row_a]
 
 
-def test_a_removal_of_a_row_that_is_already_gone_sends_no_clash():
+def test_a_removal_of_a_row_that_is_already_gone_sends_no_clash() -> None:
     row_a = qos_row(HUB_A, SERVICE_A_ID, SERVICE_A)
     module = qos_at(
         "q1",

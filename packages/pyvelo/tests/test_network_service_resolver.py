@@ -1,4 +1,6 @@
-"""The network-service resolver: services of an enterprise by name, logical ID and object ID.
+"""The network-service resolver.
+
+Services of an enterprise by name, logical ID and object ID.
 
 Each test that loads the resolver serves ``enterprise/getEnterpriseServices``
 from a ``ModuleStore`` through a ``VcoClient``, so the rows are parsed as the
@@ -62,7 +64,7 @@ async def loaded_registry(
 
 async def test_loads_services_by_name_logical_id_and_object_id(
     mock_vco_client: MockVcoClientFactory,
-):
+) -> None:
     registry = await loaded_registry(mock_vco_client, store_with_services())
     expected = NetworkServiceIdentity("dns-a", uuid.UUID(DNS_A), 701, "dns")
 
@@ -90,7 +92,7 @@ async def test_loads_services_by_name_logical_id_and_object_id(
 
 async def test_a_service_of_a_type_the_models_do_not_know_still_loads(
     mock_vco_client: MockVcoClientFactory,
-):
+) -> None:
     store = store_with_services()
     store.add_object(704, logical_id=TACACS, name="tacacs-a", type_="tacacs")
     registry = await loaded_registry(mock_vco_client, store)
@@ -104,7 +106,7 @@ async def test_a_service_of_a_type_the_models_do_not_know_still_loads(
 
 async def test_before_its_load_the_resolver_says_it_is_not_loaded(
     mock_vco_client: MockVcoClientFactory,
-):
+) -> None:
     client = await mock_vco_client(store_with_services())
     resolver = NetworkServiceResolver(client)
     registry = ResolverRegistry()
@@ -127,7 +129,7 @@ async def test_before_its_load_the_resolver_says_it_is_not_loaded(
     assert registry.lookup(NetworkServiceIdentity, "dns-a").object_id == 701
 
 
-def test_the_not_loaded_message_names_the_type_and_the_label():
+def test_the_not_loaded_message_names_the_type_and_the_label() -> None:
     message = str(ResolverNotLoadedError(NetworkServiceIdentity))
 
     assert message == (
@@ -144,7 +146,7 @@ def test_the_not_loaded_message_names_the_type_and_the_label():
     assert isinstance(error, KeyError)
 
 
-def test_lookup_by_without_a_registered_resolver_is_not_loaded():
+def test_lookup_by_without_a_registered_resolver_is_not_loaded() -> None:
     registry = ResolverRegistry()
 
     with pytest.raises(ResolverNotLoadedError) as caught:
@@ -154,7 +156,7 @@ def test_lookup_by_without_a_registered_resolver_is_not_loaded():
 
 async def test_lookup_by_of_an_unknown_value_is_a_resolution_error(
     mock_vco_client: MockVcoClientFactory,
-):
+) -> None:
     registry = await loaded_registry(mock_vco_client, store_with_services())
 
     with pytest.raises(ResolutionError) as caught:
@@ -167,7 +169,7 @@ async def test_lookup_by_of_an_unknown_value_is_a_resolution_error(
 
 async def test_a_service_unknown_by_name_is_a_resolution_error(
     mock_vco_client: MockVcoClientFactory,
-):
+) -> None:
     registry = await loaded_registry(mock_vco_client, store_with_services())
 
     with pytest.raises(ResolutionError) as caught:
@@ -181,7 +183,7 @@ async def test_a_service_unknown_by_name_is_a_resolution_error(
 
 async def test_a_name_matches_without_regard_to_case(
     mock_vco_client: MockVcoClientFactory,
-):
+) -> None:
     registry = await loaded_registry(mock_vco_client, store_with_services())
 
     assert registry.lookup(NetworkServiceIdentity, "DNS-A").object_id == 701
@@ -189,7 +191,7 @@ async def test_a_name_matches_without_regard_to_case(
 
 async def test_a_shared_name_asks_for_the_logical_id(
     mock_vco_client: MockVcoClientFactory,
-):
+) -> None:
     store = store_with_services()
     store.add_object(711, logical_id=DUP_DNS, name="dup", type_="dns")
     store.add_object(712, logical_id=DUP_AUTH, name="dup", type_="authentication")
@@ -220,7 +222,7 @@ async def test_a_shared_name_asks_for_the_logical_id(
 
 async def test_an_unloaded_copy_must_be_loaded_again(
     mock_vco_client: MockVcoClientFactory,
-):
+) -> None:
     registry = await loaded_registry(mock_vco_client, store_with_services())
     resolver = registry.get_resolver(NetworkServiceResolver)
 
@@ -241,7 +243,7 @@ async def test_an_unloaded_copy_must_be_loaded_again(
 
 async def test_clearing_the_registry_context_unloads_the_resolver(
     mock_vco_client: MockVcoClientFactory,
-):
+) -> None:
     registry = await loaded_registry(mock_vco_client, store_with_services())
 
     with (
@@ -256,7 +258,7 @@ async def test_clearing_the_registry_context_unloads_the_resolver(
 
 async def test_a_reload_replaces_what_was_loaded(
     mock_vco_client: MockVcoClientFactory,
-):
+) -> None:
     store = store_with_services()
     registry = await loaded_registry(mock_vco_client, store)
     del store.objects[701]
@@ -270,7 +272,7 @@ async def test_a_reload_replaces_what_was_loaded(
     assert registry.lookup(NetworkServiceIdentity, "zs-a").object_id == 703
 
 
-async def test_a_resolver_that_needs_no_load_answers_lookup_by_as_loaded():
+async def test_a_resolver_that_needs_no_load_answers_lookup_by_as_loaded() -> None:
     resolver = await make_segment_resolver(
         [{"name": "Global Segment", "segment_id": 0}]
     )
@@ -283,7 +285,7 @@ async def test_a_resolver_that_needs_no_load_answers_lookup_by_as_loaded():
     )
 
 
-async def test_the_fixture_resolver_is_loaded_with_the_services_given():
+async def test_the_fixture_resolver_is_loaded_with_the_services_given() -> None:
     services = [
         NetworkServiceIdentity("dns-a", uuid.UUID(DNS_A), 701, "dns"),
         NetworkServiceIdentity("tacacs-a", uuid.UUID(TACACS), 704, "tacacs"),

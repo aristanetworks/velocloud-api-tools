@@ -1,3 +1,8 @@
+"""The requests and results of the enterprise export and import reads.
+
+``enterpriseExport/getExportMetadata`` and ``enterpriseImport/getImportResult``.
+"""
+
 from typing import Any
 
 from pydantic import MISSING

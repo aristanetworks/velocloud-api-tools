@@ -111,7 +111,7 @@ def outbound(state: ConfigState, segment: str = SEGMENT) -> list[str]:
     return [r.name for r in data.segment(segment).outbound]
 
 
-async def test_firewall_rule_add_change_delete_move():
+async def test_firewall_rule_add_change_delete_move() -> None:
     raw = firewall(
         fw_rule("a", ruleLogicalId="la", futureKey=1),
         fw_rule("b", ruleLogicalId="lb"),
@@ -170,7 +170,7 @@ async def test_firewall_rule_add_change_delete_move():
     ]
 
 
-async def test_delete_one_of_two_firewall_rules_of_one_name():
+async def test_delete_one_of_two_firewall_rules_of_one_name() -> None:
     rules = [
         fw_rule("web", ruleLogicalId="l1", futureKey=1),
         fw_rule("web", ruleLogicalId="l2"),
@@ -196,7 +196,7 @@ async def test_delete_one_of_two_firewall_rules_of_one_name():
     assert sent == [rules[0], rules[2]]
 
 
-async def test_reading_a_later_inherited_segment_sends_nothing():
+async def test_reading_a_later_inherited_segment_sends_nothing() -> None:
     profile: dict[str, Any] = {
         "segments": [
             {"segment": desc(0, SEGMENT), "outbound": []},
@@ -240,7 +240,7 @@ def logical_id(n: int) -> str:
     return str(uuid.UUID(int=100 + n))
 
 
-async def test_qos_rule_add_change_delete_move():
+async def test_qos_rule_add_change_delete_move() -> None:
     raw = qos(
         qos_rule("a", ruleLogicalId=logical_id(1), futureKey=1),
         qos_rule("b", ruleLogicalId=logical_id(2)),
@@ -292,7 +292,7 @@ async def test_qos_rule_add_change_delete_move():
     ]
 
 
-async def test_rename_a_qos_rule():
+async def test_rename_a_qos_rule() -> None:
     raw = qos(
         qos_rule("old", ruleLogicalId=logical_id(1), futureKey=1),
         qos_rule("other", ruleLogicalId=logical_id(2)),
@@ -335,7 +335,7 @@ def device_settings(*routes: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-async def test_static_route_add_and_delete_by_composite_key():
+async def test_static_route_add_and_delete_by_composite_key() -> None:
     raw = device_settings(
         route("10.1.0.0", futureKey=1), route("10.2.0.0"), route("10.3.0.0")
     )
@@ -377,7 +377,7 @@ async def test_static_route_add_and_delete_by_composite_key():
     assert [r["destination"] for r in sent] == ["10.1.0.0", "10.3.0.0", "10.9.0.0"]
 
 
-async def test_a_static_route_is_named_by_its_parts_joined_with_commas():
+async def test_a_static_route_is_named_by_its_parts_joined_with_commas() -> None:
     raw = device_settings(route("10.1.0.0"), route("10.2.0.0"))
     state = make_state({"deviceSettings": raw}, {"deviceSettings": PROFILE_DS})
     _ = await ConfigPipeline(None).apply(
@@ -425,7 +425,7 @@ def link_path(internal_id: uuid.UUID, field: str) -> str:
     return f"links[{key_text((str(internal_id), 'IPv4'))}].{field}"
 
 
-async def test_rename_a_wan_link():
+async def test_rename_a_wan_link() -> None:
     raw = {"links": [link(U1, "Internet", futureKey=1), link(U2, "MPLS")]}
     state = make_state({"WAN": raw})
     _ = await ConfigPipeline(None).apply(
@@ -440,7 +440,7 @@ async def test_rename_a_wan_link():
     assert sent == [link(U1, "Internet", futureKey=1), link(U2, "Backup")]
 
 
-async def test_two_wan_links_of_one_name():
+async def test_two_wan_links_of_one_name() -> None:
     raw = {"links": [link(U1, "Internet"), link(U2, "Internet")]}
     pipeline = ConfigPipeline(None)
 
@@ -487,7 +487,7 @@ async def test_two_wan_links_of_one_name():
 # --- segments ---------------------------------------------------------------
 
 
-async def test_select_a_segment_by_segment_id():
+async def test_select_a_segment_by_segment_id() -> None:
     raw = firewall(fw_rule("a"), guest=True)
     state = make_state({"firewall": raw}, {"firewall": firewall(guest=True)})
     _ = await ConfigPipeline(None).apply(
@@ -502,7 +502,7 @@ async def test_select_a_segment_by_segment_id():
     assert change_paths(state) == ["segments[Guest].outbound[block]"]
 
 
-async def test_a_change_cannot_give_a_segment_or_a_rule_another_ones_id():
+async def test_a_change_cannot_give_a_segment_or_a_rule_another_ones_id() -> None:
     raw = firewall(
         fw_rule("a", ruleLogicalId="la"), fw_rule("b", ruleLogicalId="lb"), guest=True
     )
@@ -536,7 +536,9 @@ def bgp_settings(bgp: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-async def test_a_patch_inside_inherited_bgp_is_listed_on_the_plan_and_copies_nothing():
+async def test_a_patch_inside_inherited_bgp_is_listed_on_the_plan_and_copies_nothing() -> (  # noqa: E501 (a test's name)
+    None
+):
     edge_bgp: dict[str, Any] = {
         "override": False,
         "enabled": False,
@@ -579,7 +581,7 @@ async def test_a_patch_inside_inherited_bgp_is_listed_on_the_plan_and_copies_not
 # --- what a patch may hold ----------------------------------------------------
 
 
-async def test_a_list_value_that_is_not_a_list_raises_and_keeps_the_rules():
+async def test_a_list_value_that_is_not_a_list_raises_and_keeps_the_rules() -> None:
     raw = firewall(fw_rule("allow-web"), fw_rule("allow-dns"), fw_rule("deny-all"))
     new = [fw_rule("only-ssh"), fw_rule("deny-all")]
     state = make_state({"firewall": raw}, {"firewall": firewall()})
@@ -593,7 +595,7 @@ async def test_a_list_value_that_is_not_a_list_raises_and_keeps_the_rules():
     assert state.plan().changed == ()
 
 
-async def test_one_patch_applied_to_two_states_shares_nothing():
+async def test_one_patch_applied_to_two_states_shares_nothing() -> None:
     patch: dict[str, object] = {"a": {"comments": [{"who": {"tags": ["x"]}}]}}
     states = [
         make_state({"firewall": firewall(fw_rule("a"))}, {"firewall": firewall()})
@@ -614,7 +616,7 @@ def nested(levels: int) -> object:
     return json.loads('{"x":' * levels + "1" + "}" * levels)
 
 
-async def test_the_deepest_patch_apply_takes_is_planned_and_saved():
+async def test_the_deepest_patch_apply_takes_is_planned_and_saved() -> None:
     def state_and_client() -> tuple[ConfigState, MockVcoClient]:
         state = make_state(
             {"firewall": firewall(fw_rule("a"))}, {"firewall": firewall()}
@@ -698,7 +700,7 @@ LAN_DS: dict[str, Any] = {
 )
 async def test_null_and_empty_text_are_not_coerced_on_the_real_models(
     address: str, patch: object, path: str
-):
+) -> None:
     state = make_state({"deviceSettings": LAN_DS}, {"deviceSettings": PROFILE_DS})
     with pytest.raises(PatchError) as exc:
         _ = await ConfigPipeline(None).apply(
@@ -708,7 +710,9 @@ async def test_null_and_empty_text_are_not_coerced_on_the_real_models(
     assert state.plan().changed == ()
 
 
-async def test_the_planned_dump_of_an_added_item_is_taken_as_the_body_of_an_add():
+async def test_the_planned_dump_of_an_added_item_is_taken_as_the_body_of_an_add() -> (
+    None
+):
     async def add_rule(body: dict[str, Any]) -> ConfigState:
         state = make_state(
             {"firewall": firewall(fw_rule("a"))}, {"firewall": firewall()}
@@ -735,7 +739,7 @@ async def test_the_planned_dump_of_an_added_item_is_taken_as_the_body_of_an_add(
     assert [(str(c.path), c.after) for c in again.changes] == [(str(change.path), dump)]
 
 
-async def test_true_is_not_a_vlan_id():
+async def test_true_is_not_a_vlan_id() -> None:
     raw = {
         "lan": {
             "networks": [
@@ -775,7 +779,7 @@ def dns_settings(dns: dict[str, Any] | None) -> dict[str, Any]:
     return {"lan": {"networks": [], "interfaces": []}, "segments": [segment]}
 
 
-async def test_a_dns_provider_takes_an_object():
+async def test_a_dns_provider_takes_an_object() -> None:
     state = make_state(
         {"deviceSettings": dns_settings(DNS)}, {"deviceSettings": PROFILE_DS}
     )
@@ -797,7 +801,7 @@ async def test_a_dns_provider_takes_an_object():
     }
 
 
-async def test_a_dns_block_is_built_with_its_providers_as_objects():
+async def test_a_dns_block_is_built_with_its_providers_as_objects() -> None:
     state = make_state(
         {"deviceSettings": dns_settings(None)}, {"deviceSettings": PROFILE_DS}
     )
@@ -852,7 +856,7 @@ VALIDATED_DS: dict[str, Any] = {
 )
 async def test_a_patch_the_parser_would_refuse_is_refused_by_apply(
     kw: dict[str, Any], path: str, text: str
-):
+) -> None:
     state = make_state({"deviceSettings": VALIDATED_DS}, {"deviceSettings": PROFILE_DS})
     with pytest.raises(PatchError) as exc:
         _ = await ConfigPipeline(None).apply(state, module="device_settings", **kw)
@@ -861,7 +865,9 @@ async def test_a_patch_the_parser_would_refuse_is_refused_by_apply(
     assert state.plan().changed == ()
 
 
-async def test_disabling_netflow_and_deleting_its_collector_in_one_patch_applies():
+async def test_disabling_netflow_and_deleting_its_collector_in_one_patch_applies() -> (
+    None
+):
     state = make_state({"deviceSettings": VALIDATED_DS}, {"deviceSettings": PROFILE_DS})
     _ = await ConfigPipeline(None).apply(
         state,
@@ -877,7 +883,7 @@ async def test_disabling_netflow_and_deleting_its_collector_in_one_patch_applies
 # --- get_field_changes --------------------------------------------------------
 
 
-async def test_field_changes_are_the_plans_changes_in_python_names():
+async def test_field_changes_are_the_plans_changes_in_python_names() -> None:
     raw = firewall(fw_rule("a", ruleLogicalId="la"), fw_rule("b", ruleLogicalId="lb"))
     state = make_state({"firewall": raw}, {"firewall": firewall()})
     _ = await ConfigPipeline(None).apply(
@@ -909,7 +915,7 @@ async def test_field_changes_are_the_plans_changes_in_python_names():
     ]
 
 
-async def test_field_changes_show_a_rename_as_one_change():
+async def test_field_changes_show_a_rename_as_one_change() -> None:
     raw = firewall(fw_rule("a", ruleLogicalId="la"), fw_rule("b", ruleLogicalId="lb"))
     state = make_state({"firewall": raw}, {"firewall": firewall()})
     _ = await ConfigPipeline(None).apply(
@@ -924,7 +930,7 @@ async def test_field_changes_show_a_rename_as_one_change():
     ]
 
 
-def test_field_changes_show_nothing_for_a_read():
+def test_field_changes_show_nothing_for_a_read() -> None:
     state = make_state(
         {"firewall": firewall(fw_rule("a"))},
         {"firewall": firewall(guest=True), "QOS": qos()},
@@ -938,7 +944,9 @@ def test_field_changes_show_nothing_for_a_read():
 # --- names ------------------------------------------------------------------
 
 
-async def test_an_application_name_with_no_application_resolver_is_refused_at_the_field():
+async def test_an_application_name_with_no_application_resolver_is_refused_at_the_field() -> (  # noqa: E501 (a test's name)
+    None
+):
     state = make_state({"firewall": firewall(fw_rule("a"))}, {"firewall": firewall()})
     state.resolvers.register(
         await make_segment_resolver([{"name": "Global Segment", "segment_id": 0}])
@@ -979,7 +987,7 @@ async def test_an_application_name_with_no_application_resolver_is_refused_at_th
         )
 
 
-async def test_validation_messages_on_the_real_models_use_python_names():
+async def test_validation_messages_on_the_real_models_use_python_names() -> None:
     state = make_state({"QOS": qos()}, {"QOS": qos()})
     with pytest.raises(PatchError) as exc:
         _ = await ConfigPipeline(None).apply(

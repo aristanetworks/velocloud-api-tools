@@ -1,7 +1,9 @@
 # The cycle is through ``pyvelo.client.exceptions``, whose annotation-only imports name
 # ``module_check``, which imports this module for ``APPEND_ONLY_REF_NAMES``.
 # pyright: reportImportCycles=false
-"""The ref rows an edit adds and removes, and the complete refs to send, by difference of the declared owners.
+"""The ref rows an edit adds and removes, and the complete refs to send.
+
+Both follow by difference of the declared owners.
 
 A ref row goes with an identity that the data holds (``OwnsRef``) or that only
 the row says (``RefOnly``). ``derive_refs`` compares the owners of a
@@ -20,7 +22,6 @@ from __future__ import annotations
 import copy
 import operator
 import uuid
-from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Final, cast
 
@@ -47,11 +48,13 @@ from pyvelo.core.identity import (
     SegmentIdentity,
     entity_label,
 )
-from pyvelo.core.rebase import Path
 from pyvelo.core.show import patch_text
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
+
     from pyvelo.client.schemas.configuration import ConfigurationModuleBase
+    from pyvelo.core.rebase import Path
 
 APPEND_ONLY_REF_NAMES: Final = frozenset(
     {"deviceSettings:vnfs:edge", "objectGroup:addressGroup", "objectGroup:portGroup"}
@@ -68,7 +71,8 @@ SERVICE_TYPES: Final[Mapping[str, str]] = {
     "deviceSettings:authentication": EnterpriseServiceType.AUTHENTICATION.value,
     "deviceSettings:css:provider": EnterpriseServiceType.CLOUD_SECURITY_SERVICE.value,
 }
-"""The type of network service each provider ref names, a tag of ``EnterpriseServiceType``.
+"""The type of network service each provider ref names, a tag of
+``EnterpriseServiceType``.
 
 A new row of one of these names whose service is of another type is refused:
 the VCO would store a row that names a service the field cannot use.
@@ -110,7 +114,10 @@ _ONLY_THE_EDIT = "the plan changes only what the edit adds or removes"
 
 @dataclass(frozen=True)
 class PlanWarning:
-    """Something about the module as read that disagrees, and that the plan leaves as it is."""
+    """Something about the module as read that disagrees.
+
+    The plan leaves it as it is.
+    """
 
     code: str
     """``"ref_without_owner"``, ``"owner_without_ref"`` or ``"several_refs"``."""
@@ -140,6 +147,8 @@ class RefChange:
 
 @dataclass(frozen=True)
 class DerivedRefs:
+    """What ``derive_refs`` finds: the refs to send, the changes and the warnings."""
+
     refs: dict[str, Any] | None
     """The complete refs to send, or ``None`` when none go."""
     changes: tuple[RefChange, ...]
@@ -170,7 +179,10 @@ class _Context:
 
 
 def _object_ids(raw_refs: object, given: Mapping[int, int] | None) -> dict[int, int]:
-    """``segmentId`` to the segment's object ID: the module's own segment rows, over those *given*."""
+    """``segmentId`` to the segment's object ID.
+
+    From the module's own segment rows, over those *given*.
+    """
     return {**(given or {}), **segment_object_ids(raw_refs)}
 
 
@@ -207,7 +219,9 @@ def row_field(row: dict[object, object], field: str) -> object:
 
 
 def same_identity(identity: object, held: object) -> bool:
-    """Whether *held* (a row's value) is *identity*: UUIDs as lower-case text, ints as ints.
+    """Whether *held* (a row's value) is *identity*.
+
+    UUIDs are compared as lower-case text, ints as ints.
 
     *identity* may be a ``UUID`` or its text (as ``RefChange.value`` holds it).
     """
@@ -249,12 +263,12 @@ def _unknown_identity(owner: RefOwner, caught: ResolutionError) -> ResolutionErr
     if isinstance(marker, OwnsRef) and marker.value is not None:
         advice = (
             f"Use a {label} that exists: add the {label} to the profile first, "
-            + "or give the segment entry the segment ID of one that does."
+            "or give the segment entry the segment ID of one that does."
         )
     else:
         advice = (
             f"Give the name or the logical ID of a {label} that exists: "
-            + f"{patch_text(owner.path)} sets it."
+            f"{patch_text(owner.path)} sets it."
         )
     return ResolutionError(
         name=caught.name,
@@ -262,7 +276,7 @@ def _unknown_identity(owner: RefOwner, caught: ResolutionError) -> ResolutionErr
         candidates=[],
         message=(
             f"{owner.path} names the {label} {owner.value}, which the VCO does "
-            + f"not have, so the row it goes with cannot be added. {advice}"
+            f"not have, so the row it goes with cannot be added. {advice}"
         ),
     )
 
@@ -274,7 +288,7 @@ def _identity(
     if resolvers is None:
         raise ResolverNotLoadedError(identity_type)
     return resolvers.lookup_by(
-        cast(type[object], identity_type), operator.attrgetter(by), value
+        cast("type[object]", identity_type), operator.attrgetter(by), value
     )
 
 
@@ -297,10 +311,10 @@ def _wrong_service_type(
         candidates=[],
         message=(
             f"{owner.path} names the service {service.name!r}, which is of type "
-            + f"{service.type_!r}, and the field wants a service of type "
-            + f"{wanted!r}, so the row it goes with would name a service it "
-            + "cannot use. Give the name or the logical ID of a service of type "
-            + f"{wanted!r}: {patch_text(owner.path)} sets it."
+            f"{service.type_!r}, and the field wants a service of type "
+            f"{wanted!r}, so the row it goes with would name a service it "
+            "cannot use. Give the name or the logical ID of a service of type "
+            f"{wanted!r}: {patch_text(owner.path)} sets it."
         ),
     )
 
@@ -308,7 +322,11 @@ def _wrong_service_type(
 def _segment_object_id(
     owner: RefOwner, context: _Context, resolvers: IdentityLookup | None
 ) -> int:
-    """The ``segmentObjectId`` of the row for *owner*: from the segment rows the module has or was given, else the segment resolver."""
+    """The ``segmentObjectId`` of the row for *owner*.
+
+    It comes from the segment rows the module has or was given, else from the
+    segment resolver.
+    """
     found = (
         None if owner.segment_id is None else context.object_ids.get(owner.segment_id)
     )
@@ -327,9 +345,9 @@ def _segment_object_id(
             candidates=[],
             message=(
                 f"{owner.path} sits in the segment with segment ID "
-                + f"{owner.segment_id}, which the VCO does not have, so "
-                + "the row cannot be added. Add the segment to the profile "
-                + "first, or use one that exists."
+                f"{owner.segment_id}, which the VCO does not have, so "
+                "the row cannot be added. Add the segment to the profile "
+                "first, or use one that exists."
             ),
         ) from caught
 
@@ -351,8 +369,8 @@ def _no_service(
         path=error.path,
         message=(
             f"{error} No device settings of the profile were given to look "
-            + "in: pass the profile's device settings module as "
-            + "profile_device_settings= (a ConfigState does)."
+            "in: pass the profile's device settings module as "
+            "profile_device_settings= (a ConfigState does)."
         ),
     )
 
@@ -364,7 +382,10 @@ def _new_row(
     resolvers: IdentityLookup | None,
     hub_services: HubServiceTable | None,
 ) -> tuple[dict[str, Any], int | None]:
-    """The row to add for *owner* and its ``segmentObjectId`` (``None`` for a ref with no segment)."""
+    """The row to add for *owner* and its ``segmentObjectId``.
+
+    The ``segmentObjectId`` is ``None`` for a ref with no segment.
+    """
     segment_object_id: int | None = None
     if owner.identity_type is HubService:
         if hub_services is None:
@@ -425,8 +446,9 @@ def _warnings(
                     PlanWarning(
                         "owner_without_ref",
                         path,
-                        f"The data holds {owner.value} at {owner.path}, but the module has "
-                        + f"no {owner.name} row for it. The row is left missing: {_ONLY_THE_EDIT}.",
+                        f"The data holds {owner.value} at {owner.path}, but the "
+                        f"module has no {owner.name} row for it. The row is left "
+                        f"missing: {_ONLY_THE_EDIT}.",
                     )
                 )
         else:
@@ -441,9 +463,10 @@ def _warnings(
                     PlanWarning(
                         "several_refs",
                         path,
-                        f"The module has {len(of_segment)} {owner.name} rows for one "
-                        + f"segment, and {owner.path} shows the first. Every row is left "
-                        + f"as it is: {_ONLY_THE_EDIT}, and a change removes only the row shown.",
+                        f"The module has {len(of_segment)} {owner.name} rows for "
+                        f"one segment, and {owner.path} shows the first. Every row "
+                        f"is left as it is: {_ONLY_THE_EDIT}, and a change removes "
+                        "only the row shown.",
                     )
                 )
     for name in sorted(declared_ref_names(type(baseline), level)):
@@ -472,7 +495,7 @@ def _warnings(
                     "ref_without_owner",
                     _warning_path(name, segment_name),
                     f"The module has a {name} row that nothing in the data names. "
-                    + f"The row is left as it is: {_ONLY_THE_EDIT}.",
+                    f"The row is left as it is: {_ONLY_THE_EDIT}.",
                 )
             )
     return found
@@ -500,7 +523,10 @@ def sends_refs_always(
 def changed_owners(
     baseline: VcoModel, current: VcoModel, level: ConfigContext | None
 ) -> tuple[RefOwner, ...]:
-    """The owners that *baseline* has and *current* has not, then those *current* has and *baseline* has not.
+    """The owners that only one of *baseline* and *current* has.
+
+    First those *baseline* has and *current* has not, then those *current* has
+    and *baseline* has not.
 
     Owners are told apart as ``derive_refs`` tells them (ref name, identity
     and segment), so an owner that moved to another place with the same
@@ -515,7 +541,7 @@ def changed_owners(
     )
 
 
-def derive_refs(
+def derive_refs(  # noqa: C901, PLR0912, PLR0913 (existing: split it when it next changes)
     module: ConfigurationModuleBase,
     baseline: VcoModel | None,
     current: VcoModel | None,
@@ -526,7 +552,9 @@ def derive_refs(
     hub_services: HubServiceTable | None = None,
     segment_object_ids: Mapping[int, int] | None = None,
 ) -> DerivedRefs:
-    """The rows the edit from *baseline* to *current* adds and removes, and the refs to send.
+    """The ref changes of the edit from *baseline* to *current*.
+
+    The rows it adds and removes, and the refs to send.
 
     *baseline* is the module's data as read, with its ``RefOnly`` fields
     filled from its refs, and *current* the data now; ``None`` for either (a
@@ -583,11 +611,11 @@ def derive_refs(
                 added=False,
                 name=owner.name,
                 segment=owner.segment_name,
-                row=cast(dict[str, Any], row),
+                row=cast("dict[str, Any]", row),
                 match=_match_field(owner),
                 value=_json_value(owner.value),
                 segment_object_id=(
-                    cast(int | None, row.get("segmentObjectId"))
+                    cast("int | None", row.get("segmentObjectId"))
                     if _is_per_segment(owner)
                     else None
                 ),

@@ -1,13 +1,16 @@
-"""Fetch analytics time-series data and render an HTML report with inline SVG charts.
+r"""Fetch analytics time-series data and render an HTML report with inline SVG charts.
 
 Discovers connected edges, then pulls link throughput, health, and flow
 series for each edge. Charts are rendered via matplotlib and embedded as
 inline SVG in a self-contained HTML file.
 
 Usage:
-    uv run --package pyvelo-examples python -m pyvelo_examples.analytics_report --enterprise-id 123
-    uv run --package pyvelo-examples python -m pyvelo_examples.analytics_report --enterprise-id 123 --hours 24
-    uv run --package pyvelo-examples python -m pyvelo_examples.analytics_report --enterprise-id 123 --output report.html
+    uv run --package pyvelo-examples python -m pyvelo_examples.analytics_report \
+        --enterprise-id 123
+    uv run --package pyvelo-examples python -m pyvelo_examples.analytics_report \
+        --enterprise-id 123 --hours 24
+    uv run --package pyvelo-examples python -m pyvelo_examples.analytics_report \
+        --enterprise-id 123 --output report.html
 """
 
 import argparse
@@ -22,10 +25,10 @@ from html import escape
 from pathlib import Path
 from typing import cast
 
-import matplotlib
+import matplotlib as mpl
 import polars as pl
 
-matplotlib.use("Agg")
+mpl.use("Agg")
 
 import matplotlib.pyplot as plt
 from matplotlib.axes import Axes
@@ -40,9 +43,13 @@ from pyvelo.core import ApiInterval
 
 logger = logging.getLogger(__name__)
 
+_BYTES_PER_UNIT = 1024
+
 
 @dataclass
 class AnalyticsReportArgs:
+    """The command line options, with their defaults."""
+
     env: str | None = None
     enterprise_id: int | None = None
     hours: int = 1
@@ -52,6 +59,7 @@ class AnalyticsReportArgs:
 
 
 def parse_args(argv: Sequence[str] | None = None) -> AnalyticsReportArgs:
+    """Read the command line options."""
     parser = argparse.ArgumentParser(
         description="Generate an HTML report with analytics time-series charts.",
     )
@@ -83,11 +91,13 @@ def parse_args(argv: Sequence[str] | None = None) -> AnalyticsReportArgs:
 
 
 def make_interval(hours: int) -> ApiInterval:
+    """Make an interval from *hours* ago to now."""
     now = datetime.now(tz=UTC)
     return ApiInterval(start=now - timedelta(hours=hours))
 
 
 def svg_from_figure(fig: Figure) -> str:
+    """Render *fig* as SVG markup, without the XML prologue, and close it."""
     buf = io.BytesIO()
     fig.savefig(buf, format="svg", bbox_inches="tight")  # pyright: ignore[reportUnknownMemberType]  # Matplotlib leaves file-like kwargs open-ended.
     plt.close(fig)
@@ -99,10 +109,18 @@ def svg_from_figure(fig: Figure) -> str:
 
 
 def build_html(sections: list[tuple[str, str]], title: str) -> str:
+    """Make a self-contained HTML page of *sections*, each a heading and its chart SVG.
+
+    The page's content security policy allows no scripts.
+    """
     parts = [
         "<!DOCTYPE html>",
         "<html><head>",
-        "<meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; script-src 'none'; style-src 'unsafe-inline'\">",
+        (
+            '<meta http-equiv="Content-Security-Policy" '
+            "content=\"default-src 'none'; script-src 'none'; "
+            "style-src 'unsafe-inline'\">"
+        ),
         f"<title>{escape(title)}</title>",
         "<style>",
         (
@@ -131,9 +149,9 @@ def build_html(sections: list[tuple[str, str]], title: str) -> str:
 
 def _format_bytes(value: float) -> str:
     for unit in ("B", "KB", "MB", "GB", "TB"):
-        if abs(value) < 1024:
+        if abs(value) < _BYTES_PER_UNIT:
             return f"{value:.1f} {unit}"
-        value /= 1024
+        value /= _BYTES_PER_UNIT
     return f"{value:.1f} PB"
 
 
@@ -144,12 +162,13 @@ def _format_bytes_tick(value: float, _position: int) -> str:
 def _setup_axes(ax: Axes) -> None:
     ax.xaxis.set_major_formatter(DateFormatter("%H:%M"))
     ax.tick_params(axis="x", rotation=30)  # pyright: ignore[reportUnknownMemberType]  # Matplotlib exposes flexible style kwargs.
-    ax.grid(True, alpha=0.3)  # pyright: ignore[reportUnknownMemberType]  # Matplotlib exposes flexible style kwargs.
+    ax.grid(visible=True, alpha=0.3)  # pyright: ignore[reportUnknownMemberType]  # Matplotlib exposes flexible style kwargs.
 
 
 def plot_link_series(df: pl.DataFrame) -> Figure:
+    """Plot each link's received and sent bytes over time."""
     fig, ax = plt.subplots(figsize=(10, 4))
-    links = cast(list[object], df["link_name"].unique().to_list())
+    links = cast("list[object]", df["link_name"].unique().to_list())
     for link in links:
         ldf = df.filter(pl.col("link_name") == link).sort("timestamp")
         if "bytes_rx" in ldf.columns:
@@ -167,6 +186,7 @@ def plot_link_series(df: pl.DataFrame) -> Figure:
 
 
 def plot_health_series(df: pl.DataFrame) -> Figure:
+    """Plot CPU and memory percent, and the flow count on a second axis."""
     fig, ax1 = plt.subplots(figsize=(10, 4))
     df = df.sort("timestamp")
 
@@ -203,6 +223,7 @@ def plot_health_series(df: pl.DataFrame) -> Figure:
 
 
 def plot_flow_series(df: pl.DataFrame) -> Figure:
+    """Plot the bytes of each application, or of each metric column, over time."""
     fig, ax = plt.subplots(figsize=(10, 4))
     group_col = (
         "app"
@@ -213,12 +234,12 @@ def plot_flow_series(df: pl.DataFrame) -> Figure:
     )
     if group_col is None:
         for col in df.columns:
-            if col not in ("timestamp",):
+            if col != "timestamp":
                 group_col = col
                 break
 
     if group_col and group_col in df.columns:
-        groups = cast(list[object], df[group_col].unique().to_list())
+        groups = cast("list[object]", df[group_col].unique().to_list())
         for group in groups:
             gdf = df.filter(pl.col(group_col) == group).sort("timestamp")
             metric_col = (
@@ -250,6 +271,11 @@ async def fetch_edge_series(
     edge_name: str,
     interval: ApiInterval,
 ) -> list[tuple[str, str]]:
+    """Fetch an edge's link, health and application flow series as charts.
+
+    Each chart is a heading and its SVG. A call with no data or that fails gives a
+    note in place of its chart.
+    """
     sections: list[tuple[str, str]] = []
 
     # Link throughput
@@ -316,7 +342,10 @@ async def fetch_edge_series(
         sections.append(
             (
                 f"Flow by Application — {edge_name}",
-                '<p class="no-data">Unavailable; check VIEW_FLOW_STATS access and the local log.</p>',
+                (
+                    '<p class="no-data">Unavailable; check VIEW_FLOW_STATS access '
+                    "and the local log.</p>"
+                ),
             )
         )
 
@@ -324,6 +353,10 @@ async def fetch_edge_series(
 
 
 async def main() -> None:
+    """Write the HTML report of every connected edge's charts and open it in a browser.
+
+    The enterprise is read from the token when ``--enterprise-id`` is not given.
+    """
     args = parse_args()
     logging.basicConfig(
         level=logging.DEBUG if args.verbose else logging.INFO,
@@ -386,11 +419,16 @@ async def main() -> None:
     title = f"Analytics Report — Enterprise {enterprise_id} — Last {args.hours}h"
     html = build_html(all_sections, title)
 
-    output = Path(args.output)
-    _ = output.write_text(html)
-    logger.info("Report written to %s", output.resolve())
+    written = await asyncio.to_thread(_write_report, Path(args.output), html)
+    logger.info("Report written to %s", written)
 
-    _ = webbrowser.open(output.resolve().as_uri())
+    _ = webbrowser.open(written.as_uri())
+
+
+def _write_report(output: Path, html: str) -> Path:
+    """Write *html* to *output*; the file's absolute path."""
+    _ = output.write_text(html)
+    return output.resolve()
 
 
 if __name__ == "__main__":

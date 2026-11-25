@@ -21,7 +21,7 @@ from ._type_support import require_present
 
 
 class TestEdgeGroupFiltersBareWrap:
-    def test_bare_dict_is_wrapped_into_and(self):
+    def test_bare_dict_is_wrapped_into_and(self) -> None:
         req = GetEnterpriseEdges.model_validate(
             {"filters": {"field": "edgeState", "operator": "is", "value": "CONNECTED"}}
         )
@@ -32,7 +32,7 @@ class TestEdgeGroupFiltersBareWrap:
         assert req.filters.and_[0].operator == "is"
         assert req.filters.and_[0].value == "CONNECTED"
 
-    def test_bare_dict_with_field_alias_is_wrapped(self):
+    def test_bare_dict_with_field_alias_is_wrapped(self) -> None:
         req = GetEnterpriseEdges.model_validate(
             {"filters": {"fieldName": "edgeState", "op": "is", "value": "CONNECTED"}}
         )
@@ -40,7 +40,7 @@ class TestEdgeGroupFiltersBareWrap:
         assert isinstance(req.filters.and_[0], EdgeStateFilter)
         assert req.filters.and_[0].field == "edgeState"
 
-    def test_bare_filter_instance_is_wrapped(self):
+    def test_bare_filter_instance_is_wrapped(self) -> None:
         req = GetEnterpriseEdges.model_validate(
             {
                 "filters": EdgeStateFilter.model_validate(
@@ -52,7 +52,7 @@ class TestEdgeGroupFiltersBareWrap:
         assert isinstance(req.filters.and_[0], EdgeStateFilter)
         assert req.filters.and_[0].field == "edgeState"
 
-    def test_and_group_passes_through(self):
+    def test_and_group_passes_through(self) -> None:
         req = GetEnterpriseEdges.model_validate(
             {
                 "filters": {
@@ -66,7 +66,7 @@ class TestEdgeGroupFiltersBareWrap:
         assert isinstance(req.filters.and_[0], EdgeStateFilter)
         assert req.filters.and_[0].field == "edgeState"
 
-    def test_or_group_passes_through(self):
+    def test_or_group_passes_through(self) -> None:
         req = GetEnterpriseEdges.model_validate(
             {
                 "filters": {
@@ -80,11 +80,11 @@ class TestEdgeGroupFiltersBareWrap:
         assert isinstance(req.filters, EdgeFiltersOr)
         assert len(req.filters.or_) == 2
 
-    def test_missing_filters_stays_missing(self):
+    def test_missing_filters_stays_missing(self) -> None:
         req = GetEnterpriseEdges.model_validate({})
         assert req.filters is MISSING
 
-    def test_wrapped_serializes_with_and_key(self):
+    def test_wrapped_serializes_with_and_key(self) -> None:
         req = GetEnterpriseEdges.model_validate(
             {"filters": {"field": "edgeState", "operator": "is", "value": "CONNECTED"}}
         )
@@ -94,7 +94,7 @@ class TestEdgeGroupFiltersBareWrap:
 
 
 class TestEdgeFilterFieldDiscrimination:
-    def test_activation_state_filter(self):
+    def test_activation_state_filter(self) -> None:
         req = GetEnterpriseEdges.model_validate(
             {
                 "filters": {
@@ -114,7 +114,7 @@ class TestEdgeFilterFieldDiscrimination:
         assert isinstance(f, EdgeActivationStateFilter)
         assert f.field == "activationState"
 
-    def test_string_field_filter(self):
+    def test_string_field_filter(self) -> None:
         req = GetEnterpriseEdges.model_validate(
             {
                 "filters": {
@@ -135,7 +135,7 @@ class TestEdgeFilterFieldDiscrimination:
         assert f.field == "name"
         assert f.operator == "contains"
 
-    def test_ha_state_filter(self):
+    def test_ha_state_filter(self) -> None:
         req = GetEnterpriseEdges.model_validate(
             {
                 "filters": {
@@ -156,7 +156,7 @@ class TestEdgeFilterFieldDiscrimination:
         assert f.field == "haState"
         assert f.value == "FAILED"
 
-    def test_ha_state_filter_in_operator(self):
+    def test_ha_state_filter_in_operator(self) -> None:
         req = GetEnterpriseEdges.model_validate(
             {
                 "filters": {
@@ -177,7 +177,7 @@ class TestEdgeFilterFieldDiscrimination:
         assert f.operator == "in"
         assert f.value == ["READY", "FAILED"]
 
-    def test_ha_state_filter_on_edge_list(self):
+    def test_ha_state_filter_on_edge_list(self) -> None:
         """Reproduce the exact input from the reported bug."""
         req = GetEnterpriseEdgeList.model_validate(
             {
@@ -201,7 +201,7 @@ class TestEdgeFilterFieldDiscrimination:
         assert isinstance(f, EdgeHaStateFilter)
         assert f.value == "FAILED"
 
-    def test_mixed_fields_in_and_group(self):
+    def test_mixed_fields_in_and_group(self) -> None:
         req = GetEnterpriseEdges.model_validate(
             {
                 "filters": {

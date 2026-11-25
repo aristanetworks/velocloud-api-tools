@@ -33,12 +33,15 @@ class FieldSite:
     """The field's python name."""
     field_info: FieldInfo
     path: Path
-    """The field's path in python names: ``segments["Global Segment"].dns.primary_provider``."""
+    """The field's path in python names.
+
+    For example, ``segments["Global Segment"].dns.primary_provider``.
+    """
     segment: VcoModel | None
     """The item of the root's ``segments`` list that holds the field, else ``None``."""
 
 
-def walk_fields(
+def walk_fields(  # noqa: C901 (existing: split it when it next changes)
     data: VcoModel,
     *,
     holds: Callable[[type[VcoModel]], bool],
@@ -73,7 +76,7 @@ def walk_fields(
             )
         return layouts[model_cls]
 
-    def walk(
+    def walk(  # noqa: C901 (existing: split it when it next changes)
         model: VcoModel, path: Path, segment: VcoModel | None, *, root: bool
     ) -> Iterator[FieldSite]:
         if not wanted(model):
@@ -93,7 +96,7 @@ def walk_fields(
                 yield from walk(value, here, segment, root=False)
             elif listed:
                 spec = get_key_spec(field_info)
-                for position, item in enumerate(cast(list[object], value)):
+                for position, item in enumerate(cast("list[object]", value)):
                     if not isinstance(item, VcoModel) or not wanted(item):
                         continue
                     key = item_key(item, spec.paths) if spec is not None else None
@@ -101,7 +104,7 @@ def walk_fields(
                     inside = item if root and name == "segments" else segment
                     yield from walk(item, here.child(part), inside, root=False)
             elif mapped:
-                for key, item in cast(dict[object, object], value).items():
+                for key, item in cast("dict[object, object]", value).items():
                     if isinstance(item, VcoModel) and wanted(item):
                         yield from walk(item, here.child(str(key)), segment, root=False)
 

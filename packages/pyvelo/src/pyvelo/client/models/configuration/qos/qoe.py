@@ -1,3 +1,5 @@
+"""The QoE latency thresholds of the voice, video and transactional traffic types."""
+
 from typing import Annotated
 
 from pydantic import MISSING, Field

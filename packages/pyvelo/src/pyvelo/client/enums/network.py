@@ -1,3 +1,5 @@
+"""The ``with`` options of the network (operator) read methods."""
+
 from enum import StrEnum
 
 

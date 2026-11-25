@@ -6,17 +6,20 @@ codes. Library code raises them rather than calling ``sys.exit()``.
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING, Any, cast, override
 
-from pyvelo.config.validation import ValidationError
-
 if TYPE_CHECKING:
+    from collections.abc import Mapping, Sequence
+
     from pyvelo.config.hub_steps import HubStep
+    from pyvelo.config.validation import ValidationError
 
 
 def _rebuild_error(cls: type[IntentError], args: tuple[Any, ...]) -> IntentError:
-    """Build an error of *cls* without calling its constructor; its attributes arrive as state."""
+    """Build an error of *cls* without calling its constructor.
+
+    Its attributes arrive as state.
+    """
     error = cls.__new__(cls)
     error.args = args
     return error
@@ -37,7 +40,7 @@ class IntentError(Exception):
         attributes = dict(self.__dict__)
         if "__notes__" in attributes:
             # A shallow copy must not add its notes to this error's list.
-            attributes["__notes__"] = list(cast(list[str], attributes["__notes__"]))
+            attributes["__notes__"] = list(cast("list[str]", attributes["__notes__"]))
         return (_rebuild_error, (type(self), self.args), attributes)
 
 
@@ -57,12 +60,13 @@ class SaveValidationError(IntentError):
     """
 
     def __init__(self, errors: list[ValidationError]) -> None:
+        """Keep *errors* and name each one's path and message in the message."""
         self.errors: list[ValidationError] = list(errors)
         summary = ", ".join(f"{e.path}: {e.message}" for e in self.errors)
         super().__init__(
             f"save blocked by {len(self.errors)} validator error(s): {summary}. "
-            + "Fix them and save again; a save with dry_run=True returns the "
-            + "errors without raising"
+            "Fix them and save again; a save with dry_run=True returns the "
+            "errors without raising"
         )
 
 
@@ -80,6 +84,11 @@ class LayerNotSavedError(IntentError):
         fields: Mapping[str, Sequence[str]],
         profile_id: int | None = None,
     ) -> None:
+        """Name the edits to *layer*, which a state saving its *saved* layer drops.
+
+        *profile_id*, when given, goes in the ``load_profile`` call the message
+        suggests for a profile edit.
+        """
         self.layer: str = layer
         self.fields: dict[str, list[str]] = {
             module: list(paths) for module, paths in fields.items()
@@ -95,9 +104,9 @@ class LayerNotSavedError(IntentError):
             load = "load()"
         super().__init__(
             f"this state saves its {saved} layer only, and its {layer} layer "
-            + f"was edited: {edited}. Those edits are not saved. To change the "
-            + f"{layer}, load it with {load} and make the edits there. They are "
-            + "reported this once: the next plan or save goes ahead without them."
+            f"was edited: {edited}. Those edits are not saved. To change the "
+            f"{layer}, load it with {load} and make the edits there. They are "
+            "reported this once: the next plan or save goes ahead without them."
         )
 
 
@@ -118,7 +127,7 @@ class SaveStepError(IntentError):
     and sends the rest.
     """
 
-    def __init__(
+    def __init__(  # noqa: PLR0913 (existing: split it when it next changes)
         self,
         reason: str,
         *,
@@ -128,6 +137,7 @@ class SaveStepError(IntentError):
         steps_in_place: Sequence[HubStep] = (),
         written: Sequence[str] = (),
     ) -> None:
+        """Say where the save stopped, and why (*reason*), and what it sent before."""
         self.step: HubStep | None = step
         self.module_name: str | None = module_name
         self.steps_done: tuple[HubStep, ...] = tuple(steps_done)

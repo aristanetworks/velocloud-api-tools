@@ -1,4 +1,6 @@
-"""The values that name something the configuration provides, and the check that each one does.
+"""The values that name something the configuration provides, and their check.
+
+The check is that each one does.
 
 A field marked ``RefersTo`` holds a value that the items of a list marked
 ``Provides`` of the same name have (a segment ID that a device settings
@@ -28,7 +30,10 @@ from .rebase import Path
 from .walk import walk_fields
 
 type SetKey = tuple[str, int | None]
-"""A set: its name, and the ID of the segment it belongs to (``None`` when the set is of the module)."""
+"""A set: its name, and the ID of the segment it belongs to.
+
+The ID is ``None`` when the set is of the module.
+"""
 type Sets = Mapping[SetKey, frozenset[object]]
 """The members of each set."""
 
@@ -45,11 +50,17 @@ class Reference:
     set_name: str
     """The name of the set the value is a member of."""
     segment_id: int | None
-    """The ID of the segment the field sits in, for a ``per_segment`` reference; else ``None``."""
+    """The ID of the segment the field sits in, for a ``per_segment`` reference.
+
+    ``None`` for any other reference.
+    """
     segment_name: str | None = field(default=None, compare=False)
     """The name of that segment, when the segment has one."""
     holder: VcoModel | None = field(default=None, compare=False, repr=False)
-    """The model that holds the field (a backhaul entry, for a hub), as the walk found it."""
+    """The model that holds the field, as the walk found it.
+
+    For a hub, it is a backhaul entry.
+    """
 
 
 @dataclass(frozen=True)
@@ -63,7 +74,9 @@ class ReferenceFindings:
 
 
 def _can_hold(model_cls: type[VcoModel], marked: Callable[[FieldInfo], bool]) -> bool:
-    """Whether a model of *model_cls* has a field *marked* accepts, or a model below it does, at any depth.
+    """Whether a model of *model_cls*, or one below it, has a field *marked* accepts.
+
+    The model below may be at any depth.
 
     It follows the declared field types (through ``Annotated``, unions,
     ``list``, ``dict`` and ``tuple``): a subclass that adds a marker below a
@@ -85,13 +98,18 @@ def _can_hold(model_cls: type[VcoModel], marked: Callable[[FieldInfo], bool]) ->
 
 @functools.cache
 def can_refer(model_cls: type[VcoModel]) -> bool:
-    """Whether a model of *model_cls* can hold a ``RefersTo`` value, at any depth; computed once per class."""
+    """Whether a model of *model_cls* can hold a ``RefersTo`` value, at any depth.
+
+    Computed once per class.
+    """
     return _can_hold(model_cls, lambda info: get_refers_to(info) is not None)
 
 
 @functools.cache
 def can_provide(model_cls: type[VcoModel]) -> bool:
-    """Whether a model of *model_cls* can hold a ``Provides`` list, at any depth; computed once per class.
+    """Whether a model of *model_cls* can hold a ``Provides`` list, at any depth.
+
+    Computed once per class.
 
     The walk for the sets (``provided``) goes by this, so it passes over the
     rules of a QoS module, which refer to hubs and provide nothing.
@@ -114,7 +132,7 @@ def _segment_name(segment: VcoModel | None) -> str | None:
 
 
 def references(module: str, data: VcoModel) -> tuple[Reference, ...]:
-    """Every ``RefersTo`` value in *data*, which is the data of the module named *module*.
+    """Every ``RefersTo`` value in *data*, the data of the module named *module*.
 
     The walk goes through sub-models, lists of models (an item of a keyed list
     is named by its key, any other by its position) and maps of models. A
@@ -150,7 +168,10 @@ def references(module: str, data: VcoModel) -> tuple[Reference, ...]:
 
 
 def _key_value(item: object, path: str) -> object | None:
-    """The value at the dotted *path* of *item*, or ``None`` when a step to it is absent, null or ``MISSING``."""
+    """The value at the dotted *path* of *item*, or ``None``.
+
+    It is ``None`` when a step to it is absent, null or ``MISSING``.
+    """
     value: object = item
     for name in path.split("."):
         if value is None or value is MISSING:
@@ -200,7 +221,10 @@ def provided(data: VcoModel) -> dict[SetKey, set[object]]:
 
 
 def union(*sets: Mapping[SetKey, AbstractSet[object]]) -> Sets:
-    """The sets of *sets* put together: the members of a set of one name are those of all of them."""
+    """The sets of *sets* put together.
+
+    The members of a set of one name are those of all of them.
+    """
     joined: dict[SetKey, set[object]] = {}
     for one in sets:
         for key, members in one.items():
@@ -217,7 +241,7 @@ def check_references(
     sets_now: Sets,
     sets_as_read: Sets,
 ) -> ReferenceFindings:
-    """Check the references of each target against the sets of the configuration as edited.
+    """Check each target's references against the sets of the configuration as edited.
 
     A target is ``(module name, data as edited, data as read or None)``;
     *sets_now* are the sets of the configuration as edited and *sets_as_read*
@@ -255,7 +279,9 @@ def check_references(
 
 
 def reference_text(reference: Reference) -> str:
-    """A reference as one line: ``<module> <path>: <value> is not a <set> of segment <ID>``.
+    """A reference as one line.
+
+    The line is ``<module> <path>: <value> is not a <set> of segment <ID>``.
 
     The tail ``of segment <ID>`` is left out for a set of the module.
     """

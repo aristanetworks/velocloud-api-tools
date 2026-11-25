@@ -1,4 +1,6 @@
-"""The save's calls for the role steps: the hub services, the role calls and the hub rows.
+"""The save's calls for the role steps.
+
+They are the hub services, the role calls and the hub rows.
 
 ``hub_steps`` plans the steps from the module as read and as edited. The save
 reads the hub services (``read_services``), sends each step not already in
@@ -66,7 +68,10 @@ _ROLE_FIELDS: Final[dict[Role, str]] = {
 
 @dataclass(frozen=True)
 class HubServices:
-    """The hub services of one read of the enterprise: the Edge hubs (with the rows that point at them) and the clusters."""
+    """The hub services of one read of the enterprise.
+
+    They are the Edge hubs (with the rows that point at them) and the clusters.
+    """
 
     edge_hubs: tuple[EdgeHubService, ...] = ()
     clusters: tuple[EdgeHubClusterService, ...] = ()
@@ -78,7 +83,9 @@ class HubServices:
         module_id: int,
         segment_object_id: int,
     ) -> EdgeHubService | None:
-        """The service of the Edge with logical ID *hub_logical_id* for that profile, module and segment, or None.
+        """The service of the Edge with logical ID *hub_logical_id*, or None.
+
+        It is the service for that profile, module and segment.
 
         It is the service whose ``data.logical_id`` is the Edge's and which has
         a ``configuration`` row of that profile, module and segment. Raises
@@ -121,7 +128,10 @@ class HubServices:
     def cluster_roles(
         cluster: EdgeHubClusterService, configuration_id: int, segment_id: int
     ) -> EdgeRoles | None:
-        """The roles *cluster* has in segment *segment_id* of profile *configuration_id*, or None when its data holds none there.
+        """The roles *cluster* has in a segment of a profile, or None.
+
+        The segment is *segment_id* and the profile *configuration_id*; None when its
+        data holds none there.
 
         A cluster's ``data`` is by configuration ID and then segment ID, and
         a cluster that never was a hub of the profile has no entry for it.
@@ -154,7 +164,9 @@ def _has_configuration(
 async def read_services(
     client: VcoClientProtocol, enterprise_id: int | None, *, qos_usage: bool
 ) -> HubServices:
-    """Read the hub services of the enterprise: two requests, the Edge hubs and then the clusters.
+    """Read the hub services of the enterprise.
+
+    It takes two requests, the Edge hubs and then the clusters.
 
     The Edge hubs come with the ``configuration`` rows that point at them,
     which say the profile, module and segment each is the service for, and
@@ -261,12 +273,18 @@ _CALLS: Final[dict[tuple[Action, Role, str], tuple[type[_RoleRequest], str]]] = 
         "disable_cluster_backhaul",
     ),
 }
-"""Each role call: its request and the method of the client that sends it, by action, role and kind of hub."""
+"""Each role call, by action, role and kind of hub.
+
+A call is its request and the method of the client that sends it.
+"""
 
 
 @dataclass(frozen=True)
 class PreparedStep:
-    """A step with what the services say about it: whether it is in place and, if not, the ID its call takes."""
+    """A step with what the services say about it.
+
+    That is whether it is in place and, if not, the ID its call takes.
+    """
 
     step: HubStep
     in_place: bool
@@ -281,7 +299,9 @@ def prepare_steps(
     configuration_id: int,
     module_id: int,
 ) -> tuple[PreparedStep, ...]:
-    """Every step of *steps* with its ``in_place`` decision and, for a step to send, the ID of its call, all from *services*.
+    """Every step of *steps* with its ``in_place`` decision, from *services*.
+
+    A step to send also has the ID of its call, from *services* too.
 
     The save sends from these, so that everything the library can refuse
     (``HubListError`` for a hub whose service the VCO holds twice,
@@ -294,26 +314,30 @@ def prepare_steps(
         if in_place(
             step, services, configuration_id=configuration_id, module_id=module_id
         ):
-            prepared.append(PreparedStep(step, True, None))
+            prepared.append(PreparedStep(step, in_place=True, target_id=None))
             continue
         target = _target_id(
             step, services, configuration_id=configuration_id, module_id=module_id
         )
-        prepared.append(PreparedStep(step, False, target))
+        prepared.append(PreparedStep(step, in_place=False, target_id=target))
     return tuple(prepared)
 
 
 def _target_id(
     step: HubStep, services: HubServices, *, configuration_id: int, module_id: int
 ) -> int:
-    """The Edge ID or cluster ID the call of *step* takes: the step's for an enable, the one *services* give for a removal."""
+    """The Edge ID or cluster ID the call of *step* takes.
+
+    It is the step's for an enable, the one *services* give for a removal.
+    """
     hub = step.hub
     if step.action == "enable":
         given = hub.edge_id if hub.kind == "edge" else hub.cluster_id
         if given is None:
             raise ValueError(
-                f"the step '{step.render()}' has no {'Edge' if hub.kind == 'edge' else 'cluster'} "
-                "ID to call the VCO with: plan it with a loaded hub resolver"
+                f"the step '{step.render()}' has no "
+                f"{'Edge' if hub.kind == 'edge' else 'cluster'} ID to call the VCO "
+                "with: plan it with a loaded hub resolver"
             )
         return given
     if hub.kind == "cluster":
@@ -344,7 +368,7 @@ def _no_service(step: HubStep, what: str) -> HubServiceNotFoundError:
     )
 
 
-async def send_step(
+async def send_step(  # noqa: PLR0913 (existing: split it when it next changes)
     client: VcoClientProtocol,
     step: HubStep,
     services: HubServices,
@@ -354,7 +378,10 @@ async def send_step(
     enterprise_id: int | None,
     target_id: int | None = None,
 ) -> None:
-    """Make the one role call of *step*: a removal's Edge or cluster ID comes from *services*, or is *target_id* (``prepare_steps`` found it).
+    """Make the one role call of *step*.
+
+    A removal's Edge or cluster ID comes from *services*, or is *target_id*
+    (``prepare_steps`` found it).
 
     An Edge disable the VCO answers with ``null`` counts as done. Any other
     error of the call propagates.
@@ -371,7 +398,7 @@ async def send_step(
         segment_object_id=step.segment_object_id,
         enterprise_id=enterprise_id if enterprise_id is not None else MISSING,
     )
-    send = cast(Callable[[_RoleRequest], Awaitable[object]], getattr(client, method))
+    send = cast("Callable[[_RoleRequest], Awaitable[object]]", getattr(client, method))
     _ = await send(request)
 
 
@@ -382,7 +409,10 @@ def hubs_in_use(
     configuration_id: int,
     module_id: int,
 ) -> dict[HubStep, tuple[tuple[int, str], ...]]:
-    """For each disable-hub step of an Edge hub, the ``(edgeId, name)`` of the edges whose QoS rules use the hub's service.
+    """The edges whose QoS rules use the service of each Edge hub a step disables.
+
+    For each disable-hub step of an Edge hub, the ``(edgeId, name)`` of the edges whose
+    QoS rules use the hub's service.
 
     The hub's service is the one for *configuration_id*, *module_id* and the
     step's segment (``HubServices.edge_service``), read with ``edgeQOSUsage``
@@ -414,9 +444,16 @@ def hubs_in_use(
 def report_hubs_in_use(
     in_use: Mapping[HubStep, tuple[tuple[int, str], ...]], *, refuse: bool
 ) -> list[ValidationWarning]:
-    """The ``hub_in_use`` warnings for *in_use*, one per hub and segment; with *refuse*, raise ``HubListError`` for all of them instead."""
+    """The ``hub_in_use`` warnings for *in_use*, one per hub and segment.
+
+    With *refuse*, raise ``HubListError`` for all of them instead.
+    """
     found = [
-        (step, edges, hub_in_use_message(step.segment, step.hub.name, edges, refuse))
+        (
+            step,
+            edges,
+            hub_in_use_message(step.segment, step.hub.name, edges, refuse=refuse),
+        )
         for step, edges in in_use.items()
     ]
     if refuse and found:
@@ -469,11 +506,11 @@ def _row_of_hub(
         else:
             logical_id = row.get("logicalId")
         if str(logical_id).lower() == str(step.hub.logical_id):
-            return cast(dict[str, object], row)
+            return cast("dict[str, object]", row)
     return None
 
 
-def hub_rows(
+def hub_rows(  # noqa: PLR0913 (existing: split it when it next changes)
     as_read_refs: object,
     steps: Sequence[HubStep],
     services: HubServices,
@@ -482,7 +519,10 @@ def hub_rows(
     module_id: int,
     now: DeviceSettingsData,
 ) -> tuple[list[dict[str, object]], list[dict[str, object]]]:
-    """The hub rows the steps add to and remove from the refs of the device settings module: ``(added, removed)``.
+    """The hub rows the steps add to and remove from the device settings refs.
+
+    The refs are those of the device settings module, and the result is
+    ``(added, removed)``.
 
     *services* are read after the steps were sent, *as_read_refs* are the
     module's refs as read, and *now* the module as edited. A hub added to a

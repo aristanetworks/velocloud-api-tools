@@ -1,3 +1,8 @@
+"""The requests and results of the Gateway Edge assignment and property reads.
+
+``gateway/getGatewayEdgeAssignments`` and ``gatewayProperty/getGatewayProperties``.
+"""
+
 from typing import Annotated
 
 from pydantic import MISSING

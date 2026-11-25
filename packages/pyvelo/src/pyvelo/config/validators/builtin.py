@@ -1,4 +1,7 @@
-"""Built-in structural validators: override_consistency, key_uniqueness, required_fields."""
+"""Built-in structural validators.
+
+These are override_consistency, key_uniqueness, required_fields.
+"""
 
 from typing import cast
 
@@ -65,7 +68,7 @@ def override_consistency(state: ConfigStateLike) -> ValidationResult:
     return result
 
 
-def _walk_model_for_keys(
+def _walk_model_for_keys(  # noqa: C901 (existing: split it when it next changes)
     model: BaseModel,
     path: str,
     errors: list[ValidationError],
@@ -78,7 +81,7 @@ def _walk_model_for_keys(
         if spec is not None and isinstance(val, list):
             # Keys compare in string form, part by part (24 and "24" are one).
             seen_keys: dict[KeyForm, int] = {}
-            for i, item in enumerate(cast(list[object], val)):
+            for i, item in enumerate(cast("list[object]", val)):
                 form = key_form(item_key(item, spec.paths))
                 if form is not None:
                     if form in seen_keys:
@@ -86,7 +89,10 @@ def _walk_model_for_keys(
                         errors.append(
                             ValidationError(
                                 path=f"{path}.{field_name}[{i}]",
-                                message=f"Duplicate key {key_str!r} (first at index {seen_keys[form]})",
+                                message=(
+                                    f"Duplicate key {key_str!r} "
+                                    f"(first at index {seen_keys[form]})"
+                                ),
                                 code="key_uniqueness",
                             )
                         )

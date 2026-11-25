@@ -1,4 +1,6 @@
-"""Every reader of a field goes through ``field_kind``: a carrier field behaves as a plain field of its inner type.
+"""Every reader of a field goes through ``field_kind``.
+
+A carrier field behaves as a plain field of its inner type.
 
 The save computation, the merge engine, the change list and the walkers read
 the type and the markers of a field. On a ``Layered`` model that is the
@@ -146,7 +148,10 @@ def _junk(rng: random.Random, depth: int = 0) -> object:
 
 
 def _with_unknown_keys(rng: random.Random, node: object) -> None:
-    """Add unknown keys at every object of a valid document, and below the unknown values too."""
+    """Add unknown keys at every object of a valid document.
+
+    Add them below the unknown values too.
+    """
     if isinstance(node, dict):
         for value in list(node.values()):  # pyright: ignore[reportUnknownVariableType, reportUnknownArgumentType]
             _with_unknown_keys(rng, value)
@@ -188,7 +193,10 @@ def _segment(rng: random.Random, index: int, *, edge: bool) -> dict[str, object]
 
 
 def _document(rng: random.Random, *, edge: bool) -> object:
-    """A raw document of ``Mod`` for the edge or the profile layer that parses: nulls only where the layer holds them."""
+    """A raw document of ``Mod`` for the edge or the profile layer that parses.
+
+    Nulls only where the layer holds them.
+    """
     doc: dict[str, object] = {
         "segments": [_segment(rng, i, edge=edge) for i in range(rng.randint(0, 3))]
     }
@@ -552,7 +560,7 @@ def test_merge_validates_the_inner_type_of_an_inheritable() -> None:
     assert profile.level == 3
     assert {"settings", "level"} <= profile.model_fields_set
     assert wire_dump(profile, PROFILE_LEVEL)["settings"] == {"a": 5, "b": False}
-    with pytest.raises(PatchError, match="settings.a"):
+    with pytest.raises(PatchError, match=r"settings\.a"):
         _ = profile.merge_patch({"settings": {"a": "x"}})
     with pytest.raises(PatchError, match="invalid value"):
         _ = profile.merge_patch({"level": "x"})
@@ -619,7 +627,7 @@ class _Guarded(Layered[L]):
         return value
 
 
-def test_a_field_validator_on_an_inheritable_refuses_alike_through_set_local_and_a_patch() -> (
+def test_a_field_validator_on_an_inheritable_refuses_alike_through_set_local_and_a_patch() -> (  # noqa: E501 (a test's name)
     None
 ):
     edge = _Guarded[Edge].model_validate({"level": 1})
@@ -656,7 +664,7 @@ def test_a_validator_that_would_see_an_owned_is_refused_at_class_creation(
     def check(value: object) -> object:
         return value
 
-    def check_wrapping(value: object, handler: object) -> object:
+    def check_wrapping(value: object, _handler: object) -> object:
         return value
 
     function = check_wrapping if mode == "wrap" else check
@@ -667,7 +675,7 @@ def test_a_validator_that_would_see_an_owned_is_refused_at_class_creation(
             level: Annotated[Inheritable[int], ByPresence(), Default(0)] = Field(
                 default=...
             )
-            _check = field_validator("level", mode=mode)(function)  # pyright: ignore[reportArgumentType, reportCallIssue, reportUnknownVariableType]
+            _check = field_validator("level", mode=mode)(function)  # pyright: ignore[reportArgumentType, reportCallIssue, reportUnknownVariableType, reportUnannotatedClassAttribute]
 
     # The fix it names, and a before validator, are accepted.
     assert _Guarded[Edge].model_validate({"level": 1}).level.stored == 1
@@ -680,7 +688,7 @@ def test_a_validator_marker_outside_the_kind_is_refused_at_class_creation(
     def check(value: object) -> object:
         return value
 
-    def check_wrapping(value: object, handler: object) -> object:
+    def check_wrapping(value: object, _handler: object) -> object:
         return value
 
     function = check_wrapping if marker is WrapValidator else check

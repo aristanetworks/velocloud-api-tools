@@ -19,20 +19,20 @@ from ._type_support import JsonObject
 def _json_object(value: object) -> JsonObject:
     if not isinstance(value, dict):
         raise TypeError("expected a JSON object")
-    return cast(JsonObject, value)
+    return cast("JsonObject", value)
 
 
 def _string_list(value: object) -> list[str]:
     if not isinstance(value, list):
         raise TypeError("expected an array of strings")
-    items = cast(list[object], value)
+    items = cast("list[object]", value)
     strings = [item for item in items if isinstance(item, str)]
     if len(strings) != len(items):
         raise TypeError("expected an array of strings")
     return strings
 
 
-def test_recursive_event_filters_validate_and_serialize():
+def test_recursive_event_filters_validate_and_serialize() -> None:
     request = GetEnterpriseEvents.model_validate(
         {
             "enterpriseId": 7,
@@ -85,12 +85,12 @@ def test_recursive_event_filters_validate_and_serialize():
     }
 
 
-def test_recursive_event_filter_groups_must_not_be_empty():
+def test_recursive_event_filter_groups_must_not_be_empty() -> None:
     with pytest.raises(ValidationError):
         _ = GetEnterpriseEvents.model_validate({"filters": {"and_": [{"or_": []}]}})
 
 
-def test_enterprise_event_filters_require_and_at_root():
+def test_enterprise_event_filters_require_and_at_root() -> None:
     with pytest.raises(ValidationError):
         _ = GetEnterpriseEvents.model_validate(
             {
@@ -122,7 +122,7 @@ def test_enterprise_event_filters_require_and_at_root():
         ("in", []),
     ],
 )
-def test_event_filter_operator_value_cardinality(operator: str, value: object):
+def test_event_filter_operator_value_cardinality(operator: str, value: object) -> None:
     with pytest.raises(ValidationError):
         _ = GetEnterpriseEvents.model_validate(
             {
@@ -133,7 +133,7 @@ def test_event_filter_operator_value_cardinality(operator: str, value: object):
         )
 
 
-def test_string_filter_supports_in_with_multiple_values():
+def test_string_filter_supports_in_with_multiple_values() -> None:
     request = GetEnterpriseEvents.model_validate(
         {
             "filters": {
@@ -159,8 +159,8 @@ def test_string_filter_supports_in_with_multiple_values():
     }
 
 
-def test_json_schema_exposes_operator_value_cardinality():
-    schema = cast(JsonObject, GetEnterpriseEvents.model_json_schema(by_alias=True))
+def test_json_schema_exposes_operator_value_cardinality() -> None:
+    schema = cast("JsonObject", GetEnterpriseEvents.model_json_schema(by_alias=True))
 
     defs = _json_object(schema["$defs"])
     event_filter = _json_object(defs["EnterpriseEventTypeFilter"])

@@ -1,3 +1,5 @@
+"""The requests and results of the ``migration/`` action and Gateway reads."""
+
 from typing import Annotated, Any
 
 from pydantic import MISSING

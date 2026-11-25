@@ -1,18 +1,19 @@
+"""What an outbound, inbound or inbound IPv6 firewall rule matches."""
+
 from typing import Annotated, Any, override
 
 from pydantic import MISSING
 
-from pyvelo.core import Alias, VcoModel
-from pyvelo.core.fields import Normalizer, Resolvable
-from pyvelo.core.identity import ApplicationIdentity
-
-from ..common import (
+from pyvelo.client.models.configuration.common import (
     AddressGroupRef,
     AddressType,
     RuleMatchType,
     ServiceGroupRef,
     VlanType,
 )
+from pyvelo.core import Alias, VcoModel
+from pyvelo.core.fields import Normalizer, Resolvable
+from pyvelo.core.identity import ApplicationIdentity
 
 
 def _subnet_mask_normalizer(v: Any) -> Any:

@@ -92,7 +92,7 @@ ROUND_TRIPS: dict[str, tuple[dict[str, Any], dict[str, Any]]] = {
 
 
 @pytest.mark.parametrize("case", ROUND_TRIPS)
-def test_the_patch_of_the_changes_makes_the_new_document(case: str):
+def test_the_patch_of_the_changes_makes_the_new_document(case: str) -> None:
     old, new = (doc(data) for data in ROUND_TRIPS[case])
     patch, left_out = patch_of(raw_changes(old, new, Root), Root)
     assert left_out == ()
@@ -100,7 +100,7 @@ def test_the_patch_of_the_changes_makes_the_new_document(case: str):
     assert json.loads(json.dumps(patch)) == patch  # plain JSON, string keys
 
 
-def test_fields_are_written_under_python_names_and_values_as_they_are():
+def test_fields_are_written_under_python_names_and_values_as_they_are() -> None:
     old = doc({"rules": [A], "hopsSafe": []})
     new = doc({"rules": [{**A, "ruleId": "9"}], "hopsSafe": [{"ip": "10.0.0.1"}]})
     patch, _ = patch_of(raw_changes(old, new, Root), Root)
@@ -110,7 +110,7 @@ def test_fields_are_written_under_python_names_and_values_as_they_are():
     }
 
 
-def test_adds_removes_and_moves_are_item_operations():
+def test_adds_removes_and_moves_are_item_operations() -> None:
     old, new = doc({"rules": [A, B, C]}), doc({"rules": [C, rule("x"), A]})
     patch, _ = patch_of(raw_changes(old, new, Root), Root)
     assert patch == {
@@ -128,7 +128,7 @@ def test_adds_removes_and_moves_are_item_operations():
     }
 
 
-def test_a_run_of_placed_items_is_written_backwards_after_the_item_it_follows():
+def test_a_run_of_placed_items_is_written_backwards_after_the_item_it_follows() -> None:
     old, new = doc({"rules": [A, B]}), doc({"rules": [A, rule("x"), rule("y"), B]})
     patch, _ = patch_of(raw_changes(old, new, Root), Root)
     ops = patch["rules"]
@@ -139,7 +139,7 @@ def test_a_run_of_placed_items_is_written_backwards_after_the_item_it_follows():
     ]
 
 
-def test_an_item_without_a_key_is_added_under_plus():
+def test_an_item_without_a_key_is_added_under_plus() -> None:
     link = {"internalId": "u1", "family": "IPv4", "name": "x"}
     old = doc({"links": [link]})
     new = doc({"links": [{"name": "n1"}, {"name": "n2"}, link]})
@@ -174,12 +174,14 @@ def test_an_item_without_a_key_is_added_under_plus():
         RawChange(Path(("byName", "#1")), MISSING, {"v": 1}),
     ],
 )
-def test_a_change_no_patch_can_make_is_left_out_and_writes_nothing(change: RawChange):
+def test_a_change_no_patch_can_make_is_left_out_and_writes_nothing(
+    change: RawChange,
+) -> None:
     kept = RawChange("count", 1, 2)
     assert patch_of([change, kept], Root) == ({"count": 2}, (change,))
 
 
-def test_with_stored_parts_an_item_is_named_as_the_stored_list_names_it():
+def test_with_stored_parts_an_item_is_named_as_the_stored_list_names_it() -> None:
     changes = [
         RawChange("rules[#1].priority", 0, 7),
         RawChange("rules[x]", {"name": "x"}, MISSING),
@@ -201,7 +203,7 @@ def test_with_stored_parts_an_item_is_named_as_the_stored_list_names_it():
     }
 
 
-def test_with_stored_parts_a_change_whose_item_is_gone_is_left_out():
+def test_with_stored_parts_a_change_whose_item_is_gone_is_left_out() -> None:
     inside = RawChange("rules[gone].priority", 0, 7)
     after_it = RawChange(
         "rules[new]", MISSING, {"name": "new"}, place=ItemPlace(Key("gone"))
@@ -222,7 +224,7 @@ def test_with_stored_parts_a_change_whose_item_is_gone_is_left_out():
     assert set(map(id, left_out)) == set(map(id, [inside, after_it, chained, order]))
 
 
-def test_fields_of_an_item_that_is_there_are_set_and_the_item_placed():
+def test_fields_of_an_item_that_is_there_are_set_and_the_item_placed() -> None:
     change = RawChange(
         "rules[a]",
         {"name": "a", "priority": 1},
@@ -244,7 +246,10 @@ def _random_rule(rng: random.Random, name: str, rule_id: str | None) -> dict[str
 
 
 def _edited(rng: random.Random, old: dict[str, Any]) -> dict[str, Any]:
-    """*old* with a few random edits to its rules: fields, adds, removes, moves, renames."""
+    """*old* with a few random edits to its rules.
+
+    Fields, adds, removes, moves, renames.
+    """
     new = copy.deepcopy(old)
     rules: list[dict[str, Any]] = new["rules"]
     names = {r["name"] for r in rules}
@@ -276,7 +281,7 @@ def _edited(rng: random.Random, old: dict[str, Any]) -> dict[str, Any]:
 
 
 @pytest.mark.parametrize("seed", range(4))
-def test_random_edits_to_a_keyed_list_round_trip(seed: int):
+def test_random_edits_to_a_keyed_list_round_trip(seed: int) -> None:
     rng = random.Random(seed)
     for _ in range(300):
         names = [f"b{n}" for n in range(rng.randrange(7))]
@@ -290,7 +295,9 @@ def test_random_edits_to_a_keyed_list_round_trip(seed: int):
         assert patched(old, patch) == new
 
 
-def test_an_added_item_whose_key_reads_as_a_position_or_a_new_item_is_added_by_its_body():
+def test_an_added_item_whose_key_reads_as_a_position_or_a_new_item_is_added_by_its_body() -> (  # noqa: E501 (a test's name)
+    None
+):
     old = doc({"rules": [A, B]})
     new = doc({"rules": [rule("#0"), A, rule("+"), rule("+2"), B, rule("#7")]})
     patch, left_out = patch_of(raw_changes(old, new, Root), Root)
@@ -301,7 +308,7 @@ def test_an_added_item_whose_key_reads_as_a_position_or_a_new_item_is_added_by_i
     assert patched(old, patch) == new
 
 
-def test_patch_of_steps_into_a_field_that_takes_a_sub_model_or_a_list():
+def test_patch_of_steps_into_a_field_that_takes_a_sub_model_or_a_list() -> None:
     old = {
         "primaryProvider": {"ref": "deviceSettings:dns:primaryProvider"},
         "backupProvider": {"ref": "deviceSettings:dns:backupProvider"},
@@ -329,7 +336,9 @@ class Holder(VcoModel):
     items: Annotated[list[Both], KeyField("name")] = Field(default_factory=list)
 
 
-def test_a_set_that_gives_none_to_a_field_that_takes_none_and_missing_is_left_out():
+def test_a_set_that_gives_none_to_a_field_that_takes_none_and_missing_is_left_out() -> (
+    None
+):
     # A patch's null would unset the field: the change is left out whole.
     stored_parts = {
         Path.parse("items[a]"): Key("a"),
@@ -343,7 +352,7 @@ def test_a_set_that_gives_none_to_a_field_that_takes_none_and_missing_is_left_ou
     )
 
 
-def test_a_set_that_gives_a_value_to_such_a_field_is_written():
+def test_a_set_that_gives_a_value_to_such_a_field_is_written() -> None:
     stored_parts = {Path.parse("items[a]"): Key("a")}
     some = RawChange("items[a]", {"name": "a"}, {"name": "a", "both": 2})
     assert patch_of([some], Holder, stored_parts=stored_parts) == (
@@ -352,7 +361,7 @@ def test_a_set_that_gives_a_value_to_such_a_field_is_written():
     )
 
 
-def test_a_map_of_models_that_is_new_is_written_as_one_add_per_entry():
+def test_a_map_of_models_that_is_new_is_written_as_one_add_per_entry() -> None:
     old = {key: value for key, value in doc({}).items() if key != "byName"}
     new = doc({"byName": {"a": {"v": 1}, "b": {"v": 2}}})
     patch, left_out = patch_of(raw_changes(old, new, Root), Root)
@@ -367,6 +376,6 @@ def test_a_map_of_models_that_is_new_is_written_as_one_add_per_entry():
     assert json.loads(json.dumps(patch)) == patch
 
 
-def test_a_new_map_with_an_entry_that_cannot_be_added_is_left_out():
+def test_a_new_map_with_an_entry_that_cannot_be_added_is_left_out() -> None:
     change = RawChange("byName", MISSING, {"a": {"v": 1}, "+b": {"v": 2}})
     assert patch_of([change], Root) == ({}, (change,))

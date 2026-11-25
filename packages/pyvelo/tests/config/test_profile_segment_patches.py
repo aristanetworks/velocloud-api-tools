@@ -1,4 +1,7 @@
-"""``ConfigPipeline.apply`` on a profile: an ``add`` of a segment under ``segments`` of any of its three modules assigns it, as ``assign_segment`` does.
+"""``ConfigPipeline.apply`` on a profile: an ``add`` of a segment assigns it.
+
+The ``add`` is under ``segments`` of any of the three modules, and it assigns the
+segment as ``assign_segment`` does.
 
 Each state is built by ``profile_state`` (a profile target, a segment resolver
 loaded with Global, Guest and Voice, the profile holding the Global Segment
@@ -14,7 +17,7 @@ from collections.abc import Mapping
 from typing import Any, cast
 
 import pytest
-from profile_state import (  # pyright: ignore[reportImplicitRelativeImport]
+from profile_state import (
     module_store_pipeline,
     profile_state,
 )
@@ -48,7 +51,7 @@ QOS = "QOS"
 def qos_of(state: ConfigState) -> QosConfigurationModule[Profile]:
     module = state.module(QOS)
     assert isinstance(module, QosConfigurationModule)
-    return cast(QosConfigurationModule[Profile], module)  # the state's profile layer
+    return cast("QosConfigurationModule[Profile]", module)  # the state's profile layer
 
 
 FIREWALL = "firewall"
@@ -111,8 +114,7 @@ def rule(name: str) -> dict[str, Any]:
 
 def kept(state: ConfigState, module: str, position: int = 0) -> dict[str, Any]:
     """The entry at *position* of *module* as read, as a list value can give it."""
-    entry = copy.deepcopy(state.module(module).raw_data["segments"][position])  # pyright: ignore[reportIndexIssue, reportUnknownMemberType, reportUnknownVariableType]
-    return entry
+    return copy.deepcopy(state.module(module).raw_data["segments"][position])  # pyright: ignore[reportIndexIssue, reportUnknownVariableType]
 
 
 def dumps(state: ConfigState) -> list[object]:
@@ -141,7 +143,7 @@ def assigned_defaults(state: ConfigState) -> list[dict[str, Any]]:
 @pytest.mark.parametrize("order", list(itertools.permutations(MODULES)), ids="-".join)
 async def test_adds_in_any_module_order_each_merge_their_own_body(
     order: tuple[str, ...],
-):
+) -> None:
     state = await global_only()
     the_rule = rule("Box")
     bodies: dict[str, dict[str, object]] = {
@@ -178,12 +180,13 @@ async def test_adds_in_any_module_order_each_merge_their_own_body(
     ]
     assert qos["cosMapping"] == template[QOS]["cosMapping"]
     assert qos["webProxy"] == template[QOS]["webProxy"]
-    assert "vpn" not in qos and "firewall_logging_enabled" not in qos
+    assert "vpn" not in qos
+    assert "firewall_logging_enabled" not in qos
     firewall = entry_of(plan_of(state, FIREWALL), "Guest")
     assert firewall == {**template[FIREWALL], "firewall_logging_enabled": True}
 
 
-async def test_assign_segment_after_an_add_raises_nothing_to_do():
+async def test_assign_segment_after_an_add_raises_nothing_to_do() -> None:
     state = await global_only()
     _ = await patch(state, QOS, {"Guest": add({})})
     before = state.plan().render()
@@ -194,7 +197,7 @@ async def test_assign_segment_after_an_add_raises_nothing_to_do():
     assert state.plan().render() == before
 
 
-async def test_the_first_add_assigns_all_three_modules():
+async def test_the_first_add_assigns_all_three_modules() -> None:
     state = await global_only()
 
     _ = await patch(state, FIREWALL, {"Guest": add({})})
@@ -205,7 +208,7 @@ async def test_the_first_add_assigns_all_three_modules():
         assert names_in(state, module) == ["Global Segment", "Guest"]
 
 
-async def test_an_add_in_another_case_assigns_the_enterprise_name():
+async def test_an_add_in_another_case_assigns_the_enterprise_name() -> None:
     state = await global_only()
 
     _ = await patch(state, QOS, {"gUEST": add({})})
@@ -214,7 +217,7 @@ async def test_an_add_in_another_case_assigns_the_enterprise_name():
     assert names_in(state, FIREWALL) == ["Global Segment", "Guest"]
 
 
-async def test_an_addressed_add_assigns():
+async def test_an_addressed_add_assigns() -> None:
     state = await global_only()
 
     _ = await ConfigPipeline(client=None).apply(
@@ -224,7 +227,7 @@ async def test_an_addressed_add_assigns():
     assert [m.name for m in state.plan().changed] == [DS, QOS, FIREWALL]
 
 
-async def test_a_plus_add_with_a_name_assigns():
+async def test_a_plus_add_with_a_name_assigns() -> None:
     state = await global_only()
 
     _ = await patch(state, QOS, {"+": add({"segment": {"name": "guest"}})})
@@ -233,7 +236,7 @@ async def test_a_plus_add_with_a_name_assigns():
     assert names_in(state, QOS) == ["Global Segment", "Guest"]
 
 
-async def test_a_plus_add_without_a_name_raises():
+async def test_a_plus_add_without_a_name_raises() -> None:
     state = await global_only()
     before = dumps(state)
 
@@ -246,7 +249,7 @@ async def test_a_plus_add_without_a_name_raises():
     assert dumps(state) == before
 
 
-async def test_an_add_of_a_segment_the_module_had_as_read_raises_exists():
+async def test_an_add_of_a_segment_the_module_had_as_read_raises_exists() -> None:
     state = await guest_everywhere()
 
     for module, wire in (("qos", QOS), ("firewall", FIREWALL), ("device_settings", DS)):
@@ -260,7 +263,7 @@ async def test_an_add_of_a_segment_the_module_had_as_read_raises_exists():
     assert state.plan().changed == ()
 
 
-async def test_an_add_after_assign_segment_merges_into_the_entry():
+async def test_an_add_after_assign_segment_merges_into_the_entry() -> None:
     state = await global_only()
     pipeline = ConfigPipeline(client=None)
     _ = await pipeline.assign_segment(state, "Guest")
@@ -283,7 +286,7 @@ async def test_an_add_after_assign_segment_merges_into_the_entry():
     assert [m.added_segments for m in state.plan().changed] == [("Guest",)] * 3
 
 
-async def test_an_add_completes_a_partial_profile():
+async def test_an_add_completes_a_partial_profile() -> None:
     state = await profile_state(
         [ds_entry(GLOBAL), ds_entry(GUEST)],
         [qos_entry(GLOBAL)],
@@ -302,7 +305,7 @@ async def test_an_add_completes_a_partial_profile():
     assert plan.segment_warnings == ()
 
 
-async def test_an_add_to_a_module_that_has_it_completes_the_others_too():
+async def test_an_add_to_a_module_that_has_it_completes_the_others_too() -> None:
     # Guest is in device settings and firewall as read; QoS lacks it. The add is
     # to QoS, so it is accepted, and the others have it already.
     state = await profile_state(
@@ -321,7 +324,7 @@ async def test_an_add_to_a_module_that_has_it_completes_the_others_too():
 # --- the body's descriptor ---------------------------------------------------------
 
 
-async def test_an_add_with_its_own_descriptor_is_taken():
+async def test_an_add_with_its_own_descriptor_is_taken() -> None:
     state = await global_only()
     body = new_segment_entry(QOS, identity(GUEST))
     for default in body["defaults"]:
@@ -337,7 +340,9 @@ async def test_an_add_with_its_own_descriptor_is_taken():
     assert [m.added_segments for m in state.plan().changed] == [("Guest",)] * 3
 
 
-async def test_an_add_with_the_name_in_another_case_in_its_descriptor_is_taken():
+async def test_an_add_with_the_name_in_another_case_in_its_descriptor_is_taken() -> (
+    None
+):
     state = await global_only()
 
     _ = await patch(state, QOS, {"Guest": add({"segment": {"name": "GUEST"}})})
@@ -354,7 +359,7 @@ async def test_an_add_with_the_name_in_another_case_in_its_descriptor_is_taken()
         ("name", "Voice"),
     ],
 )
-async def test_an_add_with_another_descriptor_raises(key: str, value: object):
+async def test_an_add_with_another_descriptor_raises(key: str, value: object) -> None:
     state = await global_only()
     before = dumps(state)
     body = {"segment": {**descriptor(GUEST), key: value}}
@@ -369,7 +374,7 @@ async def test_an_add_with_another_descriptor_raises(key: str, value: object):
     assert state.plan().changed == ()
 
 
-async def test_an_add_with_a_position_moves_the_new_entry():
+async def test_an_add_with_a_position_moves_the_new_entry() -> None:
     state = await global_only()
 
     _ = await patch(state, QOS, {"Guest": add({}, first=True)})
@@ -381,7 +386,7 @@ async def test_an_add_with_a_position_moves_the_new_entry():
 # --- the name ------------------------------------------------------------------------
 
 
-async def test_an_unknown_name_raises_resolution_error_and_changes_nothing():
+async def test_an_unknown_name_raises_resolution_error_and_changes_nothing() -> None:
     state = await global_only()
     before = dumps(state)
     rendered = state.plan().render()
@@ -395,7 +400,9 @@ async def test_an_unknown_name_raises_resolution_error_and_changes_nothing():
     assert all(state.module(name).additions == () for name in MODULES)
 
 
-async def test_no_segment_resolver_raises_patch_error_with_the_lookup_error_as_cause():
+async def test_no_segment_resolver_raises_patch_error_with_the_lookup_error_as_cause() -> (  # noqa: E501 (a test's name)
+    None
+):
     state = await global_only()
     state.resolvers = ResolverRegistry()
 
@@ -409,10 +416,10 @@ async def test_no_segment_resolver_raises_patch_error_with_the_lookup_error_as_c
     assert state.plan().changed == ()
 
 
-# --- the modules ------------------------------------------------------------------------
+# --- the modules ----------------------------------------------------------------------
 
 
-async def test_a_profile_without_qos_refuses_an_add():
+async def test_a_profile_without_qos_refuses_an_add() -> None:
     state = await global_only()
     modules = state.profile_config.modules
     assert isinstance(modules, list)
@@ -438,7 +445,9 @@ async def test_a_profile_without_qos_refuses_an_add():
         pytest.param("list", id="a list value"),
     ],
 )
-async def test_an_add_to_a_module_the_profile_lacks_raises_patch_error(form: str):
+async def test_an_add_to_a_module_the_profile_lacks_raises_patch_error(
+    form: str,
+) -> None:
     state = await global_only()
     modules = state.profile_config.modules
     assert isinstance(modules, list)
@@ -463,7 +472,9 @@ async def test_an_add_to_a_module_the_profile_lacks_raises_patch_error(form: str
     assert state.plan().render() == before
 
 
-async def test_a_patch_without_segment_ops_to_a_module_the_profile_lacks_keeps_its_error():
+async def test_a_patch_without_segment_ops_to_a_module_the_profile_lacks_keeps_its_error() -> (  # noqa: E501 (a test's name)
+    None
+):
     state = await global_only()
     modules = state.profile_config.modules
     assert isinstance(modules, list)
@@ -475,7 +486,7 @@ async def test_a_patch_without_segment_ops_to_a_module_the_profile_lacks_keeps_i
     assert not isinstance(raised.value, PatchError)
 
 
-async def test_a_change_on_a_firewall_only_profile_still_works():
+async def test_a_change_on_a_firewall_only_profile_still_works() -> None:
     state = await global_only()
     modules = state.profile_config.modules
     assert isinstance(modules, list)
@@ -488,10 +499,10 @@ async def test_a_change_on_a_firewall_only_profile_still_works():
     assert [m.name for m in state.plan().changed] == [FIREWALL]
 
 
-# --- a list value --------------------------------------------------------------------------
+# --- a list value ---------------------------------------------------------------------
 
 
-async def test_a_list_value_with_a_new_segment_assigns_it():
+async def test_a_list_value_with_a_new_segment_assigns_it() -> None:
     state = await global_only()
     first = kept(state, QOS)
 
@@ -519,7 +530,7 @@ async def test_a_list_value_with_a_new_segment_assigns_it():
     )
 
 
-async def test_a_list_value_with_a_new_segment_of_another_descriptor_raises():
+async def test_a_list_value_with_a_new_segment_of_another_descriptor_raises() -> None:
     state = await global_only()
     first = kept(state, QOS)
     before = dumps(state)
@@ -549,7 +560,9 @@ def stored_default_ids(state: ConfigState) -> list[str]:
 
 
 @pytest.mark.parametrize("key", ["ruleLogicalId", "rule_logical_id"])
-async def test_an_add_of_a_copied_entry_takes_the_assignments_defaults_ids(key: str):
+async def test_an_add_of_a_copied_entry_takes_the_assignments_defaults_ids(
+    key: str,
+) -> None:
     state = await global_only()
     copied = copied_guest_entry()
     for item in copied["defaults"]:
@@ -564,7 +577,7 @@ async def test_an_add_of_a_copied_entry_takes_the_assignments_defaults_ids(key: 
     assert names_in(state, DS) == ["Global Segment", "Guest"]
 
 
-async def test_an_add_of_a_copied_entry_keeps_its_rules_and_actions():
+async def test_an_add_of_a_copied_entry_keeps_its_rules_and_actions() -> None:
     state = await global_only()
     copied = copied_guest_entry()
     copied["rules"] = [rule("Voice")]
@@ -578,7 +591,7 @@ async def test_an_add_of_a_copied_entry_keeps_its_rules_and_actions():
     assert guest["defaults"][0]["action"] == copied["defaults"][0]["action"]
 
 
-async def test_an_add_of_defaults_given_as_changes_takes_the_assignments_ids():
+async def test_an_add_of_defaults_given_as_changes_takes_the_assignments_ids() -> None:
     state = await global_only()
     copied = copied_guest_entry()
     copied["defaults"] = {d["name"]: d for d in copied["defaults"]}
@@ -590,7 +603,9 @@ async def test_an_add_of_defaults_given_as_changes_takes_the_assignments_ids():
     ]
 
 
-async def test_a_list_item_that_copies_an_entry_takes_the_assignments_defaults_ids():
+async def test_a_list_item_that_copies_an_entry_takes_the_assignments_defaults_ids() -> (  # noqa: E501 (a test's name)
+    None
+):
     state = await global_only()
     first = kept(state, QOS)
     copied = copied_guest_entry()
@@ -603,7 +618,7 @@ async def test_a_list_item_that_copies_an_entry_takes_the_assignments_defaults_i
 
 
 @pytest.mark.parametrize("form", ["add", "list"])
-async def test_a_copied_entry_whose_default_differs_is_still_refused(form: str):
+async def test_a_copied_entry_whose_default_differs_is_still_refused(form: str) -> None:
     state = await global_only()
     copied = copied_guest_entry()
     copied["defaults"][1]["match"] = {"appid": 9}
@@ -621,7 +636,7 @@ async def test_a_copied_entry_whose_default_differs_is_still_refused(form: str):
     assert dumps(state) == before
 
 
-async def test_a_copied_entry_with_its_defaults_reordered_is_still_refused():
+async def test_a_copied_entry_with_its_defaults_reordered_is_still_refused() -> None:
     state = await global_only()
     copied = copied_guest_entry()
     copied["defaults"].reverse()
@@ -632,11 +647,14 @@ async def test_a_copied_entry_with_its_defaults_reordered_is_still_refused():
     assert raised.value.kind == "fixed_list"
 
 
-# --- an orphan can go, nothing else --------------------------------------------------------------
+# --- an orphan can go, nothing else ---------------------------------------------------
 
 
 async def orphan_in(module: str) -> ConfigState:
-    """A profile whose device settings lack Guest, which *module* (QoS or firewall) has."""
+    """A profile whose device settings lack Guest.
+
+    *module* (QoS or firewall) has Guest.
+    """
     return await profile_state(
         [ds_entry(GLOBAL)],
         [qos_entry(GLOBAL)] + ([qos_entry(GUEST)] if module == QOS else []),
@@ -646,7 +664,7 @@ async def orphan_in(module: str) -> ConfigState:
 
 
 @pytest.mark.parametrize("module", [QOS, FIREWALL])
-async def test_deleting_an_orphan_is_accepted(module: str):
+async def test_deleting_an_orphan_is_accepted(module: str) -> None:
     state = await orphan_in(module)
 
     _ = await patch(state, module, {"Guest": delete()})
@@ -657,7 +675,7 @@ async def test_deleting_an_orphan_is_accepted(module: str):
 
 
 @pytest.mark.parametrize("module", [QOS, FIREWALL])
-async def test_a_list_value_without_an_orphan_is_accepted(module: str):
+async def test_a_list_value_without_an_orphan_is_accepted(module: str) -> None:
     state = await orphan_in(module)
     first = kept(state, module)
 
@@ -676,7 +694,7 @@ async def test_a_list_value_without_an_orphan_is_accepted(module: str):
         pytest.param("empty-list", id="an empty list"),
     ],
 )
-async def test_every_other_removal_raises(module: str, form: str):
+async def test_every_other_removal_raises(module: str, form: str) -> None:
     state = await guest_everywhere()
     before = dumps(state)
     rendered = state.plan().render()
@@ -700,7 +718,9 @@ async def test_every_other_removal_raises(module: str, form: str):
     assert state.plan().render() == rendered
 
 
-async def test_removing_a_segment_device_settings_has_raises_even_from_qos_without_it():
+async def test_removing_a_segment_device_settings_has_raises_even_from_qos_without_it() -> (  # noqa: E501 (a test's name)
+    None
+):
     # Guest is in device settings and firewall; QoS lacks it. Removing it from
     # firewall is a removal, not an orphan.
     state = await profile_state(
@@ -715,7 +735,7 @@ async def test_removing_a_segment_device_settings_has_raises_even_from_qos_witho
     assert raised.value.kind == "segment_rule"
 
 
-# --- a descriptor is not rewritten -----------------------------------------------------------------
+# --- a descriptor is not rewritten ----------------------------------------------------
 
 
 @pytest.mark.parametrize(
@@ -757,7 +777,7 @@ async def test_removing_a_segment_device_settings_has_raises_even_from_qos_witho
 @pytest.mark.parametrize("module", ["qos", "firewall", "device_settings"])
 async def test_a_descriptor_rewrite_raises(
     module: str, segments: dict[str, object], detail: str
-):
+) -> None:
     state = await guest_everywhere()
     before = dumps(state)
     rendered = state.plan().render()
@@ -775,7 +795,7 @@ async def test_a_descriptor_rewrite_raises(
 
 
 @pytest.mark.parametrize("module", ["qos", "firewall", "device_settings"])
-async def test_a_descriptor_rewritten_into_anothers_id_raises(module: str):
+async def test_a_descriptor_rewritten_into_anothers_id_raises(module: str) -> None:
     state = await guest_everywhere()
     before = dumps(state)
 
@@ -785,7 +805,7 @@ async def test_a_descriptor_rewritten_into_anothers_id_raises(module: str):
     assert dumps(state) == before
 
 
-async def test_a_descriptor_that_a_list_value_keeps_is_accepted():
+async def test_a_descriptor_that_a_list_value_keeps_is_accepted() -> None:
     state = await guest_everywhere()
     reordered = [kept(state, QOS, 1), kept(state, QOS, 0)]
 
@@ -794,10 +814,10 @@ async def test_a_descriptor_that_a_list_value_keeps_is_accepted():
     assert names_in(state, QOS) == ["Guest", "Global Segment"]
 
 
-# --- all or nothing -----------------------------------------------------------------------------------
+# --- all or nothing -------------------------------------------------------------------
 
 
-async def test_a_failed_patch_leaves_all_three_modules_as_they_were():
+async def test_a_failed_patch_leaves_all_three_modules_as_they_were() -> None:
     state = await global_only()
     before = dumps(state)
     rendered = state.plan().render()
@@ -811,7 +831,7 @@ async def test_a_failed_patch_leaves_all_three_modules_as_they_were():
     assert all(state.module(name).additions == () for name in MODULES)
 
 
-async def test_a_failed_second_add_keeps_the_first():
+async def test_a_failed_second_add_keeps_the_first() -> None:
     state = await global_only()
     _ = await patch(state, QOS, {"Guest": add({})})
     before = dumps(state)
@@ -822,10 +842,10 @@ async def test_a_failed_second_add_keeps_the_first():
     assert dumps(state) == before
 
 
-# --- the saved assignment -------------------------------------------------------------------------------
+# --- the saved assignment -------------------------------------------------------------
 
 
-async def test_the_saved_assignment_reads_back_and_a_second_add_raises_exists():
+async def test_the_saved_assignment_reads_back_and_a_second_add_raises_exists() -> None:
     state = await global_only()
     pipeline, _ = module_store_pipeline(state)
     _ = await pipeline.apply(
@@ -847,10 +867,10 @@ async def test_the_saved_assignment_reads_back_and_a_second_add_raises_exists():
         assert raised.value.kind == "exists"
 
 
-# --- the other segments --------------------------------------------------------------------------------
+# --- the other segments ---------------------------------------------------------------
 
 
-async def test_two_adds_in_one_patch_assign_two_segments():
+async def test_two_adds_in_one_patch_assign_two_segments() -> None:
     state = await global_only()
 
     _ = await patch(state, QOS, {"Guest": add({}), "Voice": add({})})
@@ -859,7 +879,7 @@ async def test_two_adds_in_one_patch_assign_two_segments():
     assert [m.added_segments for m in state.plan().changed] == [("Guest", "Voice")] * 3
 
 
-async def test_two_selectors_for_one_segment_raise_duplicate():
+async def test_two_selectors_for_one_segment_raise_duplicate() -> None:
     state = await global_only()
     before = dumps(state)
 
@@ -870,7 +890,7 @@ async def test_two_selectors_for_one_segment_raise_duplicate():
     assert dumps(state) == before
 
 
-async def test_a_change_to_a_segment_the_module_lacks_is_no_item():
+async def test_a_change_to_a_segment_the_module_lacks_is_no_item() -> None:
     state = await global_only()
 
     with pytest.raises(PatchError) as raised:
@@ -879,7 +899,7 @@ async def test_a_change_to_a_segment_the_module_lacks_is_no_item():
     assert raised.value.kind == "no_item"
 
 
-async def test_a_second_add_to_the_same_module_before_a_save_is_merged_again():
+async def test_a_second_add_to_the_same_module_before_a_save_is_merged_again() -> None:
     state = await global_only()
 
     _ = await patch(state, QOS, {"Guest": add({"rules": [rule("Box")]})})

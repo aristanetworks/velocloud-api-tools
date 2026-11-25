@@ -22,7 +22,7 @@ _LOGICAL_ID = uuid.UUID("da060e97-9815-4f17-b55f-edf51ff1077e")
 
 
 class TestGetEnterprise:
-    def test_accepts_all_vco_identifiers(self):
+    def test_accepts_all_vco_identifiers(self) -> None:
         by_id = GetEnterprise.model_validate({"id": 7})
         by_enterprise_id = GetEnterprise.model_validate({"enterpriseId": 8})
         by_logical_id = GetEnterprise.model_validate(
@@ -37,14 +37,14 @@ class TestGetEnterprise:
             == _LOGICAL_ID
         )
 
-    def test_only_supports_enterprise_proxy_expansion(self):
+    def test_only_supports_enterprise_proxy_expansion(self) -> None:
         request = GetEnterprise.model_validate({"with": ["enterpriseProxy"]})
         assert request.with_ == [GetEnterpriseWith.ENTERPRISE_PROXY]
 
         with pytest.raises(ValidationError):
             _ = GetEnterprise.model_validate({"with": ["edges"]})
 
-    def test_retains_expanded_enterprise_proxy(self):
+    def test_retains_expanded_enterprise_proxy(self) -> None:
         result = EnterpriseResult.model_validate(
             {
                 "id": 7,
@@ -67,7 +67,7 @@ class TestGetEnterprise:
             == _LOGICAL_ID
         )
 
-    def test_accepts_null_enterprise_proxy(self):
+    def test_accepts_null_enterprise_proxy(self) -> None:
         result = EnterpriseResult.model_validate(
             {
                 "id": 7,
@@ -81,7 +81,7 @@ class TestGetEnterprise:
 
 
 class TestGetEnterpriseProxy:
-    def test_accepts_vco_identifiers_and_serializes_logical_id(self):
+    def test_accepts_vco_identifiers_and_serializes_logical_id(self) -> None:
         by_id = GetEnterpriseProxy.model_validate({"id": 9})
         by_logical_id = GetEnterpriseProxy.model_validate(
             {"enterpriseProxyLogicalId": str(_LOGICAL_ID)}
@@ -94,14 +94,14 @@ class TestGetEnterpriseProxy:
             == _LOGICAL_ID
         )
 
-    def test_supports_only_gateway_pool_expansions(self):
+    def test_supports_only_gateway_pool_expansions(self) -> None:
         request = GetEnterpriseProxy.model_validate({"with": ["gatewayPoolIds"]})
         assert request.with_ == [GetEnterpriseProxyWith.GATEWAY_POOL_IDS]
 
         with pytest.raises(ValidationError):
             _ = GetEnterpriseProxy.model_validate({"with": ["enterprises"]})
 
-    def test_retains_gateway_pool_expansions(self):
+    def test_retains_gateway_pool_expansions(self) -> None:
         result = EnterpriseProxyResult.model_validate(
             {
                 "id": 9,
@@ -127,11 +127,11 @@ class TestGetEnterpriseProxy:
 
 
 class TestGetEnterpriseProxyEnterprises:
-    def test_proxy_id_is_inferred_for_msp_sessions(self):
+    def test_proxy_id_is_inferred_for_msp_sessions(self) -> None:
         request = GetEnterpriseProxyEnterprises()
         assert request.enterprise_proxy_id is MISSING
 
-    def test_accepts_documented_expansions(self):
+    def test_accepts_documented_expansions(self) -> None:
         request = GetEnterpriseProxyEnterprises.model_validate(
             {"with": ["edgeCount", "serviceLicenses"]}
         )

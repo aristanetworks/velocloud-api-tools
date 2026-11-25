@@ -1,7 +1,7 @@
 """Strict patches: fields, validation, unknown keys, all or nothing."""
 
 import copy
-import datetime
+import datetime as dt
 import ipaddress
 import json
 import pickle
@@ -30,7 +30,7 @@ def raises_at(model: VcoModel, patch: dict[str, object], path: str) -> PatchErro
     return exc.value
 
 
-def test_patch_error_text():
+def test_patch_error_text() -> None:
     assert issubclass(PatchError, ValueError)
     error = PatchError("bad", Path.parse("sub.v"), "invalid_value")
     assert str(error) == "sub.v: bad"
@@ -50,7 +50,7 @@ def test_patch_error_text():
         )
 
 
-def test_object_merges_into_a_sub_model():
+def test_object_merges_into_a_sub_model() -> None:
     root = Root()
     sub = root.sub
     _ = root.merge_patch({"sub": {"v": 3}})
@@ -58,43 +58,45 @@ def test_object_merges_into_a_sub_model():
     assert root.sub is sub
 
 
-def test_object_builds_an_unset_sub_model():
+def test_object_builds_an_unset_sub_model() -> None:
     root = Root()
     _ = root.merge_patch({"maybe": {"v": 3}})
     assert root.maybe == Sub(v=3)
 
 
-def test_object_builds_a_sub_model_with_a_required_field():
+def test_object_builds_a_sub_model_with_a_required_field() -> None:
     root = Root()
     _ = root.merge_patch({"need": {"name": "n"}})
     assert isinstance(root.need, Rule)
     assert root.need.name == "n"
 
 
-def test_null_unsets_a_field_that_accepts_missing():
+def test_null_unsets_a_field_that_accepts_missing() -> None:
     root = Root(maybe=Sub())
     _ = root.merge_patch({"maybe": None})
     assert root.maybe is MISSING
 
 
-def test_null_sets_none_where_the_type_has_none():
+def test_null_sets_none_where_the_type_has_none() -> None:
     root = Root(title="t")
     _ = root.merge_patch({"title": None})
     assert root.title is None
 
 
 @pytest.mark.parametrize("name", ["flag", "sub", "count"])
-def test_null_raises_where_the_type_has_neither(name: str):
+def test_null_raises_where_the_type_has_neither(name: str) -> None:
     error = raises_at(Root(), {name: None}, name)
     assert "a change cannot unset it" in error.message
 
 
-def test_null_in_a_built_model_where_the_type_has_neither_says_to_leave_the_key_out():
+def test_null_in_a_built_model_where_the_type_has_neither_says_to_leave_the_key_out() -> (  # noqa: E501 (a test's name)
+    None
+):
     error = raises_at(Root(), {"maybe": {"v": None}}, "maybe.v")
     assert error.message.endswith("leave the key out")
 
 
-def test_value_replaces_and_is_coerced():
+def test_value_replaces_and_is_coerced() -> None:
     root = Root()
     _ = root.merge_patch({"count": "8443"})
     assert root.count == 8443
@@ -109,7 +111,7 @@ def test_value_replaces_and_is_coerced():
         ({"rules": {"z": add({"priority": "abc"})}}, "rules[z]"),
     ],
 )
-def test_wrong_type_raises(patch: dict[str, object], path: str):
+def test_wrong_type_raises(patch: dict[str, object], path: str) -> None:
     error = raises_at(Root(), patch, path)
     assert isinstance(error.__cause__, ValidationError)
 
@@ -123,7 +125,7 @@ def test_wrong_type_raises(patch: dict[str, object], path: str):
 )
 def test_defaulting_markers_do_not_default_in_a_patch(
     patch: dict[str, object], path: str
-):
+) -> None:
     _ = raises_at(Root(), patch, path)
 
 
@@ -142,7 +144,7 @@ class Validated(VcoModel):
         return v.upper()
 
 
-def test_field_validators_apply_in_a_patch():
+def test_field_validators_apply_in_a_patch() -> None:
     patch: dict[str, object] = {"prefix": "", "label": "x"}
     model = Validated(prefix=24)
     _ = model.merge_patch(patch)
@@ -174,7 +176,7 @@ class WithEnum(VcoModel):
     level: Level = Level.LOW
 
 
-def test_enum_field_holds_the_same_type_after_a_patch_as_after_parse():
+def test_enum_field_holds_the_same_type_after_a_patch_as_after_parse() -> None:
     parsed = WithEnum.model_validate({"level": 1})
     patched = WithEnum()
     _ = patched.merge_patch({"level": 1})
@@ -182,7 +184,7 @@ def test_enum_field_holds_the_same_type_after_a_patch_as_after_parse():
     assert type(patched.level) is type(parsed.level)
 
 
-def test_defaulting_markers_still_default_on_parse():
+def test_defaulting_markers_still_default_on_parse() -> None:
     assert Root.model_validate({"safe": "abc"}).safe is False
 
 
@@ -196,17 +198,17 @@ def test_defaulting_markers_still_default_on_parse():
         ({"maybe": {"nope": 1}}, "maybe.nope"),
     ],
 )
-def test_unknown_key_raises_at_every_depth(patch: dict[str, object], path: str):
+def test_unknown_key_raises_at_every_depth(patch: dict[str, object], path: str) -> None:
     _ = raises_at(Root(rules=[Rule(name="a")]), patch, path)
 
 
-def test_unknown_key_message_suggests_close_names():
+def test_unknown_key_message_suggests_close_names() -> None:
     error = raises_at(Root(), {"cuont": 1}, "cuont")
     assert "Root" in str(error)
     assert "count" in str(error)
 
 
-def test_unknown_key_in_a_built_item_names_its_class():
+def test_unknown_key_in_a_built_item_names_its_class() -> None:
     error = raises_at(
         Root(rules=[Rule(name="a")]),
         {"rules": {"z": add({"priority": 1, "nope": 1})}},
@@ -256,7 +258,7 @@ class Holder(VcoModel):
 )
 def test_key_of_another_union_variant_raises_in_a_built_item(
     patch: dict[str, object], path: str
-):
+) -> None:
     error = raises_at(Holder(), patch, path)
     assert "VariantA" in str(error)
 
@@ -268,7 +270,9 @@ class WithAlias(VcoModel):
 @pytest.mark.parametrize(
     ("key", "value"), [("dh_group", 1), ("DHGroup", 2), ("dhGroup", 3)]
 )
-def test_a_field_is_named_by_python_name_alias_or_camel_case(key: str, value: int):
+def test_a_field_is_named_by_python_name_alias_or_camel_case(
+    key: str, value: int
+) -> None:
     model = WithAlias()
     _ = model.merge_patch({key: value})
     assert model.dh_group == value
@@ -282,7 +286,9 @@ def test_a_field_is_named_by_python_name_alias_or_camel_case(key: str, value: in
         ({"sub": {"_position": "first"}}, "sub._position"),
     ],
 )
-def test_directives_raise_outside_a_list_item(patch: dict[str, object], path: str):
+def test_directives_raise_outside_a_list_item(
+    patch: dict[str, object], path: str
+) -> None:
     _ = raises_at(Root(), patch, path)
 
 
@@ -295,15 +301,16 @@ def test_directives_raise_outside_a_list_item(patch: dict[str, object], path: st
     ],
     ids=["merged", "built-item", "built-sub-model"],
 )
-def test_one_field_named_twice_raises(patch: dict[str, object], path: str):
+def test_one_field_named_twice_raises(patch: dict[str, object], path: str) -> None:
     root = Root(rules=[Rule(name="a")])
     dump = copy.deepcopy(root.model_dump())
     error = raises_at(root, patch, path)
-    assert "'rule_id'" in error.message and "'ruleId'" in error.message
+    assert "'rule_id'" in error.message
+    assert "'ruleId'" in error.message
     assert root.model_dump() == dump
 
 
-def test_failed_patch_changes_nothing():
+def test_failed_patch_changes_nothing() -> None:
     root = Root(rules=[Rule(name="a")])
     dump = copy.deepcopy(root.model_dump())
     fields_set = set(root.model_fields_set)
@@ -313,7 +320,7 @@ def test_failed_patch_changes_nothing():
     assert root.model_fields_set == fields_set
 
 
-def test_failure_deep_in_a_patch_changes_nothing():
+def test_failure_deep_in_a_patch_changes_nothing() -> None:
     root = Root(rules=[Rule(name="a")])
     dump = copy.deepcopy(root.model_dump())
     fields_set = set(root.model_fields_set)
@@ -328,7 +335,7 @@ class Segmented(VcoModel):
     segment_id: Annotated[int, Resolvable(SegmentIdentity, lambda i: i.segment_id)] = 0
 
 
-def test_resolver_error_changes_nothing_and_keeps_its_type():
+def test_resolver_error_changes_nothing_and_keeps_its_type() -> None:
     model = Segmented()
     dump = model.model_dump()
     with pytest.raises(ResolutionError) as exc:
@@ -359,7 +366,7 @@ class Members(VcoModel):
     members: Annotated[list[Member], KeyField("name")] = Field(default_factory=list)
 
 
-def test_a_name_with_no_resolver_registered_is_refused_at_its_field():
+def test_a_name_with_no_resolver_registered_is_refused_at_its_field() -> None:
     empty = ResolverRegistry()
     with pytest.raises(PatchError) as exc:
         _ = Bound().merge_patch({"segment_id": "Guest"}, resolvers=empty)
@@ -376,7 +383,7 @@ def test_a_name_with_no_resolver_registered_is_refused_at_its_field():
     assert "SegmentIdentity" in exc.value.message
 
 
-def test_an_id_needs_no_resolver():
+def test_an_id_needs_no_resolver() -> None:
     empty = ResolverRegistry()
     model = Bound()
     _ = model.merge_patch(
@@ -388,7 +395,7 @@ def test_an_id_needs_no_resolver():
     assert members.members[0].segment_id == 7
 
 
-def test_patch_is_not_mutated():
+def test_patch_is_not_mutated() -> None:
     root = Root(rules=[Rule(name="a")])
     patch: dict[str, object] = {
         "sub": {"v": 1},
@@ -419,7 +426,7 @@ def test_patch_is_not_mutated():
 )
 def test_a_value_that_is_not_json_raises(
     patch: dict[str, object], path: str, text: str
-):
+) -> None:
     root = Root(rules=[Rule(name="a")], names=["a"])
     dump = copy.deepcopy(root.model_dump())
     error = raises_at(root, patch, path)
@@ -431,7 +438,7 @@ def nested(levels: int) -> object:
     return json.loads('{"x":' * levels + "1" + "}" * levels)
 
 
-def test_nesting_is_bounded():
+def test_nesting_is_bounded() -> None:
     # The patch, the list and 62 objects are levels 0 to 63; one more is too deep.
     root = Root()
     _ = root.merge_patch({"blobs": [nested(62)]})
@@ -444,7 +451,7 @@ def test_nesting_is_bounded():
     assert len(exc.value.path.parts) == 64
 
 
-def test_the_model_shares_no_object_with_the_patch():
+def test_the_model_shares_no_object_with_the_patch() -> None:
     patch: dict[str, object] = {"blobs": [{"who": {"tags": ["x"]}}]}
     first, second = Root(), Root()
     _ = first.merge_patch(patch)
@@ -454,9 +461,9 @@ def test_the_model_shares_no_object_with_the_patch():
     assert patch == {"blobs": [{"who": {"tags": ["x"]}}]}
 
 
-def test_a_patch_that_is_not_a_dict_is_a_type_error():
+def test_a_patch_that_is_not_a_dict_is_a_type_error() -> None:
     root = Root()
-    with pytest.raises(TypeError, match="write .*<field>.*: value"):
+    with pytest.raises(TypeError, match=r"write .*<field>.*: value"):
         _ = root.merge_patch(MappingProxyType({"count": 1}))
     with pytest.raises(TypeError, match="dict"):
         _ = root.merge_patch(json.loads('[["count", 1]]'))
@@ -472,8 +479,8 @@ class Colour(Enum):
     [
         (uuid.UUID(int=1), "str(value)"),
         (Colour.RED, "member.value"),
-        (datetime.date(2026, 1, 1), "isoformat()"),
-        (datetime.time(1, 2), "isoformat()"),
+        (dt.date(2026, 1, 1), "isoformat()"),
+        (dt.time(1, 2), "isoformat()"),
         ({"a"}, "as a list"),
         (("a",), "as a list"),
         ((x for x in "a"), "as a list"),
@@ -481,13 +488,13 @@ class Colour(Enum):
 )
 def test_a_value_that_is_not_json_says_what_to_write_instead(
     value: object, remedy: str
-):
+) -> None:
     error = raises_at(Root(), {"blobs": [{"a": value}]}, "blobs[#0].a")
     assert remedy in error.message
 
 
 @pytest.mark.parametrize("value", [uuid.UUID(int=1), Colour.RED])
-def test_a_uuid_or_enum_member_points_to_the_json_dump(value: object):
+def test_a_uuid_or_enum_member_points_to_the_json_dump(value: object) -> None:
     error = raises_at(Root(), {"title": value}, "title")
     assert 'model_dump(mode="json")' in error.message
 
@@ -500,12 +507,12 @@ def test_a_uuid_or_enum_member_points_to_the_json_dump(value: object):
         ({"maybe": MISSING}, "maybe", "MISSING"),
         ({"title": Colour.RED}, "title", "Colour"),
         ({"title": ipaddress.IPv4Address("10.0.0.1")}, "title", "IPv4Address"),
-        ({"title": datetime.datetime(2026, 1, 1)}, "title", "datetime"),
+        ({"title": dt.datetime(2026, 1, 1, tzinfo=dt.UTC)}, "title", "datetime"),
     ],
 )
 def test_a_python_object_is_not_a_json_value(
     patch: dict[str, object], path: str, text: str
-):
+) -> None:
     root = Root(rules=[Rule(name="a")], maybe=Sub())
     dump = copy.deepcopy(root.model_dump())
     error = raises_at(root, patch, path)
@@ -525,7 +532,7 @@ class Ratio(float):
     pass
 
 
-def test_a_subclass_of_a_json_scalar_is_stored_as_the_plain_value():
+def test_a_subclass_of_a_json_scalar_is_stored_as_the_plain_value() -> None:
     root = Root()
     _ = root.merge_patch(
         {
@@ -544,7 +551,7 @@ def test_a_subclass_of_a_json_scalar_is_stored_as_the_plain_value():
     assert type(blob["k"][0]) is int
 
 
-def test_a_subclass_of_str_as_a_key_is_stored_as_the_plain_key():
+def test_a_subclass_of_str_as_a_key_is_stored_as_the_plain_key() -> None:
     root = Root()
     _ = root.merge_patch({"blobs": [{"inner": {Word.HELLO: 1}}]})
     (blob,) = root.blobs
@@ -553,7 +560,7 @@ def test_a_subclass_of_str_as_a_key_is_stored_as_the_plain_key():
     assert type(key) is str
 
 
-def test_from_python_a_patch_is_json_too():
+def test_from_python_a_patch_is_json_too() -> None:
     root = Root(rules=[Rule(name="a")], maybe=Sub(v=1))
     _ = root.merge_patch(
         {"maybe": None, "sub": Sub(v=2).model_dump(mode="json"), "title": "red"}
@@ -577,7 +584,7 @@ class Nets(VcoModel):
     one: Net | MISSING = MISSING
 
 
-def test_tolerant_fields_still_tolerate_on_parse():
+def test_tolerant_fields_still_tolerate_on_parse() -> None:
     net = Net.model_validate(
         {"name": "n", "advertise": None, "lease": None, "passive": ""}
     )
@@ -598,7 +605,7 @@ def test_tolerant_fields_still_tolerate_on_parse():
 )
 def test_null_and_empty_text_are_not_coerced_in_a_patch(
     patch: dict[str, object], path: str
-):
+) -> None:
     model = Nets(nets=[Net(name="corp")])
     _ = raises_at(model, patch, path)
     assert [(n.name, n.advertise, n.passive) for n in model.nets] == [
@@ -607,7 +614,7 @@ def test_null_and_empty_text_are_not_coerced_in_a_patch(
     assert model.one is MISSING
 
 
-def test_null_in_a_built_item_follows_the_null_rule():
+def test_null_in_a_built_item_follows_the_null_rule() -> None:
     model = Nets()
     _ = model.merge_patch(
         {"nets": {"new": add({"note": None, "opt": None, "both": None})}}
@@ -636,7 +643,7 @@ class LooseHolder(VcoModel):
     by_name: dict[str, Loose] = Field(default_factory=dict)
 
 
-def test_null_in_a_sub_model_the_patch_builds_follows_the_null_rule():
+def test_null_in_a_sub_model_the_patch_builds_follows_the_null_rule() -> None:
     holder = LooseHolder()
     _ = holder.merge_patch({"sub": {"both": None}})
     assert isinstance(holder.sub, Loose)
@@ -646,7 +653,7 @@ def test_null_in_a_sub_model_the_patch_builds_follows_the_null_rule():
     assert holder.sub.both is MISSING
 
 
-def test_null_in_a_map_entry_the_patch_builds_follows_the_null_rule():
+def test_null_in_a_map_entry_the_patch_builds_follows_the_null_rule() -> None:
     holder = LooseHolder()
     _ = holder.merge_patch({"by_name": {"a": add({"both": None})}})
     assert holder.by_name["a"].both is None
@@ -654,7 +661,7 @@ def test_null_in_a_map_entry_the_patch_builds_follows_the_null_rule():
     assert holder.by_name["a"].both is MISSING
 
 
-def test_null_in_a_sub_model_inside_a_built_sub_model_follows_the_null_rule():
+def test_null_in_a_sub_model_inside_a_built_sub_model_follows_the_null_rule() -> None:
     holder = LooseHolder()
     _ = holder.merge_patch({"sub": {"inner": {"both": None}}})
     assert isinstance(holder.sub, Loose)
@@ -681,7 +688,9 @@ def test_null_in_a_sub_model_inside_a_built_sub_model_follows_the_null_rule():
         ),
     ],
 )
-def test_a_boolean_is_not_taken_for_a_number(patch: dict[str, object], path: str):
+def test_a_boolean_is_not_taken_for_a_number(
+    patch: dict[str, object], path: str
+) -> None:
     root = Root(rules=[Rule(name="a")])
     dump = copy.deepcopy(root.model_dump())
     error = raises_at(root, patch, path)
@@ -690,13 +699,15 @@ def test_a_boolean_is_not_taken_for_a_number(patch: dict[str, object], path: str
     assert root.model_dump() == dump
 
 
-def test_a_boolean_is_taken_where_the_field_holds_one():
+def test_a_boolean_is_taken_where_the_field_holds_one() -> None:
     root = Root()
     _ = root.merge_patch({"flag": True, "safe": True, "blobs": [{"a": True}]})
     assert (root.flag, root.safe, root.blobs) == (True, True, [{"a": True}])
 
 
-def test_a_field_whose_id_can_be_text_takes_the_name_as_it_is_with_no_resolver():
+def test_a_field_whose_id_can_be_text_takes_the_name_as_it_is_with_no_resolver() -> (
+    None
+):
     model = Either()
     _ = model.merge_patch({"segment_id": "Guest"}, resolvers=ResolverRegistry())
     assert model.segment_id == "Guest"
@@ -719,7 +730,7 @@ BAD_TUNNEL: dict[str, object] = {"dh_group": "x", "next_hops": [{"cost": "y"}]}
 INT = "Input should be a valid integer, unable to parse string as an integer"
 
 
-def test_validation_messages_name_fields_as_a_patch_writes_them():
+def test_validation_messages_name_fields_as_a_patch_writes_them() -> None:
     error = raises_at(Tunnels(), {"tunnels": {"t": add(BAD_TUNNEL)}}, "tunnels[t]")
     assert error.message == (
         f"invalid value: dh_group: {INT}; peer_address: Field required; "
@@ -741,6 +752,6 @@ def test_validation_messages_name_fields_as_a_patch_writes_them():
     )
 
 
-def test_a_field_value_has_no_name_in_its_message():
+def test_a_field_value_has_no_name_in_its_message() -> None:
     error = raises_at(Root(), {"count": "abc"}, "count")
     assert error.message == f"invalid value: {INT}"

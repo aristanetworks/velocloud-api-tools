@@ -1,5 +1,7 @@
 """Generic VCO API response schema."""
 
+from typing import ClassVar
+
 from pydantic import ConfigDict
 
 from pyvelo.core import VcoModel
@@ -8,7 +10,7 @@ from pyvelo.core import VcoModel
 class GenericResult(VcoModel):
     """Generic API response for arbitrary VCO endpoints."""
 
-    model_config = ConfigDict(extra="allow")
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="allow")
 
 
 class GenericRequest(VcoModel):
@@ -19,4 +21,4 @@ class GenericRequest(VcoModel):
     this exists for unsupported endpoints.
     """
 
-    model_config = ConfigDict(extra="allow")
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="allow")

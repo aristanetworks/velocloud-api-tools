@@ -1,4 +1,6 @@
-"""A profile's three modules hold the same segments: the order of the write, the rule that keeps them together, and what the plan carries.
+"""A profile's three modules hold the same segments.
+
+The order of the write, the rule that keeps them together, and what the plan carries.
 
 Each state is built by ``profile_state``; the additions are made through
 ``add_segment_entry``, as the pipeline does.
@@ -9,7 +11,7 @@ import json
 from typing import Any
 
 import pytest
-from profile_state import (  # pyright: ignore[reportImplicitRelativeImport]
+from profile_state import (
     module_store_pipeline,
     profile_state,
 )
@@ -45,7 +47,10 @@ ADD_GUEST = '{"segments": {"Guest": {"_op": "add"}}}'
 
 
 async def state_of(ds: list[str], qos: list[str], firewall: list[str]) -> ConfigState:
-    """A profile state whose modules hold the segments named (``"Global"`` and ``"Guest"``)."""
+    """A profile state whose modules hold the segments named.
+
+    The names are ``"Global"`` and ``"Guest"``.
+    """
     chosen = {"Global": GLOBAL, "Guest": GUEST}
     return await profile_state(
         [ds_entry(chosen[n]) for n in ds],
@@ -80,7 +85,7 @@ def written_names(plan: ConfigPlan, module: str) -> list[str]:
 # --- the order -------------------------------------------------------------
 
 
-async def test_device_settings_is_planned_first():
+async def test_device_settings_is_planned_first() -> None:
     state = await in_all_three()
     modules_of(state).reverse()
     assert [m.name for m in modules_of(state)] == [FIREWALL, QOS, DS]
@@ -88,7 +93,7 @@ async def test_device_settings_is_planned_first():
     assert [m.name for m in plan.modules] == [DS, FIREWALL, QOS]
 
 
-def test_an_edge_plan_puts_device_settings_first_too():
+def test_an_edge_plan_puts_device_settings_first_too() -> None:
     ds_row = make_module_json(
         DS,
         {"lan": {"networks": [], "interfaces": []}, "segments": []},
@@ -105,7 +110,7 @@ def test_an_edge_plan_puts_device_settings_first_too():
 # --- the segment-set rule --------------------------------------------------
 
 
-async def test_removing_a_segment_raises():
+async def test_removing_a_segment_raises() -> None:
     state = await in_all_three()
     del state.profile.firewall.segments[1]
 
@@ -119,7 +124,7 @@ async def test_removing_a_segment_raises():
     assert "leave it in the data" in str(error)
 
 
-async def test_removing_an_orphan_from_qos_is_accepted():
+async def test_removing_an_orphan_from_qos_is_accepted() -> None:
     state = await state_of(["Global"], ["Global", "Guest"], ["Global"])
     del state.profile.qos.segments[1]
 
@@ -130,7 +135,7 @@ async def test_removing_an_orphan_from_qos_is_accepted():
     assert plan.segment_warnings == ()
 
 
-async def test_removing_an_orphan_from_firewall_is_accepted():
+async def test_removing_an_orphan_from_firewall_is_accepted() -> None:
     state = await state_of(["Global"], ["Global"], ["Global", "Guest"])
     del state.profile.firewall.segments[1]
 
@@ -140,7 +145,9 @@ async def test_removing_an_orphan_from_firewall_is_accepted():
     assert plan.segment_warnings == ()
 
 
-async def test_removing_a_segment_from_device_settings_raises_even_when_qos_lacks_it():
+async def test_removing_a_segment_from_device_settings_raises_even_when_qos_lacks_it() -> (  # noqa: E501 (a test's name)
+    None
+):
     state = await state_of(["Global", "Guest"], ["Global"], ["Global", "Guest"])
     del state.profile.device_settings.segments[1]
 
@@ -151,7 +158,9 @@ async def test_removing_a_segment_from_device_settings_raises_even_when_qos_lack
     assert caught.value.modules == (DS,)
 
 
-async def test_an_addition_in_two_of_three_raises_naming_the_module_that_lacks_it():
+async def test_an_addition_in_two_of_three_raises_naming_the_module_that_lacks_it() -> (
+    None
+):
     state = await state_of(["Global"], ["Global"], ["Global"])
     add_guest(state, DS, QOS)
 
@@ -169,7 +178,9 @@ async def test_an_addition_in_two_of_three_raises_naming_the_module_that_lacks_i
     assert ASSIGN_GUEST in message
 
 
-async def test_an_addition_in_all_three_plans_three_updates_device_settings_first():
+async def test_an_addition_in_all_three_plans_three_updates_device_settings_first() -> (
+    None
+):
     state = await state_of(["Global"], ["Global"], ["Global"])
     add_guest(state, FIREWALL, QOS, DS)
 
@@ -187,7 +198,7 @@ async def test_an_addition_in_all_three_plans_three_updates_device_settings_firs
     assert (row.added, row.name) == (True, "deviceSettings:segment")
 
 
-async def test_a_disagreement_as_read_is_a_warning():
+async def test_a_disagreement_as_read_is_a_warning() -> None:
     state = await state_of(["Global", "Guest"], ["Global"], ["Global", "Guest"])
 
     plan = state.plan()
@@ -206,7 +217,7 @@ async def test_a_disagreement_as_read_is_a_warning():
     assert plan.render().splitlines()[-1] == f"warning: {warning.message}"
 
 
-async def test_a_profile_without_all_three_modules_skips_the_rule():
+async def test_a_profile_without_all_three_modules_skips_the_rule() -> None:
     state = await in_all_three()
     state.profile_config.modules = [m for m in modules_of(state) if m.name != FIREWALL]
     del state.profile.qos.segments[1]
@@ -245,7 +256,9 @@ def guest_defaults(data: dict[str, Any]) -> dict[str, dict[str, Any]]:
     return {d["name"]: d for d in guest["defaults"]}
 
 
-async def test_the_repair_takes_conditional_backhaul_from_device_settings_as_it_is_now():
+async def test_the_repair_takes_conditional_backhaul_from_device_settings_as_it_is_now() -> (  # noqa: E501 (a test's name)
+    None
+):
     state = await lacking_defaults_state()
     state.profile.device_settings.segments[1].vpn.conditional_backhaul = True
     edit_global_qos(state)
@@ -262,7 +275,7 @@ async def test_the_repair_takes_conditional_backhaul_from_device_settings_as_it_
     assert "allowConditionalBh" not in defaults["Default-Internet-UDP"]["action"]
 
 
-async def test_the_repair_of_a_segment_whose_device_settings_say_no_backhaul():
+async def test_the_repair_of_a_segment_whose_device_settings_say_no_backhaul() -> None:
     state = await lacking_defaults_state()
     edit_global_qos(state)
 
@@ -276,7 +289,7 @@ async def test_the_repair_of_a_segment_whose_device_settings_say_no_backhaul():
     ]
 
 
-async def test_save_with_repair_defaults_false_sends_no_repair():
+async def test_save_with_repair_defaults_false_sends_no_repair() -> None:
     state = await lacking_defaults_state()
     edit_global_qos(state)
     pipeline, store = module_store_pipeline(state)
@@ -295,7 +308,7 @@ async def test_save_with_repair_defaults_false_sends_no_repair():
     assert missing.repaired is False
 
 
-async def test_dry_run_and_save_plan_the_same_repaired_ids():
+async def test_dry_run_and_save_plan_the_same_repaired_ids() -> None:
     state = await lacking_defaults_state()
     edit_global_qos(state)
     pipeline, store = module_store_pipeline(state)
@@ -317,7 +330,7 @@ async def test_dry_run_and_save_plan_the_same_repaired_ids():
 # --- what the plan lists -------------------------------------------------------
 
 
-async def test_get_field_changes_lists_an_added_segment():
+async def test_get_field_changes_lists_an_added_segment() -> None:
     state = await state_of(["Global"], ["Global"], ["Global"])
     add_guest(state, DS, QOS, FIREWALL)
 
@@ -335,7 +348,7 @@ async def test_get_field_changes_lists_an_added_segment():
     assert guest.after == addition.entry  # pyright: ignore[reportAttributeAccessIssue]
 
 
-async def test_plan_warnings_reach_the_save_result():
+async def test_plan_warnings_reach_the_save_result() -> None:
     # Guest is in device settings and QoS but not in firewall (a disagreement
     # as read), and its QoS segment lacks two defaults, which the QoS edit repairs.
     state = await profile_state(

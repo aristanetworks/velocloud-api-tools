@@ -1,11 +1,14 @@
-"""The outcome of one module write: what the VCO stored, against what the plan meant to change."""
+"""The outcome of one module write.
+
+What the VCO stored, against what the plan meant to change.
+"""
 
 import copy
 import dataclasses
 import json
 import uuid
 from collections.abc import Callable, Iterable
-from typing import Any, cast
+from typing import Any, cast, override
 
 import pytest
 from pydantic import MISSING
@@ -156,7 +159,7 @@ def firewall_disabled() -> FirewallConfigurationModule[Edge]:
     return module
 
 
-def test_every_change_applied_returns_the_stored_module():
+def test_every_change_applied_returns_the_stored_module() -> None:
     module = firewall_disabled()
     plan = plan_module(module)
     stored = as_stored(module, plan.data)
@@ -167,7 +170,7 @@ def test_every_change_applied_returns_the_stored_module():
     assert paths(write.applied) == ["firewall_enabled"]
 
 
-def test_nothing_applied_and_as_read_is_a_conflict():
+def test_nothing_applied_and_as_read_is_a_conflict() -> None:
     module = firewall_disabled()
     plan = plan_module(module)
     stored = as_stored(module, RAW)
@@ -190,7 +193,7 @@ def test_nothing_applied_and_as_read_is_a_conflict():
     )
 
 
-def test_nothing_applied_but_moved_is_not_applied():
+def test_nothing_applied_but_moved_is_not_applied() -> None:
     module = fw(RAW, layer=Edge)
     plan = plan_module(module, {**RAW, "future": 2})
     with pytest.raises(WriteNotAppliedError) as exc:
@@ -199,7 +202,7 @@ def test_nothing_applied_but_moved_is_not_applied():
     assert "None is stored" in str(exc.value)
 
 
-def test_partial_lists_applied_and_lost_apart():
+def test_partial_lists_applied_and_lost_apart() -> None:
     module = fw(RAW, layer=Edge)
     plan = plan_module(module, {**RAW, "firewall_enabled": False, "future": 2})
     stored = as_stored(module, {**RAW, "firewall_enabled": False})
@@ -215,7 +218,7 @@ def test_partial_lists_applied_and_lost_apart():
     assert "  firewall_enabled" in text.splitlines()
 
 
-def test_refused_with_a_change_missing_is_a_conflict():
+def test_refused_with_a_change_missing_is_a_conflict() -> None:
     module = fw(RAW, layer=Edge)
     plan = plan_module(module, {**RAW, "future": 2})
     stored = as_stored(module, {**RAW, "future": 3})
@@ -225,7 +228,7 @@ def test_refused_with_a_change_missing_is_a_conflict():
     assert exc.value.lost_edits[0].clash
 
 
-def test_refused_with_every_change_stored_passes():
+def test_refused_with_every_change_stored_passes() -> None:
     module = firewall_disabled()
     plan = plan_module(module)
     write = check_module_write(
@@ -235,7 +238,7 @@ def test_refused_with_every_change_stored_passes():
     assert paths(write.applied) == ["firewall_enabled"]
 
 
-def test_insert_not_stored_is_not_applied():
+def test_insert_not_stored_is_not_applied() -> None:
     module = new_edge_module(ConfigurationModuleName.FIREWALL, 10)
     assert isinstance(module, FirewallConfigurationModule)
     module.data.inbound.append(inbound("a"))
@@ -248,7 +251,7 @@ def test_insert_not_stored_is_not_applied():
     assert "None is stored" not in str(exc.value)  # nothing there moved
 
 
-def test_conflict_lists_what_another_writer_changed():
+def test_conflict_lists_what_another_writer_changed() -> None:
     module = firewall_disabled()
     plan = plan_module(module)
     with pytest.raises(ConfigConflictError) as exc:
@@ -260,15 +263,15 @@ def test_conflict_lists_what_another_writer_changed():
     assert lines[-2:] == ["stored otherwise than sent:", "  future: read 1, stored 2"]
 
 
-def test_message_names_each_path_and_marks_a_clash():
+def test_message_names_each_path_and_marks_a_clash() -> None:
     module = fw(RAW, layer=Edge)
     plan = plan_module(module, {**RAW, "future": 2, "added": "x"})
     with pytest.raises(WriteNotAppliedError) as exc:
         _ = check_module_write(module, plan, as_stored(module, {**RAW, "future": 3}))
     lines = str(exc.value).splitlines()
     assert (
-        "lost edits (not stored; `error.redo_patch()` redoes those it can, `error.not_redone()` lists the rest):"
-        in lines
+        "lost edits (not stored; `error.redo_patch()` redoes those it can, "
+        "`error.not_redone()` lists the rest):" in lines
     )
     assert (
         "  future: read 1, meant 2, stored 3  [clash: also changed on the VCO]" in lines
@@ -277,7 +280,7 @@ def test_message_names_each_path_and_marks_a_clash():
     assert str(exc.value).count("[clash: also changed on the VCO]") == 1
 
 
-def test_long_values_are_cut():
+def test_long_values_are_cut() -> None:
     module = fw(RAW, layer=Edge)
     plan = plan_module(module, {**RAW, "future": "x" * 500})
     with pytest.raises(ModuleWriteError) as exc:
@@ -287,7 +290,7 @@ def test_long_values_are_cut():
     assert "…" in text
 
 
-def test_long_values_are_cut_where_they_differ():
+def test_long_values_are_cut_where_they_differ() -> None:
     old, new = list(range(60)), [*range(55), 99, *range(56, 60)]
     module = fw({**RAW, "future": old}, layer=Edge)
     plan = plan_module(module, {**RAW, "future": new})
@@ -295,7 +298,10 @@ def test_long_values_are_cut_where_they_differ():
     with pytest.raises(ConfigConflictError) as exc:
         _ = check_module_write(module, plan, stored)
     assert str(exc.value).splitlines()[1:] == [
-        "lost edits (not stored; `error.redo_patch()` redoes those it can, `error.not_redone()` lists the rest):",
+        (
+            "lost edits (not stored; `error.redo_patch()` redoes those it can, "
+            "`error.not_redone()` lists the rest):"
+        ),
         (
             "  future: read …50, 51, 52, 53, 54, 55, 56, 57, 58, 59], "
             "meant …50, 51, 52, 53, 54, 99, 56, 57, 58, 59], "
@@ -314,7 +320,7 @@ def inbound_rows(*names: str) -> list[dict[str, Any]]:
     ]
 
 
-def test_message_shows_the_place_of_an_added_rule_and_the_order():
+def test_message_shows_the_place_of_an_added_rule_and_the_order() -> None:
     rows = inbound_rows("a", "b")
     module = fw({**RAW, "inbound": rows}, layer=Edge)
     module.data.inbound.insert(0, inbound("c"))
@@ -325,8 +331,8 @@ def test_message_shows_the_place_of_an_added_rule_and_the_order():
         _ = check_module_write(module, plan, stored, answer="refused")
     lines = str(exc.value).splitlines()
     assert (
-        lines[1]
-        == "lost edits (not stored; `error.redo_patch()` redoes those it can, `error.not_redone()` lists the rest):"
+        lines[1] == "lost edits (not stored; `error.redo_patch()` redoes those it can, "
+        "`error.not_redone()` lists the rest):"
     )
     assert lines[2].startswith(
         '  inbound[c] (first): read (nothing), meant {"action": '
@@ -338,7 +344,7 @@ def test_message_shows_the_place_of_an_added_rule_and_the_order():
     )
 
 
-def test_message_names_a_stored_order():
+def test_message_names_a_stored_order() -> None:
     module = fw({**RAW, "inbound": inbound_rows("a", "b")}, layer=Edge)
     module.data.inbound.reverse()
     module.data.firewall_enabled.set_local(False)
@@ -349,7 +355,7 @@ def test_message_names_a_stored_order():
     assert str(exc.value).splitlines()[-2:] == ["already stored:", "  inbound: order"]
 
 
-def test_redo_patch_rebuilds_a_place_and_a_move():
+def test_redo_patch_rebuilds_a_place_and_a_move() -> None:
     rows = inbound_rows("a", "b")
     module = fw({**RAW, "inbound": rows}, layer=Edge)
     module.data.inbound.insert(0, inbound("c"))
@@ -363,7 +369,7 @@ def test_redo_patch_rebuilds_a_place_and_a_move():
 
     patch = error.redo_patch()
     assert list(patch) == ["inbound"]
-    ops = cast(dict[str, dict[str, object]], patch["inbound"])
+    ops = cast("dict[str, dict[str, object]]", patch["inbound"])
     assert list(ops) == ["b", "c"]  # b goes after c, so it is written before it
     assert ops["b"] == {"logging_enabled": True, "_position": "first"}
     assert (ops["c"]["_op"], ops["c"]["name"], ops["c"]["_position"]) == (
@@ -380,7 +386,7 @@ def test_redo_patch_rebuilds_a_place_and_a_move():
     assert again.render() == plan.render()
 
 
-def test_redo_patch_leaves_out_a_clash_and_redoes_a_provider_row():
+def test_redo_patch_leaves_out_a_clash_and_redoes_a_provider_row() -> None:
     module = primary_provider_module()
     current = copy_of_data(module)
     _ = current.merge_patch({"ntp": {"enabled": True}})
@@ -401,7 +407,7 @@ def test_redo_patch_leaves_out_a_clash_and_redoes_a_provider_row():
     assert error.not_redone(include_clashes=True) == ()
 
 
-def test_redo_patch_never_sets_another_writers_unkeyed_item():
+def test_redo_patch_never_sets_another_writers_unkeyed_item() -> None:
     # A link added without an internalId has no key, so the check pairs it
     # with the link another writer put at the front.
     def link(name: str, internal_id: str) -> dict[str, Any]:
@@ -426,7 +432,7 @@ def test_redo_patch_never_sets_another_writers_unkeyed_item():
     assert error.redo_patch() == {}
 
     patch = error.redo_patch(include_clashes=True)
-    links = cast(dict[str, dict[str, object]], patch["links"])
+    links = cast("dict[str, dict[str, object]]", patch["links"])
     assert (links["+"]["_op"], links["+"]["_position"]) == ("add", "first")
     assert isinstance(error.module, WanConfigurationModule)
     _ = error.module.data.merge_patch(patch)  # their link is not overwritten
@@ -434,7 +440,7 @@ def test_redo_patch_never_sets_another_writers_unkeyed_item():
     assert [link.name for link in error.module.data.links] == ["ours", "theirs", "a"]
 
 
-def test_completed_writes_are_named():
+def test_completed_writes_are_named() -> None:
     module = firewall_disabled()
     with pytest.raises(ModuleWriteError) as exc:
         _ = check_module_write(module, plan_module(module), as_stored(module, RAW))
@@ -453,7 +459,7 @@ def test_completed_writes_are_named():
     assert "written before this one: QOS (update)" in str(exc.value)
 
 
-async def test_ref_row_added_must_be_returned():
+async def test_ref_row_added_must_be_returned() -> None:
     module, plan = await provider_set(with_data_change=True)
     reissued = {
         **raw_refs(module),
@@ -471,7 +477,7 @@ async def test_ref_row_added_must_be_returned():
     assert "refs " in str(exc.value)
 
 
-def test_ref_row_removed_must_be_gone():
+def test_ref_row_removed_must_be_gone() -> None:
     module, plan = provider_cleared()
     with pytest.raises(ConfigConflictError) as exc:
         _ = check_module_write(module, plan, as_stored(module, DS_ROW_RAW))
@@ -479,7 +485,7 @@ def test_ref_row_removed_must_be_gone():
     assert exc.value.applied == ()
 
 
-async def test_refs_only_write_refused_is_a_conflict():
+async def test_refs_only_write_refused_is_a_conflict() -> None:
     module, plan = await provider_set()
     assert plan.data == DS_ROW_RAW
     with pytest.raises(ConfigConflictError) as exc:
@@ -493,7 +499,9 @@ async def test_refs_only_write_refused_is_a_conflict():
     )
 
 
-async def test_stale_data_with_refs_replaced_is_not_applied_and_not_a_conflict():
+async def test_stale_data_with_refs_replaced_is_not_applied_and_not_a_conflict() -> (
+    None
+):
     """A VCO with the check off that kept the data as it was and replaced the refs."""
     module, plan = await provider_set(with_data_change=True)
     replaced = {
@@ -510,7 +518,7 @@ async def test_stale_data_with_refs_replaced_is_not_applied_and_not_a_conflict()
     assert [(c.part, str(c.path)) for c in exc.value.lost_edits] == [("data", "ntp")]
 
 
-def test_refs_the_vco_dropped_on_its_own():
+def test_refs_the_vco_dropped_on_its_own() -> None:
     module = qos(QOS_RAW, refs={"a": [ROW1, ROW2]})
     plan = plan_module(module, {**QOS_RAW, "future": 1})
     assert plan.refs is None
@@ -523,7 +531,7 @@ def test_refs_the_vco_dropped_on_its_own():
     assert change.stored is MISSING
 
 
-def test_firewall_rule_id_revised_passes():
+def test_firewall_rule_id_revised_passes() -> None:
     module = fw(RAW, layer=Edge)
     module.data.inbound.append(inbound("a", ruleLogicalId="x"))
     plan = plan_module(module)
@@ -536,7 +544,7 @@ def test_firewall_rule_id_revised_passes():
     assert change.stored == "y"
 
 
-def test_a_write_whose_only_changes_are_left_out_passes():
+def test_a_write_whose_only_changes_are_left_out_passes() -> None:
     rule = inbound("a", ruleLogicalId="x").model_dump(mode="json")
     module = fw({**RAW, "inbound": [rule]}, layer=Edge)
     module.data.inbound[0].rule_logical_id = "x2"
@@ -549,7 +557,7 @@ def test_a_write_whose_only_changes_are_left_out_passes():
     assert write.applied == ()
 
 
-def test_write_error_lists_what_is_left_out():
+def test_write_error_lists_what_is_left_out() -> None:
     rule = inbound("a", ruleLogicalId="x").model_dump(mode="json")
     module = fw({**RAW, "inbound": [rule]}, layer=Edge)
     plan = plan_module(
@@ -572,7 +580,7 @@ def test_write_error_lists_what_is_left_out():
     assert (change.as_read, change.intended, change.stored) == ("x", "x2", "x")
 
 
-def test_refs_not_read_and_none_sent_are_no_server_changes():
+def test_refs_not_read_and_none_sent_are_no_server_changes() -> None:
     module = qos(QOS_RAW)
     assert module.raw_refs is MISSING
     plan = plan_module(module, {**QOS_RAW, "future": 1})
@@ -583,7 +591,7 @@ def test_refs_not_read_and_none_sent_are_no_server_changes():
     assert check_refs(module, plan, stored) == ResponseCheck()
 
 
-def test_wan_link_internal_id_issued_passes():
+def test_wan_link_internal_id_issued_passes() -> None:
     module = wan({"links": []})
     link = {"name": "l1", "type": "WIRED", "addressingVersion": "IPv4"}
     plan = plan_module(module, {"links": [link]})
@@ -595,7 +603,7 @@ def test_wan_link_internal_id_issued_passes():
     assert change.stored == issued["internalId"]
 
 
-def test_wan_internal_id_changed_and_stored_otherwise_passes():
+def test_wan_internal_id_changed_and_stored_otherwise_passes() -> None:
     # A link read without an internalId has no key, so the links are compared
     # as a list replaced whole, and the first link's ID, a ServerOwned field,
     # may be stored as another value than the one sent. (A keyed link whose
@@ -617,7 +625,7 @@ def test_wan_internal_id_changed_and_stored_otherwise_passes():
     assert change.stored == U3
 
 
-def test_ipv6_in_another_form_passes_in_device_settings():
+def test_ipv6_in_another_form_passes_in_device_settings() -> None:
     module = ds(DS_RAW)
     plan = plan_module(module, {**DS_RAW, "note6": "2001:DB8::1"})
     stored = as_stored(module, {**DS_RAW, "note6": "2001:db8::1"})
@@ -625,7 +633,7 @@ def test_ipv6_in_another_form_passes_in_device_settings():
     assert paths(write.applied) == ["note6"]
 
 
-def test_the_same_in_firewall_is_not_applied():
+def test_the_same_in_firewall_is_not_applied() -> None:
     module = fw(RAW, layer=Edge)
     plan = plan_module(module, {**RAW, "note6": "2001:DB8::1"})
     stored = as_stored(module, {**RAW, "note6": "2001:db8::1"})
@@ -634,7 +642,7 @@ def test_the_same_in_firewall_is_not_applied():
     assert not isinstance(exc.value, ConfigConflictError)
 
 
-def test_ecmp_removed_and_added_back_passes():
+def test_ecmp_removed_and_added_back_passes() -> None:
     hash_params: dict[str, object] = {}
     ecmp = {"maximumPaths": 4, "loadSharing": {"hashParams": hash_params}}
     default = {"maximumPaths": 2, "loadSharing": {"hashParams": hash_params}}
@@ -658,13 +666,19 @@ SECOND: dict[str, Any] = {"id": 302, "enterpriseObjectId": 8}
 
 
 def ecmp_removed() -> tuple[ConfigurationModuleBase, ModulePlan]:
-    """Device settings whose only planned change removes a segment's ``ecmp``, a default the VCO adds back."""
+    """Device settings whose only planned change removes a segment's ``ecmp``.
+
+    ``ecmp`` is a default the VCO adds back.
+    """
     module = ds({**DS_RAW, "segments": [{**GLOBAL, "ecmp": ECMP}]})
     return module, plan_module(module, {**DS_RAW, "segments": [GLOBAL]})
 
 
 def owned_id_changed() -> tuple[ConfigurationModuleBase, ModulePlan]:
-    """A firewall module whose only planned change is to a rule's ``ruleLogicalId``, which the VCO owns."""
+    """A firewall module whose only planned change is to a rule's ``ruleLogicalId``.
+
+    The VCO owns it.
+    """
     rule = inbound("a", ruleLogicalId="x").model_dump(mode="json")
     module = fw({**RAW, "inbound": [rule]}, layer=Edge)
     return module, plan_module(
@@ -672,16 +686,19 @@ def owned_id_changed() -> tuple[ConfigurationModuleBase, ModulePlan]:
     )
 
 
-DS_ROW_RAW = cast(dict[str, Any], primary_provider_module().raw_data)
+DS_ROW_RAW = cast("dict[str, Any]", primary_provider_module().raw_data)
 PRIMARY_ROW_PATH = f'"{PRIMARY}"[{DNS_A},{SEG0_OBJECT}]'
 
 
 def raw_refs(module: ConfigurationModuleBase) -> dict[str, Any]:
-    return cast(dict[str, Any], module.raw_refs)
+    return cast("dict[str, Any]", module.raw_refs)
 
 
 def provider_cleared() -> tuple[DeviceSettingsConfigurationModule, ModulePlan]:
-    """Device settings whose only planned change removes the row of a primary provider."""
+    """Device settings whose only planned change removes a row.
+
+    It is the row of a primary provider.
+    """
     module = primary_provider_module()
     current = copy_of_data(module)
     set_primary_provider(current, None)
@@ -691,7 +708,10 @@ def provider_cleared() -> tuple[DeviceSettingsConfigurationModule, ModulePlan]:
 async def provider_set(
     *, with_data_change: bool = False
 ) -> tuple[DeviceSettingsConfigurationModule, ModulePlan]:
-    """Device settings that get a primary provider and its row, and beside it ``ntp`` if asked."""
+    """Device settings that get a primary provider and its row.
+
+    Beside it, ``ntp`` if asked.
+    """
     module = unset_provider_module()
     current = copy_of_data(module)
     set_primary_provider(current, uuid.UUID(DNS_A))
@@ -703,36 +723,38 @@ async def provider_set(
     return module, plan_module(module, current, resolvers=resolvers)
 
 
-def test_a_change_of_data_is_checkable():
+def test_a_change_of_data_is_checkable() -> None:
     module = firewall_disabled()
     assert has_checkable_change(module, plan_module(module)) is True
 
 
-async def test_a_ref_row_added_is_checkable():
+async def test_a_ref_row_added_is_checkable() -> None:
     module, plan = await provider_set()
     assert (plan.operation, plan.changes) == ("update", ())
     assert has_checkable_change(module, plan) is True
 
 
-def test_a_ref_row_removed_is_checkable():
+def test_a_ref_row_removed_is_checkable() -> None:
     module, plan = provider_cleared()
     assert has_checkable_change(module, plan) is True
 
 
 @pytest.mark.parametrize("case", [ecmp_removed, owned_id_changed])
-def test_a_plan_of_changes_the_check_cannot_find_stored_is_not_checkable(case: Any):
+def test_a_plan_of_changes_the_check_cannot_find_stored_is_not_checkable(
+    case: Any,
+) -> None:
     module, plan = case()
     assert plan.operation == "update"
     assert has_checkable_change(module, plan) is False
 
 
-def test_a_removal_of_a_readded_default_beside_another_change_is_checkable():
+def test_a_removal_of_a_readded_default_beside_another_change_is_checkable() -> None:
     module = ds({**DS_RAW, "segments": [{**GLOBAL, "ecmp": ECMP}]})
     plan = plan_module(module, {**DS_RAW, "segments": [GLOBAL], "otherKey": 1})
     assert has_checkable_change(module, plan) is True
 
 
-def test_refused_and_a_left_out_change_still_as_read_is_a_lost_edit():
+def test_refused_and_a_left_out_change_still_as_read_is_a_lost_edit() -> None:
     module, plan = ecmp_removed()
     stored = as_stored(module, module.raw_data)
     with pytest.raises(ConfigConflictError) as exc:
@@ -746,7 +768,7 @@ def test_refused_and_a_left_out_change_still_as_read_is_a_lost_edit():
     assert error.module is stored
 
 
-def test_refused_with_a_left_out_change_stored_otherwise_is_a_conflict_too():
+def test_refused_with_a_left_out_change_stored_otherwise_is_a_conflict_too() -> None:
     module, plan = ecmp_removed()
     stored = as_stored(
         module, {**DS_RAW, "segments": [{**GLOBAL, "ecmp": ECMP_DEFAULT}]}
@@ -769,7 +791,7 @@ def test_refused_with_a_left_out_change_stored_otherwise_is_a_conflict_too():
     assert "lost edits" not in str(error)
 
 
-def test_refused_with_a_change_stored_and_one_left_out_as_read_is_a_conflict():
+def test_refused_with_a_change_stored_and_one_left_out_as_read_is_a_conflict() -> None:
     rule = inbound("a", ruleLogicalId="x").model_dump(mode="json")
     module = fw({**RAW, "inbound": [rule]}, layer=Edge)
     plan = plan_module(
@@ -788,7 +810,9 @@ def test_refused_with_a_change_stored_and_one_left_out_as_read_is_a_conflict():
     assert exc.value.left_out == ()
 
 
-def test_a_row_with_nothing_stored_makes_a_left_out_change_as_read_a_lost_edit():
+def test_a_row_with_nothing_stored_makes_a_left_out_change_as_read_a_lost_edit() -> (
+    None
+):
     rule = inbound("a", ruleLogicalId="x").model_dump(mode="json")
     module = fw({**RAW, "inbound": [rule]}, layer=Edge)
     plan = plan_module(
@@ -803,7 +827,7 @@ def test_a_row_with_nothing_stored_makes_a_left_out_change_as_read_a_lost_edit()
     assert error.left_out == ()
 
 
-def test_a_row_whose_only_change_is_left_out_and_as_read_is_a_conflict():
+def test_a_row_whose_only_change_is_left_out_and_as_read_is_a_conflict() -> None:
     module, plan = ecmp_removed()
     with pytest.raises(ConfigConflictError) as exc:
         _ = check_module_write(module, plan, as_stored(module, module.raw_data))
@@ -812,7 +836,7 @@ def test_a_row_whose_only_change_is_left_out_and_as_read_is_a_conflict():
     assert exc.value.left_out == ()
 
 
-def test_a_counted_write_keeps_a_left_out_change_as_read_left_out():
+def test_a_counted_write_keeps_a_left_out_change_as_read_left_out() -> None:
     module, plan = ecmp_removed()
     write = check_module_write(
         module, plan, as_stored(module, module.raw_data), answer="counted"
@@ -822,7 +846,7 @@ def test_a_counted_write_keeps_a_left_out_change_as_read_left_out():
     assert write.applied == ()
 
 
-def test_a_counted_write_with_nothing_stored_is_not_a_conflict():
+def test_a_counted_write_with_nothing_stored_is_not_a_conflict() -> None:
     module = firewall_disabled()
     plan = plan_module(module)
     with pytest.raises(WriteNotAppliedError) as exc:
@@ -830,11 +854,12 @@ def test_a_counted_write_with_nothing_stored_is_not_a_conflict():
     assert not isinstance(exc.value, ConfigConflictError)
     assert paths(exc.value.lost_edits) == ["firewall_enabled"]
     assert str(exc.value).splitlines()[0] == (
-        "Configuration module 1 (firewall): 1 of 1 planned changes are not stored as sent"
+        "Configuration module 1 (firewall): 1 of 1 planned changes are not stored "
+        "as sent"
     )
 
 
-def test_an_inferred_conflict_does_not_state_that_the_module_changed():
+def test_an_inferred_conflict_does_not_state_that_the_module_changed() -> None:
     module = firewall_disabled()
     with pytest.raises(ConfigConflictError) as exc:
         _ = check_module_write(module, plan_module(module), as_stored(module, RAW))
@@ -847,11 +872,13 @@ def test_an_inferred_conflict_does_not_state_that_the_module_changed():
     )
 
 
-def test_str_of_a_write_error_never_raises():
+def test_str_of_a_write_error_never_raises() -> None:
     class Odd:
+        @override
         def __repr__(self) -> str:
             return "<odd>"
 
+        @override
         def __str__(self) -> str:
             raise RuntimeError("no text")
 
@@ -903,10 +930,12 @@ READDED: dict[
         "ha.fips",
     ),
 }
-"""Per ``readded`` pattern of device settings: the data as read, as sent and as stored, and the path left out."""
+"""Per ``readded`` pattern of device settings: the data as read, as sent and as stored,
+and the path left out.
+"""
 
 
-def test_every_rewrite_in_the_table_has_a_case_here():
+def test_every_rewrite_in_the_table_has_a_case_here() -> None:
     assert set(MODULE_REWRITES) == {"deviceSettings"}
     rewrites = MODULE_REWRITES["deviceSettings"]
     assert set(rewrites.readded) == set(READDED)
@@ -915,7 +944,7 @@ def test_every_rewrite_in_the_table_has_a_case_here():
 
 
 @pytest.mark.parametrize("pattern", list(READDED), ids=".".join)
-def test_a_default_device_settings_adds_back_is_left_out(pattern: PathPattern):
+def test_a_default_device_settings_adds_back_is_left_out(pattern: PathPattern) -> None:
     read, sent, stored, path = READDED[pattern]
     check = check_response(
         read,
@@ -928,7 +957,7 @@ def test_a_default_device_settings_adds_back_is_left_out(pattern: PathPattern):
     assert check.not_applied == ()
 
 
-def test_the_client_connector_name_is_owned_in_device_settings():
+def test_the_client_connector_name_is_owned_in_device_settings() -> None:
     check = check_response(
         {"clientConnector": {"name": "a"}},
         {"clientConnector": {"name": "b"}},
@@ -939,18 +968,21 @@ def test_the_client_connector_name_is_owned_in_device_settings():
     assert check.not_applied == ()
 
 
-def test_the_append_only_ref_names():
-    assert APPEND_ONLY_REF_NAMES == {
+def test_the_append_only_ref_names() -> None:
+    assert {
         "deviceSettings:vnfs:edge",
         "objectGroup:addressGroup",
         "objectGroup:portGroup",
-    }
+    } == APPEND_ONLY_REF_NAMES
 
 
 def refs_plan(
     module: ConfigurationModuleBase, refs: dict[str, Any], *changes: RefChange
 ) -> ModulePlan:
-    """A plan of *module* that sends *refs* and plans *changes* of them; its data is not changed."""
+    """A plan of *module* that sends *refs* and plans *changes* of them.
+
+    Its data is not changed.
+    """
     plan = plan_module(module, {**QOS_RAW, "future": 1})
     return dataclasses.replace(plan, refs=refs, ref_changes=changes)
 
@@ -971,7 +1003,9 @@ def ref_change(
 
 
 @pytest.mark.parametrize("name", sorted(APPEND_ONLY_REF_NAMES | PROCESSOR_REF_NAMES))
-def test_a_row_of_a_processor_or_append_only_ref_is_never_applied_or_lost(name: str):
+def test_a_row_of_a_processor_or_append_only_ref_is_never_applied_or_lost(
+    name: str,
+) -> None:
     module = qos(QOS_RAW, refs={name: [ROW1, ROW2]})
     plan = refs_plan(module, {name: [ROW2]}, ref_change(name, ROW1))
     stored = as_stored(module, plan.data, refs={name: [ROW1, ROW2]})
@@ -979,7 +1013,9 @@ def test_a_row_of_a_processor_or_append_only_ref_is_never_applied_or_lost(name: 
 
 
 @pytest.mark.parametrize("name", sorted(APPEND_ONLY_REF_NAMES | PROCESSOR_REF_NAMES))
-def test_a_difference_in_a_processor_or_append_only_ref_is_a_server_change(name: str):
+def test_a_difference_in_a_processor_or_append_only_ref_is_a_server_change(
+    name: str,
+) -> None:
     module = qos(QOS_RAW, refs={name: [ROW1, ROW2]})
     plan = refs_plan(module, {name: [ROW1, ROW2]})
     reissued = {**ROW1, "id": 901, "name": "other"}  # content is not compared
@@ -993,7 +1029,7 @@ def test_a_difference_in_a_processor_or_append_only_ref_is_a_server_change(name:
     ]
 
 
-def test_removing_a_row_of_any_other_ref_is_not_applied_while_it_is_stored():
+def test_removing_a_row_of_any_other_ref_is_not_applied_while_it_is_stored() -> None:
     module = qos(QOS_RAW, refs={"a": [ROW1, ROW2]})
     plan = refs_plan(module, {"a": [ROW2]}, ref_change("a", ROW1, segment=9))
     check = check_refs(module, plan, as_stored(module, plan.data))
@@ -1001,13 +1037,13 @@ def test_removing_a_row_of_any_other_ref_is_not_applied_while_it_is_stored():
     assert paths(check.not_applied) == ["a[a5,9]"]
 
 
-def test_a_stored_module_read_without_its_refs_has_none_checked():
+def test_a_stored_module_read_without_its_refs_has_none_checked() -> None:
     module, plan = provider_cleared()
     stored = unset_provider_module(refs_loaded=False)
     assert check_refs(module, plan, stored) == ResponseCheck()
 
 
-def test_the_stored_module_must_be_of_the_class_of_the_one_written():
+def test_the_stored_module_must_be_of_the_class_of_the_one_written() -> None:
     module = firewall_disabled()
     with pytest.raises(TypeError, match="QosConfigurationModule"):
         _ = check_module_write(module, plan_module(module), qos(QOS_RAW))
@@ -1032,7 +1068,9 @@ SITE_ROW: dict[str, Any] = {
     "object": "NETWORK_SERVICE",
     "data": {},
 }
-"""A row of a name the VCO's processors manage, as read; the store's service 702 completes it the same way."""
+"""A row of a name the VCO's processors manage, as read; the store's service 702
+completes it the same way.
+"""
 DNS_A_IDENTITY = NetworkServiceIdentity("dns-a", uuid.UUID(DNS_A), 701, "dns")
 SEG0_IDENTITY = SegmentIdentity("Global Segment", 0, SEG0_OBJECT, uuid.UUID(SEG0))
 
@@ -1040,7 +1078,10 @@ SEG0_IDENTITY = SegmentIdentity("Global Segment", 0, SEG0_OBJECT, uuid.UUID(SEG0
 async def provider_set_over_a_store(
     mock_vco_client: MockVcoClientFactory, *, with_data_change: bool = True
 ) -> tuple[DeviceSettingsConfigurationModule, ModulePlan, ModuleStore, VcoClient]:
-    """A device settings write of a new primary provider, over a store that holds the services."""
+    """A device settings write of a new primary provider.
+
+    It is over a store that holds the services.
+    """
     module, plan = await provider_set(with_data_change=with_data_change)
     store = store_of(module)
     store.objects.update(store_with_services().objects)
@@ -1053,12 +1094,13 @@ def ref_paths(changes: Iterable[PlannedChange | ServerChange]) -> list[str]:
 
 async def test_a_provider_row_the_vco_stored_is_applied(
     mock_vco_client: MockVcoClientFactory,
-):
+) -> None:
     module, plan, store, client = await provider_set_over_a_store(mock_vco_client)
     write = await client.write_module(module, plan)
     (row,) = [c for c in write.applied if c.part == "refs"]
     assert str(row.path) == PRIMARY_ROW_PATH
-    assert row.owner is not None and str(row.owner) == PRIMARY_OWNER
+    assert row.owner is not None
+    assert str(row.owner) == PRIMARY_OWNER
     assert (row.as_read, row.intended) == (MISSING, plan.ref_changes[0].row)
     assert write.server_changes == ()
     assert store.rows[module.id_]["refs"][PRIMARY]["logicalId"] == DNS_A
@@ -1066,14 +1108,16 @@ async def test_a_provider_row_the_vco_stored_is_applied(
 
 async def test_a_provider_row_the_vco_skipped_is_refs_dropped(
     mock_vco_client: MockVcoClientFactory,
-):
+) -> None:
     module, plan, store, client = await provider_set_over_a_store(mock_vco_client)
     store.skipped_objects.add(701)
     with pytest.raises(RefsDroppedError) as caught:
         _ = await client.write_module(module, plan)
     (lost,) = caught.value.lost_edits
-    assert lost.part == "refs" and PRIMARY in str(caught.value)
-    assert lost.owner is not None and str(lost.owner) == PRIMARY_OWNER
+    assert lost.part == "refs"
+    assert PRIMARY in str(caught.value)
+    assert lost.owner is not None
+    assert str(lost.owner) == PRIMARY_OWNER
     assert [c.part for c in caught.value.applied] == ["data"]
     assert caught.value.refs_as_read == module.raw_refs
     assert not caught.value.every_row_lost
@@ -1098,7 +1142,7 @@ async def test_a_provider_row_the_vco_skipped_is_refs_dropped(
 
 async def test_a_skipped_row_leaves_the_others_stored_and_sends_no_further_request(
     mock_vco_client: MockVcoClientFactory,
-):
+) -> None:
     module, plan, store, client = await provider_set_over_a_store(mock_vco_client)
     store.skipped_objects.add(701)
     with pytest.raises(RefsDroppedError) as caught:
@@ -1106,12 +1150,12 @@ async def test_a_skipped_row_leaves_the_others_stored_and_sends_no_further_reque
     assert [method for method, _ in store.requests] == [VERSION, UPDATE]
     assert list(store.rows[module.id_]["refs"]) == [SEGMENT]
     assert caught.value.module is not None
-    assert list(cast(dict[str, Any], caught.value.module.raw_refs)) == [SEGMENT]
+    assert list(cast("dict[str, Any]", caught.value.module.raw_refs)) == [SEGMENT]
 
 
 async def test_every_row_lost_lists_them_all_and_carries_the_refs_as_read(
     mock_vco_client: MockVcoClientFactory,
-):
+) -> None:
     module, plan, store, client = await provider_set_over_a_store(mock_vco_client)
     store.skipped_objects.update({SEG0_OBJECT, 701})
     with pytest.raises(RefsDroppedError) as caught:
@@ -1135,7 +1179,7 @@ async def test_every_row_lost_lists_them_all_and_carries_the_refs_as_read(
 
 async def test_refs_as_read_leaves_out_an_append_only_row_present_as_read(
     mock_vco_client: MockVcoClientFactory,
-):
+) -> None:
     vnf = "deviceSettings:vnfs:edge"
     appended = {
         **service_row(vnf, DNS_A, 810, SEG0_OBJECT, SEG0),
@@ -1158,7 +1202,7 @@ async def test_refs_as_read_leaves_out_an_append_only_row_present_as_read(
         _ = await client.write_module(module, plan)
     error = caught.value
     assert error.every_row_lost
-    assert vnf in cast(dict[str, Any], module.raw_refs)
+    assert vnf in cast("dict[str, Any]", module.raw_refs)
     assert error.refs_as_read == {SEGMENT: segment_row(0, SEG0_OBJECT, SEG0)}
     message = str(error)
     for name in sorted(APPEND_ONLY_REF_NAMES):
@@ -1172,13 +1216,14 @@ async def test_refs_as_read_leaves_out_an_append_only_row_present_as_read(
 
 async def test_a_row_sent_as_read_the_vco_dropped_is_a_server_change(
     mock_vco_client: MockVcoClientFactory,
-):
+) -> None:
     module, plan, store, client = await provider_set_over_a_store(mock_vco_client)
     store.skipped_objects.add(SEG0_OBJECT)
     write = await client.write_module(module, plan)
     assert ref_paths(write.applied) == [PRIMARY_ROW_PATH]
     (dropped,) = write.server_changes
-    assert dropped.part == "refs" and str(dropped.path) == f'"{SEGMENT}"[{SEG0}]'
+    assert dropped.part == "refs"
+    assert str(dropped.path) == f'"{SEGMENT}"[{SEG0}]'
     assert (dropped.as_read, dropped.stored) == (
         segment_row(0, SEG0_OBJECT, SEG0),
         MISSING,
@@ -1186,7 +1231,10 @@ async def test_a_row_sent_as_read_the_vco_dropped_is_a_server_change(
 
 
 def module_with_a_processor_row() -> DeviceSettingsConfigurationModule:
-    """A module with a provider stub and no provider row, and a row of ``deviceSettings:css:site``."""
+    """A module with a provider stub and no provider row.
+
+    It has a row of ``deviceSettings:css:site``.
+    """
     return ds_module(
         [segment_entry(0, "Global Segment", SEG0, dns=dns(primary=True))],
         {SEGMENT: segment_row(0, SEG0_OBJECT, SEG0), CSS_SITE: SITE_ROW},
@@ -1208,11 +1256,14 @@ async def edit_of_a_module_with_a_processor_row(
     return module, plan, store, await mock_vco_client(store)
 
 
-async def test_processor_rows_are_not_compared(mock_vco_client: MockVcoClientFactory):
+async def test_processor_rows_are_not_compared(
+    mock_vco_client: MockVcoClientFactory,
+) -> None:
     module, plan, store, client = await edit_of_a_module_with_a_processor_row(
         mock_vco_client
     )
-    assert plan.refs is not None and CSS_SITE in plan.refs
+    assert plan.refs is not None
+    assert CSS_SITE in plan.refs
     write = await client.write_module(module, plan)  # the row is stored again, new ID
     site = store.rows[module.id_]["refs"][CSS_SITE]
     assert site["id"] != SITE_ROW["id"]
@@ -1222,12 +1273,12 @@ async def test_processor_rows_are_not_compared(mock_vco_client: MockVcoClientFac
 
 async def test_a_change_of_a_processor_row_is_reported_and_is_not_a_lost_edit(
     mock_vco_client: MockVcoClientFactory,
-):
+) -> None:
     module, plan, store, client = await edit_of_a_module_with_a_processor_row(
         mock_vco_client
     )
 
-    def processor(new: dict[str, Any], old: dict[str, Any] | None) -> None:
+    def processor(new: dict[str, Any], _old: dict[str, Any] | None) -> None:
         new["refs"][CSS_SITE]["logicalId"] = DNS_A  # the processor chose another site
 
     store.on_store.append(processor)
@@ -1242,7 +1293,7 @@ async def test_a_change_of_a_processor_row_is_reported_and_is_not_a_lost_edit(
 
 async def test_a_data_and_a_ref_failure_is_write_not_applied_listing_both(
     mock_vco_client: MockVcoClientFactory,
-):
+) -> None:
     module = unset_provider_module()
     current = copy_of_data(module)
     set_primary_provider(current, uuid.UUID(DNS_A))
@@ -1252,7 +1303,7 @@ async def test_a_data_and_a_ref_failure_is_write_not_applied_listing_both(
     store.objects.update(store_with_services().objects)
     store.skipped_objects.add(701)
 
-    def revert(new: dict[str, Any], old: dict[str, Any] | None) -> None:
+    def revert(new: dict[str, Any], _old: dict[str, Any] | None) -> None:
         del new["data"]["ntp"]["sourceInterface"]
 
     store.on_store.append(revert)
@@ -1279,7 +1330,7 @@ def provider_cleared_with_a_data_edit() -> tuple[
 
 async def test_a_row_the_plan_removed_is_applied_when_it_is_gone(
     mock_vco_client: MockVcoClientFactory,
-):
+) -> None:
     module, plan = provider_cleared_with_a_data_edit()
     store = store_of(module)
     store.objects.update(store_with_services().objects)
@@ -1292,7 +1343,7 @@ async def test_a_row_the_plan_removed_is_applied_when_it_is_gone(
 
 async def test_a_row_the_plan_removed_that_is_still_stored_is_refs_dropped(
     mock_vco_client: MockVcoClientFactory,
-):
+) -> None:
     module, plan = provider_cleared_with_a_data_edit()
     store = store_of(module)
     store.objects.update(store_with_services().objects)
@@ -1306,8 +1357,10 @@ async def test_a_row_the_plan_removed_that_is_still_stored_is_refs_dropped(
     with pytest.raises(RefsDroppedError) as caught:
         _ = await client.write_module(module, plan)
     (lost,) = caught.value.lost_edits
-    assert str(lost.path) == PRIMARY_ROW_PATH and lost.intended is MISSING
-    assert lost.stored is not MISSING and lost.clash is False
+    assert str(lost.path) == PRIMARY_ROW_PATH
+    assert lost.intended is MISSING
+    assert lost.stored is not MISSING
+    assert lost.clash is False
     assert not caught.value.every_row_lost
     message = str(caught.value)
     assert "The VCO kept a ref row the plan removed" in message
@@ -1322,7 +1375,7 @@ async def test_a_row_the_plan_removed_that_is_still_stored_is_refs_dropped(
 
 async def test_a_refused_refs_only_write_is_a_conflict(
     mock_vco_client: MockVcoClientFactory,
-):
+) -> None:
     module, plan = await provider_set()
     store = store_of(module, conditional_check=True)
     store.objects.update(store_with_services().objects)
@@ -1337,14 +1390,15 @@ async def test_a_refused_refs_only_write_is_a_conflict(
     with pytest.raises(ConfigConflictError) as caught:
         _ = await client.write_module(module, plan)
     assert not isinstance(caught.value, RefsDroppedError)
-    assert caught.value.stated and caught.value.sent
+    assert caught.value.stated
+    assert caught.value.sent
     assert caught.value.detail == "the VCO refused the version"
     assert ref_paths(caught.value.lost_edits) == [PRIMARY_ROW_PATH]
 
 
 async def test_a_refs_only_write_whose_row_is_skipped_is_a_conflict_naming_both_causes(
     mock_vco_client: MockVcoClientFactory,
-):
+) -> None:
     module, plan, store, client = await provider_set_over_a_store(
         mock_vco_client, with_data_change=False
     )
@@ -1353,7 +1407,8 @@ async def test_a_refs_only_write_whose_row_is_skipped_is_a_conflict_naming_both_
         _ = await client.write_module(module, plan)
     error = caught.value
     assert not isinstance(error, RefsDroppedError)
-    assert not error.stated and error.applied == ()
+    assert not error.stated
+    assert error.applied == ()
     assert ref_paths(error.lost_edits) == [PRIMARY_ROW_PATH]
     assert "the module changed since it was read" in error.detail
     assert "the VCO would not take a new row because it cannot resolve its object" in (
@@ -1362,7 +1417,10 @@ async def test_a_refs_only_write_whose_row_is_skipped_is_a_conflict_naming_both_
 
 
 def a_row_with_no_owner() -> DeviceSettingsConfigurationModule:
-    """A module with a primary provider and its row, and a backup provider row that nothing in the data names."""
+    """A module with a primary provider and its row, and a backup provider row.
+
+    Nothing in the data names the backup row.
+    """
     return primary_provider_module(
         {BACKUP: service_row(BACKUP, DNS_B, 702, SEG0_OBJECT, SEG0)}
     )
@@ -1374,12 +1432,13 @@ def a_row_with_no_owner() -> DeviceSettingsConfigurationModule:
 async def test_rows_that_disagree_as_read_raise_nothing_after_a_write(
     mock_vco_client: MockVcoClientFactory,
     build: Callable[[], DeviceSettingsConfigurationModule],
-):
+) -> None:
     module = build()
     current = copy_of_data(module)
     _ = current.merge_patch({"ntp": {"enabled": True}})
     plan = plan_module(module, current)
-    assert plan.ref_changes == () and plan.refs is not None
+    assert plan.ref_changes == ()
+    assert plan.refs is not None
     store = store_of(module)
     store.objects.update(store_with_services().objects)
     client = await mock_vco_client(store)
@@ -1388,7 +1447,7 @@ async def test_rows_that_disagree_as_read_raise_nothing_after_a_write(
     assert write.server_changes == ()
 
 
-def test_an_insert_checks_the_refs_it_planned():
+def test_an_insert_checks_the_refs_it_planned() -> None:
     module = new_edge_module(ConfigurationModuleName.QOS, 10)
     assert isinstance(module, QosConfigurationModule)
     module.data.segments.append(QosSegment[Edge].model_validate(GLOBAL))
@@ -1411,7 +1470,10 @@ def test_an_insert_checks_the_refs_it_planned():
 
 
 def a_service_set(value: str | None) -> dict[str, object]:
-    """The patch that sets the primary provider of the Global Segment to *value* (``None`` clears it)."""
+    """The patch that sets the primary provider of the Global Segment to *value*.
+
+    ``None`` clears it.
+    """
     return {
         "segments": {"Global Segment": {"dns": {"primaryProvider": {"service": value}}}}
     }
@@ -1426,7 +1488,10 @@ def put_the_removed_row_back(new: dict[str, Any], old: dict[str, Any] | None) ->
 async def provider_swapped_over_a_store(
     mock_vco_client: MockVcoClientFactory,
 ) -> tuple[DeviceSettingsConfigurationModule, ModulePlan, ModuleStore, VcoClient]:
-    """A write that swaps ``dns-a`` for ``dns-b`` as the primary provider, and sets ``ntp``, over a store that holds the services."""
+    """A write that swaps ``dns-a`` for ``dns-b`` as the primary provider.
+
+    It sets ``ntp`` too, over a store that holds the services.
+    """
     module = primary_provider_module()
     current = copy_of_data(module)
     set_primary_provider(current, uuid.UUID(DNS_B))
@@ -1445,7 +1510,7 @@ async def provider_swapped_over_a_store(
 
 async def test_a_lost_provider_set_is_redone_by_its_field(
     mock_vco_client: MockVcoClientFactory,
-):
+) -> None:
     module, plan, store, client = await provider_set_over_a_store(mock_vco_client)
     store.skipped_objects.add(701)
     with pytest.raises(RefsDroppedError) as caught:
@@ -1459,7 +1524,7 @@ async def test_a_lost_provider_set_is_redone_by_its_field(
 
 async def test_a_lost_provider_set_is_redone_on_a_conflict_too(
     mock_vco_client: MockVcoClientFactory,
-):
+) -> None:
     module, plan, store, client = await provider_set_over_a_store(
         mock_vco_client, with_data_change=False
     )
@@ -1473,7 +1538,7 @@ async def test_a_lost_provider_set_is_redone_on_a_conflict_too(
 
 async def test_a_lost_provider_clear_is_redone_as_null(
     mock_vco_client: MockVcoClientFactory,
-):
+) -> None:
     module, plan = provider_cleared_with_a_data_edit()
     store = store_of(module)
     store.objects.update(store_with_services().objects)
@@ -1485,7 +1550,9 @@ async def test_a_lost_provider_clear_is_redone_as_null(
     assert caught.value.not_redone() == ()
 
 
-async def test_a_lost_provider_swap_is_one_set(mock_vco_client: MockVcoClientFactory):
+async def test_a_lost_provider_swap_is_one_set(
+    mock_vco_client: MockVcoClientFactory,
+) -> None:
     module, plan, store, client = await provider_swapped_over_a_store(mock_vco_client)
     store.skipped_objects.add(702)
     store.on_store.append(put_the_removed_row_back)
@@ -1499,7 +1566,7 @@ async def test_a_lost_provider_swap_is_one_set(mock_vco_client: MockVcoClientFac
 
 async def test_a_lost_removal_beside_a_stored_add_is_a_set_not_a_clear(
     mock_vco_client: MockVcoClientFactory,
-):
+) -> None:
     module, plan, _, _ = await provider_swapped_over_a_store(mock_vco_client)
     both = {
         SEGMENT: segment_row(0, SEG0_OBJECT, SEG0),
@@ -1519,7 +1586,7 @@ async def test_a_lost_removal_beside_a_stored_add_is_a_set_not_a_clear(
 
 async def test_the_redo_applied_to_the_module_as_stored_plans_the_same_row(
     mock_vco_client: MockVcoClientFactory,
-):
+) -> None:
     module, plan, store, client = await provider_set_over_a_store(mock_vco_client)
     store.skipped_objects.add(701)
     with pytest.raises(RefsDroppedError) as caught:
@@ -1544,7 +1611,12 @@ async def test_the_redo_applied_to_the_module_as_stored_plans_the_same_row(
 async def lost_provider_and_dns_edit(
     stored_data: Callable[[dict[str, Any]], dict[str, Any]] = lambda raw: raw,
 ) -> WriteNotAppliedError:
-    """The error of a write that sets a primary provider and the DNS source interface of the Global Segment, over a module as stored that *stored_data* makes of the module's data as read with its ``ntp`` change, and that holds neither of the others."""
+    """The error of a write that sets two values of the Global Segment.
+
+    The write sets a primary provider and the DNS source interface of the Global
+    Segment. It is over a module as stored that *stored_data* makes of the module's data
+    as read with its ``ntp`` change, and that holds neither of the others.
+    """
     module = unset_provider_module()
     current = copy_of_data(module)
     set_primary_provider(current, uuid.UUID(DNS_A))
@@ -1563,7 +1635,7 @@ async def lost_provider_and_dns_edit(
     )
     raw = stored_data(
         {
-            **copy.deepcopy(cast(dict[str, Any], module.raw_data)),
+            **copy.deepcopy(cast("dict[str, Any]", module.raw_data)),
             "ntp": plan.data["ntp"],
         }
     )
@@ -1572,7 +1644,7 @@ async def lost_provider_and_dns_edit(
     return caught.value
 
 
-async def test_a_data_and_a_refs_edit_under_one_segment_are_one_object():
+async def test_a_data_and_a_refs_edit_under_one_segment_are_one_object() -> None:
     error = await lost_provider_and_dns_edit()
     assert sorted((c.part, str(c.path)) for c in error.lost_edits) == [
         ("data", 'segments["Global Segment"].dns.sourceInterface'),
@@ -1592,7 +1664,7 @@ async def test_a_data_and_a_refs_edit_under_one_segment_are_one_object():
     assert error.not_redone() == ()
 
 
-async def test_a_provider_is_set_in_the_segment_as_the_stored_list_names_it():
+async def test_a_provider_is_set_in_the_segment_as_the_stored_list_names_it() -> None:
     def renamed(raw: dict[str, Any]) -> dict[str, Any]:
         raw["segments"][0]["segment"]["name"] = "Voice"
         return raw
@@ -1611,7 +1683,7 @@ async def test_a_provider_is_set_in_the_segment_as_the_stored_list_names_it():
     assert error.not_redone() == ()
 
 
-async def test_a_provider_whose_segment_is_not_stored_is_not_redone():
+async def test_a_provider_whose_segment_is_not_stored_is_not_redone() -> None:
     def no_segment(raw: dict[str, Any]) -> dict[str, Any]:
         raw["segments"] = []
         return raw
@@ -1621,7 +1693,7 @@ async def test_a_provider_whose_segment_is_not_stored_is_not_redone():
     assert error.redo_patch() == {}
 
 
-async def test_a_provider_is_set_under_the_spelling_a_data_entry_used():
+async def test_a_provider_is_set_under_the_spelling_a_data_entry_used() -> None:
     error = await lost_provider_and_dns_edit()
     stub = Path(("segments", Key("Global Segment"), "dns", "primaryProvider", "ref"))
     error.lost_edits = tuple(
@@ -1631,7 +1703,7 @@ async def test_a_provider_is_set_under_the_spelling_a_data_entry_used():
         for edit in error.lost_edits
     )
     patch = error.redo_patch()
-    assert cast(dict[str, Any], patch)["segments"]["Global Segment"]["dns"] == {
+    assert cast("dict[str, Any]", patch)["segments"]["Global Segment"]["dns"] == {
         "primary_provider": {"ref": PRIMARY, "service": DNS_A}
     }
     assert isinstance(error.module, DeviceSettingsConfigurationModule)
@@ -1644,7 +1716,10 @@ OTHER_SEGMENT = "99999999-9999-4999-8999-999999999999"
 async def lost_provider_beside_ntp(
     stored_segments: list[dict[str, Any]], *, refs: object = MISSING
 ) -> WriteNotAppliedError:
-    """The error of a write that sets a primary provider and ``ntp``, over a module as stored that holds ``ntp`` and the *stored_segments*, with the module's refs unless *refs* is given.
+    """The error of a write that sets a primary provider and ``ntp``.
+
+    It is over a module as stored that holds ``ntp`` and the *stored_segments*, with the
+    module's refs unless *refs* is given.
 
     No data edit is made in a segment, so the check records no stored part for
     the segment and the redo has to find it by identity.
@@ -1654,7 +1729,7 @@ async def lost_provider_beside_ntp(
     set_primary_provider(current, uuid.UUID(DNS_A))
     _ = current.merge_patch({"ntp": {"enabled": True}})
     plan = plan_module(module, current, resolvers=await table_registry(DNS_A_IDENTITY))
-    raw = {**cast(dict[str, Any], module.raw_data), "ntp": plan.data["ntp"]}
+    raw = {**cast("dict[str, Any]", module.raw_data), "ntp": plan.data["ntp"]}
     raw["segments"] = stored_segments
     with pytest.raises(WriteNotAppliedError) as caught:
         _ = check_module_write(module, plan, as_stored(module, raw, refs=refs))
@@ -1662,7 +1737,7 @@ async def lost_provider_beside_ntp(
     return caught.value
 
 
-async def test_a_provider_is_not_set_on_another_segment_that_took_the_name():
+async def test_a_provider_is_not_set_on_another_segment_that_took_the_name() -> None:
     error = await lost_provider_beside_ntp(
         [
             segment_entry(0, "Voice", SEG0, dns=dns(primary=True)),
@@ -1675,7 +1750,9 @@ async def test_a_provider_is_not_set_on_another_segment_that_took_the_name():
     assert error.not_redone() == ()
 
 
-async def test_a_provider_is_not_redone_when_no_stored_segment_is_the_one_edited():
+async def test_a_provider_is_not_redone_when_no_stored_segment_is_the_one_edited() -> (
+    None
+):
     error = await lost_provider_beside_ntp(
         [segment_entry(77, "Global Segment", OTHER_SEGMENT, dns=dns(primary=True))]
     )
@@ -1683,7 +1760,7 @@ async def test_a_provider_is_not_redone_when_no_stored_segment_is_the_one_edited
     assert error.redo_patch() == {}
 
 
-async def test_a_segment_with_no_stored_row_is_found_by_its_logical_id():
+async def test_a_segment_with_no_stored_row_is_found_by_its_logical_id() -> None:
     segments = [
         segment_entry(0, "Voice", SEG0, dns=dns(primary=True)),
         segment_entry(77, "Global Segment", OTHER_SEGMENT, dns=dns(primary=True)),
@@ -1699,7 +1776,7 @@ async def test_a_segment_with_no_stored_row_is_found_by_its_logical_id():
     assert error.redo_patch() == {}
 
 
-async def test_a_refs_entry_with_no_owner_is_not_redone():
+async def test_a_refs_entry_with_no_owner_is_not_redone() -> None:
     error = await lost_provider_and_dns_edit()
     error.lost_edits = tuple(
         dataclasses.replace(edit, owner=None) if edit.part == "refs" else edit

@@ -92,7 +92,7 @@ def add_guest_to_qos() -> tuple[QosConfigurationModule[Profile], dict[str, Any],
 # --- an added entry is the baseline -----------------------------------------
 
 
-def test_an_added_entry_nobody_edited_is_written_as_the_template():
+def test_an_added_entry_nobody_edited_is_written_as_the_template() -> None:
     module, entry, _ = add_guest_to_qos()
     plan = plan_module(module, via_pipeline=True)
     assert plan.operation == "update"
@@ -101,10 +101,10 @@ def test_an_added_entry_nobody_edited_is_written_as_the_template():
     assert json.dumps(plan.data["segments"][1], sort_keys=False) == json.dumps(
         entry, sort_keys=False
     )
-    assert plan.data["segments"][0] == module.raw_data["segments"][0]  # pyright: ignore[reportIndexIssue, reportOptionalSubscript]
+    assert plan.data["segments"][0] == module.raw_data["segments"][0]  # pyright: ignore[reportIndexIssue]
 
 
-def test_an_edit_to_an_added_entry_is_a_change_from_the_template():
+def test_an_edit_to_an_added_entry_is_a_change_from_the_template() -> None:
     module, entry, item = add_guest_to_qos()
     original = entry["rules"][0]["name"]
     item.rules[0].name = "Box2"
@@ -117,19 +117,19 @@ def test_an_edit_to_an_added_entry_is_a_change_from_the_template():
     assert plan.data["segments"][1] == expected
 
 
-def test_the_render_lists_added_segments():
+def test_the_render_lists_added_segments() -> None:
     module, _, _ = add_guest_to_qos()
     plan = plan_module(module, via_pipeline=True)
     assert "  added segments: Guest" in plan.render().splitlines()
 
 
-def test_the_render_of_a_plan_with_nothing_added_has_no_such_line():
+def test_the_render_of_a_plan_with_nothing_added_has_no_such_line() -> None:
     plan = plan_module(global_qos())
     assert "added segments" not in plan.render()
     assert plan.added_segments == ()
 
 
-def test_added_defaults_are_part_of_the_baseline():
+def test_added_defaults_are_part_of_the_baseline() -> None:
     entry = qos_entry(GLOBAL, defaults=MISSING)
     row = profile_rows([ds_entry(GLOBAL)], [entry], [])[1]
     module = QosConfigurationModule[Profile].model_validate(row)
@@ -146,14 +146,14 @@ def test_added_defaults_are_part_of_the_baseline():
     assert [r["name"] for r in addition.entries] == [r["name"] for r in rules]
 
 
-def test_an_added_entry_with_its_template_defaults_is_not_a_fixed_list_error():
+def test_an_added_entry_with_its_template_defaults_is_not_a_fixed_list_error() -> None:
     module, entry, _ = add_guest_to_qos()
     assert len(entry["defaults"]) == 4
     plan = plan_module(module, via_pipeline=True)
     assert plan.data["segments"][1]["defaults"] == entry["defaults"]
 
 
-def test_an_edit_to_the_fixed_part_of_an_added_default_is_refused():
+def test_an_edit_to_the_fixed_part_of_an_added_default_is_refused() -> None:
     module, _, item = add_guest_to_qos()
     item.defaults[0].match.proto = 99
     with pytest.raises(FixedListError):
@@ -163,7 +163,7 @@ def test_an_edit_to_the_fixed_part_of_an_added_default_is_refused():
 # --- the refs are not planned against the additions -------------------------
 
 
-async def test_an_added_device_settings_entry_adds_its_segment_row():
+async def test_an_added_device_settings_entry_adds_its_segment_row() -> None:
     module = global_ds()
     module.add_segment_entry(new_segment_entry("deviceSettings", identity(GUEST)))
     registry = await segment_registry(GLOBAL, GUEST)
@@ -171,7 +171,8 @@ async def test_an_added_device_settings_entry_adds_its_segment_row():
     assert plan.operation == "update"
     assert plan.changes == ()
     (row_change,) = plan.ref_changes
-    assert row_change.added and row_change.name == SEGMENT
+    assert row_change.added
+    assert row_change.name == SEGMENT
     assert row_change.row["enterpriseObjectId"] == SEG1_OBJECT
     assert plan.refs is not None
     as_read = module.raw_refs[SEGMENT]  # pyright: ignore[reportIndexIssue]
@@ -182,7 +183,7 @@ async def test_an_added_device_settings_entry_adds_its_segment_row():
 # --- one module alone cannot change its segments ----------------------------
 
 
-def test_a_one_module_plan_refuses_a_new_segment():
+def test_a_one_module_plan_refuses_a_new_segment() -> None:
     module, _, _ = add_guest_to_qos()
     with pytest.raises(SegmentSetError) as caught:
         plan_module(module)
@@ -196,7 +197,7 @@ def test_a_one_module_plan_refuses_a_new_segment():
     assert 'pipeline.assign_segment(state, "Guest")' in str(error)
 
 
-def test_a_one_module_plan_refuses_a_removed_segment():
+def test_a_one_module_plan_refuses_a_removed_segment() -> None:
     module = global_qos()
     module.data.segments.clear()
     with pytest.raises(SegmentSetError) as caught:
@@ -205,10 +206,11 @@ def test_a_one_module_plan_refuses_a_removed_segment():
     assert error.segments == ("Global Segment",)
     message = str(error)
     assert "removed from all three modules together, which is not supported" in message
-    assert "_op" not in message and "assign_segment" not in message
+    assert "_op" not in message
+    assert "assign_segment" not in message
 
 
-def test_a_removed_segment_is_planned_through_the_pipeline():
+def test_a_removed_segment_is_planned_through_the_pipeline() -> None:
     module = global_qos()
     module.data.segments.clear()
     plan = plan_module(module, via_pipeline=True)
@@ -218,7 +220,7 @@ def test_a_removed_segment_is_planned_through_the_pipeline():
 
 async def test_update_module_refuses_a_segment_set_change(
     mock_vco_client: MockVcoClientFactory,
-):
+) -> None:
     module = global_qos()
     store = store_of(module)
     client = await mock_vco_client(store)
@@ -241,21 +243,23 @@ def raw_with_a_guest_segment() -> dict[str, Any]:
     return {"segments": [*raw["segments"], guest_qos_entry()]}
 
 
-def test_a_dict_with_a_new_segment_is_refused_at_the_profile_level():
+def test_a_dict_with_a_new_segment_is_refused_at_the_profile_level() -> None:
     module = global_qos()
     with pytest.raises(SegmentSetError) as caught:
         plan_module(module, raw_with_a_guest_segment())
     assert caught.value.segments == ("Guest",)
 
 
-def test_a_dict_without_a_segment_is_refused_at_the_profile_level():
+def test_a_dict_without_a_segment_is_refused_at_the_profile_level() -> None:
     module = global_qos()
     with pytest.raises(SegmentSetError) as caught:
         plan_module(module, {"segments": []})
     assert caught.value.segments == ("Global Segment",)
 
 
-def test_a_hand_built_model_with_a_new_segment_is_refused_at_the_profile_level():
+def test_a_hand_built_model_with_a_new_segment_is_refused_at_the_profile_level() -> (
+    None
+):
     module = global_qos()
     data = type(module.data).model_validate(raw_with_a_guest_segment())
     assert (
@@ -268,7 +272,7 @@ def test_a_hand_built_model_with_a_new_segment_is_refused_at_the_profile_level()
 
 async def test_update_module_refuses_a_segment_set_change_of_a_hand_built_model(
     mock_vco_client: MockVcoClientFactory,
-):
+) -> None:
     module = global_qos()
     store = store_of(module)
     client = await mock_vco_client(store)
@@ -282,7 +286,7 @@ async def test_update_module_refuses_a_segment_set_change_of_a_hand_built_model(
     assert [method for method, _ in store.requests] == []
 
 
-def test_the_edge_level_is_not_refused():
+def test_the_edge_level_is_not_refused() -> None:
     profile = global_qos()
     edge_row = make_module_json(
         "QOS", {"segments": []}, module_id=21, configuration_id=200
@@ -300,7 +304,7 @@ def test_the_edge_level_is_not_refused():
 # --- the module methods ------------------------------------------------------
 
 
-def test_add_segment_entry_returns_the_item_and_records_the_addition():
+def test_add_segment_entry_returns_the_item_and_records_the_addition() -> None:
     module, entry, item = add_guest_to_qos()
     assert module.data.segments[1] is item
     assert item.segment.name == "Guest"
@@ -312,7 +316,7 @@ def test_add_segment_entry_returns_the_item_and_records_the_addition():
     assert addition.entry != entry  # the record holds a copy
 
 
-def test_add_segment_entry_refuses_an_edge_module_and_a_segment_already_there():
+def test_add_segment_entry_refuses_an_edge_module_and_a_segment_already_there() -> None:
     edge = QosConfigurationModule[Edge].model_validate(
         make_module_json("QOS", {"segments": []}, module_id=21, configuration_id=200)
     )
@@ -328,7 +332,7 @@ def test_add_segment_entry_refuses_an_edge_module_and_a_segment_already_there():
     assert len(module.additions) == 1
 
 
-def test_add_segment_entry_refuses_a_module_without_segments():
+def test_add_segment_entry_refuses_a_module_without_segments() -> None:
     wan = WanConfigurationModule.model_validate(
         make_module_json("WAN", {"links": []}, module_id=30, configuration_id=100),
         context={"config_level": ConfigContext.PROFILE},
@@ -337,7 +341,7 @@ def test_add_segment_entry_refuses_a_module_without_segments():
         _ = wan.add_segment_entry(guest_qos_entry())
 
 
-def test_add_default_entries_is_for_qos_and_a_segment_it_holds():
+def test_add_default_entries_is_for_qos_and_a_segment_it_holds() -> None:
     ds = global_ds()
     with pytest.raises(TypeError, match="QoS"):
         ds.add_default_entries(0, default_rules())
@@ -347,16 +351,17 @@ def test_add_default_entries_is_for_qos_and_a_segment_it_holds():
     assert module.additions == ()
 
 
-def test_add_default_entries_parses_the_rules_into_the_segment():
+def test_add_default_entries_parses_the_rules_into_the_segment() -> None:
     row = profile_rows([ds_entry(GLOBAL)], [qos_entry(GLOBAL, defaults=MISSING)], [])[1]
     module = QosConfigurationModule[Profile].model_validate(row)
     module.add_default_entries(0, default_rules())
     defaults = module.data.segments[0].defaults
-    assert isinstance(defaults, list) and len(defaults) == 4
+    assert isinstance(defaults, list)
+    assert len(defaults) == 4
     assert all(isinstance(rule, QosRule) for rule in defaults)
 
 
-def test_additions_survive_deepcopy_and_pickle():
+def test_additions_survive_deepcopy_and_pickle() -> None:
     module, _, _ = add_guest_to_qos()
     module.add_default_entries(0, [])
     for copied in (
@@ -373,7 +378,7 @@ def test_additions_survive_deepcopy_and_pickle():
     assert deep.additions[0].entry is not module.additions[0].entry  # pyright: ignore[reportAttributeAccessIssue]
 
 
-def test_with_data_parsed_from_carries_only_the_given_additions():
+def test_with_data_parsed_from_carries_only_the_given_additions() -> None:
     module, _, _ = add_guest_to_qos()
     raw = copy.deepcopy(module.raw_data)
     carried = module.with_data_parsed_from(raw)
@@ -390,23 +395,23 @@ def test_with_data_parsed_from_carries_only_the_given_additions():
 # --- with_additions ----------------------------------------------------------
 
 
-def test_with_additions_appends_an_entry_and_leaves_raw_alone():
+def test_with_additions_appends_an_entry_and_leaves_raw_alone() -> None:
     raw = {"segments": [qos_entry(GLOBAL)]}
     before = copy.deepcopy(raw)
     entry = guest_qos_entry()
     added = with_additions(raw, [AddedSegment(2, "Guest", entry)])
     assert raw == before
-    assert added == {"segments": [*before["segments"], entry]}  # pyright: ignore[reportOperatorIssue]
+    assert added == {"segments": [*before["segments"], entry]}
 
 
-def test_with_additions_makes_a_list_of_an_absent_or_null_segments():
+def test_with_additions_makes_a_list_of_an_absent_or_null_segments() -> None:
     entry = guest_qos_entry()
     for raw in ({}, {"segments": None}):
         added = with_additions(raw, [AddedSegment(2, "Guest", entry)])
         assert added == {"segments": [entry]}
 
 
-def test_with_additions_inserts_defaults_into_an_unset_list():
+def test_with_additions_inserts_defaults_into_an_unset_list() -> None:
     raw = {"segments": [qos_entry(GLOBAL, defaults=MISSING)]}
     rules = default_rules()
     added = with_additions(raw, [AddedDefaults(0, "Global Segment", tuple(rules))])
@@ -414,7 +419,9 @@ def test_with_additions_inserts_defaults_into_an_unset_list():
     assert "defaults" not in raw["segments"][0]
 
 
-def test_with_additions_refuses_a_segment_that_is_there_and_defaults_that_have_none():
+def test_with_additions_refuses_a_segment_that_is_there_and_defaults_that_have_none() -> (  # noqa: E501 (a test's name)
+    None
+):
     raw = {"segments": [qos_entry(GLOBAL)]}
     with pytest.raises(ValueError, match="already"):
         _ = with_additions(raw, [AddedSegment(0, "Global Segment", qos_entry(GLOBAL))])

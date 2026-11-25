@@ -1,4 +1,7 @@
-"""Validation framework: types, registry, and decorator for incremental config validation."""
+"""Validation framework: types, registry, and decorator.
+
+They are for incremental config validation.
+"""
 
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -21,7 +24,9 @@ class ConfigStateLike(Protocol):
     """
 
     @property
-    def target_type(self) -> str: ...
+    def target_type(self) -> str:
+        """What the state is of, such as ``"edge"`` or ``"profile"``."""
+        ...
 
     edge_config: Any
     profile_config: Any
@@ -46,6 +51,7 @@ class ValidationResult:
 
     @property
     def is_valid(self) -> bool:
+        """Whether no validator reported an error; warnings do not count."""
         return len(self.errors) == 0
 
     def merge(self, other: "ValidationResult") -> None:
@@ -61,16 +67,20 @@ class Validator(Protocol):
     phases: list[str]
     modules: list[ConfigurationModuleName]
 
-    def validate(self, state: ConfigStateLike) -> ValidationResult: ...
+    def validate(self, state: ConfigStateLike) -> ValidationResult:
+        """The errors and warnings this validator finds in *state*."""
+        ...
 
 
 class ValidatorRegistry:
     """Registry for validators, with phase/module-scoped execution."""
 
     def __init__(self) -> None:
+        """A registry with no validators."""
         self._validators: list[Validator] = []
 
     def register(self, v: Validator) -> None:
+        """Add *v*, after the validators already registered; ``run`` keeps the order."""
         self._validators.append(v)
 
     def run(

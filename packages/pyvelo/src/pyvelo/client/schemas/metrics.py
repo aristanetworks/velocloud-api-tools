@@ -1,5 +1,13 @@
+"""The requests and results of the ``metrics/`` methods.
+
+Edge link, path, application, device, destination, category, segment, OS and
+interface metrics and their series; aggregate Edge link metrics; flow visibility;
+firewall IDPS, malicious IP and URL metrics; Edge and Gateway status; and NSD tunnel
+stats.
+"""
+
 import uuid
-from typing import Annotated, Any
+from typing import Annotated, Any, ClassVar
 
 from pydantic import (
     MISSING,
@@ -493,7 +501,9 @@ class FlowVisibilityFilter(VcoModel):
 
 class FlowVisibilityFilters(VcoModel):
     conditions: Annotated[list[FlowVisibilityFilter], Alias("and")] = Field(
-        description="Array of filter conditions; each specifies field, operator and value"
+        description=(
+            "Array of filter conditions; each specifies field, operator and value"
+        )
     )
 
 
@@ -513,7 +523,9 @@ class GetEdgeFlowVisibilityMetrics(PaginatedVcoModel):
     limit: int | MISSING = MISSING
     sort: FlowVisibilityMetric | MISSING = Field(
         default=MISSING,
-        description="Metric to sort results by (e.g. totalBytes); use sortOrder for direction",
+        description=(
+            "Metric to sort results by (e.g. totalBytes); use sortOrder for direction"
+        ),
     )
     sort_order: SortDirection | MISSING = Field(
         default=MISSING,
@@ -651,10 +663,7 @@ class LinkAutoDualModeTimeSeries(VcoModel):
 
 
 def _link_time_series_discriminator(v: Any) -> str:
-    if isinstance(v, dict):
-        metric = v.get("metric", "")
-    else:
-        metric = getattr(v, "metric", "")
+    metric = v.get("metric", "") if isinstance(v, dict) else getattr(v, "metric", "")
     if metric == LinkMetric.STATE:
         return "state"
     if metric == LinkMetric.AUTO_DUAL_MODE:
@@ -704,7 +713,7 @@ class EdgeStatusSeriesPoint(VcoModel):
     format used by getEdgeStatusSeries.
     """
 
-    model_config = ConfigDict(extra="allow")
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="allow")
 
     start_time: VcoTimestamp
     cpu_pct: float | None | MISSING = MISSING
@@ -990,10 +999,7 @@ class NetworkInterfaceStateTimeSeries(VcoModel):
 
 
 def _interface_time_series_discriminator(v: Any) -> str:
-    if isinstance(v, dict):
-        metric = v.get("metric", "")
-    else:
-        metric = getattr(v, "metric", "")
+    metric = v.get("metric", "") if isinstance(v, dict) else getattr(v, "metric", "")
     if metric == NetworkInterfaceMetric.STATE:
         return "state"
     return "numeric"
@@ -1345,7 +1351,7 @@ class GatewayStatusSeriesItem(VcoModel):
     like cpuPct, memoryPct, connectedEdges, etc.
     """
 
-    model_config = ConfigDict(extra="allow")
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="allow")
     start_time: VcoTimestamp | MISSING = MISSING
 
 

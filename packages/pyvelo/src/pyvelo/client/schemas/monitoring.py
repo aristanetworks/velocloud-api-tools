@@ -1,3 +1,10 @@
+"""The requests and results of the ``monitoring/`` methods.
+
+Edge, link, cluster, BGP and BFD peer and NVS tunnel status; aggregates and aggregate
+events; link degradation and flap summaries; NNI metrics; Gateway route tables and
+VPN status.
+"""
+
 import uuid
 from typing import Annotated, Any, ClassVar, Self
 
@@ -36,7 +43,6 @@ from pyvelo.core import (
     ApiFilter,
     ApiFilters,
     ApiFiltersAnd,
-    ApiFiltersOr,
     ApiInterval,
     CoerceInt,
     PaginatedVcoModel,
@@ -97,7 +103,7 @@ class MetricSummary(VcoModel):
 
 
 class EdgeHealthStats(VcoModel):
-    model_config = ConfigDict(extra="allow")
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="allow")
 
     cpu_pct: MetricSummary | MISSING = MISSING
     memory_pct: MetricSummary | MISSING = MISSING
@@ -114,7 +120,7 @@ class EdgeHealthStats(VcoModel):
 
 
 class GatewayHealthStats(VcoModel):
-    model_config = ConfigDict(extra="allow")
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="allow")
 
     cpu_pct: MetricSummary | MISSING = MISSING
     memory_pct: MetricSummary | MISSING = MISSING
@@ -132,14 +138,14 @@ class TunnelStateCounts(VcoModel):
 
 
 class NvsDataCenter(VcoModel):
-    model_config = ConfigDict(extra="allow")
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="allow")
 
     name: str | None | MISSING = MISSING
     public_ip: str | None | MISSING = MISSING
 
 
 class AggregateEventItem(VcoModel):
-    model_config = ConfigDict(extra="allow")
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="allow")
 
     event: str | None | MISSING = MISSING
     category: str | None | MISSING = MISSING
@@ -151,7 +157,7 @@ class AggregateEventItem(VcoModel):
 
 
 class EventAggregateMetadata(VcoModel):
-    model_config = ConfigDict(extra="allow")
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="allow")
 
     limit: int | None | MISSING = MISSING
     more: bool | None | MISSING = MISSING
@@ -440,7 +446,7 @@ class GetEnterpriseEdgeClusterStatus(VcoModel):
 class ClusterEdgeEntry(VcoModel):
     """Health metrics for an edge member of a cluster."""
 
-    model_config = ConfigDict(extra="allow")
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="allow")
 
     edge_id: Annotated[
         int | None | MISSING, Resolvable(EdgeIdentity, lambda i: i.id)
@@ -463,7 +469,7 @@ class ClusterEdgeEntry(VcoModel):
 class GetEnterpriseEdgeClusterStatusResultItem(VcoModel):
     """Status of a single edge cluster within an enterprise."""
 
-    model_config = ConfigDict(extra="allow")
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="allow")
 
     cluster_id: int | None | MISSING = MISSING
     cluster_name: str | None | MISSING = MISSING
@@ -483,7 +489,7 @@ class GetEnterpriseEdgeNvsTunnelStatus(VcoModel):
 
 
 class GetEnterpriseEdgeNvsTunnelStatusResultItemData(VcoModel):
-    model_config = ConfigDict(extra="allow")
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="allow")
 
     name: str | None | MISSING = MISSING
     link: uuid.UUID | None | MISSING = MISSING
@@ -778,7 +784,7 @@ class RouteTableSegmentEntry(VcoModel):
 class EnterpriseGatewayRouteTableConfigResult(VcoModel):
     """Gateway route table configuration showing available gateways and segments."""
 
-    model_config = ConfigDict(extra="allow")
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="allow")
 
     gateways: list[RouteTableGatewayEntry] | None | MISSING = MISSING
     segments: list[RouteTableSegmentEntry] | None | MISSING = MISSING
@@ -799,9 +805,7 @@ def _iter_api_filters(filters: ApiFilters) -> list[ApiFilter]:
         return [filters]
     if isinstance(filters, ApiFiltersAnd):
         return filters.and_
-    if isinstance(filters, ApiFiltersOr):
-        return filters.or_
-    return []
+    return filters.or_
 
 
 class _LinkInsightsRequest(VcoModel):
@@ -964,7 +968,7 @@ class DegradationDetailsSortItem(VcoModel):
 
 
 class GetLinkDegradationDetails(_LinkInsightsRequest):
-    model_config = ConfigDict(
+    model_config: ClassVar[ConfigDict] = ConfigDict(
         json_schema_extra={
             "oneOf": [
                 {

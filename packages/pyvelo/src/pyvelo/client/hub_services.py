@@ -1,4 +1,6 @@
-"""The hub services of a profile, and the backhaul entries that name a hub with no service.
+"""The hub services of a profile.
+
+Also the backhaul entries that name a hub with no service.
 
 A QoS rule's backhaul entry names a hub twice: ``edgeLogicalId`` is the hub's
 own logical ID, and ``logicalId`` the hub's service for the profile and the
@@ -79,12 +81,15 @@ class HubListField:
 
     role: Literal["hub", "bridge", "backhaul"]
     path: tuple[str, ...]
-    """The wire keys from the segment entry to the list: ``("vpn", "backHaulEdges")``."""
+    """The wire keys from the segment entry to the list:
+    ``("vpn", "backHaulEdges")``."""
 
 
 @functools.cache
 def hub_list_fields() -> tuple[HubListField, ...]:
-    """The fields of a device settings segment entry marked ``HubRole``: their role and wire path, in field order.
+    """The fields of a device settings segment entry marked ``HubRole``.
+
+    Each with its role and wire path, in field order.
 
     This is the one declaration of which lists hold hubs; the planner of the
     role steps walks the models for the same marker, and the one-module
@@ -121,7 +126,10 @@ def _uuid(value: object) -> uuid.UUID | None:
 def _service(
     row: dict[object, object], kind: Literal["edge", "cluster"]
 ) -> HubService | None:
-    """The service a hub row of *kind* stands for, or ``None`` for a row that does not say."""
+    """The service a hub row of *kind* stands for.
+
+    ``None`` for a row that does not say.
+    """
     object_id = row.get("enterpriseObjectId")
     logical_id = _uuid(row.get("logicalId"))
     if not isinstance(object_id, int) or logical_id is None:
@@ -150,6 +158,7 @@ class HubServiceTable:
     _services: tuple[HubService, ...]
 
     def __init__(self, services: tuple[HubService, ...]) -> None:
+        """A table of *services*; ``from_refs`` builds one from a module's refs."""
         self._services = services
 
     @classmethod
@@ -177,13 +186,19 @@ class HubServiceTable:
         return cls(tuple(found))
 
     def services(self) -> tuple[HubService, ...]:
-        """Every service of the table: Edge hubs first, then clusters, each in read order."""
+        """Every service of the table.
+
+        Edge hubs first, then clusters, each in read order.
+        """
         return self._services
 
     def find(
         self, segment_object_id: int, service_logical_id: uuid.UUID
     ) -> HubService | None:
-        """The service of segment *segment_object_id* whose ``logical_id`` is *service_logical_id*, else ``None``.
+        """The service of segment *segment_object_id* named by *service_logical_id*.
+
+        That is the one whose ``logical_id`` is *service_logical_id*; else
+        ``None``.
 
         The segment is part of the key because a cluster's one object stands
         for the cluster in every segment.
@@ -201,7 +216,9 @@ class HubServiceTable:
     def find_for_hub(
         self, segment_object_id: int, hub_logical_id: uuid.UUID
     ) -> HubService | None:
-        """The service of segment *segment_object_id* for the hub with logical ID *hub_logical_id*, else ``None``.
+        """The service of segment *segment_object_id* for a hub, else ``None``.
+
+        The hub is the one with logical ID *hub_logical_id*.
 
         The hub's logical ID is the service's ``data_logical_id``: the Edge's
         for an Edge hub, the cluster's own for a cluster.
@@ -218,7 +235,10 @@ class HubServiceTable:
 
 
 def _set(value: object) -> bool:
-    """Whether *value* names something: ``MISSING``, ``None`` and ``""`` name nothing."""
+    """Whether *value* names something.
+
+    ``MISSING``, ``None`` and ``""`` name nothing.
+    """
     return value is not MISSING and value is not None and value != ""
 
 
@@ -236,7 +256,10 @@ def _is_backhaul_service(field_info: FieldInfo) -> bool:
 
 
 def _unserved(data: VcoModel) -> Iterator[tuple[Path, BackhaulEdge, VcoModel | None]]:
-    """Each entry of *data* that names a hub and no service, with its path and its segment entry."""
+    """Each entry of *data* that names a hub and no service.
+
+    Each comes with its path and its segment entry.
+    """
     for site in walk_fields(data, holds=can_hold_owner, fields=_is_backhaul_service):
         model = site.model
         if (
@@ -248,7 +271,9 @@ def _unserved(data: VcoModel) -> Iterator[tuple[Path, BackhaulEdge, VcoModel | N
 
 
 def missing_services(data: VcoModel) -> tuple[Path, ...]:
-    """The paths of the ``BackhaulEdge`` entries of *data* that name a hub (``edge_logical_id``) and no service (``logical_id``).
+    """The paths of the ``BackhaulEdge`` entries of *data* with a hub and no service.
+
+    Each names a hub (``edge_logical_id``) and no service (``logical_id``).
 
     Such an entry cannot have its row: the row points at the service.
     """
@@ -266,7 +291,10 @@ def _segment_object_id(
     segment_object_ids: Mapping[int, int],
     resolvers: IdentityLookup | None,
 ) -> int | None:
-    """The object ID of the segment entry *segment*: from *segment_object_ids*, else the segment resolver; ``None`` when there is none.
+    """The object ID of the segment entry *segment*.
+
+    It comes from *segment_object_ids*, else from the segment resolver;
+    ``None`` when there is none.
 
     Raises ``ResolverNotLoadedError`` when the resolver is needed and not loaded.
     """
@@ -296,7 +324,9 @@ def fill_services(
     *,
     skip: Collection[Path] = (),
 ) -> None:
-    """Give each ``BackhaulEdge`` of *data* that names a hub and no service the hub's service for its segment.
+    """Give each ``BackhaulEdge`` of *data* the hub's service for its segment.
+
+    Each entry given one names a hub and no service.
 
     The service is the one *table* holds for the hub (``edge_logical_id``)
     in the entry's segment, found by the segment's object ID: *segment_object_ids*
@@ -331,7 +361,9 @@ def fill_services(
 def missing_service_error(
     data: VcoModel, *, as_read: VcoModel | None = None
 ) -> HubServiceNotFoundError | None:
-    """The error for the first entry of *data* that names a hub and no service, or ``None`` when there is none.
+    """The error for the first entry of *data* that names a hub and no service.
+
+    ``None`` when there is none.
 
     An entry that was so as *as_read* is left out: the module as it stands
     was stored with it, and an edit that does not touch it is no cause to
@@ -355,10 +387,11 @@ def missing_service_error(
             path=str(path),
             message=(
                 f"{path} names the hub {hub!r} and no service for it: the row "
-                + "that goes with the rule points at the hub's service for this "
-                + "profile and segment, so it cannot be added. Give the entry's "
-                + f"logicalId, the hub's service: {patch_text(path.child('logical_id'))}, "
-                + "or add the hub through apply, which fills it."
+                "that goes with the rule points at the hub's service for this "
+                "profile and segment, so it cannot be added. Give the entry's "
+                "logicalId, the hub's service: "
+                f"{patch_text(path.child('logical_id'))}, "
+                "or add the hub through apply, which fills it."
             ),
         )
     return None

@@ -98,10 +98,12 @@ def test_null_on_a_member_inherits_the_group() -> None:
 def test_a_scalar_sets_local() -> None:
     e, _ = _bound()
     _ = e.merge_patch({"enabled": True, "level": 4})
-    assert e.enabled.is_local and e.enabled.local is True
+    assert e.enabled.is_local
+    assert e.enabled.local is True
     assert e.level.local == 4
     dump = _dump(e)
-    assert dump["enabled"] is True and dump["level"] == 4
+    assert dump["enabled"] is True
+    assert dump["level"] == 4
     # A value equal to what the profile gives is the edge's own all the same.
     _ = e.merge_patch({"enabled": False})
     assert _dump(e)["enabled"] is False
@@ -140,7 +142,7 @@ def test_an_object_on_an_inherited_field_starts_from_the_profile() -> None:
     assert (p.settings.a, p.settings.b) == (4, True)
 
 
-def test_an_object_on_an_inherited_field_the_profile_lacks_starts_from_the_display_default() -> (
+def test_an_object_on_an_inherited_field_the_profile_lacks_starts_from_the_display_default() -> (  # noqa: E501 (a test's name)
     None
 ):
     e = Mod[Edge].model_validate(mod_json())
@@ -195,7 +197,9 @@ def test_a_whole_group_in_one_patch() -> None:
 
 @pytest.mark.parametrize("flag", [True, False])
 @pytest.mark.parametrize("local", [True, False])
-def test_the_flag_of_a_by_flag_field_is_not_patchable(flag: bool, local: bool) -> None:
+def test_the_flag_of_a_by_flag_field_is_not_patchable(
+    *, flag: bool, local: bool
+) -> None:
     keys: dict[str, object] = (
         {"segments": [{"segment": _SEGMENT, "mapping": {"override": True}}]}
         if local
@@ -233,7 +237,7 @@ def test_an_object_on_a_local_by_flag_field_merges_into_it() -> None:
     assert _dump(e)["affinity"] == {"override": True, "affinity": ["x", "y"]}
 
 
-def test_an_object_on_a_by_flag_field_that_is_stored_unflagged_starts_from_the_profile() -> (
+def test_an_object_on_a_by_flag_field_that_is_stored_unflagged_starts_from_the_profile() -> (  # noqa: E501 (a test's name)
     None
 ):
     # The edge stores a reset object (flag false): not local, so the profile's value
@@ -443,7 +447,7 @@ def test_a_structural_or_unconverted_change_still_turns_on_the_override_flag() -
         assert profile.flag is True
 
 
-def test_an_inheritable_change_beside_a_plain_one_leaves_the_flag_to_the_plain_one() -> (
+def test_an_inheritable_change_beside_a_plain_one_leaves_the_flag_to_the_plain_one() -> (  # noqa: E501 (a test's name)
     None
 ):
     model = _Flagged[Edge].model_validate({})

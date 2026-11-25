@@ -1,3 +1,11 @@
+"""What the configuration modules share: segment metadata, group refs, segment lookup.
+
+``SegmentMetadata`` is the ``segment`` descriptor of a segment entry. The functions
+find a segment entry of a module by name or ID, add an empty one a layer lacks
+(``get_or_create_segment``), and bind a layer's data to the profile module it
+inherits from (``bind_profile_layers``).
+"""
+
 import copy
 import uuid
 from collections.abc import Mapping, Sequence
@@ -108,7 +116,8 @@ def profile_placeholder(
     """
     if profile_segments is None:
         raise UnboundError(
-            f"segment {name!r} is not in this layer, and this object is not bound to a profile; load it through ConfigPipeline"
+            f"segment {name!r} is not in this layer, and this object is not bound "
+            "to a profile; load it through ConfigPipeline"
         )
     entry = _profile_segment_called(profile_segments, name)
     if entry is not None:
@@ -148,10 +157,14 @@ def profile_segment_id(
 def _profile_segment_entry(
     profile_segments: Sequence[Mapping[str, object]] | None, selector: object
 ) -> Mapping[str, object] | None:
-    """The profile segment entry *selector* names (``profile_segment_name``), or None."""
+    """The profile segment entry *selector* names, or None.
+
+    See ``profile_segment_name``.
+    """
     if profile_segments is None:
         raise UnboundError(
-            f"segment {selector!r}: this object is not bound to a profile; load it through ConfigPipeline"
+            f"segment {selector!r}: this object is not bound to a profile; "
+            "load it through ConfigPipeline"
         )
     text = str(selector)
     entry = _profile_segment_called(profile_segments, text)
@@ -168,7 +181,10 @@ def _profile_segment_entry(
 
 
 def _segment_name(entry: Mapping[str, object]) -> str | None:
-    """``entry["segment"]["name"]``, or None if any step is missing or it is not a string."""
+    """``entry["segment"]["name"]``, or None.
+
+    None if any step is missing or it is not a string.
+    """
     descriptor = entry.get("segment")
     name = descriptor.get("name") if is_dict(descriptor) else None
     return name if isinstance(name, str) else None
@@ -201,7 +217,7 @@ def copy_profile_segments(profile_data: object) -> list[dict[str, Any]]:
     if not is_list(segments):
         return []
     return [
-        cast(dict[str, Any], copy.deepcopy(entry))
+        cast("dict[str, Any]", copy.deepcopy(entry))
         for entry in segments
         if is_dict(entry)
     ]
@@ -237,7 +253,7 @@ def find_segment[S: _HasSegment](
     raise ValueError(f"Segment not found. Available: {', '.join(available)}")
 
 
-def get_or_create_segment[S: _HasSegment](
+def get_or_create_segment[S: _HasSegment](  # noqa: PLR0913, PLR0917 (existing: split it when it next changes)
     segments: list[S],
     name: str,
     profile_segments: Sequence[Mapping[str, object]] | None,
@@ -280,7 +296,9 @@ def bind_profile_layers(
     profile_data: object,
     profile_class: type[Layered[Profile]],
 ) -> list[dict[str, Any]]:
-    """Link *data* to the profile module it inherits from, and return the profile's segments for ``_profile_segments``.
+    """Link *data* to the profile module it inherits from.
+
+    Return the profile's segments for ``_profile_segments``.
 
     *profile_data* is the profile module's raw ``data`` (anything else, as for
     an edge whose profile has no such module, is a profile with no segments).
@@ -296,6 +314,6 @@ def bind_profile_layers(
         return segments
     raw: dict[str, Any] = {"segments": []}
     if is_dict(profile_data):
-        raw = {**cast(dict[str, Any], profile_data), "segments": segments}
+        raw = {**cast("dict[str, Any]", profile_data), "segments": segments}
     bind_layers(cast("Layered[Edge]", data), profile_class.model_validate(raw))
     return segments

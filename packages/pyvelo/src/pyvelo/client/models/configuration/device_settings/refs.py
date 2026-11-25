@@ -1,10 +1,15 @@
-from typing import Annotated, Any, Literal
+"""The ref rows of ``deviceSettings``: one ``ConfigurationRef`` class per ref name.
+
+Each names the enterprise object a part of the module points at, such as a
+segment, a hub, a data center or a DNS provider.
+"""
+
+from typing import Annotated, Any, ClassVar, Literal
 
 from pydantic import MISSING, ConfigDict
 
+from pyvelo.client.models.configuration.ref import ConfigurationRef
 from pyvelo.core import Alias, VcoModel
-
-from ..ref import ConfigurationRef
 
 DeviceSettingsRefName = Literal[
     "deviceSettings:authentication",
@@ -214,7 +219,7 @@ class DeviceSettingsZscalerSubLocationRef(ConfigurationRef):
 
 # Container class for all DeviceSettings refs
 class DeviceSettingsRefs(VcoModel):
-    model_config = ConfigDict(frozen=True)
+    model_config: ClassVar[ConfigDict] = ConfigDict(frozen=True)
 
     # Authentication
     authentication: Annotated[

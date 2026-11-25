@@ -75,7 +75,7 @@ def _make_realistic_stack() -> GetEdgeConfigurationStackResult:
 
 
 @pytest.mark.asyncio
-async def test_full_e2e_load_apply_save():
+async def test_full_e2e_load_apply_save() -> None:
     """Exercise loading a named edge, applying a firewall patch, and saving."""
     client = MockVcoClient(stack=_make_realistic_stack(), edges=[BRANCH_NYC])
 
@@ -154,7 +154,7 @@ async def test_full_e2e_load_apply_save():
 
 
 @pytest.mark.asyncio
-async def test_e2e_dry_run():
+async def test_e2e_dry_run() -> None:
     """dry_run should report what would change without making API calls."""
     client = MockVcoClient(stack=_make_realistic_stack())
     pipeline = ConfigPipeline(client)
@@ -175,7 +175,7 @@ async def test_e2e_dry_run():
 
 
 @pytest.mark.asyncio
-async def test_e2e_no_changes_skips_save():
+async def test_e2e_no_changes_skips_save() -> None:
     """If no changes were made, save should skip API calls."""
     client = MockVcoClient(stack=_make_realistic_stack())
     pipeline = ConfigPipeline(client)
@@ -191,7 +191,7 @@ async def test_e2e_no_changes_skips_save():
 
 
 @pytest.mark.asyncio
-async def test_e2e_multiple_patches():
+async def test_e2e_multiple_patches() -> None:
     """Multiple apply calls should accumulate changes."""
     client = MockVcoClient(stack=_make_realistic_stack())
     pipeline = ConfigPipeline(client)

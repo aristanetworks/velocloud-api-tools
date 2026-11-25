@@ -1,4 +1,6 @@
-"""A hub that edge QoS rules use: removing it from the Branch-to-Hub list warns and names the edges, or refuses.
+"""A hub that edge QoS rules use, removed from the Branch-to-Hub list.
+
+The removal warns and names the edges, or refuses.
 
 A role call that disables an Edge hub deletes its service, and with it the
 backhaul refs of the rules of the edges that used the hub (those rules keep the
@@ -13,7 +15,7 @@ from typing import Any, Literal
 
 import pytest
 from hub_helpers import HUB_A, HUB_B, Hub, ds_with_vpn, hub_row
-from hub_state import (  # pyright: ignore[reportImplicitRelativeImport]
+from hub_state import (
     hub_pipeline,
     hub_profile_state,
     profile_hub_rows,
@@ -47,7 +49,10 @@ def service_id(hub: Hub) -> int:
 
 
 def service_row(hub: Hub) -> dict[str, Any]:
-    """The row of *hub*'s Edge service for the Global Segment of the profile, with all three roles."""
+    """The row of *hub*'s Edge service for the Global Segment of the profile.
+
+    It has all three roles.
+    """
     return hub_row(
         hub,
         service_id=service_id(hub),
@@ -58,7 +63,10 @@ def service_row(hub: Hub) -> dict[str, Any]:
 
 
 async def profile_with(*hubs: Hub) -> ConfigState:
-    """A profile whose Global Segment has *hubs* in all three lists, each with its service."""
+    """A profile whose Global Segment has *hubs* in all three lists.
+
+    Each hub has its service.
+    """
     ds = ds_with_vpn(GLOBAL, hubs=hubs, bridges=hubs, backhaul=hubs)
     refs = profile_hub_rows(
         segment_row(GLOBAL[0], GLOBAL[3], GLOBAL[2]),
@@ -74,7 +82,10 @@ async def profile_with(*hubs: Hub) -> ConfigState:
 
 
 async def remove(state: ConfigState, *hubs: Hub, only_backhaul: bool = False) -> None:
-    """Take *hubs* out of the three lists (out of the backhaul list only, with *only_backhaul*), as the UI's removal does."""
+    """Take *hubs* out of the three lists, as the UI's removal does.
+
+    With *only_backhaul*, take them out of the backhaul list only.
+    """
     gone = {hub.name: delete() for hub in hubs}
     vpn: dict[str, Any] = {"backHaulEdges": gone}
     if not only_backhaul:
@@ -91,7 +102,10 @@ def used_by_edge(
     *hubs: Hub,
     configuration_id: int = EDGE_CONFIG,
 ) -> None:
-    """Give Edge *edge* a configuration whose QoS module has a ``backHaulEdge`` row for the service of each of *hubs*."""
+    """Give Edge *edge* a configuration whose QoS module has ``backHaulEdge`` rows.
+
+    It has one for the service of each of *hubs*.
+    """
     edge_id, name = edge
     if edge_id not in store.edges:
         store.add_edge(edge_id, logical_id=str(uuid.UUID(int=edge_id)), name=name)
@@ -146,7 +160,10 @@ def in_use_warnings(warnings: list[ValidationWarning]) -> list[ValidationWarning
 
 
 async def used_hub_save() -> tuple[ConfigPipeline, ModuleStore, ConfigState]:
-    """A profile that removes Hub-A, which Branch-1's QoS rules use, from its lists: the pipeline, the store and the state."""
+    """A profile that removes Hub-A, which Branch-1's QoS rules use, from its lists.
+
+    The pipeline, the store and the state.
+    """
     state = await profile_with(HUB_A, HUB_B)
     await remove(state, HUB_A)
     pipeline, store = hub_pipeline(state, vpn_check=True)
@@ -154,16 +171,20 @@ async def used_hub_save() -> tuple[ConfigPipeline, ModuleStore, ConfigState]:
     return pipeline, store, state
 
 
-async def test_removing_a_hub_that_an_edge_uses_warns_and_names_the_edge_and_goes_on():
+async def test_removing_a_hub_that_an_edge_uses_warns_and_names_the_edge_and_goes_on() -> (  # noqa: E501 (a test's name)
+    None
+):
     pipeline, store, state = await used_hub_save()
 
     result = await pipeline.save(state)
 
     (warning,) = in_use_warnings(result.warnings)
     assert warning.path == 'deviceSettings: segments["Global Segment"].vpn'
-    assert "Hub-A" in warning.message and "Branch-1" in warning.message
+    assert "Hub-A" in warning.message
+    assert "Branch-1" in warning.message
     assert "Hub-B" not in warning.message
-    assert "deletes" in warning.message and "service" in warning.message
+    assert "deletes" in warning.message
+    assert "service" in warning.message
     assert [(o.step.action, o.step.role, o.status) for o in result.steps] == [
         ("disable", "hub", "sent")
     ]
@@ -171,7 +192,7 @@ async def test_removing_a_hub_that_an_edge_uses_warns_and_names_the_edge_and_goe
     assert len(writes(store)) == 1
 
 
-async def test_the_advice_to_keep_the_hub_names_the_lists_the_patch_restores():
+async def test_the_advice_to_keep_the_hub_names_the_lists_the_patch_restores() -> None:
     pipeline, _, state = await used_hub_save()
 
     result = await pipeline.save(state)
@@ -186,7 +207,7 @@ async def test_the_advice_to_keep_the_hub_names_the_lists_the_patch_restores():
     assert "`vpn.backHaulEdges`" in warning.message
 
 
-async def test_with_refuse_a_hub_an_edge_uses_raises_before_any_step():
+async def test_with_refuse_a_hub_an_edge_uses_raises_before_any_step() -> None:
     pipeline, store, state = await used_hub_save()
 
     with pytest.raises(HubListError) as error:
@@ -196,15 +217,17 @@ async def test_with_refuse_a_hub_an_edge_uses_raises_before_any_step():
     assert error.value.hubs == ("Hub-A",)
     assert error.value.segment == "Global Segment"
     message = str(error.value)
-    assert "Branch-1" in message and 'on_hub_in_use="warn"' in message
-    assert role_calls(store) == [] and writes(store) == []
+    assert "Branch-1" in message
+    assert 'on_hub_in_use="warn"' in message
+    assert role_calls(store) == []
+    assert writes(store) == []
     assert edge_hub_services(store) == ["Hub-A", "Hub-B"]
     # Nothing was lost: the same save with the default goes on.
     result = await pipeline.save(state)
     assert [o.status for o in result.steps] == ["sent"]
 
 
-async def test_a_hub_no_edge_uses_gives_no_warning_and_is_not_refused():
+async def test_a_hub_no_edge_uses_gives_no_warning_and_is_not_refused() -> None:
     state = await profile_with(HUB_A, HUB_B)
     await remove(state, HUB_B)
     pipeline, store = hub_pipeline(state, vpn_check=True)
@@ -216,7 +239,7 @@ async def test_a_hub_no_edge_uses_gives_no_warning_and_is_not_refused():
     assert edge_hub_services(store) == ["Hub-A"]
 
 
-async def test_each_hub_in_use_has_its_own_warning_with_its_own_edges():
+async def test_each_hub_in_use_has_its_own_warning_with_its_own_edges() -> None:
     state = await profile_with(HUB_A, HUB_B)
     await remove(state, HUB_A, HUB_B)
     _ = await ConfigPipeline(client=None).apply(
@@ -231,13 +254,15 @@ async def test_each_hub_in_use_has_its_own_warning_with_its_own_edges():
     result = await pipeline.save(state)
 
     first, second = in_use_warnings(result.warnings)
-    assert "Hub-A" in first.message and "Branch-1" in first.message
+    assert "Hub-A" in first.message
+    assert "Branch-1" in first.message
     assert "Branch-2" not in first.message
     assert "Hub-B" in second.message
-    assert "Branch-1" in second.message and "Branch-2" in second.message
+    assert "Branch-1" in second.message
+    assert "Branch-2" in second.message
 
 
-async def test_with_refuse_every_edge_of_every_hub_in_use_is_in_the_error():
+async def test_with_refuse_every_edge_of_every_hub_in_use_is_in_the_error() -> None:
     state = await profile_with(HUB_A, HUB_B)
     await remove(state, HUB_A, HUB_B)
     _ = await ConfigPipeline(client=None).apply(
@@ -257,7 +282,7 @@ async def test_with_refuse_every_edge_of_every_hub_in_use_is_in_the_error():
     assert role_calls(store) == []
 
 
-async def test_a_dry_run_warns_the_same_way_and_sends_nothing():
+async def test_a_dry_run_warns_the_same_way_and_sends_nothing() -> None:
     pipeline, store, state = await used_hub_save()
 
     result = await pipeline.save(state, dry_run=True)
@@ -265,20 +290,24 @@ async def test_a_dry_run_warns_the_same_way_and_sends_nothing():
     (warning,) = in_use_warnings(result.warnings)
     assert "Branch-1" in warning.message
     assert [o.status for o in result.steps] == ["would_send"]
-    assert role_calls(store) == [] and writes(store) == []
+    assert role_calls(store) == []
+    assert writes(store) == []
 
 
-async def test_a_dry_run_with_refuse_raises_the_same_error():
+async def test_a_dry_run_with_refuse_raises_the_same_error() -> None:
     pipeline, store, state = await used_hub_save()
 
     with pytest.raises(HubListError) as error:
         _ = await pipeline.save(state, dry_run=True, on_hub_in_use="refuse")
 
     assert error.value.edges == (BRANCH_1,)
-    assert role_calls(store) == [] and writes(store) == []
+    assert role_calls(store) == []
+    assert writes(store) == []
 
 
-async def test_a_hub_that_only_leaves_the_backhaul_list_is_not_in_use_in_that_sense():
+async def test_a_hub_that_only_leaves_the_backhaul_list_is_not_in_use_in_that_sense() -> (  # noqa: E501 (a test's name)
+    None
+):
     state = await profile_with(HUB_A, HUB_B)
     await remove(state, HUB_A, only_backhaul=True)
     pipeline, store = hub_pipeline(state, vpn_check=True)
@@ -292,9 +321,10 @@ async def test_a_hub_that_only_leaves_the_backhaul_list_is_not_in_use_in_that_se
 
 
 @pytest.mark.parametrize("leaves_the_hub_list", [True, False])
-async def test_the_services_read_asks_for_edge_qos_usage_only_when_a_hub_leaves_the_hub_list(
+async def test_the_services_read_asks_for_edge_qos_usage_only_when_a_hub_leaves_the_hub_list(  # noqa: E501 (a test's name)
+    *,
     leaves_the_hub_list: bool,
-):
+) -> None:
     state = await profile_with(HUB_A, HUB_B)
     await remove(state, HUB_A, only_backhaul=not leaves_the_hub_list)
     pipeline, store = hub_pipeline(state, vpn_check=True)
@@ -358,7 +388,9 @@ def service_with(
     )
 
 
-def in_use(steps: list[HubStep], *services: EdgeHubService):
+def in_use(
+    steps: list[HubStep], *services: EdgeHubService
+) -> dict[HubStep, tuple[tuple[int, str], ...]]:
     return hubs_in_use(
         steps,
         HubServices(edge_hubs=services),
@@ -367,7 +399,7 @@ def in_use(steps: list[HubStep], *services: EdgeHubService):
     )
 
 
-def test_hubs_in_use_gives_the_edges_whose_rows_are_backhaul_refs_once_each():
+def test_hubs_in_use_gives_the_edges_whose_rows_are_backhaul_refs_once_each() -> None:
     step = removal(HUB_A)
     service = service_with(
         HUB_A, usage(34, "Branch-1"), usage(70, "Branch-2"), usage(34, "Branch-1")
@@ -376,7 +408,7 @@ def test_hubs_in_use_gives_the_edges_whose_rows_are_backhaul_refs_once_each():
     assert in_use([step], service) == {step: ((34, "Branch-1"), (70, "Branch-2"))}
 
 
-def test_hubs_in_use_counts_only_rows_whose_ref_is_the_backhaul_ref_name():
+def test_hubs_in_use_counts_only_rows_whose_ref_is_the_backhaul_ref_name() -> None:
     step = removal(HUB_A)
     service = service_with(
         HUB_A,
@@ -389,7 +421,9 @@ def test_hubs_in_use_counts_only_rows_whose_ref_is_the_backhaul_ref_name():
     assert in_use([step], service) == {step: ((70, "Branch-2"),)}
 
 
-def test_hubs_in_use_leaves_out_a_hub_no_row_uses_and_a_service_that_was_not_asked_for():
+def test_hubs_in_use_leaves_out_a_hub_no_row_uses_and_a_service_that_was_not_asked_for() -> (  # noqa: E501 (a test's name)
+    None
+):
     used, unused = removal(HUB_A), removal(HUB_B)
     services = (
         service_with(HUB_A, usage(34, "Branch-1")),
@@ -403,7 +437,7 @@ def test_hubs_in_use_leaves_out_a_hub_no_row_uses_and_a_service_that_was_not_ask
     assert in_use([used], asked_not) == {}
 
 
-def test_hubs_in_use_looks_only_at_the_disable_hub_steps_of_edge_hubs():
+def test_hubs_in_use_looks_only_at_the_disable_hub_steps_of_edge_hubs() -> None:
     service = service_with(HUB_A, usage(34, "Branch-1"))
     others = [
         removal(HUB_A, role="backhaul"),
@@ -422,17 +456,20 @@ def test_hubs_in_use_looks_only_at_the_disable_hub_steps_of_edge_hubs():
     assert in_use(others, service) == {}
 
 
-def test_hubs_in_use_takes_the_service_of_the_profile_and_segment_only():
+def test_hubs_in_use_takes_the_service_of_the_profile_and_segment_only() -> None:
     step = removal(HUB_A)
     elsewhere = service_with(HUB_A, usage(34, "Branch-1"), configuration_id=CONFIG + 1)
 
     assert in_use([step], elsewhere) == {}
 
 
-async def test_an_on_hub_in_use_that_is_neither_warn_nor_refuse_is_a_value_error():
+async def test_an_on_hub_in_use_that_is_neither_warn_nor_refuse_is_a_value_error() -> (
+    None
+):
     pipeline, store, state = await used_hub_save()
 
-    with pytest.raises(ValueError, match="'warn'.*'refuse'"):
+    with pytest.raises(ValueError, match=r"'warn'.*'refuse'"):
         _ = await pipeline.save(state, on_hub_in_use="refues")  # pyright: ignore[reportArgumentType]
 
-    assert role_calls(store) == [] and writes(store) == []
+    assert role_calls(store) == []
+    assert writes(store) == []

@@ -62,22 +62,27 @@ class DiffResult:
 
     @cached_property
     def added(self) -> list[Added]:
+        """The items in desired and not in current, in the order of ``changes``."""
         return [c for c in self.changes if isinstance(c, Added)]
 
     @cached_property
     def removed(self) -> list[Removed]:
+        """The items in current and not in desired, in the order of ``changes``."""
         return [c for c in self.changes if isinstance(c, Removed)]
 
     @cached_property
     def modified(self) -> list[Modified]:
+        """The items in both whose fields differ, in the order of ``changes``."""
         return [c for c in self.changes if isinstance(c, Modified)]
 
     @cached_property
     def unchanged(self) -> list[Unchanged]:
+        """The items identical in both, in the order of ``changes``."""
         return [c for c in self.changes if isinstance(c, Unchanged)]
 
     @property
     def has_changes(self) -> bool:
+        """Whether any item was added, removed or modified."""
         return any(not isinstance(c, Unchanged) for c in self.changes)
 
 
@@ -97,8 +102,8 @@ def _diff_values(
         if isinstance(cur, dict) and isinstance(des, dict):
             changes.extend(
                 _diff_values(
-                    cast(dict[str, object], cur),
-                    cast(dict[str, object], des),
+                    cast("dict[str, object]", cur),
+                    cast("dict[str, object]", des),
                     path,
                 )
             )
@@ -106,8 +111,8 @@ def _diff_values(
             changes.append(
                 FieldChange(
                     path=path,
-                    current=cast(object, cur),
-                    desired=cast(object, des),
+                    current=cast("object", cur),
+                    desired=cast("object", des),
                 )
             )
     return changes
@@ -120,7 +125,7 @@ def _index_by_key(
     by_key: dict[object, BaseModel] = {}
     repeated: dict[object, None] = {}
     for item in items:
-        key = cast(object, getattr(item, key_field))
+        key = cast("object", getattr(item, key_field))
         if key in by_key:
             repeated[key] = None
         by_key[key] = item
@@ -161,8 +166,8 @@ def diff_intents(
     for key in sorted(current_by_key.keys() & desired_by_key.keys(), key=repr):
         cur = current_by_key[key]
         des = desired_by_key[key]
-        cur_d = cast(dict[str, object], cur.model_dump(mode="json"))
-        des_d = cast(dict[str, object], des.model_dump(mode="json"))
+        cur_d = cast("dict[str, object]", cur.model_dump(mode="json"))
+        des_d = cast("dict[str, object]", des.model_dump(mode="json"))
         if cur_d == des_d:
             changes.append(Unchanged(key=key, item=cur))
         else:

@@ -48,35 +48,38 @@ class HasResolvable(VcoModel):
 
 
 class TestResolvableMarker:
-    def test_processed_marker_in_metadata(self):
+    def test_processed_marker_in_metadata(self) -> None:
         fi = HasResolvable.model_fields["segment_id"]
         processed = get_resolvable(fi)
         assert processed is not None
         assert processed.identity_type is SegmentIdentity
         assert processed.attribute == "segment_id"
 
-    def test_different_attribute_for_same_identity(self):
+    def test_different_attribute_for_same_identity(self) -> None:
         fi = HasResolvable.model_fields["segment_logical_id"]
         processed = get_resolvable(fi)
         assert processed is not None
         assert processed.attribute == "logical_id"
 
-    def test_different_identity_type(self):
+    def test_different_identity_type(self) -> None:
         fi = HasResolvable.model_fields["app_id"]
         processed = get_resolvable(fi)
         assert processed is not None
         assert processed.identity_type is ApplicationIdentity
         assert processed.attribute == "id"
 
-    def test_model_validates_normally(self):
+    def test_model_validates_normally(self) -> None:
         m = HasResolvable(segment_id=42)
         assert m.segment_id == 42
 
 
 class TestAliasWithResolvableOnSubclass:
-    """Regression: Alias must be applied even when a parent already processed Resolvable."""
+    """Regression: Alias must be applied.
 
-    def test_subclass_alias_applied_alongside_inherited_resolvable(self):
+    Even when a parent already processed Resolvable.
+    """
+
+    def test_subclass_alias_applied_alongside_inherited_resolvable(self) -> None:
         class Parent(VcoModel):
             app_id: Annotated[int, Resolvable(ApplicationIdentity, lambda i: i.id)] = -1
 
@@ -91,7 +94,7 @@ class TestAliasWithResolvableOnSubclass:
         processed = get_resolvable(fi)
         assert processed is not None
 
-    def test_alias_roundtrip_on_subclass(self):
+    def test_alias_roundtrip_on_subclass(self) -> None:
         class Parent(VcoModel):
             app_id: Annotated[int, Resolvable(ApplicationIdentity, lambda i: i.id)] = -1
 
@@ -110,7 +113,8 @@ def test_an_accessor_is_read_and_applied() -> None:
         segment_id: Annotated[int, Resolvable(SegmentIdentity, lambda i: i.segment_id)]
 
     found = get_resolvable(Rule.model_fields["segment_id"])
-    assert found is not None and found.attribute == "segment_id"
+    assert found is not None
+    assert found.attribute == "segment_id"
     assert found.accessor(GUEST) == GUEST.segment_id
 
 
@@ -126,7 +130,7 @@ BAD_ACCESSORS: list[Callable[[SegmentIdentity], object] | str] = [
 ]
 
 # Accessors that read no field, so no field can be suggested from what they read.
-NO_FIELD_ACCESSORS: list[object] = [lambda i: 0, lambda i: 1 / 0, 5]  # pyright: ignore[reportUnknownLambdaType]
+NO_FIELD_ACCESSORS: list[object] = [lambda _: 0, lambda _: 1 / 0, 5]  # pyright: ignore[reportUnknownLambdaType]
 
 
 @pytest.mark.parametrize("accessor", BAD_ACCESSORS)
@@ -143,7 +147,7 @@ def test_an_accessor_that_reads_no_field_is_refused(accessor: object) -> None:
 
 def test_an_accessor_that_raises_is_refused_with_what_it_raised() -> None:
     with pytest.raises(TypeError) as caught:
-        _ = Resolvable(SegmentIdentity, lambda i: 1 / 0)  # pyright: ignore[reportUnknownLambdaType]
+        _ = Resolvable(SegmentIdentity, lambda _: 1 / 0)
     text = str(caught.value)
     assert "raised" in text
     assert "ZeroDivisionError" in text
@@ -217,7 +221,7 @@ def test_a_resolvable_inside_a_kind_is_checked_against_the_inner_type() -> None:
         ] = Field(default=...)
 
     assert get_resolvable(Fits.model_fields["group"]) is not None
-    with pytest.raises(TypeError, match="lambda i: i.logical_id"):
+    with pytest.raises(TypeError, match=r"lambda i: i\.logical_id"):
 
         class Refused(Layered[Edge]):  # pyright: ignore[reportUnusedClass]
             group: Annotated[

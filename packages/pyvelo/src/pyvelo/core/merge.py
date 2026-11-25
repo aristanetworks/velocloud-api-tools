@@ -11,9 +11,8 @@ import difflib
 import enum
 import functools
 import json
-from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Literal, LiteralString, cast, get_args, get_origin
+from typing import TYPE_CHECKING, Literal, LiteralString, cast, get_args, get_origin
 
 from pydantic import (
     MISSING,
@@ -21,7 +20,6 @@ from pydantic import (
     TypeAdapter,
     ValidationError,
 )
-from pydantic.fields import FieldInfo
 from pydantic_core import InitErrorDetails, PydanticCustomError, PydanticUndefined
 
 from .base import (
@@ -95,11 +93,18 @@ from .rebase import (
     parse_key_text,
 )
 
+if TYPE_CHECKING:
+    from collections.abc import Callable, Mapping, Sequence
+
+    from pydantic.fields import FieldInfo
+
 
 def apply_patch(
     model: VcoModel, patch: Mapping[str, object], resolvers: IdentityResolver | None
 ) -> VcoModel:
-    """Recursively merge a partial dict into *model*, in place. See ``VcoModel.merge_patch``.
+    """Recursively merge a partial dict into *model*, in place.
+
+    See ``VcoModel.merge_patch``.
 
     *patch* must be a ``dict`` (``TypeError`` otherwise) of JSON values
     (``checked_patch``). It is checked and copied once, so *model* shares no
@@ -125,7 +130,7 @@ def apply_patch(
     return model
 
 
-def nest_patch(
+def nest_patch(  # noqa: C901 (existing: split it when it next changes)
     model: type[VcoModel],
     patch: object,
     *,
@@ -193,7 +198,7 @@ def nest_patch(
             if sub is None:
                 raise PatchError(
                     f"{cls.__name__}.{name} does not hold a single sub-model, "
-                    + "so the path cannot continue past it",
+                    "so the path cannot continue past it",
                     where,
                     "address",
                 )
@@ -277,7 +282,7 @@ def _field_name(names: Mapping[str, str], owner: str, key: object, path: Path) -
     if text.startswith("_"):
         raise PatchError(
             f"unknown directive {text!r}: the only directives are "
-            + f"{' and '.join(_DIRECTIVES)}, on a list item",
+            f"{' and '.join(_DIRECTIVES)}, on a list item",
             where,
             "operation",
         )
@@ -293,7 +298,9 @@ def _field_name(names: Mapping[str, str], owner: str, key: object, path: Path) -
 def _patch_fields(
     names: Mapping[str, str], owner: str, patch: Mapping[object, object], path: Path
 ) -> list[tuple[object, str, object]]:
-    """``(key, python name, value)`` for each key of *patch*, each checked by ``_field_name``.
+    """``(key, python name, value)`` for each key of *patch*.
+
+    Each key is checked by ``_field_name``.
 
     Two keys that name one field (``rule_id`` and ``ruleId``) raise
     ``PatchError`` at the field's path, naming both.
@@ -313,7 +320,7 @@ def _patch_fields(
     return fields
 
 
-def _merge_field(
+def _merge_field(  # noqa: PLR0913, PLR0917 (existing: split it when it next changes)
     model: VcoModel,
     name: str,
     field_info: FieldInfo,
@@ -347,12 +354,13 @@ def _merge_field(
     # A list, or a map of models: a list value, or item operations. An object
     # on a field that also takes one sub-model is that sub-model, unless the
     # field holds a list.
-    if _list_spec(field_info) is not None and not (
+    spec = _list_spec(field_info)
+    if spec is not None and not (
         is_dict(value)
         and _field_model_types(field_info)
         and not isinstance(_field_value(model, name), list)
     ):
-        _merge_list(model, name, field_info, value, resolvers, path)
+        _merge_list(model, name, field_info, spec, value, resolvers, path)
         return
 
     if is_dict(value):
@@ -394,7 +402,7 @@ def _merge_field(
 def _refuse_profile_only(
     model: VcoModel, name: str, field_info: FieldInfo, path: Path
 ) -> None:
-    """``PatchError`` if the patch names a ``ProfileOnly`` field of an edge layer's model.
+    """``PatchError`` if the patch names a ``ProfileOnly`` field of an edge-layer model.
 
     The edge layer holds none of the field's value, and what a save of the
     edge sent for it would be added to the profile's by the VCO instead of
@@ -408,15 +416,15 @@ def _refuse_profile_only(
         key = wire_name(type(model), name)
         raise PatchError(
             f"{key!r} belongs to the profile: the edge layer holds none, and one "
-            + "stored there would be added to the profile's by the VCO, not "
-            + "replace it. Send this patch to the profile's state, and leave "
-            + f"{key!r} out of an edge's",
+            "stored there would be added to the profile's by the VCO, not "
+            "replace it. Send this patch to the profile's state, and leave "
+            f"{key!r} out of an edge's",
             path,
             "invalid_value",
         )
 
 
-def _merge_owned(
+def _merge_owned(  # noqa: PLR0913, PLR0917 (existing: split it when it next changes)
     model: VcoModel,
     name: str,
     field_info: FieldInfo,
@@ -427,7 +435,9 @@ def _merge_owned(
     *,
     built: bool,
 ) -> None:
-    """Merge one patch value into the ``Owned`` that the edge layer holds at ``model.<name>``.
+    """Merge one patch value into the ``Owned`` at ``model.<name>``.
+
+    The edge layer holds the ``Owned`` there.
 
     ``null`` inherits (``Owned.inherit``). A value that is not an object sets
     the value local (``Owned.set_local``). An object is merged into the local
@@ -456,13 +466,13 @@ def _merge_owned(
     spec = _list_spec(field_info)
     model_types = _field_model_types(field_info)
     if spec is not None and not is_dict(value):
-        _merge_list(model, name, field_info, value, resolvers, path)
+        _merge_list(model, name, field_info, spec, value, resolvers, path)
         return
     if is_dict(value) and (spec is not None or model_types):
         _refuse_flag_key(model, name, field_info, value, path)
         local = owned.localize()
         if spec is not None and not (model_types and not isinstance(local, list)):
-            _merge_list(model, name, field_info, value, resolvers, path)
+            _merge_list(model, name, field_info, spec, value, resolvers, path)
             return
         if isinstance(local, VcoModel):
             _merge_model(local, value, resolvers, path, built=built)
@@ -494,7 +504,9 @@ def _refuse_flag_key(
     patch: Mapping[object, object],
     path: Path,
 ) -> None:
-    """``PatchError`` if *patch*, an object for a ``ByFlag`` field, names the flag that the encoding is made of.
+    """``PatchError`` if *patch*, an object for a ``ByFlag`` field, names its flag.
+
+    The flag is the one the encoding is made of.
 
     The flag says whether the edge overrides the profile. A patch that set it
     to false would leave a local value stored but not local, and one that set
@@ -512,21 +524,23 @@ def _refuse_flag_key(
                 inherit = json.dumps(_inherit_patch(wire_name(type(model), name), path))
                 raise PatchError(
                     f"{key!r} is the flag that says whether the edge overrides the "
-                    + "profile here, and it follows the value, so a patch cannot "
-                    + "set it (it would leave a local value that is not local, "
-                    + "or make the profile's value the edge's without a copy). "
-                    + f"Leave {key!r} out: an object given overrides it "
-                    + "(merged into the edge's value, or into a copy of the "
-                    + "profile's when the edge stores none; set_local() stores "
-                    + "the whole object it is given instead) and null inherits it "
-                    + f"(inherit()); to inherit, send {inherit}",
+                    "profile here, and it follows the value, so a patch cannot "
+                    "set it (it would leave a local value that is not local, "
+                    "or make the profile's value the edge's without a copy). "
+                    f"Leave {key!r} out: an object given overrides it "
+                    "(merged into the edge's value, or into a copy of the "
+                    "profile's when the edge stores none; set_local() stores "
+                    "the whole object it is given instead) and null inherits it "
+                    f"(inherit()); to inherit, send {inherit}",
                     path.child(encoding.flag),
                     "invalid_value",
                 )
 
 
 def _inherit_patch(field_key: str, path: Path) -> dict[str, object]:
-    """The patch that sends ``null`` to the field at *path* (its own key *field_key*), as the parts of *path* nest.
+    """The patch that sends ``null`` to the field at *path*.
+
+    The field's own key is *field_key*, and the patch nests as the parts of *path* do.
 
     A keyed item is named by its selector and a list position by ``at``.
     """
@@ -543,7 +557,9 @@ def _inherit_patch(field_key: str, path: Path) -> dict[str, object]:
 
 
 def _null_value(field_info: FieldInfo, name: str, path: Path, *, built: bool) -> object:
-    """What ``null`` means for field *name*: ``MISSING``, ``None``, or ``PatchError`` at *path*.
+    """What ``null`` means for field *name*.
+
+    It is ``MISSING``, ``None``, or ``PatchError`` at *path*.
 
     A field whose type takes ``MISSING`` is unset by ``null``, one that takes
     only ``None`` is set to it, and one that takes neither refuses it. A field
@@ -593,7 +609,9 @@ def validate_patched_value(
     models: Sequence[type[VcoModel]],
     path: Path,
 ) -> object:
-    """*value* validated by *adapter* the way a patched value is: the one place that does it.
+    """*value* validated by *adapter* the way a patched value is.
+
+    This is the one place that does it.
 
     The patch context (``{"patch": True}``) stops ``DefaultingScalar`` and
     ``DefaultingModel`` from turning a bad value into the default. A value that
@@ -621,7 +639,7 @@ def _refuse_bool_as_number(given: object, stored: object, path: Path) -> None:
         word = "true" if given else "false"
         raise PatchError(
             f"{word} is a boolean, which this value does not take: "
-            + f"it would be read as {stored!r}; send a number",
+            f"it would be read as {stored!r}; send a number",
             path,
             "invalid_value",
         )
@@ -662,7 +680,7 @@ def _python_place(loc: Sequence[int | str], models: Sequence[type[VcoModel]]) ->
 def _field_named(
     models: Sequence[type[VcoModel]], key: str
 ) -> tuple[type[VcoModel], str] | None:
-    """The first of *models* that has a field *key* names, and that field's python name."""
+    """The first of *models* with a field *key* names, and that field's python name."""
     for model in models:
         if (name := python_name(model, key)) is not None:
             return model, name
@@ -670,7 +688,9 @@ def _field_named(
 
 
 def _parts_before_fields(field_info: FieldInfo) -> int:
-    """How many parts of an error's location follow *field_info*'s name before the fields of its models.
+    """How many parts of an error's location follow *field_info*'s name.
+
+    They come before the fields of its models.
 
     A map gives its key; a list gives the position of the item (and, for a
     union of models, the tag of the member); a union of models gives the tag.
@@ -686,7 +706,9 @@ def _parts_before_fields(field_info: FieldInfo) -> int:
 
 
 def _validation_lines(exc: ValidationError, models: Sequence[type[VcoModel]]) -> str:
-    """What a ``ValidationError`` says, one ``place: message`` per error, joined by ``"; "``.
+    """What a ``ValidationError`` says, one ``place: message`` per error.
+
+    The errors are joined by ``"; "``.
 
     The place is in python names (``_python_place``), where *models* are the
     classes the validated value is made of; it is left out for an error of
@@ -700,7 +722,9 @@ def _validation_lines(exc: ValidationError, models: Sequence[type[VcoModel]]) ->
 
 
 def _without_input(exc: ValidationError) -> ValidationError:
-    """*exc* as an error whose text quotes no input value; ``errors()`` still holds them.
+    """*exc* as an error whose text quotes no input value.
+
+    ``errors()`` still holds them.
 
     Pydantic reads ``hide_input_in_errors`` from the outermost validator, which
     for a field typed as one model is a validator without the model's config. An
@@ -718,7 +742,8 @@ def _without_input(exc: ValidationError) -> ValidationError:
             _ = ValidationError.from_exception_data("", [detail])
         except KeyError:  # an error type of a validator of ours, not pydantic's
             detail["type"] = PydanticCustomError(
-                cast(LiteralString, error["type"]), cast(LiteralString, error["msg"])
+                cast("LiteralString", error["type"]),
+                cast("LiteralString", error["msg"]),
             )
         details.append(detail)
     return ValidationError.from_exception_data(exc.title, details, hide_input=True)
@@ -730,7 +755,9 @@ def _validated[T](
     models: Sequence[type[VcoModel]],
     path: Path,
 ) -> T:
-    """*value* as ``validate(value, context={"patch": True})`` gives it; ``PatchError`` at *path* if it is refused.
+    """*value* as ``validate(value, context={"patch": True})`` gives it.
+
+    ``PatchError`` at *path* if it is refused.
 
     The error's cause is the ``ValidationError`` without its input, and the
     error is raised outside the ``except`` block: raised inside, it would
@@ -748,7 +775,9 @@ def _validated[T](
 
 
 def _check_merged(model: VcoModel, validate: Callable[..., object], path: Path) -> None:
-    """Check *model*, merged into and complete, as the parser would; ``PatchError`` at *path* if not.
+    """Check *model*, merged into and complete, as the parser would.
+
+    ``PatchError`` at *path* if it does not pass.
 
     *validate* is the validator of the place that holds *model*: its own
     class, or the union of models that the place is typed as, so that the
@@ -767,7 +796,8 @@ def _check_merged(model: VcoModel, validate: Callable[..., object], path: Path) 
         _ = validate(model.model_copy(), context={"patch": True})
     except ValidationError as exc:
         refusal = PatchError(
-            f"{name} is not valid after this change: {_validation_lines(exc, (type(model),))}",
+            f"{name} is not valid after this change: "
+            f"{_validation_lines(exc, (type(model),))}",
             path,
             "invalid_value",
         )
@@ -775,9 +805,9 @@ def _check_merged(model: VcoModel, validate: Callable[..., object], path: Path) 
     except Exception as exc:
         raise PatchError(
             f"a validator of {name} failed on the changed model with "
-            + f"{type(exc).__name__}: {exc}; the model validators of {name} "
-            + "must accept a model instance, as well as the dict a response "
-            + "gives them",
+            f"{type(exc).__name__}: {exc}; the model validators of {name} "
+            "must accept a model instance, as well as the dict a response "
+            "gives them",
             path,
             "invalid_value",
         ) from exc
@@ -840,7 +870,9 @@ def _refuse_unread_keys(
     data: Mapping[str, object] | Mapping[object, object],
     path: Path,
 ) -> None:
-    """Raise ``PatchError`` for a key of *data* that *model*, validated from it, has no field for.
+    """Raise ``PatchError`` for a key of *data* that *model* has no field for.
+
+    *model* is validated from *data*.
 
     ``_build_input`` checks a key against every variant of a union, and
     pydantic then drops the keys that only another variant has. This walks
@@ -924,7 +956,10 @@ def _is_known_id[T](
     accessor: Callable[[T], object],
     value: object,
 ) -> bool:
-    """True if a loaded identity of *identity_type* has ``accessor(identity) == value``."""
+    """True if a loaded identity of *identity_type* matches *value*.
+
+    It matches when ``accessor(identity) == value``.
+    """
     try:
         _ = resolvers.lookup_by(identity_type, accessor, value)
     except ResolutionError:
@@ -933,7 +968,10 @@ def _is_known_id[T](
 
 
 def _key_name_of(item_type: ListItemType | None, key_path: str) -> type[object] | None:
-    """The identity type that the field at *key_path* of the list's items names (``NameOf``), or None."""
+    """The identity type the field at *key_path* of the list's items names, or None.
+
+    The field names it with ``NameOf``.
+    """
     if item_type is None:
         return None
     fields: Mapping[str, FieldInfo] = item_type.fields
@@ -982,7 +1020,9 @@ def _require_ids_for_name(
     key: str,
     where: Path,
 ) -> None:
-    """Refuse *item*, named *key* and at *where* in the patch, if the IDs of that name were not set on it.
+    """Refuse *item* if the IDs of its name were not set on it.
+
+    *item* is named *key* and is at *where* in the patch.
 
     *identity_type* is what the field at *key_path* is the ``NameOf``. The IDs
     are the ``Resolvable`` fields for that type next to it. One that was neither
@@ -1005,11 +1045,11 @@ def _require_ids_for_name(
     if unset:
         raise LookupError(
             f"Cannot add {key!r} by name: no loaded {identity_type.__name__} "
-            + "resolver or profile entry has it, and the patch does not give "
-            + f"{', '.join(unset)} (at {where}). Give "
-            + f"{'it' if len(unset) == 1 else 'them'} in the body, or register a "
-            + f"{identity_type.__name__} resolver (the resolvers given to the "
-            + "merge; state.resolvers of a ConfigState)"
+            "resolver or profile entry has it, and the patch does not give "
+            f"{', '.join(unset)} (at {where}). Give "
+            f"{'it' if len(unset) == 1 else 'them'} in the body, or register a "
+            f"{identity_type.__name__} resolver (the resolvers given to the "
+            "merge; state.resolvers of a ConfigState)"
         )
 
 
@@ -1038,7 +1078,7 @@ def _new_item(
     return item
 
 
-def _new_keyed_item(
+def _new_keyed_item(  # noqa: PLR0913, PLR0917 (existing: split it when it next changes)
     spec: _ListSpec,
     item_type: ListItemType,
     body: Mapping[object, object],
@@ -1101,8 +1141,8 @@ def _inject_key_path(
 ) -> dict[object, object]:
     """Return a copy of *patch* with *key_value* set at the dotted *key_path*.
 
-    For ``"name"``, sets ``patch["name"]`` unless the patch already has it.
-    For ``"segment.name"``, makes ``patch["segment"] = {**existing, "name": key_value}``,
+    For ``"name"``, sets ``patch["name"]`` unless the patch already has it. For
+    ``"segment.name"``, makes ``patch["segment"] = {**existing, "name": key_value}``,
     keeping sibling keys and overriding any existing name.
     """
     *parents, leaf = key_path.split(".")
@@ -1122,7 +1162,10 @@ def _inject_key_path(
 
 
 def _input_keys(field_info: FieldInfo, field_name: str) -> tuple[str, ...]:
-    """Patch keys that may hold this field: the python name, plus the string alias if there is one."""
+    """Patch keys that may hold this field.
+
+    They are the python name, plus the string alias if there is one.
+    """
     alias = field_info.validation_alias or field_info.alias
     if isinstance(alias, str) and alias != field_name:
         return (field_name, alias)
@@ -1173,9 +1216,10 @@ def _build_input(
     names = _field_names_by_key(fields)
     built: JsonObject = {}
 
-    for key, field_name, value in _patch_fields(names, owner, patch, path):
+    for key, field_name, given in _patch_fields(names, owner, patch, path):
         fi = fields[field_name]
         child = path.child(field_name)
+        value = given
         if value is None:
             value = _null_value(fi, field_name, child, built=True)
         elif isinstance(value, str):
@@ -1201,10 +1245,12 @@ def _build_input(
     return built
 
 
-def _fill_from_names(
+def _fill_from_names(  # noqa: C901 (existing: split it when it next changes)
     fields: Mapping[str, FieldInfo], resolved: JsonObject, resolvers: IdentityResolver
 ) -> None:
-    """Fill, in *resolved*, what the identity a ``NameOf`` field names, or an ID of it, says.
+    """Fill, in *resolved*, what the identity a ``NameOf`` field names says.
+
+    The identity is found by its name or by an ID of it.
 
     For each ``NameOf`` field: with its name given, the ``Resolvable`` fields
     of that identity type that *resolved* lacks are filled from the identity
@@ -1258,7 +1304,9 @@ def _identity_of_given_id(
     identity_type: type[object],
     resolvers: IdentityResolver,
 ) -> object | None:
-    """The identity of *identity_type* that the first ID given in *resolved* finds, or None if none is given.
+    """The identity of *identity_type* that the first ID given in *resolved* finds.
+
+    None if no ID is given.
 
     An ID is a ``Resolvable`` field of the type that *resolved* gives a value
     other than ``null``, and whose type is not a fixed set of values: a
@@ -1297,7 +1345,10 @@ def _identity_of_given_id(
 
 
 def _is_value_set(tp: object) -> bool:
-    """True if *tp* is a ``Literal`` or an enum: a field of it holds one of a few values, not an ID."""
+    """True if *tp* is a ``Literal`` or an enum.
+
+    A field of it holds one of a few values, not an ID.
+    """
     return get_origin(tp) is Literal or (
         isinstance(tp, type) and issubclass(tp, enum.Enum)
     )
@@ -1310,11 +1361,14 @@ def _is_value_set(tp: object) -> bool:
 
 @dataclass(frozen=True, eq=False)
 class _ListSpec:
-    """How the items of a list field, or the values of a map field, are named and built."""
+    """How a list field's items, or a map field's values, are named and built."""
 
     kind: ListKind
     key_paths: tuple[str, ...]
-    """The ``KeyField`` paths of a keyed list, one per part of its key; empty for any other list."""
+    """The ``KeyField`` paths of a keyed list, one per part of its key.
+
+    Empty for any other list.
+    """
     alt_path: str | None
     """The ``KeyField`` alt key path of a keyed list that has one."""
     label_path: str | None
@@ -1335,7 +1389,7 @@ class _ListSpec:
 
 @functools.cache
 def _list_spec(field_info: FieldInfo) -> _ListSpec | None:
-    """The ``_ListSpec`` of a list or map field (``list_kind``), or None for any other field."""
+    """The ``_ListSpec`` of a list or map field (``list_kind``); None for any other."""
     kind = list_kind(field_info)
     if kind is None:
         return None
@@ -1373,7 +1427,10 @@ def _list_spec(field_info: FieldInfo) -> _ListSpec | None:
 
 
 def _type_args(field_info: FieldInfo, origin: type) -> tuple[object, ...]:
-    """The arguments of the ``origin[...]`` member of the field's annotation (``list`` or ``dict``)."""
+    """The arguments of the ``origin[...]`` member of the field's annotation.
+
+    *origin* is ``list`` or ``dict``.
+    """
     for member in _members_of(_held_type(field_info)):
         if get_origin(member) is origin and (args := get_args(member)):
             return args
@@ -1386,12 +1443,18 @@ def _members_of(annotation: object) -> list[object]:
 
 
 def _item_key(item: object, paths: tuple[str, ...]) -> KeyForm | None:
-    """The key of a keyed-list item at *paths* (``item_key``), in string form; None if it has none."""
+    """The key of a keyed-list item at *paths* (``item_key``), in string form.
+
+    None if it has none.
+    """
     return key_form(item_key(item, paths))
 
 
 def _alt_key(spec: _ListSpec, item: object) -> KeyForm | None:
-    """The alt key of *item* in a keyed list, in string form; None if the list has no alt key or the item none."""
+    """The alt key of *item* in a keyed list, in string form.
+
+    None if the list has no alt key or the item none.
+    """
     if spec.alt_path is None:
         return None
     return _item_key(item, (spec.alt_path,))
@@ -1403,13 +1466,19 @@ def _show_key(key: KeyValue) -> str:
 
 
 def _show_item(spec: _ListSpec, item: object, index: int) -> str:
-    """The item at position *index* of a keyed list for a message: by its key, or by its position when it has none."""
+    """The item at position *index* of a keyed list, for a message.
+
+    It is named by its key, or by its position when it has none.
+    """
     key = item_key(item, spec.key_paths)
     return f"item #{index}" if key is None else f"item {_show_key(key)}"
 
 
 def _show_selector(selector: object) -> str:
-    """A selector for a message: a tuple or list of key parts as ``key_text`` writes it, quoted."""
+    """A selector for a message.
+
+    A tuple or list of key parts is written as ``key_text`` writes it, quoted.
+    """
     if isinstance(selector, (tuple, list)):
         parts = cast("tuple[object, ...] | list[object]", selector)
         return _show_key(tuple(key_part(p) for p in parts))
@@ -1417,7 +1486,10 @@ def _show_selector(selector: object) -> str:
 
 
 def _key_path_part(key: KeyValue) -> Key:
-    """The path part that names an item by *key*: a one-part key in string form, a composite key part by part."""
+    """The path part that names an item by *key*.
+
+    It is a one-part key in string form, or a composite key part by part.
+    """
     return Key(key if isinstance(key, tuple) else str(key))
 
 
@@ -1446,7 +1518,9 @@ def _patch_value(
     data: Mapping[str, object] | Mapping[object, object],
     path: str,
 ) -> object:
-    """The value that *data*, a patch for a new item with *fields*, gives at dotted *path*.
+    """The value that *data* gives at dotted *path*.
+
+    *data* is a patch for a new item with *fields*.
 
     None if it gives none (or null, or MISSING). Keys of *data* are read as
     ``_build_input`` reads them (python name, alias or camelCase).
@@ -1478,7 +1552,9 @@ class _Selection:
     positions: list[int]
     """The positions of the items it names, in the list as it was."""
     key: KeyValue | None
-    """The key (keyed list) or value (value list) it stands for: as written, or the resolver's name.
+    """The key (keyed list) or value (value list) it stands for.
+
+    It is as written, or the resolver's name.
 
     None where it is none: a selector of a composite key that is not one of
     its parts, ``"#n"``, ``"+"``, any selector of another list.
@@ -1492,7 +1568,10 @@ class _Selection:
     new: bool = False
     """Whether it is ``"+"`` or ``"+tag"`` in a keyed list: a new item."""
     other_reading: tuple[KeyValue, list[int]] | None = None
-    """The key and positions of a second reading of the selector that names other items than ``positions`` (``_select``)."""
+    """The key and positions of a second reading of the selector.
+
+    The reading names other items than ``positions`` (``_select``).
+    """
 
 
 def _selector_keys(spec: _ListSpec, selector: object) -> list[KeyValue]:
@@ -1535,7 +1614,9 @@ def _refuse_two_readings(
     selector: object,
     where: Path,
 ) -> None:
-    """Raise ``PatchError`` at *where* if *selector* has two readings that name different items.
+    """Raise ``PatchError`` at *where* if *selector* has two readings.
+
+    That is, two readings that name different items.
 
     A text of a composite key is read as the form ``key_text`` writes and as
     its parts split at every comma; where those are two keys of the list, one
@@ -1555,15 +1636,15 @@ def _refuse_two_readings(
         shown.append(", ".join(texts))
     raise PatchError(
         f"{_show_selector(selector)} is ambiguous: written as a quoted key "
-        + f"(key_text) it names {shown[0]}, and as parts split at the commas "
-        + f"it names {shown[1]}. Write the key in its quoted form, as shown "
-        + "for the item, to choose",
+        f"(key_text) it names {shown[0]}, and as parts split at the commas "
+        f"it names {shown[1]}. Write the key in its quoted form, as shown "
+        "for the item, to choose",
         where,
         "several_items",
     )
 
 
-def _select(
+def _select(  # noqa: PLR0911 (existing: split it when it next changes)
     items: Sequence[object],
     spec: _ListSpec,
     selector: object,
@@ -1571,17 +1652,16 @@ def _select(
 ) -> _Selection:
     """Resolve *selector* against *items*; the one place a selector is read.
 
-    In a keyed list, tried in order: an item whose key is one
-    the selector stands for (``_selector_keys``), compared in string form
-    part by part (when two readings of the selector name different items,
-    the selection says so in ``other_reading`` and the caller refuses it,
-    ``_refuse_two_readings``); ``"#n"``, the item at position ``n``; ``"+"`` or ``"+tag"``,
-    a new item; an item whose alt key equals the selector in string form;
-    an item whose label does; and, where the key is a ``NameOf`` field and
-    with *resolvers*, the name the resolver has for the selector, as the key
-    once more. An unknown name raises ``ResolutionError``. In a value list, an
-    entry equal to the selector in string form, then ``"#n"``. In any other
-    list only ``"#n"`` names an item.
+    In a keyed list, tried in order: an item whose key is one the selector stands for
+    (``_selector_keys``), compared in string form part by part (when two readings of the
+    selector name different items, the selection says so in ``other_reading`` and the
+    caller refuses it, ``_refuse_two_readings``); ``"#n"``, the item at position ``n``;
+    ``"+"`` or ``"+tag"``, a new item; an item whose alt key equals the selector in
+    string form; an item whose label does; and, where the key is a ``NameOf`` field and
+    with *resolvers*, the name the resolver has for the selector, as the key once more.
+    An unknown name raises ``ResolutionError``. In a value list, an entry equal to the
+    selector in string form, then ``"#n"``. In any other list only ``"#n"`` names an
+    item.
     """
     if spec.kind == "value":
         text = str(selector)
@@ -1627,7 +1707,10 @@ def _with_key(items: Sequence[object], spec: _ListSpec, key: KeyValue) -> list[i
 
 
 def _with_part(items: Sequence[object], path: str, text: str) -> list[int]:
-    """The positions of the items whose value at *path* (an alt key, a label) is *text* in string form."""
+    """The positions of the items whose value at *path* is *text* in string form.
+
+    The value at *path* is an alt key or a label.
+    """
     return [i for i, item in enumerate(items) if _item_key(item, (path,)) == text]
 
 
@@ -1637,7 +1720,9 @@ def select_items(
     selector: object,
     resolvers: IdentityResolver | None = None,
 ) -> list[int]:
-    """The positions of the items of the list or map field *field_name* that *selector* names.
+    """The positions of the items that *selector* names in the field *field_name*.
+
+    The field is a list or map field.
 
     Empty if it names none. In a list a selector is read as in a patch
     (``_select``): the key of an item of a keyed list (for a composite key,
@@ -1668,7 +1753,9 @@ def select_items(
 
 
 def item_selector(model: VcoModel, field_name: str, position: int) -> str | None:
-    """The selector that names the item at *position* of the list or map field *field_name*, and no other.
+    """The selector that names the item at *position* of *field_name*, and no other.
+
+    *field_name* is a list or map field.
 
     The inverse of ``select_items``. Candidates, in order: in a keyed list the
     item's label, its key (``selector_of``), its alt key, then ``at(position)``;
@@ -1708,10 +1795,13 @@ def item_selector(model: VcoModel, field_name: str, position: int) -> str | None
     return None
 
 
-def _selector_candidates(
+def _selector_candidates(  # noqa: C901 (existing: split it when it next changes)
     spec: _ListSpec, entries: Sequence[object], position: int
 ) -> list[str]:
-    """The texts ``item_selector`` tries for the entry at *position* of a list (or the keys of a map), best first."""
+    """The texts ``item_selector`` tries for the entry at *position*, best first.
+
+    The entry is at *position* of a list, or of the keys of a map.
+    """
     item = entries[position]
     match spec.kind:
         case "map":
@@ -1738,10 +1828,11 @@ def _selector_candidates(
             return []
 
 
-def _merge_list(
+def _merge_list(  # noqa: C901, PLR0912, PLR0913, PLR0917 (existing: split it when it next changes)
     model: VcoModel,
     name: str,
     field_info: FieldInfo,
+    spec: _ListSpec,
     value: object,
     resolvers: IdentityResolver | None,
     path: Path,
@@ -1754,8 +1845,6 @@ def _merge_list(
     an object only and an untyped list a list only. Any other value is
     validated as the field's value, which refuses it.
     """
-    spec = _list_spec(field_info)
-    assert spec is not None  # _merge_field checked
     model_cls = type(model)
     held = _field_value(model, name)
     owned = held if isinstance(held, Owned) else None
@@ -1857,7 +1946,9 @@ def _list_value_input(
     resolvers: IdentityResolver | None,
     path: Path,
 ) -> object:
-    """*value*, a list value for a list of models, with each item object checked by ``_build_input``.
+    """*value* with each item object checked by ``_build_input``.
+
+    *value* is a list value for a list of models.
 
     An item's path is ``path[key]`` in a keyed list when the item gives its
     key, ``path[#n]`` otherwise. In a list whose key is a name (``NameOf``),
@@ -1871,25 +1962,25 @@ def _list_value_input(
         return value
     built: list[object] = []
     for index, item in enumerate(value):
-        if is_dict(item):
-            key = _patch_key(item_type.fields, item, spec.key_paths)
-            if (
-                key is not None
-                and spec.name_identity is not None
-                and resolvers is not None
-            ):
-                name = _canonical_name(spec.name_identity, str(key), resolvers)
-                if name != key:
-                    item, key = _inject_key_path(item, spec.key_paths[0], name), name
-            part: PathPart = index if key is None else _key_path_part(key)
-            item = _build_input(
+        if not is_dict(item):
+            built.append(item)
+            continue
+        named = item
+        key = _patch_key(item_type.fields, named, spec.key_paths)
+        if key is not None and spec.name_identity is not None and resolvers is not None:
+            name = _canonical_name(spec.name_identity, str(key), resolvers)
+            if name != key:
+                named, key = _inject_key_path(named, spec.key_paths[0], name), name
+        part: PathPart = index if key is None else _key_path_part(key)
+        built.append(
+            _build_input(
                 item_type.fields,
-                item,
+                named,
                 resolvers,
                 path.child(part),
                 owner=item_type.name,
             )
-        built.append(item)
+        )
     return built
 
 
@@ -1899,7 +1990,9 @@ def _check_list_value(
     built: Sequence[object],
     path: Path,
 ) -> None:
-    """Check *built*, a list validated from the list value *data*, for what validation lets by.
+    """Check *built* for what validation lets by.
+
+    *built* is a list validated from the list value *data*.
 
     Each item built from an object refuses keys it has no field for
     (``_refuse_unread_keys``). In a list whose key is a name (``NameOf``),
@@ -1909,7 +2002,7 @@ def _check_list_value(
     alt key raises ``PatchError`` at *path*.
     """
     if len(data) == len(built):
-        for index, (item_data, item) in enumerate(zip(data, built)):
+        for index, (item_data, item) in enumerate(zip(data, built, strict=True)):
             _refuse_bool_as_number(item_data, item, path.child(index))
             if is_dict(item_data) and isinstance(item, VcoModel):
                 _refuse_unread_keys(
@@ -1933,8 +2026,8 @@ def _check_list_value(
             if form in seen:
                 raise PatchError(
                     f"items #{seen[form]} and #{index} have one key, "
-                    + f"{_show_key(key)}: the items of a keyed list have "
-                    + "distinct keys",
+                    f"{_show_key(key)}: the items of a keyed list have "
+                    "distinct keys",
                     path,
                     "duplicate",
                 )
@@ -1945,9 +2038,9 @@ def _check_list_value(
                 first = seen_alt[alt]
                 raise PatchError(
                     f"items #{first} and #{index} have one alt key, {alt!r}: "
-                    + "the items of a keyed list have distinct alt keys; "
-                    + f"{_show_item(spec, built[first], first)} holds it "
-                    + f"already, so give item #{index} another alt key",
+                    "the items of a keyed list have distinct alt keys; "
+                    f"{_show_item(spec, built[first], first)} holds it "
+                    f"already, so give item #{index} another alt key",
                     path,
                     "duplicate",
                 )
@@ -1955,10 +2048,35 @@ def _check_list_value(
 
 
 def _fixed_dump(spec: _ListSpec, item: object) -> JsonObject | None:
-    """The JSON dump of *item*, a model, without the editable fields of a ``FixedList``; None for any other list."""
+    """The JSON dump of model *item* without the editable fields of a ``FixedList``.
+
+    None for any other list.
+    """
     if spec.fixed is None or not isinstance(item, VcoModel):
         return None
     return item.model_dump(mode="json", exclude=set(spec.fixed.editable))
+
+
+def _fixed_of(spec: _ListSpec) -> FixedList:
+    """The ``FixedList`` of *spec*, which its caller found to be one."""
+    if spec.fixed is None:
+        raise AssertionError("the list is not a FixedList")
+    return spec.fixed
+
+
+def _item_type_of(spec: _ListSpec) -> ListItemType:
+    """The item type of *spec*, a list of models (a ``FixedList`` is one)."""
+    if spec.item_type is None:
+        raise AssertionError("the list is not a list of models")
+    return spec.item_type
+
+
+def _fixed_model_dump(spec: _ListSpec, item: object) -> JsonObject:
+    """``_fixed_dump`` of *item*, a model of a ``FixedList``."""
+    dumped = _fixed_dump(spec, item)
+    if dumped is None:
+        raise AssertionError("the item is not a model of a FixedList")
+    return dumped
 
 
 def _fixed_differences(before: JsonObject, after: JsonObject) -> str:
@@ -1973,31 +2091,32 @@ def _fixed_field(path: Path) -> str:
 
 
 def _fixed_form(spec: _ListSpec, key: object, path: Path) -> str:
-    """The JSON form of an edit a ``FixedList`` takes, for a message: the entry *key*, one editable field.
+    """The JSON form of an edit a ``FixedList`` takes, for a message.
+
+    The edit is of the entry *key*, one editable field.
 
     *path* is the list's path in the patch; its last part is the field as written.
     """
-    assert spec.fixed is not None
-    editable = spec.fixed.editable[0] if spec.fixed.editable else "..."
+    fixed = _fixed_of(spec)
+    editable = fixed.editable[0] if fixed.editable else "..."
     return (
         "{"
-        + f"{json.dumps(_fixed_field(path))}: {{{json.dumps(str(key))}: "
-        + f"{{{json.dumps(editable)}: {{...}}}}"
-        + "}}"
+        f"{json.dumps(_fixed_field(path))}: {{{json.dumps(str(key))}: "
+        f"{{{json.dumps(editable)}: {{...}}}}"
+        "}}"
     )
 
 
 def _fixed_rule(spec: _ListSpec, path: Path) -> str:
     """The sentence that says what a ``FixedList`` takes, for a message."""
-    assert spec.fixed is not None
     return (
         f"{_fixed_field(path)} is a fixed list: its entries, their keys and "
-        + "their order are fixed, and only "
-        + f"{' and '.join(spec.fixed.editable)} of an entry may change"
+        "their order are fixed, and only "
+        f"{' and '.join(_fixed_of(spec).editable)} of an entry may change"
     )
 
 
-def _check_fixed_op(
+def _check_fixed_op(  # noqa: PLR0913 (existing: split it when it next changes)
     spec: _ListSpec,
     items: Sequence[object],
     op: ItemOp,
@@ -2006,18 +2125,20 @@ def _check_fixed_op(
     *,
     new_only: bool,
 ) -> None:
-    """Refuse an item operation on a ``FixedList`` that is not a change: an add, delete, move or ``_position``.
+    """Refuse an item operation on a ``FixedList`` that is not a change.
+
+    That is an add, delete, move or ``_position``.
 
     Every operation is refused in a list the patch builds (*new_only*): it
     has no entries to edit yet. *where* is the entry's path, *path* the
     list's.
     """
-    assert spec.fixed is not None
+    fixed = _fixed_of(spec)
     if new_only:
         raise PatchError(
             f"{_fixed_rule(spec, path)}: this patch builds the item, so the "
-            + "list has no entries to edit yet; give its entries as a list "
-            + "value, or leave them out",
+            "list has no entries to edit yet; give its entries as a list "
+            "value, or leave them out",
             where,
             "fixed_list",
         )
@@ -2028,7 +2149,7 @@ def _check_fixed_op(
     form = _fixed_form(spec, "<key>" if first is None else first, path)
     raise PatchError(
         f"{_fixed_rule(spec, path)}: a {what} is not an edit of an entry's "
-        + f"{' or '.join(spec.fixed.editable)}. To edit an entry, send {form}",
+        f"{' or '.join(fixed.editable)}. To edit an entry, send {form}",
         where,
         "fixed_list",
     )
@@ -2041,7 +2162,9 @@ def _check_fixed_change(
     where: Path,
     path: Path,
 ) -> None:
-    """Refuse a change of *item* that altered anything but the editable fields of a ``FixedList``.
+    """Refuse a change of *item* that altered a fixed part of a ``FixedList``.
+
+    A fixed part is anything but the editable fields.
 
     *before* is ``_fixed_dump`` of the item before the change; it is compared
     with the dump after it, so a rename, an alt key change and a change of
@@ -2050,15 +2173,14 @@ def _check_fixed_change(
     """
     if before is None:
         return
-    after = _fixed_dump(spec, item)
-    assert after is not None
+    after = _fixed_model_dump(spec, item)
     if after == before:
         return
     key = item_key(item, spec.key_paths)
     raise PatchError(
         f"{_fixed_rule(spec, path)}: this patch changes "
-        + f"{_fixed_differences(before, after)} of {_show_item(spec, item, 0)}. "
-        + "To edit the entry, send the editable fields only, "
+        f"{_fixed_differences(before, after)} of {_show_item(spec, item, 0)}. "
+        "To edit the entry, send the editable fields only, "
         + _fixed_form(spec, "<key>" if key is None else key, path),
         where,
         "fixed_list",
@@ -2072,7 +2194,9 @@ def _check_fixed_value(
     current: object,
     path: Path,
 ) -> None:
-    """Check *built*, validated from the list value *value* for a ``FixedList``, against the *current* list.
+    """Check *built*, for a ``FixedList``, against the *current* list.
+
+    *built* is validated from the list value *value*.
 
     Accepted when it has the current keys in the current order and each item
     equals the current one but for the editable fields. An item object that
@@ -2081,14 +2205,14 @@ def _check_fixed_value(
     its model made up. Anything else raises ``PatchError`` at *path* or at
     the item.
     """
-    assert spec.fixed is not None and spec.item_type is not None
+    item_type = _item_type_of(spec)
     rule = _fixed_rule(spec, path)
     if not is_list(current):
         raise PatchError(
             f"{rule}: a list value cannot build the list where there was "
-            + "none. Leave the field out of the patch: its entries come from "
-            + "the template when the segment is assigned, or are repaired "
-            + "when the module is written",
+            "none. Leave the field out of the patch: its entries come from "
+            "the template when the segment is assigned, or are repaired "
+            "when the module is written",
             path,
             "fixed_list",
         )
@@ -2097,27 +2221,26 @@ def _check_fixed_value(
         shown = ", ".join(repr(str(k)) for k in keys)
         raise PatchError(
             f"{rule}: a list value must give the current entries ({shown}) "
-            + "in that order, and no other. To edit an entry, send "
+            "in that order, and no other. To edit an entry, send "
             + _fixed_form(spec, "<key>" if not keys else keys[0], path),
             path,
             "fixed_list",
         )
-    for index, (data, new, old) in enumerate(zip(value, built, current)):
+    for index, (data, new, old) in enumerate(zip(value, built, current, strict=True)):
         where = path.child(_item_part(spec, old, index))
         if (
             spec.alt_path is not None
             and is_dict(data)
-            and _patch_value(spec.item_type.fields, data, spec.alt_path) is None
+            and _patch_value(item_type.fields, data, spec.alt_path) is None
         ):
             _copy_path(old, new, spec.alt_path)
-        before, after = _fixed_dump(spec, old), _fixed_dump(spec, new)
-        assert before is not None and after is not None
+        before, after = _fixed_model_dump(spec, old), _fixed_model_dump(spec, new)
         if before != after:
             key = item_key(old, spec.key_paths)
             raise PatchError(
                 f"{rule}: the list value changes "
-                + f"{_fixed_differences(before, after)} of "
-                + f"{_show_item(spec, old, index)}. "
+                f"{_fixed_differences(before, after)} of "
+                f"{_show_item(spec, old, index)}. "
                 + _alt_key_advice(spec, old, new)
                 + "Give each entry as it is, "
                 + "with its editable fields changed, or send "
@@ -2128,11 +2251,13 @@ def _check_fixed_value(
 
 
 def _alt_key_advice(spec: _ListSpec, old: object, new: object) -> str:
-    """The sentence that says how to keep the alt key, when *new* gives another than *old*'s; else empty."""
-    assert spec.item_type is not None
+    """The sentence that says how to keep the alt key, or empty.
+
+    It is not empty when *new* gives another alt key than *old*'s.
+    """
     if spec.alt_path is None or _alt_key(spec, old) == _alt_key(spec, new):
         return ""
-    field = spec.item_type.fields.get(spec.alt_path)
+    field = _item_type_of(spec).fields.get(spec.alt_path)
     name = spec.alt_path if field is None else _field_alias(field, spec.alt_path)
     return f"Leave `{name}` out of the item and it keeps the current one. "
 
@@ -2169,12 +2294,15 @@ class _ItemEntry:
     slot: _Slot | None
     """The item a change, delete or move names."""
     new: object
-    """For an add: what it adds, built in step 1: the item (list of models) or the validated value (value list)."""
+    """For an add: what it adds, built in step 1.
+
+    It is the item (list of models) or the validated value (value list).
+    """
     anchor: _Slot | None
     """The item a ``before`` or ``after`` place names."""
 
 
-def _merge_items(
+def _merge_items(  # noqa: C901, PLR0912, PLR0913, PLR0917 (existing: split it when it next changes)
     items: list[object],
     spec: _ListSpec,
     ops: Mapping[object, object],
@@ -2205,13 +2333,15 @@ def _merge_items(
     )
 
     paths = spec.key_paths
-    renamed: list[_ItemEntry] = []
-    alt_changed: list[_ItemEntry] = []
+    renamed: list[tuple[_ItemEntry, _Slot]] = []
+    alt_changed: list[tuple[_ItemEntry, _Slot]] = []
     for entry in entries:
-        if entry.kind != "change" or entry.slot is None:
+        slot = entry.slot
+        if entry.kind != "change" or slot is None:
             continue
-        item = entry.slot.value
-        assert isinstance(item, VcoModel)  # _resolve_items checked it
+        item = slot.value
+        if not isinstance(item, VcoModel):
+            raise TypeError("_resolve_items let a change of a non-model through")
         before = _item_key(item, paths)
         alt_before = _alt_key(spec, item)
         fixed_before = _fixed_dump(spec, item)
@@ -2225,30 +2355,28 @@ def _merge_items(
             entry.path,
         )
         if _item_key(item, paths) != before:
-            renamed.append(entry)
+            renamed.append((entry, slot))
         if _alt_key(spec, item) != alt_before:
-            alt_changed.append(entry)
-    for entry in renamed:
-        assert entry.slot is not None
-        key = item_key(entry.slot.value, paths)
+            alt_changed.append((entry, slot))
+    for entry, slot in renamed:
+        key = item_key(slot.value, paths)
         form = key_form(key)
         if key is not None and any(
-            s is not entry.slot and _item_key(s.value, paths) == form for s in slots
+            s is not slot and _item_key(s.value, paths) == form for s in slots
         ):
             raise PatchError(
                 f"another item has the key {_show_key(key)}", entry.path, "exists"
             )
-    for entry in alt_changed:
-        assert entry.slot is not None
-        alt = _alt_key(spec, entry.slot.value)
+    for entry, slot in alt_changed:
+        alt = _alt_key(spec, slot.value)
         if alt is None:
             continue
         for index, other in enumerate(slots):
-            if other is not entry.slot and _alt_key(spec, other.value) == alt:
+            if other is not slot and _alt_key(spec, other.value) == alt:
                 raise PatchError(
                     f"{_show_item(spec, other.value, index)} already has the "
-                    + f"alt key {alt!r}: give this item another alt key, or "
-                    + "change that item instead",
+                    f"alt key {alt!r}: give this item another alt key, or "
+                    "change that item instead",
                     entry.path,
                     "exists",
                 )
@@ -2269,7 +2397,7 @@ def _merge_items(
     items[:] = [s.value for s in slots]
 
 
-def _resolve_items(
+def _resolve_items(  # noqa: C901, PLR0912, PLR0913, PLR0917 (existing: split it when it next changes)
     slots: Sequence[_Slot],
     spec: _ListSpec,
     ops: Mapping[object, object],
@@ -2279,7 +2407,9 @@ def _resolve_items(
     *,
     new_only: bool,
 ) -> list[_ItemEntry]:
-    """Parse every entry of *ops*, resolve its selector and anchor, and build what an add adds.
+    """Parse every entry of *ops* and resolve its selector and anchor.
+
+    It also builds what an add adds.
 
     Step 1 of ``_merge_items``. Raises ``PatchError`` for an operation the
     list does not take, a selector that names no item or several, two
@@ -2317,7 +2447,7 @@ def _resolve_items(
         elif new_only:
             raise PatchError(
                 f"a {op.kind} in a list the patch builds has nothing to name: "
-                + 'write {"_op": "add", ...} entries (add(...)) or a list value',
+                'write {"_op": "add", ...} entries (add(...)) or a list value',
                 where,
                 "operation",
             )
@@ -2375,7 +2505,10 @@ def _selector_part(selector: object, selection: _Selection) -> PathPart:
 
 
 def _added_form(spec: _ListSpec, new: object) -> KeyForm | None:
-    """The key (keyed list) or value (value list) in string form of what an add adds, or None."""
+    """The key or value, in string form, of what an add adds; or None.
+
+    The key in a keyed list, the value in a value list.
+    """
     if spec.kind == "value":
         return str(new)
     if spec.kind == "keyed":
@@ -2383,7 +2516,7 @@ def _added_form(spec: _ListSpec, new: object) -> KeyForm | None:
     return None
 
 
-def _check_add(
+def _check_add(  # noqa: C901, PLR0913, PLR0917 (existing: split it when it next changes)
     spec: _ListSpec,
     selector: object,
     selection: _Selection,
@@ -2393,7 +2526,9 @@ def _check_add(
     where: Path,
     context: ConfigContext | None,
 ) -> object:
-    """Refuse an ``add`` the list does not take; return what it adds (``_ItemEntry.new``).
+    """Refuse an ``add`` the list does not take; return what it adds.
+
+    What it adds is ``_ItemEntry.new``.
 
     In a list of models, the item, built here; in a value list, the value,
     validated. Under a plain selector a keyed list takes the key only: a key
@@ -2404,14 +2539,14 @@ def _check_add(
         if spec.item_type is None:
             raise PatchError(
                 "a list of values named by position has no body to build an item "
-                + "from: give a list value",
+                "from: give a list value",
                 where,
                 "operation",
             )
         if not is_new(selector):
             raise PatchError(
                 "a new item of a list named by position goes under "
-                + '"+" or "+tag": write {"+": {"_op": "add", ...}} ("+": add(...))',
+                '"+" or "+tag": write {"+": {"_op": "add", ...}} ("+": add(...))',
                 where,
                 "selector",
             )
@@ -2438,21 +2573,22 @@ def _check_add(
     if is_new(selector):
         raise PatchError(
             f"{str(selector)!r} names no value: an add in a list of values takes "
-            + "the value itself as its selector, "
-            + 'as in {"<value>": {"_op": "add"}} (`{"<value>": add()}`); a '
-            + 'value that starts with "+" cannot be added under its own text, '
-            + "so give the whole list as a list value",
+            "the value itself as its selector, "
+            'as in {"<value>": {"_op": "add"}} (`{"<value>": add()}`); a '
+            'value that starts with "+" cannot be added under its own text, '
+            "so give the whole list as a list value",
             where,
             "selector",
         )
     if op.body:
         raise PatchError(
             "an add in a list of values takes no fields: "
-            + 'write {"_op": "add"} (add()) under the value',
+            'write {"_op": "add"} (add()) under the value',
             where,
             "operation",
         )
-    assert spec.element is not None
+    if spec.element is None:
+        raise AssertionError("a list of values has no element adapter")
     new = _validated(spec.element.validate_python, selector, (), where)
     if any(str(item) == str(new) for item in items):
         raise PatchError(
@@ -2462,7 +2598,10 @@ def _check_add(
 
 
 def _key_form_hint(spec: _ListSpec, items: Sequence[object]) -> str:
-    """How a composite key is written, with the key of the first keyed item of *items* as the example."""
+    """How a composite key is written, with an example.
+
+    The example is the key of the first keyed item of *items*.
+    """
     n = len(spec.key_paths)
     form = f"a key is its {n} parts ({', '.join(spec.key_paths)}) joined by commas"
     for item in items:
@@ -2472,7 +2611,7 @@ def _key_form_hint(spec: _ListSpec, items: Sequence[object]) -> str:
     return form
 
 
-def _check_keyed_add(
+def _check_keyed_add(  # noqa: PLR0913, PLR0917 (existing: split it when it next changes)
     spec: _ListSpec,
     selector: object,
     selection: _Selection,
@@ -2482,7 +2621,9 @@ def _check_keyed_add(
     where: Path,
     context: ConfigContext | None,
 ) -> VcoModel:
-    """The item an ``add`` in a keyed list adds, built; ``PatchError`` if the list does not take it (``_check_add``).
+    """The item an ``add`` in a keyed list adds, built.
+
+    ``PatchError`` if the list does not take it (``_check_add``).
 
     Under ``"+"`` in a list whose key is a name (``NameOf``), a name in the
     body is taken as an add under that name: the same resolver lookup and the
@@ -2510,7 +2651,7 @@ def _check_keyed_add(
         if key is not None and _with_key(items, spec, key):
             raise PatchError(
                 f"the body gives the key {_show_key(key)}, which is already in the "
-                + f"list{_CHANGE_IT_IN_LIST}",
+                f"list{_CHANGE_IT_IN_LIST}",
                 where,
                 "exists",
             )
@@ -2539,7 +2680,7 @@ def _check_keyed_add(
         if not from_body and given is not None and str(given) != str(part):
             raise PatchError(
                 f"the body gives {key_path} {str(given)!r}, and the selector "
-                + f"{_show_key(key)}: an add takes the key from its selector",
+                f"{_show_key(key)}: an add takes the key from its selector",
                 where,
                 "operation",
             )
@@ -2551,14 +2692,14 @@ def _check_change(spec: _ListSpec, where: Path) -> None:
     if spec.item_type is None:
         raise PatchError(
             "an entry of a list of values has no fields to change: "
-            + 'add it with {"_op": "add"} (add()), '
-            + 'remove it with {"_op": "delete"} (delete()), or give a list value',
+            'add it with {"_op": "add"} (add()), '
+            'remove it with {"_op": "delete"} (delete()), or give a list value',
             where,
             "operation",
         )
 
 
-def _named_item(
+def _named_item(  # noqa: C901, PLR0912, PLR0913, PLR0917 (existing: split it when it next changes)
     spec: _ListSpec,
     selector: object,
     selection: _Selection,
@@ -2566,7 +2707,10 @@ def _named_item(
     items: Sequence[object],
     where: Path,
 ) -> int:
-    """The position of the one item a change, delete or move names; else ``PatchError``."""
+    """The position of the one item a change, delete or move names.
+
+    Else ``PatchError``.
+    """
     if len(selection.positions) == 1:
         return selection.positions[0]
     if selection.positions:
@@ -2578,7 +2722,7 @@ def _named_item(
     if selection.position is not None:
         raise PatchError(
             f"there is no item at position {selection.position}: "
-            + f"the list has {len(items)}",
+            f"the list has {len(items)}",
             where,
             "no_item",
         )
@@ -2590,14 +2734,14 @@ def _named_item(
         )
         raise PatchError(
             f"{str(selector)!r} is not a position: the items of this list are "
-            + f'named by "#n" (at(n)){hint}',
+            f'named by "#n" (at(n)){hint}',
             where,
             "selector",
         )
     if selection.new:
         raise PatchError(
             f"{str(selector)!r} names a new item, which only "
-            + '{"_op": "add", ...} (add(...)) takes',
+            '{"_op": "add", ...} (add(...)) takes',
             where,
             "operation",
         )
@@ -2620,7 +2764,7 @@ def _named_item(
                 if op.kind == "change":
                     message += (
                         '; to add an item, write {"+": {"_op": "add", ...}} '
-                        + '("+": add({...})) with its fields'
+                        '("+": add({...})) with its fields'
                     )
                 raise PatchError(message, where, "selector")
             message = f"no item has the {what} {shown}; {form}"
@@ -2639,7 +2783,9 @@ def _named_item(
 def _names_several(
     subject: str, spec: _ListSpec, items: Sequence[object], positions: Sequence[int]
 ) -> str:
-    """The message for *subject*, a selector or anchor that names the items at *positions*.
+    """The message for *subject*, which names the items at *positions*.
+
+    *subject* is a selector or anchor.
 
     It lists each match with its position and its key (a composite key as
     ``key_text`` writes it) or value, and its alt key if it has one.
@@ -2661,11 +2807,11 @@ def _names_several(
         )
     return (
         f"{subject} names {len(positions)} items: {', '.join(shown)}; "
-        + "select one of them"
+        "select one of them"
     )
 
 
-def _anchor_position(
+def _anchor_position(  # noqa: PLR0913, PLR0917 (existing: split it when it next changes)
     items: Sequence[object],
     spec: _ListSpec,
     anchor: object,
@@ -2674,7 +2820,10 @@ def _anchor_position(
     resolvers: IdentityResolver | None,
     where: Path,
 ) -> int:
-    """The position of the one item *anchor* names, which is not *slot*'s; else ``PatchError``."""
+    """The position of the one item *anchor* names, which is not *slot*'s.
+
+    Else ``PatchError``.
+    """
     selection = _select(items, spec, anchor, resolvers)
     _refuse_two_readings(selection, spec, items, anchor, where)
     if not selection.positions:
@@ -2696,7 +2845,9 @@ def _anchor_position(
 def _new_list_item(
     spec: _ListSpec, entry: _ItemEntry, slots: Sequence[_Slot]
 ) -> object:
-    """What an ``add`` entry adds (built in step 1), checked against the list now in *slots*.
+    """What an ``add`` entry adds, checked against the list now in *slots*.
+
+    What it adds was built in step 1.
 
     Its key, value or alt key may have come into the list since step 1, by a
     rename or an earlier add: that raises ``PatchError``.
@@ -2712,7 +2863,7 @@ def _new_list_item(
             shown = item_key(new, spec.key_paths) if spec.kind == "keyed" else None
             raise PatchError(
                 f"{_show_key(form if shown is None else shown)} is already in the "
-                + f"list{_CHANGE_IT_IN_LIST}",
+                f"list{_CHANGE_IT_IN_LIST}",
                 entry.path,
                 "exists",
             )
@@ -2722,8 +2873,8 @@ def _new_list_item(
             if _alt_key(spec, slot.value) == alt:
                 raise PatchError(
                     f"{alt!r} is already in the list as an alt key, that of "
-                    + f"{_show_item(spec, slot.value, index)}: give the new "
-                    + "item another alt key, or change that item instead",
+                    f"{_show_item(spec, slot.value, index)}: give the new "
+                    "item another alt key, or change that item instead",
                     entry.path,
                     "exists",
                 )
@@ -2742,7 +2893,7 @@ def _place_index(
     return index if place.kind == "before" else index + 1
 
 
-def _merge_map(
+def _merge_map(  # noqa: C901, PLR0912, PLR0913 (existing: split it when it next changes)
     entries: dict[object, object],
     spec: _ListSpec,
     ops: Mapping[object, object],
@@ -2781,9 +2932,9 @@ def _merge_map(
             ):
                 raise PatchError(
                     f"{text!r} names no entry of a map: an add takes the new "
-                    + "entry's key as its selector, "
-                    + 'as in {"<key>": {"_op": "add", ...}} '
-                    + '(`{"<key>": add(...)}`)',
+                    "entry's key as its selector, "
+                    'as in {"<key>": {"_op": "add", ...}} '
+                    '(`{"<key>": add(...)}`)',
                     where,
                     "selector",
                 )
@@ -2792,14 +2943,14 @@ def _merge_map(
             if text in keys:
                 raise PatchError(
                     f"{text!r} is already in the map; to change it, write a plain "
-                    + 'object under its key (no "_op")',
+                    'object under its key (no "_op")',
                     where,
                     "exists",
                 )
         elif new_only:
             raise PatchError(
                 f"a {op.kind} in a map the patch builds has nothing to name: "
-                + 'write {"_op": "add", ...} entries (add(...))',
+                'write {"_op": "add", ...} entries (add(...))',
                 where,
                 "operation",
             )
@@ -2839,7 +2990,8 @@ def _merge_map(
     for op, key, where in resolved:
         if op.kind == "change":
             current = entries[key]
-            assert isinstance(current, VcoModel)  # checked above
+            if not isinstance(current, VcoModel):
+                raise TypeError("a change of a map entry that is not a model")
             _merge_model(current, _body(op), resolvers, where)
             _check_merged(current, type(current).model_validate, where)
     for op, key, _ in resolved:
@@ -2847,7 +2999,8 @@ def _merge_map(
             del entries[key]
     for op, key, where in resolved:
         if op.kind == "add":
-            assert spec.map_type is not None  # _new_map_key checked it
+            if spec.map_type is None:
+                raise AssertionError("_new_map_key let an add through")
             entries[key] = _new_model_from_patch(
                 spec.map_type, _body(op), resolvers, where
             )
@@ -2863,7 +3016,8 @@ def _new_map_key(spec: _ListSpec, text: str, where: Path) -> object:
         raise PatchError(
             "this map has no one model type to build from", where, "operation"
         )
-    assert spec.map_key is not None  # a map
+    if spec.map_key is None:
+        raise AssertionError("a map has no key adapter")
     return _validated(spec.map_key.validate_python, text, (), where)
 
 
@@ -2901,7 +3055,7 @@ def _has_non_edge_local_changes(model: VcoModel, before: Mapping[str, object]) -
     change confined to EdgeLocal descendants doesn't count either.
     """
     fields = type(model).model_fields
-    for name, old in before.items():
+    for name, held in before.items():
         fi = fields.get(name)
         if (
             fi is None
@@ -2911,7 +3065,7 @@ def _has_non_edge_local_changes(model: VcoModel, before: Mapping[str, object]) -
         ):
             continue
         new = unwrap(_field_value(model, name))
-        old = unwrap(old)
+        old = unwrap(held)
         if isinstance(new, VcoModel) and type(new) is type(old):
             if _has_non_edge_local_changes(new, _all_field_values(new, old)):
                 return True
@@ -2921,7 +3075,7 @@ def _has_non_edge_local_changes(model: VcoModel, before: Mapping[str, object]) -
 
 
 def _all_field_values(model: VcoModel, source: object) -> JsonObject:
-    """Read every one of *model*'s fields from *source*, an instance of the same class."""
+    """Read each of *model*'s fields from *source*, an instance of the same class."""
     return {
         name: unwrap(_field_value(source, name)) for name in type(model).model_fields
     }

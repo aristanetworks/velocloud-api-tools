@@ -1,5 +1,11 @@
+"""The routed interfaces of ``deviceSettings``, one class per interface kind.
+
+GE, SFP, DSL and GPON interfaces and their subinterfaces, with their IPv4 and IPv6
+addressing, OSPF, DHCP, cellular and LAG settings.
+"""
+
 import uuid
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, Self
 
 from pydantic import (
     MISSING,
@@ -10,6 +16,7 @@ from pydantic import (
     model_validator,
 )
 
+from pyvelo.client.models.configuration.common import OverlayAddressPreferenceType
 from pyvelo.core import (
     Alias,
     ContextDefault,
@@ -28,7 +35,6 @@ from pyvelo.core import (
 from pyvelo.core.fields import Lenient, RefersTo
 from pyvelo.core.identity import SegmentIdentity
 
-from ..common import OverlayAddressPreferenceType
 from .common import (
     DhcpServerOption,
     InterfaceL2,
@@ -55,7 +61,7 @@ class RoutedInterfaceAddressing(VcoModel):
     gateway: Annotated[str | None, EdgeLocal] = None
 
     @model_validator(mode="after")
-    def _strip_non_pppoe_credentials(self):
+    def _strip_non_pppoe_credentials(self) -> Self:
         if self.type_ != "PPPOE":
             self.username = MISSING
             self.password = MISSING
@@ -396,11 +402,11 @@ def _routed_interface_discriminator(v: Any) -> str:
         prefix = name.rstrip("0123456789")
         if prefix == "LAG":
             return "lag"
-        elif prefix == "SFP":
+        if prefix == "SFP":
             return _sfp_discriminator(v)
-        elif prefix in ("CELL", "CELL_"):
+        if prefix in ("CELL", "CELL_"):
             return "cell"
-        elif prefix == "USB":
+        if prefix == "USB":
             return "usb"
     return "ge"
 

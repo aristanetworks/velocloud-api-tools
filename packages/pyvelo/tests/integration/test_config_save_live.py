@@ -1,4 +1,4 @@
-"""Live tests of the configuration write path (``plan_module`` / ``update_module``).
+r"""Live tests of the configuration write path (``plan_module`` / ``update_module``).
 
 A save sends a module's raw data as it was read, with only the caller's changes
 applied, under the version it was read at, and returns the module as stored.
@@ -55,16 +55,16 @@ to write, PYVELO_IT_WRITE_HOST and PYVELO_IT_WRITE_ENTERPRISE_ID: see
 ``live_support``.
 
 Run:
-    uv run --env-file .env pytest -m integration packages/pyvelo/tests/integration/test_config_save_live.py
+    uv run --env-file .env pytest -m integration \
+        packages/pyvelo/tests/integration/test_config_save_live.py
 """
 
 from __future__ import annotations
 
 import copy
 import uuid
-from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 from live_support import (
@@ -112,9 +112,7 @@ from pyvelo.client.models.configuration import (
     QosData,
     WanData,
 )
-from pyvelo.client.models.configuration.firewall.rules import FirewallOutboundRule
 from pyvelo.client.models.configuration.qos.qoe import QoeSettings
-from pyvelo.client.models.configuration.qos.rule import QosRule
 from pyvelo.client.module_check import has_checkable_change
 from pyvelo.client.module_write import plan_module, update_request, wire_dump
 from pyvelo.client.schemas.configuration import (
@@ -130,6 +128,12 @@ from pyvelo.core import ConfigContext, VcoModel
 from pyvelo.core.layers import Edge, Profile
 from pyvelo.core.rebase import Key, Path, RawChange, raw_changes
 
+if TYPE_CHECKING:
+    from collections.abc import Callable, Sequence
+
+    from pyvelo.client.models.configuration.firewall.rules import FirewallOutboundRule
+    from pyvelo.client.models.configuration.qos.rule import QosRule
+
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio(loop_scope="session")]
 
 type AnyFirewallData = FirewallData[Edge] | FirewallData[Profile]
@@ -141,7 +145,7 @@ def data_of(module: ConfigurationModuleBase) -> EditableData:
     data: object = getattr(module, "data", None)
     if not isinstance(data, DeviceSettingsData | WanData | QosData | FirewallData):
         pytest.fail(f"the data of a module is a {type(data).__name__}", pytrace=False)
-    return cast(EditableData, data)
+    return cast("EditableData", data)
 
 
 # ---------------------------------------------------------------------------
@@ -160,7 +164,8 @@ def _plan_nothing(
     raw: object = module.raw_data
     if plan.operation != "none" or plan.changes:
         failures.append(
-            f"{label} {module.name}: planned {plan.operation} ({describe(plan.changes)})"
+            f"{label} {module.name}: planned {plan.operation} "
+            f"({describe(plan.changes)})"
         )
     elif plan.data != raw or plan.data is raw:
         failures.append(f"{label} {module.name}: plan.data is not a copy of raw_data")
@@ -365,7 +370,10 @@ def _qos_rule_usable(module: AnyStoredModule) -> bool:
 
 
 def _qos_source(data: AnyQosData, version: str = "IPv4v6") -> tuple[str, str] | None:
-    """The segment and rule names of the first QoS rule that matches *version* addresses."""
+    """The segment and rule names of the first QoS rule that matches addresses.
+
+    It matches addresses of *version*.
+    """
     for segment in data.segments:
         for rule in segment.rules:
             if rule.match.ip_version == version:
@@ -620,7 +628,10 @@ VIDEO_RED = Path(("qoe", "video", "latency", "red"))
 
 
 def _qoe_thresholds_usable(module: AnyStoredModule) -> bool:
-    """Whether *module* is a QoS module whose raw data has the QoE thresholds ``_raised`` raises."""
+    """Whether *module* is a QoS module whose raw data has raised QoE thresholds.
+
+    The thresholds are those ``_raised`` raises.
+    """
     return _qoe_usable(module) and all(
         isinstance(value_at(module.raw_data, path), int)
         for path in (VOICE_YELLOW, VOICE_RED, VIDEO_RED)
@@ -978,7 +989,9 @@ async def test_writes_answered_without_the_row_are_read_back(
 async def test_a_write_with_no_checkable_change_asks_for_a_count(
     lab: Lab, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """An update that changes only a value the VCO owns goes out without ``returnData`` and is read back.
+    """An update that changes only a value the VCO owns goes out without ``returnData``.
+
+    It is read back.
 
     The check cannot find such a change stored or missing in a module row, so
     ``write_module`` asks for a row count, which says whether the VCO stored

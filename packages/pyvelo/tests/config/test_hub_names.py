@@ -1,10 +1,13 @@
-"""A hub named in a patch is looked up in the enterprise's Edges and clusters, loaded once on first use."""
+"""A hub named in a patch is looked up in the enterprise's Edges and clusters.
+
+They are loaded once, on first use.
+"""
 
 from typing import Any
 
 import hub_helpers
 from hub_helpers import CLUSTER, HUB_A, HUB_B, MEMBER, NOT_A_HUB, Hub
-from profile_state import (  # pyright: ignore[reportImplicitRelativeImport]
+from profile_state import (
     module_store_pipeline,
     profile_state,
 )
@@ -53,8 +56,7 @@ def add_hub_by_id(logical_id: str) -> dict[str, Any]:
 def hubs_of(state: ConfigState) -> list[tuple[str, str, str]]:
     (segment,) = state.profile.device_settings.segments
     return [
-        (h.name, h.type_, str(h.logical_id))
-        for h in segment.vpn.hub_edges.vpn_hubs  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType, reportUnknownVariableType]
+        (h.name, h.type_, str(h.logical_id)) for h in segment.vpn.hub_edges.vpn_hubs
     ]
 
 
@@ -83,11 +85,11 @@ async def hub_pipeline(
     return pipeline, store, state
 
 
-def test_hub_identity_is_exported_by_the_package():
+def test_hub_identity_is_exported_by_the_package() -> None:
     assert ExportedHubIdentity is HubIdentity
 
 
-async def test_a_state_gets_an_unloaded_hub_resolver_and_a_load_reads_no_hubs():
+async def test_a_state_gets_an_unloaded_hub_resolver_and_a_load_reads_no_hubs() -> None:
     _, store, state = await hub_pipeline(HUB_A)
 
     resolver = state.resolvers.get_resolver(HubResolver)
@@ -97,7 +99,7 @@ async def test_a_state_gets_an_unloaded_hub_resolver_and_a_load_reads_no_hubs():
     assert GET_SERVICES not in [m for m, _ in store.requests]
 
 
-async def test_apply_of_a_hub_by_name_loads_the_resolver_once():
+async def test_apply_of_a_hub_by_name_loads_the_resolver_once() -> None:
     pipeline, store, state = await hub_pipeline(HUB_A, HUB_B, CLUSTER, MEMBER)
     store.requests.clear()
 
@@ -119,7 +121,9 @@ async def test_apply_of_a_hub_by_name_loads_the_resolver_once():
     ]
 
 
-async def test_apply_of_a_hub_by_logical_id_loads_the_resolver_and_takes_the_name():
+async def test_apply_of_a_hub_by_logical_id_loads_the_resolver_and_takes_the_name() -> (
+    None
+):
     pipeline, store, state = await hub_pipeline(HUB_A, HUB_B, CLUSTER, MEMBER)
     store.requests.clear()
 
@@ -131,7 +135,7 @@ async def test_apply_of_a_hub_by_logical_id_loads_the_resolver_and_takes_the_nam
     assert hubs_of(state) == [("Hub-B", "edgeHub", HUB_B.logical_id)]
 
 
-async def test_load_resolvers_loads_the_hub_resolver_when_asked_to():
+async def test_load_resolvers_loads_the_hub_resolver_when_asked_to() -> None:
     pipeline, store, state = await hub_pipeline(HUB_A, NOT_A_HUB)
     store.requests.clear()
 
@@ -143,7 +147,7 @@ async def test_load_resolvers_loads_the_hub_resolver_when_asked_to():
     assert sorted(i.name for i in resolver.identities()) == ["Branch-1", "Hub-A"]
 
 
-async def test_a_state_with_no_hub_resolver_is_given_one_to_load():
+async def test_a_state_with_no_hub_resolver_is_given_one_to_load() -> None:
     pipeline, _, state = await hub_pipeline(HUB_A)
     state.resolvers = ResolverRegistry()
     assert state.resolvers.resolver_for(HubIdentity) is None

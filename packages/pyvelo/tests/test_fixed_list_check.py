@@ -1,4 +1,7 @@
-"""A payload that changes a fixed part of the QoS ``defaults`` is refused, whatever made the change."""
+"""A payload that changes a fixed part of the QoS ``defaults`` is refused.
+
+It is refused whatever made the change.
+"""
 
 import copy
 from typing import Any, overload
@@ -35,12 +38,12 @@ def violations(
     return fixed_list_violations(QosData, baseline, payload)
 
 
-def test_untouched_defaults_pass():
+def test_untouched_defaults_pass() -> None:
     baseline = data(qos_entry(GUEST))
     assert violations(baseline, copy.deepcopy(baseline)) == []
 
 
-def test_an_action_change_passes():
+def test_an_action_change_passes() -> None:
     baseline = data(qos_entry(GUEST))
     payload = copy.deepcopy(baseline)
     guest_defaults(payload)[0]["action"]["routeType"] = "gateway"
@@ -48,7 +51,7 @@ def test_an_action_change_passes():
     assert violations(baseline, payload) == []
 
 
-def test_a_match_change_is_refused_at_the_rule():
+def test_a_match_change_is_refused_at_the_rule() -> None:
     baseline = data(qos_entry(GUEST))
     payload = copy.deepcopy(baseline)
     guest_defaults(payload)[0]["match"]["proto"] = 99
@@ -57,7 +60,7 @@ def test_a_match_change_is_refused_at_the_rule():
     assert "match" in reason
 
 
-def test_a_removed_rule_is_refused():
+def test_a_removed_rule_is_refused() -> None:
     baseline = data(qos_entry(GUEST))
     payload = copy.deepcopy(baseline)
     del guest_defaults(payload)[1]
@@ -66,7 +69,7 @@ def test_a_removed_rule_is_refused():
     ]
 
 
-def test_a_reordered_list_is_refused():
+def test_a_reordered_list_is_refused() -> None:
     baseline = data(qos_entry(GUEST))
     payload = copy.deepcopy(baseline)
     rules = guest_defaults(payload)
@@ -76,20 +79,20 @@ def test_a_reordered_list_is_refused():
     ]
 
 
-def test_a_renamed_rule_is_refused():
+def test_a_renamed_rule_is_refused() -> None:
     baseline = data(qos_entry(GUEST))
     payload = copy.deepcopy(baseline)
     guest_defaults(payload)[2]["name"] = "Renamed"
     assert [p for p, _ in violations(baseline, payload)] == [Path.parse(DEFAULTS)]
 
 
-def test_a_list_gone_is_refused():
+def test_a_list_gone_is_refused() -> None:
     baseline = data(qos_entry(GUEST))
     payload = data(qos_entry(GUEST, defaults=MISSING))
     assert violations(baseline, payload) == [(Path.parse(DEFAULTS), "the list is gone")]
 
 
-def test_a_list_built_where_there_was_none_is_refused():
+def test_a_list_built_where_there_was_none_is_refused() -> None:
     baseline = data(qos_entry(GUEST, defaults=MISSING))
     payload = data(qos_entry(GUEST))
     assert violations(baseline, payload) == [
@@ -97,7 +100,7 @@ def test_a_list_built_where_there_was_none_is_refused():
     ]
 
 
-def test_a_new_segment_with_defaults_is_refused():
+def test_a_new_segment_with_defaults_is_refused() -> None:
     baseline = data(qos_entry(GLOBAL))
     payload = data(qos_entry(GLOBAL), qos_entry(GUEST))
     assert violations(baseline, payload) == [
@@ -105,7 +108,7 @@ def test_a_new_segment_with_defaults_is_refused():
     ]
 
 
-def test_no_list_on_either_side_passes():
+def test_no_list_on_either_side_passes() -> None:
     for empty in (MISSING, None):
         baseline = data(qos_entry(GUEST, defaults=empty))
         assert violations(baseline, copy.deepcopy(baseline)) == []
@@ -118,14 +121,14 @@ def test_no_list_on_either_side_passes():
     )
 
 
-def test_an_edit_to_the_rules_beside_the_defaults_passes():
+def test_an_edit_to_the_rules_beside_the_defaults_passes() -> None:
     baseline = data(qos_entry(GUEST))
     payload = copy.deepcopy(baseline)
     payload["segments"][0]["rules"].append({"name": "new"})
     assert violations(baseline, payload) == []
 
 
-def test_items_pair_by_key_so_a_segment_moved_in_its_list_passes():
+def test_items_pair_by_key_so_a_segment_moved_in_its_list_passes() -> None:
     baseline = data(qos_entry(GLOBAL), qos_entry(GUEST))
     payload = data(*reversed(baseline["segments"]))
     assert violations(baseline, copy.deepcopy(payload)) == []
@@ -152,9 +155,9 @@ def qos_module(
     return QosConfigurationModule[Profile].model_validate(row)
 
 
-def test_plan_module_raises_fixed_list_error_for_an_assigned_match_edit():
+def test_plan_module_raises_fixed_list_error_for_an_assigned_match_edit() -> None:
     module = qos_module(qos_entry(GUEST), layer=Profile)
-    module.data.segments[0].defaults[0].match.proto = 99  # pyright: ignore[reportIndexIssue, reportAttributeAccessIssue, reportOptionalMemberAccess]
+    module.data.segments[0].defaults[0].match.proto = 99  # pyright: ignore[reportIndexIssue]
     with pytest.raises(FixedListError) as caught:
         plan_module(module, level=ConfigContext.PROFILE)
     assert caught.value.module_name == "QOS"
@@ -162,14 +165,14 @@ def test_plan_module_raises_fixed_list_error_for_an_assigned_match_edit():
     assert f"{Path.parse(FIRST)}: match" in str(caught.value)
 
 
-def test_plan_module_passes_an_action_assignment():
+def test_plan_module_passes_an_action_assignment() -> None:
     module = qos_module(qos_entry(GUEST), layer=Profile)
-    module.data.segments[0].defaults[0].action.route_type = "gateway"  # pyright: ignore[reportIndexIssue, reportAttributeAccessIssue, reportOptionalMemberAccess]
+    module.data.segments[0].defaults[0].action.route_type = "gateway"  # pyright: ignore[reportIndexIssue, reportAttributeAccessIssue]
     plan = plan_module(module, level=ConfigContext.PROFILE)
     assert plan.operation == "update"
 
 
-def test_plan_module_raises_for_a_rule_appended_to_defaults():
+def test_plan_module_raises_for_a_rule_appended_to_defaults() -> None:
     module = qos_module(qos_entry(GUEST), layer=Profile)
     defaults = module.data.segments[0].defaults
     assert isinstance(defaults, list)
@@ -179,9 +182,11 @@ def test_plan_module_raises_for_a_rule_appended_to_defaults():
     assert caught.value.paths == (Path.parse(DEFAULTS),)
 
 
-def test_the_message_says_what_can_change_and_that_missing_entries_are_repaired():
+def test_the_message_says_what_can_change_and_that_missing_entries_are_repaired() -> (
+    None
+):
     module = qos_module(qos_entry(GUEST), layer=Profile)
-    module.data.segments[0].defaults[0].match.proto = 99  # pyright: ignore[reportIndexIssue, reportAttributeAccessIssue, reportOptionalMemberAccess]
+    module.data.segments[0].defaults[0].match.proto = 99  # pyright: ignore[reportIndexIssue]
     with pytest.raises(FixedListError) as caught:
         plan_module(module, level=ConfigContext.PROFILE)
     text = str(caught.value)
@@ -192,7 +197,7 @@ def test_the_message_says_what_can_change_and_that_missing_entries_are_repaired(
     assert "repaired" in text
 
 
-def test_the_check_runs_at_the_edge_level_too():
+def test_the_check_runs_at_the_edge_level_too() -> None:
     entry = qos_entry(GUEST)
     entry["rules"] = [
         {
@@ -218,7 +223,7 @@ def test_the_check_runs_at_the_edge_level_too():
     assert caught.value.paths == (Path.parse(FIRST),)
 
 
-def test_a_plain_dict_data_that_leaves_the_defaults_alone_passes():
+def test_a_plain_dict_data_that_leaves_the_defaults_alone_passes() -> None:
     entry = qos_entry(GUEST)
     module = qos_module(entry, layer=Profile)
     assert (
@@ -230,7 +235,7 @@ def test_a_plain_dict_data_that_leaves_the_defaults_alone_passes():
 # --- the edge layer has no `defaults` ------------------------------------------
 
 
-def test_an_edge_segment_holds_no_defaults_and_a_write_keeps_the_raw_ones():
+def test_an_edge_segment_holds_no_defaults_and_a_write_keeps_the_raw_ones() -> None:
     entry = qos_entry(GUEST)
     raw_defaults = copy.deepcopy(entry["defaults"])
     module = qos_module(entry, layer=Edge)
@@ -245,10 +250,10 @@ def test_an_edge_segment_holds_no_defaults_and_a_write_keeps_the_raw_ones():
     assert (plan.operation, plan.data) == ("none", data(entry))
 
     # An edit through the model is refused as lossy, never written.
-    segment.defaults = []  # pyright: ignore[reportAttributeAccessIssue]
+    segment.defaults = []
     with pytest.raises(LossyFieldError, match="defaults"):
         plan_module(module, level=ConfigContext.EDGE)
-    segment.defaults = MISSING  # pyright: ignore[reportAttributeAccessIssue]
+    segment.defaults = MISSING
 
     # A write for another edit sends the raw `defaults` as read.
     segment.rules.append(QosRule.model_validate({**entry["defaults"][0], "name": "r1"}))
@@ -260,5 +265,6 @@ def test_an_edge_segment_holds_no_defaults_and_a_write_keeps_the_raw_ones():
     # The profile layer holds them.
     profile = qos_module(qos_entry(GUEST), layer=Profile)
     held = profile.data.segments[0].defaults
-    assert isinstance(held, list) and len(held) == len(raw_defaults)
+    assert isinstance(held, list)
+    assert len(held) == len(raw_defaults)
     assert "defaults" in profile.data.segments[0].model_dump(by_alias=True, mode="json")

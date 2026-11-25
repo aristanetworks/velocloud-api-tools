@@ -1,3 +1,9 @@
+"""The operation mixins that make up ``VcoClientProtocol``, one per VCO API area.
+
+Each mixin's methods send one kind of portal request through the client's
+``portal`` methods and return its typed result.
+"""
+
 from pyvelo.client.operations.alert import AlertMixin
 from pyvelo.client.operations.branding import BrandingMixin
 from pyvelo.client.operations.composite_role import CompositeRoleMixin

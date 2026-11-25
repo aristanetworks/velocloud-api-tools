@@ -25,25 +25,25 @@ class _UniqueKeyLoader(yaml.SafeLoader):
         if node is None:
             return None
         self._refuse_repeated_keys(node, set())
-        return cast(object, self.construct_document(node))  # pyright: ignore[reportUnknownMemberType]
+        return cast("object", self.construct_document(node))  # pyright: ignore[reportUnknownMemberType]
 
     def _refuse_repeated_keys(self, node: yaml.Node, visited: set[int]) -> None:
         if id(node) in visited:
             return
         visited.add(id(node))
         if isinstance(node, yaml.SequenceNode):
-            for item in cast(list[yaml.Node], node.value):
+            for item in cast("list[yaml.Node]", node.value):
                 self._refuse_repeated_keys(item, visited)
         elif isinstance(node, yaml.MappingNode):
             seen: set[object] = set()
             for key_node, value_node in cast(
-                list[tuple[yaml.Node, yaml.Node]], node.value
+                "list[tuple[yaml.Node, yaml.Node]]", node.value
             ):
                 self._refuse_repeated_keys(value_node, visited)
                 if key_node.tag == "tag:yaml.org,2002:merge":
                     continue
                 self._refuse_repeated_keys(key_node, visited)
-                key = cast(object, self.construct_object(key_node, deep=True))  # pyright: ignore[reportUnknownMemberType]
+                key = cast("object", self.construct_object(key_node, deep=True))  # pyright: ignore[reportUnknownMemberType]
                 if isinstance(key, Hashable) and key in seen:
                     raise yaml.constructor.ConstructorError(
                         None,
@@ -66,9 +66,9 @@ def load_config[T: BaseModel](path: str | Path, model: type[T]) -> T:
     the file and each field at fault, not the values, which may be secrets.
     An ``OSError`` from opening the file is left as it is.
     """
-    with open(path) as f:
+    with Path(path).open() as f:
         try:
-            data = cast(object, yaml.load(f, Loader=_UniqueKeyLoader))
+            data = cast("object", yaml.load(f, Loader=_UniqueKeyLoader))  # noqa: S506 (_UniqueKeyLoader is a SafeLoader)
         except yaml.YAMLError as error:
             raise ConfigInputError(f"{path}: not valid YAML: {error}") from error
     try:
@@ -83,8 +83,8 @@ def load_config[T: BaseModel](path: str | Path, model: type[T]) -> T:
 
 def confirm_save(
     message: str = "Apply changes?",
-    auto_yes: bool = False,
     *,
+    auto_yes: bool = False,
     plan: ConfigPlan | None = None,
 ) -> bool:
     """Prompt for interactive confirmation.  Returns ``True`` if confirmed.
@@ -96,7 +96,7 @@ def confirm_save(
     if not isinstance(auto_yes, bool):  # pyright: ignore[reportUnnecessaryIsInstance]
         raise TypeError(f"auto_yes must be True or False, not {auto_yes!r}")  # pyright: ignore[reportUnreachable]
     if plan is not None:
-        print(plan.render())
+        print(plan.render())  # noqa: T201  # an interactive prompt: the person asked is shown the plan
     if auto_yes:
         return True
     try:

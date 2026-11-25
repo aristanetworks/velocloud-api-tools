@@ -7,7 +7,7 @@ operations as plain JSON values; ``parse_item_op`` reads one back and
 ``checked_patch`` is the check every patch passes once, at entry.
 """
 
-import datetime
+import datetime as dt
 import math
 import re
 from collections.abc import Iterator, Mapping
@@ -30,7 +30,10 @@ from .rebase import (
 )
 
 MAX_PATCH_DEPTH = 64
-"""How many levels of dicts and lists a patch may nest, the patch itself being the first."""
+"""How many levels of dicts and lists a patch may nest.
+
+The patch itself is the first.
+"""
 
 
 type PatchErrorKind = Literal[
@@ -86,6 +89,7 @@ class PatchError(ValueError):
     kind: PatchErrorKind
 
     def __init__(self, message: str, path: Path, kind: PatchErrorKind) -> None:
+        """*message* says what is wrong, at *path* in the patch, of the kind *kind*."""
         super().__init__(message, path, kind)
         self.message: str = message
         self.path = path
@@ -97,7 +101,10 @@ class PatchError(ValueError):
 
 
 type Selector = str | int | UUID | tuple[object, ...]
-"""A key or value (a ``UUID`` key too), ``at(n)``, or the tuple of the parts of a composite key."""
+"""A key or value, ``at(n)``, or the tuple of the parts of a composite key.
+
+A key may be a ``UUID`` too.
+"""
 
 _POSITION_WORDS = ("first", "last")
 _POSITION_ANCHORS = ("before", "after")
@@ -114,7 +121,9 @@ def at(n: int) -> str:
 
 
 def key_selector(key: KeyValue) -> str:
-    """The selector that names an item by *key*: the simplest text a patch reads back as that key.
+    """The selector that names an item by *key*.
+
+    It is the simplest text a patch reads back as that key.
 
     A one-part key in string form. A composite key as its parts in string form
     joined by commas (``10.0.0.0,24,192.168.1.1,GE3``); in the form
@@ -137,7 +146,10 @@ def key_selector(key: KeyValue) -> str:
 
 
 def selector_of(part: ItemPart) -> str:
-    """The selector text that names the item *part* names: ``"#n"`` for a position, as ``at(n)`` gives it, else ``key_selector`` of its key.
+    """The selector text that names the item *part* names.
+
+    It is ``"#n"`` for a position, as ``at(n)`` gives it, else ``key_selector`` of its
+    key.
 
     This is the text only: whether it names that item and no other in a given
     list is for the caller to know (an item of the list may have the key ``#n``
@@ -149,18 +161,25 @@ def selector_of(part: ItemPart) -> str:
 
 
 def _anchor(selector: Selector) -> str | int | float | list[str | int | float]:
-    """*selector* as JSON: the parts of a tuple as a list; a selector or part that is not a number or a string (a ``UUID``) in string form."""
+    """*selector* as JSON: the parts of a tuple as a list.
+
+    A selector or part that is not a number or a string (a ``UUID``) is in string form.
+    """
     if not isinstance(selector, tuple):
         return _json_part(selector)
     return [_json_part(p) for p in selector]
 
 
 def _json_part(value: object) -> str | int | float:
-    """*value* as it is when a number (``bool`` included) or a string, else in string form."""
+    """*value* as it is when a number or a string, else in string form.
+
+    A ``bool`` counts as a number.
+    """
     return value if isinstance(value, (str, int, float)) else str(value)
 
 
 def _place(
+    *,
     first: bool,
     last: bool,
     before: Selector | None,
@@ -208,7 +227,7 @@ def add(
             "give the place with first, last, before or after"
         )
     value: dict[str, object] = {"_op": "add", **fields}
-    place = _place(first, last, before, after)
+    place = _place(first=first, last=last, before=before, after=after)
     if place is not None:
         value["_position"] = place
     return value
@@ -227,7 +246,7 @@ def move(
     after: Selector | None = None,
 ) -> dict[str, object]:
     """Move the item: exactly one of ``first``, ``last``, ``before``, ``after``."""
-    place = _place(first, last, before, after)
+    place = _place(first=first, last=last, before=before, after=after)
     if place is None:
         raise TypeError("move() needs a place: first, last, before or after")
     return {"_position": place}
@@ -269,11 +288,12 @@ def _selector(value: object, path: Path) -> Selector:
 def _parse_place(value: object, path: Path) -> Place:
     if isinstance(value, str):
         if value in _POSITION_WORDS:
-            return Place(cast("Literal['first', 'last']", value))
+            return Place(value)
         for word in _POSITION_ANCHORS:
             if value.startswith(f"{word}:"):
                 raise PatchError(
-                    f'the "{word}:key" form of _position was removed; {_POSITION_FORMS}',
+                    f'the "{word}:key" form of _position was removed; '
+                    f"{_POSITION_FORMS}",
                     path,
                     "operation",
                 )
@@ -282,10 +302,7 @@ def _parse_place(value: object, path: Path) -> Place:
         if len(anchors) == 1:
             ((word, anchor),) = anchors.items()
             if word in _POSITION_ANCHORS:
-                return Place(
-                    cast("Literal['before', 'after']", word),
-                    _selector(anchor, path),
-                )
+                return Place(word, _selector(anchor, path))
         raise PatchError(
             f"_position takes exactly one of before and after; {_POSITION_FORMS}",
             path,
@@ -317,8 +334,8 @@ def parse_item_op(value: object, path: Path) -> ItemOp:
     if not isinstance(value, dict):
         raise PatchError(
             f"an item operation is an object, not {type(value).__name__}; write "
-            + 'a plain object, {"_op": "add", ...} (add(...)) or {"_op": "delete"} '
-            + "(delete())",
+            'a plain object, {"_op": "add", ...} (add(...)) or {"_op": "delete"} '
+            "(delete())",
             path,
             "operation",
         )
@@ -330,8 +347,8 @@ def parse_item_op(value: object, path: Path) -> ItemOp:
     if has_op and op not in ("add", "delete"):
         raise PatchError(
             f'_op is "add" or "delete", not {op!r}; write {{"_op": "add", ...}} '
-            + '(add(...)) or {"_op": "delete"} (delete()), a change as a plain '
-            + 'object, and a move as {"_position": ...} (move(...))',
+            '(add(...)) or {"_op": "delete"} (delete()), a change as a plain '
+            'object, and a move as {"_position": ...} (move(...))',
             path,
             "operation",
         )
@@ -354,7 +371,10 @@ _POSITION_SELECTOR = re.compile(r"#[0-9]{1,18}", re.ASCII)
 
 
 def position_of(selector: object) -> int | None:
-    """The position ``"#n"`` names, or None when ``selector`` is not that form (``n`` of at most 18 digits)."""
+    """The position ``"#n"`` names, or None when ``selector`` is not that form.
+
+    In that form ``n`` has at most 18 digits.
+    """
     if isinstance(selector, str) and _POSITION_SELECTOR.fullmatch(selector):
         return int(selector[1:])
     return None
@@ -391,8 +411,11 @@ def checked_patch(patch: object, path: Path = _ROOT) -> object:
     return _check(patch, path.parts)
 
 
-def _check(value: object, parts: tuple[PathPart, ...]) -> object:
-    """*value* checked and copied. *parts* is where it sits (a ``Path`` is built only for an error)."""
+def _check(value: object, parts: tuple[PathPart, ...]) -> object:  # noqa: C901 (existing: split it when it next changes)
+    """*value* checked and copied.
+
+    *parts* is where it sits (a ``Path`` is built only for an error).
+    """
     if value is None or isinstance(value, bool):
         return value
     if isinstance(value, (int, str)):
@@ -443,7 +466,10 @@ def _check(value: object, parts: tuple[PathPart, ...]) -> object:
 
 
 def _not_json_message(value: object) -> str:
-    """What to say of *value*, which is not a JSON value: what it is, and what to give instead."""
+    """What to say of *value*, which is not a JSON value.
+
+    It says what it is, and what to give instead.
+    """
     message = (
         f"{type(value).__name__} is not a JSON value: a patch holds dicts, "
         "lists, strings, numbers, booleans and None"
@@ -454,7 +480,7 @@ def _not_json_message(value: object) -> str:
         message += "; write a UUID as its text, str(value)"
     elif isinstance(value, Enum):
         message += "; give an Enum member as its value, member.value"
-    elif isinstance(value, (datetime.date, datetime.time)):
+    elif isinstance(value, (dt.date, dt.time)):
         message += "; write a date or a time as its text, value.isoformat()"
     elif isinstance(value, (set, frozenset, tuple, Iterator)):
         message += "; give a set, a tuple or a generator as a list, list(value)"
@@ -469,7 +495,11 @@ def _not_json_message(value: object) -> str:
 
 
 def _plain[T](value: T) -> T:
-    """*value* as the plain ``int`` or ``str`` when it is an instance of a subclass of one (an ``IntEnum`` or ``StrEnum`` member), else itself."""
+    """*value* as the plain ``int`` or ``str`` when it subclasses one, else itself.
+
+    That is when it is an instance of a subclass of one (an ``IntEnum`` or ``StrEnum``
+    member).
+    """
     if isinstance(value, bool):
         return value
     if isinstance(value, int) and type(value) is not int:

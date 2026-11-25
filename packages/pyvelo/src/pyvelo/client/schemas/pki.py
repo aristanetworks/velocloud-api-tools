@@ -1,3 +1,9 @@
+"""The requests and results of the ``pki/`` methods.
+
+Revoked certificates, Edge and Gateway certificate signing requests, and Edge
+certificate renewal.
+"""
+
 from typing import Annotated
 
 from pydantic import MISSING, Field

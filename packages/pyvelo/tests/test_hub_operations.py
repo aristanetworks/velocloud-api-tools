@@ -1,4 +1,7 @@
-"""The Edge disable calls accept a ``null`` answer; the cluster ones do not; the services read parses a source-shaped answer."""
+"""The Edge disable calls accept a ``null`` answer; the cluster ones do not.
+
+The services read parses a source-shaped answer.
+"""
 
 from typing import Any
 
@@ -34,20 +37,20 @@ EDGE_ARGS: dict[str, Any] = {
 CLUSTER_ARGS: dict[str, Any] = {**EDGE_ARGS, "id_": 41}
 
 
-def answer_null(request: httpx.Request) -> httpx.Response:
+def answer_null(_request: httpx.Request) -> httpx.Response:
     return httpx.Response(200, json={"jsonrpc": "2.0", "id": 1, "result": None})
 
 
 async def test_an_edge_hub_disable_answered_null_returns_none(
     mock_vco_client: MockVcoClientFactory,
-):
+) -> None:
     client = await mock_vco_client(answer_null)
     assert await client.disable_edge_hub(DisableEdgeHub(**EDGE_ARGS)) is None
 
 
 async def test_an_edge_bridge_disable_answered_null_returns_none(
     mock_vco_client: MockVcoClientFactory,
-):
+) -> None:
     client = await mock_vco_client(answer_null)
     assert (
         await client.disable_edge_to_edge_bridge(DisableEdgeToEdgeBridge(**EDGE_ARGS))
@@ -57,15 +60,15 @@ async def test_an_edge_bridge_disable_answered_null_returns_none(
 
 async def test_an_edge_backhaul_disable_answered_null_returns_none(
     mock_vco_client: MockVcoClientFactory,
-):
+) -> None:
     client = await mock_vco_client(answer_null)
     assert await client.disable_edge_backhaul(DisableEdgeBackHaul(**EDGE_ARGS)) is None
 
 
 async def test_an_edge_disable_answered_with_a_service_returns_it(
     mock_vco_client: MockVcoClientFactory,
-):
-    def answer(request: httpx.Request) -> httpx.Response:
+) -> None:
+    def answer(_request: httpx.Request) -> httpx.Response:
         service = {
             "id": 7,
             "logicalId": "a1a1a1a1-a1a1-4a1a-8a1a-a1a1a1a1a1a1",
@@ -92,7 +95,7 @@ async def test_an_edge_disable_answered_with_a_service_returns_it(
 )
 async def test_a_cluster_disable_answered_null_still_raises(
     mock_vco_client: MockVcoClientFactory, call: Any
-):
+) -> None:
     client = await mock_vco_client(answer_null)
     with pytest.raises(VcoEmptyResultError):
         await call(client)
@@ -100,7 +103,7 @@ async def test_a_cluster_disable_answered_null_still_raises(
 
 async def test_services_with_a_source_shaped_qos_usage_parse(
     mock_vco_client: MockVcoClientFactory,
-):
+) -> None:
     service = {
         "id": 7,
         "logicalId": "a1a1a1a1-a1a1-4a1a-8a1a-a1a1a1a1a1a1",
@@ -132,7 +135,7 @@ async def test_services_with_a_source_shaped_qos_usage_parse(
         ],
     }
 
-    def answer(request: httpx.Request) -> httpx.Response:
+    def answer(_request: httpx.Request) -> httpx.Response:
         return httpx.Response(
             200, json={"jsonrpc": "2.0", "id": 1, "result": [service]}
         )

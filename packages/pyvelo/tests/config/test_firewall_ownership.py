@@ -1,11 +1,14 @@
-"""The firewall through ``ConfigPipeline.apply`` and ``state.effective``: patches on inherited values start from the profile."""
+"""The firewall through ``ConfigPipeline.apply`` and ``state.effective``.
+
+Patches on inherited values start from the profile.
+"""
 
 import copy
 import uuid
 from typing import Any, cast, final
 
 import pytest
-from profile_state import profile_state  # pyright: ignore[reportImplicitRelativeImport]
+from profile_state import profile_state
 from pydantic import MISSING
 from pyvelo.client.exceptions import DetachedObjectError
 from pyvelo.client.models.configuration import FirewallData
@@ -42,7 +45,10 @@ def global_segment(*rules: dict[str, Any]) -> dict[str, Any]:
 def state_of(
     edge: dict[str, Any] | None, profile: dict[str, Any] | None = None
 ) -> ConfigState:
-    """An edge state whose edge firewall data is *edge* (no row for None), over a profile whose is *profile*."""
+    """An edge state whose edge firewall data is *edge* (no row for None).
+
+    Its profile's firewall data is *profile*.
+    """
     edge_rows = (
         []
         if edge is None
@@ -97,7 +103,9 @@ def change_after(plan: ModulePlan, path: str) -> object:
 # --- a patch on an inherited value starts from the profile ------------------
 
 
-async def test_a_patch_into_an_inherited_section_the_profile_lacks_copies_the_display_default():
+async def test_a_patch_into_an_inherited_section_the_profile_lacks_copies_the_display_default() -> (  # noqa: E501 (a test's name)
+    None
+):
     state = state_of({"segments": [global_segment()]})
     await ConfigPipeline(client=None).apply(
         state, module="firewall", patch={"services": {"ssh": {"enabled": True}}}
@@ -111,7 +119,7 @@ async def test_a_patch_into_an_inherited_section_the_profile_lacks_copies_the_di
     assert default["ssh"]["enabled"] is False  # the template is not changed
 
 
-async def test_a_patch_into_an_inherited_section_copies_the_profiles():
+async def test_a_patch_into_an_inherited_section_copies_the_profiles() -> None:
     state = state_of(
         {"segments": [global_segment()]}, {**PROFILE_FW, "services": PROFILE_SERVICES}
     )
@@ -122,11 +130,11 @@ async def test_a_patch_into_an_inherited_section_copies_the_profiles():
     after = change_after(firewall_plan(state), "services")
     assert after == {**PROFILE_SERVICES, "ssh": {"enabled": True}}
     # The profile itself is as it was.
-    assert state.profile.firewall.services.logging_enabled is True  # pyright: ignore[reportOptionalMemberAccess]
-    assert state.profile.firewall.services.ssh.enabled is False  # pyright: ignore[reportOptionalMemberAccess, reportAttributeAccessIssue, reportUnknownMemberType]
+    assert state.profile.firewall.services.logging_enabled is True
+    assert state.profile.firewall.services.ssh.enabled is False  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType]
 
 
-async def test_null_inherits_and_plan_shows_the_removal():
+async def test_null_inherits_and_plan_shows_the_removal() -> None:
     state = state_of({"segments": [global_segment()], "syslog_forwarding": True})
     await ConfigPipeline(client=None).apply(
         state, module="firewall", patch={"syslog_forwarding": None}
@@ -137,7 +145,7 @@ async def test_null_inherits_and_plan_shows_the_removal():
     assert "syslog_forwarding" not in plan.data
 
 
-async def test_a_member_patch_localizes_the_stateful_group():
+async def test_a_member_patch_localizes_the_stateful_group() -> None:
     profile_settings = {
         "establishedTcpFlowTimeout": 7000,
         "nonEstablishedTcpFlowTimeout": 200,
@@ -165,7 +173,7 @@ async def test_a_member_patch_localizes_the_stateful_group():
     assert state.edge.firewall.stateful.is_local is True
 
 
-async def test_a_failed_patch_leaves_a_localized_group_inherited():
+async def test_a_failed_patch_leaves_a_localized_group_inherited() -> None:
     state = state_of({"segments": [global_segment()]})
     before = state.plan().render()
     with pytest.raises(PatchError, match="syslog_forwarding"):
@@ -180,7 +188,7 @@ async def test_a_failed_patch_leaves_a_localized_group_inherited():
     assert state.plan().render() == before
 
 
-async def test_owned_intents_on_a_detached_layer_raise():
+async def test_owned_intents_on_a_detached_layer_raise() -> None:
     state = state_of({"segments": [global_segment()], "syslog_forwarding": True})
     client = MockVcoClient.for_state(state)
     pipeline = ConfigPipeline(client)
@@ -203,7 +211,7 @@ def resolved(view: FirewallData[Effective]) -> dict[str, Resolved[object]]:
     return effective_dump(view)[1]
 
 
-async def test_the_effective_view_follows_the_layers():
+async def test_the_effective_view_follows_the_layers() -> None:
     edge_rule = {"name": "edge-rule", **DENY}
     state = state_of(
         {
@@ -221,7 +229,7 @@ async def test_the_effective_view_follows_the_layers():
     assert view.firewall_enabled.value is False
     assert view.atp_enabled.origin is Origin.FACTORY
     glob = view.get_segment(name="Global Segment")
-    assert [(r.origin, r.value.name) for r in glob.outbound] == [  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType, reportUnknownVariableType]
+    assert [(r.origin, r.value.name) for r in glob.outbound] == [
         (Origin.EDGE, "edge-rule"),
         (Origin.PROFILE, "allow-all"),
     ]
@@ -230,7 +238,7 @@ async def test_the_effective_view_follows_the_layers():
     assert state.effective.firewall.syslog_forwarding.origin is Origin.FACTORY
 
 
-async def test_the_effective_view_of_an_edge_without_a_row_creates_nothing():
+async def test_the_effective_view_of_an_edge_without_a_row_creates_nothing() -> None:
     state = state_of(None, {**PROFILE_FW, "syslog_forwarding": True})
     before = state.plan().render()
     modules_before = state.edge_config.modules if state.edge_config else None
@@ -245,7 +253,7 @@ async def test_the_effective_view_of_an_edge_without_a_row_creates_nothing():
     assert state.plan().render() == before
 
 
-def test_a_profile_state_has_no_effective_view():
+def test_a_profile_state_has_no_effective_view() -> None:
     state = ConfigState(
         edge_config=None,
         profile_config=EnterpriseConfigurationProfile.model_validate(
@@ -258,7 +266,7 @@ def test_a_profile_state_has_no_effective_view():
         _ = state.effective
 
 
-async def test_a_patch_sets_a_rules_logging_flags():
+async def test_a_patch_sets_a_rules_logging_flags() -> None:
     stored = {"name": "block", "match": {}, "action": {"allow_or_deny": "deny"}}
     state = state_of({"segments": [global_segment(stored)]})
     await ConfigPipeline(client=None).apply(
@@ -280,7 +288,7 @@ async def test_a_patch_sets_a_rules_logging_flags():
 # --- a module the edge lacks ------------------------------------------------
 
 
-async def test_a_missing_edge_module_inserts_only_local_content():
+async def test_a_missing_edge_module_inserts_only_local_content() -> None:
     state = state_of(None, {**PROFILE_FW, "syslog_forwarding": True})
     await ConfigPipeline(client=None).apply(
         state,
@@ -301,7 +309,9 @@ async def test_a_missing_edge_module_inserts_only_local_content():
     assert "allow-all" not in str(plan.data)
 
 
-async def test_a_patch_on_an_inherited_object_of_a_missing_module_copies_it_into_the_insert():
+async def test_a_patch_on_an_inherited_object_of_a_missing_module_copies_it_into_the_insert() -> (  # noqa: E501 (a test's name)
+    None
+):
     profile_segments = copy.deepcopy(PROFILE_FW["segments"])
     profile_segments[0]["outbound"][0]["ruleLogicalId"] = str(uuid.UUID(int=0x55))
     state = state_of(
@@ -322,7 +332,7 @@ async def test_a_patch_on_an_inherited_object_of_a_missing_module_copies_it_into
     assert [s["outbound"] for s in plan.data["segments"]] == [[], []]
     assert "ruleLogicalId" not in str(plan.data)
     # The profile is as it was.
-    assert state.profile.firewall.services.ssh.enabled is False  # pyright: ignore[reportOptionalMemberAccess, reportAttributeAccessIssue, reportUnknownMemberType]
+    assert state.profile.firewall.services.ssh.enabled is False  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType]
 
 
 # --- names resolve through the converted firewall ---------------------------
@@ -341,11 +351,14 @@ class FakeGroup:
 
 @final
 class ObjectGroupClient:
-    """Answers ``get_object_groups``: the address group ``printers`` and the service group ``web``."""
+    """Answers ``get_object_groups``.
+
+    The answer holds the address group ``printers`` and the service group ``web``.
+    """
 
     @property
     def protocol(self) -> VcoClientProtocol:
-        return cast(VcoClientProtocol, cast(object, self))
+        return cast("VcoClientProtocol", cast("object", self))
 
     async def get_object_groups(self, request: GetObjectGroups) -> list[FakeGroup]:
         if request.type_ == "address_group":
@@ -395,7 +408,7 @@ def block_rule(module: FirewallData[Any], segment: str) -> Any:
     return rule
 
 
-async def test_names_resolve_through_the_converted_firewall_at_an_edge():
+async def test_names_resolve_through_the_converted_firewall_at_an_edge() -> None:
     state = await with_resolvers(state_of({"segments": [global_segment()]}))
     await ConfigPipeline(client=None).apply(
         state,
@@ -420,7 +433,7 @@ async def test_names_resolve_through_the_converted_firewall_at_an_edge():
     assert written["match"]["dPortGroup"] == str(WEB)
 
 
-async def test_names_resolve_through_the_converted_firewall_at_a_profile():
+async def test_names_resolve_through_the_converted_firewall_at_a_profile() -> None:
     state = await profile_state(
         [ds_entry(GLOBAL), ds_entry(GUEST)],
         [qos_entry(GLOBAL), qos_entry(GUEST)],

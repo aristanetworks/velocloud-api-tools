@@ -1,4 +1,7 @@
-"""ServiceGroupResolver — resolves service/port group names to ServiceGroupIdentity via VCO API."""
+"""ServiceGroupResolver — resolves service/port group names to ServiceGroupIdentity.
+
+Resolution is via the VCO API.
+"""
 
 from typing import override
 
@@ -15,7 +18,9 @@ from pyvelo.core.identity import (
 
 
 class ServiceGroupResolver(BaseResolver[ServiceGroupIdentity]):
-    """Resolves a service-group (port-group) identifier to a :class:`ServiceGroupIdentity`.
+    """Resolves a service-group identifier to a :class:`ServiceGroupIdentity`.
+
+    A service group is also called a port group.
 
     Accepts:
         - :class:`ServiceGroupName`: human-readable group name.
@@ -25,7 +30,7 @@ class ServiceGroupResolver(BaseResolver[ServiceGroupIdentity]):
     Loads via ``enterprise/getObjectGroups`` with type ``port_group``.
     """
 
-    identity_type = ServiceGroupIdentity
+    identity_type: type[ServiceGroupIdentity] = ServiceGroupIdentity
 
     @override
     def lookup_key(

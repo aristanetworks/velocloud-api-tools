@@ -1,4 +1,6 @@
-"""``ModuleStore``: Edges, hub clusters, the twelve hub role calls and the hub list check.
+"""``ModuleStore``: Edges, hub clusters and the twelve hub role calls.
+
+And the hub list check.
 
 Each test runs on a store with the profile of ``segment_helpers`` (configuration
 ``CONFIG``, one device settings segment, ``GLOBAL``), the Edges of ``hub_helpers``
@@ -113,13 +115,13 @@ def call(store: ModuleStore, method: str, target: int) -> Any:
 
 def services(store: ModuleStore, **extra: Any) -> list[dict[str, Any]]:
     return cast(
-        list[dict[str, Any]],
+        "list[dict[str, Any]]",
         store.handle(GET_SERVICES, {"enterpriseId": 7, **extra}),
     )
 
 
 def refs(store: ModuleStore, module_id: int = DS_ID) -> dict[str, Any]:
-    return cast(dict[str, Any], store.rows[module_id].get("refs", {}))
+    return cast("dict[str, Any]", store.rows[module_id].get("refs", {}))
 
 
 def rows_of(store: ModuleStore, name: str, module_id: int = DS_ID) -> list[Any]:
@@ -135,7 +137,10 @@ def edge_service_of(store: ModuleStore, hub: Hub) -> dict[str, Any]:
 
 
 def add_backhaul_row(store: ModuleStore, service_id: int) -> None:
-    """A ``deviceSettings:backHaulEdge`` row of the Edge configuration's QoS module that points at *service_id*."""
+    """A ``deviceSettings:backHaulEdge`` row of the Edge configuration's QoS module.
+
+    It points at *service_id*.
+    """
     service = store.objects[service_id]
     store.rows[EDGE_QOS_ID]["refs"] = {
         BACKHAUL_REF: {
@@ -155,18 +160,18 @@ def add_backhaul_row(store: ModuleStore, service_id: int) -> None:
 
 
 def roles_of(service: dict[str, Any]) -> dict[str, bool]:
-    return cast(dict[str, bool], service["data"]["roles"])
+    return cast("dict[str, bool]", service["data"]["roles"])
 
 
 def error_codes(error: RpcError) -> list[str]:
-    data = cast(dict[str, Any], error.data)
+    data = cast("dict[str, Any]", error.data)
     return [e.get("code") for e in data["error"]]
 
 
 # -- Edges and clusters -----------------------------------------------------
 
 
-def test_add_edge_with_a_cluster_adds_a_member_service():
+def test_add_edge_with_a_cluster_adds_a_member_service() -> None:
     store = make_store()
     (member,) = services(store, type="edgeHubClusterMember")
     assert member["edgeId"] == MEMBER.id
@@ -174,7 +179,7 @@ def test_add_edge_with_a_cluster_adds_a_member_service():
     assert services(store, type="edgeHub") == []
 
 
-def test_add_cluster_holds_a_cluster_object_with_no_data_and_version_1():
+def test_add_cluster_holds_a_cluster_object_with_no_data_and_version_1() -> None:
     store = make_store()
     cluster = store.objects[CLUSTER.id]
     assert (cluster["type"], cluster["data"], cluster["version"]) == (
@@ -187,7 +192,7 @@ def test_add_cluster_holds_a_cluster_object_with_no_data_and_version_1():
 
 async def test_the_edge_list_is_one_page_of_the_edges(
     mock_vco_client: MockVcoClientFactory,
-):
+) -> None:
     store = make_store()
     client = await mock_vco_client(store)
     edges = await client.get_enterprise_edge_list(GetEnterpriseEdgeList())
@@ -200,7 +205,7 @@ async def test_the_edge_list_is_one_page_of_the_edges(
 # -- The services read ------------------------------------------------------
 
 
-def test_the_services_read_filters_by_type_and_parses_as_any_service():
+def test_the_services_read_filters_by_type_and_parses_as_any_service() -> None:
     store = make_store()
     everything = services(store)
     assert len(everything) == 2
@@ -221,7 +226,9 @@ def test_the_services_read_filters_by_type_and_parses_as_any_service():
     ]
 
 
-def test_the_services_read_answers_configuration_and_qos_usage_only_with_configuration():
+def test_the_services_read_answers_configuration_and_qos_usage_only_with_configuration() -> (  # noqa: E501 (a test's name)
+    None
+):
     store = make_store()
     _ = call(store, ENABLE_EDGE["hub"], NOT_A_HUB.id)
     service = edge_service_of(store, NOT_A_HUB)
@@ -272,7 +279,7 @@ def test_the_services_read_answers_configuration_and_qos_usage_only_with_configu
 # -- Edge role calls --------------------------------------------------------
 
 
-def test_an_edge_enable_twice_makes_one_service_and_one_row():
+def test_an_edge_enable_twice_makes_one_service_and_one_row() -> None:
     store = make_store()
     first = call(store, ENABLE_EDGE["hub"], HUB_A.id)
     second = call(store, ENABLE_EDGE["hub"], HUB_A.id)
@@ -294,7 +301,9 @@ def test_an_edge_enable_twice_makes_one_service_and_one_row():
 
 
 @pytest.mark.parametrize("role", ["bridge", "backhaul"])
-def test_an_edge_bridge_or_backhaul_enable_sets_the_role_and_edge_hub(role: str):
+def test_an_edge_bridge_or_backhaul_enable_sets_the_role_and_edge_hub(
+    role: str,
+) -> None:
     store = make_store()
     answer = call(store, ENABLE_EDGE[role], HUB_A.id)
     assert roles_of(answer) == {
@@ -306,7 +315,7 @@ def test_an_edge_bridge_or_backhaul_enable_sets_the_role_and_edge_hub(role: str)
     assert row["data"]["roles"] == roles_of(answer)
 
 
-def test_an_edge_enable_leaves_the_module_data_and_version():
+def test_an_edge_enable_leaves_the_module_data_and_version() -> None:
     store = make_store()
     before = copy.deepcopy(store.rows[DS_ID])
     _ = call(store, ENABLE_EDGE["hub"], HUB_A.id)
@@ -315,7 +324,7 @@ def test_an_edge_enable_leaves_the_module_data_and_version():
     assert store.rows[DS_ID]["version"] == before["version"]
 
 
-def test_an_edge_enable_for_a_cluster_member_is_refused():
+def test_an_edge_enable_for_a_cluster_member_is_refused() -> None:
     store = make_store()
     with pytest.raises(RpcError) as refused:
         _ = call(store, ENABLE_EDGE["hub"], MEMBER.id)
@@ -325,7 +334,7 @@ def test_an_edge_enable_for_a_cluster_member_is_refused():
     assert rows_of(store, HUB_REF) == []
 
 
-def test_an_edge_hub_disable_deletes_the_service_and_every_row_pointing_at_it():
+def test_an_edge_hub_disable_deletes_the_service_and_every_row_pointing_at_it() -> None:
     store = make_store()
     service = call(store, ENABLE_EDGE["hub"], HUB_A.id)
     other = call(store, ENABLE_EDGE["hub"], HUB_B.id)
@@ -338,7 +347,7 @@ def test_an_edge_hub_disable_deletes_the_service_and_every_row_pointing_at_it():
 
 
 @pytest.mark.parametrize("role", ["hub", "bridge", "backhaul"])
-def test_an_edge_disable_with_no_service_answers_null(role: str):
+def test_an_edge_disable_with_no_service_answers_null(role: str) -> None:
     store = make_store()
     assert call(store, DISABLE_EDGE[role], HUB_A.id) is None
     assert services(store, type="edgeHub") == []
@@ -347,7 +356,7 @@ def test_an_edge_disable_with_no_service_answers_null(role: str):
 @pytest.mark.parametrize("role", ["bridge", "backhaul"])
 def test_an_edge_bridge_or_backhaul_disable_clears_its_role_and_answers_the_service(
     role: str,
-):
+) -> None:
     store = make_store()
     _ = call(store, ENABLE_EDGE["bridge"], HUB_A.id)
     _ = call(store, ENABLE_EDGE["backhaul"], HUB_A.id)
@@ -367,7 +376,9 @@ def cluster(store: ModuleStore) -> dict[str, Any]:
     return store.objects[CLUSTER.id]
 
 
-def test_a_cluster_enable_sets_the_segment_roles_the_row_and_bumps_the_version():
+def test_a_cluster_enable_sets_the_segment_roles_the_row_and_bumps_the_version() -> (
+    None
+):
     store = make_store()
     answer = call(store, ENABLE_CLUSTER["hub"], CLUSTER.id)
     _ = call(store, ENABLE_CLUSTER["hub"], CLUSTER.id)
@@ -389,7 +400,7 @@ def test_a_cluster_enable_sets_the_segment_roles_the_row_and_bumps_the_version()
     assert parsed.name == CLUSTER.name
 
 
-def test_a_cluster_enable_in_a_second_segment_refreshes_the_rows_of_the_first():
+def test_a_cluster_enable_in_a_second_segment_refreshes_the_rows_of_the_first() -> None:
     store = make_store()
     second_object = SEGMENT_OBJECT + 1
     store.add_object(
@@ -418,7 +429,7 @@ def test_a_cluster_enable_in_a_second_segment_refreshes_the_rows_of_the_first():
 @pytest.mark.parametrize("role", ["bridge", "backhaul"])
 def test_a_cluster_bridge_or_backhaul_enable_and_disable_set_and_clear_its_flag(
     role: str,
-):
+) -> None:
     store = make_store()
     _ = call(store, ENABLE_CLUSTER[role], CLUSTER.id)
     held = cluster(store)["data"][str(CONFIG)][str(GLOBAL[0])]["roles"]
@@ -434,7 +445,7 @@ def test_a_cluster_bridge_or_backhaul_enable_and_disable_set_and_clear_its_flag(
     assert row["data"][str(CONFIG)][str(GLOBAL[0])]["roles"] == held
 
 
-def test_a_cluster_hub_disable_clears_the_segment_roles_and_leaves_the_row():
+def test_a_cluster_hub_disable_clears_the_segment_roles_and_leaves_the_row() -> None:
     store = make_store()
     _ = call(store, ENABLE_CLUSTER["bridge"], CLUSTER.id)
     answer = call(store, DISABLE_CLUSTER["hub"], CLUSTER.id)
@@ -444,7 +455,7 @@ def test_a_cluster_hub_disable_clears_the_segment_roles_and_leaves_the_row():
     assert answer["id"] == CLUSTER.id
 
 
-def test_a_cluster_hub_disable_with_no_profile_data_fails_and_changes_nothing():
+def test_a_cluster_hub_disable_with_no_profile_data_fails_and_changes_nothing() -> None:
     store = make_store()
     before = copy.deepcopy(cluster(store))
     with pytest.raises(RpcError) as failed:
@@ -462,7 +473,7 @@ def test_a_cluster_hub_disable_with_no_profile_data_fails_and_changes_nothing():
         *DISABLE_CLUSTER.values(),
     ],
 )
-def test_every_cluster_call_bumps_the_version(method: str):
+def test_every_cluster_call_bumps_the_version(method: str) -> None:
     store = make_store()
     _ = call(store, ENABLE_CLUSTER["hub"], CLUSTER.id)
     before = cluster(store)["version"]
@@ -473,7 +484,7 @@ def test_every_cluster_call_bumps_the_version(method: str):
 # -- fail_calls -------------------------------------------------------------
 
 
-def test_fail_calls_fails_the_named_call_once():
+def test_fail_calls_fails_the_named_call_once() -> None:
     store = make_store()
     store.fail_calls.add(ENABLE_EDGE["backhaul"])
     with pytest.raises(RpcError) as failed:
@@ -499,7 +510,10 @@ def update_ds(
 
 
 def hub_ref(store: ModuleStore, hub: Hub) -> dict[str, Any]:
-    """The refs holding the row for *hub*, whose service the store holds (made with an enable if an Edge)."""
+    """The refs holding the row for *hub*, whose service the store holds.
+
+    The service is made with an enable if the hub is an Edge.
+    """
     if hub.kind == "edge":
         service = call(store, ENABLE_EDGE["hub"], hub.id)
         row = hub_helpers.hub_row(
@@ -535,7 +549,7 @@ def refused_codes(
     return error_codes(refused.value)
 
 
-def test_vpn_check_accepts_a_matching_edge_and_cluster_list():
+def test_vpn_check_accepts_a_matching_edge_and_cluster_list() -> None:
     store = make_store(vpn_check=True)
     sent = merge(hub_ref(store, HUB_A), hub_ref(store, CLUSTER))
     entry = hub_helpers.ds_with_vpn(GLOBAL, hubs=(HUB_A, CLUSTER))
@@ -550,33 +564,33 @@ def test_vpn_check_accepts_a_matching_edge_and_cluster_list():
 )
 def test_vpn_check_refuses_a_list_and_rows_that_differ_either_way(
     listed: tuple[Hub, ...], held: tuple[Hub, ...]
-):
+) -> None:
     store = make_store(vpn_check=True)
     sent = merge(*(hub_ref(store, h) for h in held))
     entry = hub_helpers.ds_with_vpn(GLOBAL, hubs=listed)
     assert refused_codes(store, entry, sent) == ["DS00000020"]
 
 
-def test_vpn_check_refuses_an_enabled_hub_list_with_no_hub_row():
+def test_vpn_check_refuses_an_enabled_hub_list_with_no_hub_row() -> None:
     store = make_store(vpn_check=True)
     entry = hub_helpers.ds_with_vpn(GLOBAL, hub_list_enabled=True)
     assert refused_codes(store, entry, {}) == ["DS00000010"]
 
 
-def test_vpn_check_refuses_a_disabled_hub_list_with_an_edge_hub_row():
+def test_vpn_check_refuses_a_disabled_hub_list_with_an_edge_hub_row() -> None:
     store = make_store(vpn_check=True)
     sent = hub_ref(store, HUB_A)
     entry = hub_helpers.ds_with_vpn(GLOBAL, hubs=(HUB_A,), hub_list_enabled=False)
     assert refused_codes(store, entry, sent) == ["DS00000011"]
 
 
-def test_vpn_check_is_off_by_default():
+def test_vpn_check_is_off_by_default() -> None:
     store = make_store()
     entry = hub_helpers.ds_with_vpn(GLOBAL, hub_list_enabled=True)
     assert update_ds(store, entry, {}) == {"rows": 1}
 
 
-def test_vpn_check_is_a_public_attribute_set_after_construction():
+def test_vpn_check_is_a_public_attribute_set_after_construction() -> None:
     store = make_store()
     assert store.vpn_check is False
     store.vpn_check = True
@@ -584,7 +598,7 @@ def test_vpn_check_is_a_public_attribute_set_after_construction():
     assert refused_codes(store, entry, {}) == ["DS00000010"]
 
 
-def test_an_update_that_drops_a_live_edge_hub_row_deletes_the_service():
+def test_an_update_that_drops_a_live_edge_hub_row_deletes_the_service() -> None:
     store = make_store()
     service = call(store, ENABLE_EDGE["hub"], HUB_A.id)
     kept = call(store, ENABLE_EDGE["hub"], HUB_B.id)
@@ -597,7 +611,7 @@ def test_an_update_that_drops_a_live_edge_hub_row_deletes_the_service():
     assert "refs" not in store.rows[EDGE_QOS_ID]
 
 
-def test_an_update_that_keeps_the_row_keeps_the_service():
+def test_an_update_that_keeps_the_row_keeps_the_service() -> None:
     store = make_store()
     service = call(store, ENABLE_EDGE["hub"], HUB_A.id)
     sent = {HUB_REF: copy.deepcopy(rows_of(store, HUB_REF)[0])}

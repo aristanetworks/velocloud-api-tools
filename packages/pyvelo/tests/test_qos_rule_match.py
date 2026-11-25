@@ -30,13 +30,13 @@ def address_keys(match: QosRuleMatch) -> set[str]:
     return ADDRESS_KEYS & set(written(match))
 
 
-def test_an_ipv4_match_has_no_ipv6_fields():
+def test_an_ipv4_match_has_no_ipv6_fields() -> None:
     match = QosRuleMatch.model_validate({"ipVersion": "IPv4"})
     assert address_keys(match) == V4_KEYS
     assert (written(match)["sip"], written(match)["sip_prenat_enabled"]) == ("any", 0)
 
 
-def test_an_ipv6_match_has_no_ipv4_fields():
+def test_an_ipv6_match_has_no_ipv4_fields() -> None:
     match = QosRuleMatch.model_validate({"ipVersion": "IPv6"})
     assert address_keys(match) == V6_KEYS
     assert (written(match)["sipV6"], written(match)["sip_prenat_enabledV6"]) == (
@@ -45,14 +45,14 @@ def test_an_ipv6_match_has_no_ipv4_fields():
     )
 
 
-def test_an_ipv4v6_match_has_both_families():
+def test_an_ipv4v6_match_has_both_families() -> None:
     assert address_keys(QosRuleMatch.model_validate({"ipVersion": "IPv4v6"})) == (
         ADDRESS_KEYS
     )
     assert address_keys(QosRuleMatch.model_validate({})) == ADDRESS_KEYS
 
 
-def test_the_fields_of_the_family_it_has_are_read_as_given():
+def test_the_fields_of_the_family_it_has_are_read_as_given() -> None:
     match = QosRuleMatch.model_validate(
         {"ipVersion": "IPv4", "sip": "10.0.0.1", "sip_prenat_enabled": 1}
     )
@@ -61,7 +61,7 @@ def test_the_fields_of_the_family_it_has_are_read_as_given():
     assert other.destination_ip_v6 == "2001:db8::1"
 
 
-def test_the_config_level_of_the_validation_context_is_kept():
+def test_the_config_level_of_the_validation_context_is_kept() -> None:
     match = QosRuleMatch.model_validate(
         {"ipVersion": "IPv4"}, context={"config_level": EDGE}
     )
@@ -129,7 +129,7 @@ MATCHES = [IPV4_AS_READ, IPV4_WITH_IPV6_KEYS, IPV6_AS_READ, IPV4V6_AS_READ, {}]
 
 
 @pytest.mark.parametrize("match", MATCHES, ids=lambda m: str(sorted(m)))
-def test_a_rule_as_read_is_written_back_unchanged(match: dict[str, Any]):
+def test_a_rule_as_read_is_written_back_unchanged(match: dict[str, Any]) -> None:
     raw_rule = rule("r1", match)
     plan = plan_module(qos(raw_rule), level=EDGE)
     assert (plan.operation, plan.changes) == ("none", ())
@@ -137,7 +137,9 @@ def test_a_rule_as_read_is_written_back_unchanged(match: dict[str, Any]):
 
 
 @pytest.mark.parametrize("match", MATCHES, ids=lambda m: str(sorted(m)))
-def test_an_edit_next_to_a_match_leaves_its_keys_as_they_were(match: dict[str, Any]):
+def test_an_edit_next_to_a_match_leaves_its_keys_as_they_were(
+    match: dict[str, Any],
+) -> None:
     raw_rule = rule("r1", match)
     mod = qos(raw_rule)
     mod.data.segments[0].rules[0].match.hostname = "example.invalid"
@@ -149,7 +151,7 @@ def test_an_edit_next_to_a_match_leaves_its_keys_as_they_were(match: dict[str, A
     assert written_match == {**match, "hostname": "example.invalid"}
 
 
-def test_a_new_rule_copied_from_an_ipv4_rule_has_no_ipv6_fields():
+def test_a_new_rule_copied_from_an_ipv4_rule_has_no_ipv6_fields() -> None:
     mod = qos(rule("r1", IPV4_AS_READ))
     rules = mod.data.segments[0].rules
     added = rules[0].model_copy(deep=True)
@@ -165,7 +167,7 @@ def test_a_new_rule_copied_from_an_ipv4_rule_has_no_ipv6_fields():
     assert new_match["ipVersion"] == "IPv4"
 
 
-def test_a_new_rule_built_for_ipv6_has_no_ipv4_fields():
+def test_a_new_rule_built_for_ipv6_has_no_ipv4_fields() -> None:
     mod = qos(rule("r1", IPV4_AS_READ))
     rules = mod.data.segments[0].rules
     rules.append(
@@ -176,7 +178,7 @@ def test_a_new_rule_built_for_ipv6_has_no_ipv4_fields():
     assert ADDRESS_KEYS & set(new_match) == V6_KEYS
 
 
-def test_a_new_rule_for_both_families_has_every_address_field():
+def test_a_new_rule_for_both_families_has_every_address_field() -> None:
     mod = qos(rule("r1", IPV4_AS_READ))
     rules = mod.data.segments[0].rules
     rules.append(type(rules[0]).model_validate(rule("r2", {})))

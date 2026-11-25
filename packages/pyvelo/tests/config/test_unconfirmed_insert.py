@@ -70,7 +70,7 @@ def rate_limit() -> ServiceRateLimit:
     return ServiceRateLimit(enabled=True, input_type="percent", value=50)
 
 
-async def test_an_insert_whose_answer_was_lost_is_not_sent_again():
+async def test_an_insert_whose_answer_was_lost_is_not_sent_again() -> None:
     state = make_state()
     client = MockVcoClient.for_state(state)
     client.store.lose_answers = {1}
@@ -95,7 +95,7 @@ async def test_an_insert_whose_answer_was_lost_is_not_sent_again():
     assert state.plan().changed == ()
 
 
-async def test_an_insert_that_was_not_stored_is_sent_again_after_a_read():
+async def test_an_insert_that_was_not_stored_is_sent_again_after_a_read() -> None:
     state = make_state()
     client = MockVcoClient.for_state(state)
     client.store.fail_writes = {1}
@@ -122,7 +122,7 @@ async def test_an_insert_that_was_not_stored_is_sent_again_after_a_read():
 
 async def test_an_insert_the_vco_counted_that_cannot_be_read_back_is_unconfirmed(
     monkeypatch: pytest.MonkeyPatch,
-):
+) -> None:
     state = make_state()
     client = MockVcoClient.for_state(state)
     client.store.return_data = False  # the insert is answered with an ID only
@@ -130,7 +130,10 @@ async def test_an_insert_the_vco_counted_that_cannot_be_read_back_is_unconfirmed
     serve = client.store.handle
 
     def without_qos(method: str, params: dict[str, Any]) -> object:
-        """Answer as the store does, but a configuration read leaves its QoS module out."""
+        """Answer as the store does.
+
+        But a configuration read leaves its QoS module out.
+        """
         answer: Any = serve(method, params)
         if method == "configuration/getConfiguration":
             answer["modules"] = [m for m in answer["modules"] if m["name"] != "QOS"]
@@ -159,7 +162,9 @@ async def test_an_insert_the_vco_counted_that_cannot_be_read_back_is_unconfirmed
     assert state.unconfirmed_inserts == set()
 
 
-async def test_edits_made_after_the_lost_answer_are_lost_edits_of_the_next_save():
+async def test_edits_made_after_the_lost_answer_are_lost_edits_of_the_next_save() -> (
+    None
+):
     state = make_state()
     client = MockVcoClient.for_state(state)
     client.store.lose_answers = {1}
@@ -185,7 +190,7 @@ async def test_edits_made_after_the_lost_answer_are_lost_edits_of_the_next_save(
     assert edge_qos_rows(client) == [stored_id]
 
 
-async def test_a_dry_run_after_a_lost_answer_reads_nothing_and_warns():
+async def test_a_dry_run_after_a_lost_answer_reads_nothing_and_warns() -> None:
     state = make_state()
     client = MockVcoClient.for_state(state)
     client.store.lose_answers = {1}
@@ -205,8 +210,9 @@ async def test_a_dry_run_after_a_lost_answer_reads_nothing_and_warns():
 
 @pytest.mark.parametrize("conditional_check", [False, True])
 async def test_an_update_whose_answer_was_lost_is_found_stored_by_the_next_save(
+    *,
     conditional_check: bool,
-):
+) -> None:
     state = make_state()
     client = MockVcoClient.for_state(state, conditional_check=conditional_check)
     client.store.lose_answers = {1}
@@ -232,8 +238,9 @@ async def test_an_update_whose_answer_was_lost_is_found_stored_by_the_next_save(
 
 @pytest.mark.parametrize("conditional_check", [False, True])
 async def test_an_update_retried_with_a_change_the_vco_stores_its_own_way(
+    *,
     conditional_check: bool,
-):
+) -> None:
     web = {"name": "web", "action": {"allow_or_deny": "allow"}, "match": {}}
     raw = copy.deepcopy(EDGE_FW)
     raw["segments"][0]["outbound"] = [{**web, "ruleLogicalId": "l1"}]
@@ -278,7 +285,7 @@ async def test_an_update_retried_with_a_change_the_vco_stores_its_own_way(
     assert state.plan().changed == ()
 
 
-async def test_a_save_cancelled_while_an_insert_is_out_marks_it_unconfirmed():
+async def test_a_save_cancelled_while_an_insert_is_out_marks_it_unconfirmed() -> None:
     state = make_state()
     client = Gated.over(state)
     pipeline = await with_a_new_qos_rule(client, state)
@@ -330,7 +337,9 @@ class RemovesTheModuleDuringTheWrite(MockVcoClient):
         return stored
 
 
-async def test_a_stored_insert_the_state_could_not_take_back_is_written_and_unconfirmed():
+async def test_a_stored_insert_the_state_could_not_take_back_is_written_and_unconfirmed() -> (  # noqa: E501 (a test's name)
+    None
+):
     state = make_state()
     client = RemovesTheModuleDuringTheWrite.for_state(state)
     client.state = state
@@ -348,7 +357,7 @@ async def test_a_stored_insert_the_state_could_not_take_back_is_written_and_unco
     assert edge_qos_rows(client) == [stored_id]
 
 
-async def test_a_stored_update_the_state_could_not_take_back_is_written():
+async def test_a_stored_update_the_state_could_not_take_back_is_written() -> None:
     state = make_state()
     client = RemovesTheModuleDuringTheWrite.for_state(state)
     client.state = state

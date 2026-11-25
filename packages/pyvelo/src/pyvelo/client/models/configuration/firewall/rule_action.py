@@ -1,3 +1,5 @@
+"""The action of an outbound firewall rule and of an inbound (NAT) rule."""
+
 from typing import Annotated
 
 from pydantic import MISSING

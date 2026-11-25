@@ -1,4 +1,6 @@
-"""Synthetic ``Layered`` models shaped like the firewall and QoS modules, for the tests of the layer machinery.
+"""Synthetic ``Layered`` models shaped like the firewall and QoS modules.
+
+They are for the tests of the layer machinery.
 
 ``tests/support`` is on pytest's ``pythonpath`` and basedpyright's
 ``extraPaths``, so the tests import this as ``layered_models``. It imports
@@ -31,7 +33,10 @@ from pyvelo.core.layers import L
 
 
 def profile_false_wins(profile_value: object) -> bool:
-    """The firewall's authority rule: a profile that has the setting off turns it off for every edge."""
+    """The firewall's authority rule.
+
+    A profile that has the setting off turns it off for every edge.
+    """
     return profile_value is False
 
 
@@ -111,5 +116,8 @@ class Mod(Layered[L]):
 
 
 def mod_json(**keys: object) -> dict[str, object]:
-    """A wire dict for ``Mod``: no segments, and *keys* (wire keys, as the VCO writes them)."""
+    """A wire dict for ``Mod``: no segments, and *keys*.
+
+    *keys* are wire keys, as the VCO writes them.
+    """
     return {"segments": [], **keys}

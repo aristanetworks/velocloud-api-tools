@@ -1,4 +1,7 @@
-"""The factory entries of a new profile segment ship as package data, with builders; the test helpers built on them work."""
+"""The factory entries of a new profile segment ship as package data.
+
+They ship with builders; the test helpers built on them work.
+"""
 
 import copy
 import hashlib
@@ -7,6 +10,7 @@ from importlib.resources import files
 from typing import Any
 
 import pytest
+import refs_helpers
 import segment_helpers
 from pydantic import MISSING
 from pyvelo.client.models.configuration.profile_segments import (
@@ -53,7 +57,7 @@ def rule_ids(entry: dict[str, Any]) -> list[str]:
     return [r["ruleLogicalId"] for r in [*entry["rules"], *entry["defaults"]]]
 
 
-def test_the_packaged_template_is_the_companion_file():
+def test_the_packaged_template_is_the_companion_file() -> None:
     data = (
         files("pyvelo.client.models.configuration")
         .joinpath("new_segment_templates.json")
@@ -62,7 +66,7 @@ def test_the_packaged_template_is_the_companion_file():
     assert hashlib.sha256(data).hexdigest() == TEMPLATE_SHA256
 
 
-def test_the_template_has_no_rule_ids_and_no_descriptor():
+def test_the_template_has_no_rule_ids_and_no_descriptor() -> None:
     for name in MODULES:
         template = segment_template(name)
         assert "ruleLogicalId" not in keys_of(template)
@@ -71,7 +75,7 @@ def test_the_template_has_no_rule_ids_and_no_descriptor():
 
 
 @pytest.mark.parametrize("name", MODULES)
-def test_each_module_entry_is_the_template_with_the_descriptor(name: str):
+def test_each_module_entry_is_the_template_with_the_descriptor(name: str) -> None:
     entry = new_segment_entry(name, segment_helpers.identity(GUEST))
     assert without_rule_ids(entry) == {
         "segment": segment_helpers.descriptor(GUEST),
@@ -80,20 +84,20 @@ def test_each_module_entry_is_the_template_with_the_descriptor(name: str):
     assert entry["segment"] == descriptor_of(segment_helpers.identity(GUEST))
 
 
-def test_the_qos_entry_has_the_rules_and_the_four_defaults():
+def test_the_qos_entry_has_the_rules_and_the_four_defaults() -> None:
     entry = new_segment_entry("QOS", segment_helpers.identity(GUEST))
     assert len(entry["rules"]) == 22
     assert tuple(d["name"] for d in entry["defaults"]) == DEFAULT_NAMES
     assert tuple(d["name"] for d in default_rules()) == DEFAULT_NAMES
 
 
-def test_the_firewall_entry_has_one_allow_any_rule_and_no_rule_id():
+def test_the_firewall_entry_has_one_allow_any_rule_and_no_rule_id() -> None:
     entry = new_segment_entry("firewall", segment_helpers.identity(GUEST))
     assert [r["name"] for r in entry["outbound"]] == ["AllowAny"]
     assert "ruleLogicalId" not in keys_of(entry)
 
 
-def test_every_qos_rule_gets_a_new_id():
+def test_every_qos_rule_gets_a_new_id() -> None:
     first = rule_ids(new_segment_entry("QOS", segment_helpers.identity(GUEST)))
     second = rule_ids(new_segment_entry("QOS", segment_helpers.identity(GUEST)))
     assert len(first) == 26
@@ -103,7 +107,7 @@ def test_every_qos_rule_gets_a_new_id():
     assert not set(first) & set(second)
 
 
-def test_qos_rules_replace_the_template_rules():
+def test_qos_rules_replace_the_template_rules() -> None:
     rule = {"name": "Mine", "match": {"appid": 1}, "ruleLogicalId": str(uuid.uuid4())}
     given = copy.deepcopy(rule)
     entry = new_segment_entry("QOS", segment_helpers.identity(GUEST), qos_rules=[given])
@@ -115,7 +119,7 @@ def test_qos_rules_replace_the_template_rules():
     assert emptied["rules"] == []
 
 
-def test_calls_return_copies():
+def test_calls_return_copies() -> None:
     entry = new_segment_entry("QOS", segment_helpers.identity(GUEST))
     entry["rules"].clear()
     entry["defaults"][0]["name"] = "changed"
@@ -130,8 +134,8 @@ def test_calls_return_copies():
     )
 
 
-def test_an_unknown_module_raises():
-    with pytest.raises(ValueError) as error:
+def test_an_unknown_module_raises() -> None:
+    with pytest.raises(ValueError, match="A new segment has a template for") as error:
         segment_template("WAN")
     for name in MODULES:
         assert name in str(error.value)
@@ -140,7 +144,7 @@ def test_an_unknown_module_raises():
 # The helpers the later tasks build their tests on.
 
 
-def test_the_descriptor_and_the_identity_describe_one_segment():
+def test_the_descriptor_and_the_identity_describe_one_segment() -> None:
     assert segment_helpers.identity(VOICE) == SegmentIdentity(
         name="Voice",
         segment_id=4,
@@ -152,7 +156,7 @@ def test_the_descriptor_and_the_identity_describe_one_segment():
     )
 
 
-def test_the_helper_entries_are_the_factory_entries():
+def test_the_helper_entries_are_the_factory_entries() -> None:
     qos = segment_helpers.qos_entry(GUEST)
     assert qos["segment"] == segment_helpers.descriptor(GUEST)
     assert qos["rules"] == []
@@ -171,13 +175,13 @@ def test_the_helper_entries_are_the_factory_entries():
     assert {"ospf", "syslog"} <= set(ds)
 
 
-def test_the_helper_defaults_are_not_shared_between_entries():
+def test_the_helper_defaults_are_not_shared_between_entries() -> None:
     first = segment_helpers.qos_entry(GUEST)
     first["defaults"][0]["name"] = "changed"
     assert segment_helpers.qos_entry(GUEST)["defaults"][0]["name"] == DEFAULT_NAMES[0]
 
 
-def test_the_rows_of_profile_rows_validate_as_the_modules_of_a_profile():
+def test_the_rows_of_profile_rows_validate_as_the_modules_of_a_profile() -> None:
     rows = segment_helpers.profile_rows(
         [segment_helpers.ds_entry(GLOBAL), segment_helpers.ds_entry(GUEST)],
         [segment_helpers.qos_entry(GLOBAL), segment_helpers.qos_entry(GUEST)],
@@ -187,15 +191,15 @@ def test_the_rows_of_profile_rows_validate_as_the_modules_of_a_profile():
         ],
     )
     profile = EnterpriseConfigurationProfile.model_validate(
-        {"name": "P", "id": segment_helpers.CONFIG, "modules": rows}
+        {"name": "P", "id": refs_helpers.CONFIG, "modules": rows}
     )
     assert isinstance(profile.device_settings, DeviceSettingsConfigurationModule)
     assert isinstance(profile.qos, QosConfigurationModule)
     assert isinstance(profile.firewall, FirewallConfigurationModule)
-    assert [r["configurationId"] for r in rows] == [segment_helpers.CONFIG] * 3
+    assert [r["configurationId"] for r in rows] == [refs_helpers.CONFIG] * 3
     assert [r["id"] for r in rows] == [
-        segment_helpers.DS_ID,
-        segment_helpers.QOS_ID,
+        refs_helpers.DS_ID,
+        refs_helpers.QOS_ID,
         segment_helpers.FW_ID,
     ]
     assert len(profile.device_settings.data.segments) == 2
@@ -203,7 +207,7 @@ def test_the_rows_of_profile_rows_validate_as_the_modules_of_a_profile():
     assert len(profile.firewall.data.segments) == 2
 
 
-def test_profile_rows_refs_default_to_a_segment_row_per_entry():
+def test_profile_rows_refs_default_to_a_segment_row_per_entry() -> None:
     rows = segment_helpers.profile_rows(
         [segment_helpers.ds_entry(GLOBAL), segment_helpers.ds_entry(GUEST)], [], []
     )
@@ -216,14 +220,14 @@ def test_profile_rows_refs_default_to_a_segment_row_per_entry():
     assert none[0]["refs"] == {}
 
 
-def test_profile_rows_takes_the_ds_refs_given():
+def test_profile_rows_takes_the_ds_refs_given() -> None:
     ds = [segment_helpers.ds_entry(GLOBAL)]
     assert "refs" not in segment_helpers.profile_rows(ds, [], [], ds_refs=MISSING)[0]
     refs = {"deviceSettings:segment": {}}
     assert segment_helpers.profile_rows(ds, [], [], ds_refs=refs)[0]["refs"] == refs
 
 
-async def test_the_registry_resolves_the_segments_given():
+async def test_the_registry_resolves_the_segments_given() -> None:
     registry = await segment_helpers.segment_registry(GLOBAL, GUEST)
     guest = await registry.resolve(SegmentIdentity, "guest")
     assert guest == segment_helpers.identity(GUEST)

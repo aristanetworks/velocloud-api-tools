@@ -1,4 +1,6 @@
-"""``ConfigState.plan`` refuses a value that names a segment or a backhaul hub the configuration lacks.
+"""``ConfigState.plan`` refuses a value that names what the configuration lacks.
+
+That is a segment or a backhaul hub the configuration lacks.
 
 A profile state is built by ``profile_state``; an edge state is an edge whose
 device settings (or QoS) hold the edit, over that profile. A reference that
@@ -20,11 +22,11 @@ from hub_helpers import (
     ds_with_vpn,
     hub_row,
 )
-from hub_state import (  # pyright: ignore[reportImplicitRelativeImport]
+from hub_state import (
     hub_profile_state,
     profile_hub_rows,
 )
-from profile_state import (  # pyright: ignore[reportImplicitRelativeImport]
+from profile_state import (
     module_store_pipeline,
     profile_state,
 )
@@ -70,7 +72,10 @@ async def profile_of(
     qos: list[dict[str, Any]] | None = None,
     networks: list[dict[str, Any]] | None = None,
 ) -> ConfigState:
-    """A profile with Global and Guest in its three modules, unless *ds* or *qos* say otherwise."""
+    """A profile with Global and Guest in its three modules.
+
+    *ds* or *qos* may say otherwise.
+    """
     return await profile_state(
         ds if ds is not None else [ds_entry(GLOBAL), ds_entry(GUEST)],
         qos if qos is not None else [qos_entry(GLOBAL), qos_entry(GUEST)],
@@ -82,10 +87,12 @@ async def profile_of(
 async def edge_over(
     profile: ConfigState,
     *,
-    networks: list[dict[str, Any]] = [],  # noqa: B006 -- copied, never changed
+    networks: list[dict[str, Any]] | None = None,
     with_qos: bool = False,
 ) -> ConfigState:
-    """An edge state over *profile*'s profile: its device settings hold only the Global Segment and *networks*.
+    """An edge state over *profile*'s profile.
+
+    Its device settings hold only the Global Segment and *networks*.
 
     With *with_qos* the edge also has a QoS module of its own, with the Global
     Segment, no rule and no `cosMapping` (it inherits the profile's).
@@ -94,7 +101,7 @@ async def edge_over(
         make_module_json(
             DS,
             {
-                "lan": {"networks": copy.deepcopy(networks), "interfaces": []},
+                "lan": {"networks": copy.deepcopy(networks or []), "interfaces": []},
                 "segments": [ds_entry(GLOBAL)],
             },
             module_id=EDGE_DS_ID,
@@ -135,7 +142,7 @@ def add_network(segment_id: int, vlan_id: int = 200) -> dict[str, Any]:
     return {"lan": {"networks": {"+": add(network(segment_id, vlan_id))}}}
 
 
-async def test_an_edge_vlan_naming_a_profile_only_segment_is_accepted():
+async def test_an_edge_vlan_naming_a_profile_only_segment_is_accepted() -> None:
     profile = await profile_of()
     state = await edge_over(profile, networks=[network(GUEST[0])])
 
@@ -144,7 +151,7 @@ async def test_an_edge_vlan_naming_a_profile_only_segment_is_accepted():
     assert plan.warnings == ()
 
 
-async def test_a_new_vlan_naming_no_segment_raises():
+async def test_a_new_vlan_naming_no_segment_raises() -> None:
     state = await profile_of()
     await patch(state, DS, add_network(9))
 
@@ -156,7 +163,7 @@ async def test_a_new_vlan_naming_no_segment_raises():
     assert "lan.networks" in str(error.value)
 
 
-async def test_a_new_vlan_on_an_edge_naming_no_segment_raises():
+async def test_a_new_vlan_on_an_edge_naming_no_segment_raises() -> None:
     state = await edge_over(await profile_of())
     await patch(state, DS, add_network(9))
 
@@ -166,7 +173,7 @@ async def test_a_new_vlan_on_an_edge_naming_no_segment_raises():
     assert [r.value for r in error.value.references] == [9]
 
 
-async def test_a_vlan_left_as_read_on_a_missing_segment_warns():
+async def test_a_vlan_left_as_read_on_a_missing_segment_warns() -> None:
     state = await profile_of(networks=[network(9, 100)])
     state.profile.device_settings.lan.networks[0].name = "renamed"
 
@@ -181,7 +188,7 @@ async def test_a_vlan_left_as_read_on_a_missing_segment_warns():
     assert [m.name for m in plan.changed] == [DS]  # the save goes ahead
 
 
-async def test_a_vlan_moved_onto_a_missing_segment_raises():
+async def test_a_vlan_moved_onto_a_missing_segment_raises() -> None:
     state = await profile_of(networks=[network(9, 100)])
     state.profile.device_settings.lan.networks[0].segment_id = 8
 
@@ -195,7 +202,10 @@ SERVICE_ID = 601
 
 
 def hub_refs(*hubs: Hub, segment: tuple[int, str, str, int] = GLOBAL) -> dict[str, Any]:
-    """The device settings refs of a profile with the Global Segment and Guest, and a hub row in *segment* (service ``SERVICE``) for each of *hubs*."""
+    """The device settings refs of a profile with the Global Segment and Guest.
+
+    They hold a hub row in *segment* (service ``SERVICE``) for each of *hubs*.
+    """
     return profile_hub_rows(
         segment_row(GLOBAL[0], GLOBAL[3], GLOBAL[2]),
         segment_row(GUEST[0], GUEST[3], GUEST[2]),
@@ -232,7 +242,10 @@ async def hub_profile_of(
     refs: dict[str, Any],
     **more: Any,
 ) -> ConfigState:
-    """A profile of *ds* and *qos* with the device settings refs *refs*; the Global Segment and Guest are in the firewall too."""
+    """A profile of *ds* and *qos* with the device settings refs *refs*.
+
+    The Global Segment and Guest are in the firewall too.
+    """
     return await hub_profile_state(
         ds,
         qos,
@@ -242,7 +255,7 @@ async def hub_profile_of(
     )
 
 
-async def test_removing_a_hub_a_rule_uses_raises_and_names_the_rule():
+async def test_removing_a_hub_a_rule_uses_raises_and_names_the_rule() -> None:
     state = await hub_profile_of(
         hub_profile_ds(),
         guest_rule_qos(HUB_A),
@@ -284,11 +297,13 @@ async def test_removing_a_hub_a_rule_uses_raises_and_names_the_rule():
     assert (reference.module, reference.set_name) == (QOS, "backhaul_hub")
     assert reference.segment_id == GUEST[0]
     assert "rules[Web]" in str(error.value)
-    assert not error.value.on_edge and "This is an Edge" not in str(error.value)
+    assert not error.value.on_edge
+    assert "This is an Edge" not in str(error.value)
 
 
-async def test_an_edge_rule_must_name_a_backhaul_hub_of_the_profile():
-    # Hub-B has a service in the Global Segment, and the segment does not list it for backhaul.
+async def test_an_edge_rule_must_name_a_backhaul_hub_of_the_profile() -> None:
+    # Hub-B has a service in the Global Segment, and the segment does not list it for
+    # backhaul.
     profile = await hub_profile_of(
         [
             ds_with_vpn(GLOBAL, hubs=(HUB_A, HUB_B), backhaul=(HUB_A,)),
@@ -324,7 +339,7 @@ async def test_an_edge_rule_must_name_a_backhaul_hub_of_the_profile():
     assert f'"name": "{HUB_B.name}"' in str(error.value)
 
 
-async def test_an_edge_rule_naming_a_backhaul_hub_of_the_profile_is_accepted():
+async def test_an_edge_rule_naming_a_backhaul_hub_of_the_profile_is_accepted() -> None:
     profile = await hub_profile_of(
         [ds_with_vpn(GLOBAL, hubs=(HUB_A,), backhaul=(HUB_A,)), ds_entry(GUEST)],
         [qos_entry(GLOBAL), qos_entry(GUEST)],
@@ -348,7 +363,7 @@ async def test_an_edge_rule_naming_a_backhaul_hub_of_the_profile_is_accepted():
     assert state.plan().warnings == ()
 
 
-async def test_validate_false_does_not_skip_it():
+async def test_validate_false_does_not_skip_it() -> None:
     state = await profile_of()
     await patch(state, DS, add_network(9))
     pipeline, store = module_store_pipeline(state)
@@ -359,7 +374,7 @@ async def test_validate_false_does_not_skip_it():
     assert [m for m, _ in store.requests if m == UPDATE] == []
 
 
-async def test_update_module_does_not_run_it():
+async def test_update_module_does_not_run_it() -> None:
     state = await profile_of(networks=[network(GLOBAL[0], 100)])
     client = MockVcoClient.for_state(state)
     modules = state.profile_config.modules
@@ -379,7 +394,10 @@ async def test_update_module_does_not_run_it():
 
 
 def count_parses(monkeypatch: pytest.MonkeyPatch) -> list[type]:
-    """Record the class of every module as read that ``ReadData.model`` parses from now on."""
+    """Record the class of every module as read that ``ReadData.model`` parses.
+
+    Recording starts now.
+    """
     parsed: list[type] = []
     original = ReadData.model
 
@@ -393,7 +411,7 @@ def count_parses(monkeypatch: pytest.MonkeyPatch) -> list[type]:
 
 async def test_a_profile_plan_parses_each_module_as_read_once(
     monkeypatch: pytest.MonkeyPatch,
-):
+) -> None:
     state = await profile_of()
     await patch(state, DS, {"lan": {"networks": {"+": add(network(GUEST[0]))}}})
     parsed = count_parses(monkeypatch)
@@ -410,7 +428,7 @@ async def test_a_profile_plan_parses_each_module_as_read_once(
 
 async def test_an_edge_plan_parses_only_the_profile_modules_that_provide(
     monkeypatch: pytest.MonkeyPatch,
-):
+) -> None:
     # The profile's QoS and firewall provide nothing a reference names: their
     # rules are not parsed again for the sets.
     state = await edge_over(await profile_of(), with_qos=True)

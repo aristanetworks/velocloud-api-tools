@@ -1,6 +1,7 @@
 """ConfigState: holds edge/profile configuration with snapshot for diff-on-save."""
 
 import asyncio
+import contextlib
 import copy
 import json
 import weakref
@@ -52,7 +53,7 @@ from pyvelo.client.schemas.configuration import (
     WanConfigurationModule,
     new_edge_module,
 )
-from pyvelo.config.errors import LayerNotSavedError
+from pyvelo.config.errors import LayerNotSavedError, SaveValidationError
 from pyvelo.config.hub_steps import (
     HubStep,
     changed_segment_ids,
@@ -227,7 +228,10 @@ class ConfigPlan:
 
     @property
     def warnings(self) -> tuple[ValidationWarning, ...]:
-        """The warnings of every module's plan, then the segment and check warnings, as data; ``render()`` shows them in their blocks."""
+        """The warnings of every module's plan, then the segment and check warnings.
+
+        They are data; ``render()`` shows them in their blocks.
+        """
         return (
             *(
                 ValidationWarning(
@@ -243,6 +247,7 @@ class ConfigPlan:
         )
 
     def render(self) -> str:
+        """The plan as text to show before a save, in the format above."""
         lines = [m.render() for m in self.modules]
         if self.steps:
             lines = ["steps:", *(f"  {step.render()}" for step in self.steps), *lines]
@@ -253,7 +258,7 @@ class ConfigPlan:
         return "\n".join([self.target, *lines] if self.target else lines)
 
 
-type _AnyConfiguration = ConfigurationBase[Any]  # pyright: ignore[reportExplicitAny]
+type _AnyConfiguration = ConfigurationBase[Any]
 """A configuration of either stored layer, for the helpers that read both."""
 
 
@@ -273,6 +278,7 @@ class LayerView[X: (Edge, Profile)]:
         config: ConfigurationBase[X],
         profile: ConfigurationBase[Profile] | None = None,
     ) -> None:
+        """A view of *config*'s modules, binding a module it creates to *profile*."""
         self._config: ConfigurationBase[X] = config
         self._profile: ConfigurationBase[Profile] | None = profile
 
@@ -285,8 +291,9 @@ class LayerView[X: (Edge, Profile)]:
             create=True,
             profile=self._profile,
         )
-        assert isinstance(module, FirewallConfigurationModule)
-        return cast(FirewallData[X], module.data)  # the module is of this layer
+        if not isinstance(module, FirewallConfigurationModule):
+            raise _wrong_module(module, FirewallConfigurationModule)
+        return cast("FirewallData[X]", module.data)  # the module is of this layer
 
     @property
     def qos(self) -> QosData[X]:
@@ -297,26 +304,31 @@ class LayerView[X: (Edge, Profile)]:
             create=True,
             profile=self._profile,
         )
-        assert isinstance(module, QosConfigurationModule)
-        return cast(QosData[X], module.data)  # the module is of this layer
+        if not isinstance(module, QosConfigurationModule):
+            raise _wrong_module(module, QosConfigurationModule)
+        return cast("QosData[X]", module.data)  # the module is of this layer
 
     @property
     def device_settings(self) -> DeviceSettingsData:
+        """The device settings data; a layer that has none raises ``ValueError``."""
         module = _module_of(
             self._config, ConfigurationModuleName.DEVICE_SETTINGS, create=False
         )
-        assert isinstance(module, DeviceSettingsConfigurationModule)
+        if not isinstance(module, DeviceSettingsConfigurationModule):
+            raise _wrong_module(module, DeviceSettingsConfigurationModule)
         return module.data
 
     @property
     def wan(self) -> WanData:
+        """The WAN data; a layer that has none raises ``ValueError``."""
         module = _module_of(self._config, ConfigurationModuleName.WAN, create=False)
-        assert isinstance(module, WanConfigurationModule)
+        if not isinstance(module, WanConfigurationModule):
+            raise _wrong_module(module, WanConfigurationModule)
         return module.data
 
 
 class EffectiveView:
-    """Each module's effective data: what an edge uses, with where each value comes from.
+    """Each module's effective data: what an edge uses, with each value's origin.
 
     Computed from the edge layer and the profile layer each time a property is
     read, so it follows every edit. A value is a ``Resolved`` (its origin, the
@@ -328,12 +340,16 @@ class EffectiveView:
     def __init__(
         self, edge: ConfigurationBase[Edge], profile: ConfigurationBase[Profile]
     ) -> None:
+        """A view of the *edge* layer over the *profile* layer it inherits from."""
         self._edge: ConfigurationBase[Edge] = edge
         self._profile: ConfigurationBase[Profile] = profile
 
     @property
     def firewall(self) -> FirewallData[Effective]:
-        """The firewall's effective data: the edge's local values over the profile's, then the display defaults."""
+        """The firewall's effective data.
+
+        The edge's local values over the profile's, then the display defaults.
+        """
         return self._view(
             ConfigurationModuleName.FIREWALL,
             FirewallData[Profile],
@@ -342,7 +358,10 @@ class EffectiveView:
 
     @property
     def qos(self) -> QosData[Effective]:
-        """The QoS effective data: the edge's local values over the profile's, then the display defaults."""
+        """The QoS effective data.
+
+        The edge's local values over the profile's, then the display defaults.
+        """
         return self._view(
             ConfigurationModuleName.QOS, QosData[Profile], QosData[Effective]
         )
@@ -361,16 +380,19 @@ class EffectiveView:
         profile_module = _find_module(self._profile, name)
         edge_data = None
         if edge_module is not None:
-            edge_data = cast(Layered[Edge], cast(object, edge_module.data))
+            edge_data = cast("Layered[Edge]", cast("object", edge_module.data))
         if profile_module is None:
             profile_data = profile_class.model_validate({"segments": []})
         else:
-            profile_data = cast(Layered[Profile], cast(object, profile_module.data))
+            profile_data = cast("Layered[Profile]", cast("object", profile_module.data))
         return effective_view(edge_data, profile_data, effective_class)
 
 
 type _Place = tuple[str | int, ...]
-"""Where a model is in its module's dump: dump keys and list positions (``mark_detached``)."""
+"""Where a model is in its module's dump: dump keys and list positions.
+
+For ``mark_detached``.
+"""
 
 
 @dataclass
@@ -395,7 +417,9 @@ class _Replaced:
     root: weakref.ref[VcoModel] | None
 
     def changed_paths(self) -> list[Path]:
-        """Where the objects still alive were changed in place since ``dump``, each once.
+        """Where the objects still alive were changed in place since ``dump``.
+
+        Each is listed once.
 
         A ``RefOnly`` value of the data, if it is alive, that is not the one
         recorded is a change too, at its path under ``data``. Drops the nodes
@@ -454,7 +478,9 @@ def _dump(model: BaseModel) -> object:
 def ref_only_changes(
     before: Mapping[Path, object], after: Mapping[Path, object]
 ) -> list[Path]:
-    """The paths whose ``RefOnly`` value differs between *before* and *after*, in python names.
+    """The paths whose ``RefOnly`` value differs between *before* and *after*.
+
+    The paths are in python names.
 
     A dump leaves these values out, so a comparison of dumps does not see
     them. A path only one side has (a segment added or removed) counts as
@@ -473,14 +499,14 @@ def _at(doc: object, place: _Place) -> object:
         if isinstance(part, int):
             if not isinstance(doc, list):
                 return MISSING
-            items = cast(list[object], doc)
+            items = cast("list[object]", doc)
             if part >= len(items):
                 return MISSING
             doc = items[part]
         else:
             if not isinstance(doc, dict):
                 return MISSING
-            entries = cast(dict[str, object], doc)
+            entries = cast("dict[str, object]", doc)
             if part not in entries:
                 return MISSING
             doc = entries[part]
@@ -493,10 +519,10 @@ def _put(doc: object, place: _Place, value: object) -> object:
         return value
     part, rest = place[0], place[1:]
     if isinstance(part, int):
-        items = list(cast(list[object], doc))
+        items = list(cast("list[object]", doc))
         items[part] = _put(items[part], rest, value)
         return items
-    entries = dict(cast(dict[str, object], doc))
+    entries = dict(cast("dict[str, object]", doc))
     entries[part] = _put(entries[part], rest, value)
     return entries
 
@@ -522,7 +548,8 @@ class StateLock(asyncio.Lock):
         if task is not None and task is self._holder:
             raise RuntimeError(
                 "this task already holds the lock of this state. apply and save take "
-                + "the lock themselves: call them outside the `async with state.lock:` block"
+                "the lock themselves: call them outside the "
+                "`async with state.lock:` block"
             )
         _ = await super().acquire()
         self._holder = task
@@ -601,6 +628,7 @@ class ConfigState:
     """Each module ``replace_module`` took out whose objects may still be held."""
 
     def __post_init__(self) -> None:
+        """Bind each edge module's data to the profile module of the same name."""
         if self.edge_config is None or self.edge_config.modules is MISSING:
             return
         for mod in self.edge_config.modules:
@@ -686,11 +714,16 @@ class ConfigState:
     def find_module(
         self, name: ConfigurationModuleName | str
     ) -> AnyStoredModule | None:
-        """The target config's module called *name* (an intent-level name works), or None."""
+        """The target config's module called *name*, or None.
+
+        An intent-level name works.
+        """
         return _find_module(self.target_config, resolve_module_name(name))
 
     def drop_module(self, module: AnyStoredModule) -> None:
-        """Remove *module*, one that ``module(create=True)`` made, from the target config.
+        """Remove *module* from the target config.
+
+        It is one that ``module(create=True)`` made.
 
         A ``modules`` list that the creation set, where it was unset, is unset
         again once it is empty. Raises ``ValueError`` for a module that is not
@@ -699,10 +732,11 @@ class ConfigState:
         """
         if not module.is_new:
             raise ValueError(
-                f"module {module.name!r} was read from the VCO; only a new one is dropped"
+                f"module {module.name!r} was read from the VCO; "
+                "only a new one is dropped"
             )
         self.unconfirmed_inserts.discard(module.name)
-        config = cast(_AnyConfiguration, self.target_config)
+        config = cast("_AnyConfiguration", self.target_config)
         if config.modules is MISSING:
             return
         config.modules[:] = [m for m in config.modules if m is not module]
@@ -718,7 +752,9 @@ class ConfigState:
                 config.model_fields_set.discard("modules")
 
     def replace_module(self, old: AnyStoredModule, new: AnyStoredModule) -> None:
-        """Put *new*, the module as the VCO stored it, where *old* is in the target config.
+        """Put *new* where *old* is in the target config.
+
+        *new* is the module as the VCO stored it.
 
         An edge module is bound to the profile layer. The snapshot takes a
         copy of *new*, and a later :meth:`plan` starts from *new*, so it does
@@ -741,7 +777,7 @@ class ConfigState:
         assignment to it does not raise. The state keeps no strong reference to
         *old*. Raises ``ValueError`` if *old* is not in the target config.
         """
-        config = cast(_AnyConfiguration, self.target_config)
+        config = cast("_AnyConfiguration", self.target_config)
         modules = [] if config.modules is MISSING else config.modules
         index = next((i for i, m in enumerate(modules) if m is old), None)
         if index is None:
@@ -750,7 +786,7 @@ class ConfigState:
         self.unconfirmed_inserts.discard(old.name)
         if config is self.edge_config:
             _bind_to_profile(new, self.profile_config)
-        snapshot = cast(_AnyConfiguration | None, self.snapshot_for_target())
+        snapshot = cast("_AnyConfiguration | None", self.snapshot_for_target())
         if snapshot is not None:
             stored = copy.deepcopy(new)
             if snapshot.modules is MISSING:
@@ -787,7 +823,9 @@ class ConfigState:
         )
 
     def _check_detached(self) -> None:
-        """Raise ``DetachedObjectError`` if objects of a replaced module were changed in place.
+        """Raise ``DetachedObjectError`` for in-place changes to a replaced module.
+
+        The changes are to objects of the module.
 
         Each change is reported once: the comparison is then taken again from
         the objects as they are. A replaced module none of whose objects is
@@ -804,8 +842,8 @@ class ConfigState:
         raise DetachedObjectError(
             "\n".join(
                 f"{name}: objects taken from the state before a save were changed "
-                + f"in place at: {', '.join(paths)}. The state holds the module as "
-                + "stored; take the objects from the state again and redo the change"
+                f"in place at: {', '.join(paths)}. The state holds the module as "
+                "stored; take the objects from the state again and redo the change"
                 for name, paths in found
             ),
             [path for _, paths in found for path in paths],
@@ -826,7 +864,7 @@ class ConfigState:
             layer, current = "edge", self.edge_config
         else:
             return
-        snapshot = cast(_AnyConfiguration | None, self._snapshot.get(layer))
+        snapshot = cast("_AnyConfiguration | None", self._snapshot.get(layer))
         if snapshot is None or snapshot.modules is MISSING:
             return
         if current.modules is MISSING:
@@ -967,7 +1005,9 @@ class ConfigState:
         modules: Sequence[AnyStoredModule],
         as_read: Mapping[str, VcoModel | None],
     ) -> tuple[tuple[HubStep, ...], tuple[ValidationWarning, ...]]:
-        """The role steps of the hub list changes of a profile's device settings, and the warnings of its lists.
+        """The role steps of the hub list changes of a profile's device settings.
+
+        With them, the warnings of its lists.
 
         *as_read* is each module's data as the plan parsed it
         (``ModulePlan.as_read``, by module name); the device settings are not
@@ -986,7 +1026,11 @@ class ConfigState:
         if self.target_type != "profile":
             return (), ()
         module = next(
-            (m for m in modules if m.name == ConfigurationModuleName.DEVICE_SETTINGS),
+            (
+                m
+                for m in modules
+                if m.name == ConfigurationModuleName.DEVICE_SETTINGS.value
+            ),
             None,
         )
         edited: object = None if module is None else module.data
@@ -1024,7 +1068,9 @@ class ConfigState:
         return steps, (*list_warnings, *disagreements)
 
     def _segment_object_id(self, segment_id: int) -> int | None:
-        """The object ID of segment *segment_id* in the segment resolver, or None when it does not know it.
+        """The object ID of segment *segment_id* in the segment resolver.
+
+        None when it does not know it.
 
         Raises ``ResolverNotLoadedError`` when the resolver is not loaded.
         """
@@ -1043,17 +1089,18 @@ class ConfigState:
         modules: Sequence[AnyStoredModule],
         as_read: Mapping[str, VcoModel | None],
     ) -> tuple[ValidationWarning, ...]:
-        """Refuse a value of the target that names nothing the configuration provides; warn of one that did as read.
+        """Refuse a value of the target that names nothing the configuration provides.
 
-        Each module of the target is a target of the check, as edited
-        (``module.data``) and as read (*as_read*, by module name: the data as
-        the plan parsed it, with an edge's placeholders and a profile's
-        additions; ``ModulePlan.as_read``). The sets the values are looked up
-        in are those of the target's modules as edited and, for an edge, the
-        profile's modules as read that can provide a set (parsed here); the
-        sets as read are those of the modules as read. Raises ``DanglingReferenceError`` for a value that is
-        new, or was a member and no longer is; returns a ``reference_kept``
-        warning for one that named nothing as read and does still.
+        Warn of one that did as read.
+
+        Each module of the target is a target of the check, as edited (``module.data``)
+        and as read (*as_read*, by module name: the data as the plan parsed it, with an
+        edge's placeholders and a profile's additions; ``ModulePlan.as_read``). The sets
+        the values are looked up in are those of the target's modules as edited and, for
+        an edge, the profile's modules as read that can provide a set (parsed here); the
+        sets as read are those of the modules as read. Raises ``DanglingReferenceError``
+        for a value that is new, or was a member and no longer is; returns a
+        ``reference_kept`` warning for one that named nothing as read and does still.
         """
         level = self._level()
         profile_models = self._profile_as_read() if level is ConfigContext.EDGE else []
@@ -1096,7 +1143,9 @@ class ConfigState:
         )
 
     def _profile_as_read(self) -> list[VcoModel]:
-        """The data of each module of the profile layer as read, with the profile's additions, for the modules that can provide a set.
+        """The profile layer's module data as read, with the profile's additions.
+
+        Only the modules that can provide a set are included.
 
         A module that provides none (QoS, firewall) is not parsed: its rules
         are the bulk of a profile, and the sets of its modules as read are
@@ -1139,7 +1188,9 @@ class ConfigState:
         *,
         repair_defaults: bool = True,
     ) -> ModulePlan:
-        """Plan the write of one *module* of the target config, as :meth:`plan` plans it.
+        """Plan the write of one *module* of the target config.
+
+        It is planned as :meth:`plan` plans it.
 
         With *data*, that is planned in place of the module's own data: the
         way to ask whether a change to *module* could be written before it is
@@ -1186,7 +1237,9 @@ class ConfigState:
         )
 
     def fill_hub_services(self, data: VcoModel, *, skip: Collection[Path] = ()) -> None:
-        """Give each backhaul hub of the QoS *data* that names a hub and no service its service for the segment.
+        """Give each backhaul hub of the QoS *data* its service for the segment.
+
+        That is each one that names a hub and no service.
 
         The service is the hub's in the profile's device settings module as
         read (the target's own on a profile, the profile layer's on an edge),
@@ -1211,10 +1264,13 @@ class ConfigState:
     def conditional_backhaul(
         self, module: AnyStoredModule, level: ConfigContext
     ) -> dict[int, bool] | None:
-        """For a profile QoS *module*, each segment's ``vpn.conditionalBackhaul`` in the profile's device settings now; else None."""
+        """For a profile QoS *module*, each segment's ``vpn.conditionalBackhaul``.
+
+        As the profile's device settings hold it now; else None.
+        """
         if (
             level is not ConfigContext.PROFILE
-            or module.name != ConfigurationModuleName.QOS
+            or module.name != ConfigurationModuleName.QOS.value
         ):
             return None
         held = _find_module(
@@ -1289,7 +1345,10 @@ class ConfigState:
 def _added_segment_changes(
     module: ModulePlan, held: AnyStoredModule | None
 ) -> list[ConfigFieldChange]:
-    """One change for each segment added to *held*, a profile module, with the entry as the plan writes it."""
+    """One change for each segment added to *held*, a profile module.
+
+    Each change has the entry as the plan writes it.
+    """
     if held is None:
         return []
     written = _segment_entries(module.data)
@@ -1306,7 +1365,10 @@ def _added_segment_changes(
 
 
 def _segment_entries(data: object) -> dict[Any, Any]:
-    """The entries of the ``segments`` list of the module *data*, by ``segmentId``; one without an ID is left out."""
+    """The entries of the ``segments`` list of the module *data*, by ``segmentId``.
+
+    One without an ID is left out.
+    """
     segments = data.get("segments") if is_dict(data) else None
     if not is_list(segments):
         return {}
@@ -1326,7 +1388,7 @@ def _segment_name(entry: object, segment_id: object) -> str:
 def _names_text(names: Sequence[str]) -> str:
     return (
         " and ".join(names)
-        if len(names) < 3
+        if len(names) < 3  # noqa: PLR2004  # two names are joined by "and" alone
         else f"{', '.join(names[:-1])} and {names[-1]}"
     )
 
@@ -1343,7 +1405,9 @@ def _add_hint(name: str, modules: Sequence[str]) -> str:
 def _check_segment_set(
     modules: Sequence[AnyStoredModule], plans: Sequence[ModulePlan]
 ) -> tuple[ValidationWarning, ...]:
-    """Run the segment-set rule of a profile on the payloads of *plans* and the modules as read.
+    """Run the segment-set rule of a profile on the payloads and the modules as read.
+
+    The payloads are those of *plans*.
 
     Does nothing, and returns no warning, unless the three modules of a profile
     are all there. For each ``segmentId`` in the payloads or the modules as
@@ -1452,7 +1516,9 @@ def _check_segment_set(
 
 
 def _provider_changes(module: ModulePlan) -> list[ConfigFieldChange]:
-    """The provider changes of *module*'s plan: the ref rows of ``RefOnly`` owners, one change per owner.
+    """The provider changes of *module*'s plan, one change per owner.
+
+    They are the ref rows of ``RefOnly`` owners.
 
     The row a change removes is the owner's ``before`` and the row it adds
     its ``after``, each as the identity's lower-case text.
@@ -1493,11 +1559,12 @@ class SaveProgress:
     pending: tuple[str, ...]
 
     def attach(self, error: BaseException) -> None:
-        """Set this on *error*, for :func:`save_progress`; an error whose class takes no attributes is left as it is."""
-        try:
+        """Set this on *error*, for :func:`save_progress`.
+
+        An error whose class takes no attributes is left as it is.
+        """
+        with contextlib.suppress(AttributeError, TypeError):
             setattr(error, _PROGRESS_ATTRIBUTE, self)
-        except (AttributeError, TypeError):
-            pass
 
 
 def save_progress(error: BaseException) -> SaveProgress | None:
@@ -1547,14 +1614,19 @@ class SaveResult:
     dry_run: bool = False
     """Whether the save that returned this sent nothing on purpose."""
     written: tuple[ModuleWrite[Any], ...] = ()
-    """The writes this save stored, in order; empty for a dry run and for a save with nothing to change."""
+    """The writes this save stored, in order.
+
+    Empty for a dry run and for a save with nothing to change.
+    """
     modules_updated: list[ConfigurationModuleName] = field(default_factory=list)
     modules_inserted: list[ConfigurationModuleName] = field(default_factory=list)
     plan: ConfigPlan | None = None
     server_changes: dict[ConfigurationModuleName, tuple[ServerChange, ...]] = field(
         default_factory=dict
     )
-    """For each module written, what the VCO stored otherwise than sent, at paths that are not lost edits.
+    """For each module written, what the VCO stored otherwise than sent.
+
+    It is listed at paths that are not lost edits.
 
     A value stored as it was read is not listed: a planned change kept so is
     in ``left_out``."""
@@ -1572,7 +1644,9 @@ class SaveResult:
     owned field is part of the list's change, and a value stored there
     otherwise than sent is a server change with ``as_read`` ``MISSING``."""
     steps: tuple[StepOutcome, ...] = ()
-    """What the save did with each role step of the plan, in order; empty for a plan without steps.
+    """What the save did with each role step of the plan, in order.
+
+    Empty for a plan without steps.
 
     A dry run says ``"would_send"`` or ``"in_place"``, and sends none."""
     warnings: list[ValidationWarning] = field(default_factory=list)
@@ -1583,7 +1657,9 @@ class SaveResult:
 
     @override
     def __repr__(self) -> str:
-        """The dataclass ``repr``, with the number of entries per module for ``server_changes`` and ``left_out``.
+        """The dataclass ``repr``, with a count for ``server_changes`` and ``left_out``.
+
+        The count is the number of entries per module.
 
         The entries hold configuration values, so they are not printed.
         """
@@ -1592,20 +1668,19 @@ class SaveResult:
         for item in fields(self):
             value: object = getattr(self, item.name)
             if item.name in counted:
-                counts = cast(dict[object, tuple[object, ...]], value)
+                counts = cast("dict[object, tuple[object, ...]]", value)
                 value = {str(name): len(entries) for name, entries in counts.items()}
             parts.append(f"{item.name}={value!r}")
         return f"{type(self).__name__}({', '.join(parts)})"
 
     @property
     def is_valid(self) -> bool:
+        """Whether no write-time validator reported an error."""
         return len(self.validation_errors) == 0
 
     def raise_for_errors(self) -> None:
         """Raise :class:`SaveValidationError` if any write-time validator failed."""
         if self.validation_errors:
-            from pyvelo.config.errors import SaveValidationError
-
             raise SaveValidationError(self.validation_errors)
 
 
@@ -1634,6 +1709,17 @@ def _bind_to_profile(
         return
     profile_module = _find_module(profile_config, module.name)
     data.bind_profile(profile_module.raw_data if profile_module else MISSING)
+
+
+def _wrong_module(module: object, expected: type) -> TypeError:
+    """The error for a module in a configuration's ``modules`` with the wrong class.
+
+    Its class is not the one its name has.
+    """
+    return TypeError(
+        f"the {getattr(module, 'name', '?')} module is a "
+        f"{type(module).__name__}, not a {expected.__name__}"
+    )
 
 
 def _module_of(

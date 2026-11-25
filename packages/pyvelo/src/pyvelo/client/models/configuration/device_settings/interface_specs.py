@@ -1,3 +1,9 @@
+"""The interfaces of each Edge model class: their type, mode, rates and options.
+
+``MODEL_INTERFACE_TEMPLATES`` maps a model class (such as ``edge6X0``) to the spec of
+each of its interfaces, which ``synthesis`` builds a model's interfaces from.
+"""
+
 from typing import Annotated, Literal
 
 from pyvelo.core import Alias, VcoModel

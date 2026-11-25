@@ -85,7 +85,10 @@ def global_segment(**values: Any) -> dict[str, Any]:
 
 
 def a_store() -> ModuleStore:
-    """A store with the services and segments, and the configuration the module goes in."""
+    """A store with the services and segments.
+
+    And the configuration the module goes in.
+    """
     store = store_with_services()
     store.add_configuration({"id": CONFIG, "name": "Edge Specific Profile"})
     return store
@@ -115,7 +118,7 @@ def methods(store: ModuleStore) -> list[str]:
 
 async def test_an_insert_with_a_declared_identity_sends_its_rows_in_one_request(
     mock_vco_client: MockVcoClientFactory,
-):
+) -> None:
     module, plan = await probe_insert()
     store = a_store()
     client = await mock_vco_client(store)
@@ -138,7 +141,7 @@ async def test_an_insert_with_a_declared_identity_sends_its_rows_in_one_request(
 
 async def test_an_insert_is_read_back_and_its_rows_checked(
     mock_vco_client: MockVcoClientFactory,
-):
+) -> None:
     module, plan = await probe_insert()
     store = a_store()
     client = await mock_vco_client(store)
@@ -159,7 +162,7 @@ async def test_an_insert_is_read_back_and_its_rows_checked(
 
 async def test_an_insert_the_vco_counted_is_read_back_once(
     mock_vco_client: MockVcoClientFactory,
-):
+) -> None:
     module, plan = await probe_insert()
     store = a_store()
     store.return_data = False
@@ -173,7 +176,7 @@ async def test_an_insert_the_vco_counted_is_read_back_once(
 
 async def test_an_inserted_row_the_vco_skipped_is_refs_dropped(
     mock_vco_client: MockVcoClientFactory,
-):
+) -> None:
     module, plan = await probe_insert()
     store = a_store()
     store.skipped_objects.add(701)
@@ -188,7 +191,7 @@ async def test_an_inserted_row_the_vco_skipped_is_refs_dropped(
 
 async def test_a_new_qos_module_with_reconciled_segments_is_inserted_without_refs(
     mock_vco_client: MockVcoClientFactory,
-):
+) -> None:
     module, plan = await probe_insert(probe=None, segment_probe="")
     assert plan.refs is None
     store = a_store()
@@ -203,7 +206,7 @@ async def test_a_new_qos_module_with_reconciled_segments_is_inserted_without_ref
 
 async def test_a_module_found_by_if_absent_is_not_read_again(
     mock_vco_client: MockVcoClientFactory,
-):
+) -> None:
     module, plan = await probe_insert()
     first = a_store()
     client = await mock_vco_client(first)

@@ -1,4 +1,7 @@
-"""``ConfigPipeline.assign_segment``: one call adds the UI's factory entry for an enterprise segment to each of a profile's three modules, in memory.
+"""``ConfigPipeline.assign_segment`` adds an enterprise segment to a profile, in memory.
+
+One call adds the UI's factory entry for the segment to each of the profile's three
+modules.
 
 Each state is built by ``profile_state`` (a profile target, a segment resolver
 loaded with Global, Guest and Voice); the writes go to a ``ModuleStore``.
@@ -7,10 +10,10 @@ loaded with Global, Guest and Voice); the writes go to a ``ModuleStore``.
 import copy
 import uuid
 from collections.abc import Mapping
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 import pytest
-from profile_state import (  # pyright: ignore[reportImplicitRelativeImport]
+from profile_state import (
     module_store_pipeline,
     profile_state,
 )
@@ -35,7 +38,6 @@ from pyvelo.config.profile_segments import (
 from pyvelo.config.resolver import ResolverRegistry
 from pyvelo.config.state import ConfigState
 from pyvelo.core.identity import ResolutionError
-from pyvelo.core.layers import Profile
 from refs_helpers import QOS_ID, SEG1_OBJECT
 from segment_helpers import (
     GLOBAL,
@@ -48,6 +50,9 @@ from segment_helpers import (
 from test_state_plan import (  # pyright: ignore[reportImplicitRelativeImport]
     make_state,
 )
+
+if TYPE_CHECKING:
+    from pyvelo.core.layers import Profile
 
 DS = "deviceSettings"
 QOS = "QOS"
@@ -91,7 +96,7 @@ def rule(name: str, rule_id: str | None = None) -> dict[str, Any]:
 # --- what an assignment makes ----------------------------------------------
 
 
-async def test_assign_then_plan_writes_three_updates_device_settings_first():
+async def test_assign_then_plan_writes_three_updates_device_settings_first() -> None:
     state = await global_only()
     pipeline, _ = module_store_pipeline(state)
 
@@ -121,7 +126,7 @@ async def test_assign_then_plan_writes_three_updates_device_settings_first():
     assert row.row["enterpriseObjectId"] == SEG1_OBJECT
 
 
-async def test_the_qos_entry_has_the_template_defaults_match_key_for_key():
+async def test_the_qos_entry_has_the_template_defaults_match_key_for_key() -> None:
     state = await global_only()
     pipeline, _ = module_store_pipeline(state)
 
@@ -135,7 +140,7 @@ async def test_the_qos_entry_has_the_template_defaults_match_key_for_key():
     assert state.plan().warnings == ()
 
 
-async def test_assign_then_save_writes_the_three_modules():
+async def test_assign_then_save_writes_the_three_modules() -> None:
     state = await global_only()
     pipeline, store = module_store_pipeline(state)
 
@@ -151,7 +156,7 @@ async def test_assign_then_save_writes_the_three_modules():
 # --- qos_rules ---------------------------------------------------------------
 
 
-async def test_qos_rules_take_the_place_of_the_template_rules():
+async def test_qos_rules_take_the_place_of_the_template_rules() -> None:
     state = await global_only()
     pipeline, _ = module_store_pipeline(state)
     kept_id = str(uuid.uuid4())
@@ -170,11 +175,12 @@ async def test_qos_rules_take_the_place_of_the_template_rules():
     assert [r["name"] for r in rules] == ["Box", "Video", "Chat"]
     assert rules[0]["ruleLogicalId"] == kept_id
     made = [r["ruleLogicalId"] for r in rules[1:]]
-    assert len(set(made)) == 2 and kept_id not in made
+    assert len(set(made)) == 2
+    assert kept_id not in made
     assert [uuid.UUID(i).version for i in made] == [4, 4]
 
 
-async def test_qos_rules_empty_gives_no_rules():
+async def test_qos_rules_empty_gives_no_rules() -> None:
     state = await global_only()
     pipeline, _ = module_store_pipeline(state)
 
@@ -198,7 +204,7 @@ async def test_qos_rules_empty_gives_no_rules():
 )
 async def test_qos_rules_with_a_repeated_name_or_id_raise(
     rules: list[dict[str, Any]],
-):
+) -> None:
     state = await global_only()
     pipeline, _ = module_store_pipeline(state)
     before = state.plan().render()
@@ -209,7 +215,7 @@ async def test_qos_rules_with_a_repeated_name_or_id_raise(
     assert state.plan().render() == before
 
 
-async def test_an_edit_before_the_save_is_a_change_from_the_template():
+async def test_an_edit_before_the_save_is_a_change_from_the_template() -> None:
     state = await global_only()
     pipeline, _ = module_store_pipeline(state)
     _ = await pipeline.assign_segment(state, "Guest")
@@ -234,7 +240,7 @@ async def test_an_edit_before_the_save_is_a_change_from_the_template():
 # --- what raises ---------------------------------------------------------------
 
 
-async def test_an_edge_target_raises():
+async def test_an_edge_target_raises() -> None:
     state = make_state()
     pipeline = ConfigPipeline(None)
 
@@ -242,20 +248,20 @@ async def test_an_edge_target_raises():
         _ = await pipeline.assign_segment(state, "Guest")
 
 
-async def test_a_profile_without_qos_raises():
+async def test_a_profile_without_qos_raises() -> None:
     state = await global_only()
     qos = state.module(QOS)
     assert isinstance(qos, QosConfigurationModule)
     modules = state.profile_config.modules
     assert isinstance(modules, list)
-    modules.remove(cast(QosConfigurationModule[Profile], qos))  # the profile layer
+    modules.remove(cast("QosConfigurationModule[Profile]", qos))  # the profile layer
     pipeline, _ = module_store_pipeline(state)
 
     with pytest.raises(ValueError, match="QOS"):
         _ = await pipeline.assign_segment(state, "Guest")
 
 
-async def test_nothing_to_do_raises():
+async def test_nothing_to_do_raises() -> None:
     state = await profile_state(
         [ds_entry(GLOBAL), ds_entry(GUEST)],
         [qos_entry(GLOBAL), qos_entry(GUEST)],
@@ -272,7 +278,7 @@ async def test_nothing_to_do_raises():
     assert state.plan().changed == ()
 
 
-async def test_qos_rules_for_a_qos_entry_already_there_raise():
+async def test_qos_rules_for_a_qos_entry_already_there_raise() -> None:
     state = await profile_state(
         [ds_entry(GLOBAL), ds_entry(GUEST)],
         [qos_entry(GLOBAL), qos_entry(GUEST)],
@@ -289,7 +295,7 @@ async def test_qos_rules_for_a_qos_entry_already_there_raise():
 # --- the name --------------------------------------------------------------------
 
 
-async def test_an_unknown_name_raises_resolution_error_with_suggestions():
+async def test_an_unknown_name_raises_resolution_error_with_suggestions() -> None:
     state = await global_only()
     pipeline, _ = module_store_pipeline(state)
 
@@ -300,7 +306,7 @@ async def test_an_unknown_name_raises_resolution_error_with_suggestions():
     assert state.plan().changed == ()
 
 
-async def test_a_name_in_another_case_assigns_the_enterprise_name():
+async def test_a_name_in_another_case_assigns_the_enterprise_name() -> None:
     state = await global_only()
     pipeline, _ = module_store_pipeline(state)
 
@@ -309,7 +315,7 @@ async def test_a_name_in_another_case_assigns_the_enterprise_name():
     assert plan_of(state, FIREWALL).added_segments == ("Guest",)
 
 
-async def test_no_segment_resolver_raises_lookup_error_naming_load_resolvers():
+async def test_no_segment_resolver_raises_lookup_error_naming_load_resolvers() -> None:
     state = await global_only()
     state.resolvers = ResolverRegistry()
     pipeline, _ = module_store_pipeline(state)
@@ -323,7 +329,7 @@ async def test_no_segment_resolver_raises_lookup_error_naming_load_resolvers():
 # --- a profile that has part of it ----------------------------------------------------
 
 
-async def test_a_profile_with_the_segment_in_one_module_is_completed():
+async def test_a_profile_with_the_segment_in_one_module_is_completed() -> None:
     state = await profile_state(
         [ds_entry(GLOBAL), ds_entry(GUEST)],
         [qos_entry(GLOBAL)],
@@ -343,7 +349,9 @@ async def test_a_profile_with_the_segment_in_one_module_is_completed():
     assert plan.segment_warnings == ()
 
 
-async def test_an_existing_qos_entry_missing_defaults_gets_them_in_the_baseline():
+async def test_an_existing_qos_entry_missing_defaults_gets_them_in_the_baseline() -> (
+    None
+):
     two = default_rules()[:2]
     for default in two:
         default["ruleLogicalId"] = str(uuid.uuid4())
@@ -373,15 +381,15 @@ async def test_an_existing_qos_entry_missing_defaults_gets_them_in_the_baseline(
     assert [w.code for w in plan.warnings if w.code == "defaults_repaired"] == []
 
 
-# --- all or nothing ----------------------------------------------------------------------
+# --- all or nothing -------------------------------------------------------------------
 
 
-async def test_a_failure_leaves_the_state_as_it_was():
+async def test_a_failure_leaves_the_state_as_it_was() -> None:
     state = await global_only()
     pipeline, _ = module_store_pipeline(state)
     before = state.plan().render()
 
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="validation errors for QosRule"):
         _ = await pipeline.assign_segment(
             state, "Guest", qos_rules=[{"name": "Box", "match": "not a match"}]
         )
@@ -390,7 +398,7 @@ async def test_a_failure_leaves_the_state_as_it_was():
     assert all(state.module(name).additions == () for name in (DS, QOS, FIREWALL))
 
 
-async def test_assign_holds_the_lock():
+async def test_assign_holds_the_lock() -> None:
     state = await global_only()
     pipeline, _ = module_store_pipeline(state)
 
@@ -401,10 +409,10 @@ async def test_assign_holds_the_lock():
     assert state.plan().changed == ()
 
 
-# --- the shared helpers ------------------------------------------------------------------
+# --- the shared helpers ---------------------------------------------------------------
 
 
-async def test_a_module_not_at_the_profile_level_raises_naming_the_fix():
+async def test_a_module_not_at_the_profile_level_raises_naming_the_fix() -> None:
     state = await global_only()
     ds = state.module(DS)
     ds._config_context = None  # pyright: ignore[reportPrivateUsage]
@@ -413,7 +421,7 @@ async def test_a_module_not_at_the_profile_level_raises_naming_the_fix():
         _ = segment_modules(state)
 
 
-async def test_the_trial_changes_nothing_and_raises_what_the_edit_raises():
+async def test_the_trial_changes_nothing_and_raises_what_the_edit_raises() -> None:
     state = await global_only()
     modules = segment_modules(state)
     assignment = plan_assignment(state, identity(GUEST))
@@ -436,7 +444,7 @@ async def test_the_trial_changes_nothing_and_raises_what_the_edit_raises():
     assert all(len(m.additions) == 1 for m in modules.values())
 
 
-async def test_an_assignment_made_once_has_one_set_of_ids():
+async def test_an_assignment_made_once_has_one_set_of_ids() -> None:
     state = await global_only()
     modules = segment_modules(state)
     assignment = plan_assignment(state, identity(GUEST))

@@ -1,6 +1,15 @@
+"""An Edge as the VCO answers for it, and the requests and results of ``edge/``.
+
+The Edge object with its site, links, licence and HA state; Edge creation and
+deletion; the configuration stack and the composed modules
+(``getEdgeConfigurationModules``); SD-WAN peers, Gateway assignments, certificates and
+HA interfaces; and the calls that make an Edge a hub, bridge or backhaul hub of a
+profile.
+"""
+
 import uuid
 from collections.abc import Mapping
-from typing import Annotated, Any, Literal, Self, cast
+from typing import Annotated, Any, ClassVar, Literal, Self, cast
 
 from pydantic import (
     MISSING,
@@ -458,9 +467,12 @@ class GatewayHandOffs(VcoModel):
 
 
 class EdgeGatewayAssignmentResult(VcoModel):
-    """Edge gateway assignment view showing primary, secondary, and data-center gateways."""
+    """Edge gateway assignment view.
 
-    model_config = ConfigDict(extra="allow")
+    It shows primary, secondary, and data-center gateways.
+    """
+
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="allow")
 
     primary: GatewayAssignmentsEntry | None | MISSING = MISSING
     secondary: GatewayAssignmentsEntry | None | MISSING = MISSING
@@ -514,7 +526,7 @@ class CompositeModuleBase(VcoModel):
         if not isinstance(value, Mapping):
             # An existing instance keeps the snapshot it already has.
             return handler(value)
-        source = cast(Mapping[object, object], value)
+        source = cast("Mapping[object, object]", value)
         try:
             raw_data = capture_key(source, "data", info.mode)
         except PydanticSerializationError:
@@ -527,7 +539,9 @@ class CompositeModuleBase(VcoModel):
 
     @property
     def raw_data(self) -> object:
-        """``data`` exactly as the server composed it, as validated; ``MISSING`` if the input had none.
+        """``data`` exactly as the server composed it, as validated.
+
+        ``MISSING`` if the input had none.
 
         The models drop a key they do not know, so this is what a comparison
         with the composed data reads.
@@ -638,7 +652,7 @@ class GetHaInterfaces(VcoModel):
 class HaInterfaceItem(VcoModel):
     """A single HA interface entry."""
 
-    model_config = ConfigDict(extra="allow")
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="allow")
 
     id_: Annotated[int | None | MISSING, Alias("id")] = MISSING
     edge_logical_id: Annotated[
@@ -675,11 +689,11 @@ class GetSecureDeviceSecretsOption(VcoModel):
 
 
 class SecureDeviceSecretsOptionResult(VcoModel):
-    model_config = ConfigDict(extra="allow")
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="allow")
 
 
 class EdgeSdwanPeersResult(VcoModel):
-    model_config = ConfigDict(extra="allow")
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="allow")
 
     @model_validator(mode="before")
     @classmethod

@@ -1,4 +1,6 @@
-"""A state plans the row of a QoS rule's backhaul hub, on a profile and on an edge, from the profile's service for that segment.
+"""A state plans the row of a QoS rule's backhaul hub, on a profile and on an edge.
+
+It plans it from the profile's service for that segment.
 
 The profile has the Global Segment with ``HUB_A`` as its hub and backhaul hub,
 whose service (object 601) is in the device settings refs. A rule is edited as
@@ -18,7 +20,7 @@ from hub_helpers import (
     ds_with_vpn,
     hub_row,
 )
-from hub_state import (  # pyright: ignore[reportImplicitRelativeImport]
+from hub_state import (
     EDGE,
     EDGE_CONFIG,
     EDGE_QOS_ID,
@@ -45,7 +47,10 @@ GET_SERVICES = "enterprise/getEnterpriseServices"
 
 
 def profile_refs(*hubs: tuple[Hub, int, str]) -> dict[str, Any]:
-    """The profile's device settings refs: the Global Segment's row and a hub row (hub and backhaul roles) for each of *hubs*."""
+    """The profile's device settings refs.
+
+    The Global Segment's row and a hub row (hub and backhaul roles) for each of *hubs*.
+    """
     return profile_hub_rows(
         segment_row(GLOBAL[0], SEG0_OBJECT, SEG0),
         *(
@@ -63,7 +68,7 @@ def profile_refs(*hubs: tuple[Hub, int, str]) -> dict[str, Any]:
 
 def profile_ds(
     *, backhaul: tuple[Hub, ...] = (HUB_A,), hubs: tuple[Hub, ...] = (HUB_A,)
-):
+) -> list[dict[str, Any]]:
     return [ds_with_vpn(GLOBAL, hubs=hubs, backhaul=backhaul)]
 
 
@@ -88,7 +93,10 @@ async def an_edge(
     backhaul: tuple[Hub, ...] = (HUB_A,),
     hubs: tuple[Hub, ...] = (HUB_A,),
 ) -> ConfigState:
-    """An edge with its own QoS rule ``r1`` that uses no hub, over a profile of the hubs *hubs*."""
+    """An edge with its own QoS rule ``r1`` that uses no hub.
+
+    Its profile is a profile of the hubs *hubs*.
+    """
     return await hub_edge_state(
         [ds_entry(GLOBAL)],
         [qos_entry(GLOBAL, rules=[backhaul_rule("r1")])],
@@ -99,7 +107,10 @@ async def an_edge(
 
 
 def use_hub(qos: Any, hub: Hub, service_logical_id: str) -> None:
-    """Have rule ``r1`` of the Global Segment of *qos* backhaul to *hub* through its service."""
+    """Have rule ``r1`` of the Global Segment of *qos* backhaul to *hub*.
+
+    It backhauls to the hub through its service.
+    """
     (segment,) = qos.segments
     (held,) = segment.rules
     route = held.action.edge_to_edge_route_action.route_cfg
@@ -125,11 +136,11 @@ def planned_refs(state: ConfigState, name: str = "QOS") -> dict[str, Any] | None
     return module.refs
 
 
-def test_the_error_is_exported():
+def test_the_error_is_exported() -> None:
     assert ExportedError is HubServiceNotFoundError
 
 
-async def test_a_profile_state_plans_the_row_of_a_rules_hub():
+async def test_a_profile_state_plans_the_row_of_a_rules_hub() -> None:
     state = await a_profile()
     use_hub(state.profile.qos, HUB_A, SERVICE_A)
 
@@ -143,7 +154,7 @@ async def test_a_profile_state_plans_the_row_of_a_rules_hub():
     assert [m.name for m in plan.changed] == ["QOS"]
 
 
-async def test_an_edge_state_plans_the_row_of_a_rules_hub():
+async def test_an_edge_state_plans_the_row_of_a_rules_hub() -> None:
     state = await an_edge()
     use_hub(state.edge.qos, HUB_A, SERVICE_A)
 
@@ -158,7 +169,7 @@ async def test_an_edge_state_plans_the_row_of_a_rules_hub():
     assert [m.name for m in plan.changed] == ["QOS"]
 
 
-async def test_a_rule_on_a_hub_with_no_service_raises_service_not_found():
+async def test_a_rule_on_a_hub_with_no_service_raises_service_not_found() -> None:
     state = await a_profile(backhaul=(HUB_A, HUB_B), hubs=(HUB_A, HUB_B))
     use_hub(state.profile.qos, HUB_B, SERVICE_B)
 
@@ -169,7 +180,7 @@ async def test_a_rule_on_a_hub_with_no_service_raises_service_not_found():
     assert "save the hub first and the rule after" in str(error.value)
 
 
-async def test_an_edge_rule_on_a_hub_the_profile_has_no_service_for_raises():
+async def test_an_edge_rule_on_a_hub_the_profile_has_no_service_for_raises() -> None:
     state = await an_edge(backhaul=(HUB_A, HUB_B), hubs=(HUB_A, HUB_B))
     use_hub(state.edge.qos, HUB_B, SERVICE_B)
 
@@ -179,7 +190,9 @@ async def test_an_edge_rule_on_a_hub_the_profile_has_no_service_for_raises():
     assert error.value.hub == "Hub-B"
 
 
-async def test_a_rule_on_a_hub_with_a_service_but_not_listed_for_backhaul_dangles():
+async def test_a_rule_on_a_hub_with_a_service_but_not_listed_for_backhaul_dangles() -> (
+    None
+):
     state = await a_profile(
         rows=((HUB_A, SERVICE_A_ID, SERVICE_A), (HUB_B, SERVICE_B_ID, SERVICE_B)),
         backhaul=(HUB_A,),
@@ -194,7 +207,7 @@ async def test_a_rule_on_a_hub_with_a_service_but_not_listed_for_backhaul_dangle
     assert (reference.module, reference.set_name) == ("QOS", "backhaul_hub")
 
 
-async def test_the_save_of_a_profile_rule_writes_the_row_the_store_keeps():
+async def test_the_save_of_a_profile_rule_writes_the_row_the_store_keeps() -> None:
     state = await a_profile()
     pipeline, store = hub_pipeline(state)
     use_hub(state.profile.qos, HUB_A, SERVICE_A)
@@ -202,7 +215,7 @@ async def test_the_save_of_a_profile_rule_writes_the_row_the_store_keeps():
     result = await pipeline.save(state)
 
     assert result.modules_updated == [ConfigurationModuleName.QOS]
-    stored = cast(dict[str, Any], store.rows[QOS_ID]["refs"][BACKHAUL_REF])
+    stored = cast("dict[str, Any]", store.rows[QOS_ID]["refs"][BACKHAUL_REF])
     assert (stored["enterpriseObjectId"], stored["logicalId"]) == (
         SERVICE_A_ID,
         SERVICE_A,
@@ -210,20 +223,22 @@ async def test_the_save_of_a_profile_rule_writes_the_row_the_store_keeps():
     assert stored["segmentObjectId"] == GLOBAL[3]
 
 
-async def test_the_save_of_an_edge_rule_writes_the_row_and_the_service_knows_its_edge():
+async def test_the_save_of_an_edge_rule_writes_the_row_and_the_service_knows_its_edge() -> (  # noqa: E501 (a test's name)
+    None
+):
     state = await an_edge()
     pipeline, store = hub_pipeline(state)
     use_hub(state.edge.qos, HUB_A, SERVICE_A)
 
     _ = await pipeline.save(state)
 
-    stored = cast(dict[str, Any], store.rows[EDGE_QOS_ID]["refs"][BACKHAUL_REF])
+    stored = cast("dict[str, Any]", store.rows[EDGE_QOS_ID]["refs"][BACKHAUL_REF])
     assert (stored["enterpriseObjectId"], stored["configurationId"]) == (
         SERVICE_A_ID,
         EDGE_CONFIG,
     )
     answered = cast(
-        list[dict[str, Any]],
+        "list[dict[str, Any]]",
         store.handle(
             GET_SERVICES,
             {

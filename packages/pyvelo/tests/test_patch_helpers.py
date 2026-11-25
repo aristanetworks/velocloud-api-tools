@@ -24,17 +24,17 @@ from pyvelo.core.rebase import Path
 PATH = Path.parse("rules[a]")
 
 
-def test_at():
+def test_at() -> None:
     assert at(0) == "#0"
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="a position counts from 0, not -1"):
         at(-1)
 
 
-def test_delete():
+def test_delete() -> None:
     assert delete() == {"_op": "delete"}
 
 
-def test_add_shapes():
+def test_add_shapes() -> None:
     assert add() == {"_op": "add"}
     assert add({"a": 1}) == {"_op": "add", "a": 1}
     assert add({"a": 1}, before="x") == {
@@ -46,12 +46,12 @@ def test_add_shapes():
     assert add(after=("a", 1))["_position"] == {"after": ["a", 1]}
 
 
-def test_move_shapes():
+def test_move_shapes() -> None:
     assert move(last=True) == {"_position": "last"}
     assert move(after=at(0)) == {"_position": {"after": "#0"}}
 
 
-def test_place_is_exactly_one():
+def test_place_is_exactly_one() -> None:
     with pytest.raises(TypeError):
         move()
     with pytest.raises(TypeError):
@@ -64,7 +64,7 @@ def test_place_is_exactly_one():
         add({"_position": "first"})
 
 
-def test_helpers_return_json():
+def test_helpers_return_json() -> None:
     values = [
         at(0),
         delete(),
@@ -80,13 +80,13 @@ def test_helpers_return_json():
         assert json.loads(json.dumps(v)) == v
 
 
-def test_scalar_anchor_is_written_as_json():
+def test_scalar_anchor_is_written_as_json() -> None:
     value = move(before=uuid.UUID(int=1))
     assert value == {"_position": {"before": "00000000-0000-0000-0000-000000000001"}}
     assert json.loads(json.dumps(value)) == value
 
 
-def test_parse_change():
+def test_parse_change() -> None:
     assert parse_item_op({"a": 1}, PATH) == ItemOp("change", {"a": 1}, None)
     op = parse_item_op({"a": 1, "_position": "first"}, PATH)
     assert op.kind == "change"
@@ -94,11 +94,11 @@ def test_parse_change():
     assert op.place == Place("first")
 
 
-def test_an_empty_object_is_a_change_of_nothing():
+def test_an_empty_object_is_a_change_of_nothing() -> None:
     assert parse_item_op({}, PATH) == ItemOp("change", {}, None)
 
 
-def test_parse_add_delete_move():
+def test_parse_add_delete_move() -> None:
     assert parse_item_op(add({"a": 1}, after="x"), PATH) == ItemOp(
         "add", {"a": 1}, Place("after", "x")
     )
@@ -109,7 +109,7 @@ def test_parse_add_delete_move():
     assert op.place == Place("first")
 
 
-def test_parse_composite_anchor():
+def test_parse_composite_anchor() -> None:
     op = parse_item_op(add(after=("a", 1)), PATH)
     assert op.place == Place("after", ("a", 1))
 
@@ -127,14 +127,14 @@ def test_parse_composite_anchor():
         ({"_position": {"before": "a", "after": "b"}}, ""),
     ],
 )
-def test_parse_refuses(value: object, text: str):
+def test_parse_refuses(value: object, text: str) -> None:
     with pytest.raises(PatchError) as exc:
         parse_item_op(value, PATH)
     assert exc.value.path == PATH
     assert text in exc.value.message
 
 
-def test_an_explicit_null_op_is_refused():
+def test_an_explicit_null_op_is_refused() -> None:
     with pytest.raises(PatchError) as exc:
         parse_item_op({"_op": None, "a": 1}, PATH)
     assert exc.value.path == PATH
@@ -142,13 +142,13 @@ def test_an_explicit_null_op_is_refused():
 
 
 @pytest.mark.parametrize("word", ["before", "after"])
-def test_removed_string_position_names_its_own_form(word: str):
+def test_removed_string_position_names_its_own_form(word: str) -> None:
     with pytest.raises(PatchError) as exc:
         parse_item_op({"_position": f"{word}:x"}, PATH)
     assert f'"{word}:key" form' in exc.value.message
 
 
-def test_helpers_do_not_mutate_the_body():
+def test_helpers_do_not_mutate_the_body() -> None:
     body: dict[str, object] = {"a": 1, "sub": {"b": 2}}
     value = add(body, before="x")
     assert body == {"a": 1, "sub": {"b": 2}}
@@ -158,12 +158,12 @@ def test_helpers_do_not_mutate_the_body():
     assert op.body == body
 
 
-def test_a_position_with_too_many_digits_is_no_position():
+def test_a_position_with_too_many_digits_is_no_position() -> None:
     assert position_of("#" + "9" * 18) == 10**18 - 1
     assert position_of("#" + "1" * 5000) is None
 
 
-def test_selector_syntax():
+def test_selector_syntax() -> None:
     assert position_of("#12") == 12
     assert position_of("#x") is None
     assert position_of("12") is None
@@ -173,7 +173,7 @@ def test_selector_syntax():
     assert not is_new("a+")
 
 
-def test_what_the_helpers_return_passes_the_check():
+def test_what_the_helpers_return_passes_the_check() -> None:
     values: list[object] = [
         at(0),
         delete(),
@@ -189,7 +189,7 @@ def test_what_the_helpers_return_passes_the_check():
         assert checked_patch(value) == value
 
 
-def test_the_checked_patch_is_a_copy_with_the_selector_keys_kept():
+def test_the_checked_patch_is_a_copy_with_the_selector_keys_kept() -> None:
     key = ("10.0.0.0", 24, uuid.UUID(int=1))
     patch = {"routes": {key: {"cost": 1}, 10: {"tags": ["t"]}}}
     checked = cast("dict[str, dict[object, dict[str, object]]]", checked_patch(patch))
@@ -200,7 +200,7 @@ def test_the_checked_patch_is_a_copy_with_the_selector_keys_kept():
     assert list(checked["routes"]) == [key, 10]
 
 
-def test_the_check_reports_and_counts_from_the_path_given():
+def test_the_check_reports_and_counts_from_the_path_given() -> None:
     with pytest.raises(PatchError) as exc:
         _ = checked_patch([1, {2}], Path.parse("segments[Guest].outbound"))
     assert exc.value.path == Path.parse("segments[Guest].outbound[#1]")

@@ -1,6 +1,13 @@
+"""The requests and results of the ``event/`` methods and of enterprise alerts.
+
+An enterprise event read takes a filter tree of ``and``/``or`` groups over typed
+rules; each rule checks that its operator gets a scalar or a list value, as the VCO
+requires.
+"""
+
 import uuid
 from collections.abc import Sequence
-from typing import Annotated, Any, Literal, Self
+from typing import Annotated, Any, ClassVar, Literal, Self
 
 import annotated_types
 from pydantic import (
@@ -142,7 +149,7 @@ class EventSorting(VcoModel):
 class EnterpriseEventTypeFilter(VcoModel):
     """Filter by event type. Scalar value for is/isNot; list for in/notIn."""
 
-    model_config = ConfigDict(
+    model_config: ClassVar[ConfigDict] = ConfigDict(
         json_schema_extra=_filter_cardinality_json_schema(("is", "isNot"))
     )
 
@@ -161,7 +168,7 @@ class EnterpriseEventTypeFilter(VcoModel):
 class EnterpriseEventSeverityFilter(VcoModel):
     """Filter by severity. Scalar value for is/isNot; list for in/notIn."""
 
-    model_config = ConfigDict(
+    model_config: ClassVar[ConfigDict] = ConfigDict(
         json_schema_extra=_filter_cardinality_json_schema(("is", "isNot"))
     )
 
@@ -182,7 +189,7 @@ class EnterpriseEventSeverityFilter(VcoModel):
 class EnterpriseEventStringValueFilter(VcoModel):
     """Filter a string field using a scalar or list-valued operator."""
 
-    model_config = ConfigDict(
+    model_config: ClassVar[ConfigDict] = ConfigDict(
         json_schema_extra=_filter_cardinality_json_schema(
             (
                 "is",
@@ -240,7 +247,7 @@ type EnterpriseEventStringFilter = Annotated[
 ]
 
 
-def _enterprise_event_filter_discriminator(v: Any) -> str | None:
+def _enterprise_event_filter_discriminator(v: Any) -> str | None:  # noqa: PLR0911 (existing: split it when it next changes)
     if isinstance(v, dict):
         f = v.get("field") or v.get("fieldName")
         if f == "event":
@@ -452,7 +459,7 @@ class GetOperatorEvents(PaginatedVcoModel):
 
 
 class OperatorEventItem(VcoModel):
-    model_config = ConfigDict(extra="allow")
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="allow")
 
 
 # ---------------------------------------------------------------------------
@@ -469,4 +476,4 @@ class GetProxyEvents(PaginatedVcoModel):
 
 
 class ProxyEventItem(VcoModel):
-    model_config = ConfigDict(extra="allow")
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="allow")

@@ -1,9 +1,15 @@
 """Tests for SDK-side convenience re-exports."""
 
+import pyvelo
+import pyvelo.client
+import pyvelo.core
+from pyvelo.client import exceptions
+from pyvelo.core import base, fields, merge, patch, rebase
+
 
 class TestValidationReexports:
-    def test_imports_from_config(self):
-        from pyvelo.config import (
+    def test_imports_from_config(self) -> None:
+        from pyvelo.config import (  # noqa: PLC0415 (the import is what this test checks)
             ValidationResult,
             ValidatorRegistry,
             validator,
@@ -15,11 +21,7 @@ class TestValidationReexports:
 
 
 class TestSaveErrorReexports:
-    def test_save_errors_are_importable_from_client_and_top_level(self):
-        import pyvelo
-        import pyvelo.client
-        from pyvelo.client import exceptions
-
+    def test_save_errors_are_importable_from_client_and_top_level(self) -> None:
         for name in (
             "ComposedModuleError",
             "ConfigConflictError",
@@ -45,10 +47,7 @@ class TestSaveErrorReexports:
 
 
 class TestPatchToolReexports:
-    def test_the_names_a_tool_over_patches_uses_come_from_pyvelo_core(self):
-        import pyvelo.core
-        from pyvelo.core import base, fields, merge, patch, rebase
-
+    def test_the_names_a_tool_over_patches_uses_come_from_pyvelo_core(self) -> None:
         homes = {
             "list_kind": base,
             "ListKind": base,
@@ -66,9 +65,6 @@ class TestPatchToolReexports:
             assert getattr(pyvelo.core, name) is getattr(home, name), name
             assert name in pyvelo.core.__all__, name
 
-    def test_the_kind_of_a_patch_error_comes_from_pyvelo_core(self):
-        import pyvelo.core
-        from pyvelo.core import patch
-
+    def test_the_kind_of_a_patch_error_comes_from_pyvelo_core(self) -> None:
         assert pyvelo.core.PatchErrorKind is patch.PatchErrorKind
         assert "PatchErrorKind" in pyvelo.core.__all__

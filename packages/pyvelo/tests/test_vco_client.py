@@ -3,16 +3,18 @@
 import asyncio
 from collections.abc import Awaitable, Callable
 from types import CoroutineType
-from typing import cast, override
+from typing import ClassVar, Self, cast, override
 from unittest.mock import patch
 
 import httpx
 import pytest
+from pyvelo.client import VcoAuth, VcoClient
 from pyvelo.client.exceptions import (
     VcoApiError,
     VcoClientNotInitializedError,
     VcoCredentialsError,
     VcoEmptyResultError,
+    VcoHttpError,
     VcoOperationError,
     VcoRateLimitError,
 )
@@ -20,6 +22,7 @@ from pyvelo.core import (
     PaginatedVcoModel,
     VcoModel,
 )
+from pyvelo.testing import make_transport
 
 from ._type_support import (
     JsonObject,
@@ -80,7 +83,7 @@ class TestPortal:
         self,
         mock_vco_client: MockVcoClientFactory,
         json_rpc_response: JsonRpcResponseFactory,
-    ):
+    ) -> None:
         """portal() should deserialize a successful JSON-RPC response."""
 
         def handler(request: httpx.Request) -> httpx.Response:
@@ -105,7 +108,7 @@ class TestPortal:
         self,
         mock_vco_client: MockVcoClientFactory,
         json_rpc_response: JsonRpcResponseFactory,
-    ):
+    ) -> None:
         """portal() should raise VcoOperationError on JSON-RPC error."""
 
         def handler(_request: httpx.Request) -> httpx.Response:
@@ -130,7 +133,7 @@ class TestPortal:
         self,
         mock_vco_client: MockVcoClientFactory,
         json_rpc_response: JsonRpcResponseFactory,
-    ):
+    ) -> None:
         """portal() should raise when result is null."""
 
         def handler(_request: httpx.Request) -> httpx.Response:
@@ -146,7 +149,7 @@ class TestPortal:
         self,
         mock_vco_client: MockVcoClientFactory,
         json_rpc_response: JsonRpcResponseFactory,
-    ):
+    ) -> None:
         """portal() should include the auth token in requests."""
 
         def handler(request: httpx.Request) -> httpx.Response:
@@ -166,7 +169,7 @@ class TestPortal:
         self,
         mock_vco_client: MockVcoClientFactory,
         json_rpc_response: JsonRpcResponseFactory,
-    ):
+    ) -> None:
         """Request params should be serialized with camelCase aliases."""
 
         def handler(request: httpx.Request) -> httpx.Response:
@@ -191,7 +194,7 @@ class TestPortalPaginated:
         self,
         mock_vco_client: MockVcoClientFactory,
         json_rpc_response: JsonRpcResponseFactory,
-    ):
+    ) -> None:
         """portal_paginated() with a single page of results."""
 
         def handler(_request: httpx.Request) -> httpx.Response:
@@ -209,13 +212,14 @@ class TestPortalPaginated:
             )
 
         client = await mock_vco_client(handler)
-        pages: list[list[SampleResult]] = []
-        async for page in client.portal_paginated(
-            "test/listStuff",
-            SamplePaginatedRequest(enterprise_id=1),
-            SampleResult,
-        ):
-            pages.append(page)
+        pages: list[list[SampleResult]] = [
+            page
+            async for page in client.portal_paginated(
+                "test/listStuff",
+                SamplePaginatedRequest(enterprise_id=1),
+                SampleResult,
+            )
+        ]
 
         assert len(pages) == 1
         assert len(pages[0]) == 2
@@ -226,7 +230,7 @@ class TestPortalPaginated:
         self,
         mock_vco_client: MockVcoClientFactory,
         json_rpc_response: JsonRpcResponseFactory,
-    ):
+    ) -> None:
         """portal_paginated() should follow pagination links."""
         call_count = 0
 
@@ -248,25 +252,25 @@ class TestPortalPaginated:
                         }
                     ),
                 )
-            else:
-                return httpx.Response(
-                    200,
-                    json=json_rpc_response(
-                        result={
-                            "metaData": {"limit": 1, "more": False},
-                            "data": [{"name": "item2", "value": 2}],
-                        }
-                    ),
-                )
+            return httpx.Response(
+                200,
+                json=json_rpc_response(
+                    result={
+                        "metaData": {"limit": 1, "more": False},
+                        "data": [{"name": "item2", "value": 2}],
+                    }
+                ),
+            )
 
         client = await mock_vco_client(handler)
-        pages: list[list[SampleResult]] = []
-        async for page in client.portal_paginated(
-            "test/listStuff",
-            SamplePaginatedRequest(enterprise_id=1),
-            SampleResult,
-        ):
-            pages.append(page)
+        pages: list[list[SampleResult]] = [
+            page
+            async for page in client.portal_paginated(
+                "test/listStuff",
+                SamplePaginatedRequest(enterprise_id=1),
+                SampleResult,
+            )
+        ]
 
         assert len(pages) == 2
         assert call_count == 2
@@ -275,7 +279,7 @@ class TestPortalPaginated:
         self,
         mock_vco_client: MockVcoClientFactory,
         json_rpc_response: JsonRpcResponseFactory,
-    ):
+    ) -> None:
         """portal_paginated() should raise VcoOperationError on error."""
 
         def handler(_request: httpx.Request) -> httpx.Response:
@@ -300,7 +304,7 @@ class TestPortalPaginated:
         self,
         mock_vco_client: MockVcoClientFactory,
         json_rpc_response: JsonRpcResponseFactory,
-    ):
+    ) -> None:
         """A caller that stops after one page can resume from the recorded cursor."""
         sent: list[str | None] = []
         client = await mock_vco_client(paged_handler(json_rpc_response, 2, sent))
@@ -310,8 +314,8 @@ class TestPortalPaginated:
             "test/listStuff", request, SampleResult
         ):
             assert [item.value for item in page] == [1]
-            assert cast(bool, request._page_has_more) is True
-            assert cast(str | None, request._page_next_link) == "page2"
+            assert request.page_has_more is True
+            assert request.page_next_link == "page2"
             break
 
         assert sent == [None]
@@ -321,7 +325,7 @@ class TestPortalPaginated:
         self,
         mock_vco_client: MockVcoClientFactory,
         json_rpc_response: JsonRpcResponseFactory,
-    ):
+    ) -> None:
         sent: list[str | None] = []
         client = await mock_vco_client(paged_handler(json_rpc_response, 2, sent))
         request = SamplePaginatedRequest(enterprise_id=1)
@@ -335,14 +339,14 @@ class TestPortalPaginated:
 
         assert len(pages) == 2
         assert sent == [None, "page2"]
-        assert cast(bool, request._page_has_more) is False
-        assert cast(str | None, request._page_next_link) is None
+        assert request.page_has_more is False
+        assert request.page_next_link is None
 
     async def test_more_without_cursor_raises(
         self,
         mock_vco_client: MockVcoClientFactory,
         json_rpc_response: JsonRpcResponseFactory,
-    ):
+    ) -> None:
         """An incomplete page with no cursor must not resend the same request."""
         calls = 0
 
@@ -368,7 +372,7 @@ class TestPortalPaginatedList:
         self,
         mock_vco_client: MockVcoClientFactory,
         json_rpc_response: JsonRpcResponseFactory,
-    ):
+    ) -> None:
         sent: list[str | None] = []
         client = await mock_vco_client(paged_handler(json_rpc_response, 3, sent))
         request = SamplePaginatedRequest(enterprise_id=1)
@@ -379,8 +383,8 @@ class TestPortalPaginatedList:
 
         assert [item.value for item in items] == [1, 2, 3]
         assert sent == [None, "page2", "page3"]
-        assert cast(bool, request._page_has_more) is False
-        assert cast(str | None, request._page_next_link) is None
+        assert request.page_has_more is False
+        assert request.page_next_link is None
 
     @pytest.mark.parametrize("max_pages", [1, 2])
     async def test_max_pages_stops_and_keeps_resume_cursor(
@@ -388,11 +392,11 @@ class TestPortalPaginatedList:
         mock_vco_client: MockVcoClientFactory,
         json_rpc_response: JsonRpcResponseFactory,
         max_pages: int,
-    ):
+    ) -> None:
         sent: list[str | None] = []
         client = await mock_vco_client(paged_handler(json_rpc_response, 3, sent))
         request = SamplePaginatedRequest(enterprise_id=1)
-        request._max_pages = max_pages
+        request.max_pages = max_pages
 
         items = await client.portal_paginated_list(
             "test/listStuff", request, SampleResult
@@ -400,49 +404,49 @@ class TestPortalPaginatedList:
 
         assert [item.value for item in items] == list(range(1, max_pages + 1))
         assert len(sent) == max_pages
-        assert cast(bool, request._page_has_more) is True
-        assert cast(str | None, request._page_next_link) == (f"page{max_pages + 1}")
+        assert request.page_has_more is True
+        assert request.page_next_link == (f"page{max_pages + 1}")
 
     async def test_max_pages_reaching_last_page_reports_complete(
         self,
         mock_vco_client: MockVcoClientFactory,
         json_rpc_response: JsonRpcResponseFactory,
-    ):
+    ) -> None:
         sent: list[str | None] = []
         client = await mock_vco_client(paged_handler(json_rpc_response, 2, sent))
         request = SamplePaginatedRequest(enterprise_id=1)
-        request._max_pages = 2
+        request.max_pages = 2
 
         items = await client.portal_paginated_list(
             "test/listStuff", request, SampleResult
         )
 
         assert len(items) == 2
-        assert cast(bool, request._page_has_more) is False
-        assert cast(str | None, request._page_next_link) is None
+        assert request.page_has_more is False
+        assert request.page_next_link is None
 
     async def test_resumes_from_recorded_cursor(
         self,
         mock_vco_client: MockVcoClientFactory,
         json_rpc_response: JsonRpcResponseFactory,
-    ):
+    ) -> None:
         sent: list[str | None] = []
         client = await mock_vco_client(paged_handler(json_rpc_response, 3, sent))
         request = SamplePaginatedRequest(enterprise_id=1)
-        request._max_pages = 1
+        request.max_pages = 1
         _ = await client.portal_paginated_list("test/listStuff", request, SampleResult)
 
-        next_page_link = cast(str | None, request._page_next_link)
+        next_page_link = request.page_next_link
         assert next_page_link is not None
         resumed = SamplePaginatedRequest(enterprise_id=1, next_page_link=next_page_link)
-        resumed._max_pages = 1
+        resumed.max_pages = 1
         items = await client.portal_paginated_list(
             "test/listStuff", resumed, SampleResult
         )
 
         assert [item.value for item in items] == [2]
         assert sent == [None, "page2"]
-        assert cast(str | None, resumed._page_next_link) == "page3"
+        assert resumed.page_next_link == "page3"
 
 
 class TestPortalList:
@@ -450,7 +454,7 @@ class TestPortalList:
         self,
         mock_vco_client: MockVcoClientFactory,
         json_rpc_response: JsonRpcResponseFactory,
-    ):
+    ) -> None:
         """portal_list() should deserialize a JSON-RPC response with array result."""
 
         def handler(request: httpx.Request) -> httpx.Response:
@@ -478,7 +482,7 @@ class TestPortalList:
         self,
         mock_vco_client: MockVcoClientFactory,
         json_rpc_response: JsonRpcResponseFactory,
-    ):
+    ) -> None:
         """portal_list() should raise VcoOperationError on JSON-RPC error."""
 
         def handler(_request: httpx.Request) -> httpx.Response:
@@ -501,7 +505,7 @@ class TestPortalList:
         self,
         mock_vco_client: MockVcoClientFactory,
         json_rpc_response: JsonRpcResponseFactory,
-    ):
+    ) -> None:
         """portal_list() should raise when result is null."""
 
         def handler(_request: httpx.Request) -> httpx.Response:
@@ -517,7 +521,7 @@ class TestPortalList:
         self,
         mock_vco_client: MockVcoClientFactory,
         json_rpc_response: JsonRpcResponseFactory,
-    ):
+    ) -> None:
         """portal_list() should handle empty array result."""
 
         def handler(_request: httpx.Request) -> httpx.Response:
@@ -536,7 +540,7 @@ class TestPortalList:
         self,
         mock_vco_client: MockVcoClientFactory,
         json_rpc_response: JsonRpcResponseFactory,
-    ):
+    ) -> None:
         def handler(_request: httpx.Request) -> httpx.Response:
             return httpx.Response(
                 200,
@@ -555,7 +559,7 @@ class TestPortalList:
         assert [item.value for item in result] == [1]
 
     @pytest.mark.parametrize(
-        "request_model,message",
+        ("request_model", "message"),
         [
             (SampleRequest(enterprise_id=1), "pagination is unsupported"),
             (SamplePaginatedRequest(enterprise_id=1), "portal_paginated_list"),
@@ -567,7 +571,7 @@ class TestPortalList:
         json_rpc_response: JsonRpcResponseFactory,
         request_model: SampleRequest | SamplePaginatedRequest,
         message: str,
-    ):
+    ) -> None:
         sent: list[str | None] = []
         client = await mock_vco_client(paged_handler(json_rpc_response, 2, sent))
 
@@ -581,7 +585,7 @@ class TestRetry429:
         self,
         mock_vco_client: MockVcoClientFactory,
         json_rpc_response: JsonRpcResponseFactory,
-    ):
+    ) -> None:
         """_post() should retry on 429 and succeed when server recovers."""
         call_count = 0
 
@@ -608,7 +612,7 @@ class TestRetry429:
         self,
         mock_vco_client: MockVcoClientFactory,
         json_rpc_response: JsonRpcResponseFactory,
-    ):
+    ) -> None:
         """_post() should use Retry-After header value as delay."""
         delays: list[float] = []
 
@@ -642,7 +646,7 @@ class TestRetry429:
 
     async def test_raises_after_retries_exhausted(
         self, mock_vco_client: MockVcoClientFactory
-    ):
+    ) -> None:
         """_post() should raise VcoRateLimitError when max retries exhausted."""
 
         def handler(_request: httpx.Request) -> httpx.Response:
@@ -658,7 +662,7 @@ class TestRetry429:
 
     async def test_non_429_errors_not_retried(
         self, mock_vco_client: MockVcoClientFactory
-    ):
+    ) -> None:
         """_post() should not retry on non-429 HTTP errors."""
         call_count = 0
 
@@ -668,8 +672,7 @@ class TestRetry429:
             return httpx.Response(500, text="Internal Server Error")
 
         client = await mock_vco_client(handler, max_retries=3)
-        # 500 goes through to JSON parsing, which fails with ValidationError
-        with pytest.raises(Exception):  # noqa: B017
+        with pytest.raises(VcoHttpError, match="HTTP 500"):
             _ = await client.portal(
                 "test/getStuff", SampleRequest(enterprise_id=1), SampleResult
             )
@@ -681,7 +684,7 @@ class TestConcurrencySemaphore:
         self,
         mock_vco_client: MockVcoClientFactory,
         json_rpc_response: JsonRpcResponseFactory,
-    ):
+    ) -> None:
         """Semaphore should limit the number of concurrent in-flight requests."""
 
         def handler(_request: httpx.Request) -> httpx.Response:
@@ -699,8 +702,8 @@ class TestConcurrencySemaphore:
         count_lock = asyncio.Lock()
 
         http_client = cast(
-            httpx.AsyncClient,
-            cast(Callable[[], object], client._http_client)(),
+            "httpx.AsyncClient",
+            cast("Callable[[], object]", client._http_client)(),  # pyright: ignore[reportPrivateUsage]  # counts requests at the transport
         )
         original_http_post = http_client.post
 
@@ -740,7 +743,7 @@ class TestRateLimiter:
         self,
         mock_vco_client: MockVcoClientFactory,
         json_rpc_response: JsonRpcResponseFactory,
-    ):
+    ) -> None:
         """Rate limiter should throttle when window budget is exhausted."""
 
         def handler(_request: httpx.Request) -> httpx.Response:
@@ -772,7 +775,7 @@ class TestRateLimiter:
         self,
         mock_vco_client: MockVcoClientFactory,
         json_rpc_response: JsonRpcResponseFactory,
-    ):
+    ) -> None:
         """No rate limiting when max_requests_per_window is not set."""
 
         def handler(_request: httpx.Request) -> httpx.Response:
@@ -799,10 +802,7 @@ class TestRateLimiter:
 class TestTransport:
     async def test_a_client_over_a_transport_is_connected_and_keeps_it_under_async_with(
         self, json_rpc_response: JsonRpcResponseFactory
-    ):
-        from pyvelo.client import VcoClient
-        from pyvelo.testing import make_transport
-
+    ) -> None:
         seen: list[httpx.Request] = []
 
         def handler(request: httpx.Request) -> httpx.Response:
@@ -825,20 +825,22 @@ class TestTransport:
         with pytest.raises(VcoClientNotInitializedError):
             _ = await client.portal("test/getStuff", request, SampleResult)
 
-    async def test_a_transport_that_closes_with_the_client_is_entered_again_by_the_next_async_with(
+    async def test_a_transport_that_closes_with_the_client_is_entered_again_by_the_next_async_with(  # noqa: E501 (a test's name)
         self, json_rpc_response: JsonRpcResponseFactory
-    ):
-        from pyvelo.client import VcoClient
-
+    ) -> None:
         class HoldsConnections(httpx.AsyncBaseTransport):
-            """Like a pool: closing it ends its connections until it is entered again."""
+            """Like a pool: closing it ends its connections.
+
+            They end until it is entered again.
+            """
 
             def __init__(self) -> None:
                 self.closed: bool = False
                 self.closings: int = 0
                 self.sent: int = 0
 
-            async def __aenter__(self):
+            @override
+            async def __aenter__(self) -> Self:
                 self.closed = False
                 return self
 
@@ -873,7 +875,7 @@ class TestVcoAuth:
         self,
         mock_vco_client: MockVcoClientFactory,
         json_rpc_response: JsonRpcResponseFactory,
-    ):
+    ) -> None:
         """A bare token should be sent as 'Token <value>'."""
 
         def handler(request: httpx.Request) -> httpx.Response:
@@ -890,10 +892,8 @@ class TestVcoAuth:
 
     async def test_token_prefix_not_duplicated(
         self, json_rpc_response: JsonRpcResponseFactory
-    ):
+    ) -> None:
         """A token that already starts with 'Token ' must not be double-prefixed."""
-        from pyvelo.client import VcoClient
-        from pyvelo.testing import make_transport
 
         def handler(request: httpx.Request) -> httpx.Response:
             assert request.headers["Authorization"] == "Token already-prefixed"
@@ -913,10 +913,11 @@ class TestVcoAuth:
 
     async def test_custom_prefix_preserved(
         self, json_rpc_response: JsonRpcResponseFactory
-    ):
-        """A token with an arbitrary prefix like 'RandomPrefix ' must be sent verbatim."""
-        from pyvelo.client import VcoClient
-        from pyvelo.testing import make_transport
+    ) -> None:
+        """A token with an arbitrary prefix must be sent verbatim.
+
+        The prefix is one like 'RandomPrefix '.
+        """
 
         def handler(request: httpx.Request) -> httpx.Response:
             assert request.headers["Authorization"] == "RandomPrefix my-jwt"
@@ -934,7 +935,7 @@ class TestVcoAuth:
             "test/getStuff", SampleRequest(enterprise_id=1), SampleResult
         )
 
-    REFUSED = (
+    REFUSED: ClassVar[str] = (
         "The API token has a character that cannot be sent in an HTTP header: a "
         "line break, a tab, another control character or a character that is not "
         "ASCII. The token is not shown here. Check where it comes from, for "
@@ -943,10 +944,7 @@ class TestVcoAuth:
 
     async def test_whitespace_around_the_token_is_stripped(
         self, json_rpc_response: JsonRpcResponseFactory
-    ):
-        from pyvelo.client import VcoClient
-        from pyvelo.testing import make_transport
-
+    ) -> None:
         seen: list[httpx.Request] = []
 
         def handler(request: httpx.Request) -> httpx.Response:
@@ -975,9 +973,9 @@ class TestVcoAuth:
             "zzSECRETzz\u00e9",
         ],
     )
-    def test_a_token_no_header_can_carry_is_refused_and_not_shown(self, token: str):
-        from pyvelo.client import VcoAuth, VcoClient
-
+    def test_a_token_no_header_can_carry_is_refused_and_not_shown(
+        self, token: str
+    ) -> None:
         with pytest.raises(VcoCredentialsError) as exc:
             _ = VcoClient("vco.example.invalid", token)
         assert str(exc.value) == self.REFUSED
@@ -987,9 +985,7 @@ class TestVcoAuth:
         assert str(direct.value) == self.REFUSED
 
     @pytest.mark.parametrize("token", ["", "   ", "\r\n"])
-    def test_an_empty_token_is_refused(self, token: str):
-        from pyvelo.client import VcoAuth, VcoClient
-
+    def test_an_empty_token_is_refused(self, token: str) -> None:
         expected = (
             "The API token is empty. Give the token, or check the file or "
             "variable it is read from."
@@ -1001,9 +997,7 @@ class TestVcoAuth:
             _ = VcoAuth(token)
         assert str(direct.value) == expected
 
-    def test_vco_auth_strips_and_keeps_a_prefix(self):
-        from pyvelo.client import VcoAuth
-
+    def test_vco_auth_strips_and_keeps_a_prefix(self) -> None:
         request = httpx.Request("POST", "https://vco.example.invalid/portal/")
         sent = next(VcoAuth(" Bearer made-up-token\n").auth_flow(request))
         assert sent.headers["Authorization"] == "Bearer made-up-token"

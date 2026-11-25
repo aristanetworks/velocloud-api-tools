@@ -1,4 +1,7 @@
-"""The QoS module's kinds as declared, the display defaults it reads, and what each layer holds."""
+"""The QoS module's kinds as declared and the display defaults it reads.
+
+And what each layer holds.
+"""
 
 import copy
 from typing import Any, cast
@@ -8,6 +11,7 @@ from pydantic import MISSING
 from pyvelo.client.models.configuration import QosData
 from pyvelo.client.models.configuration.qos import (
     CosMapping,
+    QosRule,
     QosSegment,
     ServiceRateLimit,
 )
@@ -64,7 +68,7 @@ KIND_TABLE: list[tuple[type[VcoModel], str, Kind, type | None, str]] = [
 ]
 
 
-def test_the_qos_kinds_are_as_declared():
+def test_the_qos_kinds_are_as_declared() -> None:
     for model, name, kind, encoding, key in KIND_TABLE:
         for layer in (Edge, Profile):
             layered: Any = model
@@ -91,7 +95,7 @@ def test_the_qos_kinds_are_as_declared():
     )
 
 
-def test_profile_qos_reads_the_template_display_defaults():
+def test_profile_qos_reads_the_template_display_defaults() -> None:
     profile = QosData[Profile].model_validate({"segments": []})
     assert profile.service_rate_limit.model_dump(mode="json", by_alias=True) == {
         "enabled": False,
@@ -107,7 +111,7 @@ def test_profile_qos_reads_the_template_display_defaults():
     assert profile.model_dump(mode="json", by_alias=True) == {"segments": []}
 
 
-def test_a_display_default_is_a_fresh_object():
+def test_a_display_default_is_a_fresh_object() -> None:
     one = QosData[Profile].model_validate({"segments": []})
     two = QosData[Profile].model_validate({"segments": []})
     assert one.qoe is not two.qoe
@@ -115,7 +119,7 @@ def test_a_display_default_is_a_fresh_object():
     assert two.service_rate_limit.value == 1
 
 
-def test_a_profile_segment_without_a_cos_mapping_reads_the_default_one():
+def test_a_profile_segment_without_a_cos_mapping_reads_the_default_one() -> None:
     segment = QosSegment[Profile].model_validate(
         {"segment": descriptor(GLOBAL), "rules": []}
     )
@@ -125,7 +129,7 @@ def test_a_profile_segment_without_a_cos_mapping_reads_the_default_one():
     assert "cosMapping" not in segment.model_dump(mode="json", by_alias=True)
 
 
-def test_edge_qos_values_are_owned():
+def test_edge_qos_values_are_owned() -> None:
     raw: dict[str, Any] = {
         "segments": [],
         "serviceRateLimit": {"enabled": False, "inputType": "rate", "value": 5},
@@ -137,7 +141,7 @@ def test_edge_qos_values_are_owned():
     assert edge.model_dump(mode="json", by_alias=True) == raw
 
 
-def test_a_cos_mapping_stored_with_its_flag_off_is_kept_and_not_local():
+def test_a_cos_mapping_stored_with_its_flag_off_is_kept_and_not_local() -> None:
     stored = {
         "lsInputType": "bandwidth",
         "realtime": {
@@ -189,13 +193,11 @@ def test_a_cos_mapping_stored_with_its_flag_off_is_kept_and_not_local():
     assert written["cosMapping"] == stored
 
 
-def _rule():
-    from pyvelo.client.models.configuration.qos import QosRule
-
+def _rule() -> QosRule:
     return QosRule.model_validate(RULE)
 
 
-def test_a_stored_null_client_connector_is_kept_and_not_local():
+def test_a_stored_null_client_connector_is_kept_and_not_local() -> None:
     edge = qos_mod({"segments": [], "qosClientConnector": None}, layer=Edge)
     profile = qos_mod({"segments": []}, layer=Profile, module_id=2)
     owned = edge.data.qos_client_connector
@@ -212,7 +214,7 @@ def test_a_stored_null_client_connector_is_kept_and_not_local():
     assert "serviceRateLimit" in data
 
 
-def test_an_edge_s_stored_null_client_connector_shows_the_profile_s_block():
+def test_an_edge_s_stored_null_client_connector_shows_the_profile_s_block() -> None:
     # ByPresence: a null is not local, so the profile's block is what the view shows.
     block = {"data": {"a": 1}}
     edge = qos_mod({"segments": [], "qosClientConnector": None}, layer=Edge)
@@ -226,14 +228,14 @@ def test_an_edge_s_stored_null_client_connector_shows_the_profile_s_block():
     assert connector.value.model_dump(mode="json", by_alias=True) == block
 
 
-def test_a_stored_client_connector_is_local():
+def test_a_stored_client_connector_is_local() -> None:
     raw: dict[str, Any] = {"segments": [], "qosClientConnector": {"data": {"a": 1}}}
     edge = qos_mod(raw, layer=Edge)
     assert edge.data.qos_client_connector.is_local
     assert edge.data.model_dump(mode="json", by_alias=True) == raw
 
 
-def test_a_profile_segment_without_defaults_stays_without_them():
+def test_a_profile_segment_without_defaults_stays_without_them() -> None:
     raw: dict[str, Any] = {"segments": [{"segment": descriptor(GUEST), "rules": []}]}
     module = qos_mod(raw, layer=Profile)
     segment = module.data.segments[0]
@@ -256,7 +258,7 @@ def test_a_profile_segment_without_defaults_stays_without_them():
     assert plan.missing_defaults
 
 
-def test_edge_defaults_are_not_the_edge_s():
+def test_edge_defaults_are_not_the_edge_s() -> None:
     entry = qos_entry(GUEST)
     assert entry["defaults"]
     module = qos_mod({"segments": [entry]}, layer=Edge)
@@ -269,7 +271,7 @@ def test_edge_defaults_are_not_the_edge_s():
     assert plan.data["segments"][0]["defaults"] == entry["defaults"]
 
 
-def test_the_effective_rules_are_the_edge_s_then_the_profile_s():
+def test_the_effective_rules_are_the_edge_s_then_the_profile_s() -> None:
     def rule(name: str) -> dict[str, Any]:
         return {**copy.deepcopy(RULE), "name": name}
 
@@ -299,7 +301,9 @@ def test_the_effective_rules_are_the_edge_s_then_the_profile_s():
 
 
 @pytest.mark.parametrize("layer", [Edge, Profile])
-def test_an_untouched_module_is_planned_as_none(layer: type[Edge] | type[Profile]):
+def test_an_untouched_module_is_planned_as_none(
+    layer: type[Edge] | type[Profile],
+) -> None:
     raw = {"segments": [qos_entry(GLOBAL, rules=[RULE])]}
     module = qos_mod(raw, layer=layer)
     plan = plan_module(module, level=EDGE if layer is Edge else PROFILE)

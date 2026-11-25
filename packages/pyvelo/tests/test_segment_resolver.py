@@ -43,7 +43,7 @@ class FakeSegmentClient:
 
 
 def _client_protocol(client: FakeSegmentClient) -> VcoClientProtocol:
-    return cast(VcoClientProtocol, cast(object, client))
+    return cast("VcoClientProtocol", cast("object", client))
 
 
 class TestSegmentResolver:
@@ -57,47 +57,51 @@ class TestSegmentResolver:
         await r.load(ResolverContext(enterprise_id=42))
         return r
 
-    async def test_resolve_by_name(self, resolver: SegmentResolver):
+    async def test_resolve_by_name(self, resolver: SegmentResolver) -> None:
         identity = await resolver.resolve("Global Segment")
         assert identity.name == "Global Segment"
         assert identity.segment_id == 0
         assert identity.object_id == 100
         assert identity.logical_id == GLOBAL_UUID
 
-    async def test_resolve_second_segment(self, resolver: SegmentResolver):
+    async def test_resolve_second_segment(self, resolver: SegmentResolver) -> None:
         identity = await resolver.resolve("PCI")
         assert identity.name == "PCI"
         assert identity.segment_id == 1
         assert identity.object_id == 101
 
-    async def test_resolve_unknown_name(self, resolver: SegmentResolver):
-        with pytest.raises(KeyError, match="Unknown segment.*nonexistent"):
+    async def test_resolve_unknown_name(self, resolver: SegmentResolver) -> None:
+        with pytest.raises(KeyError, match=r"Unknown segment.*nonexistent"):
             _ = await resolver.resolve("nonexistent")
 
-    async def test_lookup_key_by_segment_id(self, resolver: SegmentResolver):
+    async def test_lookup_key_by_segment_id(self, resolver: SegmentResolver) -> None:
         assert resolver.lookup_key(SegmentId(0)).name == "Global Segment"
 
-    async def test_lookup_key_by_object_id(self, resolver: SegmentResolver):
+    async def test_lookup_key_by_object_id(self, resolver: SegmentResolver) -> None:
         assert resolver.lookup_key(SegmentObjectId(101)).name == "PCI"
 
-    async def test_lookup_key_by_logical_id(self, resolver: SegmentResolver):
+    async def test_lookup_key_by_logical_id(self, resolver: SegmentResolver) -> None:
         assert resolver.lookup_key(SegmentLogicalId(GLOBAL_UUID)).name == (
             "Global Segment"
         )
 
-    def test_identity_type(self, mock_client: FakeSegmentClient):
+    def test_identity_type(self, mock_client: FakeSegmentClient) -> None:
         assert (
             SegmentResolver(_client_protocol(mock_client)).identity_type
             is SegmentIdentity
         )
 
-    async def test_load_passes_enterprise_id(self, mock_client: FakeSegmentClient):
+    async def test_load_passes_enterprise_id(
+        self, mock_client: FakeSegmentClient
+    ) -> None:
         r = SegmentResolver(_client_protocol(mock_client))
         await r.load(ResolverContext(enterprise_id=99))
         request = mock_client.requests[0]
         assert request.enterprise_id == 99
 
-    async def test_load_without_enterprise_id(self, mock_client: FakeSegmentClient):
+    async def test_load_without_enterprise_id(
+        self, mock_client: FakeSegmentClient
+    ) -> None:
         r = SegmentResolver(_client_protocol(mock_client))
         await r.load(ResolverContext())
         result = await r.resolve("Global Segment")

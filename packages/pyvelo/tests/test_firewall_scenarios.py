@@ -1,9 +1,14 @@
-"""The firewall's ownership scenarios, each through ``plan_module`` on edge modules bound to a profile."""
+"""The firewall's ownership scenarios, each through ``plan_module``.
+
+Each runs on edge modules bound to a profile.
+"""
 
 import copy
 from typing import Any
 
+import pytest
 from pydantic import MISSING
+from pyvelo.client.exceptions import GroupOwnershipError
 from pyvelo.client.models.configuration import FirewallData
 from pyvelo.client.models.configuration.firewall import (
     ConsoleService,
@@ -13,6 +18,7 @@ from pyvelo.client.models.configuration.firewall import (
     StatefulLocal,
 )
 from pyvelo.client.module_write import plan_module
+from pyvelo.client.schemas.configuration import FirewallConfigurationModule
 from pyvelo.core import ConfigContext, Edge, Profile
 from pyvelo.core.effective import Origin, effective_view
 from pyvelo.core.layers import Effective
@@ -44,8 +50,13 @@ def desc(sid: int, name: str) -> dict[str, object]:
     }
 
 
-def bound(edge_raw: dict[str, Any], profile_raw: dict[str, Any] | None = None):
-    """An edge module of *edge_raw* bound to a profile module of *profile_raw*, and that one."""
+def bound(
+    edge_raw: dict[str, Any], profile_raw: dict[str, Any] | None = None
+) -> tuple[FirewallConfigurationModule[Edge], FirewallConfigurationModule[Profile]]:
+    """An edge module of *edge_raw*, and the profile module it is bound to.
+
+    The profile module is of *profile_raw*.
+    """
     edge = fw({"segments": [], **edge_raw}, layer=Edge)
     profile = fw({"segments": [], **(profile_raw or {})}, layer=Profile, module_id=2)
     edge.data.bind_profile(profile.raw_data)
@@ -56,7 +67,7 @@ def payload(edge: Any, profile: Any) -> dict[str, Any]:
     return plan_module(edge, level=EDGE, profile=profile).data
 
 
-def test_an_unrelated_edit_leaves_an_inherited_section_absent():
+def test_an_unrelated_edit_leaves_an_inherited_section_absent() -> None:
     edge, profile = bound({})
     assert edge.data.services.stored is MISSING
     edge.data.syslog_forwarding.set_local(True)
@@ -67,7 +78,7 @@ def test_an_unrelated_edit_leaves_an_inherited_section_absent():
 
 async def test_an_explicit_local_false_survives_a_reload(
     mock_vco_client: MockVcoClientFactory,
-):
+) -> None:
     edge, _ = bound({"syslog_forwarding": False})
     owned = edge.data.syslog_forwarding
     assert (owned.is_local, owned.local) == (True, False)
@@ -82,13 +93,14 @@ async def test_an_explicit_local_false_survives_a_reload(
     assert raw["firewall_logging_enabled"] is True
 
 
-def test_a_stored_null_is_kept_and_does_not_count_as_local():
+def test_a_stored_null_is_kept_and_does_not_count_as_local() -> None:
     edge, profile = bound({"syslog_forwarding": None})
     owned = edge.data.syslog_forwarding
     assert owned.stored is None
     assert owned.is_local is False
     assert owned.local is MISSING
-    # The profile stores nothing for it either: the effective value is the display default.
+    # The profile stores nothing for it either: the effective value is the display
+    # default.
     view = effective_view(edge.data, profile.data, FirewallData[Effective])
     assert view.syslog_forwarding.origin is Origin.FACTORY
     stores = effective_view(
@@ -110,7 +122,7 @@ def test_a_stored_null_is_kept_and_does_not_count_as_local():
     }
 
 
-def test_inheriting_the_stateful_group_removes_exactly_its_three_keys():
+def test_inheriting_the_stateful_group_removes_exactly_its_three_keys() -> None:
     edge, profile = bound(
         {**STATEFUL, "syslog_forwarding": True, "futureKey": [1]}, PROFILE_STATEFUL
     )
@@ -127,7 +139,7 @@ def test_inheriting_the_stateful_group_removes_exactly_its_three_keys():
     )
 
 
-def test_setting_stateful_enabled_false_while_local_keeps_the_settings():
+def test_setting_stateful_enabled_false_while_local_keeps_the_settings() -> None:
     edge, profile = bound(STATEFUL, PROFILE_STATEFUL)
     edge.data.stateful_firewall_enabled.set_local(False)
     plan = plan_module(edge, level=EDGE, profile=profile)
@@ -136,10 +148,7 @@ def test_setting_stateful_enabled_false_while_local_keeps_the_settings():
     assert edge.data.stateful.is_local
 
 
-def test_setting_one_stateful_member_while_inherited_refuses():
-    import pytest
-    from pyvelo.client.exceptions import GroupOwnershipError
-
+def test_setting_one_stateful_member_while_inherited_refuses() -> None:
     edge, _ = bound({}, PROFILE_STATEFUL)
     with pytest.raises(GroupOwnershipError):
         edge.data.stateful_firewall_enabled.set_local(False)
@@ -162,7 +171,7 @@ def rule(name: str, **extra: Any) -> FirewallOutboundRule:
     )
 
 
-def test_edge_rules_add_delete_reorder_keep_profile_rules_out():
+def test_edge_rules_add_delete_reorder_keep_profile_rules_out() -> None:
     profile_rule = {"name": "p1", "match": {}, "action": {"allow_or_deny": "allow"}}
     edge_rules = [
         {"name": "a", "match": {}, "action": {"allow_or_deny": "deny"}},
@@ -183,7 +192,7 @@ def test_edge_rules_add_delete_reorder_keep_profile_rules_out():
     assert "p1" not in names
 
 
-def test_localize_starts_from_the_profile():
+def test_localize_starts_from_the_profile() -> None:
     profile_services = {"loggingEnabled": True, "ssh": {"enabled": True}}
     edge, profile = bound({}, {"services": profile_services})
     services = edge.data.services.localize()
@@ -194,7 +203,7 @@ def test_localize_starts_from_the_profile():
     assert profile.raw_data["services"] == profile_services  # the profile is unchanged
 
 
-def test_a_value_made_local_carries_none_of_the_profiles_server_assigned_ids():
+def test_a_value_made_local_carries_none_of_the_profiles_server_assigned_ids() -> None:
     profile_services = {
         "ssh": {"enabled": True},
         "console": {"enabled": False, "ruleLogicalId": "xyz"},
@@ -208,10 +217,10 @@ def test_a_value_made_local_carries_none_of_the_profiles_server_assigned_ids():
     # The profile keeps its own.
     assert isinstance(profile.raw_data, dict)
     assert profile.raw_data["services"]["console"]["ruleLogicalId"] == "xyz"
-    assert profile.data.services.console.rule_logical_id == "xyz"  # pyright: ignore[reportOptionalMemberAccess, reportAttributeAccessIssue, reportUnknownMemberType]
+    assert profile.data.services.console.rule_logical_id == "xyz"  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType]
 
 
-def test_a_patch_into_an_inherited_section_carries_none_of_the_profiles_ids():
+def test_a_patch_into_an_inherited_section_carries_none_of_the_profiles_ids() -> None:
     profile_services = {"console": {"enabled": False, "ruleLogicalId": "xyz"}}
     edge, profile = bound({}, {"services": profile_services})
     _ = edge.data.merge_patch({"services": {"ssh": {"enabled": True}}})
@@ -220,7 +229,7 @@ def test_a_patch_into_an_inherited_section_carries_none_of_the_profiles_ids():
     assert services["ssh"] == {"enabled": True}
 
 
-def test_a_stored_null_id_is_kept_as_read():
+def test_a_stored_null_id_is_kept_as_read() -> None:
     # A services object the edge stores with a null ID round-trips unchanged,
     # as does a profile's.
     raw = {"ssh": {"enabled": True, "ruleLogicalId": None}}
@@ -234,7 +243,7 @@ def test_a_stored_null_id_is_kept_as_read():
     assert plan_module(profile, level=ConfigContext.PROFILE).operation == "none"
 
 
-def test_a_rule_match_keeps_the_vco_s_vlan_type_key_for_key():
+def test_a_rule_match_keeps_the_vco_s_vlan_type_key_for_key() -> None:
     stored = {"vlan_type": "local", "svlan": 3}
     match = OutboundRuleMatch.model_validate(stored)
     assert match.vlan_type == "local"
@@ -242,7 +251,7 @@ def test_a_rule_match_keeps_the_vco_s_vlan_type_key_for_key():
     assert written == stored
 
 
-def test_a_new_outbound_rule_is_written_with_vlan_type_and_not_vlanType():
+def test_a_new_outbound_rule_is_written_with_vlan_type_and_not_vlanType() -> None:  # noqa: N802 (the VCO key is the point of the test)
     edge, profile = bound({"segments": [{"segment": desc(0, "Global Segment")}]})
     edge.data.segments[0].outbound.append(rule("new"))
     (written,) = payload(edge, profile)["segments"][0]["outbound"]
@@ -250,7 +259,7 @@ def test_a_new_outbound_rule_is_written_with_vlan_type_and_not_vlanType():
     assert "vlanType" not in written["match"]
 
 
-def test_a_rule_keeps_its_logging_flags_key_for_key():
+def test_a_rule_keeps_its_logging_flags_key_for_key() -> None:
     base = {"name": "r", "action": {"allow_or_deny": "deny"}, "match": {}}
     flagged = {**base, "hostedLoggingEnabled": True, "syslogForwardingEnabled": False}
     for stored in (flagged, base):

@@ -7,17 +7,16 @@ type-only imports in operation modules from cycling back through
 
 from __future__ import annotations
 
-import asyncio
-from collections.abc import AsyncGenerator, Sequence
 from typing import TYPE_CHECKING, Any, Literal, Protocol
 
-import httpx
 from pydantic import BaseModel
 
-from pyvelo.core import ConfigContext, PaginatedVcoModel, VcoModel
-from pyvelo.core.base import IdentityLookup
-
 if TYPE_CHECKING:
+    import asyncio
+    from collections.abc import AsyncGenerator, Sequence
+
+    import httpx
+
     from pyvelo.client.module_check import ModuleWrite
     from pyvelo.client.module_write import ModulePlan
     from pyvelo.client.schemas.configuration import (
@@ -30,6 +29,8 @@ if TYPE_CHECKING:
         InsertConfigurationModuleResult,
         UpdateConfigurationModule,
     )
+    from pyvelo.core import ConfigContext, PaginatedVcoModel, VcoModel
+    from pyvelo.core.base import IdentityLookup
 
 
 class VcoClientBaseProtocol(Protocol):
@@ -45,7 +46,7 @@ class VcoClientBaseProtocol(Protocol):
         self,
         method: str,
         request: VcoModel,
-        ResultType: type[T],
+        result_type: type[T],
         *,
         validation_context: dict[str, Any] | None = None,
     ) -> T: ...
@@ -54,17 +55,17 @@ class VcoClientBaseProtocol(Protocol):
         self,
         method: str,
         request: VcoModel,
-        ItemType: type[T],
+        item_type: type[T],
         *,
         hint: Literal["list"] | None = None,
     ) -> Sequence[T]: ...
 
     def portal_paginated[T: BaseModel](
-        self, method: str, request: PaginatedVcoModel, ItemType: type[T]
+        self, method: str, request: PaginatedVcoModel, item_type: type[T]
     ) -> AsyncGenerator[list[T]]: ...
 
     async def portal_paginated_list[T: BaseModel](
-        self, method: str, request: PaginatedVcoModel, ItemType: type[T]
+        self, method: str, request: PaginatedVcoModel, item_type: type[T]
     ) -> Sequence[T]: ...
 
     async def update_configuration_module(
@@ -85,7 +86,7 @@ class VcoClientBaseProtocol(Protocol):
         self, request: GetConfiguration
     ) -> EdgeConfiguration | EnterpriseConfigurationProfile: ...
 
-    async def write_module[M: ConfigurationModuleBase](
+    async def write_module[M: ConfigurationModuleBase](  # noqa: PLR0913 (existing: split it when it next changes)
         self,
         module: M,
         plan: ModulePlan,

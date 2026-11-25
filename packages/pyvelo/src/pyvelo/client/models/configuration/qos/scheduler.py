@@ -1,3 +1,5 @@
+"""The receive and transmit schedulers of a QoS rule's service class."""
+
 from typing import Annotated
 
 from pydantic import Field

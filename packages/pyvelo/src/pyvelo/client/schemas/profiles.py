@@ -1,3 +1,8 @@
+"""The profile requests: list an enterprise's profiles, create one, and read one.
+
+``CreateProfile`` is sent as ``configuration/cloneEnterpriseTemplate``.
+"""
+
 from typing import Annotated
 
 from pydantic import MISSING, Field

@@ -1,3 +1,8 @@
+"""The requests and results of the ``operatorUser/`` methods.
+
+A user, its API tokens, and the status of the operator users.
+"""
+
 from typing import Annotated
 
 from pydantic import MISSING

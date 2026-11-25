@@ -1,3 +1,7 @@
+"""The ``QOS`` module's data, re-exported from its submodules."""
+
+from pyvelo.client.models.configuration.common import SegmentMetadata
+
 from .common import (
     CosMappingInputType,
     FlowPriority,
@@ -26,7 +30,6 @@ from .segment import (
     CosMappingType,
     CosMappingValue,
     QosSegment,
-    SegmentMetadata,
     WebProxy,
 )
 

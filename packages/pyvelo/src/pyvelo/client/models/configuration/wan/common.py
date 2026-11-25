@@ -1,3 +1,5 @@
+"""The WAN, link, network, discovery and bandwidth measurement modes of ``WAN``."""
+
 from typing import Literal
 
 WanMode = Literal["PUBLIC", "PRIVATE", "dynamic"]

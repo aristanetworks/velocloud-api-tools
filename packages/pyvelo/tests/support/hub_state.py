@@ -1,4 +1,7 @@
-"""States and pipelines over hubs: a profile or an edge whose device settings hold hub rows, and a store that agrees with them.
+"""States and pipelines over hubs.
+
+A profile or an edge whose device settings hold hub rows, and a store that agrees with
+them.
 
 Test modules import this as they import ``profile_state``
 (``from hub_state import ...``). The hubs, entries and rows come from
@@ -11,7 +14,7 @@ from collections.abc import Sequence
 from typing import Any, Final, cast
 
 from hub_helpers import CLUSTER, HUB_A, HUB_B, MEMBER, NOT_A_HUB, Hub
-from profile_state import (  # pyright: ignore[reportImplicitRelativeImport]
+from profile_state import (
     module_store_pipeline,
     profile_state,
 )
@@ -28,7 +31,9 @@ from pyvelo.testing.fixtures import make_hub_resolver
 from segment_helpers import GLOBAL, GUEST, VOICE
 
 ALL_HUBS: Final = (HUB_A, HUB_B, CLUSTER, MEMBER, NOT_A_HUB)
-"""The hubs of a state and a store unless a test gives others: ``MEMBER`` is a member of ``CLUSTER``."""
+"""The hubs of a state and a store unless a test gives others: ``MEMBER`` is a member of
+``CLUSTER``.
+"""
 EDGE_CONFIG: Final = 50
 EDGE_DS_ID: Final = 51
 EDGE_QOS_ID: Final = 52
@@ -55,7 +60,10 @@ def _identity(hub: Hub) -> HubIdentity:
 
 
 async def _with_hubs(state: ConfigState, hubs: Sequence[Hub]) -> ConfigState:
-    """Register a loaded ``HubResolver`` over *hubs* on *state*: a member of a cluster is no hub."""
+    """Register a loaded ``HubResolver`` over *hubs* on *state*.
+
+    A member of a cluster is no hub.
+    """
     resolver = await make_hub_resolver(
         [_identity(h) for h in hubs if h != MEMBER],
         members=[(uuid.UUID(h.logical_id), h.name) for h in hubs if h == MEMBER],
@@ -64,7 +72,7 @@ async def _with_hubs(state: ConfigState, hubs: Sequence[Hub]) -> ConfigState:
     return state
 
 
-async def hub_profile_state(
+async def hub_profile_state(  # noqa: PLR0913 (existing: split it when it next changes)
     ds: list[dict[str, Any]],
     qos: list[dict[str, Any]],
     firewall: list[dict[str, Any]],
@@ -73,7 +81,9 @@ async def hub_profile_state(
     qos_refs: dict[str, Any] | MISSING = MISSING,
     hubs: Sequence[Hub] = ALL_HUBS,
 ) -> ConfigState:
-    """A profile state of the three modules (``profile_state``), with a loaded ``HubResolver`` over *hubs*.
+    """A profile state of the three modules (``profile_state``).
+
+    It has a loaded ``HubResolver`` over *hubs*.
 
     *ds_refs* are the refs of the device settings module: the segment rows
     and the hub rows the test needs (``hub_helpers.hub_row``); *qos_refs* those
@@ -90,7 +100,7 @@ async def hub_profile_state(
     return await _with_hubs(state, hubs)
 
 
-async def hub_edge_state(
+async def hub_edge_state(  # noqa: PLR0913 (existing: split it when it next changes)
     edge_ds: list[dict[str, Any]],
     edge_qos: list[dict[str, Any]],
     *,
@@ -101,14 +111,15 @@ async def hub_edge_state(
     edge_qos_refs: dict[str, Any] | MISSING = MISSING,
     hubs: Sequence[Hub] = ALL_HUBS,
 ) -> ConfigState:
-    """An edge state of ``EDGE`` over a profile (``hub_profile_state``) whose device settings hold hub rows.
+    """An edge state of ``EDGE`` over a profile (``hub_profile_state``).
 
-    The edge's own device settings and QoS modules (configuration
-    ``EDGE_CONFIG``) have *edge_ds* and *edge_qos* as their segments, and no
-    refs, but *edge_qos_refs* for QoS; the profile's refs are *profile_refs*
-    and *profile_qos_refs*. The state's ``resolver_context`` names the Edge (``edge_id``), so
-    ``hub_pipeline`` registers the stack for it and the store's QoS usage of a
-    service finds it.
+    The profile's device settings hold hub rows.
+
+    The edge's own device settings and QoS modules (configuration ``EDGE_CONFIG``) have
+    *edge_ds* and *edge_qos* as their segments, and no refs, but *edge_qos_refs* for
+    QoS; the profile's refs are *profile_refs* and *profile_qos_refs*. The state's
+    ``resolver_context`` names the Edge (``edge_id``), so ``hub_pipeline`` registers the
+    stack for it and the store's QoS usage of a service finds it.
     """
     profile = await hub_profile_state(
         profile_ds,
@@ -166,13 +177,16 @@ def _hub_rows(state: ConfigState) -> list[tuple[str, dict[str, Any]]]:
             held = refs.get(name)
             rows = held if is_list(held) else [held]
             found.extend(
-                (name, cast(dict[str, Any], row)) for row in rows if is_dict(row)
+                (name, cast("dict[str, Any]", row)) for row in rows if is_dict(row)
             )
     return found
 
 
 def _seed_services(store: ModuleStore, state: ConfigState) -> None:
-    """Hold the service each hub row of *state* points at, so the store and the state agree as read."""
+    """Hold the service each hub row of *state* points at.
+
+    Then the store and the state agree as read.
+    """
     for name, row in _hub_rows(state):
         object_id: int = row["enterpriseObjectId"]
         if name == CLUSTER_HUB_REF:
@@ -209,13 +223,16 @@ def hub_pipeline(
     vpn_check: bool = False,
     hubs: Sequence[Hub] = ALL_HUBS,
 ) -> tuple[ConfigPipeline, ModuleStore]:
-    """A pipeline over a ``MockVcoClient`` for *state*, whose store holds *hubs* and the services the state's hub rows name.
+    """A pipeline over a ``MockVcoClient`` for *state*.
 
-    The store holds the segment objects of ``module_store_pipeline``, the Edges and clusters (``add_edge``, ``add_cluster``;
-    ``MEMBER`` as a member of ``CLUSTER``) and, for each hub row of the
-    profile's device settings, the service it points at, with the roles the row
-    shows. An edge state's stack is registered for its Edge. *vpn_check* is the
-    store's (the VCO's check of a device settings update against its hub rows).
+    Its store holds *hubs* and the services the state's hub rows name.
+
+    The store holds the segment objects of ``module_store_pipeline``, the Edges and
+    clusters (``add_edge``, ``add_cluster``; ``MEMBER`` as a member of ``CLUSTER``) and,
+    for each hub row of the profile's device settings, the service it points at, with
+    the roles the row shows. An edge state's stack is registered for its Edge.
+    *vpn_check* is the store's (the VCO's check of a device settings update against its
+    hub rows).
     """
     pipeline, store = module_store_pipeline(state)
     for hub in hubs:
@@ -244,7 +261,9 @@ def hub_pipeline(
 
 
 def profile_hub_rows(*rows: dict[str, Any]) -> dict[str, Any]:
-    """The refs of a profile's device settings module for the segment rows and hub rows *rows*, as the VCO groups them.
+    """The refs of a profile's device settings module for the rows *rows*.
+
+    The rows are segment rows and hub rows, grouped as the VCO groups them.
 
     A row is held by its ``ref``: one row bare, several a list.
     """

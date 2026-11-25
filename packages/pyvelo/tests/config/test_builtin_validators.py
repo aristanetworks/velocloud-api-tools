@@ -1,4 +1,7 @@
-"""Tests for built-in validators: key_uniqueness, override_consistency, required_fields."""
+"""Tests for built-in validators.
+
+The validators are key_uniqueness, override_consistency and required_fields.
+"""
 
 from datetime import UTC, datetime
 from types import SimpleNamespace
@@ -92,7 +95,7 @@ def _make_state(modules: list[AnyConfigurationModule[Profile]]) -> ConfigState:
 
 
 class TestKeyUniqueness:
-    def test_unique_keys_pass(self):
+    def test_unique_keys_pass(self) -> None:
         """No errors when all keys are unique."""
         fw_mod = FirewallConfigurationModule[Profile](
             name="firewall",
@@ -126,7 +129,7 @@ class TestKeyUniqueness:
         result = key_uniqueness.validate(state)
         assert result.is_valid
 
-    def test_duplicate_segment_keys(self):
+    def test_duplicate_segment_keys(self) -> None:
         """Detect duplicate segment names."""
         ds_mod = DeviceSettingsConfigurationModule(
             name="deviceSettings",
@@ -145,7 +148,7 @@ class TestKeyUniqueness:
         assert not result.is_valid
         assert any("Duplicate key" in e.message for e in result.errors)
 
-    def test_duplicate_firewall_rule_names(self):
+    def test_duplicate_firewall_rule_names(self) -> None:
         """Detect duplicate outbound rule names via KeyField."""
         fw_mod = FirewallConfigurationModule[Profile](
             name="firewall",
@@ -179,7 +182,7 @@ class TestKeyUniqueness:
         result = key_uniqueness.validate(state)
         assert not result.is_valid
 
-    def test_empty_config(self):
+    def test_empty_config(self) -> None:
         """No errors on empty config."""
         state = _make_state([])
         result = key_uniqueness.validate(state)
@@ -213,7 +216,7 @@ def _routes_state(*routes: StaticRoute) -> ConfigState:
     return _make_state([ds_mod])
 
 
-def test_key_uniqueness_reads_composite_keys():
+def test_key_uniqueness_reads_composite_keys() -> None:
     result = key_uniqueness.validate(
         _routes_state(_static_route("192.168.1.1"), _static_route("192.168.1.1"))
     )
@@ -228,7 +231,7 @@ def test_key_uniqueness_reads_composite_keys():
     assert result.is_valid
 
 
-def test_key_uniqueness_compares_key_parts_in_string_form():
+def test_key_uniqueness_compares_key_parts_in_string_form() -> None:
     as_text = _static_route("192.168.1.1")
     as_text.cidr_prefix = "24"
     result = key_uniqueness.validate(
@@ -240,7 +243,7 @@ def test_key_uniqueness_compares_key_parts_in_string_form():
 
 
 class TestOverrideConsistency:
-    def test_no_errors_on_valid_config(self):
+    def test_no_errors_on_valid_config(self) -> None:
         """Override consistency should not error on well-formed config."""
         ds_mod = DeviceSettingsConfigurationModule(
             name="deviceSettings",
@@ -256,7 +259,7 @@ class TestOverrideConsistency:
         # Override consistency produces warnings, not errors
         assert result.is_valid
 
-    def test_empty_config(self):
+    def test_empty_config(self) -> None:
         """No errors on empty config."""
         state = _make_state([])
         result = override_consistency.validate(state)
@@ -264,7 +267,7 @@ class TestOverrideConsistency:
 
 
 class TestRequiredFields:
-    def test_valid_config_passes(self):
+    def test_valid_config_passes(self) -> None:
         """No errors when all required fields are filled."""
         ds_mod = DeviceSettingsConfigurationModule(
             name="deviceSettings",
@@ -279,7 +282,7 @@ class TestRequiredFields:
         result = required_fields.validate(state)
         assert result.is_valid
 
-    def test_empty_config(self):
+    def test_empty_config(self) -> None:
         """No errors on empty config."""
         state = _make_state([])
         result = required_fields.validate(state)
@@ -304,19 +307,22 @@ def _layered_state(data: object, target: str) -> ConfigStateLike:
         edge_config=config if target == "edge" else None,
         profile_config=config,
     )
-    return cast(ConfigStateLike, cast(object, state))
+    return cast("ConfigStateLike", cast("object", state))
 
 
 class TestLayeredModels:
-    def test_an_inheritable_field_is_not_required(self):
-        """Where the edge inherits (it stores nothing) or the profile reads its display default."""
+    def test_an_inheritable_field_is_not_required(self) -> None:
+        """Where the edge inherits or the profile reads its display default.
+
+        An edge that inherits stores nothing.
+        """
         for target, data in (
             ("edge", Mod[Edge].model_validate(mod_json())),
             ("profile", Mod[Profile].model_validate(mod_json())),
         ):
             assert required_fields.validate(_layered_state(data, target)).is_valid
 
-    def test_a_duplicate_key_inside_an_inheritable_value_is_found(self):
+    def test_a_duplicate_key_inside_an_inheritable_value_is_found(self) -> None:
         raw = {"holder": {"rules": [{"name": "r1"}, {"name": "r1"}]}}
         for target, data in (
             ("edge", _Held[Edge].model_validate(raw)),

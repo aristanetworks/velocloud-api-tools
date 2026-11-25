@@ -1,5 +1,10 @@
 """Mixin for VCO WebSocket remote diagnostics."""
 
+# The mixin's methods run on the client: they keep the client's WebSocket cache
+# and reach its transport through the private members ``VcoClientBaseProtocol``
+# declares for them.
+# pyright: reportPrivateUsage=false
+
 from __future__ import annotations
 
 import asyncio

@@ -1,4 +1,6 @@
-"""A QoS rule's backhaul hub derives its ``deviceSettings:backHaulEdge`` row from the profile's service for that segment.
+"""A QoS rule's backhaul hub derives its ``deviceSettings:backHaulEdge`` row.
+
+It derives it from the profile's service for that segment.
 
 A rule's backhaul entry holds the hub's service for the profile and segment
 (``logicalId``). The row that goes with it points at that service, which the
@@ -28,15 +30,22 @@ from pyvelo.client.hub_services import (
 )
 from pyvelo.client.models.configuration import FirewallData
 from pyvelo.client.models.configuration import ref_owners as ref_owners_module
+from pyvelo.client.models.configuration.firewall.rules import (
+    FirewallOutboundRule,
+)
 from pyvelo.client.models.configuration.qos.root import QosData
-from pyvelo.client.models.configuration.qos.rule import BackhaulEdge
+from pyvelo.client.models.configuration.qos.rule import (
+    BackhaulEdge,
+    QosRule,
+    QosRuleMatch,
+)
 from pyvelo.client.models.configuration.ref_owners import ref_owners
 from pyvelo.client.module_write import ModulePlan, plan_module
 from pyvelo.client.schemas.configuration import (
     DeviceSettingsConfigurationModule,
     QosConfigurationModule,
 )
-from pyvelo.core import ConfigContext, VcoModel
+from pyvelo.core import ConfigContext, VcoModel, walk_fields
 from pyvelo.core.identity import HubService, HubServiceNotFoundError
 from pyvelo.core.layers import Edge, Profile
 from pyvelo.core.rebase import Path
@@ -65,7 +74,10 @@ OTHER_ROW = {"enterpriseObjectId": 9, "ref": OTHER_REF, "logicalId": SERVICE_A}
 
 
 def profile_ds(*, hub_rows: list[dict[str, Any]]) -> DeviceSettingsConfigurationModule:
-    """The profile's device settings module: both segments, and *hub_rows* in the refs."""
+    """The profile's device settings module.
+
+    Both segments, and *hub_rows* in the refs.
+    """
     edge_rows = [r for r in hub_rows if r["ref"] == EDGE_HUB_REF]
     cluster_rows = [r for r in hub_rows if r["ref"] == CLUSTER_HUB_REF]
     refs: dict[str, Any] = {
@@ -96,7 +108,10 @@ def service_row(
 
 
 def profile_services() -> DeviceSettingsConfigurationModule:
-    """The profile's device settings with Hub-A and Hub-B as hubs of the Global Segment."""
+    """The profile's device settings with Hub-A and Hub-B as hubs.
+
+    They are hubs of the Global Segment.
+    """
     return profile_ds(
         hub_rows=[
             service_row(HUB_A, SERVICE_A_ID, SERVICE_A),
@@ -105,7 +120,7 @@ def profile_services() -> DeviceSettingsConfigurationModule:
     )
 
 
-def qos_row(
+def qos_row(  # noqa: PLR0913 (existing: split it when it next changes)
     hub: Hub,
     service_id: int,
     service_logical_id: str,
@@ -154,7 +169,10 @@ def qos_module(
     *,
     level: ConfigContext = ConfigContext.PROFILE,
 ) -> AnyQosModule:
-    """A QoS module of the layer *level* names, with *rules* in its segments and *refs*."""
+    """A QoS module of the layer *level* names.
+
+    It has *rules* in its segments and *refs*.
+    """
     edge = level is ConfigContext.EDGE
     row = make_module_json(
         "QOS",
@@ -183,7 +201,10 @@ def edited(
     module: QosConfigurationModule[Profile], **entries: list[dict[str, Any]]
 ) -> QosData[Profile]: ...
 def edited(module: AnyQosModule, **entries: list[dict[str, Any]]) -> AnyQosData:
-    """A copy of the module's data in which each rule named in *entries* has those backhaul entries."""
+    """A copy of the module's data with the backhaul entries of *entries*.
+
+    Each rule named in *entries* has those backhaul entries.
+    """
     data = module.data.model_copy(deep=True)
     for segment in data.segments:
         for held in segment.rules:
@@ -213,7 +234,7 @@ def rows_of(plan_: ModulePlan, name: str = BACKHAUL_REF) -> list[dict[str, Any]]
     held = plan_.refs.get(name)
     if held is None:
         return []
-    return cast(list[dict[str, Any]], held if isinstance(held, list) else [held])
+    return cast("list[dict[str, Any]]", held if isinstance(held, list) else [held])
 
 
 def new_row(
@@ -235,7 +256,7 @@ def new_row(
 # -- the table --------------------------------------------------------------
 
 
-def test_the_table_reads_the_services_of_an_edge_hub_and_of_a_cluster():
+def test_the_table_reads_the_services_of_an_edge_hub_and_of_a_cluster() -> None:
     refs = {
         EDGE_HUB_REF: service_row(HUB_A, SERVICE_A_ID, SERVICE_A),
         CLUSTER_HUB_REF: [
@@ -274,26 +295,28 @@ def test_the_table_reads_the_services_of_an_edge_hub_and_of_a_cluster():
     )
 
 
-def test_a_service_is_found_by_its_segment_and_its_logical_id():
+def test_a_service_is_found_by_its_segment_and_its_logical_id() -> None:
     table = HubServiceTable.from_refs(profile_services().raw_refs)
 
     found = table.find(GLOBAL[3], uuid.UUID(SERVICE_A))
 
-    assert found is not None and found.object_id == SERVICE_A_ID
+    assert found is not None
+    assert found.object_id == SERVICE_A_ID
     assert table.find(GUEST[3], uuid.UUID(SERVICE_A)) is None
     assert table.find(GLOBAL[3], uuid.UUID(HUB_A.logical_id)) is None
 
 
-def test_a_service_is_found_for_a_hub_by_the_hubs_logical_id():
+def test_a_service_is_found_for_a_hub_by_the_hubs_logical_id() -> None:
     table = HubServiceTable.from_refs(profile_services().raw_refs)
 
     found = table.find_for_hub(GLOBAL[3], uuid.UUID(HUB_B.logical_id))
 
-    assert found is not None and found.object_id == SERVICE_B_ID
+    assert found is not None
+    assert found.object_id == SERVICE_B_ID
     assert table.find_for_hub(GUEST[3], uuid.UUID(HUB_B.logical_id)) is None
 
 
-def test_refs_that_are_not_an_object_give_an_empty_table():
+def test_refs_that_are_not_an_object_give_an_empty_table() -> None:
     assert HubServiceTable.from_refs(MISSING).services() == ()
     assert HubServiceTable.from_refs(None).services() == ()
     assert (
@@ -304,7 +327,7 @@ def test_refs_that_are_not_an_object_give_an_empty_table():
 # -- the row ----------------------------------------------------------------
 
 
-def test_adding_a_hub_to_a_rule_adds_its_row():
+def test_adding_a_hub_to_a_rule_adds_its_row() -> None:
     held = qos_row(HUB_B, SERVICE_B_ID, SERVICE_B)
     module = qos_module(
         {GLOBAL: [rule("r1"), rule("r2", backhaul_entry(HUB_B, SERVICE_B))]},
@@ -315,7 +338,8 @@ def test_adding_a_hub_to_a_rule_adds_its_row():
     planned = plan(module, data, profile_services())
 
     assert rows_of(planned) == [held, new_row(SERVICE_A_ID)]
-    assert planned.refs is not None and planned.refs[OTHER_REF] == OTHER_ROW
+    assert planned.refs is not None
+    assert planned.refs[OTHER_REF] == OTHER_ROW
     (change,) = planned.ref_changes
     assert (change.added, change.name, change.segment) == (
         True,
@@ -330,7 +354,7 @@ def test_adding_a_hub_to_a_rule_adds_its_row():
     assert planned.warnings == ()
 
 
-def test_removing_the_last_use_removes_it():
+def test_removing_the_last_use_removes_it() -> None:
     row_a = qos_row(HUB_A, SERVICE_A_ID, SERVICE_A)
     row_b = qos_row(HUB_B, SERVICE_B_ID, SERVICE_B)
     module = qos_module(
@@ -347,7 +371,8 @@ def test_removing_the_last_use_removes_it():
     planned = plan(module, data, profile_services())
 
     assert rows_of(planned) == [row_b]
-    assert planned.refs is not None and planned.refs[OTHER_REF] == OTHER_ROW
+    assert planned.refs is not None
+    assert planned.refs[OTHER_REF] == OTHER_ROW
     (change,) = planned.ref_changes
     assert (change.added, change.row) == (False, row_a)
     assert planned.ref_lines() == [
@@ -355,7 +380,7 @@ def test_removing_the_last_use_removes_it():
     ]
 
 
-def test_removing_the_only_row_of_the_name_leaves_the_name_out_of_the_refs():
+def test_removing_the_only_row_of_the_name_leaves_the_name_out_of_the_refs() -> None:
     row_a = qos_row(HUB_A, SERVICE_A_ID, SERVICE_A)
     module = qos_module(
         {GLOBAL: [rule("r1", backhaul_entry(HUB_A, SERVICE_A))]},
@@ -367,7 +392,7 @@ def test_removing_the_only_row_of_the_name_leaves_the_name_out_of_the_refs():
     assert planned.refs == {OTHER_REF: OTHER_ROW}
 
 
-def test_two_rules_using_one_hub_share_one_row():
+def test_two_rules_using_one_hub_share_one_row() -> None:
     row_a = qos_row(HUB_A, SERVICE_A_ID, SERVICE_A)
     module = qos_module(
         {GLOBAL: [rule("r1", backhaul_entry(HUB_A, SERVICE_A)), rule("r2")]},
@@ -398,7 +423,7 @@ def test_two_rules_using_one_hub_share_one_row():
     assert rows_of(one_left) == [row_a]
 
 
-def test_an_edge_rule_takes_the_profile_scoped_service():
+def test_an_edge_rule_takes_the_profile_scoped_service() -> None:
     module = qos_module(
         {GLOBAL: [rule("r1")]}, {OTHER_REF: OTHER_ROW}, level=ConfigContext.EDGE
     )
@@ -411,10 +436,11 @@ def test_an_edge_rule_takes_the_profile_scoped_service():
     ]
     (change,) = planned.ref_changes
     assert change.segment_object_id == GLOBAL[3]
-    assert planned.refs is not None and planned.refs[OTHER_REF] == OTHER_ROW
+    assert planned.refs is not None
+    assert planned.refs[OTHER_REF] == OTHER_ROW
 
 
-def test_an_edge_rule_that_loses_its_hub_removes_the_row_as_read():
+def test_an_edge_rule_that_loses_its_hub_removes_the_row_as_read() -> None:
     held = qos_row(
         HUB_A,
         SERVICE_A_ID,
@@ -435,7 +461,7 @@ def test_an_edge_rule_that_loses_its_hub_removes_the_row_as_read():
     assert planned.refs == {}
 
 
-def test_a_cluster_rule_takes_the_cluster_object():
+def test_a_cluster_rule_takes_the_cluster_object() -> None:
     ds = profile_ds(
         hub_rows=[
             service_row(CLUSTER, CLUSTER.id, "ignored", GLOBAL),
@@ -452,7 +478,7 @@ def test_a_cluster_rule_takes_the_cluster_object():
     assert (change.segment, change.value) == ("Guest", CLUSTER.logical_id)
 
 
-def test_a_hub_with_no_service_in_that_segment_raises():
+def test_a_hub_with_no_service_in_that_segment_raises() -> None:
     module = qos_module({GUEST: [rule("v1")]}, {})
     data = edited(module, v1=[backhaul_entry(HUB_A, SERVICE_A)])
 
@@ -471,7 +497,7 @@ def test_a_hub_with_no_service_in_that_segment_raises():
     ) in message
 
 
-def test_no_profile_device_settings_raises():
+def test_no_profile_device_settings_raises() -> None:
     module = qos_module({GLOBAL: [rule("r1")]}, {})
     data = edited(module, r1=[backhaul_entry(HUB_A, SERVICE_A)])
 
@@ -484,7 +510,7 @@ def test_no_profile_device_settings_raises():
     assert '"vpnHubs"' in message
 
 
-def test_an_entry_without_its_service_raises():
+def test_an_entry_without_its_service_raises() -> None:
     entry = backhaul_entry(HUB_A, SERVICE_A)
     del entry["logicalId"]
     module = qos_module({GLOBAL: [rule("r1")]}, {})
@@ -502,11 +528,14 @@ def test_an_entry_without_its_service_raises():
     assert (error.hub, error.segment) == ("Hub-A", "Global Segment")
     message = str(error)
     assert "names the hub 'Hub-A' and no service for it" in message
-    assert "logicalId" in message and "apply" in message
+    assert "logicalId" in message
+    assert "apply" in message
     assert '"logical_id": "<' in message
 
 
-def test_an_entry_that_had_no_service_as_read_does_not_refuse_an_unrelated_edit():
+def test_an_entry_that_had_no_service_as_read_does_not_refuse_an_unrelated_edit() -> (
+    None
+):
     entry = backhaul_entry(HUB_A, SERVICE_A)
     del entry["logicalId"]
     module = qos_module({GLOBAL: [rule("r1", entry)]}, {})
@@ -519,7 +548,7 @@ def test_an_entry_that_had_no_service_as_read_does_not_refuse_an_unrelated_edit(
     assert planned.ref_changes == ()
 
 
-def test_nothing_edited_sends_the_rows_as_read():
+def test_nothing_edited_sends_the_rows_as_read() -> None:
     held = qos_row(HUB_A, SERVICE_A_ID, SERVICE_A)
     refs = {BACKHAUL_REF: held, OTHER_REF: OTHER_ROW}
     module = qos_module({GLOBAL: [rule("r1", backhaul_entry(HUB_A, SERVICE_A))]}, refs)
@@ -535,7 +564,7 @@ def test_nothing_edited_sends_the_rows_as_read():
     assert planned.warnings == ()
 
 
-def test_a_row_the_data_no_longer_names_as_read_warns_and_stays():
+def test_a_row_the_data_no_longer_names_as_read_warns_and_stays() -> None:
     held = qos_row(HUB_A, SERVICE_A_ID, SERVICE_A)
     module = qos_module({GLOBAL: [rule("r1")]}, {BACKHAUL_REF: held})
     data = module.data.model_copy(deep=True)
@@ -576,7 +605,9 @@ def an_added_hub() -> tuple[QosConfigurationModule[Profile], ModulePlan]:
     return module, plan(module, data, profile_services())
 
 
-async def test_the_returned_row_is_applied(mock_vco_client: MockVcoClientFactory):
+async def test_the_returned_row_is_applied(
+    mock_vco_client: MockVcoClientFactory,
+) -> None:
     module, planned = an_added_hub()
     store = a_service_store(module)
     client = await mock_vco_client(store)
@@ -589,7 +620,9 @@ async def test_the_returned_row_is_applied(mock_vco_client: MockVcoClientFactory
     assert (stored["logicalId"], stored["segmentObjectId"]) == (SERVICE_A, GLOBAL[3])
 
 
-async def test_the_returned_row_is_checked(mock_vco_client: MockVcoClientFactory):
+async def test_the_returned_row_is_checked(
+    mock_vco_client: MockVcoClientFactory,
+) -> None:
     module, planned = an_added_hub()
     store = a_service_store(module)
     store.skipped_objects.add(SERVICE_A_ID)
@@ -600,12 +633,13 @@ async def test_the_returned_row_is_checked(mock_vco_client: MockVcoClientFactory
 
     (lost,) = caught.value.lost_edits
     assert lost.part == "refs"
-    assert BACKHAUL_REF in str(lost.path) and SERVICE_A in str(lost.path)
+    assert BACKHAUL_REF in str(lost.path)
+    assert SERVICE_A in str(lost.path)
 
 
 async def test_update_module_takes_the_profile_device_settings(
     mock_vco_client: MockVcoClientFactory,
-):
+) -> None:
     module = qos_module({GLOBAL: [rule("r1")]}, {})
     data = edited(module, r1=[backhaul_entry(HUB_A, SERVICE_A)])
     store = a_service_store(module)
@@ -619,7 +653,7 @@ async def test_update_module_takes_the_profile_device_settings(
         module, data, profile_device_settings=profile_services()
     )
 
-    row = cast(dict[str, Any], store.rows[module.id_]["refs"][BACKHAUL_REF])
+    row = cast("dict[str, Any]", store.rows[module.id_]["refs"][BACKHAUL_REF])
     assert (row["enterpriseObjectId"], row["logicalId"]) == (SERVICE_A_ID, SERVICE_A)
     assert stored is not module
 
@@ -628,7 +662,10 @@ async def test_update_module_takes_the_profile_device_settings(
 
 
 class _Visits:
-    """What ``ref_owners`` asked of the walk: the classes it asked about, and the models it took fields of."""
+    """What ``ref_owners`` asked of the walk.
+
+    The classes it asked about, and the models it took fields of.
+    """
 
     def __init__(self) -> None:
         self.asked: list[type[VcoModel]] = []
@@ -639,7 +676,7 @@ class _Visits:
 def visits(monkeypatch: pytest.MonkeyPatch) -> _Visits:
     seen = _Visits()
     real_holds = ref_owners_module.can_hold_owner
-    real_walk = ref_owners_module.walk_fields
+    real_walk = walk_fields
 
     def holds(model_cls: type[VcoModel]) -> bool:
         seen.asked.append(model_cls)
@@ -655,15 +692,9 @@ def visits(monkeypatch: pytest.MonkeyPatch) -> _Visits:
     return seen
 
 
-def test_the_walk_reaches_rule_lists_and_skips_what_holds_no_owner(visits: _Visits):
-    from pyvelo.client.models.configuration.firewall.rules import (
-        FirewallOutboundRule,
-    )
-    from pyvelo.client.models.configuration.qos.rule import (
-        QosRule,
-        QosRuleMatch,
-    )
-
+def test_the_walk_reaches_rule_lists_and_skips_what_holds_no_owner(
+    visits: _Visits,
+) -> None:
     firewall_entry = segment_helpers.firewall_entry(GLOBAL)
     (template,) = firewall_entry["outbound"]
     firewall_entry["outbound"] = [
@@ -699,7 +730,7 @@ def test_the_walk_reaches_rule_lists_and_skips_what_holds_no_owner(visits: _Visi
     assert visits.walked == [BackhaulEdge]
 
 
-def test_the_owner_of_a_backhaul_entry_is_found_below_a_rule_with_its_segment():
+def test_the_owner_of_a_backhaul_entry_is_found_below_a_rule_with_its_segment() -> None:
     module = qos_module({GLOBAL: [rule("r1", backhaul_entry(HUB_A, SERVICE_A))]}, {})
 
     (owner,) = ref_owners(module.data, ConfigContext.PROFILE)

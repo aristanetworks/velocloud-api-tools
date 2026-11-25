@@ -1,4 +1,7 @@
-"""ApplicationResolver — resolves application names to ApplicationIdentity via VCO API."""
+"""ApplicationResolver — resolves application names to ApplicationIdentity.
+
+Resolution is via the VCO API.
+"""
 
 from typing import override
 
@@ -18,13 +21,14 @@ class ApplicationResolver(BaseResolver[ApplicationIdentity]):
     """Resolves an application identifier to an :class:`ApplicationIdentity`.
 
     Accepts:
-        - :class:`ApplicationName`: human-readable application name (display or canonical).
+        - :class:`ApplicationName`: human-readable application name (display or
+          canonical).
         - :class:`ApplicationId`: numeric application ID.
 
     Loads via ``configuration/getIdentifiableApplications``.
     """
 
-    identity_type = ApplicationIdentity
+    identity_type: type[ApplicationIdentity] = ApplicationIdentity
 
     @override
     def lookup_key(self, key: IdentityKey[ApplicationIdentity]) -> ApplicationIdentity:
@@ -51,16 +55,12 @@ class ApplicationResolver(BaseResolver[ApplicationIdentity]):
         apps = result.all.applications or []
         for app in apps:
             display = app.display_name
-            if display is MISSING or display is None:
+            if display is MISSING or display is None:  # pyright: ignore[reportUnnecessaryComparison]  # ApplicationItem requires it; a client whose apps lack it falls back to the name
                 display = app.name
-            if display is MISSING or display is None:
+            if display is MISSING:
                 continue
 
-            app_id_raw = app.id_
-            if app_id_raw is MISSING or app_id_raw is None:
-                continue
-
-            app_id = app_id_raw
+            app_id = app.id_
             identity = ApplicationIdentity(name=display, id=app_id)
             self._register(display, identity, id=app_id)
             self._reverse.setdefault("name", {})[display] = display

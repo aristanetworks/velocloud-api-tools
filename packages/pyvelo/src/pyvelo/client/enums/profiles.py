@@ -1,3 +1,5 @@
+"""The ``with`` options of the profile (configuration) read methods."""
+
 from enum import StrEnum
 
 

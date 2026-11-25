@@ -1,4 +1,6 @@
-"""Builders for the tests of hubs: the Edges and clusters that can be hubs, and their entries in the modules.
+"""Builders for the tests of hubs.
+
+The Edges and clusters that can be hubs, and their entries in the modules.
 
 ``tests/support`` is on pytest's ``pythonpath`` and basedpyright's
 ``extraPaths``, so the tests of both packages import this as ``hub_helpers``.
@@ -10,11 +12,14 @@ from typing import Any, Final, Literal, NamedTuple
 import segment_helpers
 from pyvelo.client.models.configuration.profile_segments import segment_template
 from pyvelo.testing.module_store import ModuleStore
-from segment_helpers import CONFIG, DS_ID, QOS_ID
+from refs_helpers import CONFIG, DS_ID, QOS_ID
 
 
 class Hub(NamedTuple):
-    """An Edge or a cluster a test uses as a hub: its kind, its Edge or cluster ID, its logical ID and its name."""
+    """An Edge or a cluster a test uses as a hub.
+
+    Its kind, its Edge or cluster ID, its logical ID and its name.
+    """
 
     kind: Literal["edge", "cluster"]
     id: int
@@ -36,12 +41,18 @@ NOT_A_HUB: Final = Hub("edge", 34, "e5e5e5e5-e5e5-4e5e-8e5e-e5e5e5e5e5e5", "Bran
 
 
 def hub_entry(hub: Hub) -> dict[str, Any]:
-    """The entry of a device settings hub list for *hub*: ``name``, ``type`` and ``logicalId``."""
+    """The entry of a device settings hub list for *hub*.
+
+    ``name``, ``type`` and ``logicalId``.
+    """
     return {"name": hub.name, "type": hub.type_, "logicalId": hub.logical_id}
 
 
 def backhaul_entry(hub: Hub, service_logical_id: str) -> dict[str, Any]:
-    """The entry of a QoS ``routeCfg.backhaulEdges`` list for *hub*, whose service in the profile and segment has *service_logical_id*."""
+    """The entry of a QoS ``routeCfg.backhaulEdges`` list for *hub*.
+
+    The hub's service in the profile and segment has *service_logical_id*.
+    """
     return {
         "type": hub.type_,
         "logicalId": service_logical_id,
@@ -52,7 +63,10 @@ def backhaul_entry(hub: Hub, service_logical_id: str) -> dict[str, Any]:
 
 
 def backhaul_rule(name: str, *entries: dict[str, Any]) -> dict[str, Any]:
-    """A QoS rule named *name* whose Edge to Edge route has *entries* as its ``backhaulEdges``."""
+    """A QoS rule named *name* whose Edge to Edge route has *entries*.
+
+    They are its ``backhaulEdges``.
+    """
     rule = segment_template("QOS")["rules"][0]
     rule["name"] = name
     rule["ruleLogicalId"] = "f6f6f6f6-f6f6-4f6f-8f6f-f6f6f6f6f6f6"
@@ -62,7 +76,7 @@ def backhaul_rule(name: str, *entries: dict[str, Any]) -> dict[str, Any]:
     return rule
 
 
-def ds_with_vpn(
+def ds_with_vpn(  # noqa: PLR0913 (existing: split it when it next changes)
     segment: segment_helpers.Segment,
     *,
     enabled: bool = True,
@@ -73,7 +87,9 @@ def ds_with_vpn(
     edge_to_edge: bool = False,
     cloud_gateway: bool = True,
 ) -> dict[str, Any]:
-    """A device settings segment entry for *segment* whose ``vpn`` has the given hubs, bridges and backhaul hubs.
+    """A device settings segment entry for *segment*.
+
+    Its ``vpn`` has the given hubs, bridges and backhaul hubs.
 
     *hub_list_enabled* is the ``enabled`` flag of the hub list and is true
     when there are *hubs*, unless given.
@@ -97,7 +113,7 @@ def ds_with_vpn(
     return entry
 
 
-def hub_row(
+def hub_row(  # noqa: PLR0913 (existing: split it when it next changes)
     hub: Hub,
     *,
     service_id: int,
@@ -146,7 +162,7 @@ def hub_row(
     }
 
 
-def backhaul_row(
+def backhaul_row(  # noqa: PLR0913 (existing: split it when it next changes)
     hub: Hub,
     *,
     service_id: int,

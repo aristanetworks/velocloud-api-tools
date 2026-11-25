@@ -72,18 +72,18 @@ A, B, C = rule("a"), rule("b"), rule("c")
 X, Y, Z = rule("x"), rule("y"), rule("z")
 
 
-def test_nothing_planned():
+def test_nothing_planned() -> None:
     check = chk({"count": 1}, {"count": 1}, {"count": 1})
     assert_paths(check)
 
 
-def test_scalar_applied():
+def test_scalar_applied() -> None:
     check = chk({"count": 1}, {"count": 2}, {"count": 2})
     assert_paths(check, applied=["count"])
     assert check.applied == (PlannedChange(check.applied[0].path, 1, 2, 2),)
 
 
-def test_scalar_refused():
+def test_scalar_refused() -> None:
     check = chk({"count": 1}, {"count": 2}, {"count": 1})
     assert_paths(check, not_applied=["count"])
     change = not_applied_at(check, "count")
@@ -91,7 +91,7 @@ def test_scalar_refused():
     assert change.clash is False
 
 
-def test_scalar_moved():
+def test_scalar_moved() -> None:
     check = chk({"count": 1}, {"count": 2}, {"count": 3})
     assert_paths(check, not_applied=["count"])
     change = not_applied_at(check, "count")
@@ -99,7 +99,7 @@ def test_scalar_moved():
     assert change.clash is True
 
 
-def test_object_added_may_hold_more():
+def test_object_added_may_hold_more() -> None:
     check = chk({}, {"maybe": {"v": 1}}, {"maybe": {"v": 1, "note": "x"}})
     assert_paths(check, applied=["maybe"], server_changes=["maybe.note"])
     change = server_change_at(check, "maybe.note")
@@ -107,7 +107,7 @@ def test_object_added_may_hold_more():
     assert change.stored == "x"
 
 
-def test_object_added_lacks_a_leaf():
+def test_object_added_lacks_a_leaf() -> None:
     check = chk({}, {"maybe": {"v": 1, "note": "n"}}, {"maybe": {"v": 1}})
     assert_paths(check, not_applied=["maybe"])
     change = not_applied_at(check, "maybe")
@@ -115,7 +115,7 @@ def test_object_added_lacks_a_leaf():
     assert change.clash is True
 
 
-def test_leaf_in_an_object_is_its_own_change():
+def test_leaf_in_an_object_is_its_own_change() -> None:
     check = chk(
         {"sub": {"v": 1, "note": "n"}},
         {"sub": {"v": 2, "note": "n"}},
@@ -127,7 +127,7 @@ def test_leaf_in_an_object_is_its_own_change():
     assert change.stored == "z"
 
 
-def test_key_removed():
+def test_key_removed() -> None:
     check = chk({"title": "t"}, {}, {})
     assert_paths(check, applied=["title"])
     (change,) = check.applied
@@ -136,7 +136,7 @@ def test_key_removed():
     assert change.stored is MISSING
 
 
-def test_key_removed_is_still_there():
+def test_key_removed_is_still_there() -> None:
     check = chk({"title": "t"}, {}, {"title": "t"})
     assert_paths(check, not_applied=["title"])
     change = not_applied_at(check, "title")
@@ -144,7 +144,7 @@ def test_key_removed_is_still_there():
     assert change.clash is False
 
 
-def test_unplanned_difference_is_a_server_change():
+def test_unplanned_difference_is_a_server_change() -> None:
     check = chk(
         {"count": 1, "flag": False},
         {"count": 2, "flag": False},
@@ -156,7 +156,7 @@ def test_unplanned_difference_is_a_server_change():
     assert change.stored is True
 
 
-def test_stored_object_is_gone():
+def test_stored_object_is_gone() -> None:
     check = chk({"sub": {"v": 1}}, {"sub": {"v": 2}}, {})
     assert_paths(check, not_applied=["sub.v"], server_changes=["sub"])
     planned = not_applied_at(check, "sub.v")
@@ -169,36 +169,36 @@ def test_stored_object_is_gone():
     assert change.stored is MISSING
 
 
-def test_unkeyed_list_replaced_whole():
+def test_unkeyed_list_replaced_whole() -> None:
     check = chk({"hops": [H0]}, {"hops": [H1, H0]}, {"hops": [H1, H0]})
     assert_paths(check, applied=["hops"])
 
 
-def test_unkeyed_list_in_another_order():
+def test_unkeyed_list_in_another_order() -> None:
     check = chk({"hops": [H0]}, {"hops": [H1, H0]}, {"hops": [H0, H1]})
     assert_paths(check, not_applied=["hops"])
 
 
-def test_list_items_may_hold_more():
+def test_list_items_may_hold_more() -> None:
     check = chk(
         {"hops": []}, {"hops": [{"ip": "1"}]}, {"hops": [{"ip": "1", "cost": 0}]}
     )
     assert_paths(check, applied=["hops"], server_changes=["hops[#0].cost"])
 
 
-def test_keyed_item_changed():
+def test_keyed_item_changed() -> None:
     check = chk(
         rules(rule("a", p=1), B), rules(rule("a", p=2), B), rules(rule("a", p=2), B)
     )
     assert_paths(check, applied=["rules[a].priority"])
 
 
-def test_keyed_item_added_and_given_an_id():
+def test_keyed_item_added_and_given_an_id() -> None:
     check = chk(rules(A), rules(A, B), rules(A, rule("b", i="i7")))
     assert_paths(check, applied=["rules[b]"], server_changes=["rules[b].ruleId"])
 
 
-def test_keyed_item_added_is_missing():
+def test_keyed_item_added_is_missing() -> None:
     check = chk(rules(A), rules(A, B), rules(A))
     assert_paths(check, not_applied=["rules[b]"])
     change = not_applied_at(check, "rules[b]")
@@ -206,12 +206,12 @@ def test_keyed_item_added_is_missing():
     assert change.clash is False
 
 
-def test_keyed_item_removed():
+def test_keyed_item_removed() -> None:
     check = chk(rules(A, B), rules(A), rules(A))
     assert_paths(check, applied=["rules[b]"])
 
 
-def test_keyed_item_removed_is_still_there():
+def test_keyed_item_removed_is_still_there() -> None:
     check = chk(rules(A, B), rules(A), rules(A, B))
     assert_paths(check, not_applied=["rules[b]"])
     change = not_applied_at(check, "rules[b]")
@@ -219,7 +219,7 @@ def test_keyed_item_removed_is_still_there():
     assert change.clash is False
 
 
-def test_reorder_is_checked_by_keys():
+def test_reorder_is_checked_by_keys() -> None:
     check = chk(rules(A, B, C), rules(C, A, B), rules(C, A, B))
     assert_paths(check, applied=["rules"])
     (order,) = check.applied
@@ -227,7 +227,7 @@ def test_reorder_is_checked_by_keys():
     assert order.moves == ()
 
 
-def test_reorder_refused():
+def test_reorder_refused() -> None:
     check = chk(rules(A, B, C), rules(C, A, B), rules(A, B, C))
     assert_paths(check, not_applied=["rules"])
     change = not_applied_at(check, "rules")
@@ -238,7 +238,7 @@ def test_reorder_refused():
     assert change.clash is False
 
 
-def test_reorder_refused_where_the_stored_order_changed_too_is_a_clash():
+def test_reorder_refused_where_the_stored_order_changed_too_is_a_clash() -> None:
     check = chk(rules(A, B, C), rules(C, A, B), rules(B, A, C))
     change = not_applied_at(check, "rules")
     assert change.stored == ["b", "a", "c"]
@@ -247,14 +247,14 @@ def test_reorder_refused_where_the_stored_order_changed_too_is_a_clash():
     assert [str(move) for move in change.moves] == ["c first", "a after c"]
 
 
-def test_added_item_carries_its_place():
+def test_added_item_carries_its_place() -> None:
     first = not_applied_at(chk(rules(A), rules(B, A), rules(A)), "rules[b]")
     last = not_applied_at(chk(rules(A), rules(A, B), rules(A)), "rules[b]")
     assert (first.place, last.place) == (ItemPlace(), ItemPlace(Key("a")))
     assert first.is_order is False
 
 
-def test_added_item_stored_in_another_place_is_a_lost_order():
+def test_added_item_stored_in_another_place_is_a_lost_order() -> None:
     check = chk(rules(A), rules(B, A), rules(A, B))
     assert_paths(check, applied=["rules[b]"], not_applied=["rules"])
     order = not_applied_at(check, "rules")
@@ -268,13 +268,13 @@ def test_added_item_stored_in_another_place_is_a_lost_order():
     assert order.clash is False
 
 
-def test_added_item_stored_in_its_place_has_no_order_entry():
+def test_added_item_stored_in_its_place_has_no_order_entry() -> None:
     check = chk(rules(A), rules(B, A), rules(B, A))
     assert_paths(check, applied=["rules[b]"])
     assert check.applied[0].place == ItemPlace()
 
 
-def test_an_item_is_named_as_it_was_read():
+def test_an_item_is_named_as_it_was_read() -> None:
     renamed = chk(
         rules(rule("a", i="i1")), rules(rule("z", i="i1")), rules(rule("a", i="i1"))
     )
@@ -287,7 +287,7 @@ def test_an_item_is_named_as_it_was_read():
     assert_paths(shifted, not_applied=["rules[new]", "rules[#1].priority"])
 
 
-def test_added_item_named_as_a_read_one_compares_the_list_whole():
+def test_added_item_named_as_a_read_one_compares_the_list_whole() -> None:
     r, p = rules(rule("a", i="i1")), rules(rule("b", i="i1"), A)
     assert_paths(chk(r, p, p), applied=["rules"])
     refused = chk(r, p, r)
@@ -295,7 +295,7 @@ def test_added_item_named_as_a_read_one_compares_the_list_whole():
     assert not_applied_at(refused, "rules").is_order is False
 
 
-def test_a_list_the_vco_orders_itself_has_no_planned_order():
+def test_a_list_the_vco_orders_itself_has_no_planned_order() -> None:
     own = Rewrites(own_order=(("rules",),))
     added = check_response(rules(A), rules(B, A), rules(A, B), Root, rewrites=own)
     assert (paths(added.applied), added.not_applied) == (["rules[b]"], ())
@@ -312,14 +312,14 @@ def test_a_list_the_vco_orders_itself_has_no_planned_order():
     assert paths(moved.server_changes) == ["rules"]
 
 
-def test_reorder_and_edit_are_two_changes():
+def test_reorder_and_edit_are_two_changes() -> None:
     check = chk(
         rules(A, rule("b", p=1)), rules(rule("b", p=2), A), rules(rule("b", p=2), A)
     )
     assert_paths(check, applied=["rules", "rules[b].priority"])
 
 
-def test_item_another_writer_added():
+def test_item_another_writer_added() -> None:
     check = chk(rules(rule("a", p=1)), rules(rule("a", p=2)), rules(rule("a", p=2), Z))
     assert_paths(check, applied=["rules[a].priority"], server_changes=["rules[z]"])
     change = server_change_at(check, "rules[z]")
@@ -327,7 +327,7 @@ def test_item_another_writer_added():
     assert change.stored == Z
 
 
-def test_add_and_remove_refused_is_as_read():
+def test_add_and_remove_refused_is_as_read() -> None:
     check = chk(rules(A, X), rules(A, Y), rules(A, X))
     assert_paths(check, not_applied=["rules[y]", "rules[x]"])
     added = not_applied_at(check, "rules[y]")
@@ -338,7 +338,7 @@ def test_add_and_remove_refused_is_as_read():
     assert removed.clash is False
 
 
-def test_another_writers_item_is_not_mine():
+def test_another_writers_item_is_not_mine() -> None:
     check = chk(rules(A), rules(A, Y), rules(A, Z))
     assert_paths(check, not_applied=["rules[y]"], server_changes=["rules[z]"])
     change = not_applied_at(check, "rules[y]")
@@ -346,7 +346,7 @@ def test_another_writers_item_is_not_mine():
     assert change.clash is False
 
 
-def test_repeated_keys_pair_in_order():
+def test_repeated_keys_pair_in_order() -> None:
     check = chk(
         rules(rule("d", i="i1"), rule("d", i="i2"), rule("d", i="i3")),
         rules(rule("d", i="i1"), rule("d", i="i2", p=2), rule("d", i="i3", p=2)),
@@ -359,7 +359,7 @@ def test_repeated_keys_pair_in_order():
     )
 
 
-def test_keyless_added_item_pairs_with_what_is_left():
+def test_keyless_added_item_pairs_with_what_is_left() -> None:
     check = chk(
         {"links": [L1]},
         {"links": [L1, {"family": "IPv4", "name": "new"}]},
@@ -368,12 +368,12 @@ def test_keyless_added_item_pairs_with_what_is_left():
     assert_paths(check, applied=["links[#1]"], server_changes=["links[#1].internalId"])
 
 
-def test_without_a_model_every_list_is_whole():
+def test_without_a_model_every_list_is_whole() -> None:
     check = check_response({"rules": [A]}, {"rules": [A, B]}, {"rules": [A, B]})
     assert_paths(check, applied=["rules"])
 
 
-def test_unplanned_difference_in_a_keyed_list_is_told_by_item():
+def test_unplanned_difference_in_a_keyed_list_is_told_by_item() -> None:
     check = chk(
         {"count": 1, "rules": [A]},
         {"count": 2, "rules": [A]},
@@ -385,7 +385,7 @@ def test_unplanned_difference_in_a_keyed_list_is_told_by_item():
     assert change.stored == Z
 
 
-def test_order_the_plan_kept_and_the_vco_changed_is_a_server_change():
+def test_order_the_plan_kept_and_the_vco_changed_is_a_server_change() -> None:
     check = chk(
         rules(rule("a", p=1), B), rules(rule("a", p=2), B), rules(B, rule("a", p=2))
     )
@@ -395,7 +395,7 @@ def test_order_the_plan_kept_and_the_vco_changed_is_a_server_change():
     assert change.stored == ["b", "a"]
 
 
-def test_stored_keyed_list_is_gone():
+def test_stored_keyed_list_is_gone() -> None:
     check = chk(rules(rule("a", p=1)), rules(rule("a", p=2)), {})
     assert_paths(check, not_applied=["rules[a].priority"], server_changes=["rules"])
     planned = not_applied_at(check, "rules[a].priority")
@@ -406,7 +406,7 @@ def test_stored_keyed_list_is_gone():
     assert change.stored is MISSING
 
 
-def test_removal_inside_a_container_the_vco_dropped_is_applied():
+def test_removal_inside_a_container_the_vco_dropped_is_applied() -> None:
     check = chk({"sub": {"v": 1, "note": "n"}}, {"sub": {"v": 1}}, {})
     assert_paths(check, applied=["sub.note"], server_changes=["sub"])
     (removal,) = check.applied
@@ -418,7 +418,7 @@ def test_removal_inside_a_container_the_vco_dropped_is_applied():
     assert change.stored is MISSING
 
 
-def test_removed_and_readded_under_one_name_is_applied():
+def test_removed_and_readded_under_one_name_is_applied() -> None:
     check = chk(
         rules(A, rule("x", i="i1")),
         rules(A, X, X),
@@ -434,7 +434,7 @@ def test_removed_and_readded_under_one_name_is_applied():
     assert server_change_at(check, "rules[#2].ruleId").stored == "i9"
 
 
-def test_removed_item_found_by_its_alt_key():
+def test_removed_item_found_by_its_alt_key() -> None:
     check = chk(
         rules(A, rule("x", i="i1")),
         rules(A),
@@ -449,7 +449,7 @@ def test_removed_item_found_by_its_alt_key():
     assert change.stored == rule("x", i="i9")
 
 
-def test_change_beside_that_removal_is_not_applied():
+def test_change_beside_that_removal_is_not_applied() -> None:
     check = chk({"sub": {"v": 1, "note": "n"}}, {"sub": {"v": 2}}, {})
     assert_paths(
         check, applied=["sub.note"], not_applied=["sub.v"], server_changes=["sub"]
@@ -477,7 +477,9 @@ def box(*ports: dict[str, object]) -> dict[str, object]:
     return {"ports": list(ports)}
 
 
-def test_an_edit_below_a_map_entry_is_applied_and_a_sibling_key_is_a_server_change():
+def test_an_edit_below_a_map_entry_is_applied_and_a_sibling_key_is_a_server_change() -> (  # noqa: E501 (a test's name)
+    None
+):
     p1: dict[str, object] = {"name": "p1", "speed": 1}
     p2: dict[str, object] = {"name": "p2", "speed": 5}
     read = {"boxes": {"a": box(p1), "b": box(p2)}}
@@ -492,7 +494,7 @@ def test_an_edit_below_a_map_entry_is_applied_and_a_sibling_key_is_a_server_chan
     assert server_change_at(check, "boxes.b.ports[p2].note").stored == "n"
 
 
-def test_an_edit_below_a_map_entry_the_stored_data_lacks_is_not_applied():
+def test_an_edit_below_a_map_entry_the_stored_data_lacks_is_not_applied() -> None:
     p1: dict[str, object] = {"name": "p1", "speed": 1}
     p2: dict[str, object] = {"name": "p2", "speed": 5}
     read = {"boxes": {"a": box(p1), "b": box(p2)}}
@@ -548,13 +550,15 @@ WHOLE_LISTS = [
         id="no model",
     ),
 ]
-"""A model, a list field of it, the list as read and as sent: one key of one item is removed."""
+"""A model, a list field of it, the list as read and as sent: one key of one item is
+removed.
+"""
 
 
 @pytest.mark.parametrize(("model", "name", "read", "sent"), WHOLE_LISTS)
 def test_key_removed_in_a_list_compared_whole_and_still_there_is_not_applied(
     model: type[VcoModel] | None, name: str, read: list[object], sent: list[object]
-):
+) -> None:
     check = check_response({name: read}, {name: sent}, {name: read}, model)
     assert_paths(check, not_applied=[name])
     change = not_applied_at(check, name)
@@ -565,12 +569,14 @@ def test_key_removed_in_a_list_compared_whole_and_still_there_is_not_applied(
 @pytest.mark.parametrize(("model", "name", "read", "sent"), WHOLE_LISTS)
 def test_key_removed_in_a_list_compared_whole_and_gone_is_applied(
     model: type[VcoModel] | None, name: str, read: list[object], sent: list[object]
-):
+) -> None:
     check = check_response({name: read}, {name: sent}, {name: sent}, model)
     assert_paths(check, applied=[name])
 
 
-def test_key_removed_in_a_list_item_and_stored_with_another_value_is_not_applied():
+def test_key_removed_in_a_list_item_and_stored_with_another_value_is_not_applied() -> (
+    None
+):
     check = chk(
         {"hops": [{"ip": "10.0.0.1", "cost": 5}]},
         {"hops": [{"ip": "10.0.0.1"}]},
@@ -580,7 +586,7 @@ def test_key_removed_in_a_list_item_and_stored_with_another_value_is_not_applied
     assert not_applied_at(check, "hops").clash is True
 
 
-def test_key_removed_beside_a_change_that_is_stored_is_not_applied():
+def test_key_removed_beside_a_change_that_is_stored_is_not_applied() -> None:
     # Another writer stored the same cost; the write that removed the note was not.
     check = chk(
         {"hops": [{"ip": "10.0.0.1", "cost": 5, "note": "x"}]},
@@ -590,7 +596,7 @@ def test_key_removed_beside_a_change_that_is_stored_is_not_applied():
     assert_paths(check, not_applied=["hops"])
 
 
-def test_key_the_vco_adds_where_none_was_read_is_a_server_change():
+def test_key_the_vco_adds_where_none_was_read_is_a_server_change() -> None:
     check = chk(
         {"hops": [{"ip": "10.0.0.1"}]},
         {"hops": [{"ip": "10.0.0.2"}]},
@@ -601,7 +607,7 @@ def test_key_the_vco_adds_where_none_was_read_is_a_server_change():
     assert (change.as_read, change.stored) == (MISSING, 0)
 
 
-def test_the_item_as_read_is_the_one_at_the_same_position():
+def test_the_item_as_read_is_the_one_at_the_same_position() -> None:
     # The plan appends an item and removes a key of the first. The stored list
     # has the key, and an item another writer appended that holds the new one.
     check = chk(
@@ -612,7 +618,7 @@ def test_the_item_as_read_is_the_one_at_the_same_position():
     assert_paths(check, not_applied=["hops"])
 
 
-def test_an_item_past_the_end_of_the_list_as_read_may_hold_more():
+def test_an_item_past_the_end_of_the_list_as_read_may_hold_more() -> None:
     check = chk(
         {"hops": [{"ip": "10.0.0.1", "cost": 5}]},
         {"hops": [{"ip": "10.0.0.1", "cost": 5}, {"ip": "10.0.0.2"}]},
@@ -621,7 +627,7 @@ def test_an_item_past_the_end_of_the_list_as_read_may_hold_more():
     assert_paths(check, applied=["hops"], server_changes=["hops[#1].cost"])
 
 
-def test_item_pairs_by_its_alt_key_before_its_key():
+def test_item_pairs_by_its_alt_key_before_its_key() -> None:
     # The write that raised rule a (i1) to priority 2 was not stored. Another
     # writer renamed that rule to b and made a new rule a (i9) with priority 2.
     check = chk(
@@ -634,12 +640,12 @@ def test_item_pairs_by_its_alt_key_before_its_key():
     assert not_applied_at(check, "rules[a].priority").stored == 1
 
 
-def test_removed_item_without_an_alt_key_does_not_take_another_writers_item():
+def test_removed_item_without_an_alt_key_does_not_take_another_writers_item() -> None:
     check = chk(rules(A, X), rules(A), rules(A, Z))
     assert_paths(check, applied=["rules[x]"], server_changes=["rules[z]"])
 
 
-def test_item_taken_for_a_removal_is_not_paired_again():
+def test_item_taken_for_a_removal_is_not_paired_again() -> None:
     # Nothing was stored: the item the plan removed is still there, and the
     # item it added without a key is not.
     two = {"internalId": "u2", "family": "IPv4", "name": "two"}
@@ -652,7 +658,7 @@ def test_item_taken_for_a_removal_is_not_paired_again():
     assert not_applied_at(check, "links[u2,IPv4]").stored == two
 
 
-def test_a_change_gives_its_path_in_python_names():
+def test_a_change_gives_its_path_in_python_names() -> None:
     check = chk(
         {"sub": {"v": 1}, **rules(rule("a", i="i1"))},
         {"sub": {"v": 1}, **rules(rule("a", i="i2"))},
@@ -669,7 +675,7 @@ def test_a_change_gives_its_path_in_python_names():
     assert row.python_path(Root) == "rules[a].ruleId"
 
 
-def test_an_item_no_selector_names_has_no_stored_part():
+def test_an_item_no_selector_names_has_no_stored_part() -> None:
     # Item 1 is named by its position, and "#1" is the name of item 0.
     r = rules(rule("#1"), rule("x", i="i1"), rule("x", i="i2"))
     p = rules(rule("#1"), rule("x", i="i1", p=5), rule("x", i="i2", p=6))

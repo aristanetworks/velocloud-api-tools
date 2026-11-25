@@ -116,7 +116,7 @@ def rule(name: str) -> FirewallOutboundRule:
     )
 
 
-def test_no_edit_plans_nothing_and_keeps_raw():
+def test_no_edit_plans_nothing_and_keeps_raw() -> None:
     plan = plan_module(fw(EDGE_RAW, layer=Edge), level=EDGE)
     assert (plan.operation, plan.data, plan.changes, plan.refs) == (
         "none",
@@ -126,7 +126,7 @@ def test_no_edit_plans_nothing_and_keeps_raw():
     )
 
 
-def test_unrelated_edit_leaves_inherited_keys_absent_and_local_false_present():
+def test_unrelated_edit_leaves_inherited_keys_absent_and_local_false_present() -> None:
     mod = fw(EDGE_RAW, layer=Edge)
     mod.data.firewall_enabled.set_local(False)
     plan = plan_module(mod, level=EDGE)
@@ -137,7 +137,7 @@ def test_unrelated_edit_leaves_inherited_keys_absent_and_local_false_present():
     ]
 
 
-def test_edit_is_written_to_the_snake_case_key_as_read():
+def test_edit_is_written_to_the_snake_case_key_as_read() -> None:
     mod = fw(EDGE_RAW, layer=Edge)
     mod.data.firewall_logging_enabled.set_local(True)
     plan = plan_module(mod, level=EDGE)
@@ -145,7 +145,7 @@ def test_edit_is_written_to_the_snake_case_key_as_read():
     assert "firewallLoggingEnabled" not in plan.data
 
 
-def test_the_logging_flag_is_written_in_snake_case_where_the_key_was_absent():
+def test_the_logging_flag_is_written_in_snake_case_where_the_key_was_absent() -> None:
     raw: dict[str, Any] = {
         "firewall_enabled": True,
         "segments": [{"segment": desc(0, "Global Segment"), "outbound": []}],
@@ -164,7 +164,7 @@ def test_the_logging_flag_is_written_in_snake_case_where_the_key_was_absent():
     ]
 
 
-def test_the_logging_flag_dumps_in_snake_case():
+def test_the_logging_flag_dumps_in_snake_case() -> None:
     for data in (
         FirewallData[Edge](firewall_logging_enabled=Owned(False)),
         FirewallData[Profile](firewall_logging_enabled=False),
@@ -177,7 +177,7 @@ def test_the_logging_flag_dumps_in_snake_case():
     assert dumped["firewall_logging_enabled"] is True
 
 
-def test_inserted_rules_keep_order_and_unknown_segment_keys():
+def test_inserted_rules_keep_order_and_unknown_segment_keys() -> None:
     mod = fw(EDGE_RAW, layer=Edge)
     seg = mod.data.segments[0]
     seg.outbound.insert(0, rule("b"))
@@ -185,10 +185,11 @@ def test_inserted_rules_keep_order_and_unknown_segment_keys():
     plan = plan_module(mod, level=EDGE)
     out = plan.data["segments"][0]
     assert [r["name"] for r in out["outbound"]] == ["a", "b"]
-    assert out["futureKey"] == 1 and plan.data["futureTopLevel"] == [1, 2.5, None]
+    assert out["futureKey"] == 1
+    assert plan.data["futureTopLevel"] == [1, 2.5, None]
 
 
-def test_lossy_assignment_raises():
+def test_lossy_assignment_raises() -> None:
     mod = fw(EDGE_RAW, layer=Edge)
     mod.data.inbound = []  # absent in raw, equals the model default
     with pytest.raises(LossyFieldError, match="inbound") as exc:
@@ -196,7 +197,9 @@ def test_lossy_assignment_raises():
     assert exc.value.fields == ["inbound"]
 
 
-def test_a_profile_assigns_the_display_default_of_an_inheritable_and_it_is_written():
+def test_a_profile_assigns_the_display_default_of_an_inheritable_and_it_is_written() -> (  # noqa: E501 (a test's name)
+    None
+):
     # An Inheritable field of a profile has a display default, not a model
     # default: assigning that value stores it, where an unconverted field
     # would raise LossyFieldError.
@@ -207,7 +210,7 @@ def test_a_profile_assigns_the_display_default_of_an_inheritable_and_it_is_writt
     assert [str(c.path) for c in plan.changes] == ["atp_enabled"]
 
 
-def test_reconciliation_rides_along_with_a_write():
+def test_reconciliation_rides_along_with_a_write() -> None:
     mod, profile = fw(EDGE_RAW, layer=Edge), fw(PROFILE_RAW, module_id=2, layer=Profile)
     mod.data.firewall_enabled.set_local(False)
     plan = plan_module(mod, level=EDGE, profile=profile)
@@ -220,7 +223,7 @@ def test_reconciliation_rides_along_with_a_write():
     assert [c.path for c in plan.changes] == ["firewall_enabled"]
 
 
-def test_no_edit_does_not_write_just_to_reconcile():
+def test_no_edit_does_not_write_just_to_reconcile() -> None:
     plan = plan_module(
         fw(EDGE_RAW, layer=Edge),
         level=EDGE,
@@ -233,7 +236,7 @@ def test_no_edit_does_not_write_just_to_reconcile():
     )
 
 
-def test_edge_only_segment_is_kept_and_profile_level_never_reconciles():
+def test_edge_only_segment_is_kept_and_profile_level_never_reconciles() -> None:
     raw = copy.deepcopy(EDGE_RAW)
     raw["segments"].append({"segment": desc(9, "EdgeOnly"), "outbound": []})
     mod = fw(raw, layer=Edge)
@@ -260,7 +263,7 @@ def guest_rule() -> dict[str, Any]:
     return {"name": "g", "match": {}, "action": {"allow_or_deny": "allow"}}
 
 
-def test_deleting_an_edge_segment_the_profile_has_leaves_its_placeholder():
+def test_deleting_an_edge_segment_the_profile_has_leaves_its_placeholder() -> None:
     raw = copy.deepcopy(EDGE_RAW)
     raw["segments"].append({"segment": desc(2, "Guest"), "outbound": [guest_rule()]})
     mod, profile = fw(raw, layer=Edge), fw(PROFILE_RAW, module_id=2, layer=Profile)
@@ -274,7 +277,7 @@ def test_deleting_an_edge_segment_the_profile_has_leaves_its_placeholder():
     assert plan.reconciled_segments == ("Guest",)
 
 
-def test_deleting_a_segment_that_is_only_a_placeholder_is_no_change():
+def test_deleting_a_segment_that_is_only_a_placeholder_is_no_change() -> None:
     raw = copy.deepcopy(EDGE_RAW)
     raw["segments"].append(missing_segments(EDGE_RAW, PROFILE_RAW, "firewall")[0])
     mod, profile = fw(raw, layer=Edge), fw(PROFILE_RAW, module_id=2, layer=Profile)
@@ -283,7 +286,7 @@ def test_deleting_a_segment_that_is_only_a_placeholder_is_no_change():
     assert (plan.operation, plan.data) == ("none", raw)
 
 
-def test_edit_inside_a_missing_segment_is_relative_to_its_placeholder():
+def test_edit_inside_a_missing_segment_is_relative_to_its_placeholder() -> None:
     mod, profile = fw(EDGE_RAW, layer=Edge), fw(PROFILE_RAW, module_id=2, layer=Profile)
     guest = type(mod.data.segments[0]).model_validate(
         {"segment": desc(2, "Guest", vendorKey="x"), "outbound": []}
@@ -297,7 +300,7 @@ def test_edit_inside_a_missing_segment_is_relative_to_its_placeholder():
     assert set(written) == {"segment", "outbound"}
 
 
-def test_insert_from_an_empty_layer_has_only_local_content_plus_placeholders():
+def test_insert_from_an_empty_layer_has_only_local_content_plus_placeholders() -> None:
     mod = new_edge_module(ConfigurationModuleName.FIREWALL, 10)
     assert isinstance(mod, FirewallConfigurationModule)
     profile = fw(PROFILE_RAW, module_id=2, layer=Profile)
@@ -314,7 +317,7 @@ def test_insert_from_an_empty_layer_has_only_local_content_plus_placeholders():
     }
 
 
-def test_placeholders_per_module():
+def test_placeholders_per_module() -> None:
     prof = {
         "segments": [
             {
@@ -336,7 +339,7 @@ def test_placeholders_per_module():
     assert missing_segments({"segments": []}, prof, "WAN") == []
 
 
-def test_reconcile_tolerates_malformed_segments():
+def test_reconcile_tolerates_malformed_segments() -> None:
     prof = {
         "segments": [
             {"segment": desc(2, "Guest")},
@@ -353,7 +356,7 @@ def test_reconcile_tolerates_malformed_segments():
     assert missing_segments(edge, prof, "firewall") == []
 
 
-def test_unparseable_shapes_do_not_cause_a_write():
+def test_unparseable_shapes_do_not_cause_a_write() -> None:
     # A null is kept as stored and is not local; DefaultingScalar turns the
     # other into False on parse.
     raw = {"segments": [], "syslog_forwarding": None, "atp_enabled": "not-a-bool"}
@@ -365,7 +368,7 @@ def test_unparseable_shapes_do_not_cause_a_write():
     assert (plan.operation, plan.data) == ("none", raw)
 
 
-def test_untyped_module_plans_none():
+def test_untyped_module_plans_none() -> None:
     mod = GenericConfigurationModule.model_validate(
         make_module_json("analyticsSettings", {"a": [1]})
     )
@@ -374,7 +377,7 @@ def test_untyped_module_plans_none():
     assert plan_module(mod).data == {"a": [1, 2]}
 
 
-def test_refs_are_sent_only_with_a_ref_change_or_segments_and_then_whole():
+def test_refs_are_sent_only_with_a_ref_change_or_segments_and_then_whole() -> None:
     raw_refs: dict[str, Any] = {"x": [1], "y": 2}
     bare = QosConfigurationModule[Edge].model_validate(
         make_module_json("QOS", {"segments": []}, refs=raw_refs)
@@ -395,7 +398,7 @@ def test_refs_are_sent_only_with_a_ref_change_or_segments_and_then_whole():
     assert plan.refs is not raw_refs
 
 
-def test_explicit_data_argument_leaves_module_data_out_of_it():
+def test_explicit_data_argument_leaves_module_data_out_of_it() -> None:
     mod = fw(EDGE_RAW, layer=Edge)
     data = mod.mutable_data()
     data.firewall_enabled.set_local(False)
@@ -403,7 +406,7 @@ def test_explicit_data_argument_leaves_module_data_out_of_it():
     assert plan_module(mod, level=EDGE).operation == "none"
 
 
-def test_render():
+def test_render() -> None:
     mod = fw(EDGE_RAW, layer=Edge)
     mod.data.firewall_enabled.set_local(False)
     mod.data.syslog_forwarding.set_local(True)
@@ -418,7 +421,7 @@ def test_render():
     ]
 
 
-def test_change_paths_quote_keys_with_special_characters():
+def test_change_paths_quote_keys_with_special_characters() -> None:
     mod = fw(EDGE_RAW, layer=Edge)
     mod.data.segments[0].outbound.append(rule("b"))
     plan = plan_module(mod, level=EDGE)
@@ -453,7 +456,7 @@ RULES_RAW: dict[str, Any] = {
 OUTBOUND = 'segments["Global Segment"].outbound'
 
 
-def test_render_shows_where_an_added_rule_goes():
+def test_render_shows_where_an_added_rule_goes() -> None:
     first, last = fw(RULES_RAW, layer=Edge), fw(RULES_RAW, layer=Edge)
     first.data.segments[0].outbound.insert(0, rule("x"))
     last.data.segments[0].outbound.append(rule("x"))
@@ -461,10 +464,11 @@ def test_render_shows_where_an_added_rule_goes():
     at_last = plan_module(last, level=EDGE).render().splitlines()
     assert at_first[1].startswith(f'  + {OUTBOUND}[x] (first): {{"action": ')
     assert at_last[1].startswith(f'  + {OUTBOUND}[x] (after c): {{"action": ')
-    assert at_first[1].endswith("…") and len(at_first[1]) < 150
+    assert at_first[1].endswith("…")
+    assert len(at_first[1]) < 150
 
 
-def test_render_of_a_move_is_one_short_line_beside_the_edit():
+def test_render_of_a_move_is_one_short_line_beside_the_edit() -> None:
     mod = fw(RULES_RAW, layer=Edge)
     rules = mod.data.segments[0].outbound
     rules.insert(0, rules.pop())
@@ -476,7 +480,7 @@ def test_render_of_a_move_is_one_short_line_beside_the_edit():
     ]
 
 
-def test_render_names_five_moves_and_counts_the_rest():
+def test_render_names_five_moves_and_counts_the_rest() -> None:
     raw = copy.deepcopy(RULES_RAW)
     raw["segments"][0]["outbound"] = [raw_rule(f"r{n}") for n in range(9)]
     mod = fw(raw, layer=Edge)
@@ -487,7 +491,7 @@ def test_render_names_five_moves_and_counts_the_rest():
     )
 
 
-def test_render_cuts_two_long_values_where_they_differ():
+def test_render_cuts_two_long_values_where_they_differ() -> None:
     old, new = list(range(60)), [*range(55), 99, *range(56, 60)]
     mod = fw({**EDGE_RAW, "futureTopLevel": old}, layer=Edge)
     plan = plan_module(mod, {**EDGE_RAW, "futureTopLevel": new}, level=EDGE)
@@ -500,7 +504,7 @@ def test_render_cuts_two_long_values_where_they_differ():
     ]
 
 
-def test_lossy_error_carries_structured_paths():
+def test_lossy_error_carries_structured_paths() -> None:
     raw = copy.deepcopy(EDGE_RAW)
     raw["segments"][0]["outbound"] = [
         {"name": "r1", "action": {"allow_or_deny": "allow"}, "match": {}}
@@ -531,7 +535,7 @@ def test_lossy_error_carries_structured_paths():
 # --- behaviour the cases above do not pin ----------------------------------
 
 
-async def test_unknown_ref_names_are_kept_in_the_refs_sent():
+async def test_unknown_ref_names_are_kept_in_the_refs_sent() -> None:
     module = primary_provider_module({"unknownRef": {"k": 1}})
     current = module.data.model_copy(deep=True)
     set_primary_provider(current, uuid.UUID(DNS_B))
@@ -542,7 +546,7 @@ async def test_unknown_ref_names_are_kept_in_the_refs_sent():
     assert plan.refs["unknownRef"] == {"k": 1}
 
 
-async def test_a_module_that_had_no_refs_gets_only_the_new_row():
+async def test_a_module_that_had_no_refs_gets_only_the_new_row() -> None:
     module = ds_module(
         [segment_entry(0, "Global Segment", SEG0, dns=dns(primary=True))], MISSING
     )
@@ -558,7 +562,7 @@ async def test_a_module_that_had_no_refs_gets_only_the_new_row():
     assert plan.refs[PRIMARY] == [change.row]
 
 
-def test_module_that_never_carried_data_sends_the_whole_dump():
+def test_module_that_never_carried_data_sends_the_whole_dump() -> None:
     mod = FirewallConfigurationModule[Edge].model_construct(
         name="firewall", data=FirewallData[Edge](segments=[], firewall_enabled=False)
     )
@@ -573,7 +577,7 @@ def test_module_that_never_carried_data_sends_the_whole_dump():
     assert plan.changes[0].path == "firewall_enabled"
 
 
-def test_a_module_without_a_segments_key_gets_one_for_reconciliation():
+def test_a_module_without_a_segments_key_gets_one_for_reconciliation() -> None:
     mod = fw({}, layer=Edge)
     profile = fw(PROFILE_RAW, module_id=2, layer=Profile)
     assert plan_module(mod, level=EDGE, profile=profile).operation == "none"
@@ -589,19 +593,19 @@ def test_a_module_without_a_segments_key_gets_one_for_reconciliation():
     assert plan.reconciled_segments == ("Global Segment", "Guest")
 
 
-def test_a_profile_that_repeats_a_segment_id_reconciles_it_once():
+def test_a_profile_that_repeats_a_segment_id_reconciles_it_once() -> None:
     prof = {"segments": [{"segment": desc(2, "A")}, {"segment": desc(2, "A")}]}
     assert missing_segments({}, prof, "firewall") == [
         {"segment": desc(2, "A"), "outbound": []}
     ]
 
 
-def test_edge_segments_that_are_not_a_list_are_left_alone():
+def test_edge_segments_that_are_not_a_list_are_left_alone() -> None:
     prof = {"segments": [{"segment": desc(2, "A")}]}
     assert missing_segments({"segments": 5}, prof, "firewall") == []
 
 
-def test_json_mode_module_plans_none_and_then_only_the_edit():
+def test_json_mode_module_plans_none_and_then_only_the_edit() -> None:
     raw = {"segments": [], "syslog_forwarding": None, "futureKey": [1]}
     rows = [make_module_json("firewall", copy.deepcopy(raw))]
     mod = ConfigurationModuleList[Edge].model_validate_json(json.dumps(rows)).root[0]
@@ -614,7 +618,7 @@ def test_json_mode_module_plans_none_and_then_only_the_edit():
     assert plan.data == {**raw, "syslog_forwarding": True}
 
 
-def test_plan_data_does_not_alias_the_module_snapshot():
+def test_plan_data_does_not_alias_the_module_snapshot() -> None:
     mod = fw(EDGE_RAW, layer=Edge)
     plan = plan_module(mod, level=EDGE)
     plan.data["segments"].clear()
@@ -624,14 +628,14 @@ def test_plan_data_does_not_alias_the_module_snapshot():
 # --- reconciliation with a plain dict as the data --------------------------
 
 
-def test_dict_data_with_no_edit_does_not_write_just_to_reconcile():
+def test_dict_data_with_no_edit_does_not_write_just_to_reconcile() -> None:
     mod, profile = fw(EDGE_RAW, layer=Edge), fw(PROFILE_RAW, module_id=2, layer=Profile)
     plan = plan_module(mod, copy.deepcopy(EDGE_RAW), level=EDGE, profile=profile)
     assert (plan.operation, plan.data, plan.changes) == ("none", EDGE_RAW, ())
     assert plan.reconciled_segments == ("Guest",)
 
 
-def test_dict_data_edit_carries_the_reconciled_segments_along():
+def test_dict_data_edit_carries_the_reconciled_segments_along() -> None:
     mod, profile = fw(EDGE_RAW, layer=Edge), fw(PROFILE_RAW, module_id=2, layer=Profile)
     data = copy.deepcopy(EDGE_RAW)
     data["firewall_enabled"] = False
@@ -654,7 +658,7 @@ def test_dict_data_edit_carries_the_reconciled_segments_along():
     ]
 
 
-def test_dict_data_without_a_segments_list_gets_the_reconciled_segments():
+def test_dict_data_without_a_segments_list_gets_the_reconciled_segments() -> None:
     mod, profile = fw({}, layer=Edge), fw(PROFILE_RAW, module_id=2, layer=Profile)
     assert plan_module(mod, {}, level=EDGE, profile=profile).operation == "none"
     plan = plan_module(mod, {"firewall_enabled": False}, level=EDGE, profile=profile)
@@ -665,7 +669,7 @@ def test_dict_data_without_a_segments_list_gets_the_reconciled_segments():
     assert [c.path for c in plan.changes] == ["firewall_enabled"]
 
 
-def test_dict_data_keeps_its_own_version_of_a_reconciled_segment():
+def test_dict_data_keeps_its_own_version_of_a_reconciled_segment() -> None:
     mod, profile = fw(EDGE_RAW, layer=Edge), fw(PROFILE_RAW, module_id=2, layer=Profile)
     data = copy.deepcopy(EDGE_RAW)
     guest = {"segment": desc(2, "Guest", vendorKey="x"), "outbound": [{"name": "b"}]}
@@ -689,7 +693,10 @@ THREE_SEGMENTS_RAW: dict[str, Any] = {
 def bound(
     raw: dict[str, Any], profile_raw: dict[str, Any]
 ) -> tuple[FirewallConfigurationModule[Edge], FirewallConfigurationModule[Profile]]:
-    """An edge module of *raw* bound to a profile module of *profile_raw*, and that one."""
+    """An edge module of *raw*, and the profile module it is bound to.
+
+    The profile module is of *profile_raw*.
+    """
     mod, profile = fw(raw, layer=Edge), fw(profile_raw, module_id=2, layer=Profile)
     mod.data.bind_profile(profile.raw_data)
     return mod, profile
@@ -699,7 +706,7 @@ def segment_names(data: dict[str, Any]) -> list[str]:
     return [s["segment"]["name"] for s in data["segments"]]
 
 
-def test_a_placeholder_for_a_later_profile_segment_plans_nothing():
+def test_a_placeholder_for_a_later_profile_segment_plans_nothing() -> None:
     for looked_up in (["Voice"], ["Voice", "Guest"], ["Guest", "Voice"]):
         mod, profile = bound(EDGE_RAW, THREE_SEGMENTS_RAW)
         for name in looked_up:
@@ -709,7 +716,7 @@ def test_a_placeholder_for_a_later_profile_segment_plans_nothing():
         assert plan.reconciled_segments == ("Guest", "Voice")
 
 
-def test_an_edit_in_a_later_missing_segment_is_planned_at_the_item():
+def test_an_edit_in_a_later_missing_segment_is_planned_at_the_item() -> None:
     mod, profile = bound(EDGE_RAW, THREE_SEGMENTS_RAW)
     mod.data.segment("Voice").outbound.append(rule("block"))
     plan = plan_module(mod, level=EDGE, profile=profile)
@@ -720,7 +727,7 @@ def test_an_edit_in_a_later_missing_segment_is_planned_at_the_item():
     assert plan.data["segments"][1] == THREE_SEGMENTS_RAW["segments"][1]
 
 
-def test_a_created_module_has_its_segments_in_the_profiles_order():
+def test_a_created_module_has_its_segments_in_the_profiles_order() -> None:
     mod = new_edge_module(ConfigurationModuleName.FIREWALL, 10)
     assert isinstance(mod, FirewallConfigurationModule)
     profile = fw(PROFILE_RAW, module_id=2, layer=Profile)
@@ -737,7 +744,7 @@ def test_a_created_module_has_its_segments_in_the_profiles_order():
     assert (plan.operation, plan.changes) == ("none", ())
 
 
-def test_the_order_of_the_edges_own_segments_is_the_callers():
+def test_the_order_of_the_edges_own_segments_is_the_callers() -> None:
     raw = copy.deepcopy(EDGE_RAW)
     raw["segments"].append({"segment": desc(9, "Branch"), "outbound": []})
     mod, profile = bound(raw, THREE_SEGMENTS_RAW)
@@ -748,7 +755,9 @@ def test_the_order_of_the_edges_own_segments_is_the_callers():
     assert segment_names(plan.data) == ["Branch", "Global Segment", "Guest", "Voice"]
 
 
-def test_a_reconciled_segment_is_written_after_the_edges_own_wherever_the_model_has_it():
+def test_a_reconciled_segment_is_written_after_the_edges_own_wherever_the_model_has_it() -> (  # noqa: E501 (a test's name)
+    None
+):
     mod, profile = bound(EDGE_RAW, PROFILE_RAW)
     _ = mod.data.segment("Guest")
     mod.data.segments.reverse()  # Guest, Global Segment
@@ -756,7 +765,9 @@ def test_a_reconciled_segment_is_written_after_the_edges_own_wherever_the_model_
     assert (plan.operation, plan.data) == ("none", EDGE_RAW)
 
 
-def test_dict_data_with_its_reconciled_segments_in_another_order_plans_nothing():
+def test_dict_data_with_its_reconciled_segments_in_another_order_plans_nothing() -> (
+    None
+):
     mod, profile = (
         fw(EDGE_RAW, layer=Edge),
         fw(THREE_SEGMENTS_RAW, module_id=2, layer=Profile),
@@ -784,7 +795,7 @@ DS_RAW: dict[str, Any] = {
 }
 
 
-def test_profile_outbound_patch_is_saved_as_the_rule_alone():
+def test_profile_outbound_patch_is_saved_as_the_rule_alone() -> None:
     mod = fw(PROFILE_RAW, module_id=2, layer=Profile)
     _ = mod.data.for_profile()
     _ = mod.data.merge_patch(
@@ -806,7 +817,7 @@ def test_profile_outbound_patch_is_saved_as_the_rule_alone():
     assert "outboundOverride" not in plan.data["segments"][0]
 
 
-def test_profile_ntp_patch_is_saved():
+def test_profile_ntp_patch_is_saved() -> None:
     mod = ds({**DS_RAW, "ntp": {"enabled": False, "servers": []}})
     _ = mod.data.for_profile()
     _ = mod.data.merge_patch({"ntp": {"enabled": True}})
@@ -815,7 +826,7 @@ def test_profile_ntp_patch_is_saved():
     assert "override" not in plan.data["ntp"]
 
 
-def test_edge_edit_to_a_section_the_edge_dump_omits_is_refused():
+def test_edge_edit_to_a_section_the_edge_dump_omits_is_refused() -> None:
     raw = {**DS_RAW, "ntp": {"override": True, "enabled": False, "servers": []}}
     mod = ds(raw)
     _ = mod.data.for_edge()
@@ -825,7 +836,7 @@ def test_edge_edit_to_a_section_the_edge_dump_omits_is_refused():
     assert exc.value.fields == ["ntp"]
 
 
-def test_edge_edit_to_a_section_the_edge_raw_lacks_is_refused():
+def test_edge_edit_to_a_section_the_edge_raw_lacks_is_refused() -> None:
     mod = ds(DS_RAW)
     _ = mod.data.for_edge()
     _ = mod.data.merge_patch({"ntp": {"enabled": True}})
@@ -834,7 +845,7 @@ def test_edge_edit_to_a_section_the_edge_raw_lacks_is_refused():
     assert exc.value.fields == ["ntp"]
 
 
-def test_edge_section_the_dump_omits_does_not_block_an_unrelated_edit():
+def test_edge_section_the_dump_omits_does_not_block_an_unrelated_edit() -> None:
     raw = {**DS_RAW, "ntp": {"override": True, "enabled": False, "servers": []}}
     mod = ds(raw)
     _ = mod.data.for_edge()
@@ -843,7 +854,7 @@ def test_edge_section_the_dump_omits_does_not_block_an_unrelated_edit():
     assert plan.data["ntp"] == raw["ntp"]
 
 
-def test_override_flag_the_document_lacks_is_named_as_one():
+def test_override_flag_the_document_lacks_is_named_as_one() -> None:
     raw = {
         **DS_RAW,
         "segments": [{"segment": desc(0, "Global Segment"), "bfd": {"enabled": False}}],
@@ -867,7 +878,7 @@ LOOPBACK_RAW: dict[str, Any] = {
 }
 
 
-def test_the_default_of_an_absent_key_below_the_loopback_map_is_refused():
+def test_the_default_of_an_absent_key_below_the_loopback_map_is_refused() -> None:
     mod = ds(LOOPBACK_RAW)
     _ = mod.data.for_edge()
     _ = mod.data.merge_patch({"loopback_interfaces": {"LO1": {"advertise": True}}})
@@ -876,7 +887,7 @@ def test_the_default_of_an_absent_key_below_the_loopback_map_is_refused():
     assert exc.value.fields == ["loopback_interfaces.LO1.advertise"]
 
 
-def test_an_edit_below_the_loopback_map_is_written_to_the_key_as_read():
+def test_an_edit_below_the_loopback_map_is_written_to_the_key_as_read() -> None:
     mod = ds(LOOPBACK_RAW)
     _ = mod.data.for_edge()
     _ = mod.data.merge_patch({"loopback_interfaces": {"LO1": {"ping_response": True}}})
@@ -890,7 +901,10 @@ def test_an_edit_below_the_loopback_map_is_written_to_the_key_as_read():
 
 
 def model_interface(name: str) -> dict[str, Any]:
-    """A routed interface of a profile's model entry, with keys and values the models do not keep."""
+    """A routed interface of a profile's model entry.
+
+    It has keys and values the models do not keep.
+    """
     return {
         "name": name,
         "disabled": False,
@@ -920,7 +934,7 @@ MODELS_RAW: dict[str, Any] = {
 }
 
 
-def test_one_edit_to_a_profile_interface_writes_that_interface_alone():
+def test_one_edit_to_a_profile_interface_writes_that_interface_alone() -> None:
     mod = ds(MODELS_RAW)
     _ = mod.data.for_profile()
     _ = mod.data.merge_patch(
@@ -944,7 +958,7 @@ def test_one_edit_to_a_profile_interface_writes_that_interface_alone():
     assert plan.data == expected
 
 
-def test_an_edge_only_field_below_the_models_map_is_refused_on_a_profile():
+def test_an_edge_only_field_below_the_models_map_is_refused_on_a_profile() -> None:
     mod = ds(MODELS_RAW)
     _ = mod.data.for_profile()
     _ = mod.data.merge_patch(
@@ -955,10 +969,13 @@ def test_an_edge_only_field_below_the_models_map_is_refused_on_a_profile():
     assert exc.value.fields == ["models.edge510.routed_interfaces[GE3].description"]
 
 
-def test_a_list_inside_a_lag_interface_is_written_whole():
-    """Known limit: a list inside an interface that is not a plain port is typed as
-    that of a plain port, so one edit in it is written as the whole list and the
-    keys of its other items that the models do not know are dropped."""
+def test_a_list_inside_a_lag_interface_is_written_whole() -> None:
+    """Known limit: a list in an interface that is not a plain port is written whole.
+
+    The list is typed as that of a plain port, so one edit in it is written as
+    the whole list and the keys of its other items that the models do not know
+    are dropped.
+    """
     raw = {
         **DS_RAW,
         "models": {
@@ -1031,21 +1048,21 @@ def bgp_ds() -> DeviceSettingsConfigurationModule:
     return ds({**DS_RAW, "segments": [segment]})
 
 
-def test_no_edit_does_not_stamp_a_generated_rule_id():
+def test_no_edit_does_not_stamp_a_generated_rule_id() -> None:
     plan = plan_module(qos(QOS_RULE), level=EDGE)
     assert (plan.operation, plan.changes) == ("none", ())
     assert plan.data["segments"][0]["rules"] == [QOS_RULE]
 
 
 @pytest.mark.parametrize("level", [EDGE, PROFILE])
-def test_no_edit_does_not_stamp_generated_bgp_ids(level: ConfigContext):
+def test_no_edit_does_not_stamp_generated_bgp_ids(level: ConfigContext) -> None:
     mod = bgp_ds()
     plan = plan_module(mod, level=level)
     assert (plan.operation, plan.changes) == ("none", ())
     assert plan.data == mod.raw_data
 
 
-def test_an_edit_in_a_rule_without_an_id_does_not_stamp_one():
+def test_an_edit_in_a_rule_without_an_id_does_not_stamp_one() -> None:
     other = {
         **QOS_RULE,
         "name": "r2",
@@ -1055,22 +1072,24 @@ def test_an_edit_in_a_rule_without_an_id_does_not_stamp_one():
     mod.data.segments[0].rules[0].match.source_ip = "10.1.1.1"
     plan = plan_module(mod, level=EDGE)
     r1, r2 = plan.data["segments"][0]["rules"]
-    assert "ruleLogicalId" not in r1 and r2 == other
+    assert "ruleLogicalId" not in r1
+    assert r2 == other
     assert [str(c.path) for c in plan.changes] == [
         'segments["Global Segment"].rules[r1].match.sip'
     ]
 
 
-def test_an_edit_elsewhere_does_not_stamp_bgp_ids():
+def test_an_edit_elsewhere_does_not_stamp_bgp_ids() -> None:
     mod = bgp_ds()
     mod.data.lan.management.cidr_prefix = 24
     plan = plan_module(mod, level=EDGE)
     bgp = plan.data["segments"][0]["bgp"]
-    assert "id" not in bgp["neighbors"][0] and "id" not in bgp["filters"][0]
+    assert "id" not in bgp["neighbors"][0]
+    assert "id" not in bgp["filters"][0]
     assert [str(c.path) for c in plan.changes] == ["lan.management"]
 
 
-def test_generated_alt_keys_pair_by_key_and_cause_no_write():
+def test_generated_alt_keys_pair_by_key_and_cause_no_write() -> None:
     # Each parse gives a rule without a ruleLogicalId a new one, so the baseline
     # and the model disagree on every ID: the rules pair by name instead.
     second: dict[str, Any] = {**QOS_RULE, "name": "r2"}
@@ -1089,7 +1108,7 @@ def test_generated_alt_keys_pair_by_key_and_cause_no_write():
     ]
 
 
-def test_repeated_names_without_ids_are_replaced_whole_not_paired_by_position():
+def test_repeated_names_without_ids_are_replaced_whole_not_paired_by_position() -> None:
     # The IDs each parse makes up are carried over by position, but an ID the
     # document lacks must not pair the rules: the list is replaced whole.
     first = {**QOS_RULE, "name": "dup", "futureA": 1}
@@ -1113,18 +1132,20 @@ def test_repeated_names_without_ids_are_replaced_whole_not_paired_by_position():
     )
     survivor, fresh = plan_module(replaced, level=EDGE).data["segments"][0]["rules"]
     assert fresh["name"] == "fresh"
-    assert "futureA" not in fresh and "futureB" not in fresh
+    assert "futureA" not in fresh
+    assert "futureB" not in fresh
     assert "futureA" not in survivor
 
 
-def test_a_new_item_keeps_the_id_it_is_given():
+def test_a_new_item_keeps_the_id_it_is_given() -> None:
     mod = qos(QOS_RULE)
     mod.data.segments[0].rules.append(
         type(mod.data.segments[0].rules[0]).model_validate({**QOS_RULE, "name": "r2"})
     )
     plan = plan_module(mod, level=EDGE)
     r1, r2 = plan.data["segments"][0]["rules"]
-    assert "ruleLogicalId" not in r1 and "ruleLogicalId" in r2
+    assert "ruleLogicalId" not in r1
+    assert "ruleLogicalId" in r2
 
 
 # --- a deviceSettings segment the edge lacks -------------------------------
@@ -1167,7 +1188,9 @@ DS_PLACEHOLDER: dict[str, Any] = {
 }
 
 
-def test_an_unrelated_edit_adds_a_device_settings_segment_with_empty_static_routes():
+def test_an_unrelated_edit_adds_a_device_settings_segment_with_empty_static_routes() -> (  # noqa: E501 (a test's name)
+    None
+):
     mod, profile = ds(DS_EDGE_RAW), ds(DS_PROFILE_RAW, module_id=2)
     assert plan_module(mod, level=EDGE, profile=profile).operation == "none"
     mod.data.lan.networks[0].cost += 1
@@ -1178,7 +1201,9 @@ def test_an_unrelated_edit_adds_a_device_settings_segment_with_empty_static_rout
     assert [str(c.path) for c in plan.changes] == ["lan.networks[1].cost"]
 
 
-def test_the_device_settings_placeholder_copies_nothing_of_the_profile_segment():
+def test_the_device_settings_placeholder_copies_nothing_of_the_profile_segment() -> (
+    None
+):
     mod, profile = ds(DS_EDGE_RAW), ds(DS_PROFILE_RAW, module_id=2)
     mod.data.lan.networks[0].cost += 1
     written = plan_module(mod, level=EDGE, profile=profile).data["segments"][1]
@@ -1187,7 +1212,9 @@ def test_the_device_settings_placeholder_copies_nothing_of_the_profile_segment()
     assert DS_PROFILE_RAW["segments"][1]["routes"]["static"]  # the profile is untouched
 
 
-def test_a_device_settings_segment_the_edge_drops_comes_back_with_empty_static_routes():
+def test_a_device_settings_segment_the_edge_drops_comes_back_with_empty_static_routes() -> (  # noqa: E501 (a test's name)
+    None
+):
     raw = copy.deepcopy(DS_EDGE_RAW)
     raw["segments"].append(
         {
@@ -1203,7 +1230,9 @@ def test_a_device_settings_segment_the_edge_drops_comes_back_with_empty_static_r
     assert plan.reconciled_segments == ("Guest",)
 
 
-def test_a_device_settings_segment_in_a_profile_without_routes_still_gets_static():
+def test_a_device_settings_segment_in_a_profile_without_routes_still_gets_static() -> (
+    None
+):
     profile_raw = {
         **DS_PROFILE_RAW,
         "segments": [
@@ -1217,7 +1246,7 @@ def test_a_device_settings_segment_in_a_profile_without_routes_still_gets_static
     assert written == DS_PLACEHOLDER
 
 
-def test_a_device_settings_placeholder_for_a_later_segment_plans_nothing():
+def test_a_device_settings_placeholder_for_a_later_segment_plans_nothing() -> None:
     profile_raw: dict[str, Any] = copy.deepcopy(DS_PROFILE_RAW)
     profile_raw["segments"].append(
         {"segment": desc(3, "Voice"), "routes": {"static": []}}
@@ -1288,7 +1317,7 @@ GLOBAL_OUTBOUND = 'segments["Global Segment"].outbound'
 )
 def test_an_outbound_rule_patch_writes_the_rule_and_no_override_flag(
     level: ConfigContext, rule_patch: dict[str, Any], path: str
-):
+) -> None:
     mod = fw(FW_OUTBOUND_RAW, layer=layer_for(level))
     _ = mod.data.for_context(level)
     _ = mod.data.merge_patch({"segments": {"Global Segment": {"outbound": rule_patch}}})
@@ -1302,7 +1331,7 @@ def test_an_outbound_rule_patch_writes_the_rule_and_no_override_flag(
     )
 
 
-def test_a_firewall_segment_dumps_no_override_key_even_when_new():
+def test_a_firewall_segment_dumps_no_override_key_even_when_new() -> None:
     raw = copy.deepcopy(FW_OUTBOUND_RAW)
     mod = fw(raw, layer=Edge)
     assert not _has_key(
@@ -1337,7 +1366,7 @@ STRAY_RAW: dict[str, Any] = {
 )
 def test_a_stray_override_key_with_no_edit_is_reported_and_not_written(
     level: ConfigContext,
-):
+) -> None:
     mod = fw(STRAY_RAW, layer=layer_for(level))
     plan = plan_module(mod, level=level)
     assert (plan.operation, plan.changes) == ("none", ())
@@ -1354,7 +1383,7 @@ def test_a_stray_override_key_with_no_edit_is_reported_and_not_written(
 )
 def test_a_stray_override_key_is_dropped_and_listed_when_a_rule_is_edited(
     level: ConfigContext,
-):
+) -> None:
     mod = fw(STRAY_RAW, layer=layer_for(level))
     _ = mod.data.for_context(level)
     _ = mod.data.merge_patch(
@@ -1378,7 +1407,7 @@ def test_a_stray_override_key_is_dropped_and_listed_when_a_rule_is_edited(
     assert plan.data["segments"][1] == STRAY_RAW["segments"][1]
 
 
-def test_a_stray_override_key_is_dropped_from_every_segment_entry():
+def test_a_stray_override_key_is_dropped_from_every_segment_entry() -> None:
     raw = copy.deepcopy(STRAY_RAW)
     raw["segments"][1]["outboundOverride"] = False
     mod = fw(raw, layer=Edge)
@@ -1388,7 +1417,7 @@ def test_a_stray_override_key_is_dropped_from_every_segment_entry():
     assert len(plan.legacy_keys) == 2
 
 
-def test_a_stray_override_key_is_dropped_from_an_insert_too():
+def test_a_stray_override_key_is_dropped_from_an_insert_too() -> None:
     mod = fw(STRAY_RAW, layer=Edge)
     mod._is_new = True  # pyright: ignore[reportPrivateUsage]
     mod.data.segments[0].outbound[0].name = "other"
@@ -1398,7 +1427,7 @@ def test_a_stray_override_key_is_dropped_from_an_insert_too():
     assert f"- {STRAY_PATH}" in plan.render()
 
 
-def test_only_a_firewall_module_has_legacy_keys():
+def test_only_a_firewall_module_has_legacy_keys() -> None:
     raw = copy.deepcopy(DS_EDGE_RAW)
     raw["segments"][0]["outboundOverride"] = True
     mod = ds(raw)
@@ -1424,7 +1453,10 @@ ADD_NEIGHBOR: dict[str, Any] = {
 
 
 def bgp_module(**flag: bool) -> DeviceSettingsConfigurationModule:
-    """Edge device settings whose one segment has an empty BGP section; *flag* is its ``override`` key, if any."""
+    """Edge device settings whose one segment has an empty BGP section.
+
+    *flag* is its ``override`` key, if any.
+    """
     bgp = {**flag, "enabled": False, "ASN": "", "neighbors": [], "filters": []}
     segment = {"segment": desc(0, "Global Segment"), "bgp": bgp}
     mod = ds({**DS_RAW, "segments": [segment]})
@@ -1432,7 +1464,9 @@ def bgp_module(**flag: bool) -> DeviceSettingsConfigurationModule:
     return mod
 
 
-def test_a_patch_inside_an_inherited_section_turns_its_override_on_and_the_plan_says_so():
+def test_a_patch_inside_an_inherited_section_turns_its_override_on_and_the_plan_says_so() -> (  # noqa: E501 (a test's name)
+    None
+):
     mod = bgp_module(override=False)
     _ = mod.data.merge_patch(ADD_NEIGHBOR)
     plan = plan_module(mod, level=EDGE)
@@ -1453,7 +1487,7 @@ def test_a_patch_inside_an_inherited_section_turns_its_override_on_and_the_plan_
     assert [n["neighborIp"] for n in sent["neighbors"]] == ["10.0.0.2"]
 
 
-def test_a_flag_that_was_on_is_not_listed():
+def test_a_flag_that_was_on_is_not_listed() -> None:
     mod = bgp_module(override=True)
     _ = mod.data.merge_patch(ADD_NEIGHBOR)
     plan = plan_module(mod, level=EDGE)
@@ -1462,7 +1496,7 @@ def test_a_flag_that_was_on_is_not_listed():
     assert "override turned on" not in plan.render()
 
 
-def test_a_flag_the_patch_sets_alone_is_listed_too():
+def test_a_flag_the_patch_sets_alone_is_listed_too() -> None:
     mod = bgp_module(override=False)
     _ = mod.data.merge_patch(
         {"segments": {"Global Segment": {"bgp": {"override": True}}}}
@@ -1472,7 +1506,7 @@ def test_a_flag_the_patch_sets_alone_is_listed_too():
     assert [str(p) for p in plan.overrides_turned_on] == [BGP]
 
 
-def test_the_flag_of_a_list_item_is_listed_at_the_item():
+def test_the_flag_of_a_list_item_is_listed_at_the_item() -> None:
     mod = ds(DS_EDGE_RAW)
     _ = mod.data.for_edge()
     _ = mod.data.merge_patch({"lan": {"networks": {"1": {"cost": 11}}}})
@@ -1488,7 +1522,7 @@ def test_the_flag_of_a_list_item_is_listed_at_the_item():
     )
 
 
-def test_a_plan_that_turns_no_flag_on_lists_none():
+def test_a_plan_that_turns_no_flag_on_lists_none() -> None:
     mod = ds(DS_EDGE_RAW)
     assert plan_module(mod, level=EDGE).overrides_turned_on == ()
     mod.data.lan.networks[0].cost += 1  # an assignment sets no flag
@@ -1496,7 +1530,7 @@ def test_a_plan_that_turns_no_flag_on_lists_none():
     assert (plan.operation, plan.overrides_turned_on) == ("update", ())
 
 
-def test_a_profile_has_no_override_flag_to_turn_on():
+def test_a_profile_has_no_override_flag_to_turn_on() -> None:
     mod = ds({**DS_RAW, "ntp": {"enabled": False, "servers": []}})
     _ = mod.data.for_profile()
     _ = mod.data.merge_patch({"ntp": {"enabled": True}})
@@ -1505,7 +1539,7 @@ def test_a_profile_has_no_override_flag_to_turn_on():
     assert plan.overrides_turned_on == ()
 
 
-def test_a_section_read_without_its_flag_still_refuses_the_patch():
+def test_a_section_read_without_its_flag_still_refuses_the_patch() -> None:
     mod = bgp_module()
     _ = mod.data.merge_patch(ADD_NEIGHBOR)
     with pytest.raises(LossyFieldError) as exc:
@@ -1514,7 +1548,7 @@ def test_a_section_read_without_its_flag_still_refuses_the_patch():
     assert [str(p) for p in exc.value.override_flags] == [f"{BGP}.override"]
 
 
-def test_data_given_as_a_dict_is_planned_as_plain_json():
+def test_data_given_as_a_dict_is_planned_as_plain_json() -> None:
     qos = QosConfigurationModule[Edge].model_validate(
         make_module_json("QOS", {"segments": []})
     )
@@ -1531,7 +1565,7 @@ def test_data_given_as_a_dict_is_planned_as_plain_json():
     assert isinstance(data["stamp"], uuid.UUID)
 
 
-def test_a_value_given_in_its_text_form_or_as_an_object_plans_the_same():
+def test_a_value_given_in_its_text_form_or_as_an_object_plans_the_same() -> None:
     raw = {"segments": [], "stamp": "00000000-0000-0000-0000-000000000007"}
     qos = QosConfigurationModule[Edge].model_validate(make_module_json("QOS", raw))
     plan = plan_module(qos, {"segments": [], "stamp": uuid.UUID(int=7)})
@@ -1554,10 +1588,12 @@ def an_edit_of_the_data(data: DeviceSettingsData) -> None:
 
 
 def raw_refs_of(module: ConfigurationModuleBase) -> dict[str, Any]:
-    return cast(dict[str, Any], module.raw_refs)
+    return cast("dict[str, Any]", module.raw_refs)
 
 
-async def test_a_provider_set_plans_an_update_of_the_data_as_read_with_its_row():
+async def test_a_provider_set_plans_an_update_of_the_data_as_read_with_its_row() -> (
+    None
+):
     module = unset_provider_module()
     current = copy_of_data(module)
     set_primary_provider(current, uuid.UUID(DNS_A))
@@ -1578,20 +1614,21 @@ async def test_a_provider_set_plans_an_update_of_the_data_as_read_with_its_row()
     assert plan.warnings == ()
 
 
-def test_a_provider_cleared_plans_an_update_that_removes_its_row():
+def test_a_provider_cleared_plans_an_update_that_removes_its_row() -> None:
     module = primary_provider_module()
     current = copy_of_data(module)
     set_primary_provider(current, None)
     plan = plan_module(module, current)
     assert (plan.operation, plan.data) == ("update", module.raw_data)
     (change,) = plan.ref_changes
-    assert not change.added and change.row == primary_provider_row()
+    assert not change.added
+    assert change.row == primary_provider_row()
     assert plan.refs == {SEGMENT: segment_row(0, SEG0_OBJECT, SEG0)}
     lines = plan.render().splitlines()
     assert f"  - refs {PRIMARY} (Global Segment): {DNS_A}" in lines
 
 
-def test_a_data_edit_of_device_settings_with_segments_sends_its_refs_as_read():
+def test_a_data_edit_of_device_settings_with_segments_sends_its_refs_as_read() -> None:
     module = primary_provider_module(
         {
             "deviceSettings:vnfs:edge": [
@@ -1618,7 +1655,7 @@ def test_a_data_edit_of_device_settings_with_segments_sends_its_refs_as_read():
     assert "refs: replaced" not in plan.render()
 
 
-def test_a_data_edit_of_qos_with_segments_sends_its_refs_as_read():
+def test_a_data_edit_of_qos_with_segments_sends_its_refs_as_read() -> None:
     refs: dict[str, Any] = {"x": [1], "y": 2}
     qos = QosConfigurationModule[Edge].model_validate(
         make_module_json(
@@ -1631,19 +1668,19 @@ def test_a_data_edit_of_qos_with_segments_sends_its_refs_as_read():
     assert "  refs: sent as read" in plan.render().splitlines()
 
 
-def test_a_plan_of_plain_data_with_segments_sends_the_refs_as_read():
+def test_a_plan_of_plain_data_with_segments_sends_the_refs_as_read() -> None:
     module = primary_provider_module()
-    edited: dict[str, Any] = copy.deepcopy(cast(dict[str, Any], module.raw_data))
+    edited: dict[str, Any] = copy.deepcopy(cast("dict[str, Any]", module.raw_data))
     edited["syslog_forwarding"] = True
     plan = plan_module(module, edited)
     assert (plan.operation, plan.ref_changes) == ("update", ())
     assert plan.refs == module.raw_refs
-    same = copy.deepcopy(cast(dict[str, Any], module.raw_data))
+    same = copy.deepcopy(cast("dict[str, Any]", module.raw_data))
     unchanged = plan_module(module, same)
     assert (unchanged.operation, unchanged.refs) == ("none", None)
 
 
-def test_a_plan_with_nothing_to_write_has_no_refs():
+def test_a_plan_with_nothing_to_write_has_no_refs() -> None:
     module = primary_provider_module()
     plan = plan_module(module)
     assert (plan.operation, plan.refs, plan.ref_changes) == ("none", None, ())
@@ -1653,7 +1690,7 @@ def test_a_plan_with_nothing_to_write_has_no_refs():
     assert (unread.operation, unread.refs) == ("none", None)
 
 
-def test_a_data_edit_of_a_module_without_segments_sends_no_refs():
+def test_a_data_edit_of_a_module_without_segments_sends_no_refs() -> None:
     module = ds_module([], {SEGMENT: segment_row(0, SEG0_OBJECT, SEG0)})
     current = copy_of_data(module)
     an_edit_of_the_data(current)
@@ -1661,7 +1698,7 @@ def test_a_data_edit_of_a_module_without_segments_sends_no_refs():
     assert (plan.operation, plan.refs) == ("update", None)
 
 
-def test_a_module_that_never_carried_data_sends_no_refs():
+def test_a_module_that_never_carried_data_sends_no_refs() -> None:
     mod = FirewallConfigurationModule[Edge].model_construct(
         name="firewall", data=FirewallData[Edge](segments=[], firewall_enabled=False)
     )
@@ -1669,7 +1706,7 @@ def test_a_module_that_never_carried_data_sends_no_refs():
     assert (plan.operation, plan.refs, plan.ref_changes) == ("update", None, ())
 
 
-async def test_a_module_whose_refs_were_not_read_refuses_an_owner_edit():
+async def test_a_module_whose_refs_were_not_read_refuses_an_owner_edit() -> None:
     module = unset_provider_module(refs_loaded=False)
     current = copy_of_data(module)
     set_primary_provider(current, uuid.UUID(DNS_A))
@@ -1678,14 +1715,16 @@ async def test_a_module_whose_refs_were_not_read_refuses_an_owner_edit():
     assert caught.value.module_name == "deviceSettings"
     assert caught.value.paths == (PRIMARY_PATH,)
     message = str(caught.value)
-    assert PRIMARY_PATH in message and NOT_READ in message
-    assert "configuration/getConfiguration" in message and "modules" in message
+    assert PRIMARY_PATH in message
+    assert NOT_READ in message
+    assert "configuration/getConfiguration" in message
+    assert "modules" in message
     assert "edge/getEdgeConfigurationStack" in message
     assert '{"edgeId": <edge ID>}' in message
     assert '"enterpriseId": <enterprise ID>' in message
 
 
-def test_a_module_whose_refs_were_not_read_refuses_a_write_with_segments():
+def test_a_module_whose_refs_were_not_read_refuses_a_write_with_segments() -> None:
     module = primary_provider_module(refs_loaded=False)
     current = copy_of_data(module)
     an_edit_of_the_data(current)
@@ -1696,7 +1735,7 @@ def test_a_module_whose_refs_were_not_read_refuses_a_write_with_segments():
     assert "replace" in str(caught.value)
 
 
-def test_a_module_whose_refs_were_not_read_plans_any_other_write_without_refs():
+def test_a_module_whose_refs_were_not_read_plans_any_other_write_without_refs() -> None:
     module = ds_module([], MISSING, refs_loaded=False)
     current = copy_of_data(module)
     an_edit_of_the_data(current)
@@ -1712,7 +1751,7 @@ def test_a_module_whose_refs_were_not_read_plans_any_other_write_without_refs():
     assert (plan.operation, plan.refs) == ("update", None)
 
 
-def test_render_lists_ref_rows_and_warnings():
+def test_render_lists_ref_rows_and_warnings() -> None:
     module = ds_module(
         [segment_entry(0, "Global Segment", SEG0, dns=dns(primary=True), css={})],
         {
@@ -1737,7 +1776,7 @@ def test_render_lists_ref_rows_and_warnings():
     assert f"  warning: {warning.message}" in plan_module(module).render()
 
 
-async def test_render_lists_an_added_row_with_its_value():
+async def test_render_lists_an_added_row_with_its_value() -> None:
     module = unset_provider_module()
     current = copy_of_data(module)
     set_primary_provider(current, uuid.UUID(DNS_A))
@@ -1748,7 +1787,7 @@ async def test_render_lists_an_added_row_with_its_value():
     ]
 
 
-def test_an_owner_edit_without_resolvers_is_not_loaded():
+def test_an_owner_edit_without_resolvers_is_not_loaded() -> None:
     module = unset_provider_module()
     current = copy_of_data(module)
     set_primary_provider(current, uuid.UUID(DNS_A))
@@ -1756,7 +1795,7 @@ def test_an_owner_edit_without_resolvers_is_not_loaded():
         plan_module(module, current)
 
 
-def test_plan_module_has_no_refs_parameter():
+def test_plan_module_has_no_refs_parameter() -> None:
     parameters = inspect.signature(plan_module).parameters
     assert "refs" not in parameters
     assert "resolvers" in parameters
@@ -1784,7 +1823,9 @@ async def plan_with_refs(refs: dict[str, Any] | None) -> ModulePlan:
     return dataclasses.replace(plan_module(module, current), refs=refs)
 
 
-async def test_with_hub_rows_puts_an_added_row_in_the_refs_and_lists_it_as_a_change():
+async def test_with_hub_rows_puts_an_added_row_in_the_refs_and_lists_it_as_a_change() -> (  # noqa: E501 (a test's name)
+    None
+):
     existing = hub_ref_row(601)
     plan = await plan_with_refs({HUB_ROW_REF: existing})
     new = hub_ref_row(602)
@@ -1808,7 +1849,9 @@ async def test_with_hub_rows_puts_an_added_row_in_the_refs_and_lists_it_as_a_cha
     assert f"  + refs {HUB_ROW_REF} (Global Segment): 602" in result.render()
 
 
-async def test_with_hub_rows_takes_a_removed_row_out_and_drops_a_name_left_empty():
+async def test_with_hub_rows_takes_a_removed_row_out_and_drops_a_name_left_empty() -> (
+    None
+):
     gone = hub_ref_row(601)
     kept = hub_ref_row(602)
     plan = await plan_with_refs({HUB_ROW_REF: [gone, kept]})
@@ -1820,7 +1863,7 @@ async def test_with_hub_rows_takes_a_removed_row_out_and_drops_a_name_left_empty
     assert "  - refs " + HUB_ROW_REF + ": 601" in both.render()
 
 
-async def test_with_hub_rows_matches_a_removed_row_by_object_and_segment():
+async def test_with_hub_rows_matches_a_removed_row_by_object_and_segment() -> None:
     same_object_other_segment = hub_ref_row(601, SEG0_OBJECT + 1)
     gone = hub_ref_row(601)
     plan = await plan_with_refs({HUB_ROW_REF: [same_object_other_segment, gone]})
@@ -1828,7 +1871,9 @@ async def test_with_hub_rows_matches_a_removed_row_by_object_and_segment():
     assert result.refs == {HUB_ROW_REF: [same_object_other_segment]}
 
 
-async def test_with_hub_rows_refuses_a_row_to_remove_that_the_refs_lack_and_a_plan_with_no_refs():
+async def test_with_hub_rows_refuses_a_row_to_remove_that_the_refs_lack_and_a_plan_with_no_refs() -> (  # noqa: E501 (a test's name)
+    None
+):
     plan = await plan_with_refs({HUB_ROW_REF: hub_ref_row(601)})
     with pytest.raises(ValueError, match="there is none to remove"):
         _ = with_hub_rows(plan, added=[], removed=[hub_ref_row(699)])

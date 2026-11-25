@@ -19,7 +19,7 @@ class ProfileResolver(BaseResolver[ProfileIdentity]):
     Loads via ``enterprise/getEnterpriseConfigurations``.
     """
 
-    identity_type = ProfileIdentity
+    identity_type: type[ProfileIdentity] = ProfileIdentity
 
     @override
     def lookup_key(self, key: IdentityKey[ProfileIdentity]) -> ProfileIdentity:
@@ -43,8 +43,6 @@ class ProfileResolver(BaseResolver[ProfileIdentity]):
 
         for profile in profiles:
             name = profile.name
-            if name is None or name is MISSING:
-                continue
             profile_id = profile.id_
             if profile_id is None or profile_id is MISSING:
                 continue

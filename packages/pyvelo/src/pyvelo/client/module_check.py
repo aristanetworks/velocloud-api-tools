@@ -1,4 +1,6 @@
-"""The outcome of one module write: what the VCO stored, against what the plan meant to change.
+"""The outcome of one module write.
+
+What the VCO stored, against what the plan meant to change.
 
 ``check_module_write`` runs the response check (``pyvelo.core.response_check``)
 on the data and ``check_refs`` on the refs, and turns what they find into a
@@ -79,7 +81,8 @@ class ModuleWrite[M: ConfigurationModuleBase]:
     plan: ModulePlan
     applied: tuple[PlannedChange, ...] = ()
     left_out: tuple[PlannedChange, ...] = ()
-    """Planned changes the VCO stores otherwise than as sent (``ResponseCheck.left_out``)."""
+    """Planned changes the VCO stores otherwise than as sent
+    (``ResponseCheck.left_out``)."""
     server_changes: tuple[ServerChange, ...] = ()
 
     @override
@@ -113,10 +116,12 @@ is added here. A firewall rule's ``ruleLogicalId`` and a WAN link's
 """
 
 type RowId = tuple[str, object, object]
-"""A ref row's identity: its name, ``logicalId`` and ``segmentLogicalId``; a field a row lacks is None."""
+"""A ref row's identity: its name, ``logicalId`` and ``segmentLogicalId``; a field a row
+lacks is None."""
 
 _NOT_COMPARED = PROCESSOR_REF_NAMES | APPEND_ONLY_REF_NAMES
-"""Ref names whose rows are never applied or lost: their difference is a server change."""
+"""Ref names whose rows are never applied or lost: their difference is a server
+change."""
 
 
 def _entries(refs: object) -> list[tuple[str, dict[str, Any]]]:
@@ -130,9 +135,11 @@ def _entries(refs: object) -> list[tuple[str, dict[str, Any]]]:
     if not is_dict(refs):
         return entries
     for name, value in refs.items():
-        for entry in value if is_list(value) else [value]:
-            if is_dict(entry):
-                entries.append((str(name), cast(dict[str, Any], entry)))
+        entries.extend(
+            (str(name), cast("dict[str, Any]", entry))
+            for entry in (value if is_list(value) else [value])
+            if is_dict(entry)
+        )
     return entries
 
 
@@ -155,27 +162,37 @@ def _key(identity: object, segment: object) -> Key:
 
 
 def _row_path(identity: RowId) -> Path:
-    """``name[logicalId]``, or ``name[logicalId,segmentLogicalId]`` for a row with a segment."""
+    """``name[logicalId]``, or with the segment for a row with one.
+
+    That form is ``name[logicalId,segmentLogicalId]``.
+    """
     name, logical_id, segment_logical_id = identity
     return Path((name, _key(logical_id, segment_logical_id)))
 
 
 def _change_path(change: RefChange) -> Path:
-    """``name[value]``, or ``name[value,segmentObjectId]`` for a row of a segment, of a row the plan adds or removes."""
+    """``name[value]`` of a row the plan adds or removes.
+
+    For a row of a segment it is ``name[value,segmentObjectId]``.
+    """
     return Path((change.name, _key(change.value, change.segment_object_id)))
 
 
 def _stored_row(
     change: RefChange, entries: list[tuple[str, dict[str, Any]]]
 ) -> dict[str, Any] | None:
-    """The stored row an added row is: one under its name whose ``match`` field holds its ``value`` and, per segment, its ``segmentObjectId``."""
+    """The stored row an added row is.
+
+    The one under its name whose ``match`` field holds its ``value`` and, per
+    segment, its ``segmentObjectId``.
+    """
     return next(
         (
             row
             for name, row in entries
             if name == change.name
             and same_identity(
-                change.value, row_field(cast(dict[object, object], row), change.match)
+                change.value, row_field(cast("dict[object, object]", row), change.match)
             )
             and (
                 change.segment_object_id is None
@@ -186,12 +203,12 @@ def _stored_row(
     )
 
 
-def check_refs(
+def check_refs(  # noqa: C901, PLR0912 (existing: split it when it next changes)
     module: ConfigurationModuleBase,
     plan: ModulePlan,
     stored: ConfigurationModuleBase,
 ) -> ResponseCheck:
-    """Compare the refs the VCO stored with what the write of *plan* meant to change in them.
+    """Compare the refs the VCO stored with what *plan*'s write meant to change in them.
 
     The refs as read are those of *module*. Rows are compared by identity,
     ``(name, logicalId, segmentLogicalId)``, and never by content: the other
@@ -371,18 +388,18 @@ def check_module_write[M: ConfigurationModuleBase](
     After ``"refused"`` or ``"stale"``, or ``"row"`` with no change found
     stored, a left-out change whose stored value is the one read is a lost
     edit: the write did not reach it. A refused or stale write is returned only
-    when a change is found stored and none is lost or left out. A ``"row"`` or ``"counted"`` write
-    is returned when no change is lost. Otherwise this raises
-    ``ConfigConflictError`` after a refusal (``stated``) or for a stale write
-    (not ``stated``, and not ``sent``), for an insert
+    when a change is found stored and none is lost or left out. A ``"row"`` or
+    ``"counted"`` write is returned when no change is lost. Otherwise this
+    raises ``ConfigConflictError`` after a refusal (``stated``) or for a stale
+    write (not ``stated``, and not ``sent``), for an insert
     ``WriteNotAppliedError``, ``ConfigConflictError`` (not ``stated``) for a
     row with none of the changes stored and each value as read, and
     ``WriteNotAppliedError`` for anything else and for every ``"counted"``
     write. ``RefsDroppedError`` takes the place of ``WriteNotAppliedError``
-    when every lost edit is a ref row. After a ``"row"`` answer to an update
-    it needs a change applied (a data edit beside the ref change): with none,
-    the write is a conflict. An insert and a ``"counted"`` write are never
-    inferred to be conflicts, so they raise it with none applied too.
+    when every lost edit is a ref row. After a ``"row"`` answer to an update it
+    needs a change applied (a data edit beside the ref change): with none, the
+    write is a conflict. An insert and a ``"counted"`` write are never inferred
+    to be conflicts, so they raise it with none applied too.
     """
     if not isinstance(stored, type(module)):
         raise TypeError(
@@ -480,7 +497,9 @@ def _conflict(
     *,
     refs_only: bool,
 ) -> str | None:
-    """Why a write that is not stored whole is a conflict, the ``detail``; None when it is not one.
+    """Why a write that is not stored whole is a conflict, the ``detail``.
+
+    None when it is not one.
 
     *refs_only* is a write whose planned changes are all ref rows: no change
     is stored then, and the refs are as read, either because the VCO refused

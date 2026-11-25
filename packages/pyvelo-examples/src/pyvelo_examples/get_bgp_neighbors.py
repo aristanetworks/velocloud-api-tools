@@ -1,9 +1,12 @@
-"""Get all BGP neighbors configured across edges in an enterprise.
+r"""Get all BGP neighbors configured across edges in an enterprise.
 
 Usage:
-    uv run --package pyvelo-examples python -m pyvelo_examples.get_bgp_neighbors --enterprise-id 123
-    uv run --package pyvelo-examples python -m pyvelo_examples.get_bgp_neighbors --enterprise-id 123 --format csv
-    uv run --package pyvelo-examples python -m pyvelo_examples.get_bgp_neighbors --enterprise-id 123 --segment "Global Segment"
+    uv run --package pyvelo-examples python -m pyvelo_examples.get_bgp_neighbors \
+        --enterprise-id 123
+    uv run --package pyvelo-examples python -m pyvelo_examples.get_bgp_neighbors \
+        --enterprise-id 123 --format csv
+    uv run --package pyvelo-examples python -m pyvelo_examples.get_bgp_neighbors \
+        --enterprise-id 123 --segment "Global Segment"
 """
 
 import argparse
@@ -30,6 +33,8 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class BgpNeighborRow:
+    """One BGP neighbor of an edge segment, as the outputs print it."""
+
     edge_name: str
     edge_id: int
     segment_name: str
@@ -43,6 +48,8 @@ class BgpNeighborRow:
 
 @dataclass
 class BgpNeighborArgs(argparse.Namespace):
+    """The command line options, with their defaults."""
+
     enterprise_id: int = field(init=False)
     env: str | None = None
     segment: str | None = None
@@ -52,6 +59,7 @@ class BgpNeighborArgs(argparse.Namespace):
 
 
 def parse_args(argv: Sequence[str] | None = None) -> BgpNeighborArgs:
+    """Read the command line options."""
     parser = argparse.ArgumentParser(
         description="Get all BGP neighbors configured across edges in an enterprise."
     )
@@ -88,7 +96,7 @@ def _integer_or_default(value: object, default: int = 0) -> int:
     return value if isinstance(value, int) and not isinstance(value, bool) else default
 
 
-def _boolean_or_default(value: object, default: bool = False) -> bool:
+def _boolean_or_default(value: object, *, default: bool = False) -> bool:
     return value if isinstance(value, bool) else default
 
 
@@ -122,20 +130,20 @@ async def collect_bgp_neighbors(
             if neighbors is MISSING:
                 continue
 
-            for n in neighbors:
-                rows.append(
-                    BgpNeighborRow(
-                        edge_name=edge_name,
-                        edge_id=edge_id,
-                        segment_name=_string_or_default(cast(object, seg.segment.name)),
-                        neighbor_ip=_string_or_default(cast(object, n.neighbor_ip)),
-                        neighbor_as=_integer_or_default(cast(object, n.neighbor_as)),
-                        local_ip=_string_or_default(cast(object, n.local_ip)),
-                        bfd=_boolean_or_default(cast(object, n.enable_bfd)),
-                        uplink=_boolean_or_default(cast(object, n.uplink)),
-                        max_hop=_integer_or_default(cast(object, n.max_hop), 1),
-                    )
+            rows.extend(
+                BgpNeighborRow(
+                    edge_name=edge_name,
+                    edge_id=edge_id,
+                    segment_name=_string_or_default(cast("object", seg.segment.name)),
+                    neighbor_ip=_string_or_default(cast("object", n.neighbor_ip)),
+                    neighbor_as=_integer_or_default(cast("object", n.neighbor_as)),
+                    local_ip=_string_or_default(cast("object", n.local_ip)),
+                    bfd=_boolean_or_default(cast("object", n.enable_bfd)),
+                    uplink=_boolean_or_default(cast("object", n.uplink)),
+                    max_hop=_integer_or_default(cast("object", n.max_hop), 1),
                 )
+                for n in neighbors
+            )
     except Exception as e:  # noqa: BLE001 - continue collecting neighbors from other edges
         logger.warning(
             "Failed to get BGP config for edge %s (%s)", edge_name, type(e).__name__
@@ -177,7 +185,8 @@ def output_table(rows: list[BgpNeighborRow], enterprise_id: int, vco_host: str) 
     edge_count = len({r.edge_id for r in rows})
     segment_count = len({r.segment_name for r in rows})
     console.print(
-        f"\nTotal: {len(rows)} BGP neighbors across {edge_count} edges ({segment_count} segments)"
+        f"\nTotal: {len(rows)} BGP neighbors across {edge_count} edges "
+        f"({segment_count} segments)"
     )
 
 
@@ -243,6 +252,10 @@ def output_json(rows: list[BgpNeighborRow]) -> None:
 
 
 async def main() -> None:
+    """Print the BGP neighbors of every edge in the enterprise, in the chosen format.
+
+    The edges are read at most ``--concurrency`` at a time.
+    """
     args = parse_args()
     logging.basicConfig(
         level=logging.DEBUG if args.verbose else logging.INFO,
@@ -253,10 +266,10 @@ async def main() -> None:
     vco_host, vco_token = get_vco_credentials(args.env)
 
     async with VcoClient(vco_host, vco_token) as client:
-        logger.info(f"Fetching edges for enterprise {args.enterprise_id}...")
+        logger.info("Fetching edges for enterprise %s...", args.enterprise_id)
         request = GetEnterpriseEdges(enterprise_id=args.enterprise_id)
         edges = await client.get_enterprise_edges(request)
-        logger.info(f"Found {len(edges)} edges")
+        logger.info("Found %d edges", len(edges))
 
         semaphore = asyncio.Semaphore(args.concurrency)
         all_rows: list[BgpNeighborRow] = []

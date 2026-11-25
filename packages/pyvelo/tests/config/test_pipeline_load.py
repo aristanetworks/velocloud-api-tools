@@ -2,7 +2,7 @@
 
 import copy
 import uuid
-from typing import Any
+from typing import Any, ClassVar
 
 import pytest
 from pydantic import BaseModel, ConfigDict
@@ -43,7 +43,7 @@ def _make_stack() -> GetEdgeConfigurationStackResult:
 
 
 @pytest.mark.asyncio
-async def test_load_by_edge_id():
+async def test_load_by_edge_id() -> None:
     """Load by numeric edge ID should fetch config stack."""
     client = MockVcoClient(stack=_make_stack())
     pipeline = ConfigPipeline(client)
@@ -68,7 +68,7 @@ async def test_load_by_edge_id():
 
 
 @pytest.mark.asyncio
-async def test_load_takes_snapshot():
+async def test_load_takes_snapshot() -> None:
     """Loading should take a snapshot for later diff detection."""
     client = MockVcoClient(stack=_make_stack())
     pipeline = ConfigPipeline(client)
@@ -85,7 +85,7 @@ async def test_load_takes_snapshot():
 
 
 @pytest.mark.asyncio
-async def test_load_by_edge_name():
+async def test_load_by_edge_name() -> None:
     """Load by edge name should resolve name via EdgeResolver first."""
     client = MockVcoClient(
         stack=_make_stack(),
@@ -114,7 +114,7 @@ async def test_load_by_edge_name():
 
 
 @pytest.mark.asyncio
-async def test_load_by_name_is_strict():
+async def test_load_by_name_is_strict() -> None:
     client = MockVcoClient(
         stack=_make_stack(),
         edges=[
@@ -134,7 +134,7 @@ async def test_load_by_name_is_strict():
 
 
 @pytest.mark.asyncio
-async def test_load_profile_by_id():
+async def test_load_profile_by_id() -> None:
     """load_profile by numeric ID should fetch profile config."""
     client = MockVcoClient(stack=_make_stack())
     pipeline = ConfigPipeline(client)
@@ -151,11 +151,13 @@ async def test_load_profile_by_id():
 
 
 @pytest.mark.asyncio
-async def test_load_profile_refuses_an_edge_specific_configuration():
+async def test_load_profile_refuses_an_edge_specific_configuration() -> None:
     client = MockVcoClient(stack=_make_stack())  # its store holds 10 and 20
     pipeline = ConfigPipeline(client)
 
-    with pytest.raises(ValueError) as exc:
+    with pytest.raises(
+        ValueError, match="is the edge-specific configuration of an edge"
+    ) as exc:
         _ = await pipeline.load_profile(10)
 
     assert str(exc.value) == (
@@ -189,7 +191,10 @@ _FIREWALL: dict[str, Any] = {
 
 
 def _raw_stack() -> GetEdgeConfigurationStackResult:
-    """A stack whose modules were read from JSON: edge 10 (module 11), profile 20 (module 21)."""
+    """A stack whose modules were read from JSON.
+
+    Edge 10 (module 11), profile 20 (module 21).
+    """
 
     def row(module_id: int, config_id: int) -> dict[str, Any]:
         return make_module_json(
@@ -209,7 +214,7 @@ def _raw_stack() -> GetEdgeConfigurationStackResult:
 
 
 @pytest.mark.asyncio
-async def test_two_loads_are_two_reads_and_a_second_load_sees_the_save():
+async def test_two_loads_are_two_reads_and_a_second_load_sees_the_save() -> None:
     client = MockVcoClient(stack=_raw_stack())
     client.store.issue_rule_ids = True
     pipeline = ConfigPipeline(client)
@@ -245,7 +250,7 @@ async def test_two_loads_are_two_reads_and_a_second_load_sees_the_save():
 
 
 @pytest.mark.asyncio
-async def test_a_client_seeded_from_a_state_serves_that_edges_stack():
+async def test_a_client_seeded_from_a_state_serves_that_edges_stack() -> None:
     first = await ConfigPipeline(MockVcoClient(stack=_raw_stack())).load(42)
     client = MockVcoClient.for_state(first)
     loaded = await ConfigPipeline(client).load(42)
@@ -255,22 +260,22 @@ async def test_a_client_seeded_from_a_state_serves_that_edges_stack():
 
 
 @pytest.mark.asyncio
-async def test_load_by_name_without_a_resolver_says_what_to_register():
+async def test_load_by_name_without_a_resolver_says_what_to_register() -> None:
     client = MockVcoClient(stack=_make_stack())
     with pytest.raises(LookupError) as exc:
         _ = await ConfigPipeline(client).load("branch-nyc", enterprise_id=1)
     assert str(exc.value) == (
         "load('branch-nyc') was given a name, and this pipeline has no edge resolver "
-        "to turn it into an ID. Build the pipeline with build_default_pipeline(client), "
-        "or register EdgeResolver(client) on pipeline.resolvers, or pass the edge's "
+        "to turn it into an ID. Build the pipeline with build_default_pipeline(client),"
+        " or register EdgeResolver(client) on pipeline.resolvers, or pass the edge's "
         "numeric ID."
     )
     with pytest.raises(LookupError) as exc:
         _ = await ConfigPipeline(client).load_profile("P", enterprise_id=1)
     assert str(exc.value) == (
         "load_profile('P') was given a name, and this pipeline has no profile resolver "
-        "to turn it into an ID. Build the pipeline with build_default_pipeline(client), "
-        "or register ProfileResolver(client) on pipeline.resolvers, or pass the "
+        "to turn it into an ID. Build the pipeline with build_default_pipeline(client),"
+        " or register ProfileResolver(client) on pipeline.resolvers, or pass the "
         "profile's numeric ID."
     )
     assert client.calls == []
@@ -279,15 +284,18 @@ async def test_load_by_name_without_a_resolver_says_what_to_register():
 class ServiceRow(BaseModel):
     """A row of ``enterprise/getEnterpriseServices`` as the store answers it."""
 
-    model_config = ConfigDict(extra="allow")
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="allow")
     id: int
-    logicalId: str
+    logicalId: str  # noqa: N815 (the key of the VCO row, which this model reads unaliased)
     name: str
     type: str
 
 
 async def listed_services(client: MockVcoClient) -> list[tuple[int, str, str]]:
-    """The ID, logical ID and name of each service the store lists, asked through the client."""
+    """The ID, logical ID and name of each service the store lists.
+
+    They are asked through the client.
+    """
     rows = await client.portal_list(
         "enterprise/getEnterpriseServices", GetEnterpriseServices(), ServiceRow
     )
@@ -295,7 +303,7 @@ async def listed_services(client: MockVcoClient) -> list[tuple[int, str, str]]:
 
 
 @pytest.mark.asyncio
-async def test_the_mock_client_holds_the_services_it_adds_as_objects():
+async def test_the_mock_client_holds_the_services_it_adds_as_objects() -> None:
     client = MockVcoClient()
     logical_id = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
     client.add_service(701, logical_id=logical_id, name="dns-a", type_="dnsService")
@@ -311,7 +319,7 @@ async def test_the_mock_client_holds_the_services_it_adds_as_objects():
 
 
 @pytest.mark.asyncio
-async def test_the_mock_client_holds_the_segment_it_answers_as_an_object():
+async def test_the_mock_client_holds_the_segment_it_answers_as_an_object() -> None:
     client = MockVcoClient()
     (segment,) = await client.get_enterprise_network_segments(
         GetEnterpriseNetworkSegments()

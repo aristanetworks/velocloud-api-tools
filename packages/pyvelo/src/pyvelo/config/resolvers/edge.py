@@ -29,7 +29,7 @@ class EdgeResolver(BaseResolver[EdgeIdentity]):
     ``load()`` is called, scoped to the enterprise from ResolverContext.
     """
 
-    identity_type = EdgeIdentity
+    identity_type: type[EdgeIdentity] = EdgeIdentity
 
     @override
     def lookup_key(self, key: IdentityKey[EdgeIdentity]) -> EdgeIdentity:

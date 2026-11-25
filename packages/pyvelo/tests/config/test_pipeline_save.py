@@ -39,7 +39,7 @@ def _make_state() -> ConfigState:
 
 
 @pytest.mark.asyncio
-async def test_save_no_changes():
+async def test_save_no_changes() -> None:
     """Save with no changes should return empty SaveResult."""
     state = _make_state()
     client = MockVcoClient.for_state(state)
@@ -54,7 +54,7 @@ async def test_save_no_changes():
 
 
 @pytest.mark.asyncio
-async def test_save_updates_changed_module():
+async def test_save_updates_changed_module() -> None:
     """Save should call update_configuration_module for changed modules."""
     state = _make_state()
     client = MockVcoClient.for_state(state)
@@ -75,7 +75,7 @@ async def test_save_updates_changed_module():
 
 
 @pytest.mark.asyncio
-async def test_save_dry_run():
+async def test_save_dry_run() -> None:
     """dry_run=True should report changes without making API calls."""
     client = MockVcoClient()
     pipeline = ConfigPipeline(client)
@@ -92,11 +92,11 @@ async def test_save_dry_run():
 
 
 @pytest.mark.asyncio
-async def test_keyword_built_module_saves_only_the_change():
+async def test_keyword_built_module_saves_only_the_change() -> None:
     state = _make_state()
     client = MockVcoClient.for_state(state)
     assert state.edge_config is not None
-    before = cast(dict[str, object], state.edge_config.firewall.raw_data)
+    before = cast("dict[str, object]", state.edge_config.firewall.raw_data)
     state.edge_config.firewall.data.firewall_enabled.set_local(False)
     await ConfigPipeline(client).save(state)
     assert client.update_requests[0].update.data == {
@@ -106,7 +106,7 @@ async def test_keyword_built_module_saves_only_the_change():
 
 
 @pytest.mark.asyncio
-async def test_mock_client_seeds_from_a_state_and_records_requests():
+async def test_mock_client_seeds_from_a_state_and_records_requests() -> None:
     state = _make_state()
     client = MockVcoClient.for_state(state)
     assert set(client.store.rows) == {1, 2}
@@ -123,7 +123,7 @@ async def test_mock_client_seeds_from_a_state_and_records_requests():
 
 
 @pytest.mark.asyncio
-async def test_mock_client_under_async_with_still_talks_to_its_store():
+async def test_mock_client_under_async_with_still_talks_to_its_store() -> None:
     state = _make_state()
     client = MockVcoClient.for_state(state)
     async with client:

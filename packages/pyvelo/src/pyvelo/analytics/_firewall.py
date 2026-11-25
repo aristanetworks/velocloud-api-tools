@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from pydantic import MISSING
 
@@ -10,12 +10,21 @@ from pyvelo.analytics.enums import EnterpriseFirewallType, FirewallType
 from pyvelo.analytics.frame import MetricFrame
 from pyvelo.client.enums.metrics import (
     EnterpriseFirewallEdgeSummaryMetric,
+    EnterpriseFirewallEdgeSummarySortMetric,
     EnterpriseFirewallIdpsMetric,
+    EnterpriseFirewallIdpsViewBy,
+    EnterpriseFirewallMaliciousIpViewBy,
+    EnterpriseFirewallUrlCategoryViewBy,
+    EnterpriseFirewallUrlReputationViewBy,
     FirewallIdpsMetric,
     FirewallIdpsSeriesViewBy,
+    FirewallIdpsViewBy,
     FirewallMaliciousIpMetric,
+    FirewallMaliciousIpViewBy,
     FirewallUrlCategoryMetric,
+    FirewallUrlCategoryViewBy,
     FirewallUrlReputationMetric,
+    FirewallUrlReputationViewBy,
 )
 from pyvelo.client.schemas.metrics import (
     GetEdgeFirewallIdpsMetrics,
@@ -30,17 +39,17 @@ from pyvelo.client.schemas.metrics import (
     GetEnterpriseFirewallUrlCategoryMetrics,
     GetEnterpriseFirewallUrlReputationMetrics,
 )
-from pyvelo.core import ApiInterval
 
-if __builtins__:  # type: ignore[truthy-bool]
+if TYPE_CHECKING:
     from pyvelo.client.protocol import VcoClientProtocol
+    from pyvelo.core import ApiInterval
 
 
-async def get_edge_firewall_metrics(
+async def get_edge_firewall_metrics(  # noqa: PLR0913 (existing: split it when it next changes)
     client: VcoClientProtocol,
     edge_id: int,
     interval: ApiInterval,
-    type: FirewallType,
+    type_: FirewallType,
     view_by: str,
     *,
     enterprise_id: int | None = None,
@@ -50,10 +59,8 @@ async def get_edge_firewall_metrics(
     limit_val = limit if limit is not None else MISSING
     eid = enterprise_id if enterprise_id is not None else MISSING
 
-    match type:
+    match type_:
         case FirewallType.IDPS:
-            from pyvelo.client.enums.metrics import FirewallIdpsViewBy
-
             request = GetEdgeFirewallIdpsMetrics(
                 edge_id=edge_id,
                 interval=interval,
@@ -67,8 +74,6 @@ async def get_edge_firewall_metrics(
             return items_to_frame(result, _IDPS_FIELDS)
 
         case FirewallType.MALICIOUS_IP:
-            from pyvelo.client.enums.metrics import FirewallMaliciousIpViewBy
-
             request = GetEdgeFirewallMaliciousIpMetrics(
                 edge_id=edge_id,
                 interval=interval,
@@ -82,8 +87,6 @@ async def get_edge_firewall_metrics(
             return items_to_frame(result, _MAL_IP_FIELDS)
 
         case FirewallType.URL_CATEGORY:
-            from pyvelo.client.enums.metrics import FirewallUrlCategoryViewBy
-
             request = GetEdgeFirewallUrlCategoryMetrics(
                 edge_id=edge_id,
                 interval=interval,
@@ -97,8 +100,6 @@ async def get_edge_firewall_metrics(
             return items_to_frame(result, _URL_CAT_FIELDS)
 
         case FirewallType.URL_REPUTATION:
-            from pyvelo.client.enums.metrics import FirewallUrlReputationViewBy
-
             request = GetEdgeFirewallUrlReputationMetrics(
                 edge_id=edge_id,
                 interval=interval,
@@ -111,7 +112,7 @@ async def get_edge_firewall_metrics(
             result = await client.get_edge_firewall_url_reputation_metrics(request)
             return items_to_frame(result, _URL_REP_FIELDS)
 
-    raise ValueError(f"Unknown firewall type: {type}")
+    raise ValueError(f"Unknown firewall type: {type_}")  # pyright: ignore[reportUnreachable]  # a caller may pass a value outside the enum
 
 
 async def get_edge_firewall_series(
@@ -134,10 +135,10 @@ async def get_edge_firewall_series(
     return denormalize_timeseries(list(result), "name")
 
 
-async def get_enterprise_firewall_metrics(
+async def get_enterprise_firewall_metrics(  # noqa: PLR0913 (existing: split it when it next changes)
     client: VcoClientProtocol,
     interval: ApiInterval,
-    type: EnterpriseFirewallType,
+    type_: EnterpriseFirewallType,
     view_by: str | None = None,
     *,
     enterprise_id: int | None = None,
@@ -147,10 +148,8 @@ async def get_enterprise_firewall_metrics(
     limit_val = limit if limit is not None else MISSING
     eid = enterprise_id if enterprise_id is not None else MISSING
 
-    match type:
+    match type_:
         case EnterpriseFirewallType.IDPS:
-            from pyvelo.client.enums.metrics import EnterpriseFirewallIdpsViewBy
-
             request = GetEnterpriseFirewallIdpsMetrics(
                 interval=interval,
                 enterprise_id=eid,
@@ -180,10 +179,6 @@ async def get_enterprise_firewall_metrics(
             return MetricFrame(columns=cols, rows=[row] if row else [])
 
         case EnterpriseFirewallType.EDGE_SUMMARY:
-            from pyvelo.client.enums.metrics import (
-                EnterpriseFirewallEdgeSummarySortMetric,
-            )
-
             request = GetEnterpriseFirewallEdgeSummaryMetrics(
                 interval=interval,
                 enterprise_id=eid,
@@ -195,8 +190,6 @@ async def get_enterprise_firewall_metrics(
             return items_to_frame(result, _EDGE_SUMMARY_FIELDS)
 
         case EnterpriseFirewallType.MALICIOUS_IP:
-            from pyvelo.client.enums.metrics import EnterpriseFirewallMaliciousIpViewBy
-
             request = GetEnterpriseFirewallMaliciousIpMetrics(
                 interval=interval,
                 enterprise_id=eid,
@@ -213,8 +206,6 @@ async def get_enterprise_firewall_metrics(
             return items_to_frame(result, _MAL_IP_FIELDS)
 
         case EnterpriseFirewallType.URL_CATEGORY:
-            from pyvelo.client.enums.metrics import EnterpriseFirewallUrlCategoryViewBy
-
             request = GetEnterpriseFirewallUrlCategoryMetrics(
                 interval=interval,
                 enterprise_id=eid,
@@ -231,10 +222,6 @@ async def get_enterprise_firewall_metrics(
             return items_to_frame(result, _URL_CAT_FIELDS)
 
         case EnterpriseFirewallType.URL_REPUTATION:
-            from pyvelo.client.enums.metrics import (
-                EnterpriseFirewallUrlReputationViewBy,
-            )
-
             request = GetEnterpriseFirewallUrlReputationMetrics(
                 interval=interval,
                 enterprise_id=eid,
@@ -252,7 +239,7 @@ async def get_enterprise_firewall_metrics(
             )
             return items_to_frame(result, _URL_REP_FIELDS)
 
-    raise ValueError(f"Unknown enterprise firewall type: {type}")
+    raise ValueError(f"Unknown enterprise firewall type: {type_}")  # pyright: ignore[reportUnreachable]  # a caller may pass a value outside the enum
 
 
 _IDPS_FIELDS = [

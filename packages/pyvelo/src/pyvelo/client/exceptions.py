@@ -1,6 +1,14 @@
 # ModuleWriteError names ModulePlan, ConfigurationModuleBase and ModuleWrite in
 # annotations only; their modules import this one.
 # pyright: reportImportCycles=false
+"""The errors pyvelo raises, each a ``VcoError``.
+
+First the client's: an HTTP status, a JSON-RPC error, an empty result, the rate
+limit, the WebSocket and the credentials. Then the refusals of a plan before it
+writes (``LossyFieldError``, ``HubListError``, ``DanglingReferenceError`` and
+others), the module write errors (``ModuleWriteError`` and its subclasses) and
+the layer errors.
+"""
 
 from __future__ import annotations
 
@@ -25,7 +33,6 @@ from pyvelo.core.rebase import (
     node_child,
 )
 from pyvelo.core.references import Reference, reference_text
-from pyvelo.core.response_check import PlannedChange, ServerChange
 from pyvelo.core.secrets import HIDDEN
 from pyvelo.core.show import moves_text, patch_text, shown_together
 
@@ -33,10 +40,14 @@ if TYPE_CHECKING:
     from pyvelo.client.module_check import ModuleWrite
     from pyvelo.client.module_write import ModulePlan
     from pyvelo.client.schemas.configuration import ConfigurationModuleBase
+    from pyvelo.core.response_check import PlannedChange, ServerChange
 
 
 def _rebuild_error(cls: type[VcoError], args: tuple[Any, ...]) -> VcoError:
-    """Build an error of *cls* without calling its constructor; its attributes arrive as state."""
+    """Build an error of *cls* without calling its constructor.
+
+    Its attributes arrive as state.
+    """
     error = cls.__new__(cls)
     error.args = args
     return error
@@ -58,7 +69,7 @@ class VcoError(Exception):
         attributes = dict(self.__dict__)
         if "__notes__" in attributes:
             # A shallow copy must not add its notes to this error's list.
-            attributes["__notes__"] = list(cast(list[str], attributes["__notes__"]))
+            attributes["__notes__"] = list(cast("list[str]", attributes["__notes__"]))
         return (_rebuild_error, (type(self), self.args), attributes)
 
 
@@ -66,6 +77,7 @@ class VcoClientNotInitializedError(VcoError):
     """Raised when the client is used without a connection."""
 
     def __init__(self) -> None:
+        """The error, with a message that says to use the client in ``async with``."""
         super().__init__(
             "VcoClient is not connected. Use it inside "
             "`async with VcoClient(host, token) as client:`; the connection closes "
@@ -83,9 +95,14 @@ class VcoApiError(VcoError):
         message: str,
         data: Any = None,
     ) -> None:
-        self.code = code
-        self.message = message
-        self.data = data
+        """The JSON-RPC error's *code*, *message* and *data*.
+
+        The message lists the VCO's validation errors and warnings in *data* a line
+        each, and shows any other *data* as it is.
+        """
+        self.code: int = code
+        self.message: str = message
+        self.data: Any = data
         detail = f"VCO API error {code}: {message}"
         if data:
             if isinstance(data, dict):
@@ -99,7 +116,8 @@ class VcoEmptyResultError(VcoError):
     """Raised when the VCO API returns a null result."""
 
     def __init__(self, method: str | None = None) -> None:
-        self.method = method
+        """The error for an empty result of *method*, which the message names."""
+        self.method: str | None = method
         msg = "VCO API returned an empty result"
         if method:
             msg += f" for {method}"
@@ -117,10 +135,15 @@ class VcoOperationError(VcoError):
         code: int | None = None,
         data: Any = None,
     ) -> None:
-        self.operation = operation
-        self.error = error
-        self.code = code
-        self.data = data
+        """The failure of *operation* with the VCO's *error* text.
+
+        *code* and *data* are the JSON-RPC error's, when the failure came as one; the
+        message shows *data* as ``VcoApiError`` does.
+        """
+        self.operation: str = operation
+        self.error: str = error
+        self.code: int | None = code
+        self.data: Any = data
         detail = f"{operation} failed: {error}"
         if data:
             if isinstance(data, dict):
@@ -160,9 +183,10 @@ class VcoHttpError(VcoError):
     """
 
     def __init__(self, status_code: int, body: str) -> None:
-        self.status_code = status_code
-        self.text = body
-        self.body = body[:500]
+        """The error for HTTP *status_code*, with *body* the response's text."""
+        self.status_code: int = status_code
+        self.text: str = body
+        self.body: str = body[:500]
         super().__init__(f"HTTP {status_code}: {self.body}")
 
 
@@ -170,7 +194,8 @@ class VcoRateLimitError(VcoError):
     """Raised when 429 retries are exhausted."""
 
     def __init__(self, attempts: int) -> None:
-        self.attempts = attempts
+        """The error after *attempts* requests that were each answered 429."""
+        self.attempts: int = attempts
         super().__init__(f"Rate limited: retries exhausted after {attempts} attempts")
 
 
@@ -178,7 +203,8 @@ class VcoWebSocketError(VcoError):
     """Raised when a WebSocket operation fails (connection, send, or receive)."""
 
     def __init__(self, message: str) -> None:
-        self.message = message
+        """The error, with *message* kept as ``message`` too."""
+        self.message: str = message
         super().__init__(message)
 
 
@@ -193,7 +219,8 @@ class VcoWebSocketTimeoutError(VcoWebSocketError):
     """Raised when a WebSocket request or diagnostic times out."""
 
     def __init__(self, message: str, *, timeout: float) -> None:
-        self.timeout = timeout
+        """The error, with the *timeout* that ran out, in seconds."""
+        self.timeout: float = timeout
         super().__init__(message)
 
 
@@ -212,6 +239,7 @@ class VcoUserTypeUnknownError(VcoError):
     """Raised when none of the user-type probe endpoints succeed."""
 
     def __init__(self) -> None:
+        """The error, with a fixed message: every probe failed."""
         super().__init__("Unable to determine user type: all probes failed")
 
 
@@ -241,10 +269,14 @@ class LossyFieldError(VcoError):
         paths: Sequence[Path],
         override_flags: Sequence[Path] = (),
     ) -> None:
-        self.module = module
-        self.paths = list(paths)
-        self.fields = [str(path) for path in self.paths]
-        self.override_flags = list(override_flags)
+        """The error for the edits to *module* at *paths*, *override_flags* among them.
+
+        The message says why a save writes none of them and what to do instead.
+        """
+        self.module: str = module
+        self.paths: list[Path] = list(paths)
+        self.fields: list[str] = [str(path) for path in self.paths]
+        self.override_flags: list[Path] = list(override_flags)
         message = (
             f"{module}: a save cannot write these edits: {', '.join(self.fields)}. "
             "A save sends what differs from the module as read, and at these "
@@ -266,7 +298,9 @@ class LossyFieldError(VcoError):
 
 
 class FixedListError(VcoError):
-    """Raised when a payload changes a fixed part of a ``FixedList``, such as the QoS ``defaults``.
+    """Raised when a payload changes a fixed part of a ``FixedList``.
+
+    The QoS ``defaults`` are such a part.
 
     The ``defaults`` rules of a segment have fixed entries, keys and order, and
     only their ``action`` can change. A plan compares the payload with the
@@ -282,6 +316,7 @@ class FixedListError(VcoError):
     def __init__(
         self, module_name: str, violations: Sequence[tuple[Path, str]]
     ) -> None:
+        """The error for *module_name*: *violations* are each changed place and why."""
         self.module_name = module_name
         self.paths = tuple(path for path, _ in violations)
         found = "; ".join(f"{path}: {reason}" for path, reason in violations)
@@ -319,6 +354,7 @@ class SegmentSetError(VcoError):
         segments: Sequence[str] = (),
         modules: Sequence[str] = (),
     ) -> None:
+        """The error with *message* and the module, segments and modules it is about."""
         self.module_name = module_name
         self.segments = tuple(segments)
         self.modules = tuple(modules)
@@ -326,7 +362,9 @@ class SegmentSetError(VcoError):
 
 
 class HubListError(VcoError):
-    """Raised when one module's plan would add a hub to a segment's hub lists, or remove one.
+    """Raised when one module's plan would change a segment's hub lists.
+
+    The plan would add a hub to them, or remove one.
 
     A hub in the ``vpn`` lists of a profile's segment (the hub list, the
     bridge list and the backhaul list) needs its role set on the hub's
@@ -354,6 +392,7 @@ class HubListError(VcoError):
         hubs: Sequence[str] = (),
         edges: Sequence[tuple[int, str]] = (),
     ) -> None:
+        """The error with *message* and the segment, lists, hubs and Edges it names."""
         self.segment = segment
         self.lists = tuple(lists)
         self.hubs = tuple(hubs)
@@ -362,7 +401,10 @@ class HubListError(VcoError):
 
 
 def _hub_advice(reference: Reference, *, on_edge: bool) -> str:
-    """What to do about *reference*, a backhaul entry whose hub the segment does not list: the patch that makes it a hub of its segment, as the segment's own sentence.
+    """What to do about the backhaul entry *reference*.
+
+    Its hub is one the segment does not list. The answer is the patch that
+    makes it a hub of its segment, as the segment's own sentence.
 
     The patch is for the segment of the reference and names the hub as its
     entry does (its name, else its logical ID). It adds the hub to the
@@ -427,6 +469,11 @@ class DanglingReferenceError(VcoError):
     def __init__(
         self, references: Sequence[Reference], *, on_edge: bool = False
     ) -> None:
+        """The error for *references*, with a message that lists each and what to do.
+
+        The message says where a segment or a backhaul hub comes from and, for a hub,
+        gives the patch that makes it a hub of its segment.
+        """
         self.references = tuple(references)
         self.on_edge = on_edge
         lines = "\n".join(f"  {reference_text(r)}" for r in self.references)
@@ -476,6 +523,10 @@ class RefsNotLoadedError(VcoError):
     paths: tuple[Path, ...]
 
     def __init__(self, module_name: str, paths: Sequence[Path] = ()) -> None:
+        """The error for *module_name*, with the owners at *paths* the edit changed.
+
+        The message says how to read the module with its refs.
+        """
         self.module_name = module_name
         self.paths = tuple(paths)
         read = (
@@ -535,7 +586,10 @@ def _first[T](entries: Sequence[T], limit: int | None) -> Sequence[T]:
 
 
 def _and_more(total: int, limit: int | None, attribute: str) -> list[str]:
-    """The line that counts the entries of a list a message cut short, or no line when it did not."""
+    """The line that counts the entries of a list a message cut short.
+
+    There is no line when the message did not cut it short.
+    """
     if limit is None or total <= limit:
         return []
     return [f"  and {total - limit} more: error.{attribute} has them all"]
@@ -552,7 +606,9 @@ def _what(change: PlannedChange) -> str:
 
 
 class ModuleWriteError(VcoError):
-    """A module write that was sent, or was about to be sent again, and is not known to be stored as planned.
+    """A module write that is not known to be stored as planned.
+
+    It was sent, or was about to be sent again.
 
     ``ConfigConflictError`` and ``WriteNotAppliedError`` are a write whose
     module as stored was read and holds the changes only in part. They carry
@@ -579,15 +635,16 @@ class ModuleWriteError(VcoError):
     lost_edits: tuple[PlannedChange, ...]
     applied: tuple[PlannedChange, ...]
     left_out: tuple[PlannedChange, ...]
-    """Planned changes the VCO stores otherwise than as sent (``ResponseCheck.left_out``)."""
+    """Planned changes the VCO stores otherwise than as sent
+    (``ResponseCheck.left_out``)."""
     server_changes: tuple[ServerChange, ...]
     completed: tuple[ModuleWrite[Any], ...]
     """The earlier writes of the same save, which are stored. Set by the save."""
     stored_parts: dict[Path, ItemPart]
-    """For each item of every keyed list the check walks that the module as stored
-    holds too, by its path, the part that names it there (``ResponseCheck.stored_parts``)."""
+    """For each item of every keyed list the check walks that the module as stored holds
+    too, by its path, the part that names it there (``ResponseCheck.stored_parts``)."""
 
-    def __init__(
+    def __init__(  # noqa: PLR0913 (existing: split it when it next changes)
         self,
         module_id: int,
         version: str,
@@ -601,6 +658,10 @@ class ModuleWriteError(VcoError):
         server_changes: Sequence[ServerChange] = (),
         stored_parts: Mapping[Path, ItemPart] | None = None,
     ) -> None:
+        """The write of module *module_id* at *version*, with what its check found.
+
+        ``completed`` starts empty; the save sets it.
+        """
         self.module_id = module_id
         self.module_name = module_name
         self.version = version
@@ -626,7 +687,11 @@ class ModuleWriteError(VcoError):
         )
 
     def _notes(self, limit: int | None) -> list[str]:
-        """Lines between the headline and the lists; a list in them shows at most *limit* entries."""
+        """Lines between the headline and the lists.
+
+        A list in them shows at most *limit* entries.
+        """
+        del limit
         return []
 
     def _document(self) -> type[VcoModel] | None:
@@ -648,7 +713,9 @@ class ModuleWriteError(VcoError):
         return shown_together(*values, model=self._document(), path=change.path)
 
     def render(self, limit: int | None = 20) -> str:
-        """The message: the headline, any notes, then each list by path; a list with no entries is left out.
+        """The message: the headline, any notes, then each list by path.
+
+        A list with no entries is left out.
 
         Each list shows its first *limit* entries (all for None), and a line
         after it counts the rest. A secret is shown as ``"***"``.
@@ -699,20 +766,20 @@ class ModuleWriteError(VcoError):
         # Computed when asked: ``completed`` is set after the error is built.
         return self.render()
 
-    def redo_patch(self, include_clashes: bool = False) -> dict[str, object]:
+    def redo_patch(self, *, include_clashes: bool = False) -> dict[str, object]:
         """The patch that redoes the lost edits on ``module``, the module as stored.
 
         It is plain JSON (``json.loads(json.dumps(patch)) == patch``), rooted
-        at the module, so
-        ``await pipeline.apply(state, module=error.module_name, patch=error.redo_patch())``
-        takes it, and so does ``error.module.data.merge_patch(error.redo_patch())``
-        without a state. Each lost edit is redone from what is stored to what
-        was meant: an added item goes back in its place, a lost order is made
-        again by the moves from the stored order, and each item is named as the
-        stored list names it, so an edit to "the second rule" still reaches
-        that rule when another writer put one in front of it. An item the plan
-        added is added again, never set on the item another writer has under
-        its name or at its place: where that name is taken, ``apply`` refuses.
+        at the module, so ``await pipeline.apply(state,
+        module=error.module_name, patch=error.redo_patch())`` takes it, and so
+        does ``error.module.data.merge_patch(error.redo_patch())`` without a
+        state. Each lost edit is redone from what is stored to what was meant:
+        an added item goes back in its place, a lost order is made again by the
+        moves from the stored order, and each item is named as the stored list
+        names it, so an edit to "the second rule" still reaches that rule when
+        another writer put one in front of it. An item the plan added is added
+        again, never set on the item another writer has under its name or at
+        its place: where that name is taken, ``apply`` refuses.
 
         A clash is an edit whose value was also changed on the VCO, and
         redoing it overwrites that change: it is left out unless
@@ -744,14 +811,18 @@ class ModuleWriteError(VcoError):
         ``apply`` refuses as a patch: make such an edit again the way it was
         made.
         """
-        return self._redo(include_clashes)[0]
+        return self._redo(include_clashes=include_clashes)[0]
 
-    def not_redone(self, include_clashes: bool = False) -> tuple[PlannedChange, ...]:
-        """The lost edits that ``redo_patch(include_clashes)`` leaves out, in the order of ``lost_edits``."""
-        return self._redo(include_clashes)[1]
+    def not_redone(self, *, include_clashes: bool = False) -> tuple[PlannedChange, ...]:
+        """The lost edits that ``redo_patch`` leaves out.
 
-    def _redo(
-        self, include_clashes: bool
+        That is ``redo_patch(include_clashes=include_clashes)``, and they come
+        in the order of ``lost_edits``.
+        """
+        return self._redo(include_clashes=include_clashes)[1]
+
+    def _redo(  # noqa: C901, PLR0912 (existing: split it when it next changes)
+        self, *, include_clashes: bool
     ) -> tuple[dict[str, object], tuple[PlannedChange, ...]]:
         """The patch that redoes the lost edits, and the lost edits it leaves out."""
         plan, module = self.plan, self.module
@@ -778,7 +849,7 @@ class ModuleWriteError(VcoError):
                 plan, edit
             ):
                 if is_added:
-                    added.append(selector_of(cast(Key, edit.path.parts[1])))
+                    added.append(selector_of(cast("Key", edit.path.parts[1])))
                 for change in _changes_below(plan, edit.path):
                     owner[id(change)] = edit
                     changes.append(change)
@@ -839,7 +910,9 @@ def _changes_below(plan: ModulePlan, path: Path) -> list[RawChange]:
 
 
 def _is_added_segment(plan: ModulePlan, edit: PlannedChange) -> bool:
-    """Whether *edit* is the whole entry of a segment the pipeline added to the profile module.
+    """Whether *edit* is the whole entry of an added segment.
+
+    The segment is one the pipeline added to the profile module.
 
     The module as read had no entry for it, so the check finds the whole entry
     lost when the VCO stored none of it. The plan's changes are relative to the
@@ -849,7 +922,7 @@ def _is_added_segment(plan: ModulePlan, edit: PlannedChange) -> bool:
     parts = edit.path.parts
     return (
         edit.as_read is MISSING
-        and len(parts) == 2
+        and len(parts) == 2  # noqa: PLR2004  # segments[<segment>] has two parts
         and parts[0] == "segments"
         and isinstance(parts[1], Key)
         and parts[1].value in plan.added_segments
@@ -870,7 +943,7 @@ def _is_repaired_default(plan: ModulePlan, edit: PlannedChange) -> bool:
         and any(
             missing.repaired
             and missing.segment == parts[1].value
-            and (len(parts) == 3 or _is_default_named(parts[3], missing.names))
+            and (len(parts) == 3 or _is_default_named(parts[3], missing.names))  # noqa: PLR2004  # segments[<segment>].defaults has three parts; an entry of it a fourth
             for missing in plan.missing_defaults
         )
     )
@@ -892,7 +965,7 @@ def _is_reconciled_segment(plan: ModulePlan, edit: PlannedChange) -> bool:
     return (
         bool(plan.reconciled_segments)
         and edit.as_read is MISSING
-        and len(parts) == 2
+        and len(parts) == 2  # noqa: PLR2004  # segments[<segment>] has two parts
         and parts[0] == "segments"
         and not isinstance(parts[1], str)
         and all(change.path != edit.path for change in plan.changes)
@@ -900,7 +973,9 @@ def _is_reconciled_segment(plan: ModulePlan, edit: PlannedChange) -> bool:
 
 
 def _provider_value(edits: Sequence[PlannedChange]) -> object:
-    """The value that sets a ``RefOnly`` field again, from the refs entries *edits* at it.
+    """The value that sets a ``RefOnly`` field again.
+
+    It comes from the refs entries *edits* at it.
 
     The added row's logical ID as text, or ``None`` for a row removed with none
     added; ``MISSING`` when an entry is neither. A row added carries only the
@@ -924,7 +999,8 @@ def _provider_value(edits: Sequence[PlannedChange]) -> object:
 
 
 _SEGMENT_REF: Final = "deviceSettings:segment"
-"""The ref name of a segment's row; ``ref_owners.SEGMENT_REF``, which this module cannot import (a cycle)."""
+"""The ref name of a segment's row; ``ref_owners.SEGMENT_REF``, which this module cannot
+import (a cycle)."""
 
 
 def _json_objects(value: object) -> list[dict[str, object]]:
@@ -938,7 +1014,10 @@ def _json_objects(value: object) -> list[dict[str, object]]:
 
 
 def _json_field(value: object, *names: str) -> object:
-    """The value at *names* below *value*, None where a step is not an object or is absent."""
+    """The value at *names* below *value*.
+
+    None where a step is not an object or is absent.
+    """
     for name in names:
         if not isinstance(value, dict):
             return None
@@ -954,7 +1033,7 @@ def _same_logical_id(left: object, right: object) -> bool:
     )
 
 
-def _stored_segment(
+def _stored_segment(  # noqa: PLR0913, PLR0917 (existing: split it when it next changes)
     data: VcoModel,
     module: ConfigurationModuleBase,
     plan: ModulePlan,
@@ -962,7 +1041,10 @@ def _stored_segment(
     item: ItemPart,
     object_ids: Sequence[int],
 ) -> ItemPart | None:
-    """The part that names, in the ``segments`` of *module* as stored, the segment the edits were made to; None when it cannot be proved.
+    """The part that names the segment the edits were made to.
+
+    It is the part in the ``segments`` of *module* as stored; None when it
+    cannot be proved.
 
     The check records it for an item it walked (a data edit in the segment).
     Otherwise the segment is found by identity, never by name: another segment
@@ -990,7 +1072,7 @@ def _stored_segment(
     if by_id:
         matches = [
             part
-            for part, entry in zip(item_parts(stored, node), stored)
+            for part, entry in zip(item_parts(stored, node), stored, strict=True)
             if _json_field(entry, "segment", "segmentId") in by_id
         ]
     else:
@@ -1003,7 +1085,7 @@ def _stored_segment(
             ]
         matches = [
             part
-            for part, entry in zip(item_parts(stored, node), stored)
+            for part, entry in zip(item_parts(stored, node), stored, strict=True)
             if any(
                 _same_logical_id(
                     _json_field(entry, "segment", "segmentLogicalId"), known
@@ -1017,7 +1099,10 @@ def _stored_segment(
 def _field_spellings(
     models: Sequence[type[VcoModel]], names: Sequence[str]
 ) -> list[tuple[str, str]] | None:
-    """For each of the fields *names* below one of *models*, its python name and its wire name; None where no model has the field."""
+    """The python name and wire name of each field *names* below one of *models*.
+
+    None where no model has the field.
+    """
     name, *rest = names
     for model in models:
         field_info = model.model_fields.get(name)
@@ -1029,7 +1114,7 @@ def _field_spellings(
     return None
 
 
-def _set_provider(
+def _set_provider(  # noqa: PLR0913, PLR0917 (existing: split it when it next changes)
     patch: dict[str, object],
     data: VcoModel,
     module: ConfigurationModuleBase,
@@ -1038,7 +1123,10 @@ def _set_provider(
     edits: Sequence[PlannedChange],
     value: object,
 ) -> bool:
-    """Set the ``RefOnly`` field the refs entries *edits* go with to *value* in *patch*, in the segment as the stored module names it; False when the patch has no place for it.
+    """Set the ``RefOnly`` field the refs entries *edits* go with to *value* in *patch*.
+
+    The field is set in the segment as the stored module names it. False when
+    the patch has no place for it.
 
     The owner is ``segments[<segment>].<fields>`` in python names, and a
     ``RefOnly`` field is not in a raw dump, so the path is built from its parts.
@@ -1046,14 +1134,14 @@ def _set_provider(
     object under its python name: ``merge_patch`` refuses both for one field.
     The segment's object is the one a data entry of the patch has, if any.
     """
-    owner = cast(Path, edits[0].owner)
+    owner = cast("Path", edits[0].owner)
     object_ids = [
         key.value[1]
         for edit in edits
         for key in [edit.path.parts[-1]]
         if isinstance(key, Key)
         and isinstance(key.value, tuple)
-        and len(key.value) == 2
+        and len(key.value) == 2  # noqa: PLR2004  # a two-part key, its second part the object ID
         and isinstance(key.value[1], int)
     ]
     segment, *names = owner.parts[1:]
@@ -1076,14 +1164,20 @@ def _set_provider(
 
 
 def _spelled(node: dict[str, object], spellings: tuple[str, ...]) -> str:
-    """The key *node* already has for a field, by one of its *spellings*; else the last."""
+    """The key *node* already has for a field, by one of its *spellings*.
+
+    Else the last spelling.
+    """
     return next((key for key in spellings if key in node), spellings[-1])
 
 
 def _child(
     node: dict[str, object], spellings: tuple[str, ...]
 ) -> dict[str, object] | None:
-    """The object of *node* under a field's key (``_spelled``), made if there is none; None where the key holds something else."""
+    """The object of *node* under a field's key (``_spelled``).
+
+    It is made if there is none; None where the key holds something else.
+    """
     found = node.setdefault(_spelled(node, spellings), {})
     return cast("dict[str, object]", found) if isinstance(found, dict) else None
 
@@ -1110,7 +1204,7 @@ class ConfigConflictError(ModuleWriteError):
     stated: bool
     sent: bool
 
-    def __init__(
+    def __init__(  # noqa: PLR0913 (existing: split it when it next changes)
         self,
         module_id: int,
         version: str,
@@ -1127,6 +1221,10 @@ class ConfigConflictError(ModuleWriteError):
         server_changes: Sequence[ServerChange] = (),
         stored_parts: Mapping[Path, ItemPart] | None = None,
     ) -> None:
+        """The conflict, with *detail* and how the refusal is known (*stated*, *sent*).
+
+        The other arguments are those of ``ModuleWriteError``.
+        """
         self.detail = detail
         self.stated = stated
         self.sent = sent
@@ -1183,7 +1281,7 @@ class WriteNotAppliedError(ModuleWriteError):
     with the value sent and the value stored.
     """
 
-    def __init__(
+    def __init__(  # noqa: PLR0913 (existing: split it when it next changes)
         self,
         module_id: int,
         version: str,
@@ -1197,6 +1295,10 @@ class WriteNotAppliedError(ModuleWriteError):
         server_changes: Sequence[ServerChange] = (),
         stored_parts: Mapping[Path, ItemPart] | None = None,
     ) -> None:
+        """The write, with the *module* as stored and the *lost_edits* it does not hold.
+
+        The other arguments are those of ``ModuleWriteError``.
+        """
         super().__init__(
             module_id,
             version,
@@ -1251,7 +1353,7 @@ class RefsDroppedError(WriteNotAppliedError):
 
     refs_as_read: object
 
-    def __init__(
+    def __init__(  # noqa: PLR0913 (existing: split it when it next changes)
         self,
         module_id: int,
         version: str,
@@ -1266,6 +1368,7 @@ class RefsDroppedError(WriteNotAppliedError):
         server_changes: Sequence[ServerChange] = (),
         stored_parts: Mapping[Path, ItemPart] | None = None,
     ) -> None:
+        """As ``WriteNotAppliedError``, with *refs_as_read*: the refs to put back."""
         self.refs_as_read = refs_as_read
         super().__init__(
             module_id,
@@ -1282,7 +1385,10 @@ class RefsDroppedError(WriteNotAppliedError):
 
     @property
     def every_row_lost(self) -> bool:
-        """Whether the VCO took none of the rows sent, and some were sent as read: each of those is a lost edit, and ``refs_as_read`` holds them to put back."""
+        """Whether the VCO took none of the rows sent, and some were sent as read.
+
+        Each of those is a lost edit, and ``refs_as_read`` holds them to put back.
+        """
         return any(
             edit.as_read is not MISSING and edit.intended is not MISSING
             for edit in self.lost_edits
@@ -1298,14 +1404,16 @@ class RefsDroppedError(WriteNotAppliedError):
         )
 
     def _put_back_note(self) -> str:
-        """How to put the rows back when the VCO took none of those sent, for a caller with or without Python."""
+        """How to put the rows back when the VCO took none of those sent.
+
+        It is written for a caller with or without Python.
+        """
         configuration_id = (
             "<configuration ID>"
             if self.module is None or self.module.configuration_id is None
             else self.module.configuration_id
         )
-        # Imported here: ``derived_refs`` reaches this module through the models.
-        from pyvelo.client.derived_refs import APPEND_ONLY_REF_NAMES
+        from pyvelo.client.derived_refs import APPEND_ONLY_REF_NAMES  # noqa: PLC0415 (derived_refs reaches this module through the models)
 
         names = ", ".join(sorted(APPEND_ONLY_REF_NAMES))
         return (
@@ -1348,7 +1456,7 @@ class RefsDroppedError(WriteNotAppliedError):
                 "(null for a clear), for each field whose segment error.module has:"
             )
         for edit in _first(owners, limit):
-            owner = cast(Path, edit.owner)
+            owner = cast("Path", edit.owner)
             if edit.intended is MISSING:
                 lines.append(
                     f"  to clear {owner} again, send the patch "
@@ -1364,7 +1472,9 @@ class RefsDroppedError(WriteNotAppliedError):
 
 
 class WriteOutcomeUnknownError(ModuleWriteError):
-    """Raised when a module write was sent, or was about to be sent again, and the module as stored could not be read.
+    """Raised when a module write was sent and the module as stored could not be read.
+
+    This includes a write that was about to be sent again.
 
     The write's answer did not parse, or it was not this module's row, or the
     read-back found no module to check (``detail`` says which). Nothing is
@@ -1388,7 +1498,7 @@ class WriteOutcomeUnknownError(ModuleWriteError):
     detail: str
     answer: WriteAnswer
 
-    def __init__(
+    def __init__(  # noqa: PLR0913 (existing: split it when it next changes)
         self,
         module_id: int,
         version: str,
@@ -1398,6 +1508,7 @@ class WriteOutcomeUnknownError(ModuleWriteError):
         module_name: str,
         plan: ModulePlan,
     ) -> None:
+        """The write of *plan*, with *detail* and the VCO's *answer* to the write."""
         self.detail = detail
         self.answer = answer
         super().__init__(module_id, version, module_name=module_name, plan=plan)
@@ -1417,7 +1528,10 @@ class WriteOutcomeUnknownError(ModuleWriteError):
                 "the changes below are stored already is not known."
             )
         elif self.answer == "counted":
-            said = "The VCO counted the write, so the changes below are most likely stored."
+            said = (
+                "The VCO counted the write, so the changes below are most likely "
+                "stored."
+            )
         else:
             said = "Whether the changes below are stored is not known."
         lines = [said, "planned, not checked:"]
@@ -1441,7 +1555,9 @@ class WriteOutcomeUnknownError(ModuleWriteError):
 
 
 class UnboundError(VcoError):
-    """Raised when a layer is asked for something that only its profile can give, and it has none.
+    """Raised when a layer is asked for something that only its profile can give.
+
+    The layer has no profile.
 
     A segment a layer lacks is asked for with no profile to copy it from, or an
     edge-layer value is asked to ``localize`` (copy the profile's value in)
@@ -1452,7 +1568,9 @@ class UnboundError(VcoError):
 
 
 class LayerUnknownError(VcoError):
-    """Raised by an update that asked for the module row back, was given no layer, and was answered with a firewall row.
+    """Raised by an update that was given no layer and answered with a firewall row.
+
+    The update asked for the module row back.
 
     A firewall module is of the edge layer or the profile layer, and the row
     the VCO answers with does not say which; reading it as the wrong one would
@@ -1469,13 +1587,16 @@ class LayerUnknownError(VcoError):
     def __init__(
         self, message: str, *, module_id: int | None, answer: dict[str, object]
     ) -> None:
+        """The error with *message*, the row's *module_id* and the row as *answer*."""
         self.module_id = module_id
         self.answer = answer
         super().__init__(message)
 
 
 class GroupOwnershipError(VcoError):
-    """Raised by an edit of one member of a coupled group that would leave the group half inherited.
+    """Raised by an edit that would leave a coupled group half inherited.
+
+    The edit is of one member of the group.
 
     The members of a group (the stateful firewall's settings, its IPv6
     settings and its enabled flag, say) change ownership together: the UI does
@@ -1489,13 +1610,16 @@ class GroupOwnershipError(VcoError):
     field: str
 
     def __init__(self, message: str, *, group: str, field: str) -> None:
+        """The error with *message*, the *group*'s name and the *field* edited."""
         self.group = group
         self.field = field
         super().__init__(message)
 
 
 class ComposedModuleError(VcoError):
-    """Raised by ``compare_effective`` for a module the VCO's composed read gave no data for.
+    """Raised by ``compare_effective`` for a module with no composed data.
+
+    The VCO's composed read gave no data for it.
 
     ``edge/getEdgeConfigurationModules`` hides a composition error by
     returning ``null`` for the module, and a module it was asked for may be
@@ -1509,6 +1633,7 @@ class ComposedModuleError(VcoError):
     module: str
 
     def __init__(self, message: str, *, module: str) -> None:
+        """The error with *message* and the wire name of the *module*."""
         self.module = module
         super().__init__(message)
 
@@ -1533,25 +1658,30 @@ class DetachedObjectError(VcoError):
     paths: list[Path]
 
     def __init__(self, message: str, paths: Sequence[Path] = ()) -> None:
+        """The error with *message* and the *paths* of the edits found by comparison."""
         self.paths = list(paths)
         super().__init__(message)
 
 
 PRECONDITION_FAILED: Final = "UPDATE_CONFIGURATION_MODULE_PRECONDITION_FAILED"
-"""The code of the VCO's refusal of a stale module version, in ``error.data.error[]``."""
+"""The code of the VCO's refusal of a stale module version, in
+``error.data.error[]``."""
 
 
 def _lists_precondition(data: object) -> bool:
-    """Whether the ``data`` of a JSON-RPC error lists an ``error[]`` entry with the code ``PRECONDITION_FAILED``."""
+    """Whether a JSON-RPC error's ``data`` lists a ``PRECONDITION_FAILED`` entry.
+
+    The entry is one of ``error[]`` with the code ``PRECONDITION_FAILED``.
+    """
     if not isinstance(data, Mapping):
         return False
-    entries = cast(Mapping[str, object], data).get("error")
+    entries = cast("Mapping[str, object]", data).get("error")
     if not isinstance(entries, list):
         return False
     return any(
         isinstance(entry, Mapping)
-        and cast(Mapping[str, object], entry).get("code") == PRECONDITION_FAILED
-        for entry in cast(list[object], entries)
+        and cast("Mapping[str, object]", entry).get("code") == PRECONDITION_FAILED
+        for entry in cast("list[object]", entries)
     )
 
 
@@ -1562,7 +1692,7 @@ def is_precondition_failure(error: VcoOperationError) -> bool:
     not the module's current one with a ``validationError`` whose data lists an
     error with the code ``PRECONDITION_FAILED``, and writes nothing.
     """
-    return _lists_precondition(cast(object, error.data))
+    return _lists_precondition(cast("object", error.data))
 
 
 def is_precondition_answer(text: str) -> bool:
@@ -1574,15 +1704,15 @@ def is_precondition_answer(text: str) -> bool:
     object whose data lists the code.
     """
     try:
-        answer = cast(object, json.loads(text))
+        answer = cast("object", json.loads(text))
     except ValueError:
         return False
     if not isinstance(answer, Mapping):
         return False
-    error = cast(Mapping[str, object], answer).get("error")
+    error = cast("Mapping[str, object]", answer).get("error")
     if not isinstance(error, Mapping):
         return False
-    return _lists_precondition(cast(Mapping[str, object], error).get("data"))
+    return _lists_precondition(cast("Mapping[str, object]", error).get("data"))
 
 
 def is_version_conflict(*, error: str | None, rows: int | None) -> bool:

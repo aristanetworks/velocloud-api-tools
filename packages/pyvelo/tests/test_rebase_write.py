@@ -1,4 +1,6 @@
-"""A module written after a profile device settings write is rebased onto what that write changed.
+"""A module written after a profile device settings write is rebased.
+
+It is rebased onto what that write changed.
 
 A profile device settings write can change other modules of the profile (it
 rewrites QoS rule flags, and it bumps the versions of every module when a
@@ -15,15 +17,15 @@ QoS row as another writer would.
 import copy
 from collections.abc import Callable
 from dataclasses import replace
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pytest
+from pyvelo.client import VcoClient
 from pyvelo.client.exceptions import ConfigConflictError
 from pyvelo.client.models.configuration import QosData
 from pyvelo.client.models.configuration.profile_segments import default_rules
 from pyvelo.client.models.configuration.qos.root import ServiceRateLimit
 from pyvelo.client.models.configuration.qos.segment import WebProxy
-from pyvelo.client.module_check import ModuleWrite
 from pyvelo.client.module_write import ModulePlan, plan_module, rebase_onto
 from pyvelo.client.schemas.configuration import (
     DeviceSettingsConfigurationModule,
@@ -41,6 +43,9 @@ from refs_helpers import (
 )
 
 from ._type_support import MockVcoClientFactory
+
+if TYPE_CHECKING:
+    from pyvelo.client.module_check import ModuleWrite
 
 VERSION = "configuration/getConfigurationModules"
 UPDATE = "configuration/updateConfigurationModule"
@@ -115,7 +120,10 @@ def a_store(
     qos: QosConfigurationModule[Profile],
     propagation: Callable[[dict[str, Any]], None] | None,
 ) -> ModuleStore:
-    """A store holding both modules; a write of device settings has *propagation* change the QoS row."""
+    """A store holding both modules.
+
+    A write of device settings has *propagation* change the QoS row.
+    """
     store = store_of(ds, qos)
     store.objects.update(store_with_services().objects)
 
@@ -153,7 +161,7 @@ async def device_settings_written(
     store: ModuleStore,
     ds: DeviceSettingsConfigurationModule,
     plan: ModulePlan,
-):
+) -> VcoClient:
     """A client over *store*, after the write of *ds*; the requests are cleared."""
     client = await mock_vco_client(store)
     _ = await client.write_module(ds, plan)
@@ -163,7 +171,7 @@ async def device_settings_written(
 
 async def test_a_changed_module_is_rebased_and_written_with_the_fresh_version(
     mock_vco_client: MockVcoClientFactory,
-):
+) -> None:
     ds, ds_plan = device_settings()
     qos = qos_module()
     store = a_store(ds, qos, enabled)
@@ -198,7 +206,7 @@ async def test_a_changed_module_is_rebased_and_written_with_the_fresh_version(
 
 async def test_a_clash_raises_a_conflict_and_sends_nothing(
     mock_vco_client: MockVcoClientFactory,
-):
+) -> None:
     ds, ds_plan = device_settings()
     qos = qos_module()
     store = a_store(ds, qos, rate_to(7))
@@ -228,7 +236,7 @@ async def test_a_clash_raises_a_conflict_and_sends_nothing(
 
 async def test_an_unchanged_version_writes_as_planned(
     mock_vco_client: MockVcoClientFactory,
-):
+) -> None:
     ds, ds_plan = device_settings()
     qos = qos_module()
     store = a_store(ds, qos, None)
@@ -244,7 +252,7 @@ async def test_an_unchanged_version_writes_as_planned(
 
 async def test_without_rebase_a_changed_version_of_a_refs_write_is_a_conflict(
     mock_vco_client: MockVcoClientFactory,
-):
+) -> None:
     ds, ds_plan = device_settings()
     qos = qos_module()
     store = a_store(ds, qos, enabled)
@@ -262,7 +270,7 @@ async def test_without_rebase_a_changed_version_of_a_refs_write_is_a_conflict(
 
 async def test_a_write_that_sends_no_refs_is_not_read_without_rebase(
     mock_vco_client: MockVcoClientFactory,
-):
+) -> None:
     qos = qos_module()
     store = store_of(qos)
     client = await mock_vco_client(store)
@@ -276,7 +284,7 @@ async def test_a_write_that_sends_no_refs_is_not_read_without_rebase(
 
 async def test_a_change_the_other_writer_made_too_is_written_as_nothing(
     mock_vco_client: MockVcoClientFactory,
-):
+) -> None:
     ds, ds_plan = device_settings()
     qos = qos_module()
     store = a_store(ds, qos, rate_to(5))
@@ -299,7 +307,7 @@ async def test_a_change_the_other_writer_made_too_is_written_as_nothing(
 
 async def test_a_module_gone_from_its_configuration_is_a_conflict_without_a_module(
     mock_vco_client: MockVcoClientFactory,
-):
+) -> None:
     qos = qos_module()
     store = store_of(qos)
     store.other_writer(QOS_ID, enabled)
@@ -313,7 +321,7 @@ async def test_a_module_gone_from_its_configuration_is_a_conflict_without_a_modu
             store.rows.pop(QOS_ID)
         return original_get(method, params)
 
-    store.handle = handle  # pyright: ignore[reportAttributeAccessIssue]
+    store.handle = handle
 
     with pytest.raises(ConfigConflictError) as caught:
         _ = await client.write_module(qos, plan, rebase=True)
@@ -324,7 +332,7 @@ async def test_a_module_gone_from_its_configuration_is_a_conflict_without_a_modu
 
 async def test_a_list_the_other_writer_added_to_is_a_conflict_and_not_replaced(
     mock_vco_client: MockVcoClientFactory,
-):
+) -> None:
     ds, ds_plan = device_settings()
     qos = qos_module()
     store = a_store(ds, qos, a_guest_segment)
@@ -352,7 +360,7 @@ def repaired_defaults(plan: ModulePlan) -> list[dict[str, Any]]:
     return plan.data["segments"][0]["defaults"]
 
 
-def test_a_rebase_carries_the_repaired_defaults_as_planned():
+def test_a_rebase_carries_the_repaired_defaults_as_planned() -> None:
     qos = qos_module(with_defaults=False)
     plan = rate_set(qos, 5)
     assert len(repaired_defaults(plan)) == 4
@@ -366,7 +374,7 @@ def test_a_rebase_carries_the_repaired_defaults_as_planned():
     assert [str(c.path) for c in rebased_plan.changes] == ["serviceRateLimit.value"]
 
 
-def test_a_rebase_keeps_the_repair_turned_off():
+def test_a_rebase_keeps_the_repair_turned_off() -> None:
     qos = qos_module(with_defaults=False)
     plan = plan_module(qos, _edited(qos), repair_defaults=False)
     assert plan.repair_defaults is False

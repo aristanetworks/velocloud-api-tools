@@ -21,7 +21,7 @@ class GenericMixin(Protocol):
     async def execute_vco_api(
         self: VcoClientBaseProtocol, api_path: str, body: dict[str, Any]
     ) -> GenericResult:
-        """Execute a generic VCO API call for any operation not covered by specific tools.
+        """Execute a generic VCO API call for any operation no specific tool covers.
 
         Common API paths include:
         - /edge/getEdge - Get edge details

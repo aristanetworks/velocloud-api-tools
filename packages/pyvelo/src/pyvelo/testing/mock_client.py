@@ -1,11 +1,13 @@
-"""Testing helpers for the configuration pipeline: a client over a ``ModuleStore`` and firewall module builders."""
+"""Testing helpers for the configuration pipeline.
+
+A client over a ``ModuleStore`` and firewall module builders.
+"""
 
 from __future__ import annotations
 
 import uuid
-from collections.abc import Sequence
 from datetime import UTC, datetime
-from typing import Self, cast, overload, override
+from typing import TYPE_CHECKING, Self, cast, overload, override
 
 from pydantic import MISSING
 
@@ -13,10 +15,8 @@ from pyvelo.client.enums.configuration import ConfigurationModuleType
 from pyvelo.client.enums.enterprise import NetworkSegmentType
 from pyvelo.client.models.configuration.common import SegmentMetadata
 from pyvelo.client.models.configuration.firewall.root import FirewallData
-from pyvelo.client.models.configuration.firewall.rules import FirewallOutboundRule
 from pyvelo.client.models.configuration.firewall.segment import FirewallSegment
 from pyvelo.client.models.enterprise.network_segment import NetworkSegmentData
-from pyvelo.client.operations.edge import GetEdgeConfigurationStackResult
 from pyvelo.client.schemas.configuration import (
     AnyStoredModule,
     EdgeConfiguration,
@@ -27,20 +27,26 @@ from pyvelo.client.schemas.configuration import (
     InsertConfigurationModuleResult,
     UpdateConfigurationModule,
 )
-from pyvelo.client.schemas.edge import GetEdgeConfigurationStack
 from pyvelo.client.schemas.enterprise import (
     GetEnterpriseEdges,
     GetEnterpriseEdgesItem,
     GetEnterpriseNetworkSegments,
     NetworkSegment,
 )
-from pyvelo.client.schemas.profiles import GetEnterpriseConfigurations
 from pyvelo.client.vco_client import VcoClient
-from pyvelo.config.state import ConfigState
-from pyvelo.core import ConfigContext
 from pyvelo.core.layers import Edge, Profile
 from pyvelo.testing.fixtures import make_transport
 from pyvelo.testing.module_store import ModuleStore, configuration_row, module_row
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
+
+    from pyvelo.client.models.configuration.firewall.rules import FirewallOutboundRule
+    from pyvelo.client.operations.edge import GetEdgeConfigurationStackResult
+    from pyvelo.client.schemas.edge import GetEdgeConfigurationStack
+    from pyvelo.client.schemas.profiles import GetEnterpriseConfigurations
+    from pyvelo.config.state import ConfigState
+    from pyvelo.core import ConfigContext
 
 _HOST = "vco.example.invalid"
 _GLOBAL_SEGMENT_OBJECT_ID = 1
@@ -125,16 +131,19 @@ def make_firewall_module(
     *,
     layer: type[Edge | Profile] = Edge,
 ) -> FirewallConfigurationModule[Edge] | FirewallConfigurationModule[Profile]:
-    """A firewall module of the layer *layer* (``Edge`` unless said otherwise), with *segments*."""
+    """A firewall module of the layer *layer*, with *segments*.
+
+    The layer is ``Edge`` unless said otherwise.
+    """
     if layer is Edge:
         data = FirewallData[Edge](
-            segments=cast(list[FirewallSegment[Edge]], segments or [])
+            segments=cast("list[FirewallSegment[Edge]]", segments or [])
         )
         return FirewallConfigurationModule[Edge].model_validate(
             _firewall_row(mod_id, config_id, data)
         )
     profile_data = FirewallData[Profile](
-        segments=cast(list[FirewallSegment[Profile]], segments or [])
+        segments=cast("list[FirewallSegment[Profile]]", segments or [])
     )
     return FirewallConfigurationModule[Profile].model_validate(
         _firewall_row(mod_id, config_id, profile_data)
@@ -156,7 +165,9 @@ def _register_stack(
 
 
 class MockVcoClient(VcoClient):
-    """Mock VCO client that records its API calls and serves configurations from a store.
+    """Mock VCO client that records its API calls.
+
+    It serves configurations from a store.
 
     An edge's configuration stack, module updates, inserts and the
     configurations the store holds go through the real client code to
@@ -179,6 +190,11 @@ class MockVcoClient(VcoClient):
         *,
         conditional_check: bool = False,
     ) -> None:
+        """A client over a new store, seeded with *stack* when one is given.
+
+        *edges* is what ``get_enterprise_edges`` answers, and
+        *conditional_check* turns on the store's check of the ``version`` sent.
+        """
         self.store = ModuleStore(conditional_check=conditional_check)
         super().__init__(_HOST, "test-token", transport=make_transport(self.store))
         self.store.add_object(
@@ -220,12 +236,17 @@ class MockVcoClient(VcoClient):
     def add_service(
         self, object_id: int, *, logical_id: str, name: str, type_: str
     ) -> None:
-        """Have the store hold the network service *object_id*, which a ref row can point at."""
+        """Have the store hold the network service *object_id*.
+
+        A ref row can point at it.
+        """
         self.store.add_object(object_id, logical_id=logical_id, name=name, type_=type_)
 
     @classmethod
     def for_state(cls, state: ConfigState, *, conditional_check: bool = False) -> Self:
-        """A client whose store holds the configurations of *state*: its edge one, if any, and its profile one.
+        """A client whose store holds the configurations of *state*.
+
+        Its edge one, if any, and its profile one.
 
         A state with an edge configuration also gets the stack of both, for
         every edge.
@@ -249,7 +270,10 @@ class MockVcoClient(VcoClient):
     async def get_configuration(
         self, request: GetConfiguration
     ) -> EdgeConfiguration | EnterpriseConfigurationProfile:
-        """The configuration from the store when it holds it; else the stack's profile."""
+        """The configuration from the store when it holds it.
+
+        Else the stack's profile.
+        """
         self.calls.append(("get_configuration", request))
         if request.id_ in self.store.configurations:
             return await super().get_configuration(request)

@@ -1,4 +1,7 @@
-"""AddressGroupResolver — resolves address group names to AddressGroupIdentity via VCO API."""
+"""AddressGroupResolver — resolves address group names to AddressGroupIdentity.
+
+Resolution is via the VCO API.
+"""
 
 from typing import override
 
@@ -25,7 +28,7 @@ class AddressGroupResolver(BaseResolver[AddressGroupIdentity]):
     Loads via ``enterprise/getObjectGroups`` with type ``address_group``.
     """
 
-    identity_type = AddressGroupIdentity
+    identity_type: type[AddressGroupIdentity] = AddressGroupIdentity
 
     @override
     def lookup_key(

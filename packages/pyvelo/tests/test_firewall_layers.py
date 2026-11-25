@@ -1,4 +1,7 @@
-"""The firewall module's kinds, groups and display defaults as declared, and where they come from."""
+"""The firewall module's kinds, groups and display defaults as declared.
+
+And where they come from.
+"""
 
 from typing import Any
 
@@ -60,7 +63,7 @@ def group_of(name: str, fields: Any) -> str | None:
     )
 
 
-def test_the_firewall_kinds_are_as_declared():
+def test_the_firewall_kinds_are_as_declared() -> None:
     fields = FirewallData[Edge].model_fields
     assert set(fields) == set(MODULE_TABLE)
     for name, (kind, group) in MODULE_TABLE.items():
@@ -86,7 +89,7 @@ def test_the_firewall_kinds_are_as_declared():
     } == {n: k for n, (k, _) in MODULE_TABLE.items()}
 
 
-def test_the_firewall_groups_are_declared_with_their_anchors_and_bundles():
+def test_the_firewall_groups_are_declared_with_their_anchors_and_bundles() -> None:
     groups = groups_of(FirewallData[Edge])
     assert {n: (g.anchor, g.bundle) for n, g in groups.items()} == {
         "stateful": ("stateful_firewall_settings", StatefulLocal),
@@ -107,14 +110,14 @@ def test_the_firewall_groups_are_declared_with_their_anchors_and_bundles():
     }
 
 
-def test_firewall_enabled_has_the_profile_false_wins_authority():
+def test_firewall_enabled_has_the_profile_false_wins_authority() -> None:
     metadata = field_kind(FirewallData[Edge].model_fields["firewall_enabled"]).metadata
     (authority,) = [m for m in metadata if isinstance(m, Authority)]
-    assert authority.rule(False) is True
-    assert authority.rule(True) is False
+    assert authority.rule(False) is True  # noqa: FBT003 (a rule is a Callable[[T], bool], called with the value)
+    assert authority.rule(True) is False  # noqa: FBT003 (a rule is a Callable[[T], bool], called with the value)
 
 
-def test_the_display_defaults_are_the_templates():
+def test_the_display_defaults_are_the_templates() -> None:
     profile = FirewallData[Profile].model_validate({"segments": []})
     assert profile.stateful_firewall_enabled is False
     assert profile.firewall_logging_enabled is False
@@ -140,7 +143,7 @@ def test_the_display_defaults_are_the_templates():
     assert profile.model_fields_set == {"segments"}
 
 
-def test_each_default_equals_the_template_value():
+def test_each_default_equals_the_template_value() -> None:
     profile = FirewallData[Profile].model_validate({"segments": []})
     for attribute, key in (
         ("services", "services"),
@@ -155,7 +158,7 @@ def test_each_default_equals_the_template_value():
         assert dumped == module_template_value("firewall", key)
 
 
-def test_a_display_default_is_a_fresh_object():
+def test_a_display_default_is_a_fresh_object() -> None:
     one = FirewallData[Profile].model_validate({"segments": []})
     two = FirewallData[Profile].model_validate({"segments": []})
     assert one.services is not two.services
@@ -163,7 +166,7 @@ def test_a_display_default_is_a_fresh_object():
     assert two.stateful_firewall_settings.udp_flow_timeout == 300
 
 
-def test_an_edge_that_stores_nothing_holds_nothing():
+def test_an_edge_that_stores_nothing_holds_nothing() -> None:
     edge = FirewallData[Edge].model_validate({"segments": []})
     for name in MODULE_TABLE:
         if MODULE_TABLE[name][0] is INHERITABLE:
@@ -172,14 +175,14 @@ def test_an_edge_that_stores_nothing_holds_nothing():
             assert owned.is_local is False
 
 
-def test_module_template_value_raises_for_an_unknown_key():
+def test_module_template_value_raises_for_an_unknown_key() -> None:
     with pytest.raises(KeyError):
         module_template_value("firewall", "noSuchKey")
     with pytest.raises(ValueError, match="nope"):
         module_template_value("nope", "services")
 
 
-def test_module_template_value_is_a_copy():
+def test_module_template_value_is_a_copy() -> None:
     first = module_template_value("firewall", "statefulFirewallSettings")
     assert isinstance(first, dict)
     first["udpFlowTimeout"] = 1
@@ -192,11 +195,13 @@ def test_module_template_value_is_a_copy():
 
 
 @pytest.mark.parametrize("layer", [Profile, Composed])
-def test_a_constructed_model_reads_a_missing_inheritable_as_its_display_default(layer):
+def test_a_constructed_model_reads_a_missing_inheritable_as_its_display_default(
+    layer: Any,  # Profile or Composed: a union cannot fill FirewallData's constrained L
+) -> None:
     built = FirewallData[layer].model_construct()
     parsed = FirewallData[layer].model_validate({})
     assert built.atp_enabled is False
-    assert built.services.ssh.enabled is False  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType]
+    assert built.services.ssh.enabled is False
     assert built.model_fields_set == set()
     # Nothing was given, so nothing is written, as for a parse.
     assert built.model_dump(mode="json", by_alias=True) == parsed.model_dump(

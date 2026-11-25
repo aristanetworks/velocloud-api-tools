@@ -1,8 +1,22 @@
+"""The ``deviceSettings`` module's data and its module-level settings.
+
+``DeviceSettingsData`` holds the LAN, the segments, the routed interfaces of each
+model, and the module-level settings: HA, BFD, loopbacks, NTP, radio, SNMP,
+Zscaler, VNFs and more.
+"""
+
 import uuid
 from typing import Annotated, Any, Literal, get_args
 
 from pydantic import MISSING, Field, PrivateAttr, SerializeAsAny
 
+from pyvelo.client.models.configuration.common import (
+    copy_profile_segments,
+    find_segment,
+    get_or_create_segment,
+    profile_segment_id,
+    profile_segment_name,
+)
 from pyvelo.core import (
     Alias,
     ContextDefault,
@@ -24,13 +38,6 @@ from pyvelo.core.fields import (
 )
 from pyvelo.core.identity import SegmentIdentity
 
-from ..common import (
-    copy_profile_segments,
-    find_segment,
-    get_or_create_segment,
-    profile_segment_id,
-    profile_segment_name,
-)
 from .common import (
     DeviceSettingsRef,
     RadioBand,

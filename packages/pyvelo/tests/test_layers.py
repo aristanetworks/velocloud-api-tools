@@ -1,4 +1,7 @@
-"""Tests for the layer-parametrized models, the field kinds and their carriers, display defaults and ``field_kind``."""
+"""Tests for the layer-parametrized models.
+
+The field kinds and their carriers, display defaults and ``field_kind``.
+"""
 
 from typing import Annotated, Any, get_origin
 
@@ -43,7 +46,7 @@ def test_a_layered_model_needs_a_layer() -> None:
 
 
 def test_a_class_with_a_layer_given_reports_it() -> None:
-    class Wrapper(Layered[Edge]):  # pyright: ignore[reportUnusedClass]
+    class Wrapper(Layered[Edge]):
         pass
 
     assert Wrapper.layer() is Edge
@@ -183,9 +186,9 @@ def test_edge_assignment_of_other_fields_is_ordinary() -> None:
 
 def test_effective_and_composed_are_read_only() -> None:
     composed = Mod[Composed].model_validate({"segments": []})
-    with pytest.raises(TypeError, match="state.edge"):
+    with pytest.raises(TypeError, match=r"state\.edge"):
         composed.enabled = False
-    with pytest.raises(TypeError, match="state.edge"):
+    with pytest.raises(TypeError, match=r"state\.edge"):
         composed.edge_note = "x"
     with pytest.raises(TypeError, match="Effective"):
         Mod[Effective].model_validate({})
@@ -207,7 +210,7 @@ def test_a_model_copy_update_cannot_replace_who_owns_an_edge_value() -> None:
 def test_a_model_copy_update_of_a_read_only_layer_raises() -> None:
     composed = Mod[Composed].model_validate({"segments": []})
     for key in ("enabled", "edge_note"):
-        with pytest.raises(TypeError, match="state.edge"):
+        with pytest.raises(TypeError, match=r"state\.edge"):
             composed.model_copy(update={key: False})
     assert composed.model_copy().enabled == composed.enabled
 

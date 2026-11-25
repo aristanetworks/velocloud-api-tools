@@ -70,7 +70,7 @@ async def registry(make_segment_resolver: SegmentResolverFactory) -> ResolverReg
 
 
 class TestMergeResolvable:
-    def test_string_resolves_to_segment_id(self, registry: ResolverRegistry):
+    def test_string_resolves_to_segment_id(self, registry: ResolverRegistry) -> None:
         m = Config()
         _ = m.merge_patch(
             {"segment": {"segment_id": "PCI"}},
@@ -78,7 +78,7 @@ class TestMergeResolvable:
         )
         assert m.segment.segment_id == 1
 
-    def test_string_resolves_to_logical_id(self, registry: ResolverRegistry):
+    def test_string_resolves_to_logical_id(self, registry: ResolverRegistry) -> None:
         m = Config()
         _ = m.merge_patch(
             {"segment": {"logical_id": "Global Segment"}},
@@ -86,7 +86,7 @@ class TestMergeResolvable:
         )
         assert m.segment.logical_id == GLOBAL_UUID
 
-    def test_numeric_value_passes_through(self, registry: ResolverRegistry):
+    def test_numeric_value_passes_through(self, registry: ResolverRegistry) -> None:
         """Raw IDs should still work without resolution."""
         m = Config()
         _ = m.merge_patch(
@@ -95,22 +95,27 @@ class TestMergeResolvable:
         )
         assert m.segment.segment_id == 42
 
-    def test_no_resolvers_string_passes_through(self):
-        """Without resolvers, string values are assigned directly (may fail validation)."""
+    def test_no_resolvers_string_passes_through(self) -> None:
+        """Without resolvers, string values are assigned directly.
+
+        This may fail validation.
+        """
         m = Config()
         # No resolvers -> string value assigned as-is
         _ = m.merge_patch({"segment": {"name": "test"}})
         assert m.segment.name == "test"
 
-    def test_unknown_name_raises(self, registry: ResolverRegistry):
+    def test_unknown_name_raises(self, registry: ResolverRegistry) -> None:
         m = Config()
-        with pytest.raises(KeyError, match="Unknown segment.*nonexistent"):
+        with pytest.raises(KeyError, match=r"Unknown segment.*nonexistent"):
             _ = m.merge_patch(
                 {"segment": {"segment_id": "nonexistent"}},
                 resolvers=registry,
             )
 
-    def test_non_resolvable_string_field_unaffected(self, registry: ResolverRegistry):
+    def test_non_resolvable_string_field_unaffected(
+        self, registry: ResolverRegistry
+    ) -> None:
         """String fields without Resolvable marker aren't resolved."""
         m = Config()
         _ = m.merge_patch(
@@ -120,7 +125,7 @@ class TestMergeResolvable:
         # name is a plain str field, not Resolvable — should be "PCI" literally
         assert m.segment.name == "PCI"
 
-    def test_multiple_resolvable_fields(self, registry: ResolverRegistry):
+    def test_multiple_resolvable_fields(self, registry: ResolverRegistry) -> None:
         """Multiple Resolvable fields can be resolved in one merge."""
         m = Config()
         _ = m.merge_patch(
@@ -137,11 +142,14 @@ class TestMergeResolvable:
 
 
 class TestNewItemNamedByItsId:
-    """A new item that gives an ID of an identity and no name takes the name and the other IDs."""
+    """A new item that gives an ID of an identity and no name takes the rest.
+
+    It takes the name and the other IDs.
+    """
 
     def test_a_segment_given_by_its_id_takes_its_name_and_logical_id(
         self, registry: ResolverRegistry
-    ):
+    ) -> None:
         m = NamedSegments()
         _ = m.merge_patch(
             {"segments": {"+": add({"segment_id": 1})}}, resolvers=registry
@@ -152,7 +160,7 @@ class TestNewItemNamedByItsId:
 
     def test_a_segment_given_by_its_logical_id_text_takes_its_name_and_id(
         self, registry: ResolverRegistry
-    ):
+    ) -> None:
         m = NamedSegments()
         _ = m.merge_patch(
             {"segments": {"+": add({"logical_id": str(PCI_UUID)})}},
@@ -160,7 +168,9 @@ class TestNewItemNamedByItsId:
         )
         assert [(s.name, s.segment_id) for s in m.segments] == [("PCI", 1)]
 
-    def test_a_name_that_is_given_is_not_replaced(self, registry: ResolverRegistry):
+    def test_a_name_that_is_given_is_not_replaced(
+        self, registry: ResolverRegistry
+    ) -> None:
         m = NamedSegments()
         _ = m.merge_patch(
             {
@@ -174,7 +184,9 @@ class TestNewItemNamedByItsId:
         )
         assert [s.name for s in m.segments] == ["Mine"]
 
-    def test_an_unknown_id_raises_resolution_error(self, registry: ResolverRegistry):
+    def test_an_unknown_id_raises_resolution_error(
+        self, registry: ResolverRegistry
+    ) -> None:
         m = NamedSegments()
         with pytest.raises(ResolutionError, match="99") as unknown:
             _ = m.merge_patch(
@@ -183,7 +195,7 @@ class TestNewItemNamedByItsId:
         assert unknown.value.identity_type is SegmentIdentity
         assert m.segments == []
 
-    def test_with_no_resolver_for_the_type_nothing_is_filled(self):
+    def test_with_no_resolver_for_the_type_nothing_is_filled(self) -> None:
         m = NamedSegments()
         with pytest.raises(PatchError, match="name"):
             _ = m.merge_patch(

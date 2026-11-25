@@ -1,3 +1,5 @@
+"""The request and result of ``license/getEnterpriseEdgeLicenses``."""
+
 from typing import Annotated
 
 from pydantic import MISSING, AwareDatetime, Field

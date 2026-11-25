@@ -7,11 +7,15 @@ This package is split into these submodules:
 - patch: the patch helpers (add, delete, move, at) and PatchError
 - merge: applying a patch to a model, and selecting items of a list
 - rebase: the path and key types that locate a change
-- owned: Owned, the value an inheritable field holds on the edge layer, its encodings, the ownership intents, coupled groups and the binding of an edge layer to its profile
-- layers: the layers (Edge, Profile, Effective, Composed), Layered models, the field kinds, Default and field_kind
-- effective: Origin and Resolved, a value of the effective view, and effective_view and effective_dump, which compute and write the view
+- owned: Owned, the value an inheritable field holds on the edge layer, its encodings,
+  the ownership intents, coupled groups and the binding of an edge layer to its profile
+- layers: the layers (Edge, Profile, Effective, Composed), Layered models, the field
+  kinds, Default and field_kind
+- effective: Origin and Resolved, a value of the effective view, and effective_view and
+  effective_dump, which compute and write the view
 - walk: walk_fields, the walk over the fields of a model and the models below it
-- references: the values that name a member of a set the configuration provides, and the check of them
+- references: the values that name a member of a set the configuration provides, and the
+  check of them
 - secrets: hide_secrets, which shows a value without its secrets
 
 This package exports the public names of those submodules; ``__all__`` lists them.

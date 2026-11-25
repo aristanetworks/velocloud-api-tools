@@ -54,21 +54,23 @@ DS_RAW: dict[str, Any] = {
 }
 
 
-def test_a_client_connector_ref_with_null_data_validates():
+def test_a_client_connector_ref_with_null_data_validates() -> None:
     ref = DeviceSettingsClientConnectorConfigRef.model_validate(CONNECTOR_REF)
     assert ref.data is None
     refs = DeviceSettingsRefs.model_validate({REF_NAME: CONNECTOR_REF})
     assert refs.client_connector_config == ref
 
 
-def test_a_client_connector_ref_with_data_still_validates():
+def test_a_client_connector_ref_with_data_still_validates() -> None:
     ref = DeviceSettingsClientConnectorConfigRef.model_validate(
         {**CONNECTOR_REF, "data": {"enabled": True}}
     )
     assert ref.data == {"enabled": True}
 
 
-def test_an_edge_configuration_stack_with_such_a_ref_loads_and_keeps_it_as_read():
+def test_an_edge_configuration_stack_with_such_a_ref_loads_and_keeps_it_as_read() -> (
+    None
+):
     row = make_module_json(
         "deviceSettings",
         copy.deepcopy(DS_RAW),
@@ -126,7 +128,7 @@ def _module(refs: dict[str, Any]) -> DeviceSettingsConfigurationModule:
     )
 
 
-def test_assigning_to_a_ref_row_raises():
+def test_assigning_to_a_ref_row_raises() -> None:
     refs = DeviceSettingsRefs.model_validate({REF_NAME: CONNECTOR_REF})
     row = refs.client_connector_config
     assert isinstance(row, DeviceSettingsClientConnectorConfigRef)
@@ -136,13 +138,13 @@ def test_assigning_to_a_ref_row_raises():
         row.status = "x"
 
 
-def test_assigning_to_the_refs_container_raises():
+def test_assigning_to_the_refs_container_raises() -> None:
     refs = DeviceSettingsRefs.model_validate({REF_NAME: CONNECTOR_REF})
     with pytest.raises(ValidationError, match="frozen"):
         refs.client_connector_config = MISSING
 
 
-def test_a_list_of_rows_is_a_tuple():
+def test_a_list_of_rows_is_a_tuple() -> None:
     module = _module({SEGMENT_REF_NAME: [ROW_A, ROW_B]})
     assert isinstance(module.refs, DeviceSettingsRefs)
     rows = module.refs.segment
@@ -152,13 +154,13 @@ def test_a_list_of_rows_is_a_tuple():
         rows.append(rows[0])  # pyright: ignore[reportAttributeAccessIssue]
 
 
-def test_a_single_row_stays_a_row():
+def test_a_single_row_stays_a_row() -> None:
     module = _module({SEGMENT_REF_NAME: ROW_A})
     assert isinstance(module.refs, DeviceSettingsRefs)
     assert not isinstance(module.refs.segment, tuple)
 
 
-def test_assigning_module_refs_raises_for_device_settings():
+def test_assigning_module_refs_raises_for_device_settings() -> None:
     module = _module({SEGMENT_REF_NAME: ROW_A})
     with pytest.raises(ValidationError, match="frozen"):
         module.refs = MISSING
@@ -166,7 +168,7 @@ def test_assigning_module_refs_raises_for_device_settings():
         module.refs = DeviceSettingsRefs()
 
 
-def test_assigning_module_refs_raises_for_qos():
+def test_assigning_module_refs_raises_for_qos() -> None:
     module = QosConfigurationModule[Edge].model_validate(
         make_module_json("QOS", {"segments": []}, refs={"qos:ref": {"a": 1}})
     )
@@ -176,14 +178,16 @@ def test_assigning_module_refs_raises_for_qos():
 
 
 @pytest.mark.parametrize("held", [ROW_A, [ROW_A, ROW_B], [ROW_A]])
-def test_a_frozen_refs_dump_is_the_json_read(held: Any):
+def test_a_frozen_refs_dump_is_the_json_read(held: Any) -> None:
     refs = DeviceSettingsRefs.model_validate({SEGMENT_REF_NAME: copy.deepcopy(held)})
     dumped = refs.model_dump(mode="json", exclude_unset=True)
     assert dumped == {SEGMENT_REF_NAME: held}
     assert isinstance(dumped[SEGMENT_REF_NAME], list) == isinstance(held, list)
 
 
-def test_a_module_holding_frozen_refs_is_marked_detached_and_copies_and_pickles():
+def test_a_module_holding_frozen_refs_is_marked_detached_and_copies_and_pickles() -> (
+    None
+):
     module = _module({SEGMENT_REF_NAME: [ROW_A, ROW_B]})
     module.mark_detached()
     assert module.is_detached

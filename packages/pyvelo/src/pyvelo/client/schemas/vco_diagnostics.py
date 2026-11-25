@@ -1,4 +1,6 @@
-from typing import Any
+"""The request and result of ``vcoDiagnostics/getVcoDbDiagnostics``."""
+
+from typing import Any, ClassVar
 
 from pydantic import MISSING, ConfigDict
 
@@ -10,7 +12,7 @@ class GetVcoDbDiagnostics(VcoModel):
 
 
 class VcoDbDiagnosticsResultItem(VcoModel):
-    model_config = ConfigDict(extra="allow")
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="allow")
     method: str | None | MISSING = MISSING
     result: dict[str, Any] | list[dict[str, Any]] | None | MISSING = MISSING
 

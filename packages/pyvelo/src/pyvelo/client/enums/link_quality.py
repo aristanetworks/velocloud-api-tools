@@ -1,3 +1,9 @@
+"""The integer codes of link quality (QoE) events.
+
+Traffic types, quality states, the index of each metric in a sample, and the
+enhancement actions the Edge took.
+"""
+
 from enum import IntEnum
 
 

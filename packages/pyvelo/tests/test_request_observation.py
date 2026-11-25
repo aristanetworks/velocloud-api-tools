@@ -55,7 +55,7 @@ async def observed_client(
     )
 
 
-async def test_retry_after_and_limiter_waits_match_actual_attempts():
+async def test_retry_after_and_limiter_waits_match_actual_attempts() -> None:
     clock: list[float] = [0.0]
     sleeps: list[float] = []
     records: list[RequestObservation] = []
@@ -81,21 +81,24 @@ async def test_retry_after_and_limiter_waits_match_actual_attempts():
         ) as client:
             assert (await client.portal("test/get", Request(), Result)).value == 1
     record = records[0]
-    assert len(records) == 1 and len(calls) == record.http_attempts == 2
+    assert len(records) == 1
+    assert len(calls) == record.http_attempts == 2
     assert record.http_429_count == 1
     assert record.retry_delays == record.retry_after_delays == (2.5,)
     assert record.retry_wait_seconds == pytest.approx(2.5)
     assert record.limiter_wait_seconds == pytest.approx(2.3)
     assert record.http_seconds == pytest.approx(0.4)
     assert record.elapsed_seconds == pytest.approx(5.2)
-    assert record.max_requests_per_window == 1 and record.rate_limit_window_seconds == 5
-    assert record.max_retries == 5 and record.last_http_status == 200
+    assert record.max_requests_per_window == 1
+    assert record.rate_limit_window_seconds == 5
+    assert record.max_retries == 5
+    assert record.last_http_status == 200
     assert sleeps == pytest.approx([2.5, 2.3])
     assert "private-token" not in json.dumps(asdict(record))
     assert record.rpc_method == "test/get"
 
 
-async def test_exhaustion_records_all_attempts_with_no_extra_retry():
+async def test_exhaustion_records_all_attempts_with_no_extra_retry() -> None:
     records: list[RequestObservation] = []
 
     async def sleep(_seconds: float) -> None:
@@ -115,7 +118,7 @@ async def test_exhaustion_records_all_attempts_with_no_extra_retry():
     assert record.outcome == "retries_exhausted"
 
 
-async def test_timeout_is_one_attempt_and_does_not_trigger_retries():
+async def test_timeout_is_one_attempt_and_does_not_trigger_retries() -> None:
     records: list[RequestObservation] = []
 
     def handle(request: httpx.Request) -> httpx.Response:
@@ -130,7 +133,7 @@ async def test_timeout_is_one_attempt_and_does_not_trigger_retries():
     assert "private diagnostic" not in repr(records)
 
 
-async def test_cancelled_retry_wait_is_accounted_and_not_retried():
+async def test_cancelled_retry_wait_is_accounted_and_not_retried() -> None:
     records: list[RequestObservation] = []
     sleeping = asyncio.Event()
 
@@ -153,7 +156,9 @@ async def test_cancelled_retry_wait_is_accounted_and_not_retried():
     assert records[0].retry_wait_seconds >= 0
 
 
-async def test_pagination_records_separate_source_requests_and_cursor_presence():
+async def test_pagination_records_separate_source_requests_and_cursor_presence() -> (
+    None
+):
     records: list[RequestObservation] = []
 
     def handle(request: httpx.Request) -> httpx.Response:
@@ -189,7 +194,7 @@ async def test_pagination_records_separate_source_requests_and_cursor_presence()
 
 async def test_observer_failure_does_not_change_source_result_or_log_exception(
     caplog: pytest.LogCaptureFixture,
-):
+) -> None:
     def observer(_record: RequestObservation) -> None:
         raise ValueError("private credential")
 
@@ -203,25 +208,23 @@ async def test_observer_failure_does_not_change_source_result_or_log_exception(
 
 async def test_observer_preparation_failure_preserves_source_error(
     caplog: pytest.LogCaptureFixture,
-):
+) -> None:
     records: list[RequestObservation] = []
     failure = httpx.InvalidURL("original transport error")
     async with observed_client(lambda _: httpx.Response(200), records.append) as client:
-        with (
-            patch.object(VcoClientProtocol, "_send_request", side_effect=failure),
-            pytest.raises(httpx.InvalidURL) as error,
-        ):
+        with patch.object(VcoClientProtocol, "_send_request", side_effect=failure):
             send_request = cast(
-                Callable[[str, str], Awaitable[httpx.Response]],
-                client._send_request,
+                "Callable[[str, str], Awaitable[httpx.Response]]",
+                client._send_request,  # pyright: ignore[reportPrivateUsage]  # observation is made in the transport call
             )
-            _ = await send_request("POST", "https://[invalid")
+            with pytest.raises(httpx.InvalidURL) as error:
+                _ = await send_request("POST", "https://[invalid")
     assert error.value is failure
     assert records == []
     assert "observer failed" in caplog.text
 
 
-async def test_uninitialized_client_records_no_http_attempt():
+async def test_uninitialized_client_records_no_http_attempt() -> None:
     records: list[RequestObservation] = []
     client = VcoClient("example.test", "private-token", request_observer=records.append)
     with pytest.raises(VcoClientNotInitializedError) as exc:
@@ -235,12 +238,12 @@ async def test_uninitialized_client_records_no_http_attempt():
     assert records[0].http_attempts == 0
 
 
-async def test_observation_strips_host_query_and_payload():
+async def test_observation_strips_host_query_and_payload() -> None:
     records: list[RequestObservation] = []
     async with observed_client(lambda _: httpx.Response(200), records.append) as client:
         send_request = cast(
-            Callable[[str, str], Awaitable[httpx.Response]],
-            client._send_request,
+            "Callable[[str, str], Awaitable[httpx.Response]]",
+            client._send_request,  # pyright: ignore[reportPrivateUsage]  # observation is made in the transport call
         )
         _ = await send_request(
             "GET", "https://example.test/rest/test?token=private-query"
@@ -249,7 +252,7 @@ async def test_observation_strips_host_query_and_payload():
     assert "private-query" not in repr(records)
 
 
-async def test_rpc_error_is_distinct_from_http_success():
+async def test_rpc_error_is_distinct_from_http_success() -> None:
     records: list[RequestObservation] = []
     async with observed_client(
         lambda _: httpx.Response(200, json={"error": {"code": 1, "message": "failed"}}),

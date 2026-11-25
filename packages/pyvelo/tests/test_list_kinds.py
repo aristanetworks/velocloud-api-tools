@@ -69,7 +69,9 @@ def _models_in(annotation: object) -> Iterator[type[VcoModel]]:
 
 
 def walk(roots: tuple[type[VcoModel], ...]) -> dict[str, ListKind]:
-    """Map ``"Class.field"`` to its kind for every list or map field reachable from *roots*.
+    """Map ``"Class.field"`` to its kind for every list or map field.
+
+    The fields are those reachable from *roots*.
 
     Reachable means through sub-model fields, list elements, union members and
     the values of maps of models; each class is visited once.
@@ -96,7 +98,9 @@ def undeclared(roots: tuple[type[VcoModel], ...]) -> frozenset[str]:
 def keyed_fields(
     roots: tuple[type[VcoModel], ...],
 ) -> Iterator[tuple[str, KeySpec, type[VcoModel]]]:
-    """Each keyed field reachable from *roots*: its name, its ``KeySpec`` and an item class.
+    """Each keyed field reachable from *roots*.
+
+    Its name, its ``KeySpec`` and an item class.
 
     A list of a union of models yields once per variant.
     """
@@ -126,7 +130,7 @@ def resolves(model: type[VcoModel], path: str) -> bool:
     return leaf in model.model_fields
 
 
-def test_kind_of_each_synthetic_field():
+def test_kind_of_each_synthetic_field() -> None:
     kinds = {name: list_kind(fi) for name, fi in Root.model_fields.items()}
     assert kinds["rules"] == "keyed"
     assert kinds["ports"] == kinds["names"] == "value"
@@ -138,18 +142,18 @@ def test_kind_of_each_synthetic_field():
     assert kinds["count"] is None
 
 
-def test_undeclared_lists_are_the_recorded_set():
+def test_undeclared_lists_are_the_recorded_set() -> None:
     assert undeclared(ROOTS) == UNDECLARED
 
 
-def test_every_key_path_names_a_field():
+def test_every_key_path_names_a_field() -> None:
     for name, spec, item in keyed_fields(ROOTS):
         for path in (*spec.paths, spec.alt, spec.label):
             if path is not None:
                 assert resolves(item, path), f"{name}: {path}"
 
 
-def test_list_counts():
+def test_list_counts() -> None:
     assert Counter(walk(ROOTS).values()) == {
         "keyed": 45,
         "value": 19,

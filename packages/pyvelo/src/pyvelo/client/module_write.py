@@ -1,4 +1,6 @@
-"""Plan the write of a configuration module: the raw data as read, plus the caller's changes.
+"""Plan the write of a configuration module.
+
+The write is the raw data as read, plus the caller's changes.
 
 ``plan_module`` is the one way a typed model becomes a write payload. The payload
 starts from the JSON the module was read from (``raw_data``), so keys the model
@@ -168,7 +170,11 @@ A write drops them (``drop_legacy_keys``); a plan reports them either way.
 def _legacy_model(
     module_name: str, level: ConfigContext | None
 ) -> type[VcoModel] | None:
-    """The data model of a module in ``LEGACY_SEGMENT_KEYS`` at config level *level* (an edge's but for the profile's), to address a path by its keys; None for another module."""
+    """The data model of a module in ``LEGACY_SEGMENT_KEYS`` at config level *level*.
+
+    It is an edge's but for the profile's, to address a path by its keys; None
+    for another module.
+    """
     if module_name != "firewall":
         return None
     return (
@@ -214,7 +220,7 @@ def missing_segments(
             continue
         seen.append(segment_id)  # a profile that repeats an id still gets one entry
         missing.append(
-            placeholder_segment(cast(Mapping[str, object], entry), module_name)
+            placeholder_segment(cast("Mapping[str, object]", entry), module_name)
         )
     return missing
 
@@ -252,7 +258,8 @@ class ModulePlan:
     it (``module.additions``), so an added entry nobody edited is no change.
     """
     reconciled_segments: tuple[str, ...]
-    """The profile's segments that the edge module, as read or as edited, does not have."""
+    """The profile's segments that the edge module, as read or as edited, does not
+    have."""
     legacy_keys: tuple[Path, ...] = ()
     """Where the raw data has keys that the VCO does not know and a write drops.
 
@@ -273,13 +280,16 @@ class ModulePlan:
     ref_changes: tuple[RefChange, ...] = ()
     """The ref rows the edit adds and removes, from the difference of the owners."""
     warnings: tuple[PlanWarning, ...] = ()
-    """What disagrees in the module as read about its refs, and the plan leaves as it is."""
+    """What disagrees in the module as read about its refs, and the plan leaves as it
+    is."""
     added_segments: tuple[str, ...] = ()
     """The names of the segments added to the module that the payload holds."""
     repair_defaults: bool = True
-    """The ``repair_defaults`` that ``plan_module`` was called with; a rebase of the plan keeps it."""
+    """The ``repair_defaults`` that ``plan_module`` was called with; a rebase of the
+    plan keeps it."""
     missing_defaults: tuple[MissingDefaults, ...] = ()
-    """The segments of a profile QoS module that lack template ``defaults``, one entry each.
+    """The segments of a profile QoS module that lack template ``defaults``, one entry
+    each.
 
     ``repaired`` says whether the payload has the missing entries.
     """
@@ -351,11 +361,11 @@ class ModulePlan:
             lines.append(
                 f"  {label} defaults: {missing.segment}: {', '.join(missing.names)}"
             )
-        for path in self.overrides_turned_on:
-            lines.append(
-                f"  override turned on: {path} (the edge's own values apply there "
-                "from now on, and the profile's no longer do)"
-            )
+        lines.extend(
+            f"  override turned on: {path} (the edge's own values apply there "
+            "from now on, and the profile's no longer do)"
+            for path in self.overrides_turned_on
+        )
         if self.legacy_keys and self.operation == "none":
             lines.append(
                 "  legacy keys (dropped when the module is written): "
@@ -365,7 +375,10 @@ class ModulePlan:
         return "\n".join(lines)
 
     def ref_lines(self) -> list[str]:
-        """The lines of ``render`` about the refs sent: a line for each row added or removed."""
+        """The lines of ``render`` about the refs sent.
+
+        A line for each row added or removed.
+        """
         lines: list[str] = []
         for change in self.ref_changes:
             sign = "+" if change.added else "-"
@@ -383,7 +396,9 @@ def with_hub_rows(
     removed: Sequence[Mapping[str, object]],
     segments: Mapping[int, str] | None = None,
 ) -> ModulePlan:
-    """*plan* with the hub ref rows of a save's role steps: the *removed* rows out of its refs and the *added* rows in.
+    """*plan* with the hub ref rows of a save's role steps.
+
+    The *removed* rows are out of its refs and the *added* rows in.
 
     The role calls make a hub's service and its row, which the plan of the
     device settings module, made before them, cannot know. A row is told by its
@@ -401,7 +416,11 @@ def with_hub_rows(
     if plan.operation != "update" or plan.refs is None:
         raise ValueError(
             f"{plan.name}: hub rows go with an update that sends refs, and this "
-            f"plan is {'an update with no refs' if plan.operation == 'update' else plan.operation}"
+            f"plan is {
+                'an update with no refs'
+                if plan.operation == 'update'
+                else plan.operation
+            }"
         )
     names = segments or {}
     refs = copy.deepcopy(plan.refs)
@@ -427,8 +446,8 @@ def with_hub_rows(
     def held(name: str) -> list[dict[str, Any]]:
         value = refs.get(name)
         if is_list(value):
-            return [cast(dict[str, Any], row) for row in value]
-        return [] if value is None else [cast(dict[str, Any], value)]
+            return [cast("dict[str, Any]", row) for row in value]
+        return [] if value is None else [cast("dict[str, Any]", value)]
 
     for row in removed:
         name = str(row["ref"])
@@ -489,7 +508,9 @@ def update_request(
 def insert_request(
     module: ConfigurationModuleBase, plan: ModulePlan, enterprise_id: int | None
 ) -> InsertConfigurationModule:
-    """The request that inserts *plan* as a new module of *module*'s configuration, asking for its row.
+    """The request that inserts *plan* as a new module of *module*'s configuration.
+
+    It asks for the new module's row.
 
     Only a firewall or QoS module is inserted (``TypeError`` otherwise); a QoS
     one carries the plan's refs when it has any, and a firewall one never does:
@@ -519,7 +540,7 @@ def insert_request(
 
 
 def drop_legacy_keys(data: object, module_name: str) -> None:
-    """Remove from *data*'s segment entries the keys that *module_name* does not have."""
+    """Remove from *data*'s segment entries the keys *module_name* does not have."""
     keys = LEGACY_SEGMENT_KEYS.get(module_name)
     if not (keys and is_dict(data)):
         return
@@ -535,7 +556,10 @@ def drop_legacy_keys(data: object, module_name: str) -> None:
 def legacy_key_paths(
     data: object, module_name: str, level: ConfigContext | None
 ) -> tuple[Path, ...]:
-    """Where *data*, a module's data at config level *level*, has keys that ``drop_legacy_keys`` would remove."""
+    """Where *data* has keys that ``drop_legacy_keys`` would remove.
+
+    *data* is a module's data at config level *level*.
+    """
     model = _legacy_model(module_name, level)
     if model is None:
         return ()
@@ -600,11 +624,14 @@ class ReadData:
 
     module: ConfigurationModuleBase
     extra: list[dict[str, Any]]
-    """The profile's segment entries the edge module lacks (none at the profile level)."""
+    """The profile's segment entries the edge module lacks (none at the profile
+    level)."""
     reconciled: Any
-    """The raw data plus *extra*: the module as read, as the VCO would store it reconciled."""
+    """The raw data plus *extra*: the module as read, as the VCO would store it
+    reconciled."""
     planned_from: Any
-    """*reconciled* plus the entries added to a profile module (``module.additions``)."""
+    """*reconciled* plus the entries added to a profile module
+    (``module.additions``)."""
 
     def model[M: VcoModel](self, model_type: type[M]) -> M:
         """``planned_from`` parsed as *model_type*, the way the module was first parsed.
@@ -649,13 +676,16 @@ def read_data(
 
 
 def _segment_name(placeholder: Mapping[str, Any]) -> str:
-    descriptor = cast(Mapping[str, object], placeholder["segment"])
+    descriptor = cast("Mapping[str, object]", placeholder["segment"])
     name = descriptor.get("name")
     return name if isinstance(name, str) else str(descriptor.get("segmentId"))
 
 
 def _add_segments(data: object, entries: list[dict[str, Any]]) -> None:
-    """Append *entries* to the ``segments`` of *data*, an absent or null one included."""
+    """Append *entries* to the ``segments`` of *data*.
+
+    This includes an absent or null one.
+    """
     if not (entries and is_dict(data)):
         return
     segments = data.get("segments")
@@ -702,17 +732,23 @@ def _with_reconciled_segments(
 
 
 def _plain_json(value: Mapping[str, object]) -> dict[str, Any]:
-    """A new dict of *value* as the request would write it: plain JSON, sharing nothing with it."""
-    return cast(dict[str, Any], to_jsonable_python(dict(value), by_alias=True))
+    """A new dict of *value* as the request would write it.
+
+    It is plain JSON, sharing nothing with *value*.
+    """
+    return cast("dict[str, Any]", to_jsonable_python(dict(value), by_alias=True))
 
 
 def _segment_names(data: object) -> dict[object, str]:
-    """The name of each segment entry of *data*, by ``segmentId``, in order; entries without an ID are skipped."""
+    """The name of each segment entry of *data*, by ``segmentId``, in order.
+
+    Entries without an ID are skipped.
+    """
     segments = data.get("segments") if is_dict(data) else None
     if not is_list(segments):
         return {}
     return {
-        segment_id: _segment_name(cast(Mapping[str, Any], entry))
+        segment_id: _segment_name(cast("Mapping[str, Any]", entry))
         for entry in segments
         if (segment_id := segment_id_of(entry)) is not None
     }
@@ -721,7 +757,10 @@ def _segment_names(data: object) -> dict[object, str]:
 def _segment_set_error(
     module_name: str, added: list[str], removed: list[str]
 ) -> SegmentSetError:
-    """The refusal of a one-module plan that adds the segments *added* or removes *removed*."""
+    """The refusal of a one-module plan that changes its segments.
+
+    The plan adds the segments *added* or removes *removed*.
+    """
     did = [
         f"{verb} {', '.join(map(repr, names))}"
         for verb, names in (("adds", added), ("removes", removed))
@@ -753,7 +792,10 @@ def _segment_set_error(
 
 
 def _check_segment_set(module_name: str, as_read: object, payload: object) -> None:
-    """Raise ``SegmentSetError`` when *payload*'s segments are not those of *as_read*, by ``segmentId``."""
+    """Raise ``SegmentSetError`` when *payload*'s segments are not those of *as_read*.
+
+    They are compared by ``segmentId``.
+    """
     read, written = _segment_names(as_read), _segment_names(payload)
     added = [name for key, name in written.items() if key not in read]
     removed = [name for key, name in read.items() if key not in written]
@@ -762,7 +804,10 @@ def _check_segment_set(module_name: str, as_read: object, payload: object) -> No
 
 
 def _hub_list(entry: object, path: tuple[str, ...]) -> dict[tuple[str, str], str]:
-    """The hubs of the list at *path* of the segment entry *entry*, by ``(type, logicalId)``, with their names, in order."""
+    """The hubs of the list at *path* of the segment entry *entry*.
+
+    Keyed by ``(type, logicalId)``, with their names, in order.
+    """
     node = entry
     for key in path:
         node = node.get(key) if is_dict(node) else None
@@ -792,7 +837,10 @@ def _hub_patch(segment: str, path: tuple[str, ...], change: dict[str, Any]) -> s
 def _hub_list_error(
     module_name: str, changes: list[tuple[str, tuple[str, ...], str, bool]]
 ) -> HubListError:
-    """The refusal of a one-module plan that adds or removes the hubs of *changes*: ``(segment, list path, hub, added)``."""
+    """The refusal of a one-module plan that adds or removes the hubs of *changes*.
+
+    Each change is ``(segment, list path, hub, added)``.
+    """
     segments = list(dict.fromkeys(segment for segment, _, _, _ in changes))
     lists = list(dict.fromkeys(".".join(path) for _, path, _, _ in changes))
     hubs = list(dict.fromkeys(hub for _, _, hub, _ in changes))
@@ -826,7 +874,9 @@ def _hub_list_error(
 
 
 def _check_hub_lists(module_name: str, as_read: object, payload: object) -> None:
-    """Raise ``HubListError`` when a segment of *payload* has other hubs in a hub list than *as_read*, by ``(type, logicalId)``.
+    """Raise ``HubListError`` when a segment of *payload* has other hubs than *as_read*.
+
+    The hubs are those of a hub list, compared by ``(type, logicalId)``.
 
     A reorder is no change of members. Segments are matched by ``segmentId``.
     """
@@ -844,7 +894,7 @@ def _check_hub_lists(module_name: str, as_read: object, payload: object) -> None
         before = read_by_id.get(segment_id_of(entry))
         if before is None:
             continue
-        name = _segment_name(cast(Mapping[str, Any], entry))
+        name = _segment_name(cast("Mapping[str, Any]", entry))
         for field in hub_list_fields():
             path = field.path
             read, written = _hub_list(before, path), _hub_list(entry, path)
@@ -902,13 +952,13 @@ def _defaults_findings(
     for entry in segments if is_list(segments) else []:
         if not is_dict(entry):
             continue
-        name = _segment_name(cast(Mapping[str, Any], entry))
+        name = _segment_name(cast("Mapping[str, Any]", entry))
         pairing = pair_defaults(entry.get("defaults", MISSING))
         if not pairing.missing:
             continue
         path = _defaults_path(name)
         if pairing.unknown or pairing.clash:
-            items = cast(list[Any], entry.get("defaults"))
+            items = cast("list[Any]", entry.get("defaults"))
             parts: list[str] = []
             if pairing.unknown:
                 known = [
@@ -920,7 +970,8 @@ def _defaults_findings(
                 parts.append(f"items the template does not know ({', '.join(known)})")
             if pairing.clash:
                 parts.append(
-                    f"missing entries whose names it already holds ({', '.join(pairing.clash)}), "
+                    "missing entries whose names it already holds "
+                    f"({', '.join(pairing.clash)}), "
                     "which a repair would repeat"
                 )
             warnings.append(
@@ -940,7 +991,7 @@ def _defaults_findings(
     return warnings, repairs, targets
 
 
-def plan_module(
+def plan_module(  # noqa: C901, PLR0912, PLR0913, PLR0915 (existing: split it when it next changes)
     module: ConfigurationModuleBase,
     data: VcoModel | Mapping[str, object] | None = None,
     *,
@@ -1005,7 +1056,7 @@ def plan_module(
     name = str(_attribute(module, "name"))
     current = data if data is not None else _attribute(module, "data")
     if isinstance(current, Mapping):
-        current = _plain_json(cast(Mapping[str, object], current))
+        current = _plain_json(cast("Mapping[str, object]", current))
     if level is None and isinstance(current, VcoModel):
         level = current.config_context
     if level is None:  # a mapping, or a model built by hand, has no level of its own
@@ -1016,7 +1067,7 @@ def plan_module(
         payload = (
             wire_dump(current, level)
             if isinstance(current, VcoModel)
-            else cast(dict[str, Any], current)
+            else cast("dict[str, Any]", current)
         )
         model_type = type(current) if isinstance(current, VcoModel) else None
         drop_legacy_keys(payload, name)
@@ -1049,7 +1100,7 @@ def plan_module(
         after = wire_dump(current, level)
         carry_unset_defaults(baseline, current, before, after)
         payload = cast(
-            dict[str, Any],
+            "dict[str, Any]",
             copy.deepcopy(
                 rebase(
                     planned_from,
@@ -1066,10 +1117,10 @@ def plan_module(
     else:
         baseline = ref_baseline = None
         model_type = None
-        topped_up = dict(cast(Mapping[str, Any], current))
+        topped_up = dict(cast("Mapping[str, Any]", current))
         if extra:  # only for an object, so *reconciled* is one
             topped_up = _with_reconciled_segments(
-                topped_up, cast(dict[str, Any], reconciled), extra
+                topped_up, cast("dict[str, Any]", reconciled), extra
             )
         payload = copy.deepcopy(topped_up)
 
@@ -1157,7 +1208,9 @@ def plan_module(
                     else repaired_entry(
                         n,
                         module.defaults_rule_id(segment_id, n),
-                        conditional_backhaul.get(cast(int, segment_id))
+                        conditional_backhaul=conditional_backhaul.get(
+                            cast("int", segment_id)
+                        )
                         if conditional_backhaul is not None
                         else None,
                     )
@@ -1191,7 +1244,7 @@ def plan_module(
         and layered is not None
         and issubclass(layered, Layered)
     ):
-        held = payload if changed else cast(Mapping[str, object], raw)
+        held = payload if changed else cast("Mapping[str, object]", raw)
         flag_off = [
             _flag_off_warning(found) for found in unflagged_in_use_at(layered, held)
         ]
@@ -1199,7 +1252,7 @@ def plan_module(
     return ModulePlan(
         name=name,
         operation=operation,
-        data=payload if changed else copy.deepcopy(cast(dict[str, Any], raw)),
+        data=payload if changed else copy.deepcopy(cast("dict[str, Any]", raw)),
         refs=derived_refs if changed else None,
         changes=changes,
         reconciled_segments=tuple(
@@ -1232,7 +1285,9 @@ _REBASE_LIST = (
 def _without_repairs(
     plan: ModulePlan, as_read: object
 ) -> tuple[dict[str, Any], dict[tuple[str, str], Mapping[str, Any]]]:
-    """The payload of *plan* without its repaired ``defaults`` entries, and those entries by ``(str(segment ID), name)``.
+    """The payload of *plan* without its repaired ``defaults``, and those entries.
+
+    The entries are by ``(str(segment ID), name)``.
 
     The repaired entries are not the caller's edits: a rebase carries the
     edits and puts the repairs back as they were planned (``carried_repairs``).
@@ -1250,11 +1305,11 @@ def _without_repairs(
             if not (is_dict(entry) and segment_id_of(entry) == missing.segment_id):
                 continue
             kept: list[object] = []
-            for rule in cast(list[object], entry.get("defaults", [])):
+            for rule in cast("list[object]", entry.get("defaults", [])):
                 name = rule.get("name") if is_dict(rule) else None
                 if is_dict(rule) and name in missing.names:
-                    carried[(str(missing.segment_id), cast(str, name))] = cast(
-                        dict[str, Any], rule
+                    carried[(str(missing.segment_id), cast("str", name))] = cast(
+                        "dict[str, Any]", rule
                     )
                 else:
                     kept.append(rule)
@@ -1274,7 +1329,10 @@ def _without_repairs(
 
 
 def _segments_of(held: object) -> list[object]:
-    """The entries of the ``segments`` list of *held*; none for data that has no such list."""
+    """The entries of the ``segments`` list of *held*.
+
+    None for data that has no such list.
+    """
     segments = held.get("segments") if is_dict(held) else None
     return list(segments) if is_list(segments) else []
 
@@ -1282,7 +1340,11 @@ def _segments_of(held: object) -> list[object]:
 def _added_segments_held(
     additions: Sequence[SegmentAddition], held: object
 ) -> list[tuple[str, PlannedChange]]:
-    """Each ``AddedSegment`` of *additions* whose ``segmentId`` the segments of *held* hold, with the lost edit that is its entry, as stored there."""
+    """Each ``AddedSegment`` of *additions* that the segments of *held* hold.
+
+    They are matched by ``segmentId``; each comes with the lost edit that is
+    its entry, as stored there.
+    """
     found: list[tuple[str, PlannedChange]] = []
     for addition in additions:
         if not isinstance(addition, AddedSegment):
@@ -1302,7 +1364,10 @@ def _added_segments_held(
 def _defaults_without_segment(
     additions: Sequence[SegmentAddition], held: object
 ) -> list[str]:
-    """The names of the segments that an ``AddedDefaults`` of *additions* goes into and the segments of *held* lack."""
+    """The names of the segments that an ``AddedDefaults`` of *additions* goes into.
+
+    Only those the segments of *held* lack.
+    """
     held_ids = {segment_id_of(entry) for entry in _segments_of(held)}
     added_ids = {a.segment_id for a in additions if isinstance(a, AddedSegment)}
     return [
@@ -1322,7 +1387,9 @@ def rebase_onto[M: ConfigurationModuleBase](
     resolvers: IdentityLookup | None = None,
     profile_device_settings: ConfigurationModuleBase | None = None,
 ) -> tuple[M, ModulePlan, tuple[ServerChange, ...]]:
-    """*plan*, made for *module* as read, applied to *fresh*, the module as the VCO holds it now.
+    """*plan*, made for *module* as read, applied to *fresh*.
+
+    *fresh* is the module as the VCO holds it now.
 
     Returns the rebased module, its plan and what changed under the caller.
     The module is of the class of *module*, with the raw snapshot, ``version``
@@ -1356,12 +1423,12 @@ def rebase_onto[M: ConfigurationModuleBase](
     service in the profile's device settings); the plan's ``ref_changes`` are
     those of the rebased plan.
     """
-    # Imported here: module_check imports this module.
-    from pyvelo.client.module_check import MODULE_REWRITES, data_model
+    from pyvelo.client.module_check import MODULE_REWRITES, data_model  # noqa: PLC0415 (module_check imports this module)
 
     if not isinstance(fresh, type(module)):
         raise TypeError(
-            f"the module read is a {type(fresh).__name__}, not a {type(module).__name__}"
+            f"the module read is a {type(fresh).__name__}, "
+            f"not a {type(module).__name__}"
         )
     additions = module.additions
     as_read = {} if module.raw_data is MISSING else module.raw_data

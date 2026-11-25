@@ -33,13 +33,13 @@ for a side that has no value there.
    applied when ``D`` holds the payload's value (``_beyond``): ``D`` may hold
    more keys than the payload, but not a key ``R`` had and the payload lacks.
 
-A path names an item of a keyed list as ``raw_changes`` does: by its key, or
-by its position ``#n`` where the key repeats or there is none. An item that
-was read is named as read, also when it was renamed or moved; an added item by
-its key or position in the payload; an item only the VCO has by its key or
-position in the stored data. So two entries share a path only where a key
-repeats or an item has none; their values tell them apart. A keyed list in which an added item
-would have the name of an item as read is compared whole (rule 5).
+A path names an item of a keyed list as ``raw_changes`` does: by its key, or by its
+position ``#n`` where the key repeats or there is none. An item that was read is named
+as read, also when it was renamed or moved; an added item by its key or position in the
+payload; an item only the VCO has by its key or position in the stored data. So two
+entries share a path only where a key repeats or an item has none; their values tell
+them apart. A keyed list in which an added item would have the name of an item as read
+is compared whole (rule 5).
 
 The VCO stores some values otherwise than as sent; ``Rewrites`` says where.
 A key it owns (a field marked ``ServerOwned``, or a path a pattern matches)
@@ -61,7 +61,7 @@ a changed list is one change.
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from ipaddress import IPv6Interface
-from typing import Literal
+from typing import Final, Literal
 
 from pydantic import MISSING
 
@@ -100,7 +100,11 @@ from .rebase import (
 )
 
 type PathPattern = tuple[str, ...]
-"""The names of a path, in order. ``*`` is any one part (a name, a keyed item, a position); ``**`` is any number of parts, none included."""
+"""The names of a path, in order.
+
+``*`` is any one part (a name, a keyed item, a position); ``**`` is any number of parts,
+none included.
+"""
 
 
 @dataclass(frozen=True, slots=True)
@@ -115,6 +119,10 @@ class Rewrites:
     """Two strings that parse as one ``IPv6Interface`` are the same value."""
     own_order: tuple[PathPattern, ...] = ()
     """Keyed lists whose order the VCO sets itself."""
+
+
+_NO_REWRITES: Final = Rewrites()
+"""The default of ``check_response``: the VCO stores every value as sent."""
 
 
 def matches(path: Path, pattern: PathPattern) -> bool:
@@ -152,7 +160,10 @@ class PlannedChange:
     place: ItemPlace | None = None
     """Where an added item of a keyed list was planned to go."""
     moves: tuple[ItemMove, ...] | None = None
-    """Not None for the order entry of a keyed list: the moves that put the stored order right."""
+    """Not None for the order entry of a keyed list.
+
+    It is the moves that put the stored order right.
+    """
     owner: Path | None = None
     """For a ``refs`` entry of a ``RefOnly`` owner: the owner's path in python names."""
 
@@ -245,7 +256,7 @@ def check_response(
     stored: object,
     model: type[VcoModel] | None = None,
     *,
-    rewrites: Rewrites = Rewrites(),
+    rewrites: Rewrites = _NO_REWRITES,
 ) -> ResponseCheck:
     """Compare what the VCO stored with what a write meant to change.
 
@@ -318,7 +329,7 @@ class _ModelList:
 
 
 type _CheckNode = Node | _ModelList
-"""What a JSON value is known to be, as ``Node`` says, or a list of models without a key."""
+"""What a JSON value is known to be (as ``Node`` says), or a keyless list of models."""
 
 
 def _rebase_node(node: _CheckNode) -> Node:
@@ -362,7 +373,10 @@ def _is_owned(rewrites: Rewrites, node: _CheckNode, key: object, path: Path) -> 
 def _is_owned_below(
     rewrites: Rewrites, path: Path, node: _CheckNode, below: Path
 ) -> bool:
-    """Whether *below*, a path under *path* (whose node is *node*), is a key the VCO owns."""
+    """Whether *below*, a path under *path*, is a key the VCO owns.
+
+    The node of *path* is *node*.
+    """
     parts = below.parts[len(path.parts) :]
     if not parts or not isinstance(parts[-1], str):
         return False
@@ -387,7 +401,7 @@ def _differences(
     return out
 
 
-def _walk(
+def _walk(  # noqa: PLR0913, PLR0917 (existing: split it when it next changes)
     found: _Found, path: Path, r: object, p: object, d: object, node: _CheckNode
 ) -> None:
     if r == p:
@@ -416,7 +430,7 @@ def _walk(
         _planned(found, path, r, p, d, node)
 
 
-def _walk_object(
+def _walk_object(  # noqa: PLR0913, PLR0917 (existing: split it when it next changes)
     found: _Found,
     path: Path,
     r: dict[object, object],
@@ -454,7 +468,7 @@ def _owned(found: _Found, path: Path, r: object, p: object, d: object) -> None:
         found.server_changes.append(ServerChange(path, r, d))
 
 
-def _walk_replaced(
+def _walk_replaced(  # noqa: PLR0913, PLR0917 (existing: split it when it next changes)
     found: _Found, path: Path, r: object, p: object, d: object, node: _CheckNode
 ) -> None:
     """Rule 4: *d* is not the container *r* and *p* are, so it stores nothing inside it.
@@ -489,7 +503,7 @@ def _walk_replaced(
     found.server_changes.append(ServerChange(path, r, d))
 
 
-def _walk_keyed_list(
+def _walk_keyed_list(  # noqa: C901, PLR0913, PLR0917 (existing: split it when it next changes)
     found: _Found,
     path: Path,
     r: list[object],
@@ -509,7 +523,7 @@ def _walk_keyed_list(
     d_keys = set(key_forms(d, node))
 
     def record(item_path: Path, k: int) -> None:
-        """Note the part that names item *k* of *d*, when a selector can name it alone."""
+        """Note the part naming item *k* of *d*, when a selector can name it alone."""
         part = d_parts[k]
         if isinstance(part, int) and f"#{part}" in d_keys:
             return
@@ -602,7 +616,7 @@ def _canonical_form(form: KeyForm | None) -> KeyForm | None:
 
 
 def _canonical_ipv6(text: str) -> str:
-    """*text* in canonical ``IPv6Interface`` form, or as it is when it does not parse as one."""
+    """*text* in canonical ``IPv6Interface`` form, or as it is if it does not parse."""
     try:
         return str(IPv6Interface(text))
     except ValueError:
@@ -621,7 +635,7 @@ def _first_with(
     return next((index for index in left if values[index] == value), None)
 
 
-def _pair_stored(
+def _pair_stored(  # noqa: PLR0913, PLR0917 (existing: split it when it next changes)
     r: list[object],
     p: list[object],
     d: list[object],
@@ -690,7 +704,7 @@ def _pair_stored(
     return d_of, d_of_removed
 
 
-def _planned(
+def _planned(  # noqa: PLR0913, PLR0917 (existing: split it when it next changes)
     found: _Found,
     path: Path,
     r: object,
@@ -725,7 +739,7 @@ def _planned(
         found.server_changes.extend(beyond)
 
 
-def _beyond(
+def _beyond(  # noqa: C901, PLR0911, PLR0912, PLR0913, PLR0917 (existing: split it when it next changes)
     rewrites: Rewrites,
     path: Path,
     r: object,

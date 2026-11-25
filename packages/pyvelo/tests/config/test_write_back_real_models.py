@@ -76,7 +76,10 @@ def issue_rule_ids(new: dict[str, Any], _: dict[str, Any] | None) -> None:
 
 
 def revise_rule_ids(new: dict[str, Any], old: dict[str, Any] | None) -> None:
-    """Give a firewall rule whose content changed a new ``ruleLogicalId``, as the VCO does."""
+    """Give a firewall rule whose content changed a new ``ruleLogicalId``.
+
+    The VCO does that.
+    """
     assert old is not None
     before = {rule["ruleLogicalId"]: rule for rule in outbound_rules(old)}
     for rule in outbound_rules(new):
@@ -97,13 +100,19 @@ def responders(row: dict[str, Any]) -> Iterable[dict[str, Any]]:
 
 
 def lower_case_ipv6(new: dict[str, Any], _: dict[str, Any] | None) -> None:
-    """Store each ICMP responder's address in canonical (lower-case) form, as the VCO does."""
+    """Store each ICMP responder's address in canonical (lower-case) form.
+
+    The VCO does that.
+    """
     for responder in responders(new):
         responder["ipAddress"] = responder["ipAddress"].lower()
 
 
 def lower_case_v6_routes(new: dict[str, Any], _: dict[str, Any] | None) -> None:
-    """Store each IPv6 static route's addresses in canonical (lower-case) form, as the VCO does."""
+    """Store each IPv6 static route's addresses in canonical (lower-case) form.
+
+    The VCO does that.
+    """
     for segment in new["data"]["segments"]:
         for route in segment["routes"]["staticV6"]:
             route["destination"] = route["destination"].lower()
@@ -115,7 +124,7 @@ def other_writer_edit(row: dict[str, Any]) -> None:
     row["data"]["futureKey"] = 1
 
 
-async def test_added_firewall_rule_gets_its_id_from_the_vco():
+async def test_added_firewall_rule_gets_its_id_from_the_vco() -> None:
     raw = firewall(fw_rule("allow-web", ruleLogicalId="l1"))
     state = make_state({"firewall": raw}, {"firewall": firewall()})
     client = MockVcoClient.for_state(state)
@@ -145,7 +154,7 @@ async def test_added_firewall_rule_gets_its_id_from_the_vco():
     assert_state_is_the_stored_row(state, client, "firewall")
 
 
-async def test_rules_that_share_a_name_survive_a_revised_id():
+async def test_rules_that_share_a_name_survive_a_revised_id() -> None:
     raw = firewall(
         fw_rule("web", ruleLogicalId="l1"), fw_rule("web", ruleLogicalId="l2")
     )
@@ -177,7 +186,7 @@ async def test_rules_that_share_a_name_survive_a_revised_id():
     assert_state_is_the_stored_row(state, client, "firewall")
 
 
-async def test_added_wan_link_without_an_id_passes():
+async def test_added_wan_link_without_an_id_passes() -> None:
     state = make_state({"WAN": {"links": [link(U1, "Internet")]}})
     client = MockVcoClient.for_state(state)
     client.store.on_store.append(issue_link_ids)
@@ -202,7 +211,7 @@ async def test_added_wan_link_without_an_id_passes():
     assert_state_is_the_stored_row(state, client, "WAN")
 
 
-async def test_ipv6_stored_in_canonical_form_passes():
+async def test_ipv6_stored_in_canonical_form_passes() -> None:
     responder = {
         "enabled": True,
         "ipAddress": "2001:db8::2",
@@ -246,7 +255,7 @@ async def test_ipv6_stored_in_canonical_form_passes():
     assert_state_is_the_stored_row(state, client, "deviceSettings")
 
 
-async def test_ipv6_keyed_static_route_stored_in_canonical_form_passes():
+async def test_ipv6_keyed_static_route_stored_in_canonical_form_passes() -> None:
     raw: dict[str, Any] = {
         "lan": {"networks": [], "interfaces": []},
         "segments": [
@@ -290,7 +299,7 @@ async def test_ipv6_keyed_static_route_stored_in_canonical_form_passes():
 
 
 @pytest.mark.parametrize("conditional_check", [False, True])
-async def test_refused_reorder_and_edit_list_both(conditional_check: bool):
+async def test_refused_reorder_and_edit_list_both(*, conditional_check: bool) -> None:
     raw = qos(
         *(qos_rule(name, ruleLogicalId=logical_id(n)) for n, name in enumerate("abcd"))
     )
@@ -332,8 +341,9 @@ async def test_refused_reorder_and_edit_list_both(conditional_check: bool):
 
 @pytest.mark.parametrize("conditional_check", [False, True])
 async def test_refused_delete_of_a_same_named_rule_is_the_one_lost_edit(
+    *,
     conditional_check: bool,
-):
+) -> None:
     rules = [
         fw_rule("web", ruleLogicalId="l1", futureKey=1),
         fw_rule("web", ruleLogicalId="l2"),
@@ -367,7 +377,10 @@ async def test_refused_delete_of_a_same_named_rule_is_the_one_lost_edit(
 
 
 @pytest.mark.parametrize("conditional_check", [False, True])
-async def test_reconciled_segment_is_a_lost_edit_when_refused(conditional_check: bool):
+async def test_reconciled_segment_is_a_lost_edit_when_refused(
+    *,
+    conditional_check: bool,
+) -> None:
     state = make_state(
         {"firewall": firewall(fw_rule("a"))}, {"firewall": firewall(guest=True)}
     )
@@ -403,7 +416,7 @@ DENY: dict[str, Any] = {"action": {"allow_or_deny": "deny"}, "match": {"dport_lo
 
 def outbound_ops(patch: dict[str, object], segment: str = SEGMENT) -> dict[str, Any]:
     """The item operations *patch* has for the outbound rules of *segment*."""
-    segments = cast(dict[str, dict[str, dict[str, Any]]], patch["segments"])
+    segments = cast("dict[str, dict[str, dict[str, Any]]]", patch["segments"])
     return segments[segment]["outbound"]
 
 
@@ -413,7 +426,7 @@ def stored_rules(client: MockVcoClient, segment: int = 0) -> list[dict[str, Any]
 
 
 @pytest.mark.parametrize("conditional_check", [False, True])
-async def test_redo_patch_redoes_a_place_and_a_move(conditional_check: bool):
+async def test_redo_patch_redoes_a_place_and_a_move(*, conditional_check: bool) -> None:
     raw = firewall(
         fw_rule("block-ssh", ruleLogicalId="l1"),
         fw_rule("allow-branch-erp", ruleLogicalId="l2"),
@@ -461,7 +474,7 @@ async def test_redo_patch_redoes_a_place_and_a_move(conditional_check: bool):
     assert state.plan().changed == ()
 
 
-async def test_redo_patch_leaves_a_clash_out_unless_asked():
+async def test_redo_patch_leaves_a_clash_out_unless_asked() -> None:
     raw = firewall(fw_rule("allow-web", ruleLogicalId="l1", match={"dport_high": 443}))
     state = make_state({"firewall": raw}, {"firewall": firewall()})
     client = MockVcoClient.for_state(state, conditional_check=True)
@@ -500,7 +513,7 @@ async def test_redo_patch_leaves_a_clash_out_unless_asked():
     ]
 
 
-async def test_redo_patch_names_an_item_as_the_stored_list_does():
+async def test_redo_patch_names_an_item_as_the_stored_list_does() -> None:
     # Two rules share a name, so each is named by its position.
     raw = firewall(
         fw_rule("d", ruleLogicalId="l1"),
@@ -536,7 +549,7 @@ async def test_redo_patch_names_an_item_as_the_stored_list_does():
     ] == [("l9", None), ("l1", None), ("l2", True), ("l3", None)]
 
 
-async def test_redo_patch_leaves_out_an_add_whose_place_is_gone():
+async def test_redo_patch_leaves_out_an_add_whose_place_is_gone() -> None:
     raw = firewall(
         fw_rule("block-ssh", ruleLogicalId="l1"),
         fw_rule("allow-branch-erp", ruleLogicalId="l2"),
@@ -569,7 +582,7 @@ async def test_redo_patch_leaves_out_an_add_whose_place_is_gone():
     }
 
 
-async def test_redo_patch_redoes_the_change_made_in_a_reconciled_segment():
+async def test_redo_patch_redoes_the_change_made_in_a_reconciled_segment() -> None:
     state = make_state(
         {"firewall": firewall(fw_rule("a", ruleLogicalId="l1"))},
         {"firewall": firewall(guest=True)},
@@ -601,7 +614,7 @@ async def test_redo_patch_redoes_the_change_made_in_a_reconciled_segment():
     assert [r["name"] for r in stored_rules(client, segment=1)] == ["r"]
 
 
-async def test_an_added_rule_stored_in_another_place_is_redone_as_a_move():
+async def test_an_added_rule_stored_in_another_place_is_redone_as_a_move() -> None:
     raw = firewall(fw_rule("a", ruleLogicalId="l1"), fw_rule("b", ruleLogicalId="l2"))
     state = make_state({"firewall": raw}, {"firewall": firewall()})
     client = MockVcoClient.for_state(state)

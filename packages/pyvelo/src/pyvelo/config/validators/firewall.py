@@ -1,12 +1,10 @@
 """Domain-specific validators for firewall and QOS modules."""
 
+from typing import TYPE_CHECKING
+
 from pydantic import MISSING
 
 from pyvelo.client.enums.configuration import ConfigurationModuleName
-from pyvelo.client.schemas.configuration import (
-    EdgeConfiguration,
-    EnterpriseConfigurationProfile,
-)
 from pyvelo.config.validation import (
     ConfigStateLike,
     ValidationError,
@@ -14,12 +12,18 @@ from pyvelo.config.validation import (
     validator,
 )
 
+if TYPE_CHECKING:
+    from pyvelo.client.schemas.configuration import (
+        EdgeConfiguration,
+        EnterpriseConfigurationProfile,
+    )
+
 
 @validator(
     modules=[ConfigurationModuleName.FIREWALL, ConfigurationModuleName.QOS],
     phases=["read", "write"],
 )
-def validate_rule_names_unique(state: ConfigStateLike) -> ValidationResult:
+def validate_rule_names_unique(state: ConfigStateLike) -> ValidationResult:  # noqa: C901, PLR0912 (existing: split it when it next changes)
     """Check that rule names are unique within each segment (firewall and QOS)."""
     result = ValidationResult()
 
@@ -45,7 +49,10 @@ def validate_rule_names_unique(state: ConfigStateLike) -> ValidationResult:
                             result.errors.append(
                                 ValidationError(
                                     path=f"firewall.segments[{seg_name}].outbound[{i}]",
-                                    message=f"Duplicate rule name {name!r} (first at index {seen_firewall_names[name]})",
+                                    message=(
+                                        f"Duplicate rule name {name!r} "
+                                        f"(first at index {seen_firewall_names[name]})"
+                                    ),
                                     code="duplicate_rule_name",
                                 )
                             )
@@ -66,7 +73,10 @@ def validate_rule_names_unique(state: ConfigStateLike) -> ValidationResult:
                             result.errors.append(
                                 ValidationError(
                                     path=f"QOS.segments[{seg_name}].rules[{i}]",
-                                    message=f"Duplicate rule name {name!r} (first at index {seen_qos_names[name]})",
+                                    message=(
+                                        f"Duplicate rule name {name!r} "
+                                        f"(first at index {seen_qos_names[name]})"
+                                    ),
                                     code="duplicate_rule_name",
                                 )
                             )
@@ -80,7 +90,7 @@ def validate_rule_names_unique(state: ConfigStateLike) -> ValidationResult:
     modules=[ConfigurationModuleName.DEVICE_SETTINGS, ConfigurationModuleName.FIREWALL],
     phases=["write"],
 )
-def validate_interface_firewall_consistency(state: ConfigStateLike) -> ValidationResult:
+def validate_interface_firewall_consistency(state: ConfigStateLike) -> ValidationResult:  # noqa: C901, PLR0912 (existing: split it when it next changes)
     """Check that interfaces referenced in firewall rules exist in deviceSettings."""
     result = ValidationResult()
 

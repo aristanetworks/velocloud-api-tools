@@ -1,4 +1,6 @@
-"""Builders for the tests of profile segments: descriptors, entries of the three modules, profile rows and registries.
+"""Builders for the tests of profile segments.
+
+Descriptors, entries of the three modules, profile rows and registries.
 
 ``tests/support`` is on pytest's ``pythonpath`` and basedpyright's
 ``extraPaths``, so the tests of both packages import this as ``segment_helpers``.
@@ -22,7 +24,7 @@ from refs_helpers import CONFIG, DS_ID, QOS_ID
 
 FW_ID = 12
 
-# (segment_id, name, logical_id, object_id)
+# A segment as its ID, name, logical ID and object ID.
 type Segment = tuple[int, str, str, int]
 
 GLOBAL: Final[Segment] = (
@@ -73,14 +75,16 @@ def qos_entry(
     segment: Segment,
     *,
     defaults: list[dict[str, Any]] | None | MISSING = _FACTORY_DEFAULTS,
-    rules: list[dict[str, Any]] = [],  # noqa: B006 -- copied, never changed
+    rules: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    """A QoS segment entry for *segment*: the template's parts, the given *rules* and *defaults*.
+    """A QoS segment entry for *segment*.
+
+    The template's parts, the given *rules* and *defaults*.
 
     *defaults* is the template's four, with IDs, unless given: ``None`` puts
     ``"defaults": null`` in the entry and ``MISSING`` leaves the key out.
     """
-    entry = new_segment_entry("QOS", identity(segment), qos_rules=rules)
+    entry = new_segment_entry("QOS", identity(segment), qos_rules=rules or [])
     if defaults is MISSING:
         del entry["defaults"]
     elif defaults is _FACTORY_DEFAULTS:
@@ -91,7 +95,10 @@ def qos_entry(
 
 
 def firewall_entry(segment: Segment) -> dict[str, Any]:
-    """A firewall segment entry for *segment*: one ``AllowAny`` rule, with a ``ruleLogicalId``."""
+    """A firewall segment entry for *segment*.
+
+    One ``AllowAny`` rule, with a ``ruleLogicalId``.
+    """
     entry = new_segment_entry("firewall", identity(segment))
     (rule,) = entry["outbound"]
     rule["ruleLogicalId"] = str(uuid.uuid4())
@@ -99,7 +106,10 @@ def firewall_entry(segment: Segment) -> dict[str, Any]:
 
 
 def ds_entry(segment: Segment) -> dict[str, Any]:
-    """A device settings segment entry for *segment*: the template's ``ospf`` and ``syslog``, and ``vpn``."""
+    """A device settings segment entry for *segment*.
+
+    The template's ``ospf`` and ``syslog``, and ``vpn``.
+    """
     template = segment_template("deviceSettings")
     return {
         "segment": descriptor(segment),
@@ -112,16 +122,18 @@ def ds_entry(segment: Segment) -> dict[str, Any]:
 _ONE_ROW_PER_ENTRY: Final[dict[str, Any]] = {}
 
 
-def profile_rows(
+def profile_rows(  # noqa: PLR0913 (existing: split it when it next changes)
     ds: list[dict[str, Any]],
     qos: list[dict[str, Any]],
     firewall: list[dict[str, Any]],
     *,
     ds_refs: dict[str, Any] | MISSING = _ONE_ROW_PER_ENTRY,
     qos_refs: dict[str, Any] | MISSING = MISSING,
-    networks: list[dict[str, Any]] = [],  # noqa: B006 -- copied, never changed
+    networks: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
-    """The three module rows of a profile of configuration ``CONFIG``, with the given segment lists.
+    """The three module rows of a profile of configuration ``CONFIG``.
+
+    They have the given segment lists.
 
     The device settings module has *ds_refs*, by default one
     ``deviceSettings:segment`` row per entry of *ds* (of one of the three
@@ -147,7 +159,7 @@ def profile_rows(
         make_module_json(
             "deviceSettings",
             {
-                "lan": {"networks": copy.deepcopy(networks), "interfaces": []},
+                "lan": {"networks": copy.deepcopy(networks or []), "interfaces": []},
                 "segments": copy.deepcopy(ds),
             },
             module_id=DS_ID,

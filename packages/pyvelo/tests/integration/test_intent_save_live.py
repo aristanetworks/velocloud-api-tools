@@ -98,10 +98,9 @@ from __future__ import annotations
 import copy
 import uuid
 from collections import Counter
-from collections.abc import AsyncGenerator, Awaitable, Callable, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from typing import Any, Literal, cast
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 import pytest
 from live_support import (
@@ -110,7 +109,7 @@ from live_support import (
     TARGET_MARK,
     WITH_EDGES_MARK,
     Answer,
-    DataRefused,
+    DataRefusedError,
     EdgeLayout,
     HubTarget,
     Lab,
@@ -166,11 +165,9 @@ from pyvelo.client.models.configuration import (
     QosData,
     WanData,
 )
-from pyvelo.client.models.configuration.device_settings.segment import StaticRoute
 from pyvelo.client.models.configuration.qos.qoe import QoeSettings
 from pyvelo.client.models.configuration.qos.root import ServiceRateLimit
 from pyvelo.client.models.configuration.ref_owners import declared_ref_names
-from pyvelo.client.module_write import ModulePlan
 from pyvelo.client.schemas.configuration import (
     AnyStoredModule,
     DeviceSettingsConfigurationModule,
@@ -182,7 +179,6 @@ from pyvelo.client.schemas.configuration import (
     UpdateConfigurationModule,
     WanConfigurationModule,
 )
-from pyvelo.client.schemas.edge import GetEdgeConfigurationStack
 from pyvelo.client.schemas.enterprise import (
     EnterpriseServiceSummary,
     GetEnterpriseServices,
@@ -197,13 +193,20 @@ from pyvelo.config import (
 )
 from pyvelo.config.resolvers.segment import SegmentResolver
 from pyvelo.core import ConfigContext, VcoModel
-from pyvelo.core.identity import SegmentIdentity
 from pyvelo.core.rebase import Key, Path, RawChange, raw_changes
 from pyvelo.core.response_check import (
     PathPattern,
     ServerChange,
     matches,
 )
+
+if TYPE_CHECKING:
+    from collections.abc import AsyncGenerator, Awaitable, Callable, Sequence
+
+    from pyvelo.client.models.configuration.device_settings.segment import StaticRoute
+    from pyvelo.client.module_write import ModulePlan
+    from pyvelo.client.schemas.edge import GetEdgeConfigurationStack
+    from pyvelo.core.identity import SegmentIdentity
 
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio(loop_scope="session")]
 
@@ -216,7 +219,7 @@ class Writes:
     inserts: list[InsertConfigurationModule]
 
 
-class WriteRefused(AssertionError):
+class WriteRefusedError(AssertionError):
     """A test that must send nothing tried to write."""
 
 
@@ -226,16 +229,18 @@ def refused_writes(vco_client: VcoClient, monkeypatch: pytest.MonkeyPatch) -> li
     attempts: list[str] = []
 
     async def refuse_update(
-        request: UpdateConfigurationModule, *, level: ConfigContext | None = None
+        _request: UpdateConfigurationModule, *, level: ConfigContext | None = None
     ) -> None:
+        del level
         attempts.append("update")
-        raise WriteRefused
+        raise WriteRefusedError
 
     async def refuse_insert(
-        request: InsertConfigurationModule, *, level: ConfigContext | None = None
+        _request: InsertConfigurationModule, *, level: ConfigContext | None = None
     ) -> Any:
+        del level
         attempts.append("insert")
-        raise WriteRefused
+        raise WriteRefusedError
 
     monkeypatch.setattr(vco_client, "update_configuration_module", refuse_update)
     monkeypatch.setattr(vco_client, "insert_configuration_module", refuse_insert)
@@ -365,7 +370,7 @@ async def _save_nothing(
     """Save a state with no edit: it must return without sending, and stay usable."""
     try:
         result = await pipeline.save(state)
-    except WriteRefused:
+    except WriteRefusedError:
         failures.append(f"{label}: save with no edit tried to write")
         return
     if result.modules_updated or result.modules_inserted:
@@ -713,7 +718,9 @@ def _has_lan_network(raw: dict[str, Any]) -> bool:
 
 
 def _is_empty_entry(entry: object) -> bool:
-    """A segment entry that holds nothing: its descriptor and routes with only empty lists.
+    """A segment entry that holds nothing.
+
+    Its descriptor and routes with only empty lists.
 
     That is what a placeholder is (``routeMapsVersion``, which the Orchestrator
     adds on a write, does not count). Taking such an entry out of a module and
@@ -721,21 +728,23 @@ def _is_empty_entry(entry: object) -> bool:
     """
     if not isinstance(entry, dict):
         return False
-    fields = cast(dict[str, object], entry)
+    fields = cast("dict[str, object]", entry)
     if set(fields) - {SEGMENT_DRIFT_KEY} != {"segment", "routes"}:
         return False
     routes = fields["routes"]
     return isinstance(routes, dict) and all(
         isinstance(value, list) and not value
-        for value in cast(dict[str, object], routes).values()
+        for value in cast("dict[str, object]", routes).values()
     )
 
 
 def _empty_shared_segments(
     edge: dict[str, Any], profile: dict[str, Any]
 ) -> list[object]:
-    """The IDs of the segments, other than the Global one, that both layers have and
-    whose entry on the edge is empty (``_is_empty_entry``)."""
+    """The IDs of the non-Global segments both layers have, empty on the edge.
+
+    An entry is empty as ``_is_empty_entry`` says.
+    """
     in_profile = [_segment_id(s) for s in profile.get("segments") or []]
     return [
         found
@@ -749,7 +758,10 @@ def _empty_shared_segments(
 async def _reconcile_unrefused(
     lab: Lab, pipeline: ConfigPipeline, case: Reconcile, layout: EdgeLayout
 ) -> None:
-    """``_reconcile``; a refusal by the Orchestrator fails the test, by its codes alone."""
+    """``_reconcile``; a refusal by the Orchestrator fails the test.
+
+    The failure gives its codes alone.
+    """
     refused: str | None = None
     try:
         await _reconcile(lab, pipeline, case, layout)
@@ -759,7 +771,7 @@ async def _reconcile_unrefused(
 
 
 @pytest.mark.live_write
-async def test_missing_device_settings_segment_is_added_as_a_placeholder_the_orchestrator_accepts(
+async def test_missing_device_settings_segment_is_added_as_a_placeholder_the_orchestrator_accepts(  # noqa: E501 (a test's name)
     lab: Lab, pipeline: ConfigPipeline
 ) -> None:
     case = DEVICE_SETTINGS_CASE
@@ -813,11 +825,12 @@ async def test_missing_device_settings_segment_is_added_as_a_placeholder_the_orc
         refused: str | None = None
         try:
             await write_data(site, module, data)
-        except DataRefused as exc:
+        except DataRefusedError as exc:
             refused = refusal_codes(exc)
         if refused is not None:
             pytest.skip(
-                f"the Orchestrator takes no module without that segment entry: {refused}"
+                "the Orchestrator takes no module without that segment entry: "
+                f"{refused}"
             )
         check(
             len(_lacking(_raw(await site.read_present()), profile)) == 1,
@@ -1058,7 +1071,10 @@ VIDEO_RED = Path(("qoe", "video", "latency", "red"))
 
 
 def _qoe_red_thresholds(module: AnyStoredModule) -> bool:
-    """Whether *module* is a QoS module whose raw data has the red latency thresholds of voice and video."""
+    """Whether *module* is a QoS module whose raw data has red latency thresholds.
+
+    They are those of voice and video.
+    """
     return _profile_has_qoe(module) and all(
         isinstance(value_at(module.raw_data, path), int)
         for path in (VOICE_RED, VIDEO_RED)
@@ -1300,7 +1316,10 @@ async def test_segment_named_in_another_case_is_edited_in_place_not_duplicated(
 
 
 def _first_link(state: ConfigState) -> tuple[str, str]:
-    """The key of the state's first WAN link: its internal ID and address family (link names repeat)."""
+    """The key of the state's first WAN link: its internal ID and address family.
+
+    Link names repeat.
+    """
     wan = expect(state.module("WAN"), WanConfigurationModule, "the WAN module")
     links = wan.data.links
     check(links is not MISSING and bool(links), "the WAN module has no link")
@@ -1546,9 +1565,12 @@ async def test_refused_edge_save_refreshes_the_state(
     pipeline: ConfigPipeline,
     capsys: pytest.CaptureFixture[str],
     monkeypatch: pytest.MonkeyPatch,
+    *,
     read_back: bool,
 ) -> None:
-    """A stale save of an edge module leaves the state holding the module as stored, to save again.
+    """A stale save of an edge module leaves the state holding the module as stored.
+
+    The state can save it again.
 
     ``read-back`` sends the writes without ``returnData``, so the
     Orchestrator answers with a row count and the module is read back from
@@ -1621,7 +1643,10 @@ async def test_refused_edge_save_refreshes_the_state(
 
 
 def _v6_route(data: object) -> tuple[str, StaticRoute] | None:
-    """The segment name and the route of the first IPv6 static route with a prefix of 48 or longer."""
+    """The segment name and the route of the first long-prefix IPv6 static route.
+
+    Its prefix is 48 or longer.
+    """
     if not isinstance(data, DeviceSettingsData):
         return None
     for segment in data.segments:
@@ -1655,7 +1680,9 @@ def _v6_destinations(module: AnyStoredModule, description: str) -> list[str]:
 async def test_an_ipv6_key_in_upper_case_is_recorded(
     lab: Lab, pipeline: ConfigPipeline, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """What the Orchestrator stores for an IPv6 key sent in upper case, and whether the save passes.
+    """What the Orchestrator stores for an IPv6 key sent in upper case.
+
+    And whether the save passes.
 
     A copy of an IPv6 static route the edge has, to a prefix of the
     documentation range and not advertised, is added through ``apply`` with
@@ -1755,7 +1782,9 @@ async def test_an_insert_answered_with_an_id_is_read_back(
     capsys: pytest.CaptureFixture[str],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A missing edge QoS module, inserted without ``returnData``, is read back by the ID answered.
+    """A missing edge QoS module, inserted without ``returnData``, is read back.
+
+    It is read by the ID answered.
 
     As from a VCO that ignores ``returnData`` (``without_return_data``): the
     insert is answered with the new module's ID, and the state must then hold
@@ -1834,7 +1863,8 @@ def _rows_named(refs: object, name: str) -> list[dict[str, Any]]:
 
 
 REBUILT_REF_NAMES = PROCESSOR_REF_NAMES - APPEND_ONLY_REF_NAMES
-"""Names whose rows the VCO's processors delete and rebuild on a write: not compared after one.
+"""Names whose rows the VCO's processors delete and rebuild on a write: not compared
+after one.
 
 ``deviceSettings:vnfs:edge`` is a processor name too, but it is append-only, so
 its rows stay and are compared.
@@ -1842,7 +1872,9 @@ its rows stay and are compared.
 
 
 def _row_keys(refs: object) -> Counter[tuple[str, str, str]]:
-    """Each row of raw *refs* by ``(name, logicalId, segmentLogicalId)`` but those of a rebuilt name.
+    """Each row of raw *refs* by ``(name, logicalId, segmentLogicalId)``.
+
+    The rows of a rebuilt name are left out.
 
     Row IDs are re-issued on a write, so they are no part of the key.
     """
@@ -1867,7 +1899,10 @@ def _rebuilt_rows(refs: object) -> int:
 
 
 def _stable_refs(refs: object) -> dict[str, Any]:
-    """Raw *refs* without a client-connector ref, which carries a login token that is new on every read."""
+    """Raw *refs* without a client-connector ref.
+
+    That ref carries a login token that is new on every read.
+    """
     if not isinstance(refs, dict):
         return {}
     return {
@@ -1880,7 +1915,10 @@ def _stable_refs(refs: object) -> dict[str, Any]:
 def _check_state_holds_stored(
     label: str, state: ConfigState, stored: AnyStoredModule
 ) -> None:
-    """After a save the state's module is the module as stored: the version, data and refs of a read made right after."""
+    """After a save the state's module is the module as stored.
+
+    The version, data and refs of a read made right after.
+    """
     held = state.module(Name.DEVICE_SETTINGS)
     check_as_read(label, held, stored)
     ours, theirs = _stable_refs(held.raw_refs), _stable_refs(stored.raw_refs)
@@ -1906,7 +1944,10 @@ def _global_entry(raw: object) -> dict[str, Any] | None:
 
 
 def _descriptor_of(entry: dict[str, Any] | None) -> tuple[str, str] | None:
-    """The name and the logical ID of a segment entry's segment, where it has both as text."""
+    """The name and the logical ID of a segment entry's segment.
+
+    Only where it has both as text.
+    """
     descriptor = entry.get("segment") if entry is not None else None
     if not isinstance(descriptor, dict):
         return None
@@ -1926,7 +1967,10 @@ def _primary_rows(refs: object, segment_logical_id: str) -> list[dict[str, Any]]
 
 
 def _global_segment_without_provider(module: AnyStoredModule) -> bool:
-    """A device settings module with refs read, whose Global Segment has a DNS section and no primary provider row."""
+    """A device settings module with refs read.
+
+    Its Global Segment has a DNS section and no primary provider row.
+    """
     if not isinstance(module, DeviceSettingsConfigurationModule):
         return False
     if not isinstance(module.raw_refs, dict):
@@ -1945,7 +1989,10 @@ def _global_segment_without_provider(module: AnyStoredModule) -> bool:
 
 @dataclass(frozen=True)
 class DnsTarget:
-    """A marked profile's Global Segment, and a network service of type ``dns`` to set on it."""
+    """A marked profile's Global Segment, and a network service to set on it.
+
+    The service is of type ``dns``.
+    """
 
     profile_id: int
     segment: str
@@ -1962,7 +2009,9 @@ async def _dns_services(lab: Lab) -> list[EnterpriseServiceSummary]:
 
 
 async def _dns_target(lab: Lab) -> DnsTarget:
-    """The target of a case that sets a DNS provider; skip, saying what to set up, where there is none.
+    """The target of a case that sets a DNS provider.
+
+    Skip, saying what to set up, where there is none.
 
     The opt-in is checked first and the services are read next: the pick of a
     profile writes the module back to try it, so a case that is to skip for a
@@ -1993,7 +2042,10 @@ async def _set_primary_provider(
     target: DnsTarget,
     service: uuid.UUID | None,
 ) -> None:
-    """Set the Global Segment's primary DNS provider to the service of this logical ID, or clear it with ``None``."""
+    """Set the Global Segment's primary DNS provider to the service of this logical ID.
+
+    Clear it with ``None``.
+    """
     _ = await pipeline.apply(
         state,
         module=Name.DEVICE_SETTINGS.value,
@@ -2011,7 +2063,10 @@ async def _set_primary_provider(
 def _check_provider_change(
     label: str, plan: ModulePlan, *, added: bool, target: DnsTarget
 ) -> None:
-    """The plan adds (or removes) the primary provider row of the Global Segment, and no other row."""
+    """The plan adds (or removes) the primary provider row of the Global Segment.
+
+    It changes no other row.
+    """
     changes = plan.ref_changes
     check(
         len(changes) == 1
@@ -2019,14 +2074,18 @@ def _check_provider_change(
         and changes[0].name == PRIMARY_PROVIDER
         and changes[0].segment == target.segment,
         f"{label}: the plan lists {len(changes)} ref change(s), expected the "
-        f"primary provider row of the Global Segment {'added' if added else 'removed'} alone",
+        "primary provider row of the Global Segment "
+        f"{'added' if added else 'removed'} alone",
     )
 
 
 def _check_primary_row(
     label: str, stored: AnyStoredModule, target: DnsTarget, *, set_: bool
 ) -> None:
-    """The stored refs hold the primary provider row of the Global Segment, for the service set, or none."""
+    """The stored refs hold the primary provider row of the Global Segment, or none.
+
+    The row is for the service set.
+    """
     rows = _primary_rows(stored.raw_refs, target.segment_logical_id)
     if not set_:
         check(not rows, f"{label}: the primary provider row is still stored")
@@ -2040,7 +2099,10 @@ def _check_primary_row(
 
 
 def _what(error: BaseException) -> str:
-    """*error* as what holds no lab data: ``failure_text``, else the suite's own message of a failed check."""
+    """*error* as what holds no lab data.
+
+    ``failure_text``, else the suite's own message of a failed check.
+    """
     return failure_text(error) or str(error)
 
 
@@ -2048,7 +2110,9 @@ def _what(error: BaseException) -> str:
 async def _provider_cleared(
     pipeline: ConfigPipeline, lab: Lab, target: DnsTarget, site: Site
 ) -> AsyncGenerator[None]:
-    """However the block ends, clear the Global Segment's primary provider row if one is stored.
+    """However the block ends, clear the Global Segment's primary provider row.
+
+    Clear it only if one is stored.
 
     It reads the module fresh and saves a fresh state, so it needs nothing the
     block held. A block that failed and a clearing that fails are both
@@ -2117,7 +2181,9 @@ async def test_set_and_clear_a_dns_provider(lab: Lab, pipeline: ConfigPipeline) 
 
 
 def _raise_profile_lan_cost(state: ConfigState, by: int) -> Path:
-    """Raise the OSPF cost of the profile's first LAN network by *by*; the path it changes.
+    """Raise the OSPF cost of the profile's first LAN network by *by*.
+
+    Return the path it changes.
 
     Assigned on the typed data, so that no override flag is set along with it.
     """
@@ -2183,7 +2249,9 @@ async def test_a_stale_version_with_refs_raises_before_sending(
 async def test_a_data_edit_keeps_every_row(
     lab: Lab, pipeline: ConfigPipeline, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """Every ref row as read is still stored after a data edit, but the rows of the names the VCO rebuilds.
+    """Every ref row as read is still stored after a data edit.
+
+    The rows of the names the VCO rebuilds are the exception.
 
     The VCO deletes and rebuilds the hand-off gateway and controller objects
     and the rest of ``REBUILT_REF_NAMES`` on every such write, and a write is
@@ -2222,7 +2290,9 @@ async def test_a_data_edit_keeps_every_row(
 async def test_record_the_refs_a_write_returns(
     lab: Lab, pipeline: ConfigPipeline, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """The fields of the ref rows the Orchestrator returns after a save that sends refs, for each declared name.
+    """The fields of the ref rows the Orchestrator returns after a save that sends refs.
+
+    For each declared name.
 
     A primary DNS provider is set on the Global Segment, so that the save adds a
     row of the five-field shape (``configurationId``, ``moduleId``,
@@ -2273,7 +2343,9 @@ async def test_record_the_refs_a_write_returns(
 # ---------------------------------------------------------------------------
 
 SEGMENT_MODULES = (Name.DEVICE_SETTINGS, Name.QOS, Name.FIREWALL)
-"""The three modules of a profile that hold its segments, device settings written first."""
+"""The three modules of a profile that hold its segments, device settings written
+first.
+"""
 
 VERSION_READ = "configuration/getConfigurationModules"
 """The request that reads a module's ``version`` alone (``noData``)."""
@@ -2281,7 +2353,10 @@ VERSION_READ = "configuration/getConfigurationModules"
 
 @dataclass(frozen=True)
 class SegmentTarget:
-    """A marked profile, and an enterprise segment that none of its three modules has."""
+    """A marked profile, and an enterprise segment it lacks.
+
+    None of the profile's three modules has the segment.
+    """
 
     profile_id: int
     segment: SegmentIdentity
@@ -2294,7 +2369,10 @@ def _segment_ids_of(data: object) -> set[object]:
 
 
 def _lacked_segment(state: ConfigState) -> SegmentIdentity | None:
-    """The first enterprise segment, by ID, that none of the profile's three modules has; ``None`` where there is none or a module is missing."""
+    """The first enterprise segment, by ID, that the profile's three modules lack.
+
+    ``None`` where there is none or a module is missing.
+    """
     try:
         held = [
             _segment_ids_of(state.module(name).raw_data) for name in SEGMENT_MODULES
@@ -2315,7 +2393,9 @@ def _lacked_segment(state: ConfigState) -> SegmentIdentity | None:
 async def _segment_target(
     lab: Lab, pipeline: ConfigPipeline, *, with_edges: bool
 ) -> SegmentTarget:
-    """The first marked profile that lacks an enterprise segment and takes a write of each of its three modules.
+    """The first marked profile that lacks an enterprise segment.
+
+    It takes a write of each of its three modules.
 
     With *with_edges*, the profile must carry the mark for edges assigned to it
     as well. Skip where there is none to use, fail where each one that lacks a
@@ -2360,7 +2440,10 @@ async def _segment_target(
 
 
 def _version_reads(answers: Sequence[Answer]) -> int:
-    """How many of the recorded answers are to the request that reads a module's version alone."""
+    """How many of the recorded answers are to a module's version read.
+
+    That request reads a module's version alone.
+    """
     return sum(answer.method == VERSION_READ for answer in answers)
 
 
@@ -2378,7 +2461,9 @@ async def test_assign_a_segment_and_read_it_back(
     writes: Writes,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A segment assigned to a profile is three writes, device settings first, and reads back as the state holds it.
+    """A segment assigned to a profile is three writes, device settings first.
+
+    It reads back as the state holds it.
 
     The modules are restored QoS and firewall first, device settings last, as
     the restore of device settings sends its refs as read. Three reads of a
@@ -2465,7 +2550,9 @@ async def test_record_versions_around_the_device_settings_write(
     writes: Writes,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """Whether the device settings write of an assignment changes the version of the QoS and firewall modules.
+    """Whether the device settings write of an assignment changes other versions.
+
+    The versions are those of the QoS and firewall modules.
 
     The version of each of the two is read before the save, and the versions
     their writes were sent with are taken from the requests. Only whether the
@@ -2523,7 +2610,10 @@ async def test_record_versions_around_the_device_settings_write(
 
 @dataclass(frozen=True)
 class HubCase:
-    """A marked profile's segment that lacks the hub in all three lists, with the flags of its VPN as read."""
+    """A marked profile's segment that lacks the hub in all three lists.
+
+    It comes with the flags of its VPN as read.
+    """
 
     profile_id: int
     segment: str
@@ -2533,7 +2623,10 @@ class HubCase:
 
 
 def _vpn_lists(vpn: dict[str, Any]) -> dict[str, list[Any]]:
-    """The three role lists of a segment's raw ``vpn``, by the name they are patched under: ``hub``, ``bridge`` and ``backhaul``."""
+    """The three role lists of a segment's raw ``vpn``.
+
+    By the name they are patched under: ``hub``, ``bridge`` and ``backhaul``.
+    """
 
     def listed(section: object, key: str) -> list[Any]:
         held = (
@@ -2586,7 +2679,10 @@ def _segment_entries(raw: object) -> list[tuple[str, dict[str, Any]]]:
 
 
 def _free_segment(raw: object, hub: HubTarget) -> tuple[str, bool, bool] | None:
-    """The first segment of device settings *raw* whose three lists lack *hub*, with its ``vpn.enabled`` and hub list ``enabled`` as read."""
+    """The first segment of device settings *raw* whose three lists lack *hub*.
+
+    It comes with its ``vpn.enabled`` and hub list ``enabled`` as read.
+    """
     for name, entry in _segment_entries(raw):
         vpn = entry.get("vpn")
         if not isinstance(vpn, dict):
@@ -2614,7 +2710,9 @@ def _qos_rules(raw: object, segment: str) -> list[Any]:
 
 
 async def _hub_case(lab: Lab, hub: HubTarget, *, with_rule: bool) -> HubCase:
-    """The first marked profile with a segment that lacks the hub (and, with *with_rule*, has a QoS rule), whose modules take a write.
+    """The first marked profile with a segment that lacks the hub.
+
+    With *with_rule*, the segment has a QoS rule; the profile's modules take a write.
 
     Skip where there is none, fail where each refuses a write of its own
     data. The modules are tried last: trying one writes it back.
@@ -2661,7 +2759,10 @@ async def _hub_case(lab: Lab, hub: HubTarget, *, with_rule: bool) -> HubCase:
 
 
 def _add_hub_patch(case: HubCase) -> dict[str, Any]:
-    """The patch that adds the hub to the segment's Branch-to-Hub and backhaul lists, with the flags the UI's rules need on."""
+    """The patch that adds the hub to the segment's Branch-to-Hub and backhaul lists.
+
+    It comes with the flags the UI's rules need on.
+    """
     entry = {"+": add({"logicalId": str(case.hub.logical_id)})}
     return {
         "segments": {
@@ -2677,7 +2778,10 @@ def _add_hub_patch(case: HubCase) -> dict[str, Any]:
 
 
 def _remove_hub_patch(case: HubCase, holding: set[str]) -> dict[str, Any]:
-    """The patch that takes the hub out of the lists in *holding* and puts the flags back as read."""
+    """The patch that takes the hub out of the lists in *holding*.
+
+    It puts the flags back as read.
+    """
     key = str(case.hub.logical_id)
     vpn: dict[str, Any] = {
         "enabled": case.vpn_enabled,
@@ -2693,7 +2797,10 @@ def _remove_hub_patch(case: HubCase, holding: set[str]) -> dict[str, Any]:
 
 
 def _segment_vpn(module: AnyStoredModule, case: HubCase) -> dict[str, Any]:
-    """The raw ``vpn`` of the case's segment in a device settings module; empty where the segment is gone."""
+    """The raw ``vpn`` of the case's segment in a device settings module.
+
+    Empty where the segment is gone.
+    """
     for name, entry in _segment_entries(module.raw_data):
         vpn = entry.get("vpn")
         if name == case.segment and isinstance(vpn, dict):
@@ -2707,7 +2814,10 @@ def _steps(state: ConfigState) -> list[tuple[str, str]]:
 
 
 def _hub_rows(refs: object, hub: HubTarget) -> list[dict[str, Any]]:
-    """The device settings rows of *hub*: an Edge's row holds its logical ID in ``data``, a cluster's in the row."""
+    """The device settings rows of *hub*.
+
+    An Edge's row holds its logical ID in ``data``, a cluster's in the row.
+    """
     found: list[dict[str, Any]] = []
     for row in _rows_named(
         refs, EDGE_HUB_REF if hub.kind == "edge" else CLUSTER_HUB_REF
@@ -2723,7 +2833,7 @@ def _hub_rows(refs: object, hub: HubTarget) -> list[dict[str, Any]]:
     return found
 
 
-async def _add_hub(
+async def _add_hub(  # noqa: PLR0913, PLR0917 (existing: split it when it next changes)
     pipeline: ConfigPipeline,
     lab: Lab,
     case: HubCase,
@@ -2731,14 +2841,20 @@ async def _add_hub(
     state: ConfigState,
     site: Site,
 ) -> AnyStoredModule:
-    """Add the hub to the segment's lists and save: two steps and one write; the module as stored."""
+    """Add the hub to the segment's lists and save: two steps and one write.
+
+    Return the module as stored.
+    """
     run = run_of(lab.client)
     _ = await pipeline.apply(
         state, module="device_settings", patch=_add_hub_patch(case)
     )
     check(
         _steps(state) == [("enable", "hub"), ("enable", "backhaul")],
-        f"the plan has the steps {_steps(state)}, expected enable hub then enable backhaul",
+        (
+            f"the plan has the steps {_steps(state)}, "
+            "expected enable hub then enable backhaul"
+        ),
     )
     dry = await _save(pipeline, state, dry_run=True)
     check(
@@ -2760,7 +2876,7 @@ async def _add_hub(
     return await site.read_present()
 
 
-async def _remove_hub(
+async def _remove_hub(  # noqa: PLR0913, PLR0917 (existing: split it when it next changes)
     pipeline: ConfigPipeline,
     lab: Lab,
     case: HubCase,
@@ -2768,7 +2884,10 @@ async def _remove_hub(
     state: ConfigState,
     site: Site,
 ) -> AnyStoredModule:
-    """Take the hub out of the segment's lists and save: one disable and one write; the module as stored."""
+    """Take the hub out of the segment's lists and save: one disable and one write.
+
+    Return the module as stored.
+    """
     run = run_of(lab.client)
     held = _holding(_segment_vpn(state.module(Name.DEVICE_SETTINGS), case), case.hub)
     _ = await pipeline.apply(
@@ -2794,7 +2913,9 @@ async def _remove_hub(
 
 
 async def _clear_hub(pipeline: ConfigPipeline, lab: Lab, case: HubCase) -> None:
-    """However a case ended, take the hub out of the segment's lists and send its disable.
+    """However a case ended, take the hub out of the segment's lists.
+
+    Send its disable.
 
     It reads the profile fresh and saves a fresh state, so it needs nothing
     the case held. A hub in no list may still have its roles set (a save that
@@ -2832,7 +2953,11 @@ async def _clear_hub(pipeline: ConfigPipeline, lab: Lab, case: HubCase) -> None:
 async def _cleaned_up(
     what: str, clear: Callable[[], Awaitable[None]]
 ) -> AsyncGenerator[None]:
-    """However the block ends, run *clear*; the block's own failure is never hidden by it, and a clearing that fails is reported too."""
+    """However the block ends, run *clear*.
+
+    The block's own failure is never hidden by it, and a clearing that fails is reported
+    too.
+    """
     try:
         yield
     except BaseException as case:
@@ -2853,7 +2978,9 @@ async def _cleaned_up(
 async def test_add_a_hub_then_remove_it(
     lab: Lab, pipeline: ConfigPipeline, writes: Writes
 ) -> None:
-    """A hub added to a segment's Branch-to-Hub and backhaul lists is two steps and one write; removed, one disable and one write.
+    """A hub added to a segment's Branch-to-Hub and backhaul lists, then removed.
+
+    Added, it is two steps and one write; removed, one disable and one write.
 
     A read after each save holds the row and the lists, then neither, and the
     profile is restored as read. The restore of the module does not undo a
@@ -2918,7 +3045,10 @@ def _rule_patch(case: HubCase, name: str, change: object) -> dict[str, Any]:
 
 
 def _rule_uses_hub(raw: object, case: HubCase, name: str) -> bool:
-    """Whether the rule *name* of the case's QoS segment holds the hub as a backhaul hub."""
+    """Whether the rule *name* of the case's QoS segment holds the hub.
+
+    It holds it as a backhaul hub.
+    """
     for rule in _qos_rules(raw, case.segment):
         if (
             not isinstance(rule, dict)
@@ -2962,7 +3092,10 @@ def _has_rule(raw: object, case: HubCase, name: str) -> bool:
 async def _clear_rule(
     pipeline: ConfigPipeline, lab: Lab, case: HubCase, name: str
 ) -> None:
-    """However a case ended, delete the rule it added to the QoS segment if one is stored."""
+    """However a case ended, delete the rule it added to the QoS segment.
+
+    Delete it only if one is stored.
+    """
     site = lab.profile_site(case.profile_id, Name.QOS)
     if not _has_rule((await site.read_present()).raw_data, case, name):
         return
@@ -2983,7 +3116,9 @@ async def _clear_rule(
 async def test_a_rule_backhauls_to_the_hub(
     lab: Lab, pipeline: ConfigPipeline, writes: Writes
 ) -> None:
-    """With the hub saved, a QoS rule that names it as a backhaul hub has the row whose object is the hub's service.
+    """With the hub saved, a QoS rule that names it as a backhaul hub has its row.
+
+    The row's object is the hub's service.
 
     The rule is a copy of a rule of the segment. It is deleted, then the hub is
     removed, the order a caller must follow: a hub that rules use is removed

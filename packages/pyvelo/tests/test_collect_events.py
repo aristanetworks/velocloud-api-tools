@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import uuid
-from collections.abc import Callable
 from datetime import UTC, datetime
+from typing import TYPE_CHECKING
 
 import pytest
 from pydantic import MISSING
@@ -19,6 +19,9 @@ from pyvelo.client.schemas.event import (
 from pyvelo.core import ApiInterval
 
 from ._type_support import MockPaginatedClient
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 
 def _make_event(
@@ -61,7 +64,7 @@ def interval() -> ApiInterval:
 
 class TestCollectEventsFilterPushdown:
     @pytest.mark.anyio
-    async def test_no_filters(self, interval: ApiInterval):
+    async def test_no_filters(self, interval: ApiInterval) -> None:
         client = _make_client([[_make_event()]])
         analytics = Analytics(client.protocol, enterprise_id=1)
         result = await analytics.collect_events(interval)
@@ -70,7 +73,7 @@ class TestCollectEventsFilterPushdown:
         assert req.filters is MISSING
 
     @pytest.mark.anyio
-    async def test_event_type_filter(self, interval: ApiInterval):
+    async def test_event_type_filter(self, interval: ApiInterval) -> None:
         client = _make_client([[_make_event()]])
         analytics = Analytics(client.protocol, enterprise_id=1)
         _ = await analytics.collect_events(
@@ -88,7 +91,7 @@ class TestCollectEventsFilterPushdown:
         assert EventType.EDGE_UP in event_filter.value
 
     @pytest.mark.anyio
-    async def test_severity_filter(self, interval: ApiInterval):
+    async def test_severity_filter(self, interval: ApiInterval) -> None:
         client = _make_client([[_make_event()]])
         analytics = Analytics(client.protocol, enterprise_id=1)
         _ = await analytics.collect_events(interval, severity=[EventSeverity.CRITICAL])
@@ -101,7 +104,7 @@ class TestCollectEventsFilterPushdown:
         assert sev_filter.operator == "in"
 
     @pytest.mark.anyio
-    async def test_edge_id_filter(self, interval: ApiInterval):
+    async def test_edge_id_filter(self, interval: ApiInterval) -> None:
         client = _make_client([[_make_event()]])
         analytics = Analytics(client.protocol, enterprise_id=1)
         _ = await analytics.collect_events(interval, edge_ids=[100, 200])
@@ -109,7 +112,7 @@ class TestCollectEventsFilterPushdown:
         assert req.edge_id == [100, 200]
 
     @pytest.mark.anyio
-    async def test_string_filter(self, interval: ApiInterval):
+    async def test_string_filter(self, interval: ApiInterval) -> None:
         string_filter = EnterpriseEventStringValueFilter(
             field="message", operator="contains", value="down"
         )
@@ -125,7 +128,7 @@ class TestCollectEventsFilterPushdown:
         )
 
     @pytest.mark.anyio
-    async def test_combined_filters(self, interval: ApiInterval):
+    async def test_combined_filters(self, interval: ApiInterval) -> None:
         client = _make_client([[_make_event()]])
         analytics = Analytics(client.protocol, enterprise_id=1)
         _ = await analytics.collect_events(
@@ -143,7 +146,7 @@ class TestCollectEventsFilterPushdown:
 
 class TestCollectEventsEarlyTermination:
     @pytest.mark.anyio
-    async def test_stops_at_max_items(self, interval: ApiInterval):
+    async def test_stops_at_max_items(self, interval: ApiInterval) -> None:
         page1 = [_make_event(edge_name=f"e{i}") for i in range(5)]
         page2 = [_make_event(edge_name=f"e{i}") for i in range(5, 10)]
         page3 = [_make_event(edge_name=f"e{i}") for i in range(10, 15)]
@@ -158,7 +161,7 @@ class TestCollectEventsEarlyTermination:
         assert len(pages_yielded) == 2
 
     @pytest.mark.anyio
-    async def test_exact_max_items(self, interval: ApiInterval):
+    async def test_exact_max_items(self, interval: ApiInterval) -> None:
         page = [_make_event() for _ in range(5)]
         client = _make_client([page])
         analytics = Analytics(client.protocol, enterprise_id=1)
@@ -166,7 +169,7 @@ class TestCollectEventsEarlyTermination:
         assert len(result) == 5
 
     @pytest.mark.anyio
-    async def test_fewer_than_max(self, interval: ApiInterval):
+    async def test_fewer_than_max(self, interval: ApiInterval) -> None:
         page = [_make_event() for _ in range(3)]
         client = _make_client([page])
         analytics = Analytics(client.protocol, enterprise_id=1)
@@ -178,7 +181,7 @@ class TestCollectEventsOutput:
     @pytest.mark.anyio
     async def test_returns_metric_frame_with_expected_columns(
         self, interval: ApiInterval
-    ):
+    ) -> None:
         client = _make_client([[_make_event()]])
         analytics = Analytics(client.protocol, enterprise_id=1)
         result = await analytics.collect_events(interval)
@@ -197,7 +200,7 @@ class TestCollectEventsOutput:
         assert result.columns == expected
 
     @pytest.mark.anyio
-    async def test_event_values_are_strings(self, interval: ApiInterval):
+    async def test_event_values_are_strings(self, interval: ApiInterval) -> None:
         client = _make_client([[_make_event(event="EDGE_DOWN", severity="CRITICAL")]])
         analytics = Analytics(client.protocol, enterprise_id=1)
         result = await analytics.collect_events(interval)
@@ -206,7 +209,7 @@ class TestCollectEventsOutput:
         assert row["severity"] == "CRITICAL"
 
     @pytest.mark.anyio
-    async def test_chainable_with_frame_ops(self, interval: ApiInterval):
+    async def test_chainable_with_frame_ops(self, interval: ApiInterval) -> None:
         events = [
             _make_event(event="EDGE_DOWN", severity="CRITICAL"),
             _make_event(event="EDGE_UP", severity="INFO"),

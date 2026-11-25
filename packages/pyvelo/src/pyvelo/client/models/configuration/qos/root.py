@@ -1,19 +1,21 @@
+"""The ``QOS`` module's data: segments, service rate limit, QoE and client connector."""
+
 from typing import Annotated, Any
 
 from pydantic import Field, PrivateAttr
 
-from pyvelo.core import ByPresence, Default, Inheritable, Layered, VcoModel
-from pyvelo.core.fields import KeyField
-from pyvelo.core.layers import L, Profile
-
-from ..common import (
+from pyvelo.client.models.configuration.common import (
     bind_profile_layers,
     find_segment,
     get_or_create_segment,
     profile_segment_id,
     profile_segment_name,
 )
-from ..profile_segments import template_default
+from pyvelo.client.models.configuration.profile_segments import template_default
+from pyvelo.core import ByPresence, Default, Inheritable, Layered, VcoModel
+from pyvelo.core.fields import KeyField
+from pyvelo.core.layers import L, Profile
+
 from .common import ServiceRateLimitInputType
 from .qoe import QoeSettings
 from .segment import QosSegment

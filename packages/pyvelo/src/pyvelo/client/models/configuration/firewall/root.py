@@ -1,7 +1,20 @@
+"""The ``firewall`` module's data, and the local form of its inheritable groups.
+
+``profile_false_wins`` is how the VCO combines ``firewall_enabled`` across layers.
+"""
+
 from typing import Annotated, Any, ClassVar
 
 from pydantic import Field, PrivateAttr
 
+from pyvelo.client.models.configuration.common import (
+    bind_profile_layers,
+    find_segment,
+    get_or_create_segment,
+    profile_segment_id,
+    profile_segment_name,
+)
+from pyvelo.client.models.configuration.profile_segments import template_default
 from pyvelo.core import (
     Alias,
     Authority,
@@ -18,14 +31,6 @@ from pyvelo.core.fields import DefaultingScalar, KeyField
 from pyvelo.core.layers import L, Profile
 from pyvelo.core.owned import OwnedGroup
 
-from ..common import (
-    bind_profile_layers,
-    find_segment,
-    get_or_create_segment,
-    profile_segment_id,
-    profile_segment_name,
-)
-from ..profile_segments import template_default
 from .rules import FirewallInboundRule, FirewallInboundRuleV6
 from .security_features import NetworkProtectionSettings, SecurityFeatureSettings
 from .segment import FirewallSegment
@@ -34,12 +39,18 @@ from .stateful import StatefulFirewallSettings
 
 
 def profile_false_wins(profile_value: object) -> bool:
-    """The VCO's rule for ``firewall_enabled``: a profile that has it off turns it off for every edge."""
+    """The VCO's rule for ``firewall_enabled``.
+
+    A profile that has it off turns it off for every edge.
+    """
     return profile_value is False
 
 
 class StatefulLocal(VcoModel):
-    """What the group ``stateful`` stores when it is local: every member, all required."""
+    """What the group ``stateful`` stores when it is local.
+
+    Every member, all required.
+    """
 
     stateful_firewall_settings: StatefulFirewallSettings
     stateful_firewall_settings_v6: StatefulFirewallSettings
@@ -47,7 +58,10 @@ class StatefulLocal(VcoModel):
 
 
 class NetworkProtectionLocal(VcoModel):
-    """What the group ``network_protection`` stores when it is local: every member, all required."""
+    """What the group ``network_protection`` stores when it is local.
+
+    Every member, all required.
+    """
 
     network_protection_settings: NetworkProtectionSettings
     network_protection_settings_v6: NetworkProtectionSettings
@@ -214,7 +228,8 @@ class FirewallData(Layered[L]):
         its content, and on the edge layer it is bound to the profile's segment,
         so its keys can be localized. Raises ``UnboundError`` if the data is not
         bound to a profile (see :meth:`bind_profile`) and ``ValueError`` if the
-        profile has no such segment. Use :meth:`get_segment` to look up without creating.
+        profile has no such segment. Use :meth:`get_segment` to look up without
+        creating.
         """
         # FirewallSegment[layer], where the layer is this data's own.
         segment_class: Any = FirewallSegment

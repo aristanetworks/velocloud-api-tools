@@ -1,3 +1,9 @@
+"""The LAN of ``deviceSettings``: its networks, interfaces and settings.
+
+VLAN networks with their addressing, DHCP, OSPF and IPv6 settings; LAN interfaces,
+wired or wireless by discriminator; and LAN management and client visibility.
+"""
+
 import uuid
 from typing import Annotated, Any, Literal
 

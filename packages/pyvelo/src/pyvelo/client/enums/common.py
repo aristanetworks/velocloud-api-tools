@@ -1,3 +1,5 @@
+"""The status codes of an Edge's pending action, shared across API areas."""
+
 from enum import IntEnum
 
 

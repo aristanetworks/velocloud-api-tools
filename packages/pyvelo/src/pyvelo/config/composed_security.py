@@ -1,4 +1,6 @@
-"""The keys the composer adds to a firewall rule, expected from the security objects its group names.
+"""The keys the composer adds to a firewall rule.
+
+They are expected from the security objects the rule's group names.
 
 A rule that names a security service group (``securityServiceGroup``, the
 ``logicalId`` of a ``securityServiceGroup`` security object) gets three keys in
@@ -41,7 +43,11 @@ __all__ = [
 
 @dataclass(frozen=True)
 class _SyntheticKey:
-    """A key the composer adds to a rule: the kind of object that gives it, and how it is built from that object's ``data``."""
+    """A key the composer adds to a rule.
+
+    It holds the kind of object that gives it, and how it is built from that object's
+    ``data``.
+    """
 
     key: str
     type_: SecurityObjectType
@@ -87,12 +93,15 @@ SECURITY_OBJECT_TYPES: tuple[SecurityObjectType, ...] = (
 
 UNRESOLVED = (
     "the rule's security service group, or an object it names, "
-    + "is not among the enterprise's security objects"
+    "is not among the enterprise's security objects"
 )
 
 
 def _same_id(logical_id: object) -> str:
-    """*logical_id* in one spelling, so that two UUIDs differing in case are the same."""
+    """*logical_id* in one spelling.
+
+    So two UUIDs differing in case are the same.
+    """
     text = str(logical_id)
     try:
         return str(uuid.UUID(text))
@@ -106,16 +115,25 @@ def _object(value: object) -> JsonObject | None:
 
 @dataclass(frozen=True)
 class SecurityObjects:
-    """The enterprise's security objects, as rows the VCO returns them (``type``, ``id``, ``logicalId`` and ``data``)."""
+    """The enterprise's security objects, as rows the VCO returns them.
+
+    A row has ``type``, ``id``, ``logicalId`` and ``data``.
+    """
 
     groups: Mapping[str, Mapping[str, object]]
-    """The ``securityServiceGroup`` rows by ``logicalId`` (as ``_same_id`` spells it)."""
+    """The ``securityServiceGroup`` rows by ``logicalId``.
+
+    The ``logicalId`` is as ``_same_id`` spells it.
+    """
     by_id: Mapping[tuple[str, int], Mapping[str, object]]
     """The rows by type and ``id``."""
 
     @classmethod
     def from_rows(cls, rows: Iterable[Mapping[str, object]]) -> "SecurityObjects":
-        """The objects of *rows*; a row with no usable ``type`` and ``id`` is left out."""
+        """The objects of *rows*.
+
+        A row with no usable ``type`` and ``id`` is left out.
+        """
         groups: dict[str, Mapping[str, object]] = {}
         by_id: dict[tuple[str, int], Mapping[str, object]] = {}
         for row in rows:
@@ -140,12 +158,22 @@ class SecurityObjects:
 
 @dataclass(frozen=True)
 class ExpectedKeys:
-    """What the composer adds to a rule: the keys with their values, and why some cannot be expected."""
+    """What the composer adds to a rule.
+
+    That is the keys with their values, and why some cannot be expected.
+    """
 
     values: Mapping[str, object]
-    """The expected value of each of ``SYNTHETIC_RULE_KEYS`` the group gives the rule."""
+    """The expected value of each of ``SYNTHETIC_RULE_KEYS`` the group gives.
+
+    The group gives them to the rule.
+    """
     unresolved: frozenset[str]
-    """The keys that cannot be expected because the object that gives them is not among the security objects (all of ``SYNTHETIC_RULE_KEYS`` when the group itself is not); the reason is ``UNRESOLVED``."""
+    """The keys that cannot be expected, each with the reason ``UNRESOLVED``.
+
+    A key cannot be expected because the object that gives it is not among the security
+    objects (all of ``SYNTHETIC_RULE_KEYS`` when the group itself is not).
+    """
 
 
 def expected_rule_keys(group_logical_id: str, objects: SecurityObjects) -> ExpectedKeys:
@@ -172,7 +200,10 @@ def expected_rule_keys(group_logical_id: str, objects: SecurityObjects) -> Expec
 def _lookup(
     objects: SecurityObjects, type_: SecurityObjectType, id_: object
 ) -> JsonObject | None:
-    """The ``data`` of the object of *type_* with *id_*, or ``None`` when there is none."""
+    """The ``data`` of the object of *type_* with *id_*.
+
+    ``None`` when there is none.
+    """
     if not isinstance(id_, int):
         return None
     row = objects.named(type_.value, id_)
@@ -192,7 +223,10 @@ class RuleGroup:
 
 
 def rules_naming_a_group(dump: JsonObject) -> list[RuleGroup]:
-    """The outbound rules in the firewall module dump *dump* that name a security service group."""
+    """The outbound rules in the firewall module dump *dump* that name a group.
+
+    The group is a security service group.
+    """
     found: list[RuleGroup] = []
     segments = dump.get("segments")
     for position, entry in enumerate(segments if is_list(segments) else []):

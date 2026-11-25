@@ -45,7 +45,7 @@ def _error(code: int = -32600, message: str = "Not authorized") -> httpx.Respons
 
 
 OPERATOR_RESULT: JsonValue = cast(
-    JsonValue,
+    "JsonValue",
     [
         {
             "id": 1,
@@ -55,7 +55,7 @@ OPERATOR_RESULT: JsonValue = cast(
     ],
 )
 MSP_RESULT: JsonValue = cast(
-    JsonValue,
+    "JsonValue",
     {
         "id": 1,
         "name": "partner",
@@ -68,7 +68,7 @@ MSP_RESULT: JsonValue = cast(
     },
 )
 ENTERPRISE_RESULT: JsonValue = cast(
-    JsonValue,
+    "JsonValue",
     {
         "id": 1,
         "name": "enterprise",
@@ -85,7 +85,9 @@ ENTERPRISE_RESULT: JsonValue = cast(
 
 
 class TestDetermineUserType:
-    async def test_operator_detected_first(self, mock_vco_client: MockVcoClientFactory):
+    async def test_operator_detected_first(
+        self, mock_vco_client: MockVcoClientFactory
+    ) -> None:
         """When all three probes succeed, OPERATOR wins and later probes are skipped."""
         calls: list[str] = []
         handler = _make_handler(
@@ -101,8 +103,13 @@ class TestDetermineUserType:
         assert result == UserType.OPERATOR
         assert calls == ["network/getNetworkEnterprises"]
 
-    async def test_msp_when_operator_fails(self, mock_vco_client: MockVcoClientFactory):
-        """When operator probe fails, MSP is returned and enterprise probe is skipped."""
+    async def test_msp_when_operator_fails(
+        self, mock_vco_client: MockVcoClientFactory
+    ) -> None:
+        """When operator probe fails, MSP is returned.
+
+        Enterprise probe is skipped.
+        """
         calls: list[str] = []
         handler = _make_handler(
             {
@@ -122,7 +129,7 @@ class TestDetermineUserType:
 
     async def test_enterprise_when_operator_and_msp_fail(
         self, mock_vco_client: MockVcoClientFactory
-    ):
+    ) -> None:
         """When operator and MSP probes fail, ENTERPRISE is returned."""
         handler = _make_handler(
             {
@@ -135,7 +142,7 @@ class TestDetermineUserType:
         result = await client.determine_user_type()
         assert result == UserType.ENTERPRISE
 
-    async def test_all_fail_raises(self, mock_vco_client: MockVcoClientFactory):
+    async def test_all_fail_raises(self, mock_vco_client: MockVcoClientFactory) -> None:
         """When all probes fail, VcoUserTypeUnknownError is raised."""
         handler = _make_handler(
             {
@@ -150,7 +157,7 @@ class TestDetermineUserType:
 
     async def test_operator_probe_omits_network_id(
         self, mock_vco_client: MockVcoClientFactory
-    ):
+    ) -> None:
         """The operator probe should NOT send networkId (let VCO infer from token)."""
         captured_params: dict[str, JsonObject] = {}
 

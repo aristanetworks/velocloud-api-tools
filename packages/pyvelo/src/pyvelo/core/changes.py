@@ -53,20 +53,41 @@ class _Plan:
     kind: Literal["value", "add", "delete", "set", "order", "map_add", "map_delete"]
     steps: tuple[str, ...]
     key: str = ""
-    """The field name of a value, the selector of a delete or a set, the key of a map entry."""
+    """The field name of a value, the selector of a delete or a set.
+
+    For a map entry it is the key of the entry.
+    """
     value: object = None
     """The value of a field, or the fields of an item that is added or set."""
     list_path: Path | None = None
-    """Where the keyed list of an added item, an item that is set, or an order entry is."""
+    """Where the keyed list of an item or of an order entry is.
+
+    The item is an added item or an item that is set.
+    """
     item: ItemPart | None = None
     """How the changes name the item an add adds or a set sets."""
     moves: tuple[tuple[ItemMove, str], ...] = ()
     """The items an order entry moves, each with its selector."""
 
+    def listed(self) -> Path:
+        """``list_path``, which a plan of an add, a set or an order has."""
+        if self.list_path is None:
+            raise AssertionError(f"a plan of kind {self.kind} has no list_path")
+        return self.list_path
+
+    def listed_item(self) -> tuple[Path, ItemPart]:
+        """``list_path`` and ``item``, which a plan of an add or a set has."""
+        if self.item is None:
+            raise AssertionError(f"a plan of kind {self.kind} has no item")
+        return self.listed(), self.item
+
 
 @dataclass(frozen=True, slots=True)
 class _Placed:
-    """An item of a keyed list that gets a ``_position``, and the plan that places it."""
+    """An item of a keyed list that gets a ``_position``.
+
+    It comes with the plan that places it.
+    """
 
     plan: _Plan
     item: ItemPart
@@ -121,7 +142,10 @@ def patch_of(
 def _stored(
     stored_parts: Mapping[Path, ItemPart] | None, list_path: Path, part: ItemPart
 ) -> ItemPart | None:
-    """The part that names the item *part* names in the stored list; None if it has none."""
+    """The part that names the item *part* names in the stored list.
+
+    None if it has none.
+    """
     if stored_parts is None:
         return part
     return stored_parts.get(list_path.child(part))
@@ -135,7 +159,7 @@ def _selector(
     return None if stored is None else selector_of(stored)
 
 
-def _resolve(
+def _resolve(  # noqa: C901, PLR0911, PLR0912 (existing: split it when it next changes)
     change: RawChange,
     model: type[VcoModel],
     stored_parts: Mapping[Path, ItemPart] | None,
@@ -208,7 +232,10 @@ def _order_plan(
     list_path: Path,
     stored_parts: Mapping[Path, ItemPart] | None,
 ) -> _Plan | None:
-    """The plan of the order entry of a keyed list: its moves, each by the selector of its item."""
+    """The plan of the order entry of a keyed list.
+
+    It is its moves, each by the selector of its item.
+    """
     moves: list[tuple[ItemMove, str]] = []
     for move in change.moves or ():
         selector = _selector(stored_parts, list_path, move.item)
@@ -226,7 +253,9 @@ def _object(value: object) -> _Node | None:
 
 
 def _nulls_writable(body: _Node, fields: Mapping[str, FieldInfo]) -> bool:
-    """Whether every ``None`` in *body*, the fields of an item that exists, is written by a ``null``.
+    """Whether every ``None`` in *body* is written by a ``null``.
+
+    *body* is the fields of an item that exists.
 
     For an item that exists, a patch's ``null`` unsets a field that takes
     ``MISSING``, so it writes ``None`` only where the field takes that and not
@@ -244,7 +273,7 @@ def _nulls_writable(body: _Node, fields: Mapping[str, FieldInfo]) -> bool:
     return True
 
 
-def _item_plan(
+def _item_plan(  # noqa: PLR0913, PLR0917 (existing: split it when it next changes)
     change: RawChange,
     steps: tuple[str, ...],
     list_path: Path,
@@ -252,7 +281,9 @@ def _item_plan(
     stored_parts: Mapping[Path, ItemPart] | None,
     fields: Mapping[str, FieldInfo] | None,
 ) -> _Plan | None:
-    """The plan of a change that ends at an item of a keyed list: add, delete, or set its fields.
+    """The plan of a change that ends at an item of a keyed list.
+
+    It adds, deletes, or sets the item's fields.
 
     *fields* are the fields of the items of the list. A set is left out whole
     when it gives a field a ``None`` that a patch's ``null`` cannot write.
@@ -281,7 +312,10 @@ def _item_plan(
 
 
 def _map_plan(change: RawChange, steps: tuple[str, ...], key: str) -> _Plan | None:
-    """The plan of a change that ends at an entry of a map of models: add or delete it."""
+    """The plan of a change that ends at an entry of a map of models.
+
+    It adds or deletes the entry.
+    """
     after = _object(change.after)
     if change.before is MISSING and after is not None:
         if key.startswith("+") or position_of(key) is not None:
@@ -329,7 +363,9 @@ def _value_plan(
 def _new_map_plan(
     change: RawChange, steps: tuple[str, ...], name: str, entries: _Node
 ) -> _Plan | None:
-    """The plan of a map of models that was not there and now has *entries*: one add each.
+    """The plan of a map of models that was not there and now has *entries*.
+
+    It is one add each.
 
     A patch's object on a map is item operations, so the entries are written
     as adds. Left out when the map was there, or when an entry is not an object
@@ -347,7 +383,10 @@ def _new_map_plan(
 
 
 def _repeats_a_key(items: list[object], spec: _ListSpec) -> bool:
-    """Whether two *items* of a keyed list value have one key: ``merge_patch`` refuses that."""
+    """Whether two *items* of a keyed list value have one key.
+
+    ``merge_patch`` refuses that.
+    """
     if spec.item_type is None:
         return False
     forms = [
@@ -381,7 +420,10 @@ def _placed_by_list(plans: Iterable[_Plan]) -> dict[Path, dict[ItemPart, _Placed
 def _anchor(
     placed: Mapping[ItemPart, _Placed], item: ItemPart
 ) -> tuple[int, ItemPart | None]:
-    """How many placed items are between *item* and the item its run follows, and that item (None: first)."""
+    """How many placed items are between *item* and the item its run follows.
+
+    The item it follows is returned too (None: first).
+    """
     depth, after = 0, placed[item].place.after
     while after is not None and after in placed and depth < len(placed):
         depth, after = depth + 1, placed[after].place.after
@@ -415,7 +457,10 @@ def _follows_an_item_there(
     list_path: Path,
     stored_parts: Mapping[Path, ItemPart] | None,
 ) -> bool:
-    """Whether the item the run of *item* follows can be named: it is first, or the stored list has the item."""
+    """Whether the item the run of *item* follows can be named.
+
+    It can when it is first, or when the stored list has the item.
+    """
     _, after = _anchor(placed, item)
     if after is None:
         return True
@@ -456,7 +501,7 @@ def _added_selector(item: ItemPart, node: _Node) -> str:
     return selector
 
 
-def _write(plans: list[_Plan], stored_parts: Mapping[Path, ItemPart] | None) -> _Node:
+def _write(plans: list[_Plan], stored_parts: Mapping[Path, ItemPart] | None) -> _Node:  # noqa: C901, PLR0912 (existing: split it when it next changes)
     """The patch the *plans* write, in the order given, then the places."""
     patch: _Node = {}
     entries: dict[tuple[Path, ItemPart], tuple[_Node, str]] = {}
@@ -471,21 +516,21 @@ def _write(plans: list[_Plan], stored_parts: Mapping[Path, ItemPart] | None) -> 
         elif plan.kind in ("delete", "map_delete"):
             node[plan.key] = {"_op": "delete"}
         elif plan.kind == "add":
-            assert plan.item is not None and plan.list_path is not None
-            selector = _added_selector(plan.item, node)
+            list_path, item = plan.listed_item()
+            selector = _added_selector(item, node)
             node[selector] = {"_op": "add", **cast("_Node", plan.value)}
-            entries[plan.list_path, plan.item] = (node, selector)
+            entries[list_path, item] = (node, selector)
         elif plan.kind == "set":
-            assert plan.item is not None and plan.list_path is not None
+            list_path, item = plan.listed_item()
             entry = node.get(plan.key)
             if not isinstance(entry, dict):
                 entry = node[plan.key] = {}
             cast("_Node", entry).update(cast("_Node", plan.value))
-            entries[plan.list_path, plan.item] = (node, plan.key)
+            entries[list_path, item] = (node, plan.key)
         else:
-            assert plan.list_path is not None
+            list_path = plan.listed()
             for move, selector in plan.moves:
-                entries[plan.list_path, move.item] = (node, selector)
+                entries[list_path, move.item] = (node, selector)
     for list_path, placed in _placed_by_list(plans).items():
         # The deepest item of a run first: each is written after the item the run
         # follows, so that the run is in order when the patch is applied.
@@ -497,7 +542,8 @@ def _write(plans: list[_Plan], stored_parts: Mapping[Path, ItemPart] | None) -> 
                 entry["_position"] = "first"
             else:
                 anchor = _selector(stored_parts, list_path, after)
-                assert anchor is not None
+                if anchor is None:
+                    raise AssertionError("_placeable kept a place after no item")
                 entry["_position"] = {"after": anchor}
             node[selector] = entry
     return patch

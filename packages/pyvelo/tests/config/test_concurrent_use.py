@@ -38,7 +38,10 @@ from test_write_back import (  # pyright: ignore[reportImplicitRelativeImport]
 
 
 class Gated(MockVcoClient):
-    """Each module write sets ``started``, yields to the loop, then waits for ``release``."""
+    """Each module write sets ``started`` and yields to the loop.
+
+    Then it waits for ``release``.
+    """
 
     started: asyncio.Event
     release: asyncio.Event
@@ -69,7 +72,7 @@ class Gated(MockVcoClient):
         return await super().insert_configuration_module(request, level=level)
 
 
-async def test_apply_during_a_save_waits_and_its_edit_stays_planned():
+async def test_apply_during_a_save_waits_and_its_edit_stays_planned() -> None:
     state = make_state()
     client = Gated.over(state)
     pipeline = ConfigPipeline(client)
@@ -96,7 +99,7 @@ async def test_apply_during_a_save_waits_and_its_edit_stays_planned():
     assert (stored["firewall_enabled"], stored["syslog_forwarding"]) == (False, True)
 
 
-async def test_two_saves_at_once_write_each_module_once():
+async def test_two_saves_at_once_write_each_module_once() -> None:
     state = three_module_state()
     client = Gated.over(state)
     client.release.set()  # a write only yields to the loop
@@ -110,7 +113,7 @@ async def test_two_saves_at_once_write_each_module_once():
     assert state.plan().changed == ()
 
 
-async def test_two_saves_at_once_insert_a_new_module_once():
+async def test_two_saves_at_once_insert_a_new_module_once() -> None:
     state = make_state()  # the edge has no QoS module
     client = Gated.over(state)
     client.release.set()
@@ -131,7 +134,7 @@ async def test_two_saves_at_once_insert_a_new_module_once():
     assert sorted(r["name"] for r in rows) == ["QOS", "firewall"]
 
 
-async def test_a_cancelled_save_releases_the_state():
+async def test_a_cancelled_save_releases_the_state() -> None:
     state = make_state()
     client = Gated.over(state)
     pipeline = ConfigPipeline(client)
@@ -151,7 +154,7 @@ async def test_a_cancelled_save_releases_the_state():
     assert changed(state) == ["firewall"]
 
 
-async def test_an_assignment_during_a_save_is_reported_by_the_save():
+async def test_an_assignment_during_a_save_is_reported_by_the_save() -> None:
     state = make_state()
     client = Gated.over(state)
     pipeline = ConfigPipeline(client)
@@ -175,7 +178,7 @@ async def test_an_assignment_during_a_save_is_reported_by_the_save():
     assert state.plan().changed == ()
 
 
-async def test_a_lookup_during_a_save_is_reported_as_no_edit():
+async def test_a_lookup_during_a_save_is_reported_as_no_edit() -> None:
     state = make_state()  # the profile has a Guest segment the edge only inherits
     client = Gated.over(state)
     pipeline = ConfigPipeline(client)
@@ -199,7 +202,7 @@ async def test_a_lookup_during_a_save_is_reported_as_no_edit():
     assert state.plan().changed == ()
 
 
-async def test_an_edit_of_a_later_module_during_a_save_is_reported_too():
+async def test_an_edit_of_a_later_module_during_a_save_is_reported_too() -> None:
     state = three_module_state()
     client = Gated.over(state)
     pipeline = ConfigPipeline(client)
@@ -222,7 +225,7 @@ async def test_an_edit_of_a_later_module_during_a_save_is_reported_too():
     assert state.plan().changed == ()
 
 
-async def test_the_error_names_the_modules_written_and_those_left():
+async def test_the_error_names_the_modules_written_and_those_left() -> None:
     state = three_module_state()
     client = Gated.over(state)
     pipeline = ConfigPipeline(client)
@@ -248,7 +251,7 @@ async def test_the_error_names_the_modules_written_and_those_left():
     assert changed(state) == ["WAN"]
 
 
-async def test_an_assignment_under_the_lock_waits_for_the_save():
+async def test_an_assignment_under_the_lock_waits_for_the_save() -> None:
     state = make_state()
     client = Gated.over(state)
     pipeline = ConfigPipeline(client)
@@ -270,7 +273,7 @@ async def test_an_assignment_under_the_lock_waits_for_the_save():
     assert state.edge.firewall.syslog_forwarding.local is True
 
 
-async def test_apply_and_save_by_the_task_that_holds_the_lock_raise():
+async def test_apply_and_save_by_the_task_that_holds_the_lock_raise() -> None:
     state = make_state()
     client = MockVcoClient.for_state(state)
     pipeline = ConfigPipeline(client)
@@ -296,7 +299,7 @@ async def test_apply_and_save_by_the_task_that_holds_the_lock_raise():
     assert result.modules_updated == [FIREWALL]
 
 
-async def test_another_task_still_waits_for_the_lock():
+async def test_another_task_still_waits_for_the_lock() -> None:
     state = make_state()
     pipeline = ConfigPipeline(MockVcoClient.for_state(state))
 

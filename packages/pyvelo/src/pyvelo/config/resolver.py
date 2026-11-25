@@ -20,7 +20,8 @@ from typing import (
 from pyvelo.client.protocol import VcoClientProtocol
 from pyvelo.core.identity import IdentityKey, ResolverNotLoadedError, entity_label
 
-# ResolutionError lives in pyvelo.core.identity; re-exported so this import path keeps working.
+# ResolutionError lives in pyvelo.core.identity; re-exported so this import path keeps
+# working.
 from pyvelo.core.identity import ResolutionError as ResolutionError  # noqa: PLC0414
 
 
@@ -52,7 +53,10 @@ class Resolver[IdentityT](Protocol):
         ...
 
     def lookup_key(self, key: IdentityKey[IdentityT]) -> IdentityT:
-        """Key object -> typed identity, from the loaded tables. Dispatches on key type."""
+        """Key object -> typed identity, from the loaded tables.
+
+        Dispatches on key type.
+        """
         ...
 
     async def resolve(self, name: str) -> IdentityT:
@@ -96,28 +100,36 @@ class BaseResolver[IdentityT]:
     requires_load: ClassVar[bool] = False
 
     def __init__(self, client: VcoClientProtocol) -> None:
-        self._client = client
+        """An empty resolver that loads its tables through *client*."""
+        self._client: VcoClientProtocol = client
         self.loaded: bool = False
         self._by_name: dict[str, IdentityT] = {}
         self._reverse: dict[str, dict[int | str | uuid.UUID, str]] = {}
 
     def lookup(self, name: str) -> IdentityT:
+        """The identity loaded under *name*, matched exactly or ignoring case."""
         self._require_loaded()
         _, identity = resolve_name(name, self._by_name, self._entity_label)
         return identity
 
     def lookup_key(self, key: IdentityKey[IdentityT]) -> IdentityT:
+        """The identity *key* names; a subclass dispatches on the key's type."""
+        del key
         raise NotImplementedError
 
     @final
     async def resolve(self, name: str) -> IdentityT:
+        """The awaitable form of ``lookup``."""
         return self.lookup(name)
 
     @final
     async def resolve_key(self, key: IdentityKey[IdentityT]) -> IdentityT:
+        """The awaitable form of ``lookup_key``."""
         return self.lookup_key(key)
 
     async def load(self, context: ResolverContext) -> None:
+        """Fetch the entities of *context* and register them; a subclass does this."""
+        del context
         raise NotImplementedError
 
     def identities(self) -> Collection[IdentityT]:
@@ -152,7 +164,7 @@ class BaseResolver[IdentityT]:
         ID that is not there is told from a name that is not.
         """
         self._require_loaded()
-        name = self._reverse.get(attribute, {}).get(cast(Any, value))
+        name = self._reverse.get(attribute, {}).get(cast("Any", value))
         if name is None:
             raise ResolutionError(
                 name=str(value),
@@ -169,7 +181,10 @@ class BaseResolver[IdentityT]:
         self.loaded = False
 
     def _require_loaded(self) -> None:
-        """Raise ``ResolverNotLoadedError`` when this resolver needs a load and has none."""
+        """Raise ``ResolverNotLoadedError`` if this resolver is not loaded.
+
+        That is when it needs a load and has none.
+        """
         if self.requires_load and not self.loaded:
             raise ResolverNotLoadedError(self.identity_type)
 
@@ -187,6 +202,7 @@ class ResolverRegistry:
     """
 
     def __init__(self) -> None:
+        """A registry with no resolvers and no context."""
         self._resolvers: dict[type, Resolver[Any]] = {}
         self._context: ResolverContext | None = None
 
@@ -214,7 +230,7 @@ class ResolverRegistry:
         twin = ResolverRegistry()
         for resolver in self._resolvers.values():
             make_copy = cast(
-                Callable[[], Resolver[Any]] | None,
+                "Callable[[], Resolver[Any]] | None",
                 getattr(resolver, "unloaded", None),
             )
             if make_copy is None:
@@ -275,22 +291,19 @@ class ResolverRegistry:
           resolve(SegmentIdentity, "Global Segment")  # identity type + name
         """
         if isinstance(key, type):
-            # resolve(IdentityType, name)
+            # Called as resolve(IdentityType, name).
             resolver = self._resolvers.get(key)
             if resolver is None:
                 raise LookupError(f"No resolver registered for {key.__name__}")
             if name is None:
                 raise TypeError("name is required when resolving by identity type")
             return await resolver.resolve(name)
-        else:
-            # Key-based API: resolve(SegmentName("value"))
-            identity_type = type(key).identity_type
-            resolver = self._resolvers.get(identity_type)
-            if resolver is None:
-                raise LookupError(
-                    f"No resolver registered for {identity_type.__name__}"
-                )
-            return await resolver.resolve_key(key)
+        # Key-based API: resolve(SegmentName("value"))
+        identity_type = type(key).identity_type
+        resolver = self._resolvers.get(identity_type)
+        if resolver is None:
+            raise LookupError(f"No resolver registered for {identity_type.__name__}")
+        return await resolver.resolve_key(key)
 
     @overload
     def lookup[T](self, key: IdentityKey[T]) -> T: ...
@@ -325,7 +338,9 @@ class ResolverRegistry:
         accessor: Callable[[T], object],
         value: object,
     ) -> T:
-        """The first loaded identity of *identity_type* for which ``accessor(identity) == value``.
+        """The first loaded identity of *identity_type* whose accessor gives *value*.
+
+        It is the first for which ``accessor(identity) == value``.
 
         The scan covers ``identities()``, in its order, so it finds an identity
         that another one of the same name hides from the name lookups (an Edge
@@ -348,7 +363,7 @@ class ResolverRegistry:
         )
 
 
-def resolve_name[T](
+def resolve_name[T](  # noqa: PLR0913 (existing: split it when it next changes)
     name: str,
     by_name: dict[str, T],
     entity_label: str,
@@ -391,6 +406,10 @@ def resolve_name[T](
     raise resolution_error(entity_label, name, by_name.keys(), n=n, cutoff=cutoff)
 
 
+_MAX_AVAILABLE_SHOWN = 20
+"""How many of the available names an unknown-name error lists, at most."""
+
+
 def resolution_error(
     entity_label: str,
     name: str,
@@ -418,14 +437,14 @@ def resolution_error(
     if original_suggestions:
         formatted = "\n".join(f"  - {s}" for s in original_suggestions)
         parts.append(f"Did you mean:\n{formatted}")
+    elif len(available_list) > _MAX_AVAILABLE_SHOWN:
+        shown = ", ".join(available_list[:_MAX_AVAILABLE_SHOWN])
+        parts.append(
+            f"Available ({len(available_list)} total, "
+            f"showing first {_MAX_AVAILABLE_SHOWN}): {shown}"
+        )
     else:
-        if len(available_list) > 20:
-            shown = ", ".join(available_list[:20])
-            parts.append(
-                f"Available ({len(available_list)} total, showing first 20): {shown}"
-            )
-        else:
-            parts.append(f"Available: {', '.join(available_list)}")
+        parts.append(f"Available: {', '.join(available_list)}")
     return ResolutionError(
         name=name,
         identity_type=entity_label,

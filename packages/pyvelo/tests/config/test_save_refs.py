@@ -1,4 +1,6 @@
-"""A state plans with its own resolvers: provider edits, the services read, and the plan's warnings.
+"""A state plans with its own resolvers.
+
+Provider edits, the services read, and the plan's warnings.
 
 The state is a profile whose device settings module (10 of configuration 100)
 has the Global Segment, which the mock client serves as object 1. The store
@@ -6,7 +8,7 @@ holds the services ``dns-a`` (701) and ``dns-b`` (702) beside it.
 """
 
 import uuid
-from typing import Any, cast
+from typing import Any, ClassVar, cast, override
 
 import pytest
 from pydantic import MISSING
@@ -36,7 +38,7 @@ from pyvelo.core.layers import Edge, Profile
 from pyvelo.core.owned import Owned
 from pyvelo.core.rebase import Path
 from pyvelo.testing import MockVcoClient, ModuleStore, make_module_json
-from refs_helpers import (  # pyright: ignore[reportImplicitRelativeImport]
+from refs_helpers import (
     AUTH,
     CONFIG,
     DNS_A,
@@ -134,7 +136,10 @@ def profile_state(service: str | None = None, *, css: bool = False) -> ConfigSta
 
 
 def served(state: ConfigState) -> MockVcoClient:
-    """A client over a store that holds *state*'s configurations and the two services."""
+    """A client over a store that holds *state*'s configurations.
+
+    The store holds the two services too.
+    """
     client = MockVcoClient.for_state(state)
     client.add_service(701, logical_id=DNS_A, name="dns-a", type_="dns")
     client.add_service(702, logical_id=DNS_B, name="dns-b", type_="dns")
@@ -181,14 +186,14 @@ def one_row(refs: dict[str, Any], name: str) -> dict[str, Any]:
     held = refs[name]
     (row,) = held if isinstance(held, list) else [held]
     assert isinstance(row, dict)
-    return cast(dict[str, Any], row)
+    return cast("dict[str, Any]", row)
 
 
 def provider_patch(name: str) -> dict[str, Any]:
     return {"dns": {"primaryProvider": {"service": name}}}
 
 
-async def test_apply_loads_the_network_services_for_a_provider_name():
+async def test_apply_loads_the_network_services_for_a_provider_name() -> None:
     pipeline, client, state = await loaded_profile()
 
     state = await pipeline.apply(
@@ -214,7 +219,7 @@ async def test_apply_loads_the_network_services_for_a_provider_name():
     assert methods(client.store).count(SERVICES) == 1
 
 
-async def test_an_unknown_provider_name_leaves_the_state_unchanged():
+async def test_an_unknown_provider_name_leaves_the_state_unchanged() -> None:
     pipeline, client, state = await loaded_profile()
 
     with pytest.raises(ResolutionError, match="nope"):
@@ -230,7 +235,9 @@ async def test_an_unknown_provider_name_leaves_the_state_unchanged():
     assert state.plan().changed == ()
 
 
-async def test_a_provider_of_the_wrong_service_type_leaves_the_state_unchanged():
+async def test_a_provider_of_the_wrong_service_type_leaves_the_state_unchanged() -> (
+    None
+):
     pipeline, client, state = await loaded_profile()
     client.add_service(703, logical_id=AUTH, name="radius-1", type_="authentication")
 
@@ -244,12 +251,15 @@ async def test_a_provider_of_the_wrong_service_type_leaves_the_state_unchanged()
 
     message = str(caught.value)
     assert "'radius-1'" in message
-    assert "type 'authentication'" in message and "type 'dns'" in message
+    assert "type 'authentication'" in message
+    assert "type 'dns'" in message
     assert primary_provider(state).service is None
     assert state.plan().changed == ()
 
 
-async def test_a_save_after_setting_a_provider_by_uuid_loads_the_services_once():
+async def test_a_save_after_setting_a_provider_by_uuid_loads_the_services_once() -> (
+    None
+):
     pipeline, client, state = await loaded_profile()
     primary_provider(state).service = uuid.UUID(DNS_A)
 
@@ -257,7 +267,7 @@ async def test_a_save_after_setting_a_provider_by_uuid_loads_the_services_once()
 
     assert methods(client.store) == [SERVICES, VERSION_READ, UPDATE]
     (request,) = client.update_requests
-    refs = cast(dict[str, Any], request.update.refs)
+    refs = cast("dict[str, Any]", request.update.refs)
     assert one_row(refs, PRIMARY) == {
         "configurationId": CONFIG,
         "moduleId": DS_ID,
@@ -271,7 +281,7 @@ async def test_a_save_after_setting_a_provider_by_uuid_loads_the_services_once()
     assert state.plan().changed == ()
 
 
-async def test_a_dry_run_loads_the_services_too():
+async def test_a_dry_run_loads_the_services_too() -> None:
     pipeline, client, state = await loaded_profile()
     primary_provider(state).service = uuid.UUID(DNS_A)
 
@@ -284,7 +294,7 @@ async def test_a_dry_run_loads_the_services_too():
     assert f"+ refs {PRIMARY}" in result.plan.render()
 
 
-async def test_load_costs_no_service_read():
+async def test_load_costs_no_service_read() -> None:
     client = served(profile_state(DNS_A))
     client.store.requests.clear()
 
@@ -294,7 +304,7 @@ async def test_load_costs_no_service_read():
     assert not state.resolvers.get_resolver(NetworkServiceResolver).loaded
 
 
-def test_a_direct_plan_lets_the_not_loaded_error_through():
+def test_a_direct_plan_lets_the_not_loaded_error_through() -> None:
     state = profile_state()
     primary_provider(state).service = uuid.UUID(DNS_A)
 
@@ -304,11 +314,13 @@ def test_a_direct_plan_lets_the_not_loaded_error_through():
     assert error.value.identity_type is NetworkServiceIdentity
 
 
-async def test_a_second_not_loaded_error_for_the_same_type_propagates():
+async def test_a_second_not_loaded_error_for_the_same_type_propagates() -> None:
     class NeverLoads(NetworkServiceResolver):
-        loads = 0
+        loads: ClassVar[int] = 0
 
+        @override
         async def load(self, context: ResolverContext) -> None:
+            del context
             type(self).loads += 1
 
     pipeline, client, state = await loaded_profile()
@@ -332,7 +344,7 @@ async def test_a_second_not_loaded_error_for_the_same_type_propagates():
     assert primary_provider(state).service == uuid.UUID(DNS_A)
 
 
-async def test_plan_warnings_reach_the_plan_and_the_save_result():
+async def test_plan_warnings_reach_the_plan_and_the_save_result() -> None:
     pipeline, _, state = await loaded_profile(css=True)
     plan = state.plan()
     (module_plan,) = plan.modules
@@ -353,7 +365,9 @@ async def test_plan_warnings_reach_the_plan_and_the_save_result():
     assert saved.warnings == list(plan.warnings)
 
 
-async def test_a_data_edit_of_device_settings_keeps_every_row_through_a_processor():
+async def test_a_data_edit_of_device_settings_keeps_every_row_through_a_processor() -> (
+    None
+):
     pipeline, client, state = await loaded_profile(DNS_A)
     client.store.processor_refs[DS_ID] = {}
     device_settings(state).lan.networks[0].name = "renamed"
@@ -366,7 +380,7 @@ async def test_a_data_edit_of_device_settings_keeps_every_row_through_a_processo
     assert primary_provider(state).service == uuid.UUID(DNS_A)
 
 
-async def test_field_changes_list_a_provider_change_at_its_path():
+async def test_field_changes_list_a_provider_change_at_its_path() -> None:
     _, _, state = await loaded_profile(DNS_A)
     state.resolvers = await table_registry(DNS_A_SERVICE, DNS_B_SERVICE)
 
@@ -387,7 +401,7 @@ async def test_field_changes_list_a_provider_change_at_its_path():
     assert state.get_field_changes() == []
 
 
-async def test_a_new_provider_on_a_stub_with_no_ref_lists_the_ref_it_writes():
+async def test_a_new_provider_on_a_stub_with_no_ref_lists_the_ref_it_writes() -> None:
     _, _, state = await loaded_profile()
     state.resolvers = await table_registry(DNS_A_SERVICE)
     primary_provider(state).service = uuid.UUID(DNS_A)
@@ -404,7 +418,7 @@ async def test_a_new_provider_on_a_stub_with_no_ref_lists_the_ref_it_writes():
     ]
 
 
-async def test_a_provider_on_a_stub_that_has_a_ref_is_one_change():
+async def test_a_provider_on_a_stub_that_has_a_ref_is_one_change() -> None:
     _, _, state = await loaded_profile(DNS_A)
     state.resolvers = await table_registry(DNS_A_SERVICE, DNS_B_SERVICE)
     primary_provider(state).service = uuid.UUID(DNS_B)
@@ -437,7 +451,9 @@ def edge_state() -> ConfigState:
     )
 
 
-async def test_a_provider_edit_on_the_profile_layer_of_an_edge_state_is_not_saved():
+async def test_a_provider_edit_on_the_profile_layer_of_an_edge_state_is_not_saved() -> (
+    None
+):
     state = edge_state()
     state.take_snapshot()
     client = served(state)
@@ -452,12 +468,12 @@ async def test_a_provider_edit_on_the_profile_layer_of_an_edge_state_is_not_save
     assert state.plan().changed == ()  # reported once
 
 
-async def test_a_provider_assigned_during_its_write_is_reported():
+async def test_a_provider_assigned_during_its_write_is_reported() -> None:
     pipeline, client, state = await loaded_profile()
     primary_provider(state).service = uuid.UUID(DNS_A)
     during = primary_provider(state)
 
-    def assign_while_writing(new: dict[str, Any], old: dict[str, Any] | None) -> None:
+    def assign_while_writing(new: dict[str, Any], _old: dict[str, Any] | None) -> None:
         if new.get("name") == "deviceSettings":
             during.service = uuid.UUID(DNS_B)
 
@@ -473,7 +489,9 @@ async def test_a_provider_assigned_during_its_write_is_reported():
     assert state.plan().changed == ()
 
 
-async def test_a_provider_changed_behind_the_guard_of_a_detached_object_is_reported():
+async def test_a_provider_changed_behind_the_guard_of_a_detached_object_is_reported() -> (  # noqa: E501 (a test's name)
+    None
+):
     pipeline, _, state = await loaded_profile()
     primary_provider(state).service = uuid.UUID(DNS_A)
     data = device_settings(state)  # compared while the data is alive
@@ -498,7 +516,10 @@ EDGE_QOS_ID = 52
 
 
 def qos_json(*, module_id: int, configuration_id: int) -> dict[str, Any]:
-    """A QoS module with the Global Segment and a rate limit, the one value a test edits."""
+    """A QoS module with the Global Segment and a rate limit.
+
+    The rate limit is the one value a test edits.
+    """
     data = {
         "segments": [
             {
@@ -519,7 +540,10 @@ def qos_json(*, module_id: int, configuration_id: int) -> dict[str, Any]:
 
 
 def profile_with_qos(*, qos_first: bool = False) -> ConfigState:
-    """A profile state with device settings and QoS, written in that order unless *qos_first*."""
+    """A profile state with device settings and QoS.
+
+    They are written in that order unless *qos_first*.
+    """
     modules = [
         module_json(
             module_id=DS_ID,
@@ -542,7 +566,10 @@ def profile_with_qos(*, qos_first: bool = False) -> ConfigState:
 
 
 def edge_with_qos() -> ConfigState:
-    """An edge state with device settings and QoS of its own, over a profile that has only device settings."""
+    """An edge state with device settings and QoS of its own.
+
+    Its profile has only device settings.
+    """
     edge = EdgeConfiguration.model_validate(
         {
             "name": "Edge Specific Profile",
@@ -575,7 +602,10 @@ def rate_limit(data: QosData[Edge] | QosData[Profile]) -> ServiceRateLimit:
 
 
 def propagating(client: MockVcoClient, qos_id: int) -> None:
-    """Make a write of device settings change the QoS row, as the VCO's propagation does."""
+    """Make a write of device settings change the QoS row.
+
+    The VCO's propagation does that.
+    """
 
     def enable(row: dict[str, Any]) -> None:
         row["data"]["serviceRateLimit"]["enabled"] = True
@@ -588,7 +618,7 @@ def propagating(client: MockVcoClient, qos_id: int) -> None:
     client.store.on_store.append(hook)
 
 
-async def test_a_profile_save_rebases_qos_after_device_settings():
+async def test_a_profile_save_rebases_qos_after_device_settings() -> None:
     state = profile_with_qos()
     client = served(state)
     propagating(client, QOS_ID)
@@ -627,7 +657,9 @@ async def test_a_profile_save_rebases_qos_after_device_settings():
     )
 
 
-async def test_a_profile_save_raises_a_conflict_where_the_propagation_reached_an_edit():
+async def test_a_profile_save_raises_a_conflict_where_the_propagation_reached_an_edit() -> (  # noqa: E501 (a test's name)
+    None
+):
     state = profile_with_qos()
     client = served(state)
     pipeline = ConfigPipeline(client)
@@ -659,7 +691,9 @@ async def test_a_profile_save_raises_a_conflict_where_the_propagation_reached_an
     assert rate_limit(state.profile.qos).value == 7
 
 
-async def test_a_module_listed_before_device_settings_is_written_after_it_and_rebased():
+async def test_a_module_listed_before_device_settings_is_written_after_it_and_rebased() -> (  # noqa: E501 (a test's name)
+    None
+):
     state = profile_with_qos(qos_first=True)
     client = served(state)
     propagating(client, QOS_ID)
@@ -685,7 +719,7 @@ async def test_a_module_listed_before_device_settings_is_written_after_it_and_re
     assert [str(n) for n in result.modules_updated] == ["deviceSettings", "QOS"]
 
 
-async def test_an_edge_save_does_not_rebase():
+async def test_an_edge_save_does_not_rebase() -> None:
     state = edge_with_qos()
     state.take_snapshot()
     client = served(state)

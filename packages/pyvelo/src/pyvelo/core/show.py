@@ -59,7 +59,9 @@ def shown(
     model: type[VcoModel] | None = None,
     path: Path | None = None,
 ) -> str:
-    """``value_text`` of *value*, cut to ``VALUE_WIDTH`` characters, with ``…`` after it when text is left out.
+    """``value_text`` of *value*, cut to ``VALUE_WIDTH`` characters.
+
+    ``…`` follows it when text is left out.
 
     Given both *model* and *path* (where in a document of *model* the value
     is), a secret in the value is shown as ``"***"`` (``hide_secrets``).
@@ -86,7 +88,7 @@ def shown_together(
         return tuple(texts)
     start = 0
     if any(text != texts[0] for text in texts):
-        start = max(0, len(os.path.commonprefix(texts)) - LEAD)
+        start = max(0, len(os.path.commonprefix(texts)) - LEAD)  # noqa: RUF071  # a character prefix, not a path
     cut: list[str] = []
     for text in texts:
         if len(text) <= VALUE_WIDTH:
@@ -102,7 +104,10 @@ def shown_together(
 
 
 def moves_text(moves: Sequence[ItemMove]) -> str:
-    """The first ``MOVES_SHOWN`` of *moves*, each with its new place, and a count of the rest."""
+    """The first ``MOVES_SHOWN`` of *moves*, each with its new place.
+
+    With them comes a count of the rest.
+    """
     text = "; ".join(str(move) for move in moves[:MOVES_SHOWN])
     if len(moves) > MOVES_SHOWN:
         text += f"; and {len(moves) - MOVES_SHOWN} more"
@@ -110,7 +115,9 @@ def moves_text(moves: Sequence[ItemMove]) -> str:
 
 
 def patch_text(path: Path, *, clear: bool = False) -> str:
-    """The merge patch that sets the field at *path* to a service, or clears it, as JSON a text-only caller can send.
+    """The merge patch that sets the field at *path* to a service, or clears it.
+
+    It is JSON a text-only caller can send.
 
     The path is in the names a patch is written in; a keyed item is named by
     its key. The value is a placeholder to replace with the name or the

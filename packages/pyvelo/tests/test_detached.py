@@ -5,6 +5,8 @@ import pickle
 from typing import Any, ClassVar, Self, cast
 
 import pytest
+import pyvelo
+import pyvelo.client
 from pydantic import ConfigDict, Field, RootModel, model_validator
 from pyvelo.client.exceptions import DetachedObjectError, VcoError
 from pyvelo.client.models.configuration import FirewallData
@@ -43,8 +45,8 @@ PATCH: dict[str, object] = {
 REPLACED = (
     "this object was replaced by a write; take it again from the module as stored "
     "(after a save: state.edge.<module> or state.profile.<module>; "
-    "after update_module: the module it returned, or error.module after a write error), "
-    "or put a deep copy of it there (copy.deepcopy)"
+    "after update_module: the module it returned, or error.module after a write "
+    "error), or put a deep copy of it there (copy.deepcopy)"
 )
 
 
@@ -77,7 +79,7 @@ class Filled(VcoModel):
         return self
 
 
-def test_assignment_on_a_detached_object_raises():
+def test_assignment_on_a_detached_object_raises() -> None:
     data, segment, rule = firewall()
     _ = data.mark_detached()
 
@@ -91,7 +93,7 @@ def test_assignment_on_a_detached_object_raises():
         DetachedObjectError, match=r"FirewallSegment\[Edge\]\.firewall_logging"
     ):
         segment.firewall_logging_enabled = True
-    with pytest.raises(DetachedObjectError, match="FirewallOutboundRule.name") as exc:
+    with pytest.raises(DetachedObjectError, match=r"FirewallOutboundRule\.name") as exc:
         rule.name = "other"
     assert "take it again from the module as stored" in str(exc.value)
     # The other intents are refused too; reading what the edge stores is not.
@@ -105,12 +107,12 @@ def test_assignment_on_a_detached_object_raises():
     # The guard comes before validate_assignment: no ValidationError for a bad value.
     checked = Checked()
     _ = checked.mark_detached()
-    with pytest.raises(DetachedObjectError, match="Checked.count"):
+    with pytest.raises(DetachedObjectError, match=r"Checked\.count"):
         checked.count = "not a number"  # pyright: ignore[reportAttributeAccessIssue]
     assert checked.count == 0
 
 
-def test_reading_a_detached_object_is_fine():
+def test_reading_a_detached_object_is_fine() -> None:
     data, segment, rule = firewall()
     before = dump(data)
     compact = data.model_dump(context={"compact": True})
@@ -124,7 +126,7 @@ def test_reading_a_detached_object_is_fine():
     assert data.model_dump(context={"compact": True}) == compact
 
 
-def test_an_object_that_is_not_marked_is_unaffected():
+def test_an_object_that_is_not_marked_is_unaffected() -> None:
     data, segment, rule = firewall()
 
     data.firewall_enabled.set_local(False)
@@ -139,7 +141,7 @@ def test_an_object_that_is_not_marked_is_unaffected():
     assert rule.is_detached is False
 
 
-def test_merge_patch_on_a_detached_object_raises():
+def test_merge_patch_on_a_detached_object_raises() -> None:
     data, segment, _ = firewall()
     before = dump(data)
     _ = data.mark_detached()
@@ -157,7 +159,7 @@ def test_merge_patch_on_a_detached_object_raises():
     assert dump(data) == before
 
 
-def test_mark_detached_lists_every_model_with_its_place():
+def test_mark_detached_lists_every_model_with_its_place() -> None:
     data, segment, rule = firewall()
     then = dump(data)
 
@@ -179,7 +181,7 @@ def test_mark_detached_lists_every_model_with_its_place():
         assert at == node.model_dump(mode="json", by_alias=True), place
 
 
-def test_a_module_marks_its_data_and_refs():
+def test_a_module_marks_its_data_and_refs() -> None:
     ref_name = "deviceSettings:clientConnector:config"
     ref: dict[str, Any] = {
         "id": 5,
@@ -210,12 +212,14 @@ def test_a_module_marks_its_data_and_refs():
     assert places[("data",)] is module.data
     assert places[("refs",)] is refs
     assert places[("refs", ref_name)] is refs.client_connector_config
-    assert module.is_detached and module.data.is_detached and refs.is_detached
+    assert module.is_detached
+    assert module.data.is_detached
+    assert refs.is_detached
     with pytest.raises(DetachedObjectError, match="DeviceSettingsData"):
         module.data.segments = []
 
 
-def test_model_machinery_still_works():
+def test_model_machinery_still_works() -> None:
     data, segment, rule = firewall()
 
     # The private attributes are not set yet, or are None.
@@ -239,7 +243,7 @@ def test_model_machinery_still_works():
     updated.syslog_forwarding.set_local(True)
     assert (updated.segments, updated.syslog_forwarding.local) == ([], True)
 
-    loaded = cast(FirewallData[Edge], pickle.loads(pickle.dumps(data)))
+    loaded = cast("FirewallData[Edge]", pickle.loads(pickle.dumps(data)))
     loaded.firewall_enabled.set_local(False)
     assert loaded.is_detached is False
 
@@ -265,10 +269,7 @@ def test_model_machinery_still_works():
         _ = data.merge_patch({"no_such_field": 1})
 
 
-def test_the_error_is_a_vco_error_and_exported():
-    import pyvelo
-    import pyvelo.client
-
+def test_the_error_is_a_vco_error_and_exported() -> None:
     assert issubclass(DetachedObjectError, VcoError)
     assert "DetachedObjectError" in pyvelo.client.__all__
     assert "DetachedObjectError" in pyvelo.__all__
@@ -288,17 +289,17 @@ class Open(VcoModel):
     model_config: ClassVar[ConfigDict] = ConfigDict(extra="allow")
 
 
-def test_models_in_a_dict_field_are_detached_and_listed():
+def test_models_in_a_dict_field_are_detached_and_listed() -> None:
     held = Checked(count=1)
     shelf = Shelf(by_name={"a": held})
     places = dict(shelf.mark_detached())
     assert places[("byName", "a")] is held
-    with pytest.raises(DetachedObjectError, match="Checked.count"):
+    with pytest.raises(DetachedObjectError, match=r"Checked\.count"):
         held.count = 2
     assert held.count == 1
 
 
-def test_models_in_extra_keys_are_detached_and_listed():
+def test_models_in_extra_keys_are_detached_and_listed() -> None:
     held = Checked(count=1)
     box = Open.model_validate({"more": held, "many": [held]})
     places = dict(box.mark_detached())
@@ -307,14 +308,14 @@ def test_models_in_extra_keys_are_detached_and_listed():
     assert held.is_detached
 
 
-def test_the_level_of_a_detached_object_can_still_be_set():
+def test_the_level_of_a_detached_object_can_still_be_set() -> None:
     data, _, rule = firewall()
     _ = data.mark_detached()
     assert data.for_edge() is data
     assert rule.config_context is ConfigContext.EDGE
 
 
-def test_a_deep_copy_of_a_detached_object_is_not_detached():
+def test_a_deep_copy_of_a_detached_object_is_not_detached() -> None:
     data, _, rule = firewall()
     _ = data.mark_detached()
 
@@ -334,12 +335,12 @@ def test_a_deep_copy_of_a_detached_object_is_not_detached():
     assert data.firewall_enabled.local is True
 
 
-def test_a_shallow_copy_of_a_detached_object_is_detached():
+def test_a_shallow_copy_of_a_detached_object_is_detached() -> None:
     data, _, rule = firewall()
     _ = data.mark_detached()
     for copied in (copy.copy(rule), rule.model_copy(), data.model_copy()):
         assert copied.is_detached
-    with pytest.raises(DetachedObjectError, match="FirewallOutboundRule.name"):
+    with pytest.raises(DetachedObjectError, match=r"FirewallOutboundRule\.name"):
         copy.copy(rule).name = "other"
 
 
@@ -351,7 +352,7 @@ class Crate(VcoModel):
     blobs: list[Blob] = Field(default_factory=list)
 
 
-def test_a_pydantic_model_that_is_not_a_vco_model_is_listed_and_not_guarded():
+def test_a_pydantic_model_that_is_not_a_vco_model_is_listed_and_not_guarded() -> None:
     blob, other = Blob({"enabled": False}), Blob(None)
     crate = Crate(blob=blob, blobs=[other])
 

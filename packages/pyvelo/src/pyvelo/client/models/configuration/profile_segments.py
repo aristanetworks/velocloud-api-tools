@@ -54,7 +54,9 @@ def _template() -> dict[str, Any]:
 
 
 def segment_template(module_name: str) -> dict[str, Any]:
-    """A copy of the template's segment entry for *module_name*, without a descriptor and without rule IDs.
+    """A copy of the template's segment entry for *module_name*.
+
+    The copy is without a descriptor and without rule IDs.
 
     *module_name* is a module's name on the wire: ``"deviceSettings"``,
     ``"QOS"`` or ``"firewall"``. Any other name raises ``ValueError``.
@@ -69,7 +71,9 @@ def segment_template(module_name: str) -> dict[str, Any]:
 
 
 def module_template_value(module_name: str, key: str) -> object:
-    """A deep copy of the template's value at *key* of the module-level part of *module_name*.
+    """A deep copy of the template's value at *key*.
+
+    The key is of the module-level part of *module_name*.
 
     *module_name* is a module's name on the wire (see :func:`segment_template`)
     and *key* a raw key of its ``data``, as the file spells it
@@ -91,7 +95,9 @@ def module_template_value(module_name: str, key: str) -> object:
 def template_default[M: VcoModel](
     model: type[M], module_name: str, key: str
 ) -> Callable[[], M]:
-    """A factory of the display default of *key* of *module_name*: the template's value, read as *model*.
+    """A factory of the display default of *key* of *module_name*.
+
+    The default is the template's value, read as *model*.
 
     It is the ``Default(factory=...)`` of an ``Inheritable`` field whose value
     an untouched profile holds as the template has it
@@ -105,7 +111,10 @@ def template_default[M: VcoModel](
 
 
 def default_rules() -> list[dict[str, Any]]:
-    """A copy of the template's four QoS ``defaults``, without IDs, in ``DEFAULT_NAMES`` order."""
+    """A copy of the template's four QoS ``defaults``, without IDs.
+
+    They are in ``DEFAULT_NAMES`` order.
+    """
     return copy.deepcopy(_template()["qos"]["segment"]["defaults"])
 
 
@@ -125,7 +134,9 @@ def new_segment_entry(
     *,
     qos_rules: Sequence[Mapping[str, object]] | None = None,
 ) -> dict[str, Any]:
-    """The entry of segment *identity* in module *module_name*: its descriptor, then the template's entry.
+    """The entry of segment *identity* in module *module_name*.
+
+    It is its descriptor, then the template's entry.
 
     For QoS, every rule of ``rules`` and of ``defaults`` gets a new
     ``ruleLogicalId``. With *qos_rules*, ``rules`` is a deep copy of them
@@ -152,7 +163,10 @@ def _give_ids(rules: list[dict[str, Any]]) -> None:
 
 @dataclass(frozen=True)
 class AddedSegment:
-    """A segment entry added to a profile module: its ``segmentId``, name and the whole raw entry."""
+    """A segment entry added to a profile module.
+
+    Its ``segmentId``, name and the whole raw entry.
+    """
 
     segment_id: int
     name: str
@@ -249,7 +263,9 @@ def pair_defaults(defaults: object) -> DefaultsPairing:
 def _arranged(
     items: Sequence[object], entries: Sequence[Mapping[str, Any]]
 ) -> list[tuple[bool, int]]:
-    """The order of *items* and *entries* once placed: ``(True, i)`` is item *i*, ``(False, j)`` is entry *j*.
+    """The order of *items* and *entries* once placed.
+
+    ``(True, i)`` is item *i*, ``(False, j)`` is entry *j*.
 
     An entry of the template goes after the item paired with the nearest
     earlier template entry, or first when none is paired; the entries after
@@ -286,7 +302,9 @@ def _template_index(name: object) -> int:
 def insert_defaults(
     defaults: list[object] | None, entries: Sequence[Mapping[str, Any]]
 ) -> list[object]:
-    """The list *defaults* with the template entries *entries* placed in template order among its items.
+    """The list *defaults* with the template entries *entries* placed among its items.
+
+    They are placed in template order.
 
     Each entry (found by its name) goes after the item paired with the
     nearest earlier template entry, else first. The items present keep their
@@ -302,7 +320,7 @@ def insert_defaults(
 
 
 def repaired_entry(
-    name: str, rule_id: str, conditional_backhaul: bool | None
+    name: str, rule_id: str, *, conditional_backhaul: bool | None
 ) -> dict[str, Any]:
     """The template ``defaults`` entry *name*, with ``ruleLogicalId`` *rule_id*.
 

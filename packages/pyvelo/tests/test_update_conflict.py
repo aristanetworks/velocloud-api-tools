@@ -68,7 +68,7 @@ def req(
 ) -> UpdateConfigurationModule:
     return UpdateConfigurationModule(
         configuration_module_id=7,
-        version=version if version else MISSING,
+        version=version or MISSING,
         return_data=True if return_data else MISSING,
         update=ConfigurationModuleUpdate(
             data=copy.deepcopy(data) if data is not None else {"segments": []}
@@ -85,7 +85,10 @@ def qos_insert(*, return_data: bool = False) -> InsertQosConfigurationModule:
 
 
 def firewall_store(**knobs: bool) -> ModuleStore:
-    """A store holding firewall module 7, at version ``"1700"``, of edge configuration 10."""
+    """A store holding firewall module 7 of edge configuration 10.
+
+    The module is at version ``"1700"``.
+    """
     store = ModuleStore(**knobs)
     store.add_configuration({"id": 10, "name": "Edge Specific Profile"})
     store.rows[7] = make_module_json(
@@ -112,11 +115,13 @@ def firewall_store(**knobs: bool) -> ModuleStore:
         ("address conflict", None, False),
     ],
 )
-def test_is_version_conflict(error: str | None, rows: int | None, expected: bool):
+def test_is_version_conflict(
+    error: str | None, rows: int | None, *, expected: bool
+) -> None:
     assert is_version_conflict(error=error, rows=rows) is expected
 
 
-def test_return_data_is_sent_as_returnData():
+def test_return_data_is_sent_as_returnData() -> None:  # noqa: N802 (the VCO key is the point of the test)
     assert req("1700", return_data=True).model_dump(by_alias=True)["returnData"] is True
     assert "returnData" not in req("1700").model_dump(by_alias=True)
     assert qos_insert(return_data=True).model_dump(by_alias=True)["returnData"] is True
@@ -125,7 +130,7 @@ def test_return_data_is_sent_as_returnData():
 
 async def test_returned_row_is_a_module_with_its_raw_data_and_level(
     mock_vco_client: MockVcoClientFactory,
-):
+) -> None:
     store = firewall_store()
     client = await mock_vco_client(store)
     module = await client.update_configuration_module(
@@ -140,8 +145,8 @@ async def test_returned_row_is_a_module_with_its_raw_data_and_level(
 
 @pytest.mark.parametrize("return_data", [True, False])
 async def test_precondition_failure_is_a_conflict(
-    mock_vco_client: MockVcoClientFactory, return_data: bool
-):
+    mock_vco_client: MockVcoClientFactory, *, return_data: bool
+) -> None:
     store = firewall_store(conditional_check=True)
     store.other_writer(7, lambda row: row.update(description="changed elsewhere"))
     client = await mock_vco_client(store)
@@ -156,9 +161,9 @@ async def test_precondition_failure_is_a_conflict(
 
 async def test_zero_rows_with_version_is_a_conflict(
     mock_vco_client: MockVcoClientFactory, json_rpc_response: JsonRpcResponseFactory
-):
+) -> None:
     client = await mock_vco_client(
-        lambda r: httpx.Response(200, json=json_rpc_response({"rows": 0}))
+        lambda _: httpx.Response(200, json=json_rpc_response({"rows": 0}))
     )
     with pytest.raises(ConfigConflictError) as exc:
         _ = await client.update_configuration_module(req("1700"))
@@ -172,9 +177,9 @@ async def test_zero_rows_with_version_is_a_conflict(
 
 async def test_zero_rows_without_version_is_not(
     mock_vco_client: MockVcoClientFactory, json_rpc_response: JsonRpcResponseFactory
-):
+) -> None:
     client = await mock_vco_client(
-        lambda r: httpx.Response(200, json=json_rpc_response({"rows": 0}))
+        lambda _: httpx.Response(200, json=json_rpc_response({"rows": 0}))
     )
     assert await client.update_configuration_module(req(None)) is None
 
@@ -184,18 +189,18 @@ async def test_one_row_is_a_write(
     mock_vco_client: MockVcoClientFactory,
     json_rpc_response: JsonRpcResponseFactory,
     version: str | None,
-):
+) -> None:
     client = await mock_vco_client(
-        lambda r: httpx.Response(200, json=json_rpc_response({"rows": 1}))
+        lambda _: httpx.Response(200, json=json_rpc_response({"rows": 1}))
     )
     assert await client.update_configuration_module(req(version)) is None
 
 
 async def test_result_error_stays_an_operation_error(
     mock_vco_client: MockVcoClientFactory, json_rpc_response: JsonRpcResponseFactory
-):
+) -> None:
     client = await mock_vco_client(
-        lambda r: httpx.Response(
+        lambda _: httpx.Response(
             200, json=json_rpc_response({"error": "validation failed"})
         )
     )
@@ -205,9 +210,9 @@ async def test_result_error_stays_an_operation_error(
 
 async def test_result_error_with_zero_rows_is_not_a_conflict(
     mock_vco_client: MockVcoClientFactory, json_rpc_response: JsonRpcResponseFactory
-):
+) -> None:
     client = await mock_vco_client(
-        lambda r: httpx.Response(
+        lambda _: httpx.Response(
             200, json=json_rpc_response({"rows": 0, "error": "validation failed"})
         )
     )
@@ -220,9 +225,9 @@ async def test_unknown_module_is_still_an_operation_error(
     mock_vco_client: MockVcoClientFactory,
     json_rpc_response: JsonRpcResponseFactory,
     version: str | None,
-):
+) -> None:
     client = await mock_vco_client(
-        lambda r: httpx.Response(
+        lambda _: httpx.Response(
             200, json=json_rpc_response(error=UNKNOWN_MODULE_ERROR)
         )
     )
@@ -233,10 +238,13 @@ async def test_unknown_module_is_still_an_operation_error(
 
 async def test_error_response_mentioning_version_is_not_a_conflict(
     mock_vco_client: MockVcoClientFactory, json_rpc_response: JsonRpcResponseFactory
-):
-    """Only the precondition error is a stale version, whatever another error's text says."""
+) -> None:
+    """Only the precondition error is a stale version.
+
+    That holds whatever another error's text says.
+    """
     client = await mock_vco_client(
-        lambda r: httpx.Response(
+        lambda _: httpx.Response(
             200,
             json=json_rpc_response(
                 error={"code": -32000, "message": "unsupported schema version"}
@@ -250,8 +258,11 @@ async def test_error_response_mentioning_version_is_not_a_conflict(
 
 async def test_asked_for_data_and_got_a_row_count(
     mock_vco_client: MockVcoClientFactory,
-):
-    """A VCO that ignores ``returnData`` answers with a row count, handled as without it."""
+) -> None:
+    """A VCO that ignores ``returnData`` answers with a row count.
+
+    The count is handled as without it.
+    """
     store = firewall_store(return_data=False)
     client = await mock_vco_client(store)
     fresh = await client.update_configuration_module(req("1700", return_data=True))
@@ -272,11 +283,12 @@ async def test_asked_for_data_and_got_a_row_count(
 async def test_a_result_that_is_neither_raises(
     mock_vco_client: MockVcoClientFactory,
     json_rpc_response: JsonRpcResponseFactory,
+    *,
     return_data: bool,
     answer: JsonObject,
-):
+) -> None:
     client = await mock_vco_client(
-        lambda r: httpx.Response(200, json=json_rpc_response(answer))
+        lambda _: httpx.Response(200, json=json_rpc_response(answer))
     )
     with pytest.raises(VcoOperationError, match="neither"):
         _ = await client.update_configuration_module(
@@ -304,13 +316,13 @@ async def test_a_known_module_row_that_fails_validation_raises_its_error(
     mock_vco_client: MockVcoClientFactory,
     json_rpc_response: JsonRpcResponseFactory,
     send: Callable[[VcoClient], Awaitable[object]],
-):
+) -> None:
     """A row the models know by name is validated as a module, as on any read."""
     row = make_module_json(
         "firewall", {"segments": "not a list"}, module_id=7, configuration_id=10
     )
     client = await mock_vco_client(
-        lambda r: httpx.Response(200, json=json_rpc_response(row))
+        lambda _: httpx.Response(200, json=json_rpc_response(row))
     )
     with pytest.raises(ValidationError) as exc:
         _ = await send(client)
@@ -319,7 +331,7 @@ async def test_a_known_module_row_that_fails_validation_raises_its_error(
 
 async def test_insert_with_return_data_returns_the_module(
     mock_vco_client: MockVcoClientFactory,
-):
+) -> None:
     store = firewall_store()
     client = await mock_vco_client(store)
     module = await client.insert_configuration_module(
@@ -333,7 +345,7 @@ async def test_insert_with_return_data_returns_the_module(
 
 async def test_insert_without_it_returns_the_id_as_today(
     mock_vco_client: MockVcoClientFactory,
-):
+) -> None:
     store = firewall_store()
     client = await mock_vco_client(store)
     result = await client.insert_configuration_module(qos_insert())
@@ -364,9 +376,9 @@ async def test_precondition_failure_in_an_http_error_is_a_conflict(
     mock_vco_client: MockVcoClientFactory,
     json_rpc_response: JsonRpcResponseFactory,
     status: int,
-):
+) -> None:
     client = await mock_vco_client(
-        lambda r: httpx.Response(
+        lambda _: httpx.Response(
             status, json=json_rpc_response(error=PRECONDITION_ERROR)
         )
     )
@@ -383,23 +395,23 @@ async def test_precondition_failure_in_an_http_error_is_a_conflict(
 
 async def test_any_other_http_error_of_an_update_is_an_http_error(
     mock_vco_client: MockVcoClientFactory, json_rpc_response: JsonRpcResponseFactory
-):
+) -> None:
     answers = [
         httpx.Response(400, json=json_rpc_response(error=UNKNOWN_MODULE_ERROR)),
         httpx.Response(502, text="<html>Bad Gateway</html>"),
         httpx.Response(400, json=[1, 2]),
     ]
     for answer in answers:
-        client = await mock_vco_client(lambda r, answer=answer: answer)
+        client = await mock_vco_client(lambda _, answer=answer: answer)
         with pytest.raises(VcoHttpError):
             _ = await client.update_configuration_module(req("1700"))
 
 
 async def test_the_same_body_from_another_operation_is_an_http_error(
     mock_vco_client: MockVcoClientFactory, json_rpc_response: JsonRpcResponseFactory
-):
+) -> None:
     client = await mock_vco_client(
-        lambda r: httpx.Response(412, json=json_rpc_response(error=PRECONDITION_ERROR))
+        lambda _: httpx.Response(412, json=json_rpc_response(error=PRECONDITION_ERROR))
     )
     with pytest.raises(VcoHttpError):
         _ = await client.insert_configuration_module(qos_insert())

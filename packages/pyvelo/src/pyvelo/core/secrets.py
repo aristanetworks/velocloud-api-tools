@@ -30,7 +30,9 @@ def _is_tuple(value: object) -> TypeIs[tuple[object, ...]]:
 
 
 def _under(classes: _Classes, key: object) -> tuple[bool, _Classes, bool] | None:
-    """The field JSON key *key* names in *classes*: is it secret, what it holds, is it a map.
+    """The field JSON key *key* names in *classes*.
+
+    Whether it is secret, what it holds, and whether it is a map.
 
     None when no class has a field read from *key*. With several classes a
     field is secret if it is in any of them, and holds what it holds in each.
@@ -51,15 +53,15 @@ def _under(classes: _Classes, key: object) -> tuple[bool, _Classes, bool] | None
     return (secret, tuple(below), is_map) if known else None
 
 
-def _hide(value: object, classes: _Classes, is_map: bool) -> object:
+def _hide(value: object, classes: _Classes, *, is_map: bool) -> object:
     if not classes:
         return value
     if is_list(value) or _is_tuple(value):
-        return [_hide(item, classes, is_map) for item in value]
+        return [_hide(item, classes, is_map=is_map) for item in value]
     if not is_dict(value):
         return value
     if is_map:  # the keys are map keys, not field names
-        return {key: _hide(item, classes, False) for key, item in value.items()}
+        return {key: _hide(item, classes, is_map=False) for key, item in value.items()}
     hidden: dict[object, object] = {}
     for key, item in value.items():
         found = _under(classes, key)
@@ -68,7 +70,7 @@ def _hide(value: object, classes: _Classes, is_map: bool) -> object:
         elif found[0]:
             hidden[key] = HIDDEN
         else:
-            hidden[key] = _hide(item, found[1], found[2])
+            hidden[key] = _hide(item, found[1], is_map=found[2])
     return hidden
 
 
@@ -97,4 +99,4 @@ def hide_secrets(model: type[VcoModel] | None, path: Path, value: object) -> obj
         secret, classes, is_map = found
         if secret:
             return HIDDEN
-    return _hide(value, classes, is_map)
+    return _hide(value, classes, is_map=is_map)

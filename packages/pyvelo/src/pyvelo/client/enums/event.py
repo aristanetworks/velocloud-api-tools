@@ -1,3 +1,5 @@
+"""Event types, categories and severities, and the ``with`` options of alert reads."""
+
 from enum import StrEnum
 
 

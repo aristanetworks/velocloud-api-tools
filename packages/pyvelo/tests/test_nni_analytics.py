@@ -1,18 +1,21 @@
 from __future__ import annotations
 
-from collections.abc import Sequence
 from datetime import UTC, datetime
-from typing import cast, final
+from typing import TYPE_CHECKING, cast, final
 
 import pytest
 from pydantic import MISSING
 from pyvelo.analytics.analytics import Analytics
-from pyvelo.client.protocol import VcoClientProtocol
-from pyvelo.client.schemas.monitoring import (
-    GetEnterpriseNniMetrics,
-    GetEnterpriseNniSeries,
-)
 from pyvelo.core import ApiInterval
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
+
+    from pyvelo.client.protocol import VcoClientProtocol
+    from pyvelo.client.schemas.monitoring import (
+        GetEnterpriseNniMetrics,
+        GetEnterpriseNniSeries,
+    )
 
 
 @pytest.fixture
@@ -29,7 +32,7 @@ class NniAnalyticsTestClient:
 
     @property
     def protocol(self) -> VcoClientProtocol:
-        return cast(VcoClientProtocol, cast(object, self))
+        return cast("VcoClientProtocol", cast("object", self))
 
     async def get_enterprise_nni_metrics(
         self, request: GetEnterpriseNniMetrics
@@ -46,7 +49,7 @@ class NniAnalyticsTestClient:
 
 class TestNniEnterpriseContext:
     @pytest.mark.anyio
-    async def test_metrics_passes_enterprise_id(self, interval: ApiInterval):
+    async def test_metrics_passes_enterprise_id(self, interval: ApiInterval) -> None:
         client = NniAnalyticsTestClient()
 
         _ = await Analytics(client.protocol, enterprise_id=42).get_nni_metrics(interval)
@@ -54,7 +57,7 @@ class TestNniEnterpriseContext:
         assert client.captured_requests[0].enterprise_id == 42
 
     @pytest.mark.anyio
-    async def test_series_passes_enterprise_id(self, interval: ApiInterval):
+    async def test_series_passes_enterprise_id(self, interval: ApiInterval) -> None:
         client = NniAnalyticsTestClient()
 
         _ = await Analytics(client.protocol, enterprise_id=42).get_nni_series(interval)
@@ -62,7 +65,9 @@ class TestNniEnterpriseContext:
         assert client.captured_requests[0].enterprise_id == 42
 
     @pytest.mark.anyio
-    async def test_omits_enterprise_id_when_unspecified(self, interval: ApiInterval):
+    async def test_omits_enterprise_id_when_unspecified(
+        self, interval: ApiInterval
+    ) -> None:
         client = NniAnalyticsTestClient()
 
         _ = await Analytics(client.protocol).get_nni_metrics(interval)

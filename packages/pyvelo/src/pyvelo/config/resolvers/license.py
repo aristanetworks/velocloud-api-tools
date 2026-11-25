@@ -26,7 +26,7 @@ class LicenseResolver(BaseResolver[LicenseIdentity]):
     Loads via ``license/getEnterpriseEdgeLicenses``.
     """
 
-    identity_type = LicenseIdentity
+    identity_type: type[LicenseIdentity] = LicenseIdentity
 
     @override
     def lookup_key(self, key: IdentityKey[LicenseIdentity]) -> LicenseIdentity:

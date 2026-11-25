@@ -43,14 +43,14 @@ def pair(raw: dict[str, Any]) -> tuple[Holder, Holder]:
     return Holder.model_validate(raw), Holder.model_validate(raw)
 
 
-def test_a_scalar_neither_model_set_takes_its_value_from_before():
+def test_a_scalar_neither_model_set_takes_its_value_from_before() -> None:
     base, cur = pair({})
     assert dump(base)["tag"] != dump(cur)["tag"]
     before, after = carried(base, cur)
     assert after == before
 
 
-def test_nested_models_and_lists_are_walked():
+def test_nested_models_and_lists_are_walked() -> None:
     raw = {
         "items": [{"name": "a"}, {"name": "b", "tag": str(uuid.uuid4())}],
         "plain": [{"name": "x"}, {"name": "y"}],
@@ -60,7 +60,7 @@ def test_nested_models_and_lists_are_walked():
     assert after == before
 
 
-def test_a_keyed_list_is_paired_by_key_not_position():
+def test_a_keyed_list_is_paired_by_key_not_position() -> None:
     base, cur = pair({"items": [{"name": "a"}, {"name": "b"}]})
     cur.items.reverse()
     before, after = carried(base, cur)
@@ -69,7 +69,7 @@ def test_a_keyed_list_is_paired_by_key_not_position():
     assert after["items"][1]["tag"] == before["items"][0]["tag"]
 
 
-def test_an_item_only_the_caller_has_keeps_its_own_value():
+def test_an_item_only_the_caller_has_keeps_its_own_value() -> None:
     base, cur = pair({"items": [{"name": "a"}]})
     cur.items.append(Tagged(name="new"))
     before, after = carried(base, cur)
@@ -77,13 +77,13 @@ def test_an_item_only_the_caller_has_keeps_its_own_value():
     assert after["items"][1]["tag"] == dump(cur)["items"][1]["tag"]
 
 
-def test_a_list_without_keys_is_paired_by_position_when_lengths_match():
+def test_a_list_without_keys_is_paired_by_position_when_lengths_match() -> None:
     base, cur = pair({"plain": [{"name": "x"}, {"name": "y"}]})
     before, after = carried(base, cur)
     assert after["plain"] == before["plain"]
 
 
-def test_a_list_without_keys_of_another_length_is_not_walked():
+def test_a_list_without_keys_of_another_length_is_not_walked() -> None:
     base, cur = pair({"plain": [{"name": "x"}]})
     cur.plain.append(Tagged(name="y"))
     expected = dump(cur)["plain"]
@@ -91,7 +91,7 @@ def test_a_list_without_keys_of_another_length_is_not_walked():
     assert after["plain"] == expected
 
 
-def test_a_value_the_caller_assigned_is_kept():
+def test_a_value_the_caller_assigned_is_kept() -> None:
     base, cur = pair({})
     cur.tag = uuid.UUID(int=7)
     cur.inner.note = "changed"
@@ -100,7 +100,7 @@ def test_a_value_the_caller_assigned_is_kept():
     assert after["inner"]["note"] == "changed"
 
 
-def test_a_value_the_document_had_is_kept():
+def test_a_value_the_document_had_is_kept() -> None:
     raw = {"inner": {"name": "in", "tag": str(uuid.UUID(int=1))}}
     base, cur = pair(raw)
     cur.inner.tag = uuid.UUID(int=2)
@@ -108,7 +108,7 @@ def test_a_value_the_document_had_is_kept():
     assert after["inner"]["tag"] == str(uuid.UUID(int=2))
 
 
-def test_a_scalar_assigned_inside_an_unset_model_is_kept():
+def test_a_scalar_assigned_inside_an_unset_model_is_kept() -> None:
     base, cur = pair({})
     cur.inner.note = "changed"
     before, after = carried(base, cur)
@@ -116,14 +116,15 @@ def test_a_scalar_assigned_inside_an_unset_model_is_kept():
     assert after["inner"]["tag"] == before["inner"]["tag"]
 
 
-def test_the_models_are_left_as_they_are():
+def test_the_models_are_left_as_they_are() -> None:
     base, cur = pair({})
     tag = cur.tag
     _ = carried(base, cur)
-    assert cur.tag == tag and cur.model_fields_set == set()
+    assert cur.tag == tag
+    assert cur.model_fields_set == set()
 
 
-def test_dumps_that_do_not_line_up_with_the_models_are_not_walked():
+def test_dumps_that_do_not_line_up_with_the_models_are_not_walked() -> None:
     base, cur = pair({"items": [{"name": "a"}]})
     before, after = dump(base), dump(cur)
     after["items"] = [after["items"][0], {"name": "extra"}]
@@ -132,7 +133,7 @@ def test_dumps_that_do_not_line_up_with_the_models_are_not_walked():
     assert after["items"] == expected["items"]
 
 
-def test_lossy_and_carry_pair_by_alt_key():
+def test_lossy_and_carry_pair_by_alt_key() -> None:
     base, cur = pair({"ided": [{"name": "a", "rid": "1"}]})
     cur.ided[0].name = "b"
     before, after = carried(base, cur)
@@ -140,7 +141,7 @@ def test_lossy_and_carry_pair_by_alt_key():
     assert after["ided"][0]["tag"] == before["ided"][0]["tag"]
 
 
-def test_items_beside_a_removed_same_named_item_stay_paired():
+def test_items_beside_a_removed_same_named_item_stay_paired() -> None:
     base, cur = pair(
         {
             "ided": [

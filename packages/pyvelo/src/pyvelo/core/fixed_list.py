@@ -1,4 +1,6 @@
-"""Find where a payload changes the fixed part of a ``FixedList`` relative to a baseline.
+"""Find where a payload changes the fixed part of a ``FixedList``.
+
+A change is found relative to a baseline.
 
 ``fixed_list_violations`` walks raw JSON, a baseline and the payload planned
 from it, along the model class: sub-models, keyed lists of models (their items
@@ -67,7 +69,9 @@ def _node_model(node: Node) -> type[VcoModel] | None:
 
 
 def _by_field(model: type[VcoModel], value: object) -> dict[str, tuple[str, object]]:
-    """The fields of the JSON object *value* by python name: ``(key it is read from, its value)``.
+    """The fields of the JSON object *value* by python name.
+
+    Each is ``(key it is read from, its value)``.
 
     A key the model does not know is left out; of two keys for one field the
     first is taken. Anything but an object has no fields.
@@ -156,7 +160,10 @@ def _check_fixed(
     payload: object,
     path: Path,
 ) -> Iterator[tuple[Path, str]]:
-    """The violations at one ``FixedList`` field, *path*: the lists compared by position."""
+    """The violations at one ``FixedList`` field, *path*.
+
+    The lists are compared by position.
+    """
     if not is_list(baseline) and not is_list(payload):
         return
     if not is_list(payload):
@@ -171,7 +178,9 @@ def _check_fixed(
         yield path, LIST_CHANGED
         return
     editable = {key for name in fixed.editable for key in wire_keys(node.item, name)}
-    for part, old, new in zip(item_parts(baseline, node), baseline, payload):
+    for part, old, new in zip(
+        item_parts(baseline, node), baseline, payload, strict=True
+    ):
         if not is_dict(old) or not is_dict(new):
             if old != new:
                 yield path.child(part), "differs"
@@ -190,7 +199,9 @@ def _check_fixed(
 def fixed_list_violations(
     model: type[VcoModel], baseline: object, payload: object
 ) -> list[tuple[Path, str]]:
-    """Each place where *payload* changes a fixed part of a ``FixedList`` of *baseline*, as ``(path, reason)``.
+    """Each place where *payload* changes a fixed part of a ``FixedList`` of *baseline*.
+
+    Each is given as ``(path, reason)``.
 
     *baseline* and *payload* are raw JSON of *model*; the paths are raw too,
     at the item or at the field. At a ``FixedList`` field the two lists are

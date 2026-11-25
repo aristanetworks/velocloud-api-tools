@@ -32,7 +32,7 @@ patch
 
 from __future__ import annotations
 
-import datetime
+import datetime as dt
 import functools
 import sys
 import types
@@ -40,6 +40,7 @@ from collections.abc import Callable, Iterable, Iterator, Mapping
 from dataclasses import dataclass
 from enum import Enum, IntEnum, auto
 from typing import (
+    TYPE_CHECKING,
     Annotated,
     Any,
     ClassVar,
@@ -72,7 +73,6 @@ from pydantic import (
     model_serializer,
 )
 from pydantic.alias_generators import to_camel
-from pydantic.fields import FieldInfo
 from pydantic_core import PydanticUndefined
 
 from .fields import (
@@ -90,6 +90,9 @@ from .fields import (
 )
 from .owned import Owned, unwrap
 
+if TYPE_CHECKING:
+    from pydantic.fields import FieldInfo
+
 type JsonObject = dict[str, object]
 """A JSON object: a merge patch, a compact dump, a pydantic context, ..."""
 
@@ -100,13 +103,19 @@ class IdentityResolver(Protocol):
     Satisfied by ``pyvelo.config.resolver.ResolverRegistry``.
     """
 
-    def lookup[T](self, key: type[T], name: str, /) -> T: ...
+    def lookup[T](self, key: type[T], name: str, /) -> T:
+        """The loaded identity of type *key* named *name*."""
+        ...
 
     def lookup_by[T](
         self, identity_type: type[T], accessor: Callable[[T], object], value: object, /
-    ) -> T: ...
+    ) -> T:
+        """The first loaded *identity_type* whose *accessor* gives *value*."""
+        ...
 
-    def resolver_for(self, identity_type: type[object], /) -> object | None: ...
+    def resolver_for(self, identity_type: type[object], /) -> object | None:
+        """The resolver registered for *identity_type*, or None when there is none."""
+        ...
 
 
 class IdentityLookup(Protocol):
@@ -117,7 +126,9 @@ class IdentityLookup(Protocol):
 
     def lookup_by[T](
         self, identity_type: type[T], accessor: Callable[[T], object], value: object, /
-    ) -> T: ...
+    ) -> T:
+        """The first loaded *identity_type* whose *accessor* gives *value*."""
+        ...
 
 
 # ---------------------------------------------------------------------------
@@ -130,10 +141,12 @@ class IdentityLookup(Protocol):
 
 
 def is_list(value: object) -> TypeIs[list[object]]:
+    """Whether *value* is a list, narrowed to a list of ``object``."""
     return isinstance(value, list)
 
 
 def is_dict(value: object) -> TypeIs[dict[object, object]]:
+    """Whether *value* is a dict, narrowed to a dict of ``object`` keys and values."""
     return isinstance(value, dict)
 
 
@@ -158,7 +171,10 @@ def _level_from_context(context: object) -> ConfigContext | None:
 
 
 def _field_alias(field_info: FieldInfo, python_name: str) -> str:
-    """Get the field's serialization key. Falls back to the camelCase alias_generator."""
+    """Get the field's serialization key.
+
+    Falls back to the camelCase alias_generator.
+    """
     if field_info.serialization_alias is not None:
         return field_info.serialization_alias
     if field_info.alias is not None:
@@ -251,11 +267,10 @@ def _equal_after_normalizing(
     Values that cannot be normalized or compared count as not equal.
     """
     try:
-        if norm is not None:
-            return norm(a, level) == norm(b, level)
-        return a == b
+        equal = norm(a, level) == norm(b, level) if norm is not None else a == b
     except (TypeError, ValueError):
         return False
+    return equal
 
 
 def _matches_field_default(value: object, field_info: FieldInfo) -> bool:
@@ -389,7 +404,9 @@ type _Place = tuple[str | int, ...]
 
 
 def _models_inside(value: object, place: _Place) -> Iterator[tuple[_Place, BaseModel]]:
-    """Every pydantic model in *value*, at any depth, with its place; *value* is at *place*.
+    """Every pydantic model in *value*, at any depth, with its place.
+
+    *value* is at *place*.
 
     Walks as ``_propagate_context`` does: fields, extra values, lists and
     dicts. A model comes before the models inside it. A field is named by its
@@ -419,15 +436,15 @@ def _models_inside(value: object, place: _Place) -> Iterator[tuple[_Place, BaseM
 
 def _raise_detached(model: VcoModel, name: str) -> Never:
     """Raise ``DetachedObjectError`` for an edit of *name* through *model*."""
-    from pyvelo.client.exceptions import DetachedObjectError  # it imports pyvelo.core
+    from pyvelo.client.exceptions import DetachedObjectError  # noqa: PLC0415 (it imports pyvelo.core)
 
     raise DetachedObjectError(
         f"{type(model).__name__}.{name}: this object was replaced by a write; "
-        + "take it again from the module as stored "
-        + "(after a save: state.edge.<module> or state.profile.<module>; "
-        + "after update_module: the module it returned, "
-        + "or error.module after a write error), "
-        + "or put a deep copy of it there (copy.deepcopy)"
+        "take it again from the module as stored "
+        "(after a save: state.edge.<module> or state.profile.<module>; "
+        "after update_module: the module it returned, "
+        "or error.module after a write error), "
+        "or put a deep copy of it there (copy.deepcopy)"
     )
 
 
@@ -436,11 +453,16 @@ def _raise_detached(model: VcoModel, name: str) -> Never:
 # ---------------------------------------------------------------------------
 
 _REF_FILLING_HOOKS: set[Callable[..., object]] = set()
-"""The hooks ``_install_ref_filling`` put on classes, to tell them from a class's own."""
+"""The hooks ``_install_ref_filling`` put on classes.
+
+They are kept to tell them from a class's own.
+"""
 
 
 def ref_only_fields(model_cls: type[VcoModel]) -> Mapping[str, str | None]:
-    """The ``RefOnly`` fields of *model_cls*, each with the default ref name of its marker.
+    """The ``RefOnly`` fields of *model_cls*.
+
+    Each comes with the default ref name of its marker.
 
     Computed once, when the class is complete. Empty for a class with none.
     """
@@ -448,7 +470,9 @@ def ref_only_fields(model_cls: type[VcoModel]) -> Mapping[str, str | None]:
 
 
 def _fill_ref(model: VcoModel, name: str) -> None:
-    """Give *model* the default ref name of its ``RefOnly`` field *name*, if it holds a value and has no ``ref``.
+    """Give *model* the default ref name of its ``RefOnly`` field *name*.
+
+    It does so if the field holds a value and *model* has no ``ref``.
 
     A value is anything but ``None`` and ``MISSING``. The ref name is that of
     the sibling field ``ref``; a model with none, and a marker with no default,
@@ -463,8 +487,11 @@ def _fill_ref(model: VcoModel, name: str) -> None:
     model.ref = default
 
 
-def _install_ref_filling(cls: type[VcoModel]) -> None:
-    """Make assignment, a constructor keyword and a patch set a ``RefOnly`` field, and fill the ``ref``.
+def _install_ref_filling(cls: type[VcoModel]) -> None:  # noqa: C901 (existing: split it when it next changes)
+    """Make the ways to set a ``RefOnly`` field fill the ``ref``.
+
+    Assignment, a constructor keyword and a patch each set the field and fill the
+    ``ref``.
 
     Each is a hook put on *cls* itself, and only on a class that has such a
     field: the base class pays nothing, for the instances of every other
@@ -549,6 +576,16 @@ def _register_parametrization(cls: type[BaseModel]) -> None:
 
 
 class VcoModel(BaseModel):
+    """The base of every VCO model: python field names, camelCase on the wire.
+
+    A model validates by either name and dumps by alias. A dump leaves out the
+    fields absent at the config level (the pydantic context's ``config_level``, or
+    the model's own from ``for_context``), and a compact dump
+    (``context={"compact": True}``) leaves out MISSING and default values too.
+    ``merge_patch`` merges a patch into the model in place, and a model a write
+    replaced (``mark_detached``) refuses edits.
+    """
+
     model_config: ClassVar[ConfigDict] = ConfigDict(
         alias_generator=to_camel,
         use_enum_values=True,
@@ -562,7 +599,10 @@ class VcoModel(BaseModel):
     _detached: bool = PrivateAttr(default=False)
     _ref_only_fields: ClassVar[Mapping[str, str | None]] = types.MappingProxyType({})
     _ref_only_keys: ClassVar[Mapping[str, str]] = types.MappingProxyType({})
-    """The keys that name a ``RefOnly`` field (its python name and its alias), each with the field."""
+    """The keys that name a ``RefOnly`` field, each with the field.
+
+    A field is named by its python name and by its alias.
+    """
 
     @override
     def model_post_init(self, validation_context: object, /) -> None:
@@ -589,7 +629,9 @@ class VcoModel(BaseModel):
 
     @property
     def is_detached(self) -> bool:
-        """Whether a write replaced this object (``mark_detached``); then it takes no edit.
+        """Whether a write replaced this object (``mark_detached``).
+
+        An object a write replaced takes no edit.
 
         A save marks the modules it replaces, and so does ``update_module``.
         """
@@ -600,7 +642,9 @@ class VcoModel(BaseModel):
         return private is not None and private.get("_detached") is True
 
     def check_not_detached(self, name: str) -> None:
-        """Raise ``DetachedObjectError`` naming *name* if a write replaced this object (``is_detached``).
+        """Raise ``DetachedObjectError`` naming *name* if a write replaced this object.
+
+        That is what ``is_detached`` says.
 
         For an edit that is not an assignment to a field of this model, such
         as an ``Owned`` intent, which has to refuse as an assignment does.
@@ -716,7 +760,9 @@ class VcoModel(BaseModel):
         by_alias: bool,
         compact_value: Callable[[object], object] | None,
     ) -> JsonObject:
-        """The last step of a dump of this model, full or compact; a subclass changes *dumped* here.
+        """The last step of a dump of this model, full or compact.
+
+        A subclass changes *dumped* here.
 
         *dumped* has the keys of the fields as ``by_alias`` says. A full dump
         holds each field as pydantic serialized it. A compact one holds each
@@ -724,6 +770,7 @@ class VcoModel(BaseModel):
         models, lists and dicts included) as the dump does, and is ``None``
         for a full dump.
         """
+        del by_alias, compact_value
         return dumped
 
     @classmethod
@@ -945,7 +992,7 @@ class VcoModel(BaseModel):
         """
         if self.is_detached:
             _raise_detached(self, "merge_patch")
-        from .merge import apply_patch  # merge.py imports this module
+        from .merge import apply_patch  # noqa: PLC0415 (merge imports this module)
 
         _ = apply_patch(self, patch, resolvers)
         return self
@@ -976,12 +1023,14 @@ def _unwrap_annotated(tp: object) -> object:
 
 
 def _held_type(fi: FieldInfo) -> object:
-    """The type a field holds: its annotation, or the type inside its kind (``field_kind``).
+    """The type a field holds: its annotation, or the type inside its kind.
+
+    The kind is the one ``field_kind`` finds.
 
     ``FieldInfo.annotation`` of a converted field is the carrier, so every
     reader of a field's type reads it here.
     """
-    from .layers import field_kind  # layers imports this module
+    from .layers import field_kind  # noqa: PLC0415 (layers imports this module)
 
     return field_kind(fi).inner_type
 
@@ -1002,18 +1051,20 @@ def _field_names_by_key(fields: Mapping[str, FieldInfo]) -> dict[str, str]:
     return names
 
 
-def _field_accepts_missing(fi: FieldInfo) -> bool:
+def _field_accepts_missing(fi: FieldInfo) -> bool:  # pyright: ignore[reportUnusedFunction]  # imported by core.changes and core.merge
     """Check if a field's type annotation includes MISSING."""
     return MISSING in _union_members(_held_type(fi))
 
 
-def _field_accepts_none(fi: FieldInfo) -> bool:
+def _field_accepts_none(fi: FieldInfo) -> bool:  # pyright: ignore[reportUnusedFunction]  # imported by core.changes and core.merge
     """Check if a field's type annotation includes None."""
     return type(None) in _union_members(_held_type(fi))
 
 
-def _id_type(fi: FieldInfo) -> object | None:
-    """The ID type of a Resolvable field: its annotation without ``MISSING``, ``None`` and ``Annotated``.
+def _id_type(fi: FieldInfo) -> object | None:  # pyright: ignore[reportUnusedFunction]  # imported by core.merge
+    """The ID type of a Resolvable field.
+
+    It is the field's annotation without ``MISSING``, ``None`` and ``Annotated``.
 
     None unless exactly one type is left.
     """
@@ -1029,14 +1080,17 @@ def _id_adapter(id_type: object) -> TypeAdapter[object]:
     return TypeAdapter[object](id_type)  # pyright: ignore[reportArgumentType]
 
 
-def _field_model_type(fi: FieldInfo) -> type[VcoModel] | None:
-    """Get the VcoModel class from an annotation like ``T`` or ``T | MISSING | None``."""
+def _field_model_type(fi: FieldInfo) -> type[VcoModel] | None:  # pyright: ignore[reportUnusedFunction]  # imported by core.merge and core.rebase
+    """Get the VcoModel class from an annotation.
+
+    The annotation is like ``T`` or ``T | MISSING | None``.
+    """
     return next(
         (m for m in _union_members(_held_type(fi)) if _is_vco_model_type(m)), None
     )
 
 
-def _field_model_types(fi: FieldInfo) -> tuple[type[VcoModel], ...]:
+def _field_model_types(fi: FieldInfo) -> tuple[type[VcoModel], ...]:  # pyright: ignore[reportUnusedFunction]  # imported by core.changes and core.merge
     """Every VcoModel class a field's value can be, in the order written.
 
     Handles ``T | MISSING | None`` and (discriminated) unions of models, also
@@ -1088,6 +1142,7 @@ class ListItemType:
         )
 
     def validate(self, value: object, *, context: JsonObject | None = None) -> VcoModel:
+        """*value* as the element type; for a union, the discriminator picks one."""
         if len(self.variants) == 1:
             return self.variants[0].model_validate(value, context=context)
         return self._union_adapter.validate_python(value, context=context)
@@ -1099,6 +1154,7 @@ class ListItemType:
 
     @functools.cached_property
     def fields(self) -> dict[str, FieldInfo]:
+        """The fields of every variant; for a name two variants have, the first's."""
         return _merged_fields(self.variants)
 
 
@@ -1121,7 +1177,7 @@ def list_item_type(fi: FieldInfo) -> ListItemType | None:
             for v in map(_unwrap_annotated, _union_members(inner))
             if _is_vco_model_type(v)
         )
-        if len(variants) >= 2:
+        if len(variants) > 1:
             return ListItemType(element, variants)
         if len(variants) == 1:
             return ListItemType(variants[0], variants)
@@ -1145,7 +1201,10 @@ def _is_model_members(members: Iterable[object]) -> bool:
 
 
 def _members_without_missing_and_none(annotation: object) -> list[object]:
-    """The union members of *annotation* as written, without ``MISSING`` and ``None``."""
+    """The union members of *annotation* as written.
+
+    ``MISSING`` and ``None`` are left out.
+    """
     return [
         inner
         for member in _union_members(_unwrap_annotated(annotation))
@@ -1197,7 +1256,7 @@ def _collect_models(annotation: object, found: dict[type[VcoModel], None]) -> No
             _collect_models(member, found)
 
 
-def list_kind(field_info: FieldInfo) -> ListKind | None:
+def list_kind(field_info: FieldInfo) -> ListKind | None:  # noqa: C901 (existing: split it when it next changes)
     """How a list field's items are told apart, or None if it is not a list.
 
     A ``dict`` of models is ``"map"``. Of lists: ``"keyed"`` has a
@@ -1212,7 +1271,7 @@ def list_kind(field_info: FieldInfo) -> ListKind | None:
     for member in _members_without_missing_and_none(_held_type(field_info)):
         origin = get_origin(member)
         args = get_args(member)
-        if origin is dict and len(args) == 2:
+        if origin is dict and len(args) == 2:  # noqa: PLR2004  # dict[K, V] has two type arguments
             value_members = _members_without_missing_and_none(args[1])
             is_dict_of_models = is_dict_of_models or _is_model_members(value_members)
         elif member is list or origin is list:
@@ -1220,7 +1279,7 @@ def list_kind(field_info: FieldInfo) -> ListKind | None:
             element_members = _members_without_missing_and_none(args[0]) if args else []
             if _is_model_members(element_members):
                 element_kind = "model"
-            elif element_members and all(m in (str, int) for m in element_members):
+            elif element_members and all(m is str or m is int for m in element_members):
                 element_kind = "value"
     if is_dict_of_models and not has_list:
         return "map"
@@ -1255,7 +1314,10 @@ class ContextFieldInfo:
 class ContextView:
     """Attribute-access proxy for context-specific field metadata."""
 
-    def __init__(self, model_cls: type[VcoModel], config_context: ConfigContext):
+    def __init__(
+        self, model_cls: type[VcoModel], config_context: ConfigContext
+    ) -> None:
+        """A view of the fields of *model_cls* at *config_context*, read as asked."""
         self._model_cls: type[VcoModel] = model_cls
         self._context: ConfigContext = config_context
         self._cache: dict[str, ContextFieldInfo] = {}
@@ -1278,11 +1340,13 @@ class ContextView:
         return info
 
     def __getattr__(self, name: str) -> ContextFieldInfo:
+        """The field *name* at this view's level; a name starting ``_`` raises."""
         if name.startswith("_"):
             raise AttributeError(name)
         return self._resolve(name)
 
     def __iter__(self) -> Iterator[tuple[str, ContextFieldInfo]]:
+        """Each field's name and its metadata at this level, in field order."""
         for name in self._model_cls.model_fields:
             yield name, self._resolve(name)
 
@@ -1293,11 +1357,50 @@ class ContextView:
 
 
 class PaginatedVcoModel(VcoModel):
+    """A request of a paginated VCO method.
+
+    ``next_page_link`` is the cursor of the page to ask for. The client records
+    where paging over the request stopped (``record_page_cursor``).
+    """
+
     next_page_link: str | MISSING = Field(default=MISSING)  # ty: ignore[invalid-type-form]
 
     _max_pages: int = PrivateAttr(default=0)
     _page_has_more: bool = PrivateAttr(default=False)
     _page_next_link: str | None = PrivateAttr(default=None)
+
+    @property
+    def max_pages(self) -> int:
+        """The most pages ``portal_paginated_list`` collects for this request.
+
+        0 means no cap.
+        """
+        return self._max_pages
+
+    @max_pages.setter
+    def max_pages(self, value: int) -> None:
+        self._max_pages = value
+
+    @property
+    def page_has_more(self) -> bool:
+        """Whether VCO had more pages when paging over this request last stopped."""
+        return self._page_has_more
+
+    @property
+    def page_next_link(self) -> str | None:
+        """The cursor of the next page when paging last stopped.
+
+        None when there is none.
+        """
+        return self._page_next_link
+
+    def record_page_cursor(self, next_page_link: str | None) -> None:
+        """Record where paging over this request stopped.
+
+        That is the next page's cursor, or None when VCO has no more.
+        """
+        self._page_has_more = next_page_link is not None
+        self._page_next_link = next_page_link
 
 
 # ---------------------------------------------------------------------------
@@ -1306,21 +1409,27 @@ class PaginatedVcoModel(VcoModel):
 
 
 class JsonRpcRequest[ParamsT](VcoModel):
+    """A JSON-RPC 2.0 request of *method* with *params*; its ``id`` is a time in ms."""
+
     jsonrpc: Literal["2.0"] = Field(default="2.0")
     id_: Annotated[int | str | None, Alias("id")] = Field(
-        default_factory=lambda: int(1000 * datetime.datetime.now().timestamp())
+        default_factory=lambda: int(1000 * dt.datetime.now(dt.UTC).timestamp())
     )
     method: str
     params: ParamsT | None = Field(default=None)
 
 
 class JsonRpcError(VcoModel):
+    """The error of a JSON-RPC response: its code, its message and the VCO's data."""
+
     code: int
     message: str
     data: dict[str, object] | str | list[object] | None = Field(default=None)
 
 
 class JsonRpcResponse[ResultT](VcoModel):
+    """A JSON-RPC 2.0 response, with its ``result`` or its ``error``."""
+
     jsonrpc: Literal["2.0"] = Field(default="2.0")
     id_: Annotated[int | str | None, Alias("id")] = None
     result: ResultT | None = Field(default=None)
@@ -1333,6 +1442,8 @@ class JsonRpcResponse[ResultT](VcoModel):
 
 
 class PaginationMetadata(VcoModel):
+    """The ``metaData`` of a page: whether ``more`` pages follow, and their cursors."""
+
     limit: int | None = None
     more: bool
     next_page_link: str | None = Field(default=None)
@@ -1340,16 +1451,22 @@ class PaginationMetadata(VcoModel):
 
 
 class PaginatedResult[ItemT: BaseModel](VcoModel):
+    """One page of a paginated VCO method: its ``data`` and its ``metaData``."""
+
     metadata: Annotated[PaginationMetadata, Alias("metaData")]
     data: list[ItemT]
 
 
 class RowsModifiedConfirmation(VcoModel):
+    """The answer of a VCO write: the count of rows it changed, or an error."""
+
     error: str | None = None
     rows: int | None = None
 
 
 class InsertionConfirmation(VcoModel):
+    """The answer of a VCO insert: the new row's ``id``."""
+
     id_: Annotated[int, Alias("id")]
 
 
@@ -1359,6 +1476,11 @@ class InsertionConfirmation(VcoModel):
 
 
 class ApiFilter(VcoModel):
+    """One condition of a VCO filter: a ``field``, an ``operator`` and a ``value``.
+
+    ``fieldName`` and ``op`` are read as ``field`` and ``operator``.
+    """
+
     field: str = Field(validation_alias=AliasChoices("field", "fieldName"))
     operator: str = Field(validation_alias=AliasChoices("operator", "op"))
     value: str | float | list[str | float]
@@ -1368,10 +1490,14 @@ type ApiFiltersList = Annotated[list[ApiFilter], annotated_types.Len(min_length=
 
 
 class ApiFiltersOr(VcoModel):
+    """A filter group that holds when any one of its conditions does."""
+
     or_: Annotated[ApiFiltersList, Alias("or")]
 
 
 class ApiFiltersAnd(VcoModel):
+    """A filter group that holds when all of its conditions do."""
+
     and_: Annotated[ApiFiltersList, Alias("and")]
 
 
@@ -1389,7 +1515,7 @@ def _looks_like_bare_filter(v: Mapping[object, object]) -> bool:
     )
 
 
-def _api_filters_discriminator(v: object) -> str | None:
+def _api_filters_discriminator(v: object) -> str | None:  # noqa: PLR0911 (existing: split it when it next changes)
     if is_dict(v):
         if "and_" in v or "and" in v:
             return "and"
@@ -1447,11 +1573,13 @@ type ApiGroupFilters = Annotated[
 
 
 class Tinyint(IntEnum):
+    """A VCO flag sent as 0 or 1."""
+
     ZERO = 0
     ONE = 1
 
 
-_EPOCH = datetime.datetime.fromtimestamp(0, datetime.UTC)
+_EPOCH = dt.datetime.fromtimestamp(0, dt.UTC)
 
 
 def check_time_is_never(timestamp: object) -> object:
@@ -1467,9 +1595,7 @@ def check_time_is_never(timestamp: object) -> object:
         timezone_name = timezone_label[:-1] if timezone_label.endswith(")") else ""
         if separator and timezone_name.replace("_", "").isalnum():
             try:
-                return datetime.datetime.strptime(
-                    date_part, "%a %b %d %Y %H:%M:%S GMT%z"
-                )
+                return dt.datetime.strptime(date_part, "%a %b %d %Y %H:%M:%S GMT%z")
             except ValueError:
                 pass
 
@@ -1480,6 +1606,8 @@ type VcoTimestamp = Annotated[AwareDatetime, BeforeValidator(check_time_is_never
 
 
 class ApiInterval(VcoModel):
+    """The time interval of a VCO request: its ``start``, and its ``end`` when given."""
+
     start: VcoTimestamp
     end: VcoTimestamp | MISSING = MISSING  # ty: ignore[invalid-type-form]
 

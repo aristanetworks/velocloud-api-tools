@@ -1,12 +1,19 @@
 from __future__ import annotations
 
-from collections.abc import Sequence
 from datetime import UTC, datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from pyvelo.analytics._helpers import get_field, is_other_bucket
 from pyvelo.analytics.frame import MetricFrame
-from pyvelo.core.base import VcoModel
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
+
+    from pyvelo.core.base import VcoModel
+
+# An epoch timestamp above this is in milliseconds: 1e12 ms is in 2001, while
+# 1e12 s is tens of thousands of years away.
+_EPOCH_MILLIS_ABOVE = 1e12
 
 
 def denormalize_timeseries(
@@ -21,8 +28,10 @@ def denormalize_timeseries(
 
         [
             {name: "app1", time_series: [
-                {metric: "bytesRx", start_time: ..., tick_interval: 300000, data: [1,2,3]},
-                {metric: "bytesTx", start_time: ..., tick_interval: 300000, data: [4,5,6]},
+                {metric: "bytesRx", start_time: ..., tick_interval: 300000,
+                 data: [1,2,3]},
+                {metric: "bytesTx", start_time: ..., tick_interval: 300000,
+                 data: [4,5,6]},
             ]},
             ...
         ]
@@ -114,7 +123,7 @@ def denormalize_flat_series(
 
 def _to_millis(value: Any) -> float:
     if isinstance(value, (int, float)):
-        if value > 1e12:
+        if value > _EPOCH_MILLIS_ABOVE:
             return float(value)
         return float(value) * 1000
     if isinstance(value, datetime):
@@ -128,7 +137,7 @@ def _to_datetime(value: Any) -> datetime | None:
     if isinstance(value, datetime):
         return value
     if isinstance(value, (int, float)):
-        if value > 1e12:
+        if value > _EPOCH_MILLIS_ABOVE:
             return datetime.fromtimestamp(value / 1000, tz=UTC)
         return datetime.fromtimestamp(value, tz=UTC)
     if hasattr(value, "timestamp"):
@@ -140,15 +149,11 @@ def _camel_to_snake(name: str) -> str:
     result: list[str] = []
     for i, c in enumerate(name):
         if c.isupper():
-            if (
+            if (i > 0 and not name[i - 1].isupper()) or (
                 i > 0
-                and not name[i - 1].isupper()
-                or (
-                    i > 0
-                    and i + 1 < len(name)
-                    and name[i - 1].isupper()
-                    and not name[i + 1].isupper()
-                )
+                and i + 1 < len(name)
+                and name[i - 1].isupper()
+                and not name[i + 1].isupper()
             ):
                 result.append("_")
             result.append(c.lower())

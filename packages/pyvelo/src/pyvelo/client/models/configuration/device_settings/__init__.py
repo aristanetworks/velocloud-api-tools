@@ -1,3 +1,7 @@
+"""The ``deviceSettings`` module's data, re-exported from its submodules."""
+
+from pyvelo.client.models.configuration.common import SegmentMetadata
+
 from .common import (
     AdvertiseDefaultRoutes,
     AdvertiseDefaultRoutesMethod,
@@ -179,7 +183,6 @@ from .segment import (
     SegmentDns,
     SegmentEdgeDirect,
     SegmentHubInterconnect,
-    SegmentMetadata,
     SegmentMulticast,
     SegmentNat,
     SegmentNetflowIntervals,

@@ -34,7 +34,7 @@ from pyvelo.core.rebase import python_path
 from .patch_models import Hop, Root, Rule, Sub
 
 
-def test_wire_name_is_the_key_a_field_is_written_under():
+def test_wire_name_is_the_key_a_field_is_written_under() -> None:
     assert wire_name(Root, "by_name") == "byName"
     assert wire_name(FirewallData, "firewall_enabled") == "firewall_enabled"
     assert wire_name(FirewallData, "inbound_v6") == "inboundV6"
@@ -45,7 +45,7 @@ def test_wire_name_is_the_key_a_field_is_written_under():
         _ = wire_name(Root, "nope")
 
 
-def test_python_name_reads_every_key_a_patch_accepts():
+def test_python_name_reads_every_key_a_patch_accepts() -> None:
     for key in ("inboundV6", "inbound_v6"):
         assert python_name(FirewallData, key) == "inbound_v6"
     for key in ("firewallEnabled", "firewall_enabled"):
@@ -54,7 +54,7 @@ def test_python_name_reads_every_key_a_patch_accepts():
     assert python_name(FirewallData, "nope") is None
 
 
-def test_python_path_and_python_name_give_one_answer():
+def test_python_path_and_python_name_give_one_answer() -> None:
     for key in ("inboundV6", "inbound_v6", "firewallEnabled", "nope"):
         expected = python_name(FirewallData, key) or key
         assert python_path(Path((key,)), FirewallData).parts == (expected,)
@@ -64,7 +64,7 @@ def models(model: type[VcoModel], name: str) -> tuple[type[VcoModel], ...]:
     return field_models(model.model_fields[name])
 
 
-def test_field_models_are_the_classes_a_field_can_hold():
+def test_field_models_are_the_classes_a_field_can_hold() -> None:
     assert models(Root, "sub") == (Sub,)
     assert models(Root, "maybe") == (Sub,)
     assert models(Root, "rules") == (Rule,)
@@ -85,7 +85,7 @@ def test_field_models_are_the_classes_a_field_can_hold():
     assert models(SegmentDns, "primary_provider") == (DnsPrimaryProvider, DnsProvider)
 
 
-def test_whether_a_field_exists_at_a_level_is_in_the_context_view():
+def test_whether_a_field_exists_at_a_level_is_in_the_context_view() -> None:
     edge = DeviceSettingsData.context(ConfigContext.EDGE)
     profile = DeviceSettingsData.context(ConfigContext.PROFILE)
     assert edge.loopback_interfaces.is_present is True

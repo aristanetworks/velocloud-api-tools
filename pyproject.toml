@@ -7,6 +7,7 @@ dev = [
     "basedpyright>=1.40.2",
     "pytest>=9.0.2",
     "pytest-asyncio>=1.3.0",
+    "pytest-xdist>=3.8.0",
     "ruff>=0.15.8",
 ]
 
@@ -16,10 +17,109 @@ pyvelo = { workspace = true }
 [tool.ruff]
 target-version = "py313"
 
+[tool.ruff.lint]
+# Every rule is on, so a ruff upgrade turns new rules on too. A rule the code
+# does not meet is listed below with the reason, or as not yet met.
+select = ["ALL"]
+ignore = [
+    # Off for good.
+    "COM812",  # conflicts with the formatter
+    "ISC001",  # conflicts with the formatter
+    "CPY001",  # the licence is in LICENSE, not in a header in each file
+    "ANN401",  # VCO payloads are JSON, so Any is how the wire types are written
+    "SLF001",  # basedpyright's reportPrivateUsage checks this, with its own ignores
+    "TRY003",  # an exception's message is written where it is raised
+    "EM101",   # an exception's message is written where it is raised
+    "EM102",   # an exception's message is written where it is raised
+    "RUF036",  # the convention is X | None | MISSING: the unset sentinel goes last
+    # Off until the code meets them: turn one on, fix what it reports, and
+    # remove its line here.
+]
+
+[tool.ruff.lint.per-file-ignores]
+"packages/pyvelo/tests/**" = [
+    "S101",    # pytest asserts
+    "D1",      # a test's name says what it checks
+    "PLR2004", # expected values are written inline
+    "INP001",  # tests are not a package; pytest puts tests/support on the path
+    "S104",    # 0.0.0.0 is address data in patches; no test binds a socket
+    "S105",    # names and values of test data, not credentials
+    "S301",    # tests pickle objects they made, to check that they copy
+    "S311",    # seeded random drives the property tests
+    "ASYNC240", # a test lists its own tmp directory; nothing else runs on its loop
+]
+"packages/pyvelo/src/pyvelo/client/enums/event.py" = [
+    "S105",    # VCO event names, such as PASSWORD_RESET, not passwords
+]
+"packages/pyvelo/src/pyvelo/client/schemas/**" = [
+    # Wire classes: the class name and the VCO field names describe them. D100
+    # and D104 stay on, so each module and package still has a docstring.
+    "D101", "D102", "D103", "D105", "D106", "D107",
+]
+"packages/pyvelo/src/pyvelo/client/models/**" = [
+    # Wire classes: the class name and the VCO field names describe them. D100
+    # and D104 stay on, so each module and package still has a docstring.
+    "D101", "D102", "D103", "D105", "D106", "D107",
+]
+"packages/pyvelo/src/pyvelo/client/enums/**" = [
+    # Wire classes: the class name and the VCO field names describe them. D100
+    # and D104 stay on, so each module and package still has a docstring.
+    "D101", "D102", "D103", "D105", "D106", "D107",
+]
+"packages/pyvelo-examples/**" = [
+    "T201",    # the examples are scripts that print their results
+]
+
+[tool.ruff.lint.flake8-boolean-trap]
+# These hold or return a value of any type, so a bool given to one is the
+# value itself, not a flag that changes what the call does.
+extend-allowed-calls = [
+    "pyvelo.core.Default",
+    "pyvelo.core.kind_default",
+    "pyvelo.core.Owned",
+    "pyvelo.core.Resolved",
+    "pyvelo.core.rebase.Key",
+    "pyvelo.core.missing_or",
+    "pyvelo.core.fields._none_to",
+]
+
+[tool.ruff.lint.flake8-type-checking]
+# Pydantic reads a model's field annotations at runtime, so an import a model
+# field names must stay a runtime import. ruff follows a base class only within
+# one file, so each model class subclassed in another file is listed, under
+# each name it is imported by.
+runtime-evaluated-base-classes = [
+    "pydantic.BaseModel",
+    "pydantic.RootModel",
+    "pyvelo.core.VcoModel",
+    "pyvelo.core.base.VcoModel",
+    "pyvelo.core.PaginatedVcoModel",
+    "pyvelo.core.base.PaginatedVcoModel",
+    "pyvelo.core.Layered",
+    "pyvelo.core.layers.Layered",
+    "pyvelo.client.schemas.edge.EdgeObject",
+    "pyvelo.client.models.configuration.ConfigurationRef",
+    "pyvelo.client.models.configuration.ref.ConfigurationRef",
+    "pyvelo.client.models.configuration.qos.root.QosData",
+    "pyvelo.client.models.configuration.qos.segment.QosSegment",
+]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
-addopts = ["-ra", "-q", "-m", "not integration"]
+# One worker per vCPU. `logical` rather than `auto`: with psutil installed,
+# `auto` counts physical cores. worksteal hands an idle worker the tests a busy
+# one has not reached. Pass -n0 to run in one process, as for a single file.
+# The live tests always run in one process (tests/conftest.py).
+addopts = [
+    "-ra", "-q", "-m", "not integration", "--strict-markers", "--strict-config",
+    "-n", "logical", "--dist", "worksteal", "--durations=15",
+]
+xfail_strict = true
+filterwarnings = ["error"]
 testpaths = ["packages/pyvelo/tests"]
 pythonpath = ["packages/pyvelo/tests/support"]
 markers = [
@@ -28,13 +128,31 @@ markers = [
 ]
 
 [tool.basedpyright]
+typeCheckingMode = "all"
 enableExperimentalFeatures = true
-include = ["packages/pyvelo"]
+include = ["packages/pyvelo", "packages/pyvelo-examples"]
 extraPaths = ["packages/pyvelo/tests/support"]
 defineConstant = { DEBUG = true }
 reportMissingImports = "error"
 reportMissingTypeStubs = false
-failOnWarnings = false
+# Every warning fails the check. A rule that the code does not yet meet is
+# turned off below rather than left to warn.
+failOnWarnings = true
 pythonVersion = "3.13"
 venvPath = "."
 venv = ".venv"
+# Off for good: VCO payloads are JSON, so Any is how the wire types are written,
+# and long messages are split across lines by implicit concatenation.
+reportAny = false
+reportExplicitAny = false
+reportImplicitStringConcatenation = false
+# Off until the code meets them: turn one on, fix what it reports, and remove
+# its line here.
+reportUnknownVariableType = false
+reportUnknownArgumentType = false
+reportUnusedCallResult = false
+reportUnknownMemberType = false
+reportUnknownLambdaType = false
+# Last: while a reportUnknown* rule is off, every ignore that names it counts
+# as unnecessary.
+reportUnnecessaryTypeIgnoreComment = false

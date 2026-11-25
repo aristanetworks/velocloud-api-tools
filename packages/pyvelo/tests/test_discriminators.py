@@ -49,17 +49,19 @@ class TestApiFilters:
             ({"field": "name", "operator": "is", "value": "test"}, ApiFilter),
         ],
     )
-    def test_payload_selects_variant(self, payload: object, expected_type: type):
+    def test_payload_selects_variant(
+        self, payload: object, expected_type: type
+    ) -> None:
         result = TypeAdapter(ApiFilters).validate_python(payload)
         assert isinstance(result, expected_type)
 
-    def test_non_filter_payload_is_rejected(self):
+    def test_non_filter_payload_is_rejected(self) -> None:
         with pytest.raises(ValidationError):
             _ = TypeAdapter(ApiFilters).validate_python("not a filter")
 
 
 class TestAddressGroupEntry:
-    def test_parse_ip_entry(self):
+    def test_parse_ip_entry(self) -> None:
         result = TypeAdapter(AddressGroupEntry).validate_python(
             {
                 "entry_type": "ip",
@@ -70,31 +72,31 @@ class TestAddressGroupEntry:
         )
         assert isinstance(result, IpAddressEntry)
 
-    def test_parse_domain_entry(self):
+    def test_parse_domain_entry(self) -> None:
         result = TypeAdapter(AddressGroupEntry).validate_python(
             {"entry_type": "domain", "domain": "example.com"}
         )
         assert isinstance(result, DomainAddressEntry)
 
-    def test_domain_takes_precedence_when_both_shapes_are_present(self):
+    def test_domain_takes_precedence_when_both_shapes_are_present(self) -> None:
         result = TypeAdapter(AddressGroupEntry).validate_python(
             {"domain": "example.com", "ip": "10.0.0.1"}
         )
         assert isinstance(result, DomainAddressEntry)
 
-    def test_existing_model_instance_is_accepted(self):
+    def test_existing_model_instance_is_accepted(self) -> None:
         entry = DomainAddressEntry(domain="example.com")
         assert TypeAdapter(AddressGroupEntry).validate_python(entry) is entry
 
 
 class TestPortGroupEntry:
-    def test_parse_port_entry(self):
+    def test_parse_port_entry(self) -> None:
         result = TypeAdapter(PortGroupEntry).validate_python(
             {"entry_type": "port", "proto": 6, "port_low": 80, "port_high": 443}
         )
         assert isinstance(result, TcpUdpPortEntry)
 
-    def test_parse_icmp_entry(self):
+    def test_parse_icmp_entry(self) -> None:
         result = TypeAdapter(PortGroupEntry).validate_python(
             {
                 "entry_type": "icmp",
@@ -106,7 +108,7 @@ class TestPortGroupEntry:
         )
         assert isinstance(result, IcmpPortEntry)
 
-    def test_existing_model_instance_is_accepted(self):
+    def test_existing_model_instance_is_accepted(self) -> None:
         entry = TcpUdpPortEntry(proto=6, port_low=80, port_high=443)
         assert TypeAdapter(PortGroupEntry).validate_python(entry) is entry
 
@@ -149,11 +151,13 @@ class TestEdgeFilterUnions:
             ),
         ],
     )
-    def test_edge_field_selects_variant(self, payload: object, expected_type: type):
+    def test_edge_field_selects_variant(
+        self, payload: object, expected_type: type
+    ) -> None:
         result = TypeAdapter(EdgeFilters).validate_python(payload)
         assert isinstance(result, expected_type)
 
-    def test_groups_and_bare_filters_are_accepted(self):
+    def test_groups_and_bare_filters_are_accepted(self) -> None:
         adapter = TypeAdapter(EdgeFilters)
         and_group = adapter.validate_python(
             {"and": [{"field": "edgeState", "operator": "is", "value": "CONNECTED"}]}
@@ -169,7 +173,7 @@ class TestEdgeFilterUnions:
         assert isinstance(and_group, EdgeFiltersAnd)
         assert isinstance(or_group, EdgeFiltersOr)
 
-    def test_bare_filter_instance_is_accepted(self):
+    def test_bare_filter_instance_is_accepted(self) -> None:
         edge_state = EdgeStateFilter(
             field="edgeState", operator="is", value=EdgeState.CONNECTED
         )

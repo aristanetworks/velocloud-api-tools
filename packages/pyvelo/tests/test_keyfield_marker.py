@@ -39,24 +39,24 @@ class HasDottedKeyField(VcoModel):
 
 
 class TestKeyFieldMarker:
-    def test_processed_marker_in_metadata(self):
+    def test_processed_marker_in_metadata(self) -> None:
         fi = HasKeyField.model_fields["segments"]
         spec = get_key_spec(fi)
         assert spec is not None
         assert spec.paths == ("name",)
 
-    def test_nested_key_path(self):
+    def test_nested_key_path(self) -> None:
         fi = HasDottedKeyField.model_fields["segments"]
         spec = get_key_spec(fi)
         assert spec is not None
         assert spec.paths == ("meta.name",)
 
-    def test_model_still_validates_list(self):
+    def test_model_still_validates_list(self) -> None:
         m = HasKeyField(segments=[SegmentMeta(name="Global", segment_id=0)])
         assert len(m.segments) == 1
         assert m.segments[0].name == "Global"
 
-    def test_model_validates_from_dict(self):
+    def test_model_validates_from_dict(self) -> None:
         m = HasKeyField.model_validate(
             {"segments": [{"name": "Global", "segmentId": 0}]}
         )

@@ -106,7 +106,10 @@ INHERITED_ON_NULL = (
 
 
 def vary(rng: random.Random, node: object) -> object:
-    """A copy of a valid object with some of its booleans flipped and numbers changed."""
+    """A copy of a valid object with some of its booleans flipped.
+
+    And some of its numbers changed.
+    """
     if isinstance(node, dict):
         return {key: vary(rng, value) for key, value in node.items()}
     if isinstance(node, list):
@@ -123,7 +126,10 @@ def uuid_text(rng: random.Random) -> str:
 
 
 def maybe_id(rng: random.Random, key: str) -> dict[str, object]:
-    """An ``{key: uuid}`` or nothing: documents that lack the key get a random default."""
+    """An ``{key: uuid}`` or nothing.
+
+    Documents that lack the key get a random default.
+    """
     return {key: uuid_text(rng)} if rng.random() < 0.5 else {}
 
 
@@ -225,7 +231,7 @@ def test_no_edit_round_trip(
     name: str,
     build: Callable[[random.Random], dict[str, object]],
     level: ConfigContext,
-):
+) -> None:
     rng = random.Random(seed)
     raw = build(rng)
     if level is ConfigContext.PROFILE:

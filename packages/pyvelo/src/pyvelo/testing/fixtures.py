@@ -28,10 +28,10 @@ from pyvelo.core.identity import HubIdentity, NetworkServiceIdentity
 def make_jsonrpc_response(
     result: Any = None,
     error: dict[str, Any] | None = None,
-    id: int = 1,
+    id_: int = 1,
 ) -> dict[str, Any]:
     """Build a JSON-RPC 2.0 response envelope."""
-    resp: dict[str, Any] = {"jsonrpc": "2.0", "id": id}
+    resp: dict[str, Any] = {"jsonrpc": "2.0", "id": id_}
     if error is not None:
         resp["error"] = error
     else:
@@ -46,7 +46,7 @@ def make_transport(
     return httpx.MockTransport(handler)
 
 
-def make_module_json(
+def make_module_json(  # noqa: PLR0913 (existing: split it when it next changes)
     name: str,
     data: object,
     *,
@@ -79,8 +79,11 @@ def make_module_json(
 
 
 class FakeSegmentData:
-    def __init__(self, segment_id: int):
-        self.segment_id = segment_id
+    """The ``data`` of a ``FakeSegment``: only its ``segment_id``."""
+
+    def __init__(self, segment_id: int) -> None:
+        """Data holding *segment_id*."""
+        self.segment_id: int = segment_id
 
 
 class FakeSegment:
@@ -93,21 +96,23 @@ class FakeSegment:
         logical_id: uuid.UUID,
         segment_id: int,
         type_: NetworkSegmentType = NetworkSegmentType.REGULAR,
-    ):
-        self.id_ = id_
-        self.name = name
-        self.logical_id = logical_id
-        self.type_ = type_
-        self.data = FakeSegmentData(segment_id)
+    ) -> None:
+        """A segment with these fields, its *segment_id* under ``data``."""
+        self.id_: int = id_
+        self.name: str = name
+        self.logical_id: uuid.UUID = logical_id
+        self.type_: NetworkSegmentType = type_
+        self.data: FakeSegmentData = FakeSegmentData(segment_id)
 
 
 class FakeEdge:
     """Minimal edge object for EdgeResolver tests."""
 
-    def __init__(self, name: str, id_: int, logical_id: uuid.UUID):
-        self.name = name
-        self.id_ = id_
-        self.logical_id = logical_id
+    def __init__(self, name: str, id_: int, logical_id: uuid.UUID) -> None:
+        """An edge with these three fields and nothing else."""
+        self.name: str = name
+        self.id_: int = id_
+        self.logical_id: uuid.UUID = logical_id
 
 
 async def make_segment_resolver(segments: list[dict[str, Any]]) -> SegmentResolver:
@@ -240,7 +245,7 @@ def mock_vco_client_factory() -> Callable[..., Any]:
         max_concurrent_requests: int | None = None,
         max_requests_per_window: int | None = None,
     ) -> VcoClient:
-        client = VcoClient(
+        return VcoClient(
             "test.velocloud.net",
             "test-token",
             max_retries=max_retries,
@@ -248,6 +253,5 @@ def mock_vco_client_factory() -> Callable[..., Any]:
             max_requests_per_window=max_requests_per_window,
             transport=make_transport(handler),
         )
-        return client
 
     return _factory

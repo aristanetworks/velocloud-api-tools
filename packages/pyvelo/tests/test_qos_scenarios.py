@@ -1,4 +1,7 @@
-"""The QoS ownership scenarios, each through ``plan_module`` on edge modules bound to a profile."""
+"""The QoS ownership scenarios, each through ``plan_module``.
+
+Each runs on edge modules bound to a profile.
+"""
 
 import copy
 import json
@@ -10,7 +13,8 @@ from pyvelo.client.exceptions import UnboundError
 from pyvelo.client.models.configuration.profile_segments import module_template_value
 from pyvelo.client.models.configuration.qos import CosMapping, QosRule, SlaSettings
 from pyvelo.client.module_write import plan_module
-from pyvelo.core import ConfigContext, Edge, Profile
+from pyvelo.client.schemas.configuration import QosConfigurationModule
+from pyvelo.core import ConfigContext, Edge, PatchError, Profile
 from segment_helpers import GLOBAL, GUEST, descriptor, qos_entry
 
 from .write_helpers import qos_mod
@@ -53,8 +57,13 @@ def segment_of(name: str = "Global Segment", **extra: Any) -> dict[str, Any]:
     return {**entry, "rules": [], **extra}
 
 
-def bound(edge_raw: dict[str, Any], profile_raw: dict[str, Any] | None = None):
-    """An edge module of *edge_raw* bound to a profile module of *profile_raw*, and that one."""
+def bound(
+    edge_raw: dict[str, Any], profile_raw: dict[str, Any] | None = None
+) -> tuple[QosConfigurationModule[Edge], QosConfigurationModule[Profile]]:
+    """An edge module of *edge_raw*, and the profile module it is bound to.
+
+    The profile module is of *profile_raw*.
+    """
     edge = qos_mod({"segments": [], **edge_raw}, layer=Edge)
     profile = qos_mod(
         {"segments": [], **(profile_raw or {})}, layer=Profile, module_id=2
@@ -67,7 +76,7 @@ def payload(edge: Any, profile: Any) -> dict[str, Any]:
     return plan_module(edge, level=EDGE, profile=profile).data
 
 
-def test_set_local_on_cos_mapping_writes_it_with_override_true():
+def test_set_local_on_cos_mapping_writes_it_with_override_true() -> None:
     edge, profile = bound({"segments": [segment_of()]}, {"segments": [segment_of()]})
     owned = edge.data.segments[0].cos_mapping
     assert owned.is_local is False
@@ -82,7 +91,7 @@ def test_set_local_on_cos_mapping_writes_it_with_override_true():
     assert owned.is_local
 
 
-def test_inherit_on_cos_mapping_omits_it():
+def test_inherit_on_cos_mapping_omits_it() -> None:
     stored = {**COS_PROFILE, "override": True}
     edge, profile = bound(
         {"segments": [segment_of(cosMapping=stored)]}, {"segments": [segment_of()]}
@@ -95,7 +104,7 @@ def test_inherit_on_cos_mapping_omits_it():
     assert not owned.is_local
 
 
-def test_inherit_removes_a_cos_mapping_stored_with_its_flag_off_too():
+def test_inherit_removes_a_cos_mapping_stored_with_its_flag_off_too() -> None:
     # The backend takes a present object without its flag, so only removing it inherits.
     stored = {**COS_PROFILE, "override": False}
     edge, profile = bound(
@@ -105,7 +114,7 @@ def test_inherit_removes_a_cos_mapping_stored_with_its_flag_off_too():
     assert "cosMapping" not in payload(edge, profile)["segments"][0]
 
 
-def test_localize_cos_mapping_in_a_placeholder_copies_the_profile_segment_s():
+def test_localize_cos_mapping_in_a_placeholder_copies_the_profile_segment_s() -> None:
     edge, profile = bound(
         {"segments": []},
         {"segments": [segment_of("Guest", cosMapping=COS_PROFILE)]},
@@ -131,7 +140,9 @@ def test_localize_cos_mapping_in_a_placeholder_copies_the_profile_segment_s():
     assert profile.raw_data["segments"][0]["cosMapping"] == COS_PROFILE
 
 
-def test_a_localized_cos_mapping_of_a_segment_the_profile_gives_the_default_is_written_whole():
+def test_a_localized_cos_mapping_of_a_segment_the_profile_gives_the_default_is_written_whole() -> (  # noqa: E501 (a test's name)
+    None
+):
     edge, profile = bound({"segments": []}, {"segments": [segment_of("Guest")]})
     placeholder = edge.data.segment("Guest")
     _ = placeholder.cos_mapping.localize()
@@ -146,7 +157,9 @@ def test_a_localized_cos_mapping_of_a_segment_the_profile_gives_the_default_is_w
     }
 
 
-def test_a_localized_service_rate_limit_from_the_display_default_is_written_whole():
+def test_a_localized_service_rate_limit_from_the_display_default_is_written_whole() -> (
+    None
+):
     edge, profile = bound({})
     assert isinstance(profile.raw_data, dict)
     assert "serviceRateLimit" not in profile.raw_data
@@ -160,7 +173,7 @@ def test_a_localized_service_rate_limit_from_the_display_default_is_written_whol
     assert "qoe" not in data
 
 
-def test_a_localized_qoe_from_the_display_default_is_written_whole():
+def test_a_localized_qoe_from_the_display_default_is_written_whole() -> None:
     edge, profile = bound({})
     edge.data.qoe.localize().voice.latency.red = 70
     expected = module_template_value("QOS", "qoe")
@@ -169,7 +182,7 @@ def test_a_localized_qoe_from_the_display_default_is_written_whole():
     assert payload(edge, profile)["qoe"] == expected
 
 
-def test_a_profile_without_the_key_gives_the_edge_what_the_profile_displays():
+def test_a_profile_without_the_key_gives_the_edge_what_the_profile_displays() -> None:
     edge, profile = bound(
         {}, {"serviceRateLimit": {"enabled": True, "inputType": "rate", "value": 9}}
     )
@@ -182,7 +195,7 @@ def test_a_profile_without_the_key_gives_the_edge_what_the_profile_displays():
     )
 
 
-def test_setting_the_qoe_changes_the_write_and_inheriting_removes_it():
+def test_setting_the_qoe_changes_the_write_and_inheriting_removes_it() -> None:
     qoe = module_template_value("QOS", "qoe")
     edge, profile = bound({"qoe": qoe})
     assert edge.data.qoe.is_local
@@ -192,7 +205,7 @@ def test_setting_the_qoe_changes_the_write_and_inheriting_removes_it():
     assert [str(c.path) for c in plan.changes] == ["qoe"]
 
 
-def test_inherit_on_the_client_connector_removes_the_key():
+def test_inherit_on_the_client_connector_removes_the_key() -> None:
     edge, profile = bound({"qosClientConnector": {"data": {"a": 1}}})
     edge.data.qos_client_connector.inherit()
     plan = plan_module(edge, level=EDGE, profile=profile)
@@ -200,21 +213,19 @@ def test_inherit_on_the_client_connector_removes_the_key():
     assert [str(c.path) for c in plan.changes] == ["qosClientConnector"]
 
 
-def test_set_local_to_null_is_refused_and_means_inherit():
-    from pyvelo.core import PatchError
-
+def test_set_local_to_null_is_refused_and_means_inherit() -> None:
     edge, _ = bound({})
     with pytest.raises(PatchError):
         edge.data.qos_client_connector.set_local(None)
 
 
-def test_localize_needs_a_bound_profile():
+def test_localize_needs_a_bound_profile() -> None:
     edge = qos_mod({"segments": []}, layer=Edge)
     with pytest.raises(UnboundError):
         edge.data.qoe.localize()
 
 
-def test_rules_added_at_the_edge_stay_out_of_the_profile_s():
+def test_rules_added_at_the_edge_stay_out_of_the_profile_s() -> None:
     edge_rule = {**copy.deepcopy(RULE), "name": "e1"}
     profile_rule = {**copy.deepcopy(RULE), "name": "p1"}
     edge, profile = bound(
@@ -243,7 +254,7 @@ def full_segment() -> dict[str, Any]:
 
 
 @pytest.mark.parametrize("layer", [Edge, Profile])
-def test_an_untouched_qos_save_is_unchanged(layer: type[Edge] | type[Profile]):
+def test_an_untouched_qos_save_is_unchanged(layer: type[Edge] | type[Profile]) -> None:
     raw = {**copy.deepcopy(FULL_MODULE), "segments": [full_segment()]}
     module = qos_mod(raw, layer=layer)
     level = EDGE if layer is Edge else PROFILE
@@ -263,7 +274,7 @@ def test_an_untouched_qos_save_is_unchanged(layer: type[Edge] | type[Profile]):
 @pytest.mark.parametrize("layer", [Edge, Profile])
 def test_an_unrelated_edit_writes_every_other_key_as_read(
     layer: type[Edge] | type[Profile],
-):
+) -> None:
     raw = {**copy.deepcopy(FULL_MODULE), "segments": [full_segment()]}
     module = qos_mod(raw, layer=layer)
     module.data.segments[0].rules.append(
@@ -277,7 +288,7 @@ def test_an_unrelated_edit_writes_every_other_key_as_read(
     assert written == raw
 
 
-def test_plan_warns_of_a_cos_mapping_the_backend_uses_with_its_flag_off():
+def test_plan_warns_of_a_cos_mapping_the_backend_uses_with_its_flag_off() -> None:
     stored = {**COS_PROFILE, "override": False}
     raw = {"segments": [segment_of(cosMapping=stored)]}
     edge, profile = bound(raw, {"segments": [segment_of()]})
@@ -290,11 +301,12 @@ def test_plan_warns_of_a_cos_mapping_the_backend_uses_with_its_flag_off():
     ]
     message = plan.warnings[0].message
     assert (
-        "The edge stores cosMapping of segment 'Global Segment' with override false or absent."
-        in message
+        "The edge stores cosMapping of segment 'Global Segment' with override false "
+        "or absent." in message
     )
     assert '{"segments": {"Global Segment": {"cosMapping": null}}}' in message
-    assert "inherit()" in message and "localize()" in message
+    assert "inherit()" in message
+    assert "localize()" in message
     assert '{"segments": {"Global Segment": {"cosMapping": {}}}}' in message
 
     edge.data.segments[0].cos_mapping.inherit()
@@ -319,7 +331,7 @@ def flag_off_voice(realtime_high: int = 50) -> dict[str, Any]:
     return {"segments": [segment_of("Guest", cosMapping=stored)]}
 
 
-def test_localize_of_a_cos_mapping_stored_with_its_flag_off_keeps_its_values():
+def test_localize_of_a_cos_mapping_stored_with_its_flag_off_keeps_its_values() -> None:
     profile = {"segments": [segment_of("Guest", cosMapping=COS_PROFILE)]}
     edge, profile = bound(flag_off_voice(50), profile)
     owned = edge.data.segments[0].cos_mapping
@@ -338,7 +350,7 @@ def test_localize_of_a_cos_mapping_stored_with_its_flag_off_keeps_its_values():
     assert not [w for w in plan.warnings if w.code == "flag_off_in_use"]
 
 
-def test_the_flag_off_warning_gives_the_keep_patch_and_localize():
+def test_the_flag_off_warning_gives_the_keep_patch_and_localize() -> None:
     edge, profile = bound(
         flag_off_voice(50),
         {"segments": [segment_of("Guest", cosMapping=COS_PROFILE)]},
@@ -350,7 +362,7 @@ def test_the_flag_off_warning_gives_the_keep_patch_and_localize():
     assert "localize()" in warning.message
 
 
-def test_an_unrelated_edit_keeps_the_flag_off_warning():
+def test_an_unrelated_edit_keeps_the_flag_off_warning() -> None:
     # The warning is made from the payload when the module is written.
     raw = flag_off_voice(50)
     edge, profile = bound(raw, {"segments": [segment_of("Guest")]})
@@ -363,7 +375,7 @@ def test_an_unrelated_edit_keeps_the_flag_off_warning():
     assert plan.data["segments"][0]["cosMapping"] == raw["segments"][0]["cosMapping"]
 
 
-def test_a_profile_module_with_the_same_data_has_no_flag_off_warning():
+def test_a_profile_module_with_the_same_data_has_no_flag_off_warning() -> None:
     stored = {**COS_PROFILE, "override": False}
     profile = qos_mod({"segments": [segment_of(cosMapping=stored)]}, layer=Profile)
     plan = plan_module(profile, level=PROFILE)
@@ -375,7 +387,7 @@ def sla_rule(**sla: Any) -> dict[str, Any]:
     return {**copy.deepcopy(RULE), "action": action}
 
 
-def test_a_rule_s_sla_keeps_the_vco_s_lossPct_key_for_key():
+def test_a_rule_s_sla_keeps_the_vco_s_lossPct_key_for_key() -> None:  # noqa: N802 (the VCO key is the point of the test)
     # The VCO stores the key as lossPct; a loss_pct key is not one the VCO uses.
     raw = {"segments": [segment_of(rules=[sla_rule(lossPct="0.5")])]}
     module = qos_mod(raw, layer=Edge)
@@ -390,7 +402,7 @@ def test_a_rule_s_sla_keeps_the_vco_s_lossPct_key_for_key():
     assert "loss_pct" not in written["action"]["sla"]
 
 
-def test_a_new_qos_rule_with_an_sla_is_written_with_lossPct_and_not_loss_pct():
+def test_a_new_qos_rule_with_an_sla_is_written_with_lossPct_and_not_loss_pct() -> None:  # noqa: N802 (the VCO key is the point of the test)
     edge, profile = bound({"segments": [segment_of()]}, {"segments": [segment_of()]})
     edge.data.segments[0].rules.append(QosRule.model_validate(sla_rule()))
     (written,) = payload(edge, profile)["segments"][0]["rules"]

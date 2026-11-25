@@ -57,7 +57,7 @@ _INTERVAL = {"start": "2026-08-01T00:00:00Z", "end": "2026-08-02T00:00:00Z"}
 
 
 class TestGetNetworkGatewayStatusRequest:
-    def test_accepts_epoch_milliseconds(self):
+    def test_accepts_epoch_milliseconds(self) -> None:
         request = GetNetworkGatewayStatus.model_validate(
             {"networkId": 1, "time": 1789076451863}
         )
@@ -68,14 +68,14 @@ class TestGetNetworkGatewayStatusRequest:
             "anyOf"
         ]
 
-    def test_accepts_iso_timestamp(self):
+    def test_accepts_iso_timestamp(self) -> None:
         request = GetNetworkGatewayStatus.model_validate(
             {"networkId": 1, "time": "2026-09-10T21:40:51.863Z"}
         )
 
         assert request.time == datetime(2026, 9, 10, 21, 40, 51, 863000, tzinfo=UTC)
 
-    def test_accepts_vco_http_timestamp(self):
+    def test_accepts_vco_http_timestamp(self) -> None:
         request = GetNetworkGatewayStatus.model_validate(
             {
                 "networkId": 1,
@@ -94,13 +94,13 @@ class TestGetNetworkGatewayStatusRequest:
             -1,
         ],
     )
-    def test_rejects_duration_and_interval(self, time: JsonValue):
+    def test_rejects_duration_and_interval(self, time: JsonValue) -> None:
         with pytest.raises(ValidationError):
             _ = GetNetworkGatewayStatus.model_validate({"networkId": 1, "time": time})
 
 
 class TestGetVpnSiteStatusResult:
-    def test_preserves_vco_deployment_status_fields(self):
+    def test_preserves_vco_deployment_status_fields(self) -> None:
         item = GetVpnSiteStatusResultItem.model_validate(
             {
                 "id": 42,
@@ -134,7 +134,7 @@ class TestGetVpnSiteStatusResult:
             "providerId": 11,
         }
 
-    def test_retains_legacy_attributes_for_source_compatibility(self):
+    def test_retains_legacy_attributes_for_source_compatibility(self) -> None:
         item = GetVpnSiteStatusResultItem.model_validate(
             {
                 "siteId": 3,
@@ -161,32 +161,32 @@ class TestGetVpnSiteStatusResult:
 
 
 class TestEnumStringIdentity:
-    def test_bgp_peer_state(self):
+    def test_bgp_peer_state(self) -> None:
         assert BgpPeerState("ESTABLISHED") == "ESTABLISHED"
         assert BgpPeerState("IDLE") == "IDLE"
         assert BgpPeerState("ACTIVE") == "ACTIVE"
         assert BgpPeerState("REMOVED") == "REMOVED"
 
-    def test_bfd_peer_state(self):
+    def test_bfd_peer_state(self) -> None:
         assert BfdPeerState("UP") == "UP"
         assert BfdPeerState("DOWN") == "DOWN"
         assert BfdPeerState("INIT") == "INIT"
         assert BfdPeerState("SHUTDOWN") == "SHUTDOWN"
         assert BfdPeerState("UNKNOWN") == "UNKNOWN"
 
-    def test_tunnel_state(self):
+    def test_tunnel_state(self) -> None:
         assert TunnelState("UP") == "UP"
         assert TunnelState("DOWN") == "DOWN"
 
-    def test_tunnel_type(self):
+    def test_tunnel_type(self) -> None:
         assert TunnelType("IPSEC") == "IPSEC"
         assert TunnelType("GRE") == "GRE"
 
-    def test_gateway_state(self):
+    def test_gateway_state(self) -> None:
         assert GatewayState("CONNECTED") == "CONNECTED"
         assert GatewayState("OFFLINE") == "OFFLINE"
 
-    def test_degradation_view_by(self):
+    def test_degradation_view_by(self) -> None:
         assert DegradationViewBy("link") == "link"
         assert DegradationViewBy("edge") == "edge"
         assert DegradationViewBy("isp") == "isp"
@@ -199,15 +199,15 @@ class TestEnumStringIdentity:
             EventType.LINK_STATE_TRANSITION,
         ],
     )
-    def test_link_insights_event_types(self, event_type: EventType):
-        assert EventType(cast(str, event_type.value)) is event_type
+    def test_link_insights_event_types(self, event_type: EventType) -> None:
+        assert EventType(cast("str", event_type.value)) is event_type
 
 
 # --- MetricSummary ---
 
 
 class TestMetricSummary:
-    def test_round_trip(self):
+    def test_round_trip(self) -> None:
         data = {"min": 1.0, "max": 99.5, "average": 42.3}
         summary = MetricSummary.model_validate(data)
         assert summary.min_ == 1.0
@@ -218,7 +218,7 @@ class TestMetricSummary:
         assert dumped["max"] == 99.5
         assert dumped["average"] == 42.3
 
-    def test_partial_fields(self):
+    def test_partial_fields(self) -> None:
         summary = MetricSummary.model_validate({"average": 50.0})
         assert summary.min_ is MISSING
         assert summary.max_ is MISSING
@@ -229,7 +229,7 @@ class TestMetricSummary:
 
 
 class TestEdgeHealthStats:
-    def test_deserialization(self):
+    def test_deserialization(self) -> None:
         raw = {
             "cpuPct": {"min": 5.0, "max": 80.0, "average": 35.0},
             "memoryPct": {"min": 20.0, "max": 60.0, "average": 40.0},
@@ -240,7 +240,7 @@ class TestEdgeHealthStats:
         assert require_present(stats.memory_pct).max_ == 60.0
         assert require_present(stats.tunnel_count).min_ == 1.0
 
-    def test_extra_allow_captures_unknown(self):
+    def test_extra_allow_captures_unknown(self) -> None:
         raw = {
             "cpuPct": {"min": 5.0, "max": 80.0, "average": 35.0},
             "futureMetric": {"min": 0.0, "max": 100.0, "average": 50.0},
@@ -255,26 +255,26 @@ class TestEdgeHealthStats:
 
 
 class TestBackwardsCompatibility:
-    def test_edge_state_coerces_from_string(self):
+    def test_edge_state_coerces_from_string(self) -> None:
         item = GetEnterpriseEdgeStatusResultItem.model_validate(
             {"edgeState": "CONNECTED", "haState": "READY"}
         )
         assert item.edge_state == "CONNECTED"
         assert item.ha_state == "READY"
 
-    def test_bgp_peer_state_coerces(self):
+    def test_bgp_peer_state_coerces(self) -> None:
         record = BgpPeerData.model_validate(
             {"state": "ESTABLISHED", "neighborIp": "10.0.0.1"}
         )
         assert record.state == "ESTABLISHED"
 
-    def test_bfd_peer_state_coerces(self):
+    def test_bfd_peer_state_coerces(self) -> None:
         item = GetEnterpriseEdgeBfdPeerStatusResultItem.model_validate(
             {"state": "UP", "peerAddress": "10.0.0.1"}
         )
         assert item.state == "UP"
 
-    def test_tunnel_state_coerces(self):
+    def test_tunnel_state_coerces(self) -> None:
         item = GetEnterpriseEdgeNvsTunnelStatusResultItem.model_validate(
             {
                 "state": "UP",
@@ -294,13 +294,13 @@ class TestBackwardsCompatibility:
         )
         assert item.state == "UP"
 
-    def test_gateway_state_coerces(self):
+    def test_gateway_state_coerces(self) -> None:
         item = GetNetworkGatewayStatusResultItem.model_validate(
             {"gatewayState": "CONNECTED"}
         )
         assert item.gateway_state == "CONNECTED"
 
-    def test_gateway_status_preserves_flat_health_metrics(self):
+    def test_gateway_status_preserves_flat_health_metrics(self) -> None:
         item = GetNetworkGatewayStatusResultItem.model_validate(
             {
                 "gatewayId": 2,
@@ -355,7 +355,7 @@ class TestEdgeBgpPeerStatus:
         "edgeState": "CONNECTED",
     }
 
-    def test_full_event_round_trip(self):
+    def test_full_event_round_trip(self) -> None:
         item = GetEnterpriseEdgeBgpPeerStatusResultItem.model_validate(
             self.SAMPLE_EVENT
         )
@@ -369,7 +369,7 @@ class TestEdgeBgpPeerStatus:
         assert item.edge_name == "Example-Edge"
         assert item.edge_state is not None
 
-    def test_nested_data_fields(self):
+    def test_nested_data_fields(self) -> None:
         # SAMPLE_EVENT carries the historical quoted-int form ("94", "93", "2");
         # CoerceInt normalizes them to real ints on the way in.
         item = GetEnterpriseEdgeBgpPeerStatusResultItem.model_validate(
@@ -386,13 +386,13 @@ class TestEdgeBgpPeerStatus:
         assert data.pfx_rcvd == 3
         assert data.segment_id == 0
 
-    def test_int_form_data_validates_identically(self):
+    def test_int_form_data_validates_identically(self) -> None:
         # Regression: counters may arrive as JSON numbers or quoted integers.
         # Both wire representations should normalize to the same integer values.
         int_event = {
             **self.SAMPLE_EVENT,
             "data": {
-                **cast(JsonObject, self.SAMPLE_EVENT["data"]),
+                **cast("JsonObject", self.SAMPLE_EVENT["data"]),
                 "msgRcvd": 12,
                 "msgSent": 8,
                 "pfxRcvd": 3,
@@ -404,12 +404,13 @@ class TestEdgeBgpPeerStatus:
         int_item = GetEnterpriseEdgeBgpPeerStatusResultItem.model_validate(int_event)
         str_data = require_present(str_item.data)
         int_data = require_present(int_item.data)
-        assert str_data is not None and int_data is not None
+        assert str_data is not None
+        assert int_data is not None
         assert str_data.msg_rcvd == int_data.msg_rcvd == 12
         assert str_data.msg_sent == int_data.msg_sent == 8
         assert str_data.pfx_rcvd == int_data.pfx_rcvd == 3
 
-    def test_bgp_peer_data_standalone(self):
+    def test_bgp_peer_data_standalone(self) -> None:
         data = BgpPeerData.model_validate(
             {
                 "neighborIp": "10.0.0.1",
@@ -425,7 +426,7 @@ class TestEdgeBgpPeerStatus:
         assert data.state == BgpPeerState.IDLE
         assert data.pfx_rcvd == 0
 
-    def test_minimal_event(self):
+    def test_minimal_event(self) -> None:
         item = GetEnterpriseEdgeBgpPeerStatusResultItem.model_validate(
             {"state": "ESTABLISHED", "dataKey": "10.0.0.1"}
         )
@@ -438,18 +439,18 @@ class TestEdgeBgpPeerStatus:
 
 
 class TestAggregateSubModels:
-    def test_tunnel_state_counts(self):
+    def test_tunnel_state_counts(self) -> None:
         counts = TunnelStateCounts.model_validate({"up": 5, "down": 1, "unknown": 0})
         assert counts.up == 5
         assert counts.down == 1
         assert counts.unknown == 0
 
-    def test_nvs_data_center(self):
+    def test_nvs_data_center(self) -> None:
         dc = NvsDataCenter.model_validate({"name": "US-West", "publicIp": "1.2.3.4"})
         assert dc.name == "US-West"
         assert dc.public_ip == "1.2.3.4"
 
-    def test_aggregate_nvs_tunnel_status(self):
+    def test_aggregate_nvs_tunnel_status(self) -> None:
         raw = {
             "id": 42,
             "name": "Zscaler",
@@ -462,7 +463,7 @@ class TestAggregateSubModels:
         assert require_present(item.tunnel_state_counts).up == 3
         assert require_present(item.data_centers)[0].name == "DC1"
 
-    def test_aggregate_events_result(self):
+    def test_aggregate_events_result(self) -> None:
         raw = {
             "data": [
                 {
@@ -483,7 +484,7 @@ class TestAggregateSubModels:
         assert meta_data.more is True
         assert meta_data.limit == 100
 
-    def test_nni_identifier(self):
+    def test_nni_identifier(self) -> None:
         nni = NniIdentifier.model_validate({"gatewayId": "123", "nniId": "456"})
         assert nni.gateway_id == "123"
         assert nni.nni_id == "456"
@@ -493,7 +494,7 @@ class TestAggregateSubModels:
 
 
 class TestGatewayHealthStats:
-    def test_deserialization(self):
+    def test_deserialization(self) -> None:
         raw = {
             "cpuPct": {"min": 10.0, "max": 90.0, "average": 50.0},
             "connectedEdges": {"min": 5.0, "max": 100.0, "average": 55.0},
@@ -502,7 +503,7 @@ class TestGatewayHealthStats:
         assert require_present(stats.cpu_pct).average == 50.0
         assert require_present(stats.connected_edges).max_ == 100.0
 
-    def test_gateway_status_with_health_stats(self):
+    def test_gateway_status_with_health_stats(self) -> None:
         raw = {
             "id": 1,
             "gatewayState": "CONNECTED",
@@ -548,7 +549,7 @@ class TestEnterpriseBgpPeerStatus:
         },
     }
 
-    def test_full_record(self):
+    def test_full_record(self) -> None:
         item = GetEnterpriseBgpPeerStatusResultItem.model_validate(self.SAMPLE_RECORD)
         assert item.id_ == 3
         assert item.gateway_name == "Example-Gateway"
@@ -558,7 +559,7 @@ class TestEnterpriseBgpPeerStatus:
         assert item.data_key == "198.51.100.1"
         assert item.state == BgpPeerState.ESTABLISHED
 
-    def test_nested_data(self):
+    def test_nested_data(self) -> None:
         # Sample uses the historical quoted-int form; CoerceInt normalizes.
         item = GetEnterpriseBgpPeerStatusResultItem.model_validate(self.SAMPLE_RECORD)
         data = require_present(item.data)
@@ -598,7 +599,7 @@ class TestEnterpriseBfdPeerStatus:
         },
     }
 
-    def test_full_record(self):
+    def test_full_record(self) -> None:
         item = GetEnterpriseBfdPeerStatusResultItem.model_validate(self.SAMPLE_RECORD)
         assert item.id_ == 4
         assert item.gateway_name == "Example-Gateway"
@@ -607,7 +608,7 @@ class TestEnterpriseBfdPeerStatus:
         assert item.data_key == "203.0.113.9"
         assert item.state == BfdPeerState.UP
 
-    def test_nested_data(self):
+    def test_nested_data(self) -> None:
         item = GetEnterpriseBfdPeerStatusResultItem.model_validate(self.SAMPLE_RECORD)
         data = require_present(item.data)
         assert data is not None
@@ -617,7 +618,7 @@ class TestEnterpriseBfdPeerStatus:
         assert data.session_time == "1 minute(s), 0 second(s)"
         assert data.segment_id == "0"
 
-    def test_bfd_timers(self):
+    def test_bfd_timers(self) -> None:
         item = GetEnterpriseBfdPeerStatusResultItem.model_validate(self.SAMPLE_RECORD)
         data = require_present(item.data)
         assert data is not None
@@ -629,7 +630,7 @@ class TestEnterpriseBfdPeerStatus:
         assert local_timers.transmit == "300ms"
         assert remote_timers.receive == "300ms"
 
-    def test_bfd_peer_status_record_standalone(self):
+    def test_bfd_peer_status_record_standalone(self) -> None:
         record = BfdPeerStatusRecord.model_validate(
             {
                 "peerAddress": "10.0.0.1",
@@ -642,7 +643,7 @@ class TestEnterpriseBfdPeerStatus:
         assert record.state == BfdPeerState.DOWN
         assert record.session_time is MISSING
 
-    def test_bfd_peer_timer(self):
+    def test_bfd_peer_timer(self) -> None:
         timer = BfdPeerTimer.model_validate({"receive": "100ms", "transmit": "100ms"})
         assert timer.receive == "100ms"
         assert timer.transmit == "100ms"
@@ -704,7 +705,7 @@ class TestClusterStatus:
         },
     ]
 
-    def test_full_response_round_trip(self):
+    def test_full_response_round_trip(self) -> None:
         items = [
             GetEnterpriseEdgeClusterStatusResultItem.model_validate(r)
             for r in self.SAMPLE_RESPONSE
@@ -714,7 +715,7 @@ class TestClusterStatus:
         assert items[0].cluster_id == 70079
         assert items[1].edges == []
 
-    def test_edge_entry_with_all_metrics(self):
+    def test_edge_entry_with_all_metrics(self) -> None:
         item = GetEnterpriseEdgeClusterStatusResultItem.model_validate(
             self.SAMPLE_RESPONSE[0]
         )
@@ -736,7 +737,7 @@ class TestClusterStatus:
         assert edge.flow_util_pct == 0
         assert edge.tunnel_util_pct == 0
 
-    def test_edge_entry_with_null_metrics(self):
+    def test_edge_entry_with_null_metrics(self) -> None:
         item = GetEnterpriseEdgeClusterStatusResultItem.model_validate(
             self.SAMPLE_RESPONSE[2]
         )
@@ -749,7 +750,7 @@ class TestClusterStatus:
         assert edge.route_count is None
         assert edge.flow_util_pct is None
 
-    def test_cluster_edge_entry_standalone(self):
+    def test_cluster_edge_entry_standalone(self) -> None:
         entry = ClusterEdgeEntry.model_validate(
             {
                 "edgeId": 1384,
@@ -803,7 +804,7 @@ class TestLinkInsightsOverview:
         },
     }
 
-    def test_parse_overview(self):
+    def test_parse_overview(self) -> None:
         result = GetLinkInsightsOverviewResult.model_validate(self.SAMPLE)
         assert result.total_links == 42
         assert result.total_edges == 12
@@ -821,12 +822,12 @@ class TestLinkInsightsOverview:
         assert degradation_before.total_minutes == 120.5
         assert degradation_after.critical_minutes == 5.0
 
-    def test_overview_without_flapping(self):
+    def test_overview_without_flapping(self) -> None:
         data = {**self.SAMPLE, "linkFlapping": None}
         result = GetLinkInsightsOverviewResult.model_validate(data)
         assert result.link_flapping is None
 
-    def test_request_serialization(self):
+    def test_request_serialization(self) -> None:
         req = GetLinkInsightsOverview.model_validate(
             {
                 "interval": {
@@ -874,7 +875,7 @@ class TestLinkFlapSummary:
         ]
     }
 
-    def test_parse_link_view(self):
+    def test_parse_link_view(self) -> None:
         result = GetLinkFlapSummaryResult.model_validate(self.SAMPLE_LINK_VIEW)
         data = require_present(result.data)
         assert data is not None
@@ -885,7 +886,7 @@ class TestLinkFlapSummary:
         assert item.isp == "Comcast"
         assert item.wan_link_type == "WIRED"
 
-    def test_parse_isp_view(self):
+    def test_parse_isp_view(self) -> None:
         result = GetLinkFlapSummaryResult.model_validate(self.SAMPLE_ISP_VIEW)
         assert result.data is not None
         data = require_present(result.data)
@@ -898,7 +899,7 @@ class TestLinkFlapSummary:
         assert detail.num_flapping_links == 5
         assert detail.num_flapping_edges == 3
 
-    def test_request_view_by(self):
+    def test_request_view_by(self) -> None:
         req = GetLinkFlapSummary.model_validate(
             {
                 "interval": {
@@ -942,7 +943,7 @@ class TestLinkDegradationSummary:
         ]
     }
 
-    def test_parse_summary(self):
+    def test_parse_summary(self) -> None:
         result = GetLinkDegradationSummaryResult.model_validate(self.SAMPLE)
         data = require_present(result.data)
         assert data is not None
@@ -960,7 +961,7 @@ class TestLinkDegradationSummary:
         assert after.critical_minutes == 0.0
         assert item.link_ip_address == "10.0.1.5"
 
-    def test_no_phantom_link_id_edge_id(self):
+    def test_no_phantom_link_id_edge_id(self) -> None:
         """DegradationSummaryItem should not have link_id or edge_id fields."""
         assert "link_id" not in DegradationSummaryItem.model_fields
         assert "edge_id" not in DegradationSummaryItem.model_fields
@@ -1015,7 +1016,7 @@ class TestLinkDegradationDetails:
         },
     }
 
-    def test_parse_details(self):
+    def test_parse_details(self) -> None:
         result = GetLinkDegradationDetailsResult.model_validate(self.SAMPLE)
         data = require_present(result.data)
         assert data is not None
@@ -1033,7 +1034,7 @@ class TestLinkDegradationDetails:
         assert before is not None
         assert before.critical_minutes == 10.0
 
-    def test_new_uptime_and_state_fields(self):
+    def test_new_uptime_and_state_fields(self) -> None:
         result = GetLinkDegradationDetailsResult.model_validate(self.SAMPLE)
         data = require_present(result.data)
         assert data is not None
@@ -1046,12 +1047,12 @@ class TestLinkDegradationDetails:
         assert item.current_state_since == datetime(2026, 8, 19, tzinfo=UTC)
         assert item.last_updated == datetime(2026, 8, 20, 12, tzinfo=UTC)
 
-    def test_no_phantom_link_id_edge_id(self):
+    def test_no_phantom_link_id_edge_id(self) -> None:
         """DegradationDetailItem should not have link_id or edge_id fields."""
         assert "link_id" not in DegradationDetailItem.model_fields
         assert "edge_id" not in DegradationDetailItem.model_fields
 
-    def test_parse_metadata(self):
+    def test_parse_metadata(self) -> None:
         result = GetLinkDegradationDetailsResult.model_validate(self.SAMPLE)
         meta_data = require_present(result.meta_data)
         assert meta_data is not None
@@ -1059,7 +1060,7 @@ class TestLinkDegradationDetails:
         assert meta_data.next_page_link == "eyJwYWdlIjogMn0="
         assert meta_data.prev_page_link is MISSING
 
-    def test_empty_response(self):
+    def test_empty_response(self) -> None:
         result = GetLinkDegradationDetailsResult.model_validate(
             {"data": [], "metaData": {"limit": 20, "more": False}}
         )
@@ -1069,7 +1070,7 @@ class TestLinkDegradationDetails:
         assert meta_data.more is False
         assert meta_data.limit == 20
 
-    def test_count_response(self):
+    def test_count_response(self) -> None:
         result = GetLinkDegradationDetailsResult.model_validate({"totalCount": 7})
 
         assert result.total_count == 7
@@ -1086,7 +1087,7 @@ class TestLinkDegradationDetails:
         GetLinkDegradationDetailsResult,
     ],
 )
-def test_link_insights_filter_spec_response(result_type: type[BaseModel]):
+def test_link_insights_filter_spec_response(result_type: type[BaseModel]) -> None:
     result = result_type.model_validate(
         {
             "pagination": {"supported": False},
@@ -1098,13 +1099,13 @@ def test_link_insights_filter_spec_response(result_type: type[BaseModel]):
             },
         }
     )
-    response = cast(JsonObject, result.model_dump())
+    response = cast("JsonObject", result.model_dump())
 
-    filtering = cast(JsonObject, response["filtering"])
-    attributes = cast(JsonObject, filtering["attributes"])
-    isp = cast(JsonObject, attributes["isp"])
+    filtering = cast("JsonObject", response["filtering"])
+    attributes = cast("JsonObject", filtering["attributes"])
+    isp = cast("JsonObject", attributes["isp"])
     assert isp["operators"] == ["is"]
-    pagination = cast(JsonObject, response["pagination"])
+    pagination = cast("JsonObject", response["pagination"])
     assert pagination["supported"] is False
 
 
@@ -1129,16 +1130,18 @@ class TestLinkInsightsRequestAliases:
     )
     def test_filter_spec_safe_name_and_wire_alias(
         self, request_type: type[BaseModel], params: JsonObject
-    ):
+    ) -> None:
         request = request_type.model_validate({**params, "filter_spec": True})
 
-        dumped = cast(JsonObject, request.model_dump(by_alias=True, exclude_unset=True))
+        dumped = cast(
+            "JsonObject", request.model_dump(by_alias=True, exclude_unset=True)
+        )
 
         assert request.filter_spec is True  # pyright: ignore[reportAttributeAccessIssue]
         assert dumped["_filterSpec"] is True
         assert "filter_spec" not in dumped
 
-    def test_count_safe_name_and_wire_alias(self):
+    def test_count_safe_name_and_wire_alias(self) -> None:
         request = GetLinkDegradationDetails.model_validate(
             {"interval": _INTERVAL, "count": True}
         )
@@ -1149,7 +1152,7 @@ class TestLinkInsightsRequestAliases:
         assert dumped["_count"] is True
         assert "count" not in dumped
 
-    def test_wire_control_aliases_are_accepted(self):
+    def test_wire_control_aliases_are_accepted(self) -> None:
         request = GetLinkDegradationDetails.model_validate(
             {"interval": _INTERVAL, "_count": True, "_filterSpec": True}
         )
@@ -1168,7 +1171,7 @@ class TestLinkInsightsRequestAliases:
     )
     def test_link_insights_interval_requires_end(
         self, request_type: type[BaseModel], params: JsonObject
-    ):
+    ) -> None:
         with pytest.raises(ValidationError):
             _ = request_type.model_validate(
                 {
@@ -1179,32 +1182,32 @@ class TestLinkInsightsRequestAliases:
 
 
 class TestFlapSummaryLimitValidation:
-    def test_valid_limit(self):
+    def test_valid_limit(self) -> None:
         req = GetLinkFlapSummary.model_validate(
             {"interval": _INTERVAL, "viewBy": "link", "limit": 50}
         )
         assert req.limit == 50
 
-    def test_limit_at_boundaries(self):
+    def test_limit_at_boundaries(self) -> None:
         for val in (1, 100):
             req = GetLinkFlapSummary.model_validate(
                 {"interval": _INTERVAL, "viewBy": "link", "limit": val}
             )
             assert req.limit == val
 
-    def test_limit_zero_rejected(self):
+    def test_limit_zero_rejected(self) -> None:
         with pytest.raises(ValidationError):
             _ = GetLinkFlapSummary.model_validate(
                 {"interval": _INTERVAL, "viewBy": "link", "limit": 0}
             )
 
-    def test_limit_over_max_rejected(self):
+    def test_limit_over_max_rejected(self) -> None:
         with pytest.raises(ValidationError):
             _ = GetLinkFlapSummary.model_validate(
                 {"interval": _INTERVAL, "viewBy": "link", "limit": 101}
             )
 
-    def test_limit_negative_rejected(self):
+    def test_limit_negative_rejected(self) -> None:
         with pytest.raises(ValidationError):
             _ = GetLinkFlapSummary.model_validate(
                 {"interval": _INTERVAL, "viewBy": "link", "limit": -5}
@@ -1212,26 +1215,26 @@ class TestFlapSummaryLimitValidation:
 
 
 class TestDegradationSummaryWithValidation:
-    def test_valid_with_before(self):
+    def test_valid_with_before(self) -> None:
         req = GetLinkDegradationSummary.model_validate(
             {"interval": _INTERVAL, "viewBy": "link", "with": ["before"]}
         )
         assert req.with_ == [DegradationWith.BEFORE]
         assert req.model_dump(by_alias=True, exclude_unset=True)["with"] == ["before"]
 
-    def test_valid_with_both(self):
+    def test_valid_with_both(self) -> None:
         req = GetLinkDegradationSummary.model_validate(
             {"interval": _INTERVAL, "viewBy": "link", "with": ["before", "after"]}
         )
         assert req.with_ == [DegradationWith.BEFORE, DegradationWith.AFTER]
 
-    def test_duplicate_with_value_rejected(self):
+    def test_duplicate_with_value_rejected(self) -> None:
         with pytest.raises(ValidationError, match="unique"):
             _ = GetLinkDegradationSummary.model_validate(
                 {"interval": _INTERVAL, "viewBy": "link", "with": ["before", "before"]}
             )
 
-    def test_more_than_two_with_values_rejected(self):
+    def test_more_than_two_with_values_rejected(self) -> None:
         with pytest.raises(ValidationError):
             _ = GetLinkDegradationSummary.model_validate(
                 {
@@ -1241,13 +1244,13 @@ class TestDegradationSummaryWithValidation:
                 }
             )
 
-    def test_invalid_with_value_rejected(self):
+    def test_invalid_with_value_rejected(self) -> None:
         with pytest.raises(ValidationError):
             _ = GetLinkDegradationSummary.model_validate(
                 {"interval": _INTERVAL, "viewBy": "link", "with": ["garbage"]}
             )
 
-    def test_limit_over_max_rejected(self):
+    def test_limit_over_max_rejected(self) -> None:
         with pytest.raises(ValidationError):
             _ = GetLinkDegradationSummary.model_validate(
                 {"interval": _INTERVAL, "viewBy": "link", "limit": 101}
@@ -1255,7 +1258,7 @@ class TestDegradationSummaryWithValidation:
 
 
 class TestDegradationDetailsValidation:
-    def test_valid_sort_by(self):
+    def test_valid_sort_by(self) -> None:
         req = GetLinkDegradationDetails.model_validate(
             {
                 "interval": _INTERVAL,
@@ -1266,7 +1269,7 @@ class TestDegradationDetailsValidation:
         assert len(sort_by) == 1
         assert sort_by[0].attribute == DegradationDetailsSortAttribute.LAST_UPDATED
 
-    def test_invalid_sort_attribute_rejected(self):
+    def test_invalid_sort_attribute_rejected(self) -> None:
         with pytest.raises(ValidationError):
             _ = GetLinkDegradationDetails.model_validate(
                 {
@@ -1275,7 +1278,7 @@ class TestDegradationDetailsValidation:
                 }
             )
 
-    def test_dot_notation_sort_attribute(self):
+    def test_dot_notation_sort_attribute(self) -> None:
         req = GetLinkDegradationDetails.model_validate(
             {
                 "interval": _INTERVAL,
@@ -1296,7 +1299,7 @@ class TestDegradationDetailsValidation:
         "attribute",
         ["uptimePct", "secondsUp", "secondsDown", "secondsUnknown", "totalFlaps"],
     )
-    def test_uptime_and_flap_sort_attributes(self, attribute: str):
+    def test_uptime_and_flap_sort_attributes(self, attribute: str) -> None:
         req = GetLinkDegradationDetails.model_validate(
             {
                 "interval": _INTERVAL,
@@ -1306,32 +1309,32 @@ class TestDegradationDetailsValidation:
 
         assert require_present(req.sort_by)[0].attribute == attribute
 
-    def test_sort_direction_required(self):
+    def test_sort_direction_required(self) -> None:
         with pytest.raises(ValidationError):
             _ = GetLinkDegradationDetails.model_validate(
                 {"interval": _INTERVAL, "sortBy": [{"attribute": "lastUpdated"}]}
             )
 
-    def test_limit_at_boundaries(self):
+    def test_limit_at_boundaries(self) -> None:
         for val in (1, 2048):
             req = GetLinkDegradationDetails.model_validate(
                 {"interval": _INTERVAL, "limit": val}
             )
             assert req.limit == val
 
-    def test_limit_over_2048_rejected(self):
+    def test_limit_over_2048_rejected(self) -> None:
         with pytest.raises(ValidationError):
             _ = GetLinkDegradationDetails.model_validate(
                 {"interval": _INTERVAL, "limit": 2049}
             )
 
-    def test_quick_search_at_255_character_limit(self):
+    def test_quick_search_at_255_character_limit(self) -> None:
         req = GetLinkDegradationDetails.model_validate(
             {"interval": _INTERVAL, "quickSearch": "x" * 255}
         )
         assert req.quick_search == "x" * 255
 
-    def test_quick_search_over_255_rejected(self):
+    def test_quick_search_over_255_rejected(self) -> None:
         with pytest.raises(ValidationError):
             _ = GetLinkDegradationDetails.model_validate(
                 {"interval": _INTERVAL, "quickSearch": "x" * 256}
@@ -1340,7 +1343,7 @@ class TestDegradationDetailsValidation:
     @pytest.mark.parametrize("token_field", ["nextPageLink", "prevPageLink"])
     def test_token_pagination_without_interval(
         self, token_field: Literal["nextPageLink", "prevPageLink"]
-    ):
+    ) -> None:
         req = GetLinkDegradationDetails.model_validate(
             {token_field: "eyJwYWdlIjogMn0="}
         )
@@ -1353,11 +1356,11 @@ class TestDegradationDetailsValidation:
         )
         assert req.interval is MISSING
 
-    def test_empty_request_rejected(self):
+    def test_empty_request_rejected(self) -> None:
         with pytest.raises(ValidationError, match="provide exactly one"):
             _ = GetLinkDegradationDetails.model_validate({})
 
-    def test_both_pagination_tokens_rejected(self):
+    def test_both_pagination_tokens_rejected(self) -> None:
         with pytest.raises(ValidationError, match="provide at most one"):
             _ = GetLinkDegradationDetails.model_validate(
                 {"nextPageLink": "next-token", "prevPageLink": "prev-token"}
@@ -1366,7 +1369,7 @@ class TestDegradationDetailsValidation:
     @pytest.mark.parametrize("token_field", ["nextPageLink", "prevPageLink"])
     def test_interval_with_pagination_token_rejected(
         self, token_field: Literal["nextPageLink", "prevPageLink"]
-    ):
+    ) -> None:
         with pytest.raises(ValidationError, match="provide exactly one"):
             _ = GetLinkDegradationDetails.model_validate(
                 {"interval": _INTERVAL, token_field: "page-token"}
@@ -1375,16 +1378,16 @@ class TestDegradationDetailsValidation:
     @pytest.mark.parametrize("token_field", ["nextPageLink", "prevPageLink"])
     def test_empty_pagination_token_rejected(
         self, token_field: Literal["nextPageLink", "prevPageLink"]
-    ):
+    ) -> None:
         with pytest.raises(ValidationError):
             _ = GetLinkDegradationDetails.model_validate({token_field: ""})
 
-    def test_json_schema_exposes_interval_or_page_token_contract(self):
-        schema = cast(JsonObject, GetLinkDegradationDetails.model_json_schema())
-        one_of = cast(list[JsonObject], schema["oneOf"])
+    def test_json_schema_exposes_interval_or_page_token_contract(self) -> None:
+        schema = cast("JsonObject", GetLinkDegradationDetails.model_json_schema())
+        one_of = cast("list[JsonObject]", schema["oneOf"])
 
         required_fields = {
-            tuple(cast(list[str], option["required"])) for option in one_of
+            tuple(cast("list[str]", option["required"])) for option in one_of
         }
         assert required_fields == {
             ("interval",),
@@ -1427,7 +1430,7 @@ class TestLinkInsightsFilterValidation:
         field: str,
         operator: str,
         value: JsonValue,
-    ):
+    ) -> None:
         request = request_type.model_validate(
             {
                 **params,
@@ -1437,12 +1440,14 @@ class TestLinkInsightsFilterValidation:
             }
         )
 
-        dumped = cast(JsonObject, request.model_dump(by_alias=True, exclude_unset=True))
-        filters = cast(JsonObject, dumped["filters"])
-        conjunction = cast(list[JsonObject], filters["and"])
+        dumped = cast(
+            "JsonObject", request.model_dump(by_alias=True, exclude_unset=True)
+        )
+        filters = cast("JsonObject", dumped["filters"])
+        conjunction = cast("list[JsonObject]", filters["and"])
         assert conjunction[0]["field"] == field
 
-    def test_flap_summary_rejects_traffic_type_filter(self):
+    def test_flap_summary_rejects_traffic_type_filter(self) -> None:
         with pytest.raises(ValidationError, match="trafficType"):
             _ = GetLinkFlapSummary.model_validate(
                 {
@@ -1467,7 +1472,9 @@ class TestLinkInsightsFilterValidation:
             {"interval": _INTERVAL, "viewBy": "link"},
         ],
     )
-    def test_summary_requests_reject_detail_only_filter(self, request_data: JsonObject):
+    def test_summary_requests_reject_detail_only_filter(
+        self, request_data: JsonObject
+    ) -> None:
         request_type = (
             GetLinkInsightsOverview
             if "viewBy" not in request_data

@@ -1,19 +1,25 @@
+"""A QoS (business policy) rule: its match and its action.
+
+The action sets the rule's priority and service class, its link steering, its
+route (direct, Gateway or backhaul to a hub) and its NAT.
+"""
+
 import uuid
 from typing import Annotated, Any, Literal, override
 
 from pydantic import MISSING, Field
 
-from pyvelo.core import Alias, NameOf, Normalizer, VcoModel
-from pyvelo.core.fields import KeyField, OwnsRef, RefersTo, Resolvable
-from pyvelo.core.identity import ApplicationIdentity, HubIdentity, HubService
-
-from ..common import (
+from pyvelo.client.models.configuration.common import (
     AddressGroupRef,
     AddressType,
     RuleMatchType,
     ServiceGroupRef,
     VlanType,
 )
+from pyvelo.core import Alias, NameOf, Normalizer, VcoModel
+from pyvelo.core.fields import KeyField, OwnsRef, RefersTo, Resolvable
+from pyvelo.core.identity import ApplicationIdentity, HubIdentity, HubService
+
 from .common import (
     BackhaulEdgeType,
     QosLinkPolicy,
