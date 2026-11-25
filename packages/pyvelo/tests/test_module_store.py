@@ -487,6 +487,23 @@ def test_a_module_given_under_another_configuration_is_refused():
         store.add_configuration({"name": "P"})
 
 
+def test_a_module_id_held_by_another_configuration_is_refused_and_nothing_changes():
+    store = ModuleStore()
+    first = make_module_json("firewall", {}, module_id=1, configuration_id=10)
+    store.add_configuration({"id": 10, "name": "P", "modules": [first]})
+    clash = make_module_json("qos", {}, module_id=1, configuration_id=20)
+    with pytest.raises(ValueError) as exc:
+        store.add_configuration({"id": 20, "name": "Q", "modules": [clash]})
+    message = str(exc.value)
+    assert "module 1" in message and "configuration 20" in message
+    assert "configuration 10 already holds a module with that id" in message
+    assert store.rows[1]["name"] == "firewall"
+    assert store.rows[1]["configurationId"] == 10
+    assert list(store.configurations) == [10]
+    # The same configuration given again replaces its own modules.
+    store.add_configuration({"id": 10, "name": "P", "modules": [first]})
+
+
 def test_a_module_row_without_an_id_is_refused_and_nothing_is_stored():
     store = ModuleStore()
     good = make_module_json("firewall", {}, module_id=1, configuration_id=10)

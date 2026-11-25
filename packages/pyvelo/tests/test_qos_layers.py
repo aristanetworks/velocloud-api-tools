@@ -212,6 +212,20 @@ def test_a_stored_null_client_connector_is_kept_and_not_local():
     assert "serviceRateLimit" in data
 
 
+def test_an_edge_s_stored_null_client_connector_shows_the_profile_s_block():
+    # ByPresence: a null is not local, so the profile's block is what the view shows.
+    block = {"data": {"a": 1}}
+    edge = qos_mod({"segments": [], "qosClientConnector": None}, layer=Edge)
+    profile = qos_mod(
+        {"segments": [], "qosClientConnector": block}, layer=Profile, module_id=2
+    )
+    view = effective_view(edge.data, profile.data, QosData[Effective])
+    connector = view.qos_client_connector
+    assert connector.origin is Origin.PROFILE
+    assert connector.value is not None
+    assert connector.value.model_dump(mode="json", by_alias=True) == block
+
+
 def test_a_stored_client_connector_is_local():
     raw: dict[str, Any] = {"segments": [], "qosClientConnector": {"data": {"a": 1}}}
     edge = qos_mod(raw, layer=Edge)

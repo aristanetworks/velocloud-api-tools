@@ -500,6 +500,11 @@ keys are `serviceRateLimit`, `qoe` and `qosClientConnector`.
 | `qoe` | the template's latency thresholds |
 | `qos_client_connector` | `None` (nothing stored); a stored `null` is kept and is not local |
 
+An edge that stores `"qosClientConnector": null` over a profile that stores a
+block shows the profile's block (`Origin.PROFILE`): the library reads a `null`
+as not local. That is the library's reading; the backend composer's answer for
+it has not been seen live.
+
 A segment's fields are these kinds:
 
 | Field | Kind | Meaning |
