@@ -20,10 +20,10 @@ PCI_UUID = uuid.UUID("abcdef01-abcd-abcd-abcd-abcdef012345")
 
 
 class SegmentMeta(VcoModel):
-    segment_id: Annotated[int, Resolvable(SegmentIdentity, "segment_id")] = 0
-    logical_id: Annotated[uuid.UUID, Resolvable(SegmentIdentity, "logical_id")] = (
-        uuid.UUID(int=0)
-    )
+    segment_id: Annotated[int, Resolvable(SegmentIdentity, lambda i: i.segment_id)] = 0
+    logical_id: Annotated[
+        uuid.UUID, Resolvable(SegmentIdentity, lambda i: i.logical_id)
+    ] = uuid.UUID(int=0)
     name: str = ""
 
 
@@ -34,8 +34,10 @@ class Config(VcoModel):
 
 class NamedSegment(VcoModel):
     name: Annotated[str, NameOf(SegmentIdentity)]
-    segment_id: Annotated[int, Resolvable(SegmentIdentity, "segment_id")]
-    logical_id: Annotated[uuid.UUID, Resolvable(SegmentIdentity, "logical_id")]
+    segment_id: Annotated[int, Resolvable(SegmentIdentity, lambda i: i.segment_id)]
+    logical_id: Annotated[
+        uuid.UUID, Resolvable(SegmentIdentity, lambda i: i.logical_id)
+    ]
 
 
 class NamedSegments(VcoModel):

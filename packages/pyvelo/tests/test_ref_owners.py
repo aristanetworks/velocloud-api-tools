@@ -367,7 +367,7 @@ def test_the_declarations_are_the_specs():
     css_resolvable = get_resolvable(CssProviderRef.model_fields["logical_id"])
     assert css_resolvable is not None
     assert css_resolvable.identity_type is NetworkServiceIdentity
-    assert css_resolvable.id_attr == "logical_id"
+    assert css_resolvable.attribute == "logical_id"
     for cls, name in (
         (SegmentAuthentication, AUTHENTICATION),
         (DnsPrimaryProvider, PRIMARY),

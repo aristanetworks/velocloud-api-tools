@@ -293,7 +293,9 @@ def test_field_kind_is_cached_per_field_info() -> None:
 def test_field_kind_finds_a_marker_inside_the_kind() -> None:
     class Holder(Layered[Edge]):
         port: Annotated[
-            Inheritable[Annotated[int, Resolvable(SegmentIdentity, "segment_id")]],
+            Inheritable[
+                Annotated[int, Resolvable(SegmentIdentity, lambda i: i.segment_id)]
+            ],
             ByPresence(),
             Default(0),
         ] = Field(default=...)

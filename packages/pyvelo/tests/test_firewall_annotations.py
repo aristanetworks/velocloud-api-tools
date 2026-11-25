@@ -33,19 +33,19 @@ class TestFirewallResolvable:
         fi = OutboundRuleMatch.model_fields["application_id"]
         r = get_resolvable(fi)
         assert r is not None
-        assert r.id_attr == "id"
+        assert r.attribute == "id"
 
     def test_source_address_group_resolvable(self):
         fi = OutboundRuleMatch.model_fields["source_address_group"]
         r = get_resolvable(fi)
         assert r is not None
-        assert r.id_attr == "logical_id"
+        assert r.attribute == "logical_id"
 
     def test_destination_address_group_resolvable(self):
         fi = OutboundRuleMatch.model_fields["destination_address_group"]
         r = get_resolvable(fi)
         assert r is not None
-        assert r.id_attr == "logical_id"
+        assert r.attribute == "logical_id"
 
     def test_source_port_group_resolvable(self):
         fi = OutboundRuleMatch.model_fields["source_port_group"]

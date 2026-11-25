@@ -11,7 +11,6 @@ import difflib
 import enum
 import functools
 import json
-import operator
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Literal, LiteralString, cast, get_args, get_origin
@@ -872,7 +871,8 @@ def _resolve_name(
 
     1. If the field's ID type is not ``str`` and *name* parses as it (a UUID
        string on a UUID field), that value is the ID.
-    2. An exact or case-insensitive name match gives the identity's ``id_attr``.
+    2. An exact or case-insensitive name match gives what the field's accessor
+       reads off the identity.
     3. If the ID type is ``str`` and *name* equals a known ID, *name* is the ID.
     4. Otherwise the ``ResolutionError`` propagates.
 
@@ -896,7 +896,7 @@ def _resolve_name(
         if id_type is str and _is_known_id(
             resolvers,
             resolvable.identity_type,
-            operator.attrgetter(resolvable.id_attr),
+            resolvable.accessor,
             name,
         ):
             return name
@@ -911,7 +911,7 @@ def _resolve_name(
             path,
             "invalid_value",
         ) from err
-    return _field_value(identity, resolvable.id_attr)
+    return resolvable.accessor(identity)
 
 
 def _is_known_id[T](
@@ -1245,7 +1245,7 @@ def _fill_from_names(
             if isinstance(given_name, str):
                 resolved[field_name] = given_name
         for target_name, resolvable in targets:
-            resolved[target_name] = _field_value(identity, resolvable.id_attr)
+            resolved[target_name] = resolvable.accessor(identity)
 
 
 def _identity_of_given_id(
@@ -1288,9 +1288,7 @@ def _identity_of_given_id(
             )
         except ValidationError:
             continue
-        return resolvers.lookup_by(
-            identity_type, operator.attrgetter(resolvable.id_attr), value
-        )
+        return resolvers.lookup_by(identity_type, resolvable.accessor, value)
     return None
 
 

@@ -29,7 +29,7 @@ class RevokedCertificatesResult(VcoModel):
 
 class GetEdgeCsr(VcoModel):
     enterprise_id: int | MISSING = MISSING
-    edge_id: Annotated[int, Resolvable(EdgeIdentity, "id")]
+    edge_id: Annotated[int, Resolvable(EdgeIdentity, lambda i: i.id)]
 
 
 class EdgeCsrResult(VcoModel):
@@ -37,24 +37,30 @@ class EdgeCsrResult(VcoModel):
     csr: str | None | MISSING = MISSING
     created: VcoTimestamp | None | MISSING = MISSING
     signed: bool | None | MISSING = MISSING
-    edge_id: Annotated[int | None | MISSING, Resolvable(EdgeIdentity, "id")] = MISSING
+    edge_id: Annotated[
+        int | None | MISSING, Resolvable(EdgeIdentity, lambda i: i.id)
+    ] = MISSING
 
 
 class GetEdgePendingCsrs(VcoModel):
     after: str | MISSING = MISSING
-    edge_id: Annotated[int | MISSING, Resolvable(EdgeIdentity, "id")] = MISSING
+    edge_id: Annotated[int | MISSING, Resolvable(EdgeIdentity, lambda i: i.id)] = (
+        MISSING
+    )
 
 
 class PendingCsrResult(VcoModel):
     id_: Annotated[int | None | MISSING, Alias("id")] = MISSING
     csr: str | None | MISSING = MISSING
     created: VcoTimestamp | None | MISSING = MISSING
-    edge_id: Annotated[int | None | MISSING, Resolvable(EdgeIdentity, "id")] = MISSING
+    edge_id: Annotated[
+        int | None | MISSING, Resolvable(EdgeIdentity, lambda i: i.id)
+    ] = MISSING
     enterprise_id: int | None | MISSING = MISSING
 
 
 class RenewEdgeCertificate(VcoModel):
-    edge_id: Annotated[int, Resolvable(EdgeIdentity, "id")] = Field(
+    edge_id: Annotated[int, Resolvable(EdgeIdentity, lambda i: i.id)] = Field(
         description="VCO Edge ID"
     )
     enterprise_id: int | MISSING = Field(
@@ -69,7 +75,7 @@ class RenewEdgeCertificateResult(VcoModel):
 
 
 class GetGatewayCsr(VcoModel):
-    gateway_id: Annotated[int, Resolvable(GatewayIdentity, "id")]
+    gateway_id: Annotated[int, Resolvable(GatewayIdentity, lambda i: i.id)]
 
 
 class GatewayCsrResult(VcoModel):
@@ -77,13 +83,15 @@ class GatewayCsrResult(VcoModel):
     csr: str | None | MISSING = MISSING
     created: VcoTimestamp | None | MISSING = MISSING
     signed: bool | None | MISSING = MISSING
-    gateway_id: Annotated[int | None | MISSING, Resolvable(GatewayIdentity, "id")] = (
-        MISSING
-    )
+    gateway_id: Annotated[
+        int | None | MISSING, Resolvable(GatewayIdentity, lambda i: i.id)
+    ] = MISSING
 
 
 class GetGatewayPendingCsrs(VcoModel):
-    gateway_id: Annotated[int | MISSING, Resolvable(GatewayIdentity, "id")] = MISSING
+    gateway_id: Annotated[
+        int | MISSING, Resolvable(GatewayIdentity, lambda i: i.id)
+    ] = MISSING
     after: str | MISSING = MISSING
 
 
@@ -91,9 +99,9 @@ class GatewayPendingCsrResult(VcoModel):
     id_: Annotated[int | None | MISSING, Alias("id")] = MISSING
     csr: str | None | MISSING = MISSING
     created: VcoTimestamp | None | MISSING = MISSING
-    gateway_id: Annotated[int | None | MISSING, Resolvable(GatewayIdentity, "id")] = (
-        MISSING
-    )
+    gateway_id: Annotated[
+        int | None | MISSING, Resolvable(GatewayIdentity, lambda i: i.id)
+    ] = MISSING
 
 
 __all__ = [

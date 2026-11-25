@@ -42,7 +42,7 @@ class PacketCaptureOptions(VcoModel):
 
 
 class InsertDiagnosticBundle(VcoModel):
-    edge_id: Annotated[int, Resolvable(EdgeIdentity, "id")]
+    edge_id: Annotated[int, Resolvable(EdgeIdentity, lambda i: i.id)]
     enterprise_id: int | MISSING = MISSING
     reason: str | MISSING = MISSING
     options: DiagnosticDumpOptions | PacketCaptureOptions | MISSING = MISSING
@@ -59,7 +59,9 @@ class GetDiagnosticBundle(VcoModel):
 
 class GetDiagnosticBundles(VcoModel):
     enterprise_id: int | MISSING = MISSING
-    edge_id: Annotated[int | MISSING, Resolvable(EdgeIdentity, "id")] = MISSING
+    edge_id: Annotated[int | MISSING, Resolvable(EdgeIdentity, lambda i: i.id)] = (
+        MISSING
+    )
     sort: Annotated[
         Literal["asc", "desc"],
         Field(
@@ -89,7 +91,9 @@ class DiagnosticBundle(VcoModel):
     id_: Annotated[int, Alias("id")]
     request_id: Annotated[str | None | MISSING, Alias("requestId")] = MISSING
     user_id: str | None | MISSING = MISSING
-    edge_id: Annotated[int | MISSING, Resolvable(EdgeIdentity, "id")] = MISSING
+    edge_id: Annotated[int | MISSING, Resolvable(EdgeIdentity, lambda i: i.id)] = (
+        MISSING
+    )
     edge_name: str | None | MISSING = MISSING
     enterprise_id: int | MISSING = MISSING
     created: VcoTimestamp | MISSING = MISSING

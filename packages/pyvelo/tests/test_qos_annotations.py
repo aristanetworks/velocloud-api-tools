@@ -28,12 +28,12 @@ class TestQosResolvable:
     def test_application_id(self):
         r = get_resolvable(QosRuleMatch.model_fields["application_id"])
         assert r is not None
-        assert r.id_attr == "id"
+        assert r.attribute == "id"
 
     def test_source_address_group(self):
         r = get_resolvable(QosRuleMatch.model_fields["source_address_group"])
         assert r is not None
-        assert r.id_attr == "logical_id"
+        assert r.attribute == "logical_id"
 
     def test_destination_address_group(self):
         r = get_resolvable(QosRuleMatch.model_fields["destination_address_group"])

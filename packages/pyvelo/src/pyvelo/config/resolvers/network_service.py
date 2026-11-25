@@ -120,14 +120,14 @@ class NetworkServiceResolver(BaseResolver[NetworkServiceIdentity]):
         super()._clear()
         self._services.clear()
 
-    def _one(self, id_attr: str, value: object) -> NetworkServiceIdentity:
-        """The loaded service whose ``id_attr`` is *value*, also one that shares its name."""
+    def _one(self, attribute: str, value: object) -> NetworkServiceIdentity:
+        """The loaded service whose ``attribute`` is *value*, also one that shares its name."""
         for service in self._services:
-            if getattr(service, id_attr) == value:
+            if getattr(service, attribute) == value:
                 return service
         raise ResolutionError(
             name=str(value),
             identity_type=NetworkServiceIdentity,
             candidates=[],
-            message=f"No {self._entity_label} has {id_attr} {value}.",
+            message=f"No {self._entity_label} has {attribute} {value}.",
         )

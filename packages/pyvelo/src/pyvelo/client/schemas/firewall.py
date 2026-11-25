@@ -34,7 +34,9 @@ class GetEnterpriseFirewallLogs(VcoModel):
     enterprise_id: int | MISSING = MISSING
     interval: GetEnterpriseFirewallLogsInterval
     filter: GetEnterpriseFirewallLogsFilter | MISSING = MISSING
-    edge_id: Annotated[int | MISSING, Resolvable(EdgeIdentity, "id")] = MISSING
+    edge_id: Annotated[int | MISSING, Resolvable(EdgeIdentity, lambda i: i.id)] = (
+        MISSING
+    )
     rules: list[str] | MISSING = MISSING
     source_ips: list[str] | MISSING = MISSING
     dest_ips: list[str] | MISSING = MISSING
@@ -83,11 +85,11 @@ class FirewallRuleEntry(VcoModel):
     name: str | None | MISSING = MISSING
     data: str | None | MISSING = MISSING
     edge_logical_id: Annotated[
-        uuid.UUID | None | MISSING, Resolvable(EdgeIdentity, "logical_id")
+        uuid.UUID | None | MISSING, Resolvable(EdgeIdentity, lambda i: i.logical_id)
     ] = MISSING
     enterprise_id: int | None | MISSING = MISSING
     segment_object_id: Annotated[
-        int | None | MISSING, Resolvable(SegmentIdentity, "object_id")
+        int | None | MISSING, Resolvable(SegmentIdentity, lambda i: i.object_id)
     ] = MISSING
     segment_name: str | None | MISSING = MISSING
 

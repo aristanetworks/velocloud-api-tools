@@ -235,7 +235,7 @@ def test_enum_literal_on_a_resolvable_field():
 class Net(VcoModel):
     name: str
     segment_name: Annotated[str, NameOf(SegmentIdentity)] = ""
-    segment_id: Annotated[int, Resolvable(SegmentIdentity, "segment_id")] = 0
+    segment_id: Annotated[int, Resolvable(SegmentIdentity, lambda i: i.segment_id)] = 0
 
 
 class Lan(VcoModel):
@@ -255,7 +255,7 @@ def test_only_the_marked_field_fills_ids():
 
 class Uplink(VcoModel):
     name: str = ""
-    logical_id: Annotated[str, Resolvable(LinkIdentity, "logical_id")] = ""
+    logical_id: Annotated[str, Resolvable(LinkIdentity, lambda i: i.logical_id)] = ""
 
 
 class Holder(VcoModel):

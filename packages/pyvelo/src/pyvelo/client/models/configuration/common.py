@@ -33,21 +33,23 @@ RuleMatchType = Literal["prefix", "exact", "network", "netmask", "wildcard"]
 # Typed references for address group and service group UUIDs.
 # Used by both firewall and QoS rule match models.
 AddressGroupRef = Annotated[
-    uuid.UUID | MISSING, Resolvable(AddressGroupIdentity, "logical_id")
+    uuid.UUID | MISSING, Resolvable(AddressGroupIdentity, lambda i: i.logical_id)
 ]
 ServiceGroupRef = Annotated[
-    uuid.UUID | MISSING, Resolvable(ServiceGroupIdentity, "logical_id")
+    uuid.UUID | MISSING, Resolvable(ServiceGroupIdentity, lambda i: i.logical_id)
 ]
 
 
 class SegmentMetadata(VcoModel):
-    segment_id: Annotated[int, Resolvable(SegmentIdentity, "segment_id")] = 0
+    segment_id: Annotated[int, Resolvable(SegmentIdentity, lambda i: i.segment_id)] = 0
     name: Annotated[str, NameOf(SegmentIdentity)]
     type_: Annotated[
-        NetworkSegmentType, Alias("type"), Resolvable(SegmentIdentity, "type_")
+        NetworkSegmentType,
+        Alias("type"),
+        Resolvable(SegmentIdentity, lambda i: i.type_),
     ] = NetworkSegmentType.REGULAR
     segment_logical_id: Annotated[
-        uuid.UUID | None, Resolvable(SegmentIdentity, "logical_id")
+        uuid.UUID | None, Resolvable(SegmentIdentity, lambda i: i.logical_id)
     ] = None
 
 

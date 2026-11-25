@@ -138,12 +138,12 @@ class EdgeObject(VcoModel):
     ha_state: HaState | None | MISSING = MISSING
     ha_mode: str | None | MISSING = MISSING
     id_: Annotated[
-        int | None | MISSING, Alias("id"), Resolvable(EdgeIdentity, "id")
+        int | None | MISSING, Alias("id"), Resolvable(EdgeIdentity, lambda i: i.id)
     ] = MISSING
     is_live: int | None | MISSING = MISSING
     last_contact: VcoTimestamp | None | MISSING = MISSING
     logical_id: Annotated[
-        uuid.UUID | None | MISSING, Resolvable(EdgeIdentity, "logical_id")
+        uuid.UUID | None | MISSING, Resolvable(EdgeIdentity, lambda i: i.logical_id)
     ] = MISSING
     model_number: str | None | MISSING = MISSING
     modified: VcoTimestamp | None | MISSING = MISSING
@@ -169,7 +169,7 @@ class EdgeObject(VcoModel):
 
 
 class GetEdgeCertificates(VcoModel):
-    edge_id: Annotated[int, Resolvable(EdgeIdentity, "id")] = Field(
+    edge_id: Annotated[int, Resolvable(EdgeIdentity, lambda i: i.id)] = Field(
         description="VCO Edge ID"
     )
     enterprise_id: int | MISSING = Field(
@@ -181,7 +181,9 @@ class EdgeCertificate(VcoModel):
     id_: Annotated[int | None | MISSING, Alias("id")] = MISSING
     created: AwareDatetime | None | MISSING = MISSING
     csr_id: int | None | MISSING = MISSING
-    edge_id: Annotated[int | None | MISSING, Resolvable(EdgeIdentity, "id")] = MISSING
+    edge_id: Annotated[
+        int | None | MISSING, Resolvable(EdgeIdentity, lambda i: i.id)
+    ] = MISSING
     edge_serial_number: str | None | MISSING = MISSING
     enterprise_id: int | None | MISSING = MISSING
     certificate: str | None | MISSING = MISSING
@@ -244,7 +246,7 @@ class EdgeLicense(VcoModel):
 
 class CreateEdge(VcoModel):
     enterprise_id: int | MISSING = MISSING
-    configuration_id: Annotated[int, Resolvable(ProfileIdentity, "id")]
+    configuration_id: Annotated[int, Resolvable(ProfileIdentity, lambda i: i.id)]
     name: str | MISSING = MISSING
     serial_number: str | MISSING = MISSING
     model_number: ModelNumber
@@ -252,7 +254,7 @@ class CreateEdge(VcoModel):
     site: Site | MISSING = MISSING
     ha_enabled: bool | MISSING = MISSING
     endpoint_pki_mode: EndpointPkiMode | MISSING = MISSING
-    edge_license_id: Annotated[int, Resolvable(LicenseIdentity, "id")]
+    edge_license_id: Annotated[int, Resolvable(LicenseIdentity, lambda i: i.id)]
     custom_info: str | MISSING = MISSING
 
 
@@ -273,14 +275,14 @@ class CreateEdgeResult(VcoModel):
 class DeleteEdge(VcoModel):
     """Request to delete an edge."""
 
-    id_: Annotated[int, Alias("id"), Resolvable(EdgeIdentity, "id")]
+    id_: Annotated[int, Alias("id"), Resolvable(EdgeIdentity, lambda i: i.id)]
     enterprise_id: Annotated[int | MISSING, NoneIsMissing] = MISSING
 
 
 class RequestEdgeHaFailover(VcoModel):
     """Request to trigger HA failover on an edge."""
 
-    edge_id: Annotated[int, Resolvable(EdgeIdentity, "id")] = Field(
+    edge_id: Annotated[int, Resolvable(EdgeIdentity, lambda i: i.id)] = Field(
         description="VCO Edge ID of the HA-enabled edge to fail over"
     )
     enterprise_id: Annotated[int | MISSING, NoneIsMissing] = MISSING
@@ -288,7 +290,7 @@ class RequestEdgeHaFailover(VcoModel):
 
 class GetEdgeConfigurationStack(VcoModel):
     enterprise_id: Annotated[int | MISSING, NoneIsMissing] = MISSING
-    edge_id: Annotated[int, Resolvable(EdgeIdentity, "id")] = Field(
+    edge_id: Annotated[int, Resolvable(EdgeIdentity, lambda i: i.id)] = Field(
         description="VCO Edge ID"
     )
 
@@ -299,7 +301,7 @@ class GetEdgeSdwanPeersSortBy(VcoModel):
 
 
 class GetEdgeSdwanPeers(VcoModel):
-    edge_id: Annotated[int, Resolvable(EdgeIdentity, "id")] = Field(
+    edge_id: Annotated[int, Resolvable(EdgeIdentity, lambda i: i.id)] = Field(
         description="VCO Edge ID"
     )
     enterprise_id: Annotated[int | MISSING, NoneIsMissing] = MISSING
@@ -358,12 +360,12 @@ class EdgeSdwanPeerEntry(VcoModel):
 
 class GetEdge(VcoModel):
     enterprise_id: int | MISSING = MISSING
-    id_: Annotated[int | MISSING, Alias("id"), Resolvable(EdgeIdentity, "id")] = Field(
-        default=MISSING, description="VCO Edge ID"
-    )
+    id_: Annotated[
+        int | MISSING, Alias("id"), Resolvable(EdgeIdentity, lambda i: i.id)
+    ] = Field(default=MISSING, description="VCO Edge ID")
     with_: Annotated[list[GetEdgeWith] | MISSING, Alias("with")] = MISSING
     logical_id: Annotated[
-        uuid.UUID | MISSING, Resolvable(EdgeIdentity, "logical_id")
+        uuid.UUID | MISSING, Resolvable(EdgeIdentity, lambda i: i.logical_id)
     ] = MISSING
     activation_key: str | MISSING = MISSING
     name: str | MISSING = MISSING
@@ -372,7 +374,9 @@ class GetEdge(VcoModel):
 class EdgeLink(VcoModel):
     id_: Annotated[int | None | MISSING, Alias("id")] = MISSING
     created: AwareDatetime | None | MISSING = MISSING
-    edge_id: Annotated[int | None | MISSING, Resolvable(EdgeIdentity, "id")] = MISSING
+    edge_id: Annotated[
+        int | None | MISSING, Resolvable(EdgeIdentity, lambda i: i.id)
+    ] = MISSING
     logical_id: str | None | MISSING = MISSING
     internal_id: uuid.UUID | None | MISSING = MISSING
     interface: str | None | MISSING = MISSING
@@ -418,7 +422,7 @@ class GetEdgeResult(EdgeObject):
 
 
 class GetEdgeGatewayAssignmentsView(VcoModel):
-    id_: Annotated[int, Alias("id"), Resolvable(EdgeIdentity, "id")] = Field(
+    id_: Annotated[int, Alias("id"), Resolvable(EdgeIdentity, lambda i: i.id)] = Field(
         description="VCO Edge ID"
     )
     enterprise_id: int | MISSING = MISSING
@@ -474,9 +478,11 @@ class EdgeGatewayAssignmentResult(VcoModel):
 
 
 class GetEdgeConfigurationModules(VcoModel):
-    edge_id: Annotated[int | MISSING, Resolvable(EdgeIdentity, "id")] = MISSING
+    edge_id: Annotated[int | MISSING, Resolvable(EdgeIdentity, lambda i: i.id)] = (
+        MISSING
+    )
     edge_logical_id: Annotated[
-        uuid.UUID | MISSING, Resolvable(EdgeIdentity, "logical_id")
+        uuid.UUID | MISSING, Resolvable(EdgeIdentity, lambda i: i.logical_id)
     ] = MISSING
     enterprise_id: int | MISSING = MISSING
     enterprise_logical_id: uuid.UUID | MISSING = MISSING
@@ -574,17 +580,21 @@ class EdgeConfigurationModulesResult(VcoModel):
 
 class GetEdgeNvsTunnelStatus(VcoModel):
     enterprise_id: int | MISSING = MISSING
-    edge_id: Annotated[int | MISSING, Resolvable(EdgeIdentity, "id")] = MISSING
+    edge_id: Annotated[int | MISSING, Resolvable(EdgeIdentity, lambda i: i.id)] = (
+        MISSING
+    )
     tag: str | MISSING = MISSING
     provider_object_id: int | MISSING = MISSING
 
 
 class EdgeNvsTunnelStatusItem(VcoModel):
     data_key: str | None | MISSING = MISSING
-    edge_id: Annotated[int | None | MISSING, Resolvable(EdgeIdentity, "id")] = MISSING
+    edge_id: Annotated[
+        int | None | MISSING, Resolvable(EdgeIdentity, lambda i: i.id)
+    ] = MISSING
     edge_name: str | None | MISSING = MISSING
     edge_logical_id: Annotated[
-        uuid.UUID | None | MISSING, Resolvable(EdgeIdentity, "logical_id")
+        uuid.UUID | None | MISSING, Resolvable(EdgeIdentity, lambda i: i.logical_id)
     ] = MISSING
     enterprise_id: int | None | MISSING = MISSING
     enterprise_name: str | None | MISSING = MISSING
@@ -602,14 +612,16 @@ class EdgeNvsTunnelStatusItem(VcoModel):
 
 class GetClientVisibilityMode(VcoModel):
     enterprise_id: int | MISSING = MISSING
-    edge_id: Annotated[int, Resolvable(EdgeIdentity, "id")] = Field(
+    edge_id: Annotated[int, Resolvable(EdgeIdentity, lambda i: i.id)] = Field(
         description="VCO Edge ID"
     )
 
 
 class ClientVisibilityModeResult(VcoModel):
     mode: str | None | MISSING = MISSING
-    edge_id: Annotated[int | None | MISSING, Resolvable(EdgeIdentity, "id")] = MISSING
+    edge_id: Annotated[
+        int | None | MISSING, Resolvable(EdgeIdentity, lambda i: i.id)
+    ] = MISSING
 
 
 # --- get_ha_interfaces (edge/getHaInterfaces) ---
@@ -617,9 +629,9 @@ class ClientVisibilityModeResult(VcoModel):
 
 class GetHaInterfaces(VcoModel):
     enterprise_id: int | MISSING = MISSING
-    edge_logical_id: Annotated[uuid.UUID, Resolvable(EdgeIdentity, "logical_id")] = (
-        Field(description="Edge logical UUID identifier")
-    )
+    edge_logical_id: Annotated[
+        uuid.UUID, Resolvable(EdgeIdentity, lambda i: i.logical_id)
+    ] = Field(description="Edge logical UUID identifier")
     role: HaRole | MISSING = MISSING
 
 
@@ -630,7 +642,7 @@ class HaInterfaceItem(VcoModel):
 
     id_: Annotated[int | None | MISSING, Alias("id")] = MISSING
     edge_logical_id: Annotated[
-        uuid.UUID | None | MISSING, Resolvable(EdgeIdentity, "logical_id")
+        uuid.UUID | None | MISSING, Resolvable(EdgeIdentity, lambda i: i.logical_id)
     ] = MISSING
     role: str | None | MISSING = MISSING
 
@@ -656,7 +668,7 @@ class InterconnectGatewayItem(VcoModel):
 
 class GetSecureDeviceSecretsOption(VcoModel):
     enterprise_id: int | MISSING = MISSING
-    edge_id: Annotated[int, Resolvable(EdgeIdentity, "id")] = Field(
+    edge_id: Annotated[int, Resolvable(EdgeIdentity, lambda i: i.id)] = Field(
         description="VCO Edge ID"
     )
     edge_ids: list[int] | MISSING = MISSING
@@ -683,58 +695,70 @@ class EdgeSdwanPeersResult(VcoModel):
 class EnableEdgeHub(VcoModel):
     """Designate an edge as a VPN hub on a profile."""
 
-    id_: Annotated[int, Alias("id"), Resolvable(EdgeIdentity, "id")]
-    configuration_id: Annotated[int, Resolvable(ProfileIdentity, "id")]
+    id_: Annotated[int, Alias("id"), Resolvable(EdgeIdentity, lambda i: i.id)]
+    configuration_id: Annotated[int, Resolvable(ProfileIdentity, lambda i: i.id)]
     module_id: int
-    segment_object_id: Annotated[int, Resolvable(SegmentIdentity, "object_id")]
+    segment_object_id: Annotated[
+        int, Resolvable(SegmentIdentity, lambda i: i.object_id)
+    ]
     enterprise_id: int | MISSING = MISSING
 
 
 class EnableEdgeToEdgeBridge(VcoModel):
     """Designate an edge hub as a site-to-site bridge on a profile."""
 
-    id_: Annotated[int, Alias("id"), Resolvable(EdgeIdentity, "id")]
-    configuration_id: Annotated[int, Resolvable(ProfileIdentity, "id")]
+    id_: Annotated[int, Alias("id"), Resolvable(EdgeIdentity, lambda i: i.id)]
+    configuration_id: Annotated[int, Resolvable(ProfileIdentity, lambda i: i.id)]
     module_id: int
-    segment_object_id: Annotated[int, Resolvable(SegmentIdentity, "object_id")]
+    segment_object_id: Annotated[
+        int, Resolvable(SegmentIdentity, lambda i: i.object_id)
+    ]
     enterprise_id: int | MISSING = MISSING
 
 
 class EnableEdgeBackHaul(VcoModel):
     """Designate an edge hub for backhaul on a profile."""
 
-    id_: Annotated[int, Alias("id"), Resolvable(EdgeIdentity, "id")]
-    configuration_id: Annotated[int, Resolvable(ProfileIdentity, "id")]
+    id_: Annotated[int, Alias("id"), Resolvable(EdgeIdentity, lambda i: i.id)]
+    configuration_id: Annotated[int, Resolvable(ProfileIdentity, lambda i: i.id)]
     module_id: int
-    segment_object_id: Annotated[int, Resolvable(SegmentIdentity, "object_id")]
+    segment_object_id: Annotated[
+        int, Resolvable(SegmentIdentity, lambda i: i.object_id)
+    ]
     enterprise_id: int | MISSING = MISSING
 
 
 class DisableEdgeHub(VcoModel):
     """Remove VPN hub designation from an edge on a profile."""
 
-    id_: Annotated[int, Alias("id"), Resolvable(EdgeIdentity, "id")]
-    configuration_id: Annotated[int, Resolvable(ProfileIdentity, "id")]
+    id_: Annotated[int, Alias("id"), Resolvable(EdgeIdentity, lambda i: i.id)]
+    configuration_id: Annotated[int, Resolvable(ProfileIdentity, lambda i: i.id)]
     module_id: int
-    segment_object_id: Annotated[int, Resolvable(SegmentIdentity, "object_id")]
+    segment_object_id: Annotated[
+        int, Resolvable(SegmentIdentity, lambda i: i.object_id)
+    ]
     enterprise_id: int | MISSING = MISSING
 
 
 class DisableEdgeToEdgeBridge(VcoModel):
     """Remove site-to-site bridge designation from an edge on a profile."""
 
-    id_: Annotated[int, Alias("id"), Resolvable(EdgeIdentity, "id")]
-    configuration_id: Annotated[int, Resolvable(ProfileIdentity, "id")]
+    id_: Annotated[int, Alias("id"), Resolvable(EdgeIdentity, lambda i: i.id)]
+    configuration_id: Annotated[int, Resolvable(ProfileIdentity, lambda i: i.id)]
     module_id: int
-    segment_object_id: Annotated[int, Resolvable(SegmentIdentity, "object_id")]
+    segment_object_id: Annotated[
+        int, Resolvable(SegmentIdentity, lambda i: i.object_id)
+    ]
     enterprise_id: int | MISSING = MISSING
 
 
 class DisableEdgeBackHaul(VcoModel):
     """Remove backhaul designation from an edge on a profile."""
 
-    id_: Annotated[int, Alias("id"), Resolvable(EdgeIdentity, "id")]
-    configuration_id: Annotated[int, Resolvable(ProfileIdentity, "id")]
+    id_: Annotated[int, Alias("id"), Resolvable(EdgeIdentity, lambda i: i.id)]
+    configuration_id: Annotated[int, Resolvable(ProfileIdentity, lambda i: i.id)]
     module_id: int
-    segment_object_id: Annotated[int, Resolvable(SegmentIdentity, "object_id")]
+    segment_object_id: Annotated[
+        int, Resolvable(SegmentIdentity, lambda i: i.object_id)
+    ]
     enterprise_id: int | MISSING = MISSING

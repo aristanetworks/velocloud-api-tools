@@ -52,10 +52,10 @@ SEGMENT_DATA = [
 
 
 class SegmentMeta(VcoModel):
-    segment_id: Annotated[int, Resolvable(SegmentIdentity, "segment_id")] = 0
-    logical_id: Annotated[uuid.UUID, Resolvable(SegmentIdentity, "logical_id")] = (
-        uuid.UUID(int=0)
-    )
+    segment_id: Annotated[int, Resolvable(SegmentIdentity, lambda i: i.segment_id)] = 0
+    logical_id: Annotated[
+        uuid.UUID, Resolvable(SegmentIdentity, lambda i: i.logical_id)
+    ] = uuid.UUID(int=0)
     name: str = ""
 
 

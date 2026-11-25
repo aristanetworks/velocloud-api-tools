@@ -123,9 +123,9 @@ class VpnHub(VcoModel):
     type_: Annotated[
         Literal["edgeHub", "edgeHubCluster"],
         Alias("type"),
-        Resolvable(HubIdentity, "type_"),
+        Resolvable(HubIdentity, lambda i: i.type_),
     ]
-    logical_id: Annotated[uuid.UUID, Resolvable(HubIdentity, "logical_id")]
+    logical_id: Annotated[uuid.UUID, Resolvable(HubIdentity, lambda i: i.logical_id)]
 
 
 class IsolationConfig(VcoModel):
@@ -575,7 +575,7 @@ class SegmentAuthentication(VcoModel):
     service: Annotated[
         uuid.UUID | None | MISSING,
         RefOnly(default="deviceSettings:authentication"),
-        Resolvable(NetworkServiceIdentity, "logical_id"),
+        Resolvable(NetworkServiceIdentity, lambda i: i.logical_id),
     ] = MISSING
 
 
@@ -728,7 +728,7 @@ class DnsPrimaryProvider(DnsProvider):
     service: Annotated[
         uuid.UUID | None | MISSING,
         RefOnly(default="deviceSettings:dns:primaryProvider"),
-        Resolvable(NetworkServiceIdentity, "logical_id"),
+        Resolvable(NetworkServiceIdentity, lambda i: i.logical_id),
     ] = MISSING
 
 
@@ -743,7 +743,7 @@ class DnsBackupProvider(DnsProvider):
     service: Annotated[
         uuid.UUID | None | MISSING,
         RefOnly(default="deviceSettings:dns:backupProvider"),
-        Resolvable(NetworkServiceIdentity, "logical_id"),
+        Resolvable(NetworkServiceIdentity, lambda i: i.logical_id),
     ] = MISSING
 
 
@@ -786,7 +786,7 @@ class CssProviderRef(VcoModel):
             row="logicalId",
             per_segment=True,
         ),
-        Resolvable(NetworkServiceIdentity, "logical_id"),
+        Resolvable(NetworkServiceIdentity, lambda i: i.logical_id),
     ] = ""
     ref: DeviceSettingsRef = "deviceSettings:css:provider"
 

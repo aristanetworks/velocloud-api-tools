@@ -42,7 +42,7 @@ class TestQosResolvable:
         """QosRuleMatch.application_id should be Resolvable."""
         r = get_resolvable(QosRuleMatch.model_fields["application_id"])
         assert r is not None
-        assert r.id_attr == "id"
+        assert r.attribute == "id"
 
 
 class TestQosMerge:
