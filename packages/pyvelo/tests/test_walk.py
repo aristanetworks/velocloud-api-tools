@@ -1,4 +1,7 @@
-"""``walk_fields``: the fields of a model and of the models below it, with each field's path and its segment."""
+"""``walk_fields``: the fields of a model and of the models below it.
+
+Each field comes with its path and its segment.
+"""
 
 from typing import Annotated
 

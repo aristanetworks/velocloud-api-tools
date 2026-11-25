@@ -36,7 +36,10 @@ def _make_rule(name: str = "test-rule") -> FirewallOutboundRule:
 
 class TestKeyFieldMarkers:
     def test_firewall_data_segments_has_key_field(self) -> None:
-        """FirewallData.segments should be keyed by segment.name, alt key segment.segment_id."""
+        """FirewallData.segments should be keyed by segment.name.
+
+        The alt key is segment.segment_id.
+        """
         fi = FirewallData.model_fields["segments"]
         assert get_key_spec(fi) == KeySpec(("segment.name",), alt="segment.segment_id")
 

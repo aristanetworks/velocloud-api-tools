@@ -1,4 +1,7 @@
-"""A map of models (``dict[K, Model]``): rebase, raw_changes, the lossy check and carrying walk into its values."""
+"""A map of models (``dict[K, Model]``).
+
+Rebase, raw_changes, the lossy check and carrying walk into its values.
+"""
 
 import uuid
 from typing import Annotated

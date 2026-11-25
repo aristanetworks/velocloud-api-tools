@@ -130,7 +130,10 @@ async def test_an_insert_the_vco_counted_that_cannot_be_read_back_is_unconfirmed
     serve = client.store.handle
 
     def without_qos(method: str, params: dict[str, Any]) -> object:
-        """Answer as the store does, but a configuration read leaves its QoS module out."""
+        """Answer as the store does.
+
+        But a configuration read leaves its QoS module out.
+        """
         answer: Any = serve(method, params)
         if method == "configuration/getConfiguration":
             answer["modules"] = [m for m in answer["modules"] if m["name"] != "QOS"]

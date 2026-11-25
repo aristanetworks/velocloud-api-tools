@@ -693,7 +693,10 @@ THREE_SEGMENTS_RAW: dict[str, Any] = {
 def bound(
     raw: dict[str, Any], profile_raw: dict[str, Any]
 ) -> tuple[FirewallConfigurationModule[Edge], FirewallConfigurationModule[Profile]]:
-    """An edge module of *raw* bound to a profile module of *profile_raw*, and that one."""
+    """An edge module of *raw*, and the profile module it is bound to.
+
+    The profile module is of *profile_raw*.
+    """
     mod, profile = fw(raw, layer=Edge), fw(profile_raw, module_id=2, layer=Profile)
     mod.data.bind_profile(profile.raw_data)
     return mod, profile
@@ -898,7 +901,10 @@ def test_an_edit_below_the_loopback_map_is_written_to_the_key_as_read() -> None:
 
 
 def model_interface(name: str) -> dict[str, Any]:
-    """A routed interface of a profile's model entry, with keys and values the models do not keep."""
+    """A routed interface of a profile's model entry.
+
+    It has keys and values the models do not keep.
+    """
     return {
         "name": name,
         "disabled": False,
@@ -1447,7 +1453,10 @@ ADD_NEIGHBOR: dict[str, Any] = {
 
 
 def bgp_module(**flag: bool) -> DeviceSettingsConfigurationModule:
-    """Edge device settings whose one segment has an empty BGP section; *flag* is its ``override`` key, if any."""
+    """Edge device settings whose one segment has an empty BGP section.
+
+    *flag* is its ``override`` key, if any.
+    """
     bgp = {**flag, "enabled": False, "ASN": "", "neighbors": [], "filters": []}
     segment = {"segment": desc(0, "Global Segment"), "bgp": bgp}
     mod = ds({**DS_RAW, "segments": [segment]})

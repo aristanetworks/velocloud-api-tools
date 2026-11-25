@@ -1,4 +1,6 @@
-"""``write_module``: send a planned module, read it back when the VCO returns no row, check it.
+"""``write_module``: send a planned module and check it.
+
+It reads the module back when the VCO returns no row.
 
 Each test runs a client over a ``ModuleStore`` that holds the module, so the
 client's own request building, parsing and error mapping run. Unless a test
@@ -130,7 +132,10 @@ def elsewhere(row: dict[str, Any]) -> None:
 def reading(
     store: ModuleStore, modules: list[dict[str, Any]], configuration_id: int = 10
 ) -> Callable[[httpx.Request], httpx.Response]:
-    """A handler that sends each request to *store*, but answers a read of a configuration (10 unless given) with *modules*."""
+    """A handler that sends each request to *store*.
+
+    But it answers a read of a configuration (10 unless given) with *modules*.
+    """
 
     def handler(request: httpx.Request) -> httpx.Response:
         method = parse_json_object(request.content)["method"]
@@ -592,7 +597,10 @@ ECMP_PATH = 'segments["Global Segment"].ecmp'
 def ds(
     raw: dict[str, Any], *, level: ConfigContext | None = None
 ) -> DeviceSettingsConfigurationModule:
-    """Device settings module 1 of configuration 10, read with *raw* as its data, at *level*."""
+    """Device settings module 1 of configuration 10, read with *raw* as its data.
+
+    It is at *level*.
+    """
     return DeviceSettingsConfigurationModule.model_validate(
         make_module_json("deviceSettings", copy.deepcopy(raw), configuration_id=10),
         context=None if level is None else {"config_level": level},
@@ -708,7 +716,10 @@ def without_an_action(new: dict[str, Any], _old: dict[str, Any] | None) -> None:
 def returning(
     store: ModuleStore, change: Callable[[dict[str, Any]], None]
 ) -> Callable[[httpx.Request], httpx.Response]:
-    """A handler that sends each request to *store* and lets *change* edit the row a write returns."""
+    """A handler that sends each request to *store*.
+
+    It lets *change* edit the row a write returns.
+    """
 
     def handler(request: httpx.Request) -> httpx.Response:
         response = store(request)
@@ -1048,7 +1059,10 @@ REFUSAL: dict[str, Any] = {
 def refusing_with_status(
     store: ModuleStore, status: int
 ) -> Callable[[httpx.Request], httpx.Response]:
-    """A handler that answers an update with the precondition refusal at HTTP *status*, and sends the rest to *store*."""
+    """A handler that answers an update with the precondition refusal at HTTP *status*.
+
+    It sends the rest to *store*.
+    """
 
     def handler(request: httpx.Request) -> httpx.Response:
         body = parse_json_object(request.content)
@@ -1289,7 +1303,10 @@ async def test_if_absent_cannot_use_a_configuration_that_does_not_parse(
 
 
 def never_read() -> FirewallConfigurationModule[Edge]:
-    """Firewall module 1 of configuration 10, built without a read: it has no raw data."""
+    """Firewall module 1 of configuration 10, built without a read.
+
+    It has no raw data.
+    """
     module = FirewallConfigurationModule[Edge].model_construct(
         name="firewall",
         data=FirewallData[Edge](segments=[], firewall_enabled=False),

@@ -1,4 +1,6 @@
-"""A hub that edge QoS rules use: removing it from the Branch-to-Hub list warns and names the edges, or refuses.
+"""A hub that edge QoS rules use, removed from the Branch-to-Hub list.
+
+The removal warns and names the edges, or refuses.
 
 A role call that disables an Edge hub deletes its service, and with it the
 backhaul refs of the rules of the edges that used the hub (those rules keep the
@@ -47,7 +49,10 @@ def service_id(hub: Hub) -> int:
 
 
 def service_row(hub: Hub) -> dict[str, Any]:
-    """The row of *hub*'s Edge service for the Global Segment of the profile, with all three roles."""
+    """The row of *hub*'s Edge service for the Global Segment of the profile.
+
+    It has all three roles.
+    """
     return hub_row(
         hub,
         service_id=service_id(hub),
@@ -58,7 +63,10 @@ def service_row(hub: Hub) -> dict[str, Any]:
 
 
 async def profile_with(*hubs: Hub) -> ConfigState:
-    """A profile whose Global Segment has *hubs* in all three lists, each with its service."""
+    """A profile whose Global Segment has *hubs* in all three lists.
+
+    Each hub has its service.
+    """
     ds = ds_with_vpn(GLOBAL, hubs=hubs, bridges=hubs, backhaul=hubs)
     refs = profile_hub_rows(
         segment_row(GLOBAL[0], GLOBAL[3], GLOBAL[2]),
@@ -74,7 +82,10 @@ async def profile_with(*hubs: Hub) -> ConfigState:
 
 
 async def remove(state: ConfigState, *hubs: Hub, only_backhaul: bool = False) -> None:
-    """Take *hubs* out of the three lists (out of the backhaul list only, with *only_backhaul*), as the UI's removal does."""
+    """Take *hubs* out of the three lists, as the UI's removal does.
+
+    With *only_backhaul*, take them out of the backhaul list only.
+    """
     gone = {hub.name: delete() for hub in hubs}
     vpn: dict[str, Any] = {"backHaulEdges": gone}
     if not only_backhaul:
@@ -91,7 +102,10 @@ def used_by_edge(
     *hubs: Hub,
     configuration_id: int = EDGE_CONFIG,
 ) -> None:
-    """Give Edge *edge* a configuration whose QoS module has a ``backHaulEdge`` row for the service of each of *hubs*."""
+    """Give Edge *edge* a configuration whose QoS module has ``backHaulEdge`` rows.
+
+    It has one for the service of each of *hubs*.
+    """
     edge_id, name = edge
     if edge_id not in store.edges:
         store.add_edge(edge_id, logical_id=str(uuid.UUID(int=edge_id)), name=name)
@@ -146,7 +160,10 @@ def in_use_warnings(warnings: list[ValidationWarning]) -> list[ValidationWarning
 
 
 async def used_hub_save() -> tuple[ConfigPipeline, ModuleStore, ConfigState]:
-    """A profile that removes Hub-A, which Branch-1's QoS rules use, from its lists: the pipeline, the store and the state."""
+    """A profile that removes Hub-A, which Branch-1's QoS rules use, from its lists.
+
+    The pipeline, the store and the state.
+    """
     state = await profile_with(HUB_A, HUB_B)
     await remove(state, HUB_A)
     pipeline, store = hub_pipeline(state, vpn_check=True)

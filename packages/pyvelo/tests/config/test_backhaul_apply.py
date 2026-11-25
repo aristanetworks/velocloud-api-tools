@@ -1,4 +1,6 @@
-"""``apply`` gives a QoS rule's new backhaul hub its service for the segment, and refuses a hub that has none yet.
+"""``apply`` gives a QoS rule's new backhaul hub its service for the segment.
+
+It refuses a hub that has none yet.
 
 The states are those of ``test_backhaul_refs_state``: a profile whose Global
 Segment lists ``HUB_A`` for backhaul with a service row, and an edge over it.
@@ -27,7 +29,10 @@ from test_backhaul_refs_state import (  # pyright: ignore[reportImplicitRelative
 
 
 def hub_in_rule(name: str, *, rule: str = "r1") -> dict[str, Any]:
-    """The patch to the rules of a segment that adds the hub *name* to the backhaul hubs of *rule*."""
+    """The patch to the rules of a segment that adds a backhaul hub to *rule*.
+
+    The hub added is the hub *name*.
+    """
     return {
         rule: {
             "action": {

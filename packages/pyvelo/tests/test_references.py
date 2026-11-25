@@ -1,4 +1,7 @@
-"""``references``, ``provided`` and ``check_references``: what the data refers to, what it provides, and which references name nothing."""
+"""``references``, ``provided`` and ``check_references``.
+
+What the data refers to, what it provides, and which references name nothing.
+"""
 
 import json
 import uuid
@@ -34,7 +37,10 @@ SERVICE = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
 def ds_data(
     *segments: segment_helpers.Segment | dict[str, Any], **extra: Any
 ) -> DeviceSettingsData:
-    """Device settings data with *segments* (a segment, or a built entry) and the keys of *extra* beside them."""
+    """Device settings data with *segments* and the keys of *extra* beside them.
+
+    Each of *segments* is a segment, or a built entry.
+    """
     entries = [
         segment_helpers.ds_entry(s) if isinstance(s, tuple) else s for s in segments
     ]
@@ -59,7 +65,11 @@ def hub_rule_data(segment: segment_helpers.Segment, hub_id: str) -> QosData[Prof
 
 
 def sets(**named: set[object]) -> Sets:
-    """Sets by name; a name ``segment_2`` is the set ``segment`` of segment 2 (a number after the last underscore)."""
+    """Sets by name.
+
+    A name ``segment_2`` is the set ``segment`` of segment 2 (a number after the last
+    underscore).
+    """
     result: dict[tuple[str, int | None], frozenset[object]] = {}
     for name, members in named.items():
         base, _, tail = name.rpartition("_")

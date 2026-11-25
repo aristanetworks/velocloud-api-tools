@@ -1,4 +1,7 @@
-"""ConfigState.replace_module: the module as stored in place, the old objects detached."""
+"""ConfigState.replace_module: the module as stored in place.
+
+The old objects are detached.
+"""
 
 import copy
 import gc
@@ -97,7 +100,10 @@ def qos_row() -> dict[str, Any]:
 def make_state(
     edge_rows: list[dict[str, Any]] | None = None, *, modules: bool = True
 ) -> ConfigState:
-    """An edge state, its edge firewall module 1 by default; no ``modules`` without *modules*."""
+    """An edge state, its edge firewall module 1 by default.
+
+    No ``modules`` without *modules*.
+    """
     edge: dict[str, Any] = {"name": "Edge Specific Profile", "id": 10}
     if modules:
         edge["modules"] = [fw_row()] if edge_rows is None else edge_rows
@@ -131,7 +137,10 @@ def make_state(
 def replace_firewall(
     state: ConfigState, data: dict[str, Any] | None = None
 ) -> tuple[FirewallConfigurationModule[Edge], FirewallConfigurationModule[Edge]]:
-    """Replace the edge firewall module by it as stored with *data* (EDGE_FW by default)."""
+    """Replace the edge firewall module by it as stored with *data*.
+
+    *data* is EDGE_FW by default.
+    """
     old = state.module("firewall")
     assert isinstance(old, FirewallConfigurationModule)
     old = cast("FirewallConfigurationModule[Edge]", old)  # the state's edge layer

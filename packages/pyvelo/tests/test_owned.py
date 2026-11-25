@@ -1,4 +1,7 @@
-"""Tests for ``Owned``: the encodings, the ownership intents, coupled groups and the binding of an edge layer to its profile."""
+"""Tests for ``Owned``: the encodings, the ownership intents and coupled groups.
+
+And the binding of an edge layer to its profile.
+"""
 
 import copy
 from typing import Annotated, Any, ClassVar
@@ -692,7 +695,8 @@ class _Note(VcoModel):
 
 
 class _Kinded(Layered[L]):
-    # The default is not MISSING, so a field cleared to its default is told from one cleared to MISSING.
+    # The default is not MISSING, so a field cleared to its default is told from one
+    # cleared to MISSING.
     rid: Annotated[Unconverted[str | MISSING | None], ServerOwned()] = kind_default(
         None
     )

@@ -85,7 +85,10 @@ def qos_insert(*, return_data: bool = False) -> InsertQosConfigurationModule:
 
 
 def firewall_store(**knobs: bool) -> ModuleStore:
-    """A store holding firewall module 7, at version ``"1700"``, of edge configuration 10."""
+    """A store holding firewall module 7 of edge configuration 10.
+
+    The module is at version ``"1700"``.
+    """
     store = ModuleStore(**knobs)
     store.add_configuration({"id": 10, "name": "Edge Specific Profile"})
     store.rows[7] = make_module_json(
@@ -236,7 +239,10 @@ async def test_unknown_module_is_still_an_operation_error(
 async def test_error_response_mentioning_version_is_not_a_conflict(
     mock_vco_client: MockVcoClientFactory, json_rpc_response: JsonRpcResponseFactory
 ) -> None:
-    """Only the precondition error is a stale version, whatever another error's text says."""
+    """Only the precondition error is a stale version.
+
+    That holds whatever another error's text says.
+    """
     client = await mock_vco_client(
         lambda _: httpx.Response(
             200,
@@ -253,7 +259,10 @@ async def test_error_response_mentioning_version_is_not_a_conflict(
 async def test_asked_for_data_and_got_a_row_count(
     mock_vco_client: MockVcoClientFactory,
 ) -> None:
-    """A VCO that ignores ``returnData`` answers with a row count, handled as without it."""
+    """A VCO that ignores ``returnData`` answers with a row count.
+
+    The count is handled as without it.
+    """
     store = firewall_store(return_data=False)
     client = await mock_vco_client(store)
     fresh = await client.update_configuration_module(req("1700", return_data=True))

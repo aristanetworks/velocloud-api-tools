@@ -92,7 +92,10 @@ def desc(sid: int, name: str) -> dict[str, object]:
 
 
 def neighbor(password: object = OLD) -> dict[str, Any]:
-    """A BGP neighbour; the password is its last key, where an error's cut-off text shows it."""
+    """A BGP neighbour; the password is its last key.
+
+    That is where an error's cut-off text shows it.
+    """
     return {
         "neighborIp": "192.0.2.1",
         "neighborAS": "65001",
@@ -227,7 +230,10 @@ class Holder(VcoModel):
 
 
 def assert_chain_quotes_no_input(error: BaseException) -> None:
-    """Neither the cause nor the context of *error* quotes an input value; the context is empty."""
+    """Neither the cause nor the context of *error* quotes an input value.
+
+    The context is empty.
+    """
     assert error.__context__ is None
     for linked in (error.__cause__, error.__context__):
         if linked is not None:
@@ -280,7 +286,10 @@ def test_a_field_typed_as_a_model_does_not_quote_a_value_that_is_not_one(
 def test_no_field_of_the_models_quotes_a_patch_value_in_the_cause_of_its_error() -> (
     None
 ):
-    """Give every field the module data classes reach a text that none of them accepts."""
+    """Give every field the module data classes reach a text.
+
+    It is a text that none of them accepts.
+    """
     refused = 0
     for cls in reachable_classes():
         for name in cls.model_fields:
@@ -296,7 +305,10 @@ def test_no_field_of_the_models_quotes_a_patch_value_in_the_cause_of_its_error()
 
 
 def test_every_list_field_still_builds_its_adapters() -> None:
-    """No list or map field of the models refuses the setting on the adapters built for it."""
+    """No list or map field of the models refuses the setting.
+
+    The setting is on the adapters built for it.
+    """
     built = 0
     for cls in reachable_classes():
         for fi in cls.model_fields.values():
@@ -360,7 +372,10 @@ LOOKS_SECRET = re.compile(
 
 
 def reachable_fields() -> dict[str, bool]:
-    """``"Class.field"`` to whether it is marked, for every class the module data classes reach."""
+    """``"Class.field"`` to whether it is marked.
+
+    For every class the module data classes reach.
+    """
     return {
         f"{cls.__name__}.{name}": is_secret(fi)
         for cls in reachable_classes()

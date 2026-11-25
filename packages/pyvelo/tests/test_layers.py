@@ -1,4 +1,7 @@
-"""Tests for the layer-parametrized models, the field kinds and their carriers, display defaults and ``field_kind``."""
+"""Tests for the layer-parametrized models.
+
+The field kinds and their carriers, display defaults and ``field_kind``.
+"""
 
 from typing import Annotated, Any, get_origin
 

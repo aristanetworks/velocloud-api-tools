@@ -1,4 +1,7 @@
-"""The firewall through ``ConfigPipeline.apply`` and ``state.effective``: patches on inherited values start from the profile."""
+"""The firewall through ``ConfigPipeline.apply`` and ``state.effective``.
+
+Patches on inherited values start from the profile.
+"""
 
 import copy
 import uuid
@@ -42,7 +45,10 @@ def global_segment(*rules: dict[str, Any]) -> dict[str, Any]:
 def state_of(
     edge: dict[str, Any] | None, profile: dict[str, Any] | None = None
 ) -> ConfigState:
-    """An edge state whose edge firewall data is *edge* (no row for None), over a profile whose is *profile*."""
+    """An edge state whose edge firewall data is *edge* (no row for None).
+
+    Its profile's firewall data is *profile*.
+    """
     edge_rows = (
         []
         if edge is None
@@ -345,7 +351,10 @@ class FakeGroup:
 
 @final
 class ObjectGroupClient:
-    """Answers ``get_object_groups``: the address group ``printers`` and the service group ``web``."""
+    """Answers ``get_object_groups``.
+
+    The answer holds the address group ``printers`` and the service group ``web``.
+    """
 
     @property
     def protocol(self) -> VcoClientProtocol:

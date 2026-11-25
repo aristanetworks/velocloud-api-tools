@@ -1,4 +1,7 @@
-"""Configuration containers, module rows and the composed read are typed per layer; the firewall models are layered."""
+"""Configuration containers, module rows and the composed read are typed per layer.
+
+The firewall models are layered.
+"""
 
 import copy
 import json

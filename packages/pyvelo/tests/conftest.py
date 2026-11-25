@@ -1,4 +1,7 @@
-"""Shared SDK test fixtures: JSON-RPC response builders, mock VCO client, segment resolver factory."""
+"""Shared SDK test fixtures.
+
+JSON-RPC response builders, mock VCO client, segment resolver factory.
+"""
 
 from typing import cast
 

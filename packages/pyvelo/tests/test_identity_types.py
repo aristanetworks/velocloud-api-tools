@@ -40,7 +40,10 @@ from pyvelo.core.identity import (
 
 
 class TestKeyTypes:
-    """Key types are frozen dataclasses with a .value field and .identity_type ClassVar."""
+    """Key types are frozen dataclasses with a .value field.
+
+    And with an .identity_type ClassVar.
+    """
 
     def test_segment_id_is_frozen_dataclass(self) -> None:
         sid = SegmentId(42)

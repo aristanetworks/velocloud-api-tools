@@ -1,4 +1,7 @@
-"""``ConfigPipeline.compare_effective``: the effective view against the VCO's composed modules, offline."""
+"""``ConfigPipeline.compare_effective``, offline.
+
+It compares the effective view against the VCO's composed modules.
+"""
 
 import copy
 import uuid
@@ -196,7 +199,11 @@ QOS_EDGE: Json = {"segments": [qos_segment(0, "Global Segment", qos_rule("e1"))]
 
 
 def compose_qos(edge: Json | None, profile: Json) -> Json:
-    """What the composer gives for the QoS of the two layers: the edge's key where it has one, rules concatenated (the edge's first), the edge's segments first."""
+    """What the composer gives for the QoS of the two layers.
+
+    The edge's key where it has one, rules concatenated (the edge's first), the edge's
+    segments first.
+    """
     edge = edge or {"segments": []}
     data: Json = {}
     for key in (*profile, *edge):
@@ -217,7 +224,10 @@ def compose_qos(edge: Json | None, profile: Json) -> Json:
 
 
 def compose(edge: Json | None, profile: Json) -> Json:
-    """What the composer gives for the two layers: the edge's key where it has one, arrays concatenated, the edge's segments first."""
+    """What the composer gives for the two layers.
+
+    The edge's key where it has one, arrays concatenated, the edge's segments first.
+    """
     edge = edge or {"segments": []}
     data: Json = {}
     for key in (*profile, *edge):
@@ -254,7 +264,11 @@ async def loaded(
     qos_edge: Json | None = QOS_EDGE,
     qos_profile: Json = QOS_PROFILE,
 ) -> tuple[ConfigPipeline, ConfigState, MockVcoClient]:
-    """A state loaded through a pipeline over a store that composes the firewall of *edge* and *profile* (or answers *composed*), and the QoS of *qos_edge* and *qos_profile*, for the edge."""
+    """A state loaded through a pipeline over a store that composes the edge's modules.
+
+    The store composes the firewall of *edge* and *profile* (or answers *composed*), and
+    the QoS of *qos_edge* and *qos_profile*, for the edge.
+    """
     edge_rows = [
         make_module_json(
             name,
@@ -664,7 +678,10 @@ async def test_a_logging_flag_the_view_lacks_is_server_only() -> None:
 async def grouped(
     *, composer_adds: bool = True, group: str | None = GROUP, seed: bool = True
 ) -> tuple[ConfigPipeline, ConfigState, MockVcoClient]:
-    """An edge whose first rule names *group*, composed with the security keys the group's objects give it."""
+    """An edge whose first rule names *group*, composed with the group's security keys.
+
+    The security keys are those the group's objects give it.
+    """
     edge_rule = {**rule("e1"), "securityServiceGroup": group}
     edge = {**EDGE, "segments": [segment(0, "Global Segment", edge_rule)]}
     pipeline, state, client = await loaded(edge)

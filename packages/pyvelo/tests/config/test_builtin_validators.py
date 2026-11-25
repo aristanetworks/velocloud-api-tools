@@ -1,4 +1,7 @@
-"""Tests for built-in validators: key_uniqueness, override_consistency, required_fields."""
+"""Tests for built-in validators.
+
+The validators are key_uniqueness, override_consistency and required_fields.
+"""
 
 from datetime import UTC, datetime
 from types import SimpleNamespace
@@ -309,7 +312,10 @@ def _layered_state(data: object, target: str) -> ConfigStateLike:
 
 class TestLayeredModels:
     def test_an_inheritable_field_is_not_required(self) -> None:
-        """Where the edge inherits (it stores nothing) or the profile reads its display default."""
+        """Where the edge inherits or the profile reads its display default.
+
+        An edge that inherits stores nothing.
+        """
         for target, data in (
             ("edge", Mod[Edge].model_validate(mod_json())),
             ("profile", Mod[Profile].model_validate(mod_json())),

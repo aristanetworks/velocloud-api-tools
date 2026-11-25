@@ -1,4 +1,7 @@
-"""Tests for composable Annotated markers (Alias, EdgeOnly, ProfileOnly, Normalizer, ContextDefault)."""
+"""Tests for composable Annotated markers.
+
+Alias, EdgeOnly, ProfileOnly, Normalizer, ContextDefault.
+"""
 
 from typing import Annotated, cast
 
@@ -215,7 +218,8 @@ class TestCtxDefaultMarker:
     def test_profile_uses_none_default(self) -> None:
         m = CtxDefaultModel()
         d = _compact(m, config_level=ConfigContext.PROFILE)
-        # default_factory=list produces [], but profile default is None, so [] != None -> kept
+        # default_factory=list produces [], but profile default is None, so [] != None
+        # -> kept
         assert d["routed_interfaces"] == []
 
     def test_profile_none_matches_ctx_default(self) -> None:

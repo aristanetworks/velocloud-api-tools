@@ -200,7 +200,8 @@ def test_a_placeholder_is_empty_in_each_module_and_has_what_the_orchestrator_nee
         "segment": desc(2, "Guest"),
         "rules": [],
     }
-    # a deviceSettings entry without routes.static is refused as "static route is missing"
+    # a deviceSettings entry without routes.static is refused as "static route is
+    # missing"
     assert profile_placeholder(profile_segments, "Guest", "deviceSettings") == {
         "segment": desc(2, "Guest"),
         "routes": {"static": []},

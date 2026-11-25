@@ -1,4 +1,7 @@
-"""Tests for custom validators: check_time_is_never, check_int_zero, check_string_empty."""
+"""Tests for custom validators.
+
+The validators are check_time_is_never, check_int_zero and check_string_empty.
+"""
 
 import datetime as dt
 from typing import cast

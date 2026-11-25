@@ -38,7 +38,10 @@ def ds_module(
     bridges: tuple[Hub, ...] = (),
     backhaul: tuple[Hub, ...] = (),
 ) -> DeviceSettingsConfigurationModule:
-    """The device settings module of a profile whose Global Segment has these hubs, bridges and backhaul hubs."""
+    """The device settings module of a profile, with hubs in its Global Segment.
+
+    The Global Segment has these hubs, bridges and backhaul hubs.
+    """
     entry = ds_with_vpn(GLOBAL, hubs=hubs, bridges=bridges, backhaul=backhaul)
     row = profile_rows([entry], [], [])[0]
     return DeviceSettingsConfigurationModule.model_validate(

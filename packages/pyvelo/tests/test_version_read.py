@@ -56,7 +56,10 @@ GET = "configuration/getConfiguration"
 async def provider_set(
     *, with_data_change: bool = False
 ) -> tuple[DeviceSettingsConfigurationModule, ModulePlan]:
-    """Device settings that get a primary provider and its row, and beside it ``ntp`` if asked."""
+    """Device settings that get a primary provider and its row.
+
+    Beside it, ``ntp`` if asked.
+    """
     module = unset_provider_module()
     current = copy_of_data(module)
     set_primary_provider(current, uuid.UUID(DNS_A))
@@ -71,7 +74,10 @@ async def provider_set(
 def a_store_holding(
     module: DeviceSettingsConfigurationModule, **knobs: Any
 ) -> ModuleStore:
-    """A store that holds *module* and the services and segments the plan's rows point at."""
+    """A store that holds *module*.
+
+    And the services and segments the plan's rows point at.
+    """
     store = store_of(module, **knobs)
     store.objects.update(store_with_services().objects)
     return store
@@ -366,7 +372,10 @@ def test_a_version_row_has_no_data() -> None:
 async def test_the_version_row_of_another_module_of_the_name_is_not_this_one(
     mock_vco_client: MockVcoClientFactory,
 ) -> None:
-    """Of several rows of a name, the version compared is that of the module's own ID."""
+    """Of several rows of a name, one version is compared.
+
+    It is that of the module's own ID.
+    """
     module, plan = await provider_set()
     store = a_store_holding(module)
     other = copy.deepcopy(store.rows[DS_ID])

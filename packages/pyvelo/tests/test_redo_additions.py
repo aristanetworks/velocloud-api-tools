@@ -26,7 +26,9 @@ from segment_helpers import GLOBAL, GUEST, ds_entry, identity, profile_rows, qos
 def qos_module(
     *, with_defaults: bool = True, data: object = None
 ) -> QosConfigurationModule[Profile]:
-    """A profile QoS module with the Global Segment, which has the template's ``defaults`` unless *with_defaults* is false.
+    """A profile QoS module with the Global Segment.
+
+    The segment has the template's ``defaults`` unless *with_defaults* is false.
 
     With *data*, the module holds that data instead.
     """
@@ -40,7 +42,10 @@ def qos_module(
 def with_guest(
     module: QosConfigurationModule[Profile], *, edited: bool = False
 ) -> ModulePlan:
-    """The plan of *module* with Guest added, its first rule renamed to ``Box2`` when *edited*."""
+    """The plan of *module* with Guest added.
+
+    Its first rule is renamed to ``Box2`` when *edited*.
+    """
     item: Any = module.add_segment_entry(new_segment_entry("QOS", identity(GUEST)))
     if edited:
         item.rules[0].name = "Box2"

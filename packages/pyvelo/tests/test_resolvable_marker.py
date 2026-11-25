@@ -74,7 +74,10 @@ class TestResolvableMarker:
 
 
 class TestAliasWithResolvableOnSubclass:
-    """Regression: Alias must be applied even when a parent already processed Resolvable."""
+    """Regression: Alias must be applied.
+
+    Even when a parent already processed Resolvable.
+    """
 
     def test_subclass_alias_applied_alongside_inherited_resolvable(self) -> None:
         class Parent(VcoModel):

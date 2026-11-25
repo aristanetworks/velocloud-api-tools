@@ -1,4 +1,6 @@
-"""Builders for the tests of derived refs: segments, services, ref rows, modules, stores and registries.
+"""Builders for the tests of derived refs.
+
+Segments, services, ref rows, modules, stores and registries.
 
 ``tests/support`` is on pytest's ``pythonpath`` and basedpyright's
 ``extraPaths``, so the tests of both packages import this as ``refs_helpers``.
@@ -59,7 +61,10 @@ def segment_entry(
 
 
 def dns(*, primary: bool = False, backup: bool = False) -> dict[str, Any]:
-    """A ``dns`` section with a ``{"ref": ...}`` stub for each provider asked for; the others are empty."""
+    """A ``dns`` section with a ``{"ref": ...}`` stub for each provider asked for.
+
+    The others are empty.
+    """
     return {
         "primaryProvider": {"ref": PRIMARY} if primary else {},
         "backupProvider": {"ref": BACKUP} if backup else {},
@@ -116,7 +121,9 @@ def ds_module(
     level: ConfigContext = ConfigContext.PROFILE,
     version: str = "v1",
 ) -> DeviceSettingsConfigurationModule:
-    """A device settings module of configuration ``CONFIG`` with the given segments and refs.
+    """A device settings module of configuration ``CONFIG``.
+
+    It has the given segments and refs.
 
     It is validated as a read is, at *level*, with *refs_loaded* as the
     validation context's flag.
@@ -143,7 +150,10 @@ def primary_provider_row() -> dict[str, Any]:
 def primary_provider_module(
     more_refs: dict[str, Any] | None = None, *, refs_loaded: bool = True
 ) -> DeviceSettingsConfigurationModule:
-    """A module whose Global Segment has ``dns-a`` as primary provider, with its row; *more_refs* adds refs."""
+    """A module whose Global Segment has ``dns-a`` as primary provider, with its row.
+
+    *more_refs* adds refs.
+    """
     return ds_module(
         [segment_entry(0, "Global Segment", SEG0, dns=dns(primary=True))],
         {
@@ -176,7 +186,10 @@ def copy_of_data(module: DeviceSettingsConfigurationModule) -> DeviceSettingsDat
 
 
 def set_primary_provider(data: DeviceSettingsData, value: uuid.UUID | None) -> None:
-    """Set the primary provider of the first segment of *data* to the service *value*."""
+    """Set the primary provider of the first segment of *data*.
+
+    Set it to the service *value*.
+    """
     dns_section = data.segments[0].dns
     assert isinstance(dns_section, SegmentDns)
     provider = dns_section.primary_provider
@@ -214,7 +227,9 @@ def changing_after_the_version_read(
     module_id: int,
     edit: Callable[[dict[str, Any]], None],
 ) -> Callable[[httpx.Request], httpx.Response]:
-    """A handler that answers with *handler*, and after the version read has another writer *edit* module *module_id* of *store*.
+    """A handler that answers with *handler*.
+
+    After the version read it has another writer *edit* module *module_id* of *store*.
 
     A write that sends refs reads the module's version before it sends. The
     module changes between that read and the write, which the read does not
@@ -234,7 +249,10 @@ def changing_after_the_version_read(
 
 
 async def table_registry(*identities: object) -> ResolverRegistry:
-    """A registry whose segment and network-service resolvers are loaded with *identities*."""
+    """A registry whose segment and network-service resolvers are loaded.
+
+    They are loaded with *identities*.
+    """
     segments = [i for i in identities if isinstance(i, SegmentIdentity)]
     services = [i for i in identities if isinstance(i, NetworkServiceIdentity)]
     registry = ResolverRegistry()

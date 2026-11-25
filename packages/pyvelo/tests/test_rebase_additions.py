@@ -24,7 +24,10 @@ RATE: dict[str, Any] = {"enabled": False, "inputType": "percent", "value": 1}
 def qos_at(
     version: str, *entries: dict[str, Any], enabled: bool = False
 ) -> QosConfigurationModule[Profile]:
-    """A profile QoS module at *version* with *entries* and a rate limit that is *enabled* or not."""
+    """A profile QoS module at *version* with *entries* and a rate limit.
+
+    The rate limit is *enabled* or not.
+    """
     data = {
         "segments": list(entries),
         "serviceRateLimit": {**RATE, "enabled": enabled},
@@ -38,7 +41,10 @@ def qos_at(
 def guest_added(
     module: QosConfigurationModule[Profile], *, edited: bool = True
 ) -> ModulePlan:
-    """The plan of *module* with Guest added, and its first rule renamed to ``Box2`` when *edited*."""
+    """The plan of *module* with Guest added.
+
+    Its first rule is renamed to ``Box2`` when *edited*.
+    """
     item: Any = module.add_segment_entry(new_segment_entry("QOS", identity(GUEST)))
     if edited:
         item.rules[0].name = "Box2"

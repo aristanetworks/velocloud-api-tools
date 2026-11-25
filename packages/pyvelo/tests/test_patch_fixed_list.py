@@ -1,4 +1,7 @@
-"""A FixedList takes an edit of its editable fields only: entries, keys and order are fixed."""
+"""A FixedList takes an edit of its editable fields only.
+
+Entries, keys and order are fixed.
+"""
 
 import copy
 import uuid

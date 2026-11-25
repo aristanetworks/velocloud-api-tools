@@ -829,7 +829,10 @@ class TestTransport:
         self, json_rpc_response: JsonRpcResponseFactory
     ) -> None:
         class HoldsConnections(httpx.AsyncBaseTransport):
-            """Like a pool: closing it ends its connections until it is entered again."""
+            """Like a pool: closing it ends its connections.
+
+            They end until it is entered again.
+            """
 
             def __init__(self) -> None:
                 self.closed: bool = False
@@ -911,7 +914,10 @@ class TestVcoAuth:
     async def test_custom_prefix_preserved(
         self, json_rpc_response: JsonRpcResponseFactory
     ) -> None:
-        """A token with an arbitrary prefix like 'RandomPrefix ' must be sent verbatim."""
+        """A token with an arbitrary prefix must be sent verbatim.
+
+        The prefix is one like 'RandomPrefix '.
+        """
 
         def handler(request: httpx.Request) -> httpx.Response:
             assert request.headers["Authorization"] == "RandomPrefix my-jwt"

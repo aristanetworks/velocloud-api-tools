@@ -155,7 +155,10 @@ class TestNestedModels:
         assert "inner" not in d
 
     def test_nested_missing_typed_present_kept(self) -> None:
-        """inner_optional accepts MISSING; when explicitly set, kept even at defaults."""
+        """inner_optional accepts MISSING.
+
+        When explicitly set, it is kept even at defaults.
+        """
         m = Outer(inner_optional=Inner())
         d = _compact(m)
         assert "inner_optional" in d

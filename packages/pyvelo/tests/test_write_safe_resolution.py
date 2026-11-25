@@ -246,7 +246,8 @@ class Lan(VcoModel):
 
 def test_only_the_marked_field_fills_ids() -> None:
     lan = Lan()
-    # "Guest" here is a network's name. It is not marked, so it is not tried as a segment.
+    # "Guest" here is a network's name. It is not marked, so it is not tried as a
+    # segment.
     _ = lan.merge_patch({"networks": {"Guest": add()}}, resolvers=Fake())
     assert lan.networks[0].segment_id == 0
     _ = lan.merge_patch(

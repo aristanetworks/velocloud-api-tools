@@ -85,7 +85,10 @@ def global_segment(**values: Any) -> dict[str, Any]:
 
 
 def a_store() -> ModuleStore:
-    """A store with the services and segments, and the configuration the module goes in."""
+    """A store with the services and segments.
+
+    And the configuration the module goes in.
+    """
     store = store_with_services()
     store.add_configuration({"id": CONFIG, "name": "Edge Specific Profile"})
     return store

@@ -1,4 +1,6 @@
-"""A QoS segment of a profile holds the template's four ``defaults``; a write repairs one that lacks some.
+"""A QoS segment of a profile holds the template's four ``defaults``.
+
+A write repairs one that lacks some.
 
 ``plan_module`` pairs the ``defaults`` of each segment with the template's
 entries, one to one. The entries nothing pairs with are added when the module

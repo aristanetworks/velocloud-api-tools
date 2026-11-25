@@ -1,4 +1,6 @@
-"""A state plans with its own resolvers: provider edits, the services read, and the plan's warnings.
+"""A state plans with its own resolvers.
+
+Provider edits, the services read, and the plan's warnings.
 
 The state is a profile whose device settings module (10 of configuration 100)
 has the Global Segment, which the mock client serves as object 1. The store
@@ -134,7 +136,10 @@ def profile_state(service: str | None = None, *, css: bool = False) -> ConfigSta
 
 
 def served(state: ConfigState) -> MockVcoClient:
-    """A client over a store that holds *state*'s configurations and the two services."""
+    """A client over a store that holds *state*'s configurations.
+
+    The store holds the two services too.
+    """
     client = MockVcoClient.for_state(state)
     client.add_service(701, logical_id=DNS_A, name="dns-a", type_="dns")
     client.add_service(702, logical_id=DNS_B, name="dns-b", type_="dns")
@@ -511,7 +516,10 @@ EDGE_QOS_ID = 52
 
 
 def qos_json(*, module_id: int, configuration_id: int) -> dict[str, Any]:
-    """A QoS module with the Global Segment and a rate limit, the one value a test edits."""
+    """A QoS module with the Global Segment and a rate limit.
+
+    The rate limit is the one value a test edits.
+    """
     data = {
         "segments": [
             {
@@ -532,7 +540,10 @@ def qos_json(*, module_id: int, configuration_id: int) -> dict[str, Any]:
 
 
 def profile_with_qos(*, qos_first: bool = False) -> ConfigState:
-    """A profile state with device settings and QoS, written in that order unless *qos_first*."""
+    """A profile state with device settings and QoS.
+
+    They are written in that order unless *qos_first*.
+    """
     modules = [
         module_json(
             module_id=DS_ID,
@@ -555,7 +566,10 @@ def profile_with_qos(*, qos_first: bool = False) -> ConfigState:
 
 
 def edge_with_qos() -> ConfigState:
-    """An edge state with device settings and QoS of its own, over a profile that has only device settings."""
+    """An edge state with device settings and QoS of its own.
+
+    Its profile has only device settings.
+    """
     edge = EdgeConfiguration.model_validate(
         {
             "name": "Edge Specific Profile",
@@ -588,7 +602,10 @@ def rate_limit(data: QosData[Edge] | QosData[Profile]) -> ServiceRateLimit:
 
 
 def propagating(client: MockVcoClient, qos_id: int) -> None:
-    """Make a write of device settings change the QoS row, as the VCO's propagation does."""
+    """Make a write of device settings change the QoS row.
+
+    The VCO's propagation does that.
+    """
 
     def enable(row: dict[str, Any]) -> None:
         row["data"]["serviceRateLimit"]["enabled"] = True

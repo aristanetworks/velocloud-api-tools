@@ -1,4 +1,6 @@
-"""``check_module_version``: the version read of a write that sends refs, made on its own.
+"""``check_module_version``: the version read of a write that sends refs.
+
+The read is made on its own.
 
 A save that sends role steps before it writes device settings checks the
 module's version first, so that a module another writer changed stops the save

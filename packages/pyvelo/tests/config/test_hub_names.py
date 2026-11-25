@@ -1,4 +1,7 @@
-"""A hub named in a patch is looked up in the enterprise's Edges and clusters, loaded once on first use."""
+"""A hub named in a patch is looked up in the enterprise's Edges and clusters.
+
+They are loaded once, on first use.
+"""
 
 from typing import Any
 

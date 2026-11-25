@@ -166,7 +166,10 @@ class NoCopyResolver:
 
 
 class WrongIdentityResolver(BaseResolver[FooIdentity]):
-    """The type checker refuses an ``identity_type`` that is not the resolver's identity."""
+    """The type checker refuses a wrong ``identity_type``.
+
+    One that is not the resolver's identity.
+    """
 
     identity_type = BarIdentity  # pyright: ignore[reportAssignmentType, reportUnannotatedClassAttribute]
 

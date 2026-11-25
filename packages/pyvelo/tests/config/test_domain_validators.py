@@ -1,4 +1,7 @@
-"""Tests for domain-specific validators: overlapping subnets, rule uniqueness, interface consistency."""
+"""Tests for domain-specific validators.
+
+They check overlapping subnets, rule uniqueness and interface consistency.
+"""
 
 from datetime import UTC, datetime
 from typing import TypedDict

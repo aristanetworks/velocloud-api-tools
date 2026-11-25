@@ -106,7 +106,10 @@ class TestDetermineUserType:
     async def test_msp_when_operator_fails(
         self, mock_vco_client: MockVcoClientFactory
     ) -> None:
-        """When operator probe fails, MSP is returned and enterprise probe is skipped."""
+        """When operator probe fails, MSP is returned.
+
+        Enterprise probe is skipped.
+        """
         calls: list[str] = []
         handler = _make_handler(
             {

@@ -38,7 +38,10 @@ from test_write_back import (  # pyright: ignore[reportImplicitRelativeImport]
 
 
 class Gated(MockVcoClient):
-    """Each module write sets ``started``, yields to the loop, then waits for ``release``."""
+    """Each module write sets ``started`` and yields to the loop.
+
+    Then it waits for ``release``.
+    """
 
     started: asyncio.Event
     release: asyncio.Event

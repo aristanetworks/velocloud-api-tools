@@ -1,4 +1,7 @@
-"""``ConfigPipeline.assign_segment``: one call adds the UI's factory entry for an enterprise segment to each of a profile's three modules, in memory.
+"""``ConfigPipeline.assign_segment`` adds an enterprise segment to a profile, in memory.
+
+One call adds the UI's factory entry for the segment to each of the profile's three
+modules.
 
 Each state is built by ``profile_state`` (a profile target, a segment resolver
 loaded with Global, Guest and Voice); the writes go to a ``ModuleStore``.
@@ -378,7 +381,7 @@ async def test_an_existing_qos_entry_missing_defaults_gets_them_in_the_baseline(
     assert [w.code for w in plan.warnings if w.code == "defaults_repaired"] == []
 
 
-# --- all or nothing ----------------------------------------------------------------------
+# --- all or nothing -------------------------------------------------------------------
 
 
 async def test_a_failure_leaves_the_state_as_it_was() -> None:
@@ -406,7 +409,7 @@ async def test_assign_holds_the_lock() -> None:
     assert state.plan().changed == ()
 
 
-# --- the shared helpers ------------------------------------------------------------------
+# --- the shared helpers ---------------------------------------------------------------
 
 
 async def test_a_module_not_at_the_profile_level_raises_naming_the_fix() -> None:

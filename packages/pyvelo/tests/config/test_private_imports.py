@@ -1,4 +1,6 @@
-"""No source file of the package writes ``from m import _name``, outside the three engines of ``pyvelo.core``.
+"""No source file of the package writes ``from m import _name``.
+
+The exceptions are the three engines of ``pyvelo.core``.
 
 It reads each file's imports and so does not see an attribute access such as
 ``module._x``, an ``import module`` followed by a use of its private name, or an

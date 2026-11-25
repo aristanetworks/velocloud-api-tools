@@ -1,4 +1,7 @@
-"""The keys the composer adds to a firewall rule, expected from the security objects its group names."""
+"""The keys the composer adds to a firewall rule.
+
+They are expected from the security objects its group names.
+"""
 
 from collections.abc import Mapping
 from typing import Any
@@ -151,7 +154,10 @@ def test_an_unknown_group_or_object_is_unresolved_with_its_reason() -> None:
 
 
 def rule_dump(*segments: dict[str, Any]) -> dict[str, Any]:
-    """A firewall dump with the *segments*, each one's descriptor and a rule naming a group."""
+    """A firewall dump with the *segments*.
+
+    Each segment has its descriptor and a rule naming a group.
+    """
     return {
         "segments": [
             {

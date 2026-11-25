@@ -210,7 +210,8 @@ class TestPortalMethodNames:
         assert call_type == "portal"
         parts = method_str.split("/")
         assert len(parts) == 2, (
-            f"{file}:{lineno}: portal method '{method_str}' should be 'domain/methodName'"
+            f"{file}:{lineno}: portal method '{method_str}' "
+            "should be 'domain/methodName'"
         )
         domain, method_name = parts
         assert domain.isalpha(), (
@@ -245,7 +246,10 @@ class TestPortalMethodNames:
 
 class TestNoOrphanedMixins:
     def test_all_mixins_composed(self) -> None:
-        """Every *Mixin class in operations/ should appear in VcoClientProtocol's MRO."""
+        """Every *Mixin class in operations/ should appear in the MRO.
+
+        The MRO is VcoClientProtocol's.
+        """
         composed_names = {cls.__name__ for cls in _MIXIN_CLASSES}
 
         # Find all mixin classes defined in operation files via import

@@ -1,4 +1,6 @@
-"""``ModuleStore``: Edges, hub clusters, the twelve hub role calls and the hub list check.
+"""``ModuleStore``: Edges, hub clusters and the twelve hub role calls.
+
+And the hub list check.
 
 Each test runs on a store with the profile of ``segment_helpers`` (configuration
 ``CONFIG``, one device settings segment, ``GLOBAL``), the Edges of ``hub_helpers``
@@ -135,7 +137,10 @@ def edge_service_of(store: ModuleStore, hub: Hub) -> dict[str, Any]:
 
 
 def add_backhaul_row(store: ModuleStore, service_id: int) -> None:
-    """A ``deviceSettings:backHaulEdge`` row of the Edge configuration's QoS module that points at *service_id*."""
+    """A ``deviceSettings:backHaulEdge`` row of the Edge configuration's QoS module.
+
+    It points at *service_id*.
+    """
     service = store.objects[service_id]
     store.rows[EDGE_QOS_ID]["refs"] = {
         BACKHAUL_REF: {
@@ -505,7 +510,10 @@ def update_ds(
 
 
 def hub_ref(store: ModuleStore, hub: Hub) -> dict[str, Any]:
-    """The refs holding the row for *hub*, whose service the store holds (made with an enable if an Edge)."""
+    """The refs holding the row for *hub*, whose service the store holds.
+
+    The service is made with an enable if the hub is an Edge.
+    """
     if hub.kind == "edge":
         service = call(store, ENABLE_EDGE["hub"], hub.id)
         row = hub_helpers.hub_row(

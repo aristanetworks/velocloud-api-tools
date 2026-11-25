@@ -1,4 +1,7 @@
-"""``ConfigPipeline.apply`` on a profile: an ``add`` of a segment under ``segments`` of any of its three modules assigns it, as ``assign_segment`` does.
+"""``ConfigPipeline.apply`` on a profile: an ``add`` of a segment assigns it.
+
+The ``add`` is under ``segments`` of any of the three modules, and it assigns the
+segment as ``assign_segment`` does.
 
 Each state is built by ``profile_state`` (a profile target, a segment resolver
 loaded with Global, Guest and Voice, the profile holding the Global Segment
@@ -413,7 +416,7 @@ async def test_no_segment_resolver_raises_patch_error_with_the_lookup_error_as_c
     assert state.plan().changed == ()
 
 
-# --- the modules ------------------------------------------------------------------------
+# --- the modules ----------------------------------------------------------------------
 
 
 async def test_a_profile_without_qos_refuses_an_add() -> None:
@@ -496,7 +499,7 @@ async def test_a_change_on_a_firewall_only_profile_still_works() -> None:
     assert [m.name for m in state.plan().changed] == [FIREWALL]
 
 
-# --- a list value --------------------------------------------------------------------------
+# --- a list value ---------------------------------------------------------------------
 
 
 async def test_a_list_value_with_a_new_segment_assigns_it() -> None:
@@ -644,11 +647,14 @@ async def test_a_copied_entry_with_its_defaults_reordered_is_still_refused() -> 
     assert raised.value.kind == "fixed_list"
 
 
-# --- an orphan can go, nothing else --------------------------------------------------------------
+# --- an orphan can go, nothing else ---------------------------------------------------
 
 
 async def orphan_in(module: str) -> ConfigState:
-    """A profile whose device settings lack Guest, which *module* (QoS or firewall) has."""
+    """A profile whose device settings lack Guest.
+
+    *module* (QoS or firewall) has Guest.
+    """
     return await profile_state(
         [ds_entry(GLOBAL)],
         [qos_entry(GLOBAL)] + ([qos_entry(GUEST)] if module == QOS else []),
@@ -729,7 +735,7 @@ async def test_removing_a_segment_device_settings_has_raises_even_from_qos_witho
     assert raised.value.kind == "segment_rule"
 
 
-# --- a descriptor is not rewritten -----------------------------------------------------------------
+# --- a descriptor is not rewritten ----------------------------------------------------
 
 
 @pytest.mark.parametrize(
@@ -808,7 +814,7 @@ async def test_a_descriptor_that_a_list_value_keeps_is_accepted() -> None:
     assert names_in(state, QOS) == ["Guest", "Global Segment"]
 
 
-# --- all or nothing -----------------------------------------------------------------------------------
+# --- all or nothing -------------------------------------------------------------------
 
 
 async def test_a_failed_patch_leaves_all_three_modules_as_they_were() -> None:
@@ -836,7 +842,7 @@ async def test_a_failed_second_add_keeps_the_first() -> None:
     assert dumps(state) == before
 
 
-# --- the saved assignment -------------------------------------------------------------------------------
+# --- the saved assignment -------------------------------------------------------------
 
 
 async def test_the_saved_assignment_reads_back_and_a_second_add_raises_exists() -> None:
@@ -861,7 +867,7 @@ async def test_the_saved_assignment_reads_back_and_a_second_add_raises_exists() 
         assert raised.value.kind == "exists"
 
 
-# --- the other segments --------------------------------------------------------------------------------
+# --- the other segments ---------------------------------------------------------------
 
 
 async def test_two_adds_in_one_patch_assign_two_segments() -> None:

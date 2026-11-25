@@ -120,7 +120,10 @@ def update_refs(store: ModuleStore, module_id: int, refs: object) -> dict[str, A
 
 
 def refs_store() -> ModuleStore:
-    """Configuration 10 with device settings module 10 of one segment, and the objects 701 (a DNS service) and 501 (the global segment)."""
+    """Configuration 10 with device settings module 10 of one segment.
+
+    And the objects 701 (a DNS service) and 501 (the global segment).
+    """
     store = ModuleStore()
     store.add_configuration({"id": 10, "name": "Edge Specific Profile"})
     store.rows[10] = make_module_json(

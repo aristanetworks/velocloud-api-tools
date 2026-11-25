@@ -1,4 +1,7 @@
-"""The QoS ownership scenarios, each through ``plan_module`` on edge modules bound to a profile."""
+"""The QoS ownership scenarios, each through ``plan_module``.
+
+Each runs on edge modules bound to a profile.
+"""
 
 import copy
 import json
@@ -57,7 +60,10 @@ def segment_of(name: str = "Global Segment", **extra: Any) -> dict[str, Any]:
 def bound(
     edge_raw: dict[str, Any], profile_raw: dict[str, Any] | None = None
 ) -> tuple[QosConfigurationModule[Edge], QosConfigurationModule[Profile]]:
-    """An edge module of *edge_raw* bound to a profile module of *profile_raw*, and that one."""
+    """An edge module of *edge_raw*, and the profile module it is bound to.
+
+    The profile module is of *profile_raw*.
+    """
     edge = qos_mod({"segments": [], **edge_raw}, layer=Edge)
     profile = qos_mod(
         {"segments": [], **(profile_raw or {})}, layer=Profile, module_id=2
@@ -295,8 +301,8 @@ def test_plan_warns_of_a_cos_mapping_the_backend_uses_with_its_flag_off() -> Non
     ]
     message = plan.warnings[0].message
     assert (
-        "The edge stores cosMapping of segment 'Global Segment' with override false or absent."
-        in message
+        "The edge stores cosMapping of segment 'Global Segment' with override false "
+        "or absent." in message
     )
     assert '{"segments": {"Global Segment": {"cosMapping": null}}}' in message
     assert "inherit()" in message

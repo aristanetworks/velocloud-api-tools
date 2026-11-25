@@ -1,4 +1,7 @@
-"""The response check's rewrites: values the VCO owns, defaults it adds back, IPv6 forms."""
+"""The response check's rewrites.
+
+Values the VCO owns, defaults it adds back, IPv6 forms.
+"""
 
 from collections.abc import Iterable, Sequence
 from typing import Annotated
@@ -191,7 +194,9 @@ V6_ROUTE: dict[str, object] = {
     "gw": "fe80::1",
     "intf": "GE3",
 }
-"""An item of ``Root.routes`` whose key holds an IPv6 address the VCO would lower-case."""
+"""An item of ``Root.routes`` whose key holds an IPv6 address the VCO would
+lower-case.
+"""
 V6_ROUTE_PATH = 'routes["2001:DB8:1::",64,"fe80::1",GE3]'
 
 

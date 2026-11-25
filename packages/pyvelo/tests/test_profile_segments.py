@@ -1,4 +1,7 @@
-"""The factory entries of a new profile segment ship as package data, with builders; the test helpers built on them work."""
+"""The factory entries of a new profile segment ship as package data.
+
+They ship with builders; the test helpers built on them work.
+"""
 
 import copy
 import hashlib

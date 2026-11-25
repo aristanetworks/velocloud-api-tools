@@ -1,4 +1,6 @@
-"""A hub named once, or given by its logical ID once, fills its list entry or rule entry.
+"""A hub named once, or given by its logical ID once, fills its entry.
+
+That is its list entry or rule entry.
 
 ``merge_patch`` runs here over a registry that holds a loaded ``HubResolver``.
 """

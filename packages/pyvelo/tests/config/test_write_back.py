@@ -126,7 +126,10 @@ def rule(name: str) -> FirewallOutboundRule:
 
 
 def models_in(value: object) -> Iterator[VcoModel]:
-    """Every model reachable from *value*: through fields, extra values, list items and dict values."""
+    """Every model reachable from *value*.
+
+    Through fields, extra values, list items and dict values.
+    """
     if isinstance(value, VcoModel):
         yield value
         for name in type(value).model_fields:
@@ -143,7 +146,10 @@ def models_in(value: object) -> Iterator[VcoModel]:
 def assert_detached_and_replaced(
     state: ConfigState, seg: FirewallSegment[Edge], old_data: object
 ) -> None:
-    """*seg* and *old_data*, held from before a save, are detached; the firewall module now in the state shares no model with them."""
+    """*seg* and *old_data*, held from before a save, are detached.
+
+    The firewall module now in the state shares no model with them.
+    """
     with pytest.raises(
         DetachedObjectError, match=r"FirewallSegment\[Edge\]\.firewall_logging"
     ):
@@ -522,7 +528,10 @@ async def test_in_place_edit_on_a_detached_object_is_reported_by_plan() -> None:
     held = Path(("data", "segments", Key("Global Segment"), "outbound", Key("new")))
 
     async def saved() -> tuple[ConfigState, MockVcoClient, FirewallSegment[Edge]]:
-        """A state saved once with one edit, and a segment taken from it before, changed in place since."""
+        """A state saved once with one edit, and a segment taken from it before.
+
+        The segment has been changed in place since.
+        """
         state = make_state()
         client = MockVcoClient.for_state(state)
         seg = state.edge.firewall.segments[0]

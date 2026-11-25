@@ -1,4 +1,7 @@
-"""The Edge disable calls accept a ``null`` answer; the cluster ones do not; the services read parses a source-shaped answer."""
+"""The Edge disable calls accept a ``null`` answer; the cluster ones do not.
+
+The services read parses a source-shaped answer.
+"""
 
 from typing import Any
 

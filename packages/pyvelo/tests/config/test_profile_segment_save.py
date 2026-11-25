@@ -1,4 +1,6 @@
-"""The save of a segment assigned to a profile: three writes, device settings first, on a ``ModuleStore``.
+"""The save of a segment assigned to a profile, on a ``ModuleStore``.
+
+It is three writes, device settings first.
 
 Each state is built by ``profile_state`` and written through
 ``module_store_pipeline``. A change another writer makes after the device
@@ -45,7 +47,10 @@ GUEST_ID = GUEST[0]
 
 
 async def global_only(*, with_defaults: bool = True) -> ConfigState:
-    """A profile with the Global Segment in each module; its QoS ``defaults`` are the template's unless *with_defaults* is false."""
+    """A profile with the Global Segment in each module.
+
+    Its QoS ``defaults`` are the template's unless *with_defaults* is false.
+    """
     entry = qos_entry(GLOBAL) if with_defaults else qos_entry(GLOBAL, defaults=MISSING)
     return await profile_state([ds_entry(GLOBAL)], [entry], [firewall_entry(GLOBAL)])
 
@@ -85,7 +90,9 @@ def planned_guest(state: ConfigState, module: str) -> dict[str, Any]:
 def after_device_settings(
     store: ModuleStore, *writes: tuple[int, Callable[[dict[str, Any]], None]]
 ) -> dict[int, str]:
-    """Have *writes* (module ID, edit) made once, by another writer, when the device settings row is stored.
+    """Have *writes* (module ID, edit) made once, by another writer.
+
+    They are made when the device settings row is stored.
 
     Returns the versions the modules have after them, by module ID, once made.
     """

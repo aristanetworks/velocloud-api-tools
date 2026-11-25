@@ -1,4 +1,7 @@
-"""The outcome of one module write: what the VCO stored, against what the plan meant to change."""
+"""The outcome of one module write.
+
+What the VCO stored, against what the plan meant to change.
+"""
 
 import copy
 import dataclasses
@@ -267,8 +270,8 @@ def test_message_names_each_path_and_marks_a_clash() -> None:
         _ = check_module_write(module, plan, as_stored(module, {**RAW, "future": 3}))
     lines = str(exc.value).splitlines()
     assert (
-        "lost edits (not stored; `error.redo_patch()` redoes those it can, `error.not_redone()` lists the rest):"
-        in lines
+        "lost edits (not stored; `error.redo_patch()` redoes those it can, "
+        "`error.not_redone()` lists the rest):" in lines
     )
     assert (
         "  future: read 1, meant 2, stored 3  [clash: also changed on the VCO]" in lines
@@ -295,7 +298,10 @@ def test_long_values_are_cut_where_they_differ() -> None:
     with pytest.raises(ConfigConflictError) as exc:
         _ = check_module_write(module, plan, stored)
     assert str(exc.value).splitlines()[1:] == [
-        "lost edits (not stored; `error.redo_patch()` redoes those it can, `error.not_redone()` lists the rest):",
+        (
+            "lost edits (not stored; `error.redo_patch()` redoes those it can, "
+            "`error.not_redone()` lists the rest):"
+        ),
         (
             "  future: read …50, 51, 52, 53, 54, 55, 56, 57, 58, 59], "
             "meant …50, 51, 52, 53, 54, 99, 56, 57, 58, 59], "
@@ -325,8 +331,8 @@ def test_message_shows_the_place_of_an_added_rule_and_the_order() -> None:
         _ = check_module_write(module, plan, stored, answer="refused")
     lines = str(exc.value).splitlines()
     assert (
-        lines[1]
-        == "lost edits (not stored; `error.redo_patch()` redoes those it can, `error.not_redone()` lists the rest):"
+        lines[1] == "lost edits (not stored; `error.redo_patch()` redoes those it can, "
+        "`error.not_redone()` lists the rest):"
     )
     assert lines[2].startswith(
         '  inbound[c] (first): read (nothing), meant {"action": '
@@ -660,13 +666,19 @@ SECOND: dict[str, Any] = {"id": 302, "enterpriseObjectId": 8}
 
 
 def ecmp_removed() -> tuple[ConfigurationModuleBase, ModulePlan]:
-    """Device settings whose only planned change removes a segment's ``ecmp``, a default the VCO adds back."""
+    """Device settings whose only planned change removes a segment's ``ecmp``.
+
+    ``ecmp`` is a default the VCO adds back.
+    """
     module = ds({**DS_RAW, "segments": [{**GLOBAL, "ecmp": ECMP}]})
     return module, plan_module(module, {**DS_RAW, "segments": [GLOBAL]})
 
 
 def owned_id_changed() -> tuple[ConfigurationModuleBase, ModulePlan]:
-    """A firewall module whose only planned change is to a rule's ``ruleLogicalId``, which the VCO owns."""
+    """A firewall module whose only planned change is to a rule's ``ruleLogicalId``.
+
+    The VCO owns it.
+    """
     rule = inbound("a", ruleLogicalId="x").model_dump(mode="json")
     module = fw({**RAW, "inbound": [rule]}, layer=Edge)
     return module, plan_module(
@@ -683,7 +695,10 @@ def raw_refs(module: ConfigurationModuleBase) -> dict[str, Any]:
 
 
 def provider_cleared() -> tuple[DeviceSettingsConfigurationModule, ModulePlan]:
-    """Device settings whose only planned change removes the row of a primary provider."""
+    """Device settings whose only planned change removes a row.
+
+    It is the row of a primary provider.
+    """
     module = primary_provider_module()
     current = copy_of_data(module)
     set_primary_provider(current, None)
@@ -693,7 +708,10 @@ def provider_cleared() -> tuple[DeviceSettingsConfigurationModule, ModulePlan]:
 async def provider_set(
     *, with_data_change: bool = False
 ) -> tuple[DeviceSettingsConfigurationModule, ModulePlan]:
-    """Device settings that get a primary provider and its row, and beside it ``ntp`` if asked."""
+    """Device settings that get a primary provider and its row.
+
+    Beside it, ``ntp`` if asked.
+    """
     module = unset_provider_module()
     current = copy_of_data(module)
     set_primary_provider(current, uuid.UUID(DNS_A))
@@ -836,7 +854,8 @@ def test_a_counted_write_with_nothing_stored_is_not_a_conflict() -> None:
     assert not isinstance(exc.value, ConfigConflictError)
     assert paths(exc.value.lost_edits) == ["firewall_enabled"]
     assert str(exc.value).splitlines()[0] == (
-        "Configuration module 1 (firewall): 1 of 1 planned changes are not stored as sent"
+        "Configuration module 1 (firewall): 1 of 1 planned changes are not stored "
+        "as sent"
     )
 
 
@@ -911,7 +930,9 @@ READDED: dict[
         "ha.fips",
     ),
 }
-"""Per ``readded`` pattern of device settings: the data as read, as sent and as stored, and the path left out."""
+"""Per ``readded`` pattern of device settings: the data as read, as sent and as stored,
+and the path left out.
+"""
 
 
 def test_every_rewrite_in_the_table_has_a_case_here() -> None:
@@ -958,7 +979,10 @@ def test_the_append_only_ref_names() -> None:
 def refs_plan(
     module: ConfigurationModuleBase, refs: dict[str, Any], *changes: RefChange
 ) -> ModulePlan:
-    """A plan of *module* that sends *refs* and plans *changes* of them; its data is not changed."""
+    """A plan of *module* that sends *refs* and plans *changes* of them.
+
+    Its data is not changed.
+    """
     plan = plan_module(module, {**QOS_RAW, "future": 1})
     return dataclasses.replace(plan, refs=refs, ref_changes=changes)
 
@@ -1044,7 +1068,9 @@ SITE_ROW: dict[str, Any] = {
     "object": "NETWORK_SERVICE",
     "data": {},
 }
-"""A row of a name the VCO's processors manage, as read; the store's service 702 completes it the same way."""
+"""A row of a name the VCO's processors manage, as read; the store's service 702
+completes it the same way.
+"""
 DNS_A_IDENTITY = NetworkServiceIdentity("dns-a", uuid.UUID(DNS_A), 701, "dns")
 SEG0_IDENTITY = SegmentIdentity("Global Segment", 0, SEG0_OBJECT, uuid.UUID(SEG0))
 
@@ -1052,7 +1078,10 @@ SEG0_IDENTITY = SegmentIdentity("Global Segment", 0, SEG0_OBJECT, uuid.UUID(SEG0
 async def provider_set_over_a_store(
     mock_vco_client: MockVcoClientFactory, *, with_data_change: bool = True
 ) -> tuple[DeviceSettingsConfigurationModule, ModulePlan, ModuleStore, VcoClient]:
-    """A device settings write of a new primary provider, over a store that holds the services."""
+    """A device settings write of a new primary provider.
+
+    It is over a store that holds the services.
+    """
     module, plan = await provider_set(with_data_change=with_data_change)
     store = store_of(module)
     store.objects.update(store_with_services().objects)
@@ -1202,7 +1231,10 @@ async def test_a_row_sent_as_read_the_vco_dropped_is_a_server_change(
 
 
 def module_with_a_processor_row() -> DeviceSettingsConfigurationModule:
-    """A module with a provider stub and no provider row, and a row of ``deviceSettings:css:site``."""
+    """A module with a provider stub and no provider row.
+
+    It has a row of ``deviceSettings:css:site``.
+    """
     return ds_module(
         [segment_entry(0, "Global Segment", SEG0, dns=dns(primary=True))],
         {SEGMENT: segment_row(0, SEG0_OBJECT, SEG0), CSS_SITE: SITE_ROW},
@@ -1385,7 +1417,10 @@ async def test_a_refs_only_write_whose_row_is_skipped_is_a_conflict_naming_both_
 
 
 def a_row_with_no_owner() -> DeviceSettingsConfigurationModule:
-    """A module with a primary provider and its row, and a backup provider row that nothing in the data names."""
+    """A module with a primary provider and its row, and a backup provider row.
+
+    Nothing in the data names the backup row.
+    """
     return primary_provider_module(
         {BACKUP: service_row(BACKUP, DNS_B, 702, SEG0_OBJECT, SEG0)}
     )
@@ -1435,7 +1470,10 @@ def test_an_insert_checks_the_refs_it_planned() -> None:
 
 
 def a_service_set(value: str | None) -> dict[str, object]:
-    """The patch that sets the primary provider of the Global Segment to *value* (``None`` clears it)."""
+    """The patch that sets the primary provider of the Global Segment to *value*.
+
+    ``None`` clears it.
+    """
     return {
         "segments": {"Global Segment": {"dns": {"primaryProvider": {"service": value}}}}
     }
@@ -1450,7 +1488,10 @@ def put_the_removed_row_back(new: dict[str, Any], old: dict[str, Any] | None) ->
 async def provider_swapped_over_a_store(
     mock_vco_client: MockVcoClientFactory,
 ) -> tuple[DeviceSettingsConfigurationModule, ModulePlan, ModuleStore, VcoClient]:
-    """A write that swaps ``dns-a`` for ``dns-b`` as the primary provider, and sets ``ntp``, over a store that holds the services."""
+    """A write that swaps ``dns-a`` for ``dns-b`` as the primary provider.
+
+    It sets ``ntp`` too, over a store that holds the services.
+    """
     module = primary_provider_module()
     current = copy_of_data(module)
     set_primary_provider(current, uuid.UUID(DNS_B))
@@ -1570,7 +1611,12 @@ async def test_the_redo_applied_to_the_module_as_stored_plans_the_same_row(
 async def lost_provider_and_dns_edit(
     stored_data: Callable[[dict[str, Any]], dict[str, Any]] = lambda raw: raw,
 ) -> WriteNotAppliedError:
-    """The error of a write that sets a primary provider and the DNS source interface of the Global Segment, over a module as stored that *stored_data* makes of the module's data as read with its ``ntp`` change, and that holds neither of the others."""
+    """The error of a write that sets two values of the Global Segment.
+
+    The write sets a primary provider and the DNS source interface of the Global
+    Segment. It is over a module as stored that *stored_data* makes of the module's data
+    as read with its ``ntp`` change, and that holds neither of the others.
+    """
     module = unset_provider_module()
     current = copy_of_data(module)
     set_primary_provider(current, uuid.UUID(DNS_A))
@@ -1670,7 +1716,10 @@ OTHER_SEGMENT = "99999999-9999-4999-8999-999999999999"
 async def lost_provider_beside_ntp(
     stored_segments: list[dict[str, Any]], *, refs: object = MISSING
 ) -> WriteNotAppliedError:
-    """The error of a write that sets a primary provider and ``ntp``, over a module as stored that holds ``ntp`` and the *stored_segments*, with the module's refs unless *refs* is given.
+    """The error of a write that sets a primary provider and ``ntp``.
+
+    It is over a module as stored that holds ``ntp`` and the *stored_segments*, with the
+    module's refs unless *refs* is given.
 
     No data edit is made in a segment, so the check records no stored part for
     the segment and the redo has to find it by identity.

@@ -1,4 +1,7 @@
-"""End-to-end saves: what reaches the VCO is the raw data as read plus the caller's edit."""
+"""End-to-end saves.
+
+What reaches the VCO is the raw data as read plus the caller's edit.
+"""
 
 import copy
 from typing import Any
@@ -34,7 +37,10 @@ def edge_state(raw: dict[str, Any]) -> ConfigState:
 
 
 async def segment_resolvers() -> ResolverRegistry:
-    """Resolvers that know the profile's segments, as ``ConfigPipeline.load`` gives a state."""
+    """Resolvers that know the profile's segments.
+
+    They are what ``ConfigPipeline.load`` gives a state.
+    """
     registry = ResolverRegistry()
     registry.register(
         await make_segment_resolver(
@@ -360,7 +366,10 @@ PROFILE_SERVICES: dict[str, Any] = {"loggingEnabled": True, "ssh": {"enabled": T
 def state_over_profile_with_services(
     edge_modules: list[dict[str, Any]],
 ) -> ConfigState:
-    """An edge state with *edge_modules*, whose profile's firewall stores ``services``."""
+    """An edge state with *edge_modules*.
+
+    Its profile's firewall stores ``services``.
+    """
     state = make_state(edge_modules=edge_modules)
     profile_row = make_module_json(
         "firewall",

@@ -1,4 +1,6 @@
-"""A hub added to or removed from a segment's hub lists plans its role steps, in the UI's order.
+"""A hub added to or removed from a segment's hub lists plans its role steps.
+
+The steps are in the UI's order.
 
 ``derive_steps`` compares the device settings module as read with the module
 as edited; ``state.plan()`` does it for a profile and carries the steps on
@@ -57,7 +59,10 @@ LIST_KEYS = {
 
 
 def refs(*rows: dict[str, Any]) -> dict[str, Any]:
-    """The refs of a profile with the Global Segment and Guest, and the hub rows *rows*."""
+    """The refs of a profile with the Global Segment and Guest.
+
+    They hold the hub rows *rows* too.
+    """
     return profile_hub_rows(
         segment_row(GLOBAL[0], GLOBAL[3], GLOBAL[2]),
         segment_row(GUEST[0], GUEST[3], GUEST[2]),
@@ -80,7 +85,10 @@ def service_row(
 async def profile_of(
     ds: list[dict[str, Any]], *rows: dict[str, Any], **knobs: Any
 ) -> ConfigState:
-    """A profile whose three modules hold the segments of *ds* (Global and Guest), with the hub rows *rows*."""
+    """A profile whose three modules hold the segments of *ds* (Global and Guest).
+
+    It has the hub rows *rows*.
+    """
     segments = [e["segment"]["segmentId"] for e in ds]
     qos = [qos_entry(s) for s in (GLOBAL, GUEST) if s[0] in segments]
     firewall = [firewall_entry(s) for s in (GLOBAL, GUEST) if s[0] in segments]
@@ -104,7 +112,10 @@ async def edit(  # noqa: PLR0913 (existing: split it when it next changes)
     hub_list: bool | None = None,
     vpn: bool | None = None,
 ) -> None:
-    """Patch the list of *role*, and the flags a hub list needs: *hub_list* is ``edgeToEdgeHub.enabled`` and *vpn* ``vpn.enabled``."""
+    """Patch the list of *role*, and the flags a hub list needs.
+
+    *hub_list* is ``edgeToEdgeHub.enabled`` and *vpn* ``vpn.enabled``.
+    """
     patch = vpn_patch(role, change)
     if hub_list is not None:
         patch["vpn"].setdefault("edgeToEdgeHub", {})["enabled"] = hub_list
@@ -123,7 +134,10 @@ def remove_hub(name: str) -> dict[str, Any]:
 
 
 def ref_of(hub: Hub, *, as_added: bool) -> HubRef:
-    """The ``HubRef`` of *hub*: with its IDs when the step adds it, without them for a removal."""
+    """The ``HubRef`` of *hub*.
+
+    With its IDs when the step adds it, without them for a removal.
+    """
     ids = (hub.id, None) if hub.kind == "edge" else (None, hub.id)
     return HubRef(
         kind=hub.kind,

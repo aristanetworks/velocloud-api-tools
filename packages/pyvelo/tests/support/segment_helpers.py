@@ -1,4 +1,6 @@
-"""Builders for the tests of profile segments: descriptors, entries of the three modules, profile rows and registries.
+"""Builders for the tests of profile segments.
+
+Descriptors, entries of the three modules, profile rows and registries.
 
 ``tests/support`` is on pytest's ``pythonpath`` and basedpyright's
 ``extraPaths``, so the tests of both packages import this as ``segment_helpers``.
@@ -75,7 +77,9 @@ def qos_entry(
     defaults: list[dict[str, Any]] | None | MISSING = _FACTORY_DEFAULTS,
     rules: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    """A QoS segment entry for *segment*: the template's parts, the given *rules* and *defaults*.
+    """A QoS segment entry for *segment*.
+
+    The template's parts, the given *rules* and *defaults*.
 
     *defaults* is the template's four, with IDs, unless given: ``None`` puts
     ``"defaults": null`` in the entry and ``MISSING`` leaves the key out.
@@ -91,7 +95,10 @@ def qos_entry(
 
 
 def firewall_entry(segment: Segment) -> dict[str, Any]:
-    """A firewall segment entry for *segment*: one ``AllowAny`` rule, with a ``ruleLogicalId``."""
+    """A firewall segment entry for *segment*.
+
+    One ``AllowAny`` rule, with a ``ruleLogicalId``.
+    """
     entry = new_segment_entry("firewall", identity(segment))
     (rule,) = entry["outbound"]
     rule["ruleLogicalId"] = str(uuid.uuid4())
@@ -99,7 +106,10 @@ def firewall_entry(segment: Segment) -> dict[str, Any]:
 
 
 def ds_entry(segment: Segment) -> dict[str, Any]:
-    """A device settings segment entry for *segment*: the template's ``ospf`` and ``syslog``, and ``vpn``."""
+    """A device settings segment entry for *segment*.
+
+    The template's ``ospf`` and ``syslog``, and ``vpn``.
+    """
     template = segment_template("deviceSettings")
     return {
         "segment": descriptor(segment),
@@ -121,7 +131,9 @@ def profile_rows(  # noqa: PLR0913 (existing: split it when it next changes)
     qos_refs: dict[str, Any] | MISSING = MISSING,
     networks: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
-    """The three module rows of a profile of configuration ``CONFIG``, with the given segment lists.
+    """The three module rows of a profile of configuration ``CONFIG``.
+
+    They have the given segment lists.
 
     The device settings module has *ds_refs*, by default one
     ``deviceSettings:segment`` row per entry of *ds* (of one of the three

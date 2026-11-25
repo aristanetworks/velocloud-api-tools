@@ -1,4 +1,7 @@
-"""The firewall module's kinds, groups and display defaults as declared, and where they come from."""
+"""The firewall module's kinds, groups and display defaults as declared.
+
+And where they come from.
+"""
 
 from typing import Any
 

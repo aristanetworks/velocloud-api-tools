@@ -1,4 +1,7 @@
-"""The errors of ``pyvelo.config.errors`` keep their class, attributes, notes and message through pickle and copy."""
+"""The errors of ``pyvelo.config.errors`` survive pickle and copy.
+
+Each keeps its class, attributes, notes and message.
+"""
 
 import copy
 import pickle

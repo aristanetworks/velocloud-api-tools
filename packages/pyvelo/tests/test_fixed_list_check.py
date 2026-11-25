@@ -1,4 +1,7 @@
-"""A payload that changes a fixed part of the QoS ``defaults`` is refused, whatever made the change."""
+"""A payload that changes a fixed part of the QoS ``defaults`` is refused.
+
+It is refused whatever made the change.
+"""
 
 import copy
 from typing import Any, overload

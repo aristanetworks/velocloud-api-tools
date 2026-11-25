@@ -76,7 +76,10 @@ def issue_rule_ids(new: dict[str, Any], _: dict[str, Any] | None) -> None:
 
 
 def revise_rule_ids(new: dict[str, Any], old: dict[str, Any] | None) -> None:
-    """Give a firewall rule whose content changed a new ``ruleLogicalId``, as the VCO does."""
+    """Give a firewall rule whose content changed a new ``ruleLogicalId``.
+
+    The VCO does that.
+    """
     assert old is not None
     before = {rule["ruleLogicalId"]: rule for rule in outbound_rules(old)}
     for rule in outbound_rules(new):
@@ -97,13 +100,19 @@ def responders(row: dict[str, Any]) -> Iterable[dict[str, Any]]:
 
 
 def lower_case_ipv6(new: dict[str, Any], _: dict[str, Any] | None) -> None:
-    """Store each ICMP responder's address in canonical (lower-case) form, as the VCO does."""
+    """Store each ICMP responder's address in canonical (lower-case) form.
+
+    The VCO does that.
+    """
     for responder in responders(new):
         responder["ipAddress"] = responder["ipAddress"].lower()
 
 
 def lower_case_v6_routes(new: dict[str, Any], _: dict[str, Any] | None) -> None:
-    """Store each IPv6 static route's addresses in canonical (lower-case) form, as the VCO does."""
+    """Store each IPv6 static route's addresses in canonical (lower-case) form.
+
+    The VCO does that.
+    """
     for segment in new["data"]["segments"]:
         for route in segment["routes"]["staticV6"]:
             route["destination"] = route["destination"].lower()

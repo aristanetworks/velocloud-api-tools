@@ -1,4 +1,6 @@
-"""A profile's three modules hold the same segments: the order of the write, the rule that keeps them together, and what the plan carries.
+"""A profile's three modules hold the same segments.
+
+The order of the write, the rule that keeps them together, and what the plan carries.
 
 Each state is built by ``profile_state``; the additions are made through
 ``add_segment_entry``, as the pipeline does.
@@ -45,7 +47,10 @@ ADD_GUEST = '{"segments": {"Guest": {"_op": "add"}}}'
 
 
 async def state_of(ds: list[str], qos: list[str], firewall: list[str]) -> ConfigState:
-    """A profile state whose modules hold the segments named (``"Global"`` and ``"Guest"``)."""
+    """A profile state whose modules hold the segments named.
+
+    The names are ``"Global"`` and ``"Guest"``.
+    """
     chosen = {"Global": GLOBAL, "Guest": GUEST}
     return await profile_state(
         [ds_entry(chosen[n]) for n in ds],

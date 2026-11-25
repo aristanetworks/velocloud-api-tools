@@ -1,4 +1,6 @@
-"""A save that adds or removes hubs sends the role steps first, then writes the hub rows they made.
+"""A save that adds or removes hubs sends the role steps first.
+
+Then it writes the hub rows they made.
 
 The save of a profile whose edit changes a segment's hub lists reads the
 module's version, reads the hub services, sends each step not already in place
@@ -100,7 +102,10 @@ def call_name(action: str, role: Role, hub: Hub) -> str:
 
 
 def refs(*rows: dict[str, Any]) -> dict[str, Any]:
-    """The refs of a profile with the Global Segment and Guest, and the hub rows *rows*."""
+    """The refs of a profile with the Global Segment and Guest.
+
+    They hold the hub rows *rows* too.
+    """
     return profile_hub_rows(
         segment_row(GLOBAL[0], GLOBAL[3], GLOBAL[2]),
         segment_row(GUEST[0], GUEST[3], GUEST[2]),
@@ -109,7 +114,10 @@ def refs(*rows: dict[str, Any]) -> dict[str, Any]:
 
 
 def service_row(hub: Hub, *roles: Role, segment: Segment = GLOBAL) -> dict[str, Any]:
-    """The row of *hub*'s service for *segment*: the Edge's own service, the cluster itself."""
+    """The row of *hub*'s service for *segment*.
+
+    The Edge's own service, the cluster itself.
+    """
     service_id = hub.id if hub.kind == "cluster" else 600 + hub.id
     return hub_row(
         hub,
@@ -123,7 +131,10 @@ def service_row(hub: Hub, *roles: Role, segment: Segment = GLOBAL) -> dict[str, 
 async def profile_of(
     ds: list[dict[str, Any]], *rows: dict[str, Any], **knobs: Any
 ) -> ConfigState:
-    """A profile whose three modules hold the segments of *ds* (Global and Guest), with the hub rows *rows*."""
+    """A profile whose three modules hold the segments of *ds* (Global and Guest).
+
+    It has the hub rows *rows*.
+    """
     segments = [e["segment"]["segmentId"] for e in ds]
     qos = [qos_entry(s) for s in (GLOBAL, GUEST) if s[0] in segments]
     firewall = [firewall_entry(s) for s in (GLOBAL, GUEST) if s[0] in segments]
@@ -138,7 +149,10 @@ async def edit(
     hub_list: bool | None = None,
     vpn: bool | None = None,
 ) -> None:
-    """Patch the list of *role* of the Global Segment; *hub_list* is ``edgeToEdgeHub.enabled`` and *vpn* ``vpn.enabled``."""
+    """Patch the list of *role* of the Global Segment.
+
+    *hub_list* is ``edgeToEdgeHub.enabled`` and *vpn* ``vpn.enabled``.
+    """
     patch: Any = change
     for key in reversed(LIST_KEYS[role]):
         patch = {key: patch}
@@ -213,7 +227,10 @@ def step_of(
 
 
 async def two_lists_state() -> ConfigState:
-    """A profile with no hub, and an edit that adds Hub-A to the hub list and the backhaul list."""
+    """A profile with no hub, and an edit that adds Hub-A to two lists.
+
+    The lists are the hub list and the backhaul list.
+    """
     state = await profile_of([ds_entry(GLOBAL), ds_entry(GUEST)])
     await edit(state, "hub", add_hub(HUB_A.name), hub_list=True, vpn=True)
     await edit(state, "backhaul", add_hub(HUB_A.name))
@@ -295,7 +312,10 @@ async def test_the_role_calls_name_the_enterprise_when_the_state_knows_it() -> N
 
 
 async def state_before(role: Role, hub: Hub, action: str) -> ConfigState:
-    """A profile in which *hub* is where an edit of the list of *role* with *action* needs it, and the edit."""
+    """A profile and an edit of the list of *role* with *action*.
+
+    In the profile, *hub* is where the edit needs it.
+    """
     name = hub.name
     if action == "enable":
         if role == "hub":
@@ -959,7 +979,10 @@ async def test_a_plan_without_steps_saves_as_before() -> None:
 
 
 def rows_of_ref(held: Any) -> list[dict[str, Any]]:
-    """The rows of one ref name in a module's refs, which hold one row bare and several in a list."""
+    """The rows of one ref name in a module's refs.
+
+    The refs hold one row bare and several in a list.
+    """
     return held if isinstance(held, list) else [held]
 
 
@@ -971,7 +994,10 @@ async def test_a_rebased_qos_write_keeps_its_backhaul_row() -> None:
     done: list[bool] = []
 
     def another_writer(new: dict[str, Any], old: dict[str, Any] | None) -> None:
-        """After the device settings write, another writer changes a key of QoS nobody here edits."""
+        """After the device settings write, another writer changes a key of QoS.
+
+        It is a key nobody here edits.
+        """
         del old
         if new["name"] != DS or done:
             return
@@ -1024,7 +1050,10 @@ async def test_a_rebased_qos_write_takes_its_backhaul_row_from_the_stored_device
     done: list[bool] = []
 
     def stores_another_service(new: dict[str, Any], old: dict[str, Any] | None) -> None:
-        """The device settings are stored with Hub-A's row on another object than the one read, and the QoS module is changed by another writer."""
+        """The device settings are stored with Hub-A's row on another object.
+
+        It is not the object read, and the QoS module is changed by another writer.
+        """
         del old
         if new["name"] != DS or done:
             return
@@ -1057,7 +1086,10 @@ async def test_a_rebased_qos_write_takes_its_backhaul_row_from_the_stored_device
 
 
 def ds_data_with(*hubs: Hub) -> DeviceSettingsData:
-    """The device settings as edited, whose Global Segment lists *hubs* in its hub list."""
+    """The device settings as edited.
+
+    Their Global Segment lists *hubs* in its hub list.
+    """
     return DeviceSettingsData.model_validate(
         {
             "lan": {"networks": [], "interfaces": []},

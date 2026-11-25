@@ -1,4 +1,7 @@
-"""QoS through ``ConfigPipeline.apply`` and ``state.effective``: patches on inherited values start from the profile."""
+"""QoS through ``ConfigPipeline.apply`` and ``state.effective``.
+
+Patches on inherited values start from the profile.
+"""
 
 import copy
 import json
@@ -67,7 +70,10 @@ EDGE_QOS: dict[str, Any] = {
 def state_of(
     edge: dict[str, Any] | None, profile: dict[str, Any] | None = None
 ) -> ConfigState:
-    """An edge state whose edge QoS data is *edge* (no row for None), over a profile whose is *profile*."""
+    """An edge state whose edge QoS data is *edge* (no row for None).
+
+    Its profile's QoS data is *profile*.
+    """
     edge_rows = (
         []
         if edge is None
@@ -254,7 +260,10 @@ async def test_a_failed_qos_patch_leaves_a_localized_value_inherited() -> None:
 
 
 def flag_off_edge() -> dict[str, Any]:
-    """An edge whose Voice cosMapping is stored with its flag off, with values of its own (the profile's realtime.high is 35, its bulk.high 15)."""
+    """An edge whose Voice cosMapping is stored with its flag off.
+
+    It has values of its own (the profile's realtime.high is 35, its bulk.high 15).
+    """
     stored = cos_mapping(override=False, realtime_high=50)
     stored["bulk"]["high"]["value"] = 22
     return {

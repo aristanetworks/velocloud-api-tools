@@ -1,4 +1,7 @@
-"""``OwnsRef`` and ``RefOnly``: the markers of the data fields that a ref row goes with."""
+"""``OwnsRef`` and ``RefOnly``.
+
+The markers of the data fields that a ref row goes with.
+"""
 
 import copy
 import json

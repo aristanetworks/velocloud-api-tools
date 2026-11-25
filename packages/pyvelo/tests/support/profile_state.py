@@ -1,4 +1,6 @@
-"""A profile state of the three modules that hold segments, and a pipeline over a store that holds them.
+"""A profile state of the three modules that hold segments, and a pipeline.
+
+The pipeline is over a store that holds them.
 
 Test modules import this as they import each other
 (``from profile_state import ...``). The segments and entries come from
@@ -34,7 +36,9 @@ async def profile_state(  # noqa: PLR0913 (existing: split it when it next chang
     qos_refs: dict[str, Any] | MISSING = MISSING,
     networks: list[dict[str, Any]] | None = None,
 ) -> ConfigState:
-    """A profile state of configuration ``CONFIG`` with the given segment lists, and a snapshot.
+    """A profile state of configuration ``CONFIG`` with the given segment lists.
+
+    And a snapshot.
 
     The rows are those of ``profile_rows`` (*ds_refs* is its argument, given
     only when it is not None), the QoS module has *qos_refs* (none by
@@ -67,7 +71,9 @@ async def profile_state(  # noqa: PLR0913 (existing: split it when it next chang
 def module_store_pipeline(
     state: ConfigState, *, segments: tuple[Segment, ...] = (GLOBAL, GUEST, VOICE)
 ) -> tuple[ConfigPipeline, ModuleStore]:
-    """A pipeline over a ``ModuleStore`` that holds the three modules of *state*'s profile and the objects of *segments*.
+    """A pipeline over a ``ModuleStore`` for *state*'s profile.
+
+    The store holds the three modules of the profile and the objects of *segments*.
 
     A test that needs another writer adds a closure to ``store.on_store`` that
     calls ``store.other_writer(...)`` once.

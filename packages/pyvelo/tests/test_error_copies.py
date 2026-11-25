@@ -1,4 +1,7 @@
-"""The errors of ``pyvelo.client.exceptions`` keep their class and attributes through pickle and copy."""
+"""The errors of ``pyvelo.client.exceptions`` survive pickle and copy.
+
+Each keeps its class and attributes.
+"""
 
 import copy
 import pickle
@@ -58,7 +61,10 @@ from .write_helpers import fw
 
 
 def lost_write() -> ConfigConflictError:
-    """The conflict of a write that stored nothing, with one earlier write of the same save."""
+    """The conflict of a write that stored nothing.
+
+    It has one earlier write of the same save.
+    """
     module = fw({"segments": [], "firewall_enabled": True}, layer=Edge)
     module.data.firewall_enabled.set_local(False)
     plan = plan_module(module)

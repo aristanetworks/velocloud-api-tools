@@ -1,4 +1,6 @@
-"""The network-service resolver: services of an enterprise by name, logical ID and object ID.
+"""The network-service resolver.
+
+Services of an enterprise by name, logical ID and object ID.
 
 Each test that loads the resolver serves ``enterprise/getEnterpriseServices``
 from a ``ModuleStore`` through a ``VcoClient``, so the rows are parsed as the

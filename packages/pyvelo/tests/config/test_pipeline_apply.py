@@ -1001,7 +1001,9 @@ _REDESCRIBED = "a patch cannot change which segments a profile has"
                     "segments": {
                         "Guest": {
                             "segment": {
-                                "segment_logical_id": "00000000-0000-4000-8000-000000000001"
+                                "segment_logical_id": (
+                                    "00000000-0000-4000-8000-000000000001"
+                                )
                             }
                         }
                     }

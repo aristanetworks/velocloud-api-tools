@@ -264,7 +264,10 @@ def test_field_changes_address_a_composite_key() -> None:
     changes = state.get_field_changes(module_name="deviceSettings")
     assert [(c.path, c.before, c.after) for c in changes] == [
         (
-            'segments["Global Segment"].routes.static["10.0.0.0",24,"192.168.1.1",GE3].cost',
+            (
+                'segments["Global Segment"].routes.static'
+                '["10.0.0.0",24,"192.168.1.1",GE3].cost'
+            ),
             0,
             5,
         )
@@ -302,12 +305,16 @@ def test_field_changes_show_an_edit_to_a_keyless_item() -> None:
         [{"name": "A", "type": "WIRED"}, {"name": "B", "type": "WIRED"}]
     )
     _ = data.merge_patch({"links": {at(0): {"isp": "x"}}})
-    # A link without a key cannot be told from the other: the plan writes the list whole.
+    # A link without a key cannot be told from the other: the plan writes the list
+    # whole.
     assert _isps(state) == ("links", [None, None], ["x", None])
 
 
 def _isps(state: ConfigState) -> tuple[str, list[object], list[object]]:
-    """The one WAN change of *state*: its path, and the ``isp`` of each link before and after."""
+    """The one WAN change of *state*.
+
+    Its path, and the ``isp`` of each link before and after.
+    """
     (change,) = state.get_field_changes(module_name="WAN")
     before = cast("list[dict[str, object]]", change.before)
     after = cast("list[dict[str, object]]", change.after)

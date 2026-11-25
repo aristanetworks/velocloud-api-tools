@@ -1,4 +1,6 @@
-"""A module written after a profile device settings write is rebased onto what that write changed.
+"""A module written after a profile device settings write is rebased.
+
+It is rebased onto what that write changed.
 
 A profile device settings write can change other modules of the profile (it
 rewrites QoS rule flags, and it bumps the versions of every module when a
@@ -118,7 +120,10 @@ def a_store(
     qos: QosConfigurationModule[Profile],
     propagation: Callable[[dict[str, Any]], None] | None,
 ) -> ModuleStore:
-    """A store holding both modules; a write of device settings has *propagation* change the QoS row."""
+    """A store holding both modules.
+
+    A write of device settings has *propagation* change the QoS row.
+    """
     store = store_of(ds, qos)
     store.objects.update(store_with_services().objects)
 

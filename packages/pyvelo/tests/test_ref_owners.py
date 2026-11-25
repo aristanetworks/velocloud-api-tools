@@ -1,4 +1,6 @@
-"""The device settings fields that own ref rows, how they are found, and how a module fills its ``RefOnly`` fields.
+"""The device settings fields that own ref rows, and how they are found.
+
+And how a module fills its ``RefOnly`` fields.
 
 A provider's data holds a stub (``{"ref": "deviceSettings:dns:primaryProvider"}``)
 and nothing that says which service it is: the row of that name says it. A
@@ -493,7 +495,8 @@ def test_none_missing_and_empty_text_hold_no_identity() -> None:
         global_segment_refs(),
         refs_loaded=False,
     )
-    # The profile's segment owner holds an identity; the unread provider (MISSING) holds none.
+    # The profile's segment owner holds an identity; the unread provider (MISSING) holds
+    # none.
     owners = ref_owners(module.data, ConfigContext.PROFILE)
     assert [o.name for o in owners] == ["deviceSettings:segment"]
 

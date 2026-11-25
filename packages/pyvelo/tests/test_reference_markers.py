@@ -1,4 +1,7 @@
-"""``Provides``, ``RefersTo`` and ``HubRole``: the markers of identity references and hub roles, and where the models declare them."""
+"""``Provides``, ``RefersTo`` and ``HubRole``.
+
+The markers of identity references and hub roles, and where the models declare them.
+"""
 
 import dataclasses
 import json
@@ -56,13 +59,17 @@ from pyvelo.core import (
 )
 from pyvelo.core.fields import KeySpec, get_key_spec
 
-# The routed interfaces are reached through their subclasses, so the base class is a root too.
+# The routed interfaces are reached through their subclasses, so the base class is a
+# root too.
 ROOTS = (DeviceSettingsData, QosData, RoutedInterfaceBase)
 GLOBAL = segment_helpers.GLOBAL
 
 
 def _inherited(cls: type[VcoModel], name: str, field_info: FieldInfo) -> bool:
-    """Whether a base class of *cls* declares the field *name* the same way (a subclass does not count again)."""
+    """Whether a base class of *cls* declares the field *name* the same way.
+
+    A subclass does not count again.
+    """
     return any(
         (base_info := getattr(base, "model_fields", {}).get(name)) is not None
         and base_info.metadata == field_info.metadata
@@ -262,7 +269,8 @@ def test_the_hub_lists_take_an_added_entry_by_name_key() -> None:
 
 
 def test_resolvable_attrs_exist() -> None:
-    # The Resolvable checks run at class creation: importing the models above did not raise.
+    # The Resolvable checks run at class creation: importing the models above did not
+    # raise.
     for model, name, attribute in (
         (VpnHub, "type_", "type_"),
         (VpnHub, "logical_id", "logical_id"),

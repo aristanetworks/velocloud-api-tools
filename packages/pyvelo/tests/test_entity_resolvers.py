@@ -1,4 +1,8 @@
-"""Tests for ProfileResolver, ApplicationResolver, AddressGroupResolver, ServiceGroupResolver, LicenseResolver."""
+"""Tests for the entity resolvers.
+
+ProfileResolver, ApplicationResolver, AddressGroupResolver, ServiceGroupResolver,
+LicenseResolver.
+"""
 
 import uuid
 from collections.abc import Awaitable, Callable, Sequence

@@ -1,4 +1,7 @@
-"""Where a validation error is: the fields below a map key or a union tag are in their python names."""
+"""Where a validation error is.
+
+The fields below a map key or a union tag are in their python names.
+"""
 
 from typing import Annotated, Any
 

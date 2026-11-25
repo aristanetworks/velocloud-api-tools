@@ -550,7 +550,9 @@ WHOLE_LISTS = [
         id="no model",
     ),
 ]
-"""A model, a list field of it, the list as read and as sent: one key of one item is removed."""
+"""A model, a list field of it, the list as read and as sent: one key of one item is
+removed.
+"""
 
 
 @pytest.mark.parametrize(("model", "name", "read", "sent"), WHOLE_LISTS)

@@ -1,4 +1,6 @@
-"""A hub list edit that breaks the UI's rules is refused at ``plan()``, before any call; one broken as read is a warning.
+"""A hub list edit that breaks the UI's rules is refused at ``plan()``, before any call.
+
+One broken as read is a warning.
 
 ``check_hub_lists`` runs in ``state.plan()`` for a profile, so a ``save``
 refuses with no request sent: no version read, no services read.
@@ -57,7 +59,9 @@ def service_row(hub: Hub, n: int) -> dict[str, Any]:
 async def profile_of(
     ds: dict[str, Any], *hubs: Hub, loaded: tuple[Hub, ...] | None = None
 ) -> ConfigState:
-    """A profile whose Global Segment is *ds* (and Guest the default), with a service row for each of *hubs*.
+    """A profile whose Global Segment is *ds* (and Guest the default).
+
+    It has a service row for each of *hubs*.
 
     The hub resolver holds *loaded* (every hub unless given).
     """
@@ -95,7 +99,10 @@ def remove(*names: str) -> dict[str, Any]:
 
 
 async def refused(state: ConfigState) -> HubListError:
-    """The ``HubListError`` that ``plan()`` raises, after a ``save`` that raises it and sends no request at all."""
+    """The ``HubListError`` that ``plan()`` raises.
+
+    Before it, a ``save`` raises it and sends no request at all.
+    """
     with pytest.raises(HubListError) as planned:
         _ = state.plan()
     pipeline, store = hub_pipeline(state)
@@ -329,7 +336,10 @@ async def test_turning_the_vpn_off_while_it_lists_hubs_says_to_remove_them_first
 async def with_entry_added(
     state: ConfigState, entry: dict[str, Any], *, to_list: str = "hub"
 ) -> None:
-    """Give the Global Segment the list *entry* as it is (a patch names a hub, so it could not give a wrong one), and turn the list on."""
+    """Give the Global Segment the list *entry* as it is, and turn the list on.
+
+    A patch names a hub, so it could not give a wrong one.
+    """
     vpn = state.profile.device_settings.segments[0].vpn
     vpn.enabled = True
     vpn.hub_edges.enabled = True
@@ -408,7 +418,10 @@ async def test_an_added_hub_of_the_enterprise_passes() -> None:
 
 
 def broken_as_read() -> dict[str, Any]:
-    """A segment whose backhaul list holds Hub-A, which its hub list (Hub-B) does not."""
+    """A segment whose backhaul list holds Hub-A.
+
+    Its hub list (Hub-B) does not hold it.
+    """
     return ds_with_vpn(GLOBAL, hubs=(HUB_B,), backhaul=(HUB_A,))
 
 

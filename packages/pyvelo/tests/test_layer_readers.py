@@ -1,4 +1,6 @@
-"""Every reader of a field goes through ``field_kind``: a carrier field behaves as a plain field of its inner type.
+"""Every reader of a field goes through ``field_kind``.
+
+A carrier field behaves as a plain field of its inner type.
 
 The save computation, the merge engine, the change list and the walkers read
 the type and the markers of a field. On a ``Layered`` model that is the
@@ -146,7 +148,10 @@ def _junk(rng: random.Random, depth: int = 0) -> object:
 
 
 def _with_unknown_keys(rng: random.Random, node: object) -> None:
-    """Add unknown keys at every object of a valid document, and below the unknown values too."""
+    """Add unknown keys at every object of a valid document.
+
+    Add them below the unknown values too.
+    """
     if isinstance(node, dict):
         for value in list(node.values()):  # pyright: ignore[reportUnknownVariableType, reportUnknownArgumentType]
             _with_unknown_keys(rng, value)
@@ -188,7 +193,10 @@ def _segment(rng: random.Random, index: int, *, edge: bool) -> dict[str, object]
 
 
 def _document(rng: random.Random, *, edge: bool) -> object:
-    """A raw document of ``Mod`` for the edge or the profile layer that parses: nulls only where the layer holds them."""
+    """A raw document of ``Mod`` for the edge or the profile layer that parses.
+
+    Nulls only where the layer holds them.
+    """
     doc: dict[str, object] = {
         "segments": [_segment(rng, i, edge=edge) for i in range(rng.randint(0, 3))]
     }

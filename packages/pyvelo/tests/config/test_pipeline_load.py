@@ -191,7 +191,10 @@ _FIREWALL: dict[str, Any] = {
 
 
 def _raw_stack() -> GetEdgeConfigurationStackResult:
-    """A stack whose modules were read from JSON: edge 10 (module 11), profile 20 (module 21)."""
+    """A stack whose modules were read from JSON.
+
+    Edge 10 (module 11), profile 20 (module 21).
+    """
 
     def row(module_id: int, config_id: int) -> dict[str, Any]:
         return make_module_json(
@@ -263,16 +266,16 @@ async def test_load_by_name_without_a_resolver_says_what_to_register() -> None:
         _ = await ConfigPipeline(client).load("branch-nyc", enterprise_id=1)
     assert str(exc.value) == (
         "load('branch-nyc') was given a name, and this pipeline has no edge resolver "
-        "to turn it into an ID. Build the pipeline with build_default_pipeline(client), "
-        "or register EdgeResolver(client) on pipeline.resolvers, or pass the edge's "
+        "to turn it into an ID. Build the pipeline with build_default_pipeline(client),"
+        " or register EdgeResolver(client) on pipeline.resolvers, or pass the edge's "
         "numeric ID."
     )
     with pytest.raises(LookupError) as exc:
         _ = await ConfigPipeline(client).load_profile("P", enterprise_id=1)
     assert str(exc.value) == (
         "load_profile('P') was given a name, and this pipeline has no profile resolver "
-        "to turn it into an ID. Build the pipeline with build_default_pipeline(client), "
-        "or register ProfileResolver(client) on pipeline.resolvers, or pass the "
+        "to turn it into an ID. Build the pipeline with build_default_pipeline(client),"
+        " or register ProfileResolver(client) on pipeline.resolvers, or pass the "
         "profile's numeric ID."
     )
     assert client.calls == []
@@ -289,7 +292,10 @@ class ServiceRow(BaseModel):
 
 
 async def listed_services(client: MockVcoClient) -> list[tuple[int, str, str]]:
-    """The ID, logical ID and name of each service the store lists, asked through the client."""
+    """The ID, logical ID and name of each service the store lists.
+
+    They are asked through the client.
+    """
     rows = await client.portal_list(
         "enterprise/getEnterpriseServices", GetEnterpriseServices(), ServiceRow
     )

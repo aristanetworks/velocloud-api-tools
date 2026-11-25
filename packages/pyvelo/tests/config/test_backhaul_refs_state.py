@@ -1,4 +1,6 @@
-"""A state plans the row of a QoS rule's backhaul hub, on a profile and on an edge, from the profile's service for that segment.
+"""A state plans the row of a QoS rule's backhaul hub, on a profile and on an edge.
+
+It plans it from the profile's service for that segment.
 
 The profile has the Global Segment with ``HUB_A`` as its hub and backhaul hub,
 whose service (object 601) is in the device settings refs. A rule is edited as
@@ -45,7 +47,10 @@ GET_SERVICES = "enterprise/getEnterpriseServices"
 
 
 def profile_refs(*hubs: tuple[Hub, int, str]) -> dict[str, Any]:
-    """The profile's device settings refs: the Global Segment's row and a hub row (hub and backhaul roles) for each of *hubs*."""
+    """The profile's device settings refs.
+
+    The Global Segment's row and a hub row (hub and backhaul roles) for each of *hubs*.
+    """
     return profile_hub_rows(
         segment_row(GLOBAL[0], SEG0_OBJECT, SEG0),
         *(
@@ -88,7 +93,10 @@ async def an_edge(
     backhaul: tuple[Hub, ...] = (HUB_A,),
     hubs: tuple[Hub, ...] = (HUB_A,),
 ) -> ConfigState:
-    """An edge with its own QoS rule ``r1`` that uses no hub, over a profile of the hubs *hubs*."""
+    """An edge with its own QoS rule ``r1`` that uses no hub.
+
+    Its profile is a profile of the hubs *hubs*.
+    """
     return await hub_edge_state(
         [ds_entry(GLOBAL)],
         [qos_entry(GLOBAL, rules=[backhaul_rule("r1")])],
@@ -99,7 +107,10 @@ async def an_edge(
 
 
 def use_hub(qos: Any, hub: Hub, service_logical_id: str) -> None:
-    """Have rule ``r1`` of the Global Segment of *qos* backhaul to *hub* through its service."""
+    """Have rule ``r1`` of the Global Segment of *qos* backhaul to *hub*.
+
+    It backhauls to the hub through its service.
+    """
     (segment,) = qos.segments
     (held,) = segment.rules
     route = held.action.edge_to_edge_route_action.route_cfg

@@ -1,4 +1,6 @@
-"""The ref rows an edit adds and removes, by difference of the declared owners, and the complete refs to send.
+"""The ref rows an edit adds and removes, by difference of the declared owners.
+
+And the complete refs to send.
 
 ``derive_refs`` compares the owners of a module as read with the owners now.
 It adds a row for an owner that appeared, removes the row of one that went,
@@ -92,7 +94,10 @@ def derive(
     *,
     payload: dict[str, Any] | None = None,
 ) -> DerivedRefs:
-    """``derive_refs`` for *module*'s data as read against *current*, at the module's level."""
+    """``derive_refs`` for *module*'s data as read against *current*.
+
+    At the module's level.
+    """
     data = module.data  # pyright: ignore[reportAttributeAccessIssue]
     assert isinstance(data, DeviceSettingsData)
     level = data.config_context

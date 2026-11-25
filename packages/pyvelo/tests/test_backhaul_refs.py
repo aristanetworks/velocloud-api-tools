@@ -1,4 +1,6 @@
-"""A QoS rule's backhaul hub derives its ``deviceSettings:backHaulEdge`` row from the profile's service for that segment.
+"""A QoS rule's backhaul hub derives its ``deviceSettings:backHaulEdge`` row.
+
+It derives it from the profile's service for that segment.
 
 A rule's backhaul entry holds the hub's service for the profile and segment
 (``logicalId``). The row that goes with it points at that service, which the
@@ -72,7 +74,10 @@ OTHER_ROW = {"enterpriseObjectId": 9, "ref": OTHER_REF, "logicalId": SERVICE_A}
 
 
 def profile_ds(*, hub_rows: list[dict[str, Any]]) -> DeviceSettingsConfigurationModule:
-    """The profile's device settings module: both segments, and *hub_rows* in the refs."""
+    """The profile's device settings module.
+
+    Both segments, and *hub_rows* in the refs.
+    """
     edge_rows = [r for r in hub_rows if r["ref"] == EDGE_HUB_REF]
     cluster_rows = [r for r in hub_rows if r["ref"] == CLUSTER_HUB_REF]
     refs: dict[str, Any] = {
@@ -103,7 +108,10 @@ def service_row(
 
 
 def profile_services() -> DeviceSettingsConfigurationModule:
-    """The profile's device settings with Hub-A and Hub-B as hubs of the Global Segment."""
+    """The profile's device settings with Hub-A and Hub-B as hubs.
+
+    They are hubs of the Global Segment.
+    """
     return profile_ds(
         hub_rows=[
             service_row(HUB_A, SERVICE_A_ID, SERVICE_A),
@@ -161,7 +169,10 @@ def qos_module(
     *,
     level: ConfigContext = ConfigContext.PROFILE,
 ) -> AnyQosModule:
-    """A QoS module of the layer *level* names, with *rules* in its segments and *refs*."""
+    """A QoS module of the layer *level* names.
+
+    It has *rules* in its segments and *refs*.
+    """
     edge = level is ConfigContext.EDGE
     row = make_module_json(
         "QOS",
@@ -190,7 +201,10 @@ def edited(
     module: QosConfigurationModule[Profile], **entries: list[dict[str, Any]]
 ) -> QosData[Profile]: ...
 def edited(module: AnyQosModule, **entries: list[dict[str, Any]]) -> AnyQosData:
-    """A copy of the module's data in which each rule named in *entries* has those backhaul entries."""
+    """A copy of the module's data with the backhaul entries of *entries*.
+
+    Each rule named in *entries* has those backhaul entries.
+    """
     data = module.data.model_copy(deep=True)
     for segment in data.segments:
         for held in segment.rules:
@@ -648,7 +662,10 @@ async def test_update_module_takes_the_profile_device_settings(
 
 
 class _Visits:
-    """What ``ref_owners`` asked of the walk: the classes it asked about, and the models it took fields of."""
+    """What ``ref_owners`` asked of the walk.
+
+    The classes it asked about, and the models it took fields of.
+    """
 
     def __init__(self) -> None:
         self.asked: list[type[VcoModel]] = []

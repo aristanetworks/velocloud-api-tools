@@ -1,4 +1,7 @@
-"""Tests for the validation framework: types, registry, decorator, and pipeline integration."""
+"""Tests for the validation framework.
+
+Types, registry, decorator, and pipeline integration.
+"""
 
 from datetime import UTC, datetime
 from typing import TypedDict

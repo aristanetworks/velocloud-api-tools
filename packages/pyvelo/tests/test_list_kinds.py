@@ -69,7 +69,9 @@ def _models_in(annotation: object) -> Iterator[type[VcoModel]]:
 
 
 def walk(roots: tuple[type[VcoModel], ...]) -> dict[str, ListKind]:
-    """Map ``"Class.field"`` to its kind for every list or map field reachable from *roots*.
+    """Map ``"Class.field"`` to its kind for every list or map field.
+
+    The fields are those reachable from *roots*.
 
     Reachable means through sub-model fields, list elements, union members and
     the values of maps of models; each class is visited once.
@@ -96,7 +98,9 @@ def undeclared(roots: tuple[type[VcoModel], ...]) -> frozenset[str]:
 def keyed_fields(
     roots: tuple[type[VcoModel], ...],
 ) -> Iterator[tuple[str, KeySpec, type[VcoModel]]]:
-    """Each keyed field reachable from *roots*: its name, its ``KeySpec`` and an item class.
+    """Each keyed field reachable from *roots*.
+
+    Its name, its ``KeySpec`` and an item class.
 
     A list of a union of models yields once per variant.
     """

@@ -96,7 +96,10 @@ class TestMergeResolvable:
         assert m.segment.segment_id == 42
 
     def test_no_resolvers_string_passes_through(self) -> None:
-        """Without resolvers, string values are assigned directly (may fail validation)."""
+        """Without resolvers, string values are assigned directly.
+
+        This may fail validation.
+        """
         m = Config()
         # No resolvers -> string value assigned as-is
         _ = m.merge_patch({"segment": {"name": "test"}})
@@ -139,7 +142,10 @@ class TestMergeResolvable:
 
 
 class TestNewItemNamedByItsId:
-    """A new item that gives an ID of an identity and no name takes the name and the other IDs."""
+    """A new item that gives an ID of an identity and no name takes the rest.
+
+    It takes the name and the other IDs.
+    """
 
     def test_a_segment_given_by_its_id_takes_its_name_and_logical_id(
         self, registry: ResolverRegistry

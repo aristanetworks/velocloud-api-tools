@@ -43,7 +43,10 @@ def qos_at(
     *,
     enabled: bool = False,
 ) -> QosConfigurationModule[Profile]:
-    """A profile QoS module at *version* with *rules* in the Global Segment and *refs*; its rate limit is *enabled* or not."""
+    """A profile QoS module at *version* with *rules* in the Global Segment and *refs*.
+
+    Its rate limit is *enabled* or not.
+    """
     data = {
         "segments": [qos_entry(GLOBAL, rules=rules)],
         "serviceRateLimit": {**RATE, "enabled": enabled},
@@ -77,7 +80,10 @@ def rebased(
     plan: ModulePlan,
     fresh: QosConfigurationModule[Profile],
 ) -> tuple[QosConfigurationModule[Profile], ModulePlan]:
-    """*plan* rebased onto *fresh*, with the profile's device settings as the plan was made with."""
+    """*plan* rebased onto *fresh*.
+
+    With the profile's device settings as the plan was made with.
+    """
     onto, onto_plan, _ = rebase_onto(
         module, plan, fresh, profile_device_settings=profile_services()
     )

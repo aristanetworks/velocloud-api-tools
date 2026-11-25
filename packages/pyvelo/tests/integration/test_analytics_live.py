@@ -142,7 +142,10 @@ class TestEdgeFlowMetrics:
 
 
 class TestEdgeFlowMetricsNameDtype:
-    """Small limits provoke mixed-type name columns (int | str); verify polars handles it."""
+    """Small limits provoke mixed-type name columns (int | str).
+
+    Verify polars handles it.
+    """
 
     @pytest.mark.parametrize(
         "group_by", list(FlowGroupBy), ids=[group.name for group in FlowGroupBy]

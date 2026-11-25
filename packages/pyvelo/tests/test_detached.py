@@ -45,8 +45,8 @@ PATCH: dict[str, object] = {
 REPLACED = (
     "this object was replaced by a write; take it again from the module as stored "
     "(after a save: state.edge.<module> or state.profile.<module>; "
-    "after update_module: the module it returned, or error.module after a write error), "
-    "or put a deep copy of it there (copy.deepcopy)"
+    "after update_module: the module it returned, or error.module after a write "
+    "error), or put a deep copy of it there (copy.deepcopy)"
 )
 
 

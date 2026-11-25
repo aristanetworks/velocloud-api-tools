@@ -246,7 +246,10 @@ def _random_rule(rng: random.Random, name: str, rule_id: str | None) -> dict[str
 
 
 def _edited(rng: random.Random, old: dict[str, Any]) -> dict[str, Any]:
-    """*old* with a few random edits to its rules: fields, adds, removes, moves, renames."""
+    """*old* with a few random edits to its rules.
+
+    Fields, adds, removes, moves, renames.
+    """
     new = copy.deepcopy(old)
     rules: list[dict[str, Any]] = new["rules"]
     names = {r["name"] for r in rules}

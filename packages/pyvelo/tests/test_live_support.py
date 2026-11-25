@@ -1,4 +1,6 @@
-"""Offline checks of the support code of the live save tests (tests/support/live_support.py).
+"""Offline checks of the support code of the live save tests.
+
+The code is tests/support/live_support.py.
 
 The live tests are deselected without ``-m integration`` and need an Orchestrator;
 what they rely on to restore a lab and to keep its names out of their output is
@@ -192,7 +194,10 @@ class TestBackup:
 def backups(
     tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
 ) -> Generator[pathlib.Path]:
-    """Backups go to a temporary directory, the opt-in is unset, and the test is a writer."""
+    """Backups go to a temporary directory and the opt-in is unset.
+
+    The test is a writer.
+    """
     monkeypatch.setenv(live.BACKUP_DIR_ENV, str(tmp_path))
     monkeypatch.setattr(live, "_backup_dir", None)
     monkeypatch.setattr(live, "_LEFT", {})
@@ -422,7 +427,10 @@ async def test_refusal_form_of_a_write_stored_otherwise_than_sent_is_no_refusal(
 
 
 async def test_refusal_form_of_a_refusal_whose_read_back_did_not_parse() -> None:
-    """Pydantic's ``ValidationError`` carries no ``__context__``, so the refusal is not in this chain: the clause says only ``refused``."""
+    """Pydantic's ``ValidationError`` carries no ``__context__``.
+
+    So the refusal is not in this chain: the clause says only ``refused``.
+    """
 
     def unparsable(store: ModuleStore) -> Callable[[httpx.Request], httpx.Response]:
         def handler(request: httpx.Request) -> httpx.Response:
@@ -472,7 +480,10 @@ def unknown(
     refusal: ConfigConflictError | None = None,
     detail: str = "its configuration does not hold the module",
 ) -> WriteOutcomeUnknownError:
-    """The error of a write whose stored module could not be read, raised while handling *refusal*."""
+    """The error of a write whose stored module could not be read.
+
+    It is raised while handling *refusal*.
+    """
     error = WriteOutcomeUnknownError(
         1,
         "v1",
@@ -521,7 +532,10 @@ def test_where_marks_the_order_of_a_list() -> None:
 
 
 class PassThrough:
-    """A capture whose ``disabled`` changes nothing, so that ``capsys`` sees what is printed past it."""
+    """A capture whose ``disabled`` changes nothing.
+
+    So ``capsys`` sees what is printed past it.
+    """
 
     def disabled(self) -> contextlib.AbstractContextManager[None]:
         return contextlib.nullcontext()
@@ -557,7 +571,10 @@ class ValidatorError:
 
 
 class SaveBlockedError(Exception):
-    """Shaped as ``SaveValidationError`` of ``pyvelo.config``: ``errors`` with a code each."""
+    """Shaped as ``SaveValidationError`` of ``pyvelo.config``.
+
+    ``errors`` with a code each.
+    """
 
     def __init__(self) -> None:
         self.errors: list[ValidatorError] = [ValidatorError("B2"), ValidatorError("A1")]
@@ -834,7 +851,9 @@ REFUSAL: dict[str, Any] = {
 
 
 class FakeLab:
-    """A fake Orchestrator for a live run: a ``ModuleStore``, plus the edges, profiles and enterprise it lists.
+    """A fake Orchestrator for a live run.
+
+    A ``ModuleStore``, plus the edges, profiles and enterprise it lists.
 
     It is an ``httpx`` handler, as the store is: a client built over it runs
     its own request building and parsing. Module updates, inserts,
@@ -854,7 +873,9 @@ class FakeLab:
         """The methods that are refused the same way, whatever they ask."""
         self.enterprise_error: bool = False
         self.enterprise_failure: Literal["http", "empty", "no_id"] | None = None
-        """How ``enterprise/getEnterprise`` fails apart from a refusal: an HTTP status, no result, a result with no ID."""
+        """How ``enterprise/getEnterprise`` fails apart from a refusal: an HTTP status,
+        no result, a result with no ID.
+        """
         self.before: Callable[[str], None] | None = None
         """Called with the method of each request before it is answered."""
 
@@ -953,7 +974,10 @@ REPLACEABLE = "pyvelo-it-target pyvelo-it-replace-modules"
 
 
 def lab_fake() -> FakeLab:
-    """Profile 20 (marked, no edge counted) with QoS module 2; edge 5 (marked) with QoS module 1; edge 6, unmarked, with QoS module 3."""
+    """Profile 20 (marked, no edge counted) with QoS module 2.
+
+    Edge 5 (marked) with QoS module 1; edge 6, unmarked, with QoS module 3.
+    """
     fake = FakeLab()
     fake.add_profile(20, description="pyvelo-it-target")
     fake.module(2, 20, "QOS", QOS)
@@ -972,7 +996,10 @@ async def opened(fake: FakeLab, monkeypatch: pytest.MonkeyPatch) -> live.Lab:
 
 
 async def raise_limit(site: live.Site, value: int) -> None:
-    """Write the QoS module of *site* with its rate limit value set to *value*, as a test would."""
+    """Write the QoS module of *site* with its rate limit value set to *value*.
+
+    Write it as a test would.
+    """
     module = await site.read_present()
     data = copy.deepcopy(module.raw_data)
     assert isinstance(data, dict)
@@ -988,7 +1015,10 @@ async def access_for(
     enterprise_error: bool = False,
     enterprise_failure: Literal["http", "empty", "no_id"] | None = None,
 ) -> tuple[live.WriteAccess, list[tuple[str, dict[str, Any]]]]:
-    """The access *environ* gives a client connected to *connected*, and what it asked the Orchestrator."""
+    """The access *environ* gives a client connected to *connected*.
+
+    And what it asked the Orchestrator.
+    """
     fake = FakeLab()
     fake.enterprise_error = enterprise_error
     fake.enterprise_failure = enterprise_failure
@@ -1040,7 +1070,10 @@ async def refused(  # noqa: PLR0913 (existing: split it when it next changes)
     enterprise_error: bool = False,
     enterprise_failure: Literal["http", "empty", "no_id"] | None = None,
 ) -> None:
-    """*environ* is refused for *reason*, with what to do, in a message with neither the host nor the token."""
+    """*environ* is refused for *reason*, with what to do.
+
+    The message has neither the host nor the token.
+    """
     access, _ = await access_for(
         environ,
         connected=connected,
@@ -1304,7 +1337,10 @@ VNFS_EDGE = "deviceSettings:vnfs:edge"
 
 
 def ds_lab() -> FakeLab:
-    """Profile 20 with a deviceSettings module (4) that has a segment, a segment row and an append-only row."""
+    """Profile 20 with a deviceSettings module (4).
+
+    The module has a segment, a segment row and an append-only row.
+    """
     fake = lab_fake()
     data = {
         "lan": {"networks": [dict(NETWORK)], "interfaces": []},
@@ -1475,7 +1511,8 @@ async def test_a_delete_outside_a_block_or_of_an_uncovered_module_is_refused(
         await live.delete_module(site, 1)
     assert str(outside.value) == live.OUTSIDE_RESTORING
     async with live.restoring(site):
-        # A module of another configuration, and a module of this one the block did not find.
+        # A module of another configuration, and a module of this one the block did not
+        # find.
         with pytest.raises(live.WritesRefusedError) as other_site:
             await live.delete_module(elsewhere, 2)
         with pytest.raises(live.WritesRefusedError) as other_module:
@@ -1499,7 +1536,8 @@ async def test_a_module_a_block_inserted_is_not_covered_once_the_block_is_closed
     site = lab.edge_site(lab.layouts[0], Name.QOS)
     run = live.run_of(lab.client)
     async with live.restoring(site):
-        # A second QoS module in the configuration the block is on: the block does not delete it.
+        # A second QoS module in the configuration the block is on: the block does not
+        # delete it.
         await live.insert_module(site, copy.deepcopy(QOS), None)
         (added,) = set(fake.store.rows) - {1, 2, 3}
         assert set(run.inserted) == {added}
@@ -1661,7 +1699,10 @@ def string_constants(function: ast.AST) -> list[str]:
 
 
 def test_every_method_the_read_only_live_tests_reach_passes_the_guard() -> None:
-    """The methods named in the analytics and in each read operation of the client are reads."""
+    """The methods named in the analytics are reads.
+
+    So are those named in each read operation of the client.
+    """
     source = pathlib.Path(pyvelo.__file__).parent
     method = re.compile(r"[a-zA-Z]+/[a-zA-Z]+")
     reached: set[str] = set()
@@ -2450,7 +2491,10 @@ async def test_without_return_data_the_module_is_read_back(
 async def test_the_helpers_sit_behind_the_write_guard(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A write the guard refuses is neither sent, recorded nor counted; one it passes is recorded and counted once."""
+    """A write the guard refuses is neither sent, recorded nor counted.
+
+    One it passes is recorded and counted once.
+    """
     fake = lab_fake()
     lab = await opened(fake, monkeypatch)
     run = live.run_of(lab.client)
@@ -2491,7 +2535,10 @@ DS_MODULE = 4
 
 
 def hub_lab() -> FakeLab:
-    """``ds_lab`` with an Edge, a cluster and another Edge; the Global Segment's object is known to the store."""
+    """``ds_lab`` with an Edge, a cluster and another Edge.
+
+    The Global Segment's object is known to the store.
+    """
     fake = ds_lab()
     fake.store.add_object(
         SEG0_OBJECT,
@@ -2522,7 +2569,10 @@ def role_request(
     configuration_id: int = 20,
     module_id: int = DS_MODULE,
 ) -> Any:
-    """The request of the client method *method* for *target_id* on that profile and module."""
+    """The request of the client method *method* for *target_id*.
+
+    It is on that profile and module.
+    """
     module = (
         edge_schemas if live.ROLE_CALLS[method][1] == "edge" else enterprise_schemas
     )

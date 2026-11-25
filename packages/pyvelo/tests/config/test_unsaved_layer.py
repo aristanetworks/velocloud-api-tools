@@ -1,4 +1,6 @@
-"""An edge state saves its edge layer: an edit of its profile layer is refused by ``plan()``.
+"""An edge state saves its edge layer.
+
+An edit of its profile layer is refused by ``plan()``.
 
 The state is ``test_state_plan.make_state()``: edge configuration 10 with a
 firewall module (1), profile 20 with a firewall module (2) and a QoS one (3).

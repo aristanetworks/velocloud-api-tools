@@ -163,7 +163,8 @@ def _plan_nothing(
     raw: object = module.raw_data
     if plan.operation != "none" or plan.changes:
         failures.append(
-            f"{label} {module.name}: planned {plan.operation} ({describe(plan.changes)})"
+            f"{label} {module.name}: planned {plan.operation} "
+            f"({describe(plan.changes)})"
         )
     elif plan.data != raw or plan.data is raw:
         failures.append(f"{label} {module.name}: plan.data is not a copy of raw_data")
@@ -368,7 +369,10 @@ def _qos_rule_usable(module: AnyStoredModule) -> bool:
 
 
 def _qos_source(data: AnyQosData, version: str = "IPv4v6") -> tuple[str, str] | None:
-    """The segment and rule names of the first QoS rule that matches *version* addresses."""
+    """The segment and rule names of the first QoS rule that matches addresses.
+
+    It matches addresses of *version*.
+    """
     for segment in data.segments:
         for rule in segment.rules:
             if rule.match.ip_version == version:
@@ -623,7 +627,10 @@ VIDEO_RED = Path(("qoe", "video", "latency", "red"))
 
 
 def _qoe_thresholds_usable(module: AnyStoredModule) -> bool:
-    """Whether *module* is a QoS module whose raw data has the QoE thresholds ``_raised`` raises."""
+    """Whether *module* is a QoS module whose raw data has raised QoE thresholds.
+
+    The thresholds are those ``_raised`` raises.
+    """
     return _qoe_usable(module) and all(
         isinstance(value_at(module.raw_data, path), int)
         for path in (VOICE_YELLOW, VOICE_RED, VIDEO_RED)
@@ -981,7 +988,9 @@ async def test_writes_answered_without_the_row_are_read_back(
 async def test_a_write_with_no_checkable_change_asks_for_a_count(
     lab: Lab, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """An update that changes only a value the VCO owns goes out without ``returnData`` and is read back.
+    """An update that changes only a value the VCO owns goes out without ``returnData``.
+
+    It is read back.
 
     The check cannot find such a change stored or missing in a module row, so
     ``write_module`` asks for a row count, which says whether the VCO stored

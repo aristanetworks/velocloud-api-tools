@@ -1,4 +1,7 @@
-"""The firewall's ownership scenarios, each through ``plan_module`` on edge modules bound to a profile."""
+"""The firewall's ownership scenarios, each through ``plan_module``.
+
+Each runs on edge modules bound to a profile.
+"""
 
 import copy
 from typing import Any
@@ -50,7 +53,10 @@ def desc(sid: int, name: str) -> dict[str, object]:
 def bound(
     edge_raw: dict[str, Any], profile_raw: dict[str, Any] | None = None
 ) -> tuple[FirewallConfigurationModule[Edge], FirewallConfigurationModule[Profile]]:
-    """An edge module of *edge_raw* bound to a profile module of *profile_raw*, and that one."""
+    """An edge module of *edge_raw*, and the profile module it is bound to.
+
+    The profile module is of *profile_raw*.
+    """
     edge = fw({"segments": [], **edge_raw}, layer=Edge)
     profile = fw({"segments": [], **(profile_raw or {})}, layer=Profile, module_id=2)
     edge.data.bind_profile(profile.raw_data)
@@ -93,7 +99,8 @@ def test_a_stored_null_is_kept_and_does_not_count_as_local() -> None:
     assert owned.stored is None
     assert owned.is_local is False
     assert owned.local is MISSING
-    # The profile stores nothing for it either: the effective value is the display default.
+    # The profile stores nothing for it either: the effective value is the display
+    # default.
     view = effective_view(edge.data, profile.data, FirewallData[Effective])
     assert view.syslog_forwarding.origin is Origin.FACTORY
     stores = effective_view(

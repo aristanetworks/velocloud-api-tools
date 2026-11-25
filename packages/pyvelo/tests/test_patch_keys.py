@@ -576,7 +576,10 @@ def test_add_under_a_name_where_the_key_is_composite_points_to_plus() -> None:
 
 
 def true_and_title_true() -> Root:
-    """Two routes that differ in the one part ``true`` / ``True``: the text ``..,true,..`` is two keys."""
+    """Two routes that differ in the one part ``true`` / ``True``.
+
+    The text ``..,true,..`` is two keys.
+    """
     return Root(
         routes=[
             Route(dest="a", prefix=24, gw="true", intf="GE3"),

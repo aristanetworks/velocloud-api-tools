@@ -1,4 +1,6 @@
-"""The hub resolver: the Edges and the hub clusters of an enterprise by name and logical ID.
+"""The hub resolver.
+
+The Edges and the hub clusters of an enterprise by name and logical ID.
 
 Each test that loads the resolver serves ``enterprise/getEnterpriseEdgeList``
 and ``enterprise/getEnterpriseServices`` from a ``ModuleStore`` through a

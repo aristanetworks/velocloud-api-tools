@@ -1,4 +1,7 @@
-"""The QoS module's kinds as declared, the display defaults it reads, and what each layer holds."""
+"""The QoS module's kinds as declared and the display defaults it reads.
+
+And what each layer holds.
+"""
 
 import copy
 from typing import Any, cast

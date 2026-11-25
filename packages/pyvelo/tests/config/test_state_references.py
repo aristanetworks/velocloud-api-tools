@@ -1,4 +1,6 @@
-"""``ConfigState.plan`` refuses a value that names a segment or a backhaul hub the configuration lacks.
+"""``ConfigState.plan`` refuses a value that names what the configuration lacks.
+
+That is a segment or a backhaul hub the configuration lacks.
 
 A profile state is built by ``profile_state``; an edge state is an edge whose
 device settings (or QoS) hold the edit, over that profile. A reference that
@@ -70,7 +72,10 @@ async def profile_of(
     qos: list[dict[str, Any]] | None = None,
     networks: list[dict[str, Any]] | None = None,
 ) -> ConfigState:
-    """A profile with Global and Guest in its three modules, unless *ds* or *qos* say otherwise."""
+    """A profile with Global and Guest in its three modules.
+
+    *ds* or *qos* may say otherwise.
+    """
     return await profile_state(
         ds if ds is not None else [ds_entry(GLOBAL), ds_entry(GUEST)],
         qos if qos is not None else [qos_entry(GLOBAL), qos_entry(GUEST)],
@@ -85,7 +90,9 @@ async def edge_over(
     networks: list[dict[str, Any]] | None = None,
     with_qos: bool = False,
 ) -> ConfigState:
-    """An edge state over *profile*'s profile: its device settings hold only the Global Segment and *networks*.
+    """An edge state over *profile*'s profile.
+
+    Its device settings hold only the Global Segment and *networks*.
 
     With *with_qos* the edge also has a QoS module of its own, with the Global
     Segment, no rule and no `cosMapping` (it inherits the profile's).
@@ -195,7 +202,10 @@ SERVICE_ID = 601
 
 
 def hub_refs(*hubs: Hub, segment: tuple[int, str, str, int] = GLOBAL) -> dict[str, Any]:
-    """The device settings refs of a profile with the Global Segment and Guest, and a hub row in *segment* (service ``SERVICE``) for each of *hubs*."""
+    """The device settings refs of a profile with the Global Segment and Guest.
+
+    They hold a hub row in *segment* (service ``SERVICE``) for each of *hubs*.
+    """
     return profile_hub_rows(
         segment_row(GLOBAL[0], GLOBAL[3], GLOBAL[2]),
         segment_row(GUEST[0], GUEST[3], GUEST[2]),
@@ -232,7 +242,10 @@ async def hub_profile_of(
     refs: dict[str, Any],
     **more: Any,
 ) -> ConfigState:
-    """A profile of *ds* and *qos* with the device settings refs *refs*; the Global Segment and Guest are in the firewall too."""
+    """A profile of *ds* and *qos* with the device settings refs *refs*.
+
+    The Global Segment and Guest are in the firewall too.
+    """
     return await hub_profile_state(
         ds,
         qos,
@@ -289,7 +302,8 @@ async def test_removing_a_hub_a_rule_uses_raises_and_names_the_rule() -> None:
 
 
 async def test_an_edge_rule_must_name_a_backhaul_hub_of_the_profile() -> None:
-    # Hub-B has a service in the Global Segment, and the segment does not list it for backhaul.
+    # Hub-B has a service in the Global Segment, and the segment does not list it for
+    # backhaul.
     profile = await hub_profile_of(
         [
             ds_with_vpn(GLOBAL, hubs=(HUB_A, HUB_B), backhaul=(HUB_A,)),
@@ -380,7 +394,10 @@ async def test_update_module_does_not_run_it() -> None:
 
 
 def count_parses(monkeypatch: pytest.MonkeyPatch) -> list[type]:
-    """Record the class of every module as read that ``ReadData.model`` parses from now on."""
+    """Record the class of every module as read that ``ReadData.model`` parses.
+
+    Recording starts now.
+    """
     parsed: list[type] = []
     original = ReadData.model
 

@@ -17,7 +17,10 @@ def _seg_meta(name: str = "Global Segment", segment_id: int = 0) -> SegmentMetad
 
 class TestQosKeyFields:
     def test_segments_keyed_by_name(self) -> None:
-        """QosData.segments should be keyed by segment.name, alt key segment.segment_id."""
+        """QosData.segments should be keyed by segment.name.
+
+        The alt key is segment.segment_id.
+        """
         assert get_key_spec(QosData.model_fields["segments"]) == KeySpec(
             ("segment.name",), alt="segment.segment_id"
         )
@@ -31,7 +34,10 @@ class TestQosKeyFields:
 
 class TestQosCosMappingFlag:
     def test_cos_mapping_override_is_the_flag_of_its_encoding(self) -> None:
-        """CosMapping.override is a plain field; the segment's cos_mapping is ByFlag on it."""
+        """CosMapping.override is a plain field.
+
+        The segment's cos_mapping is ByFlag on it.
+        """
         assert not has_override_flag(CosMapping.model_fields["override"])
         found = field_kind(QosSegment[Edge].model_fields["cos_mapping"])
         assert found.encoding == ByFlag("override", presence_wins=True)
