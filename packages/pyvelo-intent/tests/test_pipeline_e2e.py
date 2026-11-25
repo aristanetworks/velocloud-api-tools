@@ -15,6 +15,7 @@ from pyvelo.client.schemas.configuration import (
 from pyvelo.client.schemas.enterprise import GetEnterpriseEdgesItem
 from pyvelo.config.resolver import ResolverRegistry
 from pyvelo.config.resolvers.edge import EdgeResolver
+from pyvelo_intent import add
 from pyvelo_intent.config import ConfigPipeline, SaveResult
 from pyvelo_intent.config.firewall import (
     FirewallOutboundRule,
@@ -101,15 +102,17 @@ async def test_full_e2e_load_apply_save():
             "segments": {
                 "Global Segment": {
                     "outbound": {
-                        "block-ssh": {
-                            "name": "block-ssh",
-                            "action": {"allow_or_deny": "deny"},
-                            "match": {
-                                "proto": 6,
-                                "dport_low": 22,
-                                "dport_high": 22,
-                            },
-                        }
+                        "block-ssh": add(
+                            {
+                                "name": "block-ssh",
+                                "action": {"allow_or_deny": "deny"},
+                                "match": {
+                                    "proto": 6,
+                                    "dport_low": 22,
+                                    "dport_high": 22,
+                                },
+                            }
+                        )
                     }
                 }
             }
@@ -206,11 +209,13 @@ async def test_e2e_multiple_patches():
             "segments": {
                 "Global Segment": {
                     "outbound": {
-                        "new-rule": {
-                            "name": "new-rule",
-                            "action": {"allow_or_deny": "deny"},
-                            "match": {"proto": 17},
-                        }
+                        "new-rule": add(
+                            {
+                                "name": "new-rule",
+                                "action": {"allow_or_deny": "deny"},
+                                "match": {"proto": 17},
+                            }
+                        )
                     }
                 }
             }

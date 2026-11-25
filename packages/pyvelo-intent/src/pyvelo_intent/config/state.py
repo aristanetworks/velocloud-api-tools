@@ -25,7 +25,8 @@ from pyvelo.client.schemas.configuration import (
 from pyvelo.config.resolver import ResolverContext
 from pyvelo.config.validation import ValidationError
 from pyvelo.core import ConfigContext
-from pyvelo.core.fields import get_key_field
+from pyvelo.core.fields import get_key_spec
+from pyvelo.core.rebase import KeyForm, item_key, item_key_text, key_form
 
 from pyvelo_intent.config.module_names import resolve_module_name
 
@@ -150,6 +151,11 @@ class ConfigState:
     )
     load_warnings: list[ValidationWarning] = field(default_factory=list)
     _spent: bool = field(default=False, repr=False)
+    _made_into_unset: list[tuple[AnyConfigurationModule, bool]] = field(
+        default_factory=list, repr=False
+    )
+    """Each module ``module(create=True)`` made where ``modules`` was unset, and
+    whether ``modules`` was in the config's ``model_fields_set`` then."""
 
     def __post_init__(self) -> None:
         if self.edge_config is None or self.edge_config.modules is MISSING:
@@ -194,12 +200,50 @@ class ConfigState:
         from the profile. Raises ``ValueError`` if there is no such module and
         none can be created.
         """
-        return _module_of(
-            self.target_config,
+        config = self.target_config
+        unset = config.modules is MISSING
+        was_set = "modules" in config.model_fields_set
+        module = _module_of(
+            config,
             resolve_module_name(name),
             create=create,
             profile=self.profile_config,
         )
+        if unset and module.is_new:
+            self._made_into_unset.append((module, was_set))
+        return module
+
+    def find_module(
+        self, name: ConfigurationModuleName | str
+    ) -> AnyConfigurationModule | None:
+        """The target config's module called *name* (an intent-level name works), or None."""
+        return _find_module(self.target_config, resolve_module_name(name))
+
+    def drop_module(self, module: AnyConfigurationModule) -> None:
+        """Remove *module*, one that ``module(create=True)`` made, from the target config.
+
+        A ``modules`` list that the creation set, where it was unset, is unset
+        again once it is empty. Raises ``ValueError`` for a module that is not
+        new (``is_new``): one read from the VCO is never dropped.
+        """
+        if not module.is_new:
+            raise ValueError(
+                f"module {module.name!r} was read from the VCO; only a new one is dropped"
+            )
+        config = self.target_config
+        if config.modules is MISSING:
+            return
+        config.modules[:] = [m for m in config.modules if m is not module]
+        made = next(
+            (entry for entry in self._made_into_unset if entry[0] is module), None
+        )
+        if made is None:
+            return
+        self._made_into_unset.remove(made)
+        if not config.modules:
+            config.modules = MISSING
+            if not made[1]:
+                config.model_fields_set.discard("modules")
 
     @property
     def edge(self) -> LayerView:
@@ -263,8 +307,9 @@ class ConfigState:
         If ``module_name`` is None, returns changes across all changed
         modules. KeyField-annotated lists are diffed by key (additions,
         removals, per-key recursive diff), so reordering does not appear as
-        a change. The path format describes the field a user would patch via
-        a ``merge_patch`` dict.
+        a change; one with an item without a key, or a key repeated, is
+        diffed by position. The path format describes the field a user would
+        patch via a ``merge_patch`` dict.
 
         MISSING is preserved as the sentinel rather than rendered as None.
         """
@@ -419,16 +464,16 @@ def _diff_value(
             child_path = f"{path}.{field_name}" if path else field_name
             before_val = cast(object, getattr(before, field_name, MISSING))
             after_val = cast(object, getattr(after, field_name, MISSING))
-            key_attr = get_key_field(field_info)
+            spec = get_key_spec(field_info)
             if (
-                key_attr is not None
+                spec is not None
                 and isinstance(before_val, list)
                 and isinstance(after_val, list)
             ):
                 _diff_keyed_list(
                     module=module,
                     path=child_path,
-                    key_attr=key_attr,
+                    key_paths=spec.paths,
                     before=cast(list[object], before_val),
                     after=cast(list[object], after_val),
                     out=out,
@@ -463,31 +508,41 @@ def _diff_keyed_list(
     *,
     module: str,
     path: str,
-    key_attr: str,
+    key_paths: tuple[str, ...],
     before: list[object],
     after: list[object],
     out: list[ConfigFieldChange],
 ) -> None:
-    """Diff two lists of BaseModel items by their KeyField key value."""
+    """Diff two lists of BaseModel items by their KeyField key value.
 
-    def _resolve_key(item: object) -> object | None:
-        val: object | None = item
-        for part in key_attr.split("."):
-            val = cast(object | None, getattr(val, part, None))
-            if val is None:
-                return None
-        return val
+    Items are matched by key in string form, part by part (``key_form``). The
+    path names an item by ``item_key_text``: the value of a one-part key, a
+    composite key as ``key_text`` writes it
+    (``static["10.0.0.0",24,"192.168.1.1",GE3]``), as the item before had it.
 
-    by_key_before: dict[object | None, object] = {
-        _resolve_key(item): item for item in before
-    }
-    by_key_after: dict[object | None, object] = {
-        _resolve_key(item): item for item in after
-    }
-    all_keys: list[object | None] = list(by_key_before.keys()) + [
+    When an item on either side has no key, or a key is repeated on either
+    side, items cannot be matched by key: the lists are diffed by position,
+    as a list without a ``KeyField`` is (``_diff_value``).
+    """
+    keys_before = [key_form(item_key(item, key_paths)) for item in before]
+    keys_after = [key_form(item_key(item, key_paths)) for item in after]
+    if any(
+        None in keys or len(set(keys)) != len(keys)
+        for keys in (keys_before, keys_after)
+    ):
+        _diff_value(module=module, path=path, before=before, after=after, out=out)
+        return
+    by_key_before: dict[KeyForm | None, object] = dict(
+        zip(keys_before, before, strict=True)
+    )
+    by_key_after: dict[KeyForm | None, object] = dict(
+        zip(keys_after, after, strict=True)
+    )
+    all_keys: list[KeyForm | None] = list(by_key_before.keys()) + [
         k for k in by_key_after if k not in by_key_before
     ]
     for key in all_keys:
         b = by_key_before.get(key, MISSING)
         a = by_key_after.get(key, MISSING)
-        _diff_value(module=module, path=f"{path}[{key}]", before=b, after=a, out=out)
+        text = item_key_text(a if b is MISSING else b, key_paths)
+        _diff_value(module=module, path=f"{path}[{text}]", before=b, after=a, out=out)

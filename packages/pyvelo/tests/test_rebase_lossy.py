@@ -4,9 +4,14 @@ from typing import Annotated
 from pydantic import MISSING, Field
 from pyvelo.core import ConfigContext, EdgeOnly, VcoModel
 from pyvelo.core.fields import KeyField, OverrideFlag
-from pyvelo.core.rebase import Path, find_lossy_assignments, is_override_flag
+from pyvelo.core.rebase import (
+    Path,
+    carry_unset_defaults,
+    find_lossy_assignments,
+    is_override_flag,
+)
 
-from .test_rebase import Root
+from .test_rebase import Root, Rs
 
 
 class Opt(VcoModel):
@@ -203,6 +208,40 @@ def test_item_whose_key_changed_is_not_paired():
     cur.segments[0].segment.name = "Z"
     cur.segments[0].rules[0].port = 0
     assert lossy(base, cur) == []
+
+
+def test_lossy_and_carry_pair_by_alt_key():
+    raw = {"rules": [{"name": "a", "rid": "1"}]}
+    base, cur = Rs.model_validate(raw), Rs.model_validate(raw)
+    cur.rules[0].name = "b"
+    cur.rules[0].port = 0  # the default, and the document has no key for it
+    assert lossy(base, cur) == ["rules[a].port"]
+
+
+class Gen(VcoModel):
+    name: str
+    gid: uuid.UUID = Field(default_factory=uuid.uuid4)  # made anew by each parse
+    note: str = ""
+    port: int = 0
+
+
+class Gens(VcoModel):
+    rules: Annotated[list[Gen], KeyField("name", alt="gid")] = Field(
+        default_factory=list
+    )
+
+
+def test_a_generated_alt_key_carried_by_position_does_not_pair_items():
+    # Two items of one name and no ID: rebase writes the changed list whole, so
+    # the assignment inside it is kept. The IDs that carrying copies over by
+    # position must not pair the items as if the document had them.
+    raw = {"rules": [{"name": "dup", "note": "a"}, {"name": "dup", "note": "b"}]}
+    base, cur = Gens.model_validate(raw), Gens.model_validate(raw)
+    cur.rules.reverse()
+    cur.rules[0].port = 0  # the default, and the document has no key for it
+    before, after = dump(base), dump(cur)
+    carry_unset_defaults(base, cur, before, after)
+    assert find_lossy_assignments(base, cur, before, after) == []
 
 
 def test_dumps_that_do_not_line_up_with_the_model_are_not_walked():

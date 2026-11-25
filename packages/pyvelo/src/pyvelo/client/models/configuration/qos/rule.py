@@ -4,7 +4,7 @@ from typing import Annotated, Any, Literal, override
 from pydantic import MISSING, Field
 
 from pyvelo.core import Alias, Normalizer, VcoModel
-from pyvelo.core.fields import Resolvable
+from pyvelo.core.fields import KeyField, Resolvable
 from pyvelo.core.identity import ApplicationIdentity
 
 from ..common import (
@@ -132,7 +132,9 @@ class RouteConfig(VcoModel):
     name: str | None = None
     logical_id: uuid.UUID | None = None
     bypass_gateway: bool = False
-    backhaul_edges: list[BackhaulEdge] | MISSING = MISSING
+    backhaul_edges: Annotated[list[BackhaulEdge] | MISSING, KeyField("logical_id")] = (
+        MISSING
+    )
     backhaul_edges_auto_selection: bool = False
 
 

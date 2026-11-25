@@ -3,8 +3,9 @@
 from pyvelo.client.models.configuration.firewall.root import FirewallData
 from pyvelo.client.models.configuration.firewall.rule_match import OutboundRuleMatch
 from pyvelo.client.models.configuration.firewall.segment import FirewallSegment
+from pyvelo.core import KeySpec
 from pyvelo.core.fields import (
-    get_key_field,
+    get_key_spec,
     get_resolvable,
 )
 
@@ -12,19 +13,19 @@ from pyvelo.core.fields import (
 class TestFirewallKeyFields:
     def test_segments_has_keyfield(self):
         fi = FirewallData.model_fields["segments"]
-        assert get_key_field(fi) == "segment.name"
+        assert get_key_spec(fi) == KeySpec(("segment.name",), alt="segment.segment_id")
 
     def test_inbound_has_keyfield(self):
         fi = FirewallData.model_fields["inbound"]
-        assert get_key_field(fi) == "name"
+        assert get_key_spec(fi) == KeySpec(("name",), alt="rule_logical_id")
 
     def test_inbound_v6_has_keyfield(self):
         fi = FirewallData.model_fields["inbound_v6"]
-        assert get_key_field(fi) == "name"
+        assert get_key_spec(fi) == KeySpec(("name",), alt="rule_logical_id")
 
     def test_outbound_has_keyfield(self):
         fi = FirewallSegment.model_fields["outbound"]
-        assert get_key_field(fi) == "name"
+        assert get_key_spec(fi) == KeySpec(("name",), alt="rule_logical_id")
 
 
 class TestFirewallResolvable:

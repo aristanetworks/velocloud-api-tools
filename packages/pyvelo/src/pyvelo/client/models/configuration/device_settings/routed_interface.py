@@ -15,10 +15,12 @@ from pyvelo.core import (
     ContextDefault,
     EdgeLocal,
     EdgeOnly,
+    KeyField,
     NoneIsFalse,
     NoneIsZero,
     Normalizer,
     OverrideFlag,
+    Positional,
     Resolvable,
     VcoModel,
 )
@@ -80,7 +82,9 @@ class OspfRouteFilter(VcoModel):
 
 class OspfRoute(VcoModel):
     default_action: OspfRouteAction
-    filters: list[OspfRouteFilter] = Field(default_factory=list)
+    filters: Annotated[list[OspfRouteFilter], Positional()] = Field(
+        default_factory=list
+    )
 
 
 def _normalize_ospf_area(v: Any) -> Any:
@@ -97,6 +101,7 @@ class RoutedInterfaceOspfBase(VcoModel):
         list[int] | list[str],
         BeforeValidator(_normalize_ospf_area),
         Normalizer(lambda v: [0] if v in ("", "0", 0, [], [0]) else v),
+        Positional(),
     ] = Field(default_factory=lambda: [0])
     hello_timer: int = 10
     dead_timer: int = 40
@@ -110,7 +115,9 @@ class RoutedInterfaceOspfBase(VcoModel):
     outbound_route_advertisement: OspfRoute = Field(
         default_factory=lambda: OspfRoute(default_action="IGNORE")
     )
-    exclusion_routes: list[OspfRouteFilter] = Field(default_factory=list)
+    exclusion_routes: Annotated[list[OspfRouteFilter], Positional()] = Field(
+        default_factory=list
+    )
     enable_bfd: bool = False
 
 
@@ -126,7 +133,7 @@ class RoutedInterfaceDhcpServerV6(VcoModel):
     enabled: bool = False
     lease_time_seconds: int = 3600
     dhcp_address_count: Annotated[int, Alias("numDhcpAddr")] = 10
-    options: list[DhcpServerOption] | None = None
+    options: Annotated[list[DhcpServerOption] | None, Positional()] = None
     static_reserved: int = 10
     prefix_delegation: PrefixDelegation = Field(default_factory=PrefixDelegation)
 
@@ -235,7 +242,7 @@ class RoutedInterfaceDhcpServer(VcoModel):
     dhcp_address_count: Annotated[
         int, Alias("numDhcpAddr"), NoneIsZero, ContextDefault(profile=MISSING)
     ] = 10
-    options: Annotated[list[DhcpServerOption] | None, EdgeOnly] = Field(
+    options: Annotated[list[DhcpServerOption] | None, EdgeOnly, Positional()] = Field(
         default_factory=list
     )
     static_reserved: Annotated[int, EdgeOnly] = 10
@@ -361,7 +368,9 @@ class RoutedInterfaceCell(RoutedInterfaceCommon):
 
 class RoutedInterfaceLag(RoutedInterfaceCommon):
     lacp: Lacp = Field(default_factory=Lacp)
-    slave_interfaces: list[SlaveInterface] = Field(default_factory=list)
+    slave_interfaces: Annotated[list[SlaveInterface], KeyField("name")] = Field(
+        default_factory=list
+    )
     evdsl_modem_attached: Annotated[bool, NoneIsFalse] = False
 
 

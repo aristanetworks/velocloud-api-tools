@@ -2,7 +2,7 @@ from typing import Annotated, Literal
 
 from pydantic import MISSING, Field
 
-from pyvelo.core import Alias, VcoModel
+from pyvelo.core import Alias, Positional, VcoModel
 from pyvelo.core.fields import DefaultingScalar
 
 RadioMode = Literal["n", "ac", "ax"]
@@ -93,7 +93,7 @@ class DhcpOptionMetadata(VcoModel):
 
 class DhcpServerOption(VcoModel):
     option: int
-    value: str | list[str] | None
+    value: Annotated[str | list[str] | None, Positional()]
     type_: Annotated[str, Alias("type")]
     metadata: Annotated[DhcpOptionMetadata | MISSING, Alias("metaData")] = MISSING
 

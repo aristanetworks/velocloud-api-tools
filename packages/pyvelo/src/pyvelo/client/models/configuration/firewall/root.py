@@ -9,6 +9,8 @@ from ..common import (
     copy_profile_segments,
     find_segment,
     get_or_create_segment,
+    profile_segment_id,
+    profile_segment_name,
 )
 from .rules import FirewallInboundRule, FirewallInboundRuleV6
 from .security_features import NetworkProtectionSettings, SecurityFeatureSettings
@@ -22,18 +24,18 @@ class FirewallData(VcoModel):
     firewall_enabled: Annotated[bool, Alias("firewall_enabled")] = True
     inbound: Annotated[
         list[FirewallInboundRule],
-        KeyField("name"),
+        KeyField("name", alt="rule_logical_id"),
         ContextDefaults(profile=lambda: list),
     ] = Field(default_factory=list)
     inbound_v6: Annotated[
         list[FirewallInboundRuleV6],
         Alias("inboundV6"),
-        KeyField("name"),
+        KeyField("name", alt="rule_logical_id"),
         ContextDefaults(profile=lambda: list),
     ] = Field(default_factory=list)
-    segments: Annotated[list[FirewallSegment], KeyField("segment.name")] = Field(
-        default_factory=list
-    )
+    segments: Annotated[
+        list[FirewallSegment], KeyField("segment.name", alt="segment.segment_id")
+    ] = Field(default_factory=list)
     syslog_forwarding: Annotated[
         bool, Alias("syslog_forwarding"), DefaultingScalar(bool, default=False)
     ] = False
@@ -86,6 +88,22 @@ class FirewallData(VcoModel):
             FirewallSegment.model_validate,
             self.config_context,
         )
+
+    def profile_segment_name(self, selector: object) -> str | None:
+        """The bound profile's name for the segment *selector* names, or None.
+
+        See :func:`~pyvelo.client.models.configuration.common.profile_segment_name`.
+        Raises ``UnboundError`` if the data is not bound to a profile.
+        """
+        return profile_segment_name(self._profile_segments, selector)
+
+    def profile_segment_id(self, selector: object) -> object | None:
+        """The ``segmentId`` of the bound profile's segment *selector* names, or None.
+
+        See :func:`~pyvelo.client.models.configuration.common.profile_segment_id`.
+        Raises ``UnboundError`` if the data is not bound to a profile.
+        """
+        return profile_segment_id(self._profile_segments, selector)
 
     def get_segment(
         self, *, name: str | None = None, segment_id: int | None = None

@@ -11,7 +11,7 @@ from pyvelo.client.models.configuration.device_settings.lan import (
     LanSettings,
 )
 from pyvelo.core.fields import (
-    get_key_field,
+    get_key_spec,
     get_resolvable,
     has_override_flag,
     is_edge_local,
@@ -20,10 +20,14 @@ from pyvelo.core.fields import (
 
 class TestLanKeyFields:
     def test_interfaces_keyed_by_name(self):
-        assert get_key_field(LanSettings.model_fields["interfaces"]) == "name"
+        spec = get_key_spec(LanSettings.model_fields["interfaces"])
+        assert spec is not None
+        assert spec.paths == ("name",)
 
     def test_networks_keyed_by_vlan_id(self):
-        assert get_key_field(LanSettings.model_fields["networks"]) == "vlan_id"
+        spec = get_key_spec(LanSettings.model_fields["networks"])
+        assert spec is not None
+        assert spec.paths == ("vlan_id",)
 
 
 class TestLanOverrideFlags:

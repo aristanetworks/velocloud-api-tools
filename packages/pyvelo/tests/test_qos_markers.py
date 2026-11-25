@@ -5,7 +5,8 @@ from pyvelo.client.models.configuration.common import SegmentMetadata
 from pyvelo.client.models.configuration.qos.root import QosData
 from pyvelo.client.models.configuration.qos.rule import QosRuleMatch
 from pyvelo.client.models.configuration.qos.segment import CosMapping, QosSegment
-from pyvelo.core.fields import get_key_field, get_resolvable, has_override_flag
+from pyvelo.core import KeySpec, add
+from pyvelo.core.fields import get_key_spec, get_resolvable, has_override_flag
 
 
 def _seg_meta(name: str = "Global Segment", segment_id: int = 0) -> SegmentMetadata:
@@ -16,14 +17,16 @@ def _seg_meta(name: str = "Global Segment", segment_id: int = 0) -> SegmentMetad
 
 class TestQosKeyFields:
     def test_segments_keyed_by_name(self):
-        """QosData.segments should be keyed by segment.name."""
-        key = get_key_field(QosData.model_fields["segments"])
-        assert key == "segment.name"
+        """QosData.segments should be keyed by segment.name, alt key segment.segment_id."""
+        assert get_key_spec(QosData.model_fields["segments"]) == KeySpec(
+            ("segment.name",), alt="segment.segment_id"
+        )
 
     def test_rules_keyed_by_name(self):
-        """QosSegment.rules should be keyed by name."""
-        key = get_key_field(QosSegment.model_fields["rules"])
-        assert key == "name"
+        """QosSegment.rules should be keyed by name, alt key rule_logical_id."""
+        assert get_key_spec(QosSegment.model_fields["rules"]) == KeySpec(
+            ("name",), alt="rule_logical_id"
+        )
 
 
 class TestQosOverrideFlag:
@@ -54,17 +57,21 @@ class TestQosMerge:
                 "segments": {
                     "Global Segment": {
                         "rules": {
-                            "new-rule": {
-                                "name": "new-rule",
-                                "match": {},
-                                "action": {
-                                    "route_type": "edge2Any",
-                                    "edge2EdgeRouteAction": {"interface": "auto"},
-                                    "edge2DataCenterRouteAction": {"interface": "auto"},
-                                    "edge2CloudRouteAction": {"interface": "auto"},
-                                    "QoS": {"type": "transactional"},
-                                },
-                            }
+                            "new-rule": add(
+                                {
+                                    "name": "new-rule",
+                                    "match": {},
+                                    "action": {
+                                        "route_type": "edge2Any",
+                                        "edge2EdgeRouteAction": {"interface": "auto"},
+                                        "edge2DataCenterRouteAction": {
+                                            "interface": "auto"
+                                        },
+                                        "edge2CloudRouteAction": {"interface": "auto"},
+                                        "QoS": {"type": "transactional"},
+                                    },
+                                }
+                            )
                         }
                     }
                 }

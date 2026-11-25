@@ -1,16 +1,14 @@
 """Helper library for VeloCloud Orchestrator configuration APIs."""
 
+from pyvelo.core import PatchError, add, at, delete, move
+
 from pyvelo_intent.config import (
-    Aspect,
-    AspectRegistry,
-    AspectSummary,
     ConfigPipeline,
     ConfigState,
     SaveResult,
     ValidationWarning,
     build_default_pipeline,
     confirm_save,
-    generate_patch_schema,
     load_config,
 )
 from pyvelo_intent.diff import (
@@ -33,9 +31,6 @@ from pyvelo_intent.errors import (
 
 __all__ = [
     "Added",
-    "Aspect",
-    "AspectRegistry",
-    "AspectSummary",
     "Change",
     "ConfigInputError",
     "ConfigPipeline",
@@ -44,6 +39,7 @@ __all__ = [
     "FieldChange",
     "IntentError",
     "Modified",
+    "PatchError",
     "Removed",
     "SaveResult",
     "SaveValidationError",
@@ -51,9 +47,12 @@ __all__ = [
     "Unchanged",
     "UnknownRegistryEntryError",
     "ValidationWarning",
+    "add",
+    "at",
     "build_default_pipeline",
     "confirm_save",
+    "delete",
     "diff_intents",
-    "generate_patch_schema",
     "load_config",
+    "move",
 ]

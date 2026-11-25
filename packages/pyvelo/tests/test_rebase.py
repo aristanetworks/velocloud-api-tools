@@ -1,5 +1,6 @@
 """rebase(raw, before, after): apply the change before->after to raw."""
 
+import copy
 from collections.abc import Sequence
 from typing import Annotated, cast
 
@@ -7,6 +8,8 @@ from pydantic import MISSING, Field
 from pyvelo.core import VcoModel
 from pyvelo.core.fields import KeyField
 from pyvelo.core.rebase import RawChange, raw_changes, rebase
+
+from .patch_models import Route
 
 
 class Meta(VcoModel):
@@ -248,3 +251,196 @@ def test_unreadable_raw_key_keeps_positional_pairing():
     before = {"pols": [{"ruleName": "a", "hits": 1}]}
     after = {"pols": [{"ruleName": "a", "hits": 2}]}
     assert rebase(raw, before, after, Pols) == {"pols": [{"hits": 2, "x": 1}]}
+
+
+# --- items paired by alt key, then by key --------------------------------------
+
+
+class R(VcoModel):
+    name: str | None = None
+    rid: str | MISSING = MISSING
+    port: int = 0
+
+
+class Rs(VcoModel):
+    rules: Annotated[list[R], KeyField("name", alt="rid")] = Field(default_factory=list)
+
+
+def item(name: str | None, rid: str | None = None, **rest: object) -> dict[str, object]:
+    """A rule as JSON; with no *rid* it has no ``rid`` key."""
+    return {"name": name, **({} if rid is None else {"rid": rid}), **rest}
+
+
+def test_rename_keeps_unknown_raw_keys():
+    raw = {"rules": [item("a", "1", x=1)]}
+    before = {"rules": [item("a", "1", port=0)]}
+    after = {"rules": [item("b", "1", port=0)]}
+    assert rebase(raw, before, after, Rs) == {"rules": [item("b", "1", x=1)]}
+
+
+def test_repeated_names_with_distinct_alt_keys_rebase_item_by_item():
+    raw = {"rules": [item("a", "1", x=1), item("a", "2", x=2)]}
+    before = {"rules": [item("a", "1", port=0), item("a", "2", port=0)]}
+    after = {"rules": [item("a", "1", port=0), item("a", "2", port=5)]}
+    assert rebase(raw, before, after, Rs) == {
+        "rules": [item("a", "1", x=1), item("a", "2", x=2, port=5)]
+    }
+
+
+def test_new_item_without_alt_key_is_an_addition():
+    raw = {"rules": [item("a", "1", x=1), item("b", "2", x=2)]}
+    before = {"rules": [item("a", "1", port=0), item("b", "2", port=0)]}
+    new = item("new", port=0)
+    after = {"rules": [*before["rules"], new]}
+    out = rebase(raw, before, after, Rs)
+    assert out == {"rules": [*raw["rules"], new]}
+    assert raw_changes(raw, out, Rs) == [RawChange("rules[new]", MISSING, new)]
+
+
+def test_new_item_without_a_key_is_an_addition():
+    raw = {"rules": [item("a", "1", x=1), item("b", "2", x=2)]}
+    before = {"rules": [item("a", "1", port=0), item("b", "2", port=0)]}
+    new = item(None, port=3)
+    after = {"rules": [*before["rules"], new]}
+    out = rebase(raw, before, after, Rs)
+    assert out == {"rules": [*raw["rules"], new]}
+    assert raw_changes(raw, out, Rs) == [RawChange("rules[#2]", MISSING, new)]
+
+
+def test_repeated_key_without_alt_keys_replaces_the_list():
+    raw = {"rules": [item("a", x=1), item("a", x=2)]}
+    before = {"rules": [item("a", port=0), item("a", port=0)]}
+    after = {"rules": [item("a", port=0), item("a", port=7)]}
+    assert rebase(raw, before, after, Rs) == after
+
+
+def test_repeated_key_without_alt_keys_untouched_when_nothing_changed():
+    raw = {"rules": [item("a", x=1), item("a", x=2)]}
+    before = {"rules": [item("a", port=0), item("a", port=0)]}
+    assert rebase(raw, before, copy.deepcopy(before), Rs) == raw
+    # A change beside the list: the document is rebased, the list kept as read.
+    raw = {**raw, "other": 1}
+    before = {**before, "other": 1}
+    after = {**copy.deepcopy(before), "other": 2}
+    out = cast(dict[str, object], rebase(raw, before, after, Rs))
+    assert out == {**raw, "other": 2}
+    assert out["rules"] is raw["rules"]
+
+
+def test_removed_item_without_a_key_replaces_the_list():
+    raw = {"rules": [item("a", x=1), item(None, x=2)]}
+    before = {"rules": [item("a", port=0), item(None, port=0)]}
+    after = {"rules": [item("a", port=0)]}
+    assert rebase(raw, before, after, Rs) == after
+
+
+def test_raw_key_the_baseline_lacks_replaces_the_list():
+    # The raw item has a key ("None", a string) where the parse has none, so
+    # raw and before cannot be trusted to line up by position.
+    raw = {"rules": [item("None", "1", x=1)]}
+    before = {"rules": [item(None, "1", port=0)]}
+    after = {"rules": [item(None, "1", port=5)]}
+    assert rebase(raw, before, after, Rs) == after
+
+
+def test_raw_key_in_another_case_than_its_parse_still_rebases_item_by_item():
+    # The parse coerced the raw key (an upper-case UUID read as a lower-case one).
+    raw = {"rules": [item("RULE-A", x=1), item("RULE-B", x=2)]}
+    before = {"rules": [item("rule-a", port=0), item("rule-b", port=0)]}
+    after = {"rules": [item("rule-a", port=5), item("rule-b", port=0)]}
+    assert rebase(raw, before, after, Rs) == {
+        "rules": [item("RULE-A", x=1, port=5), item("RULE-B", x=2)]
+    }
+
+
+def test_raw_alt_key_in_another_case_is_trusted():
+    raw = {"rules": [item("a", "ABC", x=1), item("b", "DEF", x=2)]}
+    before = {"rules": [item("a", "abc", port=0), item("b", "def", port=0)]}
+    after = {"rules": [item("c", "abc", port=0), item("b", "def", port=0)]}
+    # The rename pairs by the alt key: one item, its unknown raw key kept.
+    assert rebase(raw, before, after, Rs) == {
+        "rules": [item("c", "ABC", x=1), item("b", "DEF", x=2)]
+    }
+
+
+def test_removed_item_with_a_unique_key_is_removed():
+    raw = {"rules": [item("a", x=1), item("b", x=2), item("c", x=3)]}
+    before = {"rules": [item("a", port=0), item("b", port=0), item("c", port=0)]}
+    after = {"rules": [item("a", port=0), item("c", port=0)]}
+    assert rebase(raw, before, after, Rs) == {"rules": [item("a", x=1), item("c", x=3)]}
+
+
+# --- composite keys ------------------------------------------------------------
+
+
+class Routes(VcoModel):
+    routes: Annotated[list[Route], KeyField("dest", "prefix", "gw", "intf")] = Field(
+        default_factory=list
+    )
+
+
+def route(dest: str, prefix: object, **rest: object) -> dict[str, object]:
+    """A route as JSON, through gateway ``192.168.1.1``."""
+    return {"dest": dest, "prefix": prefix, "gw": "192.168.1.1", **rest}
+
+
+def test_composite_keyed_list_keeps_unknown_raw_keys_on_untouched_items():
+    raw = {
+        "routes": [
+            route("10.0.0.0", 24, intf="GE3", x=1),
+            route("10.1.0.0", 16, intf="GE3", x=2),
+        ]
+    }
+    before = {
+        "routes": [
+            route("10.0.0.0", 24, intf="GE3", cost=0),
+            route("10.1.0.0", 16, intf="GE3", cost=0),
+        ]
+    }
+    after = {
+        "routes": [
+            route("10.0.0.0", 24, intf="GE3", cost=0),
+            route("10.1.0.0", 16, intf="GE3", cost=5),
+        ]
+    }
+    out = cast(dict[str, list[object]], rebase(raw, before, after, Routes))
+    assert out == {
+        "routes": [
+            route("10.0.0.0", 24, intf="GE3", x=1),
+            route("10.1.0.0", 16, intf="GE3", x=2, cost=5),
+        ]
+    }
+    assert out["routes"][0] is raw["routes"][0]
+    assert raw_changes(raw, out, Routes) == [
+        RawChange('routes["10.1.0.0",16,"192.168.1.1",GE3].cost', MISSING, 5)
+    ]
+
+
+def test_raw_item_without_every_key_part_pairs_by_position():
+    # The raw items have no "intf"; the dumps carry the model default "".
+    raw = {"routes": [route("10.0.0.0", 24, x=1), route("10.1.0.0", 16, x=2)]}
+    before = {
+        "routes": [
+            route("10.0.0.0", 24, intf="", cost=0),
+            route("10.1.0.0", 16, intf="", cost=0),
+        ]
+    }
+    after = {
+        "routes": [
+            route("10.0.0.0", 24, intf="", cost=0),
+            route("10.1.0.0", 16, intf="", cost=5),
+        ]
+    }
+    assert rebase(raw, before, after, Routes) == {
+        "routes": [route("10.0.0.0", 24, x=1), route("10.1.0.0", 16, x=2, cost=5)]
+    }
+
+
+def test_key_parts_pair_in_string_form():
+    # One side as read ("24"), the other as dumped (24): the same item.
+    old = {"routes": [route("10.0.0.0", "24", intf="GE3", cost=0)]}
+    new = {"routes": [route("10.0.0.0", 24, intf="GE3", cost=5)]}
+    assert raw_changes(old, new, Routes) == [
+        RawChange('routes["10.0.0.0","24","192.168.1.1",GE3].prefix', "24", 24),
+        RawChange('routes["10.0.0.0","24","192.168.1.1",GE3].cost', 0, 5),
+    ]

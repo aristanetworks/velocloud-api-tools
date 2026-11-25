@@ -13,7 +13,7 @@
 | Package | What it does |
 |---|---|
 | [**`pyvelo`**](packages/pyvelo/) | Async JSON-RPC client with Pydantic models for every request, response, and configuration module. It handles pagination, rate limiting, and retries. Analytics come back as Polars frames. |
-| [**`pyvelo-intent`**](packages/pyvelo-intent/) | A load → patch → diff → save pipeline for edge and profile configuration, with named aspects, keyed merge patches, and validators. |
+| [**`pyvelo-intent`**](packages/pyvelo-intent/) | A load → patch → diff → save pipeline for edge and profile configuration, with addressed, strict patches and validators. |
 | [**`pyvelo-examples`**](packages/pyvelo-examples/) | Read-only CLI scripts for BGP neighbors, ARP dumps, and analytics reports. |
 
 ## Install
@@ -83,13 +83,13 @@ asyncio.run(main())
 
 ## pyvelo-intent: change configuration safely
 
-This example loads an edge by name, adds a firewall rule, reviews the field-level diff, and previews the save:
+This example loads an edge by name, adds a firewall rule at the top of a segment's outbound rules, reviews the field-level diff, and previews the save:
 
 ```python
 import asyncio
 
 from pyvelo.client import VcoClient, get_vco_credentials
-from pyvelo_intent import build_default_pipeline
+from pyvelo_intent import add, build_default_pipeline
 
 
 async def main() -> None:
@@ -98,18 +98,24 @@ async def main() -> None:
         pipeline = build_default_pipeline(client)
         state = await pipeline.load("branch-nyc", enterprise_id=1)
 
-        # Aspects are named slices of config. List entries are merged by key.
-        state = await pipeline.apply_aspect(
+        # The address names the list and the patch names its items: add()
+        # makes a new rule, a plain object changes one, delete() and move()
+        # remove and reorder. A patch that fails raises PatchError and
+        # changes nothing.
+        state = await pipeline.apply(
             state,
-            "firewall_rules",
-            {
-                "block-ssh": {
-                    "name": "block-ssh",
-                    "action": {"allow_or_deny": "deny"},
-                    "match": {"proto": 6, "dport_low": 22, "dport_high": 22},
-                }
-            },
+            module="firewall",
             segment="Global Segment",
+            path="outbound",
+            patch={
+                "block-ssh": add(
+                    {
+                        "action": {"allow_or_deny": "deny"},
+                        "match": {"proto": 6, "dport_low": 22, "dport_high": 22},
+                    },
+                    first=True,
+                )
+            },
         )
 
         for change in state.get_field_changes():
@@ -124,7 +130,7 @@ async def main() -> None:
 asyncio.run(main())
 ```
 
-Built-in aspects include `firewall_rules`, `business_policy`, `wan_links`, `vlans`, `interfaces`, `routes`, `bgp`, `ntp`, `syslog`, and more. Run `pipeline.list_aspects()` for the full list. The [pyvelo-intent README](packages/pyvelo-intent/README.md) covers validators, resolvers, and the limits of the save path.
+The [pyvelo-intent README](packages/pyvelo-intent/README.md) covers the patch format, validators, resolvers, and the limits of the save path.
 
 ## Development
 

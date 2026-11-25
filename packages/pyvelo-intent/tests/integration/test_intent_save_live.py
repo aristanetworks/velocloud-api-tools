@@ -84,7 +84,7 @@ from pyvelo.client.schemas.configuration import (
 )
 from pyvelo.core import VcoModel
 from pyvelo.core.rebase import Key, Path, RawChange, raw_changes
-from pyvelo_intent import ConfigPipeline, ConfigState, StateSpentError
+from pyvelo_intent import ConfigPipeline, ConfigState, StateSpentError, add
 
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio(loop_scope="session")]
 
@@ -260,7 +260,7 @@ async def test_no_edit_plans_nothing_and_sends_nothing(
 
 
 # ---------------------------------------------------------------------------
-# 4. Profile level: load_profile, apply / apply_aspect, save
+# 4. Profile level: load_profile, apply, save
 # ---------------------------------------------------------------------------
 
 
@@ -270,7 +270,7 @@ def _profile_rule_source(module: AnyConfigurationModule) -> bool:
     )
 
 
-async def test_profile_rule_added_through_an_aspect_reads_back_as_that_rule_only(
+async def test_profile_rule_added_through_apply_reads_back_as_that_rule_only(
     lab: Lab, pipeline: ConfigPipeline
 ) -> None:
     profile_id = await lab.pick_writable_profile(
@@ -284,23 +284,24 @@ async def test_profile_rule_added_through_an_aspect_reads_back_as_that_rule_only
             state.module("firewall"), FirewallConfigurationModule, "the firewall module"
         )
         segment = next(s.segment.name for s in module.data.segments if s.outbound)
-        rules = expect(
-            pipeline.read_aspect(state, "firewall_rules", segment=segment),
-            list,
-            "the firewall_rules aspect",
-        )
+        rules = [
+            rule.model_dump(by_alias=False, context={"compact": True})
+            for rule in state.profile.firewall.segment(segment).outbound
+        ]
         name = synthetic_name()
         # A copy of the last rule, after it: the rule it copies matches first.
         added: dict[str, Any] = {**expect(rules[-1], dict, "a rule"), "name": name}
         added.pop("rule_logical_id", None)
-        _ = await pipeline.apply_aspect(
-            state, "firewall_rules", {name: added}, segment=segment
+        _ = await pipeline.apply(
+            state,
+            module="firewall",
+            patch={"segments": {segment: {"outbound": {name: add(added)}}}},
         )
 
         expected = [Path(("segments", Key(segment), "outbound", Key(name)))]
         plan = _planned(state, Name.FIREWALL)
         check(plan.operation == "update", f"planned {plan.operation}, expected update")
-        _check_paths("aspect edit", "the plan", plan.changes, expected)
+        _check_paths("rule edit", "the plan", plan.changes, expected)
 
         result = await pipeline.save(state)
         check(
@@ -313,9 +314,9 @@ async def test_profile_rule_added_through_an_aspect_reads_back_as_that_rule_only
         stored = changes_between(
             Name.FIREWALL, original.data, after.raw_data, FirewallData
         )
-        _check_paths("aspect edit", "the profile read back", stored, expected)
-        _check_stored_as_sent("aspect edit", stored, plan)
-        check_no_override_flag("aspect edit", original.data, plan.data, after.raw_data)
+        _check_paths("rule edit", "the profile read back", stored, expected)
+        _check_stored_as_sent("rule edit", stored, plan)
+        check_no_override_flag("rule edit", original.data, plan.data, after.raw_data)
 
 
 def _profile_has_qoe(module: AnyConfigurationModule) -> bool:
@@ -845,20 +846,28 @@ async def test_edge_firewall_deleted_and_inserted_again_reads_back_as_sent(
 
 
 def _wan_link(module: AnyConfigurationModule) -> bool:
-    return isinstance(module, WanConfigurationModule) and bool(module.data.links)
+    """Whether *module* is a WAN module whose first link has a key (an internal ID)."""
+    if not isinstance(module, WanConfigurationModule):
+        return False
+    links = module.data.links
+    return links is not MISSING and bool(links) and links[0].internal_id is not MISSING
 
 
 async def test_second_save_from_an_older_state_is_refused_and_spends_the_state(
     lab: Lab, pipeline: ConfigPipeline
 ) -> None:
-    layout = await lab.pick_writable_edge(Name.WAN, _wan_link, "with a link")
+    layout = await lab.pick_writable_edge(
+        Name.WAN, _wan_link, "with a link that has an internal ID"
+    )
     site = lab.edge_site(layout, Name.WAN)
     async with restoring(site) as original:
         assert original is not None
         newer = await pipeline.load(layout.edge_id, enterprise_id=lab.enterprise_id)
         older = await pipeline.load(layout.edge_id, enterprise_id=lab.enterprise_id)
         wan = expect(newer.module("WAN"), WanConfigurationModule, "the WAN module")
-        link = expect(wan.data.links, list, "the WAN links")[0].name
+        first = expect(wan.data.links, list, "the WAN links")[0]
+        # The WAN key: internal ID and address family (link names repeat).
+        link = (str(first.internal_id), first.addressing_version)
         kept, refused = synthetic_name(), synthetic_name()
         for state, text in ((newer, kept), (older, refused)):
             _ = await pipeline.apply(

@@ -9,7 +9,7 @@ from pyvelo.core.fields import (
     KeyField,
     OverrideFlag,
     Resolvable,
-    get_key_field,
+    get_key_spec,
     get_resolvable,
     has_override_flag,
     is_edge_local,
@@ -21,7 +21,7 @@ class Item(VcoModel):
     name: str
 
 
-class TestModel(VcoModel):
+class MarkedModel(VcoModel):
     override: Annotated[bool, OverrideFlag] = False
     items: Annotated[list[Item], KeyField("name")] = Field(default_factory=list)
     cidr_ip: Annotated[str, EdgeLocal] = ""
@@ -29,44 +29,46 @@ class TestModel(VcoModel):
     plain: str = ""
 
 
-class TestGetKeyField:
+class TestGetKeySpec:
     def test_returns_key_path_for_keyfield(self):
-        fi = TestModel.model_fields["items"]
-        assert get_key_field(fi) == "name"
+        fi = MarkedModel.model_fields["items"]
+        spec = get_key_spec(fi)
+        assert spec is not None
+        assert spec.paths == ("name",)
 
     def test_returns_none_for_non_keyfield(self):
-        fi = TestModel.model_fields["plain"]
-        assert get_key_field(fi) is None
+        fi = MarkedModel.model_fields["plain"]
+        assert get_key_spec(fi) is None
 
 
 class TestHasOverrideFlag:
     def test_true_for_override_field(self):
-        fi = TestModel.model_fields["override"]
+        fi = MarkedModel.model_fields["override"]
         assert has_override_flag(fi) is True
 
     def test_false_for_normal_field(self):
-        fi = TestModel.model_fields["plain"]
+        fi = MarkedModel.model_fields["plain"]
         assert has_override_flag(fi) is False
 
 
 class TestIsEdgeLocal:
     def test_true_for_edge_local_field(self):
-        fi = TestModel.model_fields["cidr_ip"]
+        fi = MarkedModel.model_fields["cidr_ip"]
         assert is_edge_local(fi) is True
 
     def test_false_for_normal_field(self):
-        fi = TestModel.model_fields["plain"]
+        fi = MarkedModel.model_fields["plain"]
         assert is_edge_local(fi) is False
 
 
 class TestGetResolvable:
     def test_returns_info_for_resolvable_field(self):
-        fi = TestModel.model_fields["segment_id"]
+        fi = MarkedModel.model_fields["segment_id"]
         r = get_resolvable(fi)
         assert r is not None
         assert r.identity_type is SegmentIdentity
         assert r.id_attr == "segment_id"
 
     def test_returns_none_for_non_resolvable(self):
-        fi = TestModel.model_fields["plain"]
+        fi = MarkedModel.model_fields["plain"]
         assert get_resolvable(fi) is None

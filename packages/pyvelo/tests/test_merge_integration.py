@@ -3,7 +3,7 @@
 from typing import Annotated
 
 from pydantic import Field
-from pyvelo.core import VcoModel
+from pyvelo.core import VcoModel, add, delete
 from pyvelo.core.fields import EdgeLocal, KeyField, OverrideFlag
 
 
@@ -70,11 +70,13 @@ class TestFullMergeScenario:
                 "segments": {
                     "Global": {
                         "rules": {
-                            "new-rule": {
-                                "name": "new-rule",
-                                "priority": 5,
-                                "enabled": True,
-                            }
+                            "new-rule": add(
+                                {
+                                    "name": "new-rule",
+                                    "priority": 5,
+                                    "enabled": True,
+                                }
+                            )
                         }
                     }
                 }
@@ -87,7 +89,7 @@ class TestFullMergeScenario:
     def test_delete_rule_from_segment(self):
         """Delete a rule from a segment."""
         m = self._make_config()
-        _ = m.merge_patch({"segments": {"Global": {"rules": {"block-ssh": None}}}})
+        _ = m.merge_patch({"segments": {"Global": {"rules": {"block-ssh": delete()}}}})
         global_seg = m.segments[0]
         assert len(global_seg.rules) == 1
         assert global_seg.rules[0].name == "allow-all"
@@ -104,7 +106,10 @@ class TestFullMergeScenario:
         _ = m.merge_patch(
             {
                 "segments": {
-                    "Global": {"cidr_ip": "10.0.0.1", "rules": {"new": {"name": "new"}}}
+                    "Global": {
+                        "cidr_ip": "10.0.0.1",
+                        "rules": {"new": add({"name": "new"})},
+                    }
                 }
             }
         )

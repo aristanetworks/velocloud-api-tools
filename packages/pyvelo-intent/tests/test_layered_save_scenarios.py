@@ -8,7 +8,8 @@ from pyvelo.client.exceptions import LossyFieldError
 from pyvelo.client.schemas.configuration import ConfigurationBase, GetConfiguration
 from pyvelo.config.resolver import ResolverRegistry
 from pyvelo.testing import make_module_json, make_segment_resolver
-from pyvelo_intent.config.pipeline import ConfigPipeline, build_default_pipeline
+from pyvelo_intent import PatchError, add, delete
+from pyvelo_intent.config.pipeline import ConfigPipeline
 from pyvelo_intent.config.state import ConfigState
 from pyvelo_intent.testing import MockVcoClient
 from test_state_plan import (  # pyright: ignore[reportImplicitRelativeImport]
@@ -110,12 +111,11 @@ async def test_edge_rules_add_delete_reorder():
             "segments": {
                 "Global Segment": {
                     "outbound": {
-                        "c": {
-                            "_position": 0,
-                            "action": {"allow_or_deny": "deny"},
-                            "match": {},
-                        },
-                        "a": None,
+                        "c": add(
+                            {"action": {"allow_or_deny": "deny"}, "match": {}},
+                            first=True,
+                        ),
+                        "a": delete(),
                     }
                 }
             }
@@ -138,7 +138,9 @@ async def test_missing_module_insert_has_only_local_content():
             "segments": {
                 "Global Segment": {
                     "outbound": {
-                        "block-ssh": {"action": {"allow_or_deny": "deny"}, "match": {}}
+                        "block-ssh": add(
+                            {"action": {"allow_or_deny": "deny"}, "match": {}}
+                        )
                     }
                 }
             }
@@ -161,7 +163,7 @@ async def test_segment_key_in_another_case_edits_the_segment_it_names():
     await pipeline.apply(
         state,
         module="firewall",
-        patch={"segments": {"global segment": {"outbound": {"x": rule("x")}}}},
+        patch={"segments": {"global segment": {"outbound": {"x": add(rule("x"))}}}},
     )
     await pipeline.save(state)
     segments = client.update_requests[0].update.data["segments"]
@@ -183,7 +185,7 @@ async def test_new_segment_by_name_takes_the_profiles_descriptor(
     await pipeline.apply(
         state,
         module="firewall",
-        patch={"segments": {key: {"outbound": {"x": rule("x")}}}},
+        patch={"segments": {key: {"outbound": {"x": add(rule("x"))}}}},
     )
     await pipeline.save(state)
     segments = client.update_requests[0].update.data["segments"]
@@ -201,14 +203,14 @@ async def test_segment_the_profile_lacks_is_refused_without_a_resolver():
         await pipeline.apply(
             state,
             module="firewall",
-            patch={"segments": {"Nowhere": {"outbound": {"x": rule("x")}}}},
+            patch={"segments": {"Nowhere": add({"outbound": {"x": add(rule("x"))}})}},
         )
     assert client.calls == []
 
 
 async def test_a_patch_that_names_one_segment_twice_is_refused():
     state = make_state()
-    with pytest.raises(ValueError, match="Guest"):
+    with pytest.raises(PatchError, match="Guest"):
         await ConfigPipeline(MockVcoClient()).apply(
             state,
             module="firewall",
@@ -225,7 +227,7 @@ async def test_deleting_an_edge_segment_the_profile_has_leaves_an_empty_one():
     }
     client, state = MockVcoClient(), edge_state(raw)
     await ConfigPipeline(client).apply(
-        state, module="firewall", patch={"segments": {"Guest": None}}
+        state, module="firewall", patch={"segments": {"Guest": delete()}}
     )
     await ConfigPipeline(client).save(state)
     segments = client.update_requests[0].update.data["segments"]
@@ -303,7 +305,14 @@ async def test_profile_target_apply_adds_a_rule():
     await pipeline.apply(
         state,
         module="firewall",
-        patch={"segments": {"Global Segment": {"outbound": {"block": rule("block")}}}},
+        segment="Global Segment",
+        path="outbound",
+        patch={"block": add(rule("block"))},
+    )
+    result = await pipeline.save(state, dry_run=True)
+    assert result.plan is not None
+    assert result.plan.render().startswith(
+        'firewall: update\n  + segments["Global Segment"].outbound[block]: '
     )
     await pipeline.save(state)
     (req,) = client.update_requests
@@ -311,28 +320,6 @@ async def test_profile_target_apply_adds_a_rule():
     assert [r["name"] for r in first["outbound"]] == ["allow-all", "block"]
     assert set(first) == {"segment", "outbound"}  # no override flag at profile level
     assert req.update.data["segments"][1] == PROFILE_FW["segments"][1]
-
-
-async def test_profile_target_apply_aspect_adds_a_rule():
-    client = profile_client()
-    pipeline = build_default_pipeline(client)
-    state = await pipeline.load_profile(20)
-    await pipeline.apply_aspect(
-        state,
-        "firewall_rules",
-        {"block-ssh": rule("block-ssh")},
-        segment="Global Segment",
-    )
-    result = await pipeline.save(state, dry_run=True)
-    assert result.plan is not None
-    assert result.plan.render().startswith(
-        'firewall: update\n  + segments["Global Segment"].outbound[block-ssh]: '
-    )
-    await pipeline.save(state)
-    (req,) = client.update_requests
-    first = req.update.data["segments"][0]
-    assert [r["name"] for r in first["outbound"]] == ["allow-all", "block-ssh"]
-    assert set(first) == {"segment", "outbound"}
 
 
 async def test_dry_run_reports_the_plan():

@@ -29,6 +29,7 @@ from pyvelo.client.models.configuration.firewall.segment import FirewallSegment
 from pyvelo.client.models.configuration.qos.root import QosData
 from pyvelo.client.models.configuration.qos.rule import QosRule
 from pyvelo.client.models.configuration.qos.segment import QosSegment
+from pyvelo.core import add, delete
 
 from ._type_support import require_present
 
@@ -260,15 +261,17 @@ class TestFirewallMerge:
                 "segments": {
                     "Global Segment": {
                         "outbound": {
-                            "deny-telnet": {
-                                "name": "deny-telnet",
-                                "match": {
-                                    "proto": 6,
-                                    "dport_low": 23,
-                                    "dport_high": 23,
-                                },
-                                "action": {"allow_or_deny": "deny"},
-                            },
+                            "deny-telnet": add(
+                                {
+                                    "name": "deny-telnet",
+                                    "match": {
+                                        "proto": 6,
+                                        "dport_low": 23,
+                                        "dport_high": 23,
+                                    },
+                                    "action": {"allow_or_deny": "deny"},
+                                }
+                            ),
                         },
                     },
                 },
@@ -283,7 +286,7 @@ class TestFirewallMerge:
             {
                 "segments": {
                     "Global Segment": {
-                        "outbound": {"block-ssh": None},
+                        "outbound": {"block-ssh": delete()},
                     },
                 },
             }

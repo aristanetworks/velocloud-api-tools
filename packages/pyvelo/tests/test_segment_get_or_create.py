@@ -5,7 +5,11 @@ from pyvelo.client.models.configuration import (
     FirewallData,
     QosData,
 )
-from pyvelo.client.models.configuration.common import profile_placeholder
+from pyvelo.client.models.configuration.common import (
+    profile_placeholder,
+    profile_segment_id,
+    profile_segment_name,
+)
 from pyvelo.core import ConfigContext
 
 from ._type_support import require_present
@@ -92,6 +96,38 @@ def test_a_name_the_profile_lacks_in_any_case_still_raises():
     fw.bind_profile(PROFILE)
     with pytest.raises(ValueError, match="Profile segments: Global Segment, Guest"):
         fw.segment("Gest")
+
+
+def test_profile_segment_name():
+    segments = PROFILE["segments"]
+    assert profile_segment_name(segments, "Guest") == "Guest"
+    assert profile_segment_name(segments, "GUEST") == "Guest"
+    assert profile_segment_name(segments, "2") == "Guest"
+    assert profile_segment_name(segments, 2) == "Guest"
+    assert profile_segment_name(segments, "Nope") is None
+    assert [profile_segment_id(segments, s) for s in ("guest", "2", "Nope")] == [
+        2,
+        2,
+        None,
+    ]
+    with pytest.raises(UnboundError):
+        _ = profile_segment_name(None, "Guest")
+    fw, qos = edge_fw(), QosData.model_validate({"segments": []})
+    ds = DeviceSettingsData.model_validate(
+        {"lan": {"networks": [], "interfaces": []}, "segments": []}
+    )
+    for data in (fw, qos, ds):
+        data.bind_profile(PROFILE)
+    assert [
+        fw.profile_segment_name("guest"),
+        qos.profile_segment_name(0),
+        ds.profile_segment_name("Nope"),
+        qos.profile_segment_id("Guest"),
+    ] == ["Guest", "Global Segment", None, 2]
+    with pytest.raises(UnboundError):
+        _ = edge_fw().profile_segment_name("Guest")
+    with pytest.raises(UnboundError):
+        _ = edge_fw().profile_segment_id("Guest")
 
 
 def test_qos_placeholder_has_empty_rules():

@@ -17,7 +17,7 @@ from pyvelo.client.schemas.configuration import (
     QosConfigurationModule,
     new_edge_module,
 )
-from pyvelo.core import ConfigContext, VcoModel
+from pyvelo.core import ConfigContext, VcoModel, add, delete
 from pyvelo.core.rebase import Key
 from pyvelo.testing import make_module_json
 
@@ -525,7 +525,7 @@ def test_profile_outbound_patch_is_saved_as_the_rule_alone():
             "segments": {
                 "Global Segment": {
                     "outbound": {
-                        "block": {"action": {"allow_or_deny": "deny"}, "match": {}}
+                        "block": add({"action": {"allow_or_deny": "deny"}, "match": {}})
                     }
                 }
             }
@@ -661,6 +661,53 @@ def test_an_edit_elsewhere_does_not_stamp_bgp_ids():
     bgp = plan.data["segments"][0]["bgp"]
     assert "id" not in bgp["neighbors"][0] and "id" not in bgp["filters"][0]
     assert [str(c.path) for c in plan.changes] == ["lan.management"]
+
+
+def test_generated_alt_keys_pair_by_key_and_cause_no_write():
+    # Each parse gives a rule without a ruleLogicalId a new one, so the baseline
+    # and the model disagree on every ID: the rules pair by name instead.
+    second: dict[str, Any] = {**QOS_RULE, "name": "r2"}
+    mod = qos(QOS_RULE, second)
+    assert plan_module(mod, level=EDGE).operation == "none"
+    mod.data.segments[0].rules[1].action.edge_to_edge_encryption = False
+    plan = plan_module(mod, level=EDGE)
+    r1, r2 = plan.data["segments"][0]["rules"]
+    assert r1 == QOS_RULE
+    assert r2 == {
+        **second,
+        "action": {**second["action"], "edgeToEdgeEncryption": False},
+    }
+    assert [str(c.path) for c in plan.changes] == [
+        'segments["Global Segment"].rules[r2].action.edgeToEdgeEncryption'
+    ]
+
+
+def test_repeated_names_without_ids_are_replaced_whole_not_paired_by_position():
+    # The IDs each parse makes up are carried over by position, but an ID the
+    # document lacks must not pair the rules: the list is replaced whole.
+    first = {**QOS_RULE, "name": "dup", "futureA": 1}
+    second = {**QOS_RULE, "name": "dup", "futureB": 2}
+    second["action"] = {**QOS_RULE["action"], "edgeToEdgeEncryption": False}
+
+    swapped = qos(first, second)
+    swapped.data.segments[0].rules.reverse()
+    rules = plan_module(swapped, level=EDGE).data["segments"][0]["rules"]
+    assert [r["action"].get("edgeToEdgeEncryption", True) for r in rules] == [
+        False,
+        True,
+    ]
+    assert not any("futureA" in r or "futureB" in r for r in rules)
+
+    replaced = qos(first, second)
+    model_rules = replaced.data.segments[0].rules
+    del model_rules[0]
+    model_rules.append(
+        type(model_rules[0]).model_validate({**QOS_RULE, "name": "fresh"})
+    )
+    survivor, fresh = plan_module(replaced, level=EDGE).data["segments"][0]["rules"]
+    assert fresh["name"] == "fresh"
+    assert "futureA" not in fresh and "futureB" not in fresh
+    assert "futureA" not in survivor
 
 
 def test_a_new_item_keeps_the_id_it_is_given():
@@ -800,7 +847,7 @@ GLOBAL_OUTBOUND = 'segments["Global Segment"].outbound'
     ("rule_patch", "path"),
     [
         pytest.param(
-            {"new": {"action": {"allow_or_deny": "deny"}, "match": {}}},
+            {"new": add({"action": {"allow_or_deny": "deny"}, "match": {}})},
             f"{GLOBAL_OUTBOUND}[new]",
             id="add",
         ),
@@ -809,7 +856,7 @@ GLOBAL_OUTBOUND = 'segments["Global Segment"].outbound'
             f"{GLOBAL_OUTBOUND}[mine].action.allow_or_deny",
             id="edit",
         ),
-        pytest.param({"mine": None}, f"{GLOBAL_OUTBOUND}[mine]", id="delete"),
+        pytest.param({"mine": delete()}, f"{GLOBAL_OUTBOUND}[mine]", id="delete"),
     ],
 )
 def test_an_outbound_rule_patch_writes_the_rule_and_no_override_flag(
@@ -835,7 +882,7 @@ def test_a_firewall_segment_dumps_no_override_key_even_when_new():
         mod.data.model_dump(mode="json", by_alias=True), "outboundOverride"
     )
     _ = mod.data.merge_patch(
-        {"segments": {"Global Segment": {"outbound": {"new": _fw_rule("new")}}}}
+        {"segments": {"Global Segment": {"outbound": {"new": add(_fw_rule("new"))}}}}
     )
     assert not _has_key(plan_module(mod, level=EDGE).data, "outboundOverride")
 

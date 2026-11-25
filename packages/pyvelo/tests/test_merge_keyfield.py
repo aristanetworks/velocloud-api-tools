@@ -2,8 +2,9 @@
 
 from typing import Annotated
 
+import pytest
 from pydantic import MISSING, Field
-from pyvelo.core import VcoModel
+from pyvelo.core import PatchError, VcoModel, add, delete, move
 from pyvelo.core.fields import ConfigContext, ContextDefault, KeyField
 
 
@@ -43,7 +44,7 @@ class TestKeyFieldMergeUpsert:
 
     def test_add_new_item(self):
         m = Container(rules=[Rule(name="r1")])
-        _ = m.merge_patch({"rules": {"r2": {"name": "r2", "priority": 5}}})
+        _ = m.merge_patch({"rules": {"r2": add({"name": "r2", "priority": 5})}})
         assert len(m.rules) == 2
         assert m.rules[1].name == "r2"
         assert m.rules[1].priority == 5
@@ -58,16 +59,17 @@ class TestKeyFieldMergeUpsert:
 
 
 class TestKeyFieldMergeDelete:
-    def test_null_deletes_item(self):
+    def test_delete_removes_item(self):
         m = Container(rules=[Rule(name="r1"), Rule(name="r2"), Rule(name="r3")])
-        _ = m.merge_patch({"rules": {"r2": None}})
+        _ = m.merge_patch({"rules": {"r2": delete()}})
         assert len(m.rules) == 2
         names = [r.name for r in m.rules]
         assert "r2" not in names
 
-    def test_delete_nonexistent_is_noop(self):
+    def test_delete_nonexistent_raises(self):
         m = Container(rules=[Rule(name="r1")])
-        _ = m.merge_patch({"rules": {"nonexistent": None}})
+        with pytest.raises(PatchError):
+            _ = m.merge_patch({"rules": {"nonexistent": delete()}})
         assert len(m.rules) == 1
 
 
@@ -85,28 +87,31 @@ class TestKeyFieldNestedKeyPath:
 
 
 class TestKeyFieldMergePosition:
-    def test_position_numeric(self):
+    def test_position_first(self):
         m = Container(rules=[Rule(name="a"), Rule(name="b")])
-        _ = m.merge_patch(
-            {"rules": {"c": {"name": "c", "priority": 1, "_position": 0}}}
-        )
+        _ = m.merge_patch({"rules": {"c": add({"priority": 1}, first=True)}})
         assert m.rules[0].name == "c"
         assert m.rules[1].name == "a"
         assert m.rules[2].name == "b"
 
+    def test_position_last(self):
+        m = Container(rules=[Rule(name="a"), Rule(name="b")])
+        _ = m.merge_patch({"rules": {"c": add(last=True)}})
+        assert [r.name for r in m.rules] == ["a", "b", "c"]
+
     def test_position_before(self):
         m = Container(rules=[Rule(name="a"), Rule(name="b")])
-        _ = m.merge_patch({"rules": {"c": {"name": "c", "_position": "before:b"}}})
+        _ = m.merge_patch({"rules": {"c": add(before="b")}})
         assert [r.name for r in m.rules] == ["a", "c", "b"]
 
     def test_position_after(self):
         m = Container(rules=[Rule(name="a"), Rule(name="b")])
-        _ = m.merge_patch({"rules": {"c": {"name": "c", "_position": "after:a"}}})
+        _ = m.merge_patch({"rules": {"c": add(after="a")}})
         assert [r.name for r in m.rules] == ["a", "c", "b"]
 
     def test_position_moves_existing(self):
         m = Container(rules=[Rule(name="a"), Rule(name="b"), Rule(name="c")])
-        _ = m.merge_patch({"rules": {"c": {"_position": 0}}})
+        _ = m.merge_patch({"rules": {"c": move(first=True)}})
         assert [r.name for r in m.rules] == ["c", "a", "b"]
 
 
@@ -135,19 +140,19 @@ class TestKeyFieldMissingPreservation:
 
     def test_no_context_preserves_missing(self):
         m = _CtxContainer()
-        _ = m.merge_patch({"items": {"a": {"name": "a"}}})
+        _ = m.merge_patch({"items": {"a": add()}})
         assert m.items[0].plain is MISSING
         assert m.items[0].profile_only is MISSING
 
     def test_edge_context_preserves_missing(self):
         m = _CtxContainer().for_context(ConfigContext.EDGE)
-        _ = m.merge_patch({"items": {"a": {"name": "a"}}})
+        _ = m.merge_patch({"items": {"a": add()}})
         assert m.items[0].plain is MISSING
         assert m.items[0].profile_only is MISSING
 
     def test_profile_context_fills_only_declared_defaults(self):
         m = _CtxContainer().for_context(ConfigContext.PROFILE)
-        _ = m.merge_patch({"items": {"a": {"name": "a"}}})
+        _ = m.merge_patch({"items": {"a": add()}})
         # plain has no ContextDefault -> stays MISSING
         assert m.items[0].plain is MISSING
         # profile_only declares profile=_SubB -> filled

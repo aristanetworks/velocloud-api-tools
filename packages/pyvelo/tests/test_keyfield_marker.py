@@ -4,7 +4,7 @@ from typing import Annotated
 
 from pydantic import Field
 from pyvelo.core import VcoModel
-from pyvelo.core.fields import KeyField, get_key_field
+from pyvelo.core.fields import KeyField, get_key_spec
 
 
 class SegmentMeta(VcoModel):
@@ -41,11 +41,15 @@ class HasDottedKeyField(VcoModel):
 class TestKeyFieldMarker:
     def test_processed_marker_in_metadata(self):
         fi = HasKeyField.model_fields["segments"]
-        assert get_key_field(fi) == "name"
+        spec = get_key_spec(fi)
+        assert spec is not None
+        assert spec.paths == ("name",)
 
     def test_nested_key_path(self):
         fi = HasDottedKeyField.model_fields["segments"]
-        assert get_key_field(fi) == "meta.name"
+        spec = get_key_spec(fi)
+        assert spec is not None
+        assert spec.paths == ("meta.name",)
 
     def test_model_still_validates_list(self):
         m = HasKeyField(segments=[SegmentMeta(name="Global", segment_id=0)])
