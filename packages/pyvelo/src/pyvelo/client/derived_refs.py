@@ -18,6 +18,7 @@ imports ``ref_owners``, and this module is imported by ``module_check``.
 from __future__ import annotations
 
 import copy
+import operator
 import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -272,7 +273,9 @@ def _identity(
     """The identity of *identity_type* whose *by* is *value*."""
     if resolvers is None:
         raise ResolverNotLoadedError(identity_type)
-    return resolvers.identity_sync(cast(type[object], identity_type), by, value)
+    return resolvers.lookup_by(
+        cast(type[object], identity_type), operator.attrgetter(by), value
+    )
 
 
 def _object_id(identity: object) -> int:

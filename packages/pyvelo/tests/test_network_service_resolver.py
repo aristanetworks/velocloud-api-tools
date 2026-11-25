@@ -70,8 +70,8 @@ async def test_loads_services_by_name_logical_id_and_object_id(
     assert registry.lookup(NetworkServiceName("dns-a")) == expected
     assert registry.lookup(NetworkServiceObjectId(701)) == expected
     assert registry.lookup(NetworkServiceLogicalId(uuid.UUID(DNS_A))) == expected
-    found = registry.identity_sync(
-        NetworkServiceIdentity, "logical_id", uuid.UUID(DNS_A)
+    found = registry.lookup_by(
+        NetworkServiceIdentity, lambda s: s.logical_id, uuid.UUID(DNS_A)
     )
     assert found.object_id == 701
     assert registry.lookup(NetworkServiceObjectId(702)).name == "radius-a"
@@ -82,7 +82,10 @@ async def test_loads_services_by_name_logical_id_and_object_id(
         "radius-a",
         "zs-a",
     ]
-    assert registry.has_id_sync(NetworkServiceIdentity, "object_id", 703)
+    assert (
+        registry.lookup_by(NetworkServiceIdentity, lambda s: s.object_id, 703).name
+        == "zs-a"
+    )
 
 
 async def test_a_service_of_a_type_the_models_do_not_know_still_loads(
@@ -117,7 +120,7 @@ async def test_before_its_load_the_resolver_says_it_is_not_loaded(
     with pytest.raises(ResolverNotLoadedError):
         _ = resolver.lookup_key(NetworkServiceObjectId(701))
     with pytest.raises(ResolverNotLoadedError):
-        _ = registry.identity_sync(NetworkServiceIdentity, "object_id", 701)
+        _ = registry.lookup_by(NetworkServiceIdentity, lambda s: s.object_id, 701)
 
     await resolver.load(ResolverContext(enterprise_id=1))
     assert resolver.loaded
@@ -141,21 +144,21 @@ def test_the_not_loaded_message_names_the_type_and_the_label():
     assert isinstance(error, KeyError)
 
 
-def test_identity_sync_without_a_registered_resolver_is_not_loaded():
+def test_lookup_by_without_a_registered_resolver_is_not_loaded():
     registry = ResolverRegistry()
 
     with pytest.raises(ResolverNotLoadedError) as caught:
-        _ = registry.identity_sync(NetworkServiceIdentity, "object_id", 701)
+        _ = registry.lookup_by(NetworkServiceIdentity, lambda s: s.object_id, 701)
     assert caught.value.identity_type is NetworkServiceIdentity
 
 
-async def test_identity_sync_of_an_unknown_value_is_a_resolution_error(
+async def test_lookup_by_of_an_unknown_value_is_a_resolution_error(
     mock_vco_client: MockVcoClientFactory,
 ):
     registry = await loaded_registry(mock_vco_client, store_with_services())
 
     with pytest.raises(ResolutionError) as caught:
-        _ = registry.identity_sync(NetworkServiceIdentity, "object_id", 999)
+        _ = registry.lookup_by(NetworkServiceIdentity, lambda s: s.object_id, 999)
     assert not isinstance(caught.value, ResolverNotLoadedError)
     assert caught.value.name == "999"
     assert caught.value.identity_type is NetworkServiceIdentity
@@ -267,7 +270,7 @@ async def test_a_reload_replaces_what_was_loaded(
     assert registry.lookup(NetworkServiceIdentity, "zs-a").object_id == 703
 
 
-async def test_a_resolver_that_needs_no_load_answers_identity_sync_as_loaded():
+async def test_a_resolver_that_needs_no_load_answers_lookup_by_as_loaded():
     resolver = await make_segment_resolver(
         [{"name": "Global Segment", "segment_id": 0}]
     )
@@ -275,7 +278,7 @@ async def test_a_resolver_that_needs_no_load_answers_identity_sync_as_loaded():
     registry.register(resolver)
 
     assert not SegmentResolver.requires_load
-    assert registry.identity_sync(SegmentIdentity, "segment_id", 0).name == (
+    assert registry.lookup_by(SegmentIdentity, lambda s: s.segment_id, 0).name == (
         "Global Segment"
     )
 

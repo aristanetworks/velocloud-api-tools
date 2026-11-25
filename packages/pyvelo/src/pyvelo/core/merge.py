@@ -11,6 +11,7 @@ import difflib
 import enum
 import functools
 import json
+import operator
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Literal, LiteralString, cast, get_args, get_origin
@@ -892,8 +893,11 @@ def _resolve_name(
     try:
         identity = resolvers.lookup(resolvable.identity_type, name)
     except ResolutionError:
-        if id_type is str and resolvers.has_id_sync(
-            resolvable.identity_type, resolvable.id_attr, name
+        if id_type is str and _is_known_id(
+            resolvers,
+            resolvable.identity_type,
+            operator.attrgetter(resolvable.id_attr),
+            name,
         ):
             return name
         raise
@@ -908,6 +912,20 @@ def _resolve_name(
             "invalid_value",
         ) from err
     return _field_value(identity, resolvable.id_attr)
+
+
+def _is_known_id[T](
+    resolvers: IdentityResolver,
+    identity_type: type[T],
+    accessor: Callable[[T], object],
+    value: object,
+) -> bool:
+    """True if a loaded identity of *identity_type* has ``accessor(identity) == value``."""
+    try:
+        _ = resolvers.lookup_by(identity_type, accessor, value)
+    except ResolutionError:
+        return False
+    return True
 
 
 def _key_name_of(item_type: ListItemType | None, key_path: str) -> type[object] | None:
@@ -1270,7 +1288,9 @@ def _identity_of_given_id(
             )
         except ValidationError:
             continue
-        return resolvers.identity_sync(identity_type, resolvable.id_attr, value)
+        return resolvers.lookup_by(
+            identity_type, operator.attrgetter(resolvable.id_attr), value
+        )
     return None
 
 

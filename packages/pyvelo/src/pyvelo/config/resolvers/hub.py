@@ -30,7 +30,7 @@ class HubResolver(BaseResolver[HubIdentity]):
         - :class:`HubName`: the Edge's or the cluster's name.
         - :class:`HubLogicalId`: the Edge's or the cluster's logical ID.
 
-    ``ResolverRegistry.identity_sync`` finds an identity by any of its fields,
+    ``ResolverRegistry.lookup_by`` finds an identity by any of its fields,
     an ``edge_id`` or a ``cluster_id`` among them.
 
     Every Edge of an enterprise can be a hub, and so can a cluster, so the

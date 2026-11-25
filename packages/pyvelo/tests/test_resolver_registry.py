@@ -16,6 +16,7 @@ from pyvelo.config.resolver import (
 from pyvelo.config.resolvers.hub import HubResolver
 from pyvelo.config.resolvers.segment import SegmentResolver
 from pyvelo.core.identity import (
+    HubIdentity,
     HubName,
     IdentityKey,
     ResolutionError,
@@ -413,6 +414,37 @@ def test_lookup_tells_no_resolver_from_not_loaded() -> None:
     registry.register(HubResolver(_no_client()))
     with pytest.raises(ResolverNotLoadedError):
         _ = registry.lookup(HubName("x"))
+
+
+def test_lookup_by_finds_a_loaded_identity_by_any_field(
+    segment_registry: ResolverRegistry,
+) -> None:
+    # the fixture's Guest segment has object_id 1 (it follows segment_id)
+    found = segment_registry.lookup_by(SegmentIdentity, lambda s: s.object_id, 1)
+    _ = assert_type(found, SegmentIdentity)
+    assert found.name == "Guest"
+
+
+def test_lookup_by_refuses_an_unknown_value_and_an_unloaded_resolver(
+    segment_registry: ResolverRegistry,
+) -> None:
+    with pytest.raises(ResolutionError) as unknown:
+        _ = segment_registry.lookup_by(SegmentIdentity, lambda s: s.object_id, 999)
+    assert not isinstance(unknown.value, ResolverNotLoadedError)
+    assert unknown.value.name == "999"
+    assert unknown.value.identity_type is SegmentIdentity
+    assert unknown.value.candidates == []
+    with pytest.raises(ResolverNotLoadedError):
+        _ = ResolverRegistry().lookup_by(SegmentIdentity, lambda s: s.object_id, 1)
+    hubs = ResolverRegistry()
+    hubs.register(HubResolver(_no_client()))
+    with pytest.raises(ResolverNotLoadedError):
+        _ = hubs.lookup_by(HubIdentity, lambda h: h.edge_id, 5)
+
+
+def test_the_attribute_name_lookups_are_gone() -> None:
+    assert not hasattr(ResolverRegistry, "identity_sync")
+    assert not hasattr(ResolverRegistry, "has_id_sync")
 
 
 def test_the_string_keyed_and_coroutine_driving_methods_are_gone() -> None:

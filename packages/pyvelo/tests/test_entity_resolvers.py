@@ -12,7 +12,7 @@ from pyvelo.client.schemas.configuration import GetRoutableApplications
 from pyvelo.client.schemas.enterprise import GetObjectGroups
 from pyvelo.client.schemas.license import GetEnterpriseEdgeLicenses
 from pyvelo.client.schemas.profiles import GetEnterpriseConfigurations
-from pyvelo.config.resolver import BaseResolver, ResolverContext
+from pyvelo.config.resolver import BaseResolver, ResolverContext, ResolverRegistry
 from pyvelo.config.resolvers.address_group import AddressGroupResolver
 from pyvelo.config.resolvers.application import ApplicationResolver
 from pyvelo.config.resolvers.edge import EdgeResolver
@@ -388,6 +388,12 @@ class TestLicenseResolver:
 
     async def test_lookup_key_by_sku(self, resolver: LicenseResolver):
         assert resolver.lookup_key(LicenseSku("PRM-BWR-2G")).name == "Premium 2G"
+
+    async def test_lookup_by_license_id(self, resolver: LicenseResolver):
+        registry = ResolverRegistry()
+        registry.register(resolver)
+        found = registry.lookup_by(LicenseIdentity, lambda i: i.license_id, 200)
+        assert found.name == "Enterprise 1G"
 
     def test_identity_type(self, mock_client: FakeResolverClient):
         assert LicenseResolver(mock_client.protocol).identity_type is LicenseIdentity

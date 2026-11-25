@@ -278,7 +278,9 @@ def _segment_object_id(
     if found is not None or resolvers is None:
         return found
     try:
-        identity = resolvers.identity_sync(SegmentIdentity, "segment_id", segment_id)
+        identity = resolvers.lookup_by(
+            SegmentIdentity, lambda s: s.segment_id, segment_id
+        )
     except ResolverNotLoadedError:
         raise
     except ResolutionError:

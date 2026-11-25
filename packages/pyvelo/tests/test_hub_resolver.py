@@ -117,14 +117,17 @@ async def test_lookups_by_name_logical_id_and_edge_id(
     assert registry.lookup(HubName("Hub-B")) == expected
     assert registry.lookup(HubName("hub-b")) == expected
     assert registry.lookup(HubLogicalId(uuid.UUID(HUB_B.logical_id))) == expected
-    assert registry.identity_sync(HubIdentity, "edge_id", HUB_B.id) == expected
-    assert registry.identity_sync(
-        HubIdentity, "cluster_id", CLUSTER.id
+    assert registry.lookup_by(HubIdentity, lambda h: h.edge_id, HUB_B.id) == expected
+    assert registry.lookup_by(
+        HubIdentity, lambda h: h.cluster_id, CLUSTER.id
     ) == cluster_identity(CLUSTER)
     assert (
         registry.lookup(HubLogicalId(uuid.UUID(CLUSTER.logical_id))).name == "Cluster-1"
     )
-    assert registry.has_id_sync(HubIdentity, "logical_id", expected.logical_id)
+    assert (
+        registry.lookup_by(HubIdentity, lambda h: h.logical_id, expected.logical_id)
+        == expected
+    )
     assert sorted(i.name for i in registry.get_resolver(HubResolver).identities()) == [
         "Branch-1",
         "Cluster-1",
@@ -142,7 +145,8 @@ async def test_a_cluster_member_is_no_identity(mock_vco_client: MockVcoClientFac
     assert not resolver.is_cluster_member(uuid.UUID(HUB_A.logical_id))
     assert resolver.member_name(uuid.UUID(HUB_A.logical_id)) is None
     assert MEMBER.name not in [i.name for i in resolver.identities()]
-    assert not registry.has_id_sync(HubIdentity, "logical_id", member)
+    with pytest.raises(ResolutionError):
+        _ = registry.lookup_by(HubIdentity, lambda h: h.logical_id, member)
     with pytest.raises(ResolutionError, match="member of a hub cluster"):
         _ = registry.lookup(HubIdentity, "Member-1")
     with pytest.raises(ResolutionError, match="member of a hub cluster"):
@@ -185,6 +189,21 @@ async def test_a_shared_hub_name_asks_for_the_logical_id(
     ) == ["cluster", "edge"]
 
 
+async def test_lookup_by_finds_a_hub_whose_name_another_hub_shares(
+    mock_vco_client: MockVcoClientFactory,
+):
+    # An Edge and a cluster both named Hub-A: the name index keeps one of them.
+    store = store_with_hubs()
+    store.add_cluster(51, logical_id=str(SHARED), name="Hub-A")
+    registry, _ = await loaded(mock_vco_client, store)
+
+    cluster = registry.lookup_by(HubIdentity, lambda h: h.cluster_id, 51)
+    edge = registry.lookup_by(HubIdentity, lambda h: h.edge_id, HUB_A.id)
+
+    assert (cluster.kind, edge.kind) == ("cluster", "edge")
+    assert cluster.name == edge.name == "Hub-A"
+
+
 async def test_before_its_load_the_resolver_says_it_is_not_loaded(
     mock_vco_client: MockVcoClientFactory,
 ):
@@ -198,7 +217,7 @@ async def test_before_its_load_the_resolver_says_it_is_not_loaded(
     assert caught.value.identity_type is HubIdentity
     assert "load_resolvers(state, HubIdentity)" in str(caught.value)
     with pytest.raises(ResolverNotLoadedError):
-        _ = registry.identity_sync(HubIdentity, "edge_id", HUB_A.id)
+        _ = registry.lookup_by(HubIdentity, lambda h: h.edge_id, HUB_A.id)
     with pytest.raises(ResolverNotLoadedError):
         _ = resolver.is_cluster_member(uuid.UUID(MEMBER.logical_id))
     assert not resolver.loaded

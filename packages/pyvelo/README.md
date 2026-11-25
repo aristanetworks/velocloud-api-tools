@@ -51,6 +51,13 @@ subclass of `BaseResolver[SegmentIdentity]` overrides `lookup`, `lookup_key` and
 `load`; its `resolve` and `resolve_key` are final and return what the lookups
 return.
 
+`registry.lookup_by(SegmentIdentity, lambda s: s.object_id, 7)` finds the first
+loaded identity for which the accessor returns the value, whatever the field: one
+that has no key type, or that an identity of the same name hides from the name
+lookups (an Edge and a hub cluster that share a name). It scans every loaded
+identity, raises `ResolverNotLoadedError` when the type has no resolver or its
+resolver is not loaded, and `ResolutionError` when no identity has the value.
+
 An ID that is not loaded raises `ResolutionError` (a `KeyError`), as an unknown
 name does, with a message such as `No segment has segment_id 99.`. A type with
 no registered resolver raises `LookupError`, which is not a `ResolutionError`,

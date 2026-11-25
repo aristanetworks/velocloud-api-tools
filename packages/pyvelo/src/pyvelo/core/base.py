@@ -102,15 +102,11 @@ class IdentityResolver(Protocol):
 
     def lookup[T](self, key: type[T], name: str, /) -> T: ...
 
-    def has_id_sync(
-        self, identity_type: type[object], id_attr: str, value: object, /
-    ) -> bool: ...
+    def lookup_by[T](
+        self, identity_type: type[T], accessor: Callable[[T], object], value: object, /
+    ) -> T: ...
 
     def resolver_for(self, identity_type: type[object], /) -> object | None: ...
-
-    def identity_sync[T](
-        self, identity_type: type[T], id_attr: str, value: object, /
-    ) -> T: ...
 
 
 class IdentityLookup(Protocol):
@@ -119,8 +115,8 @@ class IdentityLookup(Protocol):
     Satisfied by ``pyvelo.config.resolver.ResolverRegistry``.
     """
 
-    def identity_sync[T](
-        self, identity_type: type[T], id_attr: str, value: object, /
+    def lookup_by[T](
+        self, identity_type: type[T], accessor: Callable[[T], object], value: object, /
     ) -> T: ...
 
 

@@ -319,41 +319,29 @@ class ResolverRegistry:
             raise LookupError(f"No resolver registered for {identity_type.__name__}")
         return resolver.lookup_key(key)
 
-    def has_id_sync(self, identity_type: type, id_attr: str, value: object) -> bool:
-        """True if a loaded identity of *identity_type* has ``id_attr == value``.
-
-        False when no resolver is registered for the type or it does not
-        expose ``identities()``.
-        """
-        identities = cast(
-            Callable[[], Iterable[object]] | None,
-            getattr(self._resolvers.get(identity_type), "identities", None),
-        )
-        if identities is None:
-            return False
-        return any(getattr(i, id_attr) == value for i in identities())
-
-    def identity_sync[T](
-        self, identity_type: type[T], id_attr: str, value: object
+    def lookup_by[T](
+        self,
+        identity_type: type[T],
+        accessor: Callable[[T], object],
+        value: object,
     ) -> T:
-        """The loaded identity of *identity_type* whose ``id_attr`` equals *value*.
+        """The first loaded identity of *identity_type* for which ``accessor(identity) == value``.
 
-        Raises ``ResolverNotLoadedError`` when no resolver is registered for the
-        type, or the resolver requires a load and has none, and
-        ``ResolutionError`` when no loaded identity has the value.
+        The scan covers ``identities()``, in its order, so it finds an identity
+        that another one of the same name hides from the name lookups (an Edge
+        and a hub cluster that share a name). Raises ``ResolverNotLoadedError``
+        when no resolver is registered for the type, or the resolver requires a
+        load and has none, and ``ResolutionError`` when no loaded identity has
+        the value.
         """
-        resolver = self._resolvers.get(identity_type)
+        resolver = self.resolver_for(identity_type)
         if resolver is None or (
             getattr(resolver, "requires_load", False)
             and not getattr(resolver, "loaded", False)
         ):
             raise ResolverNotLoadedError(identity_type)
-        identities = cast(
-            Callable[[], Iterable[T]] | None,
-            getattr(resolver, "identities", None),
-        )
-        for identity in () if identities is None else identities():
-            if getattr(identity, id_attr) == value:
+        for identity in resolver.identities():
+            if accessor(identity) == value:
                 return identity
         raise ResolutionError(
             name=str(value), identity_type=identity_type, candidates=[]
