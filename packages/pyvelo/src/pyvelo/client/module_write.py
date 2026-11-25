@@ -877,11 +877,12 @@ def _flag_off_warning(found: UnflaggedInUse) -> PlanWarning:
     return PlanWarning(
         "flag_off_in_use",
         found.path,
-        f"The edge stores {found.field}{where} with {found.flag} false. The VCO "
-        "uses an edge object that is present whatever its flag, so this edge runs "
-        "with it and not with the profile's, though is_local reads False. To "
-        f"inherit the profile's, send {json.dumps(found.inherit_patch())} "
-        "(inherit()); to keep it, make it local with set_local() or localize().",
+        f"The edge stores {found.field}{where} with {found.flag} false or absent. "
+        "The VCO uses an edge object that is present whatever its flag, so this "
+        "edge runs with it and not with the profile's, though is_local reads "
+        f"False. To inherit the profile's, send {json.dumps(found.inherit_patch())} "
+        "(inherit()). To keep it, turn its flag on and change no value: "
+        f"localize() does that, or send {json.dumps(found.keep_patch())}.",
     )
 
 

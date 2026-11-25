@@ -1,6 +1,7 @@
 """The QoS ownership scenarios, each through ``plan_module`` on edge modules bound to a profile."""
 
 import copy
+import json
 from typing import Any
 
 import pytest
@@ -289,11 +290,12 @@ def test_plan_warns_of_a_cos_mapping_the_backend_uses_with_its_flag_off():
     ]
     message = plan.warnings[0].message
     assert (
-        "The edge stores cosMapping of segment 'Global Segment' with override false."
+        "The edge stores cosMapping of segment 'Global Segment' with override false or absent."
         in message
     )
     assert '{"segments": {"Global Segment": {"cosMapping": null}}}' in message
-    assert "inherit()" in message and "set_local()" in message
+    assert "inherit()" in message and "localize()" in message
+    assert '{"segments": {"Global Segment": {"cosMapping": {}}}}' in message
 
     edge.data.segments[0].cos_mapping.inherit()
     after = plan_module(edge, level=EDGE, profile=profile)
@@ -303,6 +305,62 @@ def test_plan_warns_of_a_cos_mapping_the_backend_uses_with_its_flag_off():
     other.data.segments[0].cos_mapping.set_local(CosMapping())
     local = plan_module(other, level=EDGE, profile=profile)
     assert not [w for w in local.warnings if w.code == "flag_off_in_use"]
+
+
+def flag_off_voice(realtime_high: int = 50) -> dict[str, Any]:
+    stored = {
+        **COS_PROFILE,
+        "override": False,
+        "realtime": {
+            **COS_PROFILE["realtime"],
+            "high": {"value": realtime_high, "ratelimit": True},
+        },
+    }
+    return {"segments": [segment_of("Guest", cosMapping=stored)]}
+
+
+def test_localize_of_a_cos_mapping_stored_with_its_flag_off_keeps_its_values():
+    profile = {"segments": [segment_of("Guest", cosMapping=COS_PROFILE)]}
+    edge, profile = bound(flag_off_voice(50), profile)
+    owned = edge.data.segments[0].cos_mapping
+    mapping = owned.localize()
+    assert mapping.override is True
+    assert mapping.realtime.high.value == 50
+    plan = plan_module(edge, level=EDGE, profile=profile)
+    assert [str(c.path) for c in plan.changes] == [
+        "segments[Guest].cosMapping.override"
+    ]
+    written = plan.data["segments"][0]["cosMapping"]
+    assert written == {
+        **flag_off_voice(50)["segments"][0]["cosMapping"],
+        "override": True,
+    }
+    assert not [w for w in plan.warnings if w.code == "flag_off_in_use"]
+
+
+def test_the_flag_off_warning_gives_the_keep_patch_and_localize():
+    edge, profile = bound(
+        flag_off_voice(50),
+        {"segments": [segment_of("Guest", cosMapping=COS_PROFILE)]},
+    )
+    plan = plan_module(edge, level=EDGE, profile=profile)
+    (warning,) = plan.warnings
+    patch = {"segments": {"Guest": {"cosMapping": {}}}}
+    assert json.dumps(patch) in warning.message
+    assert "localize()" in warning.message
+
+
+def test_an_unrelated_edit_keeps_the_flag_off_warning():
+    # The warning is made from the payload when the module is written.
+    raw = flag_off_voice(50)
+    edge, profile = bound(raw, {"segments": [segment_of("Guest")]})
+    edge.data.segments[0].rules.append(QosRule.model_validate(copy.deepcopy(RULE)))
+    plan = plan_module(edge, level=EDGE, profile=profile)
+    assert plan.operation == "update"
+    assert [(w.code, w.path) for w in plan.warnings] == [
+        ("flag_off_in_use", 'segments["Guest"].cosMapping')
+    ]
+    assert plan.data["segments"][0]["cosMapping"] == raw["segments"][0]["cosMapping"]
 
 
 def test_a_profile_module_with_the_same_data_has_no_flag_off_warning():
@@ -318,7 +376,7 @@ def sla_rule(**sla: Any) -> dict[str, Any]:
 
 
 def test_a_rule_s_sla_keeps_the_vco_s_lossPct_key_for_key():
-    # The stored rules of the lab write the key as lossPct; a loss_pct key is not one the VCO uses.
+    # The VCO stores the key as lossPct; a loss_pct key is not one the VCO uses.
     raw = {"segments": [segment_of(rules=[sla_rule(lossPct="0.5")])]}
     module = qos_mod(raw, layer=Edge)
     sla = module.data.segments[0].rules[0].action.sla

@@ -486,8 +486,11 @@ inherits (a segment's `cosMapping` with `override` false: the composer takes a
 present edge object whatever its flag) has a `flag_off_in_use` warning, at the
 object's path, in the same list and in `render()`, also when nothing else in
 the module changes; its message gives the patch that inherits
-(`{"segments": {"Voice": {"cosMapping": null}}}`) and says to use
-`set_local()` or `localize()` to keep it.
+(`{"segments": {"Voice": {"cosMapping": null}}}`) and the one that keeps the
+object as stored with its flag turned on (`{"segments": {"Voice":
+{"cosMapping": {}}}}`; `localize()` in Python). A patch that names values
+inside such an object changes only those values and turns the flag on, so
+the edge keeps running with the object `state.effective` showed as the edge's.
 
 A DNS or authentication provider is set by assignment, with the service's
 logical ID (`provider.service = uuid.UUID(...)`), or by `apply`, with the

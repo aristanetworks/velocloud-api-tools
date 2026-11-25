@@ -288,6 +288,61 @@ def test_by_flag_localize_forces_the_flag() -> None:
     assert _dump(e)["affinity"] == {"override": True, "affinity": ["a"]}
 
 
+def test_localize_keeps_a_present_object_of_a_presence_wins_field_with_its_flag_off() -> (
+    None
+):
+    # The backend runs with the object the edge stores, so localizing it keeps
+    # its values and turns the flag on, and copies nothing from the profile.
+    e, p = _bound(
+        {"segments": [_segment(1, "Corp", mapping={"override": False, "value": 3})]},
+        {"segments": [_segment(1, "Corp", mapping={"override": True, "value": 9})]},
+    )
+    mapping = e.segments[0].mapping
+    kept = mapping.stored
+    got = mapping.localize()
+    assert got is kept
+    assert got == Flagged(override=True, value=3)
+    assert mapping.is_local
+    assert _dump(e)["segments"][0]["mapping"] == {"override": True, "value": 3}
+    assert p.segments[0].mapping.value == 9
+
+
+def test_localize_of_a_presence_wins_object_with_its_flag_absent_sets_only_the_flag() -> (
+    None
+):
+    e, _ = _bound(
+        {"segments": [_segment(1, "Corp", mapping={"value": 3})]},
+        {"segments": [_segment(1, "Corp", mapping={"override": True, "value": 9})]},
+    )
+    e.segments[0].mapping.localize()
+    assert _dump(e)["segments"][0]["mapping"] == {"override": True, "value": 3}
+
+
+def test_localize_of_a_presence_wins_field_with_nothing_stored_copies_the_profile() -> (
+    None
+):
+    e, _ = _bound(
+        {"segments": [_segment(1, "Corp")]},
+        {"segments": [_segment(1, "Corp", mapping={"override": True, "value": 9})]},
+    )
+    assert e.segments[0].mapping.localize() == Flagged(override=True, value=9)
+    e, _ = _bound(
+        {"segments": [_segment(1, "Corp", mapping=None)]},
+        {"segments": [_segment(1, "Corp", mapping={"override": True, "value": 9})]},
+    )
+    assert e.segments[0].mapping.localize() == Flagged(override=True, value=9)
+
+
+def test_localize_of_a_by_flag_field_without_presence_wins_still_copies_the_profile() -> (
+    None
+):
+    e, _ = _bound(
+        {"affinity": {"override": False, "affinity": ["mine"]}},
+        {"affinity": {"affinity": ["a"]}},
+    )
+    assert e.affinity.localize() == Reset(override=True, affinity=["a"])
+
+
 # ---------------------------------------------------------------------------
 # Coupled groups
 # ---------------------------------------------------------------------------

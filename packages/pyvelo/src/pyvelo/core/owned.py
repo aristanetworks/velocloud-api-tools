@@ -194,7 +194,10 @@ class Owned[T]:
         the profile is unchanged. What is returned is the stored object, so
         an edit through it is an edit of the edge. A value that is local
         already is returned as it is. A ``null`` cannot be local (``None`` is
-        returned, and the field stays inherited). It needs the profile, so it
+        returned, and the field stays inherited). On a ``presence_wins`` field
+        the edge may store an object with its flag off or absent; the backend
+        runs with it, so ``localize`` keeps that object, with its values
+        unchanged, and turns its flag on, and copies nothing from the profile. It needs the profile, so it
         raises ``UnboundError`` on an object that did not come from a loaded
         state, and ``GroupOwnershipError`` on a member of a coupled group
         that is not local (``localize`` the group). After a save or
@@ -263,10 +266,28 @@ class Owned[T]:
             return clear_server_owned(as_stored(copy.deepcopy(value)))
         return clear_server_owned(copy.deepcopy(getattr(parent, self._field)))
 
+    def _kept_object(self) -> object | None:
+        """The stored object of a ``presence_wins`` field when the backend runs with it although its flag is off, else ``None``."""
+        encoding = self._encoding
+        stored = self.stored
+        if (
+            isinstance(encoding, ByFlag)
+            and encoding.presence_wins
+            and stored is not MISSING
+            and stored is not None
+        ):
+            return stored
+        return None
+
+    def _localize_source(self) -> object:
+        """What ``localize`` makes local: the object the backend already uses (``_kept_object``), else the profile's value."""
+        kept = self._kept_object()
+        return self._parent_value() if kept is None else kept
+
     def _localize(self) -> object:
         if self.is_local:
             return self.stored
-        value = self._parent_value()
+        value = self._localize_source()
         self._store_copy(value)
         return value
 
@@ -657,7 +678,7 @@ class GroupHandle:
             getattr(self._owner, name).stored = value
 
     def localize(self) -> None:
-        """Make every member local, copied from the profile; one that is local already is kept.
+        """Make every member local, copied from the profile; one that is local already is kept, and so is a ``presence_wins`` object the edge stores with its flag off (``Owned.localize``).
 
         The members are edited through their own ``Owned``
         (``fw.stateful_firewall_settings.local.udp_flow_timeout = 600``). It
@@ -665,7 +686,7 @@ class GroupHandle:
         """
         self._check("localize")
         owned = self._members()
-        values = [None if o.is_local else o._parent_value() for o in owned]
+        values = [None if o.is_local else o._localize_source() for o in owned]
         for member, value in zip(owned, values, strict=True):
             if value is not None:
                 member._store_copy(value)
@@ -686,8 +707,10 @@ def bind_layers(edge: Layered[Edge], profile: Layered[Profile] | None) -> None:
     same alt key (the stable ID of a segment, ``segment.segment_id``), or the
     same key where the list has no alt key. A model with no counterpart is
     bound to no profile, and ``localize`` gives it the display default. A list
-    without a ``KeyField`` is not bound. An item added after binding is not
-    bound until this runs again.
+    without a ``KeyField`` is not bound. An item added to a keyed list after
+    binding is bound by ``bind_new_item`` (``get_or_create_segment(owner=)``,
+    which a module's ``segment()`` calls, does so for the placeholder it adds);
+    one added any other way is not bound until this runs again.
 
     *profile* is ``None`` for an edge with no profile: every model is bound to
     nothing.
@@ -820,6 +843,13 @@ class UnflaggedInUse:
     def inherit_patch(self) -> dict[str, object]:
         """The patch that makes the field inherit: ``{"segments": {"Voice": {"cosMapping": null}}}``."""
         patch: object = None
+        for key, item in reversed(self.steps):
+            patch = {key: patch if item is None else {item: patch}}
+        return cast("dict[str, object]", patch)
+
+    def keep_patch(self) -> dict[str, object]:
+        """The patch that keeps the stored object and turns its flag on: ``{"segments": {"Voice": {"cosMapping": {}}}}``."""
+        patch: object = {}
         for key, item in reversed(self.steps):
             patch = {key: patch if item is None else {item: patch}}
         return cast("dict[str, object]", patch)

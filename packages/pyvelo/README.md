@@ -519,13 +519,17 @@ as the edge's (`Origin.EDGE`). `plan_module` on an edge module warns of each
 one (code `flag_off_in_use`, at `segments["Global Segment"].cosMapping`),
 whether or not the write changes anything, so nobody reads `is_local == False`
 and believes the edge inherits. Remove it with `inherit()` for the profile's
-mapping to apply. `localize()` copies the profile segment's mapping (or the
-display default, `CosMapping()`) in with `override: true`; on a segment
+mapping to apply. To keep it, `localize()` turns its flag on and changes no
+value: it returns the stored object, not the profile's, and a patch into it
+changes only what the patch names. `{"segments": {"Global Segment":
+{"cosMapping": {}}}}` does the same from text. When the edge stores nothing at
+the key, `localize()` copies the profile segment's mapping (or the display
+default, `CosMapping()`) in with `override: true`; on a segment
 `data.segment(name)` added it copies from the profile's segment of that name.
 
 | Python | Patch |
 |---|---|
-| `segment.cos_mapping.set_local(CosMapping(...))` | `{"segments": {"Global Segment": {"cosMapping": {...}}}}` |
+| `segment.cos_mapping.set_local(CosMapping(...))` | `{"segments": {"Global Segment": {"cosMapping": {...}}}}`, when `{...}` is the whole object: a partial patch merges into the object `localize()` gives (the profile's mapping, or the object the edge stores with its flag off), so it keeps every key it does not name |
 | `segment.cos_mapping.inherit()` | `{"segments": {"Global Segment": {"cosMapping": null}}}` |
 | `data.qos_client_connector.inherit()` | `{"qosClientConnector": null}`: the key is removed, whatever it held |
 | `data.service_rate_limit.localize()` | `{"serviceRateLimit": {"value": 50}}`: the profile's limit, or the display default when the profile stores none, is copied in whole and then edited |

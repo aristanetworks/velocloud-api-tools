@@ -1,6 +1,7 @@
 """QoS through ``ConfigPipeline.apply`` and ``state.effective``: patches on inherited values start from the profile."""
 
 import copy
+import json
 from typing import Any
 
 import pytest
@@ -245,3 +246,52 @@ async def test_a_failed_qos_patch_leaves_a_localized_value_inherited():
     assert state.edge.qos.service_rate_limit.is_local is False
     assert state.edge.qos.service_rate_limit.stored is MISSING
     assert state.plan().changed == ()
+
+
+def flag_off_edge() -> dict[str, Any]:
+    """An edge whose Voice cosMapping is stored with its flag off, with values of its own (the profile's realtime.high is 35, its bulk.high 15)."""
+    stored = cos_mapping(override=False, realtime_high=50)
+    stored["bulk"]["high"]["value"] = 22
+    return {
+        "segments": [{"segment": desc(3, "Voice"), "rules": [], "cosMapping": stored}]
+    }
+
+
+async def test_a_patch_into_a_cos_mapping_stored_with_its_flag_off_changes_only_what_it_names():
+    edge = flag_off_edge()
+    state = state_of(edge)
+    voice = state.effective.qos.get_segment(name="Voice")
+    assert voice.cos_mapping.origin is Origin.EDGE
+    await apply(
+        state,
+        {
+            "segments": {
+                "Voice": {"cosMapping": {"transactional": {"high": {"value": 21}}}}
+            }
+        },
+    )
+    written = qos_plan(state).data["segments"][0]["cosMapping"]
+    expected = copy.deepcopy(edge["segments"][0]["cosMapping"])
+    expected["transactional"]["high"]["value"] = 21
+    expected["override"] = True
+    assert written == expected
+    assert written["realtime"]["high"]["value"] == 50
+    assert written["bulk"]["high"]["value"] == 22
+    assert changed_paths(state) == [
+        "segments[Voice].cosMapping.transactional.high.value",
+        "segments[Voice].cosMapping.override",
+    ]
+
+
+async def test_the_keep_patch_of_the_flag_off_warning_leaves_the_values_as_read_with_the_flag_on():
+    edge = flag_off_edge()
+    state = state_of(edge)
+    (warning,) = [w for w in state.plan().warnings if w.code == "flag_off_in_use"]
+    patch = {"segments": {"Voice": {"cosMapping": {}}}}
+    assert json.dumps(patch) in warning.message
+    await apply(state, patch)
+    expected = copy.deepcopy(edge["segments"][0]["cosMapping"])
+    expected["override"] = True
+    assert qos_plan(state).data["segments"][0]["cosMapping"] == expected
+    assert changed_paths(state) == ["segments[Voice].cosMapping.override"]
+    assert not [w for w in state.plan().warnings if w.code == "flag_off_in_use"]
