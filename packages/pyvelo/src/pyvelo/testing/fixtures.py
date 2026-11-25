@@ -240,7 +240,7 @@ def mock_vco_client_factory() -> Callable[..., Any]:
         max_concurrent_requests: int | None = None,
         max_requests_per_window: int | None = None,
     ) -> VcoClient:
-        client = VcoClient(
+        return VcoClient(
             "test.velocloud.net",
             "test-token",
             max_retries=max_retries,
@@ -248,6 +248,5 @@ def mock_vco_client_factory() -> Callable[..., Any]:
             max_requests_per_window=max_requests_per_window,
             transport=make_transport(handler),
         )
-        return client
 
     return _factory

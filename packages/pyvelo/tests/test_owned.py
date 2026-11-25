@@ -582,12 +582,12 @@ def test_intents_on_a_detached_owner_raise() -> None:
     e.mark_detached()
     for call in (
         lambda: e.level.set_local(2),
-        lambda: e.level.inherit(),
-        lambda: e.level.localize(),
-        lambda: e.settings.localize(),
+        e.level.inherit,
+        e.level.localize,
+        e.settings.localize,
         lambda: e.segments[0].mapping.set_local(Flagged()),
-        lambda: e.pair.inherit(),
-        lambda: e.pair.localize(),
+        e.pair.inherit,
+        e.pair.localize,
         lambda: e.pair.set_local(
             PairLocal(pair_a=Settings(), pair_b=Settings(), pair_on=True)
         ),

@@ -213,7 +213,7 @@ def plot_flow_series(df: pl.DataFrame) -> Figure:
     )
     if group_col is None:
         for col in df.columns:
-            if col not in ("timestamp",):
+            if col != "timestamp":
                 group_col = col
                 break
 

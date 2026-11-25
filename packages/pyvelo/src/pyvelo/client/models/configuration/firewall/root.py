@@ -2,6 +2,14 @@ from typing import Annotated, Any, ClassVar
 
 from pydantic import Field, PrivateAttr
 
+from pyvelo.client.models.configuration.common import (
+    bind_profile_layers,
+    find_segment,
+    get_or_create_segment,
+    profile_segment_id,
+    profile_segment_name,
+)
+from pyvelo.client.models.configuration.profile_segments import template_default
 from pyvelo.core import (
     Alias,
     Authority,
@@ -18,14 +26,6 @@ from pyvelo.core.fields import DefaultingScalar, KeyField
 from pyvelo.core.layers import L, Profile
 from pyvelo.core.owned import OwnedGroup
 
-from pyvelo.client.models.configuration.common import (
-    bind_profile_layers,
-    find_segment,
-    get_or_create_segment,
-    profile_segment_id,
-    profile_segment_name,
-)
-from pyvelo.client.models.configuration.profile_segments import template_default
 from .rules import FirewallInboundRule, FirewallInboundRuleV6
 from .security_features import NetworkProtectionSettings, SecurityFeatureSettings
 from .segment import FirewallSegment

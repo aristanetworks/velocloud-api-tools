@@ -1,10 +1,10 @@
 from typing import Annotated
 
+from pyvelo.client.models.configuration.common import SegmentMetadata
 from pyvelo.core import Additive, Alias, Layered, Unconverted, kind_default
 from pyvelo.core.fields import KeyField
 from pyvelo.core.layers import L
 
-from pyvelo.client.models.configuration.common import SegmentMetadata
 from .rules import FirewallOutboundRule
 
 

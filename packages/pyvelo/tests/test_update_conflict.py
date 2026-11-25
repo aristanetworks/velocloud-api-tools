@@ -68,7 +68,7 @@ def req(
 ) -> UpdateConfigurationModule:
     return UpdateConfigurationModule(
         configuration_module_id=7,
-        version=version if version else MISSING,
+        version=version or MISSING,
         return_data=True if return_data else MISSING,
         update=ConfigurationModuleUpdate(
             data=copy.deepcopy(data) if data is not None else {"segments": []}

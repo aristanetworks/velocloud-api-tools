@@ -3,9 +3,9 @@ from typing import Annotated
 
 from pydantic import MISSING
 
+from pyvelo.client.models.configuration.common import AddressType
 from pyvelo.core import Alias, Secret, VcoModel
 
-from pyvelo.client.models.configuration.common import AddressType
 from .common import NetworkType, WanMode
 
 

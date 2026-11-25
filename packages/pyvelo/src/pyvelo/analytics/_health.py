@@ -40,7 +40,7 @@ async def get_edge_health_metrics(
         edge_id=edge_id,
         interval=interval,
         enterprise_id=enterprise_id if enterprise_id is not None else MISSING,
-        metrics=metrics if metrics else list(StatusMetric),
+        metrics=metrics or list(StatusMetric),
     )
     result = await client.get_edge_status_metrics(request)
 
@@ -64,7 +64,7 @@ async def get_edge_health_series(
         edge_id=edge_id,
         interval=interval,
         enterprise_id=enterprise_id if enterprise_id is not None else MISSING,
-        metrics=metrics if metrics else list(StatusMetric),
+        metrics=metrics or list(StatusMetric),
     )
     result = await client.get_edge_status_series(request)
 

@@ -111,8 +111,7 @@ def rule(name: str) -> dict[str, Any]:
 
 def kept(state: ConfigState, module: str, position: int = 0) -> dict[str, Any]:
     """The entry at *position* of *module* as read, as a list value can give it."""
-    entry = copy.deepcopy(state.module(module).raw_data["segments"][position])  # pyright: ignore[reportIndexIssue, reportUnknownVariableType]
-    return entry
+    return copy.deepcopy(state.module(module).raw_data["segments"][position])  # pyright: ignore[reportIndexIssue, reportUnknownVariableType]
 
 
 def dumps(state: ConfigState) -> list[object]:

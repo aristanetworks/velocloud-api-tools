@@ -2,10 +2,6 @@ from typing import Annotated, Any
 
 from pydantic import Field, PrivateAttr
 
-from pyvelo.core import ByPresence, Default, Inheritable, Layered, VcoModel
-from pyvelo.core.fields import KeyField
-from pyvelo.core.layers import L, Profile
-
 from pyvelo.client.models.configuration.common import (
     bind_profile_layers,
     find_segment,
@@ -14,6 +10,10 @@ from pyvelo.client.models.configuration.common import (
     profile_segment_name,
 )
 from pyvelo.client.models.configuration.profile_segments import template_default
+from pyvelo.core import ByPresence, Default, Inheritable, Layered, VcoModel
+from pyvelo.core.fields import KeyField
+from pyvelo.core.layers import L, Profile
+
 from .common import ServiceRateLimitInputType
 from .qoe import QoeSettings
 from .segment import QosSegment

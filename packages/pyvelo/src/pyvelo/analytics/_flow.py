@@ -149,7 +149,7 @@ async def _get_edge_flow_metrics(
     converted_sort = _convert_sort(group_by, sort)
     limit_val = limit if limit is not None else MISSING
     eid = enterprise_id if enterprise_id is not None else MISSING
-    filters_val = filters if filters else MISSING
+    filters_val = filters or MISSING
 
     match group_by:
         case FlowGroupBy.APP:
@@ -293,7 +293,7 @@ async def _get_edge_flow_series(
     limit_val = limit if limit is not None else MISSING
     max_samples_val = max_samples if max_samples is not None else MISSING
     eid = enterprise_id if enterprise_id is not None else MISSING
-    filters_val = filters if filters else MISSING
+    filters_val = filters or MISSING
 
     match group_by:
         case FlowGroupBy.APP:

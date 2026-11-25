@@ -52,7 +52,7 @@ class MetricFrame:
             data = {c: [row.get(c) for row in rows] for c in columns}
             self._df: pl.DataFrame = pl.DataFrame(data)
         else:
-            self._df = pl.DataFrame(schema={c: pl.Utf8 for c in columns})
+            self._df = pl.DataFrame(schema=dict.fromkeys(columns, pl.Utf8))
 
     @classmethod
     def from_polars(cls, df: pl.DataFrame) -> MetricFrame:

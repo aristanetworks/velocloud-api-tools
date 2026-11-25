@@ -405,7 +405,7 @@ async def list_edges(
 ) -> list[tuple[int, frozenset[str]]]:
     """The ID of each edge, with the marks in its description."""
     edges = await client.get_enterprise_edges(
-        GetEnterpriseEdges(enterprise_id=enterprise_id if enterprise_id else MISSING)
+        GetEnterpriseEdges(enterprise_id=enterprise_id or MISSING)
     )
     return [(e.id_, marks_in(e.description)) for e in edges if isinstance(e.id_, int)][
         :LAB_LIMIT
@@ -418,7 +418,7 @@ async def list_profiles(
     """Each profile, with the marks in its description and the number of edges assigned."""
     profiles = await client.get_enterprise_configurations(
         GetEnterpriseConfigurations(
-            enterprise_id=enterprise_id if enterprise_id else MISSING,
+            enterprise_id=enterprise_id or MISSING,
             with_=[GetEnterpriseConfigurationsWith.EDGE_COUNT],
         )
     )
@@ -957,15 +957,15 @@ class LiveRun:
     access: WriteAccess = field(default_factory=WriteAccess)
     hub: HubTarget | None = None
     """The hub the role calls may be sent for, set by ``admit_hub``."""
-    open: list[Block] = field(default_factory=lambda: list[Block]())
+    open: list[Block] = field(default_factory=list[Block])
     """The open ``restoring`` blocks, the innermost last."""
-    inserted: dict[int, Block] = field(default_factory=lambda: dict[int, Block]())
+    inserted: dict[int, Block] = field(default_factory=dict[int, Block])
     """The ID of each module a block's test inserted, with the block that was open for it."""
-    deleted: set[int] = field(default_factory=lambda: set[int]())
+    deleted: set[int] = field(default_factory=set[int])
     """The ID of each module this run deleted."""
     sent: int = 0
     """How many portal calls that are not reads the client has begun: a write that raised with this unchanged sent nothing."""
-    seen: dict[int, object] = field(default_factory=lambda: dict[int, object]())
+    seen: dict[int, object] = field(default_factory=dict[int, object])
     """Each module's raw data as the Orchestrator last answered this run's write with, or ``_UNKNOWN``."""
 
     def _check_may_write(self) -> None:

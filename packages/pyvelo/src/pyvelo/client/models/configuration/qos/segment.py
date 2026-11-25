@@ -2,6 +2,7 @@ from typing import Annotated, Any
 
 from pydantic import MISSING, Field
 
+from pyvelo.client.models.configuration.common import SegmentMetadata
 from pyvelo.core import (
     Additive,
     ByFlag,
@@ -16,7 +17,6 @@ from pyvelo.core import (
 from pyvelo.core.fields import FixedList, KeyField
 from pyvelo.core.layers import L
 
-from pyvelo.client.models.configuration.common import SegmentMetadata
 from .common import CosMappingInputType
 from .rule import QosRule
 

@@ -265,10 +265,8 @@ class VcoWebSocket:
 
     def _discard_send(self, key: _Key) -> None:
         """Remove a resolved key from the recent-sends deque."""
-        try:
+        with contextlib.suppress(ValueError):
             self._recent_sends.remove(key)
-        except ValueError:
-            pass
 
     async def _teardown_transport(self) -> None:
         """Close the WebSocket transport without touching pending futures."""

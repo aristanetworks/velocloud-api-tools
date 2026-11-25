@@ -10,6 +10,7 @@ from pydantic import (
     model_validator,
 )
 
+from pyvelo.client.models.configuration.common import OverlayAddressPreferenceType
 from pyvelo.core import (
     Alias,
     ContextDefault,
@@ -28,7 +29,6 @@ from pyvelo.core import (
 from pyvelo.core.fields import Lenient, RefersTo
 from pyvelo.core.identity import SegmentIdentity
 
-from pyvelo.client.models.configuration.common import OverlayAddressPreferenceType
 from .common import (
     DhcpServerOption,
     InterfaceL2,

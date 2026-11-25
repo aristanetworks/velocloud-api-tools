@@ -200,10 +200,10 @@ class Analytics:
             enterprise_id=(
                 self._enterprise_id if self._enterprise_id is not None else MISSING
             ),
-            filters=filters if filters else MISSING,
+            filters=filters or MISSING,
             limit=limit if limit is not None else MISSING,
-            sort=sort if sort else MISSING,
-            metrics=metrics if metrics else MISSING,
+            sort=sort or MISSING,
+            metrics=metrics or MISSING,
         )
         cols = [
             "name",
@@ -241,10 +241,10 @@ class Analytics:
             enterprise_id=(
                 self._enterprise_id if self._enterprise_id is not None else MISSING
             ),
-            metrics=metrics if metrics else MISSING,
+            metrics=metrics or MISSING,
             limit=limit if limit is not None else MISSING,
-            sort=sort if sort else MISSING,
-            links=links if links else MISSING,
+            sort=sort or MISSING,
+            links=links or MISSING,
         )
         result = await self._client.get_edge_link_metrics(request)
         return items_to_frame(
@@ -277,10 +277,10 @@ class Analytics:
             enterprise_id=(
                 self._enterprise_id if self._enterprise_id is not None else MISSING
             ),
-            metrics=metrics if metrics else MISSING,
+            metrics=metrics or MISSING,
             limit=limit if limit is not None else MISSING,
-            sort=sort if sort else MISSING,
-            links=links if links else MISSING,
+            sort=sort or MISSING,
+            links=links or MISSING,
         )
         result = await self._client.get_edge_link_series(request)
         items: list[dict[str, Any]] = []
@@ -339,7 +339,7 @@ class Analytics:
             enterprise_id=(
                 self._enterprise_id if self._enterprise_id is not None else MISSING
             ),
-            metrics=metrics if metrics else MISSING,
+            metrics=metrics or MISSING,
         )
         result = await self._client.get_edge_network_interface_metrics(request)
         return items_to_frame(
@@ -372,7 +372,7 @@ class Analytics:
             enterprise_id=(
                 self._enterprise_id if self._enterprise_id is not None else MISSING
             ),
-            metrics=metrics if metrics else MISSING,
+            metrics=metrics or MISSING,
             max_samples=max_samples if max_samples is not None else MISSING,
         )
         result = await self._client.get_edge_network_interface_series(request)
@@ -397,7 +397,7 @@ class Analytics:
                 self._enterprise_id if self._enterprise_id is not None else MISSING
             ),
             peer_logical_id=peer_logical_id,
-            metrics=metrics if metrics else list(SdwanPeerPathMetric),
+            metrics=metrics or list(SdwanPeerPathMetric),
         )
         result = await self._client.get_edge_sdwan_peer_path_metrics(request)
         rows: list[dict[str, Any]] = []
@@ -448,8 +448,8 @@ class Analytics:
             ),
             peer_logical_id=peer_logical_id,
             paths=paths,
-            metrics=metrics if metrics else list(SdwanPeerPathMetric),
-            view_by=view_by if view_by else PSViewBy.PATH,
+            metrics=metrics or list(SdwanPeerPathMetric),
+            view_by=view_by or PSViewBy.PATH,
             max_samples=max_samples if max_samples is not None else MISSING,
         )
         result = await self._client.get_edge_sdwan_peer_path_series(request)
@@ -469,7 +469,7 @@ class Analytics:
         edge_id: int | None = None,
         metrics: list[NsdTunnelStatsMetric] | None = None,
     ) -> MetricFrame:
-        metric_list = metrics if metrics else MISSING
+        metric_list = metrics or MISSING
 
         if edge_id is not None:
             request = GetNsdEdgeTunnelStats(
@@ -616,7 +616,7 @@ class Analytics:
         request = GetGatewayStatusMetrics(
             gateway_id=gateway_id,
             interval=interval,
-            metrics=metrics if metrics else MISSING,
+            metrics=metrics or MISSING,
         )
         result = await self._client.get_gateway_status_metrics(request)
         row: dict[str, Any] = {}
@@ -647,7 +647,7 @@ class Analytics:
         request = GetGatewayStatusSeries(
             gateway_id=gateway_id,
             interval=interval,
-            metrics=metrics if metrics else MISSING,
+            metrics=metrics or MISSING,
         )
         result = await self._client.get_gateway_status_series(request)
         points = result.series if result.series is not MISSING and result.series else []
@@ -681,7 +681,7 @@ class Analytics:
                 self._enterprise_id if self._enterprise_id is not None else MISSING
             ),
             max_samples=max_samples if max_samples is not None else MISSING,
-            links=links if links else MISSING,
+            links=links or MISSING,
         )
         result = await self._client.get_link_quality_events(request)
 
@@ -735,7 +735,7 @@ class Analytics:
                 self._enterprise_id if self._enterprise_id is not None else MISSING
             ),
             interval=interval,
-            metrics=metrics if metrics else MISSING,
+            metrics=metrics or MISSING,
         )
         result = await self._client.get_enterprise_nni_metrics(request)
         return items_to_frame(
@@ -763,7 +763,7 @@ class Analytics:
                 self._enterprise_id if self._enterprise_id is not None else MISSING
             ),
             interval=interval,
-            metrics=metrics if metrics else MISSING,
+            metrics=metrics or MISSING,
             limit=limit if limit is not None else MISSING,
         )
         result = await self._client.get_enterprise_nni_series(request)
@@ -845,9 +845,9 @@ class Analytics:
                 self._enterprise_id if self._enterprise_id is not None else MISSING
             ),
             interval=interval,
-            edge_id=edge_ids if edge_ids else MISSING,
+            edge_id=edge_ids or MISSING,
             filters=EnterpriseEventFiltersAnd(and_=filters) if filters else MISSING,
-            sort_by=sort_by if sort_by else MISSING,
+            sort_by=sort_by or MISSING,
         )
         pages = self._client.portal_paginated(
             "event/getEnterpriseEventsList",
@@ -943,7 +943,7 @@ class Analytics:
             enterprise_id=(
                 self._enterprise_id if self._enterprise_id is not None else MISSING
             ),
-            edge_ids=edge_ids if edge_ids else MISSING,
+            edge_ids=edge_ids or MISSING,
             filters=EdgeFiltersAnd(and_=filters) if filters else MISSING,
         )
         pages = self._client.portal_paginated(
@@ -1010,7 +1010,7 @@ class Analytics:
             enterprise_id=(
                 self._enterprise_id if self._enterprise_id is not None else MISSING
             ),
-            with_=with_ if with_ else MISSING,
+            with_=with_ or MISSING,
         )
         items = await self._client.portal_list(
             "enterprise/getEnterpriseConfigurations",

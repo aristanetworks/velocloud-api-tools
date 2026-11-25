@@ -13,6 +13,7 @@ from pydantic import (
     model_validator,
 )
 
+from pyvelo.client.models.configuration.common import SegmentMetadata
 from pyvelo.core import (
     Alias,
     ConfigContext,
@@ -40,7 +41,6 @@ from pyvelo.core.fields import (
 )
 from pyvelo.core.identity import HubIdentity, NetworkServiceIdentity, SegmentIdentity
 
-from pyvelo.client.models.configuration.common import SegmentMetadata
 from .common import (
     AdvertiseDefaultRoutes,
     AdvertiseDefaultRoutesMethod,

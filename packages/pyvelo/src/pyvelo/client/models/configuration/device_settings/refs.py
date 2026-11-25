@@ -2,9 +2,8 @@ from typing import Annotated, Any, ClassVar, Literal
 
 from pydantic import MISSING, ConfigDict
 
-from pyvelo.core import Alias, VcoModel
-
 from pyvelo.client.models.configuration.ref import ConfigurationRef
+from pyvelo.core import Alias, VcoModel
 
 DeviceSettingsRefName = Literal[
     "deviceSettings:authentication",

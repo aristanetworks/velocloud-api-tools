@@ -43,7 +43,7 @@ async def get_aggregate_link_metrics(
     request = GetAggregateEdgeLinkMetrics(
         enterprise_id=enterprise_id if enterprise_id is not None else MISSING,
         interval=interval,
-        metrics=metrics if metrics else MISSING,
+        metrics=metrics or MISSING,
     )
     items = await client.get_aggregate_edge_link_metrics(request)
     rows: list[dict[str, Any]] = []

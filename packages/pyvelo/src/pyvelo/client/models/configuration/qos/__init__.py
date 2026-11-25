@@ -1,4 +1,5 @@
 from pyvelo.client.models.configuration.common import SegmentMetadata
+
 from .common import (
     CosMappingInputType,
     FlowPriority,

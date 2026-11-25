@@ -86,7 +86,7 @@ def shown_together(
         return tuple(texts)
     start = 0
     if any(text != texts[0] for text in texts):
-        start = max(0, len(os.path.commonprefix(texts)) - LEAD)
+        start = max(0, len(os.path.commonprefix(texts)) - LEAD)  # noqa: RUF071  # a character prefix, not a path
     cut: list[str] = []
     for text in texts:
         if len(text) <= VALUE_WIDTH:

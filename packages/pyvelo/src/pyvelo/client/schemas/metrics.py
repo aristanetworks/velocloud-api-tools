@@ -651,10 +651,7 @@ class LinkAutoDualModeTimeSeries(VcoModel):
 
 
 def _link_time_series_discriminator(v: Any) -> str:
-    if isinstance(v, dict):
-        metric = v.get("metric", "")
-    else:
-        metric = getattr(v, "metric", "")
+    metric = v.get("metric", "") if isinstance(v, dict) else getattr(v, "metric", "")
     if metric == LinkMetric.STATE:
         return "state"
     if metric == LinkMetric.AUTO_DUAL_MODE:
@@ -990,10 +987,7 @@ class NetworkInterfaceStateTimeSeries(VcoModel):
 
 
 def _interface_time_series_discriminator(v: Any) -> str:
-    if isinstance(v, dict):
-        metric = v.get("metric", "")
-    else:
-        metric = getattr(v, "metric", "")
+    metric = v.get("metric", "") if isinstance(v, dict) else getattr(v, "metric", "")
     if metric == NetworkInterfaceMetric.STATE:
         return "state"
     return "numeric"

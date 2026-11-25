@@ -1,6 +1,7 @@
 """ConfigState: holds edge/profile configuration with snapshot for diff-on-save."""
 
 import asyncio
+import contextlib
 import copy
 import json
 import weakref
@@ -1498,10 +1499,8 @@ class SaveProgress:
 
     def attach(self, error: BaseException) -> None:
         """Set this on *error*, for :func:`save_progress`; an error whose class takes no attributes is left as it is."""
-        try:
+        with contextlib.suppress(AttributeError, TypeError):
             setattr(error, _PROGRESS_ATTRIBUTE, self)
-        except (AttributeError, TypeError):
-            pass
 
 
 def save_progress(error: BaseException) -> SaveProgress | None:

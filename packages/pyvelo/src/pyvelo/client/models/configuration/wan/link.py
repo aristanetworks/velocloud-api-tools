@@ -3,9 +3,9 @@ from typing import Annotated, Any, Literal
 
 from pydantic import MISSING, Field, field_validator
 
+from pyvelo.client.models.configuration.common import AddressType
 from pyvelo.core import Alias, ServerOwned, VcoModel
 
-from pyvelo.client.models.configuration.common import AddressType
 from .common import (
     BandwidthMeasurement,
     DiscoveryMode,
