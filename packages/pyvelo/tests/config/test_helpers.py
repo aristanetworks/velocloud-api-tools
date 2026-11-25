@@ -110,7 +110,7 @@ def test_load_config_leaves_a_missing_file_to_the_os_error(tmp_path: Path) -> No
     [("y\n", True), (" YES \n", True), ("\n", False), ("n\n", False), ("yep\n", False)],
 )
 def test_confirm_save_reads_an_answer(
-    monkeypatch: pytest.MonkeyPatch, answer: str, confirmed: bool
+    monkeypatch: pytest.MonkeyPatch, answer: str, *, confirmed: bool
 ) -> None:
     monkeypatch.setattr("sys.stdin", io.StringIO(answer))
     assert confirm_save() is confirmed

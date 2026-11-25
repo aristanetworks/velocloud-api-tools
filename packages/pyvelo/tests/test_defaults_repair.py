@@ -122,10 +122,10 @@ def test_insert_defaults_into_no_list_gives_the_entries() -> None:
 
 
 def test_repaired_entry_is_the_template_entry_with_an_id_and_the_flag() -> None:
-    entry = repaired_entry(ANY_UDP, "abc", None)
+    entry = repaired_entry(ANY_UDP, "abc", conditional_backhaul=None)
     assert entry == {**TEMPLATE[ANY_UDP], "ruleLogicalId": "abc"}
     assert "allowConditionalBh" not in entry["action"]
-    flagged = repaired_entry(ANY_UDP, "abc", False)
+    flagged = repaired_entry(ANY_UDP, "abc", conditional_backhaul=False)
     assert flagged["action"]["allowConditionalBh"] is False
     assert TEMPLATE[ANY_UDP]["action"] == entry["action"]  # the template is not changed
 

@@ -262,10 +262,10 @@ class ModuleStore:
                 edge_path = f"edge/{verb}EdgeFor{suffix}"
                 cluster_path = f"enterprise/{verb}ClusterFor{suffix}"
                 self._methods[edge_path] = functools.partial(
-                    self._edge_role, edge_path, role, enable
+                    self._edge_role, edge_path, role, enable=enable
                 )
                 self._methods[cluster_path] = functools.partial(
-                    self._cluster_role, cluster_path, role, enable
+                    self._cluster_role, cluster_path, role, enable=enable
                 )
 
     def add_configuration(self, row: Mapping[str, Any]) -> None:
@@ -574,7 +574,7 @@ class ModuleStore:
     # -- hub role calls -----------------------------------------------------
 
     def _edge_role(
-        self, path: str, role: str, enable: bool, params: dict[str, Any]
+        self, path: str, role: str, params: dict[str, Any], *, enable: bool
     ) -> object:
         """An Edge role call: *role* of the Edge ``id`` on a profile, module and segment, enabled or disabled."""
         path = path.replace("/", ".")
@@ -619,7 +619,7 @@ class ModuleStore:
         return self._service(service, ())
 
     def _cluster_role(
-        self, path: str, role: str, enable: bool, params: dict[str, Any]
+        self, path: str, role: str, params: dict[str, Any], *, enable: bool
     ) -> object:
         """A cluster role call: *role* of the cluster ``id`` on a profile, module and segment, enabled or disabled."""
         path = path.replace("/", ".")

@@ -174,7 +174,7 @@ async def test_update_asks_for_data_and_returns_the_stored_module(
 
 @pytest.mark.parametrize("return_data", [True, False])
 async def test_the_stored_module_has_the_level_of_the_one_given(
-    mock_vco_client: MockVcoClientFactory, return_data: bool
+    mock_vco_client: MockVcoClientFactory, *, return_data: bool
 ) -> None:
     module = fw(RAW, layer=Edge).for_edge()
     module.data.firewall_enabled.set_local(False)
@@ -265,7 +265,7 @@ async def test_stale_version_with_the_check_on_reads_and_raises_the_same(
 
 @pytest.mark.parametrize("conditional_check", [True, False])
 async def test_clash_with_another_writer(
-    mock_vco_client: MockVcoClientFactory, conditional_check: bool
+    mock_vco_client: MockVcoClientFactory, *, conditional_check: bool
 ) -> None:
     def edit_both(row: dict[str, Any]) -> None:
         row["data"]["future"] = 3
@@ -292,6 +292,7 @@ async def test_clash_with_another_writer(
 )
 async def test_an_edit_another_writer_made_identically_counts_as_applied(
     mock_vco_client: MockVcoClientFactory,
+    *,
     conditional_check: bool,
     raised: type[ModuleWriteError],
 ) -> None:
@@ -314,7 +315,7 @@ async def test_an_edit_another_writer_made_identically_counts_as_applied(
 
 @pytest.mark.parametrize("conditional_check", [True, False])
 async def test_refused_write_whose_changes_are_already_stored_passes(
-    mock_vco_client: MockVcoClientFactory, conditional_check: bool
+    mock_vco_client: MockVcoClientFactory, *, conditional_check: bool
 ) -> None:
     def same_edit(row: dict[str, Any]) -> None:
         row["data"]["firewall_enabled"] = False
@@ -548,7 +549,7 @@ def syslog_on(row: dict[str, Any]) -> None:
 
 @pytest.mark.parametrize("conditional_check", [True, False])
 async def test_stale_removal_inside_a_list_item_raises(
-    mock_vco_client: MockVcoClientFactory, conditional_check: bool
+    mock_vco_client: MockVcoClientFactory, *, conditional_check: bool
 ) -> None:
     module = fw({**RAW, "items": ITEMS}, layer=Edge)
     plan = plan_module(module, {**RAW, "items": [{"a": 1}]})
@@ -634,7 +635,7 @@ async def test_a_plan_with_nothing_checkable_asks_for_a_count_and_reads_back(
 
 @pytest.mark.parametrize("conditional_check", [True, False])
 async def test_a_stale_write_with_nothing_checkable_is_a_conflict(
-    mock_vco_client: MockVcoClientFactory, conditional_check: bool
+    mock_vco_client: MockVcoClientFactory, *, conditional_check: bool
 ) -> None:
     module = ds(DS_RAW)
     plan = plan_module(module, DS_WITHOUT_ECMP)
@@ -657,7 +658,7 @@ async def test_a_stale_write_with_nothing_checkable_is_a_conflict(
 
 @pytest.mark.parametrize("return_data", [True, False])
 async def test_a_module_with_no_level_comes_back_with_none(
-    mock_vco_client: MockVcoClientFactory, return_data: bool
+    mock_vco_client: MockVcoClientFactory, *, return_data: bool
 ) -> None:
     module = ds(DS_RAW)
     assert module.config_context is None
@@ -671,7 +672,7 @@ async def test_a_module_with_no_level_comes_back_with_none(
 
 @pytest.mark.parametrize("return_data", [True, False])
 async def test_a_profile_module_comes_back_at_profile_level_at_every_depth(
-    mock_vco_client: MockVcoClientFactory, return_data: bool
+    mock_vco_client: MockVcoClientFactory, *, return_data: bool
 ) -> None:
     module = ds(DS_RAW, level=ConfigContext.PROFILE)
     plan = plan_module(module, {**DS_RAW, "otherKey": 1})
@@ -845,7 +846,7 @@ async def test_counted_insert_that_cannot_be_read_back_carries_the_id_answered(
     ("conditional_check", "answer"), [(True, "refused"), (False, "counted")]
 )
 async def test_a_module_with_no_configuration_id_cannot_be_read_back(
-    mock_vco_client: MockVcoClientFactory, conditional_check: bool, answer: str
+    mock_vco_client: MockVcoClientFactory, *, conditional_check: bool, answer: str
 ) -> None:
     module = firewall_disabled()
     plan = plan_module(module)
@@ -902,7 +903,7 @@ async def test_insert_answer_that_does_not_parse_is_an_unknown_outcome(
     ("conditional_check", "answer"), [(True, "refused"), (False, "counted")]
 )
 async def test_read_back_row_that_does_not_parse_is_an_unknown_outcome(
-    mock_vco_client: MockVcoClientFactory, conditional_check: bool, answer: str
+    mock_vco_client: MockVcoClientFactory, *, conditional_check: bool, answer: str
 ) -> None:
     module = firewall_disabled()
     store = store_of(module, conditional_check=conditional_check, return_data=False)
@@ -1080,7 +1081,7 @@ async def test_precondition_refusal_in_an_http_error_is_read_back_and_checked(
 
 @pytest.mark.parametrize("conditional_check", [True, False])
 async def test_every_request_of_an_update_names_the_enterprise(
-    mock_vco_client: MockVcoClientFactory, conditional_check: bool
+    mock_vco_client: MockVcoClientFactory, *, conditional_check: bool
 ) -> None:
     module = firewall_disabled()
     store = store_of(
@@ -1106,7 +1107,7 @@ async def test_every_request_of_an_update_names_the_enterprise(
 
 @pytest.mark.parametrize("return_data", [True, False])
 async def test_every_request_of_an_insert_names_the_enterprise(
-    mock_vco_client: MockVcoClientFactory, return_data: bool
+    mock_vco_client: MockVcoClientFactory, *, return_data: bool
 ) -> None:
     module = new_qos_with_a_segment()
     store = store_of(module, return_data=return_data, enterprise_id=7)

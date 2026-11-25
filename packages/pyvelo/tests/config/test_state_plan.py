@@ -278,7 +278,7 @@ async def test_no_edit_save_does_not_call() -> None:
     [(True, ConfigConflictError), (False, WriteNotAppliedError)],
 )
 async def test_conflict_propagates(
-    conditional_check: bool, raised: type[ConfigConflictError | WriteNotAppliedError]
+    *, conditional_check: bool, raised: type[ConfigConflictError | WriteNotAppliedError]
 ) -> None:
     # Another writer changed the path edited here: a VCO with the check off
     # stores nothing and returns its row, which the check finds a clash in.

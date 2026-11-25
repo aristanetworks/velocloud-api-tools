@@ -302,7 +302,7 @@ def insert_defaults(
 
 
 def repaired_entry(
-    name: str, rule_id: str, conditional_backhaul: bool | None
+    name: str, rule_id: str, *, conditional_backhaul: bool | None
 ) -> dict[str, Any]:
     """The template ``defaults`` entry *name*, with ``ruleLogicalId`` *rule_id*.
 

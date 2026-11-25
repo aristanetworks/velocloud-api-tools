@@ -369,7 +369,7 @@ def test_removed_and_gone_is_applied_all_the_same() -> None:
         (("**", "fips"), "fips.x", False),
     ],
 )
-def test_matches(pattern: PathPattern, path: str, expected: bool) -> None:
+def test_matches(pattern: PathPattern, path: str, *, expected: bool) -> None:
     assert matches(Path.parse(path), pattern) is expected
 
 

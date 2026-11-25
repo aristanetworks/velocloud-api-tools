@@ -83,8 +83,8 @@ def load_config[T: BaseModel](path: str | Path, model: type[T]) -> T:
 
 def confirm_save(
     message: str = "Apply changes?",
-    auto_yes: bool = False,
     *,
+    auto_yes: bool = False,
     plan: ConfigPlan | None = None,
 ) -> bool:
     """Prompt for interactive confirmation.  Returns ``True`` if confirmed.

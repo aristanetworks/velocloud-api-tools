@@ -169,7 +169,9 @@ def _missing_defaults(
         repaired_entry(
             name,
             str(uuid.uuid4()),
-            None if backhaul is None else backhaul.get(identity.segment_id),
+            conditional_backhaul=None
+            if backhaul is None
+            else backhaul.get(identity.segment_id),
         )
         for name in pairing.missing
     )

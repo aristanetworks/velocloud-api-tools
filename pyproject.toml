@@ -60,9 +60,6 @@ ignore = [
     "E501",
     "E712",
     "ERA001",
-    "FBT001",
-    "FBT002",
-    "FBT003",
     "G003",
     "G004",
     "N802",
@@ -111,6 +108,19 @@ ignore = [
 ]
 "packages/pyvelo-examples/**" = [
     "T201",    # the examples are scripts that print their results
+]
+
+[tool.ruff.lint.flake8-boolean-trap]
+# These hold or return a value of any type, so a bool given to one is the
+# value itself, not a flag that changes what the call does.
+extend-allowed-calls = [
+    "pyvelo.core.Default",
+    "pyvelo.core.kind_default",
+    "pyvelo.core.Owned",
+    "pyvelo.core.Resolved",
+    "pyvelo.core.rebase.Key",
+    "pyvelo.core.missing_or",
+    "pyvelo.core.fields._none_to",
 ]
 
 [tool.ruff.lint.pydocstyle]

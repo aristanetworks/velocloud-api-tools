@@ -113,7 +113,7 @@ def firewall_store(**knobs: bool) -> ModuleStore:
     ],
 )
 def test_is_version_conflict(
-    error: str | None, rows: int | None, expected: bool
+    error: str | None, rows: int | None, *, expected: bool
 ) -> None:
     assert is_version_conflict(error=error, rows=rows) is expected
 
@@ -142,7 +142,7 @@ async def test_returned_row_is_a_module_with_its_raw_data_and_level(
 
 @pytest.mark.parametrize("return_data", [True, False])
 async def test_precondition_failure_is_a_conflict(
-    mock_vco_client: MockVcoClientFactory, return_data: bool
+    mock_vco_client: MockVcoClientFactory, *, return_data: bool
 ) -> None:
     store = firewall_store(conditional_check=True)
     store.other_writer(7, lambda row: row.update(description="changed elsewhere"))
@@ -274,6 +274,7 @@ async def test_asked_for_data_and_got_a_row_count(
 async def test_a_result_that_is_neither_raises(
     mock_vco_client: MockVcoClientFactory,
     json_rpc_response: JsonRpcResponseFactory,
+    *,
     return_data: bool,
     answer: JsonObject,
 ) -> None:

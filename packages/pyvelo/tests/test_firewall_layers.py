@@ -110,8 +110,8 @@ def test_the_firewall_groups_are_declared_with_their_anchors_and_bundles() -> No
 def test_firewall_enabled_has_the_profile_false_wins_authority() -> None:
     metadata = field_kind(FirewallData[Edge].model_fields["firewall_enabled"]).metadata
     (authority,) = [m for m in metadata if isinstance(m, Authority)]
-    assert authority.rule(False) is True
-    assert authority.rule(True) is False
+    assert authority.rule(False) is True  # noqa: FBT003 (a rule is a Callable[[T], bool], called with the value)
+    assert authority.rule(True) is False  # noqa: FBT003 (a rule is a Callable[[T], bool], called with the value)
 
 
 def test_the_display_defaults_are_the_templates() -> None:

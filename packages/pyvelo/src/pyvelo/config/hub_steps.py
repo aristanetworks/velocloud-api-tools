@@ -476,7 +476,7 @@ def _addition(segment: str, role: Role, hub_name: str) -> str:
 
 
 def hub_in_use_message(
-    segment: str, hub: str, edges: Sequence[tuple[int, str]], refuse: bool
+    segment: str, hub: str, edges: Sequence[tuple[int, str]], *, refuse: bool
 ) -> str:
     """What a removal of the Edge hub *hub* from the Branch-to-Hub list of *segment* does to the *edges* whose QoS rules use it, and what to do.
 
@@ -512,7 +512,7 @@ def hub_in_use_message(
     )
 
 
-def _flag(segment: str, path: tuple[str, ...], value: bool) -> str:
+def _flag(segment: str, path: tuple[str, ...], *, value: bool) -> str:
     """The patch that sets the ``vpn`` flag at *path* of *segment*."""
     return f"{_patch(segment, path, value)} {_APPLY}"
 
@@ -611,7 +611,7 @@ def _broken_rules(
                 f"{_list_text('hub')} holds {_names(hub_list)} while "
                 f"`{'.'.join(flag_path)}` is off, so the hubs would be listed "
                 "and unused. Turn it on with "
-                f"{_flag(name, flag_path, True)} or remove the hubs with "
+                f"{_flag(name, flag_path, value=True)} or remove the hubs with "
                 f"{_removal(name, 'hub', hub_list)}."
             )
         problems.append(
@@ -631,7 +631,7 @@ def _broken_rules(
                 "is empty. The UI turns it on only with a hub, and the segment's "
                 "Edges would be told to use no hub. Add a hub with "
                 f"{_addition(name, 'hub', '<hub name>')}"
-                f" or turn it off with {_flag(name, flag_path, False)}.",
+                f" or turn it off with {_flag(name, flag_path, value=False)}.",
                 ["hub"],
             )
         )
@@ -648,7 +648,7 @@ def _broken_rules(
                 ", which is empty: they could not reach one another. Add a "
                 f"hub with {_addition(name, 'bridge', '<hub name>')}"
                 " or turn `useCloudGateway` on with "
-                f"{_flag(name, ('vpn', 'edgeToEdgeDetail', 'useCloudGateway'), True)}.",
+                f"{_flag(name, ('vpn', 'edgeToEdgeDetail', 'useCloudGateway'), value=True)}.",
                 ["bridge"],
             )
         )
@@ -692,7 +692,7 @@ def _broken_rules(
                 f"{' and '.join(_list_text(r) for r in filled)} hold "
                 f"{_names(listed)} while `vpn.enabled` is off, so the hubs would "
                 "be listed for a segment that does not use them. Turn it on with "
-                f"{_flag(name, ('vpn', 'enabled'), True)} or remove the hubs, for "
+                f"{_flag(name, ('vpn', 'enabled'), value=True)} or remove the hubs, for "
                 f"example {_removal(name, filled[0], lists[filled[0]])}."
             )
         problems.append(

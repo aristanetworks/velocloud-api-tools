@@ -290,7 +290,7 @@ async def test_ipv6_keyed_static_route_stored_in_canonical_form_passes() -> None
 
 
 @pytest.mark.parametrize("conditional_check", [False, True])
-async def test_refused_reorder_and_edit_list_both(conditional_check: bool) -> None:
+async def test_refused_reorder_and_edit_list_both(*, conditional_check: bool) -> None:
     raw = qos(
         *(qos_rule(name, ruleLogicalId=logical_id(n)) for n, name in enumerate("abcd"))
     )
@@ -332,6 +332,7 @@ async def test_refused_reorder_and_edit_list_both(conditional_check: bool) -> No
 
 @pytest.mark.parametrize("conditional_check", [False, True])
 async def test_refused_delete_of_a_same_named_rule_is_the_one_lost_edit(
+    *,
     conditional_check: bool,
 ) -> None:
     rules = [
@@ -368,6 +369,7 @@ async def test_refused_delete_of_a_same_named_rule_is_the_one_lost_edit(
 
 @pytest.mark.parametrize("conditional_check", [False, True])
 async def test_reconciled_segment_is_a_lost_edit_when_refused(
+    *,
     conditional_check: bool,
 ) -> None:
     state = make_state(
@@ -415,7 +417,7 @@ def stored_rules(client: MockVcoClient, segment: int = 0) -> list[dict[str, Any]
 
 
 @pytest.mark.parametrize("conditional_check", [False, True])
-async def test_redo_patch_redoes_a_place_and_a_move(conditional_check: bool) -> None:
+async def test_redo_patch_redoes_a_place_and_a_move(*, conditional_check: bool) -> None:
     raw = firewall(
         fw_rule("block-ssh", ruleLogicalId="l1"),
         fw_rule("allow-branch-erp", ruleLogicalId="l2"),

@@ -176,7 +176,7 @@ def test_set_local_applies_the_value_validators_of_the_field() -> None:
     [("pair_on", "x", True), ("level", "x", True), ("level", True, False)],
 )
 def test_set_local_and_merge_patch_refuse_a_value_alike(
-    field: str, bad: object, cause: bool
+    field: str, bad: object, *, cause: bool
 ) -> None:
     edge = _local_pair()
     profile = Mod[Profile].model_validate(mod_json())

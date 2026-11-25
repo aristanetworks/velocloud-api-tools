@@ -198,7 +198,7 @@ def backups(
     monkeypatch.setattr(live, "_LEFT", {})
     monkeypatch.delenv(live.WRITE_HOST_ENV, raising=False)
     monkeypatch.delenv(live.WRITE_ENTERPRISE_ENV, raising=False)
-    with live.writer_test(True):
+    with live.writer_test(marked=True):
         yield tmp_path
 
 
@@ -269,7 +269,11 @@ def test_outcome_names_the_class_and_redacted_paths_only() -> None:
         lost_edits=[
             planned(Path(("segments", SECRET, "x")), "lab-a", "lab-b", "lab-c")
         ],
-        applied=[planned(Path(("firewall_enabled",)), True, False, False)],
+        applied=[
+            planned(
+                Path(("firewall_enabled",)), as_read=True, intended=False, stored=False
+            )
+        ],
         server_changes=[ServerChange(Path(("future",)), 1, 2)],
     )
     text = live.outcome(error)
@@ -715,7 +719,7 @@ class FakeItem:
 
 
 class FakeReport:
-    def __init__(self, failed: bool) -> None:
+    def __init__(self, *, failed: bool) -> None:
         self.failed: bool = failed
         self.longrepr: object = "as pytest made it"
 
@@ -736,7 +740,7 @@ def redacted(
     when: Literal["setup", "call", "teardown"] = "call",
 ) -> str:
     """What ``redact_report`` leaves as the report of a test whose body is *body*."""
-    report = FakeReport(failed)
+    report = FakeReport(failed=failed)
     call = pytest.CallInfo.from_call(body, when)
     live.redact_report(FakeItem(marks, fixtures), call, report)  # pyright: ignore[reportArgumentType]
     assert isinstance(report.longrepr, str)
@@ -996,7 +1000,9 @@ async def access_for(
 
 async def test_an_unset_opt_in_is_off_and_asks_nothing() -> None:
     access, requests = await access_for({})
-    assert access == live.WriteAccess(False, live.WRITES_OFF, False)
+    assert access == live.WriteAccess(
+        granted=False, refusal=live.WRITES_OFF, misconfigured=False
+    )
     assert access.refusal == (
         "live write tests are off: set PYVELO_IT_WRITE_HOST to the host name "
         "of the Orchestrator this suite may write to and "
@@ -1043,7 +1049,9 @@ async def refused(
         enterprise_failure=enterprise_failure,
     )
     assert access == live.WriteAccess(
-        False, f"writes refused: {reason}; nothing was written; {remedy}", True
+        granted=False,
+        refusal=f"writes refused: {reason}; nothing was written; {remedy}",
+        misconfigured=True,
     )
     assert HOST not in access.refusal
     assert "test-token" not in access.refusal
@@ -1184,7 +1192,7 @@ async def test_a_test_that_is_not_marked_cannot_write(
     fake = lab_fake()
     lab = await opened(fake, monkeypatch)
     site = lab.edge_site(lab.layouts[0], Name.QOS)
-    with live.writer_test(False):
+    with live.writer_test(marked=False):
         with pytest.raises(pytest.fail.Exception) as caught:
             async with live.restoring(site):
                 pass
@@ -2649,7 +2657,7 @@ async def test_a_role_call_in_a_block_on_a_profile_that_is_not_a_target_is_refus
     lab = await hub_opened(hub_lab(), monkeypatch)
     hub = live.HubTarget("edge", EDGE_HUB_ID, uuid.UUID(EDGE_HUB_LOGICAL_ID))
 
-    def run_with(target: bool) -> live.LiveRun:
+    def run_with(*, target: bool) -> live.LiveRun:
         site = live.profile_site(lab.client, 20, DS, None, target=target)
         return live.LiveRun(
             access=live.WriteAccess(granted=True, refusal=""),
@@ -2657,10 +2665,10 @@ async def test_a_role_call_in_a_block_on_a_profile_that_is_not_a_target_is_refus
             open=[(site, DS_MODULE)],
         )
 
-    with live.writer_test(True):
-        run_with(True).check_role_call("edge", 20, DS_MODULE, EDGE_HUB_ID)
+    with live.writer_test(marked=True):
+        run_with(target=True).check_role_call("edge", 20, DS_MODULE, EDGE_HUB_ID)
         with pytest.raises(live.WritesRefused) as refused:
-            run_with(False).check_role_call("edge", 20, DS_MODULE, EDGE_HUB_ID)
+            run_with(target=False).check_role_call("edge", 20, DS_MODULE, EDGE_HUB_ID)
     assert str(refused.value) == live.ROLE_CALL_NOT_COVERED
 
 
@@ -2719,7 +2727,10 @@ async def test_a_role_call_of_a_test_that_is_not_marked_is_refused(
     lab = await hub_opened(fake, monkeypatch)
     _ = await live.admit_hub(lab.client, None)
     async with live.restoring(lab.profile_site(20, DS)):
-        with live.writer_test(False), pytest.raises(live.WritesRefused) as refused:
+        with (
+            live.writer_test(marked=False),
+            pytest.raises(live.WritesRefused) as refused,
+        ):
             _ = await lab.client.enable_edge_hub(
                 role_request("enable_edge_hub", EDGE_HUB_ID)
             )

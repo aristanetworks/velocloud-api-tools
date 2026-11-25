@@ -700,7 +700,7 @@ class ModuleWriteError(VcoError):
         # Computed when asked: ``completed`` is set after the error is built.
         return self.render()
 
-    def redo_patch(self, include_clashes: bool = False) -> dict[str, object]:
+    def redo_patch(self, *, include_clashes: bool = False) -> dict[str, object]:
         """The patch that redoes the lost edits on ``module``, the module as stored.
 
         It is plain JSON (``json.loads(json.dumps(patch)) == patch``), rooted
@@ -745,14 +745,14 @@ class ModuleWriteError(VcoError):
         ``apply`` refuses as a patch: make such an edit again the way it was
         made.
         """
-        return self._redo(include_clashes)[0]
+        return self._redo(include_clashes=include_clashes)[0]
 
-    def not_redone(self, include_clashes: bool = False) -> tuple[PlannedChange, ...]:
-        """The lost edits that ``redo_patch(include_clashes)`` leaves out, in the order of ``lost_edits``."""
-        return self._redo(include_clashes)[1]
+    def not_redone(self, *, include_clashes: bool = False) -> tuple[PlannedChange, ...]:
+        """The lost edits that ``redo_patch(include_clashes=include_clashes)`` leaves out, in the order of ``lost_edits``."""
+        return self._redo(include_clashes=include_clashes)[1]
 
     def _redo(
-        self, include_clashes: bool
+        self, *, include_clashes: bool
     ) -> tuple[dict[str, object], tuple[PlannedChange, ...]]:
         """The patch that redoes the lost edits, and the lost edits it leaves out."""
         plan, module = self.plan, self.module

@@ -305,6 +305,7 @@ async def test_a_hub_that_only_leaves_the_backhaul_list_is_not_in_use_in_that_se
 
 @pytest.mark.parametrize("leaves_the_hub_list", [True, False])
 async def test_the_services_read_asks_for_edge_qos_usage_only_when_a_hub_leaves_the_hub_list(
+    *,
     leaves_the_hub_list: bool,
 ) -> None:
     state = await profile_with(HUB_A, HUB_B)

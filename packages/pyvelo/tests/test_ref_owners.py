@@ -657,7 +657,7 @@ def test_a_module_list_validated_with_the_flag_is_not_loaded() -> None:
 
 
 @pytest.mark.parametrize("loaded", [True, False])
-def test_a_module_copy_keeps_whether_its_refs_were_read(loaded: bool) -> None:
+def test_a_module_copy_keeps_whether_its_refs_were_read(*, loaded: bool) -> None:
     module = primary_module(refs_loaded=loaded)
     assert copy.deepcopy(module).refs_loaded is loaded
 

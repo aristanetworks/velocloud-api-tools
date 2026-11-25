@@ -161,6 +161,7 @@ def _json_part(value: object) -> str | int | float:
 
 
 def _place(
+    *,
     first: bool,
     last: bool,
     before: Selector | None,
@@ -208,7 +209,7 @@ def add(
             "give the place with first, last, before or after"
         )
     value: dict[str, object] = {"_op": "add", **fields}
-    place = _place(first, last, before, after)
+    place = _place(first=first, last=last, before=before, after=after)
     if place is not None:
         value["_position"] = place
     return value
@@ -227,7 +228,7 @@ def move(
     after: Selector | None = None,
 ) -> dict[str, object]:
     """Move the item: exactly one of ``first``, ``last``, ``before``, ``after``."""
-    place = _place(first, last, before, after)
+    place = _place(first=first, last=last, before=before, after=after)
     if place is None:
         raise TypeError("move() needs a place: first, last, before or after")
     return {"_position": place}

@@ -197,7 +197,9 @@ def test_a_whole_group_in_one_patch() -> None:
 
 @pytest.mark.parametrize("flag", [True, False])
 @pytest.mark.parametrize("local", [True, False])
-def test_the_flag_of_a_by_flag_field_is_not_patchable(flag: bool, local: bool) -> None:
+def test_the_flag_of_a_by_flag_field_is_not_patchable(
+    *, flag: bool, local: bool
+) -> None:
     keys: dict[str, object] = (
         {"segments": [{"segment": _SEGMENT, "mapping": {"override": True}}]}
         if local

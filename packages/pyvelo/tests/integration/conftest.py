@@ -44,7 +44,7 @@ def pytest_terminal_summary(terminalreporter: pytest.TerminalReporter) -> None:
     live.report_leftover_backups(terminalreporter.write_line)
 
 
-def _env(name: str, required: bool = False) -> str | None:
+def _env(name: str, *, required: bool = False) -> str | None:
     val = os.environ.get(name)
     if required and not val:
         pytest.skip(f"{name} not set")
@@ -68,7 +68,9 @@ async def vco_client() -> AsyncGenerator[VcoClient]:
 @pytest.fixture(autouse=True)
 def live_write_marker(request: pytest.FixtureRequest) -> Generator[None]:
     """Only a test marked ``live_write`` may write to the Orchestrator."""
-    with live.writer_test(request.node.get_closest_marker("live_write") is not None):
+    with live.writer_test(
+        marked=request.node.get_closest_marker("live_write") is not None
+    ):
         yield
 
 
@@ -124,7 +126,7 @@ def assert_frame_valid(frame: MetricFrame, *, check_other: bool = True) -> None:
         )
 
 
-def skip_unless(condition: bool, reason: str) -> pytest.MarkDecorator:
+def skip_unless(condition: bool, reason: str) -> pytest.MarkDecorator:  # noqa: FBT001 (mirrors pytest.mark.skipif, whose condition is positional)
     return pytest.mark.skipif(not condition, reason=reason)
 
 

@@ -262,7 +262,7 @@ def test_the_cause_of_a_patch_error_does_not_quote_the_patch(
 @pytest.mark.parametrize("field", ["inner", "defaulted"])
 @pytest.mark.parametrize("wrap", [False, True])
 def test_a_field_typed_as_a_model_does_not_quote_a_value_that_is_not_one(
-    field: str, wrap: bool
+    field: str, *, wrap: bool
 ) -> None:
     value: object = [OLD] if wrap else OLD
     with pytest.raises(PatchError) as exc:

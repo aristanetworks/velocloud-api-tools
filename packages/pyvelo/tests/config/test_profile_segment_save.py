@@ -225,7 +225,7 @@ LOST_SEGMENT = [
 
 @pytest.mark.parametrize(("with_defaults", "expected"), LOST_SEGMENT)
 async def test_a_qos_write_that_lost_the_segment_leaves_a_plan_that_raises_segment_set_error(
-    with_defaults: bool, expected: type[ModuleWriteError]
+    *, with_defaults: bool, expected: type[ModuleWriteError]
 ) -> None:
     state = await global_only(with_defaults=with_defaults)
     pipeline, store = module_store_pipeline(state)
@@ -245,7 +245,7 @@ async def test_a_qos_write_that_lost_the_segment_leaves_a_plan_that_raises_segme
 
 @pytest.mark.parametrize(("with_defaults", "expected"), LOST_SEGMENT)
 async def test_the_redo_of_a_lost_added_segment_assigns_it_again(
-    with_defaults: bool, expected: type[ModuleWriteError]
+    *, with_defaults: bool, expected: type[ModuleWriteError]
 ) -> None:
     state = await global_only(with_defaults=with_defaults)
     pipeline, store = module_store_pipeline(state)

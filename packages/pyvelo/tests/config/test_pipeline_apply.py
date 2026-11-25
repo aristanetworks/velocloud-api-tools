@@ -1139,7 +1139,7 @@ _ADDRESSED: list[tuple[str, dict[str, object], dict[str, object], bool]] = [
     [pytest.param(a, n, c, id=i) for i, a, n, c in _ADDRESSED],
 )
 async def test_addressed_call_equals_its_nested_form(
-    addressed: dict[str, object], nested: dict[str, object], changes: bool
+    addressed: dict[str, object], nested: dict[str, object], *, changes: bool
 ) -> None:
     pipeline = ConfigPipeline(client=None)
     by_address, by_patch = make_raw_state(), make_raw_state()

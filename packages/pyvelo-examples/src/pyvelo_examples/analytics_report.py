@@ -144,7 +144,7 @@ def _format_bytes_tick(value: float, _position: int) -> str:
 def _setup_axes(ax: Axes) -> None:
     ax.xaxis.set_major_formatter(DateFormatter("%H:%M"))
     ax.tick_params(axis="x", rotation=30)  # pyright: ignore[reportUnknownMemberType]  # Matplotlib exposes flexible style kwargs.
-    ax.grid(True, alpha=0.3)  # pyright: ignore[reportUnknownMemberType]  # Matplotlib exposes flexible style kwargs.
+    ax.grid(visible=True, alpha=0.3)  # pyright: ignore[reportUnknownMemberType]  # Matplotlib exposes flexible style kwargs.
 
 
 def plot_link_series(df: pl.DataFrame) -> Figure:

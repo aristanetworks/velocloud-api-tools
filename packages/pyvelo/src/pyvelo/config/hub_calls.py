@@ -294,12 +294,12 @@ def prepare_steps(
         if in_place(
             step, services, configuration_id=configuration_id, module_id=module_id
         ):
-            prepared.append(PreparedStep(step, True, None))
+            prepared.append(PreparedStep(step, in_place=True, target_id=None))
             continue
         target = _target_id(
             step, services, configuration_id=configuration_id, module_id=module_id
         )
-        prepared.append(PreparedStep(step, False, target))
+        prepared.append(PreparedStep(step, in_place=False, target_id=target))
     return tuple(prepared)
 
 
@@ -416,7 +416,11 @@ def report_hubs_in_use(
 ) -> list[ValidationWarning]:
     """The ``hub_in_use`` warnings for *in_use*, one per hub and segment; with *refuse*, raise ``HubListError`` for all of them instead."""
     found = [
-        (step, edges, hub_in_use_message(step.segment, step.hub.name, edges, refuse))
+        (
+            step,
+            edges,
+            hub_in_use_message(step.segment, step.hub.name, edges, refuse=refuse),
+        )
         for step, edges in in_use.items()
     ]
     if refuse and found:

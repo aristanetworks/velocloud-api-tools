@@ -88,7 +88,7 @@ def _integer_or_default(value: object, default: int = 0) -> int:
     return value if isinstance(value, int) and not isinstance(value, bool) else default
 
 
-def _boolean_or_default(value: object, default: bool = False) -> bool:
+def _boolean_or_default(value: object, *, default: bool = False) -> bool:
     return value if isinstance(value, bool) else default
 
 

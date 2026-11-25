@@ -341,6 +341,7 @@ async def test_request_two_of_three_fails() -> None:
 
 @pytest.mark.parametrize("conditional_check", [False, True])
 async def test_conflict_refreshes_the_state_and_carries_the_plan(
+    *,
     conditional_check: bool,
 ) -> None:
     state = make_state()
@@ -363,6 +364,7 @@ async def test_conflict_refreshes_the_state_and_carries_the_plan(
 
 @pytest.mark.parametrize("conditional_check", [False, True])
 async def test_redo_after_a_conflict_saves_without_a_reload(
+    *,
     conditional_check: bool,
 ) -> None:
     state = make_state()
@@ -481,6 +483,7 @@ async def test_objects_are_detached_after_a_save() -> None:
 
 @pytest.mark.parametrize("conditional_check", [False, True])
 async def test_objects_are_detached_after_a_save_that_raised(
+    *,
     conditional_check: bool,
 ) -> None:
     # The module as stored is the row returned, or read after the refusal.

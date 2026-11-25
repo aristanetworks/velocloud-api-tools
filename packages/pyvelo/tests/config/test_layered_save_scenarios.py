@@ -186,7 +186,7 @@ async def test_segment_key_in_another_case_edits_the_segment_it_names() -> None:
 @pytest.mark.parametrize("key", ["Guest", "guest"])
 @pytest.mark.parametrize("with_resolver", [False, True])
 async def test_new_segment_by_name_takes_the_profiles_descriptor(
-    key: str, with_resolver: bool
+    key: str, *, with_resolver: bool
 ) -> None:
     state = make_state()
     client = MockVcoClient.for_state(state)

@@ -58,7 +58,7 @@ def segment_entry(
     }
 
 
-def dns(primary: bool = False, backup: bool = False) -> dict[str, Any]:
+def dns(*, primary: bool = False, backup: bool = False) -> dict[str, Any]:
     """A ``dns`` section with a ``{"ref": ...}`` stub for each provider asked for; the others are empty."""
     return {
         "primaryProvider": {"ref": PRIMARY} if primary else {},

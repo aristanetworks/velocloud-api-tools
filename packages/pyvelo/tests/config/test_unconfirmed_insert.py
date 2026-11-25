@@ -207,6 +207,7 @@ async def test_a_dry_run_after_a_lost_answer_reads_nothing_and_warns() -> None:
 
 @pytest.mark.parametrize("conditional_check", [False, True])
 async def test_an_update_whose_answer_was_lost_is_found_stored_by_the_next_save(
+    *,
     conditional_check: bool,
 ) -> None:
     state = make_state()
@@ -234,6 +235,7 @@ async def test_an_update_whose_answer_was_lost_is_found_stored_by_the_next_save(
 
 @pytest.mark.parametrize("conditional_check", [False, True])
 async def test_an_update_retried_with_a_change_the_vco_stores_its_own_way(
+    *,
     conditional_check: bool,
 ) -> None:
     web = {"name": "web", "action": {"allow_or_deny": "allow"}, "match": {}}

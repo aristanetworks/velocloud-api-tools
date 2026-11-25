@@ -1549,6 +1549,7 @@ async def test_refused_edge_save_refreshes_the_state(
     pipeline: ConfigPipeline,
     capsys: pytest.CaptureFixture[str],
     monkeypatch: pytest.MonkeyPatch,
+    *,
     read_back: bool,
 ) -> None:
     """A stale save of an edge module leaves the state holding the module as stored, to save again.

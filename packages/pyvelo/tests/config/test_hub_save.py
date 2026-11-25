@@ -1157,6 +1157,7 @@ def test_a_hub_found_by_its_logical_id() -> None:
 
 @pytest.mark.parametrize("qos_usage", [False, True])
 async def test_the_services_read_asks_for_the_qos_usage_only_when_told_to(
+    *,
     qos_usage: bool,
 ) -> None:
     state = await profile_of([ds_entry(GLOBAL), ds_entry(GUEST)])

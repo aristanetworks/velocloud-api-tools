@@ -1157,7 +1157,9 @@ def plan_module(
                     else repaired_entry(
                         n,
                         module.defaults_rule_id(segment_id, n),
-                        conditional_backhaul.get(cast("int", segment_id))
+                        conditional_backhaul=conditional_backhaul.get(
+                            cast("int", segment_id)
+                        )
                         if conditional_backhaul is not None
                         else None,
                     )

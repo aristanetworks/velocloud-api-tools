@@ -306,7 +306,7 @@ def describe(changes: Sequence[RawChange]) -> str:
     return "; ".join(marks) if marks else "no changes"
 
 
-def check(condition: bool, message: str) -> None:
+def check(condition: bool, message: str) -> None:  # noqa: FBT001 (an assert as a function: the condition is what it checks, not a flag)
     """Fail with *message* alone (an ``assert`` would print the operands, names included)."""
     if not condition:
         pytest.fail(message, pytrace=False)
@@ -697,7 +697,7 @@ def _states_errors(exc: VcoOperationError) -> bool:
     return isinstance(entries, list) and bool(entries)
 
 
-def _stored_nothing(exc: BaseException, unsent: bool) -> bool:
+def _stored_nothing(exc: BaseException, *, unsent: bool) -> bool:
     """Whether a write that raised *exc* is known to have stored nothing.
 
     So it is where nothing was sent, where the version was refused, and where
@@ -828,7 +828,9 @@ def _host_name(host: str) -> str:
 
 def _refused(reason: str, remedy: str) -> WriteAccess:
     return WriteAccess(
-        False, f"writes refused: {reason}; nothing was written; {remedy}", True
+        granted=False,
+        refusal=f"writes refused: {reason}; nothing was written; {remedy}",
+        misconfigured=True,
     )
 
 
@@ -920,7 +922,7 @@ _marked: bool = False
 
 
 @contextmanager
-def writer_test(marked: bool) -> Generator[None]:
+def writer_test(*, marked: bool) -> Generator[None]:
     """For the length of the block, the test running is a writer (*marked*) or is not."""
     global _marked
     before = _marked
@@ -1255,7 +1257,7 @@ def run_of(client: VcoClient) -> LiveRun:
             with _sends("configuration/updateConfigurationModule"):
                 stored = await update(request, level=level)
         except BaseException as exc:
-            if _stored_nothing(exc, run.sent == sent):
+            if _stored_nothing(exc, unsent=run.sent == sent):
                 if had:
                     run.seen[module_id] = prior
                 else:

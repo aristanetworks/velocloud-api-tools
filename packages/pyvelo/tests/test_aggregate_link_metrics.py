@@ -119,7 +119,7 @@ async def test_conflicting_scope_and_identity_fail(
 
 @pytest.mark.parametrize("more", [False, True])
 async def test_terminal_envelope_supported_and_partial_envelope_rejected(
-    mock_vco_client: MockVcoClientFactory, more: bool
+    mock_vco_client: MockVcoClientFactory, *, more: bool
 ) -> None:
     calls: list[httpx.Request] = []
 
