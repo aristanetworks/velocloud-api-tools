@@ -7,6 +7,7 @@ dev = [
     "basedpyright>=1.40.2",
     "pytest>=9.0.2",
     "pytest-asyncio>=1.3.0",
+    "pytest-xdist>=3.8.0",
     "ruff>=0.15.8",
 ]
 
@@ -109,7 +110,14 @@ convention = "google"
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
-addopts = ["-ra", "-q", "-m", "not integration", "--strict-markers", "--strict-config"]
+# One worker per vCPU. `logical` rather than `auto`: with psutil installed,
+# `auto` counts physical cores. worksteal hands an idle worker the tests a busy
+# one has not reached. Pass -n0 to run in one process, as for a single file.
+# The live tests always run in one process (tests/conftest.py).
+addopts = [
+    "-ra", "-q", "-m", "not integration", "--strict-markers", "--strict-config",
+    "-n", "logical", "--dist", "worksteal", "--durations=15",
+]
 xfail_strict = true
 filterwarnings = ["error"]
 testpaths = ["packages/pyvelo/tests"]
