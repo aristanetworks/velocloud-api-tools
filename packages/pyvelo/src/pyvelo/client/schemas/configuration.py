@@ -772,6 +772,9 @@ class InsertQosConfigurationModule(InsertConfigurationModuleBase):
     name: Literal["QOS"] = "QOS"
     data: dict[str, Any]
     refs: dict[str, Any] | MISSING = MISSING
+    profile_data: dict[str, Any] | MISSING = MISSING
+    profile_configuration_id: int | MISSING = MISSING
+    profile_module_id: int | MISSING = MISSING
 
 
 class InsertFirewallConfigurationModule(InsertConfigurationModuleBase):

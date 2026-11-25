@@ -303,6 +303,14 @@ class ModulePlan:
     mapping. It is the one object the plan used: do not change it. A plan made
     from this one (a rebase, the hub rows) keeps it.
     """
+    profile_data: dict[str, Any] | None = dataclass_field(
+        default=None, repr=False, compare=False
+    )
+    """Profile QOS ``data`` linked on an edge overlay insert, else None."""
+    profile_configuration_id: int | None = None
+    """Profile configuration ID linked on an edge overlay insert, else None."""
+    profile_module_id: int | None = None
+    """Profile QOS module ID linked on an edge overlay insert, else None."""
 
     @override
     def __repr__(self) -> str:
@@ -535,6 +543,19 @@ def insert_request(
             refs=plan.refs if plan.refs is not None else MISSING,
             enterprise_id=enterprise,
             return_data=True,
+            profile_data=(
+                plan.profile_data if plan.profile_data is not None else MISSING
+            ),
+            profile_configuration_id=(
+                plan.profile_configuration_id
+                if plan.profile_configuration_id is not None
+                else MISSING
+            ),
+            profile_module_id=(
+                plan.profile_module_id
+                if plan.profile_module_id is not None
+                else MISSING
+            ),
         )
     raise TypeError(f"Cannot insert module type: {type(module).__name__}")
 

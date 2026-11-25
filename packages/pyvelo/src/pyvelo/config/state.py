@@ -6,7 +6,7 @@ import copy
 import json
 import weakref
 from collections.abc import Collection, Mapping, Sequence
-from dataclasses import dataclass, field, fields
+from dataclasses import dataclass, field, fields, replace
 from typing import (
     Any,
     Literal,
@@ -62,6 +62,7 @@ from pyvelo.config.hub_steps import (
     role_disagreements,
 )
 from pyvelo.config.module_names import resolve_module_name
+from pyvelo.config.qos_overlay import qos_overlay_data
 from pyvelo.config.resolver import ResolverContext, ResolverRegistry
 from pyvelo.config.resolvers.hub import HubResolver
 from pyvelo.config.validation import ValidationError
@@ -1222,7 +1223,7 @@ class ConfigState:
             if level is ConfigContext.EDGE
             else None
         )
-        return plan_module(
+        plan = plan_module(
             module,
             data,
             level=level,
@@ -1235,6 +1236,22 @@ class ConfigState:
             repair_defaults=repair_defaults,
             conditional_backhaul=self.conditional_backhaul(module, level),
         )
+        if (
+            plan.operation == "insert"
+            and isinstance(module, QosConfigurationModule)
+            and profile_mod is not None
+            and isinstance(profile_mod.raw_data, dict)
+        ):
+            payload = qos_overlay_data(plan.data, profile_mod.raw_data)
+            plan = replace(
+                plan,
+                data=payload,
+                changes=tuple(raw_changes({}, payload, plan.model)),
+                profile_data=copy.deepcopy(profile_mod.raw_data),
+                profile_configuration_id=self.profile_config.id_,
+                profile_module_id=profile_mod.id_,
+            )
+        return plan
 
     def fill_hub_services(self, data: VcoModel, *, skip: Collection[Path] = ()) -> None:
         """Give each backhaul hub of the QoS *data* its service for the segment.

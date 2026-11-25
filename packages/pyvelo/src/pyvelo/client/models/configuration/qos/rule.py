@@ -7,7 +7,7 @@ route (direct, Gateway or backhaul to a hub) and its NAT.
 import uuid
 from typing import Annotated, Any, Literal, override
 
-from pydantic import MISSING, Field
+from pydantic import MISSING, AliasChoices, Field
 
 from pyvelo.client.models.configuration.common import (
     AddressGroupRef,
@@ -175,7 +175,7 @@ class RouteAction(VcoModel):
     wan_link: Annotated[str, Alias("wanlink")] = "auto"
     wan_link_name: str = ""
     link_cos_logical_id: uuid.UUID | None = None
-    link_outer_dscp_tag: str | None = None
+    link_outer_dscp_tag: str | None = "CS0"
     link_inner_dscp_tag: str | None = None
     icmp_logical_id: uuid.UUID | None = None
 
@@ -183,7 +183,14 @@ class RouteAction(VcoModel):
 class SlaSettings(VcoModel):
     latency_ms: str = "0"
     jitter_ms: str = "0"
-    loss_percent: Annotated[str, Alias("lossPct")] = "0.0"
+    # VCO UI serializes this as lossPct; also accept the collection's loss_pct.
+    loss_percent: str = Field(
+        default="0.0",
+        serialization_alias="lossPct",
+        validation_alias=AliasChoices(
+            "lossPct", "loss_pct", "lossPercent", "loss_percent"
+        ),
+    )
 
 
 class QosNatSettings(VcoModel):

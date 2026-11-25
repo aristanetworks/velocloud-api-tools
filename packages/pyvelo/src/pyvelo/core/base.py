@@ -1035,18 +1035,34 @@ def _held_type(fi: FieldInfo) -> object:
     return field_kind(fi).inner_type
 
 
+def _iter_alias_strings(alias: object) -> list[str]:
+    """Flatten a Pydantic validation alias into plain strings."""
+    if alias is None:
+        return []
+    if isinstance(alias, str):
+        return [alias]
+    choices = getattr(alias, "choices", None)
+    if choices:
+        result: list[str] = []
+        for choice in choices:
+            result.extend(_iter_alias_strings(choice))
+        return result
+    return []
+
+
 def _field_names_by_key(fields: Mapping[str, FieldInfo]) -> dict[str, str]:
     """Map each input key that names one of *fields* to its python name.
 
-    The keys: the python name, its aliases, and its camelCase form.
+    The keys: the python name, its aliases (including ``AliasChoices``), and
+    its camelCase form.
     """
     names: dict[str, str] = {}
     for python_name, fi in fields.items():
         names[python_name] = python_name
         if fi.serialization_alias:
             names[fi.serialization_alias] = python_name
-        if isinstance(fi.validation_alias, str):
-            names[fi.validation_alias] = python_name
+        for alias in _iter_alias_strings(fi.validation_alias):
+            names[alias] = python_name
         names[to_camel(python_name)] = python_name
     return names
 

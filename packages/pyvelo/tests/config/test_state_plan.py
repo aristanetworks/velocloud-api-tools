@@ -304,8 +304,14 @@ async def test_missing_edge_module_is_inserted_from_an_empty_layer() -> None:
     (req,) = client.insert_requests
     assert req.configuration_id == 10
     assert req.name == "QOS"
-    assert req.data["segments"] == [{"segment": desc(0, "Global Segment"), "rules": []}]
-    assert set(req.data) == {"segments", "serviceRateLimit"}
+    wire_seg = req.data["segments"][0]
+    assert wire_seg["segment"] == desc(0, "Global Segment")
+    assert wire_seg["rules"] == []
+    assert wire_seg["inheritedRules"] == []
+    assert req.data["serviceRateLimit"]["enabled"] is True
+    assert req.data["serviceRateLimit"]["value"] == 50
+    assert req.profile_configuration_id == 20
+    assert req.profile_module_id == 3
     assert result.modules_inserted == [ConfigurationModuleName.QOS]
     assert client.update_requests == []
 
