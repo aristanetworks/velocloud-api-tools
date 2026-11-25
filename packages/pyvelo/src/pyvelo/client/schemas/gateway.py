@@ -33,24 +33,26 @@ class GwRouteTableEntry(VcoModel):
 
 
 class GetGatewayEdgeAssignments(VcoModel):
-    gateway_id: Annotated[int, Resolvable(GatewayIdentity, "id")]
+    gateway_id: Annotated[int, Resolvable(GatewayIdentity, lambda i: i.id)]
     enterprise_proxy_id: int | MISSING = MISSING
     enterprise_id: int | MISSING = MISSING
 
 
 class GetGatewayEdgeAssignmentsResultItem(VcoModel):
-    edge_id: Annotated[int | None | MISSING, Resolvable(EdgeIdentity, "id")] = MISSING
+    edge_id: Annotated[
+        int | None | MISSING, Resolvable(EdgeIdentity, lambda i: i.id)
+    ] = MISSING
     edge_name: str | None | MISSING = MISSING
     enterprise_id: int | None | MISSING = MISSING
     enterprise_name: str | None | MISSING = MISSING
     assignment_type: str | None | MISSING = MISSING
     segment_id: Annotated[
-        int | None | MISSING, Resolvable(SegmentIdentity, "segment_id")
+        int | None | MISSING, Resolvable(SegmentIdentity, lambda i: i.segment_id)
     ] = MISSING
 
 
 class GetGatewayProperties(VcoModel):
-    gateway_id: Annotated[int, Resolvable(GatewayIdentity, "id")]
+    gateway_id: Annotated[int, Resolvable(GatewayIdentity, lambda i: i.id)]
     name: str | MISSING = MISSING
     id_: Annotated[int | MISSING, Alias("id")] = MISSING
     is_read_only: bool | MISSING = MISSING

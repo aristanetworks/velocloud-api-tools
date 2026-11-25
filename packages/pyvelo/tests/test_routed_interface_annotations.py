@@ -47,4 +47,4 @@ class TestRoutedInterfaceResolvable:
     def test_segment_id_resolvable(self):
         r = get_resolvable(RoutedInterfaceBase.model_fields["segment_id"])
         assert r is not None
-        assert r.id_attr == "segment_id"
+        assert r.attribute == "segment_id"

@@ -30,5 +30,5 @@ class CreateProfileResult(VcoModel):
 
 class GetConfiguration(VcoModel):
     enterprise_id: int | MISSING = MISSING
-    id_: Annotated[int, Alias("id"), Resolvable(ProfileIdentity, "id")]
+    id_: Annotated[int, Alias("id"), Resolvable(ProfileIdentity, lambda i: i.id)]
     with_: Annotated[list[GetConfigurationWith] | MISSING, Alias("with")] = MISSING

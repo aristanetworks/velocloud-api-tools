@@ -431,9 +431,11 @@ def _merge_owned(
 
     ``null`` inherits (``Owned.inherit``). A value that is not an object sets
     the value local (``Owned.set_local``). An object is merged into the local
-    value; when the field is not local the profile's value is copied in first
-    (``Owned.localize``) and the object merged into the copy, so ``{"a": 7}``
-    on an inherited ``{"a": 4, "b": true}`` gives a local ``{"a": 7, "b": true}``.
+    value; when the field is not local, ``Owned.localize`` makes it so first
+    and the object is merged into what that returns: a copy of the profile's
+    value, or, on a ``presence_wins`` field where the edge stores an object with
+    its flag off, that object, kept. So ``{"a": 7}`` on an inherited
+    ``{"a": 4, "b": true}`` gives a local ``{"a": 7, "b": true}``.
     A member of a coupled group is never changed alone: ``null`` inherits the
     whole group, and any other value localizes the group first, when it is
     not local, and then applies as above.
@@ -514,7 +516,9 @@ def _refuse_flag_key(
                     + "set it (it would leave a local value that is not local, "
                     + "or make the profile's value the edge's without a copy). "
                     + f"Leave {key!r} out: an object given overrides it "
-                    + "(set_local() does the same) and null inherits it "
+                    + "(merged into the edge's value, or into a copy of the "
+                    + "profile's when the edge stores none; set_local() stores "
+                    + "the whole object it is given instead) and null inherits it "
                     + f"(inherit()); to inherit, send {inherit}",
                     path.child(encoding.flag),
                     "invalid_value",
@@ -871,7 +875,8 @@ def _resolve_name(
 
     1. If the field's ID type is not ``str`` and *name* parses as it (a UUID
        string on a UUID field), that value is the ID.
-    2. An exact or case-insensitive name match gives the identity's ``id_attr``.
+    2. An exact or case-insensitive name match gives what the field's accessor
+       reads off the identity.
     3. If the ID type is ``str`` and *name* equals a known ID, *name* is the ID.
     4. Otherwise the ``ResolutionError`` propagates.
 
@@ -890,10 +895,13 @@ def _resolve_name(
         except ValidationError:
             pass
     try:
-        identity = resolvers.resolve_sync(resolvable.identity_type, name)
+        identity = resolvers.lookup(resolvable.identity_type, name)
     except ResolutionError:
-        if id_type is str and resolvers.has_id_sync(
-            resolvable.identity_type, resolvable.id_attr, name
+        if id_type is str and _is_known_id(
+            resolvers,
+            resolvable.identity_type,
+            resolvable.accessor,
+            name,
         ):
             return name
         raise
@@ -907,7 +915,21 @@ def _resolve_name(
             path,
             "invalid_value",
         ) from err
-    return _field_value(identity, resolvable.id_attr)
+    return resolvable.accessor(identity)
+
+
+def _is_known_id[T](
+    resolvers: IdentityResolver,
+    identity_type: type[T],
+    accessor: Callable[[T], object],
+    value: object,
+) -> bool:
+    """True if a loaded identity of *identity_type* has ``accessor(identity) == value``."""
+    try:
+        _ = resolvers.lookup_by(identity_type, accessor, value)
+    except ResolutionError:
+        return False
+    return True
 
 
 def _key_name_of(item_type: ListItemType | None, key_path: str) -> type[object] | None:
@@ -938,7 +960,7 @@ def _canonical_name(
     identity with no ``name``, leaves *name* as it is.
     """
     try:
-        identity = resolvers.resolve_sync(identity_type, name)
+        identity = resolvers.lookup(identity_type, name)
     except ResolutionError:
         raise
     except LookupError:
@@ -1213,7 +1235,7 @@ def _fill_from_names(
             if not targets:
                 continue
             try:
-                identity = resolvers.resolve_sync(identity_type, name)
+                identity = resolvers.lookup(identity_type, name)
             except ResolutionError:
                 raise
             except LookupError:
@@ -1227,7 +1249,7 @@ def _fill_from_names(
             if isinstance(given_name, str):
                 resolved[field_name] = given_name
         for target_name, resolvable in targets:
-            resolved[target_name] = _field_value(identity, resolvable.id_attr)
+            resolved[target_name] = resolvable.accessor(identity)
 
 
 def _identity_of_given_id(
@@ -1270,7 +1292,7 @@ def _identity_of_given_id(
             )
         except ValidationError:
             continue
-        return resolvers.identity_sync(identity_type, resolvable.id_attr, value)
+        return resolvers.lookup_by(identity_type, resolvable.accessor, value)
     return None
 
 

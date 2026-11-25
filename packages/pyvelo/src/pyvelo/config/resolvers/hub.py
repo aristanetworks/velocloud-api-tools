@@ -18,22 +18,20 @@ from pyvelo.core.identity import (
     HubIdentity,
     HubLogicalId,
     HubName,
+    IdentityKey,
     ResolutionError,
 )
 
-HubKey = HubName | HubLogicalId
 
-
-class HubResolver(BaseResolver[HubKey, HubIdentity]):
+class HubResolver(BaseResolver[HubIdentity]):
     """Resolves an Edge or a hub cluster to a :class:`HubIdentity`.
 
     Accepts:
         - :class:`HubName`: the Edge's or the cluster's name.
         - :class:`HubLogicalId`: the Edge's or the cluster's logical ID.
 
-    ``reverse_by`` answers the name for a ``logical_id``, an ``edge_id`` or a
-    ``cluster_id``, and ``ResolverRegistry.identity_sync`` finds an identity by
-    any of its fields.
+    ``ResolverRegistry.lookup_by`` finds an identity by any of its fields,
+    an ``edge_id`` or a ``cluster_id`` among them.
 
     Every Edge of an enterprise can be a hub, and so can a cluster, so the
     identities are all of them: an Edge that is no member of a cluster is an
@@ -65,7 +63,7 @@ class HubResolver(BaseResolver[HubKey, HubIdentity]):
         self._members: dict[uuid.UUID, str] = {}
 
     @override
-    async def resolve(self, name: str) -> HubIdentity:
+    def lookup(self, name: str) -> HubIdentity:
         self._require_loaded()
         named = [h for h in self._hubs if h.name == name]
         if not named:
@@ -107,11 +105,11 @@ class HubResolver(BaseResolver[HubKey, HubIdentity]):
         )
 
     @override
-    async def resolve_key(self, key: HubKey) -> HubIdentity:
+    def lookup_key(self, key: IdentityKey[HubIdentity]) -> HubIdentity:
         self._require_loaded()
         match key:
             case HubName(value=name):
-                return await self.resolve(name)
+                return self.lookup(name)
             case HubLogicalId(value=logical_id):
                 for hub in self._hubs:
                     if hub.logical_id == logical_id:

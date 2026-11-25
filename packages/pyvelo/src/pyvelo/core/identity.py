@@ -1,8 +1,8 @@
 """Identity key types and dataclasses for typed ID resolution.
 
 Key types (SegmentId, SegmentName, etc.) are frozen dataclasses used as
-typed lookup keys for the resolver system. Each key type declares its
-associated identity type via a ClassVar.
+typed lookup keys for the resolver system. Each key type subclasses
+``IdentityKey`` of its identity type, which a resolver's ``resolve`` returns.
 
 Identity dataclasses (SegmentIdentity, etc.) hold all resolved fields
 for an entity, using plain int/uuid.UUID types.
@@ -10,6 +10,8 @@ for an entity, using plain int/uuid.UUID types.
 
 import json
 import re
+import types
+import typing
 import uuid
 from dataclasses import dataclass
 from typing import Annotated, Any, ClassVar, Literal, NewType, cast, override
@@ -107,6 +109,32 @@ def _rebuild_resolution_error(
     return error
 
 
+class IdentityKey[IdentityT]:
+    """Base of every lookup key: a key of ``IdentityKey[SegmentIdentity]`` resolves to a ``SegmentIdentity``.
+
+    A key class names its identity type in its base, ``class SegmentId(IdentityKey[SegmentIdentity])``,
+    and ``identity_type`` is set from it, so the registry finds the resolver
+    for a key and a type checker knows what resolving the key returns. A
+    subclass of a concrete key inherits its parent's identity type. A class
+    whose bases name none raises ``TypeError``.
+    """
+
+    identity_type: ClassVar[type[Any]]
+
+    def __init_subclass__(cls, **kwargs: Any) -> None:
+        super().__init_subclass__(**kwargs)
+        for base in types.get_original_bases(cls):
+            if typing.get_origin(base) is IdentityKey:
+                (identity_type,) = typing.get_args(base)
+                cls.identity_type = identity_type
+                return
+        if not hasattr(cls, "identity_type"):
+            raise TypeError(
+                f"`{cls.__name__}` must name its identity type: "
+                f"`class {cls.__name__}(IdentityKey[SomeIdentity])`"
+            )
+
+
 # ---------------------------------------------------------------------------
 # Segment
 # ---------------------------------------------------------------------------
@@ -122,27 +150,23 @@ class SegmentIdentity:
 
 
 @dataclass(frozen=True)
-class SegmentId:
+class SegmentId(IdentityKey[SegmentIdentity]):
     value: int
-    identity_type: ClassVar[type[SegmentIdentity]] = SegmentIdentity
 
 
 @dataclass(frozen=True)
-class SegmentObjectId:
+class SegmentObjectId(IdentityKey[SegmentIdentity]):
     value: int
-    identity_type: ClassVar[type[SegmentIdentity]] = SegmentIdentity
 
 
 @dataclass(frozen=True)
-class SegmentLogicalId:
+class SegmentLogicalId(IdentityKey[SegmentIdentity]):
     value: uuid.UUID
-    identity_type: ClassVar[type[SegmentIdentity]] = SegmentIdentity
 
 
 @dataclass(frozen=True)
-class SegmentName:
+class SegmentName(IdentityKey[SegmentIdentity]):
     value: str
-    identity_type: ClassVar[type[SegmentIdentity]] = SegmentIdentity
 
 
 # ---------------------------------------------------------------------------
@@ -164,21 +188,18 @@ class EdgeIdentity:
 
 
 @dataclass(frozen=True)
-class EdgeId:
+class EdgeId(IdentityKey[EdgeIdentity]):
     value: int
-    identity_type: ClassVar[type[EdgeIdentity]] = EdgeIdentity
 
 
 @dataclass(frozen=True)
-class EdgeLogicalId:
+class EdgeLogicalId(IdentityKey[EdgeIdentity]):
     value: uuid.UUID
-    identity_type: ClassVar[type[EdgeIdentity]] = EdgeIdentity
 
 
 @dataclass(frozen=True)
-class EdgeName:
+class EdgeName(IdentityKey[EdgeIdentity]):
     value: str
-    identity_type: ClassVar[type[EdgeIdentity]] = EdgeIdentity
 
 
 # ---------------------------------------------------------------------------
@@ -196,27 +217,23 @@ class LinkIdentity:
 
 
 @dataclass(frozen=True)
-class LinkId:
+class LinkId(IdentityKey[LinkIdentity]):
     value: int
-    identity_type: ClassVar[type[LinkIdentity]] = LinkIdentity
 
 
 @dataclass(frozen=True)
-class LinkLogicalId:
+class LinkLogicalId(IdentityKey[LinkIdentity]):
     value: str
-    identity_type: ClassVar[type[LinkIdentity]] = LinkIdentity
 
 
 @dataclass(frozen=True)
-class LinkInternalId:
+class LinkInternalId(IdentityKey[LinkIdentity]):
     value: uuid.UUID
-    identity_type: ClassVar[type[LinkIdentity]] = LinkIdentity
 
 
 @dataclass(frozen=True)
-class LinkName:
+class LinkName(IdentityKey[LinkIdentity]):
     value: str
-    identity_type: ClassVar[type[LinkIdentity]] = LinkIdentity
 
 
 # ---------------------------------------------------------------------------
@@ -232,15 +249,13 @@ class GatewayIdentity:
 
 
 @dataclass(frozen=True)
-class GatewayId:
+class GatewayId(IdentityKey[GatewayIdentity]):
     value: int
-    identity_type: ClassVar[type[GatewayIdentity]] = GatewayIdentity
 
 
 @dataclass(frozen=True)
-class GatewayName:
+class GatewayName(IdentityKey[GatewayIdentity]):
     value: str
-    identity_type: ClassVar[type[GatewayIdentity]] = GatewayIdentity
 
 
 _GATEWAY_PREFIX = "gateway"
@@ -273,15 +288,13 @@ class ProfileIdentity:
 
 
 @dataclass(frozen=True)
-class ProfileId:
+class ProfileId(IdentityKey[ProfileIdentity]):
     value: int
-    identity_type: ClassVar[type[ProfileIdentity]] = ProfileIdentity
 
 
 @dataclass(frozen=True)
-class ProfileName:
+class ProfileName(IdentityKey[ProfileIdentity]):
     value: str
-    identity_type: ClassVar[type[ProfileIdentity]] = ProfileIdentity
 
 
 # ---------------------------------------------------------------------------
@@ -296,15 +309,13 @@ class ApplicationIdentity:
 
 
 @dataclass(frozen=True)
-class ApplicationId:
+class ApplicationId(IdentityKey[ApplicationIdentity]):
     value: int
-    identity_type: ClassVar[type[ApplicationIdentity]] = ApplicationIdentity
 
 
 @dataclass(frozen=True)
-class ApplicationName:
+class ApplicationName(IdentityKey[ApplicationIdentity]):
     value: str
-    identity_type: ClassVar[type[ApplicationIdentity]] = ApplicationIdentity
 
 
 # ---------------------------------------------------------------------------
@@ -320,21 +331,18 @@ class AddressGroupIdentity:
 
 
 @dataclass(frozen=True)
-class AddressGroupId:
+class AddressGroupId(IdentityKey[AddressGroupIdentity]):
     value: int
-    identity_type: ClassVar[type[AddressGroupIdentity]] = AddressGroupIdentity
 
 
 @dataclass(frozen=True)
-class AddressGroupLogicalId:
+class AddressGroupLogicalId(IdentityKey[AddressGroupIdentity]):
     value: uuid.UUID
-    identity_type: ClassVar[type[AddressGroupIdentity]] = AddressGroupIdentity
 
 
 @dataclass(frozen=True)
-class AddressGroupName:
+class AddressGroupName(IdentityKey[AddressGroupIdentity]):
     value: str
-    identity_type: ClassVar[type[AddressGroupIdentity]] = AddressGroupIdentity
 
 
 # ---------------------------------------------------------------------------
@@ -350,21 +358,18 @@ class ServiceGroupIdentity:
 
 
 @dataclass(frozen=True)
-class ServiceGroupId:
+class ServiceGroupId(IdentityKey[ServiceGroupIdentity]):
     value: int
-    identity_type: ClassVar[type[ServiceGroupIdentity]] = ServiceGroupIdentity
 
 
 @dataclass(frozen=True)
-class ServiceGroupLogicalId:
+class ServiceGroupLogicalId(IdentityKey[ServiceGroupIdentity]):
     value: uuid.UUID
-    identity_type: ClassVar[type[ServiceGroupIdentity]] = ServiceGroupIdentity
 
 
 @dataclass(frozen=True)
-class ServiceGroupName:
+class ServiceGroupName(IdentityKey[ServiceGroupIdentity]):
     value: str
-    identity_type: ClassVar[type[ServiceGroupIdentity]] = ServiceGroupIdentity
 
 
 # ---------------------------------------------------------------------------
@@ -381,21 +386,18 @@ class LicenseIdentity:
 
 
 @dataclass(frozen=True)
-class LicenseId:
+class LicenseId(IdentityKey[LicenseIdentity]):
     value: int
-    identity_type: ClassVar[type[LicenseIdentity]] = LicenseIdentity
 
 
 @dataclass(frozen=True)
-class LicenseSku:
+class LicenseSku(IdentityKey[LicenseIdentity]):
     value: str
-    identity_type: ClassVar[type[LicenseIdentity]] = LicenseIdentity
 
 
 @dataclass(frozen=True)
-class LicenseName:
+class LicenseName(IdentityKey[LicenseIdentity]):
     value: str
-    identity_type: ClassVar[type[LicenseIdentity]] = LicenseIdentity
 
 
 # ---------------------------------------------------------------------------
@@ -414,21 +416,18 @@ class NetworkServiceIdentity:
 
 
 @dataclass(frozen=True)
-class NetworkServiceName:
+class NetworkServiceName(IdentityKey[NetworkServiceIdentity]):
     value: str
-    identity_type: ClassVar[type[NetworkServiceIdentity]] = NetworkServiceIdentity
 
 
 @dataclass(frozen=True)
-class NetworkServiceLogicalId:
+class NetworkServiceLogicalId(IdentityKey[NetworkServiceIdentity]):
     value: uuid.UUID
-    identity_type: ClassVar[type[NetworkServiceIdentity]] = NetworkServiceIdentity
 
 
 @dataclass(frozen=True)
-class NetworkServiceObjectId:
+class NetworkServiceObjectId(IdentityKey[NetworkServiceIdentity]):
     value: int
-    identity_type: ClassVar[type[NetworkServiceIdentity]] = NetworkServiceIdentity
 
 
 # ---------------------------------------------------------------------------
@@ -457,15 +456,13 @@ class HubIdentity:
 
 
 @dataclass(frozen=True)
-class HubName:
+class HubName(IdentityKey[HubIdentity]):
     value: str
-    identity_type: ClassVar[type[HubIdentity]] = HubIdentity
 
 
 @dataclass(frozen=True)
-class HubLogicalId:
+class HubLogicalId(IdentityKey[HubIdentity]):
     value: uuid.UUID
-    identity_type: ClassVar[type[HubIdentity]] = HubIdentity
 
 
 @dataclass(frozen=True)

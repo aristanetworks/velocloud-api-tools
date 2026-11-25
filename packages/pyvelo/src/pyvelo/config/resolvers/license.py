@@ -7,16 +7,15 @@ from pydantic import MISSING
 from pyvelo.client.schemas.license import GetEnterpriseEdgeLicenses
 from pyvelo.config.resolver import BaseResolver, ResolverContext
 from pyvelo.core.identity import (
+    IdentityKey,
     LicenseId,
     LicenseIdentity,
     LicenseName,
     LicenseSku,
 )
 
-LicenseKey = LicenseName | LicenseSku | LicenseId
 
-
-class LicenseResolver(BaseResolver[LicenseKey, LicenseIdentity]):
+class LicenseResolver(BaseResolver[LicenseIdentity]):
     """Resolves a license identifier to a :class:`LicenseIdentity`.
 
     Accepts:
@@ -30,16 +29,14 @@ class LicenseResolver(BaseResolver[LicenseKey, LicenseIdentity]):
     identity_type = LicenseIdentity
 
     @override
-    async def resolve_key(self, key: LicenseKey) -> LicenseIdentity:
+    def lookup_key(self, key: IdentityKey[LicenseIdentity]) -> LicenseIdentity:
         match key:
             case LicenseName(value=name):
-                return await self.resolve(name)
+                return self.lookup(name)
             case LicenseSku(value=v):
-                name = self._reverse["sku"][v]
-                return self._by_name[name]
+                return self._by_key("sku", v)
             case LicenseId(value=v):
-                name = self._reverse["id"][v]
-                return self._by_name[name]
+                return self._by_key("id", v)
             case _:
                 raise TypeError(f"Unsupported key type: {type(key).__name__}")
 

@@ -13,12 +13,11 @@ from pyvelo.core.identity import (
     EdgeIdentity,
     EdgeLogicalId,
     EdgeName,
+    IdentityKey,
 )
 
-EdgeKey = EdgeName | EdgeId | EdgeLogicalId
 
-
-class EdgeResolver(BaseResolver[EdgeKey, EdgeIdentity]):
+class EdgeResolver(BaseResolver[EdgeIdentity]):
     """Resolves an edge identifier to an :class:`EdgeIdentity`.
 
     Accepts:
@@ -33,16 +32,14 @@ class EdgeResolver(BaseResolver[EdgeKey, EdgeIdentity]):
     identity_type = EdgeIdentity
 
     @override
-    async def resolve_key(self, key: EdgeKey) -> EdgeIdentity:
+    def lookup_key(self, key: IdentityKey[EdgeIdentity]) -> EdgeIdentity:
         match key:
             case EdgeName(value=name):
-                return await self.resolve(name)
+                return self.lookup(name)
             case EdgeId(value=v):
-                name = self._reverse["id"][v]
-                return self._by_name[name]
+                return self._by_key("id", v)
             case EdgeLogicalId(value=v):
-                name = self._reverse["logical_id"][v]
-                return self._by_name[name]
+                return self._by_key("logical_id", v)
             case _:
                 raise TypeError(f"Unsupported key type: {type(key).__name__}")
 

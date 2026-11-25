@@ -28,7 +28,7 @@ class MarkedModel(VcoModel):
     override: Annotated[bool, OverrideFlag] = False
     items: Annotated[list[Item], KeyField("name")] = Field(default_factory=list)
     cidr_ip: Annotated[str, EdgeLocal] = ""
-    segment_id: Annotated[int, Resolvable(SegmentIdentity, "segment_id")] = 0
+    segment_id: Annotated[int, Resolvable(SegmentIdentity, lambda i: i.segment_id)] = 0
     stamp: Annotated[str, ServerOwned()] = ""
     plain: str = ""
 
@@ -71,7 +71,7 @@ class TestGetResolvable:
         r = get_resolvable(fi)
         assert r is not None
         assert r.identity_type is SegmentIdentity
-        assert r.id_attr == "segment_id"
+        assert r.attribute == "segment_id"
 
     def test_returns_none_for_non_resolvable(self):
         fi = MarkedModel.model_fields["plain"]

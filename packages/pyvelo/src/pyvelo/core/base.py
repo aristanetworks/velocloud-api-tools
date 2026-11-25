@@ -100,17 +100,13 @@ class IdentityResolver(Protocol):
     Satisfied by ``pyvelo.config.resolver.ResolverRegistry``.
     """
 
-    def resolve_sync[T](self, key: type[T], name: str, /) -> T: ...
+    def lookup[T](self, key: type[T], name: str, /) -> T: ...
 
-    def has_id_sync(
-        self, identity_type: type[object], id_attr: str, value: object, /
-    ) -> bool: ...
+    def lookup_by[T](
+        self, identity_type: type[T], accessor: Callable[[T], object], value: object, /
+    ) -> T: ...
 
     def resolver_for(self, identity_type: type[object], /) -> object | None: ...
-
-    def identity_sync[T](
-        self, identity_type: type[T], id_attr: str, value: object, /
-    ) -> T: ...
 
 
 class IdentityLookup(Protocol):
@@ -119,8 +115,8 @@ class IdentityLookup(Protocol):
     Satisfied by ``pyvelo.config.resolver.ResolverRegistry``.
     """
 
-    def identity_sync[T](
-        self, identity_type: type[T], id_attr: str, value: object, /
+    def lookup_by[T](
+        self, identity_type: type[T], accessor: Callable[[T], object], value: object, /
     ) -> T: ...
 
 
@@ -801,14 +797,18 @@ class VcoModel(BaseModel):
         - a value that is not an object: sets the value local
           (``Owned.set_local``), validated as above;
         - an object, on a field that is local: merged into the local value;
-        - an object, on a field that is not local: the profile's value, or
-          the field's display default where the profile stores none, is
-          copied in as the edge's own (``Owned.localize``) and the object
-          merged into the copy (``UnboundError`` on a model that was not
-          read from a loaded state, which does not know its profile);
+        - an object, on a field that is not local: ``Owned.localize`` makes
+          the value the edge's own first, and the object is merged into it.
+          That is a copy of the profile's value, or of the field's display
+          default where the profile stores none; or, on a ``presence_wins``
+          field where the edge stores an object with its flag off, that
+          object, kept (nothing is copied). ``UnboundError`` on a model
+          that was not read from a loaded state, which does not know its
+          profile, when a copy is needed;
         - a member of a coupled group: ``null`` inherits the whole group,
-          and any other value first makes the group local, copying every
-          member from the profile, then applies as above to that member;
+          and any other value first makes the group local (``localize``:
+          each member that is not local, copied from the profile), then
+          applies as above to that member;
         - the flag of a ``ByFlag`` field (``override``) is not patchable: it
           follows the value, set when an object is given, and ``null``
           inherits.

@@ -335,20 +335,22 @@ def test_field_models_and_list_item_type_see_through_kinds() -> None:
 
 
 class _Address(VcoModel):
-    address_id: Annotated[int, Resolvable(SegmentIdentity, "segment_id")] = 0
+    address_id: Annotated[int, Resolvable(SegmentIdentity, lambda i: i.segment_id)] = 0
     note: str = ""
 
 
 class _Named(VcoModel):
     name: Annotated[str, NameOf(SegmentIdentity)]
-    segment_id: Annotated[int, Resolvable(SegmentIdentity, "segment_id")] = 0
+    segment_id: Annotated[int, Resolvable(SegmentIdentity, lambda i: i.segment_id)] = 0
 
 
 class _Inside(Layered[L]):
     """A ``Resolvable`` and a ``KeyField`` written inside the kinds."""
 
     target: Annotated[
-        Inheritable[Annotated[int, Resolvable(SegmentIdentity, "segment_id")]],
+        Inheritable[
+            Annotated[int, Resolvable(SegmentIdentity, lambda i: i.segment_id)]
+        ],
         ByPresence(),
         Default(0),
     ] = Field(default=...)
@@ -365,7 +367,7 @@ def test_a_resolvable_inside_a_kind_is_found() -> None:
         target = get_resolvable(model_type.model_fields["target"])
         assert target is not None
         assert target.identity_type is SegmentIdentity
-        assert target.id_attr == "segment_id"
+        assert target.attribute == "segment_id"
         assert get_resolvable(model_type.model_fields["address"]) is None
         (found,) = field_models(model_type.model_fields["address"])
         assert get_resolvable(found.model_fields["address_id"]) is not None
@@ -398,7 +400,7 @@ class _Marked(Layered[L]):
         Annotated[
             uuid.UUID | None | MISSING,
             RefOnly(default="marked:ref"),
-            Resolvable(SegmentIdentity, "logical_id"),
+            Resolvable(SegmentIdentity, lambda i: i.logical_id),
         ]
     ] = kind_default(factory=lambda: MISSING)
     provides: Unconverted[

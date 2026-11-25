@@ -88,7 +88,7 @@ class QosRuleMatch(VcoModel):
 
     # Application and traffic classification
     application_id: Annotated[
-        int, Alias("appid"), Resolvable(ApplicationIdentity, "id")
+        int, Alias("appid"), Resolvable(ApplicationIdentity, lambda i: i.id)
     ] = -1
     application_class_id: Annotated[int, Alias("classid")] = -1
     dscp: int = -1
@@ -122,7 +122,7 @@ class QosRuleMatch(VcoModel):
 
 class BackhaulEdge(VcoModel):
     type_: Annotated[
-        BackhaulEdgeType, Alias("type"), Resolvable(HubIdentity, "type_")
+        BackhaulEdgeType, Alias("type"), Resolvable(HubIdentity, lambda i: i.type_)
     ] = "edgeHub"
     logical_id: Annotated[
         uuid.UUID | MISSING,
@@ -136,12 +136,12 @@ class BackhaulEdge(VcoModel):
     ] = MISSING
     edge_logical_id: Annotated[
         uuid.UUID | MISSING,
-        Resolvable(HubIdentity, "logical_id"),
+        Resolvable(HubIdentity, lambda i: i.logical_id),
         RefersTo("backhaul_hub", per_segment=True),
     ] = MISSING
-    edge_id: Annotated[int | None | MISSING, Resolvable(HubIdentity, "edge_id")] = (
-        MISSING
-    )
+    edge_id: Annotated[
+        int | None | MISSING, Resolvable(HubIdentity, lambda i: i.edge_id)
+    ] = MISSING
     edge_name: Annotated[str | MISSING, Alias("name"), NameOf(HubIdentity)] = MISSING
 
 

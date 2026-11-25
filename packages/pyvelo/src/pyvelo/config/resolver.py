@@ -6,13 +6,22 @@ import difflib
 import uuid
 from collections.abc import Callable, Collection, Generator, Iterable
 from dataclasses import dataclass
-from typing import Any, ClassVar, Protocol, Self, cast, overload, runtime_checkable
+from typing import (
+    Any,
+    ClassVar,
+    Protocol,
+    Self,
+    cast,
+    final,
+    overload,
+    runtime_checkable,
+)
 
 from pyvelo.client.protocol import VcoClientProtocol
+from pyvelo.core.identity import IdentityKey, ResolverNotLoadedError, entity_label
 
 # ResolutionError lives in pyvelo.core.identity; re-exported so this import path keeps working.
 from pyvelo.core.identity import ResolutionError as ResolutionError  # noqa: PLC0414
-from pyvelo.core.identity import ResolverNotLoadedError, entity_label
 
 
 @dataclass
@@ -25,50 +34,65 @@ class ResolverContext:
 
 
 @runtime_checkable
-class Resolver[KeyT, IdentityT](Protocol):
+class Resolver[IdentityT](Protocol):
     """Protocol for resolving human-friendly names to typed identity objects.
 
-    ``KeyT`` is the union of typed key wrappers the resolver accepts via
-    ``resolve_key()`` (e.g. ``EdgeName | EdgeId | EdgeLogicalId``).
     ``IdentityT`` is the resolved identity dataclass (e.g. ``EdgeIdentity``).
+    The keys a resolver accepts are the :class:`IdentityKey` classes of that
+    identity (``EdgeName``, ``EdgeId``, ...).
+
+    ``lookup`` and ``lookup_key`` answer from the loaded tables, without an
+    event loop; ``resolve`` and ``resolve_key`` are their awaitable forms.
     """
 
     identity_type: type[IdentityT]
+
+    def lookup(self, name: str) -> IdentityT:
+        """Name -> typed identity object with all ID fields, from the loaded tables."""
+        ...
+
+    def lookup_key(self, key: IdentityKey[IdentityT]) -> IdentityT:
+        """Key object -> typed identity, from the loaded tables. Dispatches on key type."""
+        ...
 
     async def resolve(self, name: str) -> IdentityT:
         """Name -> typed identity object with all ID fields."""
         ...
 
-    async def resolve_key(self, key: KeyT) -> IdentityT:
+    async def resolve_key(self, key: IdentityKey[IdentityT]) -> IdentityT:
         """Key object -> typed identity. Dispatches on key type."""
-        ...
-
-    async def reverse_by(self, id_attr: str, value: int | str | uuid.UUID) -> str:
-        """ID -> Name. id_attr specifies which field to look up by."""
         ...
 
     async def load(self, context: ResolverContext) -> None:
         """Batch-load the full lookup table for a given context."""
         ...
 
+    def identities(self) -> Collection[IdentityT]:
+        """The identities loaded so far."""
+        ...
 
-class BaseResolver[KeyT, IdentityT]:
+
+class BaseResolver[IdentityT]:
     """Common base for resolvers that share the standard lookup structure.
 
     Subclasses must:
     - Set ``identity_type`` as a class attribute.
-    - Declare their accepted key union as ``KeyT`` in the generic parameters.
-    - Implement ``resolve_key()`` to dispatch on key type.
+    - Implement ``lookup_key()`` to dispatch on key type, answering an ID key
+      with ``_by_key()``.
     - Implement ``load()`` to fetch entities and call ``_register()``.
+
+    ``resolve()`` and ``resolve_key()`` are final: they return what ``lookup()``
+    and ``lookup_key()`` return, so a subclass overrides the lookups and the
+    awaitable forms cannot disagree with them.
 
     A resolver whose answers would be wrong before a load (it holds every
     identity of an enterprise, not those a name asks for) sets
-    ``requires_load``: until its ``load()`` sets ``loaded``, ``resolve``,
-    ``resolve_key`` and ``reverse_by`` raise ``ResolverNotLoadedError``.
+    ``requires_load``: until its ``load()`` sets ``loaded``, ``lookup``,
+    ``lookup_key`` and ``resolve`` raise ``ResolverNotLoadedError``.
     ``unloaded()`` and ``_clear()`` set ``loaded`` back to ``False``.
     """
 
-    identity_type: ClassVar[type]
+    identity_type: type[IdentityT]  # pyright: ignore[reportUninitializedInstanceVariable]
     requires_load: ClassVar[bool] = False
 
     def __init__(self, client: VcoClientProtocol) -> None:
@@ -77,22 +101,21 @@ class BaseResolver[KeyT, IdentityT]:
         self._by_name: dict[str, IdentityT] = {}
         self._reverse: dict[str, dict[int | str | uuid.UUID, str]] = {}
 
-    async def resolve(self, name: str) -> IdentityT:
+    def lookup(self, name: str) -> IdentityT:
         self._require_loaded()
         _, identity = resolve_name(name, self._by_name, self._entity_label)
         return identity
 
-    async def resolve_key(self, key: KeyT) -> IdentityT:
+    def lookup_key(self, key: IdentityKey[IdentityT]) -> IdentityT:
         raise NotImplementedError
 
-    async def reverse_by(self, id_attr: str, value: int | str | uuid.UUID) -> str:
-        self._require_loaded()
-        reverse_map = self._reverse.get(id_attr)
-        if reverse_map is None:
-            raise KeyError(f"No reverse index for attribute: {id_attr!r}")
-        if value not in reverse_map:
-            raise KeyError(f"No {self._entity_label} with {id_attr}={value}")
-        return reverse_map[value]
+    @final
+    async def resolve(self, name: str) -> IdentityT:
+        return self.lookup(name)
+
+    @final
+    async def resolve_key(self, key: IdentityKey[IdentityT]) -> IdentityT:
+        return self.lookup_key(key)
 
     async def load(self, context: ResolverContext) -> None:
         raise NotImplementedError
@@ -122,6 +145,23 @@ class BaseResolver[KeyT, IdentityT]:
         for attr, value in reverse_keys.items():
             self._reverse.setdefault(attr, {})[value] = name
 
+    def _by_key(self, attribute: str, value: object) -> IdentityT:
+        """The identity registered under ``attribute=value``.
+
+        Raises ``ResolutionError`` when no loaded identity has the value, so an
+        ID that is not there is told from a name that is not.
+        """
+        self._require_loaded()
+        name = self._reverse.get(attribute, {}).get(cast(Any, value))
+        if name is None:
+            raise ResolutionError(
+                name=str(value),
+                identity_type=self.identity_type,
+                candidates=[],
+                message=f"No {self._entity_label} has {attribute} {value}.",
+            )
+        return self._by_name[name]
+
     def _clear(self) -> None:
         """Clear all lookup tables before a reload."""
         self._by_name.clear()
@@ -142,26 +182,26 @@ class ResolverRegistry:
     """Registry of resolvers keyed by identity type.
 
     Resolvers are registered once, then the context is set when the
-    configuration pipeline loads data. All resolve/reverse calls
+    configuration pipeline loads data. All lookup and resolve calls
     delegate to the registered resolver for the given identity type.
     """
 
     def __init__(self) -> None:
-        self._resolvers: dict[type, Resolver[Any, Any]] = {}
+        self._resolvers: dict[type, Resolver[Any]] = {}
         self._context: ResolverContext | None = None
 
-    def register[K, T](self, resolver: Resolver[K, T]) -> None:
+    def register[T](self, resolver: Resolver[T]) -> None:
         """Register a resolver, keyed by its identity_type."""
         self._resolvers[resolver.identity_type] = resolver
 
-    def get_resolver[R: Resolver[Any, Any]](self, resolver_type: type[R]) -> R:
+    def get_resolver[R: Resolver[Any]](self, resolver_type: type[R]) -> R:
         """Look up a resolver by its concrete class (e.g. EdgeResolver)."""
         for resolver in self._resolvers.values():
             if isinstance(resolver, resolver_type):
                 return resolver
         raise LookupError(f"No resolver of type {resolver_type.__name__} registered")
 
-    def resolver_for(self, identity_type: type) -> Resolver[Any, Any] | None:
+    def resolver_for[T](self, identity_type: type[T]) -> Resolver[T] | None:
         """The resolver registered for *identity_type*, or None when there is none."""
         return self._resolvers.get(identity_type)
 
@@ -174,7 +214,7 @@ class ResolverRegistry:
         twin = ResolverRegistry()
         for resolver in self._resolvers.values():
             make_copy = cast(
-                Callable[[], Resolver[Any, Any]] | None,
+                Callable[[], Resolver[Any]] | None,
                 getattr(resolver, "unloaded", None),
             )
             if make_copy is None:
@@ -223,7 +263,7 @@ class ResolverRegistry:
         return self._context
 
     @overload
-    async def resolve(self, key: Any) -> Any: ...
+    async def resolve[T](self, key: IdentityKey[T]) -> T: ...
     @overload
     async def resolve[T](self, key: type[T], name: str) -> T: ...
 
@@ -232,10 +272,10 @@ class ResolverRegistry:
 
         Supports two calling conventions:
           resolve(SegmentName("Global Segment"))   # key-based dispatch
-          resolve(SegmentIdentity, "Global Segment")  # legacy type+name
+          resolve(SegmentIdentity, "Global Segment")  # identity type + name
         """
         if isinstance(key, type):
-            # Legacy API: resolve(IdentityType, name)
+            # resolve(IdentityType, name)
             resolver = self._resolvers.get(key)
             if resolver is None:
                 raise LookupError(f"No resolver registered for {key.__name__}")
@@ -253,93 +293,59 @@ class ResolverRegistry:
             return await resolver.resolve_key(key)
 
     @overload
-    def resolve_sync(self, key: Any) -> Any: ...
+    def lookup[T](self, key: IdentityKey[T]) -> T: ...
     @overload
-    def resolve_sync[T](self, key: type[T], name: str) -> T: ...
+    def lookup[T](self, key: type[T], name: str) -> T: ...
 
-    def resolve_sync(self, key: Any, name: str | None = None) -> Any:
-        """Synchronously resolve a name or key to a typed identity object.
+    def lookup(self, key: Any, name: str | None = None) -> Any:
+        """Look up a name or key in the loaded tables, and return its identity.
 
-        Only works after the resolver has been loaded (all built-in
-        resolvers do pure dict lookups, so no event loop is needed).
+        Supports the two calling conventions of ``resolve``. It needs no event
+        loop: every resolver answers from tables ``load()`` filled. Raises
+        ``LookupError`` when no resolver is registered for the identity type,
+        ``ResolverNotLoadedError`` when the resolver needs a load and has none,
+        and ``ResolutionError`` when the table holds no such name or ID.
         """
         if isinstance(key, type):
             resolver = self._resolvers.get(key)
             if resolver is None:
                 raise LookupError(f"No resolver registered for {key.__name__}")
             if name is None:
-                raise TypeError("name is required when resolving by identity type")
-            coro = resolver.resolve(name)
-        else:
-            identity_type = type(key).identity_type
-            resolver = self._resolvers.get(identity_type)
-            if resolver is None:
-                raise LookupError(
-                    f"No resolver registered for {identity_type.__name__}"
-                )
-            coro = resolver.resolve_key(key)
-
-        try:
-            coro.send(None)
-        except StopIteration as e:
-            return e.value
-        finally:
-            coro.close()
-
-        type_name = key.__name__ if isinstance(key, type) else type(key).__name__
-        raise RuntimeError(
-            f"Resolver for {type_name} suspended unexpectedly "
-            f"(resolve() must not await)"
-        )
-
-    def has_id_sync(self, identity_type: type, id_attr: str, value: object) -> bool:
-        """True if a loaded identity of *identity_type* has ``id_attr == value``.
-
-        False when no resolver is registered for the type or it does not
-        expose ``identities()``.
-        """
-        identities = cast(
-            Callable[[], Iterable[object]] | None,
-            getattr(self._resolvers.get(identity_type), "identities", None),
-        )
-        if identities is None:
-            return False
-        return any(getattr(i, id_attr) == value for i in identities())
-
-    def identity_sync[T](
-        self, identity_type: type[T], id_attr: str, value: object
-    ) -> T:
-        """The loaded identity of *identity_type* whose ``id_attr`` equals *value*.
-
-        Raises ``ResolverNotLoadedError`` when no resolver is registered for the
-        type, or the resolver requires a load and has none, and
-        ``ResolutionError`` when no loaded identity has the value.
-        """
+                raise TypeError("name is required when looking up by identity type")
+            return resolver.lookup(name)
+        identity_type = type(key).identity_type
         resolver = self._resolvers.get(identity_type)
+        if resolver is None:
+            raise LookupError(f"No resolver registered for {identity_type.__name__}")
+        return resolver.lookup_key(key)
+
+    def lookup_by[T](
+        self,
+        identity_type: type[T],
+        accessor: Callable[[T], object],
+        value: object,
+    ) -> T:
+        """The first loaded identity of *identity_type* for which ``accessor(identity) == value``.
+
+        The scan covers ``identities()``, in its order, so it finds an identity
+        that another one of the same name hides from the name lookups (an Edge
+        and a hub cluster that share a name). Raises ``ResolverNotLoadedError``
+        when no resolver is registered for the type, or the resolver requires a
+        load and has none, and ``ResolutionError`` when no loaded identity has
+        the value.
+        """
+        resolver = self.resolver_for(identity_type)
         if resolver is None or (
             getattr(resolver, "requires_load", False)
             and not getattr(resolver, "loaded", False)
         ):
             raise ResolverNotLoadedError(identity_type)
-        identities = cast(
-            Callable[[], Iterable[T]] | None,
-            getattr(resolver, "identities", None),
-        )
-        for identity in () if identities is None else identities():
-            if getattr(identity, id_attr) == value:
+        for identity in resolver.identities():
+            if accessor(identity) == value:
                 return identity
         raise ResolutionError(
             name=str(value), identity_type=identity_type, candidates=[]
         )
-
-    async def reverse(
-        self, identity_type: type, id_attr: str, value: int | str | uuid.UUID
-    ) -> str:
-        """Reverse-resolve an ID to a name."""
-        resolver = self._resolvers.get(identity_type)
-        if resolver is None:
-            raise LookupError(f"No resolver registered for {identity_type.__name__}")
-        return await resolver.reverse_by(id_attr, value)
 
 
 def resolve_name[T](

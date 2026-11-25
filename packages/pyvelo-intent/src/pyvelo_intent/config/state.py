@@ -1029,8 +1029,8 @@ class ConfigState:
         Raises ``ResolverNotLoadedError`` when the resolver is not loaded.
         """
         try:
-            identity = self.resolvers.identity_sync(
-                SegmentIdentity, "segment_id", segment_id
+            identity = self.resolvers.lookup_by(
+                SegmentIdentity, lambda s: s.segment_id, segment_id
             )
         except ResolverNotLoadedError:
             raise

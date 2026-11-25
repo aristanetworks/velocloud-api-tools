@@ -325,7 +325,7 @@ def test_failure_deep_in_a_patch_changes_nothing():
 
 class Segmented(VcoModel):
     count: int = 0
-    segment_id: Annotated[int, Resolvable(SegmentIdentity, "segment_id")] = 0
+    segment_id: Annotated[int, Resolvable(SegmentIdentity, lambda i: i.segment_id)] = 0
 
 
 def test_resolver_error_changes_nothing_and_keeps_its_type():
@@ -340,17 +340,19 @@ def test_resolver_error_changes_nothing_and_keeps_its_type():
 
 
 class Bound(VcoModel):
-    segment_id: Annotated[int, Resolvable(SegmentIdentity, "segment_id")] = 0
-    segment_ref: Annotated[str, Resolvable(SegmentIdentity, "name")] = ""
+    segment_id: Annotated[int, Resolvable(SegmentIdentity, lambda i: i.segment_id)] = 0
+    segment_ref: Annotated[str, Resolvable(SegmentIdentity, lambda i: i.name)] = ""
 
 
 class Either(VcoModel):
-    segment_id: Annotated[int | str, Resolvable(SegmentIdentity, "segment_id")] = 0
+    segment_id: Annotated[
+        int | str, Resolvable(SegmentIdentity, lambda i: i.segment_id)
+    ] = 0
 
 
 class Member(VcoModel):
     name: str
-    segment_id: Annotated[int, Resolvable(SegmentIdentity, "segment_id")]
+    segment_id: Annotated[int, Resolvable(SegmentIdentity, lambda i: i.segment_id)]
 
 
 class Members(VcoModel):

@@ -335,7 +335,9 @@ class GetEnterpriseEventsItem(VcoModel):
         str | MISSING, AfterValidator(check_string_empty)
     ] = MISSING
     edge_id: Annotated[
-        int | MISSING, AfterValidator(check_int_zero), Resolvable(EdgeIdentity, "id")
+        int | MISSING,
+        AfterValidator(check_int_zero),
+        Resolvable(EdgeIdentity, lambda i: i.id),
     ] = MISSING
     edge_name: Annotated[str | MISSING, AfterValidator(check_string_empty)] = MISSING
     segment_name: Annotated[str | MISSING, AfterValidator(check_string_empty)] = MISSING
@@ -398,7 +400,9 @@ class EnterpriseAlertItem(VcoModel):
     edge_name: str | MISSING = Field(
         MISSING, description="Name of the Edge that triggered the alert"
     )
-    edge_id: Annotated[int | MISSING, Resolvable(EdgeIdentity, "id")] = MISSING
+    edge_id: Annotated[int | MISSING, Resolvable(EdgeIdentity, lambda i: i.id)] = (
+        MISSING
+    )
     enterprise_id: int | MISSING = MISSING
     state: str | MISSING = Field(
         MISSING, description="Alert lifecycle state (TRIGGERED, CLEARED)"

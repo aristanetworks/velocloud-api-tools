@@ -120,7 +120,7 @@ def test_the_declared_references():
     for model in (RoutedInterfaceBase, LanNetwork, LoopbackInterface):
         resolvable = get_resolvable(model.model_fields["segment_id"])
         assert resolvable is not None
-        assert (resolvable.identity_type, resolvable.id_attr) == (
+        assert (resolvable.identity_type, resolvable.attribute) == (
             SegmentIdentity,
             "segment_id",
         )
@@ -264,7 +264,7 @@ def test_the_hub_lists_take_an_added_entry_by_name_key():
 
 def test_resolvable_attrs_exist():
     # The Resolvable checks run at class creation: importing the models above did not raise.
-    for model, name, id_attr in (
+    for model, name, attribute in (
         (VpnHub, "type_", "type_"),
         (VpnHub, "logical_id", "logical_id"),
         (BackhaulEdge, "type_", "type_"),
@@ -273,7 +273,10 @@ def test_resolvable_attrs_exist():
     ):
         resolvable = get_resolvable(model.model_fields[name])
         assert resolvable is not None
-        assert (resolvable.identity_type, resolvable.id_attr) == (HubIdentity, id_attr)
+        assert (resolvable.identity_type, resolvable.attribute) == (
+            HubIdentity,
+            attribute,
+        )
     assert get_name_of(VpnHub.model_fields["name"]) is HubIdentity
     assert get_name_of(BackhaulEdge.model_fields["edge_name"]) is HubIdentity
     assert get_resolvable(BackhaulEdge.model_fields["logical_id"]) is None

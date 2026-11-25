@@ -285,7 +285,7 @@ class RoutedInterfaceBase(VcoModel):
     vlan_id: int | None = None
     segment_id: Annotated[
         int,
-        Resolvable(SegmentIdentity, "segment_id"),
+        Resolvable(SegmentIdentity, lambda i: i.segment_id),
         RefersTo("segment", none=(-1,)),
     ] = -1
     v6_detail: RoutedInterfaceV6Detail = Field(default_factory=RoutedInterfaceV6Detail)

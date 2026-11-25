@@ -105,7 +105,7 @@ class ConfigurationModuleBase(VcoModel):
     id_: Annotated[int, Alias("id")]
     type_: Annotated[ConfigurationModuleType, Alias("type")]
     description: str | None
-    configuration_id: Annotated[int | None, Resolvable(ProfileIdentity, "id")]
+    configuration_id: Annotated[int | None, Resolvable(ProfileIdentity, lambda i: i.id)]
     enterprise_logical_id: uuid.UUID | None
     schema_version: str | None
     version: str | None
@@ -700,7 +700,7 @@ class InsertedConfigurationModule(
 
 class InsertConfigurationModuleBase(VcoModel):
     description: str | None = ""
-    configuration_id: Annotated[int, Resolvable(ProfileIdentity, "id")]
+    configuration_id: Annotated[int, Resolvable(ProfileIdentity, lambda i: i.id)]
     enterprise_id: Annotated[int | MISSING, NoneIsMissing] = MISSING
     type_: Annotated[ConfigurationScope, Alias("type")] = ConfigurationScope.ENTERPRISE
     return_data: bool | MISSING = MISSING
@@ -726,7 +726,7 @@ type InsertConfigurationModule = Annotated[
 
 class GetConfigurationModules(VcoModel):
     enterprise_id: int | MISSING = MISSING
-    configuration_id: Annotated[int, Resolvable(ProfileIdentity, "id")]
+    configuration_id: Annotated[int, Resolvable(ProfileIdentity, lambda i: i.id)]
     no_data: bool | MISSING = MISSING
     modules: list[ConfigurationModuleName] | MISSING = MISSING
 
@@ -740,8 +740,8 @@ class ConfigurationModuleVersion(VcoModel):
 
 
 class GetConfiguration(VcoModel):
-    id_: Annotated[int, Alias("id"), Resolvable(ProfileIdentity, "id")] = Field(
-        description="Configuration ID"
+    id_: Annotated[int, Alias("id"), Resolvable(ProfileIdentity, lambda i: i.id)] = (
+        Field(description="Configuration ID")
     )
     enterprise_id: int | MISSING = MISSING
     with_: Annotated[list[GetConfigurationWith] | MISSING, Alias("with")] = MISSING
@@ -749,13 +749,17 @@ class GetConfiguration(VcoModel):
 
 class GetIdentifiableApplications(VcoModel):
     enterprise_id: int | MISSING = MISSING
-    edge_id: Annotated[int | MISSING, Resolvable(EdgeIdentity, "id")] = MISSING
+    edge_id: Annotated[int | MISSING, Resolvable(EdgeIdentity, lambda i: i.id)] = (
+        MISSING
+    )
     application_ids: list[int] | MISSING = MISSING
 
 
 class GetRoutableApplications(VcoModel):
     enterprise_id: int | MISSING = MISSING
-    edge_id: Annotated[int | MISSING, Resolvable(EdgeIdentity, "id")] = MISSING
+    edge_id: Annotated[int | MISSING, Resolvable(EdgeIdentity, lambda i: i.id)] = (
+        MISSING
+    )
 
 
 class KnownIpPortMapping(VcoModel):
@@ -815,7 +819,7 @@ class GetAnalyticsConfigurationResult(VcoModel):
 class DeleteConfiguration(VcoModel):
     """Request to delete a configuration/profile."""
 
-    id_: Annotated[int, Alias("id"), Resolvable(ProfileIdentity, "id")]
+    id_: Annotated[int, Alias("id"), Resolvable(ProfileIdentity, lambda i: i.id)]
     enterprise_id: int | MISSING = MISSING
 
 

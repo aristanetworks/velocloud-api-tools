@@ -1,12 +1,12 @@
 """NetworkServiceResolver: resolves a network service of an enterprise by name or ID."""
 
-import uuid
 from typing import Self, override
 
 from pyvelo.client.protocol import VcoClientProtocol
 from pyvelo.client.schemas.enterprise import GetEnterpriseServices
 from pyvelo.config.resolver import BaseResolver, ResolverContext, resolution_error
 from pyvelo.core.identity import (
+    IdentityKey,
     NetworkServiceIdentity,
     NetworkServiceLogicalId,
     NetworkServiceName,
@@ -14,12 +14,8 @@ from pyvelo.core.identity import (
     ResolutionError,
 )
 
-NetworkServiceKey = (
-    NetworkServiceName | NetworkServiceLogicalId | NetworkServiceObjectId
-)
 
-
-class NetworkServiceResolver(BaseResolver[NetworkServiceKey, NetworkServiceIdentity]):
+class NetworkServiceResolver(BaseResolver[NetworkServiceIdentity]):
     """Resolves a network service to a :class:`NetworkServiceIdentity`.
 
     Accepts:
@@ -45,7 +41,7 @@ class NetworkServiceResolver(BaseResolver[NetworkServiceKey, NetworkServiceIdent
         self._services: list[NetworkServiceIdentity] = []
 
     @override
-    async def resolve(self, name: str) -> NetworkServiceIdentity:
+    def lookup(self, name: str) -> NetworkServiceIdentity:
         self._require_loaded()
         named = [s for s in self._services if s.name == name]
         if not named:
@@ -68,11 +64,13 @@ class NetworkServiceResolver(BaseResolver[NetworkServiceKey, NetworkServiceIdent
         )
 
     @override
-    async def resolve_key(self, key: NetworkServiceKey) -> NetworkServiceIdentity:
+    def lookup_key(
+        self, key: IdentityKey[NetworkServiceIdentity]
+    ) -> NetworkServiceIdentity:
         self._require_loaded()
         match key:
             case NetworkServiceName(value=name):
-                return await self.resolve(name)
+                return self.lookup(name)
             case NetworkServiceLogicalId(value=v):
                 return self._one("logical_id", v)
             case NetworkServiceObjectId(value=v):
@@ -122,13 +120,14 @@ class NetworkServiceResolver(BaseResolver[NetworkServiceKey, NetworkServiceIdent
         super()._clear()
         self._services.clear()
 
-    def _one(self, id_attr: str, value: int | uuid.UUID) -> NetworkServiceIdentity:
+    def _one(self, attribute: str, value: object) -> NetworkServiceIdentity:
+        """The loaded service whose ``attribute`` is *value*, also one that shares its name."""
         for service in self._services:
-            if getattr(service, id_attr) == value:
+            if getattr(service, attribute) == value:
                 return service
         raise ResolutionError(
             name=str(value),
             identity_type=NetworkServiceIdentity,
             candidates=[],
-            message=f"No network service with {id_attr}={value}",
+            message=f"No {self._entity_label} has {attribute} {value}.",
         )

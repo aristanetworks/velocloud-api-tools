@@ -16,12 +16,27 @@ Provides:
 
 from __future__ import annotations
 
+import dataclasses
+import difflib
 import inspect
 from collections.abc import Callable
 from dataclasses import KW_ONLY, dataclass
 from enum import StrEnum
 from types import UnionType
-from typing import TYPE_CHECKING, Any, Literal, Self, cast, overload
+from typing import (
+    TYPE_CHECKING,
+    Annotated,
+    Any,
+    Literal,
+    Self,
+    TypeAliasType,
+    Union,
+    cast,
+    get_args,
+    get_origin,
+    get_type_hints,
+    overload,
+)
 
 from pydantic import (
     MISSING,
@@ -558,31 +573,100 @@ class _ProcessedEdgeLocal:
     """Stored in FieldInfo.metadata by _apply_vco_markers."""
 
 
-class Resolvable:
+class Resolvable[IdentityT]:
     """Annotated marker: field accepts a name, resolves to a specific ID.
 
     The merge engine detects when a string is provided where a newtype ID
-    is expected and calls the registered resolver for identity_type,
-    extracting the value at id_attr.
+    is expected and calls the registered resolver for *identity_type*,
+    reading the ID off the identity it finds with *accessor*.
 
-    Validates at class creation time that id_attr exists on identity_type.
+    *accessor* is read once, on a probe that records what it reads, when the
+    marker is built: it must read exactly one field of *identity_type* and
+    return it, as in ``lambda i: i.segment_id``. That field's name is kept as
+    ``attribute``. ``apply_vco_markers`` then refuses, at class creation, a
+    field whose type cannot hold what the accessor returns.
     """
 
-    __slots__ = ("id_attr", "identity_type")
+    __slots__ = ("accessor", "attribute", "identity_type")
 
-    def __init__(self, identity_type: type, id_attr: str):
-        # Validate id_attr exists on the identity dataclass
-        import dataclasses
+    def __init__(
+        self, identity_type: type[IdentityT], accessor: Callable[[IdentityT], object]
+    ) -> None:
+        self.identity_type: type[IdentityT] = identity_type
+        self.accessor: Callable[[IdentityT], object] = accessor
+        self.attribute: str = _probe_accessor(identity_type, accessor)
 
-        if dataclasses.is_dataclass(identity_type):
-            field_names = {f.name for f in dataclasses.fields(identity_type)}
-            if id_attr not in field_names:
-                raise TypeError(
-                    f"{identity_type.__name__} has no field '{id_attr}'. "
-                    f"Available: {', '.join(sorted(field_names))}"
-                )
-        self.identity_type = identity_type
-        self.id_attr = id_attr
+
+def _identity_field_names(identity_type: type) -> list[str]:
+    """The names of the dataclass fields of *identity_type*, in order; none for any other class."""
+    if not dataclasses.is_dataclass(identity_type):
+        return []
+    return [f.name for f in dataclasses.fields(identity_type)]
+
+
+class _ProbeAnswer:
+    """What the probe answers for each attribute read: it cannot be tested for truth, so an accessor that falls back to another value for a falsy one (``i.segment_id or None``) is refused."""
+
+    __slots__ = ()
+
+    def __bool__(self) -> bool:
+        raise TypeError("the value read was tested for truth")
+
+
+def _probe_accessor(identity_type: type, accessor: object) -> str:
+    """The name of the one field of *identity_type* that *accessor* reads and returns; ``TypeError`` for any other accessor.
+
+    The accessor is called once on a stand-in for the identity that records each
+    attribute read and answers a unique sentinel. One that reads a name that is
+    not a field, reads several, computes from what it reads or raises cannot be
+    checked against the type of the field it goes on, so none is accepted. The
+    answer cannot be tested for truth: an accessor that falls back to another
+    value for a falsy ID (the Global Segment's ``segment_id`` is 0) is refused.
+    """
+    names = _identity_field_names(identity_type)
+    read: list[str] = []
+    answer = _ProbeAnswer()
+
+    class Probe:
+        def __getattr__(self, name: str) -> object:
+            read.append(name)
+            return answer
+
+    problem: str
+    if not callable(accessor):
+        problem = f"{accessor!r} is not a function."
+    else:
+        try:
+            returned = cast("Callable[[object], object]", accessor)(Probe())
+        except Exception as err:  # noqa: BLE001 - whatever it raises, it is not a plain read
+            returned = err
+        if not read and isinstance(returned, Exception):
+            problem = f"It raised {type(returned).__name__}: {returned} before reading any field of the identity."
+        elif not read:
+            problem = "It read no field of the identity."
+        elif len(read) > 1:
+            problem = f"It read several fields ({', '.join(read)}); it must read one."
+        elif read[0] not in names:
+            problem = f"It read '{read[0]}', which is not a field of {identity_type.__name__}."
+        elif returned is not answer:
+            problem = f"It did more than return '{read[0]}'."
+        else:
+            return read[0]
+    target = read[0] if read else accessor if isinstance(accessor, str) else None
+    if target in names:
+        suggested = target
+    elif target is not None and (close := difflib.get_close_matches(target, names, 1)):
+        suggested = close[0]
+    else:
+        suggested = names[0] if names else "<field>"
+    name = identity_type.__name__
+    raise TypeError(
+        f"Resolvable({name}, accessor) needs an accessor that reads one field of {name} "
+        f"and returns it. {problem} An accessor that does anything else cannot be "
+        "checked against the type of the field it goes on, so a name resolved "
+        "through it could give a value the field refuses. "
+        f"Write it as Resolvable({name}, lambda i: i.{suggested})."
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -785,7 +869,8 @@ class _ProcessedResolvable:
     """Stored in FieldInfo.metadata by _apply_vco_markers."""
 
     identity_type: type[object]
-    id_attr: str
+    accessor: Callable[[Any], object]
+    attribute: str
 
 
 def _absent_at_other_level(field_info: FieldInfo) -> ContextDefaults | None:
@@ -800,6 +885,102 @@ def _absent_at_other_level(field_info: FieldInfo) -> ContextDefaults | None:
     return None
 
 
+@dataclass(frozen=True)
+class _LiteralValue:
+    """One value of a ``Literal``, as a type atom of its own."""
+
+    value: object
+
+
+def _type_atoms(tp: object) -> frozenset[object]:
+    """The types *tp* allows, apart from ``None`` and ``MISSING``: ``Annotated``, ``type`` aliases and unions taken apart, each ``Literal`` value an atom."""
+    while get_origin(tp) is Annotated:
+        tp = get_args(tp)[0]
+    if isinstance(tp, TypeAliasType):
+        return _type_atoms(tp.__value__)
+    if get_origin(tp) is Literal:
+        return frozenset(_LiteralValue(v) for v in get_args(tp) if v is not None)
+    if get_origin(tp) in (Union, UnionType):  # pyright: ignore[reportDeprecated]
+        return frozenset().union(*(_type_atoms(m) for m in get_args(tp)))
+    return frozenset() if tp is MISSING or tp is type(None) else frozenset({tp})
+
+
+def _allows_none(tp: object) -> bool:
+    """Whether *tp* allows ``None``: ``Annotated``, ``type`` aliases and unions taken apart. ``MISSING`` does not count."""
+    while get_origin(tp) is Annotated:
+        tp = get_args(tp)[0]
+    if isinstance(tp, TypeAliasType):
+        return _allows_none(tp.__value__)
+    if get_origin(tp) is Literal:
+        return None in get_args(tp)
+    if get_origin(tp) in (Union, UnionType):  # pyright: ignore[reportDeprecated]
+        return any(_allows_none(m) for m in get_args(tp))
+    return tp is None or tp is type(None)
+
+
+def _atoms_text(atoms: frozenset[object]) -> str:
+    """The atoms as a type expression, in a stable order."""
+    values = sorted(repr(a.value) for a in atoms if isinstance(a, _LiteralValue))
+    named = sorted(
+        a.__name__ if isinstance(a, type) else repr(a)
+        for a in atoms
+        if not isinstance(a, _LiteralValue)
+    )
+    return " | ".join([*named, *([f"Literal[{', '.join(values)}]"] if values else [])])
+
+
+def _check_resolvable(
+    cls: type[BaseModel],
+    field_name: str,
+    fi: FieldInfo,
+    marker: Resolvable[Any],
+) -> None:
+    """Refuse a field that cannot hold what its ``Resolvable`` accessor returns.
+
+    Every type the identity's attribute allows apart from ``None`` must be one
+    the field's ID type allows apart from ``None`` and ``MISSING`` (the type held
+    inside a field kind, ``Annotated`` and ``type`` aliases taken apart); a
+    ``Literal`` attribute fits a ``Literal`` field that holds all its values.
+    An attribute that allows ``None`` needs a field that allows it too (a field
+    that holds only ``MISSING`` besides its type does not). A
+    field that cannot is refused here because it would otherwise fail only
+    when a name resolved to a value it refuses.
+    """
+    from .layers import field_kind  # layers imports this module
+
+    identity = marker.identity_type
+    hints = get_type_hints(identity)
+    wanted = _type_atoms(hints[marker.attribute])
+    held = _type_atoms(field_kind(fi).inner_type)
+    gives_none = _allows_none(hints[marker.attribute])
+    holds_none = _allows_none(field_kind(fi).inner_type)
+    if wanted <= held and (holds_none or not gives_none):
+        return
+    fitting = [
+        name
+        for name in _identity_field_names(identity)
+        if name in hints
+        and (atoms := _type_atoms(hints[name]))
+        and atoms <= held
+        and (holds_none or not _allows_none(hints[name]))
+    ]
+    advice = (
+        "Read a field that fits instead: "
+        + " or ".join(
+            f"Resolvable({identity.__name__}, lambda i: i.{n})" for n in fitting
+        )
+        if fitting
+        else f"No field of {identity.__name__} fits this field's type: change the field to hold what the identity gives, or read another identity."
+    )
+    raise TypeError(
+        f"{cls.__name__}.{field_name} holds {_atoms_text(held)}{' or None' if holds_none else ''}, but its Resolvable reads "
+        f"{identity.__name__}.{marker.attribute}, which can be {_atoms_text(wanted)}"
+        f"{' or None' if gives_none else ''}. "
+        "A name resolved through it would give a value the field refuses, and that "
+        f"would show only when a name is merged in. {advice}"
+    )
+
+
 def apply_vco_markers(cls: type[BaseModel]) -> None:
     """Scan FieldInfo.metadata for VCO markers and store processed results back in metadata."""
     needs_rebuild = False
@@ -811,7 +992,7 @@ def apply_vco_markers(cls: type[BaseModel]) -> None:
         _ProcessedEdgeLocal,
         _ProcessedResolvable,
     )
-    for fi in cls.model_fields.values():
+    for field_name, fi in cls.model_fields.items():
         if not fi.exclude and get_ref_only(fi) is not None:
             fi.exclude = True  # a dump leaves it out
             needs_rebuild = True
@@ -872,9 +1053,13 @@ def apply_vco_markers(cls: type[BaseModel]) -> None:
                 fi.metadata.append(_ProcessedEdgeLocal())
                 already.add(_ProcessedEdgeLocal)
             elif isinstance(m, Resolvable) and _ProcessedResolvable not in already:
+                marker = cast("Resolvable[Any]", m)
+                _check_resolvable(cls, field_name, fi, marker)
                 fi.metadata.append(
                     _ProcessedResolvable(
-                        identity_type=m.identity_type, id_attr=m.id_attr
+                        identity_type=marker.identity_type,
+                        accessor=marker.accessor,
+                        attribute=marker.attribute,
                     )
                 )
                 already.add(_ProcessedResolvable)

@@ -7,8 +7,10 @@ changes who owns the value by one of three intents, and by no assignment:
 
 - ``set_local(value)``: the edge overrides the profile with *value*.
 - ``inherit()``: the edge stores nothing, so the profile's value applies.
-- ``localize()``: the profile's value is copied in as the edge's own, and
-  returned to be edited in place.
+- ``localize()``: the edge's own value, returned to be edited in place. It is
+  the value the edge already stores (a local one, or on a ``presence_wins``
+  field an object stored with its flag off, which is kept and flagged on),
+  else a copy of the profile's value.
 
 Some keys change ownership together (a coupled group, ``OwnedGroup``): the
 group's handle does the intents for every member, and a member refuses the
@@ -197,10 +199,14 @@ class Owned[T]:
         returned, and the field stays inherited). On a ``presence_wins`` field
         the edge may store an object with its flag off or absent; the backend
         runs with it, so ``localize`` keeps that object, with its values
-        unchanged, and turns its flag on, and copies nothing from the profile. It needs the profile, so it
-        raises ``UnboundError`` on an object that did not come from a loaded
-        state, and ``GroupOwnershipError`` on a member of a coupled group
-        that is not local (``localize`` the group). After a save or
+        unchanged, and turns its flag on, and copies nothing from the profile.
+        It raises ``UnboundError`` only when it has to copy from the profile
+        (the edge stores nothing, or a ``null``, or on a field that is not
+        ``presence_wins`` an object with its flag off) and the object did not
+        come from a loaded state, so does not know its profile; a value that
+        is local already, or an object it keeps, needs no profile. It raises
+        ``GroupOwnershipError`` on a member of a coupled group that is not
+        local (``localize`` the group). After a save or
         ``update_module`` replaced the module this belongs to, it raises
         ``DetachedObjectError``.
         """
@@ -682,7 +688,9 @@ class GroupHandle:
 
         The members are edited through their own ``Owned``
         (``fw.stateful_firewall_settings.local.udp_flow_timeout = 600``). It
-        needs the profile (``UnboundError``).
+        raises ``UnboundError`` when a member has to be copied from the profile
+        and the object did not come from a loaded state; no member is changed
+        then.
         """
         self._check("localize")
         owned = self._members()

@@ -1,7 +1,7 @@
 """Three name-resolution behaviours on write, under the strict rules."""
 
 import uuid
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from typing import Annotated, ClassVar, cast
 
 import pytest
@@ -13,6 +13,7 @@ from pyvelo.core.fields import KeyField, NameOf, Resolvable
 from pyvelo.core.identity import (
     AddressGroupIdentity,
     LinkIdentity,
+    ResolverNotLoadedError,
     SegmentIdentity,
     ServiceGroupIdentity,
 )
@@ -50,27 +51,23 @@ class Fake:
         LinkIdentity: LINK,
     }
 
-    def resolve_sync[T](self, key: type[T], name: str, /) -> T:
+    def lookup[T](self, key: type[T], name: str, /) -> T:
         if key not in self.tables:
             raise LookupError(f"No resolver registered for {key.__name__}")
         return cast(T, resolve_name(name, dict(self.tables[key]), key.__name__)[1])
 
-    def has_id_sync(
-        self, identity_type: type[object], id_attr: str, value: object, /
-    ) -> bool:
-        return any(
-            getattr(i, id_attr) == value
-            for i in self.tables.get(identity_type, {}).values()
-        )
-
     def resolver_for(self, identity_type: type[object], /) -> object | None:
         return self if identity_type in self.tables else None
 
-    def identity_sync[T](
-        self, identity_type: type[T], id_attr: str, value: object, /
+    def lookup_by[T](
+        self,
+        identity_type: type[T],
+        accessor: Callable[[T], object],
+        value: object,
+        /,
     ) -> T:
-        for identity in self.tables[identity_type].values():
-            if getattr(identity, id_attr) == value:
+        for identity in self.tables.get(identity_type, {}).values():
+            if accessor(cast(T, identity)) == value:
                 return cast(T, identity)
         raise ResolutionError(
             name=str(value), identity_type=identity_type, candidates=[]
@@ -238,7 +235,7 @@ def test_enum_literal_on_a_resolvable_field():
 class Net(VcoModel):
     name: str
     segment_name: Annotated[str, NameOf(SegmentIdentity)] = ""
-    segment_id: Annotated[int, Resolvable(SegmentIdentity, "segment_id")] = 0
+    segment_id: Annotated[int, Resolvable(SegmentIdentity, lambda i: i.segment_id)] = 0
 
 
 class Lan(VcoModel):
@@ -258,7 +255,7 @@ def test_only_the_marked_field_fills_ids():
 
 class Uplink(VcoModel):
     name: str = ""
-    logical_id: Annotated[str, Resolvable(LinkIdentity, "logical_id")] = ""
+    logical_id: Annotated[str, Resolvable(LinkIdentity, lambda i: i.logical_id)] = ""
 
 
 class Holder(VcoModel):
@@ -338,7 +335,7 @@ def test_resolution_error_is_one_class_on_both_import_paths():
     assert CoreError is ResolutionError and issubclass(ResolutionError, KeyError)
 
 
-async def test_registry_has_id_sync_reads_the_loaded_identities(
+async def test_registry_lookup_by_reads_the_loaded_identities(
     make_segment_resolver: SegmentResolverFactory,
 ):
     resolver = await make_segment_resolver(
@@ -355,8 +352,17 @@ async def test_registry_has_id_sync_reads_the_loaded_identities(
     registry.register(resolver)
 
     assert [i.name for i in resolver.identities()] == ["Guest"]
-    assert registry.has_id_sync(SegmentIdentity, "segment_id", 2)
-    assert registry.has_id_sync(SegmentIdentity, "logical_id", uuid.UUID(int=3))
-    assert not registry.has_id_sync(SegmentIdentity, "segment_id", 9)
-    # No resolver registered for the type: False, not an error.
-    assert not registry.has_id_sync(AddressGroupIdentity, "id", 7)
+    assert (
+        registry.lookup_by(SegmentIdentity, lambda s: s.segment_id, 2).name == "Guest"
+    )
+    assert (
+        registry.lookup_by(
+            SegmentIdentity, lambda s: s.logical_id, uuid.UUID(int=3)
+        ).name
+        == "Guest"
+    )
+    with pytest.raises(ResolutionError):
+        _ = registry.lookup_by(SegmentIdentity, lambda s: s.segment_id, 9)
+    # No resolver registered for the type: not loaded, so nothing can be told.
+    with pytest.raises(ResolverNotLoadedError):
+        _ = registry.lookup_by(AddressGroupIdentity, lambda a: a.id, 7)

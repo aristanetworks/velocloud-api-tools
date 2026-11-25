@@ -60,7 +60,7 @@ class OutboundRuleMatch(VcoModel):
 
     # Application and traffic classification
     application_id: Annotated[
-        int, Alias("appid"), Resolvable(ApplicationIdentity, "id")
+        int, Alias("appid"), Resolvable(ApplicationIdentity, lambda i: i.id)
     ] = -1
     application_class_id: Annotated[int, Alias("classid")] = -1
     dscp: int = -1
@@ -111,7 +111,7 @@ class InboundRuleMatch(VcoModel):
 
     # Application classification
     application_id: Annotated[
-        int, Alias("appid"), Resolvable(ApplicationIdentity, "id")
+        int, Alias("appid"), Resolvable(ApplicationIdentity, lambda i: i.id)
     ] = -1
     application_class_id: Annotated[int, Alias("classid")] = -1
     dscp: int = -1
@@ -145,7 +145,7 @@ class InboundRuleMatchV6(VcoModel):
 
     # Application classification
     application_id: Annotated[
-        int, Alias("appid"), Resolvable(ApplicationIdentity, "id")
+        int, Alias("appid"), Resolvable(ApplicationIdentity, lambda i: i.id)
     ] = -1
     application_class_id: Annotated[int, Alias("classid")] = -1
     dscp: int = -1

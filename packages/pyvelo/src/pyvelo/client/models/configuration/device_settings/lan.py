@@ -267,7 +267,7 @@ class LanNetwork(VcoModel):
         default_factory=RadiusAuthentication
     )
     segment_id: Annotated[
-        int, Resolvable(SegmentIdentity, "segment_id"), RefersTo("segment")
+        int, Resolvable(SegmentIdentity, lambda i: i.segment_id), RefersTo("segment")
     ] = 0
     static_reserved: int = 10
     tag_logical_id: uuid.UUID | None = None

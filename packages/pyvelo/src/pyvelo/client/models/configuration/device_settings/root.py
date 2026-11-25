@@ -96,7 +96,7 @@ class LoopbackInterface(VcoModel):
     advertise: bool = True
     ping_response: bool = True
     segment_id: Annotated[
-        int, Resolvable(SegmentIdentity, "segment_id"), RefersTo("segment")
+        int, Resolvable(SegmentIdentity, lambda i: i.segment_id), RefersTo("segment")
     ] = 0
     ospf: LoopbackOspf = Field(default_factory=LoopbackOspf)
     disable_ipv4: Annotated[bool, Alias("disableV4")] = False

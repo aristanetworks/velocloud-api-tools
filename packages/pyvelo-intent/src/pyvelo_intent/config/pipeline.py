@@ -1479,7 +1479,7 @@ class ConfigPipeline:
             resolver = self._state_resolver(state, identity)
             await resolver.load(state.resolver_context)
 
-    def _state_resolver(self, state: ConfigState, identity: type) -> Resolver[Any, Any]:
+    def _state_resolver(self, state: ConfigState, identity: type) -> Resolver[Any]:
         """The resolver of *state* for *identity*, registered first when the state has none.
 
         The state's own, else an unloaded copy of the pipeline's, else, for
