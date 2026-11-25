@@ -36,7 +36,6 @@ from pyvelo.core import (
     ApiFilter,
     ApiFilters,
     ApiFiltersAnd,
-    ApiFiltersOr,
     ApiInterval,
     CoerceInt,
     PaginatedVcoModel,
@@ -799,9 +798,7 @@ def _iter_api_filters(filters: ApiFilters) -> list[ApiFilter]:
         return [filters]
     if isinstance(filters, ApiFiltersAnd):
         return filters.and_
-    if isinstance(filters, ApiFiltersOr):
-        return filters.or_
-    return []
+    return filters.or_
 
 
 class _LinkInsightsRequest(VcoModel):

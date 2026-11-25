@@ -111,7 +111,7 @@ async def get_edge_firewall_metrics(
             result = await client.get_edge_firewall_url_reputation_metrics(request)
             return items_to_frame(result, _URL_REP_FIELDS)
 
-    raise ValueError(f"Unknown firewall type: {type}")
+    raise ValueError(f"Unknown firewall type: {type}")  # pyright: ignore[reportUnreachable]  # a caller may pass a value outside the enum
 
 
 async def get_edge_firewall_series(
@@ -252,7 +252,7 @@ async def get_enterprise_firewall_metrics(
             )
             return items_to_frame(result, _URL_REP_FIELDS)
 
-    raise ValueError(f"Unknown enterprise firewall type: {type}")
+    raise ValueError(f"Unknown enterprise firewall type: {type}")  # pyright: ignore[reportUnreachable]  # a caller may pass a value outside the enum
 
 
 _IDPS_FIELDS = [

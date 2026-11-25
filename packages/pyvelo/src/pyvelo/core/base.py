@@ -1002,17 +1002,17 @@ def _field_names_by_key(fields: Mapping[str, FieldInfo]) -> dict[str, str]:
     return names
 
 
-def _field_accepts_missing(fi: FieldInfo) -> bool:
+def _field_accepts_missing(fi: FieldInfo) -> bool:  # pyright: ignore[reportUnusedFunction]  # imported by core.changes and core.merge
     """Check if a field's type annotation includes MISSING."""
     return MISSING in _union_members(_held_type(fi))
 
 
-def _field_accepts_none(fi: FieldInfo) -> bool:
+def _field_accepts_none(fi: FieldInfo) -> bool:  # pyright: ignore[reportUnusedFunction]  # imported by core.changes and core.merge
     """Check if a field's type annotation includes None."""
     return type(None) in _union_members(_held_type(fi))
 
 
-def _id_type(fi: FieldInfo) -> object | None:
+def _id_type(fi: FieldInfo) -> object | None:  # pyright: ignore[reportUnusedFunction]  # imported by core.merge
     """The ID type of a Resolvable field: its annotation without ``MISSING``, ``None`` and ``Annotated``.
 
     None unless exactly one type is left.
@@ -1029,14 +1029,14 @@ def _id_adapter(id_type: object) -> TypeAdapter[object]:
     return TypeAdapter[object](id_type)  # pyright: ignore[reportArgumentType]
 
 
-def _field_model_type(fi: FieldInfo) -> type[VcoModel] | None:
+def _field_model_type(fi: FieldInfo) -> type[VcoModel] | None:  # pyright: ignore[reportUnusedFunction]  # imported by core.merge and core.rebase
     """Get the VcoModel class from an annotation like ``T`` or ``T | MISSING | None``."""
     return next(
         (m for m in _union_members(_held_type(fi)) if _is_vco_model_type(m)), None
     )
 
 
-def _field_model_types(fi: FieldInfo) -> tuple[type[VcoModel], ...]:
+def _field_model_types(fi: FieldInfo) -> tuple[type[VcoModel], ...]:  # pyright: ignore[reportUnusedFunction]  # imported by core.changes and core.merge
     """Every VcoModel class a field's value can be, in the order written.
 
     Handles ``T | MISSING | None`` and (discriminated) unions of models, also
@@ -1220,7 +1220,7 @@ def list_kind(field_info: FieldInfo) -> ListKind | None:
             element_members = _members_without_missing_and_none(args[0]) if args else []
             if _is_model_members(element_members):
                 element_kind = "model"
-            elif element_members and all(m in (str, int) for m in element_members):
+            elif element_members and all(m is str or m is int for m in element_members):
                 element_kind = "value"
     if is_dict_of_models and not has_list:
         return "map"

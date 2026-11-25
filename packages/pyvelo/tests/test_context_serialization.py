@@ -91,7 +91,7 @@ def _compact_alias(model: VcoModel, **extra_ctx: object) -> JsonObject:
 
 
 def _config_context(model: VcoModel) -> ConfigContext | None:
-    return cast(ConfigContext | None, model._config_context)
+    return model._config_context
 
 
 # ---------------------------------------------------------------------------
@@ -172,7 +172,7 @@ class TestContextDefaultsStorage:
         fi = EdgeProfileModel.model_fields["override"]
         cd = _get_context_defaults(fi)
         assert cd is not None
-        assert cast(object, cd.profile) is MISSING
+        assert cd.profile is MISSING
 
     def test_alias_ctx_default_stores_context_defaults(self):
         fi = AliasedContextModel.model_fields["source_ip"]
@@ -183,7 +183,7 @@ class TestContextDefaultsStorage:
         fi = BothMetadata.model_fields["port"]
         cd = _get_context_defaults(fi)
         assert cd is not None
-        assert cast(object, cd.profile) is MISSING
+        assert cd.profile is MISSING
 
 
 # ---------------------------------------------------------------------------
@@ -302,13 +302,13 @@ class TestContextView:
         view = EdgeProfileModel.context(ConfigContext.EDGE)
         info = view.override
         assert info.is_present is True
-        assert cast(object, info.default) is True
+        assert info.default is True
 
     def test_edge_field_absent_at_profile(self):
         view = EdgeProfileModel.context(ConfigContext.PROFILE)
         info = view.override
         assert info.is_present is False
-        assert cast(object, info.default) is MISSING
+        assert info.default is MISSING
 
     def test_regular_field_present_at_both(self):
         edge = EdgeProfileModel.context(ConfigContext.EDGE)

@@ -30,7 +30,7 @@ from typing import (
     Literal,
     Self,
     TypeAliasType,
-    Union,
+    Union,  # pyright: ignore[reportDeprecated]  # get_origin(Optional[X]) is typing.Union
     cast,
     get_args,
     get_origin,

@@ -1070,8 +1070,8 @@ class ConfigurationMixin(Protocol):
         more than this one module are not run here: they need a state
         (``ConfigState``, in ``pyvelo.config``).
         """
-        if not isinstance(data, DeviceSettingsData | WanData | QosData | FirewallData):
-            raise TypeError(f"Unsupported data type: {type(data).__name__}")
+        if not isinstance(data, DeviceSettingsData | WanData | QosData | FirewallData):  # pyright: ignore[reportUnnecessaryIsInstance]  # callers may pass anything
+            raise TypeError(f"Unsupported data type: {type(data).__name__}")  # pyright: ignore[reportUnreachable]  # see the guard above
         if module.is_new:
             raise ValueError(
                 "module has not been inserted yet; insert it instead of updating"

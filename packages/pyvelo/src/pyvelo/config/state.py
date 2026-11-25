@@ -986,7 +986,11 @@ class ConfigState:
         if self.target_type != "profile":
             return (), ()
         module = next(
-            (m for m in modules if m.name == ConfigurationModuleName.DEVICE_SETTINGS),
+            (
+                m
+                for m in modules
+                if m.name == ConfigurationModuleName.DEVICE_SETTINGS.value
+            ),
             None,
         )
         edited: object = None if module is None else module.data
@@ -1214,7 +1218,7 @@ class ConfigState:
         """For a profile QoS *module*, each segment's ``vpn.conditionalBackhaul`` in the profile's device settings now; else None."""
         if (
             level is not ConfigContext.PROFILE
-            or module.name != ConfigurationModuleName.QOS
+            or module.name != ConfigurationModuleName.QOS.value
         ):
             return None
         held = _find_module(

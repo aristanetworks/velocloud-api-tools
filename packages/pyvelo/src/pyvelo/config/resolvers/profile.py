@@ -43,8 +43,6 @@ class ProfileResolver(BaseResolver[ProfileIdentity]):
 
         for profile in profiles:
             name = profile.name
-            if name is None or name is MISSING:
-                continue
             profile_id = profile.id_
             if profile_id is None or profile_id is MISSING:
                 continue

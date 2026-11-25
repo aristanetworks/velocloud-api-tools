@@ -51,16 +51,12 @@ class ApplicationResolver(BaseResolver[ApplicationIdentity]):
         apps = result.all.applications or []
         for app in apps:
             display = app.display_name
-            if display is MISSING or display is None:
+            if display is MISSING or display is None:  # pyright: ignore[reportUnnecessaryComparison]  # ApplicationItem requires it; a client whose apps lack it falls back to the name
                 display = app.name
-            if display is MISSING or display is None:
+            if display is MISSING:
                 continue
 
-            app_id_raw = app.id_
-            if app_id_raw is MISSING or app_id_raw is None:
-                continue
-
-            app_id = app_id_raw
+            app_id = app.id_
             identity = ApplicationIdentity(name=display, id=app_id)
             self._register(display, identity, id=app_id)
             self._reverse.setdefault("name", {})[display] = display

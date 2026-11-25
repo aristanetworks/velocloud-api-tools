@@ -896,7 +896,7 @@ class ConfigPipeline:
         which would wait for the lock without end.
         """
         if on_hub_in_use not in ("warn", "refuse"):
-            raise ValueError(
+            raise ValueError(  # pyright: ignore[reportUnreachable]  # a caller may pass any string
                 f"on_hub_in_use is {on_hub_in_use!r}; give 'warn' to remove a "
                 "hub that edge QoS rules use and say so in the result's "
                 "warnings, or 'refuse' to stop before any step"

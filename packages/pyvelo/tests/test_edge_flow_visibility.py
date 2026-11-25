@@ -185,8 +185,8 @@ class TestOperation:
 
         assert len(rows) == 1
         assert sent == [None]
-        assert cast(bool, request._page_has_more) is True
-        assert cast(str | None, request._page_next_link) == "flow-cursor"
+        assert request._page_has_more is True
+        assert request._page_next_link == "flow-cursor"
 
     async def test_no_filter_fallback_returns_no_flows(
         self, mock_vco_client: MockVcoClientFactory

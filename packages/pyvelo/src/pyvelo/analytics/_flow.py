@@ -239,7 +239,7 @@ async def _get_edge_flow_metrics(
             result = await client.get_edge_app_link_metrics(request)
             return _items_to_frame(result)
 
-    raise ValueError(f"Unknown group_by: {group_by}")
+    raise ValueError(f"Unknown group_by: {group_by}")  # pyright: ignore[reportUnreachable]  # a caller may pass a value outside the enum
 
 
 async def get_edge_flow_series(
@@ -388,7 +388,7 @@ async def _get_edge_flow_series(
             result = await client.get_edge_app_link_series(request)
             return denormalize_timeseries(list(result), "name")
 
-    raise ValueError(f"Unknown group_by: {group_by}")
+    raise ValueError(f"Unknown group_by: {group_by}")  # pyright: ignore[reportUnreachable]  # a caller may pass a value outside the enum
 
 
 def _items_to_frame(items: _FlowMetricsItems) -> MetricFrame:

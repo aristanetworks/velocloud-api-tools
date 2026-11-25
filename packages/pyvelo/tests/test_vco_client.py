@@ -310,8 +310,8 @@ class TestPortalPaginated:
             "test/listStuff", request, SampleResult
         ):
             assert [item.value for item in page] == [1]
-            assert cast(bool, request._page_has_more) is True
-            assert cast(str | None, request._page_next_link) == "page2"
+            assert request._page_has_more is True
+            assert request._page_next_link == "page2"
             break
 
         assert sent == [None]
@@ -335,8 +335,8 @@ class TestPortalPaginated:
 
         assert len(pages) == 2
         assert sent == [None, "page2"]
-        assert cast(bool, request._page_has_more) is False
-        assert cast(str | None, request._page_next_link) is None
+        assert request._page_has_more is False
+        assert request._page_next_link is None
 
     async def test_more_without_cursor_raises(
         self,
@@ -379,8 +379,8 @@ class TestPortalPaginatedList:
 
         assert [item.value for item in items] == [1, 2, 3]
         assert sent == [None, "page2", "page3"]
-        assert cast(bool, request._page_has_more) is False
-        assert cast(str | None, request._page_next_link) is None
+        assert request._page_has_more is False
+        assert request._page_next_link is None
 
     @pytest.mark.parametrize("max_pages", [1, 2])
     async def test_max_pages_stops_and_keeps_resume_cursor(
@@ -400,8 +400,8 @@ class TestPortalPaginatedList:
 
         assert [item.value for item in items] == list(range(1, max_pages + 1))
         assert len(sent) == max_pages
-        assert cast(bool, request._page_has_more) is True
-        assert cast(str | None, request._page_next_link) == (f"page{max_pages + 1}")
+        assert request._page_has_more is True
+        assert request._page_next_link == (f"page{max_pages + 1}")
 
     async def test_max_pages_reaching_last_page_reports_complete(
         self,
@@ -418,8 +418,8 @@ class TestPortalPaginatedList:
         )
 
         assert len(items) == 2
-        assert cast(bool, request._page_has_more) is False
-        assert cast(str | None, request._page_next_link) is None
+        assert request._page_has_more is False
+        assert request._page_next_link is None
 
     async def test_resumes_from_recorded_cursor(
         self,
@@ -432,7 +432,7 @@ class TestPortalPaginatedList:
         request._max_pages = 1
         _ = await client.portal_paginated_list("test/listStuff", request, SampleResult)
 
-        next_page_link = cast(str | None, request._page_next_link)
+        next_page_link = request._page_next_link
         assert next_page_link is not None
         resumed = SamplePaginatedRequest(enterprise_id=1, next_page_link=next_page_link)
         resumed._max_pages = 1
@@ -442,7 +442,7 @@ class TestPortalPaginatedList:
 
         assert [item.value for item in items] == [2]
         assert sent == [None, "page2"]
-        assert cast(str | None, resumed._page_next_link) == "page3"
+        assert resumed._page_next_link == "page3"
 
 
 class TestPortalList:

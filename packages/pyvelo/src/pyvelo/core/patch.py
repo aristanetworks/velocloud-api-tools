@@ -269,7 +269,7 @@ def _selector(value: object, path: Path) -> Selector:
 def _parse_place(value: object, path: Path) -> Place:
     if isinstance(value, str):
         if value in _POSITION_WORDS:
-            return Place(cast("Literal['first', 'last']", value))
+            return Place(value)
         for word in _POSITION_ANCHORS:
             if value.startswith(f"{word}:"):
                 raise PatchError(
@@ -282,10 +282,7 @@ def _parse_place(value: object, path: Path) -> Place:
         if len(anchors) == 1:
             ((word, anchor),) = anchors.items()
             if word in _POSITION_ANCHORS:
-                return Place(
-                    cast("Literal['before', 'after']", word),
-                    _selector(anchor, path),
-                )
+                return Place(word, _selector(anchor, path))
         raise PatchError(
             f"_position takes exactly one of before and after; {_POSITION_FORMS}",
             path,
