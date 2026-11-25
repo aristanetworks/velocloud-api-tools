@@ -62,7 +62,7 @@ def backhaul_rule(name: str, *entries: dict[str, Any]) -> dict[str, Any]:
     return rule
 
 
-def ds_with_vpn(
+def ds_with_vpn(  # noqa: PLR0913 (existing: split it when it next changes)
     segment: segment_helpers.Segment,
     *,
     enabled: bool = True,
@@ -97,7 +97,7 @@ def ds_with_vpn(
     return entry
 
 
-def hub_row(
+def hub_row(  # noqa: PLR0913 (existing: split it when it next changes)
     hub: Hub,
     *,
     service_id: int,
@@ -146,7 +146,7 @@ def hub_row(
     }
 
 
-def backhaul_row(
+def backhaul_row(  # noqa: PLR0913 (existing: split it when it next changes)
     hub: Hub,
     *,
     service_id: int,

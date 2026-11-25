@@ -23,7 +23,7 @@ if TYPE_CHECKING:
     modules=[ConfigurationModuleName.FIREWALL, ConfigurationModuleName.QOS],
     phases=["read", "write"],
 )
-def validate_rule_names_unique(state: ConfigStateLike) -> ValidationResult:
+def validate_rule_names_unique(state: ConfigStateLike) -> ValidationResult:  # noqa: C901, PLR0912 (existing: split it when it next changes)
     """Check that rule names are unique within each segment (firewall and QOS)."""
     result = ValidationResult()
 
@@ -84,7 +84,7 @@ def validate_rule_names_unique(state: ConfigStateLike) -> ValidationResult:
     modules=[ConfigurationModuleName.DEVICE_SETTINGS, ConfigurationModuleName.FIREWALL],
     phases=["write"],
 )
-def validate_interface_firewall_consistency(state: ConfigStateLike) -> ValidationResult:
+def validate_interface_firewall_consistency(state: ConfigStateLike) -> ValidationResult:  # noqa: C901, PLR0912 (existing: split it when it next changes)
     """Check that interfaces referenced in firewall rules exist in deviceSettings."""
     result = ValidationResult()
 

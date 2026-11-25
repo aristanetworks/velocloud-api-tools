@@ -643,7 +643,7 @@ class _ProbeAnswer:
         raise TypeError("the value read was tested for truth")
 
 
-def _probe_accessor(identity_type: type, accessor: object) -> str:
+def _probe_accessor(identity_type: type, accessor: object) -> str:  # noqa: C901 (existing: split it when it next changes)
     """The name of the one field of *identity_type* that *accessor* reads and returns; ``TypeError`` for any other accessor.
 
     The accessor is called once on a stand-in for the identity that records each
@@ -1014,7 +1014,7 @@ def _check_resolvable(
     )
 
 
-def apply_vco_markers(cls: type[BaseModel]) -> None:
+def apply_vco_markers(cls: type[BaseModel]) -> None:  # noqa: C901, PLR0912 (existing: split it when it next changes)
     """Scan FieldInfo.metadata for VCO markers and store processed results back in metadata."""
     needs_rebuild = False
     _processed_types = (

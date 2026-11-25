@@ -38,7 +38,7 @@ class FieldSite:
     """The item of the root's ``segments`` list that holds the field, else ``None``."""
 
 
-def walk_fields(
+def walk_fields(  # noqa: C901 (existing: split it when it next changes)
     data: VcoModel,
     *,
     holds: Callable[[type[VcoModel]], bool],
@@ -73,7 +73,7 @@ def walk_fields(
             )
         return layouts[model_cls]
 
-    def walk(
+    def walk(  # noqa: C901 (existing: split it when it next changes)
         model: VcoModel, path: Path, segment: VcoModel | None, *, root: bool
     ) -> Iterator[FieldSite]:
         if not wanted(model):

@@ -112,7 +112,7 @@ def profile_services() -> DeviceSettingsConfigurationModule:
     )
 
 
-def qos_row(
+def qos_row(  # noqa: PLR0913 (existing: split it when it next changes)
     hub: Hub,
     service_id: int,
     service_logical_id: str,

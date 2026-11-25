@@ -188,7 +188,7 @@ def _stored_row(
     )
 
 
-def check_refs(
+def check_refs(  # noqa: C901, PLR0912 (existing: split it when it next changes)
     module: ConfigurationModuleBase,
     plan: ModulePlan,
     stored: ConfigurationModuleBase,

@@ -344,7 +344,7 @@ def _no_service(step: HubStep, what: str) -> HubServiceNotFoundError:
     )
 
 
-async def send_step(
+async def send_step(  # noqa: PLR0913 (existing: split it when it next changes)
     client: VcoClientProtocol,
     step: HubStep,
     services: HubServices,
@@ -477,7 +477,7 @@ def _row_of_hub(
     return None
 
 
-def hub_rows(
+def hub_rows(  # noqa: PLR0913 (existing: split it when it next changes)
     as_read_refs: object,
     steps: Sequence[HubStep],
     services: HubServices,

@@ -39,7 +39,7 @@ class VcoClient(VcoClientProtocol):
     block.
     """
 
-    def __init__(
+    def __init__(  # noqa: PLR0913 (existing: split it when it next changes)
         self,
         vco_fqdn: str,
         token: str,
@@ -134,7 +134,7 @@ class VcoClient(VcoClientProtocol):
             self._window_count += 1
 
     @override
-    async def _send_request(
+    async def _send_request(  # noqa: C901, PLR0912, PLR0915 (existing: split it when it next changes)
         self,
         http_method: str,
         url: str,

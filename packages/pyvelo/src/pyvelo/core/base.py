@@ -475,7 +475,7 @@ def _fill_ref(model: VcoModel, name: str) -> None:
     model.ref = default
 
 
-def _install_ref_filling(cls: type[VcoModel]) -> None:
+def _install_ref_filling(cls: type[VcoModel]) -> None:  # noqa: C901 (existing: split it when it next changes)
     """Make assignment, a constructor keyword and a patch set a ``RefOnly`` field, and fill the ``ref``.
 
     Each is a hook put on *cls* itself, and only on a class that has such a
@@ -1222,7 +1222,7 @@ def _collect_models(annotation: object, found: dict[type[VcoModel], None]) -> No
             _collect_models(member, found)
 
 
-def list_kind(field_info: FieldInfo) -> ListKind | None:
+def list_kind(field_info: FieldInfo) -> ListKind | None:  # noqa: C901 (existing: split it when it next changes)
     """How a list field's items are told apart, or None if it is not a list.
 
     A ``dict`` of models is ``"map"``. Of lists: ``"keyed"`` has a
@@ -1472,7 +1472,7 @@ def _looks_like_bare_filter(v: Mapping[object, object]) -> bool:
     )
 
 
-def _api_filters_discriminator(v: object) -> str | None:
+def _api_filters_discriminator(v: object) -> str | None:  # noqa: PLR0911 (existing: split it when it next changes)
     if is_dict(v):
         if "and_" in v or "and" in v:
             return "and"

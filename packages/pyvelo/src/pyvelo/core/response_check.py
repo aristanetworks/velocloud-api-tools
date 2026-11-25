@@ -391,7 +391,7 @@ def _differences(
     return out
 
 
-def _walk(
+def _walk(  # noqa: PLR0913, PLR0917 (existing: split it when it next changes)
     found: _Found, path: Path, r: object, p: object, d: object, node: _CheckNode
 ) -> None:
     if r == p:
@@ -420,7 +420,7 @@ def _walk(
         _planned(found, path, r, p, d, node)
 
 
-def _walk_object(
+def _walk_object(  # noqa: PLR0913, PLR0917 (existing: split it when it next changes)
     found: _Found,
     path: Path,
     r: dict[object, object],
@@ -458,7 +458,7 @@ def _owned(found: _Found, path: Path, r: object, p: object, d: object) -> None:
         found.server_changes.append(ServerChange(path, r, d))
 
 
-def _walk_replaced(
+def _walk_replaced(  # noqa: PLR0913, PLR0917 (existing: split it when it next changes)
     found: _Found, path: Path, r: object, p: object, d: object, node: _CheckNode
 ) -> None:
     """Rule 4: *d* is not the container *r* and *p* are, so it stores nothing inside it.
@@ -493,7 +493,7 @@ def _walk_replaced(
     found.server_changes.append(ServerChange(path, r, d))
 
 
-def _walk_keyed_list(
+def _walk_keyed_list(  # noqa: C901, PLR0913, PLR0917 (existing: split it when it next changes)
     found: _Found,
     path: Path,
     r: list[object],
@@ -625,7 +625,7 @@ def _first_with(
     return next((index for index in left if values[index] == value), None)
 
 
-def _pair_stored(
+def _pair_stored(  # noqa: PLR0913, PLR0917 (existing: split it when it next changes)
     r: list[object],
     p: list[object],
     d: list[object],
@@ -694,7 +694,7 @@ def _pair_stored(
     return d_of, d_of_removed
 
 
-def _planned(
+def _planned(  # noqa: PLR0913, PLR0917 (existing: split it when it next changes)
     found: _Found,
     path: Path,
     r: object,
@@ -729,7 +729,7 @@ def _planned(
         found.server_changes.extend(beyond)
 
 
-def _beyond(
+def _beyond(  # noqa: C901, PLR0911, PLR0912, PLR0913, PLR0917 (existing: split it when it next changes)
     rewrites: Rewrites,
     path: Path,
     r: object,

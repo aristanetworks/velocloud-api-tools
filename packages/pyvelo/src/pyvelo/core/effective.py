@@ -179,7 +179,7 @@ def _build[M: Layered[Any]](
     return cls.model_construct(**values)
 
 
-def _inheritable(
+def _inheritable(  # noqa: PLR0913, PLR0917 (existing: split it when it next changes)
     cls: type[Layered[Any]],
     name: str,
     edge: Layered[Edge] | None,
@@ -219,7 +219,7 @@ def _inheritable(
     return resolved
 
 
-def _layer_only(
+def _layer_only(  # noqa: PLR0913, PLR0917 (existing: split it when it next changes)
     cls: type[Layered[Any]],
     name: str,
     origin: Origin,
@@ -238,7 +238,7 @@ def _layer_only(
     return Resolved(Origin.FACTORY, default, _join(own_at, key))
 
 
-def _additive(
+def _additive(  # noqa: PLR0913, PLR0917 (existing: split it when it next changes)
     name: str,
     edge: Layered[Edge] | None,
     profile: Layered[Profile] | None,
@@ -262,7 +262,7 @@ def _additive(
     return entries
 
 
-def _structural(
+def _structural(  # noqa: PLR0913, PLR0917 (existing: split it when it next changes)
     cls: type[Layered[Any]],
     name: str,
     edge: Layered[Edge] | None,
@@ -317,7 +317,7 @@ def _child(
     )
 
 
-def _children(
+def _children(  # noqa: PLR0913, PLR0917 (existing: split it when it next changes)
     cls: type[Layered[Any]],
     name: str,
     edge_value: object,

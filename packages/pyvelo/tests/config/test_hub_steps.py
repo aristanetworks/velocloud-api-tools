@@ -95,7 +95,7 @@ def vpn_patch(role: Role, change: dict[str, Any]) -> dict[str, Any]:
     return {"vpn": patch}
 
 
-async def edit(
+async def edit(  # noqa: PLR0913 (existing: split it when it next changes)
     state: ConfigState,
     role: Role,
     change: dict[str, Any],

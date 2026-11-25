@@ -390,7 +390,7 @@ class ConfigPipeline:
 
         return state
 
-    async def apply(
+    async def apply(  # noqa: C901, PLR0912 (existing: split it when it next changes)
         self,
         state: ConfigState,
         *,
@@ -746,7 +746,7 @@ class ConfigPipeline:
             except ResolverNotLoadedError as error:
                 await self.load_resolvers(state, _to_load(error, loaded))
 
-    async def save(
+    async def save(  # noqa: C901 (existing: split it when it next changes)
         self,
         state: ConfigState,
         *,
@@ -996,7 +996,7 @@ class ConfigPipeline:
             )
         )
 
-    async def _run_steps(
+    async def _run_steps(  # noqa: C901, PLR0913 (existing: split it when it next changes)
         self,
         state: ConfigState,
         plan: ConfigPlan,
@@ -1091,7 +1091,7 @@ class ConfigPipeline:
             raise
         return run
 
-    async def _send(
+    async def _send(  # noqa: C901, PLR0915 (existing: split it when it next changes)
         self,
         state: ConfigState,
         plan: ConfigPlan,
@@ -1316,7 +1316,7 @@ class ConfigPipeline:
             raise
         return result
 
-    async def compare_effective(
+    async def compare_effective(  # noqa: C901 (existing: split it when it next changes)
         self, state: ConfigState, *, modules: Sequence[str] | None = None
     ) -> EffectiveComparison:
         """Check the client's effective view of an edge against the modules the VCO composes for it.
@@ -1697,7 +1697,7 @@ def _prepare_segments(
     return {**patch, "segments": prepared}
 
 
-def _prepare_segment(
+def _prepare_segment(  # noqa: C901, PLR0911, PLR0913, PLR0917 (existing: split it when it next changes)
     data: _SegmentLayer,
     selector: object,
     op: ItemOp,
@@ -2023,7 +2023,7 @@ def _validation_error_to_warning(err: ValidatorError) -> ValidationWarning:
     )
 
 
-async def _write_module(
+async def _write_module(  # noqa: PLR0913 (existing: split it when it next changes)
     client: VcoClientProtocol,
     module: _WritableModule,
     plan: ModulePlan,

@@ -23,7 +23,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
 
-def _make_edge(
+def _make_edge(  # noqa: PLR0913, PLR0917 (existing: split it when it next changes)
     id_: int = 1,
     name: str = "edge-1",
     edge_state: str = "CONNECTED",

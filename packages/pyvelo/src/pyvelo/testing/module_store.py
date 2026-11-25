@@ -328,7 +328,7 @@ class ModuleStore:
         """
         self.stacks[edge_id] = (edge_configuration_id, profile_configuration_id)
 
-    def add_object(
+    def add_object(  # noqa: PLR0913 (existing: split it when it next changes)
         self,
         object_id: int,
         *,

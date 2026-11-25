@@ -24,7 +24,7 @@ from segment_helpers import (
 )
 
 
-async def profile_state(
+async def profile_state(  # noqa: PLR0913 (existing: split it when it next changes)
     ds: list[dict[str, Any]],
     qos: list[dict[str, Any]],
     firewall: list[dict[str, Any]],

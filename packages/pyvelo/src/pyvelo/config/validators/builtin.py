@@ -65,7 +65,7 @@ def override_consistency(state: ConfigStateLike) -> ValidationResult:
     return result
 
 
-def _walk_model_for_keys(
+def _walk_model_for_keys(  # noqa: C901 (existing: split it when it next changes)
     model: BaseModel,
     path: str,
     errors: list[ValidationError],

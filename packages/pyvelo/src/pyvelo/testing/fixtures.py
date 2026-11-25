@@ -46,7 +46,7 @@ def make_transport(
     return httpx.MockTransport(handler)
 
 
-def make_module_json(
+def make_module_json(  # noqa: PLR0913 (existing: split it when it next changes)
     name: str,
     data: object,
     *,

@@ -909,7 +909,7 @@ def _wire_value(model: type[VcoModel], item: object, path: str) -> object:
     return value
 
 
-def unflagged_in_use_at(
+def unflagged_in_use_at(  # noqa: C901 (existing: split it when it next changes)
     model: type[Layered[Any]], data: Mapping[str, object]
 ) -> list[UnflaggedInUse]:
     """Every object in raw *data* that the backend uses although its flag is off (``unflagged_in_use``)."""
@@ -918,7 +918,7 @@ def unflagged_in_use_at(
 
     found: list[UnflaggedInUse] = []
 
-    def walk(
+    def walk(  # noqa: C901, PLR0912 (existing: split it when it next changes)
         cls: type[Layered[Any]],
         raw: Mapping[object, object],
         above: tuple[tuple[str, str | None], ...],

@@ -45,7 +45,7 @@ if TYPE_CHECKING:
     from pyvelo.core import ApiInterval
 
 
-async def get_edge_firewall_metrics(
+async def get_edge_firewall_metrics(  # noqa: PLR0913 (existing: split it when it next changes)
     client: VcoClientProtocol,
     edge_id: int,
     interval: ApiInterval,
@@ -135,7 +135,7 @@ async def get_edge_firewall_series(
     return denormalize_timeseries(list(result), "name")
 
 
-async def get_enterprise_firewall_metrics(
+async def get_enterprise_firewall_metrics(  # noqa: PLR0913 (existing: split it when it next changes)
     client: VcoClientProtocol,
     interval: ApiInterval,
     type_: EnterpriseFirewallType,

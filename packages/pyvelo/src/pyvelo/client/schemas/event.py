@@ -247,7 +247,7 @@ type EnterpriseEventStringFilter = Annotated[
 ]
 
 
-def _enterprise_event_filter_discriminator(v: Any) -> str | None:
+def _enterprise_event_filter_discriminator(v: Any) -> str | None:  # noqa: PLR0911 (existing: split it when it next changes)
     if isinstance(v, dict):
         f = v.get("field") or v.get("fieldName")
         if f == "event":

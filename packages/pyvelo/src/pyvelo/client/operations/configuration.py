@@ -321,7 +321,7 @@ async def _check_stale[M: ConfigurationModuleBase](
     )
 
 
-async def _read_stored(
+async def _read_stored(  # noqa: PLR0913 (existing: split it when it next changes)
     client: VcoClientBaseProtocol,
     module: ConfigurationModuleBase,
     plan: ModulePlan,
@@ -615,7 +615,7 @@ class ConfigurationMixin(Protocol):
         return result
 
     @domain_tag(CONFIG)
-    async def update_configuration_module(
+    async def update_configuration_module(  # noqa: C901, PLR0912 (existing: split it when it next changes)
         self: VcoClientBaseProtocol,
         request: UpdateConfigurationModule,
         *,
@@ -752,7 +752,7 @@ class ConfigurationMixin(Protocol):
             return None
         return await _check_stale(self, module, plan, enterprise_id)
 
-    async def write_module[M: ConfigurationModuleBase](
+    async def write_module[M: ConfigurationModuleBase](  # noqa: C901, PLR0912, PLR0913, PLR0915 (existing: split it when it next changes)
         self: VcoClientBaseProtocol,
         module: M,
         plan: ModulePlan,
@@ -1000,7 +1000,7 @@ class ConfigurationMixin(Protocol):
             raise outcome from refusal
 
     @domain_tag(CONFIG)
-    async def update_module[M: ConfigurationModuleBase](
+    async def update_module[M: ConfigurationModuleBase](  # noqa: PLR0913 (existing: split it when it next changes)
         self: VcoClientBaseProtocol,
         module: M,
         data: DeviceSettingsData

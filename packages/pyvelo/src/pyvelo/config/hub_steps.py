@@ -758,7 +758,7 @@ def _hub_problems(
     return problems
 
 
-def check_hub_lists(
+def check_hub_lists(  # noqa: C901 (existing: split it when it next changes)
     as_read: DeviceSettingsData,
     now: DeviceSettingsData,
     *,

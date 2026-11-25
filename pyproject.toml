@@ -33,13 +33,7 @@ ignore = [
     "RUF036",  # the convention is X | None | MISSING: the unset sentinel goes last
     # Off until the code meets them: turn one on, fix what it reports, and
     # remove its line here.
-    "C901",
     "E501",
-    "PLR0911",
-    "PLR0912",
-    "PLR0913",
-    "PLR0915",
-    "PLR0917",
 ]
 
 [tool.ruff.lint.per-file-ignores]

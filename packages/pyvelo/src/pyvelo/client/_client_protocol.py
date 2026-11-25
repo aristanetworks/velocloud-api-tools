@@ -86,7 +86,7 @@ class VcoClientBaseProtocol(Protocol):
         self, request: GetConfiguration
     ) -> EdgeConfiguration | EnterpriseConfigurationProfile: ...
 
-    async def write_module[M: ConfigurationModuleBase](
+    async def write_module[M: ConfigurationModuleBase](  # noqa: PLR0913 (existing: split it when it next changes)
         self,
         module: M,
         plan: ModulePlan,

@@ -147,7 +147,7 @@ def _selector(
     return None if stored is None else selector_of(stored)
 
 
-def _resolve(
+def _resolve(  # noqa: C901, PLR0911, PLR0912 (existing: split it when it next changes)
     change: RawChange,
     model: type[VcoModel],
     stored_parts: Mapping[Path, ItemPart] | None,
@@ -256,7 +256,7 @@ def _nulls_writable(body: _Node, fields: Mapping[str, FieldInfo]) -> bool:
     return True
 
 
-def _item_plan(
+def _item_plan(  # noqa: PLR0913, PLR0917 (existing: split it when it next changes)
     change: RawChange,
     steps: tuple[str, ...],
     list_path: Path,
@@ -468,7 +468,7 @@ def _added_selector(item: ItemPart, node: _Node) -> str:
     return selector
 
 
-def _write(plans: list[_Plan], stored_parts: Mapping[Path, ItemPart] | None) -> _Node:
+def _write(plans: list[_Plan], stored_parts: Mapping[Path, ItemPart] | None) -> _Node:  # noqa: C901, PLR0912 (existing: split it when it next changes)
     """The patch the *plans* write, in the order given, then the places."""
     patch: _Node = {}
     entries: dict[tuple[Path, ItemPart], tuple[_Node, str]] = {}

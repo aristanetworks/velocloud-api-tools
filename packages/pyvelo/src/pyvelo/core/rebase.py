@@ -1097,7 +1097,7 @@ def _dump_get(dump: object, key: str) -> object:
     return dump[key] if _is_mapping(dump) and key in dump else MISSING
 
 
-def _lossy_in_value(
+def _lossy_in_value(  # noqa: PLR0913, PLR0917 (existing: split it when it next changes)
     out: list[Path],
     path: Path,
     baseline: object,
@@ -1177,7 +1177,7 @@ def _same_value(a: object, b: object) -> bool:
     return a == b
 
 
-def _lossy_in_model(
+def _lossy_in_model(  # noqa: PLR0913, PLR0917 (existing: split it when it next changes)
     out: list[Path],
     path: Path,
     baseline: VcoModel,
@@ -1269,7 +1269,7 @@ def _keyed_pairs(
     return [(parts[i], i, j) for i, j in pairing.pairs]
 
 
-def _lossy_in_list(
+def _lossy_in_list(  # noqa: PLR0913, PLR0917 (existing: split it when it next changes)
     out: list[Path],
     path: Path,
     baseline: list[object],

@@ -112,7 +112,7 @@ def ds_entry(segment: Segment) -> dict[str, Any]:
 _ONE_ROW_PER_ENTRY: Final[dict[str, Any]] = {}
 
 
-def profile_rows(
+def profile_rows(  # noqa: PLR0913 (existing: split it when it next changes)
     ds: list[dict[str, Any]],
     qos: list[dict[str, Any]],
     firewall: list[dict[str, Any]],

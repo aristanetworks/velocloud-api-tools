@@ -390,7 +390,7 @@ def checked_patch(patch: object, path: Path = _ROOT) -> object:
     return _check(patch, path.parts)
 
 
-def _check(value: object, parts: tuple[PathPart, ...]) -> object:
+def _check(value: object, parts: tuple[PathPart, ...]) -> object:  # noqa: C901 (existing: split it when it next changes)
     """*value* checked and copied. *parts* is where it sits (a ``Path`` is built only for an error)."""
     if value is None or isinstance(value, bool):
         return value

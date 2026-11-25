@@ -628,7 +628,7 @@ class ModuleWriteError(VcoError):
     """For each item of every keyed list the check walks that the module as stored
     holds too, by its path, the part that names it there (``ResponseCheck.stored_parts``)."""
 
-    def __init__(
+    def __init__(  # noqa: PLR0913 (existing: split it when it next changes)
         self,
         module_id: int,
         version: str,
@@ -796,7 +796,7 @@ class ModuleWriteError(VcoError):
         """The lost edits that ``redo_patch(include_clashes=include_clashes)`` leaves out, in the order of ``lost_edits``."""
         return self._redo(include_clashes=include_clashes)[1]
 
-    def _redo(
+    def _redo(  # noqa: C901, PLR0912 (existing: split it when it next changes)
         self, *, include_clashes: bool
     ) -> tuple[dict[str, object], tuple[PlannedChange, ...]]:
         """The patch that redoes the lost edits, and the lost edits it leaves out."""
@@ -1000,7 +1000,7 @@ def _same_logical_id(left: object, right: object) -> bool:
     )
 
 
-def _stored_segment(
+def _stored_segment(  # noqa: PLR0913, PLR0917 (existing: split it when it next changes)
     data: VcoModel,
     module: ConfigurationModuleBase,
     plan: ModulePlan,
@@ -1075,7 +1075,7 @@ def _field_spellings(
     return None
 
 
-def _set_provider(
+def _set_provider(  # noqa: PLR0913, PLR0917 (existing: split it when it next changes)
     patch: dict[str, object],
     data: VcoModel,
     module: ConfigurationModuleBase,
@@ -1156,7 +1156,7 @@ class ConfigConflictError(ModuleWriteError):
     stated: bool
     sent: bool
 
-    def __init__(
+    def __init__(  # noqa: PLR0913 (existing: split it when it next changes)
         self,
         module_id: int,
         version: str,
@@ -1233,7 +1233,7 @@ class WriteNotAppliedError(ModuleWriteError):
     with the value sent and the value stored.
     """
 
-    def __init__(
+    def __init__(  # noqa: PLR0913 (existing: split it when it next changes)
         self,
         module_id: int,
         version: str,
@@ -1305,7 +1305,7 @@ class RefsDroppedError(WriteNotAppliedError):
 
     refs_as_read: object
 
-    def __init__(
+    def __init__(  # noqa: PLR0913 (existing: split it when it next changes)
         self,
         module_id: int,
         version: str,
@@ -1442,7 +1442,7 @@ class WriteOutcomeUnknownError(ModuleWriteError):
     detail: str
     answer: WriteAnswer
 
-    def __init__(
+    def __init__(  # noqa: PLR0913 (existing: split it when it next changes)
         self,
         module_id: int,
         version: str,

@@ -124,7 +124,7 @@ class SaveStepError(IntentError):
     and sends the rest.
     """
 
-    def __init__(
+    def __init__(  # noqa: PLR0913 (existing: split it when it next changes)
         self,
         reason: str,
         *,

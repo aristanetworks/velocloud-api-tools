@@ -36,7 +36,7 @@ from pyvelo.core.effective import Resolved
 from pyvelo.core.owned import GroupHandle
 
 
-def _cases(e: Mod[Edge], p: Mod[Profile], v: Mod[Effective], c: Mod[Composed]) -> None:
+def _cases(e: Mod[Edge], p: Mod[Profile], v: Mod[Effective], c: Mod[Composed]) -> None:  # noqa: PLR0915 (existing: split it when it next changes)
     # structural
     assert_type(e.segments, list[Seg[Edge]])
     assert_type(p.segments, list[Seg[Profile]])

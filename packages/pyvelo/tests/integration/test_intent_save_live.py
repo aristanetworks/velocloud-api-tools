@@ -2731,7 +2731,7 @@ def _hub_rows(refs: object, hub: HubTarget) -> list[dict[str, Any]]:
     return found
 
 
-async def _add_hub(
+async def _add_hub(  # noqa: PLR0913, PLR0917 (existing: split it when it next changes)
     pipeline: ConfigPipeline,
     lab: Lab,
     case: HubCase,
@@ -2768,7 +2768,7 @@ async def _add_hub(
     return await site.read_present()
 
 
-async def _remove_hub(
+async def _remove_hub(  # noqa: PLR0913, PLR0917 (existing: split it when it next changes)
     pipeline: ConfigPipeline,
     lab: Lab,
     case: HubCase,

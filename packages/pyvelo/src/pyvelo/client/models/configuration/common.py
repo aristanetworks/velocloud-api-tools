@@ -245,7 +245,7 @@ def find_segment[S: _HasSegment](
     raise ValueError(f"Segment not found. Available: {', '.join(available)}")
 
 
-def get_or_create_segment[S: _HasSegment](
+def get_or_create_segment[S: _HasSegment](  # noqa: PLR0913, PLR0917 (existing: split it when it next changes)
     segments: list[S],
     name: str,
     profile_segments: Sequence[Mapping[str, object]] | None,

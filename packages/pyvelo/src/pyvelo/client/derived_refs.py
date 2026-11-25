@@ -518,7 +518,7 @@ def changed_owners(
     )
 
 
-def derive_refs(
+def derive_refs(  # noqa: C901, PLR0912, PLR0913 (existing: split it when it next changes)
     module: ConfigurationModuleBase,
     baseline: VcoModel | None,
     current: VcoModel | None,

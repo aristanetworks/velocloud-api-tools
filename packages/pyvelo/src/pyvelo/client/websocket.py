@@ -63,7 +63,7 @@ class PendingDiagnostic[T]:
     resubmit when the result is awaited.
     """
 
-    def __init__(
+    def __init__(  # noqa: PLR0913 (existing: split it when it next changes)
         self,
         future: asyncio.Future[dict[str, Any]],
         *,
@@ -309,7 +309,7 @@ class VcoWebSocket:
         await self._ws.send_text(json.dumps(payload, default=str))
         self._send_times[dest] = loop.time()
 
-    async def _reader_loop(self) -> None:
+    async def _reader_loop(self) -> None:  # noqa: C901, PLR0911 (existing: split it when it next changes)
         """Background task that reads messages and dispatches to futures."""
         logger.debug("Reader loop started")
         while not self._closing:
@@ -354,7 +354,7 @@ class VcoWebSocket:
                 await self._teardown_transport()
                 return
 
-    def _dispatch(self, msg: dict[str, Any]) -> None:
+    def _dispatch(self, msg: dict[str, Any]) -> None:  # noqa: C901 (existing: split it when it next changes)
         """Match an incoming message to a pending future.
 
         Every VCO WebSocket message carries a top-level ``action`` and a
@@ -557,7 +557,7 @@ class VcoWebSocket:
             dest=str(logical_id),
         )
 
-    async def run_diagnostic(
+    async def run_diagnostic(  # noqa: PLR0913 (existing: split it when it next changes)
         self,
         logical_id: uuid.UUID,
         test: str,
@@ -635,7 +635,7 @@ class VcoWebSocket:
         context: T,
     ) -> PendingDiagnostic[T]: ...
 
-    async def submit_diagnostic[T](
+    async def submit_diagnostic[T](  # noqa: PLR0913 (existing: split it when it next changes)
         self,
         logical_id: uuid.UUID,
         test: str,

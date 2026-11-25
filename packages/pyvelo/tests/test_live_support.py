@@ -905,7 +905,7 @@ class FakeLab:
         """The method of each request, without its namespace."""
         return [method.rsplit("/", 1)[-1] for method, _ in self.requests]
 
-    def __call__(self, request: httpx.Request) -> httpx.Response:
+    def __call__(self, request: httpx.Request) -> httpx.Response:  # noqa: C901 (existing: split it when it next changes)
         body: dict[str, Any] = json.loads(request.content)
         method: str = body["method"]
         params: dict[str, Any] = body.get("params") or {}
@@ -1030,7 +1030,7 @@ async def test_the_enterprise_the_requests_name_is_the_one_read() -> None:
     assert requests == [("enterprise/getEnterprise", {"enterpriseId": 9})]
 
 
-async def refused(
+async def refused(  # noqa: PLR0913 (existing: split it when it next changes)
     environ: dict[str, str],
     reason: str,
     remedy: str,

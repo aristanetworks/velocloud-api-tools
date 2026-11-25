@@ -158,7 +158,7 @@ async def run_test(name: str, fn: Callable[[], Awaitable[MetricFrame]]) -> TestR
         return TestResult(name, Status.FAIL, detail=classify_error(exc))
 
 
-async def discover_context(
+async def discover_context(  # noqa: C901, PLR0912, PLR0915 (existing: split it when it next changes)
     client: VcoClient,
     enterprise_id: int,
     edge_name_filter: str | None,

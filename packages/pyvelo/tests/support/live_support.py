@@ -837,7 +837,7 @@ def _refused(reason: str, remedy: str) -> WriteAccess:
     )
 
 
-async def check_write_access(
+async def check_write_access(  # noqa: C901, PLR0911 (existing: split it when it next changes)
     client: VcoClient,
     enterprise_id: int | None,
     environ: Mapping[str, str] | None = None,
@@ -1226,7 +1226,7 @@ async def admit_hub(
     return run.hub
 
 
-def run_of(client: VcoClient) -> LiveRun:
+def run_of(client: VcoClient) -> LiveRun:  # noqa: C901 (existing: split it when it next changes)
     """The run of *client*, made on the first call, which also puts the guard on the client.
 
     The guard is on the client's own methods, so a test that forgets every
@@ -2248,7 +2248,7 @@ def read_backs(answers: Sequence[Answer]) -> int:
 # ---------------------------------------------------------------------------
 
 
-def failure_text(error: BaseException) -> str | None:
+def failure_text(error: BaseException) -> str | None:  # noqa: PLR0911 (existing: split it when it next changes)
     """*error* as what holds no lab data, or ``None`` where the report is left as it is.
 
     It keeps the class, error codes and types, redacted paths and the

@@ -64,7 +64,7 @@ async def _with_hubs(state: ConfigState, hubs: Sequence[Hub]) -> ConfigState:
     return state
 
 
-async def hub_profile_state(
+async def hub_profile_state(  # noqa: PLR0913 (existing: split it when it next changes)
     ds: list[dict[str, Any]],
     qos: list[dict[str, Any]],
     firewall: list[dict[str, Any]],
@@ -90,7 +90,7 @@ async def hub_profile_state(
     return await _with_hubs(state, hubs)
 
 
-async def hub_edge_state(
+async def hub_edge_state(  # noqa: PLR0913 (existing: split it when it next changes)
     edge_ds: list[dict[str, Any]],
     edge_qos: list[dict[str, Any]],
     *,

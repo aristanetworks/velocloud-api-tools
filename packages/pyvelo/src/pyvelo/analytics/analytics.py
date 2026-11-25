@@ -148,7 +148,7 @@ class Analytics:
     # Group 1: Edge Flow (14 methods → 2)
     # -----------------------------------------------------------------------
 
-    async def get_edge_flow_metrics(
+    async def get_edge_flow_metrics(  # noqa: PLR0913 (existing: split it when it next changes)
         self,
         edge_id: int,
         interval: ApiInterval,
@@ -179,7 +179,7 @@ class Analytics:
             filters=filters,
         )
 
-    async def get_edge_flow_series(
+    async def get_edge_flow_series(  # noqa: PLR0913 (existing: split it when it next changes)
         self,
         edge_id: int,
         interval: ApiInterval,
@@ -214,7 +214,7 @@ class Analytics:
     # Group 2: Enterprise Flow (keep as-is)
     # -----------------------------------------------------------------------
 
-    async def get_enterprise_flow_metrics(
+    async def get_enterprise_flow_metrics(  # noqa: PLR0913 (existing: split it when it next changes)
         self,
         interval: ApiInterval,
         view_by: BasicMetricViewBy,
@@ -259,7 +259,7 @@ class Analytics:
     # Group 3: Edge Link (keep separate)
     # -----------------------------------------------------------------------
 
-    async def get_edge_link_metrics(
+    async def get_edge_link_metrics(  # noqa: PLR0913 (existing: split it when it next changes)
         self,
         edge_id: int,
         interval: ApiInterval,
@@ -296,7 +296,7 @@ class Analytics:
             ],
         )
 
-    async def get_edge_link_series(
+    async def get_edge_link_series(  # noqa: PLR0913 (existing: split it when it next changes)
         self,
         edge_id: int,
         interval: ApiInterval,
@@ -480,7 +480,7 @@ class Analytics:
         ]
         return MetricFrame(columns=columns, rows=rows)
 
-    async def get_edge_path_series(
+    async def get_edge_path_series(  # noqa: PLR0913 (existing: split it when it next changes)
         self,
         edge_id: int,
         interval: ApiInterval,
@@ -570,7 +570,7 @@ class Analytics:
     # Group 8: Edge Firewall (5 → 2)
     # -----------------------------------------------------------------------
 
-    async def get_edge_firewall_metrics(
+    async def get_edge_firewall_metrics(  # noqa: PLR0913 (existing: split it when it next changes)
         self,
         edge_id: int,
         interval: ApiInterval,
@@ -742,7 +742,7 @@ class Analytics:
     # Group 12: QoE (keep as-is)
     # -----------------------------------------------------------------------
 
-    async def get_edge_qoe_series(
+    async def get_edge_qoe_series(  # noqa: C901 (existing: split it when it next changes)
         self,
         edge_id: int,
         interval: ApiInterval,
@@ -893,7 +893,7 @@ class Analytics:
         "enterprise_username",
     ]
 
-    async def collect_events(
+    async def collect_events(  # noqa: PLR0913 (existing: split it when it next changes)
         self,
         interval: ApiInterval,
         *,
@@ -985,7 +985,7 @@ class Analytics:
         "site_id",
     ]
 
-    async def collect_edges(
+    async def collect_edges(  # noqa: C901, PLR0913 (existing: split it when it next changes)
         self,
         *,
         edge_state: list[EdgeState] | None = None,

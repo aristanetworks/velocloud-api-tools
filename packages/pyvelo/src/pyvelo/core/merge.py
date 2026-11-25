@@ -128,7 +128,7 @@ def apply_patch(
     return model
 
 
-def nest_patch(
+def nest_patch(  # noqa: C901 (existing: split it when it next changes)
     model: type[VcoModel],
     patch: object,
     *,
@@ -316,7 +316,7 @@ def _patch_fields(
     return fields
 
 
-def _merge_field(
+def _merge_field(  # noqa: PLR0913, PLR0917 (existing: split it when it next changes)
     model: VcoModel,
     name: str,
     field_info: FieldInfo,
@@ -420,7 +420,7 @@ def _refuse_profile_only(
         )
 
 
-def _merge_owned(
+def _merge_owned(  # noqa: PLR0913, PLR0917 (existing: split it when it next changes)
     model: VcoModel,
     name: str,
     field_info: FieldInfo,
@@ -1043,7 +1043,7 @@ def _new_item(
     return item
 
 
-def _new_keyed_item(
+def _new_keyed_item(  # noqa: PLR0913, PLR0917 (existing: split it when it next changes)
     spec: _ListSpec,
     item_type: ListItemType,
     body: Mapping[object, object],
@@ -1207,7 +1207,7 @@ def _build_input(
     return built
 
 
-def _fill_from_names(
+def _fill_from_names(  # noqa: C901 (existing: split it when it next changes)
     fields: Mapping[str, FieldInfo], resolved: JsonObject, resolvers: IdentityResolver
 ) -> None:
     """Fill, in *resolved*, what the identity a ``NameOf`` field names, or an ID of it, says.
@@ -1569,7 +1569,7 @@ def _refuse_two_readings(
     )
 
 
-def _select(
+def _select(  # noqa: PLR0911 (existing: split it when it next changes)
     items: Sequence[object],
     spec: _ListSpec,
     selector: object,
@@ -1714,7 +1714,7 @@ def item_selector(model: VcoModel, field_name: str, position: int) -> str | None
     return None
 
 
-def _selector_candidates(
+def _selector_candidates(  # noqa: C901 (existing: split it when it next changes)
     spec: _ListSpec, entries: Sequence[object], position: int
 ) -> list[str]:
     """The texts ``item_selector`` tries for the entry at *position* of a list (or the keys of a map), best first."""
@@ -1744,7 +1744,7 @@ def _selector_candidates(
             return []
 
 
-def _merge_list(
+def _merge_list(  # noqa: C901, PLR0912, PLR0913, PLR0917 (existing: split it when it next changes)
     model: VcoModel,
     name: str,
     field_info: FieldInfo,
@@ -2023,7 +2023,7 @@ def _fixed_rule(spec: _ListSpec, path: Path) -> str:
     )
 
 
-def _check_fixed_op(
+def _check_fixed_op(  # noqa: PLR0913 (existing: split it when it next changes)
     spec: _ListSpec,
     items: Sequence[object],
     op: ItemOp,
@@ -2197,7 +2197,7 @@ class _ItemEntry:
     """The item a ``before`` or ``after`` place names."""
 
 
-def _merge_items(
+def _merge_items(  # noqa: C901, PLR0912, PLR0913, PLR0917 (existing: split it when it next changes)
     items: list[object],
     spec: _ListSpec,
     ops: Mapping[object, object],
@@ -2292,7 +2292,7 @@ def _merge_items(
     items[:] = [s.value for s in slots]
 
 
-def _resolve_items(
+def _resolve_items(  # noqa: C901, PLR0912, PLR0913, PLR0917 (existing: split it when it next changes)
     slots: Sequence[_Slot],
     spec: _ListSpec,
     ops: Mapping[object, object],
@@ -2406,7 +2406,7 @@ def _added_form(spec: _ListSpec, new: object) -> KeyForm | None:
     return None
 
 
-def _check_add(
+def _check_add(  # noqa: C901, PLR0913, PLR0917 (existing: split it when it next changes)
     spec: _ListSpec,
     selector: object,
     selection: _Selection,
@@ -2496,7 +2496,7 @@ def _key_form_hint(spec: _ListSpec, items: Sequence[object]) -> str:
     return form
 
 
-def _check_keyed_add(
+def _check_keyed_add(  # noqa: PLR0913, PLR0917 (existing: split it when it next changes)
     spec: _ListSpec,
     selector: object,
     selection: _Selection,
@@ -2582,7 +2582,7 @@ def _check_change(spec: _ListSpec, where: Path) -> None:
         )
 
 
-def _named_item(
+def _named_item(  # noqa: C901, PLR0912, PLR0913, PLR0917 (existing: split it when it next changes)
     spec: _ListSpec,
     selector: object,
     selection: _Selection,
@@ -2689,7 +2689,7 @@ def _names_several(
     )
 
 
-def _anchor_position(
+def _anchor_position(  # noqa: PLR0913, PLR0917 (existing: split it when it next changes)
     items: Sequence[object],
     spec: _ListSpec,
     anchor: object,
@@ -2766,7 +2766,7 @@ def _place_index(
     return index if place.kind == "before" else index + 1
 
 
-def _merge_map(
+def _merge_map(  # noqa: C901, PLR0912, PLR0913 (existing: split it when it next changes)
     entries: dict[object, object],
     spec: _ListSpec,
     ops: Mapping[object, object],

@@ -940,7 +940,7 @@ def _defaults_findings(
     return warnings, repairs, targets
 
 
-def plan_module(
+def plan_module(  # noqa: C901, PLR0912, PLR0913, PLR0915 (existing: split it when it next changes)
     module: ConfigurationModuleBase,
     data: VcoModel | Mapping[str, object] | None = None,
     *,

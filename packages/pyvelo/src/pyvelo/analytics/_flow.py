@@ -102,7 +102,7 @@ def _convert_sort(
     return enum_cls(sort.value)
 
 
-async def get_edge_flow_metrics(
+async def get_edge_flow_metrics(  # noqa: PLR0913 (existing: split it when it next changes)
     client: VcoClientProtocol,
     edge_id: int,
     interval: ApiInterval,
@@ -132,7 +132,7 @@ async def get_edge_flow_metrics(
         return MetricFrame(columns=["name", *_METRICS_FIELDS], rows=[])
 
 
-async def _get_edge_flow_metrics(
+async def _get_edge_flow_metrics(  # noqa: PLR0913 (existing: split it when it next changes)
     client: VcoClientProtocol,
     edge_id: int,
     interval: ApiInterval,
@@ -242,7 +242,7 @@ async def _get_edge_flow_metrics(
     raise ValueError(f"Unknown group_by: {group_by}")  # pyright: ignore[reportUnreachable]  # a caller may pass a value outside the enum
 
 
-async def get_edge_flow_series(
+async def get_edge_flow_series(  # noqa: PLR0913 (existing: split it when it next changes)
     client: VcoClientProtocol,
     edge_id: int,
     interval: ApiInterval,
@@ -274,7 +274,7 @@ async def get_edge_flow_series(
         return MetricFrame(columns=["name", *_METRICS_FIELDS], rows=[])
 
 
-async def _get_edge_flow_series(
+async def _get_edge_flow_series(  # noqa: PLR0913 (existing: split it when it next changes)
     client: VcoClientProtocol,
     edge_id: int,
     interval: ApiInterval,

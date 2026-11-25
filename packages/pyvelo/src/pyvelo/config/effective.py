@@ -371,7 +371,7 @@ class _Comparison:
         self.reasons: Mapping[str, str] = reasons
         self.entries: list[EffectiveDifference] = []
 
-    def emit(
+    def emit(  # noqa: PLR0913 (existing: split it when it next changes)
         self,
         path: str,
         category: EffectiveCategory,
@@ -490,7 +490,7 @@ class _Comparison:
             elif not self.ignored(where, MISSING, theirs, None):
                 self.emit(where, EffectiveCategory.SERVER_ONLY, MISSING, theirs)
 
-    def field(
+    def field(  # noqa: PLR0913, PLR0917 (existing: split it when it next changes)
         self,
         view: Layered[Effective],
         name: str,
@@ -542,7 +542,7 @@ class _Comparison:
 
     # -- the segments ------------------------------------------------------
 
-    def segments(
+    def segments(  # noqa: C901, PLR0912, PLR0913, PLR0917 (existing: split it when it next changes)
         self,
         items: list[Layered[Effective]],
         item_class: type[Layered[Any]],
@@ -710,7 +710,7 @@ class _Comparison:
             reason=FACTORY_ABSENT if display else None,
         )
 
-    def deep(
+    def deep(  # noqa: C901, PLR0912 (existing: split it when it next changes)
         self,
         path: str,
         client: object,

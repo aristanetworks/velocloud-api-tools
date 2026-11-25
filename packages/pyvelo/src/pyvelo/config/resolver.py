@@ -354,7 +354,7 @@ class ResolverRegistry:
         )
 
 
-def resolve_name[T](
+def resolve_name[T](  # noqa: PLR0913 (existing: split it when it next changes)
     name: str,
     by_name: dict[str, T],
     entity_label: str,
