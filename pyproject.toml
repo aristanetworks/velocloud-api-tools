@@ -28,13 +28,45 @@ markers = [
 ]
 
 [tool.basedpyright]
+typeCheckingMode = "recommended"
 enableExperimentalFeatures = true
 include = ["packages/pyvelo"]
 extraPaths = ["packages/pyvelo/tests/support"]
 defineConstant = { DEBUG = true }
 reportMissingImports = "error"
 reportMissingTypeStubs = false
-failOnWarnings = false
+# Every warning fails the check. A rule that the code does not yet meet is
+# turned off below rather than left to warn.
+failOnWarnings = true
 pythonVersion = "3.13"
 venvPath = "."
 venv = ".venv"
+# Off for good: VCO payloads are JSON, so Any is how the wire types are written,
+# and long messages are split across lines by implicit concatenation.
+reportAny = false
+reportExplicitAny = false
+reportImplicitStringConcatenation = false
+# Off until the code meets them: turn one on, fix what it reports, and remove
+# its line here.
+reportUnknownVariableType = false
+reportUnknownArgumentType = false
+reportUnannotatedClassAttribute = false
+reportUnusedCallResult = false
+reportUnknownMemberType = false
+reportUnnecessaryTypeIgnoreComment = false
+reportUnknownLambdaType = false
+reportPrivateUsage = false
+reportUnusedParameter = false
+reportUnnecessaryCast = false
+reportPrivateImportUsage = false
+reportUnreachable = false
+reportUnknownParameterType = false
+reportImplicitOverride = false
+reportMissingParameterType = false
+reportPrivateLocalImportUsage = false
+reportUnusedFunction = false
+reportCallInDefaultInitializer = false
+reportUnnecessaryIsInstance = false
+reportUnnecessaryComparison = false
+reportUnnecessaryContains = false
+reportDeprecated = false
