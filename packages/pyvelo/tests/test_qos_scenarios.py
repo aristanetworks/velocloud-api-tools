@@ -7,7 +7,7 @@ import pytest
 from pydantic import MISSING
 from pyvelo.client.exceptions import UnboundError
 from pyvelo.client.models.configuration.profile_segments import module_template_value
-from pyvelo.client.models.configuration.qos import CosMapping, QosRule
+from pyvelo.client.models.configuration.qos import CosMapping, QosRule, SlaSettings
 from pyvelo.client.module_write import plan_module
 from pyvelo.core import ConfigContext, Edge, Profile
 from segment_helpers import GLOBAL, GUEST, descriptor, qos_entry
@@ -310,3 +310,31 @@ def test_a_profile_module_with_the_same_data_has_no_flag_off_warning():
     profile = qos_mod({"segments": [segment_of(cosMapping=stored)]}, layer=Profile)
     plan = plan_module(profile, level=PROFILE)
     assert "flag_off_in_use" not in [w.code for w in plan.warnings]
+
+
+def sla_rule(**sla: Any) -> dict[str, Any]:
+    action = {**RULE["action"], "sla": {"latencyMs": "10", "jitterMs": "5", **sla}}
+    return {**copy.deepcopy(RULE), "action": action}
+
+
+def test_a_rule_s_sla_keeps_the_vco_s_lossPct_key_for_key():
+    # The stored rules of the lab write the key as lossPct; a loss_pct key is not one the VCO uses.
+    raw = {"segments": [segment_of(rules=[sla_rule(lossPct="0.5")])]}
+    module = qos_mod(raw, layer=Edge)
+    sla = module.data.segments[0].rules[0].action.sla
+    assert isinstance(sla, SlaSettings)
+    assert sla.loss_percent == "0.5"
+    plan = plan_module(module, level=EDGE)
+    assert (plan.operation, plan.data) == ("none", raw)
+    sla.loss_percent = "1.5"
+    written = plan_module(module, level=EDGE).data["segments"][0]["rules"][0]
+    assert written["action"]["sla"]["lossPct"] == "1.5"
+    assert "loss_pct" not in written["action"]["sla"]
+
+
+def test_a_new_qos_rule_with_an_sla_is_written_with_lossPct_and_not_loss_pct():
+    edge, profile = bound({"segments": [segment_of()]}, {"segments": [segment_of()]})
+    edge.data.segments[0].rules.append(QosRule.model_validate(sla_rule()))
+    (written,) = payload(edge, profile)["segments"][0]["rules"]
+    assert written["action"]["sla"]["lossPct"] == "0.0"
+    assert "loss_pct" not in written["action"]["sla"]
