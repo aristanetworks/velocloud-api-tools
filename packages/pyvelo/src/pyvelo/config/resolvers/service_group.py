@@ -1,4 +1,7 @@
-"""ServiceGroupResolver — resolves service/port group names to ServiceGroupIdentity via VCO API."""
+"""ServiceGroupResolver — resolves service/port group names to ServiceGroupIdentity.
+
+Resolution is via the VCO API.
+"""
 
 from typing import override
 
@@ -6,17 +9,18 @@ from pyvelo.client.enums.enterprise import ObjectGroupType
 from pyvelo.client.schemas.enterprise import GetObjectGroups
 from pyvelo.config.resolver import BaseResolver, ResolverContext
 from pyvelo.core.identity import (
+    IdentityKey,
     ServiceGroupId,
     ServiceGroupIdentity,
     ServiceGroupLogicalId,
     ServiceGroupName,
 )
 
-ServiceGroupKey = ServiceGroupName | ServiceGroupId | ServiceGroupLogicalId
 
+class ServiceGroupResolver(BaseResolver[ServiceGroupIdentity]):
+    """Resolves a service-group identifier to a :class:`ServiceGroupIdentity`.
 
-class ServiceGroupResolver(BaseResolver[ServiceGroupKey, ServiceGroupIdentity]):
-    """Resolves a service-group (port-group) identifier to a :class:`ServiceGroupIdentity`.
+    A service group is also called a port group.
 
     Accepts:
         - :class:`ServiceGroupName`: human-readable group name.
@@ -26,19 +30,19 @@ class ServiceGroupResolver(BaseResolver[ServiceGroupKey, ServiceGroupIdentity]):
     Loads via ``enterprise/getObjectGroups`` with type ``port_group``.
     """
 
-    identity_type = ServiceGroupIdentity
+    identity_type: type[ServiceGroupIdentity] = ServiceGroupIdentity
 
     @override
-    async def resolve_key(self, key: ServiceGroupKey) -> ServiceGroupIdentity:
+    def lookup_key(
+        self, key: IdentityKey[ServiceGroupIdentity]
+    ) -> ServiceGroupIdentity:
         match key:
             case ServiceGroupName(value=name):
-                return await self.resolve(name)
+                return self.lookup(name)
             case ServiceGroupId(value=v):
-                name = self._reverse["id"][v]
-                return self._by_name[name]
+                return self._by_key("id", v)
             case ServiceGroupLogicalId(value=v):
-                name = self._reverse["logical_id"][v]
-                return self._by_name[name]
+                return self._by_key("logical_id", v)
             case _:
                 raise TypeError(f"Unsupported key type: {type(key).__name__}")
 

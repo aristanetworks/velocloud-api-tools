@@ -1,3 +1,5 @@
+"""The typed ``data`` of each configuration module, re-exported from its own package."""
+
 from .common import SegmentMetadata
 from .control_plane import ControlPlaneData
 from .device_settings import (
@@ -21,7 +23,13 @@ from .device_settings import (
     RoutedInterfaceUsb,
     WanOverlay,
 )
-from .firewall import FirewallData, FirewallRefs
+from .firewall import (
+    AtpLocal,
+    FirewallData,
+    FirewallRefs,
+    NetworkProtectionLocal,
+    StatefulLocal,
+)
 from .image_update import (
     FirmwareImageUpdateData,
     ImageUpdateData,
@@ -36,6 +44,7 @@ from .qos import QosData, QosRefs
 from .wan import WanData, WanRefs
 
 __all__ = [
+    "AtpLocal",
     "ControlPlaneData",
     "DeviceSegment",
     "DeviceSettingsData",
@@ -53,6 +62,7 @@ __all__ = [
     "ManagementPlaneData",
     "ManagementPlaneProxy",
     "ManagementPlaneProxyDetail",
+    "NetworkProtectionLocal",
     "QosData",
     "QosRefs",
     "RoutedInterface",
@@ -66,6 +76,7 @@ __all__ = [
     "RoutedInterfaceSfpStandard",
     "RoutedInterfaceUsb",
     "SegmentMetadata",
+    "StatefulLocal",
     "WanData",
     "WanOverlay",
     "WanRefs",

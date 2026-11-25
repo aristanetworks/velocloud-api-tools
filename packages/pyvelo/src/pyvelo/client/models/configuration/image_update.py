@@ -1,3 +1,5 @@
+"""The ``imageUpdate`` module's data: the software, firmware and update window."""
+
 from __future__ import annotations
 
 from typing import Annotated

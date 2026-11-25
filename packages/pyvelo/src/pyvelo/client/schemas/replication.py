@@ -1,3 +1,5 @@
+"""The requests and results of the ``disasterRecovery/`` replication reads."""
+
 from typing import Annotated, Any
 
 from pydantic import MISSING

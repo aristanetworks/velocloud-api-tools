@@ -3,14 +3,17 @@
 from __future__ import annotations
 
 import json
-from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping, Sequence
-from typing import Protocol, cast
+from typing import TYPE_CHECKING, Protocol, cast
 
-import httpx
 from pydantic import MISSING, BaseModel
-from pyvelo.client import VcoClient
-from pyvelo.client.protocol import VcoClientProtocol
-from pyvelo.config.resolvers.segment import SegmentResolver
+
+if TYPE_CHECKING:
+    from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping, Sequence
+
+    import httpx
+    from pyvelo.client import VcoClient
+    from pyvelo.client.protocol import VcoClientProtocol
+    from pyvelo.config.resolvers.segment import SegmentResolver
 
 type JsonScalar = None | bool | int | float | str
 type JsonValue = JsonScalar | list[JsonValue] | dict[str, JsonValue]
@@ -22,7 +25,7 @@ class JsonRpcResponseFactory(Protocol):
         self,
         result: JsonValue = None,
         error: JsonObject | None = None,
-        id: int = 1,
+        id_: int = 1,
     ) -> JsonObject: ...
 
 
@@ -45,7 +48,7 @@ class SegmentResolverFactory(Protocol):
 
 def parse_json_object(content: bytes | str) -> JsonObject:
     """Decode a JSON object at the stdlib parser's untyped boundary."""
-    return cast(JsonObject, json.loads(content))
+    return cast("JsonObject", json.loads(content))
 
 
 class MockPaginatedClient[RequestT: BaseModel, ItemT: BaseModel]:
@@ -61,7 +64,7 @@ class MockPaginatedClient[RequestT: BaseModel, ItemT: BaseModel]:
 
     @property
     def protocol(self) -> VcoClientProtocol:
-        return cast(VcoClientProtocol, cast(object, self))
+        return cast("VcoClientProtocol", cast("object", self))
 
     async def portal_paginated(
         self, _method: str, request: RequestT, _item_type: type[ItemT]
@@ -80,7 +83,7 @@ class MockListClient[RequestT: BaseModel, ItemT: BaseModel]:
 
     @property
     def protocol(self) -> VcoClientProtocol:
-        return cast(VcoClientProtocol, cast(object, self))
+        return cast("VcoClientProtocol", cast("object", self))
 
     async def portal_list(
         self,

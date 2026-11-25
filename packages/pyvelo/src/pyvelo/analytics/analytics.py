@@ -1,10 +1,17 @@
+"""``Analytics``: the VCO's monitoring and metrics methods, each as a ``MetricFrame``.
+
+Where the VCO has one method per grouping or statistic, one call here takes
+the choice as a parameter (``FlowGroupBy``, ``FirewallType``,
+``EnterpriseFirewallType``). A ``_metrics`` call totals the interval; a
+``_series`` call gives a row per sample, with a ``timestamp``.
+"""
+
 from __future__ import annotations
 
 import typing
-import uuid
 from datetime import UTC, datetime
 from enum import StrEnum
-from typing import Any
+from typing import Any, ClassVar
 
 from pydantic import MISSING
 
@@ -36,19 +43,7 @@ from pyvelo.analytics._series import (
     denormalize_flat_series,
     denormalize_timeseries,
 )
-from pyvelo.analytics.enums import (
-    EnterpriseFirewallType,
-    FirewallType,
-    FlowGroupBy,
-    FlowMetric,
-)
 from pyvelo.analytics.frame import MetricFrame
-from pyvelo.client.enums.edge import (
-    ActivationState,
-    EdgeServiceState,
-    EdgeState,
-    HaState,
-)
 from pyvelo.client.enums.event import EventSeverity, EventType
 from pyvelo.client.enums.link_quality import QualityState, TrafficType
 from pyvelo.client.enums.metrics import (
@@ -60,6 +55,7 @@ from pyvelo.client.enums.metrics import (
     NetworkInterfaceMetric,
     NniMetric,
     NsdTunnelStatsMetric,
+    PathSeriesViewBy,
     SdwanPeerPathMetric,
     StatusMetric,
 )
@@ -108,27 +104,51 @@ from pyvelo.client.schemas.monitoring import (
     GetEnterpriseNniSeries,
 )
 from pyvelo.client.schemas.profiles import GetEnterpriseConfigurations
-from pyvelo.core import ApiInterval
 
-if __builtins__:  # type: ignore[truthy-bool]
-    from pyvelo.client.enums.metrics import PathSeriesViewBy
+if typing.TYPE_CHECKING:
+    import uuid
+
+    from pyvelo.analytics.enums import (
+        EnterpriseFirewallType,
+        FirewallType,
+        FlowGroupBy,
+        FlowMetric,
+    )
+    from pyvelo.client.enums.edge import (
+        ActivationState,
+        EdgeServiceState,
+        EdgeState,
+        HaState,
+    )
     from pyvelo.client.protocol import VcoClientProtocol
+    from pyvelo.core import ApiInterval
 
 
 class Analytics:
-    __slots__ = ("_client", "_enterprise_id")
+    """Analytics for one enterprise, read through *client*.
+
+    The ``collect_`` methods read every page of a list (events, edges,
+    configuration profiles) into one frame.
+    """
+
+    __slots__: ClassVar[tuple[str, ...]] = ("_client", "_enterprise_id")
 
     def __init__(
         self, client: VcoClientProtocol, *, enterprise_id: int | None = None
     ) -> None:
-        self._client = client
-        self._enterprise_id = enterprise_id
+        """Analytics read through *client*, for the enterprise *enterprise_id*.
+
+        *enterprise_id* is sent as ``enterpriseId`` on each request that takes one,
+        and left out when it is None.
+        """
+        self._client: VcoClientProtocol = client
+        self._enterprise_id: int | None = enterprise_id
 
     # -----------------------------------------------------------------------
     # Group 1: Edge Flow (14 methods → 2)
     # -----------------------------------------------------------------------
 
-    async def get_edge_flow_metrics(
+    async def get_edge_flow_metrics(  # noqa: PLR0913 (existing: split it when it next changes)
         self,
         edge_id: int,
         interval: ApiInterval,
@@ -140,6 +160,12 @@ class Analytics:
         filter_values: list[str | int] | None = None,
         filters: list[EnterpriseFlowMetricsFilter] | None = None,
     ) -> MetricFrame:
+        """An edge's flow totals over *interval*, one row per group of *group_by*.
+
+        *filter_values* narrows the groups to those named: applications, devices,
+        categories, destinations or segments, by the grouping. Rows the VCO puts in
+        its "other" bucket are dropped; an empty VCO result gives an empty frame.
+        """
         return await _flow_metrics(
             self._client,
             edge_id,
@@ -153,7 +179,7 @@ class Analytics:
             filters=filters,
         )
 
-    async def get_edge_flow_series(
+    async def get_edge_flow_series(  # noqa: PLR0913 (existing: split it when it next changes)
         self,
         edge_id: int,
         interval: ApiInterval,
@@ -166,6 +192,10 @@ class Analytics:
         filter_values: list[str | int] | None = None,
         filters: list[EnterpriseFlowMetricsFilter] | None = None,
     ) -> MetricFrame:
+        """An edge's flow series, one row per group of *group_by* and sample.
+
+        *filter_values* narrows the groups as in ``get_edge_flow_metrics``.
+        """
         return await _flow_series(
             self._client,
             edge_id,
@@ -184,7 +214,7 @@ class Analytics:
     # Group 2: Enterprise Flow (keep as-is)
     # -----------------------------------------------------------------------
 
-    async def get_enterprise_flow_metrics(
+    async def get_enterprise_flow_metrics(  # noqa: PLR0913 (existing: split it when it next changes)
         self,
         interval: ApiInterval,
         view_by: BasicMetricViewBy,
@@ -194,16 +224,20 @@ class Analytics:
         sort: DestMetric | None = None,
         metrics: list[DestMetric] | None = None,
     ) -> MetricFrame:
+        """The enterprise's flow totals over *interval*, one row per group of *view_by*.
+
+        An empty VCO result gives an empty frame.
+        """
         request = GetEnterpriseFlowMetrics(
             interval=interval,
             view_by=view_by,
             enterprise_id=(
                 self._enterprise_id if self._enterprise_id is not None else MISSING
             ),
-            filters=filters if filters else MISSING,
+            filters=filters or MISSING,
             limit=limit if limit is not None else MISSING,
-            sort=sort if sort else MISSING,
-            metrics=metrics if metrics else MISSING,
+            sort=sort or MISSING,
+            metrics=metrics or MISSING,
         )
         cols = [
             "name",
@@ -225,7 +259,7 @@ class Analytics:
     # Group 3: Edge Link (keep separate)
     # -----------------------------------------------------------------------
 
-    async def get_edge_link_metrics(
+    async def get_edge_link_metrics(  # noqa: PLR0913 (existing: split it when it next changes)
         self,
         edge_id: int,
         interval: ApiInterval,
@@ -235,16 +269,17 @@ class Analytics:
         sort: LinkMetric | None = None,
         links: list[int] | None = None,
     ) -> MetricFrame:
+        """An edge's traffic totals over *interval*, one row per WAN link."""
         request = GetEdgeLinkMetrics(
             edge_id=edge_id,
             interval=interval,
             enterprise_id=(
                 self._enterprise_id if self._enterprise_id is not None else MISSING
             ),
-            metrics=metrics if metrics else MISSING,
+            metrics=metrics or MISSING,
             limit=limit if limit is not None else MISSING,
-            sort=sort if sort else MISSING,
-            links=links if links else MISSING,
+            sort=sort or MISSING,
+            links=links or MISSING,
         )
         result = await self._client.get_edge_link_metrics(request)
         return items_to_frame(
@@ -261,7 +296,7 @@ class Analytics:
             ],
         )
 
-    async def get_edge_link_series(
+    async def get_edge_link_series(  # noqa: PLR0913 (existing: split it when it next changes)
         self,
         edge_id: int,
         interval: ApiInterval,
@@ -271,16 +306,20 @@ class Analytics:
         sort: LinkMetric | None = None,
         links: list[int] | None = None,
     ) -> MetricFrame:
+        """An edge's traffic series over *interval*, one row per WAN link and sample.
+
+        ``link_name`` is the link's display name, else its ISP, else its link ID.
+        """
         request = GetEdgeLinkSeries(
             edge_id=edge_id,
             interval=interval,
             enterprise_id=(
                 self._enterprise_id if self._enterprise_id is not None else MISSING
             ),
-            metrics=metrics if metrics else MISSING,
+            metrics=metrics or MISSING,
             limit=limit if limit is not None else MISSING,
-            sort=sort if sort else MISSING,
-            links=links if links else MISSING,
+            sort=sort or MISSING,
+            links=links or MISSING,
         )
         result = await self._client.get_edge_link_series(request)
         items: list[dict[str, Any]] = []
@@ -315,6 +354,13 @@ class Analytics:
         *,
         metrics: list[AggregateEdgeLinkMetric] | None = None,
     ) -> MetricFrame:
+        """The enterprise's link metrics over *interval*, one row per link.
+
+        Each row has the link's identity fields beside its metrics, the nested link
+        as ``link``, and the whole VCO item as JSON in ``details``. A link that
+        belongs to another enterprise, or whose two link IDs differ, raises
+        ``VcoOperationError``.
+        """
         return await _aggregate_link_metrics(
             self._client,
             interval,
@@ -333,13 +379,14 @@ class Analytics:
         *,
         metrics: list[NetworkInterfaceMetric] | None = None,
     ) -> MetricFrame:
+        """An edge's interface counters over *interval*, one row per interface."""
         request = GetEdgeNetworkInterfaceMetrics(
             edge_id=edge_id,
             interval=interval,
             enterprise_id=(
                 self._enterprise_id if self._enterprise_id is not None else MISSING
             ),
-            metrics=metrics if metrics else MISSING,
+            metrics=metrics or MISSING,
         )
         result = await self._client.get_edge_network_interface_metrics(request)
         return items_to_frame(
@@ -366,13 +413,14 @@ class Analytics:
         metrics: list[NetworkInterfaceMetric] | None = None,
         max_samples: int | None = None,
     ) -> MetricFrame:
+        """An edge's interface counter series, one row per interface and sample."""
         request = GetEdgeNetworkInterfaceSeries(
             edge_id=edge_id,
             interval=interval,
             enterprise_id=(
                 self._enterprise_id if self._enterprise_id is not None else MISSING
             ),
-            metrics=metrics if metrics else MISSING,
+            metrics=metrics or MISSING,
             max_samples=max_samples if max_samples is not None else MISSING,
         )
         result = await self._client.get_edge_network_interface_series(request)
@@ -390,6 +438,11 @@ class Analytics:
         *,
         metrics: list[SdwanPeerPathMetric] | None = None,
     ) -> MetricFrame:
+        """The SD-WAN paths from an edge to the peer *peer_logical_id*, a row each.
+
+        Each row has the path's status, its source and destination links, and a column
+        per metric of *metrics* (every ``SdwanPeerPathMetric`` when it is None).
+        """
         request = GetEdgeSdwanPeerPathMetrics(
             edge_id=edge_id,
             interval=interval,
@@ -397,7 +450,7 @@ class Analytics:
                 self._enterprise_id if self._enterprise_id is not None else MISSING
             ),
             peer_logical_id=peer_logical_id,
-            metrics=metrics if metrics else list(SdwanPeerPathMetric),
+            metrics=metrics or list(SdwanPeerPathMetric),
         )
         result = await self._client.get_edge_sdwan_peer_path_metrics(request)
         rows: list[dict[str, Any]] = []
@@ -427,7 +480,7 @@ class Analytics:
         ]
         return MetricFrame(columns=columns, rows=rows)
 
-    async def get_edge_path_series(
+    async def get_edge_path_series(  # noqa: PLR0913 (existing: split it when it next changes)
         self,
         edge_id: int,
         interval: ApiInterval,
@@ -438,8 +491,10 @@ class Analytics:
         metrics: list[SdwanPeerPathMetric] | None = None,
         max_samples: int | None = None,
     ) -> MetricFrame:
-        from pyvelo.client.enums.metrics import PathSeriesViewBy as PSViewBy
+        """The series of *paths* from an edge to the peer *peer_logical_id*.
 
+        The rows are grouped by *view_by*, by path when it is None.
+        """
         request = GetEdgeSdwanPeerPathSeries(
             edge_id=edge_id,
             interval=interval,
@@ -448,8 +503,8 @@ class Analytics:
             ),
             peer_logical_id=peer_logical_id,
             paths=paths,
-            metrics=metrics if metrics else list(SdwanPeerPathMetric),
-            view_by=view_by if view_by else PSViewBy.PATH,
+            metrics=metrics or list(SdwanPeerPathMetric),
+            view_by=view_by or PathSeriesViewBy.PATH,
             max_samples=max_samples if max_samples is not None else MISSING,
         )
         result = await self._client.get_edge_sdwan_peer_path_series(request)
@@ -469,7 +524,12 @@ class Analytics:
         edge_id: int | None = None,
         metrics: list[NsdTunnelStatsMetric] | None = None,
     ) -> MetricFrame:
-        metric_list = metrics if metrics else MISSING
+        """The tunnel series of the non-SD-WAN destination *nsd_logical_id*.
+
+        With *edge_id*, only that edge's tunnels. The ``tunnel`` column is the
+        tunnel's public IP; a tunnel with no series gives no rows.
+        """
+        metric_list = metrics or MISSING
 
         if edge_id is not None:
             request = GetNsdEdgeTunnelStats(
@@ -510,21 +570,25 @@ class Analytics:
     # Group 8: Edge Firewall (5 → 2)
     # -----------------------------------------------------------------------
 
-    async def get_edge_firewall_metrics(
+    async def get_edge_firewall_metrics(  # noqa: PLR0913 (existing: split it when it next changes)
         self,
         edge_id: int,
         interval: ApiInterval,
-        type: FirewallType,
+        type_: FirewallType,
         view_by: str,
         *,
         limit: int | None = None,
         sort: str | None = None,
     ) -> MetricFrame:
+        """An edge's firewall statistics of *type*, grouped by *view_by*.
+
+        *view_by* and *sort* are the values of the VCO method that *type* picks.
+        """
         return await _edge_fw_metrics(
             self._client,
             edge_id,
             interval,
-            type,
+            type_,
             view_by,
             enterprise_id=self._enterprise_id,
             limit=limit,
@@ -537,6 +601,7 @@ class Analytics:
         interval: ApiInterval,
         max_samples: int,
     ) -> MetricFrame:
+        """An edge's IDPS series over *interval*, by threat impact."""
         return await _edge_fw_series(
             self._client,
             edge_id,
@@ -552,16 +617,20 @@ class Analytics:
     async def get_enterprise_firewall_metrics(
         self,
         interval: ApiInterval,
-        type: EnterpriseFirewallType,
+        type_: EnterpriseFirewallType,
         view_by: str | None = None,
         *,
         limit: int | None = None,
         sort: str | None = None,
     ) -> MetricFrame:
+        """The enterprise's firewall statistics of *type* over *interval*.
+
+        *view_by* groups the rows, with the VCO method's own default when it is None.
+        """
         return await _ent_fw_metrics(
             self._client,
             interval,
-            type,
+            type_,
             view_by,
             enterprise_id=self._enterprise_id,
             limit=limit,
@@ -579,6 +648,7 @@ class Analytics:
         *,
         metrics: list[StatusMetric] | None = None,
     ) -> MetricFrame:
+        """An edge's status metrics over *interval*: CPU, memory, flows, tunnels."""
         return await _health_metrics(
             self._client,
             edge_id,
@@ -594,6 +664,7 @@ class Analytics:
         *,
         metrics: list[StatusMetric] | None = None,
     ) -> MetricFrame:
+        """An edge's status series over *interval*, one row per sample."""
         return await _health_series(
             self._client,
             edge_id,
@@ -613,10 +684,14 @@ class Analytics:
         *,
         metrics: list[GatewayStatusMetric] | None = None,
     ) -> MetricFrame:
+        """A gateway's status metrics over *interval*, as one row.
+
+        A metric the VCO does not give is null.
+        """
         request = GetGatewayStatusMetrics(
             gateway_id=gateway_id,
             interval=interval,
-            metrics=metrics if metrics else MISSING,
+            metrics=metrics or MISSING,
         )
         result = await self._client.get_gateway_status_metrics(request)
         row: dict[str, Any] = {}
@@ -644,10 +719,11 @@ class Analytics:
         *,
         metrics: list[GatewayStatusMetric] | None = None,
     ) -> MetricFrame:
+        """A gateway's status series over *interval*, one row per sample."""
         request = GetGatewayStatusSeries(
             gateway_id=gateway_id,
             interval=interval,
-            metrics=metrics if metrics else MISSING,
+            metrics=metrics or MISSING,
         )
         result = await self._client.get_gateway_status_series(request)
         points = result.series if result.series is not MISSING and result.series else []
@@ -666,7 +742,7 @@ class Analytics:
     # Group 12: QoE (keep as-is)
     # -----------------------------------------------------------------------
 
-    async def get_edge_qoe_series(
+    async def get_edge_qoe_series(  # noqa: C901 (existing: split it when it next changes)
         self,
         edge_id: int,
         interval: ApiInterval,
@@ -674,6 +750,12 @@ class Analytics:
         max_samples: int | None = None,
         links: list[int] | None = None,
     ) -> MetricFrame:
+        """An edge's link quality (QoE) over *interval*, one row per link and sample.
+
+        Each row has the quality before and after per traffic type
+        (``quality_before_<type>``, ``quality_after_<type>``) and the link's score per
+        traffic type (``score_<type>``).
+        """
         request = GetLinkQualityEvents(
             edge_id=edge_id,
             interval=interval,
@@ -681,7 +763,7 @@ class Analytics:
                 self._enterprise_id if self._enterprise_id is not None else MISSING
             ),
             max_samples=max_samples if max_samples is not None else MISSING,
-            links=links if links else MISSING,
+            links=links or MISSING,
         )
         result = await self._client.get_link_quality_events(request)
 
@@ -730,12 +812,13 @@ class Analytics:
         *,
         metrics: list[NniMetric] | None = None,
     ) -> MetricFrame:
+        """The enterprise's NNI counters over *interval*, one row per gateway NNI."""
         request = GetEnterpriseNniMetrics(
             enterprise_id=(
                 self._enterprise_id if self._enterprise_id is not None else MISSING
             ),
             interval=interval,
-            metrics=metrics if metrics else MISSING,
+            metrics=metrics or MISSING,
         )
         result = await self._client.get_enterprise_nni_metrics(request)
         return items_to_frame(
@@ -758,12 +841,13 @@ class Analytics:
         metrics: list[NniMetric] | None = None,
         limit: int | None = None,
     ) -> MetricFrame:
+        """The enterprise's NNI series, one row per gateway NNI and sample."""
         request = GetEnterpriseNniSeries(
             enterprise_id=(
                 self._enterprise_id if self._enterprise_id is not None else MISSING
             ),
             interval=interval,
-            metrics=metrics if metrics else MISSING,
+            metrics=metrics or MISSING,
             limit=limit if limit is not None else MISSING,
         )
         result = await self._client.get_enterprise_nni_series(request)
@@ -809,7 +893,7 @@ class Analytics:
         "enterprise_username",
     ]
 
-    async def collect_events(
+    async def collect_events(  # noqa: PLR0913 (existing: split it when it next changes)
         self,
         interval: ApiInterval,
         *,
@@ -820,6 +904,12 @@ class Analytics:
         max_items: int = 10_000,
         sort_by: list[EventSorting] | None = None,
     ) -> MetricFrame:
+        """The enterprise's events over *interval*, read page by page up to *max_items*.
+
+        *event_types* and *severity* keep the events of those types and severities,
+        and *string_filters* add filters of their own; an event must match them all.
+        *edge_ids* keeps the events of those edges.
+        """
         filters: list[
             EnterpriseEventTypeFilter
             | EnterpriseEventSeverityFilter
@@ -845,9 +935,9 @@ class Analytics:
                 self._enterprise_id if self._enterprise_id is not None else MISSING
             ),
             interval=interval,
-            edge_id=edge_ids if edge_ids else MISSING,
+            edge_id=edge_ids or MISSING,
             filters=EnterpriseEventFiltersAnd(and_=filters) if filters else MISSING,
-            sort_by=sort_by if sort_by else MISSING,
+            sort_by=sort_by or MISSING,
         )
         pages = self._client.portal_paginated(
             "event/getEnterpriseEventsList",
@@ -895,7 +985,7 @@ class Analytics:
         "site_id",
     ]
 
-    async def collect_edges(
+    async def collect_edges(  # noqa: C901, PLR0913 (existing: split it when it next changes)
         self,
         *,
         edge_state: list[EdgeState] | None = None,
@@ -943,7 +1033,7 @@ class Analytics:
             enterprise_id=(
                 self._enterprise_id if self._enterprise_id is not None else MISSING
             ),
-            edge_ids=edge_ids if edge_ids else MISSING,
+            edge_ids=edge_ids or MISSING,
             filters=EdgeFiltersAnd(and_=filters) if filters else MISSING,
         )
         pages = self._client.portal_paginated(
@@ -1002,6 +1092,11 @@ class Analytics:
         with_edge_count: bool = True,
         max_items: int | None = None,
     ) -> MetricFrame:
+        """The enterprise's configuration profiles, one row each.
+
+        With *with_edge_count*, the VCO counts each profile's edges into
+        ``edge_count``. *max_items* cuts the rows after they are read.
+        """
         with_: list[GetEnterpriseConfigurationsWith] = []
         if with_edge_count:
             with_.append(GetEnterpriseConfigurationsWith.EDGE_COUNT)
@@ -1010,7 +1105,7 @@ class Analytics:
             enterprise_id=(
                 self._enterprise_id if self._enterprise_id is not None else MISSING
             ),
-            with_=with_ if with_ else MISSING,
+            with_=with_ or MISSING,
         )
         items = await self._client.portal_list(
             "enterprise/getEnterpriseConfigurations",

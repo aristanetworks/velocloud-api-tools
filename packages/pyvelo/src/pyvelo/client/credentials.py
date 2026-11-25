@@ -24,11 +24,11 @@ def get_vco_credentials(env_file: str | Path | None = None) -> tuple[str, str]:
     """
     if env_file is not None:
         try:
-            from dotenv import load_dotenv
+            from dotenv import load_dotenv  # noqa: PLC0415 (python-dotenv is the optional dotenv extra)
         except ModuleNotFoundError as exc:
             raise ModuleNotFoundError(
                 "Loading an env file requires python-dotenv; install it with: "
-                + "pip install 'pyvelo[dotenv]'",
+                "pip install 'pyvelo[dotenv]'",
                 name="dotenv",
             ) from exc
         path = Path(env_file)
@@ -40,7 +40,15 @@ def get_vco_credentials(env_file: str | Path | None = None) -> tuple[str, str]:
     host = os.getenv("VCO_HOST")
     token = os.getenv("VCO_TOKEN")
     if not host or not token:
+        missing = [
+            name
+            for name, value in (("VCO_HOST", host), ("VCO_TOKEN", token))
+            if not value
+        ]
+        verb = "are" if len(missing) > 1 else "is"
         raise VcoCredentialsError(
-            "VCO_HOST and VCO_TOKEN environment variables are required"
+            f"{' and '.join(missing)} {verb} not set or empty. Set VCO_HOST to the "
+            "Orchestrator's hostname and VCO_TOKEN to an API token, in the "
+            "environment or in the env file given to get_vco_credentials()."
         )
     return host, token

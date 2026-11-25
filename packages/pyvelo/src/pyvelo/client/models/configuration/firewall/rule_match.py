@@ -1,18 +1,19 @@
+"""What an outbound, inbound or inbound IPv6 firewall rule matches."""
+
 from typing import Annotated, Any, override
 
 from pydantic import MISSING
 
-from pyvelo.core import Alias, VcoModel
-from pyvelo.core.fields import Normalizer, Resolvable
-from pyvelo.core.identity import ApplicationIdentity
-
-from ..common import (
+from pyvelo.client.models.configuration.common import (
     AddressGroupRef,
     AddressType,
     RuleMatchType,
     ServiceGroupRef,
     VlanType,
 )
+from pyvelo.core import Alias, VcoModel
+from pyvelo.core.fields import Normalizer, Resolvable
+from pyvelo.core.identity import ApplicationIdentity
 
 
 def _subnet_mask_normalizer(v: Any) -> Any:
@@ -60,7 +61,7 @@ class OutboundRuleMatch(VcoModel):
 
     # Application and traffic classification
     application_id: Annotated[
-        int, Alias("appid"), Resolvable(ApplicationIdentity, "id")
+        int, Alias("appid"), Resolvable(ApplicationIdentity, lambda i: i.id)
     ] = -1
     application_class_id: Annotated[int, Alias("classid")] = -1
     dscp: int = -1
@@ -91,7 +92,7 @@ class OutboundRuleMatch(VcoModel):
     source_port_group: Annotated[ServiceGroupRef, Alias("sPortGroup")] = MISSING
     destination_port_group: Annotated[ServiceGroupRef, Alias("dPortGroup")] = MISSING
 
-    vlan_type: VlanType = "end-to-end"
+    vlan_type: Annotated[VlanType, Alias("vlan_type")] = "end-to-end"
 
 
 class InboundRuleMatch(VcoModel):
@@ -111,7 +112,7 @@ class InboundRuleMatch(VcoModel):
 
     # Application classification
     application_id: Annotated[
-        int, Alias("appid"), Resolvable(ApplicationIdentity, "id")
+        int, Alias("appid"), Resolvable(ApplicationIdentity, lambda i: i.id)
     ] = -1
     application_class_id: Annotated[int, Alias("classid")] = -1
     dscp: int = -1
@@ -145,7 +146,7 @@ class InboundRuleMatchV6(VcoModel):
 
     # Application classification
     application_id: Annotated[
-        int, Alias("appid"), Resolvable(ApplicationIdentity, "id")
+        int, Alias("appid"), Resolvable(ApplicationIdentity, lambda i: i.id)
     ] = -1
     application_class_id: Annotated[int, Alias("classid")] = -1
     dscp: int = -1

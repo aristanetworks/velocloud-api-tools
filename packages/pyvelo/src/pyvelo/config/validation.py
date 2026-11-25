@@ -1,4 +1,7 @@
-"""Validation framework: types, registry, and decorator for incremental config validation."""
+"""Validation framework: types, registry, and decorator.
+
+They are for incremental config validation.
+"""
 
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -11,9 +14,8 @@ from pyvelo.client.enums.configuration import ConfigurationModuleName
 class ConfigStateLike(Protocol):
     """Minimal protocol for the state object validators read.
 
-    Concrete validator implementations live in consumer packages
-    (e.g. ``pyvelo_intent.config.state.ConfigState``); this protocol keeps
-    the framework decoupled from any specific implementation.
+    The pipeline's state is ``pyvelo.config.state.ConfigState``; this protocol
+    keeps the framework decoupled from any specific implementation.
 
     ``target_type`` is exposed as a read-only ``@property`` so that concrete
     states may narrow it to a ``Literal[...]`` (e.g. ``"edge" | "profile"``).
@@ -22,7 +24,9 @@ class ConfigStateLike(Protocol):
     """
 
     @property
-    def target_type(self) -> str: ...
+    def target_type(self) -> str:
+        """What the state is of, such as ``"edge"`` or ``"profile"``."""
+        ...
 
     edge_config: Any
     profile_config: Any
@@ -47,6 +51,7 @@ class ValidationResult:
 
     @property
     def is_valid(self) -> bool:
+        """Whether no validator reported an error; warnings do not count."""
         return len(self.errors) == 0
 
     def merge(self, other: "ValidationResult") -> None:
@@ -61,18 +66,21 @@ class Validator(Protocol):
 
     phases: list[str]
     modules: list[ConfigurationModuleName]
-    aspect: str | None
 
-    def validate(self, state: ConfigStateLike) -> ValidationResult: ...
+    def validate(self, state: ConfigStateLike) -> ValidationResult:
+        """The errors and warnings this validator finds in *state*."""
+        ...
 
 
 class ValidatorRegistry:
     """Registry for validators, with phase/module-scoped execution."""
 
     def __init__(self) -> None:
+        """A registry with no validators."""
         self._validators: list[Validator] = []
 
     def register(self, v: Validator) -> None:
+        """Add *v*, after the validators already registered; ``run`` keeps the order."""
         self._validators.append(v)
 
     def run(
@@ -104,7 +112,6 @@ class _DecoratedValidator:
 
     phases: list[str]
     modules: list[ConfigurationModuleName]
-    aspect: str | None
     _fn: Callable[[ConfigStateLike], ValidationResult]
 
     def validate(self, state: ConfigStateLike) -> ValidationResult:
@@ -116,7 +123,6 @@ def validator(
     module: ConfigurationModuleName | None = None,
     modules: list[ConfigurationModuleName] | None = None,
     phases: list[str],
-    aspect: str | None = None,
     registry: ValidatorRegistry | None = None,
 ) -> Callable[[Callable[[ConfigStateLike], ValidationResult]], _DecoratedValidator]:
     """Decorator to create and optionally register a validator from a function.
@@ -138,7 +144,6 @@ def validator(
         v = _DecoratedValidator(
             phases=phases,
             modules=resolved_modules,
-            aspect=aspect,
             _fn=fn,
         )
         if registry is not None:

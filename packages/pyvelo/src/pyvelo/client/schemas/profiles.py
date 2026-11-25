@@ -1,3 +1,8 @@
+"""The profile requests: list an enterprise's profiles, create one, and read one.
+
+``CreateProfile`` is sent as ``configuration/cloneEnterpriseTemplate``.
+"""
+
 from typing import Annotated
 
 from pydantic import MISSING, Field
@@ -30,5 +35,5 @@ class CreateProfileResult(VcoModel):
 
 class GetConfiguration(VcoModel):
     enterprise_id: int | MISSING = MISSING
-    id_: Annotated[int, Alias("id"), Resolvable(ProfileIdentity, "id")]
+    id_: Annotated[int, Alias("id"), Resolvable(ProfileIdentity, lambda i: i.id)]
     with_: Annotated[list[GetConfigurationWith] | MISSING, Alias("with")] = MISSING

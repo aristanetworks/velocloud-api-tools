@@ -1,6 +1,6 @@
 """Tests for typed module accessors and mutable_data on configuration classes."""
 
-import datetime
+import datetime as dt
 from uuid import UUID
 
 import pytest
@@ -10,21 +10,16 @@ from pyvelo.client.enums.configuration import (
     ConfigurationModuleType,
 )
 from pyvelo.client.enums.enterprise import NetworkSegmentType
+from pyvelo.client.models.configuration.common import SegmentMetadata
 from pyvelo.client.models.configuration.device_settings.lan import LanSettings
 from pyvelo.client.models.configuration.device_settings.root import DeviceSettingsData
 from pyvelo.client.models.configuration.device_settings.segment import (
     DeviceSegment,
 )
-from pyvelo.client.models.configuration.device_settings.segment import (
-    SegmentMetadata as DsSegmentMetadata,
-)
 from pyvelo.client.models.configuration.firewall.root import FirewallData
 from pyvelo.client.models.configuration.qos.root import QosData
 from pyvelo.client.models.configuration.qos.segment import (
     QosSegment,
-)
-from pyvelo.client.models.configuration.qos.segment import (
-    SegmentMetadata as QosSegmentMetadata,
 )
 from pyvelo.client.models.configuration.wan.root import WanData
 from pyvelo.client.schemas.configuration import (
@@ -36,13 +31,14 @@ from pyvelo.client.schemas.configuration import (
     QosConfigurationModule,
     WanConfigurationModule,
 )
+from pyvelo.core.layers import Edge
 
-_NOW = datetime.datetime.now(tz=datetime.UTC)
+_NOW = dt.datetime.now(tz=dt.UTC)
 
 
 def _make_ds_module() -> DeviceSettingsConfigurationModule:
     seg = DeviceSegment(
-        segment=DsSegmentMetadata(
+        segment=SegmentMetadata(
             segment_id=0, name="Global Segment", type_=NetworkSegmentType.REGULAR
         )
     )
@@ -64,16 +60,16 @@ def _make_ds_module() -> DeviceSettingsConfigurationModule:
     )
 
 
-def _make_qos_module() -> QosConfigurationModule:
-    seg = QosSegment(
-        segment=QosSegmentMetadata(
+def _make_qos_module() -> QosConfigurationModule[Edge]:
+    seg = QosSegment[Edge](
+        segment=SegmentMetadata(
             segment_id=0,
             name="Global Segment",
             type_=NetworkSegmentType.REGULAR,
             segment_logical_id=UUID("00000000-0000-0000-0000-000000000000"),
         )
     )
-    return QosConfigurationModule(
+    return QosConfigurationModule[Edge](
         created=_NOW,
         modified=_NOW,
         id_=101,
@@ -84,12 +80,12 @@ def _make_qos_module() -> QosConfigurationModule:
         schema_version="1.0",
         version="1.0",
         metadata=None,
-        data=QosData(segments=[seg]),
+        data=QosData[Edge](segments=[seg]),
     )
 
 
-def _make_firewall_module() -> FirewallConfigurationModule:
-    return FirewallConfigurationModule(
+def _make_firewall_module() -> FirewallConfigurationModule[Edge]:
+    return FirewallConfigurationModule[Edge](
         created=_NOW,
         modified=_NOW,
         id_=102,
@@ -100,7 +96,7 @@ def _make_firewall_module() -> FirewallConfigurationModule:
         schema_version="1.0",
         version="1.0",
         metadata=None,
-        data=FirewallData(),
+        data=FirewallData[Edge](),
     )
 
 
@@ -121,7 +117,7 @@ def _make_wan_module() -> WanConfigurationModule:
 
 
 def _make_edge_config(
-    modules: list[AnyConfigurationModule] | None = None,
+    modules: list[AnyConfigurationModule[Edge]] | None = None,
 ) -> EdgeConfiguration:
     return EdgeConfiguration(
         name="Edge Specific Profile",
@@ -130,51 +126,51 @@ def _make_edge_config(
 
 
 class TestModuleAccessors:
-    def test_device_settings_property(self):
+    def test_device_settings_property(self) -> None:
         ds = _make_ds_module()
         config = _make_edge_config([ds])
         result = config.device_settings
         assert isinstance(result, DeviceSettingsConfigurationModule)
         assert result.id_ == 100
 
-    def test_qos_property(self):
+    def test_qos_property(self) -> None:
         qos = _make_qos_module()
         config = _make_edge_config([qos])
         result = config.qos
         assert isinstance(result, QosConfigurationModule)
         assert result.id_ == 101
 
-    def test_firewall_property(self):
+    def test_firewall_property(self) -> None:
         fw = _make_firewall_module()
         config = _make_edge_config([fw])
         result = config.firewall
         assert isinstance(result, FirewallConfigurationModule)
         assert result.id_ == 102
 
-    def test_wan_property(self):
+    def test_wan_property(self) -> None:
         wan = _make_wan_module()
         config = _make_edge_config([wan])
         result = config.wan
         assert isinstance(result, WanConfigurationModule)
         assert result.id_ == 103
 
-    def test_get_module_string(self):
+    def test_get_module_string(self) -> None:
         ds = _make_ds_module()
         config = _make_edge_config([ds])
         result = config.get_module(ConfigurationModuleName.DEVICE_SETTINGS)
         assert result.id_ == 100
 
-    def test_missing_module_raises(self):
+    def test_missing_module_raises(self) -> None:
         config = _make_edge_config([_make_ds_module()])
         with pytest.raises(ValueError, match="Module 'QOS' not found"):
             _ = config.qos
 
-    def test_missing_modules_raises(self):
+    def test_missing_modules_raises(self) -> None:
         config = _make_edge_config()
         with pytest.raises(ValueError, match="Configuration has no modules"):
             _ = config.device_settings
 
-    def test_works_on_enterprise_profile(self):
+    def test_works_on_enterprise_profile(self) -> None:
         ds = _make_ds_module()
         profile = EnterpriseConfigurationProfile(name="Default", modules=[ds])
         result = profile.device_settings
@@ -182,30 +178,30 @@ class TestModuleAccessors:
 
 
 class TestMutableData:
-    def test_deep_copy_is_independent(self):
+    def test_deep_copy_is_independent(self) -> None:
         ds = _make_ds_module()
         data_copy = ds.mutable_data()
         data_copy.segments.clear()
         assert len(ds.data.segments) == 1
 
-    def test_qos_mutable_data(self):
+    def test_qos_mutable_data(self) -> None:
         qos = _make_qos_module()
         data_copy = qos.mutable_data()
         assert isinstance(data_copy, QosData)
         data_copy.segments.clear()
         assert len(qos.data.segments) == 1
 
-    def test_firewall_mutable_data(self):
+    def test_firewall_mutable_data(self) -> None:
         fw = _make_firewall_module()
         data_copy = fw.mutable_data()
         assert isinstance(data_copy, FirewallData)
 
-    def test_wan_mutable_data(self):
+    def test_wan_mutable_data(self) -> None:
         wan = _make_wan_module()
         data_copy = wan.mutable_data()
         assert isinstance(data_copy, WanData)
 
-    def test_missing_fields_survive_deepcopy(self):
+    def test_missing_fields_survive_deepcopy(self) -> None:
         ds = _make_ds_module()
         data_copy = ds.mutable_data()
         assert data_copy.ntp_server is MISSING

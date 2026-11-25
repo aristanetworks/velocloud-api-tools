@@ -1,4 +1,7 @@
-"""ApplicationResolver — resolves application names to ApplicationIdentity via VCO API."""
+"""ApplicationResolver — resolves application names to ApplicationIdentity.
+
+Resolution is via the VCO API.
+"""
 
 from typing import override
 
@@ -6,31 +9,34 @@ from pydantic import MISSING
 
 from pyvelo.client.schemas.configuration import GetRoutableApplications
 from pyvelo.config.resolver import BaseResolver, ResolverContext
-from pyvelo.core.identity import ApplicationId, ApplicationIdentity, ApplicationName
+from pyvelo.core.identity import (
+    ApplicationId,
+    ApplicationIdentity,
+    ApplicationName,
+    IdentityKey,
+)
 
-ApplicationKey = ApplicationName | ApplicationId
 
-
-class ApplicationResolver(BaseResolver[ApplicationKey, ApplicationIdentity]):
+class ApplicationResolver(BaseResolver[ApplicationIdentity]):
     """Resolves an application identifier to an :class:`ApplicationIdentity`.
 
     Accepts:
-        - :class:`ApplicationName`: human-readable application name (display or canonical).
+        - :class:`ApplicationName`: human-readable application name (display or
+          canonical).
         - :class:`ApplicationId`: numeric application ID.
 
     Loads via ``configuration/getIdentifiableApplications``.
     """
 
-    identity_type = ApplicationIdentity
+    identity_type: type[ApplicationIdentity] = ApplicationIdentity
 
     @override
-    async def resolve_key(self, key: ApplicationKey) -> ApplicationIdentity:
+    def lookup_key(self, key: IdentityKey[ApplicationIdentity]) -> ApplicationIdentity:
         match key:
             case ApplicationName(value=name):
-                return await self.resolve(name)
+                return self.lookup(name)
             case ApplicationId(value=v):
-                name = self._reverse["id"][v]
-                return self._by_name[name]
+                return self._by_key("id", v)
             case _:
                 raise TypeError(f"Unsupported key type: {type(key).__name__}")
 
@@ -49,16 +55,12 @@ class ApplicationResolver(BaseResolver[ApplicationKey, ApplicationIdentity]):
         apps = result.all.applications or []
         for app in apps:
             display = app.display_name
-            if display is MISSING or display is None:
+            if display is MISSING or display is None:  # pyright: ignore[reportUnnecessaryComparison]  # ApplicationItem requires it; a client whose apps lack it falls back to the name
                 display = app.name
-            if display is MISSING or display is None:
+            if display is MISSING:
                 continue
 
-            app_id_raw = app.id_
-            if app_id_raw is MISSING or app_id_raw is None:
-                continue
-
-            app_id = app_id_raw
+            app_id = app.id_
             identity = ApplicationIdentity(name=display, id=app_id)
             self._register(display, identity, id=app_id)
             self._reverse.setdefault("name", {})[display] = display

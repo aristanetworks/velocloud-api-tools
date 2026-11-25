@@ -1,6 +1,9 @@
+"""The request and result models of the VCO API methods, re-exported by API area."""
+
 from pyvelo.client.schemas.configuration import (
     EMPTY_EDGE_MODULE_DATA,
     AnyConfigurationModule,
+    AnyStoredModule,
     Configuration,
     ConfigurationBase,
     ConfigurationModuleBase,
@@ -71,6 +74,7 @@ from pyvelo.client.schemas.enterprise import (
     EnableClusterHub,
     EnableClusterToEdgeBridge,
     EnterpriseServiceBase,
+    EnterpriseServiceSummary,
     GenericService,
     GetEnterpriseCustomApps,
     GetEnterpriseEdgeList,
@@ -160,6 +164,7 @@ __all__ = [
     "AnyConfigurationModule",
     "AnyEnterpriseService",
     "AnyObjectGroup",
+    "AnyStoredModule",
     "AuthenticationService",
     "BgpFilterActionConfig",
     "BgpFilterActionValue",
@@ -223,6 +228,7 @@ __all__ = [
     "EnterpriseFlowMetricsFilter",
     "EnterpriseFlowMetricsItem",
     "EnterpriseServiceBase",
+    "EnterpriseServiceSummary",
     "EventSorting",
     "FirewallConfigurationModule",
     "GeneratedCertificate",

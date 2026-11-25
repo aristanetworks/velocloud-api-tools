@@ -1,15 +1,17 @@
+"""The Edge services the firewall allows: SSH, SNMP, the local UI, ICMP, the console."""
+
 from typing import Annotated
 
 from pydantic import MISSING
 
-from pyvelo.core import Alias, VcoModel
+from pyvelo.core import Alias, ServerOwned, VcoModel
 
 
 class FirewallServicesGroup(VcoModel):
     enabled: bool
     allow_selected_ip: list[str] | MISSING = MISSING
     allow_selected_ip_v6: list[str] | MISSING = MISSING
-    rule_logical_id: str | None = None
+    rule_logical_id: Annotated[str | None | MISSING, ServerOwned()] = MISSING
 
 
 class LocalUiService(VcoModel):
@@ -17,12 +19,12 @@ class LocalUiService(VcoModel):
     allow_selected_ip: list[str] | MISSING = MISSING
     allow_selected_ip_v6: list[str] | MISSING = MISSING
     port_number: int | MISSING = MISSING
-    rule_logical_id: str | None = None
+    rule_logical_id: Annotated[str | None | MISSING, ServerOwned()] = MISSING
 
 
 class ConsoleService(VcoModel):
     enabled: bool
-    rule_logical_id: str | None = None
+    rule_logical_id: Annotated[str | None | MISSING, ServerOwned()] = MISSING
 
 
 class FirewallServices(VcoModel):

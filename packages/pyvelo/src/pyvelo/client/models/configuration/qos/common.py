@@ -1,3 +1,5 @@
+"""The route, link, service class, priority and transport types of QoS rules."""
+
 from typing import Literal
 
 # Routing types

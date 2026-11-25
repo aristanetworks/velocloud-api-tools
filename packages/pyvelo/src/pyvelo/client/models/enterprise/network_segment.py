@@ -1,3 +1,5 @@
+"""An enterprise network segment's data: its segment ID, delegation and service VLAN."""
+
 from pyvelo.core import VcoModel
 
 

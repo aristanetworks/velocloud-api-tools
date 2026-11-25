@@ -1,11 +1,24 @@
+"""A segment of the ``QOS`` module: its rules, defaults, CoS mapping and web proxy."""
+
 from typing import Annotated, Any
 
 from pydantic import MISSING, Field
 
-from pyvelo.core import EdgeOnly, VcoModel
-from pyvelo.core.fields import KeyField, OverrideFlag
+from pyvelo.client.models.configuration.common import SegmentMetadata
+from pyvelo.core import (
+    Additive,
+    ByFlag,
+    Default,
+    Inheritable,
+    Layered,
+    ProfileOnly,
+    Unconverted,
+    VcoModel,
+    kind_default,
+)
+from pyvelo.core.fields import FixedList, KeyField
+from pyvelo.core.layers import L
 
-from ..common import SegmentMetadata
 from .common import CosMappingInputType
 from .rule import QosRule
 
@@ -46,32 +59,34 @@ class CosMapping(VcoModel):
         )
     )
     ls_input_type: CosMappingInputType = "weight"
-    override: Annotated[bool, OverrideFlag] = False
+    override: bool = False
 
 
 class WebProxy(VcoModel):
     providers: list[Any] = Field(default_factory=list)
 
 
-class QosSegment(VcoModel):
+class QosSegment(Layered[L]):
+    """A segment of the QoS module.
+
+    ``rules`` are the edge's own, with the profile's after them in the effective
+    view. ``defaults`` belong to the profile layer. ``cos_mapping`` is local when
+    the edge stores it with ``override`` true; the composer takes a stored object
+    whatever its flag. ``web_proxy`` is not converted yet.
+    """
+
     segment: SegmentMetadata
-    rules: Annotated[list[QosRule], KeyField("name")] = Field(default_factory=list)
-
-    # Present on both profile QOS and the edge overlay insert (empty list on
-    # overlay). Not ProfileOnly: the UI sends defaults=[] when creating the
-    # edge module.
-    defaults: Annotated[list[QosRule] | MISSING, KeyField("name")] = MISSING
-    cos_mapping: CosMapping | MISSING = MISSING
-
-    # Edge overlay insert: profile catalog lives here, not in ``rules``.
-    inherited_rules: Annotated[list[QosRule] | MISSING, EdgeOnly, KeyField("name")] = (
-        MISSING
-    )
-    inherited_defaults: Annotated[
-        list[QosRule] | MISSING, EdgeOnly, KeyField("name")
-    ] = MISSING
-    # Sibling of cosMapping in the UI insert payload. Not OverrideFlag: adding
-    # a business-policy rule must not flip this to True.
-    cos_mapping_override: Annotated[bool | MISSING, EdgeOnly] = MISSING
-
-    web_proxy: WebProxy | MISSING = MISSING
+    rules: Annotated[
+        Additive[list[QosRule]], KeyField("name", alt="rule_logical_id")
+    ] = kind_default(factory=list)
+    defaults: Annotated[
+        ProfileOnly[list[QosRule] | MISSING],
+        KeyField("name", alt="rule_logical_id"),
+        FixedList(editable=("action",)),
+    ] = kind_default(MISSING)
+    cos_mapping: Annotated[
+        Inheritable[CosMapping],
+        ByFlag("override", presence_wins=True),
+        Default(factory=CosMapping),
+    ] = Field(default=...)
+    web_proxy: Unconverted[WebProxy | MISSING] = kind_default(MISSING)

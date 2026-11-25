@@ -6,7 +6,7 @@ from pyvelo.client.models.configuration.device_settings.interface_specs import (
     MODEL_INTERFACE_TEMPLATES,
 )
 from pyvelo.client.models.configuration.device_settings.root import ModelInterfaces
-from pyvelo.core.base import ConfigContext
+from pyvelo.core.fields import ConfigContext
 
 
 def synthesize_model_interfaces(model_class: str) -> ModelInterfaces | None:

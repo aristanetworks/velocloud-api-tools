@@ -1,10 +1,14 @@
+"""The ``firewall`` module's data, re-exported from its submodules."""
+
+from pyvelo.client.models.configuration.common import SegmentMetadata
+
 from .common import (
     FirewallInboundRuleActionType,
     FirewallRuleAction,
     SecurityFeatureAction,
 )
 from .refs import FirewallRefs
-from .root import FirewallData
+from .root import AtpLocal, FirewallData, NetworkProtectionLocal, StatefulLocal
 from .rule_action import InboundNatSettings, InboundRuleAction, OutboundRuleAction
 from .rule_match import InboundRuleMatch, InboundRuleMatchV6, OutboundRuleMatch
 from .rules import FirewallInboundRule, FirewallInboundRuleV6, FirewallOutboundRule
@@ -15,7 +19,7 @@ from .security_features import (
     SecurityFeatureSettings,
     TcpBasedAttacks,
 )
-from .segment import FirewallSegment, SegmentMetadata
+from .segment import FirewallSegment
 from .services import (
     ConsoleService,
     FirewallServices,
@@ -25,6 +29,7 @@ from .services import (
 from .stateful import StatefulFirewallSettings
 
 __all__ = [
+    "AtpLocal",
     "ConsoleService",
     "FirewallData",
     "FirewallInboundRule",
@@ -43,6 +48,7 @@ __all__ = [
     "InboundRuleMatchV6",
     "IpBasedAttacks",
     "LocalUiService",
+    "NetworkProtectionLocal",
     "NetworkProtectionSettings",
     "OutboundRuleAction",
     "OutboundRuleMatch",
@@ -50,5 +56,6 @@ __all__ = [
     "SecurityFeatureSettings",
     "SegmentMetadata",
     "StatefulFirewallSettings",
+    "StatefulLocal",
     "TcpBasedAttacks",
 ]

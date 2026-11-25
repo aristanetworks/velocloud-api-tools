@@ -1,5 +1,11 @@
+"""The requests and results of the ``firewall/`` methods.
+
+Firewall logs and their filters, firewall rules, and the malicious IP and URL
+filtering categories.
+"""
+
 import uuid
-from typing import Annotated, Any, Self
+from typing import Annotated, Any, ClassVar, Self
 
 from pydantic import MISSING, ConfigDict, RootModel, model_validator
 
@@ -34,7 +40,9 @@ class GetEnterpriseFirewallLogs(VcoModel):
     enterprise_id: int | MISSING = MISSING
     interval: GetEnterpriseFirewallLogsInterval
     filter: GetEnterpriseFirewallLogsFilter | MISSING = MISSING
-    edge_id: Annotated[int | MISSING, Resolvable(EdgeIdentity, "id")] = MISSING
+    edge_id: Annotated[int | MISSING, Resolvable(EdgeIdentity, lambda i: i.id)] = (
+        MISSING
+    )
     rules: list[str] | MISSING = MISSING
     source_ips: list[str] | MISSING = MISSING
     dest_ips: list[str] | MISSING = MISSING
@@ -55,7 +63,7 @@ class GetEnterpriseFirewallLogsList(PaginatedVcoModel):
 
 
 class GetEnterpriseFirewallLogsListItem(VcoModel):
-    model_config = ConfigDict(extra="allow")
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="allow")
 
 
 class GetEnterpriseFirewallRules(VcoModel):
@@ -83,11 +91,11 @@ class FirewallRuleEntry(VcoModel):
     name: str | None | MISSING = MISSING
     data: str | None | MISSING = MISSING
     edge_logical_id: Annotated[
-        uuid.UUID | None | MISSING, Resolvable(EdgeIdentity, "logical_id")
+        uuid.UUID | None | MISSING, Resolvable(EdgeIdentity, lambda i: i.logical_id)
     ] = MISSING
     enterprise_id: int | None | MISSING = MISSING
     segment_object_id: Annotated[
-        int | None | MISSING, Resolvable(SegmentIdentity, "object_id")
+        int | None | MISSING, Resolvable(SegmentIdentity, lambda i: i.object_id)
     ] = MISSING
     segment_name: str | None | MISSING = MISSING
 

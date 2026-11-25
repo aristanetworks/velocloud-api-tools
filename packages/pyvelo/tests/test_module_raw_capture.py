@@ -16,6 +16,8 @@ from pyvelo.client.schemas.configuration import (
     QosConfigurationModule,
     new_edge_module,
 )
+from pyvelo.core import Owned
+from pyvelo.core.layers import Edge
 from pyvelo.testing import make_module_json
 
 FW_RAW = {
@@ -31,12 +33,12 @@ FW_RAW = {
 }
 
 
-def test_capture_from_json_through_the_discriminated_union():
+def test_capture_from_json_through_the_discriminated_union() -> None:
     rows = [
         make_module_json("firewall", FW_RAW),
         make_module_json("QOS", {"segments": []}, module_id=2),
     ]
-    modules = ConfigurationModuleList.model_validate_json(json.dumps(rows)).root
+    modules = ConfigurationModuleList[Edge].model_validate_json(json.dumps(rows)).root
     assert isinstance(modules[0], FirewallConfigurationModule)
     assert modules[0].raw_data == FW_RAW
     assert modules[0].raw_mode == "json"
@@ -45,7 +47,7 @@ def test_capture_from_json_through_the_discriminated_union():
     assert isinstance(modules[1], QosConfigurationModule)
 
 
-def test_capture_from_python_dicts_is_a_copy():
+def test_capture_from_python_dicts_is_a_copy() -> None:
     row = make_module_json("firewall", copy.deepcopy(FW_RAW))
     cfg = EdgeConfiguration.model_validate(
         {"name": "Edge Specific Profile", "modules": [row]}
@@ -55,21 +57,21 @@ def test_capture_from_python_dicts_is_a_copy():
     assert cfg.firewall.raw_mode == "python"
 
 
-def test_keyword_construction_snapshots_its_own_dump():
-    data = FirewallData(segments=[])
-    mod = FirewallConfigurationModule.model_validate(
+def test_keyword_construction_snapshots_its_own_dump() -> None:
+    data = FirewallData[Edge](segments=[], firewall_enabled=Owned(True))
+    mod = FirewallConfigurationModule[Edge].model_validate(
         {**make_module_json("firewall", {}), "data": data}
     )
     assert mod.raw_data == data.model_dump(mode="json", by_alias=True)
-    data.firewall_enabled = False
+    data.firewall_enabled.set_local(False)
     assert isinstance(mod.raw_data, dict)
     assert mod.raw_data["firewall_enabled"] is True
 
 
-def test_models_nested_in_plain_containers_are_dumped_to_json():
-    segment = FirewallSegment(segment=SegmentMetadata(name="Global Segment"))
+def test_models_nested_in_plain_containers_are_dumped_to_json() -> None:
+    segment = FirewallSegment[Edge](segment=SegmentMetadata(name="Global Segment"))
     dumped = segment.model_dump(mode="json", by_alias=True)
-    mod = FirewallConfigurationModule.model_validate(
+    mod = FirewallConfigurationModule[Edge].model_validate(
         make_module_json("firewall", {"segments": [segment]})
     )
     assert mod.raw_data == {"segments": [dumped]}
@@ -77,9 +79,9 @@ def test_models_nested_in_plain_containers_are_dumped_to_json():
     assert mod.data.segments[0].segment.name == "Global Segment"
 
 
-def test_unserializable_input_still_reports_the_field_error():
+def test_unserializable_input_still_reports_the_field_error() -> None:
     with pytest.raises(ValidationError) as exc:
-        FirewallConfigurationModule.model_validate(
+        FirewallConfigurationModule[Edge].model_validate(
             make_module_json("firewall", {"segments": [object()]})
         )
     (error,) = exc.value.errors()
@@ -87,15 +89,15 @@ def test_unserializable_input_still_reports_the_field_error():
     assert error["loc"] == ("data", "segments", 0)
 
 
-def test_explicit_missing_refs_is_captured_as_missing():
+def test_explicit_missing_refs_is_captured_as_missing() -> None:
     row = {**make_module_json("QOS", {"segments": []}), "refs": MISSING}
-    mod = QosConfigurationModule.model_validate(row)
+    mod = QosConfigurationModule[Edge].model_validate(row)
     assert mod.raw_refs is MISSING
     assert mod.raw_data == {"segments": []}
 
 
-def test_round_trip_through_dict_of_a_module_keeps_raw_data():
-    mod = QosConfigurationModule.model_validate(
+def test_round_trip_through_dict_of_a_module_keeps_raw_data() -> None:
+    mod = QosConfigurationModule[Edge].model_validate(
         make_module_json("QOS", {"segments": []})
     )
     again = type(mod).model_validate(dict(mod))
@@ -104,8 +106,8 @@ def test_round_trip_through_dict_of_a_module_keeps_raw_data():
     assert again.raw_mode == "python"
 
 
-def test_existing_instance_keeps_its_snapshot():
-    mod = FirewallConfigurationModule.model_validate(
+def test_existing_instance_keeps_its_snapshot() -> None:
+    mod = FirewallConfigurationModule[Edge].model_validate(
         make_module_json("firewall", FW_RAW)
     )
     cfg = EdgeConfiguration(name="Edge Specific Profile", modules=[mod])
@@ -116,12 +118,13 @@ def test_existing_instance_keeps_its_snapshot():
     assert rebuilt.firewall.raw_data == FW_RAW
 
 
-def test_capture_tolerates_missing_and_untyped():
+def test_capture_tolerates_missing_and_untyped() -> None:
     row = make_module_json("firewall", {})
     del row["data"]
     bare = ConfigurationModuleBase.model_validate(row)
-    assert bare.raw_data is MISSING and bare.raw_refs is MISSING
-    qos = QosConfigurationModule.model_validate(
+    assert bare.raw_data is MISSING
+    assert bare.raw_refs is MISSING
+    qos = QosConfigurationModule[Edge].model_validate(
         make_module_json("QOS", {"segments": []}, refs={})
     )
     assert qos.raw_refs == {}
@@ -131,7 +134,7 @@ def test_capture_tolerates_missing_and_untyped():
     assert generic.raw_data == {"anything": [1]}
 
 
-def test_new_edge_module():
+def test_new_edge_module() -> None:
     mod = new_edge_module(ConfigurationModuleName.FIREWALL, configuration_id=10)
     assert isinstance(mod, FirewallConfigurationModule)
     assert (mod.is_new, mod.raw_data, mod.configuration_id) == (

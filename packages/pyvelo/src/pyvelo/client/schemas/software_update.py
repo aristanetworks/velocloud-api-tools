@@ -1,3 +1,5 @@
+"""The requests and result of the ``softwareUpdate/`` software and firmware lists."""
+
 from typing import Annotated, Any
 
 from pydantic import MISSING

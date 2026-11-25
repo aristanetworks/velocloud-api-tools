@@ -1,3 +1,9 @@
+"""Edge field names, Edge and link states, HA modes and ``with`` options.
+
+``device_family_for_model`` maps an Edge model name or alias to the device family that
+keys ``deviceSettings.data.models`` in a profile.
+"""
+
 from enum import StrEnum
 from typing import TypedDict
 

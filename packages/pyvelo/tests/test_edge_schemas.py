@@ -30,16 +30,17 @@ from pyvelo.client.schemas.edge import (
     GetHaInterfaces,
 )
 from pyvelo.core import PaginatedVcoModel, VcoModel
+from pyvelo.core.layers import Composed
 
 from ._type_support import JsonObject, require_present
 
 
 class TestGetEdgeSdwanPeersNotPaginated:
-    def test_base_class(self):
+    def test_base_class(self) -> None:
         assert issubclass(GetEdgeSdwanPeers, VcoModel)
         assert not issubclass(GetEdgeSdwanPeers, PaginatedVcoModel)
 
-    def test_schema_has_no_next_page_link(self):
+    def test_schema_has_no_next_page_link(self) -> None:
         schema = GetEdgeSdwanPeers.model_json_schema()
         assert "nextPageLink" not in schema.get("properties", {})
 
@@ -47,20 +48,20 @@ class TestGetEdgeSdwanPeersNotPaginated:
 class TestGetHaInterfacesRole:
     _EDGE_UUID: ClassVar[str] = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
 
-    def test_role_accepts_enum_value(self):
+    def test_role_accepts_enum_value(self) -> None:
         obj = GetHaInterfaces.model_validate(
             {"edgeLogicalId": self._EDGE_UUID, "role": "ACTIVE"}
         )
         assert obj.role == HaRole.ACTIVE
 
-    def test_role_rejects_invalid_value(self):
+    def test_role_rejects_invalid_value(self) -> None:
         with pytest.raises(ValidationError):
             _ = GetHaInterfaces.model_validate(
                 {"edgeLogicalId": self._EDGE_UUID, "role": "INVALID"}
             )
 
-    def test_schema_exposes_enum_values(self):
-        schema = cast(JsonObject, GetHaInterfaces.model_json_schema())
+    def test_schema_exposes_enum_values(self) -> None:
+        schema = cast("JsonObject", GetHaInterfaces.model_json_schema())
         defs = schema.get("$defs")
         assert isinstance(defs, dict)
         ha_role = defs.get("HaRole")
@@ -80,21 +81,21 @@ _EDGE_UUID = "00000000-0000-4000-8000-000000000001"
 
 
 class TestGetEdgeConfigurationModulesRequest:
-    def test_accepts_edge_id(self):
+    def test_accepts_edge_id(self) -> None:
         req = GetEdgeConfigurationModules(edge_id=42)
         assert req.edge_id == 42
         assert req.edge_logical_id is MISSING
 
-    def test_accepts_edge_logical_id(self):
+    def test_accepts_edge_logical_id(self) -> None:
         req = GetEdgeConfigurationModules.model_validate({"edgeLogicalId": _EDGE_UUID})
         assert req.edge_id is MISSING
         assert str(req.edge_logical_id) == _EDGE_UUID
 
-    def test_rejects_missing_both_identifiers(self):
+    def test_rejects_missing_both_identifiers(self) -> None:
         with pytest.raises(Exception, match="edgeId or edgeLogicalId"):
             _ = GetEdgeConfigurationModules()
 
-    def test_accepts_enterprise_logical_id(self):
+    def test_accepts_enterprise_logical_id(self) -> None:
         req = GetEdgeConfigurationModules.model_validate(
             {
                 "edgeLogicalId": _EDGE_UUID,
@@ -121,7 +122,7 @@ _FIRMWARE_DATA = {
 }
 
 _COMPOSITE_RESPONSE: JsonObject = cast(
-    JsonObject,
+    "JsonObject",
     {
         "deviceSettings": {
             "version": "1718888888000",
@@ -200,7 +201,7 @@ _COMPOSITE_RESPONSE: JsonObject = cast(
 
 
 class TestEdgeConfigurationModulesResult:
-    def test_parses_full_response(self):
+    def test_parses_full_response(self) -> None:
         result = EdgeConfigurationModulesResult.model_validate(_COMPOSITE_RESPONSE)
         device_settings = require_present(result.device_settings)
         firewall = require_present(result.firewall)
@@ -217,20 +218,21 @@ class TestEdgeConfigurationModulesResult:
         assert isinstance(management_plane, CompositeManagementPlaneModule)
         assert image_update is not None
         assert isinstance(require_present(device_settings.data), DeviceSettingsData)
-        assert isinstance(require_present(firewall.data), FirewallData)
+        assert type(require_present(firewall.data)) is FirewallData[Composed]
+        assert firewall.raw_data == {}
         assert isinstance(require_present(qos.data), QosData)
         assert isinstance(require_present(wan.data), WanData)
         assert isinstance(require_present(control_plane.data), ControlPlaneData)
         assert isinstance(require_present(management_plane.data), ManagementPlaneData)
         assert isinstance(require_present(image_update.data), ImageUpdateData)
 
-    def test_module_type_is_parsed(self):
+    def test_module_type_is_parsed(self) -> None:
         result = EdgeConfigurationModulesResult.model_validate(_COMPOSITE_RESPONSE)
         firewall = require_present(result.firewall)
         assert firewall is not None
         assert firewall.type_ == ConfigurationModuleType.ENTERPRISE
 
-    def test_management_plane_fields(self):
+    def test_management_plane_fields(self) -> None:
         result = EdgeConfigurationModulesResult.model_validate(_COMPOSITE_RESPONSE)
         management_plane = require_present(result.management_plane)
         assert management_plane is not None
@@ -241,7 +243,7 @@ class TestEdgeConfigurationModulesResult:
         assert mp.management_plane_proxy.secondary is None
         assert mp.stats_upload_seconds == 300
 
-    def test_image_update_fields(self):
+    def test_image_update_fields(self) -> None:
         result = EdgeConfigurationModulesResult.model_validate(_COMPOSITE_RESPONSE)
         image_update = require_present(result.image_update)
         assert image_update is not None
@@ -252,9 +254,9 @@ class TestEdgeConfigurationModulesResult:
         assert iu.modem_firmware.software_package_id == 100
         assert iu.windowed is False
 
-    def test_partial_response_only_firewall(self):
+    def test_partial_response_only_firewall(self) -> None:
         partial: JsonObject = cast(
-            JsonObject,
+            "JsonObject",
             {
                 "firewall": {
                     "version": "1718888888000",
@@ -270,13 +272,13 @@ class TestEdgeConfigurationModulesResult:
         assert result.qos is MISSING
         assert result.management_plane is MISSING
 
-    def test_null_module_value(self):
+    def test_null_module_value(self) -> None:
         payload = {"firewall": None, "QOS": None}
         result = EdgeConfigurationModulesResult.model_validate(payload)
         assert result.firewall is None
         assert result.qos is None
 
-    def test_effective_device_settings_accept_nullable_segment_defaults(self):
+    def test_effective_device_settings_accept_nullable_segment_defaults(self) -> None:
         payload = {
             "deviceSettings": {
                 "version": "1718888888000",
@@ -360,7 +362,7 @@ class TestEdgeConfigurationModulesResult:
         assert backup_provider.ref is MISSING
         assert private_provider.ref is MISSING
 
-    def test_effective_dns_accepts_resolved_provider_arrays(self):
+    def test_effective_dns_accepts_resolved_provider_arrays(self) -> None:
         dns = SegmentDns.model_validate(
             {
                 "primaryProvider": {},
@@ -377,7 +379,7 @@ class TestEdgeConfigurationModulesResult:
         names: list[str] = []
         for provider in private_providers:
             assert provider.model_extra is not None
-            extra = cast(dict[str, object], provider.model_extra)
+            extra = cast("dict[str, object]", provider.model_extra)
             name = extra["name"]
             assert isinstance(name, str)
             names.append(name)
@@ -386,7 +388,7 @@ class TestEdgeConfigurationModulesResult:
             "Private DNS B",
         ]
 
-    def test_roundtrip_serialization(self):
+    def test_roundtrip_serialization(self) -> None:
         result = EdgeConfigurationModulesResult.model_validate(_COMPOSITE_RESPONSE)
         dumped = result.model_dump(by_alias=True, exclude_unset=True)
         assert "QOS" in dumped

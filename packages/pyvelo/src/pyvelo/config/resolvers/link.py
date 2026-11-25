@@ -8,6 +8,7 @@ from pyvelo.client.enums.edge import GetEdgeWith
 from pyvelo.client.schemas.edge import GetEdge
 from pyvelo.config.resolver import BaseResolver, ResolverContext
 from pyvelo.core.identity import (
+    IdentityKey,
     LinkId,
     LinkIdentity,
     LinkInternalId,
@@ -15,10 +16,8 @@ from pyvelo.core.identity import (
     LinkName,
 )
 
-LinkKey = LinkName | LinkId | LinkLogicalId | LinkInternalId
 
-
-class LinkResolver(BaseResolver[LinkKey, LinkIdentity]):
+class LinkResolver(BaseResolver[LinkIdentity]):
     """Resolves a link identifier to a :class:`LinkIdentity`.
 
     Accepts:
@@ -32,22 +31,19 @@ class LinkResolver(BaseResolver[LinkKey, LinkIdentity]):
     ResolverContext.
     """
 
-    identity_type = LinkIdentity
+    identity_type: type[LinkIdentity] = LinkIdentity
 
     @override
-    async def resolve_key(self, key: LinkKey) -> LinkIdentity:
+    def lookup_key(self, key: IdentityKey[LinkIdentity]) -> LinkIdentity:
         match key:
             case LinkName(value=name):
-                return await self.resolve(name)
+                return self.lookup(name)
             case LinkId(value=v):
-                name = self._reverse["id"][v]
-                return self._by_name[name]
+                return self._by_key("id", v)
             case LinkLogicalId(value=v):
-                name = self._reverse["logical_id"][v]
-                return self._by_name[name]
+                return self._by_key("logical_id", v)
             case LinkInternalId(value=v):
-                name = self._reverse["internal_id"][v]
-                return self._by_name[name]
+                return self._by_key("internal_id", v)
             case _:
                 raise TypeError(f"Unsupported key type: {type(key).__name__}")
 

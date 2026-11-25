@@ -1,5 +1,13 @@
+"""An enterprise's objects, and the requests and results of the ``enterprise/`` methods.
+
+Its Edges, services (one class per service type, such as a hub, hub cluster or data
+center), network segments, object groups, security objects, custom applications,
+private networks and NSD configuration; also its users, properties, capabilities,
+route table and operator configuration, and the cluster hub role calls.
+"""
+
 import uuid
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, ClassVar, Literal
 
 from annotated_types import Ge, Le
 from pydantic import MISSING, ConfigDict, Discriminator, Field, model_validator
@@ -149,6 +157,19 @@ class GetEnterpriseServices(VcoModel):
     include_partner_gateways: bool | MISSING = MISSING
 
 
+class EnterpriseServiceSummary(VcoModel):
+    """The four fields of any enterprise service that a lookup by name or ID needs.
+
+    ``type_`` is the type text as the VCO answers it, so a service of a type
+    ``AnyEnterpriseService`` does not know still parses. Other keys are ignored.
+    """
+
+    id_: Annotated[int, Alias("id")]
+    logical_id: uuid.UUID
+    name: str
+    type_: Annotated[str, Alias("type")]
+
+
 class InsertEnterpriseService(VcoModel):
     """Request to create a new enterprise service."""
 
@@ -156,7 +177,9 @@ class InsertEnterpriseService(VcoModel):
     name: str
     data: dict[str, Any]
     enterprise_id: int | MISSING = MISSING
-    edge_id: Annotated[int | MISSING, Resolvable(EdgeIdentity, "id")] = MISSING
+    edge_id: Annotated[int | MISSING, Resolvable(EdgeIdentity, lambda i: i.id)] = (
+        MISSING
+    )
 
 
 class DeleteEnterpriseService(VcoModel):
@@ -182,14 +205,16 @@ class EnterpriseServiceBase(VcoModel):
     draft_created: VcoTimestamp | None | MISSING = MISSING
     draft_data: str | None | MISSING = MISSING
     edge_count: int | MISSING = MISSING
-    edge_id: Annotated[int | None | MISSING, Resolvable(EdgeIdentity, "id")] = MISSING
+    edge_id: Annotated[
+        int | None | MISSING, Resolvable(EdgeIdentity, lambda i: i.id)
+    ] = MISSING
     edge_name: str | MISSING = MISSING
     edge_logical_id: Annotated[
-        uuid.UUID | MISSING, Resolvable(EdgeIdentity, "logical_id")
+        uuid.UUID | MISSING, Resolvable(EdgeIdentity, lambda i: i.logical_id)
     ] = MISSING
-    gateway_id: Annotated[int | None | MISSING, Resolvable(GatewayIdentity, "id")] = (
-        MISSING
-    )
+    gateway_id: Annotated[
+        int | None | MISSING, Resolvable(GatewayIdentity, lambda i: i.id)
+    ] = MISSING
     group_count: int | MISSING = MISSING
     parent_group_id: int | None | MISSING = MISSING
     last_contact: VcoTimestamp | None | MISSING = MISSING
@@ -197,7 +222,9 @@ class EnterpriseServiceBase(VcoModel):
     profile_count: int | MISSING = MISSING
     gateways: list[Gateway] | MISSING = MISSING
     configuration: list[ServiceConfiguration] | MISSING = MISSING
-    edge_qos_usage: list[ServiceQosUsage] | MISSING = MISSING
+    edge_qos_usage: Annotated[
+        list[ServiceQosUsage] | MISSING, Alias("edgeQOSUsage")
+    ] = MISSING
     edge_usage: list[ServiceEdgeUsage] | MISSING = MISSING
     wss_usage: list[SymantecWssLocationUsage] | SymantecWssLocationUsage | MISSING = (
         MISSING
@@ -380,15 +407,15 @@ class GetEnterpriseNsdConfigurationResult(VcoModel):
     operator_id: int | None
     network_id: int | None
     enterprise_id: int | MISSING = MISSING
-    edge_id: Annotated[int | None, Resolvable(EdgeIdentity, "id")]
-    gateway_id: Annotated[int | None, Resolvable(GatewayIdentity, "id")]
+    edge_id: Annotated[int | None, Resolvable(EdgeIdentity, lambda i: i.id)]
+    gateway_id: Annotated[int | None, Resolvable(GatewayIdentity, lambda i: i.id)]
     parent_group_id: int | None
     description: str | None
     object_: Annotated[Literal["NSD_CONFIGURATION"], Alias("object")] = (
         "NSD_CONFIGURATION"
     )
     name: str
-    type_: Annotated[Literal["DEFAULT"] | str, Alias("type")]
+    type_: Annotated[str, Alias("type")]  # "DEFAULT", among others
     logical_id: uuid.UUID
     alerts_enabled: Tinyint
     operator_alerts_enabled: Tinyint
@@ -421,10 +448,12 @@ class PrivateNetwork(VcoModel):
 
     operator_id: int | None | MISSING = MISSING
     network_id: int | None | MISSING = MISSING
-    edge_id: Annotated[int | None | MISSING, Resolvable(EdgeIdentity, "id")] = MISSING
-    gateway_id: Annotated[int | None | MISSING, Resolvable(GatewayIdentity, "id")] = (
-        MISSING
-    )
+    edge_id: Annotated[
+        int | None | MISSING, Resolvable(EdgeIdentity, lambda i: i.id)
+    ] = MISSING
+    gateway_id: Annotated[
+        int | None | MISSING, Resolvable(GatewayIdentity, lambda i: i.id)
+    ] = MISSING
     parent_group_id: int | None | MISSING = MISSING
     description: str | None | MISSING = MISSING
     status: str | None | MISSING = MISSING
@@ -489,10 +518,12 @@ class ObjectGroupBase(VcoModel):
 
     operator_id: int | None | MISSING = MISSING
     network_id: int | None | MISSING = MISSING
-    edge_id: Annotated[int | None | MISSING, Resolvable(EdgeIdentity, "id")] = MISSING
-    gateway_id: Annotated[int | None | MISSING, Resolvable(GatewayIdentity, "id")] = (
-        MISSING
-    )
+    edge_id: Annotated[
+        int | None | MISSING, Resolvable(EdgeIdentity, lambda i: i.id)
+    ] = MISSING
+    gateway_id: Annotated[
+        int | None | MISSING, Resolvable(GatewayIdentity, lambda i: i.id)
+    ] = MISSING
     parent_group_id: int | None | MISSING = MISSING
     description: str | None | MISSING = MISSING
     status: str | None | MISSING = MISSING
@@ -640,10 +671,12 @@ class NetworkSegment(VcoModel):
 
     operator_id: int | None | MISSING = MISSING
     network_id: int | None | MISSING = MISSING
-    edge_id: Annotated[int | None | MISSING, Resolvable(EdgeIdentity, "id")] = MISSING
-    gateway_id: Annotated[int | None | MISSING, Resolvable(GatewayIdentity, "id")] = (
-        MISSING
-    )
+    edge_id: Annotated[
+        int | None | MISSING, Resolvable(EdgeIdentity, lambda i: i.id)
+    ] = MISSING
+    gateway_id: Annotated[
+        int | None | MISSING, Resolvable(GatewayIdentity, lambda i: i.id)
+    ] = MISSING
     parent_group_id: int | None | MISSING = MISSING
     description: str | None | MISSING = MISSING
     status: str | None | MISSING = MISSING
@@ -843,7 +876,7 @@ class GetEnterpriseCapabilities(VcoModel):
 
 
 class EnterpriseCapabilitiesResult(VcoModel):
-    model_config = ConfigDict(extra="allow")
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="allow")
 
 
 # --- get_enterprise_addresses (enterprise/getEnterpriseAddresses) ---
@@ -854,10 +887,11 @@ class GetEnterpriseAddresses(VcoModel):
 
 
 class EnterpriseAddressResult(VcoModel):
-    model_config = ConfigDict(extra="allow")
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="allow")
 
 
-# --- get_enterprise_all_alerts_recipients (enterprise/getEnterpriseAllAlertsRecipients) ---
+# --- get_enterprise_all_alerts_recipients
+# (enterprise/getEnterpriseAllAlertsRecipients) ---
 
 
 class GetEnterpriseAllAlertsRecipients(VcoModel):
@@ -865,7 +899,7 @@ class GetEnterpriseAllAlertsRecipients(VcoModel):
 
 
 class EnterpriseAllAlertsRecipientsResult(VcoModel):
-    model_config = ConfigDict(extra="allow")
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="allow")
 
 
 # --- get_enterprise_rate_limits (enterprise/getEnterpriseRateLimits) ---
@@ -876,7 +910,7 @@ class GetEnterpriseRateLimits(VcoModel):
 
 
 class EnterpriseRateLimitsResult(VcoModel):
-    model_config = ConfigDict(extra="allow")
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="allow")
 
 
 # --- get_enterprise_property (enterprise/getEnterpriseProperty) ---
@@ -889,7 +923,7 @@ class GetEnterpriseProperty(VcoModel):
 
 
 class EnterprisePropertyResult(VcoModel):
-    model_config = ConfigDict(extra="allow")
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="allow")
 
 
 # --- get_enterprise_default_operator_configuration ---
@@ -900,7 +934,7 @@ class GetEnterpriseDefaultOperatorConfiguration(VcoModel):
 
 
 class EnterpriseDefaultOperatorConfigurationResult(VcoModel):
-    model_config = ConfigDict(extra="allow")
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="allow")
 
 
 # --- get_enterprise_distributed_cost_calculation ---
@@ -911,7 +945,7 @@ class GetEnterpriseDistributedCostCalculation(VcoModel):
 
 
 class EnterpriseDistributedCostCalculationResult(VcoModel):
-    model_config = ConfigDict(extra="allow")
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="allow")
 
 
 # --- get_enterprise_maximum_segments ---
@@ -922,7 +956,7 @@ class GetEnterpriseMaximumSegments(VcoModel):
 
 
 class EnterpriseMaximumSegmentsResult(VcoModel):
-    model_config = ConfigDict(extra="allow")
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="allow")
 
 
 # --- get_enterprise_network_allocation ---
@@ -939,7 +973,7 @@ class GetEnterpriseNetworkAllocation(VcoModel):
 
 
 class EnterpriseNetworkAllocationResult(VcoModel):
-    model_config = ConfigDict(extra="allow")
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="allow")
 
 
 # --- get_enterprise_network_allocations ---
@@ -956,7 +990,7 @@ class GetEnterpriseNetworkAllocations(VcoModel):
 
 
 class EnterpriseNetworkAllocationsResult(VcoModel):
-    model_config = ConfigDict(extra="allow")
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="allow")
 
 
 # --- get_enterprise_operator_configuration ---
@@ -971,7 +1005,7 @@ class GetEnterpriseOperatorConfiguration(VcoModel):
 
 
 class EnterpriseOperatorConfigurationResult(VcoModel):
-    model_config = ConfigDict(extra="allow")
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="allow")
 
 
 # --- get_enterprise_specific_operator_configurations ---
@@ -984,7 +1018,7 @@ class GetEnterpriseSpecificOperatorConfigurations(VcoModel):
 
 
 class EnterpriseSpecificOperatorConfigurationsResult(VcoModel):
-    model_config = ConfigDict(extra="allow")
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="allow")
 
 
 # --- get_enterprises_missing_gateway ---
@@ -995,7 +1029,7 @@ class GetEnterprisesMissingGateway(VcoModel):
 
 
 class EnterprisesMissingGatewayResult(VcoModel):
-    model_config = ConfigDict(extra="allow")
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="allow")
 
 
 # --- get_enterprises_with_property ---
@@ -1008,7 +1042,7 @@ class GetEnterprisesWithProperty(VcoModel):
 
 
 class EnterprisesWithPropertyResult(VcoModel):
-    model_config = ConfigDict(extra="allow")
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="allow")
 
 
 # --- get_auth_migration_status ---
@@ -1019,7 +1053,7 @@ class GetAuthMigrationStatus(VcoModel):
 
 
 class AuthMigrationStatusResult(VcoModel):
-    model_config = ConfigDict(extra="allow")
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="allow")
 
 
 # --- get_user_export_status ---
@@ -1030,7 +1064,7 @@ class GetUserExportStatus(VcoModel):
 
 
 class UserExportStatusResult(VcoModel):
-    model_config = ConfigDict(extra="allow")
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="allow")
 
 
 # --- get_enterprise_api_tokens (enterprise/getApiTokens) ---
@@ -1041,7 +1075,7 @@ class GetEnterpriseApiTokens(VcoModel):
 
 
 class EnterpriseApiTokenResult(VcoModel):
-    model_config = ConfigDict(extra="allow")
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="allow")
 
 
 # --- get_enterprise_security_objects (enterprise/getSecurityObjects) ---
@@ -1058,17 +1092,19 @@ class GetEnterpriseSecurityObjects(VcoModel):
 class EnterpriseSecurityObjectResult(VcoModel):
     """A security object (EFS property) associated with an enterprise."""
 
-    model_config = ConfigDict(extra="allow")
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="allow")
 
     id_: Annotated[int | None | MISSING, Alias("id")] = MISSING
     created: VcoTimestamp | None | MISSING = MISSING
     operator_id: int | None | MISSING = MISSING
     network_id: int | None | MISSING = MISSING
     enterprise_id: int | None | MISSING = MISSING
-    edge_id: Annotated[int | None | MISSING, Resolvable(EdgeIdentity, "id")] = MISSING
-    gateway_id: Annotated[int | None | MISSING, Resolvable(GatewayIdentity, "id")] = (
-        MISSING
-    )
+    edge_id: Annotated[
+        int | None | MISSING, Resolvable(EdgeIdentity, lambda i: i.id)
+    ] = MISSING
+    gateway_id: Annotated[
+        int | None | MISSING, Resolvable(GatewayIdentity, lambda i: i.id)
+    ] = MISSING
     parent_group_id: int | None | MISSING = MISSING
     description: str | None | MISSING = MISSING
     object_: Annotated[str | None | MISSING, Alias("object")] = MISSING
@@ -1091,7 +1127,7 @@ class GetEnterpriseAlertConfigurations(VcoModel):
 
 
 class EnterpriseAlertConfigurationResult(VcoModel):
-    model_config = ConfigDict(extra="allow")
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="allow")
 
 
 # --- get_enterprise_route_table ---
@@ -1111,7 +1147,7 @@ class EnterpriseRouteTableProfile(VcoModel):
 
 class EnterpriseRouteTableSubnetString(VcoModel):
     subnet: str
-    segment_id: Annotated[int, Resolvable(SegmentIdentity, "segment_id")]
+    segment_id: Annotated[int, Resolvable(SegmentIdentity, lambda i: i.segment_id)]
 
     @model_validator(mode="before")
     @classmethod
@@ -1119,9 +1155,10 @@ class EnterpriseRouteTableSubnetString(VcoModel):
         if isinstance(data, str) and ":" in data:
             try:
                 netwk, segment = data.rsplit(":", 1)
-                return {"subnet": netwk, "segment_id": segment}
             except ValueError:
                 pass
+            else:
+                return {"subnet": netwk, "segment_id": segment}
         return data
 
 
@@ -1134,7 +1171,7 @@ class EnterpriseRouteTableRoute(VcoModel):
     logical_id: uuid.UUID
     modified: VcoTimestamp
     pinned: bool
-    segment_id: Annotated[int, Resolvable(SegmentIdentity, "segment_id")]
+    segment_id: Annotated[int, Resolvable(SegmentIdentity, lambda i: i.segment_id)]
 
 
 class EnterpriseRouteTableExit(VcoModel):
@@ -1145,9 +1182,11 @@ class EnterpriseRouteTableExit(VcoModel):
     cidr_prefix: Annotated[int | MISSING, Ge(0), Le(32)] = MISSING
     cost: int
     created: VcoTimestamp | MISSING = MISSING
-    edge_id: Annotated[int | MISSING, Resolvable(EdgeIdentity, "id")] = MISSING
+    edge_id: Annotated[int | MISSING, Resolvable(EdgeIdentity, lambda i: i.id)] = (
+        MISSING
+    )
     edge_logical_id: Annotated[
-        uuid.UUID | MISSING, Resolvable(EdgeIdentity, "logical_id")
+        uuid.UUID | MISSING, Resolvable(EdgeIdentity, lambda i: i.logical_id)
     ] = MISSING
     edge_name: str | MISSING = MISSING
     enterprise_object_id: int | None | MISSING = MISSING
@@ -1169,9 +1208,9 @@ class EnterpriseRouteTableExit(VcoModel):
     protocol: str | MISSING = MISSING
     route_id: int | MISSING = MISSING
     route_type: str | MISSING = MISSING
-    segment_id: Annotated[int | MISSING, Resolvable(SegmentIdentity, "segment_id")] = (
-        MISSING
-    )
+    segment_id: Annotated[
+        int | MISSING, Resolvable(SegmentIdentity, lambda i: i.segment_id)
+    ] = MISSING
     state: str | MISSING = MISSING
     tag: Any | MISSING = MISSING
     type_: Annotated[str, Alias("type")]
@@ -1198,7 +1237,7 @@ class GetEnterpriseRouteConfiguration(VcoModel):
 
 
 class EnterpriseRouteConfigurationResult(VcoModel):
-    model_config = ConfigDict(extra="allow")
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="allow")
 
 
 # --- get_enterprise_use_nsd_policy ---
@@ -1209,7 +1248,7 @@ class GetEnterpriseUseNsdPolicy(VcoModel):
 
 
 class EnterpriseUseNsdPolicyResult(VcoModel):
-    model_config = ConfigDict(extra="allow")
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="allow")
 
 
 # --- Cluster Hub Enable/Disable ---
@@ -1219,9 +1258,11 @@ class EnableClusterHub(VcoModel):
     """Designate a cluster as a VPN hub on a profile."""
 
     id_: Annotated[int, Alias("id")]
-    configuration_id: Annotated[int, Resolvable(ProfileIdentity, "id")]
+    configuration_id: Annotated[int, Resolvable(ProfileIdentity, lambda i: i.id)]
     module_id: int
-    segment_object_id: Annotated[int, Resolvable(SegmentIdentity, "object_id")]
+    segment_object_id: Annotated[
+        int, Resolvable(SegmentIdentity, lambda i: i.object_id)
+    ]
     enterprise_id: int | MISSING = MISSING
 
 
@@ -1229,9 +1270,11 @@ class EnableClusterToEdgeBridge(VcoModel):
     """Designate a cluster hub as a site-to-site bridge on a profile."""
 
     id_: Annotated[int, Alias("id")]
-    configuration_id: Annotated[int, Resolvable(ProfileIdentity, "id")]
+    configuration_id: Annotated[int, Resolvable(ProfileIdentity, lambda i: i.id)]
     module_id: int
-    segment_object_id: Annotated[int, Resolvable(SegmentIdentity, "object_id")]
+    segment_object_id: Annotated[
+        int, Resolvable(SegmentIdentity, lambda i: i.object_id)
+    ]
     enterprise_id: int | MISSING = MISSING
 
 
@@ -1239,9 +1282,11 @@ class EnableClusterBackHaul(VcoModel):
     """Designate a cluster hub for backhaul on a profile."""
 
     id_: Annotated[int, Alias("id")]
-    configuration_id: Annotated[int, Resolvable(ProfileIdentity, "id")]
+    configuration_id: Annotated[int, Resolvable(ProfileIdentity, lambda i: i.id)]
     module_id: int
-    segment_object_id: Annotated[int, Resolvable(SegmentIdentity, "object_id")]
+    segment_object_id: Annotated[
+        int, Resolvable(SegmentIdentity, lambda i: i.object_id)
+    ]
     enterprise_id: int | MISSING = MISSING
 
 
@@ -1249,9 +1294,11 @@ class DisableClusterHub(VcoModel):
     """Remove VPN hub designation from a cluster on a profile."""
 
     id_: Annotated[int, Alias("id")]
-    configuration_id: Annotated[int, Resolvable(ProfileIdentity, "id")]
+    configuration_id: Annotated[int, Resolvable(ProfileIdentity, lambda i: i.id)]
     module_id: int
-    segment_object_id: Annotated[int, Resolvable(SegmentIdentity, "object_id")]
+    segment_object_id: Annotated[
+        int, Resolvable(SegmentIdentity, lambda i: i.object_id)
+    ]
     enterprise_id: int | MISSING = MISSING
 
 
@@ -1259,9 +1306,11 @@ class DisableClusterToEdgeBridge(VcoModel):
     """Remove site-to-site bridge designation from a cluster on a profile."""
 
     id_: Annotated[int, Alias("id")]
-    configuration_id: Annotated[int, Resolvable(ProfileIdentity, "id")]
+    configuration_id: Annotated[int, Resolvable(ProfileIdentity, lambda i: i.id)]
     module_id: int
-    segment_object_id: Annotated[int, Resolvable(SegmentIdentity, "object_id")]
+    segment_object_id: Annotated[
+        int, Resolvable(SegmentIdentity, lambda i: i.object_id)
+    ]
     enterprise_id: int | MISSING = MISSING
 
 
@@ -1269,7 +1318,9 @@ class DisableClusterBackHaul(VcoModel):
     """Remove backhaul designation from a cluster on a profile."""
 
     id_: Annotated[int, Alias("id")]
-    configuration_id: Annotated[int, Resolvable(ProfileIdentity, "id")]
+    configuration_id: Annotated[int, Resolvable(ProfileIdentity, lambda i: i.id)]
     module_id: int
-    segment_object_id: Annotated[int, Resolvable(SegmentIdentity, "object_id")]
+    segment_object_id: Annotated[
+        int, Resolvable(SegmentIdentity, lambda i: i.object_id)
+    ]
     enterprise_id: int | MISSING = MISSING

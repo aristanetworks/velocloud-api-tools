@@ -3,8 +3,19 @@
 from pyvelo.client.auth import VcoAuth
 from pyvelo.client.credentials import get_vco_credentials
 from pyvelo.client.exceptions import (
+    ComposedModuleError,
     ConfigConflictError,
+    DanglingReferenceError,
+    DetachedObjectError,
+    FixedListError,
+    GroupOwnershipError,
+    HubListError,
+    LayerUnknownError,
     LossyFieldError,
+    ModuleWriteError,
+    RefsDroppedError,
+    RefsNotLoadedError,
+    SegmentSetError,
     UnboundError,
     VcoApiError,
     VcoClientNotInitializedError,
@@ -19,6 +30,8 @@ from pyvelo.client.exceptions import (
     VcoWebSocketError,
     VcoWebSocketTimeoutError,
     VcoWebSocketValidationError,
+    WriteNotAppliedError,
+    WriteOutcomeUnknownError,
 )
 from pyvelo.client.protocol import (
     Exchange,
@@ -31,13 +44,24 @@ from pyvelo.client.vco_client import VcoClient
 from pyvelo.client.websocket import PendingDiagnostic, VcoWebSocket
 
 __all__ = [
+    "ComposedModuleError",
     "ConfigConflictError",
+    "DanglingReferenceError",
+    "DetachedObjectError",
     "Exchange",
     "ExchangeHook",
+    "FixedListError",
+    "GroupOwnershipError",
+    "HubListError",
+    "LayerUnknownError",
     "LossyFieldError",
+    "ModuleWriteError",
     "PendingDiagnostic",
+    "RefsDroppedError",
+    "RefsNotLoadedError",
     "RequestObservation",
     "RequestObserver",
+    "SegmentSetError",
     "UnboundError",
     "VcoApiError",
     "VcoAuth",
@@ -56,6 +80,8 @@ __all__ = [
     "VcoWebSocketError",
     "VcoWebSocketTimeoutError",
     "VcoWebSocketValidationError",
+    "WriteNotAppliedError",
+    "WriteOutcomeUnknownError",
     "get_vco_credentials",
     "make_file_dump_hook",
 ]

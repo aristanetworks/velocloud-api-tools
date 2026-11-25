@@ -1,11 +1,16 @@
+"""The client's ``edge/`` methods.
+
+An Edge, its configuration stack and modules, its HA, its certificates and its
+hub roles.
+"""
+
 from __future__ import annotations
 
-from collections.abc import Sequence
 from typing import TYPE_CHECKING, Protocol
 
 from pydantic import RootModel
 
-from pyvelo.client.exceptions import VcoOperationError
+from pyvelo.client.exceptions import VcoEmptyResultError, VcoOperationError
 from pyvelo.client.operations._tagging import CONFIG, EDGE, PM_QOE, domain_tag
 from pyvelo.client.schemas.configuration import (
     EdgeConfiguration,
@@ -46,6 +51,8 @@ from pyvelo.client.schemas.enterprise import EnterpriseServiceBase
 from pyvelo.core import RowsModifiedConfirmation
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from pyvelo.client._client_protocol import VcoClientBaseProtocol
 
 GetEdgeConfigurationStackResult = tuple[
@@ -76,18 +83,17 @@ class EdgeMixin(Protocol):
     async def get_edge_configuration_stack(
         self: VcoClientBaseProtocol, request: GetEdgeConfigurationStack
     ) -> GetEdgeConfigurationStackResult:
-        """
-        Get the full configuration stack for an edge.
+        """Get the full configuration stack for an edge.
 
-        Returns the complete configuration profile (including all modules) of the specified
-        Edge. The stack includes edge-specific overrides and the assigned enterprise profile.
-        Each layer contains modules such as deviceSettings,
-        QOS, firewall, and controlPlane. Useful for understanding the effective configuration
+        Returns the complete configuration profile (including all modules) of the
+        specified Edge. The stack includes edge-specific overrides and the assigned
+        enterprise profile. Each layer contains modules such as deviceSettings, QOS,
+        firewall, and controlPlane. Useful for understanding the effective configuration
         an Edge receives and for diagnosing configuration conflicts across layers.
 
         Returns:
-            Array of configuration profiles in stack order (edge-specific, enterprise profile),
-            each containing their associated configuration modules
+            Array of configuration profiles in stack order (edge-specific, enterprise
+            profile), each containing their associated configuration modules
         """
         result = await self.portal(
             "edge/getEdgeConfigurationStack",
@@ -100,18 +106,17 @@ class EdgeMixin(Protocol):
     async def get_edge_sdwan_peers(
         self: VcoClientBaseProtocol, request: GetEdgeSdwanPeers
     ) -> Sequence[EdgeSdwanPeerEntry]:
-        """
-        Get SD-WAN peers that have established overlay paths with an edge.
+        """Get SD-WAN peers that have established overlay paths with an edge.
 
-        Returns the list of SD-WAN peers (other edges and gateways) that have active VCMP
-        (VeloCloud Multi-Path Protocol) tunnels with the specified edge. Optionally supports
-        filtering and time interval parameters. Useful for understanding the overlay mesh topology,
-        verifying peer-to-peer connectivity, and troubleshooting path establishment issues in the
-        SD-WAN fabric.
+        Returns the list of SD-WAN peers (other edges and gateways) that have active
+        VCMP (VeloCloud Multi-Path Protocol) tunnels with the specified edge. Optionally
+        supports filtering and time interval parameters. Useful for understanding the
+        overlay mesh topology, verifying peer-to-peer connectivity, and troubleshooting
+        path establishment issues in the SD-WAN fabric.
 
         Returns:
-            Array of SD-WAN peer objects, each containing peer edge/gateway identity, path count,
-            path state, and associated link information
+            Array of SD-WAN peer objects, each containing peer edge/gateway identity,
+            path count, path state, and associated link information
         """
         return await self.portal_list(
             "edge/getEdgeSDWANPeers", request, EdgeSdwanPeerEntry
@@ -121,15 +126,17 @@ class EdgeMixin(Protocol):
     async def get_edge(self: VcoClientBaseProtocol, request: GetEdge) -> GetEdgeResult:
         """Get comprehensive details for a specific SD-WAN edge.
 
-        Retrieves the specified Edge with optional related entities. Supports queries by Edge ID
-        and can include site location data, WAN link details, configuration profiles, and recent
-        link activity. The edge object contains core attributes such as name, model, software version,
-        activation state, HA mode, serial number, and current service state (CONNECTED, DEGRADED, etc.).
-        This is the primary method for inspecting a single edge's full state.
+        Retrieves the specified Edge with optional related entities. Supports queries by
+        Edge ID and can include site location data, WAN link details, configuration
+        profiles, and recent link activity. The edge object contains core attributes
+        such as name, model, software version, activation state, HA mode, serial number,
+        and current service state (CONNECTED, DEGRADED, etc.). This is the primary
+        method for inspecting a single edge's full state.
 
         Returns:
-            Edge object with core attributes (name, model, softwareVersion, edgeState, serviceState,
-            haState, serialNumber, etc.) plus optionally resolved site, links, and configuration data
+            Edge object with core attributes (name, model, softwareVersion, edgeState,
+            serviceState, haState, serialNumber, etc.) plus optionally resolved site,
+            links, and configuration data
         """
         return await self.portal("edge/getEdge", request, GetEdgeResult)
 
@@ -139,16 +146,18 @@ class EdgeMixin(Protocol):
     ) -> EdgeGatewayAssignmentResult:
         """Get the gateway assignments view for an edge.
 
-        Returns the complete gateway assignment information for the specified edge, including
-        primary, secondary, and super gateway assignments across all segments. In the VeloCloud
-        SD-WAN architecture, edges connect to gateways for cloud-based traffic routing, multi-path
-        optimization, and access to Non-VeloCloud Sites (NVS). This view shows which gateways are
-        assigned to the edge and their roles. Useful for understanding an edge's gateway topology,
-        troubleshooting gateway connectivity, and verifying gateway redundancy.
+        Returns the complete gateway assignment information for the specified edge,
+        including primary, secondary, and super gateway assignments across all segments.
+        In the VeloCloud SD-WAN architecture, edges connect to gateways for cloud-based
+        traffic routing, multi-path optimization, and access to Non-VeloCloud Sites
+        (NVS). This view shows which gateways are assigned to the edge and their roles.
+        Useful for understanding an edge's gateway topology, troubleshooting gateway
+        connectivity, and verifying gateway redundancy.
 
         Returns:
-            Gateway assignment details including primary, secondary, and super gateway assignments
-            with gateway names, IPs, roles, and per-segment assignment information
+            Gateway assignment details including primary, secondary, and super gateway
+            assignments with gateway names, IPs, roles, and per-segment assignment
+            information
         """
         return await self.portal(
             "edge/getEdgeGatewayAssignmentsView",
@@ -162,16 +171,18 @@ class EdgeMixin(Protocol):
     ) -> EdgeConfigurationModulesResult:
         """Get the effective (composite) configuration modules for an edge.
 
-        Returns the reconciled configuration modules for the specified Edge in precisely the same
-        format that those modules are dispatched to the Edge. This method merges elements from the
-        various profile-level and edge-level modules that comprise an Edge's configuration stack.
-        For example, the effective set of firewall rules is determined by concatenating rules from
-        the profile-level and edge-level firewall modules. Useful for understanding exactly what
-        configuration an Edge is running, without needing to manually merge the stack layers.
+        Returns the reconciled configuration modules for the specified Edge in precisely
+        the same format that those modules are dispatched to the Edge. This method
+        merges elements from the various profile-level and edge-level modules that
+        comprise an Edge's configuration stack. For example, the effective set of
+        firewall rules is determined by concatenating rules from the profile-level and
+        edge-level firewall modules. Useful for understanding exactly what configuration
+        an Edge is running, without needing to manually merge the stack layers.
 
         Returns:
-            Composite configuration modules reflecting the effective merged configuration,
-            including deviceSettings, QOS, firewall, controlPlane, and other module types
+            Composite configuration modules reflecting the effective merged
+            configuration, including deviceSettings, QOS, firewall, controlPlane, and
+            other module types
         """
         return await self.portal(
             "edge/getEdgeConfigurationModules",
@@ -185,11 +196,12 @@ class EdgeMixin(Protocol):
     ) -> ClientVisibilityModeResult:
         """Get the client visibility mode setting for an edge.
 
-        Retrieves the current client visibility mode for the specified edge, which controls how
-        the edge identifies and reports on individual client devices behind it. The mode determines
-        whether traffic statistics and flow data are aggregated or broken down by individual client
-        IP/MAC address. Useful for understanding the granularity of per-client monitoring and
-        troubleshooting flow visibility settings.
+        Retrieves the current client visibility mode for the specified edge, which
+        controls how the edge identifies and reports on individual client devices behind
+        it. The mode determines whether traffic statistics and flow data are aggregated
+        or broken down by individual client IP/MAC address. Useful for understanding the
+        granularity of per-client monitoring and troubleshooting flow visibility
+        settings.
 
         Returns:
             Client visibility mode setting (e.g., IP_ADDRESS, MAC_ADDRESS, or NONE)
@@ -206,14 +218,15 @@ class EdgeMixin(Protocol):
     ) -> Sequence[HaInterfaceItem]:
         """Get High Availability (HA) status and interface details for an edge.
 
-        Retrieves the HA state for the specified edge, including information about both the
-        active and standby appliances in an HA pair. Returns interface-level details such as
-        IP addresses, MAC addresses, and link status for each HA member. Useful for monitoring
-        HA failover readiness, verifying HA pairing, and troubleshooting HA synchronization issues.
+        Retrieves the HA state for the specified edge, including information about both
+        the active and standby appliances in an HA pair. Returns interface-level details
+        such as IP addresses, MAC addresses, and link status for each HA member. Useful
+        for monitoring HA failover readiness, verifying HA pairing, and troubleshooting
+        HA synchronization issues.
 
         Returns:
-            HA interface details including active/standby status, IP addresses, MAC addresses,
-            and link state for each HA member
+            HA interface details including active/standby status, IP addresses, MAC
+            addresses, and link state for each HA member
         """
         return await self.portal_list(
             "edge/getHaInterfaces",
@@ -228,12 +241,14 @@ class EdgeMixin(Protocol):
         """Trigger an HA failover on an edge, promoting the standby to active.
 
         Instructs the VCO to initiate an HA failover for the specified edge. The current
-        active appliance transitions to standby and the standby appliance becomes active.
-        The edge must have HA configured and a healthy standby peer. This is a destructive
-        operation that causes a brief traffic interruption during the switchover.
+        active appliance transitions to standby and the standby appliance becomes
+        active. The edge must have HA configured and a healthy standby peer. This is a
+        destructive operation that causes a brief traffic interruption during the
+        switchover.
 
         Raises:
-            VcoOperationError: If the failover request fails (e.g. no HA peer, edge offline).
+            VcoOperationError: If the failover request fails (e.g. no HA peer, edge
+                offline).
         """
         result = await self.portal(
             "edge/edgeRequestEdgeHaFailover",
@@ -249,15 +264,16 @@ class EdgeMixin(Protocol):
     ) -> Sequence[InterconnectGatewayItem]:
         """Get interconnect gateways available to an enterprise.
 
-        Returns the list of gateways that support interconnect functionality for the specified
-        enterprise. Interconnect gateways enable connectivity between different VeloCloud
-        network segments or between VeloCloud and external networks via gateway-based
-        interconnection points. Useful for understanding which gateways support multi-segment
-        or cross-network routing and for planning interconnect topology.
+        Returns the list of gateways that support interconnect functionality for the
+        specified enterprise. Interconnect gateways enable connectivity between
+        different VeloCloud network segments or between VeloCloud and external networks
+        via gateway-based interconnection points. Useful for understanding which
+        gateways support multi-segment or cross-network routing and for planning
+        interconnect topology.
 
         Returns:
-            Array of interconnect gateway objects with gateway identity, location, capabilities,
-            and interconnect configuration details
+            Array of interconnect gateway objects with gateway identity, location,
+            capabilities, and interconnect configuration details
         """
         return await self.portal_list(
             "edge/getInterconnectGateways",
@@ -271,11 +287,12 @@ class EdgeMixin(Protocol):
     ) -> Sequence[SecureDeviceSecretsOptionResult]:
         """Get the secure device secrets option status for an edge.
 
-        Retrieves whether the secure device secrets feature is enabled or disabled for the
-        specified edge. When enabled, sensitive configuration data such as PSK keys, RADIUS
-        secrets, and other credentials are encrypted and stored securely on the edge appliance
-        using a TPM (Trusted Platform Module) or software-based encryption. Useful for auditing
-        security posture and compliance across the SD-WAN deployment.
+        Retrieves whether the secure device secrets feature is enabled or disabled for
+        the specified edge. When enabled, sensitive configuration data such as PSK keys,
+        RADIUS secrets, and other credentials are encrypted and stored securely on the
+        edge appliance using a TPM (Trusted Platform Module) or software-based
+        encryption. Useful for auditing security posture and compliance across the
+        SD-WAN deployment.
 
         Returns:
             Secure device secrets configuration including enabled/disabled status
@@ -344,23 +361,42 @@ class EdgeMixin(Protocol):
     async def disable_edge_hub(
         self: VcoClientBaseProtocol, request: DisableEdgeHub
     ) -> None:
-        """Remove VPN hub designation from an edge on a profile segment."""
-        await self.portal(
-            "edge/disableEdgeForEdgeHub", request, RowsModifiedConfirmation
-        )
+        """Remove VPN hub designation from an edge on a profile segment.
+
+        An Edge that is not a hub there is answered with ``null``; that is
+        returned as ``None`` too.
+        """
+        try:
+            await self.portal(
+                "edge/disableEdgeForEdgeHub", request, RowsModifiedConfirmation
+            )
+        except VcoEmptyResultError:
+            return
 
     async def disable_edge_to_edge_bridge(
         self: VcoClientBaseProtocol, request: DisableEdgeToEdgeBridge
-    ) -> EnterpriseServiceBase:
-        """Remove site-to-site bridge designation from an edge on a profile segment."""
-        return await self.portal(
-            "edge/disableEdgeForEdgeToEdgeBridge", request, EnterpriseServiceBase
-        )
+    ) -> EnterpriseServiceBase | None:
+        """Remove site-to-site bridge designation from an edge on a profile segment.
+
+        ``None`` when the VCO answers ``null``: the Edge has no hub service there.
+        """
+        try:
+            return await self.portal(
+                "edge/disableEdgeForEdgeToEdgeBridge", request, EnterpriseServiceBase
+            )
+        except VcoEmptyResultError:
+            return None
 
     async def disable_edge_backhaul(
         self: VcoClientBaseProtocol, request: DisableEdgeBackHaul
-    ) -> EnterpriseServiceBase:
-        """Remove backhaul designation from an edge on a profile segment."""
-        return await self.portal(
-            "edge/disableEdgeForBackHaul", request, EnterpriseServiceBase
-        )
+    ) -> EnterpriseServiceBase | None:
+        """Remove backhaul designation from an edge on a profile segment.
+
+        ``None`` when the VCO answers ``null``: the Edge has no hub service there.
+        """
+        try:
+            return await self.portal(
+                "edge/disableEdgeForBackHaul", request, EnterpriseServiceBase
+            )
+        except VcoEmptyResultError:
+            return None

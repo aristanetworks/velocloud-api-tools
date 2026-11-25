@@ -1,4 +1,7 @@
-"""AddressGroupResolver — resolves address group names to AddressGroupIdentity via VCO API."""
+"""AddressGroupResolver — resolves address group names to AddressGroupIdentity.
+
+Resolution is via the VCO API.
+"""
 
 from typing import override
 
@@ -10,12 +13,11 @@ from pyvelo.core.identity import (
     AddressGroupIdentity,
     AddressGroupLogicalId,
     AddressGroupName,
+    IdentityKey,
 )
 
-AddressGroupKey = AddressGroupName | AddressGroupId | AddressGroupLogicalId
 
-
-class AddressGroupResolver(BaseResolver[AddressGroupKey, AddressGroupIdentity]):
+class AddressGroupResolver(BaseResolver[AddressGroupIdentity]):
     """Resolves an address-group identifier to an :class:`AddressGroupIdentity`.
 
     Accepts:
@@ -26,19 +28,19 @@ class AddressGroupResolver(BaseResolver[AddressGroupKey, AddressGroupIdentity]):
     Loads via ``enterprise/getObjectGroups`` with type ``address_group``.
     """
 
-    identity_type = AddressGroupIdentity
+    identity_type: type[AddressGroupIdentity] = AddressGroupIdentity
 
     @override
-    async def resolve_key(self, key: AddressGroupKey) -> AddressGroupIdentity:
+    def lookup_key(
+        self, key: IdentityKey[AddressGroupIdentity]
+    ) -> AddressGroupIdentity:
         match key:
             case AddressGroupName(value=name):
-                return await self.resolve(name)
+                return self.lookup(name)
             case AddressGroupId(value=v):
-                name = self._reverse["id"][v]
-                return self._by_name[name]
+                return self._by_key("id", v)
             case AddressGroupLogicalId(value=v):
-                name = self._reverse["logical_id"][v]
-                return self._by_name[name]
+                return self._by_key("logical_id", v)
             case _:
                 raise TypeError(f"Unsupported key type: {type(key).__name__}")
 

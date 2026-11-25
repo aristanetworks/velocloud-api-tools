@@ -1,9 +1,12 @@
-"""Run ARP_DUMP on all connected edges and display results in a table.
+r"""Run ARP_DUMP on all connected edges and display results in a table.
 
 Usage:
-    uv run --package pyvelo-examples python -m pyvelo_examples.run_arp_dump --env .credentials/lab.env
-    uv run --package pyvelo-examples python -m pyvelo_examples.run_arp_dump --env .credentials/lab.env --enterprise-id 123
-    uv run --package pyvelo-examples python -m pyvelo_examples.run_arp_dump --env .credentials/lab.env --edge-name "branch-01"
+    uv run --package pyvelo-examples python -m pyvelo_examples.run_arp_dump \
+        --env .credentials/lab.env
+    uv run --package pyvelo-examples python -m pyvelo_examples.run_arp_dump \
+        --env .credentials/lab.env --enterprise-id 123
+    uv run --package pyvelo-examples python -m pyvelo_examples.run_arp_dump \
+        --env .credentials/lab.env --edge-name "branch-01"
 """
 
 import argparse
@@ -33,6 +36,9 @@ from rich.text import Text
 
 logger = logging.getLogger(__name__)
 
+_SECONDS_PER_MINUTE = 60
+_SECONDS_PER_HOUR = 3600
+
 # ---------------------------------------------------------------------------
 # Data types
 # ---------------------------------------------------------------------------
@@ -40,6 +46,8 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class ArpEntry:
+    """One row of an edge's ARP table."""
+
     interface: str
     address: str
     mac: str
@@ -49,6 +57,8 @@ class ArpEntry:
 
 @dataclass
 class EdgeArpResult:
+    """An edge's ARP entries, or why the diagnostic gave none."""
+
     edge_name: str
     entries: list[ArpEntry] = field(default_factory=list)
     error: str | None = None
@@ -61,23 +71,26 @@ class EdgeArpResult:
 
 def _format_age(seconds: int) -> str:
     """Format age in seconds to a human-readable string."""
-    if seconds < 60:
+    if seconds < _SECONDS_PER_MINUTE:
         return f"{seconds}s"
-    if seconds < 3600:
-        return f"{seconds // 60}m{seconds % 60}s"
-    return f"{seconds // 3600}h{seconds % 3600 // 60}m"
+    if seconds < _SECONDS_PER_HOUR:
+        return f"{seconds // _SECONDS_PER_MINUTE}m{seconds % _SECONDS_PER_MINUTE}s"
+    return (
+        f"{seconds // _SECONDS_PER_HOUR}h"
+        f"{seconds % _SECONDS_PER_HOUR // _SECONDS_PER_MINUTE}m"
+    )
 
 
 def _as_mapping(value: object) -> Mapping[str, object]:
     """Return a JSON object as a read-only mapping, or an empty mapping."""
     if isinstance(value, dict):
         # JSON object keys are strings; `json.loads` guarantees that for parsed input.
-        return cast(Mapping[str, object], value)
+        return cast("Mapping[str, object]", value)
     return {}
 
 
 def _as_list(value: object) -> list[object]:
-    return cast(list[object], value) if isinstance(value, list) else []
+    return cast("list[object]", value) if isinstance(value, list) else []
 
 
 def _text(value: object, default: str = "") -> str:
@@ -100,7 +113,7 @@ def parse_arp_json(data: object) -> list[ArpEntry]:
     if not isinstance(output_str, str) or not output_str:
         return []
 
-    output = cast(object, json.loads(output_str))
+    output = cast("object", json.loads(output_str))
     arp = _as_mapping(_as_mapping(output).get("ARP_DUMP"))
 
     entries: list[ArpEntry] = []
@@ -142,6 +155,7 @@ class ArpDumpArgs:
 
 
 def parse_args(argv: Sequence[str] | None = None) -> ArpDumpArgs:
+    """Read the command line options."""
     parser = argparse.ArgumentParser(
         description="Run ARP_DUMP on connected edges and display results."
     )
@@ -178,6 +192,7 @@ def parse_args(argv: Sequence[str] | None = None) -> ArpDumpArgs:
 
 
 def render_results(results: list[EdgeArpResult], vco_host: str) -> None:
+    """Print a summary table of the edges and a table of every ARP entry."""
     console = Console()
 
     # Summary table.
@@ -234,6 +249,11 @@ def render_results(results: list[EdgeArpResult], vco_host: str) -> None:
 
 
 async def main() -> None:
+    """Run ARP_DUMP over the WebSocket on each connected edge and print the results.
+
+    At most ``--concurrency`` diagnostics run at once. The enterprise is read from
+    the token when ``--enterprise-id`` is not given.
+    """
     args = parse_args()
     logging.basicConfig(
         level=logging.DEBUG if args.verbose else logging.INFO,
@@ -249,14 +269,16 @@ async def main() -> None:
         if enterprise_id is None:
             ent = await client.get_enterprise(GetEnterprise())
             enterprise_id = ent.id_
-            logger.info(f"Auto-discovered enterprise: {ent.name} (ID {enterprise_id})")
+            logger.info(
+                "Auto-discovered enterprise: %s (ID %s)", ent.name, enterprise_id
+            )
 
         # Discover edges.
-        logger.info(f"Fetching edges for enterprise {enterprise_id}...")
+        logger.info("Fetching edges for enterprise %s...", enterprise_id)
         edges = await client.get_enterprise_edges(
             GetEnterpriseEdges(enterprise_id=enterprise_id)
         )
-        logger.info(f"Found {len(edges)} edges total")
+        logger.info("Found %d edges total", len(edges))
 
         # Filter to connected edges.
         connected = [e for e in edges if e.edge_state == EdgeState.CONNECTED]
@@ -272,10 +294,11 @@ async def main() -> None:
             return
 
         logger.info(
-            f"{len(connected)} connected edge(s) to diagnose: "
-            + ", ".join(
+            "%d connected edge(s) to diagnose: %s",
+            len(connected),
+            ", ".join(
                 e.name if isinstance(e.name, str) and e.name else "?" for e in connected
-            )
+            ),
         )
 
         # Run ARP_DUMP via WebSocket with JSON output.
@@ -293,7 +316,7 @@ async def main() -> None:
                 if not isinstance(lid, UUID):
                     return EdgeArpResult(edge_name=name, error="no logical_id")
 
-                logger.info(f"Running ARP_DUMP on {name}...")
+                logger.info("Running ARP_DUMP on %s...", name)
                 try:
                     data = await ws.run_diagnostic(
                         lid,
@@ -303,7 +326,7 @@ async def main() -> None:
                         timeout=args.timeout,
                     )
                     entries = parse_arp_json(data)
-                    logger.info(f"  {name}: {len(entries)} ARP entries")
+                    logger.info("  %s: %d ARP entries", name, len(entries))
                     return EdgeArpResult(edge_name=name, entries=entries)
                 except VcoWebSocketError as exc:
                     logger.warning(

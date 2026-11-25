@@ -1,4 +1,10 @@
-from typing import Annotated
+"""The request and result of ``linkQualityEvent/getLinkQualityEvents``.
+
+A link's QoE samples: per traffic type, the metrics of each sample and their quality
+states.
+"""
+
+from typing import Annotated, ClassVar
 
 from pydantic import MISSING, ConfigDict
 
@@ -26,7 +32,7 @@ __all__ = [
 
 class GetLinkQualityEvents(VcoModel):
     enterprise_id: int | MISSING = MISSING
-    edge_id: Annotated[int, Resolvable(EdgeIdentity, "id")]
+    edge_id: Annotated[int, Resolvable(EdgeIdentity, lambda i: i.id)]
     interval: ApiInterval
     max_samples: int | MISSING = MISSING
     minutes_per_sample: int | MISSING = MISSING
@@ -110,7 +116,7 @@ class GetLinkQualityEventsResult(VcoModel):
     (UUID string). Use ``link_entries`` to access them as typed objects.
     """
 
-    model_config = ConfigDict(extra="allow")
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="allow")
     overall_link_quality: LinkQualityData | MISSING = MISSING
 
     @property

@@ -1,5 +1,13 @@
+"""The requests and results of the ``metrics/`` methods.
+
+Edge link, path, application, device, destination, category, segment, OS and
+interface metrics and their series; aggregate Edge link metrics; flow visibility;
+firewall IDPS, malicious IP and URL metrics; Edge and Gateway status; and NSD tunnel
+stats.
+"""
+
 import uuid
-from typing import Annotated, Any
+from typing import Annotated, Any, ClassVar
 
 from pydantic import (
     MISSING,
@@ -95,25 +103,25 @@ class LinkPair(VcoModel):
 
 
 class GetEdgeSdwanPeerPathMetrics(VcoModel):
-    edge_id: Annotated[int, Resolvable(EdgeIdentity, "id")] = Field(
+    edge_id: Annotated[int, Resolvable(EdgeIdentity, lambda i: i.id)] = Field(
         description="VCO Edge ID"
     )
     enterprise_id: int | MISSING = MISSING
-    peer_logical_id: Annotated[uuid.UUID, Resolvable(EdgeIdentity, "logical_id")] = (
-        Field(description="SDWAN peer logical ID (UUID)")
-    )
+    peer_logical_id: Annotated[
+        uuid.UUID, Resolvable(EdgeIdentity, lambda i: i.logical_id)
+    ] = Field(description="SDWAN peer logical ID (UUID)")
     interval: ApiInterval
     metrics: list[SdwanPeerPathMetric]
 
 
 class GetEdgeSdwanPeerPathSeries(VcoModel):
-    edge_id: Annotated[int, Resolvable(EdgeIdentity, "id")] = Field(
+    edge_id: Annotated[int, Resolvable(EdgeIdentity, lambda i: i.id)] = Field(
         description="VCO Edge ID"
     )
     enterprise_id: int | MISSING = MISSING
-    peer_logical_id: Annotated[uuid.UUID, Resolvable(EdgeIdentity, "logical_id")] = (
-        Field(description="SDWAN peer logical ID (UUID)")
-    )
+    peer_logical_id: Annotated[
+        uuid.UUID, Resolvable(EdgeIdentity, lambda i: i.logical_id)
+    ] = Field(description="SDWAN peer logical ID (UUID)")
     paths: list[LinkPair] = Field(description="Link pairs for peer path queries")
     interval: ApiInterval
     metrics: list[SdwanPeerPathMetric]
@@ -181,7 +189,9 @@ class EdgeAppMetrics(VcoModel):
     category: int | MISSING = MISSING
     category_name: str | MISSING = MISSING
     dest_fqdn: str | MISSING = MISSING
-    link_id: Annotated[int | MISSING, Resolvable(LinkIdentity, "id")] = MISSING
+    link_id: Annotated[int | MISSING, Resolvable(LinkIdentity, lambda i: i.id)] = (
+        MISSING
+    )
     packets_rx: int
     packets_tx: int
     total_packets: int
@@ -197,7 +207,9 @@ class EnterpriseAppOtherMetrics(VcoModel):
     name: int | str
     category: int | MISSING = MISSING
     category_name: str | MISSING = MISSING
-    link_id: Annotated[int | MISSING, Resolvable(LinkIdentity, "id")] = MISSING
+    link_id: Annotated[int | MISSING, Resolvable(LinkIdentity, lambda i: i.id)] = (
+        MISSING
+    )
     packets_rx: int
     packets_tx: int
     total_packets: int
@@ -213,7 +225,9 @@ class EnterpriseFlowMetricsItem(VcoModel):
     category: int | MISSING = MISSING
     category_name: str | MISSING = MISSING
     dest_fqdn: str | MISSING = MISSING
-    link_id: Annotated[int | MISSING, Resolvable(LinkIdentity, "id")] = MISSING
+    link_id: Annotated[int | MISSING, Resolvable(LinkIdentity, lambda i: i.id)] = (
+        MISSING
+    )
     packets_rx: int | MISSING = MISSING
     packets_tx: int | MISSING = MISSING
     total_packets: int | MISSING = MISSING
@@ -223,7 +237,7 @@ class EnterpriseFlowMetricsItem(VcoModel):
     total_bytes: int | MISSING = MISSING
     service_groups: list[EdgeTransportGroup] | MISSING = MISSING
     edge_logical_id: Annotated[
-        uuid.UUID | MISSING, Resolvable(EdgeIdentity, "logical_id")
+        uuid.UUID | MISSING, Resolvable(EdgeIdentity, lambda i: i.logical_id)
     ] = MISSING
 
 
@@ -234,7 +248,7 @@ class EnterpriseFlowMetricsItem(VcoModel):
 
 class GetEdgeAppMetrics(VcoModel):
     enterprise_id: int | MISSING = MISSING
-    edge_id: Annotated[int, Resolvable(EdgeIdentity, "id")] = Field(
+    edge_id: Annotated[int, Resolvable(EdgeIdentity, lambda i: i.id)] = Field(
         description="VCO Edge ID"
     )
     interval: ApiInterval
@@ -277,7 +291,7 @@ class EdgeDeviceMetricsFilter(VcoModel):
 
 class GetEdgeDeviceMetrics(VcoModel):
     enterprise_id: int | MISSING = MISSING
-    edge_id: Annotated[int, Resolvable(EdgeIdentity, "id")] = Field(
+    edge_id: Annotated[int, Resolvable(EdgeIdentity, lambda i: i.id)] = Field(
         description="VCO Edge ID"
     )
     interval: ApiInterval
@@ -310,7 +324,7 @@ class EdgeDeviceMetricsItem(VcoModel):
 
 class GetEdgeStatusMetrics(VcoModel):
     enterprise_id: int | MISSING = MISSING
-    edge_id: Annotated[int, Resolvable(EdgeIdentity, "id")] = Field(
+    edge_id: Annotated[int, Resolvable(EdgeIdentity, lambda i: i.id)] = Field(
         description="VCO Edge ID"
     )
     interval: ApiInterval
@@ -338,7 +352,7 @@ class EdgeStatusMetricsResult(VcoModel):
 
 class GetEdgeLinkMetrics(VcoModel):
     enterprise_id: int | MISSING = MISSING
-    edge_id: Annotated[int, Resolvable(EdgeIdentity, "id")] = Field(
+    edge_id: Annotated[int, Resolvable(EdgeIdentity, lambda i: i.id)] = Field(
         description="VCO Edge ID"
     )
     interval: ApiInterval
@@ -351,7 +365,9 @@ class GetEdgeLinkMetrics(VcoModel):
 class EdgeLinkMetricsLink(VcoModel):
     id_: Annotated[int | None | MISSING, Alias("id")] = MISSING
     created: VcoTimestamp | None | MISSING = MISSING
-    edge_id: Annotated[int | None | MISSING, Resolvable(EdgeIdentity, "id")] = MISSING
+    edge_id: Annotated[
+        int | None | MISSING, Resolvable(EdgeIdentity, lambda i: i.id)
+    ] = MISSING
     logical_id: str | None | MISSING = MISSING
     internal_id: str | None | MISSING = MISSING
     interface: str | None | MISSING = MISSING
@@ -382,7 +398,9 @@ class EdgeLinkMetricsLink(VcoModel):
 
 
 class EdgeLinkMetricsItem(VcoModel):
-    link_id: Annotated[int | MISSING, Resolvable(LinkIdentity, "id")] = MISSING
+    link_id: Annotated[int | MISSING, Resolvable(LinkIdentity, lambda i: i.id)] = (
+        MISSING
+    )
     name: str | MISSING = MISSING
     link: EdgeLinkMetricsLink | MISSING = MISSING
 
@@ -483,7 +501,9 @@ class FlowVisibilityFilter(VcoModel):
 
 class FlowVisibilityFilters(VcoModel):
     conditions: Annotated[list[FlowVisibilityFilter], Alias("and")] = Field(
-        description="Array of filter conditions; each specifies field, operator and value"
+        description=(
+            "Array of filter conditions; each specifies field, operator and value"
+        )
     )
 
 
@@ -496,14 +516,16 @@ class FlowVisibilitySortSpec(VcoModel):
 
 class GetEdgeFlowVisibilityMetrics(PaginatedVcoModel):
     enterprise_id: int | MISSING = MISSING
-    edge_id: Annotated[int, Resolvable(EdgeIdentity, "id")] = Field(
+    edge_id: Annotated[int, Resolvable(EdgeIdentity, lambda i: i.id)] = Field(
         description="VCO Edge ID"
     )
     interval: ApiInterval
     limit: int | MISSING = MISSING
     sort: FlowVisibilityMetric | MISSING = Field(
         default=MISSING,
-        description="Metric to sort results by (e.g. totalBytes); use sortOrder for direction",
+        description=(
+            "Metric to sort results by (e.g. totalBytes); use sortOrder for direction"
+        ),
     )
     sort_order: SortDirection | MISSING = Field(
         default=MISSING,
@@ -573,7 +595,7 @@ class FlowVisibilityItem(VcoModel):
 
 class GetEdgeLinkSeries(VcoModel):
     enterprise_id: int | MISSING = MISSING
-    edge_id: Annotated[int, Resolvable(EdgeIdentity, "id")] = Field(
+    edge_id: Annotated[int, Resolvable(EdgeIdentity, lambda i: i.id)] = Field(
         description="VCO Edge ID"
     )
     interval: ApiInterval
@@ -641,10 +663,7 @@ class LinkAutoDualModeTimeSeries(VcoModel):
 
 
 def _link_time_series_discriminator(v: Any) -> str:
-    if isinstance(v, dict):
-        metric = v.get("metric", "")
-    else:
-        metric = getattr(v, "metric", "")
+    metric = v.get("metric", "") if isinstance(v, dict) else getattr(v, "metric", "")
     if metric == LinkMetric.STATE:
         return "state"
     if metric == LinkMetric.AUTO_DUAL_MODE:
@@ -661,8 +680,12 @@ type LinkTimeSeries = Annotated[
 
 
 class EdgeLinkSeriesItem(VcoModel):
-    link_id: Annotated[int | MISSING, Resolvable(LinkIdentity, "id")] = MISSING
-    edge_id: Annotated[int | MISSING, Resolvable(EdgeIdentity, "id")] = MISSING
+    link_id: Annotated[int | MISSING, Resolvable(LinkIdentity, lambda i: i.id)] = (
+        MISSING
+    )
+    edge_id: Annotated[int | MISSING, Resolvable(EdgeIdentity, lambda i: i.id)] = (
+        MISSING
+    )
     link: EdgeLinkMetricsLink | MISSING = MISSING
     series: list[LinkTimeSeries] | MISSING = MISSING
 
@@ -674,7 +697,7 @@ class EdgeLinkSeriesItem(VcoModel):
 
 class GetEdgeStatusSeries(VcoModel):
     enterprise_id: int | MISSING = MISSING
-    edge_id: Annotated[int, Resolvable(EdgeIdentity, "id")] = Field(
+    edge_id: Annotated[int, Resolvable(EdgeIdentity, lambda i: i.id)] = Field(
         description="VCO Edge ID"
     )
     interval: ApiInterval
@@ -690,7 +713,7 @@ class EdgeStatusSeriesPoint(VcoModel):
     format used by getEdgeStatusSeries.
     """
 
-    model_config = ConfigDict(extra="allow")
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="allow")
 
     start_time: VcoTimestamp
     cpu_pct: float | None | MISSING = MISSING
@@ -718,7 +741,7 @@ class EdgeStatusSeriesResult(VcoModel):
 
 class GetEdgeAppSeries(VcoModel):
     enterprise_id: int | MISSING = MISSING
-    edge_id: Annotated[int, Resolvable(EdgeIdentity, "id")] = Field(
+    edge_id: Annotated[int, Resolvable(EdgeIdentity, lambda i: i.id)] = Field(
         description="VCO Edge ID"
     )
     interval: ApiInterval
@@ -759,7 +782,7 @@ class EdgeAppSeriesItem(VcoModel):
 
 class GetEdgeCategoryMetrics(VcoModel):
     enterprise_id: int | MISSING = MISSING
-    edge_id: Annotated[int, Resolvable(EdgeIdentity, "id")] = Field(
+    edge_id: Annotated[int, Resolvable(EdgeIdentity, lambda i: i.id)] = Field(
         description="VCO Edge ID"
     )
     interval: ApiInterval
@@ -790,7 +813,7 @@ class EdgeCategoryMetricsItem(VcoModel):
 
 class GetEdgeDestMetrics(VcoModel):
     enterprise_id: int | MISSING = MISSING
-    edge_id: Annotated[int, Resolvable(EdgeIdentity, "id")] = Field(
+    edge_id: Annotated[int, Resolvable(EdgeIdentity, lambda i: i.id)] = Field(
         description="VCO Edge ID"
     )
     interval: ApiInterval
@@ -823,7 +846,7 @@ class EdgeDestMetricsItem(VcoModel):
 
 class GetEdgeSegmentMetrics(VcoModel):
     enterprise_id: int | MISSING = MISSING
-    edge_id: Annotated[int, Resolvable(EdgeIdentity, "id")] = Field(
+    edge_id: Annotated[int, Resolvable(EdgeIdentity, lambda i: i.id)] = Field(
         description="VCO Edge ID"
     )
     interval: ApiInterval
@@ -853,7 +876,7 @@ class EdgeSegmentMetricsItem(VcoModel):
 
 class GetEdgeOsMetrics(VcoModel):
     enterprise_id: int | MISSING = MISSING
-    edge_id: Annotated[int, Resolvable(EdgeIdentity, "id")] = Field(
+    edge_id: Annotated[int, Resolvable(EdgeIdentity, lambda i: i.id)] = Field(
         description="VCO Edge ID"
     )
     interval: ApiInterval
@@ -883,7 +906,7 @@ class EdgeOsMetricsItem(VcoModel):
 
 class GetEdgeOsSeries(VcoModel):
     enterprise_id: int | MISSING = MISSING
-    edge_id: Annotated[int, Resolvable(EdgeIdentity, "id")] = Field(
+    edge_id: Annotated[int, Resolvable(EdgeIdentity, lambda i: i.id)] = Field(
         description="VCO Edge ID"
     )
     interval: ApiInterval
@@ -908,7 +931,7 @@ class EdgeOsSeriesItem(VcoModel):
 
 class GetEdgeNetworkInterfaceMetrics(VcoModel):
     enterprise_id: int | MISSING = MISSING
-    edge_id: Annotated[int, Resolvable(EdgeIdentity, "id")] = Field(
+    edge_id: Annotated[int, Resolvable(EdgeIdentity, lambda i: i.id)] = Field(
         description="VCO Edge ID"
     )
     interval: ApiInterval
@@ -936,7 +959,7 @@ class EdgeNetworkInterfaceMetricsItem(VcoModel):
 
 class GetEdgeNetworkInterfaceSeries(VcoModel):
     enterprise_id: int | MISSING = MISSING
-    edge_id: Annotated[int, Resolvable(EdgeIdentity, "id")] = Field(
+    edge_id: Annotated[int, Resolvable(EdgeIdentity, lambda i: i.id)] = Field(
         description="VCO Edge ID"
     )
     interval: ApiInterval
@@ -976,10 +999,7 @@ class NetworkInterfaceStateTimeSeries(VcoModel):
 
 
 def _interface_time_series_discriminator(v: Any) -> str:
-    if isinstance(v, dict):
-        metric = v.get("metric", "")
-    else:
-        metric = getattr(v, "metric", "")
+    metric = v.get("metric", "") if isinstance(v, dict) else getattr(v, "metric", "")
     if metric == NetworkInterfaceMetric.STATE:
         return "state"
     return "numeric"
@@ -1004,7 +1024,7 @@ class EdgeNetworkInterfaceSeriesItem(VcoModel):
 
 
 class GetEdgeAppLinkMetrics(VcoModel):
-    id_: Annotated[int, Alias("id"), Resolvable(EdgeIdentity, "id")] = Field(
+    id_: Annotated[int, Alias("id"), Resolvable(EdgeIdentity, lambda i: i.id)] = Field(
         description="VCO Edge ID"
     )
     enterprise_id: int | MISSING = MISSING
@@ -1015,9 +1035,11 @@ class GetEdgeAppLinkMetrics(VcoModel):
 
 class EdgeAppLinkMetricsItem(VcoModel):
     name: int | str | MISSING = MISSING
-    link_id: Annotated[int | MISSING, Resolvable(LinkIdentity, "id")] = MISSING
+    link_id: Annotated[int | MISSING, Resolvable(LinkIdentity, lambda i: i.id)] = (
+        MISSING
+    )
     link_logical_id: Annotated[
-        uuid.UUID | MISSING, Resolvable(LinkIdentity, "internal_id")
+        uuid.UUID | MISSING, Resolvable(LinkIdentity, lambda i: i.internal_id)
     ] = MISSING
     packets_rx: int | MISSING = MISSING
     packets_tx: int | MISSING = MISSING
@@ -1034,7 +1056,7 @@ class EdgeAppLinkMetricsItem(VcoModel):
 
 
 class GetEdgeAppLinkSeries(VcoModel):
-    id_: Annotated[int, Alias("id"), Resolvable(EdgeIdentity, "id")] = Field(
+    id_: Annotated[int, Alias("id"), Resolvable(EdgeIdentity, lambda i: i.id)] = Field(
         description="VCO Edge ID"
     )
     enterprise_id: int | MISSING = MISSING
@@ -1046,9 +1068,11 @@ class GetEdgeAppLinkSeries(VcoModel):
 
 class EdgeAppLinkSeriesItem(VcoModel):
     name: int | str | MISSING = MISSING
-    link_id: Annotated[int | MISSING, Resolvable(LinkIdentity, "id")] = MISSING
+    link_id: Annotated[int | MISSING, Resolvable(LinkIdentity, lambda i: i.id)] = (
+        MISSING
+    )
     link_logical_id: Annotated[
-        uuid.UUID | MISSING, Resolvable(LinkIdentity, "internal_id")
+        uuid.UUID | MISSING, Resolvable(LinkIdentity, lambda i: i.internal_id)
     ] = MISSING
     series: list[AppTimeSeries] | MISSING = MISSING
 
@@ -1060,7 +1084,7 @@ class EdgeAppLinkSeriesItem(VcoModel):
 
 class GetEdgeCategorySeries(VcoModel):
     enterprise_id: int | MISSING = MISSING
-    edge_id: Annotated[int, Resolvable(EdgeIdentity, "id")] = Field(
+    edge_id: Annotated[int, Resolvable(EdgeIdentity, lambda i: i.id)] = Field(
         description="VCO Edge ID"
     )
     interval: ApiInterval
@@ -1086,7 +1110,7 @@ class EdgeCategorySeriesItem(VcoModel):
 
 class GetEdgeDestSeries(VcoModel):
     enterprise_id: int | MISSING = MISSING
-    edge_id: Annotated[int, Resolvable(EdgeIdentity, "id")] = Field(
+    edge_id: Annotated[int, Resolvable(EdgeIdentity, lambda i: i.id)] = Field(
         description="VCO Edge ID"
     )
     interval: ApiInterval
@@ -1112,7 +1136,7 @@ class EdgeDestSeriesItem(VcoModel):
 
 class GetEdgeDeviceSeries(VcoModel):
     enterprise_id: int | MISSING = MISSING
-    edge_id: Annotated[int, Resolvable(EdgeIdentity, "id")] = Field(
+    edge_id: Annotated[int, Resolvable(EdgeIdentity, lambda i: i.id)] = Field(
         description="VCO Edge ID"
     )
     interval: ApiInterval
@@ -1138,7 +1162,7 @@ class EdgeDeviceSeriesItem(VcoModel):
 
 class GetEdgeSegmentSeries(VcoModel):
     enterprise_id: int | MISSING = MISSING
-    edge_id: Annotated[int, Resolvable(EdgeIdentity, "id")] = Field(
+    edge_id: Annotated[int, Resolvable(EdgeIdentity, lambda i: i.id)] = Field(
         description="VCO Edge ID"
     )
     interval: ApiInterval
@@ -1175,7 +1199,9 @@ class AggregateEdgeLinkMetricsLink(VcoModel):
     enterprise_proxy_name: str | None | MISSING = MISSING
 
     edge_name: str | None | MISSING = MISSING
-    edge_id: Annotated[int | None | MISSING, Resolvable(EdgeIdentity, "id")] = MISSING
+    edge_id: Annotated[
+        int | None | MISSING, Resolvable(EdgeIdentity, lambda i: i.id)
+    ] = MISSING
     edge_serial_number: str | None | MISSING = MISSING
     edge_ha_serial_number: str | None | MISSING = MISSING
     edge_model_number: str | None | MISSING = MISSING
@@ -1190,7 +1216,9 @@ class AggregateEdgeLinkMetricsLink(VcoModel):
     isp: str | None | MISSING = MISSING
     interface: str | None | MISSING = MISSING
     internal_id: str | None | MISSING = MISSING
-    link_id: Annotated[int | None | MISSING, Resolvable(LinkIdentity, "id")] = MISSING
+    link_id: Annotated[
+        int | None | MISSING, Resolvable(LinkIdentity, lambda i: i.id)
+    ] = MISSING
     link_ip_address: str | None | MISSING = MISSING
     link_ip_v6_address: str | None | MISSING = MISSING
     link_state: LinkState | None | MISSING = MISSING
@@ -1203,7 +1231,9 @@ class AggregateEdgeLinkMetricsLink(VcoModel):
 
 
 class AggregateEdgeLinkMetricsItem(VcoModel):
-    link_id: Annotated[int | MISSING, Resolvable(LinkIdentity, "id")] = MISSING
+    link_id: Annotated[int | MISSING, Resolvable(LinkIdentity, lambda i: i.id)] = (
+        MISSING
+    )
     name: str | MISSING = MISSING
     link: AggregateEdgeLinkMetricsLink | MISSING = MISSING
 
@@ -1280,7 +1310,7 @@ class AggregateEdgeLinkMetricsItem(VcoModel):
 
 
 class GetGatewayStatusMetrics(VcoModel):
-    gateway_id: Annotated[int, Resolvable(GatewayIdentity, "id")] = Field(
+    gateway_id: Annotated[int, Resolvable(GatewayIdentity, lambda i: i.id)] = Field(
         description="VCO gateway ID"
     )
     interval: ApiInterval
@@ -1306,7 +1336,7 @@ class GatewayStatusMetricsResult(VcoModel):
 
 class GetGatewayStatusSeries(VcoModel):
     enterprise_id: int | MISSING = MISSING
-    gateway_id: Annotated[int, Resolvable(GatewayIdentity, "id")] = Field(
+    gateway_id: Annotated[int, Resolvable(GatewayIdentity, lambda i: i.id)] = Field(
         description="VCO gateway ID"
     )
     interval: ApiInterval
@@ -1321,7 +1351,7 @@ class GatewayStatusSeriesItem(VcoModel):
     like cpuPct, memoryPct, connectedEdges, etc.
     """
 
-    model_config = ConfigDict(extra="allow")
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="allow")
     start_time: VcoTimestamp | MISSING = MISSING
 
 
@@ -1336,7 +1366,7 @@ class GatewayStatusSeriesResult(VcoModel):
 
 class GetEdgeFirewallIdpsMetrics(VcoModel):
     enterprise_id: int | MISSING = MISSING
-    edge_id: Annotated[int, Resolvable(EdgeIdentity, "id")] = Field(
+    edge_id: Annotated[int, Resolvable(EdgeIdentity, lambda i: i.id)] = Field(
         description="VCO Edge ID"
     )
     view_by: FirewallIdpsViewBy = Field(description="Dimension to group results by")
@@ -1365,7 +1395,7 @@ class FirewallIdpsMetricsItem(VcoModel):
 
 class GetEdgeFirewallIdpsSeries(VcoModel):
     enterprise_id: int | MISSING = MISSING
-    edge_id: Annotated[int, Resolvable(EdgeIdentity, "id")] = Field(
+    edge_id: Annotated[int, Resolvable(EdgeIdentity, lambda i: i.id)] = Field(
         description="VCO Edge ID"
     )
     view_by: FirewallIdpsSeriesViewBy
@@ -1386,7 +1416,7 @@ class FirewallIdpsSeriesItem(VcoModel):
 
 class GetEdgeFirewallMaliciousIpMetrics(VcoModel):
     enterprise_id: int | MISSING = MISSING
-    edge_id: Annotated[int, Resolvable(EdgeIdentity, "id")] = Field(
+    edge_id: Annotated[int, Resolvable(EdgeIdentity, lambda i: i.id)] = Field(
         description="VCO Edge ID"
     )
     view_by: FirewallMaliciousIpViewBy
@@ -1410,7 +1440,7 @@ class FirewallMaliciousIpMetricsItem(VcoModel):
 
 class GetEdgeFirewallUrlCategoryMetrics(VcoModel):
     enterprise_id: int | MISSING = MISSING
-    edge_id: Annotated[int, Resolvable(EdgeIdentity, "id")] = Field(
+    edge_id: Annotated[int, Resolvable(EdgeIdentity, lambda i: i.id)] = Field(
         description="VCO Edge ID"
     )
     view_by: FirewallUrlCategoryViewBy
@@ -1437,7 +1467,7 @@ class FirewallUrlCategoryMetricsItem(VcoModel):
 
 class GetEdgeFirewallUrlReputationMetrics(VcoModel):
     enterprise_id: int | MISSING = MISSING
-    edge_id: Annotated[int, Resolvable(EdgeIdentity, "id")] = Field(
+    edge_id: Annotated[int, Resolvable(EdgeIdentity, lambda i: i.id)] = Field(
         description="VCO Edge ID"
     )
     view_by: FirewallUrlReputationViewBy
@@ -1512,9 +1542,11 @@ class GetEnterpriseFirewallEdgeSummaryMetrics(VcoModel):
 class FirewallEdgeSummaryMetricsItem(VcoModel):
     name: str | MISSING = MISSING
     edge_logical_id: Annotated[
-        uuid.UUID | MISSING, Resolvable(EdgeIdentity, "logical_id")
+        uuid.UUID | MISSING, Resolvable(EdgeIdentity, lambda i: i.logical_id)
     ] = MISSING
-    edge_id: Annotated[int | MISSING, Resolvable(EdgeIdentity, "id")] = MISSING
+    edge_id: Annotated[int | MISSING, Resolvable(EdgeIdentity, lambda i: i.id)] = (
+        MISSING
+    )
     idps_actions: dict[str, Any] | MISSING = MISSING
     url_cat_actions: dict[str, Any] | MISSING = MISSING
     url_rep_actions: dict[str, Any] | MISSING = MISSING
@@ -1613,7 +1645,7 @@ class NsdTunnelStatsResultItem(VcoModel):
 class GetNsdEdgeTunnelStats(VcoModel):
     enterprise_id: int | MISSING = MISSING
     nsd_logical_id: uuid.UUID = Field(description="NSD tunnel logical ID (UUID)")
-    edge_id: Annotated[int, Resolvable(EdgeIdentity, "id")] = Field(
+    edge_id: Annotated[int, Resolvable(EdgeIdentity, lambda i: i.id)] = Field(
         description="VCO Edge ID"
     )
     interval: ApiInterval

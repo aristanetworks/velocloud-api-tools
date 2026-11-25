@@ -1,11 +1,13 @@
+"""A WAN link of the ``WAN`` module, with its static SLA and CoS settings."""
+
 import uuid
 from typing import Annotated, Any, Literal
 
 from pydantic import MISSING, Field, field_validator
 
-from pyvelo.core import Alias, VcoModel
+from pyvelo.client.models.configuration.common import AddressType
+from pyvelo.core import Alias, ServerOwned, VcoModel
 
-from ..common import AddressType
 from .common import (
     BandwidthMeasurement,
     DiscoveryMode,
@@ -37,7 +39,7 @@ class WanLinkCos(VcoModel):
 
 class WanLink(VcoModel):
     logical_id: str | None = None
-    internal_id: uuid.UUID | MISSING = MISSING
+    internal_id: Annotated[uuid.UUID | MISSING, ServerOwned()] = MISSING
     addressing_version: AddressType = "IPv4"
     discovery: DiscoveryMode = "AUTO_DISCOVERED"
     mode: WanMode = "PUBLIC"
@@ -110,7 +112,7 @@ class WanLink(VcoModel):
 
     @field_validator("last_active", mode="before")
     @classmethod
-    def handle_empty_last_active(cls, v):
+    def handle_empty_last_active(cls, v: object) -> object:
         if v == "":
             return None
         return v

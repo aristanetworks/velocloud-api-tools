@@ -1,3 +1,9 @@
+"""The metric names, view-by dimensions and filter fields of the metrics methods.
+
+One enum per method family: link, path, application, device, destination, flow
+visibility, segment, firewall, Gateway, tunnel and health metrics.
+"""
+
 from enum import StrEnum
 
 

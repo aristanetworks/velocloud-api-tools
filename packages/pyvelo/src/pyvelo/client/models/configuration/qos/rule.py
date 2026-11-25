@@ -1,19 +1,25 @@
+"""A QoS (business policy) rule: its match and its action.
+
+The action sets the rule's priority and service class, its link steering, its
+route (direct, Gateway or backhaul to a hub) and its NAT.
+"""
+
 import uuid
 from typing import Annotated, Any, Literal, override
 
 from pydantic import MISSING, AliasChoices, Field
 
-from pyvelo.core import Alias, Normalizer, VcoModel
-from pyvelo.core.fields import Resolvable
-from pyvelo.core.identity import ApplicationIdentity
-
-from ..common import (
+from pyvelo.client.models.configuration.common import (
     AddressGroupRef,
     AddressType,
     RuleMatchType,
     ServiceGroupRef,
     VlanType,
 )
+from pyvelo.core import Alias, NameOf, Normalizer, VcoModel
+from pyvelo.core.fields import KeyField, OwnsRef, RefersTo, Resolvable
+from pyvelo.core.identity import ApplicationIdentity, HubIdentity, HubService
+
 from .common import (
     BackhaulEdgeType,
     QosLinkPolicy,
@@ -88,7 +94,7 @@ class QosRuleMatch(VcoModel):
 
     # Application and traffic classification
     application_id: Annotated[
-        int, Alias("appid"), Resolvable(ApplicationIdentity, "id")
+        int, Alias("appid"), Resolvable(ApplicationIdentity, lambda i: i.id)
     ] = -1
     application_class_id: Annotated[int, Alias("classid")] = -1
     dscp: int = -1
@@ -121,10 +127,28 @@ class QosRuleMatch(VcoModel):
 
 
 class BackhaulEdge(VcoModel):
-    type_: Annotated[BackhaulEdgeType, Alias("type")] = "edgeHub"
-    logical_id: uuid.UUID
-    edge_logical_id: uuid.UUID | MISSING = MISSING
-    edge_name: Annotated[str | MISSING, Alias("name")] = MISSING
+    type_: Annotated[
+        BackhaulEdgeType, Alias("type"), Resolvable(HubIdentity, lambda i: i.type_)
+    ] = "edgeHub"
+    logical_id: Annotated[
+        uuid.UUID | MISSING,
+        OwnsRef(
+            "deviceSettings:backHaulEdge",
+            HubService,
+            by="logical_id",
+            row="logicalId",
+            per_segment=True,
+        ),
+    ] = MISSING
+    edge_logical_id: Annotated[
+        uuid.UUID | MISSING,
+        Resolvable(HubIdentity, lambda i: i.logical_id),
+        RefersTo("backhaul_hub", per_segment=True),
+    ] = MISSING
+    edge_id: Annotated[
+        int | None | MISSING, Resolvable(HubIdentity, lambda i: i.edge_id)
+    ] = MISSING
+    edge_name: Annotated[str | MISSING, Alias("name"), NameOf(HubIdentity)] = MISSING
 
 
 class RouteConfig(VcoModel):
@@ -132,7 +156,10 @@ class RouteConfig(VcoModel):
     name: str | None = None
     logical_id: uuid.UUID | None = None
     bypass_gateway: bool = False
-    backhaul_edges: list[BackhaulEdge] | MISSING = MISSING
+    backhaul_edges: Annotated[
+        list[BackhaulEdge] | MISSING,
+        KeyField("edge_logical_id", alt="logical_id", label="edge_name"),
+    ] = MISSING
     backhaul_edges_auto_selection: bool = False
 
 
@@ -205,5 +232,4 @@ class QosRule(VcoModel):
     name: str
     match: QosRuleMatch
     action: QosRuleAction
-    # UI sends null on create and lets VCO assign the id.
-    rule_logical_id: uuid.UUID | None = None
+    rule_logical_id: uuid.UUID = Field(default_factory=uuid.uuid4)

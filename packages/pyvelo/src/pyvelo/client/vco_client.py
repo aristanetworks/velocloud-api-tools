@@ -6,12 +6,14 @@ import json
 import logging
 import random
 import time
+from http import HTTPStatus
 from typing import Any, override
 from urllib.parse import urlsplit
 
 import httpx
 from pydantic import SecretStr
 
+from pyvelo.client.auth import clean_token
 from pyvelo.client.exceptions import VcoRateLimitError
 from pyvelo.client.protocol import ExchangeHook, VcoClientProtocol
 from pyvelo.client.request_observation import RequestObservation, RequestObserver
@@ -26,9 +28,18 @@ _RATE_LIMIT_WINDOW = 5.0
 
 
 class VcoClient(VcoClientProtocol):
-    """Concrete VcoClient with retry, rate-limiting, and concurrency control."""
+    """Concrete VcoClient with retry, rate-limiting, and concurrency control.
 
-    def __init__(
+    With a ``transport`` the client sends every request through it, is
+    connected from the moment it is built (no ``async with`` needed), and keeps
+    the transport inside ``async with``; after the block it is closed like any
+    client. ``verify_ssl`` has no effect with a transport. Leaving the block
+    closes the transport, and entering a block again enters it again, so a
+    transport that can be entered again (an ``httpx`` one can) serves a second
+    block.
+    """
+
+    def __init__(  # noqa: PLR0913 (existing: split it when it next changes)
         self,
         vco_fqdn: str,
         token: str,
@@ -40,15 +51,28 @@ class VcoClient(VcoClientProtocol):
         max_requests_per_window: int | None = None,
         exchange_hook: ExchangeHook | None = None,
         request_observer: RequestObserver | None = None,
+        transport: httpx.AsyncBaseTransport | None = None,
     ) -> None:
+        """A client of the VCO at *vco_fqdn*, signed in with the API *token*.
+
+        *max_concurrent_requests* caps the requests in flight, and
+        *max_requests_per_window* the requests sent in each 5-second window;
+        ``None`` sets no cap. A request answered 429 is sent again up to
+        *max_retries* times, after its ``Retry-After`` or a growing delay.
+        *exchange_hook* sees each request and response, and *request_observer*
+        is given a ``RequestObservation`` of each request.
+        """
         self._vco_fqdn: str = vco_fqdn
-        self._token: SecretStr = SecretStr(token)
+        self._token: SecretStr = SecretStr(clean_token(token))
         self._verify_ssl: bool = verify_ssl
         self._timeout: float = timeout
         self._max_retries: int = max_retries
         self._exchange_hook: ExchangeHook | None = exchange_hook
         self._request_observer: RequestObserver | None = request_observer
         self._ws_cleanup_tasks: set[asyncio.Task[None]] = set()
+        self._transport: httpx.AsyncBaseTransport | None = transport
+        if transport is not None:
+            self._http: httpx.AsyncClient | None = self._new_http_client()
 
         if max_concurrent_requests is not None:
             self._concurrency_semaphore: asyncio.Semaphore | None = asyncio.Semaphore(
@@ -110,7 +134,7 @@ class VcoClient(VcoClientProtocol):
             self._window_count += 1
 
     @override
-    async def _send_request(
+    async def _send_request(  # noqa: C901, PLR0912, PLR0915 (existing: split it when it next changes)
         self,
         http_method: str,
         url: str,
@@ -119,7 +143,10 @@ class VcoClient(VcoClientProtocol):
         json_data: dict[str, Any] | None = None,
         content: str | None = None,
     ) -> httpx.Response:
-        """Send an HTTP request with rate limiting, concurrency control, and 429 retry."""
+        """Send an HTTP request.
+
+        The request has rate limiting, concurrency control, and 429 retry.
+        """
         started = time.monotonic()
         attempts = rate_limited = 0
         status = None
@@ -158,7 +185,7 @@ class VcoClient(VcoClientProtocol):
                         http_seconds += time.monotonic() - sending
                     status = response.status_code
 
-                    if response.status_code != 429:
+                    if response.status_code != HTTPStatus.TOO_MANY_REQUESTS:
                         if attempt > 0:
                             logger.debug("Request succeeded after %d retries", attempt)
                         outcome = "http_response"
@@ -186,7 +213,7 @@ class VcoClient(VcoClientProtocol):
                         retry_after_delay
                         if retry_after_delay is not None
                         else min(_RETRY_BASE_DELAY * (1 << attempt), _RETRY_MAX_DELAY)
-                        + random.uniform(0, _RETRY_JITTER)
+                        + random.uniform(0, _RETRY_JITTER)  # noqa: S311 (retry jitter, not cryptography)
                     )
 
                     logger.warning(

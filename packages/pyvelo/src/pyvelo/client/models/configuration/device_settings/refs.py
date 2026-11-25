@@ -1,10 +1,15 @@
-from typing import Annotated, Any, Literal
+"""The ref rows of ``deviceSettings``: one ``ConfigurationRef`` class per ref name.
 
-from pydantic import MISSING
+Each names the enterprise object a part of the module points at, such as a
+segment, a hub, a data center or a DNS provider.
+"""
 
+from typing import Annotated, Any, ClassVar, Literal
+
+from pydantic import MISSING, ConfigDict
+
+from pyvelo.client.models.configuration.ref import ConfigurationRef
 from pyvelo.core import Alias, VcoModel
-
-from ..ref import ConfigurationRef
 
 DeviceSettingsRefName = Literal[
     "deviceSettings:authentication",
@@ -214,63 +219,69 @@ class DeviceSettingsZscalerSubLocationRef(ConfigurationRef):
 
 # Container class for all DeviceSettings refs
 class DeviceSettingsRefs(VcoModel):
+    model_config: ClassVar[ConfigDict] = ConfigDict(frozen=True)
+
     # Authentication
     authentication: Annotated[
         DeviceSettingsAuthenticationRef
-        | list[DeviceSettingsAuthenticationRef]
+        | tuple[DeviceSettingsAuthenticationRef, ...]
         | MISSING,
         Alias("deviceSettings:authentication"),
     ] = MISSING
 
     # BackHaul Edge
     back_haul_edge: Annotated[
-        DeviceSettingsBackHaulEdgeRef | list[DeviceSettingsBackHaulEdgeRef] | MISSING,
+        DeviceSettingsBackHaulEdgeRef
+        | tuple[DeviceSettingsBackHaulEdgeRef, ...]
+        | MISSING,
         Alias("deviceSettings:backHaulEdge"),
     ] = MISSING
 
     # Client Connector
     client_connector_config: Annotated[
         DeviceSettingsClientConnectorConfigRef
-        | list[DeviceSettingsClientConnectorConfigRef]
+        | tuple[DeviceSettingsClientConnectorConfigRef, ...]
         | MISSING,
         Alias("deviceSettings:clientConnector:config"),
     ] = MISSING
 
     # Cloud Security Service (CSS)
     css_provider: Annotated[
-        DeviceSettingsCssProviderRef | list[DeviceSettingsCssProviderRef] | MISSING,
+        DeviceSettingsCssProviderRef
+        | tuple[DeviceSettingsCssProviderRef, ...]
+        | MISSING,
         Alias("deviceSettings:css:provider"),
     ] = MISSING
 
     css_site: Annotated[
-        DeviceSettingsCssSiteRef | list[DeviceSettingsCssSiteRef] | MISSING,
+        DeviceSettingsCssSiteRef | tuple[DeviceSettingsCssSiteRef, ...] | MISSING,
         Alias("deviceSettings:css:site"),
     ] = MISSING
 
     # Data Center
     data_center: Annotated[
-        DeviceSettingsDataCenterRef | list[DeviceSettingsDataCenterRef] | MISSING,
+        DeviceSettingsDataCenterRef | tuple[DeviceSettingsDataCenterRef, ...] | MISSING,
         Alias("deviceSettings:dataCenter"),
     ] = MISSING
 
     # DNS
     dns_primary_provider: Annotated[
         DeviceSettingsDnsPrimaryProviderRef
-        | list[DeviceSettingsDnsPrimaryProviderRef]
+        | tuple[DeviceSettingsDnsPrimaryProviderRef, ...]
         | MISSING,
         Alias("deviceSettings:dns:primaryProvider"),
     ] = MISSING
 
     dns_backup_provider: Annotated[
         DeviceSettingsDnsBackupProviderRef
-        | list[DeviceSettingsDnsBackupProviderRef]
+        | tuple[DeviceSettingsDnsBackupProviderRef, ...]
         | MISSING,
         Alias("deviceSettings:dns:backupProvider"),
     ] = MISSING
 
     dns_private_providers: Annotated[
         DeviceSettingsDnsPrivateProvidersRef
-        | list[DeviceSettingsDnsPrivateProvidersRef]
+        | tuple[DeviceSettingsDnsPrivateProvidersRef, ...]
         | MISSING,
         Alias("deviceSettings:dns:privateProviders"),
     ] = MISSING
@@ -278,14 +289,14 @@ class DeviceSettingsRefs(VcoModel):
     # Edge Direct NVS
     edge_direct_nvs_provider: Annotated[
         DeviceSettingsEdgeDirectNvsProviderRef
-        | list[DeviceSettingsEdgeDirectNvsProviderRef]
+        | tuple[DeviceSettingsEdgeDirectNvsProviderRef, ...]
         | MISSING,
         Alias("deviceSettings:edgeDirectNvs:provider"),
     ] = MISSING
 
     edge_direct_nvs_site: Annotated[
         DeviceSettingsEdgeDirectNvsSiteRef
-        | list[DeviceSettingsEdgeDirectNvsSiteRef]
+        | tuple[DeviceSettingsEdgeDirectNvsSiteRef, ...]
         | MISSING,
         Alias("deviceSettings:edgeDirectNvs:site"),
     ] = MISSING
@@ -293,7 +304,7 @@ class DeviceSettingsRefs(VcoModel):
     # Hand-Off Gateways
     hand_off_gateways: Annotated[
         DeviceSettingsHandOffGatewaysRef
-        | list[DeviceSettingsHandOffGatewaysRef]
+        | tuple[DeviceSettingsHandOffGatewaysRef, ...]
         | MISSING,
         Alias("deviceSettings:handOffGateways:gateways"),
     ] = MISSING
@@ -301,63 +312,67 @@ class DeviceSettingsRefs(VcoModel):
     # Security VNF
     security_vnf_service: Annotated[
         DeviceSettingsSecurityVnfServiceRef
-        | list[DeviceSettingsSecurityVnfServiceRef]
+        | tuple[DeviceSettingsSecurityVnfServiceRef, ...]
         | MISSING,
         Alias("deviceSettings:securityVnf:service"),
     ] = MISSING
 
     security_vnf_license: Annotated[
         DeviceSettingsSecurityVnfLicenseRef
-        | list[DeviceSettingsSecurityVnfLicenseRef]
+        | tuple[DeviceSettingsSecurityVnfLicenseRef, ...]
         | MISSING,
         Alias("deviceSettings:securityVnf:license"),
     ] = MISSING
 
     # Segment
     segment: Annotated[
-        DeviceSettingsSegmentRef | list[DeviceSettingsSegmentRef] | MISSING,
+        DeviceSettingsSegmentRef | tuple[DeviceSettingsSegmentRef, ...] | MISSING,
         Alias("deviceSettings:segment"),
     ] = MISSING
 
     segment_netflow_collectors: Annotated[
         DeviceSettingsSegmentNetflowCollectorsRef
-        | list[DeviceSettingsSegmentNetflowCollectorsRef]
+        | tuple[DeviceSettingsSegmentNetflowCollectorsRef, ...]
         | MISSING,
         Alias("deviceSettings:segment:netflowCollectors"),
     ] = MISSING
 
     segment_netflow_filters: Annotated[
         DeviceSettingsSegmentNetflowFiltersRef
-        | list[DeviceSettingsSegmentNetflowFiltersRef]
+        | tuple[DeviceSettingsSegmentNetflowFiltersRef, ...]
         | MISSING,
         Alias("deviceSettings:segment:netflowFilters"),
     ] = MISSING
 
     # VNFs
     vnfs_edge: Annotated[
-        DeviceSettingsVnfsEdgeRef | list[DeviceSettingsVnfsEdgeRef] | MISSING,
+        DeviceSettingsVnfsEdgeRef | tuple[DeviceSettingsVnfsEdgeRef, ...] | MISSING,
         Alias("deviceSettings:vnfs:edge"),
     ] = MISSING
 
     vnfs_vnf_image: Annotated[
-        DeviceSettingsVnfsVnfImageRef | list[DeviceSettingsVnfsVnfImageRef] | MISSING,
+        DeviceSettingsVnfsVnfImageRef
+        | tuple[DeviceSettingsVnfsVnfImageRef, ...]
+        | MISSING,
         Alias("deviceSettings:vnfs:vnfImage"),
     ] = MISSING
 
     # VPN
     vpn_data_center: Annotated[
-        DeviceSettingsVpnDataCenterRef | list[DeviceSettingsVpnDataCenterRef] | MISSING,
+        DeviceSettingsVpnDataCenterRef
+        | tuple[DeviceSettingsVpnDataCenterRef, ...]
+        | MISSING,
         Alias("deviceSettings:vpn:dataCenter"),
     ] = MISSING
 
     vpn_edge_hub: Annotated[
-        DeviceSettingsVpnEdgeHubRef | list[DeviceSettingsVpnEdgeHubRef] | MISSING,
+        DeviceSettingsVpnEdgeHubRef | tuple[DeviceSettingsVpnEdgeHubRef, ...] | MISSING,
         Alias("deviceSettings:vpn:edgeHub"),
     ] = MISSING
 
     vpn_edge_hub_cluster: Annotated[
         DeviceSettingsVpnEdgeHubClusterRef
-        | list[DeviceSettingsVpnEdgeHubClusterRef]
+        | tuple[DeviceSettingsVpnEdgeHubClusterRef, ...]
         | MISSING,
         Alias("deviceSettings:vpn:edgeHubCluster"),
     ] = MISSING
@@ -365,21 +380,21 @@ class DeviceSettingsRefs(VcoModel):
     # Zscaler
     zscaler_iaas_subscription: Annotated[
         DeviceSettingsZscalerIaasSubscriptionRef
-        | list[DeviceSettingsZscalerIaasSubscriptionRef]
+        | tuple[DeviceSettingsZscalerIaasSubscriptionRef, ...]
         | MISSING,
         Alias("deviceSettings:zscaler:iaasSubscription"),
     ] = MISSING
 
     zscaler_location: Annotated[
         DeviceSettingsZscalerLocationRef
-        | list[DeviceSettingsZscalerLocationRef]
+        | tuple[DeviceSettingsZscalerLocationRef, ...]
         | MISSING,
         Alias("deviceSettings:zscaler:location"),
     ] = MISSING
 
     zscaler_sub_location: Annotated[
         DeviceSettingsZscalerSubLocationRef
-        | list[DeviceSettingsZscalerSubLocationRef]
+        | tuple[DeviceSettingsZscalerSubLocationRef, ...]
         | MISSING,
         Alias("deviceSettings:zscaler:subLocation"),
     ] = MISSING

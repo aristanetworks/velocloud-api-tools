@@ -1,3 +1,5 @@
+"""The ``controlPlane`` module's data: the Gateway selection, primary and secondary."""
+
 from typing import Literal
 
 from pyvelo.core import VcoModel

@@ -1,5 +1,12 @@
+"""A segment of ``deviceSettings``: its routing, VPN and service settings.
+
+``DeviceSegment`` holds a segment's BGP, OSPF, BFD, multicast, VPN hubs and
+Edge-to-Edge, handoff Gateways, Edge Direct, ECMP, NetFlow, syslog, DNS and cloud
+security settings.
+"""
+
 import uuid
-from typing import Annotated, Any, Literal, Self
+from typing import Annotated, Any, ClassVar, Literal, Self
 
 from pydantic import (
     MISSING,
@@ -13,23 +20,34 @@ from pydantic import (
     model_validator,
 )
 
+from pyvelo.client.models.configuration.common import SegmentMetadata
 from pyvelo.core import (
     Alias,
+    ConfigContext,
     EdgeOnly,
     GatewayLogicalId,
+    NameOf,
     NoneIsFalse,
+    OwnsRef,
+    Positional,
+    RefOnly,
+    Secret,
     VcoModel,
 )
 from pyvelo.core.fields import (
     DefaultingModel,
     DefaultingScalar,
+    HubRole,
     KeyField,
+    Lenient,
     NoneIsTrue,
     OverrideFlag,
     ProfileOnly,
+    Provides,
+    Resolvable,
 )
+from pyvelo.core.identity import HubIdentity, NetworkServiceIdentity, SegmentIdentity
 
-from ..common import SegmentMetadata
 from .common import (
     AdvertiseDefaultRoutes,
     AdvertiseDefaultRoutesMethod,
@@ -57,8 +75,12 @@ class BfdRuleNsd(BfdRuleBase):
 class SegmentBfd(VcoModel):
     enabled: bool = False
     override: Annotated[bool, OverrideFlag] = True
-    rules: list[BfdRuleBase] = Field(default_factory=list)
-    rules_v6: list[BfdRuleBase] = Field(default_factory=list)
+    rules: Annotated[list[BfdRuleBase], KeyField("peer_address")] = Field(
+        default_factory=list
+    )
+    rules_v6: Annotated[list[BfdRuleBase], KeyField("peer_address")] = Field(
+        default_factory=list
+    )
 
 
 class SegmentEdgeDirectProviderConfig(VcoModel):
@@ -91,18 +113,26 @@ class GatewayListItem(VcoModel):
 
 class SegmentHandoffGateways(VcoModel):
     auto_select: bool = False
-    gateway_list: list[GatewayListItem] = Field(default_factory=list)
+    gateway_list: Annotated[list[GatewayListItem], KeyField("logical_id")] = Field(
+        default_factory=list
+    )
     override: Annotated[bool, OverrideFlag] = True
-    gateways: list[GatewayListItem] = Field(default_factory=list)
+    gateways: Annotated[list[GatewayListItem], KeyField("logical_id")] = Field(
+        default_factory=list
+    )
 
 
 SegmentVrrp = RootModel[dict[str, Any] | None]
 
 
 class VpnHub(VcoModel):
-    name: str
-    type_: Annotated[Literal["edgeHub", "edgeHubCluster"], Alias("type")]
-    logical_id: uuid.UUID
+    name: Annotated[str, NameOf(HubIdentity)]
+    type_: Annotated[
+        Literal["edgeHub", "edgeHubCluster"],
+        Alias("type"),
+        Resolvable(HubIdentity, lambda i: i.type_),
+    ]
+    logical_id: Annotated[uuid.UUID, Resolvable(HubIdentity, lambda i: i.logical_id)]
 
 
 class IsolationConfig(VcoModel):
@@ -123,7 +153,9 @@ class EdgeToEdgeDetail(VcoModel):
         "GROUP_IPSEC"
     )
     dynamic: DynamicVpnConfig = Field(default_factory=DynamicVpnConfig)
-    vpn_hubs: list[VpnHub] = Field(default_factory=list)
+    vpn_hubs: Annotated[
+        list[VpnHub], KeyField("logical_id", label="name"), HubRole("bridge")
+    ] = Field(default_factory=list)
     auto_select_vpn_hubs: bool = False
     isolation_group_id: None = None
     isolation_groups: list[Any] = Field(default_factory=list)
@@ -132,7 +164,9 @@ class EdgeToEdgeDetail(VcoModel):
 class EdgeToEdgeHub(VcoModel):
     enabled: bool = False
     ref: DeviceSettingsRef = "deviceSettings:vpn:edgeHub"
-    vpn_hubs: list[VpnHub] = Field(default_factory=list)
+    vpn_hubs: Annotated[
+        list[VpnHub], KeyField("logical_id", label="name"), HubRole("hub")
+    ] = Field(default_factory=list)
 
 
 class SegmentVpn(VcoModel):
@@ -145,9 +179,13 @@ class SegmentVpn(VcoModel):
     )
     edge_to_edge: bool = False
     edge_to_edge_detail: EdgeToEdgeDetail = Field(default_factory=EdgeToEdgeDetail)
-    backhaul_edges: Annotated[list[VpnHub], Alias("backHaulEdges")] = Field(
-        default_factory=list
-    )
+    backhaul_edges: Annotated[
+        list[VpnHub],
+        Alias("backHaulEdges"),
+        KeyField("logical_id", label="name"),
+        HubRole("backhaul"),
+        Provides("backhaul_hub", key="logical_id", per_segment=True),
+    ] = Field(default_factory=list)
 
 
 class SegmentStaticGroup(VcoModel):
@@ -157,7 +195,9 @@ class SegmentStaticGroup(VcoModel):
 
 class MulticastRp(VcoModel):
     type_: Annotated[Literal["STATIC"], Alias("type")] = "STATIC"
-    static_groups: list[SegmentStaticGroup] = Field(default_factory=list)
+    static_groups: Annotated[list[SegmentStaticGroup], Positional()] = Field(
+        default_factory=list
+    )
 
 
 class PimOnWanOverlay(VcoModel):
@@ -172,10 +212,10 @@ class SegmentMulticast(VcoModel):
     rp: MulticastRp = Field(default_factory=MulticastRp)
     pim_on_wan_overlay: PimOnWanOverlay = Field(default_factory=PimOnWanOverlay)
     pim_keep_alive_timer_seconds: Annotated[
-        int, BeforeValidator(lambda v: 210 if v is None else v)
+        int, Lenient(lambda v: 210 if v is None else v)
     ] = 210
     pim_prune_interval_seconds: Annotated[
-        int, BeforeValidator(lambda v: 5 if v is None else v)
+        int, Lenient(lambda v: 5 if v is None else v)
     ] = 5
     igmp_host_query_interval_seconds: None = None
     igmp_max_query_response: None = None
@@ -206,7 +246,9 @@ class SegmentOspfArea(VcoModel):
 class SegmentOspfBase(VcoModel):
     aggregation: list[OspfAggregation] = Field(default_factory=list)
     enabled: bool = False
-    areas: list[SegmentOspfArea] = Field(default_factory=list)
+    areas: Annotated[list[SegmentOspfArea], KeyField("id_")] = Field(
+        default_factory=list
+    )
     default_routes: AdvertiseDefaultRoutes = "NONE"
     default_prefixes: bool = False
     bgp: OspfBgpConfig = Field(default_factory=OspfBgpConfig)
@@ -250,7 +292,9 @@ class BgpFilterActionValue(VcoModel):
 
 class BgpFilterAction(VcoModel):
     type_: Annotated[BgpFilterActionType, Alias("type")] = "DENY"
-    values: list[BgpFilterActionValue] = Field(default_factory=list)
+    values: Annotated[list[BgpFilterActionValue], Positional()] = Field(
+        default_factory=list
+    )
 
 
 class BgpFilterRule(VcoModel):
@@ -262,7 +306,7 @@ class BgpFilter(VcoModel):
     id_: Annotated[uuid.UUID, Alias("id")] = Field(default_factory=uuid.uuid4)
     name: str
     is_locked_by_profile: Annotated[bool, ProfileOnly] = False
-    rules: list[BgpFilterRule] = Field(default_factory=list)
+    rules: Annotated[list[BgpFilterRule], Positional()] = Field(default_factory=list)
     version: str | MISSING = MISSING
 
 
@@ -292,7 +336,7 @@ class BgpNeighbor(VcoModel):
     holdtime: str = "180"
     connect: str = "120"
     enable_md5: bool = False
-    md5_password: str = ""
+    md5_password: Annotated[str, Secret()] = ""
     id_: Annotated[uuid.UUID, Alias("id")] = Field(default_factory=uuid.uuid4)
 
 
@@ -322,25 +366,31 @@ def _none_to_empty_object(value: Any) -> Any:
 
 
 class BgpBase(VcoModel):
-    aggregation: list[BgpAggregation] = Field(default_factory=list)
+    aggregation: Annotated[
+        list[BgpAggregation], KeyField("prefix", "prefix_length")
+    ] = Field(default_factory=list)
     propagate_uplink: Annotated[bool, NoneIsFalse] = False
     overlay_prefix: Annotated[bool, NoneIsTrue] = True
     connected_routes: Annotated[bool, NoneIsTrue] = True
-    ospf: Annotated[BgpOspfConfig, BeforeValidator(_none_to_empty_object)] = Field(
+    ospf: Annotated[BgpOspfConfig, Lenient(_none_to_empty_object)] = Field(
         default_factory=BgpOspfConfig
     )
     disable_as_path_carry_over: Annotated[
         bool, NoneIsFalse, Alias("disableASPathCarryOver")
     ] = False
-    default_route: Annotated[
-        BgpDefaultRoute, BeforeValidator(_none_to_empty_object)
-    ] = Field(default_factory=BgpDefaultRoute)
-    neighbors: Annotated[list[BgpNeighbor], KeyField("neighbor_ip")] = Field(
+    default_route: Annotated[BgpDefaultRoute, Lenient(_none_to_empty_object)] = Field(
+        default_factory=BgpDefaultRoute
+    )
+    neighbors: Annotated[list[BgpNeighbor], KeyField("neighbor_ip", alt="id_")] = Field(
         default_factory=list
     )
-    filters: Annotated[list[BgpFilter], KeyField("name")] = Field(default_factory=list)
+    filters: Annotated[list[BgpFilter], KeyField("name", alt="id_")] = Field(
+        default_factory=list
+    )
     networks: Annotated[
-        list[BgpNetwork], DefaultingModel(list[BgpNetwork], default_factory=list)
+        list[BgpNetwork],
+        DefaultingModel(list[BgpNetwork], default_factory=list),
+        Positional(),
     ] = Field(default_factory=list)
 
 
@@ -472,7 +522,7 @@ class NsdEdgeRoute(NsdRouteBase):
 
 class NsdVcgRoute(NsdRouteBase):
     nsd_type: Literal["dataCenter"] = "dataCenter"
-    next_hop: list[str] = Field(default_factory=list)
+    next_hop: Annotated[list[str], Positional()] = Field(default_factory=list)
     gateway_logical_id: GatewayLogicalId | None = None
     gateway_name: str | MISSING = MISSING
 
@@ -494,28 +544,46 @@ NsdRoute = Annotated[
 
 
 class SegmentRoutes(VcoModel):
-    model_config = ConfigDict(extra="allow")
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="allow")
 
-    icmp_probes: Annotated[list[ICMPProbe], KeyField("name")] = Field(
+    icmp_probes: Annotated[list[ICMPProbe], KeyField("name", alt="logical_id")] = Field(
         default_factory=list
     )
-    icmp_responders: Annotated[list[ICMPResponder], KeyField("name")] = Field(
-        default_factory=list
-    )
-    static: list[StaticRoute] = Field(default_factory=list)
-    static_v6: Annotated[list[StaticRoute], Alias("staticV6")] = Field(
-        default_factory=list
-    )
+    icmp_responders: Annotated[
+        list[ICMPResponder], KeyField("name", alt="logical_id")
+    ] = Field(default_factory=list)
+    static: Annotated[
+        list[StaticRoute],
+        KeyField("destination", "cidr_prefix", "gateway", "wan_interface"),
+    ] = Field(default_factory=list)
+    static_v6: Annotated[
+        list[StaticRoute],
+        Alias("staticV6"),
+        KeyField("destination", "cidr_prefix", "gateway", "wan_interface"),
+    ] = Field(default_factory=list)
     nsd: list[NsdRoute] = Field(default_factory=list)
     nsd_v6: Annotated[list[NsdRoute], Alias("nsdV6")] = Field(default_factory=list)
 
 
 class SegmentAuthentication(VcoModel):
+    """A segment's authentication settings.
+
+    The data holds a stub (``ref``) and nothing that says which authentication
+    service it is: the ``deviceSettings:authentication`` row of the segment
+    says it, and ``service`` is that row's service (a ``RefOnly`` field, not
+    part of the data on the wire).
+    """
+
     # Effective configurations use an empty object when no authentication
     # service is resolved. Keep that object round-trippable instead of
     # converting it to MISSING, because this model is also used for updates.
     ref: DeviceSettingsRef | MISSING = MISSING
     source_interface: str = ""
+    service: Annotated[
+        uuid.UUID | None | MISSING,
+        RefOnly(default="deviceSettings:authentication"),
+        Resolvable(NetworkServiceIdentity, lambda i: i.logical_id),
+    ] = MISSING
 
 
 class NatRule(VcoModel):
@@ -538,7 +606,7 @@ class NatRule(VcoModel):
 
     @field_validator("dest_cidr_prefix", "src_cidr_prefix", mode="before")
     @classmethod
-    def empty_str_to_none(cls, v):
+    def empty_str_to_none(cls, v: object) -> object:
         return None if v == "" else v
 
 
@@ -560,8 +628,8 @@ class NatDualRule(VcoModel):
 
 class SegmentNat(VcoModel):
     override: Annotated[bool, OverrideFlag] = True
-    rules: list[NatRule] = Field(default_factory=list)
-    dual_rules: list[NatDualRule] = Field(default_factory=list)
+    rules: Annotated[list[NatRule], Positional()] = Field(default_factory=list)
+    dual_rules: Annotated[list[NatDualRule], Positional()] = Field(default_factory=list)
 
 
 class NetflowCollectorFilter(VcoModel):
@@ -572,7 +640,9 @@ class NetflowCollectorFilter(VcoModel):
 
 class NetflowCollector(VcoModel):
     allow_all_segment: bool = False
-    filter_list: list[NetflowCollectorFilter] = Field(default_factory=list)
+    filter_list: Annotated[list[NetflowCollectorFilter], KeyField("logical_id")] = (
+        Field(default_factory=list)
+    )
     logical_id: uuid.UUID
     name: str
     source_interface: str = ""
@@ -596,7 +666,9 @@ class SegmentNetflow(VcoModel):
     enabled: bool
     override: Annotated[bool, OverrideFlag] = True
     version: int = 10
-    collectors: list[NetflowCollector] = Field(default_factory=list)
+    collectors: Annotated[list[NetflowCollector], KeyField("logical_id")] = Field(
+        default_factory=list
+    )
     intervals: SegmentNetflowIntervals = Field(default_factory=SegmentNetflowIntervals)
 
     @model_validator(mode="after")
@@ -625,7 +697,9 @@ SyslogRole = Literal["EDGE EVENT", "FIREWALL EVENT", "EDGE AND FIREWALL EVENT"]
 class SyslogCollector(VcoModel):
     host: str
     port: int = 514
-    roles: list[str] = Field(default_factory=lambda: ["EDGE AND FIREWALL EVENT"])
+    roles: Annotated[list[str], Positional()] = Field(
+        default_factory=lambda: ["EDGE AND FIREWALL EVENT"]
+    )
     all_segments: bool = True
     source_interface: str = ""
     protocol: Literal["UDP", "TCP"] = "UDP"
@@ -636,16 +710,48 @@ class SyslogCollector(VcoModel):
 class SegmentSyslog(VcoModel):
     facility_code: str = "local0"
     enabled: bool = False
-    collectors: list[SyslogCollector] = Field(default_factory=list)
+    collectors: Annotated[
+        list[SyslogCollector], KeyField("host", "protocol", "port")
+    ] = Field(default_factory=list)
     override: Annotated[bool, OverrideFlag] = True
 
 
 class DnsProvider(VcoModel):
     # Effective configurations may expand a provider inline rather than return
     # its configuration ref. Preserve those VCO-specific fields for callers.
-    model_config = ConfigDict(extra="allow")
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="allow")
 
     ref: DeviceSettingsRef | MISSING = MISSING
+
+
+class DnsPrimaryProvider(DnsProvider):
+    """The primary DNS provider of a segment.
+
+    ``service`` is the network service of the ``deviceSettings:dns:primaryProvider``
+    row of the segment (a ``RefOnly`` field, not part of the data on the wire).
+    The row's name is the stub's ``ref`` when it has one.
+    """
+
+    service: Annotated[
+        uuid.UUID | None | MISSING,
+        RefOnly(default="deviceSettings:dns:primaryProvider"),
+        Resolvable(NetworkServiceIdentity, lambda i: i.logical_id),
+    ] = MISSING
+
+
+class DnsBackupProvider(DnsProvider):
+    """The backup DNS provider of a segment.
+
+    ``service`` is the network service of the ``deviceSettings:dns:backupProvider``
+    row of the segment (a ``RefOnly`` field, not part of the data on the wire).
+    The row's name is the stub's ``ref`` when it has one.
+    """
+
+    service: Annotated[
+        uuid.UUID | None | MISSING,
+        RefOnly(default="deviceSettings:dns:backupProvider"),
+        Resolvable(NetworkServiceIdentity, lambda i: i.logical_id),
+    ] = MISSING
 
 
 class LocalDomainItem(VcoModel):
@@ -655,18 +761,40 @@ class LocalDomainItem(VcoModel):
 
 
 class SegmentDns(VcoModel):
-    primary_provider: DnsProvider | list[DnsProvider]
-    backup_provider: DnsProvider | list[DnsProvider]
+    """A segment's DNS settings.
+
+    A primary or backup provider given as an object owns the ref row of its
+    segment (``service``); one given as a list owns none.
+    """
+
+    primary_provider: DnsPrimaryProvider | list[DnsProvider]
+    backup_provider: DnsBackupProvider | list[DnsProvider]
     private_providers: DnsProvider | list[DnsProvider]
     source_interface: str = ""
     override: Annotated[bool, OverrideFlag] = True
-    local_dns: Annotated[list[LocalDomainItem], Alias("localDNS")] = Field(
-        default_factory=list
+    local_dns: Annotated[list[LocalDomainItem], Alias("localDNS"), KeyField("fqdn")] = (
+        Field(default_factory=list)
     )
 
 
 class CssProviderRef(VcoModel):
-    logical_id: uuid.UUID | Literal[""] = ""
+    """A segment's cloud security service provider.
+
+    A ``logical_id`` that holds a service owns the segment's
+    ``deviceSettings:css:provider`` ref row; ``""`` holds none.
+    """
+
+    logical_id: Annotated[
+        uuid.UUID | Literal[""],
+        OwnsRef(
+            "deviceSettings:css:provider",
+            NetworkServiceIdentity,
+            by="logical_id",
+            row="logicalId",
+            per_segment=True,
+        ),
+        Resolvable(NetworkServiceIdentity, lambda i: i.logical_id),
+    ] = ""
     ref: DeviceSettingsRef = "deviceSettings:css:provider"
 
 
@@ -720,7 +848,7 @@ CssConfigIpsec = CssConfigZscalerIpsec | CssConfigGenericIpsec
 class CssGreProp(VcoModel):
     keepalive_interval_secs: int = 5
     keepalive_retries: int = 3
-    links: list[str] = Field(default_factory=list)
+    links: Annotated[list[str], Positional()] = Field(default_factory=list)
 
 
 class CssConfigGre(CssConfigBase):
@@ -733,7 +861,7 @@ CssConfig = CssConfigGre | CssConfigZscalerIpsec | CssConfigGenericIpsec
 
 class CssIpsecSiteData(VcoModel):
     ike_id: str
-    psk: str
+    psk: Annotated[str, Secret()]
     ike_id_type: Literal["FQDN"] = "FQDN"
     psk_type: Literal["alpha"] = "alpha"
 
@@ -774,12 +902,28 @@ class SegmentCss(VcoModel):
 
 
 class DeviceSegment(VcoModel):
+    """A segment of a device settings module.
+
+    At the profile level ``segment`` owns the module's ``deviceSettings:segment``
+    ref row: the row goes with the segment ID.
+    """
+
     bfd: SegmentBfd | MISSING = MISSING
     edge_direct: SegmentEdgeDirect | MISSING = MISSING
     hub_interconnect: SegmentHubInterconnect | MISSING = MISSING
     handoff_controllers: SegmentHandoffGateways | MISSING = MISSING
     handoff_gateways: SegmentHandoffGateways | MISSING = MISSING
-    segment: SegmentMetadata
+    segment: Annotated[
+        SegmentMetadata,
+        OwnsRef(
+            "deviceSettings:segment",
+            SegmentIdentity,
+            by="segment_id",
+            value="segment_id",
+            row="data.segmentId",
+            level=ConfigContext.PROFILE,
+        ),
+    ]
     vrrp: SegmentVrrp | MISSING = MISSING
     vpn: Annotated[SegmentVpn, ProfileOnly] = Field(default_factory=SegmentVpn)
     multicast: SegmentMulticast | MISSING = MISSING

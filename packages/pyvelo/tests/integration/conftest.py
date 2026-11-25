@@ -11,23 +11,44 @@ from __future__ import annotations
 
 import os
 import time
-from collections.abc import AsyncGenerator, Generator
 from contextlib import contextmanager
+from typing import TYPE_CHECKING
 
 import httpx
+import live_support as live
 import pytest
 import pytest_asyncio
+from live_support import Lab, discover_lab
 from pyvelo.analytics import Analytics
 from pyvelo.analytics.frame import MetricFrame
-from pyvelo.client import VcoClient
 from pyvelo.client.exceptions import VcoOperationError
+from pyvelo.config import ConfigPipeline, build_default_pipeline
 from pyvelo.core import ApiInterval
 
-from ._config_live import Lab, discover_lab
 from ._discovery import VcoTestContext, discover
 
+if TYPE_CHECKING:
+    from collections.abc import AsyncGenerator, Generator
 
-def _env(name: str, required: bool = False) -> str | None:
+    from pyvelo.client import VcoClient
+
+
+@pytest.hookimpl(wrapper=True)
+def pytest_runtest_makereport(
+    item: pytest.Item, call: pytest.CallInfo[None]
+) -> Generator[None, pytest.TestReport, pytest.TestReport]:
+    """Keep lab data out of the report of a failed live configuration test."""
+    report = yield
+    live.redact_report(item, call, report)
+    return report
+
+
+def pytest_terminal_summary(terminalreporter: pytest.TerminalReporter) -> None:
+    """Name the backup of every module a live test did not put back."""
+    live.report_leftover_backups(terminalreporter.write_line)
+
+
+def _env(name: str, *, required: bool = False) -> str | None:
     val = os.environ.get(name)
     if required and not val:
         pytest.skip(f"{name} not set")
@@ -44,12 +65,17 @@ def interval() -> ApiInterval:
 
 @pytest_asyncio.fixture(scope="session", loop_scope="session")
 async def vco_client() -> AsyncGenerator[VcoClient]:
-    host = _env("VCO_HOST", required=True)
-    token = _env("VCO_TOKEN", required=True)
-    assert host is not None
-    assert token is not None
-    async with VcoClient(vco_fqdn=host, token=token) as client:
+    async with live.connect() as client:
         yield client
+
+
+@pytest.fixture(autouse=True)
+def live_write_marker(request: pytest.FixtureRequest) -> Generator[None]:
+    """Only a test marked ``live_write`` may write to the Orchestrator."""
+    with live.writer_test(
+        marked=request.node.get_closest_marker("live_write") is not None
+    ):
+        yield
 
 
 @pytest.fixture(scope="session")
@@ -76,6 +102,12 @@ async def lab(vco_client: VcoClient, config_enterprise_id: int | None) -> Lab:
     return await discover_lab(vco_client, config_enterprise_id)
 
 
+@pytest.fixture
+def pipeline(vco_client: VcoClient) -> ConfigPipeline:
+    """A pipeline with the default resolvers; one per test."""
+    return build_default_pipeline(vco_client)
+
+
 @pytest_asyncio.fixture(scope="session", loop_scope="session")
 async def ctx(vco_client: VcoClient, enterprise_id: int) -> VcoTestContext:
     return await discover(vco_client, enterprise_id)
@@ -98,7 +130,7 @@ def assert_frame_valid(frame: MetricFrame, *, check_other: bool = True) -> None:
         )
 
 
-def skip_unless(condition: bool, reason: str) -> pytest.MarkDecorator:
+def skip_unless(condition: bool, reason: str) -> pytest.MarkDecorator:  # noqa: FBT001 (mirrors pytest.mark.skipif, whose condition is positional)
     return pytest.mark.skipif(not condition, reason=reason)
 
 

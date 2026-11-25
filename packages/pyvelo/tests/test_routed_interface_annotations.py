@@ -12,39 +12,39 @@ from pyvelo.core.fields import (
 
 
 class TestRoutedInterfaceOverrideFlag:
-    def test_override_flag(self):
+    def test_override_flag(self) -> None:
         assert has_override_flag(RoutedInterfaceBase.model_fields["override"])
 
-    def test_override_none_coerced_to_false(self):
+    def test_override_none_coerced_to_false(self) -> None:
         ri = RoutedInterfaceBase.model_validate({"override": None})
         assert ri.override is False
 
 
 class TestRoutedInterfaceEdgeLocal:
-    def test_cidr_ip_edge_local(self):
+    def test_cidr_ip_edge_local(self) -> None:
         assert is_edge_local(RoutedInterfaceAddressing.model_fields["cidr_ip"])
 
-    def test_cidr_prefix_edge_local(self):
+    def test_cidr_prefix_edge_local(self) -> None:
         assert is_edge_local(RoutedInterfaceAddressing.model_fields["cidr_prefix"])
 
-    def test_netmask_edge_local(self):
+    def test_netmask_edge_local(self) -> None:
         assert is_edge_local(RoutedInterfaceAddressing.model_fields["netmask"])
 
-    def test_gateway_edge_local(self):
+    def test_gateway_edge_local(self) -> None:
         assert is_edge_local(RoutedInterfaceAddressing.model_fields["gateway"])
 
-    def test_type_not_edge_local(self):
+    def test_type_not_edge_local(self) -> None:
         assert not is_edge_local(RoutedInterfaceAddressing.model_fields["type_"])
 
-    def test_dhcp_server_edge_local(self):
+    def test_dhcp_server_edge_local(self) -> None:
         assert is_edge_local(RoutedInterfaceBase.model_fields["dhcp_server"])
 
-    def test_description_edge_local(self):
+    def test_description_edge_local(self) -> None:
         assert is_edge_local(RoutedInterfaceBase.model_fields["description"])
 
 
 class TestRoutedInterfaceResolvable:
-    def test_segment_id_resolvable(self):
+    def test_segment_id_resolvable(self) -> None:
         r = get_resolvable(RoutedInterfaceBase.model_fields["segment_id"])
         assert r is not None
-        assert r.id_attr == "segment_id"
+        assert r.attribute == "segment_id"

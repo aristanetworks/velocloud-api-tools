@@ -17,18 +17,18 @@ class NoOverride(VcoModel):
 
 
 class TestOverrideFlagMarker:
-    def test_processed_marker_in_metadata(self):
+    def test_processed_marker_in_metadata(self) -> None:
         fi = HasOverride.model_fields["override"]
         assert has_override_flag(fi)
 
-    def test_non_override_field_has_no_marker(self):
+    def test_non_override_field_has_no_marker(self) -> None:
         fi = HasOverride.model_fields["name"]
         assert not has_override_flag(fi)
 
-    def test_model_validates_normally(self):
+    def test_model_validates_normally(self) -> None:
         m = HasOverride(override=True, name="test", value=42)
         assert m.override is True
 
-    def test_default_is_false(self):
+    def test_default_is_false(self) -> None:
         m = HasOverride()
         assert m.override is False

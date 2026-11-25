@@ -1,8 +1,7 @@
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
 from datetime import UTC, datetime
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
 import polars as pl
 import pytest
@@ -12,57 +11,60 @@ from pyvelo.analytics._series import denormalize_timeseries
 from pyvelo.analytics.frame import MetricFrame
 from pyvelo.client.schemas.metrics import EdgeAppMetricsItem
 
+if TYPE_CHECKING:
+    from collections.abc import Callable, Sequence
+
 _items_to_frame = cast(
-    Callable[[Sequence[EdgeAppMetricsItem]], MetricFrame],
-    _flow._items_to_frame,
+    "Callable[[Sequence[EdgeAppMetricsItem]], MetricFrame]",
+    _flow._items_to_frame,  # pyright: ignore[reportPrivateUsage]  # the private builder is tested directly
 )
 
 
 class TestMetricFrameBackwardCompat:
-    def test_columns_and_rows(self):
+    def test_columns_and_rows(self) -> None:
         f = MetricFrame(columns=["a", "b"], rows=[{"a": 1, "b": "x"}])
         assert f.columns == ["a", "b"]
         assert f.rows == [{"a": 1, "b": "x"}]
 
-    def test_empty_frame(self):
+    def test_empty_frame(self) -> None:
         f = MetricFrame(columns=["a", "b"], rows=[])
         assert len(f) == 0
         assert f.columns == ["a", "b"]
         assert f.rows == []
 
-    def test_len(self):
+    def test_len(self) -> None:
         f = MetricFrame(columns=["a"], rows=[{"a": 1}, {"a": 2}, {"a": 3}])
         assert len(f) == 3
 
-    def test_iter(self):
+    def test_iter(self) -> None:
         rows = [{"a": 1}, {"a": 2}]
         f = MetricFrame(columns=["a"], rows=rows)
         assert list(f) == rows
 
-    def test_repr(self):
+    def test_repr(self) -> None:
         f = MetricFrame(columns=["x"], rows=[{"x": 1}])
         assert "MetricFrame" in repr(f)
         assert "rows=1" in repr(f)
 
-    def test_to_dataframe_returns_polars(self):
+    def test_to_dataframe_returns_polars(self) -> None:
         f = MetricFrame(columns=["a"], rows=[{"a": 1}])
         df = f.to_dataframe()
         assert isinstance(df, pl.DataFrame)
 
-    def test_datetime_values(self):
+    def test_datetime_values(self) -> None:
         ts = datetime(2024, 1, 1, tzinfo=UTC)
         f = MetricFrame(columns=["ts", "v"], rows=[{"ts": ts, "v": 42}])
         assert len(f) == 1
         assert f.rows[0]["v"] == 42
 
-    def test_none_values(self):
+    def test_none_values(self) -> None:
         f = MetricFrame(
             columns=["a", "b"],
             rows=[{"a": 1, "b": None}, {"a": None, "b": "y"}],
         )
         assert len(f) == 2
 
-    def test_mixed_int_string_column(self):
+    def test_mixed_int_string_column(self) -> None:
         f = MetricFrame(
             columns=["name", "count"],
             rows=[
@@ -87,50 +89,50 @@ class TestMetricFrameFilter:
             ],
         )
 
-    def test_filter_eq(self, frame: MetricFrame):
+    def test_filter_eq(self, frame: MetricFrame) -> None:
         result = frame.filter("status", "==", "up")
         assert len(result) == 2
         assert all(r["status"] == "up" for r in result)
 
-    def test_filter_ne(self, frame: MetricFrame):
+    def test_filter_ne(self, frame: MetricFrame) -> None:
         result = frame.filter("status", "!=", "up")
         assert len(result) == 2
 
-    def test_filter_gt(self, frame: MetricFrame):
+    def test_filter_gt(self, frame: MetricFrame) -> None:
         result = frame.filter("count", ">", 10)
         assert len(result) == 2
 
-    def test_filter_in(self, frame: MetricFrame):
+    def test_filter_in(self, frame: MetricFrame) -> None:
         result = frame.filter("name", "in", ["alpha", "delta"])
         assert len(result) == 2
         names = {r["name"] for r in result}
         assert names == {"alpha", "delta"}
 
-    def test_filter_not_in(self, frame: MetricFrame):
+    def test_filter_not_in(self, frame: MetricFrame) -> None:
         result = frame.filter("name", "not_in", ["alpha"])
         assert len(result) == 3
 
-    def test_filter_contains(self, frame: MetricFrame):
+    def test_filter_contains(self, frame: MetricFrame) -> None:
         result = frame.filter("name", "contains", "lph")
         assert len(result) == 1  # alpha
 
-    def test_filter_is_null(self):
+    def test_filter_is_null(self) -> None:
         f = MetricFrame(columns=["a"], rows=[{"a": 1}, {"a": None}])
         assert len(f.filter("a", "is_null", None)) == 1
         assert len(f.filter("a", "is_not_null", None)) == 1
 
-    def test_filter_unknown_operator(self, frame: MetricFrame):
+    def test_filter_unknown_operator(self, frame: MetricFrame) -> None:
         with pytest.raises(ValueError, match="Unknown operator"):
             _ = frame.filter("count", "~", 5)
 
-    def test_filter_returns_new_frame(self, frame: MetricFrame):
+    def test_filter_returns_new_frame(self, frame: MetricFrame) -> None:
         result = frame.filter("count", "==", 10)
         assert len(frame) == 4
         assert len(result) == 1
 
 
 class TestMetricFrameGroupBy:
-    def test_group_by_count(self):
+    def test_group_by_count(self) -> None:
         f = MetricFrame(
             columns=["cat", "val"],
             rows=[
@@ -146,7 +148,7 @@ class TestMetricFrameGroupBy:
         assert result.rows[0]["n"] == 2
         assert result.rows[1]["n"] == 1
 
-    def test_group_by_sum(self):
+    def test_group_by_sum(self) -> None:
         f = MetricFrame(
             columns=["cat", "val"],
             rows=[
@@ -155,12 +157,12 @@ class TestMetricFrameGroupBy:
                 {"cat": "B", "val": 30},
             ],
         )
-        result = f.group_by("cat").agg(sum="val")
+        result = f.group_by("cat").agg(sum_="val")
         result = result.sort("cat")
         assert result.rows[0]["val_sum"] == 30
         assert result.rows[1]["val_sum"] == 30
 
-    def test_group_by_multiple_keys(self):
+    def test_group_by_multiple_keys(self) -> None:
         f = MetricFrame(
             columns=["a", "b", "v"],
             rows=[
@@ -172,7 +174,7 @@ class TestMetricFrameGroupBy:
         result = f.group_by(["a", "b"]).agg(count="n")
         assert len(result) == 2
 
-    def test_group_by_with_polars_expr(self):
+    def test_group_by_with_polars_expr(self) -> None:
         f = MetricFrame(
             columns=["cat", "val"],
             rows=[
@@ -185,7 +187,7 @@ class TestMetricFrameGroupBy:
 
 
 class TestMetricFrameTopN:
-    def test_top_n(self):
+    def test_top_n(self) -> None:
         f = MetricFrame(
             columns=["name", "count"],
             rows=[
@@ -199,7 +201,7 @@ class TestMetricFrameTopN:
         assert result.rows[0]["count"] == 3
         assert result.rows[1]["count"] == 2
 
-    def test_top_n_ascending(self):
+    def test_top_n_ascending(self) -> None:
         f = MetricFrame(
             columns=["name", "count"],
             rows=[
@@ -213,46 +215,46 @@ class TestMetricFrameTopN:
 
 
 class TestMetricFrameSort:
-    def test_sort_ascending(self):
+    def test_sort_ascending(self) -> None:
         f = MetricFrame(columns=["v"], rows=[{"v": 3}, {"v": 1}, {"v": 2}])
         result = f.sort("v")
         assert [r["v"] for r in result] == [1, 2, 3]
 
-    def test_sort_descending(self):
+    def test_sort_descending(self) -> None:
         f = MetricFrame(columns=["v"], rows=[{"v": 3}, {"v": 1}, {"v": 2}])
         result = f.sort("v", descending=True)
         assert [r["v"] for r in result] == [3, 2, 1]
 
 
 class TestMetricFrameSelectDrop:
-    def test_select(self):
+    def test_select(self) -> None:
         f = MetricFrame(columns=["a", "b", "c"], rows=[{"a": 1, "b": 2, "c": 3}])
         result = f.select(["a", "c"])
         assert result.columns == ["a", "c"]
 
-    def test_drop(self):
+    def test_drop(self) -> None:
         f = MetricFrame(columns=["a", "b", "c"], rows=[{"a": 1, "b": 2, "c": 3}])
         result = f.drop(["b"])
         assert result.columns == ["a", "c"]
 
 
 class TestMetricFrameExport:
-    def test_to_polars(self):
+    def test_to_polars(self) -> None:
         f = MetricFrame(columns=["a"], rows=[{"a": 1}])
         df = f.to_polars()
         assert isinstance(df, pl.DataFrame)
         assert df.shape == (1, 1)
 
-    def test_to_dict(self):
+    def test_to_dict(self) -> None:
         f = MetricFrame(columns=["a"], rows=[{"a": i} for i in range(100)])
-        d = cast(dict[str, object], f.to_dict(max_rows=10))
+        d = cast("dict[str, object]", f.to_dict(max_rows=10))
         assert d["total_rows"] == 100
         assert d["truncated"] is True
         assert d["showing"] == 10
-        assert len(cast(list[object], d["rows"])) == 10
+        assert len(cast("list[object]", d["rows"])) == 10
         assert "schema" in d
 
-    def test_to_dict_no_truncation(self):
+    def test_to_dict_no_truncation(self) -> None:
         f = MetricFrame(columns=["a"], rows=[{"a": 1}])
         d = f.to_dict()
         assert d["total_rows"] == 1
@@ -260,7 +262,7 @@ class TestMetricFrameExport:
 
 
 class TestMetricFrameImmutability:
-    def test_operations_return_new_frames(self):
+    def test_operations_return_new_frames(self) -> None:
         f = MetricFrame(columns=["a"], rows=[{"a": 1}, {"a": 2}, {"a": 3}])
         filtered = f.filter("a", ">", 1)
         sorted_ = f.sort("a", descending=True)
@@ -273,14 +275,14 @@ class TestMetricFrameImmutability:
 
 class TestOtherBucketFiltering:
     @pytest.mark.parametrize("value", ["other", "Other", "OTHER"])
-    def test_is_other_bucket_true(self, value: str):
+    def test_is_other_bucket_true(self, value: str) -> None:
         assert is_other_bucket(value) is True
 
     @pytest.mark.parametrize("value", [0, 123, "myapp", "another"])
-    def test_is_other_bucket_false(self, value: str | int):
+    def test_is_other_bucket_false(self, value: str | int) -> None:
         assert is_other_bucket(value) is False
 
-    def test_items_to_frame_drops_other(self):
+    def test_items_to_frame_drops_other(self) -> None:
         items = [
             EdgeAppMetricsItem(name=205, bytes_rx=100, bytes_tx=200),
             EdgeAppMetricsItem(name="other", bytes_rx=50, bytes_tx=75),
@@ -293,7 +295,7 @@ class TestOtherBucketFiltering:
         assert 1448 in names
         assert "other" not in names
 
-    def test_denormalize_timeseries_drops_other(self):
+    def test_denormalize_timeseries_drops_other(self) -> None:
         items = [
             {
                 "name": "app1",

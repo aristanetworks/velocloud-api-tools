@@ -1,3 +1,9 @@
+"""The states, types, scopes and module names of a VCO configuration.
+
+``ConfigurationModuleName`` names the modules of a profile or an Edge's configuration,
+such as ``deviceSettings``, ``QOS`` and ``firewall``.
+"""
+
 from enum import StrEnum
 
 
@@ -15,7 +21,8 @@ class ConfigurationModuleType(StrEnum):
     GATEWAY = "GATEWAY"
 
 
-# imageUpdate,controlPlane,managementPlane,firewall,QOS,deviceSettings,WAN,metaData,properties,analyticsSettings,atpMetadata
+# imageUpdate,controlPlane,managementPlane,firewall,QOS,deviceSettings,WAN,metaData,
+# properties,analyticsSettings,atpMetadata
 class ConfigurationModuleName(StrEnum):
     META_DATA = "metaData"
     PROPERTIES = "properties"

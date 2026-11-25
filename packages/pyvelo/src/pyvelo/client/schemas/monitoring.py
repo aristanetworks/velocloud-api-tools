@@ -1,3 +1,10 @@
+"""The requests and results of the ``monitoring/`` methods.
+
+Edge, link, cluster, BGP and BFD peer and NVS tunnel status; aggregates and aggregate
+events; link degradation and flap summaries; NNI metrics; Gateway route tables and
+VPN status.
+"""
+
 import uuid
 from typing import Annotated, Any, ClassVar, Self
 
@@ -36,7 +43,6 @@ from pyvelo.core import (
     ApiFilter,
     ApiFilters,
     ApiFiltersAnd,
-    ApiFiltersOr,
     ApiInterval,
     CoerceInt,
     PaginatedVcoModel,
@@ -97,7 +103,7 @@ class MetricSummary(VcoModel):
 
 
 class EdgeHealthStats(VcoModel):
-    model_config = ConfigDict(extra="allow")
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="allow")
 
     cpu_pct: MetricSummary | MISSING = MISSING
     memory_pct: MetricSummary | MISSING = MISSING
@@ -114,7 +120,7 @@ class EdgeHealthStats(VcoModel):
 
 
 class GatewayHealthStats(VcoModel):
-    model_config = ConfigDict(extra="allow")
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="allow")
 
     cpu_pct: MetricSummary | MISSING = MISSING
     memory_pct: MetricSummary | MISSING = MISSING
@@ -132,14 +138,14 @@ class TunnelStateCounts(VcoModel):
 
 
 class NvsDataCenter(VcoModel):
-    model_config = ConfigDict(extra="allow")
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="allow")
 
     name: str | None | MISSING = MISSING
     public_ip: str | None | MISSING = MISSING
 
 
 class AggregateEventItem(VcoModel):
-    model_config = ConfigDict(extra="allow")
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="allow")
 
     event: str | None | MISSING = MISSING
     category: str | None | MISSING = MISSING
@@ -151,7 +157,7 @@ class AggregateEventItem(VcoModel):
 
 
 class EventAggregateMetadata(VcoModel):
-    model_config = ConfigDict(extra="allow")
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="allow")
 
     limit: int | None | MISSING = MISSING
     more: bool | None | MISSING = MISSING
@@ -182,7 +188,9 @@ class GetEnterpriseEdgeLinkStatusResultItem(VcoModel):
     edge_ha_serial_number: str | None | MISSING = MISSING
     edge_state: EdgeState | None | MISSING = MISSING
     edge_last_contact: VcoTimestamp | None | MISSING = MISSING
-    edge_id: Annotated[int | None | MISSING, Resolvable(EdgeIdentity, "id")] = MISSING
+    edge_id: Annotated[
+        int | None | MISSING, Resolvable(EdgeIdentity, lambda i: i.id)
+    ] = MISSING
     edge_system_up_since: VcoTimestamp | None | MISSING = MISSING
     edge_service_up_since: VcoTimestamp | None | MISSING = MISSING
     edge_model_number: str | None | MISSING = MISSING
@@ -201,7 +209,9 @@ class GetEnterpriseEdgeLinkStatusResultItem(VcoModel):
     link_state: LinkState | None | MISSING = MISSING
     link_last_active: VcoTimestamp | None | MISSING = MISSING
     link_vpn_state: str | None | MISSING = MISSING
-    link_id: Annotated[int | None | MISSING, Resolvable(LinkIdentity, "id")] = MISSING
+    link_id: Annotated[
+        int | None | MISSING, Resolvable(LinkIdentity, lambda i: i.id)
+    ] = MISSING
     link_ip_address: str | None | MISSING = MISSING
     link_ip_v6_address: str | None | MISSING = MISSING
 
@@ -212,7 +222,7 @@ class GetEnterpriseEdgeLinkStatusResultItem(VcoModel):
     # --- Detailed fields (when detailed=true) ---
     enterprise_logical_id: uuid.UUID | None | MISSING = MISSING
     edge_logical_id: Annotated[
-        uuid.UUID | None | MISSING, Resolvable(EdgeIdentity, "logical_id")
+        uuid.UUID | None | MISSING, Resolvable(EdgeIdentity, lambda i: i.logical_id)
     ] = MISSING
 
     # --- Detailed operator-user fields (when detailed=true) ---
@@ -259,9 +269,9 @@ class GetEnterpriseEdgeStatusResultItem(VcoModel):
     enterprise_id: int | None | MISSING = Field(
         MISSING, description="Parent enterprise numeric ID"
     )
-    edge_id: Annotated[int | None | MISSING, Resolvable(EdgeIdentity, "id")] = Field(
-        MISSING, description="Edge numeric ID"
-    )
+    edge_id: Annotated[
+        int | None | MISSING, Resolvable(EdgeIdentity, lambda i: i.id)
+    ] = Field(MISSING, description="Edge numeric ID")
     edge_name: str | None | MISSING = Field(
         MISSING, description="Configured display name of the Edge"
     )
@@ -276,7 +286,7 @@ class GetEnterpriseEdgeStatusResultItem(VcoModel):
         MISSING, description="Running VeloCloud Edge OS version"
     )
     edge_logical_id: Annotated[
-        uuid.UUID | None | MISSING, Resolvable(EdgeIdentity, "logical_id")
+        uuid.UUID | None | MISSING, Resolvable(EdgeIdentity, lambda i: i.logical_id)
     ] = Field(MISSING, description="Stable UUID used for configuration references")
     ha_state: HaState | None | MISSING = Field(
         MISSING, description="HA pairing state (UNCONFIGURED, READY, FAILED, etc.)"
@@ -309,7 +319,7 @@ class BgpPeerData(VcoModel):
 
     enterprise_logical_id: uuid.UUID | None | MISSING = MISSING
     segment_id: Annotated[
-        int | None | MISSING, Resolvable(SegmentIdentity, "segment_id")
+        int | None | MISSING, Resolvable(SegmentIdentity, lambda i: i.segment_id)
     ] = MISSING
     neighbor_ip: str | None | MISSING = MISSING
     neighbor_as: Annotated[str | None | MISSING, Alias("neighborAS")] = MISSING
@@ -323,9 +333,9 @@ class BgpPeerData(VcoModel):
 class GetEnterpriseBgpPeerStatusResultItem(VcoModel):
     id_: Annotated[int | None | MISSING, Alias("id")] = MISSING
     enterprise_id: int | None | MISSING = MISSING
-    gateway_id: Annotated[int | None | MISSING, Resolvable(GatewayIdentity, "id")] = (
-        MISSING
-    )
+    gateway_id: Annotated[
+        int | None | MISSING, Resolvable(GatewayIdentity, lambda i: i.id)
+    ] = MISSING
     gateway_name: str | None | MISSING = MISSING
     gateway_logical_id: GatewayLogicalId | None | MISSING = MISSING
     gateway_state: GatewayState | None | MISSING = MISSING
@@ -357,9 +367,9 @@ class BfdPeerStatusRecord(VcoModel):
 class GetEnterpriseBfdPeerStatusResultItem(VcoModel):
     id_: Annotated[int | None | MISSING, Alias("id")] = MISSING
     enterprise_id: int | None | MISSING = MISSING
-    gateway_id: Annotated[int | None | MISSING, Resolvable(GatewayIdentity, "id")] = (
-        MISSING
-    )
+    gateway_id: Annotated[
+        int | None | MISSING, Resolvable(GatewayIdentity, lambda i: i.id)
+    ] = MISSING
     gateway_name: str | None | MISSING = MISSING
     gateway_logical_id: GatewayLogicalId | None | MISSING = MISSING
     gateway_state: GatewayState | None | MISSING = MISSING
@@ -377,7 +387,9 @@ class GetEnterpriseBfdPeerStatusResultItem(VcoModel):
 
 class GetEnterpriseEdgeBgpPeerStatus(VcoModel):
     enterprise_id: int | MISSING = MISSING
-    edge_id: Annotated[int | MISSING, Resolvable(EdgeIdentity, "id")] = MISSING
+    edge_id: Annotated[int | MISSING, Resolvable(EdgeIdentity, lambda i: i.id)] = (
+        MISSING
+    )
 
 
 class GetEnterpriseEdgeBgpPeerStatusResultItem(VcoModel):
@@ -390,7 +402,9 @@ class GetEnterpriseEdgeBgpPeerStatusResultItem(VcoModel):
     id_: Annotated[int | None | MISSING, Alias("id")] = MISSING
     timestamp: VcoTimestamp | None | MISSING = MISSING
     enterprise_id: int | None | MISSING = MISSING
-    edge_id: Annotated[int | None | MISSING, Resolvable(EdgeIdentity, "id")] = MISSING
+    edge_id: Annotated[
+        int | None | MISSING, Resolvable(EdgeIdentity, lambda i: i.id)
+    ] = MISSING
     enterprise_object_id: int | None | MISSING = MISSING
     tag: str | None | MISSING = MISSING
     data_key: str | None | MISSING = MISSING
@@ -398,7 +412,7 @@ class GetEnterpriseEdgeBgpPeerStatusResultItem(VcoModel):
     data: BgpPeerData | None | MISSING = MISSING
     edge_name: str | None | MISSING = MISSING
     edge_logical_id: Annotated[
-        uuid.UUID | None | MISSING, Resolvable(EdgeIdentity, "logical_id")
+        uuid.UUID | None | MISSING, Resolvable(EdgeIdentity, lambda i: i.logical_id)
     ] = MISSING
     edge_state: EdgeState | None | MISSING = MISSING
 
@@ -408,7 +422,7 @@ class GetEnterpriseEdgeBgpPeerStatusResultItem(VcoModel):
 
 class GetEnterpriseEdgeBfdPeerStatus(VcoModel):
     enterprise_id: int | MISSING = MISSING
-    edge_id: Annotated[int | MISSING, Resolvable(EdgeIdentity, "id")] = Field(
+    edge_id: Annotated[int | MISSING, Resolvable(EdgeIdentity, lambda i: i.id)] = Field(
         default=MISSING, description="VCO Edge ID"
     )
 
@@ -432,9 +446,11 @@ class GetEnterpriseEdgeClusterStatus(VcoModel):
 class ClusterEdgeEntry(VcoModel):
     """Health metrics for an edge member of a cluster."""
 
-    model_config = ConfigDict(extra="allow")
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="allow")
 
-    edge_id: Annotated[int | None | MISSING, Resolvable(EdgeIdentity, "id")] = MISSING
+    edge_id: Annotated[
+        int | None | MISSING, Resolvable(EdgeIdentity, lambda i: i.id)
+    ] = MISSING
     edge_name: str | None | MISSING = MISSING
     tunnel_count: int | None | MISSING = MISSING
     memory_pct: float | None | MISSING = MISSING
@@ -453,7 +469,7 @@ class ClusterEdgeEntry(VcoModel):
 class GetEnterpriseEdgeClusterStatusResultItem(VcoModel):
     """Status of a single edge cluster within an enterprise."""
 
-    model_config = ConfigDict(extra="allow")
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="allow")
 
     cluster_id: int | None | MISSING = MISSING
     cluster_name: str | None | MISSING = MISSING
@@ -465,13 +481,15 @@ class GetEnterpriseEdgeClusterStatusResultItem(VcoModel):
 
 class GetEnterpriseEdgeNvsTunnelStatus(VcoModel):
     enterprise_id: int | MISSING = MISSING
-    edge_id: Annotated[int | MISSING, Resolvable(EdgeIdentity, "id")] = MISSING
+    edge_id: Annotated[int | MISSING, Resolvable(EdgeIdentity, lambda i: i.id)] = (
+        MISSING
+    )
     tag: NvsTunnelTag | MISSING = MISSING
     provider_object_id: int | MISSING = MISSING
 
 
 class GetEnterpriseEdgeNvsTunnelStatusResultItemData(VcoModel):
-    model_config = ConfigDict(extra="allow")
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="allow")
 
     name: str | None | MISSING = MISSING
     link: uuid.UUID | None | MISSING = MISSING
@@ -497,9 +515,11 @@ class GetEnterpriseEdgeNvsTunnelStatusResultItem(VcoModel):
     data: GetEnterpriseEdgeNvsTunnelStatusResultItemData | None | MISSING = MISSING
     data_key: str | None | MISSING = MISSING
     edge_name: str | None | MISSING = MISSING
-    edge_id: Annotated[int | None | MISSING, Resolvable(EdgeIdentity, "id")] = MISSING
+    edge_id: Annotated[
+        int | None | MISSING, Resolvable(EdgeIdentity, lambda i: i.id)
+    ] = MISSING
     edge_logical_id: Annotated[
-        uuid.UUID | None | MISSING, Resolvable(EdgeIdentity, "logical_id")
+        uuid.UUID | None | MISSING, Resolvable(EdgeIdentity, lambda i: i.logical_id)
     ] = MISSING
     state: TunnelState | None | MISSING = MISSING
     tag: str | None | MISSING = MISSING
@@ -511,7 +531,7 @@ class GetEnterpriseEdgeNvsTunnelStatusResultItem(VcoModel):
 
 class GetVpnEdgeActionStatus(VcoModel):
     enterprise_id: int | MISSING = MISSING
-    edge_id: Annotated[int, Resolvable(EdgeIdentity, "id")] = Field(
+    edge_id: Annotated[int, Resolvable(EdgeIdentity, lambda i: i.id)] = Field(
         description="VCO Edge ID"
     )
     provider_object_id: int = Field(description="VPN provider object ID")
@@ -531,10 +551,10 @@ class GetVpnEdgeActionStatusResult(VcoModel):
 
 class GetVpnSiteStatus(VcoModel):
     enterprise_id: int | MISSING = MISSING
-    segment_object_id: Annotated[int, Resolvable(SegmentIdentity, "object_id")] = Field(
-        description="Network segment object ID"
-    )
-    edge_id: Annotated[int, Resolvable(EdgeIdentity, "id")] = Field(
+    segment_object_id: Annotated[
+        int, Resolvable(SegmentIdentity, lambda i: i.object_id)
+    ] = Field(description="Network segment object ID")
+    edge_id: Annotated[int, Resolvable(EdgeIdentity, lambda i: i.id)] = Field(
         description="VCO Edge ID"
     )
     provider_object_id: int = Field(description="VPN provider object ID")
@@ -548,7 +568,9 @@ class GetVpnSiteStatusResultItem(VcoModel):
     status: int | None | MISSING = MISSING
     status_msg: str | None | MISSING = MISSING
     vendor_type: str | None | MISSING = MISSING
-    edge_id: Annotated[int | None | MISSING, Resolvable(EdgeIdentity, "id")] = MISSING
+    edge_id: Annotated[
+        int | None | MISSING, Resolvable(EdgeIdentity, lambda i: i.id)
+    ] = MISSING
     provider_id: int | None | MISSING = MISSING
     # Retain the former public attributes for source compatibility. Current
     # VCO responses do not populate them; callers should use the fields above.
@@ -563,7 +585,7 @@ class GetVpnSiteStatusResultItem(VcoModel):
     )
     link_id: Annotated[
         int | None | MISSING,
-        Resolvable(LinkIdentity, "id"),
+        Resolvable(LinkIdentity, lambda i: i.id),
     ] = Field(
         default=MISSING, deprecated="Use the request linkInternalId for link identity."
     )
@@ -635,9 +657,9 @@ class GetEnterpriseNniMetrics(VcoModel):
 
 
 class GetEnterpriseNniMetricsResultItem(VcoModel):
-    gateway_id: Annotated[int | None | MISSING, Resolvable(GatewayIdentity, "id")] = (
-        MISSING
-    )
+    gateway_id: Annotated[
+        int | None | MISSING, Resolvable(GatewayIdentity, lambda i: i.id)
+    ] = MISSING
     gateway_name: str | None | MISSING = MISSING
     nni_id: int | None | MISSING = MISSING
     bytes_rx: int | None | MISSING = MISSING
@@ -659,9 +681,9 @@ class GetEnterpriseNniSeries(VcoModel):
 
 
 class GetEnterpriseNniSeriesResultItem(VcoModel):
-    gateway_id: Annotated[int | None | MISSING, Resolvable(GatewayIdentity, "id")] = (
-        MISSING
-    )
+    gateway_id: Annotated[
+        int | None | MISSING, Resolvable(GatewayIdentity, lambda i: i.id)
+    ] = MISSING
     gateway_name: str | None | MISSING = MISSING
     nni_id: int | None | MISSING = MISSING
     series: list[dict[str, Any]] | None | MISSING = MISSING
@@ -709,9 +731,9 @@ class GetNetworkGatewayStatus(VcoModel):
 
 class GetNetworkGatewayStatusResultItem(VcoModel):
     id_: Annotated[int | None | MISSING, Alias("id")] = MISSING
-    gateway_id: Annotated[int | None | MISSING, Resolvable(GatewayIdentity, "id")] = (
-        MISSING
-    )
+    gateway_id: Annotated[
+        int | None | MISSING, Resolvable(GatewayIdentity, lambda i: i.id)
+    ] = MISSING
     gateway_name: str | None | MISSING = MISSING
     gateway_state: GatewayState | None | MISSING = MISSING
     health_stats: GatewayHealthStats | None | MISSING = MISSING
@@ -755,14 +777,14 @@ class RouteTableSegmentEntry(VcoModel):
 
     name: str | None | MISSING = MISSING
     segment_id: Annotated[
-        int | None | MISSING, Resolvable(SegmentIdentity, "segment_id")
+        int | None | MISSING, Resolvable(SegmentIdentity, lambda i: i.segment_id)
     ] = MISSING
 
 
 class EnterpriseGatewayRouteTableConfigResult(VcoModel):
     """Gateway route table configuration showing available gateways and segments."""
 
-    model_config = ConfigDict(extra="allow")
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="allow")
 
     gateways: list[RouteTableGatewayEntry] | None | MISSING = MISSING
     segments: list[RouteTableSegmentEntry] | None | MISSING = MISSING
@@ -783,9 +805,7 @@ def _iter_api_filters(filters: ApiFilters) -> list[ApiFilter]:
         return [filters]
     if isinstance(filters, ApiFiltersAnd):
         return filters.and_
-    if isinstance(filters, ApiFiltersOr):
-        return filters.or_
-    return []
+    return filters.or_
 
 
 class _LinkInsightsRequest(VcoModel):
@@ -948,7 +968,7 @@ class DegradationDetailsSortItem(VcoModel):
 
 
 class GetLinkDegradationDetails(_LinkInsightsRequest):
-    model_config = ConfigDict(
+    model_config: ClassVar[ConfigDict] = ConfigDict(
         json_schema_extra={
             "oneOf": [
                 {

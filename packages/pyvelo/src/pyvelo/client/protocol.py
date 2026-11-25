@@ -1,3 +1,12 @@
+"""The VCO client contract: the portal request methods and every operation mixin.
+
+``VcoClientProtocol`` sends JSON-RPC requests to ``/portal/`` and checks their
+HTTP status, JSON-RPC error and result. ``VcoClient`` subclasses it to add
+retries, rate limiting and concurrency control. An ``ExchangeHook`` sees each
+request and response, as ``Exchange``; ``make_file_dump_hook`` writes them to
+files.
+"""
+
 import asyncio
 import json
 import re
@@ -94,7 +103,7 @@ def make_file_dump_hook(dump_dir: Path) -> ExchangeHook:
 
     def _write_response(path: Path, response: httpx.Response) -> None:
         try:
-            body = cast(object, response.json())
+            body = cast("object", response.json())
         except ValueError:
             _ = path.write_bytes(response.content)
         else:
@@ -154,7 +163,14 @@ class VcoClientProtocol(
     RemoteDiagnosticsMixin,
     Protocol,
 ):
+    """The VCO client: the portal request methods and every operation mixin's methods.
+
+    It is used inside ``async with``, which opens the HTTP client and, on leaving,
+    closes it and any remote diagnostics WebSocket.
+    """
+
     _http: httpx.AsyncClient | None = None
+    _transport: httpx.AsyncBaseTransport | None = None
     _vco_fqdn: str
     _token: SecretStr
     _verify_ssl: bool
@@ -165,6 +181,7 @@ class VcoClientProtocol(
     _ws_cleanup_tasks: set[asyncio.Task[None]]
 
     async def __aenter__(self) -> Self:
+        """The client, with its HTTP client opened."""
         await self._connect()
         return self
 
@@ -174,25 +191,29 @@ class VcoClientProtocol(
         _exc_val: BaseException | None,
         _exc_tb: TracebackType | None,
     ) -> None:
+        """Close the remote diagnostics WebSocket, then the HTTP client."""
         await self.close_websocket()
         if self._http is not None:
             await self._http.__aexit__(_exc_type, _exc_val, _exc_tb)
             self._http = None
 
     async def _connect(self) -> None:
-        headers = {"Content-Type": "application/json"}
-        self._http = await httpx.AsyncClient(
+        self._http = await self._new_http_client().__aenter__()
+
+    def _new_http_client(self) -> httpx.AsyncClient:
+        return httpx.AsyncClient(
             auth=VcoAuth(self._token.get_secret_value()),
             base_url=f"https://{self._vco_fqdn}",
-            headers=headers,
+            headers={"Content-Type": "application/json"},
             verify=self._verify_ssl,
             timeout=self._timeout,
-        ).__aenter__()
+            transport=self._transport,
+        )
 
     def _http_client(self) -> httpx.AsyncClient:
         if self._http is not None:
             return self._http
-        raise VcoClientNotInitializedError()
+        raise VcoClientNotInitializedError
 
     # -- Transport hook (overridden by VcoClient for retry/rate-limiting) ----
 
@@ -300,21 +321,20 @@ class VcoClientProtocol(
         self,
         method: str,
         request: PaginatedVcoModel,
-        ItemType: type[T],
+        item_type: type[T],
     ) -> AsyncGenerator[list[T]]:
         """Yield one page per source request until VCO reports no more pages.
 
-        After each page, *request* records ``_page_has_more`` and
-        ``_page_next_link`` so a caller that stops early can resume from that
+        After each page, *request* records ``page_has_more`` and
+        ``page_next_link`` so a caller that stops early can resume from that
         cursor. The caller's ``next_page_link`` is left unchanged.
         """
         more = True
-        request._page_has_more = False
-        request._page_next_link = None
+        request.record_page_cursor(None)
         page_request = request.model_copy()
 
-        ResultType = PaginatedResult[ItemType]
-        ResponseType = JsonRpcResponse[ResultType]
+        page_type = PaginatedResult[item_type]
+        response_type = JsonRpcResponse[page_type]
 
         while more:
             rpc_request = JsonRpcRequest(method=method, params=page_request)
@@ -327,17 +347,18 @@ class VcoClientProtocol(
 
             self._check_http_status(response)
             try:
-                validated_response = ResponseType.model_validate_json(response.content)
+                validated_response = response_type.model_validate_json(response.content)
             except ValidationError as exc:
                 self._notify_exchange(
-                    content, response, result_type=ItemType, validation_error=exc
+                    content, response, result_type=item_type, validation_error=exc
                 )
                 raise
-            self._notify_exchange(content, response, result_type=ItemType)
+            self._notify_exchange(content, response, result_type=item_type)
             result = self._check_rpc_result(method, validated_response)
 
             meta = result.metadata
             more = meta.more
+            next_page_link = None
             if more:
                 next_page_link = meta.next_page_link
                 if not next_page_link:
@@ -346,8 +367,7 @@ class VcoClientProtocol(
                     )
                 page_request.next_page_link = next_page_link
 
-            request._page_has_more = more
-            request._page_next_link = meta.next_page_link if more else None
+            request.record_page_cursor(next_page_link)
 
             yield result.data
 
@@ -355,10 +375,16 @@ class VcoClientProtocol(
         self,
         method: str,
         request: VcoModel,
-        ResultType: type[T],
+        result_type: type[T],
         *,
         validation_context: dict[str, Any] | None = None,
     ) -> T:
+        """The result of one portal request for *method*, validated as *ResultType*.
+
+        *validation_context* is passed to the validation. A status that is not
+        2xx raises ``VcoHttpError``, a JSON-RPC error ``VcoOperationError`` and
+        an empty result ``VcoEmptyResultError``.
+        """
         rpc_request = JsonRpcRequest(method=method, params=request)
         content = rpc_request.model_dump_json(by_alias=True)
         response = await self._send_request(
@@ -368,25 +394,25 @@ class VcoClientProtocol(
         )
 
         self._check_http_status(response)
-        ResponseType = JsonRpcResponse[ResultType]
+        response_type = JsonRpcResponse[result_type]
 
         try:
-            validated_response = ResponseType.model_validate_json(
+            validated_response = response_type.model_validate_json(
                 response.content, context=validation_context
             )
         except ValidationError as exc:
             self._notify_exchange(
-                content, response, result_type=ResultType, validation_error=exc
+                content, response, result_type=result_type, validation_error=exc
             )
             raise
-        self._notify_exchange(content, response, result_type=ResultType)
+        self._notify_exchange(content, response, result_type=result_type)
         return self._check_rpc_result(method, validated_response)
 
     async def portal_list[T: BaseModel](
         self,
         method: str,
         request: VcoModel,
-        ItemType: type[T],
+        item_type: type[T],
         *,
         hint: Literal["list"] | None = None,
     ) -> Sequence[T]:
@@ -408,7 +434,7 @@ class VcoClientProtocol(
 
         # Try bare list first, fall back to paginated envelope on structural mismatch.
         try:
-            list_response = JsonRpcResponse[list[ItemType]].model_validate_json(
+            list_response = JsonRpcResponse[list[item_type]].model_validate_json(
                 response.content
             )
         except ValidationError as list_err:
@@ -416,24 +442,24 @@ class VcoClientProtocol(
                 self._notify_exchange(
                     content,
                     response,
-                    result_type=ItemType,
+                    result_type=item_type,
                     validation_error=list_err,
                 )
                 raise
         else:
-            self._notify_exchange(content, response, result_type=ItemType)
+            self._notify_exchange(content, response, result_type=item_type)
             return self._check_rpc_result(method, list_response)
 
         try:
             pag_response = JsonRpcResponse[
-                PaginatedResult[ItemType]
+                PaginatedResult[item_type]
             ].model_validate_json(response.content)
         except ValidationError as exc:
             self._notify_exchange(
-                content, response, result_type=ItemType, validation_error=exc
+                content, response, result_type=item_type, validation_error=exc
             )
             raise
-        self._notify_exchange(content, response, result_type=ItemType)
+        self._notify_exchange(content, response, result_type=item_type)
         page = self._check_rpc_result(method, pag_response)
 
         if page.metadata.more:
@@ -453,20 +479,20 @@ class VcoClientProtocol(
         self,
         method: str,
         request: PaginatedVcoModel,
-        ItemType: type[T],
+        item_type: type[T],
     ) -> Sequence[T]:
-        """Collect pages until VCO reports no more or ``request._max_pages`` is hit.
+        """Collect pages until VCO reports no more or ``request.max_pages`` is hit.
 
-        ``_max_pages`` of 0 means no cap. When the cap stops collection,
-        ``request._page_has_more`` stays True and ``request._page_next_link``
+        ``max_pages`` of 0 means no cap. When the cap stops collection,
+        ``request.page_has_more`` stays True and ``request.page_next_link``
         holds the cursor for the next page.
         """
         items: list[T] = []
         page_count = 0
-        async with aclosing(self.portal_paginated(method, request, ItemType)) as pages:
+        async with aclosing(self.portal_paginated(method, request, item_type)) as pages:
             async for page in pages:
                 items.extend(page)
                 page_count += 1
-                if request._max_pages and page_count >= request._max_pages:
+                if request.max_pages and page_count >= request.max_pages:
                     break
         return items

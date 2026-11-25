@@ -1,6 +1,13 @@
+"""The requests and results of the ``event/`` methods and of enterprise alerts.
+
+An enterprise event read takes a filter tree of ``and``/``or`` groups over typed
+rules; each rule checks that its operator gets a scalar or a list value, as the VCO
+requires.
+"""
+
 import uuid
 from collections.abc import Sequence
-from typing import Annotated, Any, Literal, Self
+from typing import Annotated, Any, ClassVar, Literal, Self
 
 import annotated_types
 from pydantic import (
@@ -142,7 +149,7 @@ class EventSorting(VcoModel):
 class EnterpriseEventTypeFilter(VcoModel):
     """Filter by event type. Scalar value for is/isNot; list for in/notIn."""
 
-    model_config = ConfigDict(
+    model_config: ClassVar[ConfigDict] = ConfigDict(
         json_schema_extra=_filter_cardinality_json_schema(("is", "isNot"))
     )
 
@@ -161,7 +168,7 @@ class EnterpriseEventTypeFilter(VcoModel):
 class EnterpriseEventSeverityFilter(VcoModel):
     """Filter by severity. Scalar value for is/isNot; list for in/notIn."""
 
-    model_config = ConfigDict(
+    model_config: ClassVar[ConfigDict] = ConfigDict(
         json_schema_extra=_filter_cardinality_json_schema(("is", "isNot"))
     )
 
@@ -182,7 +189,7 @@ class EnterpriseEventSeverityFilter(VcoModel):
 class EnterpriseEventStringValueFilter(VcoModel):
     """Filter a string field using a scalar or list-valued operator."""
 
-    model_config = ConfigDict(
+    model_config: ClassVar[ConfigDict] = ConfigDict(
         json_schema_extra=_filter_cardinality_json_schema(
             (
                 "is",
@@ -240,7 +247,7 @@ type EnterpriseEventStringFilter = Annotated[
 ]
 
 
-def _enterprise_event_filter_discriminator(v: Any) -> str | None:
+def _enterprise_event_filter_discriminator(v: Any) -> str | None:  # noqa: PLR0911 (existing: split it when it next changes)
     if isinstance(v, dict):
         f = v.get("field") or v.get("fieldName")
         if f == "event":
@@ -335,7 +342,9 @@ class GetEnterpriseEventsItem(VcoModel):
         str | MISSING, AfterValidator(check_string_empty)
     ] = MISSING
     edge_id: Annotated[
-        int | MISSING, AfterValidator(check_int_zero), Resolvable(EdgeIdentity, "id")
+        int | MISSING,
+        AfterValidator(check_int_zero),
+        Resolvable(EdgeIdentity, lambda i: i.id),
     ] = MISSING
     edge_name: Annotated[str | MISSING, AfterValidator(check_string_empty)] = MISSING
     segment_name: Annotated[str | MISSING, AfterValidator(check_string_empty)] = MISSING
@@ -398,7 +407,9 @@ class EnterpriseAlertItem(VcoModel):
     edge_name: str | MISSING = Field(
         MISSING, description="Name of the Edge that triggered the alert"
     )
-    edge_id: Annotated[int | MISSING, Resolvable(EdgeIdentity, "id")] = MISSING
+    edge_id: Annotated[int | MISSING, Resolvable(EdgeIdentity, lambda i: i.id)] = (
+        MISSING
+    )
     enterprise_id: int | MISSING = MISSING
     state: str | MISSING = Field(
         MISSING, description="Alert lifecycle state (TRIGGERED, CLEARED)"
@@ -448,7 +459,7 @@ class GetOperatorEvents(PaginatedVcoModel):
 
 
 class OperatorEventItem(VcoModel):
-    model_config = ConfigDict(extra="allow")
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="allow")
 
 
 # ---------------------------------------------------------------------------
@@ -465,4 +476,4 @@ class GetProxyEvents(PaginatedVcoModel):
 
 
 class ProxyEventItem(VcoModel):
-    model_config = ConfigDict(extra="allow")
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="allow")

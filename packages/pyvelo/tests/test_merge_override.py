@@ -34,51 +34,51 @@ class HasMultipleOverrideScopes(VcoModel):
 
 
 class TestOverrideFlagAutoSet:
-    def test_non_edge_local_change_triggers_override(self):
+    def test_non_edge_local_change_triggers_override(self) -> None:
         m = Network(override=False, advertise=True)
         _ = m.merge_patch({"advertise": False})
         assert m.override is True
 
-    def test_edge_local_change_does_not_trigger_override(self):
+    def test_edge_local_change_does_not_trigger_override(self) -> None:
         m = Network(override=False, cidr_ip="10.0.0.1")
         _ = m.merge_patch({"cidr_ip": "10.0.0.2"})
         assert m.override is False
 
-    def test_mixed_changes_triggers_override(self):
+    def test_mixed_changes_triggers_override(self) -> None:
         m = Network(override=False)
         _ = m.merge_patch({"cidr_ip": "10.0.0.2", "advertise": False})
         assert m.override is True
 
-    def test_only_edge_local_changes_no_trigger(self):
+    def test_only_edge_local_changes_no_trigger(self) -> None:
         m = Network(override=False)
         _ = m.merge_patch({"cidr_ip": "10.0.0.2", "cidr_prefix": 16})
         assert m.override is False
 
 
 class TestOverrideFlagDeepAncestorWalk:
-    def test_deep_non_edge_local_triggers_ancestor_override(self):
+    def test_deep_non_edge_local_triggers_ancestor_override(self) -> None:
         m = Network(override=False)
         _ = m.merge_patch({"v6_detail": {"addressing": {"gateway": "10.0.0.1"}}})
         assert m.override is True
 
-    def test_deep_edge_local_does_not_trigger(self):
+    def test_deep_edge_local_does_not_trigger(self) -> None:
         m = Network(override=False)
         _ = m.merge_patch({"v6_detail": {"addressing": {"cidr_ip": "10.0.0.2"}}})
         assert m.override is False
 
-    def test_deep_non_edge_local_in_non_override_container(self):
+    def test_deep_non_edge_local_in_non_override_container(self) -> None:
         m = Network(override=False)
         _ = m.merge_patch({"v6_detail": {"other_setting": "changed"}})
         assert m.override is True
 
 
 class TestOverrideFlagMultipleScopes:
-    def test_change_in_dns_scope_triggers_dns_override(self):
+    def test_change_in_dns_scope_triggers_dns_override(self) -> None:
         m = HasMultipleOverrideScopes(dns_override=False, primary_dns="8.8.8.8")
         _ = m.merge_patch({"primary_dns": "1.1.1.1"})
         assert m.dns_override is True
 
-    def test_change_in_network_does_not_trigger_parent_override(self):
+    def test_change_in_network_does_not_trigger_parent_override(self) -> None:
         net = Network(name="test", override=False, advertise=True)
         m = HasMultipleOverrideScopes(dns_override=False, networks=[net])
         # Directly mutate the network — this tests that override scoping

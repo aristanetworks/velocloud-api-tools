@@ -1,3 +1,5 @@
+"""The status codes and bundle types of a diagnostic bundle request."""
+
 from enum import IntEnum, StrEnum
 
 

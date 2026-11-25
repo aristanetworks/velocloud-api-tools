@@ -1,3 +1,5 @@
+"""The ``WAN`` module's data: the Edge's networks and links."""
+
 from typing import Annotated
 
 from pydantic import MISSING
@@ -10,7 +12,13 @@ from .network import WanNetwork
 
 
 class WanData(VcoModel):
-    networks: Annotated[list[WanNetwork] | MISSING, KeyField("name"), EdgeLocal] = (
-        MISSING
-    )
-    links: Annotated[list[WanLink] | MISSING, KeyField("name"), EdgeLocal] = MISSING
+    networks: Annotated[
+        list[WanNetwork] | MISSING,
+        KeyField("internal_id", "addressing_version", label="name"),
+        EdgeLocal,
+    ] = MISSING
+    links: Annotated[
+        list[WanLink] | MISSING,
+        KeyField("internal_id", "addressing_version", label="name"),
+        EdgeLocal,
+    ] = MISSING

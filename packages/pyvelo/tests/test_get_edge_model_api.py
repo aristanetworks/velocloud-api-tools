@@ -9,7 +9,7 @@ from ._type_support import require_present
 
 
 class TestGetEdgeRequestApiShape:
-    def test_id_is_not_required_when_using_supported_lookup_fields(self):
+    def test_id_is_not_required_when_using_supported_lookup_fields(self) -> None:
         req = GetEdge(logical_id=uuid.UUID("00000000-0000-0000-0000-000000000001"))
 
         dumped = req.model_dump(by_alias=True)
@@ -17,12 +17,12 @@ class TestGetEdgeRequestApiShape:
         assert "id" not in dumped
         assert dumped["logicalId"] == uuid.UUID("00000000-0000-0000-0000-000000000001")
 
-    def test_name_lookup_serializes_without_id(self):
+    def test_name_lookup_serializes_without_id(self) -> None:
         req = GetEdge(name="branch-1")
 
         assert req.model_dump(by_alias=True) == {"name": "branch-1"}
 
-    def test_accepts_upstream_get_edge_with_values(self):
+    def test_accepts_upstream_get_edge_with_values(self) -> None:
         req = GetEdge.model_validate(
             {
                 "id": 1,
@@ -50,13 +50,13 @@ class TestGetEdgeRequestApiShape:
             GetEdgeWith.SELF_HEALING,
         ]
 
-    def test_rejects_non_get_edge_with_value(self):
+    def test_rejects_non_get_edge_with_value(self) -> None:
         with pytest.raises(ValidationError):
             _ = GetEdge.model_validate({"id": 1, "with": ["licenses"]})
 
 
 class TestGetEdgeResultApiShape:
-    def test_parses_optional_enterprise_and_self_healing_fields(self):
+    def test_parses_optional_enterprise_and_self_healing_fields(self) -> None:
         result = GetEdgeResult.model_validate(
             {
                 "id": 1,
@@ -69,7 +69,7 @@ class TestGetEdgeResultApiShape:
         assert result.enterprise == {"id": 42, "name": "Acme"}
         assert result.self_healing is True
 
-    def test_parses_none_ha_type(self):
+    def test_parses_none_ha_type(self) -> None:
         result = GetEdgeResult.model_validate(
             {
                 "id": 1,

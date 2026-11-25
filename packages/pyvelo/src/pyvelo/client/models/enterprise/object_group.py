@@ -1,3 +1,5 @@
+"""The entries of an address group and a port group, one class per entry kind."""
+
 from typing import Annotated, Any, Literal
 
 from pydantic import Discriminator, Field, Tag
@@ -9,7 +11,7 @@ def _address_entry_discriminator(v: Any) -> str:
     if isinstance(v, dict):
         if "domain" in v:
             return "domain"
-        elif "ip" in v:
+        if "ip" in v:
             return "ip"
     # Fallback for already-parsed objects
     if hasattr(v, "domain"):
@@ -42,7 +44,7 @@ def _port_entry_discriminator(v: Any) -> str:
     if isinstance(v, dict):
         if "port_low" in v or "port_high" in v:
             return "port"
-        elif "type" in v or "code_low" in v:
+        if "type" in v or "code_low" in v:
             return "icmp"
     # Fallback for already-parsed objects
     if hasattr(v, "port_low"):

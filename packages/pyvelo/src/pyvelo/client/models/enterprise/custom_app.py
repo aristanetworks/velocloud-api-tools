@@ -1,3 +1,5 @@
+"""A custom application's data: the IP, port and FQDN mappings that identify it."""
+
 from typing import Annotated
 
 from pydantic import Field

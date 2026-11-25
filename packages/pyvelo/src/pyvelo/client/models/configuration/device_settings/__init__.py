@@ -1,3 +1,7 @@
+"""The ``deviceSettings`` module's data, re-exported from its submodules."""
+
+from pyvelo.client.models.configuration.common import SegmentMetadata
+
 from .common import (
     AdvertiseDefaultRoutes,
     AdvertiseDefaultRoutesMethod,
@@ -152,6 +156,8 @@ from .segment import (
     CssIpsecSite,
     CssProviderRef,
     DeviceSegment,
+    DnsBackupProvider,
+    DnsPrimaryProvider,
     DnsProvider,
     DynamicVpnConfig,
     EcmpHashParams,
@@ -177,7 +183,6 @@ from .segment import (
     SegmentDns,
     SegmentEdgeDirect,
     SegmentHubInterconnect,
-    SegmentMetadata,
     SegmentMulticast,
     SegmentNat,
     SegmentNetflowIntervals,
@@ -244,6 +249,8 @@ __all__ = [
     "DhcpOptionDataType",
     "DhcpOptionMetadata",
     "DhcpServerOption",
+    "DnsBackupProvider",
+    "DnsPrimaryProvider",
     "DnsProvider",
     "DslSettings",
     "DynamicVpnConfig",

@@ -1,10 +1,8 @@
 """Tests for context-aware serialization and ContextView introspection."""
 
-from collections.abc import Callable
-from typing import Annotated, ClassVar, cast
+from typing import TYPE_CHECKING, Annotated, ClassVar, cast
 
 from pydantic import MISSING, ConfigDict, Field
-from pydantic.fields import FieldInfo
 from pyvelo.core import (
     Alias,
     ConfigContext,
@@ -14,12 +12,17 @@ from pyvelo.core import (
     VcoModel,
 )
 from pyvelo.core import fields as core_fields
-from pyvelo.core.fields import ContextDefaults
 
 from ._type_support import JsonObject
 
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from pydantic.fields import FieldInfo
+    from pyvelo.core.fields import ContextDefaults
+
 _get_context_defaults = cast(
-    Callable[[FieldInfo], ContextDefaults | None],
+    "Callable[[FieldInfo], ContextDefaults | None]",
     core_fields.get_context_defaults,
 )
 
@@ -82,16 +85,16 @@ class FlexModel(VcoModel):
 
 def _compact(model: VcoModel, **extra_ctx: object) -> JsonObject:
     ctx: dict[str, object] = {"compact": True, **extra_ctx}
-    return cast(JsonObject, model.model_dump(by_alias=False, context=ctx))
+    return cast("JsonObject", model.model_dump(by_alias=False, context=ctx))
 
 
 def _compact_alias(model: VcoModel, **extra_ctx: object) -> JsonObject:
     ctx: dict[str, object] = {"compact": True, **extra_ctx}
-    return cast(JsonObject, model.model_dump(by_alias=True, context=ctx))
+    return cast("JsonObject", model.model_dump(by_alias=True, context=ctx))
 
 
 def _config_context(model: VcoModel) -> ConfigContext | None:
-    return cast(ConfigContext | None, model._config_context)
+    return model.config_context
 
 
 # ---------------------------------------------------------------------------
@@ -100,17 +103,17 @@ def _config_context(model: VcoModel) -> ConfigContext | None:
 
 
 class TestParity:
-    def test_basic_compact_matches(self):
+    def test_basic_compact_matches(self) -> None:
         m = EdgeProfileModel(name="test", override=True, enabled=True)
         d = _compact(m)
         assert d == {"name": "test", "enabled": True}
 
-    def test_compact_with_missing(self):
+    def test_compact_with_missing(self) -> None:
         m = ProfileOnlyFields()
         d = _compact(m)
         assert d == {}
 
-    def test_compact_with_values(self):
+    def test_compact_with_values(self) -> None:
         m = ProfileOnlyFields(rules=["r1"], defaults=["d1"])
         d = _compact(m)
         assert d == {"rules": ["r1"], "defaults": ["d1"]}
@@ -122,19 +125,19 @@ class TestParity:
 
 
 class TestAliasControl:
-    def test_by_alias_false_uses_python_names(self):
+    def test_by_alias_false_uses_python_names(self) -> None:
         m = AliasedContextModel(source_ip="10.0.0.1")
         d = _compact(m)
         assert "source_ip" in d
         assert "sip" not in d
 
-    def test_by_alias_true_uses_camel_case(self):
+    def test_by_alias_true_uses_camel_case(self) -> None:
         m = AliasedContextModel(source_ip="10.0.0.1")
         d = _compact_alias(m)
         assert "sip" in d
         assert "source_ip" not in d
 
-    def test_non_aliased_fields_get_camel_case(self):
+    def test_non_aliased_fields_get_camel_case(self) -> None:
         m = EdgeProfileModel(name="test", enabled=True)
         d = _compact_alias(m)
         assert "enabled" in d  # "enabled" -> "enabled" (no change for single word)
@@ -147,14 +150,14 @@ class TestAliasControl:
 
 
 class TestNoContext:
-    def test_model_dump_without_context_is_standard(self):
+    def test_model_dump_without_context_is_standard(self) -> None:
         m = EdgeProfileModel(name="test", override=True, enabled=False)
         d = m.model_dump()
         # Standard Pydantic dump includes all fields with aliases
         assert "override" in d or "Override" in d  # by_alias=True by default
         assert "name" in d or "Name" in d
 
-    def test_model_dump_includes_missing_as_excluded(self):
+    def test_model_dump_includes_missing_as_excluded(self) -> None:
         """Standard model_dump with exclude_unset handles MISSING fields."""
         m = EdgeProfileModel()
         d = m.model_dump(exclude_unset=True)
@@ -168,22 +171,22 @@ class TestNoContext:
 
 
 class TestContextDefaultsStorage:
-    def test_edge_only_stores_context_defaults(self):
+    def test_edge_only_stores_context_defaults(self) -> None:
         fi = EdgeProfileModel.model_fields["override"]
         cd = _get_context_defaults(fi)
         assert cd is not None
-        assert cast(object, cd.profile) is MISSING
+        assert cd.profile is MISSING
 
-    def test_alias_ctx_default_stores_context_defaults(self):
+    def test_alias_ctx_default_stores_context_defaults(self) -> None:
         fi = AliasedContextModel.model_fields["source_ip"]
         cd = _get_context_defaults(fi)
         assert cd is not None
 
-    def test_context_defaults_stored(self):
+    def test_context_defaults_stored(self) -> None:
         fi = BothMetadata.model_fields["port"]
         cd = _get_context_defaults(fi)
         assert cd is not None
-        assert cast(object, cd.profile) is MISSING
+        assert cd.profile is MISSING
 
 
 # ---------------------------------------------------------------------------
@@ -192,30 +195,30 @@ class TestContextDefaultsStorage:
 
 
 class TestContextOmission:
-    def test_edge_only_field_omitted_at_profile(self):
+    def test_edge_only_field_omitted_at_profile(self) -> None:
         m = EdgeProfileModel(override=True, enabled=True)
         d = _compact(m, config_level=ConfigContext.PROFILE)
         assert "override" not in d
         assert "enabled" in d
 
-    def test_edge_only_field_kept_at_edge(self):
+    def test_edge_only_field_kept_at_edge(self) -> None:
         m = EdgeProfileModel(override=False, enabled=True)
         d = _compact(m, config_level=ConfigContext.EDGE)
         assert "override" in d
         assert d["override"] is False
 
-    def test_edge_only_field_at_default_dropped_at_edge(self):
+    def test_edge_only_field_at_default_dropped_at_edge(self) -> None:
         """At edge level, override=True matches edge default -> omitted."""
         m = EdgeProfileModel(override=True)
         d = _compact(m, config_level=ConfigContext.EDGE)
         assert "override" not in d
 
-    def test_profile_only_field_omitted_at_edge(self):
+    def test_profile_only_field_omitted_at_edge(self) -> None:
         m = ProfileOnlyFields(defaults=["rule1"])
         d = _compact(m, config_level=ConfigContext.EDGE)
         assert "defaults" not in d
 
-    def test_profile_only_field_kept_at_profile(self):
+    def test_profile_only_field_kept_at_profile(self) -> None:
         m = ProfileOnlyFields(defaults=["rule1"])
         d = _compact(m, config_level=ConfigContext.PROFILE)
         assert d["defaults"] == ["rule1"]
@@ -227,24 +230,24 @@ class TestContextOmission:
 
 
 class TestContextSpecificDefaults:
-    def test_profile_context_uses_none_default(self):
+    def test_profile_context_uses_none_default(self) -> None:
         """At profile level, routed_interfaces default is None, so None is omitted."""
         m = ContextSpecificDefault(routed_interfaces=None)
         d = _compact(m, config_level=ConfigContext.PROFILE)
         assert "routed_interfaces" not in d
 
-    def test_profile_context_keeps_non_default(self):
+    def test_profile_context_keeps_non_default(self) -> None:
         m = ContextSpecificDefault(routed_interfaces=["GE1"])
         d = _compact(m, config_level=ConfigContext.PROFILE)
         assert d["routed_interfaces"] == ["GE1"]
 
-    def test_edge_context_uses_field_default(self):
+    def test_edge_context_uses_field_default(self) -> None:
         """At edge level, no context default -> falls back to field default (list)."""
         m = ContextSpecificDefault(routed_interfaces=[])
         d = _compact(m, config_level=ConfigContext.EDGE)
         assert "routed_interfaces" not in d  # empty list == field default
 
-    def test_edge_context_keeps_populated_list(self):
+    def test_edge_context_keeps_populated_list(self) -> None:
         m = ContextSpecificDefault(routed_interfaces=["GE1"])
         d = _compact(m, config_level=ConfigContext.EDGE)
         assert d["routed_interfaces"] == ["GE1"]
@@ -256,7 +259,7 @@ class TestContextSpecificDefaults:
 
 
 class TestNestedPropagation:
-    def test_context_flows_to_nested_model(self):
+    def test_context_flows_to_nested_model(self) -> None:
         child = EdgeProfileModel(override=True, enabled=True)
         m = NestedOuter(child=child, extra="hello")
         d = _compact(m, config_level=ConfigContext.PROFILE)
@@ -266,7 +269,7 @@ class TestNestedPropagation:
         assert nested["enabled"] is True
         assert d["extra"] == "hello"
 
-    def test_context_flows_to_nested_at_edge(self):
+    def test_context_flows_to_nested_at_edge(self) -> None:
         child = EdgeProfileModel(override=False, enabled=True)
         m = NestedOuter(child=child, extra="hello")
         d = _compact(m, config_level=ConfigContext.EDGE)
@@ -281,12 +284,12 @@ class TestNestedPropagation:
 
 
 class TestModelExtra:
-    def test_extra_keys_preserved(self):
+    def test_extra_keys_preserved(self) -> None:
         m = FlexModel.model_validate({"name": "test", "unknownKey": 42})
         d = _compact(m)
         assert d["unknownKey"] == 42
 
-    def test_extra_keys_preserved_with_context(self):
+    def test_extra_keys_preserved_with_context(self) -> None:
         m = FlexModel.model_validate({"name": "test", "unknownKey": 42})
         d = _compact(m, config_level=ConfigContext.EDGE)
         assert d["unknownKey"] == 42
@@ -298,38 +301,38 @@ class TestModelExtra:
 
 
 class TestContextView:
-    def test_edge_field_present_at_edge(self):
+    def test_edge_field_present_at_edge(self) -> None:
         view = EdgeProfileModel.context(ConfigContext.EDGE)
         info = view.override
         assert info.is_present is True
-        assert cast(object, info.default) is True
+        assert info.default is True
 
-    def test_edge_field_absent_at_profile(self):
+    def test_edge_field_absent_at_profile(self) -> None:
         view = EdgeProfileModel.context(ConfigContext.PROFILE)
         info = view.override
         assert info.is_present is False
-        assert cast(object, info.default) is MISSING
+        assert info.default is MISSING
 
-    def test_regular_field_present_at_both(self):
+    def test_regular_field_present_at_both(self) -> None:
         edge = EdgeProfileModel.context(ConfigContext.EDGE)
         profile = EdgeProfileModel.context(ConfigContext.PROFILE)
         assert edge.enabled.is_present is True
         assert profile.enabled.is_present is True
 
-    def test_field_info_attached(self):
+    def test_field_info_attached(self) -> None:
         view = EdgeProfileModel.context(ConfigContext.EDGE)
         assert view.override.field_info is EdgeProfileModel.model_fields["override"]
 
 
 class TestContextViewIteration:
-    def test_yields_all_fields(self):
+    def test_yields_all_fields(self) -> None:
         view = EdgeProfileModel.context(ConfigContext.EDGE)
         fields = dict(view)
         assert "override" in fields
         assert "enabled" in fields
         assert "name" in fields
 
-    def test_profile_view_marks_override_absent(self):
+    def test_profile_view_marks_override_absent(self) -> None:
         view = EdgeProfileModel.context(ConfigContext.PROFILE)
         present = {n for n, info in view if info.is_present}
         absent = {n for n, info in view if not info.is_present}
@@ -339,7 +342,7 @@ class TestContextViewIteration:
 
 
 class TestContextViewErrors:
-    def test_nonexistent_field_raises(self):
+    def test_nonexistent_field_raises(self) -> None:
         view = EdgeProfileModel.context(ConfigContext.EDGE)
         try:
             _ = view.nonexistent_field
@@ -354,7 +357,7 @@ class TestContextViewErrors:
 
 
 class TestContextRoundTrip:
-    def test_compact_with_context_round_trips(self):
+    def test_compact_with_context_round_trips(self) -> None:
         original = EdgeProfileModel(
             name="my_edge", override=True, enabled=True, tags=["prod"]
         )
@@ -366,7 +369,7 @@ class TestContextRoundTrip:
         # override was at default, so omitted and restored to default
         assert restored.override is True
 
-    def test_profile_round_trip_omits_edge_only(self):
+    def test_profile_round_trip_omits_edge_only(self) -> None:
         original = EdgeProfileModel(name="my_profile", override=True, enabled=True)
         compacted = _compact(original, config_level=ConfigContext.PROFILE)
         assert "override" not in compacted
@@ -381,19 +384,19 @@ class TestContextRoundTrip:
 
 
 class TestDefaultAndContext:
-    def test_default_value_omitted_at_edge(self):
+    def test_default_value_omitted_at_edge(self) -> None:
         """port=-1 matches field default, omitted at edge level."""
         m = BothMetadata(port=-1)
         d = _compact(m, config_level=ConfigContext.EDGE)
         assert "port" not in d
 
-    def test_context_absent_overrides_value(self):
+    def test_context_absent_overrides_value(self) -> None:
         """If context says field absent, omit even if value is meaningful."""
         m = BothMetadata(port=8080)
         d = _compact(m, config_level=ConfigContext.PROFILE)
         assert "port" not in d
 
-    def test_non_default_value_kept_at_edge(self):
+    def test_non_default_value_kept_at_edge(self) -> None:
         m = BothMetadata(port=8080)
         d = _compact(m, config_level=ConfigContext.EDGE)
         assert d["port"] == 8080
@@ -405,18 +408,18 @@ class TestDefaultAndContext:
 
 
 class TestForContext:
-    def test_for_context_sets_instance_context(self):
+    def test_for_context_sets_instance_context(self) -> None:
         m = EdgeProfileModel(name="test", override=True, enabled=True)
         assert _config_context(m) is None
         _ = m.for_edge()
         assert _config_context(m) is ConfigContext.EDGE
 
-    def test_for_context_returns_self(self):
+    def test_for_context_returns_self(self) -> None:
         m = EdgeProfileModel(name="test")
         result = m.for_edge()
         assert result is m
 
-    def test_compact_uses_instance_context(self):
+    def test_compact_uses_instance_context(self) -> None:
         """Compact serialization reads _config_context when no explicit config_level."""
         m = EdgeProfileModel(name="test", override=True, enabled=True)
         _ = m.for_edge()
@@ -424,7 +427,7 @@ class TestForContext:
         # override=True is the edge default, so it should be omitted
         assert d == {"name": "test", "enabled": True}
 
-    def test_compact_uses_instance_context_profile(self):
+    def test_compact_uses_instance_context_profile(self) -> None:
         """Profile context omits edge-only fields."""
         m = EdgeProfileModel(name="test", override=True, enabled=True)
         _ = m.for_profile()
@@ -433,7 +436,7 @@ class TestForContext:
         assert "override" not in d
         assert d == {"name": "test", "enabled": True}
 
-    def test_explicit_config_level_overrides_instance(self):
+    def test_explicit_config_level_overrides_instance(self) -> None:
         """Explicit config_level in context dict takes precedence."""
         m = EdgeProfileModel(name="test", override=True, enabled=True)
         _ = m.for_edge()
@@ -441,7 +444,7 @@ class TestForContext:
         d = _compact(m, config_level=ConfigContext.PROFILE)
         assert "override" not in d
 
-    def test_for_context_propagates_to_nested(self):
+    def test_for_context_propagates_to_nested(self) -> None:
         """Context propagates to nested VcoModel instances."""
         outer = NestedOuter(
             child=EdgeProfileModel(name="inner", override=True, enabled=True),
@@ -451,7 +454,7 @@ class TestForContext:
         assert _config_context(outer) is ConfigContext.PROFILE
         assert _config_context(outer.child) is ConfigContext.PROFILE
 
-    def test_nested_compact_uses_propagated_context(self):
+    def test_nested_compact_uses_propagated_context(self) -> None:
         """Nested models use propagated context during compact serialization."""
         outer = NestedOuter(
             child=EdgeProfileModel(name="inner", override=True, enabled=True),
@@ -464,7 +467,7 @@ class TestForContext:
         assert isinstance(nested, dict)
         assert "override" not in nested
 
-    def test_for_context_propagates_through_list(self):
+    def test_for_context_propagates_through_list(self) -> None:
         """Context propagates through list fields containing VcoModels."""
 
         class ListContainer(VcoModel):
@@ -480,13 +483,13 @@ class TestForContext:
         assert _config_context(container.items[0]) is ConfigContext.PROFILE
         assert _config_context(container.items[1]) is ConfigContext.PROFILE
 
-    def test_chaining_for_context(self):
+    def test_chaining_for_context(self) -> None:
         """for_context can be chained with construction."""
         m = EdgeProfileModel(name="test", override=True, enabled=True).for_edge()
         d = _compact(m)
         assert d == {"name": "test", "enabled": True}
 
-    def test_isolated_nested_model_with_context(self):
+    def test_isolated_nested_model_with_context(self) -> None:
         """Extracted nested model retains context for independent serialization."""
         outer = NestedOuter(
             child=EdgeProfileModel(name="inner", override=True, enabled=True),
@@ -498,19 +501,19 @@ class TestForContext:
         assert "override" not in d
         assert d == {"name": "inner", "enabled": True}
 
-    def test_standalone_model_with_for_context(self):
+    def test_standalone_model_with_for_context(self) -> None:
         """Standalone model construction with for_context (isolated part use case)."""
         data = ContextSpecificDefault(routed_interfaces=["eth0"]).for_edge()
         d = _compact(data)
         assert d == {"routed_interfaces": ["eth0"]}
 
-    def test_standalone_model_empty_list_at_edge(self):
+    def test_standalone_model_empty_list_at_edge(self) -> None:
         """Empty list matches edge default (list factory) -> omitted."""
         data = ContextSpecificDefault(routed_interfaces=[]).for_edge()
         d = _compact(data)
         assert "routed_interfaces" not in d
 
-    def test_standalone_model_none_at_profile(self):
+    def test_standalone_model_none_at_profile(self) -> None:
         """None matches profile default -> omitted."""
         data = ContextSpecificDefault(routed_interfaces=None).for_profile()
         d = _compact(data)
@@ -523,7 +526,7 @@ class TestForContext:
 
 
 class TestModelValidateContext:
-    def test_model_validate_sets_context(self):
+    def test_model_validate_sets_context(self) -> None:
         """model_validate with config_level sets _config_context on the root."""
         m = EdgeProfileModel.model_validate(
             {"name": "test", "override": True},
@@ -531,7 +534,7 @@ class TestModelValidateContext:
         )
         assert _config_context(m) is ConfigContext.EDGE
 
-    def test_model_validate_propagates_to_nested(self):
+    def test_model_validate_propagates_to_nested(self) -> None:
         """Validation context propagates to nested VcoModel instances."""
         m = NestedOuter.model_validate(
             {"child": {"name": "inner", "override": True}, "extra": "val"},
@@ -540,7 +543,7 @@ class TestModelValidateContext:
         assert _config_context(m) is ConfigContext.PROFILE
         assert _config_context(m.child) is ConfigContext.PROFILE
 
-    def test_model_validate_compact_without_explicit_level(self):
+    def test_model_validate_compact_without_explicit_level(self) -> None:
         """After model_validate with context, compact serialization uses it."""
         m = EdgeProfileModel.model_validate(
             {"name": "test", "override": True, "enabled": True},
@@ -551,7 +554,7 @@ class TestModelValidateContext:
         assert "override" not in d
         assert d == {"name": "test", "enabled": True}
 
-    def test_model_validate_nested_compact(self):
+    def test_model_validate_nested_compact(self) -> None:
         """Nested model extracted after context validation serializes correctly."""
         m = NestedOuter.model_validate(
             {"child": {"name": "inner", "override": True, "enabled": True}},
@@ -560,12 +563,12 @@ class TestModelValidateContext:
         d = _compact(m.child)
         assert "override" not in d
 
-    def test_model_validate_without_context_leaves_none(self):
+    def test_model_validate_without_context_leaves_none(self) -> None:
         """model_validate without context leaves _config_context as None."""
         m = EdgeProfileModel.model_validate({"name": "test"})
         assert _config_context(m) is None
 
-    def test_model_validate_json_sets_context(self):
+    def test_model_validate_json_sets_context(self) -> None:
         """model_validate_json also propagates context."""
         m = EdgeProfileModel.model_validate_json(
             '{"name": "test", "override": true}',
@@ -592,80 +595,80 @@ class TestUnionContextDefaults:
 
     # -- Profile context -----------------------------------------------------
 
-    def test_profile_false_matches_default_omitted(self):
+    def test_profile_false_matches_default_omitted(self) -> None:
         """False matches profile default (False) -> omitted."""
         m = UnionContextModel(problematic_field=False)
         d = _compact(m, config_level=ConfigContext.PROFILE)
         assert "problematic_field" not in d
 
-    def test_profile_true_kept(self):
+    def test_profile_true_kept(self) -> None:
         m = UnionContextModel(problematic_field=True)
         d = _compact(m, config_level=ConfigContext.PROFILE)
         assert d["problematic_field"] is True
 
-    def test_profile_empty_list_kept(self):
+    def test_profile_empty_list_kept(self) -> None:
         """Empty list does NOT match profile default (False) -> kept."""
         m = UnionContextModel(problematic_field=[])
         d = _compact(m, config_level=ConfigContext.PROFILE)
         assert d["problematic_field"] == []
 
-    def test_profile_populated_list_kept(self):
+    def test_profile_populated_list_kept(self) -> None:
         m = UnionContextModel(problematic_field=[1, 2, 3])
         d = _compact(m, config_level=ConfigContext.PROFILE)
         assert d["problematic_field"] == [1, 2, 3]
 
-    def test_profile_none_kept(self):
+    def test_profile_none_kept(self) -> None:
         m = UnionContextModel(problematic_field=None)
         d = _compact(m, config_level=ConfigContext.PROFILE)
         assert d["problematic_field"] is None
 
     # -- Edge context --------------------------------------------------------
 
-    def test_edge_empty_list_matches_default_omitted(self):
+    def test_edge_empty_list_matches_default_omitted(self) -> None:
         """Empty list matches edge default (list factory -> []) -> omitted."""
         m = UnionContextModel(problematic_field=[])
         d = _compact(m, config_level=ConfigContext.EDGE)
         assert "problematic_field" not in d
 
-    def test_edge_populated_list_kept(self):
+    def test_edge_populated_list_kept(self) -> None:
         m = UnionContextModel(problematic_field=[10, 20])
         d = _compact(m, config_level=ConfigContext.EDGE)
         assert d["problematic_field"] == [10, 20]
 
-    def test_edge_false_kept(self):
+    def test_edge_false_kept(self) -> None:
         """False does NOT match edge default ([]) -> kept."""
         m = UnionContextModel(problematic_field=False)
         d = _compact(m, config_level=ConfigContext.EDGE)
         assert d["problematic_field"] is False
 
-    def test_edge_true_kept(self):
+    def test_edge_true_kept(self) -> None:
         m = UnionContextModel(problematic_field=True)
         d = _compact(m, config_level=ConfigContext.EDGE)
         assert d["problematic_field"] is True
 
-    def test_edge_none_kept(self):
+    def test_edge_none_kept(self) -> None:
         m = UnionContextModel(problematic_field=None)
         d = _compact(m, config_level=ConfigContext.EDGE)
         assert d["problematic_field"] is None
 
     # -- for_context construction patterns -----------------------------------
 
-    def test_for_context_edge_chained(self):
+    def test_for_context_edge_chained(self) -> None:
         m = UnionContextModel(problematic_field=[]).for_edge()
         d = _compact(m)
         assert "problematic_field" not in d
 
-    def test_for_context_profile_chained(self):
+    def test_for_context_profile_chained(self) -> None:
         m = UnionContextModel(problematic_field=False).for_profile()
         d = _compact(m)
         assert "problematic_field" not in d
 
-    def test_for_context_edge_non_default_kept(self):
+    def test_for_context_edge_non_default_kept(self) -> None:
         m = UnionContextModel(problematic_field=False).for_edge()
         d = _compact(m)
         assert d["problematic_field"] is False
 
-    def test_for_context_profile_non_default_kept(self):
+    def test_for_context_profile_non_default_kept(self) -> None:
         m = UnionContextModel(problematic_field=[42]).for_profile()
         d = _compact(m)
         assert d["problematic_field"] == [42]
@@ -697,16 +700,18 @@ class VcoFormatModel(VcoModel):
 
 def _vco_dump(model: VcoModel) -> JsonObject:
     """VCO-format: by_alias=True, no compact omission, context exclusion only."""
-    return cast(JsonObject, model.model_dump(by_alias=True))
+    return cast("JsonObject", model.model_dump(by_alias=True))
 
 
 class TestVcoFormatSerialization:
-    """VCO-format output: camelCase aliases, all defaults included, only
-    context-absent (MISSING) fields excluded."""
+    """VCO-format output: camelCase aliases and all defaults.
+
+    Only context-absent (MISSING) fields are excluded.
+    """
 
     # -- Edge serialization --------------------------------------------------
 
-    def test_edge_includes_edge_only_fields(self):
+    def test_edge_includes_edge_only_fields(self) -> None:
         m = VcoFormatModel(
             edge_override=False, log_level=3, description="test"
         ).for_edge()
@@ -715,26 +720,26 @@ class TestVcoFormatSerialization:
         assert d["logLevel"] == 3
         assert d["description"] == "test"
 
-    def test_edge_omits_profile_only_fields(self):
+    def test_edge_omits_profile_only_fields(self) -> None:
         """Profile-only fields (context_defaults edge=MISSING) are excluded."""
         m = VcoFormatModel(edge_override=False, description="test").for_edge()
         d = _vco_dump(m)
         assert "profileBaseline" not in d
         assert "defAction" not in d
 
-    def test_edge_default_value_included(self):
+    def test_edge_default_value_included(self) -> None:
         """edge_override=True is the field default but VCO format keeps it."""
         m = VcoFormatModel(description="test").for_edge()
         d = _vco_dump(m)
         assert d["edgeOverride"] is True
 
-    def test_edge_alias_sport_included(self):
+    def test_edge_alias_sport_included(self) -> None:
         m = VcoFormatModel(source_port=443, description="test").for_edge()
         d = _vco_dump(m)
         assert d["sport"] == 443
         assert "sourcePort" not in d  # alias takes precedence
 
-    def test_edge_alias_sport_default_included(self):
+    def test_edge_alias_sport_default_included(self) -> None:
         """sport=-1 is the field default but VCO format keeps it."""
         m = VcoFormatModel(description="test").for_edge()
         d = _vco_dump(m)
@@ -742,7 +747,7 @@ class TestVcoFormatSerialization:
 
     # -- Profile serialization -----------------------------------------------
 
-    def test_profile_includes_profile_only_fields(self):
+    def test_profile_includes_profile_only_fields(self) -> None:
         m = VcoFormatModel(
             profile_baseline="strict", log_level=5, description="test"
         ).for_profile()
@@ -751,20 +756,20 @@ class TestVcoFormatSerialization:
         assert d["logLevel"] == 5
         assert d["description"] == "test"
 
-    def test_profile_omits_edge_only_fields(self):
+    def test_profile_omits_edge_only_fields(self) -> None:
         """Edge-only fields (context_defaults profile=MISSING) are excluded."""
         m = VcoFormatModel(profile_baseline="strict", description="test").for_profile()
         d = _vco_dump(m)
         assert "edgeOverride" not in d
         assert "sport" not in d
 
-    def test_profile_alias_def_action_included(self):
+    def test_profile_alias_def_action_included(self) -> None:
         m = VcoFormatModel(default_action="deny", description="test").for_profile()
         d = _vco_dump(m)
         assert d["defAction"] == "deny"
         assert "defaultAction" not in d  # alias takes precedence
 
-    def test_profile_alias_def_action_default_included(self):
+    def test_profile_alias_def_action_default_included(self) -> None:
         """defAction='allow' is the field default but VCO format keeps it."""
         m = VcoFormatModel(description="test").for_profile()
         d = _vco_dump(m)
@@ -772,19 +777,19 @@ class TestVcoFormatSerialization:
 
     # -- Defaults are preserved (not omitted like compact) -------------------
 
-    def test_edge_log_level_at_context_default_included(self):
+    def test_edge_log_level_at_context_default_included(self) -> None:
         """log_level=1 matches edge context default but VCO format keeps it."""
         m = VcoFormatModel(log_level=1, description="test").for_edge()
         d = _vco_dump(m)
         assert d["logLevel"] == 1
 
-    def test_profile_log_level_at_context_default_included(self):
+    def test_profile_log_level_at_context_default_included(self) -> None:
         """log_level=0 matches profile context default but VCO format keeps it."""
         m = VcoFormatModel(log_level=0, description="test").for_profile()
         d = _vco_dump(m)
         assert d["logLevel"] == 0
 
-    def test_shared_field_default_included(self):
+    def test_shared_field_default_included(self) -> None:
         """Shared field at default value is still included in VCO format."""
         m = VcoFormatModel().for_edge()
         d = _vco_dump(m)
@@ -792,7 +797,7 @@ class TestVcoFormatSerialization:
 
     # -- MISSING-valued fields excluded --------------------------------------
 
-    def test_missing_valued_field_excluded(self):
+    def test_missing_valued_field_excluded(self) -> None:
         """profile_baseline defaults to MISSING -> excluded from VCO output."""
         m = VcoFormatModel(description="test").for_profile()
         d = _vco_dump(m)
@@ -800,7 +805,7 @@ class TestVcoFormatSerialization:
 
     # -- Full round-trip: edge vs profile produce disjoint key sets ----------
 
-    def test_edge_and_profile_key_sets_disjoint_for_exclusive_fields(self):
+    def test_edge_and_profile_key_sets_disjoint_for_exclusive_fields(self) -> None:
         """Edge-only and profile-only keys never appear in the other context."""
         edge = VcoFormatModel(
             edge_override=False, source_port=80, log_level=2, description="e"

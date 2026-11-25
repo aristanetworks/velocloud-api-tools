@@ -1,3 +1,5 @@
+"""The typed ``data`` of enterprise objects, re-exported from their modules."""
+
 from .common import (
     ProviderCategory,
     RoutingPolicy,

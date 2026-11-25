@@ -1,3 +1,9 @@
+"""The requests and results of the ``enterpriseProxy/`` (partner) methods.
+
+A partner's enterprises, Edges, Gateways and Gateway pools, operator profiles, users,
+properties, configurations, services, capabilities and rate limits.
+"""
+
 import uuid
 from typing import Annotated, Any
 
@@ -160,7 +166,8 @@ class EnterpriseProxyEdgeItem(VcoModel):
     activation_state: str | None | MISSING = MISSING
 
 
-# --- get_enterprise_proxy_enterprises (enterpriseProxy/getEnterpriseProxyEnterprises) ---
+# --- get_enterprise_proxy_enterprises
+# (enterpriseProxy/getEnterpriseProxyEnterprises) ---
 
 
 class GetEnterpriseProxyEnterprises(VcoModel):
@@ -200,7 +207,8 @@ class EnterpriseProxyEnterpriseItem(VcoModel):
     edges: list[dict[str, Any]] | None | MISSING = MISSING
 
 
-# --- get_enterprise_proxy_gateway_pools (enterpriseProxy/getEnterpriseProxyGatewayPools) ---
+# --- get_enterprise_proxy_gateway_pools
+# (enterpriseProxy/getEnterpriseProxyGatewayPools) ---
 
 
 class GetEnterpriseProxyGatewayPools(VcoModel):
@@ -234,7 +242,8 @@ class EnterpriseProxyGatewayItem(VcoModel):
     modified: VcoTimestamp | None | MISSING = MISSING
 
 
-# --- get_enterprise_proxy_operator_profiles (enterpriseProxy/getEnterpriseProxyOperatorProfiles) ---
+# --- get_enterprise_proxy_operator_profiles
+# (enterpriseProxy/getEnterpriseProxyOperatorProfiles) ---
 
 
 class GetEnterpriseProxyOperatorProfiles(VcoModel):
@@ -326,7 +335,8 @@ class EnterpriseProxyUserItem(VcoModel):
     modified: VcoTimestamp | None | MISSING = MISSING
 
 
-# --- get_enterprise_proxy_configurations (enterpriseProxy/getEnterpriseProxyConfigurations) ---
+# --- get_enterprise_proxy_configurations
+# (enterpriseProxy/getEnterpriseProxyConfigurations) ---
 
 
 class GetEnterpriseProxyConfigurations(VcoModel):
@@ -344,7 +354,8 @@ class EnterpriseProxyConfigurationItem(VcoModel):
     edge_count: int | None | MISSING = MISSING
 
 
-# --- get_enterprise_proxy_edge_inventory (enterpriseProxy/getEnterpriseProxyEdgeInventory) ---
+# --- get_enterprise_proxy_edge_inventory
+# (enterpriseProxy/getEnterpriseProxyEdgeInventory) ---
 
 
 class GetEnterpriseProxyEdgeInventory(VcoModel):
@@ -358,7 +369,8 @@ class EnterpriseProxyEdgeInventoryItem(VcoModel):
     edge_count: int | None | MISSING = MISSING
 
 
-# --- get_enterprise_proxy_rate_limits (enterpriseProxy/getEnterpriseProxyRateLimits) ---
+# --- get_enterprise_proxy_rate_limits
+# (enterpriseProxy/getEnterpriseProxyRateLimits) ---
 
 
 class GetEnterpriseProxyRateLimits(VcoModel):
@@ -389,7 +401,8 @@ class EnterpriseProxyServiceItem(VcoModel):
     data: dict[str, Any] | None | MISSING = MISSING
 
 
-# --- get_enterprise_proxy_capabilities (enterpriseProxy/getEnterpriseProxyCapabilities) ---
+# --- get_enterprise_proxy_capabilities
+# (enterpriseProxy/getEnterpriseProxyCapabilities) ---
 
 
 class GetEnterpriseProxyCapabilities(VcoModel):
@@ -400,7 +413,8 @@ class EnterpriseProxyCapabilitiesResult(VcoModel):
     data: dict[str, Any] | None | MISSING = MISSING
 
 
-# --- get_enterprise_proxy_cloneable_enterprises (enterpriseProxy/getEnterpriseProxyCloneableEnterprises) ---
+# --- get_enterprise_proxy_cloneable_enterprises
+# (enterpriseProxy/getEnterpriseProxyCloneableEnterprises) ---
 
 
 class GetEnterpriseProxyCloneableEnterprises(VcoModel):
@@ -416,7 +430,7 @@ class EnterpriseProxyCloneableEnterpriseItem(VcoModel):
 
 
 # --- get_enterprise_proxy_enterprises_with_property ---
-# (enterpriseProxy/getEnterpriseProxyEnterprisesWithProperty)
+# (enterpriseProxy/getEnterpriseProxyEnterprisesWithProperty)  # noqa: ERA001 (a method name)
 
 
 class GetEnterpriseProxyEnterprisesWithProperty(VcoModel):

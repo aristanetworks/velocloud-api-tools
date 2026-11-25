@@ -11,6 +11,8 @@ from enum import StrEnum
 
 
 class ModelNumber(StrEnum):
+    """An Edge model, as the VCO's ``modelNumber`` names it."""
+
     EDGE500 = "edge500"
     EDGE5_X0 = "edge5X0"
     EDGE510 = "edge510"
@@ -33,6 +35,8 @@ class ModelNumber(StrEnum):
 
 
 class NetworkSegmentType(StrEnum):
+    """The type of an enterprise network segment."""
+
     REGULAR = "REGULAR"
     CDE = "CDE"
     PRIVATE = "PRIVATE"

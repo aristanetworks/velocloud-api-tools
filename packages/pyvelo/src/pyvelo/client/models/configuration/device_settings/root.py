@@ -1,24 +1,43 @@
+"""The ``deviceSettings`` module's data and its module-level settings.
+
+``DeviceSettingsData`` holds the LAN, the segments, the routed interfaces of each
+model, and the module-level settings: HA, BFD, loopbacks, NTP, radio, SNMP,
+Zscaler, VNFs and more.
+"""
+
 import uuid
 from typing import Annotated, Any, Literal, get_args
 
-from pydantic import MISSING, BeforeValidator, Field, PrivateAttr, SerializeAsAny
+from pydantic import MISSING, Field, PrivateAttr, SerializeAsAny
 
+from pyvelo.client.models.configuration.common import (
+    copy_profile_segments,
+    find_segment,
+    get_or_create_segment,
+    profile_segment_id,
+    profile_segment_name,
+)
 from pyvelo.core import (
     Alias,
     ContextDefault,
     EdgeOnly,
     NoneIsFalse,
     NoneIsMissing,
+    Positional,
     ProfileOnly,
+    Secret,
     VcoModel,
 )
-from pyvelo.core.fields import KeyField, OverrideFlag
-
-from ..common import (
-    copy_profile_segments,
-    find_segment,
-    get_or_create_segment,
+from pyvelo.core.fields import (
+    KeyField,
+    Lenient,
+    OverrideFlag,
+    Provides,
+    RefersTo,
+    Resolvable,
 )
+from pyvelo.core.identity import SegmentIdentity
+
 from .common import (
     DeviceSettingsRef,
     RadioBand,
@@ -43,7 +62,7 @@ class EdgeHaSettings(VcoModel):
     interface: Annotated[str, EdgeOnly] = "GE1"
     unique_lan_macs: Annotated[bool, Alias("vmacoverride"), EdgeOnly] = False
     unique_wan_macs: Annotated[bool, Alias("wanmacoverride"), EdgeOnly] = False
-    nodes: Annotated[list[EdgeHaNode] | MISSING, EdgeOnly] = MISSING
+    nodes: Annotated[list[EdgeHaNode] | MISSING, EdgeOnly, Positional()] = MISSING
     ha_graceful_switchover: Annotated[bool, EdgeOnly] = False
     ha_failover_count: Annotated[float, EdgeOnly] = 7
     preempt_switchover: Annotated[bool, Alias("preEmptSwitchover"), EdgeOnly] = False
@@ -83,7 +102,9 @@ class LoopbackInterface(VcoModel):
     cidr_prefix: Literal[32] = 32
     advertise: bool = True
     ping_response: bool = True
-    segment_id: int = 0
+    segment_id: Annotated[
+        int, Resolvable(SegmentIdentity, lambda i: i.segment_id), RefersTo("segment")
+    ] = 0
     ospf: LoopbackOspf = Field(default_factory=LoopbackOspf)
     disable_ipv4: Annotated[bool, Alias("disableV4")] = False
     disable_ipv6: Annotated[bool, Alias("disableV6")] = True
@@ -105,7 +126,7 @@ class Ntp(VcoModel):
 
 class Md5AuthKey(VcoModel):
     key_number: int | None = None
-    key: str
+    key: Annotated[str, Secret()]
 
 
 class NtpServer(VcoModel):
@@ -127,7 +148,9 @@ class RadioSettingsItem(VcoModel):
 
 class RadioSettings(VcoModel):
     country: str
-    radios: list[RadioSettingsItem] = Field(default_factory=list)
+    radios: Annotated[list[RadioSettingsItem], Positional()] = Field(
+        default_factory=list
+    )
 
 
 class Layer2Settings(VcoModel):
@@ -164,8 +187,10 @@ class GlobalIpv6Settings(VcoModel):
 
 class EdgeSnmpV2c(VcoModel):
     enabled: bool = False
-    community: str = ""
-    community_list: list[str] = Field(default_factory=list)
+    community: Annotated[str, Secret()] = ""
+    community_list: Annotated[list[str], Positional(), Secret()] = Field(
+        default_factory=list
+    )
     allowed_ips: list[str] = Field(default_factory=list)
 
 
@@ -175,9 +200,9 @@ def _none_to_md5(v: Any) -> Any:
 
 class SnmpV3User(VcoModel):
     name: str
-    passphrase: str | None = None
+    passphrase: Annotated[str | None, Secret()] = None
     authentication_algorithm: Annotated[
-        SnmpV3AuthenticationAlgorithm, BeforeValidator(_none_to_md5), Alias("authAlg")
+        SnmpV3AuthenticationAlgorithm, Lenient(_none_to_md5), Alias("authAlg")
     ] = "MD5"
     encryption_algorithm: Annotated[SnmpV3EncryptionAlgorithm, Alias("encrAlg")] = "AES"
     authentication: bool | MISSING = MISSING
@@ -186,7 +211,7 @@ class SnmpV3User(VcoModel):
 
 class EdgeSnmpV3(VcoModel):
     enabled: bool = False
-    users: list[SnmpV3User] = Field(default_factory=list)
+    users: Annotated[list[SnmpV3User], Positional()] = Field(default_factory=list)
 
 
 class EdgeSnmp(VcoModel):
@@ -228,7 +253,9 @@ class EdgeZscaler(VcoModel):
         cloud: str = ""
         provider: Provider | MISSING = Field(default_factory=Provider)
         location: Location | MISSING = Field(default_factory=Location)
-        sub_locations: list[SubLocation] = Field(default_factory=list)
+        sub_locations: Annotated[
+            list[SubLocation], KeyField("name", alt="internal_id")
+        ] = Field(default_factory=list)
 
     config_: Annotated[ZscalerConfig, Alias("config")] = Field(
         default_factory=ZscalerConfig
@@ -250,11 +277,13 @@ class EdgeWirelessLinkManagement(VcoModel):
 
 
 class ModelLanInterfaces(VcoModel):
-    interfaces: list[SerializeAsAny[LanInterface]]
+    interfaces: Annotated[list[SerializeAsAny[LanInterface]], KeyField("name")]
 
 
 class ModelInterfaces(VcoModel):
-    routed_interfaces: list[SerializeAsAny[RoutedInterface]]
+    routed_interfaces: Annotated[
+        list[SerializeAsAny[RoutedInterface]], KeyField("name")
+    ]
     lan: ModelLanInterfaces
 
 
@@ -326,11 +355,15 @@ class DeviceSettingsData(VcoModel):
     models: Annotated[dict[EdgeModelClass, ModelInterfaces], ProfileOnly] = Field(
         default_factory=dict
     )
-    segments: Annotated[list[DeviceSegment], KeyField("segment.name")]
+    segments: Annotated[
+        list[DeviceSegment],
+        KeyField("segment.name", alt="segment.segment_id"),
+        Provides("segment", key="segment.segment_id"),
+    ]
     snmp: Annotated[
         EdgeSnmp | MISSING, ContextDefault(edge=MISSING, profile=EdgeSnmp)
     ] = MISSING
-    zscaler: Annotated[EdgeZscaler, BeforeValidator(_empty_string_to_zscaler)] = Field(
+    zscaler: Annotated[EdgeZscaler, Lenient(_empty_string_to_zscaler)] = Field(
         default_factory=EdgeZscaler
     )
     auto_sim_switchover: Annotated[EdgeAutoSimSwitchover | MISSING, EdgeOnly] = MISSING
@@ -371,6 +404,22 @@ class DeviceSettingsData(VcoModel):
             DeviceSegment.model_validate,
             self.config_context,
         )
+
+    def profile_segment_name(self, selector: object) -> str | None:
+        """The bound profile's name for the segment *selector* names, or None.
+
+        See :func:`~pyvelo.client.models.configuration.common.profile_segment_name`.
+        Raises ``UnboundError`` if the data is not bound to a profile.
+        """
+        return profile_segment_name(self._profile_segments, selector)
+
+    def profile_segment_id(self, selector: object) -> object | None:
+        """The ``segmentId`` of the bound profile's segment *selector* names, or None.
+
+        See :func:`~pyvelo.client.models.configuration.common.profile_segment_id`.
+        Raises ``UnboundError`` if the data is not bound to a profile.
+        """
+        return profile_segment_id(self._profile_segments, selector)
 
     def get_segment(
         self, *, name: str | None = None, segment_id: int | None = None

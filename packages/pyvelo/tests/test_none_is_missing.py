@@ -15,35 +15,35 @@ class _SampleRequest(VcoModel):
 
 
 class TestNoneIsMissing:
-    def test_none_converts_to_missing(self):
+    def test_none_converts_to_missing(self) -> None:
         obj = _SampleRequest.model_validate({"enterprise_id": None})
         assert obj.enterprise_id is MISSING
 
-    def test_int_preserved(self):
+    def test_int_preserved(self) -> None:
         obj = _SampleRequest(enterprise_id=42)
         assert obj.enterprise_id == 42
 
-    def test_missing_preserved(self):
+    def test_missing_preserved(self) -> None:
         obj = _SampleRequest()
         assert obj.enterprise_id is MISSING
 
-    def test_serialization_excludes_none_converted(self):
+    def test_serialization_excludes_none_converted(self) -> None:
         obj = _SampleRequest.model_validate({"enterprise_id": None})
         dumped = obj.model_dump(by_alias=True, exclude_unset=True)
         assert "enterpriseId" not in dumped
 
-    def test_serialization_includes_int(self):
+    def test_serialization_includes_int(self) -> None:
         obj = _SampleRequest(enterprise_id=42)
         dumped = obj.model_dump(by_alias=True, exclude_unset=True)
         assert dumped["enterpriseId"] == 42
 
-    def test_json_excludes_none_converted(self):
+    def test_json_excludes_none_converted(self) -> None:
         obj = _SampleRequest.model_validate({"enterprise_id": None})
         raw = obj.model_dump_json(by_alias=True, exclude_unset=True)
         parsed = parse_json_object(raw)
         assert "enterpriseId" not in parsed
 
-    def test_applied_to_real_schemas(self):
+    def test_applied_to_real_schemas(self) -> None:
         req = GetEdgeConfigurationStack.model_validate(
             {"edge_id": 1, "enterprise_id": None}
         )

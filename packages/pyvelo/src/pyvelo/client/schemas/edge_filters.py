@@ -182,7 +182,7 @@ type EdgeDateFilter = Annotated[
 ]
 
 
-def _edge_filter_discriminator(v: Any) -> str | None:
+def _edge_filter_discriminator(v: Any) -> str | None:  # noqa: C901, PLR0911 (existing: split it when it next changes)
     if isinstance(v, dict):
         f = v.get("field") or v.get("fieldName")
         if f == "activationState":

@@ -1,5 +1,11 @@
+"""The routed interfaces of ``deviceSettings``, one class per interface kind.
+
+GE, SFP, DSL and GPON interfaces and their subinterfaces, with their IPv4 and IPv6
+addressing, OSPF, DHCP, cellular and LAG settings.
+"""
+
 import uuid
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, Self
 
 from pydantic import (
     MISSING,
@@ -10,21 +16,25 @@ from pydantic import (
     model_validator,
 )
 
+from pyvelo.client.models.configuration.common import OverlayAddressPreferenceType
 from pyvelo.core import (
     Alias,
     ContextDefault,
     EdgeLocal,
     EdgeOnly,
+    KeyField,
     NoneIsFalse,
     NoneIsZero,
     Normalizer,
     OverrideFlag,
+    Positional,
     Resolvable,
+    Secret,
     VcoModel,
 )
+from pyvelo.core.fields import Lenient, RefersTo
 from pyvelo.core.identity import SegmentIdentity
 
-from ..common import OverlayAddressPreferenceType
 from .common import (
     DhcpServerOption,
     InterfaceL2,
@@ -44,14 +54,14 @@ from .common import (
 class RoutedInterfaceAddressing(VcoModel):
     type_: Annotated[IPv4AddressingType, Alias("type")] = "DHCP"
     username: str | None | MISSING = MISSING
-    password: str | None | MISSING = MISSING
+    password: Annotated[str | None | MISSING, Secret()] = MISSING
     cidr_ip: Annotated[str | None, EdgeLocal] = None
     cidr_prefix: Annotated[Literal[""] | int | None, EdgeLocal] = None
     netmask: Annotated[str | None, EdgeLocal] = None
     gateway: Annotated[str | None, EdgeLocal] = None
 
     @model_validator(mode="after")
-    def _strip_non_pppoe_credentials(self):
+    def _strip_non_pppoe_credentials(self) -> Self:
         if self.type_ != "PPPOE":
             self.username = MISSING
             self.password = MISSING
@@ -61,7 +71,7 @@ class RoutedInterfaceAddressing(VcoModel):
 class RoutedInterfaceAddressingV6(VcoModel):
     type_: Annotated[IPv6AddressingType, Alias("type")] = "DHCP_STATELESS"
     username: str | None | MISSING = MISSING
-    password: str | None | MISSING = MISSING
+    password: Annotated[str | None | MISSING, Secret()] = MISSING
     cidr_ip: str | None = None
     cidr_prefix: int | None = None
     netmask: str | None = None
@@ -80,7 +90,9 @@ class OspfRouteFilter(VcoModel):
 
 class OspfRoute(VcoModel):
     default_action: OspfRouteAction
-    filters: list[OspfRouteFilter] = Field(default_factory=list)
+    filters: Annotated[list[OspfRouteFilter], Positional()] = Field(
+        default_factory=list
+    )
 
 
 def _normalize_ospf_area(v: Any) -> Any:
@@ -97,6 +109,7 @@ class RoutedInterfaceOspfBase(VcoModel):
         list[int] | list[str],
         BeforeValidator(_normalize_ospf_area),
         Normalizer(lambda v: [0] if v in ("", "0", 0, [], [0]) else v),
+        Positional(),
     ] = Field(default_factory=lambda: [0])
     hello_timer: int = 10
     dead_timer: int = 40
@@ -110,14 +123,16 @@ class RoutedInterfaceOspfBase(VcoModel):
     outbound_route_advertisement: OspfRoute = Field(
         default_factory=lambda: OspfRoute(default_action="IGNORE")
     )
-    exclusion_routes: list[OspfRouteFilter] = Field(default_factory=list)
+    exclusion_routes: Annotated[list[OspfRouteFilter], Positional()] = Field(
+        default_factory=list
+    )
     enable_bfd: bool = False
 
 
 class RoutedInterfaceOspf(RoutedInterfaceOspfBase):
     authentication: bool = False
     authentication_id: Annotated[int | str, Alias("authId")] = 0
-    authentication_passphrase: Annotated[str, Alias("authPassphrase")] = ""
+    authentication_passphrase: Annotated[str, Alias("authPassphrase"), Secret()] = ""
     md5_authentication: bool = False
 
 
@@ -126,7 +141,7 @@ class RoutedInterfaceDhcpServerV6(VcoModel):
     enabled: bool = False
     lease_time_seconds: int = 3600
     dhcp_address_count: Annotated[int, Alias("numDhcpAddr")] = 10
-    options: list[DhcpServerOption] | None = None
+    options: Annotated[list[DhcpServerOption] | None, Positional()] = None
     static_reserved: int = 10
     prefix_delegation: PrefixDelegation = Field(default_factory=PrefixDelegation)
 
@@ -171,11 +186,11 @@ CellularIpType = Literal["IPv4", "IPv4v6"]
 
 
 class RoutedInterfaceCellular(VcoModel):
-    sim_pin: str
+    sim_pin: Annotated[str, Secret()]
     network: CellularNetworks | Literal[""] = ""
     apn: str
     username: str
-    password: str | int
+    password: Annotated[str | int, Secret()]
     ip_type: CellularIpType | MISSING = MISSING
 
 
@@ -235,7 +250,7 @@ class RoutedInterfaceDhcpServer(VcoModel):
     dhcp_address_count: Annotated[
         int, Alias("numDhcpAddr"), NoneIsZero, ContextDefault(profile=MISSING)
     ] = 10
-    options: Annotated[list[DhcpServerOption] | None, EdgeOnly] = Field(
+    options: Annotated[list[DhcpServerOption] | None, EdgeOnly, Positional()] = Field(
         default_factory=list
     )
     static_reserved: Annotated[int, EdgeOnly] = 10
@@ -274,13 +289,17 @@ class RoutedInterfaceBase(VcoModel):
     rpf: ReversePathFilter = "SPECIFIC"
     ospf: RoutedInterfaceOspf = Field(default_factory=RoutedInterfaceOspf)
     vlan_id: int | None = None
-    segment_id: Annotated[int, Resolvable(SegmentIdentity, "segment_id")] = -1
+    segment_id: Annotated[
+        int,
+        Resolvable(SegmentIdentity, lambda i: i.segment_id),
+        RefersTo("segment", none=(-1,)),
+    ] = -1
     v6_detail: RoutedInterfaceV6Detail = Field(default_factory=RoutedInterfaceV6Detail)
     multicast: MulticastConfiguration = Field(default_factory=MulticastConfiguration)
     override: Annotated[bool, OverrideFlag] = False
     dhcp_server: Annotated[
         RoutedInterfaceDhcpServer | MISSING,
-        BeforeValidator(_none_is_missing_dhcp_server),
+        Lenient(_none_is_missing_dhcp_server),
         EdgeOnly,
         EdgeLocal,
     ] = MISSING
@@ -361,7 +380,9 @@ class RoutedInterfaceCell(RoutedInterfaceCommon):
 
 class RoutedInterfaceLag(RoutedInterfaceCommon):
     lacp: Lacp = Field(default_factory=Lacp)
-    slave_interfaces: list[SlaveInterface] = Field(default_factory=list)
+    slave_interfaces: Annotated[list[SlaveInterface], KeyField("name")] = Field(
+        default_factory=list
+    )
     evdsl_modem_attached: Annotated[bool, NoneIsFalse] = False
 
 
@@ -381,11 +402,11 @@ def _routed_interface_discriminator(v: Any) -> str:
         prefix = name.rstrip("0123456789")
         if prefix == "LAG":
             return "lag"
-        elif prefix == "SFP":
+        if prefix == "SFP":
             return _sfp_discriminator(v)
-        elif prefix in ("CELL", "CELL_"):
+        if prefix in ("CELL", "CELL_"):
             return "cell"
-        elif prefix == "USB":
+        if prefix == "USB":
             return "usb"
     return "ge"
 

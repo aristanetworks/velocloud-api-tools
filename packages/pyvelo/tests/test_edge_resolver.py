@@ -9,7 +9,7 @@ from pyvelo.client.protocol import VcoClientProtocol
 from pyvelo.client.schemas.enterprise import GetEnterpriseEdges, GetEnterpriseEdgesItem
 from pyvelo.config.resolver import ResolverContext
 from pyvelo.config.resolvers.edge import EdgeResolver
-from pyvelo.core.identity import EdgeIdentity
+from pyvelo.core.identity import EdgeId, EdgeIdentity, EdgeLogicalId
 
 EDGE1_UUID = uuid.UUID("11111111-1111-1111-1111-111111111111")
 EDGE2_UUID = uuid.UUID("22222222-2222-2222-2222-222222222222")
@@ -39,7 +39,7 @@ def _edge(
 
 
 def _client_protocol(client: FakeEdgeClient) -> VcoClientProtocol:
-    return cast(VcoClientProtocol, cast(object, client))
+    return cast("VcoClientProtocol", cast("object", client))
 
 
 class TestEdgeResolver:
@@ -58,50 +58,48 @@ class TestEdgeResolver:
         await r.load(ResolverContext(enterprise_id=42))
         return r
 
-    async def test_resolve_by_name(self, resolver: EdgeResolver):
+    async def test_resolve_by_name(self, resolver: EdgeResolver) -> None:
         identity = await resolver.resolve("Branch-NYC")
         assert identity.name == "Branch-NYC"
         assert identity.id == 1
         assert identity.logical_id == EDGE1_UUID
 
-    async def test_resolve_second_edge(self, resolver: EdgeResolver):
+    async def test_resolve_second_edge(self, resolver: EdgeResolver) -> None:
         identity = await resolver.resolve("Branch-LAX")
         assert identity.name == "Branch-LAX"
         assert identity.id == 2
 
-    async def test_resolve_unknown(self, resolver: EdgeResolver):
-        with pytest.raises(KeyError, match="Unknown edge.*nonexistent"):
+    async def test_resolve_unknown(self, resolver: EdgeResolver) -> None:
+        with pytest.raises(KeyError, match=r"Unknown edge.*nonexistent"):
             _ = await resolver.resolve("nonexistent")
 
-    async def test_reverse_by_id(self, resolver: EdgeResolver):
-        name = await resolver.reverse_by("id", 1)
-        assert name == "Branch-NYC"
+    async def test_lookup_key_by_id(self, resolver: EdgeResolver) -> None:
+        assert resolver.lookup_key(EdgeId(1)).name == "Branch-NYC"
 
-    async def test_reverse_by_logical_id(self, resolver: EdgeResolver):
-        name = await resolver.reverse_by("logical_id", EDGE2_UUID)
-        assert name == "Branch-LAX"
+    async def test_lookup_key_by_logical_id(self, resolver: EdgeResolver) -> None:
+        assert resolver.lookup_key(EdgeLogicalId(EDGE2_UUID)).name == "Branch-LAX"
 
-    async def test_reverse_unknown(self, resolver: EdgeResolver):
-        with pytest.raises(KeyError, match="No edge with"):
-            _ = await resolver.reverse_by("id", 999)
-
-    def test_identity_type(self, mock_client: FakeEdgeClient):
+    def test_identity_type(self, mock_client: FakeEdgeClient) -> None:
         assert EdgeResolver(_client_protocol(mock_client)).identity_type is EdgeIdentity
 
-    async def test_load_passes_enterprise_id(self, mock_client: FakeEdgeClient):
+    async def test_load_passes_enterprise_id(self, mock_client: FakeEdgeClient) -> None:
         r = EdgeResolver(_client_protocol(mock_client))
         await r.load(ResolverContext(enterprise_id=99))
         request = mock_client.requests[0]
         assert request.enterprise_id == 99
 
-    async def test_load_without_enterprise_id(self, mock_client: FakeEdgeClient):
+    async def test_load_without_enterprise_id(
+        self, mock_client: FakeEdgeClient
+    ) -> None:
         r = EdgeResolver(_client_protocol(mock_client))
         await r.load(ResolverContext())
         # Should still work, enterprise_id stays MISSING
         result = await r.resolve("Branch-NYC")
         assert result.id == 1
 
-    async def test_edges_with_none_name_skipped(self, mock_client: FakeEdgeClient):
+    async def test_edges_with_none_name_skipped(
+        self, mock_client: FakeEdgeClient
+    ) -> None:
         mock_client.edges = [
             _edge(id_=1, name="Branch-NYC", logical_id=EDGE1_UUID),
             _edge(id_=3, name=None, logical_id=uuid.UUID(int=3)),
@@ -112,17 +110,17 @@ class TestEdgeResolver:
         with pytest.raises(KeyError, match="Unknown edge"):
             _ = await r.resolve("None")
 
-    async def test_resolve_case_insensitive(self, resolver: EdgeResolver):
+    async def test_resolve_case_insensitive(self, resolver: EdgeResolver) -> None:
         identity = await resolver.resolve("branch-nyc")
         assert identity.name == "Branch-NYC"
         assert identity.id == 1
 
-    async def test_resolve_case_insensitive_upper(self, resolver: EdgeResolver):
+    async def test_resolve_case_insensitive_upper(self, resolver: EdgeResolver) -> None:
         identity = await resolver.resolve("BRANCH-LAX")
         assert identity.name == "Branch-LAX"
         assert identity.id == 2
 
-    async def test_resolve_near_miss_raises(self, mock_client: FakeEdgeClient):
+    async def test_resolve_near_miss_raises(self, mock_client: FakeEdgeClient) -> None:
         mock_client.edges = [
             _edge(id_=1, name="Example-Edge", logical_id=EDGE1_UUID),
             _edge(id_=2, name="DC-Primary", logical_id=EDGE2_UUID),
@@ -132,6 +130,6 @@ class TestEdgeResolver:
         with pytest.raises(KeyError, match="Did you mean"):
             _ = await r.resolve("Example-Edg")
 
-    async def test_resolve_fuzzy_ambiguous(self, resolver: EdgeResolver):
+    async def test_resolve_fuzzy_ambiguous(self, resolver: EdgeResolver) -> None:
         with pytest.raises(KeyError, match="Did you mean"):
             _ = await resolver.resolve("Branch")

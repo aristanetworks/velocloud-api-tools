@@ -1,14 +1,30 @@
+"""The LAN of ``deviceSettings``: its networks, interfaces and settings.
+
+VLAN networks with their addressing, DHCP, OSPF and IPv6 settings; LAN interfaces,
+wired or wireless by discriminator; and LAN management and client visibility.
+"""
+
 import uuid
 from typing import Annotated, Any, Literal
 
-from pydantic import MISSING, BeforeValidator, Discriminator, Field, SerializeAsAny, Tag
+from pydantic import MISSING, Discriminator, Field, SerializeAsAny, Tag
 
-from pyvelo.core import Alias, EdgeOnly, NoneIsFalse, ProfileOnly, VcoModel
+from pyvelo.core import (
+    Alias,
+    EdgeOnly,
+    NoneIsFalse,
+    Positional,
+    ProfileOnly,
+    Secret,
+    VcoModel,
+)
 from pyvelo.core.fields import (
     DefaultingScalar,
     EdgeLocal,
     KeyField,
+    Lenient,
     OverrideFlag,
+    RefersTo,
     Resolvable,
 )
 from pyvelo.core.identity import SegmentIdentity
@@ -61,7 +77,9 @@ class AllowedMac(VcoModel):
 
 class MacAllowList(VcoModel):
     enabled: bool = False
-    allowed_macs: list[AllowedMac] = Field(default_factory=list)
+    allowed_macs: Annotated[list[AllowedMac], KeyField("mac_address")] = Field(
+        default_factory=list
+    )
     enable_mac_filtering_for_ap_probes: Annotated[
         bool, Alias("enableMACFilteringForAPProbes")
     ] = False
@@ -87,7 +105,7 @@ class LanWirelessInterface(LanInterfaceBase):
     mac_allowlist: MacAllowList = Field(default_factory=MacAllowList)
     radius_acl_check: bool = False
     broadcast_ssid: bool = True
-    passphrase: Annotated[str, BeforeValidator(_none_to_vcsecret)]
+    passphrase: Annotated[str, Lenient(_none_to_vcsecret), Secret()]
     ssid: str
     security_mode: WirelessSecurityMode = "WPA2Personal"
 
@@ -117,10 +135,10 @@ def _none_to_default_lease_time(v: Any) -> Any:
 class EdgeLanDhcp(VcoModel):
     dhcp_relay: EdgeLanDhcpRelay = Field(default_factory=EdgeLanDhcpRelay)
     enabled: bool = True
-    lease_time_seconds: Annotated[int, BeforeValidator(_none_to_default_lease_time)] = (
-        86400
+    lease_time_seconds: Annotated[int, Lenient(_none_to_default_lease_time)] = 86400
+    options: Annotated[list[DhcpServerOption], Positional()] = Field(
+        default_factory=list
     )
-    options: list[DhcpServerOption] = Field(default_factory=list)
     override: Annotated[bool, OverrideFlag] = True
 
 
@@ -137,7 +155,7 @@ def _none_empty_str_to_true(v: Any) -> Any:
 class LanOspf(VcoModel):
     enabled: bool = False
     override: Annotated[bool, OverrideFlag] = True
-    passive_interface: Annotated[bool, BeforeValidator(_none_empty_str_to_true)] = True
+    passive_interface: Annotated[bool, Lenient(_none_empty_str_to_true)] = True
     area: int | str = ""
 
 
@@ -154,7 +172,7 @@ class LanAddressingV6(VcoModel):
     cidr_ip: Annotated[str | None, EdgeLocal] = None
     cidr_prefix: Annotated[int | None, EdgeLocal] = 64
     interface_address: str | None = None
-    netmask: Annotated[str, BeforeValidator(_none_to_default_netmask)] = (
+    netmask: Annotated[str, Lenient(_none_to_default_netmask)] = (
         "ffff:ffff:ffff:ffff:0000:0000:0000:0000"
     )
     tag_logical_id: uuid.UUID | None = None
@@ -179,10 +197,14 @@ class LanDhcpServerV6(VcoModel):
     base_dhcp_address: Annotated[int, Alias("baseDhcpAddr")] = 1
     dhcp_relay: LanDhcpRelayV6 = Field(default_factory=LanDhcpRelayV6)
     enabled: bool = True
-    fixed_ip: Annotated[list[LanFixedIP], EdgeLocal] = Field(default_factory=list)
+    fixed_ip: Annotated[
+        list[LanFixedIP], EdgeLocal, KeyField("mac_address", alt="lan_ip")
+    ] = Field(default_factory=list)
     lease_time_seconds: int = 86400
     dhcp_address_count: Annotated[int, Alias("numDhcpAddr")] = 10
-    options: list[DhcpServerOption] = Field(default_factory=list)
+    options: Annotated[list[DhcpServerOption], Positional()] = Field(
+        default_factory=list
+    )
     prefix_delegation: LanPrefixDelegation = Field(default_factory=LanPrefixDelegation)
     static_reserved: int = 10
 
@@ -230,13 +252,16 @@ class LanNetwork(VcoModel):
     disable_ipv4: Annotated[bool, Alias("disableV4")] = False
     disable_ipv6: Annotated[bool, Alias("disableV6")] = True
     dns_proxy: bool = True
-    fixed_ips: Annotated[list[LanFixedIP], Alias("fixedIp"), EdgeLocal] = Field(
-        default_factory=list
-    )
+    fixed_ips: Annotated[
+        list[LanFixedIP],
+        Alias("fixedIp"),
+        EdgeLocal,
+        KeyField("mac_address", alt="lan_ip"),
+    ] = Field(default_factory=list)
     interface_address: Annotated[str | None, EdgeLocal] = None
     interfaces: list[str] = Field(default_factory=list)
     multicast: Annotated[
-        MulticastConfiguration, BeforeValidator(_none_to_default_multicast)
+        MulticastConfiguration, Lenient(_none_to_default_multicast)
     ] = Field(default_factory=MulticastConfiguration)
     name: str
     netmask: Annotated[str, EdgeLocal] = "255.255.255.0"
@@ -247,14 +272,16 @@ class LanNetwork(VcoModel):
     radius_authentication: RadiusAuthentication = Field(
         default_factory=RadiusAuthentication
     )
-    segment_id: Annotated[int, Resolvable(SegmentIdentity, "segment_id")] = 0
+    segment_id: Annotated[
+        int, Resolvable(SegmentIdentity, lambda i: i.segment_id), RefersTo("segment")
+    ] = 0
     static_reserved: int = 10
     tag_logical_id: uuid.UUID | None = None
     ipv6_details: Annotated[LanV6Details, Alias("v6Detail")] = Field(
         default_factory=LanV6Details
     )
     vlan_id: int
-    vnf_insertion: Annotated[bool, BeforeValidator(_none_empty_str_to_false)] = False
+    vnf_insertion: Annotated[bool, Lenient(_none_empty_str_to_false)] = False
     secondary_ips: Annotated[
         list[LanSecondaryIP] | MISSING, Alias("secondaryIp"), ProfileOnly, EdgeLocal
     ] = MISSING

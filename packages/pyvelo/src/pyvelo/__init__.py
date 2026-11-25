@@ -11,12 +11,24 @@ The canonical entry points are re-exported here for convenience:
   :class:`ResolutionError`) and concrete resolvers under
   :mod:`pyvelo.config.resolvers` for translating object names to IDs.
 
-For configuration helpers (pipeline, aspects, state), see the ``pyvelo-intent`` package.
+The configuration pipeline and its state (:class:`ConfigPipeline`,
+:class:`ConfigState`) are in :mod:`pyvelo.config`.
 """
 
 from pyvelo.client import (
+    ComposedModuleError,
     ConfigConflictError,
+    DanglingReferenceError,
+    DetachedObjectError,
+    FixedListError,
+    GroupOwnershipError,
+    HubListError,
+    LayerUnknownError,
     LossyFieldError,
+    ModuleWriteError,
+    RefsDroppedError,
+    RefsNotLoadedError,
+    SegmentSetError,
     UnboundError,
     VcoApiError,
     VcoAuth,
@@ -33,6 +45,8 @@ from pyvelo.client import (
     VcoWebSocketError,
     VcoWebSocketTimeoutError,
     VcoWebSocketValidationError,
+    WriteNotAppliedError,
+    WriteOutcomeUnknownError,
     get_vco_credentials,
 )
 from pyvelo.config.resolver import (
@@ -58,17 +72,28 @@ __all__ = [
     "ApplicationResolver",
     # Resolver framework
     "BaseResolver",
+    "ComposedModuleError",
     "ConfigConflictError",
+    "DanglingReferenceError",
+    "DetachedObjectError",
     "EdgeResolver",
+    "FixedListError",
+    "GroupOwnershipError",
+    "HubListError",
+    "LayerUnknownError",
     "LicenseResolver",
     "LinkResolver",
     "LossyFieldError",
+    "ModuleWriteError",
     "ProfileResolver",
+    "RefsDroppedError",
+    "RefsNotLoadedError",
     "ResolutionError",
     "Resolver",
     "ResolverContext",
     "ResolverRegistry",
     "SegmentResolver",
+    "SegmentSetError",
     "ServiceGroupResolver",
     # Client
     "UnboundError",
@@ -89,5 +114,7 @@ __all__ = [
     "VcoWebSocketError",
     "VcoWebSocketTimeoutError",
     "VcoWebSocketValidationError",
+    "WriteNotAppliedError",
+    "WriteOutcomeUnknownError",
     "get_vco_credentials",
 ]

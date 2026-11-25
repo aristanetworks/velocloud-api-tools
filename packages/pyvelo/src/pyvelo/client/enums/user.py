@@ -1,3 +1,5 @@
+"""The type of user a VCO API token belongs to."""
+
 from enum import StrEnum
 
 

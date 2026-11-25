@@ -16,28 +16,28 @@ class SampleModel(VcoModel):
 
 
 class TestMissingSentinel:
-    def test_missing_excluded_from_serialization(self):
+    def test_missing_excluded_from_serialization(self) -> None:
         """MISSING fields should not appear in serialized output."""
         obj = SampleModel(name="test")
         dumped = obj.model_dump(by_alias=True, exclude_unset=True)
         assert "optionalField" not in dumped
         assert "name" in dumped
 
-    def test_missing_excluded_from_json_serialization(self):
+    def test_missing_excluded_from_json_serialization(self) -> None:
         """MISSING fields should not appear in JSON output."""
         obj = SampleModel(name="test")
         raw = obj.model_dump_json(by_alias=True, exclude_unset=True)
         parsed = parse_json_object(raw)
         assert "optionalField" not in parsed
 
-    def test_none_preserved_in_serialization(self):
+    def test_none_preserved_in_serialization(self) -> None:
         """Explicit None should be preserved (distinct from MISSING)."""
         obj = SampleModel(name="test", optional_field=None)
         dumped = obj.model_dump(by_alias=True, exclude_unset=True)
         assert "optionalField" in dumped
         assert dumped["optionalField"] is None
 
-    def test_missing_vs_none_distinction(self):
+    def test_missing_vs_none_distinction(self) -> None:
         """MISSING and None are semantically different."""
         missing_obj = SampleModel(name="test")
         none_obj = SampleModel(name="test", optional_field=None)
@@ -46,42 +46,42 @@ class TestMissingSentinel:
         assert none_obj.optional_field is None
         assert missing_obj.optional_field is not none_obj.optional_field
 
-    def test_missing_identity_check(self):
+    def test_missing_identity_check(self) -> None:
         """MISSING should be checked with `is`, not ==."""
         obj = SampleModel(name="test")
         assert obj.optional_field is MISSING
 
-    def test_deepcopy_preserves_missing(self):
+    def test_deepcopy_preserves_missing(self) -> None:
         """Deep copy should preserve MISSING sentinel."""
         obj = SampleModel(name="test")
         copied = copy.deepcopy(obj)
         assert copied.optional_field is MISSING
 
-    def test_missing_sentinel_copy_pickle_identity(self):
+    def test_missing_sentinel_copy_pickle_identity(self) -> None:
         """Pydantic's MISSING preserves identity across copying and pickling."""
         assert copy.copy(MISSING) is MISSING
         assert copy.deepcopy(MISSING) is MISSING
         assert pickle.loads(pickle.dumps(MISSING)) is MISSING
 
-    def test_model_copy_preserves_missing(self):
+    def test_model_copy_preserves_missing(self) -> None:
         """Pydantic model_copy should preserve MISSING."""
         obj = SampleModel(name="test")
         copied = obj.model_copy()
         assert copied.optional_field is MISSING
 
-    def test_validate_from_api_response_with_field_absent(self):
+    def test_validate_from_api_response_with_field_absent(self) -> None:
         """Validating from camelCase API data with field absent -> MISSING."""
         data = {"name": "test", "requiredField": "val"}
         obj = SampleModel.model_validate(data)
         assert obj.optional_field is MISSING
 
-    def test_validate_from_api_response_with_field_null(self):
+    def test_validate_from_api_response_with_field_null(self) -> None:
         """Validating from camelCase API data with field null -> None."""
         data = {"name": "test", "requiredField": "val", "optionalField": None}
         obj = SampleModel.model_validate(data)
         assert obj.optional_field is None
 
-    def test_validate_from_api_response_with_field_present(self):
+    def test_validate_from_api_response_with_field_present(self) -> None:
         """Validating from camelCase API data with field present -> value."""
         data = {"name": "test", "requiredField": "val", "optionalField": "hello"}
         obj = SampleModel.model_validate(data)

@@ -1,3 +1,8 @@
+"""The requests and results of the ``compositeRole/`` methods.
+
+The composite roles of an enterprise, a partner (enterprise proxy) or the operator.
+"""
+
 from typing import Annotated, Any
 
 from pydantic import MISSING

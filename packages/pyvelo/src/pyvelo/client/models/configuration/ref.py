@@ -1,12 +1,16 @@
-import uuid
-from typing import Annotated
+"""A ref row: the module, enterprise object and segment a module's ref names."""
 
-from pydantic import MISSING
+import uuid
+from typing import Annotated, ClassVar
+
+from pydantic import MISSING, ConfigDict
 
 from pyvelo.core import Alias, VcoModel
 
 
 class ConfigurationRef(VcoModel):
+    model_config: ClassVar[ConfigDict] = ConfigDict(frozen=True)
+
     id_: Annotated[int | MISSING, Alias("id")] = MISSING
     configuration_id: int
     module_id: int

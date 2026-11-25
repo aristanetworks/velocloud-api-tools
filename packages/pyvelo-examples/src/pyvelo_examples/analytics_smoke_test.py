@@ -47,7 +47,9 @@ MIN_INTERFACE_STATS_VERSION = (6, 4, 0, 0)
 
 
 class Status(StrEnum):
-    PASS = "PASS"
+    """The outcome of one test: rows, no rows, an error, or not run."""
+
+    PASS = "PASS"  # noqa: S105 (a check status, not a password)
     EMPTY = "EMPTY"
     FAIL = "FAIL"
     SKIP = "SKIP"
@@ -55,6 +57,8 @@ class Status(StrEnum):
 
 @dataclass
 class TestResult:
+    """The outcome of one ``Analytics`` call, with its row count or why it failed."""
+
     name: str
     status: Status
     rows: int = 0
@@ -63,6 +67,8 @@ class TestResult:
 
 @dataclass
 class DiscoveredContext:
+    """What the tests need: an edge, its version, links, peer, gateway and NSD."""
+
     edge_id: int = 0
     edge_name: str = ""
     edge_version: str = ""
@@ -74,6 +80,8 @@ class DiscoveredContext:
 
 @dataclass
 class AnalyticsSmokeTestArgs:
+    """The command line options, with their defaults."""
+
     env: str | None = None
     enterprise_id: int | None = None
     hours: int = 72
@@ -83,6 +91,7 @@ class AnalyticsSmokeTestArgs:
 
 
 def parse_args(argv: Sequence[str] | None = None) -> AnalyticsSmokeTestArgs:
+    """Read the command line options."""
     parser = argparse.ArgumentParser(description="Analytics smoke test")
     _ = parser.add_argument("--env", type=str, help="Path to .env file")
     _ = parser.add_argument("--enterprise-id", type=int)
@@ -104,6 +113,7 @@ def parse_args(argv: Sequence[str] | None = None) -> AnalyticsSmokeTestArgs:
 
 
 def make_interval(hours: int) -> ApiInterval:
+    """Make an interval from *hours* ago to now."""
     now = datetime.now(tz=UTC)
     return ApiInterval(start=now - timedelta(hours=hours))
 
@@ -116,6 +126,7 @@ def _parse_version(version_str: str) -> tuple[int, ...]:
 
 
 def classify_error(exc: Exception) -> str:
+    """A short reason for a failed call, without the VCO's message."""
     if isinstance(exc, VcoOperationError):
         return "API request failed"
     if isinstance(exc, VcoError):
@@ -134,6 +145,7 @@ def _log_validation_detail(name: str, exc: ValidationError) -> None:
 
 
 async def run_test(name: str, fn: Callable[[], Awaitable[MetricFrame]]) -> TestResult:
+    """Run *fn* as the test *name*: a pass with rows, empty without, a fail on error."""
     try:
         frame: MetricFrame = await fn()
         if len(frame) > 0:
@@ -146,12 +158,18 @@ async def run_test(name: str, fn: Callable[[], Awaitable[MetricFrame]]) -> TestR
         return TestResult(name, Status.FAIL, detail=classify_error(exc))
 
 
-async def discover_context(
+async def discover_context(  # noqa: C901, PLR0912, PLR0915 (existing: split it when it next changes)
     client: VcoClient,
     enterprise_id: int,
     edge_name_filter: str | None,
     interval: ApiInterval,
 ) -> DiscoveredContext:
+    """Choose a connected edge and find its peer, gateway, links and NSD service.
+
+    An edge at version 6.4.0.0 or later is preferred, for the interface
+    statistics. A lookup that fails is logged and its field is left unset; with
+    no connected edge, ``edge_id`` stays 0.
+    """
     ctx = DiscoveredContext()
 
     edges = await client.get_enterprise_edges(
@@ -275,13 +293,14 @@ async def run_all_tests(
     interval: ApiInterval,
     ctx: DiscoveredContext,
 ) -> list[TestResult]:
+    """Call every ``Analytics`` method, skipping those the context has nothing for."""
     results: list[TestResult] = []
 
     edge_id = ctx.edge_id
 
     # --- Edge flow metrics (all group-by variants) ---
-    for gb in FlowGroupBy:
-        results.append(
+    results.extend(
+        [
             await run_test(
                 f"edge_flow_metrics({gb.name})",
                 lambda gb=gb: analytics.get_edge_flow_metrics(
@@ -292,11 +311,13 @@ async def run_all_tests(
                     sort=FlowMetric.TOTAL_BYTES,
                 ),
             )
-        )
+            for gb in FlowGroupBy
+        ]
+    )
 
     # --- Edge flow series (all group-by variants) ---
-    for gb in FlowGroupBy:
-        results.append(
+    results.extend(
+        [
             await run_test(
                 f"edge_flow_series({gb.name})",
                 lambda gb=gb: analytics.get_edge_flow_series(
@@ -307,16 +328,20 @@ async def run_all_tests(
                     sort=FlowMetric.TOTAL_BYTES,
                 ),
             )
-        )
+            for gb in FlowGroupBy
+        ]
+    )
 
     # --- Enterprise flow metrics (all view-by variants) ---
-    for vb in BasicMetricViewBy:
-        results.append(
+    results.extend(
+        [
             await run_test(
                 f"enterprise_flow_metrics({vb.name})",
                 lambda vb=vb: analytics.get_enterprise_flow_metrics(interval, vb),
             )
-        )
+            for vb in BasicMetricViewBy
+        ]
+    )
 
     # --- Edge link metrics + series ---
     results.append(
@@ -400,7 +425,7 @@ async def run_all_tests(
         )
 
     # --- Edge firewall metrics (all type/view combos) ---
-    _EDGE_FW_VIEWS: list[tuple[FirewallType, str]] = [
+    edge_fw_views: list[tuple[FirewallType, str]] = [
         (FirewallType.IDPS, "signatureName"),
         (FirewallType.IDPS, "threatImpactAlias"),
         (FirewallType.IDPS, "alert"),
@@ -420,7 +445,7 @@ async def run_all_tests(
         (FirewallType.URL_REPUTATION, "urlRisk"),
         (FirewallType.URL_REPUTATION, "action"),
     ]
-    for fw_type, view_by in _EDGE_FW_VIEWS:
+    for fw_type, view_by in edge_fw_views:
         results.append(
             await run_test(
                 f"edge_fw({fw_type.name},{view_by})",
@@ -444,7 +469,7 @@ async def run_all_tests(
     )
 
     # --- Enterprise firewall metrics (all type/view combos) ---
-    _ENT_FW_VIEWS: list[tuple[EnterpriseFirewallType, str | None]] = [
+    ent_fw_views: list[tuple[EnterpriseFirewallType, str | None]] = [
         (EnterpriseFirewallType.IDPS, "signatureName"),
         (EnterpriseFirewallType.IDPS, "threatImpactAlias"),
         (EnterpriseFirewallType.IDPS, "alert"),
@@ -470,7 +495,7 @@ async def run_all_tests(
         (EnterpriseFirewallType.URL_REPUTATION, "action"),
         (EnterpriseFirewallType.URL_REPUTATION, "edgeLogicalId"),
     ]
-    for ent_type, view_by in _ENT_FW_VIEWS:
+    for ent_type, view_by in ent_fw_views:
         label = f"{ent_type.name}" + (f",{view_by}" if view_by else "")
         results.append(
             await run_test(
@@ -550,7 +575,11 @@ async def run_all_tests(
 def print_results(
     results: list[TestResult], enterprise_id: int, hours: int, ctx: DiscoveredContext
 ) -> None:
-    header = f"Analytics Smoke Test — enterprise {enterprise_id}, {hours}h, edge {ctx.edge_name} ({ctx.edge_id}, {ctx.edge_version})"
+    """Print a numbered table of *results* and a count of each status."""
+    header = (
+        f"Analytics Smoke Test — enterprise {enterprise_id}, {hours}h, "
+        f"edge {ctx.edge_name} ({ctx.edge_id}, {ctx.edge_version})"
+    )
     sep = "=" * max(len(header), 78)
 
     print(f"\n{header}")
@@ -568,6 +597,10 @@ def print_results(
 
 
 async def main() -> None:
+    """Run the smoke test and exit 1 when any test failed.
+
+    The enterprise is read from the token when ``--enterprise-id`` is not given.
+    """
     args = parse_args()
     logging.basicConfig(
         level=logging.DEBUG if args.verbose else logging.INFO,
@@ -582,7 +615,8 @@ async def main() -> None:
         if args.dump_dir:
             client.enable_dump(args.dump_dir)
             logger.warning(
-                "Writing raw VCO request/response bodies to %s; protect or delete these files after use",
+                "Writing raw VCO request/response bodies to %s; "
+                "protect or delete these files after use",
                 args.dump_dir,
             )
 

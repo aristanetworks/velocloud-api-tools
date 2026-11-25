@@ -1,12 +1,15 @@
-"""Fetch analytics metrics for all edges in an enterprise and display as Polars tables.
+r"""Fetch analytics metrics for all edges in an enterprise and display as Polars tables.
 
 Discovers edges from the given enterprise-id, then pulls flow, health, link,
 and firewall metrics for each connected edge over the last hour.
 
 Usage:
-    uv run --package pyvelo-examples python -m pyvelo_examples.analytics_overview --enterprise-id 123
-    uv run --package pyvelo-examples python -m pyvelo_examples.analytics_overview --enterprise-id 123 --env .credentials/lab.env
-    uv run --package pyvelo-examples python -m pyvelo_examples.analytics_overview --enterprise-id 123 --hours 24
+    uv run --package pyvelo-examples python -m pyvelo_examples.analytics_overview \
+        --enterprise-id 123
+    uv run --package pyvelo-examples python -m pyvelo_examples.analytics_overview \
+        --enterprise-id 123 --env .credentials/lab.env
+    uv run --package pyvelo-examples python -m pyvelo_examples.analytics_overview \
+        --enterprise-id 123 --hours 24
 """
 
 import argparse
@@ -21,6 +24,7 @@ from pyvelo.analytics import Analytics, FlowGroupBy, FlowMetric
 from pyvelo.analytics.enums import FirewallType
 from pyvelo.client import VcoClient, get_vco_credentials
 from pyvelo.client.enums import EdgeState
+from pyvelo.client.enums.metrics import BasicMetricViewBy
 from pyvelo.client.schemas.enterprise import GetEnterprise, GetEnterpriseEdges
 from pyvelo.core import ApiInterval
 
@@ -29,6 +33,8 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class AnalyticsOverviewArgs:
+    """The command line options, with their defaults."""
+
     env: str | None = None
     enterprise_id: int | None = None
     hours: int = 1
@@ -37,6 +43,7 @@ class AnalyticsOverviewArgs:
 
 
 def parse_args(argv: Sequence[str] | None = None) -> AnalyticsOverviewArgs:
+    """Read the command line options."""
     parser = argparse.ArgumentParser(
         description="Fetch analytics overview for all edges in an enterprise.",
     )
@@ -63,11 +70,13 @@ def parse_args(argv: Sequence[str] | None = None) -> AnalyticsOverviewArgs:
 
 
 def make_interval(hours: int) -> ApiInterval:
+    """Make an interval from *hours* ago to now."""
     now = datetime.now(tz=UTC)
     return ApiInterval(start=now - timedelta(hours=hours))
 
 
 def print_frame(title: str, df: pl.DataFrame) -> None:
+    """Print *df* under a banner with *title*, or a note when it has no rows."""
     print(f"\n{'=' * 80}")
     print(f"  {title}")
     print(f"{'=' * 80}")
@@ -84,6 +93,10 @@ async def fetch_edge_metrics(
     edge_name: str,
     interval: ApiInterval,
 ) -> dict[str, pl.DataFrame]:
+    """Fetch an edge's top applications, health, link and firewall IDPS metrics.
+
+    Each table is keyed by its title. A call that fails is logged and left out.
+    """
     frames: dict[str, pl.DataFrame] = {}
 
     # Flow metrics by application
@@ -133,6 +146,10 @@ async def fetch_edge_metrics(
 
 
 async def main() -> None:
+    """Print the enterprise's flow by application, then each connected edge's tables.
+
+    The enterprise is read from the token when ``--enterprise-id`` is not given.
+    """
     args = parse_args()
     logging.basicConfig(
         level=logging.DEBUG if args.verbose else logging.INFO,
@@ -148,9 +165,11 @@ async def main() -> None:
         if enterprise_id is None:
             ent = await client.get_enterprise(GetEnterprise())
             enterprise_id = ent.id_
-            logger.info(f"Auto-discovered enterprise: {ent.name} (ID {enterprise_id})")
+            logger.info(
+                "Auto-discovered enterprise: %s (ID %s)", ent.name, enterprise_id
+            )
 
-        logger.info(f"Fetching edges for enterprise {enterprise_id}...")
+        logger.info("Fetching edges for enterprise %s...", enterprise_id)
         edges = await client.get_enterprise_edges(
             GetEnterpriseEdges(enterprise_id=enterprise_id)
         )
@@ -168,16 +187,15 @@ async def main() -> None:
             return
 
         logger.info(
-            f"{len(connected)} connected edge(s): "
-            + ", ".join(e.name or f"edge-{e.id_}" for e in connected)
+            "%d connected edge(s): %s",
+            len(connected),
+            ", ".join(e.name or f"edge-{e.id_}" for e in connected),
         )
 
         # Enterprise-wide flow metrics
         analytics = Analytics(client, enterprise_id=enterprise_id)
 
         try:
-            from pyvelo.client.enums.metrics import BasicMetricViewBy
-
             ent_flow = await analytics.get_enterprise_flow_metrics(
                 interval,
                 BasicMetricViewBy.APPLICATION,
@@ -196,7 +214,7 @@ async def main() -> None:
             edge_name = edge.name
             if not isinstance(edge_name, str) or not edge_name:
                 edge_name = f"edge-{edge.id_}"
-            logger.info(f"Fetching metrics for {edge_name} (ID {edge.id_})...")
+            logger.info("Fetching metrics for %s (ID %s)...", edge_name, edge.id_)
 
             frames = await fetch_edge_metrics(
                 analytics,

@@ -1,17 +1,24 @@
+"""The ``data`` of each enterprise service type.
+
+Authentication (RADIUS, TACACS), DNS, data center, IaaS subscriptions, NetFlow
+collectors and filters, local UI credentials, hubs and hub clusters, NVS and
+WSS integrations, and prefix tags.
+"""
+
 import uuid
 from collections.abc import Generator
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, ClassVar, Literal
 
 from pydantic import MISSING, ConfigDict, Discriminator, Field
 
-from pyvelo.core import Alias, VcoModel
+from pyvelo.core import Alias, Secret, VcoModel
 
 from .common import ProviderCategory, RoutingPolicy, TunnelingProtocol, TunnelMode
 
 
 class RadiusServer(VcoModel):
     port: int
-    secret: str | MISSING = MISSING
+    secret: Annotated[str | MISSING, Secret()] = MISSING
     server: str | MISSING = MISSING
     accounting_port: int | Literal[""] | MISSING = MISSING
 
@@ -36,7 +43,7 @@ class TacacsServer(VcoModel):
 
 class TacacsServiceData(VcoModel):
     type_: Annotated[Literal["Tacacs"], Alias("type")] = "Tacacs"
-    shared_secret: str
+    shared_secret: Annotated[str, Secret()]
     servers: list[TacacsServer]
 
 
@@ -155,7 +162,7 @@ class IaasSubscription(VcoModel):
 
 class AzureVendorSpecificData(VcoModel):
     client_id: str
-    client_secret: str
+    client_secret: Annotated[str, Secret()]
     tenant_id: str
     subscription: IaasSubscription
 
@@ -168,9 +175,9 @@ class AzureSubscriptionData(VcoModel):
 class ZscalerVendorSpecificData(VcoModel):
     api_host: str
     api_path: str
-    api_token: str
+    api_token: Annotated[str, Secret()]
     domain: str
-    password: str
+    password: Annotated[str, Secret()]
     username: str
 
 
@@ -181,9 +188,9 @@ class ZscalerSubscriptionData(VcoModel):
 
 
 class AwsVendorSpecificData(VcoModel):
-    access_key: str
-    secret_key: str
-    session_token: str | MISSING = MISSING
+    access_key: Annotated[str, Secret()]
+    secret_key: Annotated[str, Secret()]
+    session_token: Annotated[str | MISSING, Secret()] = MISSING
 
 
 class AwsSubscriptionData(VcoModel):
@@ -193,7 +200,7 @@ class AwsSubscriptionData(VcoModel):
 
 class SseVendorSpecificData(VcoModel):
     username: str
-    password: str
+    password: Annotated[str, Secret()]
     cloud_type: str | MISSING = MISSING
     tenant_id: str | MISSING = MISSING
     expiry: bool | MISSING = MISSING
@@ -255,7 +262,7 @@ class NetflowFilterData(VcoModel):
 
 class LocalUiCredentialsData(VcoModel):
     configuration_id: int | MISSING = MISSING
-    password: str
+    password: Annotated[str, Secret()]
     username: str
 
 
@@ -284,7 +291,7 @@ class EdgeClusterConfig(VcoModel):
 
 
 class EdgeHubClusterServiceData(VcoModel):
-    model_config = ConfigDict(extra="allow")
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="allow")
 
     auto_rebalance: bool | MISSING = MISSING
     route_summary_v4: list[Any] | MISSING = MISSING
@@ -295,14 +302,12 @@ class EdgeHubClusterServiceData(VcoModel):
             return
 
         segments: dict[str, dict[str, Any]]
-        for config_id, segments in self.model_extra.items():
+        for config_key, segments in self.model_extra.items():
             roles: dict[str, Any]
-            for segment_id, roles in segments.items():
-                config_id = int(config_id)
-                segment_id = int(segment_id)
+            for segment_key, roles in segments.items():
                 if "roles" in roles:
                     segment_roles: EdgeRoles = roles["roles"]
-                    yield (config_id, segment_id, segment_roles)
+                    yield (int(config_key), int(segment_key), segment_roles)
 
 
 # Cloud Security Service Models (provider-specific discriminated unions)
@@ -310,7 +315,7 @@ class EdgeHubClusterServiceData(VcoModel):
 
 class BaseCloudSecurityCredentials(VcoModel):
     username: str
-    password: str
+    password: Annotated[str, Secret()]
     validated: bool
 
 
@@ -321,7 +326,7 @@ class SymantecCloudSecurityCredentials(BaseCloudSecurityCredentials):
 class ZscalerCloudSecurityCredentials(BaseCloudSecurityCredentials):
     api_host: str | None
     api_path: str
-    api_token: str | MISSING = MISSING
+    api_token: Annotated[str | MISSING, Secret()] = MISSING
 
 
 class L7HealthCheck(VcoModel):
@@ -560,7 +565,7 @@ class GenericIkev2RouterServiceData(VcoModel):
 
 
 class GenericNvsViaEdgeServiceData(VcoModel):
-    model_config = ConfigDict(extra="allow")
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="allow")
 
     provider: Literal["symantecSase", "microsoftAzureVirtualWan"]
 

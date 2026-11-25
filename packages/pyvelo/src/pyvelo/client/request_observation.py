@@ -6,6 +6,13 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True, slots=True)
 class RequestObservation:
+    """What one ``VcoClient`` request did, given to the ``request_observer``.
+
+    It holds the request's method names, the attempts and retries it took,
+    the time spent and the client's rate-limit settings, and never the
+    payload or the token.
+    """
+
     http_method: str
     endpoint: str
     rpc_method: str

@@ -1,3 +1,5 @@
+"""The firewall rule and security feature actions."""
+
 from typing import Literal
 
 # Firewall rule actions

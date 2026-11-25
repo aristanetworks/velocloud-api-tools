@@ -5,6 +5,7 @@ from typing import override
 from pyvelo.client.schemas.enterprise import GetEnterpriseNetworkSegments
 from pyvelo.config.resolver import BaseResolver, ResolverContext
 from pyvelo.core.identity import (
+    IdentityKey,
     SegmentId,
     SegmentIdentity,
     SegmentLogicalId,
@@ -12,10 +13,8 @@ from pyvelo.core.identity import (
     SegmentObjectId,
 )
 
-SegmentKey = SegmentName | SegmentId | SegmentObjectId | SegmentLogicalId
 
-
-class SegmentResolver(BaseResolver[SegmentKey, SegmentIdentity]):
+class SegmentResolver(BaseResolver[SegmentIdentity]):
     """Resolves a segment identifier to a :class:`SegmentIdentity`.
 
     Accepts:
@@ -28,22 +27,19 @@ class SegmentResolver(BaseResolver[SegmentKey, SegmentIdentity]):
     when ``load()`` is called, scoped to the enterprise from ResolverContext.
     """
 
-    identity_type = SegmentIdentity
+    identity_type: type[SegmentIdentity] = SegmentIdentity
 
     @override
-    async def resolve_key(self, key: SegmentKey) -> SegmentIdentity:
+    def lookup_key(self, key: IdentityKey[SegmentIdentity]) -> SegmentIdentity:
         match key:
             case SegmentName(value=name):
-                return await self.resolve(name)
+                return self.lookup(name)
             case SegmentId(value=v):
-                name = self._reverse["segment_id"][v]
-                return self._by_name[name]
+                return self._by_key("segment_id", v)
             case SegmentObjectId(value=v):
-                name = self._reverse["object_id"][v]
-                return self._by_name[name]
+                return self._by_key("object_id", v)
             case SegmentLogicalId(value=v):
-                name = self._reverse["logical_id"][v]
-                return self._by_name[name]
+                return self._by_key("logical_id", v)
             case _:
                 raise TypeError(f"Unsupported key type: {type(key).__name__}")
 

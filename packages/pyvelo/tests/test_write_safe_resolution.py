@@ -1,21 +1,24 @@
-"""The three behaviours measured in the design (spec 5.9), under the new rules."""
+"""Three name-resolution behaviours on write, under the strict rules."""
 
 import uuid
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from typing import Annotated, ClassVar, cast
 
 import pytest
 from pydantic import MISSING, Field
 from pyvelo.client.models.configuration import FirewallData
 from pyvelo.config.resolver import ResolutionError, ResolverRegistry, resolve_name
-from pyvelo.core import VcoModel
+from pyvelo.core import VcoModel, add, delete
 from pyvelo.core.fields import KeyField, NameOf, Resolvable
 from pyvelo.core.identity import (
     AddressGroupIdentity,
     LinkIdentity,
+    ResolverNotLoadedError,
     SegmentIdentity,
     ServiceGroupIdentity,
 )
+from pyvelo.core.identity import ResolutionError as CoreError
+from pyvelo.core.layers import Edge
 
 from ._type_support import SegmentResolverFactory
 
@@ -49,37 +52,53 @@ class Fake:
         LinkIdentity: LINK,
     }
 
-    def resolve_sync[T](self, key: type[T], name: str, /) -> T:
+    def lookup[T](self, key: type[T], name: str, /) -> T:
         if key not in self.tables:
             raise LookupError(f"No resolver registered for {key.__name__}")
-        return cast(T, resolve_name(name, dict(self.tables[key]), key.__name__)[1])
+        return cast("T", resolve_name(name, dict(self.tables[key]), key.__name__)[1])
 
-    def has_id_sync(
-        self, identity_type: type[object], id_attr: str, value: object, /
-    ) -> bool:
-        return any(
-            getattr(i, id_attr) == value
-            for i in self.tables.get(identity_type, {}).values()
+    def resolver_for(self, identity_type: type[object], /) -> object | None:
+        return self if identity_type in self.tables else None
+
+    def lookup_by[T](
+        self,
+        identity_type: type[T],
+        accessor: Callable[[T], object],
+        value: object,
+        /,
+    ) -> T:
+        for identity in self.tables.get(identity_type, {}).values():
+            if accessor(cast("T", identity)) == value:
+                return cast("T", identity)
+        raise ResolutionError(
+            name=str(value), identity_type=identity_type, candidates=[]
         )
 
 
-def fresh() -> FirewallData:
-    return FirewallData.model_validate(
-        {
-            "segments": [
-                {"segment": {"segmentId": 0, "name": "Global Segment"}, "outbound": []}
-            ]
-        }
-    ).for_edge()
+def fresh() -> FirewallData[Edge]:
+    return (
+        FirewallData[Edge]
+        .model_validate(
+            {
+                "segments": [
+                    {
+                        "segment": {"segmentId": 0, "name": "Global Segment"},
+                        "outbound": [],
+                    }
+                ]
+            }
+        )
+        .for_edge()
+    )
 
 
-def add_rule(fw: FirewallData, match: dict[str, object]) -> None:
+def add_rule(fw: FirewallData[Edge], match: dict[str, object]) -> None:
     _ = fw.merge_patch(
         {
             "segments": {
                 "Global Segment": {
                     "outbound": {
-                        "r1": {"action": {"allow_or_deny": "deny"}, "match": match}
+                        "r1": add({"action": {"allow_or_deny": "deny"}, "match": match})
                     }
                 }
             }
@@ -88,15 +107,16 @@ def add_rule(fw: FirewallData, match: dict[str, object]) -> None:
     )
 
 
-def test_a_hostname_is_never_tried_as_an_address_group_name():
+def test_a_hostname_is_never_tried_as_an_address_group_name() -> None:
     fw = fresh()
     add_rule(fw, {"hostname": "printers"})
     m = fw.segments[0].outbound[0].match
     assert m.hostname == "printers"
-    assert m.source_address_group is MISSING and m.destination_address_group is MISSING
+    assert m.source_address_group is MISSING
+    assert m.destination_address_group is MISSING
 
 
-def test_misspelled_segment_key_raises_with_a_suggestion():
+def test_misspelled_segment_key_raises_with_a_suggestion() -> None:
     fw = fresh()
     with pytest.raises(ResolutionError) as exc:
         _ = fw.merge_patch({"segments": {"Gest": {"outbound": {}}}}, resolvers=Fake())
@@ -104,14 +124,14 @@ def test_misspelled_segment_key_raises_with_a_suggestion():
     assert [s.segment.name for s in fw.segments] == ["Global Segment"]
 
 
-def test_segment_key_in_another_case_edits_the_existing_segment():
+def test_segment_key_in_another_case_edits_the_existing_segment() -> None:
     fw = fresh()
     _ = fw.merge_patch(
         {
             "segments": {
                 "global segment": {
                     "outbound": {
-                        "r1": {"action": {"allow_or_deny": "deny"}, "match": {}}
+                        "r1": add({"action": {"allow_or_deny": "deny"}, "match": {}})
                     }
                 }
             }
@@ -122,15 +142,15 @@ def test_segment_key_in_another_case_edits_the_existing_segment():
     assert [r.name for r in fw.segments[0].outbound] == ["r1"]
 
 
-def test_segment_key_in_another_case_deletes_the_existing_segment():
+def test_segment_key_in_another_case_deletes_the_existing_segment() -> None:
     fw = fresh()
-    _ = fw.merge_patch({"segments": {"GLOBAL SEGMENT": None}}, resolvers=Fake())
+    _ = fw.merge_patch({"segments": {"GLOBAL SEGMENT": delete()}}, resolvers=Fake())
     assert fw.segments == []
 
 
-def test_new_segment_by_a_key_in_another_case_gets_the_canonical_name():
+def test_new_segment_by_a_key_in_another_case_gets_the_canonical_name() -> None:
     fw = fresh()
-    _ = fw.merge_patch({"segments": {"guest": {"outbound": {}}}}, resolvers=Fake())
+    _ = fw.merge_patch({"segments": {"guest": add({"outbound": {}})}}, resolvers=Fake())
     meta = fw.segments[1].segment
     assert (meta.name, meta.segment_id, meta.segment_logical_id) == (
         "Guest",
@@ -139,7 +159,7 @@ def test_new_segment_by_a_key_in_another_case_gets_the_canonical_name():
     )
 
 
-def test_a_near_miss_segment_key_in_another_case_still_raises():
+def test_a_near_miss_segment_key_in_another_case_still_raises() -> None:
     fw = fresh()
     with pytest.raises(ResolutionError) as exc:
         _ = fw.merge_patch({"segments": {"gest": {"outbound": {}}}}, resolvers=Fake())
@@ -147,16 +167,16 @@ def test_a_near_miss_segment_key_in_another_case_still_raises():
     assert [s.segment.name for s in fw.segments] == ["Global Segment"]
 
 
-def test_a_key_the_marked_field_does_not_name_is_not_resolved():
+def test_a_key_the_marked_field_does_not_name_is_not_resolved() -> None:
     lan = Lan()
-    _ = lan.merge_patch({"networks": {"corp": {}}}, resolvers=Fake())
-    _ = lan.merge_patch({"networks": {"CORP": {}}}, resolvers=Fake())
+    _ = lan.merge_patch({"networks": {"corp": add()}}, resolvers=Fake())
+    _ = lan.merge_patch({"networks": {"CORP": add()}}, resolvers=Fake())
     assert [n.name for n in lan.networks] == ["corp", "CORP"]
 
 
-def test_segment_name_fills_its_ids():
+def test_segment_name_fills_its_ids() -> None:
     fw = fresh()
-    _ = fw.merge_patch({"segments": {"Guest": {"outbound": {}}}}, resolvers=Fake())
+    _ = fw.merge_patch({"segments": {"Guest": add({"outbound": {}})}}, resolvers=Fake())
     meta = fw.segments[1].segment
     assert (meta.name, meta.segment_id, meta.segment_logical_id) == (
         "Guest",
@@ -165,7 +185,7 @@ def test_segment_name_fills_its_ids():
     )
 
 
-def test_literal_uuid_string_is_accepted_on_new_and_existing_rules():
+def test_literal_uuid_string_is_accepted_on_new_and_existing_rules() -> None:
     fw = fresh()
     add_rule(fw, {"sAddressGroup": str(uuid.UUID(int=7))})  # _pre_resolve path
     assert fw.segments[0].outbound[0].match.source_address_group == uuid.UUID(int=7)
@@ -186,7 +206,7 @@ def test_literal_uuid_string_is_accepted_on_new_and_existing_rules():
     )
 
 
-def test_name_still_resolves_and_unknown_name_raises_on_both_paths():
+def test_name_still_resolves_and_unknown_name_raises_on_both_paths() -> None:
     fw = fresh()
     add_rule(fw, {"sAddressGroup": "Printers"})
     assert fw.segments[0].outbound[0].match.source_address_group == uuid.UUID(int=7)
@@ -205,7 +225,7 @@ def test_name_still_resolves_and_unknown_name_raises_on_both_paths():
         add_rule(fresh(), {"sAddressGroup": "printerz"})
 
 
-def test_enum_literal_on_a_resolvable_field():
+def test_enum_literal_on_a_resolvable_field() -> None:
     fw = fresh()
     _ = fw.merge_patch(
         {"segments": {"Global Segment": {"segment": {"type": "CDE"}}}},
@@ -217,34 +237,35 @@ def test_enum_literal_on_a_resolvable_field():
 class Net(VcoModel):
     name: str
     segment_name: Annotated[str, NameOf(SegmentIdentity)] = ""
-    segment_id: Annotated[int, Resolvable(SegmentIdentity, "segment_id")] = 0
+    segment_id: Annotated[int, Resolvable(SegmentIdentity, lambda i: i.segment_id)] = 0
 
 
 class Lan(VcoModel):
     networks: Annotated[list[Net], KeyField("name")] = Field(default_factory=list)
 
 
-def test_only_the_marked_field_fills_ids():
+def test_only_the_marked_field_fills_ids() -> None:
     lan = Lan()
-    # "Guest" here is a network's name. It is not marked, so it is not tried as a segment.
-    _ = lan.merge_patch({"networks": {"Guest": {}}}, resolvers=Fake())
+    # "Guest" here is a network's name. It is not marked, so it is not tried as a
+    # segment.
+    _ = lan.merge_patch({"networks": {"Guest": add()}}, resolvers=Fake())
     assert lan.networks[0].segment_id == 0
     _ = lan.merge_patch(
-        {"networks": {"corp": {"segment_name": "guest"}}}, resolvers=Fake()
+        {"networks": {"corp": add({"segment_name": "guest"})}}, resolvers=Fake()
     )
     assert lan.networks[1].segment_id == 2
 
 
 class Uplink(VcoModel):
     name: str = ""
-    logical_id: Annotated[str, Resolvable(LinkIdentity, "logical_id")] = ""
+    logical_id: Annotated[str, Resolvable(LinkIdentity, lambda i: i.logical_id)] = ""
 
 
 class Holder(VcoModel):
     uplink: Uplink = Uplink()
 
 
-def test_string_ids_name_first_then_known_id_then_error():
+def test_string_ids_name_first_then_known_id_then_error() -> None:
     h = Holder()
     _ = h.merge_patch({"uplink": {"logical_id": "wan1"}}, resolvers=Fake())
     assert h.uplink.logical_id == "00:11:22"
@@ -258,25 +279,35 @@ class NoTables(Fake):
     tables: ClassVar[dict[type, Mapping[str, object]]] = {}
 
 
-def test_missing_resolver_is_not_a_resolution_error():
+def test_missing_resolver_is_not_a_resolution_error() -> None:
     fw = fresh()
     with pytest.raises(LookupError) as exc:
         _ = fw.merge_patch(
-            {"segments": {"NewSeg": {"outbound": {}}}}, resolvers=NoTables()
+            {"segments": {"NewSeg": add({"outbound": {}})}}, resolvers=NoTables()
         )
     assert not isinstance(exc.value, ResolutionError)
 
 
-def test_a_new_segment_no_resolver_can_give_ids_to_is_refused_by_name():
+def test_a_new_segment_no_resolver_can_give_ids_to_is_refused_by_name() -> None:
     for resolvers in (NoTables(), None):
         fw = fresh()
-        with pytest.raises(LookupError, match="'NewSeg'.*segment_id") as exc:
-            _ = fw.merge_patch({"segments": {"NewSeg": {}}}, resolvers=resolvers)
+        with pytest.raises(LookupError, match=r"'NewSeg'.*segment_id") as exc:
+            _ = fw.merge_patch({"segments": {"NewSeg": add()}}, resolvers=resolvers)
         assert "segment_logical_id" in str(exc.value)
         assert [s.segment.name for s in fw.segments] == ["Global Segment"]
 
 
-def test_a_new_segment_with_its_ids_given_needs_no_resolver():
+def test_the_refusal_of_a_name_with_no_ids_says_where_and_what_to_do() -> None:
+    fw = fresh()
+    with pytest.raises(LookupError) as exc:
+        _ = fw.merge_patch({"segments": {"NewSeg": add()}})
+    message = str(exc.value)
+    assert "segments" in message
+    assert "in the body" in message
+    assert "resolver" in message
+
+
+def test_a_new_segment_with_its_ids_given_needs_no_resolver() -> None:
     fw = fresh()
     segment = {
         "segmentId": 7,
@@ -284,7 +315,7 @@ def test_a_new_segment_with_its_ids_given_needs_no_resolver():
         "segmentLogicalId": str(uuid.UUID(int=7)),
     }
     _ = fw.merge_patch(
-        {"segments": {"NewSeg": {"segment": segment, "outbound": {}}}},
+        {"segments": {"NewSeg": add({"segment": segment, "outbound": {}})}},
         resolvers=NoTables(),
     )
     meta = fw.segments[1].segment
@@ -295,21 +326,20 @@ def test_a_new_segment_with_its_ids_given_needs_no_resolver():
     )
 
 
-def test_a_new_item_whose_key_is_not_a_name_needs_no_ids():
+def test_a_new_item_whose_key_is_not_a_name_needs_no_ids() -> None:
     lan = Lan()
-    _ = lan.merge_patch({"networks": {"corp": {}}}, resolvers=NoTables())
+    _ = lan.merge_patch({"networks": {"corp": add()}}, resolvers=NoTables())
     assert lan.networks[0].segment_id == 0
 
 
-def test_resolution_error_is_one_class_on_both_import_paths():
-    from pyvelo.core.identity import ResolutionError as CoreError
+def test_resolution_error_is_one_class_on_both_import_paths() -> None:
+    assert CoreError is ResolutionError
+    assert issubclass(ResolutionError, KeyError)
 
-    assert CoreError is ResolutionError and issubclass(ResolutionError, KeyError)
 
-
-async def test_registry_has_id_sync_reads_the_loaded_identities(
+async def test_registry_lookup_by_reads_the_loaded_identities(
     make_segment_resolver: SegmentResolverFactory,
-):
+) -> None:
     resolver = await make_segment_resolver(
         [
             {
@@ -324,8 +354,17 @@ async def test_registry_has_id_sync_reads_the_loaded_identities(
     registry.register(resolver)
 
     assert [i.name for i in resolver.identities()] == ["Guest"]
-    assert registry.has_id_sync(SegmentIdentity, "segment_id", 2)
-    assert registry.has_id_sync(SegmentIdentity, "logical_id", uuid.UUID(int=3))
-    assert not registry.has_id_sync(SegmentIdentity, "segment_id", 9)
-    # No resolver registered for the type: False, not an error.
-    assert not registry.has_id_sync(AddressGroupIdentity, "id", 7)
+    assert (
+        registry.lookup_by(SegmentIdentity, lambda s: s.segment_id, 2).name == "Guest"
+    )
+    assert (
+        registry.lookup_by(
+            SegmentIdentity, lambda s: s.logical_id, uuid.UUID(int=3)
+        ).name
+        == "Guest"
+    )
+    with pytest.raises(ResolutionError):
+        _ = registry.lookup_by(SegmentIdentity, lambda s: s.segment_id, 9)
+    # No resolver registered for the type: not loaded, so nothing can be told.
+    with pytest.raises(ResolverNotLoadedError):
+        _ = registry.lookup_by(AddressGroupIdentity, lambda a: a.id, 7)

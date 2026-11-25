@@ -1,6 +1,7 @@
+"""The client's ``alert/`` methods: the alertable events and alert definitions."""
+
 from __future__ import annotations
 
-from collections.abc import Sequence
 from typing import TYPE_CHECKING, Protocol
 
 from pyvelo.client.operations._tagging import EVENTS, domain_tag
@@ -13,6 +14,8 @@ from pyvelo.client.schemas.alert_definition import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from pyvelo.client._client_protocol import VcoClientBaseProtocol
 
 
@@ -23,14 +26,15 @@ class AlertMixin(Protocol):
     async def get_enterprise_alert_definitions(
         self: VcoClientBaseProtocol, request: GetEnterpriseAlertDefinitions
     ) -> Sequence[AlertDefinitionResult]:
-        """Get all supported alert definitions and their default settings for an enterprise.
+        """Get all supported alert definitions and default settings for an enterprise.
 
-        Lists all alert types supported for the target enterprise along with their respective
-        default configuration settings. Alert definitions describe the available alert types
-        (e.g., EDGE_DOWN, LINK_DOWN, HA_FAILOVER, CERTIFICATE_EXPIRY) and their default
-        parameters such as severity, notification behavior, and trigger conditions. These
-        definitions serve as templates from which enterprise alert configurations are created.
-        Useful for understanding what alerts can be configured and their default behavior.
+        Lists all alert types supported for the target enterprise along with their
+        respective default configuration settings. Alert definitions describe the
+        available alert types (e.g., EDGE_DOWN, LINK_DOWN, HA_FAILOVER,
+        CERTIFICATE_EXPIRY) and their default parameters such as severity, notification
+        behavior, and trigger conditions. These definitions serve as templates from
+        which enterprise alert configurations are created. Useful for understanding what
+        alerts can be configured and their default behavior.
 
         Returns:
             Array of alert definition objects with alert type, default severity, default
@@ -48,11 +52,12 @@ class AlertMixin(Protocol):
     ) -> Sequence[AlertableEventItem]:
         """Get all enterprise event types that can be configured for alerting.
 
-        Returns the list of enterprise event types that support alert notification configuration.
-        When these event types are configured for alerting, the system will send alert
-        notifications (email, webhook, etc.) whenever such events occur. Not all events support
-        alerting -- this method returns only those that do. Useful for understanding which events
-        can trigger alert notifications and for building alert configuration interfaces.
+        Returns the list of enterprise event types that support alert notification
+        configuration. When these event types are configured for alerting, the system
+        will send alert notifications (email, webhook, etc.) whenever such events occur.
+        Not all events support alerting -- this method returns only those that do.
+        Useful for understanding which events can trigger alert notifications and for
+        building alert configuration interfaces.
 
         Returns:
             Array of alertable event type objects with eventName and severity
