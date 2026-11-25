@@ -604,17 +604,28 @@ def _identity_field_names(identity_type: type) -> list[str]:
     return [f.name for f in dataclasses.fields(identity_type)]
 
 
+class _ProbeAnswer:
+    """What the probe answers for each attribute read: it cannot be tested for truth, so an accessor that falls back to another value for a falsy one (``i.segment_id or None``) is refused."""
+
+    __slots__ = ()
+
+    def __bool__(self) -> bool:
+        raise TypeError("the value read was tested for truth")
+
+
 def _probe_accessor(identity_type: type, accessor: object) -> str:
     """The name of the one field of *identity_type* that *accessor* reads and returns; ``TypeError`` for any other accessor.
 
     The accessor is called once on a stand-in for the identity that records each
     attribute read and answers a unique sentinel. One that reads a name that is
     not a field, reads several, computes from what it reads or raises cannot be
-    checked against the type of the field it goes on, so none is accepted.
+    checked against the type of the field it goes on, so none is accepted. The
+    answer cannot be tested for truth: an accessor that falls back to another
+    value for a falsy ID (the Global Segment's ``segment_id`` is 0) is refused.
     """
     names = _identity_field_names(identity_type)
     read: list[str] = []
-    answer = object()
+    answer = _ProbeAnswer()
 
     class Probe:
         def __getattr__(self, name: str) -> object:
@@ -629,7 +640,9 @@ def _probe_accessor(identity_type: type, accessor: object) -> str:
             returned = cast("Callable[[object], object]", accessor)(Probe())
         except Exception as err:  # noqa: BLE001 - whatever it raises, it is not a plain read
             returned = err
-        if not read:
+        if not read and isinstance(returned, Exception):
+            problem = f"It raised {type(returned).__name__}: {returned} before reading any field of the identity."
+        elif not read:
             problem = "It read no field of the identity."
         elif len(read) > 1:
             problem = f"It read several fields ({', '.join(read)}); it must read one."
@@ -892,6 +905,19 @@ def _type_atoms(tp: object) -> frozenset[object]:
     return frozenset() if tp is MISSING or tp is type(None) else frozenset({tp})
 
 
+def _allows_none(tp: object) -> bool:
+    """Whether *tp* allows ``None``: ``Annotated``, ``type`` aliases and unions taken apart. ``MISSING`` does not count."""
+    while get_origin(tp) is Annotated:
+        tp = get_args(tp)[0]
+    if isinstance(tp, TypeAliasType):
+        return _allows_none(tp.__value__)
+    if get_origin(tp) is Literal:
+        return None in get_args(tp)
+    if get_origin(tp) in (Union, UnionType):  # pyright: ignore[reportDeprecated]
+        return any(_allows_none(m) for m in get_args(tp))
+    return tp is None or tp is type(None)
+
+
 def _atoms_text(atoms: frozenset[object]) -> str:
     """The atoms as a type expression, in a stable order."""
     values = sorted(repr(a.value) for a in atoms if isinstance(a, _LiteralValue))
@@ -914,7 +940,9 @@ def _check_resolvable(
     Every type the identity's attribute allows apart from ``None`` must be one
     the field's ID type allows apart from ``None`` and ``MISSING`` (the type held
     inside a field kind, ``Annotated`` and ``type`` aliases taken apart); a
-    ``Literal`` attribute fits a ``Literal`` field that holds all its values. A
+    ``Literal`` attribute fits a ``Literal`` field that holds all its values.
+    An attribute that allows ``None`` needs a field that allows it too (a field
+    that holds only ``MISSING`` besides its type does not). A
     field that cannot is refused here because it would otherwise fail only
     when a name resolved to a value it refuses.
     """
@@ -924,12 +952,17 @@ def _check_resolvable(
     hints = get_type_hints(identity)
     wanted = _type_atoms(hints[marker.attribute])
     held = _type_atoms(field_kind(fi).inner_type)
-    if wanted <= held:
+    gives_none = _allows_none(hints[marker.attribute])
+    holds_none = _allows_none(field_kind(fi).inner_type)
+    if wanted <= held and (holds_none or not gives_none):
         return
     fitting = [
         name
         for name in _identity_field_names(identity)
-        if name in hints and (atoms := _type_atoms(hints[name])) and atoms <= held
+        if name in hints
+        and (atoms := _type_atoms(hints[name]))
+        and atoms <= held
+        and (holds_none or not _allows_none(hints[name]))
     ]
     advice = (
         "Read a field that fits instead: "
@@ -940,8 +973,9 @@ def _check_resolvable(
         else f"No field of {identity.__name__} fits this field's type: change the field to hold what the identity gives, or read another identity."
     )
     raise TypeError(
-        f"{cls.__name__}.{field_name} holds {_atoms_text(held)}, but its Resolvable reads "
-        f"{identity.__name__}.{marker.attribute}, which can be {_atoms_text(wanted)}. "
+        f"{cls.__name__}.{field_name} holds {_atoms_text(held)}{' or None' if holds_none else ''}, but its Resolvable reads "
+        f"{identity.__name__}.{marker.attribute}, which can be {_atoms_text(wanted)}"
+        f"{' or None' if gives_none else ''}. "
         "A name resolved through it would give a value the field refuses, and that "
         f"would show only when a name is merged in. {advice}"
     )

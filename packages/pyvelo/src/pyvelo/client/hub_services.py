@@ -285,8 +285,7 @@ def _segment_object_id(
         raise
     except ResolutionError:
         return None
-    object_id: object = getattr(identity, "object_id", None)
-    return object_id if isinstance(object_id, int) else None
+    return identity.object_id
 
 
 def fill_services(

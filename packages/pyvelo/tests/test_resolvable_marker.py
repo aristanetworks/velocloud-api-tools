@@ -119,14 +119,36 @@ BAD_ACCESSORS: list[Callable[[SegmentIdentity], object] | str] = [
     lambda i: i.segment_id + 1,
     lambda i: str(i.segment_id),
     lambda i: (i.segment_id, i.object_id),
+    # a falsy ID (the Global Segment's 0) would give None or another field
+    lambda i: i.segment_id or None,
+    lambda i: i.segment_id or i.object_id,
     "segment_id",
 ]
+
+# Accessors that read no field, so no field can be suggested from what they read.
+NO_FIELD_ACCESSORS: list[object] = [lambda i: 0, lambda i: 1 / 0, 5]  # pyright: ignore[reportUnknownLambdaType]
 
 
 @pytest.mark.parametrize("accessor", BAD_ACCESSORS)
 def test_an_accessor_must_read_one_field_and_return_it(accessor: object) -> None:
     with pytest.raises(TypeError, match="lambda i: i\\.segment_id"):
         _ = Resolvable(SegmentIdentity, accessor)  # pyright: ignore[reportArgumentType]
+
+
+@pytest.mark.parametrize("accessor", NO_FIELD_ACCESSORS)
+def test_an_accessor_that_reads_no_field_is_refused(accessor: object) -> None:
+    with pytest.raises(TypeError, match=r"Resolvable\(SegmentIdentity, lambda i: i\."):
+        _ = Resolvable(SegmentIdentity, accessor)  # pyright: ignore[reportArgumentType]
+
+
+def test_an_accessor_that_raises_is_refused_with_what_it_raised() -> None:
+    with pytest.raises(TypeError) as caught:
+        _ = Resolvable(SegmentIdentity, lambda i: 1 / 0)  # pyright: ignore[reportUnknownLambdaType]
+    text = str(caught.value)
+    assert "raised" in text
+    assert "ZeroDivisionError" in text
+    assert "division by zero" in text
+    assert "It read no field" not in text
 
 
 def test_an_attribute_the_field_cannot_hold_is_refused_at_class_creation() -> None:
@@ -157,6 +179,29 @@ def test_none_and_missing_are_ignored_and_literal_values_must_fit() -> None:
             type_: Annotated[
                 Literal["edgeHub"], Resolvable(HubIdentity, lambda h: h.type_)
             ]
+
+
+def test_an_optional_attribute_needs_a_field_that_allows_none() -> None:
+    with pytest.raises(TypeError) as caught:
+
+        class Refused(VcoModel):  # pyright: ignore[reportUnusedClass]
+            hub: Annotated[int, Resolvable(HubIdentity, lambda h: h.edge_id)]
+
+    text = str(caught.value)
+    for part in ("Refused.hub", "HubIdentity.edge_id", "None", "int"):
+        assert part in text
+
+    class Ok(VcoModel):
+        hub: Annotated[int | None, Resolvable(HubIdentity, lambda h: h.edge_id)]
+
+    assert get_resolvable(Ok.model_fields["hub"]) is not None
+
+    with pytest.raises(TypeError, match="None"):
+
+        class MissingOnly(VcoModel):  # pyright: ignore[reportUnusedClass]
+            hub: Annotated[
+                int | MISSING, Resolvable(HubIdentity, lambda h: h.edge_id)
+            ] = MISSING
 
 
 def test_a_resolvable_inside_a_kind_is_checked_against_the_inner_type() -> None:

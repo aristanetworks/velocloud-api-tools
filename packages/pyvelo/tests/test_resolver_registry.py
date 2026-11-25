@@ -250,8 +250,9 @@ class TestResolverRegistry:
         assert result.logical_id == uuid.UUID(int=1)
 
     async def test_resolve_unknown_identity_type(self, registry: ResolverRegistry):
-        with pytest.raises(LookupError, match="No resolver registered"):
+        with pytest.raises(LookupError, match="No resolver registered") as caught:
             _ = await registry.resolve(FooIdentity, "anything")
+        assert not isinstance(caught.value, ResolutionError)
 
     async def test_resolve_unknown_name(
         self, registry: ResolverRegistry, foo_resolver: MockFooResolver

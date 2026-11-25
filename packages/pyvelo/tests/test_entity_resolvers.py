@@ -36,6 +36,7 @@ from pyvelo.core.identity import (
     LicenseName,
     LicenseSku,
     LinkId,
+    LinkIdentity,
     LinkInternalId,
     LinkLogicalId,
     NetworkServiceLogicalId,
@@ -564,3 +565,32 @@ async def test_an_unknown_id_key_raises_resolution_error(
         _ = resolver.lookup_key(key)
     assert str(caught.value) == message
     assert isinstance(caught.value, KeyError)
+
+
+_GE1 = LinkIdentity(
+    name="GE1", id=5, logical_id="link-1", internal_id=uuid.UUID(int=5), edge_id=7
+)
+_WEB_PORTS = ServiceGroupIdentity(name="Web Ports", id=60, logical_id=SG_UUID1)
+
+_KNOWN_ID_CASES: list[
+    tuple[Callable[[], Awaitable[BaseResolver[object]]], IdentityKey[object], object]
+] = [
+    (_links, LinkId(5), _GE1),
+    (_links, LinkLogicalId("link-1"), _GE1),
+    (_links, LinkInternalId(uuid.UUID(int=5)), _GE1),
+    (_service_groups, ServiceGroupLogicalId(SG_UUID1), _WEB_PORTS),
+]
+
+
+@pytest.mark.parametrize(
+    ("build", "key", "expected"),
+    _KNOWN_ID_CASES,
+    ids=[f"{type(key).__name__}" for _, key, _ in _KNOWN_ID_CASES],
+)
+async def test_a_known_id_key_finds_the_identity_registered_under_it(
+    build: Callable[[], Awaitable[BaseResolver[object]]],
+    key: IdentityKey[object],
+    expected: object,
+) -> None:
+    resolver = await build()
+    assert resolver.lookup_key(key) == expected
