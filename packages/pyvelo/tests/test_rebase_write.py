@@ -15,7 +15,7 @@ QoS row as another writer would.
 import copy
 from collections.abc import Callable
 from dataclasses import replace
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pytest
 from pyvelo.client.exceptions import ConfigConflictError
@@ -23,7 +23,6 @@ from pyvelo.client.models.configuration import QosData
 from pyvelo.client.models.configuration.profile_segments import default_rules
 from pyvelo.client.models.configuration.qos.root import ServiceRateLimit
 from pyvelo.client.models.configuration.qos.segment import WebProxy
-from pyvelo.client.module_check import ModuleWrite
 from pyvelo.client.module_write import ModulePlan, plan_module, rebase_onto
 from pyvelo.client.schemas.configuration import (
     DeviceSettingsConfigurationModule,
@@ -41,6 +40,9 @@ from refs_helpers import (
 )
 
 from ._type_support import MockVcoClientFactory
+
+if TYPE_CHECKING:
+    from pyvelo.client.module_check import ModuleWrite
 
 VERSION = "configuration/getConfigurationModules"
 UPDATE = "configuration/updateConfigurationModule"

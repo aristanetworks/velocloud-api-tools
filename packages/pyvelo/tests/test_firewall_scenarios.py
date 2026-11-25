@@ -3,7 +3,9 @@
 import copy
 from typing import Any
 
+import pytest
 from pydantic import MISSING
+from pyvelo.client.exceptions import GroupOwnershipError
 from pyvelo.client.models.configuration import FirewallData
 from pyvelo.client.models.configuration.firewall import (
     ConsoleService,
@@ -137,9 +139,6 @@ def test_setting_stateful_enabled_false_while_local_keeps_the_settings() -> None
 
 
 def test_setting_one_stateful_member_while_inherited_refuses() -> None:
-    import pytest
-    from pyvelo.client.exceptions import GroupOwnershipError
-
     edge, _ = bound({}, PROFILE_STATEFUL)
     with pytest.raises(GroupOwnershipError):
         edge.data.stateful_firewall_enabled.set_local(False)

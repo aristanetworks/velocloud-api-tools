@@ -1,20 +1,23 @@
 """Domain-specific validators for deviceSettings module."""
 
 import ipaddress
+from typing import TYPE_CHECKING
 
 from pydantic import MISSING
 
 from pyvelo.client.enums.configuration import ConfigurationModuleName
-from pyvelo.client.schemas.configuration import (
-    EdgeConfiguration,
-    EnterpriseConfigurationProfile,
-)
 from pyvelo.config.validation import (
     ConfigStateLike,
     ValidationError,
     ValidationResult,
     validator,
 )
+
+if TYPE_CHECKING:
+    from pyvelo.client.schemas.configuration import (
+        EdgeConfiguration,
+        EnterpriseConfigurationProfile,
+    )
 
 
 def _parse_network(

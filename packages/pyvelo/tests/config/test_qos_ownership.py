@@ -2,11 +2,10 @@
 
 import copy
 import json
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pytest
 from pydantic import MISSING
-from pyvelo.client.models.configuration import QosData
 from pyvelo.client.module_write import ModulePlan
 from pyvelo.client.schemas.configuration import (
     EdgeConfiguration,
@@ -19,6 +18,9 @@ from pyvelo.config.state import ConfigState
 from pyvelo.core import Effective, Origin, effective_dump
 from pyvelo.testing import MockVcoClient, make_module_json
 from test_state_plan import desc  # pyright: ignore[reportImplicitRelativeImport]
+
+if TYPE_CHECKING:
+    from pyvelo.client.models.configuration import QosData
 
 
 def cos_mapping(*, override: bool = True, realtime_high: int = 35) -> dict[str, Any]:

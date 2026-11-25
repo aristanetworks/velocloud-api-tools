@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from collections.abc import Sequence
 from typing import TYPE_CHECKING, Protocol
 
 from pydantic import RootModel
@@ -46,6 +45,8 @@ from pyvelo.client.schemas.enterprise import EnterpriseServiceBase
 from pyvelo.core import RowsModifiedConfirmation
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from pyvelo.client._client_protocol import VcoClientBaseProtocol
 
 GetEdgeConfigurationStackResult = tuple[

@@ -25,7 +25,6 @@ from pyvelo.core.rebase import (
     node_child,
 )
 from pyvelo.core.references import Reference, reference_text
-from pyvelo.core.response_check import PlannedChange, ServerChange
 from pyvelo.core.secrets import HIDDEN
 from pyvelo.core.show import moves_text, patch_text, shown_together
 
@@ -33,6 +32,7 @@ if TYPE_CHECKING:
     from pyvelo.client.module_check import ModuleWrite
     from pyvelo.client.module_write import ModulePlan
     from pyvelo.client.schemas.configuration import ConfigurationModuleBase
+    from pyvelo.core.response_check import PlannedChange, ServerChange
 
 
 def _rebuild_error(cls: type[VcoError], args: tuple[Any, ...]) -> VcoError:
@@ -1305,8 +1305,7 @@ class RefsDroppedError(WriteNotAppliedError):
             if self.module is None or self.module.configuration_id is None
             else self.module.configuration_id
         )
-        # Imported here: ``derived_refs`` reaches this module through the models.
-        from pyvelo.client.derived_refs import APPEND_ONLY_REF_NAMES
+        from pyvelo.client.derived_refs import APPEND_ONLY_REF_NAMES  # noqa: PLC0415 (derived_refs reaches this module through the models)
 
         names = ", ".join(sorted(APPEND_ONLY_REF_NAMES))
         return (

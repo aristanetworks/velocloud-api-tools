@@ -7,17 +7,16 @@ type-only imports in operation modules from cycling back through
 
 from __future__ import annotations
 
-import asyncio
-from collections.abc import AsyncGenerator, Sequence
 from typing import TYPE_CHECKING, Any, Literal, Protocol
 
-import httpx
 from pydantic import BaseModel
 
-from pyvelo.core import ConfigContext, PaginatedVcoModel, VcoModel
-from pyvelo.core.base import IdentityLookup
-
 if TYPE_CHECKING:
+    import asyncio
+    from collections.abc import AsyncGenerator, Sequence
+
+    import httpx
+
     from pyvelo.client.module_check import ModuleWrite
     from pyvelo.client.module_write import ModulePlan
     from pyvelo.client.schemas.configuration import (
@@ -30,6 +29,8 @@ if TYPE_CHECKING:
         InsertConfigurationModuleResult,
         UpdateConfigurationModule,
     )
+    from pyvelo.core import ConfigContext, PaginatedVcoModel, VcoModel
+    from pyvelo.core.base import IdentityLookup
 
 
 class VcoClientBaseProtocol(Protocol):

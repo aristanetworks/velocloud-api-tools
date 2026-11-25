@@ -8,6 +8,7 @@ from pydantic import MISSING
 from pyvelo.client.models.configuration import QosData
 from pyvelo.client.models.configuration.qos import (
     CosMapping,
+    QosRule,
     QosSegment,
     ServiceRateLimit,
 )
@@ -190,8 +191,6 @@ def test_a_cos_mapping_stored_with_its_flag_off_is_kept_and_not_local() -> None:
 
 
 def _rule():
-    from pyvelo.client.models.configuration.qos import QosRule
-
     return QosRule.model_validate(RULE)
 
 

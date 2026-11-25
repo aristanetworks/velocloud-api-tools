@@ -1,7 +1,7 @@
 """Tests for resolution_error() and resolve_name() fuzzy matching helpers."""
 
 import pytest
-from pyvelo.config.resolver import resolution_error
+from pyvelo.config.resolver import ResolutionError, resolution_error, resolve_name
 
 
 class TestResolutionError:
@@ -63,8 +63,6 @@ class TestResolutionError:
         assert isinstance(err, KeyError)
 
     def test_returns_structured_resolution_error(self) -> None:
-        from pyvelo.config.resolver import ResolutionError
-
         err = resolution_error(
             "application", "Microsoft 36", ["Microsoft 365", "Slack"]
         )
@@ -74,8 +72,6 @@ class TestResolutionError:
         assert "Microsoft 365" in err.candidates
 
     def test_resolution_error_caught_as_key_error(self) -> None:
-        from pyvelo.config.resolver import ResolutionError
-
         err = resolution_error("edge", "foo", ["bar"])
         # Backwards compatibility: ResolutionError must be a KeyError subclass
         assert isinstance(err, ResolutionError)
@@ -122,8 +118,6 @@ class TestResolveName:
     """Tests for resolve_name() case-insensitive and fuzzy matching."""
 
     def test_exact_match(self) -> None:
-        from pyvelo.config.resolver import resolve_name
-
         name, val = resolve_name(
             "Branch-NYC", {"Branch-NYC": 1, "Branch-LAX": 2}, "edge"
         )
@@ -131,8 +125,6 @@ class TestResolveName:
         assert val == 1
 
     def test_case_insensitive_match(self) -> None:
-        from pyvelo.config.resolver import resolve_name
-
         name, val = resolve_name(
             "branch-nyc", {"Branch-NYC": 1, "Branch-LAX": 2}, "edge"
         )
@@ -140,8 +132,6 @@ class TestResolveName:
         assert val == 1
 
     def test_case_insensitive_upper(self) -> None:
-        from pyvelo.config.resolver import resolve_name
-
         name, val = resolve_name(
             "BRANCH-LAX", {"Branch-NYC": 1, "Branch-LAX": 2}, "edge"
         )
@@ -149,8 +139,6 @@ class TestResolveName:
         assert val == 2
 
     def test_near_miss_raises_with_the_candidate(self) -> None:
-        from pyvelo.config.resolver import ResolutionError, resolve_name
-
         with pytest.raises(ResolutionError) as exc:
             _ = resolve_name(
                 "Example-Edg",
@@ -160,28 +148,20 @@ class TestResolveName:
         assert exc.value.candidates == ["Example-Edge"]
 
     def test_fuzzy_is_opt_in(self) -> None:
-        from pyvelo.config.resolver import resolve_name
-
         name, val = resolve_name(
             "Example-Edg", {"Example-Edge": 1, "Branch-LAX": 2}, "edge", fuzzy=True
         )
         assert (name, val) == ("Example-Edge", 1)
 
     def test_fuzzy_ambiguous_raises(self) -> None:
-        from pyvelo.config.resolver import resolve_name
-
         with pytest.raises(KeyError, match="Did you mean"):
             _ = resolve_name("Branch", {"Branch-NYC": 1, "Branch-LAX": 2}, "edge")
 
     def test_no_match_raises(self) -> None:
-        from pyvelo.config.resolver import resolve_name
-
         with pytest.raises(KeyError, match="Unknown edge"):
             _ = resolve_name("zzz-nothing", {"Branch-NYC": 1, "Branch-LAX": 2}, "edge")
 
     def test_exact_match_preferred_over_case_insensitive(self) -> None:
-        from pyvelo.config.resolver import resolve_name
-
         # If both "foo" and "FOO" exist, exact match wins
         name, val = resolve_name("foo", {"foo": 1, "FOO": 2}, "edge")
         assert name == "foo"

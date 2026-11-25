@@ -16,6 +16,9 @@ from pyvelo.client.models.configuration.device_settings.segment import (
     StaticRoute,
 )
 from pyvelo.client.models.configuration.firewall.root import FirewallData
+from pyvelo.client.models.configuration.firewall.segment import (
+    FirewallSegment,
+)
 from pyvelo.client.models.configuration.wan.root import WanData
 from pyvelo.client.schemas.configuration import (
     DeviceSettingsConfigurationModule,
@@ -25,7 +28,7 @@ from pyvelo.client.schemas.configuration import (
     WanConfigurationModule,
 )
 from pyvelo.config.resolver import ResolverContext
-from pyvelo.config.state import ConfigState, SaveResult
+from pyvelo.config.state import ConfigFieldChange, ConfigState, SaveResult
 from pyvelo.config.validation_warning import ValidationWarning
 from pyvelo.core import at
 from pyvelo.core.layers import Edge, Profile
@@ -145,8 +148,6 @@ class TestGetFieldChanges:
         assert state.get_field_changes() == []
 
     def test_scalar_change_emits_field_change(self) -> None:
-        from pyvelo.config.state import ConfigFieldChange
-
         state, edge_config = self._state_with_snapshot()
         edge_config.firewall.data.firewall_enabled.set_local(False)
         changes = state.get_field_changes()
@@ -169,19 +170,6 @@ class TestGetFieldChanges:
 
     def test_a_reorder_of_a_keyed_list_is_one_order_change(self) -> None:
         """Reordering a KeyField list is one change at the list, as in the plan."""
-        from datetime import datetime
-
-        from pyvelo.client.enums.configuration import ConfigurationModuleType
-        from pyvelo.client.enums.enterprise import NetworkSegmentType
-        from pyvelo.client.models.configuration.common import SegmentMetadata
-        from pyvelo.client.models.configuration.firewall.segment import (
-            FirewallSegment,
-        )
-        from pyvelo.client.schemas.configuration import (
-            EdgeConfiguration,
-            EnterpriseConfigurationProfile,
-        )
-
         seg_a = FirewallSegment[Edge](
             segment=SegmentMetadata(
                 name="A", segment_id=0, type_=NetworkSegmentType.REGULAR

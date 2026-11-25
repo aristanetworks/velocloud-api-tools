@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import uuid
-from collections.abc import Callable
 from datetime import UTC, datetime
+from typing import TYPE_CHECKING
 
 import pytest
 from pydantic import MISSING
@@ -19,6 +19,9 @@ from pyvelo.client.schemas.event import (
 from pyvelo.core import ApiInterval
 
 from ._type_support import MockPaginatedClient
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 
 def _make_event(

@@ -1,10 +1,8 @@
 """Tests for context-aware serialization and ContextView introspection."""
 
-from collections.abc import Callable
-from typing import Annotated, ClassVar, cast
+from typing import TYPE_CHECKING, Annotated, ClassVar, cast
 
 from pydantic import MISSING, ConfigDict, Field
-from pydantic.fields import FieldInfo
 from pyvelo.core import (
     Alias,
     ConfigContext,
@@ -14,9 +12,14 @@ from pyvelo.core import (
     VcoModel,
 )
 from pyvelo.core import fields as core_fields
-from pyvelo.core.fields import ContextDefaults
 
 from ._type_support import JsonObject
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from pydantic.fields import FieldInfo
+    from pyvelo.core.fields import ContextDefaults
 
 _get_context_defaults = cast(
     "Callable[[FieldInfo], ContextDefaults | None]",

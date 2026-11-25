@@ -53,7 +53,7 @@ from pyvelo.client.schemas.configuration import (
     WanConfigurationModule,
     new_edge_module,
 )
-from pyvelo.config.errors import LayerNotSavedError
+from pyvelo.config.errors import LayerNotSavedError, SaveValidationError
 from pyvelo.config.hub_steps import (
     HubStep,
     changed_segment_ids,
@@ -1607,8 +1607,6 @@ class SaveResult:
     def raise_for_errors(self) -> None:
         """Raise :class:`SaveValidationError` if any write-time validator failed."""
         if self.validation_errors:
-            from pyvelo.config.errors import SaveValidationError
-
             raise SaveValidationError(self.validation_errors)
 
 

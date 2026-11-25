@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import typing
-import uuid
 from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any, ClassVar
@@ -36,19 +35,7 @@ from pyvelo.analytics._series import (
     denormalize_flat_series,
     denormalize_timeseries,
 )
-from pyvelo.analytics.enums import (
-    EnterpriseFirewallType,
-    FirewallType,
-    FlowGroupBy,
-    FlowMetric,
-)
 from pyvelo.analytics.frame import MetricFrame
-from pyvelo.client.enums.edge import (
-    ActivationState,
-    EdgeServiceState,
-    EdgeState,
-    HaState,
-)
 from pyvelo.client.enums.event import EventSeverity, EventType
 from pyvelo.client.enums.link_quality import QualityState, TrafficType
 from pyvelo.client.enums.metrics import (
@@ -60,6 +47,7 @@ from pyvelo.client.enums.metrics import (
     NetworkInterfaceMetric,
     NniMetric,
     NsdTunnelStatsMetric,
+    PathSeriesViewBy,
     SdwanPeerPathMetric,
     StatusMetric,
 )
@@ -108,11 +96,24 @@ from pyvelo.client.schemas.monitoring import (
     GetEnterpriseNniSeries,
 )
 from pyvelo.client.schemas.profiles import GetEnterpriseConfigurations
-from pyvelo.core import ApiInterval
 
-if __builtins__:  # type: ignore[truthy-bool]
-    from pyvelo.client.enums.metrics import PathSeriesViewBy
+if typing.TYPE_CHECKING:
+    import uuid
+
+    from pyvelo.analytics.enums import (
+        EnterpriseFirewallType,
+        FirewallType,
+        FlowGroupBy,
+        FlowMetric,
+    )
+    from pyvelo.client.enums.edge import (
+        ActivationState,
+        EdgeServiceState,
+        EdgeState,
+        HaState,
+    )
     from pyvelo.client.protocol import VcoClientProtocol
+    from pyvelo.core import ApiInterval
 
 
 class Analytics:
@@ -438,8 +439,6 @@ class Analytics:
         metrics: list[SdwanPeerPathMetric] | None = None,
         max_samples: int | None = None,
     ) -> MetricFrame:
-        from pyvelo.client.enums.metrics import PathSeriesViewBy as PSViewBy
-
         request = GetEdgeSdwanPeerPathSeries(
             edge_id=edge_id,
             interval=interval,
@@ -449,7 +448,7 @@ class Analytics:
             peer_logical_id=peer_logical_id,
             paths=paths,
             metrics=metrics or list(SdwanPeerPathMetric),
-            view_by=view_by or PSViewBy.PATH,
+            view_by=view_by or PathSeriesViewBy.PATH,
             max_samples=max_samples if max_samples is not None else MISSING,
         )
         result = await self._client.get_edge_sdwan_peer_path_series(request)

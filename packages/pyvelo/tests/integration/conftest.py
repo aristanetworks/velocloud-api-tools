@@ -11,8 +11,8 @@ from __future__ import annotations
 
 import os
 import time
-from collections.abc import AsyncGenerator, Generator
 from contextlib import contextmanager
+from typing import TYPE_CHECKING
 
 import httpx
 import live_support as live
@@ -21,12 +21,16 @@ import pytest_asyncio
 from live_support import Lab, discover_lab
 from pyvelo.analytics import Analytics
 from pyvelo.analytics.frame import MetricFrame
-from pyvelo.client import VcoClient
 from pyvelo.client.exceptions import VcoOperationError
 from pyvelo.config import ConfigPipeline, build_default_pipeline
 from pyvelo.core import ApiInterval
 
 from ._discovery import VcoTestContext, discover
+
+if TYPE_CHECKING:
+    from collections.abc import AsyncGenerator, Generator
+
+    from pyvelo.client import VcoClient
 
 
 @pytest.hookimpl(wrapper=True)

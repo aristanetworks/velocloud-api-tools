@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import datetime as dt
-from collections.abc import Sequence
 from typing import TYPE_CHECKING, Protocol
 
 from pydantic import MISSING
@@ -20,6 +19,8 @@ from pyvelo.client.schemas.diagnostic_bundles import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from pyvelo.client._client_protocol import VcoClientBaseProtocol
 
 _MIN_TS = dt.datetime.min.replace(tzinfo=dt.UTC)

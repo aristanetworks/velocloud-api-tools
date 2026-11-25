@@ -14,6 +14,16 @@ from typing import TYPE_CHECKING
 from uuid import UUID
 
 from pydantic import MISSING
+from pyvelo.client.enums.edge import EdgeState, GetEdgesWith, SdwanPeerType
+from pyvelo.client.enums.metrics import SdwanPeerPathMetric
+from pyvelo.client.schemas.edge import GetEdgeSdwanPeers
+from pyvelo.client.schemas.enterprise import (
+    GetEnterpriseEdges,
+    GetEnterpriseNetworkSegments,
+)
+from pyvelo.client.schemas.metrics import GetEdgeSdwanPeerPathMetrics
+from pyvelo.client.schemas.network import GetNetworkGateways
+from pyvelo.core import ApiInterval
 
 if TYPE_CHECKING:
     from pyvelo.client import VcoClient
@@ -96,12 +106,6 @@ def _enum_str(val: object) -> str | None:
 async def _resolve_sdwan_peers(
     client: VcoClient, edge_id: int, enterprise_id: int
 ) -> tuple[SdwanPeerInfo | None, SdwanPeerInfo | None]:
-    from pyvelo.client.enums.edge import SdwanPeerType
-    from pyvelo.client.enums.metrics import SdwanPeerPathMetric
-    from pyvelo.client.schemas.edge import GetEdgeSdwanPeers
-    from pyvelo.client.schemas.metrics import GetEdgeSdwanPeerPathMetrics
-    from pyvelo.core import ApiInterval
-
     now_ms = int(time.time() * 1000)
     interval = ApiInterval.model_validate(
         {"start": now_ms - 24 * 86_400_000, "end": now_ms}
@@ -173,13 +177,6 @@ async def _resolve_sdwan_peers(
 
 async def discover(client: VcoClient, enterprise_id: int) -> VcoTestContext:
     """Query a real VCO and build a VcoTestContext with all discovered entities."""
-    from pyvelo.client.enums.edge import EdgeState, GetEdgesWith
-    from pyvelo.client.schemas.enterprise import (
-        GetEnterpriseEdges,
-        GetEnterpriseNetworkSegments,
-    )
-    from pyvelo.client.schemas.network import GetNetworkGateways
-
     # Edges with site + links
     raw_edges = await client.get_enterprise_edges(
         GetEnterpriseEdges(

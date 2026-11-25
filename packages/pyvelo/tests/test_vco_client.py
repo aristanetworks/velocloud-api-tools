@@ -8,6 +8,7 @@ from unittest.mock import patch
 
 import httpx
 import pytest
+from pyvelo.client import VcoAuth, VcoClient
 from pyvelo.client.exceptions import (
     VcoApiError,
     VcoClientNotInitializedError,
@@ -20,6 +21,7 @@ from pyvelo.core import (
     PaginatedVcoModel,
     VcoModel,
 )
+from pyvelo.testing import make_transport
 
 from ._type_support import (
     JsonObject,
@@ -799,9 +801,6 @@ class TestTransport:
     async def test_a_client_over_a_transport_is_connected_and_keeps_it_under_async_with(
         self, json_rpc_response: JsonRpcResponseFactory
     ) -> None:
-        from pyvelo.client import VcoClient
-        from pyvelo.testing import make_transport
-
         seen: list[httpx.Request] = []
 
         def handler(request: httpx.Request) -> httpx.Response:
@@ -827,8 +826,6 @@ class TestTransport:
     async def test_a_transport_that_closes_with_the_client_is_entered_again_by_the_next_async_with(
         self, json_rpc_response: JsonRpcResponseFactory
     ) -> None:
-        from pyvelo.client import VcoClient
-
         class HoldsConnections(httpx.AsyncBaseTransport):
             """Like a pool: closing it ends its connections until it is entered again."""
 
@@ -892,8 +889,6 @@ class TestVcoAuth:
         self, json_rpc_response: JsonRpcResponseFactory
     ) -> None:
         """A token that already starts with 'Token ' must not be double-prefixed."""
-        from pyvelo.client import VcoClient
-        from pyvelo.testing import make_transport
 
         def handler(request: httpx.Request) -> httpx.Response:
             assert request.headers["Authorization"] == "Token already-prefixed"
@@ -915,8 +910,6 @@ class TestVcoAuth:
         self, json_rpc_response: JsonRpcResponseFactory
     ) -> None:
         """A token with an arbitrary prefix like 'RandomPrefix ' must be sent verbatim."""
-        from pyvelo.client import VcoClient
-        from pyvelo.testing import make_transport
 
         def handler(request: httpx.Request) -> httpx.Response:
             assert request.headers["Authorization"] == "RandomPrefix my-jwt"
@@ -944,9 +937,6 @@ class TestVcoAuth:
     async def test_whitespace_around_the_token_is_stripped(
         self, json_rpc_response: JsonRpcResponseFactory
     ) -> None:
-        from pyvelo.client import VcoClient
-        from pyvelo.testing import make_transport
-
         seen: list[httpx.Request] = []
 
         def handler(request: httpx.Request) -> httpx.Response:
@@ -978,8 +968,6 @@ class TestVcoAuth:
     def test_a_token_no_header_can_carry_is_refused_and_not_shown(
         self, token: str
     ) -> None:
-        from pyvelo.client import VcoAuth, VcoClient
-
         with pytest.raises(VcoCredentialsError) as exc:
             _ = VcoClient("vco.example.invalid", token)
         assert str(exc.value) == self.REFUSED
@@ -990,8 +978,6 @@ class TestVcoAuth:
 
     @pytest.mark.parametrize("token", ["", "   ", "\r\n"])
     def test_an_empty_token_is_refused(self, token: str) -> None:
-        from pyvelo.client import VcoAuth, VcoClient
-
         expected = (
             "The API token is empty. Give the token, or check the file or "
             "variable it is read from."
@@ -1004,8 +990,6 @@ class TestVcoAuth:
         assert str(direct.value) == expected
 
     def test_vco_auth_strips_and_keeps_a_prefix(self) -> None:
-        from pyvelo.client import VcoAuth
-
         request = httpx.Request("POST", "https://vco.example.invalid/portal/")
         sent = next(VcoAuth(" Bearer made-up-token\n").auth_flow(request))
         assert sent.headers["Authorization"] == "Bearer made-up-token"

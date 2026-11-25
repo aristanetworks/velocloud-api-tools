@@ -69,7 +69,6 @@ ignore = [
     "N818",
     "PERF401",
     "PERF403",
-    "PLC0415",
     "PLR0911",
     "PLR0912",
     "PLR0913",
@@ -91,9 +90,6 @@ ignore = [
     "S506",
     "SLOT000",
     "T201",
-    "TC001",
-    "TC002",
-    "TC003",
     "TRY300",
     "TRY301",
     "TRY400",
@@ -121,6 +117,27 @@ extend-allowed-calls = [
     "pyvelo.core.rebase.Key",
     "pyvelo.core.missing_or",
     "pyvelo.core.fields._none_to",
+]
+
+[tool.ruff.lint.flake8-type-checking]
+# Pydantic reads a model's field annotations at runtime, so an import a model
+# field names must stay a runtime import. ruff follows a base class only within
+# one file, so each model class subclassed in another file is listed, under
+# each name it is imported by.
+runtime-evaluated-base-classes = [
+    "pydantic.BaseModel",
+    "pydantic.RootModel",
+    "pyvelo.core.VcoModel",
+    "pyvelo.core.base.VcoModel",
+    "pyvelo.core.PaginatedVcoModel",
+    "pyvelo.core.base.PaginatedVcoModel",
+    "pyvelo.core.Layered",
+    "pyvelo.core.layers.Layered",
+    "pyvelo.client.schemas.edge.EdgeObject",
+    "pyvelo.client.models.configuration.ConfigurationRef",
+    "pyvelo.client.models.configuration.ref.ConfigurationRef",
+    "pyvelo.client.models.configuration.qos.root.QosData",
+    "pyvelo.client.models.configuration.qos.segment.QosSegment",
 ]
 
 [tool.ruff.lint.pydocstyle]

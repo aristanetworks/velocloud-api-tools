@@ -24,9 +24,13 @@ Run:
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import pytest
 from live_support import Lab, check
-from pyvelo.config import ConfigPipeline
+
+if TYPE_CHECKING:
+    from pyvelo.config import ConfigPipeline
 
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio(loop_scope="session")]
 

@@ -48,8 +48,10 @@ from pydantic import (
     ValidationError,
     ValidationInfo,
 )
-from pydantic.fields import FieldInfo
 from pydantic_core import CoreSchema, core_schema
+
+if TYPE_CHECKING:
+    from pydantic.fields import FieldInfo
 
 CONTEXT_NOT_SET: object = object()  # sentinel for "use field's own default"
 
@@ -119,7 +121,7 @@ class _ProcessedCtxDefaults:
 
 def _markers(field_info: FieldInfo) -> tuple[object, ...]:
     """The markers of a field: its own, and those inside its kind (``field_kind``)."""
-    from .layers import field_kind  # layers imports this module
+    from .layers import field_kind  # noqa: PLC0415 (layers imports this module)
 
     return field_kind(field_info).metadata
 
@@ -448,7 +450,7 @@ else:
         """
 
         def __class_getitem__(cls, item: object) -> object:
-            from .layers import Kind, carrier  # layers imports this module
+            from .layers import Kind, carrier  # noqa: PLC0415 (layers imports this module)
 
             return carrier(Kind.EDGE_ONLY, item)
 
@@ -461,7 +463,7 @@ else:
         """
 
         def __class_getitem__(cls, item: object) -> object:
-            from .layers import Kind, carrier  # layers imports this module
+            from .layers import Kind, carrier  # noqa: PLC0415 (layers imports this module)
 
             return carrier(Kind.PROFILE_ONLY, item)
 
@@ -754,8 +756,6 @@ class OwnsRef:
     level: ConfigContext | None = None
 
     def __post_init__(self) -> None:
-        import dataclasses
-
         if dataclasses.is_dataclass(self.identity):
             field_names = {f.name for f in dataclasses.fields(self.identity)}
             if self.by not in field_names:
@@ -878,7 +878,7 @@ class _ProcessedResolvable:
 
 def _absent_at_other_level(field_info: FieldInfo) -> ContextDefaults | None:
     """What makes a field of one layer (the kind ``EdgeOnly`` or ``ProfileOnly``) absent at the other level, as the bare markers do; None for any other field."""
-    from .layers import Kind, field_kind  # layers imports this module
+    from .layers import Kind, field_kind  # noqa: PLC0415 (layers imports this module)
 
     kind = field_kind(field_info).kind
     if kind is Kind.EDGE_ONLY:
@@ -949,7 +949,7 @@ def _check_resolvable(
     field that cannot is refused here because it would otherwise fail only
     when a name resolved to a value it refuses.
     """
-    from .layers import field_kind  # layers imports this module
+    from .layers import field_kind  # noqa: PLC0415 (layers imports this module)
 
     identity = marker.identity_type
     hints = get_type_hints(identity)

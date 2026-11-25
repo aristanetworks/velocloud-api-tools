@@ -62,9 +62,8 @@ from __future__ import annotations
 
 import copy
 import uuid
-from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 from live_support import (
@@ -112,9 +111,7 @@ from pyvelo.client.models.configuration import (
     QosData,
     WanData,
 )
-from pyvelo.client.models.configuration.firewall.rules import FirewallOutboundRule
 from pyvelo.client.models.configuration.qos.qoe import QoeSettings
-from pyvelo.client.models.configuration.qos.rule import QosRule
 from pyvelo.client.module_check import has_checkable_change
 from pyvelo.client.module_write import plan_module, update_request, wire_dump
 from pyvelo.client.schemas.configuration import (
@@ -129,6 +126,12 @@ from pyvelo.client.schemas.configuration import (
 from pyvelo.core import ConfigContext, VcoModel
 from pyvelo.core.layers import Edge, Profile
 from pyvelo.core.rebase import Key, Path, RawChange, raw_changes
+
+if TYPE_CHECKING:
+    from collections.abc import Callable, Sequence
+
+    from pyvelo.client.models.configuration.firewall.rules import FirewallOutboundRule
+    from pyvelo.client.models.configuration.qos.rule import QosRule
 
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio(loop_scope="session")]
 

@@ -19,6 +19,9 @@ from pyvelo.client.models.configuration.device_settings.routed_interface import 
 )
 from pyvelo.client.models.configuration.device_settings.segment import (
     DeviceSegment,
+    DnsBackupProvider,
+    DnsPrimaryProvider,
+    DnsProvider,
     SegmentDns,
 )
 from pyvelo.client.models.configuration.firewall.root import FirewallData
@@ -42,12 +45,6 @@ def _make_segment_metadata(name: str, segment_id: int = 0) -> SegmentMetadata:
 
 
 def _make_dns() -> SegmentDns:
-    from pyvelo.client.models.configuration.device_settings.segment import (
-        DnsBackupProvider,
-        DnsPrimaryProvider,
-        DnsProvider,
-    )
-
     return SegmentDns(
         override=False,
         primary_provider=DnsPrimaryProvider(ref="deviceSettings:dns:primaryProvider"),

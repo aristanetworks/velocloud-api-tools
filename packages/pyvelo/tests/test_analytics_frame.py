@@ -1,8 +1,7 @@
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
 from datetime import UTC, datetime
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
 import polars as pl
 import pytest
@@ -11,6 +10,9 @@ from pyvelo.analytics._helpers import is_other_bucket
 from pyvelo.analytics._series import denormalize_timeseries
 from pyvelo.analytics.frame import MetricFrame
 from pyvelo.client.schemas.metrics import EdgeAppMetricsItem
+
+if TYPE_CHECKING:
+    from collections.abc import Callable, Sequence
 
 _items_to_frame = cast(
     "Callable[[Sequence[EdgeAppMetricsItem]], MetricFrame]",

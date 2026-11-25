@@ -10,7 +10,7 @@ from pyvelo.client.exceptions import UnboundError
 from pyvelo.client.models.configuration.profile_segments import module_template_value
 from pyvelo.client.models.configuration.qos import CosMapping, QosRule, SlaSettings
 from pyvelo.client.module_write import plan_module
-from pyvelo.core import ConfigContext, Edge, Profile
+from pyvelo.core import ConfigContext, Edge, PatchError, Profile
 from segment_helpers import GLOBAL, GUEST, descriptor, qos_entry
 
 from .write_helpers import qos_mod
@@ -205,8 +205,6 @@ def test_inherit_on_the_client_connector_removes_the_key() -> None:
 
 
 def test_set_local_to_null_is_refused_and_means_inherit() -> None:
-    from pyvelo.core import PatchError
-
     edge, _ = bound({})
     with pytest.raises(PatchError):
         edge.data.qos_client_connector.set_local(None)

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Callable
+from typing import TYPE_CHECKING
 
 import pytest
 from pydantic import MISSING
@@ -18,6 +18,9 @@ from pyvelo.client.schemas.edge_filters import (
 from pyvelo.client.schemas.enterprise import GetEnterpriseEdges, GetEnterpriseEdgesItem
 
 from ._type_support import MockPaginatedClient
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 
 def _make_edge(

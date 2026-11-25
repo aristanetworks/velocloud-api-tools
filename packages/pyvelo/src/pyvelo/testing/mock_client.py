@@ -3,9 +3,8 @@
 from __future__ import annotations
 
 import uuid
-from collections.abc import Sequence
 from datetime import UTC, datetime
-from typing import Self, cast, overload, override
+from typing import TYPE_CHECKING, Self, cast, overload, override
 
 from pydantic import MISSING
 
@@ -13,10 +12,8 @@ from pyvelo.client.enums.configuration import ConfigurationModuleType
 from pyvelo.client.enums.enterprise import NetworkSegmentType
 from pyvelo.client.models.configuration.common import SegmentMetadata
 from pyvelo.client.models.configuration.firewall.root import FirewallData
-from pyvelo.client.models.configuration.firewall.rules import FirewallOutboundRule
 from pyvelo.client.models.configuration.firewall.segment import FirewallSegment
 from pyvelo.client.models.enterprise.network_segment import NetworkSegmentData
-from pyvelo.client.operations.edge import GetEdgeConfigurationStackResult
 from pyvelo.client.schemas.configuration import (
     AnyStoredModule,
     EdgeConfiguration,
@@ -27,20 +24,26 @@ from pyvelo.client.schemas.configuration import (
     InsertConfigurationModuleResult,
     UpdateConfigurationModule,
 )
-from pyvelo.client.schemas.edge import GetEdgeConfigurationStack
 from pyvelo.client.schemas.enterprise import (
     GetEnterpriseEdges,
     GetEnterpriseEdgesItem,
     GetEnterpriseNetworkSegments,
     NetworkSegment,
 )
-from pyvelo.client.schemas.profiles import GetEnterpriseConfigurations
 from pyvelo.client.vco_client import VcoClient
-from pyvelo.config.state import ConfigState
-from pyvelo.core import ConfigContext
 from pyvelo.core.layers import Edge, Profile
 from pyvelo.testing.fixtures import make_transport
 from pyvelo.testing.module_store import ModuleStore, configuration_row, module_row
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
+
+    from pyvelo.client.models.configuration.firewall.rules import FirewallOutboundRule
+    from pyvelo.client.operations.edge import GetEdgeConfigurationStackResult
+    from pyvelo.client.schemas.edge import GetEdgeConfigurationStack
+    from pyvelo.client.schemas.profiles import GetEnterpriseConfigurations
+    from pyvelo.config.state import ConfigState
+    from pyvelo.core import ConfigContext
 
 _HOST = "vco.example.invalid"
 _GLOBAL_SEGMENT_OBJECT_ID = 1

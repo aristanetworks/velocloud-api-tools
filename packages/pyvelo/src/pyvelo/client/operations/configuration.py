@@ -72,12 +72,12 @@ from pyvelo.client.schemas.profiles import (
     CreateProfileResult,
 )
 from pyvelo.core import ConfigContext, RowsModifiedConfirmation, VcoModel
-from pyvelo.core.base import IdentityLookup
 from pyvelo.core.layers import Edge, Profile, layer_for
-from pyvelo.core.response_check import ServerChange
 
 if TYPE_CHECKING:
     from pyvelo.client._client_protocol import VcoClientBaseProtocol
+    from pyvelo.core.base import IdentityLookup
+    from pyvelo.core.response_check import ServerChange
 
 
 def _level_context(

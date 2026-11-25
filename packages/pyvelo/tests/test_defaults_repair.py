@@ -8,7 +8,7 @@ template does not describe is left alone, with a warning.
 
 import copy
 import uuid
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from pydantic import MISSING
 from pyvelo.client.models.configuration.profile_segments import (
@@ -19,7 +19,6 @@ from pyvelo.client.models.configuration.profile_segments import (
     pair_defaults,
     repaired_entry,
 )
-from pyvelo.client.models.configuration.qos.rule import QosRule
 from pyvelo.client.module_write import MissingDefaults, plan_module
 from pyvelo.client.schemas.configuration import QosConfigurationModule
 from pyvelo.core import ConfigContext, Edge, Profile
@@ -28,6 +27,9 @@ from refs_helpers import QOS_ID
 from segment_helpers import GLOBAL, GUEST, ds_entry, identity, profile_rows, qos_entry
 
 from ._type_support import MockVcoClientFactory
+
+if TYPE_CHECKING:
+    from pyvelo.client.models.configuration.qos.rule import QosRule
 
 TEMPLATE = {rule["name"]: rule for rule in default_rules()}
 INTERNET_UDP, INTERNET_OTHER, ANY_UDP, ANY_OTHER = DEFAULT_NAMES

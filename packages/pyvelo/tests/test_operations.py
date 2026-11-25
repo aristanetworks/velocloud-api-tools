@@ -6,7 +6,7 @@ deeply-nested configuration data models. ``update_module`` runs over a
 """
 
 import inspect
-from typing import cast, overload
+from typing import TYPE_CHECKING, cast, overload
 from unittest.mock import AsyncMock
 from uuid import UUID
 
@@ -15,14 +15,10 @@ from pydantic import MISSING
 from pyvelo.client import VcoClient
 from pyvelo.client.enums.configuration import ConfigurationModuleName
 from pyvelo.client.exceptions import VcoOperationError
-from pyvelo.client.models.configuration.device_settings.root import DeviceSettingsData
 from pyvelo.client.models.configuration.device_settings.segment import (
     DnsPrimaryProvider,
     SegmentDns,
 )
-from pyvelo.client.models.configuration.firewall.root import FirewallData
-from pyvelo.client.models.configuration.qos.root import QosData
-from pyvelo.client.models.configuration.wan.root import WanData
 from pyvelo.client.module_check import ModuleWrite
 from pyvelo.client.module_write import ModulePlan
 from pyvelo.client.schemas.configuration import (
@@ -52,6 +48,14 @@ from refs_helpers import (
 )
 
 from ._type_support import MockVcoClientFactory
+
+if TYPE_CHECKING:
+    from pyvelo.client.models.configuration.device_settings.root import (
+        DeviceSettingsData,
+    )
+    from pyvelo.client.models.configuration.firewall.root import FirewallData
+    from pyvelo.client.models.configuration.qos.root import QosData
+    from pyvelo.client.models.configuration.wan.root import WanData
 
 UPDATE = "configuration/updateConfigurationModule"
 

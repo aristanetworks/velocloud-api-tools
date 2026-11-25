@@ -21,6 +21,7 @@ from pyvelo.analytics import Analytics, FlowGroupBy, FlowMetric
 from pyvelo.analytics.enums import FirewallType
 from pyvelo.client import VcoClient, get_vco_credentials
 from pyvelo.client.enums import EdgeState
+from pyvelo.client.enums.metrics import BasicMetricViewBy
 from pyvelo.client.schemas.enterprise import GetEnterprise, GetEnterpriseEdges
 from pyvelo.core import ApiInterval
 
@@ -176,8 +177,6 @@ async def main() -> None:
         analytics = Analytics(client, enterprise_id=enterprise_id)
 
         try:
-            from pyvelo.client.enums.metrics import BasicMetricViewBy
-
             ent_flow = await analytics.get_enterprise_flow_metrics(
                 interval,
                 BasicMetricViewBy.APPLICATION,

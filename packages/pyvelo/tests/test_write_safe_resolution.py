@@ -17,6 +17,7 @@ from pyvelo.core.identity import (
     SegmentIdentity,
     ServiceGroupIdentity,
 )
+from pyvelo.core.identity import ResolutionError as CoreError
 from pyvelo.core.layers import Edge
 
 from ._type_support import SegmentResolverFactory
@@ -331,8 +332,6 @@ def test_a_new_item_whose_key_is_not_a_name_needs_no_ids() -> None:
 
 
 def test_resolution_error_is_one_class_on_both_import_paths() -> None:
-    from pyvelo.core.identity import ResolutionError as CoreError
-
     assert CoreError is ResolutionError
     assert issubclass(ResolutionError, KeyError)
 

@@ -32,7 +32,6 @@ from __future__ import annotations
 import copy
 import functools
 import json
-from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import (
     TYPE_CHECKING,
@@ -45,9 +44,13 @@ from typing import (
     override,
 )
 
-from pydantic import MISSING
+from pydantic import MISSING, BaseModel, TypeAdapter
+
+from .fields import get_key_spec, is_server_owned
 
 if TYPE_CHECKING:
+    from collections.abc import Callable, Mapping
+
     from .base import VcoModel
     from .layers import Edge, Layered, Profile
     from .patch import PatchError
@@ -261,7 +264,7 @@ class Owned[T]:
 
     def _parent_value(self) -> object:
         """A deep copy of what the profile gives this field, or the display default; ``UnboundError`` if unbound."""
-        from .layers import display_default, profile_stores
+        from .layers import display_default, profile_stores  # noqa: PLC0415 (layers imports this module)
 
         owner = self._owner
         binding = None if owner is None else owner._binding
@@ -346,8 +349,6 @@ def as_stored(value: object) -> object:
     write ``{}``. Once the edge stores the value, each of its fields is the
     edge's. A value that is not a model is returned as it is.
     """
-    from pydantic import BaseModel, TypeAdapter
-
     if isinstance(value, BaseModel):
         dumped = TypeAdapter(object).dump_python(value, mode="json", by_alias=True)
         return type(value).model_validate(dumped)
@@ -365,10 +366,7 @@ def clear_server_owned(value: object) -> object:
     and what an ``Owned`` stores are walked; *value* is changed in place and
     returned.
     """
-    from pydantic import BaseModel
-
-    from .fields import is_server_owned
-    from .layers import field_kind
+    from .layers import field_kind  # noqa: PLC0415 (layers imports this module)
 
     if isinstance(value, BaseModel):
         cls = type(value)
@@ -410,14 +408,14 @@ def unwrap(value: object) -> object:
 
 
 def _key(owner: Layered[Edge], field: str) -> str:
-    from .base import wire_name
+    from .base import wire_name  # noqa: PLC0415 (base imports this module)
 
     return wire_name(type(owner), field)
 
 
 def _null_is_inherit(owner: Layered[Edge], field: str) -> PatchError:
-    from .patch import PatchError
-    from .rebase import Path
+    from .patch import PatchError  # noqa: PLC0415 (patch imports this module, through rebase)
+    from .rebase import Path  # noqa: PLC0415 (rebase imports this module)
 
     key = _key(owner, field)
     return PatchError(
@@ -435,10 +433,10 @@ def _validate_inner(owner: Layered[Edge], field: str, value: object) -> object:
     ``validate_patched_value`` does it, so a refusal is the one a patch of the
     field gives: the same ``PatchError``, at the python name of the field.
     """
-    from .base import field_models
-    from .layers import inner_adapter
-    from .merge import validate_patched_value
-    from .rebase import Path
+    from .base import field_models  # noqa: PLC0415 (base imports this module)
+    from .layers import inner_adapter  # noqa: PLC0415 (layers imports this module)
+    from .merge import validate_patched_value  # noqa: PLC0415 (merge imports this module)
+    from .rebase import Path  # noqa: PLC0415 (rebase imports this module)
 
     cls = type(owner)
     return validate_patched_value(
@@ -450,7 +448,7 @@ def _validate_inner(owner: Layered[Edge], field: str, value: object) -> object:
 
 
 def _unbound(owner: Layered[Edge] | None, field: str) -> Exception:
-    from pyvelo.client.exceptions import UnboundError
+    from pyvelo.client.exceptions import UnboundError  # noqa: PLC0415 (it imports pyvelo.core)
 
     where = f"{type(owner).__name__}.{field}" if owner is not None else "this Owned"
     key = _key(owner, field) if owner is not None else "<key>"
@@ -469,7 +467,7 @@ def _unbound(owner: Layered[Edge] | None, field: str) -> Exception:
 
 
 def _group_name(owner: Layered[Edge], field: str) -> str | None:
-    from .layers import field_kind
+    from .layers import field_kind  # noqa: PLC0415 (layers imports this module)
 
     info = type(owner).model_fields[field]
     return next(
@@ -485,7 +483,7 @@ def group_of(owner: Layered[Edge], field: str) -> OwnedGroup | None:
 def _refuse_member(
     owner: Layered[Edge], field: str, group: OwnedGroup, intent: str
 ) -> None:
-    from pyvelo.client.exceptions import GroupOwnershipError
+    from pyvelo.client.exceptions import GroupOwnershipError  # noqa: PLC0415 (it imports pyvelo.core)
 
     cls = type(owner)
     handle = f"{group.attribute}"
@@ -559,7 +557,7 @@ class OwnedGroup:
     ) -> Self | GroupHandle:
         if obj is None:
             return self
-        from .layers import Edge
+        from .layers import Edge  # noqa: PLC0415 (layers imports this module)
 
         layer = type(obj).layer()
         if layer is not Edge:
@@ -575,7 +573,7 @@ class OwnedGroup:
 
     def members(self, cls: type[Layered[Any]]) -> tuple[str, ...]:
         """The python names of the members in *cls*, in declaration order."""
-        from .layers import field_kind
+        from .layers import field_kind  # noqa: PLC0415 (layers imports this module)
 
         return tuple(
             name
@@ -600,7 +598,7 @@ def groups_of(cls: type) -> dict[str, OwnedGroup]:
 
 def check_groups(cls: type[Layered[Any]]) -> None:
     """Check the groups of *cls*; ``TypeError`` for the first declaration that is wrong."""
-    from .layers import Kind, field_kind
+    from .layers import Kind, field_kind  # noqa: PLC0415 (layers imports this module)
 
     groups = groups_of(cls)
     members: dict[str, list[str]] = {name: [] for name in groups}
@@ -734,9 +732,8 @@ def bind_layers(edge: Layered[Edge], profile: Layered[Profile] | None) -> None:
     *profile* is ``None`` for an edge with no profile: every model is bound to
     nothing.
     """
-    from .fields import get_key_spec
-    from .layers import Edge as EdgeLayer
-    from .layers import Kind, Layered, field_kind
+    from .layers import Edge as EdgeLayer  # noqa: PLC0415 (layers imports this module)
+    from .layers import Kind, Layered, field_kind  # noqa: PLC0415 (layers imports this module)
 
     if type(edge).layer() is not EdgeLayer:
         raise TypeError(
@@ -783,8 +780,6 @@ def bind_new_item(owner: Layered[Edge], field: str, item: Layered[Edge]) -> None
     bound, nothing is done: *item* is as unbound as *owner*, and ``localize``
     in it raises ``UnboundError``.
     """
-    from .fields import get_key_spec
-
     binding = owner._binding
     if binding is None:
         return
@@ -805,7 +800,7 @@ def bind_new_item(owner: Layered[Edge], field: str, item: Layered[Edge]) -> None
 
 def _profile_models(value: object) -> list[Layered[Profile]]:
     """The ``Layered`` models in *value*: the model itself, or those among the items of a list."""
-    from .layers import Layered
+    from .layers import Layered  # noqa: PLC0415 (layers imports this module)
 
     items = cast("list[object]", value) if isinstance(value, list) else [value]
     return [
@@ -876,7 +871,7 @@ class UnflaggedInUse:
 
 def _wire_value(model: type[VcoModel], item: object, path: str) -> object:
     """The value at the python-name *path* below *item*, a raw dict of *model*, read under wire keys; None when a step is absent."""
-    from .base import field_models, is_dict, wire_name
+    from .base import field_models, is_dict, wire_name  # noqa: PLC0415 (base imports this module)
 
     value: object = item
     current: type[VcoModel] | None = model
@@ -893,9 +888,8 @@ def unflagged_in_use_at(
     model: type[Layered[Any]], data: Mapping[str, object]
 ) -> list[UnflaggedInUse]:
     """Every object in raw *data* that the backend uses although its flag is off (``unflagged_in_use``)."""
-    from .base import field_models, is_dict, is_list, wire_name
-    from .fields import get_key_spec
-    from .layers import Kind, Layered, field_kind
+    from .base import field_models, is_dict, is_list, wire_name  # noqa: PLC0415 (base imports this module)
+    from .layers import Kind, Layered, field_kind  # noqa: PLC0415 (layers imports this module)
 
     found: list[UnflaggedInUse] = []
 

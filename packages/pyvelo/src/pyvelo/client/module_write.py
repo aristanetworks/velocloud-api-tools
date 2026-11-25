@@ -1358,8 +1358,7 @@ def rebase_onto[M: ConfigurationModuleBase](
     service in the profile's device settings); the plan's ``ref_changes`` are
     those of the rebased plan.
     """
-    # Imported here: module_check imports this module.
-    from pyvelo.client.module_check import MODULE_REWRITES, data_model
+    from pyvelo.client.module_check import MODULE_REWRITES, data_model  # noqa: PLC0415 (module_check imports this module)
 
     if not isinstance(fresh, type(module)):
         raise TypeError(

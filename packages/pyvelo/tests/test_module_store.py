@@ -10,6 +10,7 @@ from typing import Any, cast
 import httpx
 import pytest
 from pydantic import MISSING
+from pyvelo.client.enums.configuration import ConfigurationModuleName
 from pyvelo.client.exceptions import PRECONDITION_FAILED, ConfigConflictError
 from pyvelo.client.schemas.configuration import (
     ConfigurationModuleUpdate,
@@ -17,6 +18,7 @@ from pyvelo.client.schemas.configuration import (
     QosConfigurationModule,
     UpdateConfigurationModule,
 )
+from pyvelo.client.schemas.edge import GetEdgeConfigurationModules
 from pyvelo.core import ConfigContext
 from pyvelo.core.layers import Edge
 from pyvelo.testing import make_module_json
@@ -904,9 +906,6 @@ def test_an_edge_with_no_composed_modules_is_unknown() -> None:
 async def test_the_client_reads_the_composed_modules_and_the_store_records_the_request(
     mock_vco_client: MockVcoClientFactory,
 ) -> None:
-    from pyvelo.client.enums.configuration import ConfigurationModuleName
-    from pyvelo.client.schemas.edge import GetEdgeConfigurationModules
-
     store = ModuleStore()
     store.composed[42] = {"firewall": copy.deepcopy(RULES)}
     client = await mock_vco_client(store)

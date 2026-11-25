@@ -6,13 +6,13 @@ codes. Library code raises them rather than calling ``sys.exit()``.
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING, Any, cast, override
 
-from pyvelo.config.validation import ValidationError
-
 if TYPE_CHECKING:
+    from collections.abc import Mapping, Sequence
+
     from pyvelo.config.hub_steps import HubStep
+    from pyvelo.config.validation import ValidationError
 
 
 def _rebuild_error(cls: type[IntentError], args: tuple[Any, ...]) -> IntentError:

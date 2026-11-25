@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from collections.abc import Sequence
 from typing import TYPE_CHECKING, Protocol
 
 from pyvelo.client.operations._tagging import SYSTEM, domain_tag
@@ -22,6 +21,8 @@ from pyvelo.client.schemas.vco_inventory import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from pyvelo.client._client_protocol import VcoClientBaseProtocol
 
 

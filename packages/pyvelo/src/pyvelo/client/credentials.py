@@ -24,7 +24,7 @@ def get_vco_credentials(env_file: str | Path | None = None) -> tuple[str, str]:
     """
     if env_file is not None:
         try:
-            from dotenv import load_dotenv
+            from dotenv import load_dotenv  # noqa: PLC0415 (python-dotenv is the optional dotenv extra)
         except ModuleNotFoundError as exc:
             raise ModuleNotFoundError(
                 "Loading an env file requires python-dotenv; install it with: "

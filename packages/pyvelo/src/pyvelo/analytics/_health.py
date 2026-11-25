@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from pydantic import MISSING
 
@@ -11,10 +11,10 @@ from pyvelo.client.schemas.metrics import (
     GetEdgeStatusMetrics,
     GetEdgeStatusSeries,
 )
-from pyvelo.core import ApiInterval
 
-if __builtins__:  # type: ignore[truthy-bool]
+if TYPE_CHECKING:
     from pyvelo.client.protocol import VcoClientProtocol
+    from pyvelo.core import ApiInterval
 
 
 _HEALTH_METRIC_FIELDS = [

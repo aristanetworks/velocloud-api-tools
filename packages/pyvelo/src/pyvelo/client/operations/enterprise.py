@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from collections.abc import Sequence
 from typing import TYPE_CHECKING, Protocol
 
 from pyvelo.client.enums import UserType
@@ -116,11 +115,13 @@ from pyvelo.client.schemas.network import (
     GetNetworkEnterprises,
     GetNetworkEnterprisesResultItem,
 )
-from pyvelo.client.schemas.profiles import GetEnterpriseConfigurations
 from pyvelo.core import InsertionConfirmation, RowsModifiedConfirmation
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from pyvelo.client._client_protocol import VcoClientBaseProtocol
+    from pyvelo.client.schemas.profiles import GetEnterpriseConfigurations
 
 
 class EnterpriseMixin(Protocol):

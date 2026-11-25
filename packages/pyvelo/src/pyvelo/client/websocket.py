@@ -14,11 +14,8 @@ import contextlib
 import json
 import logging
 import uuid
-from collections.abc import Callable, Coroutine
-from types import TracebackType
-from typing import Any, Self, overload
+from typing import TYPE_CHECKING, Any, Self, overload
 
-import httpx
 from httpx_ws import (
     AsyncWebSocketSession,
     HTTPXWSException,
@@ -34,6 +31,12 @@ from pyvelo.client.exceptions import (
     VcoWebSocketValidationError,
 )
 from pyvelo.client.schemas.gateway import GwRouteTableEntry
+
+if TYPE_CHECKING:
+    from collections.abc import Callable, Coroutine
+    from types import TracebackType
+
+    import httpx
 
 logger = logging.getLogger(__name__)
 

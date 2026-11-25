@@ -98,10 +98,9 @@ from __future__ import annotations
 import copy
 import uuid
 from collections import Counter
-from collections.abc import AsyncGenerator, Awaitable, Callable, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from typing import Any, Literal, cast
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 import pytest
 from live_support import (
@@ -166,11 +165,9 @@ from pyvelo.client.models.configuration import (
     QosData,
     WanData,
 )
-from pyvelo.client.models.configuration.device_settings.segment import StaticRoute
 from pyvelo.client.models.configuration.qos.qoe import QoeSettings
 from pyvelo.client.models.configuration.qos.root import ServiceRateLimit
 from pyvelo.client.models.configuration.ref_owners import declared_ref_names
-from pyvelo.client.module_write import ModulePlan
 from pyvelo.client.schemas.configuration import (
     AnyStoredModule,
     DeviceSettingsConfigurationModule,
@@ -182,7 +179,6 @@ from pyvelo.client.schemas.configuration import (
     UpdateConfigurationModule,
     WanConfigurationModule,
 )
-from pyvelo.client.schemas.edge import GetEdgeConfigurationStack
 from pyvelo.client.schemas.enterprise import (
     EnterpriseServiceSummary,
     GetEnterpriseServices,
@@ -197,13 +193,20 @@ from pyvelo.config import (
 )
 from pyvelo.config.resolvers.segment import SegmentResolver
 from pyvelo.core import ConfigContext, VcoModel
-from pyvelo.core.identity import SegmentIdentity
 from pyvelo.core.rebase import Key, Path, RawChange, raw_changes
 from pyvelo.core.response_check import (
     PathPattern,
     ServerChange,
     matches,
 )
+
+if TYPE_CHECKING:
+    from collections.abc import AsyncGenerator, Awaitable, Callable, Sequence
+
+    from pyvelo.client.models.configuration.device_settings.segment import StaticRoute
+    from pyvelo.client.module_write import ModulePlan
+    from pyvelo.client.schemas.edge import GetEdgeConfigurationStack
+    from pyvelo.core.identity import SegmentIdentity
 
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio(loop_scope="session")]
 

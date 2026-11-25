@@ -8,16 +8,16 @@ from pydantic import MISSING
 
 from pyvelo.analytics._helpers import get_field
 from pyvelo.analytics.frame import MetricFrame
-from pyvelo.client.enums.metrics import AggregateEdgeLinkMetric
 from pyvelo.client.exceptions import VcoOperationError
 from pyvelo.client.schemas.metrics import (
     AggregateEdgeLinkMetricsItem,
     GetAggregateEdgeLinkMetrics,
 )
-from pyvelo.core import ApiInterval
 
 if TYPE_CHECKING:
+    from pyvelo.client.enums.metrics import AggregateEdgeLinkMetric
     from pyvelo.client.protocol import VcoClientProtocol
+    from pyvelo.core import ApiInterval
 
 _IDENTITY_FIELDS = [
     "enterprise_id",

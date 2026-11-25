@@ -1,19 +1,22 @@
 from __future__ import annotations
 
-from collections.abc import Sequence
 from datetime import UTC, datetime
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
 import pytest
 from pydantic import ValidationError
 from pyvelo.analytics.analytics import Analytics
-from pyvelo.client.protocol import VcoClientProtocol
 from pyvelo.client.schemas.link_quality import (
     GetLinkQualityEvents,
     GetLinkQualityEventsResult,
 )
 from pyvelo.client.schemas.metrics import EdgeLinkSeriesItem, GetEdgeLinkSeries
 from pyvelo.core import ApiInterval
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
+
+    from pyvelo.client.protocol import VcoClientProtocol
 
 
 @pytest.fixture

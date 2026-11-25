@@ -17,6 +17,7 @@ from hub_helpers import (
     ds_with_vpn,
 )
 from pydantic.fields import FieldInfo
+from pyvelo.client.hub_services import hub_list_fields
 from pyvelo.client.models.configuration.device_settings.lan import LanNetwork
 from pyvelo.client.models.configuration.device_settings.root import (
     DeviceSettingsData,
@@ -166,8 +167,6 @@ def test_the_hub_roles() -> None:
 
 
 def test_the_hub_list_fields_are_the_marked_fields_with_their_wire_paths() -> None:
-    from pyvelo.client.hub_services import hub_list_fields
-
     marked = [
         f"{cls.__name__}.{name}"
         for cls, name, fi in _fields((DeviceSettingsData,))

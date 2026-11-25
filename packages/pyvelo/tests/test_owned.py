@@ -31,7 +31,7 @@ from pyvelo.core import (
     kind_default,
 )
 from pyvelo.core.layers import L, inner_adapter
-from pyvelo.core.owned import unflagged_in_use
+from pyvelo.core.owned import clear_server_owned, unflagged_in_use
 
 # Fields that hold their plain default in every dump and say nothing about ownership.
 _PLAIN = {"legacy", "edge_note", "profile_note"}
@@ -681,8 +681,6 @@ def test_localize_clears_server_owned_fields_at_every_depth() -> None:
 
 
 def test_clear_server_owned_changes_the_model_in_place() -> None:
-    from pyvelo.core.owned import clear_server_owned
-
     item = _Item(name="a", rule_id="1")
     assert clear_server_owned(item) is item
     assert item.rule_id is MISSING
@@ -706,8 +704,6 @@ class _Kinded(Layered[L]):
 
 
 def test_clear_server_owned_reads_the_kind_and_walks_into_owned() -> None:
-    from pyvelo.core.owned import clear_server_owned
-
     instance = _Kinded[Edge].model_validate(
         {"rid": "a", "note": {"name": "r", "ruleLogicalId": "b"}}
     )

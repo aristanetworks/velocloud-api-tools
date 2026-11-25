@@ -1,12 +1,15 @@
 from __future__ import annotations
 
-from collections.abc import Sequence
 from datetime import UTC, datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from pyvelo.analytics._helpers import get_field, is_other_bucket
 from pyvelo.analytics.frame import MetricFrame
-from pyvelo.core.base import VcoModel
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
+
+    from pyvelo.core.base import VcoModel
 
 
 def denormalize_timeseries(

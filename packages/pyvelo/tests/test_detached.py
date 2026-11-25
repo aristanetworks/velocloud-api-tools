@@ -5,6 +5,8 @@ import pickle
 from typing import Any, ClassVar, Self, cast
 
 import pytest
+import pyvelo
+import pyvelo.client
 from pydantic import ConfigDict, Field, RootModel, model_validator
 from pyvelo.client.exceptions import DetachedObjectError, VcoError
 from pyvelo.client.models.configuration import FirewallData
@@ -268,9 +270,6 @@ def test_model_machinery_still_works() -> None:
 
 
 def test_the_error_is_a_vco_error_and_exported() -> None:
-    import pyvelo
-    import pyvelo.client
-
     assert issubclass(DetachedObjectError, VcoError)
     assert "DetachedObjectError" in pyvelo.client.__all__
     assert "DetachedObjectError" in pyvelo.__all__

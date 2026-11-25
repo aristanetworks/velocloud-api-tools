@@ -7,7 +7,7 @@ loaded with Global, Guest and Voice); the writes go to a ``ModuleStore``.
 import copy
 import uuid
 from collections.abc import Mapping
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 from profile_state import (
@@ -35,7 +35,6 @@ from pyvelo.config.profile_segments import (
 from pyvelo.config.resolver import ResolverRegistry
 from pyvelo.config.state import ConfigState
 from pyvelo.core.identity import ResolutionError
-from pyvelo.core.layers import Profile
 from refs_helpers import QOS_ID, SEG1_OBJECT
 from segment_helpers import (
     GLOBAL,
@@ -48,6 +47,9 @@ from segment_helpers import (
 from test_state_plan import (  # pyright: ignore[reportImplicitRelativeImport]
     make_state,
 )
+
+if TYPE_CHECKING:
+    from pyvelo.core.layers import Profile
 
 DS = "deviceSettings"
 QOS = "QOS"

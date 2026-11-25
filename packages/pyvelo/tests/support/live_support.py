@@ -145,21 +145,11 @@ import tempfile
 import threading
 import uuid
 import weakref
-from collections.abc import (
-    AsyncGenerator,
-    Awaitable,
-    Callable,
-    Generator,
-    Iterable,
-    Mapping,
-    Sequence,
-)
 from contextlib import aclosing, asynccontextmanager, contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
-from typing import Annotated, Any, Literal, NoReturn, cast
+from typing import TYPE_CHECKING, Annotated, Any, Literal, NoReturn, cast
 
-import httpx
 import pytest
 from pydantic import MISSING, BaseModel, RootModel, ValidationError
 from pyvelo.client import (
@@ -216,6 +206,19 @@ from pyvelo.core import (
 from pyvelo.core.identity import HubLogicalId, ResolutionError
 from pyvelo.core.rebase import Key, Path, RawChange, raw_changes
 from pyvelo.core.response_check import PlannedChange, ServerChange
+
+if TYPE_CHECKING:
+    from collections.abc import (
+        AsyncGenerator,
+        Awaitable,
+        Callable,
+        Generator,
+        Iterable,
+        Mapping,
+        Sequence,
+    )
+
+    import httpx
 
 SYNTHETIC_PREFIX = "pyvelo-it-"
 """Every rule, description and the like these tests add starts with this."""

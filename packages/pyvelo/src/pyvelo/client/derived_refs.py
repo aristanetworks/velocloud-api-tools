@@ -20,7 +20,6 @@ from __future__ import annotations
 import copy
 import operator
 import uuid
-from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Final, cast
 
@@ -47,11 +46,13 @@ from pyvelo.core.identity import (
     SegmentIdentity,
     entity_label,
 )
-from pyvelo.core.rebase import Path
 from pyvelo.core.show import patch_text
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
+
     from pyvelo.client.schemas.configuration import ConfigurationModuleBase
+    from pyvelo.core.rebase import Path
 
 APPEND_ONLY_REF_NAMES: Final = frozenset(
     {"deviceSettings:vnfs:edge", "objectGroup:addressGroup", "objectGroup:portGroup"}

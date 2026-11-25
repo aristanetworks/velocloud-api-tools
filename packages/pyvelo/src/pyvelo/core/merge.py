@@ -11,9 +11,8 @@ import difflib
 import enum
 import functools
 import json
-from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Literal, LiteralString, cast, get_args, get_origin
+from typing import TYPE_CHECKING, Literal, LiteralString, cast, get_args, get_origin
 
 from pydantic import (
     MISSING,
@@ -21,7 +20,6 @@ from pydantic import (
     TypeAdapter,
     ValidationError,
 )
-from pydantic.fields import FieldInfo
 from pydantic_core import InitErrorDetails, PydanticCustomError, PydanticUndefined
 
 from .base import (
@@ -94,6 +92,11 @@ from .rebase import (
     key_text,
     parse_key_text,
 )
+
+if TYPE_CHECKING:
+    from collections.abc import Callable, Mapping, Sequence
+
+    from pydantic.fields import FieldInfo
 
 
 def apply_patch(

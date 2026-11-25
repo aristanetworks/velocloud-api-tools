@@ -40,6 +40,7 @@ from collections.abc import Callable, Iterable, Iterator, Mapping
 from dataclasses import dataclass
 from enum import Enum, IntEnum, auto
 from typing import (
+    TYPE_CHECKING,
     Annotated,
     Any,
     ClassVar,
@@ -72,7 +73,6 @@ from pydantic import (
     model_serializer,
 )
 from pydantic.alias_generators import to_camel
-from pydantic.fields import FieldInfo
 from pydantic_core import PydanticUndefined
 
 from .fields import (
@@ -89,6 +89,9 @@ from .fields import (
     resolve_ctx_default,
 )
 from .owned import Owned, unwrap
+
+if TYPE_CHECKING:
+    from pydantic.fields import FieldInfo
 
 type JsonObject = dict[str, object]
 """A JSON object: a merge patch, a compact dump, a pydantic context, ..."""
@@ -419,7 +422,7 @@ def _models_inside(value: object, place: _Place) -> Iterator[tuple[_Place, BaseM
 
 def _raise_detached(model: VcoModel, name: str) -> Never:
     """Raise ``DetachedObjectError`` for an edit of *name* through *model*."""
-    from pyvelo.client.exceptions import DetachedObjectError  # it imports pyvelo.core
+    from pyvelo.client.exceptions import DetachedObjectError  # noqa: PLC0415 (it imports pyvelo.core)
 
     raise DetachedObjectError(
         f"{type(model).__name__}.{name}: this object was replaced by a write; "
@@ -946,7 +949,7 @@ class VcoModel(BaseModel):
         """
         if self.is_detached:
             _raise_detached(self, "merge_patch")
-        from .merge import apply_patch  # merge.py imports this module
+        from .merge import apply_patch  # noqa: PLC0415 (merge imports this module)
 
         _ = apply_patch(self, patch, resolvers)
         return self
@@ -982,7 +985,7 @@ def _held_type(fi: FieldInfo) -> object:
     ``FieldInfo.annotation`` of a converted field is the carrier, so every
     reader of a field's type reads it here.
     """
-    from .layers import field_kind  # layers imports this module
+    from .layers import field_kind  # noqa: PLC0415 (layers imports this module)
 
     return field_kind(fi).inner_type
 

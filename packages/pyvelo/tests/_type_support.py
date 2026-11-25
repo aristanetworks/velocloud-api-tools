@@ -3,14 +3,17 @@
 from __future__ import annotations
 
 import json
-from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping, Sequence
-from typing import Protocol, cast
+from typing import TYPE_CHECKING, Protocol, cast
 
-import httpx
 from pydantic import MISSING, BaseModel
-from pyvelo.client import VcoClient
-from pyvelo.client.protocol import VcoClientProtocol
-from pyvelo.config.resolvers.segment import SegmentResolver
+
+if TYPE_CHECKING:
+    from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping, Sequence
+
+    import httpx
+    from pyvelo.client import VcoClient
+    from pyvelo.client.protocol import VcoClientProtocol
+    from pyvelo.config.resolvers.segment import SegmentResolver
 
 type JsonScalar = None | bool | int | float | str
 type JsonValue = JsonScalar | list[JsonValue] | dict[str, JsonValue]

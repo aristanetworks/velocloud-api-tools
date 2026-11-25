@@ -1,9 +1,12 @@
 """Tests for marker introspection helpers."""
 
+import uuid
 from typing import Annotated
 
 import pyvelo.core
-from pydantic import Field
+from pydantic import MISSING, Field
+from pyvelo.client.models.configuration.firewall.rules import FirewallOutboundRule
+from pyvelo.client.models.configuration.qos.rule import QosRule
 from pyvelo.core import VcoModel
 from pyvelo.core.fields import (
     EdgeLocal,
@@ -88,12 +91,6 @@ def test_server_owned_is_exported() -> None:
 
 
 def test_a_new_firewall_rule_has_no_id_and_a_new_qos_rule_has_one() -> None:
-    import uuid
-
-    from pydantic import MISSING
-    from pyvelo.client.models.configuration.firewall.rules import FirewallOutboundRule
-    from pyvelo.client.models.configuration.qos.rule import QosRule
-
     firewall_id = FirewallOutboundRule.model_fields["rule_logical_id"]
     assert is_server_owned(firewall_id)
     assert firewall_id.default is MISSING

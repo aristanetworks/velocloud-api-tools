@@ -14,10 +14,10 @@ Run:
 from __future__ import annotations
 
 import uuid
+from typing import TYPE_CHECKING
 
 import polars as pl
 import pytest
-from pyvelo.analytics import Analytics
 from pyvelo.analytics.enums import (
     EnterpriseFirewallType,
     FirewallType,
@@ -25,6 +25,8 @@ from pyvelo.analytics.enums import (
     FlowMetric,
 )
 from pyvelo.analytics.frame import MetricFrame
+from pyvelo.client.enums.edge import EdgeState
+from pyvelo.client.enums.event import EventSeverity, EventType
 from pyvelo.client.enums.metrics import (
     AggregateEdgeLinkMetric,
     BasicMetricViewBy,
@@ -42,10 +44,14 @@ from pyvelo.client.schemas.metrics import (
     EnterpriseFlowMetricsFilter,
     LinkPair,
 )
-from pyvelo.core import ApiInterval
 
-from ._discovery import VcoTestContext
 from .conftest import assert_frame_valid, skip_on_vco_limitation
+
+if TYPE_CHECKING:
+    from pyvelo.analytics import Analytics
+    from pyvelo.core import ApiInterval
+
+    from ._discovery import VcoTestContext
 
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio(loop_scope="session")]
 
@@ -715,8 +721,6 @@ class TestCollectEvents:
     async def test_with_event_types(
         self, analytics: Analytics, interval: ApiInterval
     ) -> None:
-        from pyvelo.client.enums.event import EventType
-
         frame = await analytics.collect_events(
             interval=interval,
             event_types=[EventType.EDGE_UP, EventType.EDGE_DOWN],
@@ -727,8 +731,6 @@ class TestCollectEvents:
     async def test_with_severity(
         self, analytics: Analytics, interval: ApiInterval
     ) -> None:
-        from pyvelo.client.enums.event import EventSeverity
-
         frame = await analytics.collect_events(
             interval=interval,
             severity=[EventSeverity.ALERT, EventSeverity.CRITICAL],
@@ -749,8 +751,6 @@ class TestCollectEdges:
         assert len(frame) > 0
 
     async def test_with_state_filter(self, analytics: Analytics) -> None:
-        from pyvelo.client.enums.edge import EdgeState
-
         frame = await analytics.collect_edges(edge_state=[EdgeState.CONNECTED])
         assert isinstance(frame, MetricFrame)
 

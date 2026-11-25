@@ -1,12 +1,16 @@
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import pytest
 from pydantic import MISSING
 from pyvelo.analytics.analytics import Analytics
 from pyvelo.client.schemas.configuration import EnterpriseConfigurationProfile
-from pyvelo.client.schemas.profiles import GetEnterpriseConfigurations
 
 from ._type_support import MockListClient
+
+if TYPE_CHECKING:
+    from pyvelo.client.schemas.profiles import GetEnterpriseConfigurations
 
 
 def _make_profile(

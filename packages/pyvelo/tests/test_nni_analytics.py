@@ -1,18 +1,21 @@
 from __future__ import annotations
 
-from collections.abc import Sequence
 from datetime import UTC, datetime
-from typing import cast, final
+from typing import TYPE_CHECKING, cast, final
 
 import pytest
 from pydantic import MISSING
 from pyvelo.analytics.analytics import Analytics
-from pyvelo.client.protocol import VcoClientProtocol
-from pyvelo.client.schemas.monitoring import (
-    GetEnterpriseNniMetrics,
-    GetEnterpriseNniSeries,
-)
 from pyvelo.core import ApiInterval
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
+
+    from pyvelo.client.protocol import VcoClientProtocol
+    from pyvelo.client.schemas.monitoring import (
+        GetEnterpriseNniMetrics,
+        GetEnterpriseNniSeries,
+    )
 
 
 @pytest.fixture

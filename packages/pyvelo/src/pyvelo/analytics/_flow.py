@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from pydantic import MISSING
 
@@ -40,10 +40,10 @@ from pyvelo.client.schemas.metrics import (
     GetEdgeSegmentMetrics,
     GetEdgeSegmentSeries,
 )
-from pyvelo.core import ApiInterval
 
-if __builtins__:  # type: ignore[truthy-bool]
+if TYPE_CHECKING:
     from pyvelo.client.protocol import VcoClientProtocol
+    from pyvelo.core import ApiInterval
 
 type _FlowMetricsItems = (
     Sequence[EdgeAppMetricsItem]

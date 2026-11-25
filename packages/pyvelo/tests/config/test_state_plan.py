@@ -2,6 +2,7 @@ import copy
 from typing import Any, override
 
 import pytest
+import pyvelo.config
 from pyvelo.client.enums.configuration import ConfigurationModuleName
 from pyvelo.client.exceptions import (
     ComposedModuleError,
@@ -10,6 +11,7 @@ from pyvelo.client.exceptions import (
     DetachedObjectError,
     FixedListError,
     HubListError,
+    LossyFieldError,
     ModuleWriteError,
     RefsDroppedError,
     RefsNotLoadedError,
@@ -17,6 +19,8 @@ from pyvelo.client.exceptions import (
     WriteNotAppliedError,
     WriteOutcomeUnknownError,
 )
+from pyvelo.client.module_check import ModuleWrite
+from pyvelo.client.module_write import ModulePlan
 from pyvelo.client.schemas.configuration import (
     EdgeConfiguration,
     EnterpriseConfigurationProfile,
@@ -24,8 +28,11 @@ from pyvelo.client.schemas.configuration import (
 )
 from pyvelo.config import add, delete
 from pyvelo.config.pipeline import ConfigPipeline
-from pyvelo.config.resolver import ResolverContext
-from pyvelo.config.state import ConfigState
+from pyvelo.config.resolver import ResolutionError, ResolverContext
+from pyvelo.config.state import ConfigFieldChange, ConfigPlan, ConfigState
+from pyvelo.core import PatchError
+from pyvelo.core.patch import PatchErrorKind
+from pyvelo.core.response_check import PlannedChange, ServerChange
 from pyvelo.testing import MockVcoClient, make_module_json
 
 
@@ -194,8 +201,6 @@ async def test_state_keeps_working_after_a_write() -> None:
 
 
 def test_write_errors_are_exported_from_the_package() -> None:
-    import pyvelo.config
-
     assert pyvelo.config.ModuleWriteError is ModuleWriteError
     assert pyvelo.config.ComposedModuleError is ComposedModuleError
     assert pyvelo.config.ConfigConflictError is ConfigConflictError
@@ -227,22 +232,11 @@ def test_write_errors_are_exported_from_the_package() -> None:
 
 
 def test_patch_error_is_exported_from_the_package() -> None:
-    import pyvelo.config
-    from pyvelo.core import PatchError
-
     assert pyvelo.config.PatchError is PatchError
     assert "PatchError" in pyvelo.config.__all__
 
 
 def test_the_types_a_save_hands_back_are_exported_from_the_package() -> None:
-    import pyvelo.config
-    from pyvelo.client.exceptions import LossyFieldError
-    from pyvelo.client.module_check import ModuleWrite
-    from pyvelo.client.module_write import ModulePlan
-    from pyvelo.config.resolver import ResolutionError
-    from pyvelo.config.state import ConfigFieldChange, ConfigPlan
-    from pyvelo.core.response_check import PlannedChange, ServerChange
-
     exported = {
         "LossyFieldError": LossyFieldError,
         "ResolutionError": ResolutionError,
@@ -259,9 +253,6 @@ def test_the_types_a_save_hands_back_are_exported_from_the_package() -> None:
 
 
 def test_the_kind_of_a_patch_error_is_exported_from_the_package() -> None:
-    import pyvelo.config
-    from pyvelo.core.patch import PatchErrorKind
-
     assert pyvelo.config.PatchErrorKind is PatchErrorKind
     assert "PatchErrorKind" in pyvelo.config.__all__
 

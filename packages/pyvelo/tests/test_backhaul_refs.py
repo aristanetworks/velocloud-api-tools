@@ -28,8 +28,15 @@ from pyvelo.client.hub_services import (
 )
 from pyvelo.client.models.configuration import FirewallData
 from pyvelo.client.models.configuration import ref_owners as ref_owners_module
+from pyvelo.client.models.configuration.firewall.rules import (
+    FirewallOutboundRule,
+)
 from pyvelo.client.models.configuration.qos.root import QosData
-from pyvelo.client.models.configuration.qos.rule import BackhaulEdge
+from pyvelo.client.models.configuration.qos.rule import (
+    BackhaulEdge,
+    QosRule,
+    QosRuleMatch,
+)
 from pyvelo.client.models.configuration.ref_owners import ref_owners
 from pyvelo.client.module_write import ModulePlan, plan_module
 from pyvelo.client.schemas.configuration import (
@@ -671,14 +678,6 @@ def visits(monkeypatch: pytest.MonkeyPatch) -> _Visits:
 def test_the_walk_reaches_rule_lists_and_skips_what_holds_no_owner(
     visits: _Visits,
 ) -> None:
-    from pyvelo.client.models.configuration.firewall.rules import (
-        FirewallOutboundRule,
-    )
-    from pyvelo.client.models.configuration.qos.rule import (
-        QosRule,
-        QosRuleMatch,
-    )
-
     firewall_entry = segment_helpers.firewall_entry(GLOBAL)
     (template,) = firewall_entry["outbound"]
     firewall_entry["outbound"] = [
