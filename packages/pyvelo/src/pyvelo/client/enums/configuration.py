@@ -21,7 +21,8 @@ class ConfigurationModuleType(StrEnum):
     GATEWAY = "GATEWAY"
 
 
-# imageUpdate,controlPlane,managementPlane,firewall,QOS,deviceSettings,WAN,metaData,properties,analyticsSettings,atpMetadata
+# imageUpdate,controlPlane,managementPlane,firewall,QOS,deviceSettings,WAN,metaData,
+# properties,analyticsSettings,atpMetadata
 class ConfigurationModuleName(StrEnum):
     META_DATA = "metaData"
     PROPERTIES = "properties"

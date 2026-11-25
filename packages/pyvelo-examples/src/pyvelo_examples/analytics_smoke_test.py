@@ -576,7 +576,10 @@ def print_results(
     results: list[TestResult], enterprise_id: int, hours: int, ctx: DiscoveredContext
 ) -> None:
     """Print a numbered table of *results* and a count of each status."""
-    header = f"Analytics Smoke Test — enterprise {enterprise_id}, {hours}h, edge {ctx.edge_name} ({ctx.edge_id}, {ctx.edge_version})"
+    header = (
+        f"Analytics Smoke Test — enterprise {enterprise_id}, {hours}h, "
+        f"edge {ctx.edge_name} ({ctx.edge_id}, {ctx.edge_version})"
+    )
     sep = "=" * max(len(header), 78)
 
     print(f"\n{header}")
@@ -612,7 +615,8 @@ async def main() -> None:
         if args.dump_dir:
             client.enable_dump(args.dump_dir)
             logger.warning(
-                "Writing raw VCO request/response bodies to %s; protect or delete these files after use",
+                "Writing raw VCO request/response bodies to %s; "
+                "protect or delete these files after use",
                 args.dump_dir,
             )
 

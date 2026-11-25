@@ -252,7 +252,8 @@ class ModulePlan:
     it (``module.additions``), so an added entry nobody edited is no change.
     """
     reconciled_segments: tuple[str, ...]
-    """The profile's segments that the edge module, as read or as edited, does not have."""
+    """The profile's segments that the edge module, as read or as edited, does not
+    have."""
     legacy_keys: tuple[Path, ...] = ()
     """Where the raw data has keys that the VCO does not know and a write drops.
 
@@ -273,13 +274,16 @@ class ModulePlan:
     ref_changes: tuple[RefChange, ...] = ()
     """The ref rows the edit adds and removes, from the difference of the owners."""
     warnings: tuple[PlanWarning, ...] = ()
-    """What disagrees in the module as read about its refs, and the plan leaves as it is."""
+    """What disagrees in the module as read about its refs, and the plan leaves as it
+    is."""
     added_segments: tuple[str, ...] = ()
     """The names of the segments added to the module that the payload holds."""
     repair_defaults: bool = True
-    """The ``repair_defaults`` that ``plan_module`` was called with; a rebase of the plan keeps it."""
+    """The ``repair_defaults`` that ``plan_module`` was called with; a rebase of the
+    plan keeps it."""
     missing_defaults: tuple[MissingDefaults, ...] = ()
-    """The segments of a profile QoS module that lack template ``defaults``, one entry each.
+    """The segments of a profile QoS module that lack template ``defaults``, one entry
+    each.
 
     ``repaired`` says whether the payload has the missing entries.
     """
@@ -401,7 +405,11 @@ def with_hub_rows(
     if plan.operation != "update" or plan.refs is None:
         raise ValueError(
             f"{plan.name}: hub rows go with an update that sends refs, and this "
-            f"plan is {'an update with no refs' if plan.operation == 'update' else plan.operation}"
+            f"plan is {
+                'an update with no refs'
+                if plan.operation == 'update'
+                else plan.operation
+            }"
         )
     names = segments or {}
     refs = copy.deepcopy(plan.refs)
@@ -600,11 +608,14 @@ class ReadData:
 
     module: ConfigurationModuleBase
     extra: list[dict[str, Any]]
-    """The profile's segment entries the edge module lacks (none at the profile level)."""
+    """The profile's segment entries the edge module lacks (none at the profile
+    level)."""
     reconciled: Any
-    """The raw data plus *extra*: the module as read, as the VCO would store it reconciled."""
+    """The raw data plus *extra*: the module as read, as the VCO would store it
+    reconciled."""
     planned_from: Any
-    """*reconciled* plus the entries added to a profile module (``module.additions``)."""
+    """*reconciled* plus the entries added to a profile module
+    (``module.additions``)."""
 
     def model[M: VcoModel](self, model_type: type[M]) -> M:
         """``planned_from`` parsed as *model_type*, the way the module was first parsed.
@@ -920,7 +931,8 @@ def _defaults_findings(
                 parts.append(f"items the template does not know ({', '.join(known)})")
             if pairing.clash:
                 parts.append(
-                    f"missing entries whose names it already holds ({', '.join(pairing.clash)}), "
+                    "missing entries whose names it already holds "
+                    f"({', '.join(pairing.clash)}), "
                     "which a repair would repeat"
                 )
             warnings.append(
@@ -1362,7 +1374,8 @@ def rebase_onto[M: ConfigurationModuleBase](
 
     if not isinstance(fresh, type(module)):
         raise TypeError(
-            f"the module read is a {type(fresh).__name__}, not a {type(module).__name__}"
+            f"the module read is a {type(fresh).__name__}, "
+            f"not a {type(module).__name__}"
         )
     additions = module.additions
     as_read = {} if module.raw_data is MISSING else module.raw_data

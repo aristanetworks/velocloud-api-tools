@@ -69,7 +69,8 @@ SERVICE_TYPES: Final[Mapping[str, str]] = {
     "deviceSettings:authentication": EnterpriseServiceType.AUTHENTICATION.value,
     "deviceSettings:css:provider": EnterpriseServiceType.CLOUD_SECURITY_SERVICE.value,
 }
-"""The type of network service each provider ref names, a tag of ``EnterpriseServiceType``.
+"""The type of network service each provider ref names, a tag of
+``EnterpriseServiceType``.
 
 A new row of one of these names whose service is of another type is refused:
 the VCO would store a row that names a service the field cannot use.
@@ -428,8 +429,9 @@ def _warnings(
                     PlanWarning(
                         "owner_without_ref",
                         path,
-                        f"The data holds {owner.value} at {owner.path}, but the module has "
-                        f"no {owner.name} row for it. The row is left missing: {_ONLY_THE_EDIT}.",
+                        f"The data holds {owner.value} at {owner.path}, but the "
+                        f"module has no {owner.name} row for it. The row is left "
+                        f"missing: {_ONLY_THE_EDIT}.",
                     )
                 )
         else:
@@ -444,9 +446,10 @@ def _warnings(
                     PlanWarning(
                         "several_refs",
                         path,
-                        f"The module has {len(of_segment)} {owner.name} rows for one "
-                        f"segment, and {owner.path} shows the first. Every row is left "
-                        f"as it is: {_ONLY_THE_EDIT}, and a change removes only the row shown.",
+                        f"The module has {len(of_segment)} {owner.name} rows for "
+                        f"one segment, and {owner.path} shows the first. Every row "
+                        f"is left as it is: {_ONLY_THE_EDIT}, and a change removes "
+                        "only the row shown.",
                     )
                 )
     for name in sorted(declared_ref_names(type(baseline), level)):

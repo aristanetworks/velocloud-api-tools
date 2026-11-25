@@ -116,7 +116,8 @@ def profile_placeholder(
     """
     if profile_segments is None:
         raise UnboundError(
-            f"segment {name!r} is not in this layer, and this object is not bound to a profile; load it through ConfigPipeline"
+            f"segment {name!r} is not in this layer, and this object is not bound "
+            "to a profile; load it through ConfigPipeline"
         )
     entry = _profile_segment_called(profile_segments, name)
     if entry is not None:
@@ -159,7 +160,8 @@ def _profile_segment_entry(
     """The profile segment entry *selector* names (``profile_segment_name``), or None."""
     if profile_segments is None:
         raise UnboundError(
-            f"segment {selector!r}: this object is not bound to a profile; load it through ConfigPipeline"
+            f"segment {selector!r}: this object is not bound to a profile; "
+            "load it through ConfigPipeline"
         )
     text = str(selector)
     entry = _profile_segment_called(profile_segments, text)

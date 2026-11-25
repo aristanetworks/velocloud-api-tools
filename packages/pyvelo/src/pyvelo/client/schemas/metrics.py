@@ -501,7 +501,9 @@ class FlowVisibilityFilter(VcoModel):
 
 class FlowVisibilityFilters(VcoModel):
     conditions: Annotated[list[FlowVisibilityFilter], Alias("and")] = Field(
-        description="Array of filter conditions; each specifies field, operator and value"
+        description=(
+            "Array of filter conditions; each specifies field, operator and value"
+        )
     )
 
 
@@ -521,7 +523,9 @@ class GetEdgeFlowVisibilityMetrics(PaginatedVcoModel):
     limit: int | MISSING = MISSING
     sort: FlowVisibilityMetric | MISSING = Field(
         default=MISSING,
-        description="Metric to sort results by (e.g. totalBytes); use sortOrder for direction",
+        description=(
+            "Metric to sort results by (e.g. totalBytes); use sortOrder for direction"
+        ),
     )
     sort_order: SortDirection | MISSING = Field(
         default=MISSING,

@@ -63,7 +63,8 @@ from pyvelo.core import ConfigContext
 from pyvelo.testing.fixtures import make_jsonrpc_response
 
 type StoreHook = Callable[[dict[str, Any], dict[str, Any] | None], None]
-"""Called with the row about to be stored and the row it replaces (None for an insert); changes the first in place."""
+"""Called with the row about to be stored and the row it replaces (None for an insert);
+changes the first in place."""
 
 _FIRST_VERSION = 1_700_000_000_000
 _FIXED_TIME = "2024-01-01T00:00:00.000Z"
@@ -188,31 +189,46 @@ class ModuleStore:
     fail_writes: set[int]
     """The 1-based numbers of the writes answered with an error."""
     lose_answers: set[int]
-    """The 1-based numbers of the writes that are handled and then not answered: the request raises ``httpx.ReadTimeout``."""
+    """The 1-based numbers of the writes that are handled and then not answered: the
+    request raises ``httpx.ReadTimeout``."""
     conditional_check: bool
     return_data: bool
     enterprise_id: int | None
-    """The enterprise every request has to name; None when requests need not name one."""
+    """The enterprise every request has to name; None when requests need not name
+    one."""
     issue_rule_ids: bool
     """Whether a stored write gives its rules the IDs a VCO gives them."""
     stacks: dict[int | None, tuple[int, int]]
-    """Edge ID, or None for every edge, to the IDs of its edge and profile configurations."""
+    """Edge ID, or None for every edge, to the IDs of its edge and profile
+    configurations."""
     composed: dict[int, dict[str, object | None]]
-    """Edge ID to the modules ``edge/getEdgeConfigurationModules`` composes for it: a module's wire name (``firewall``, ``QOS``) to its ``data``, or ``None`` for the ``null`` the VCO answers when a module does not compose. An edge with no entry is answered as an unknown edge."""
+    """Edge ID to the modules ``edge/getEdgeConfigurationModules`` composes for it: a
+    module's wire name (``firewall``, ``QOS``) to its ``data``, or ``None`` for the
+    ``null`` the VCO answers when a module does not compose. An edge with no entry is
+    answered as an unknown edge."""
     security_objects: dict[str, list[dict[str, Any]]]
-    """Security object type (``securityServiceGroup``, ``idps``) to the objects ``enterprise/getSecurityObjects`` answers for it, each as the VCO gives it: ``type``, ``id``, ``logicalId`` and ``data``. A type with no entry is answered with an empty list."""
+    """Security object type (``securityServiceGroup``, ``idps``) to the objects
+    ``enterprise/getSecurityObjects`` answers for it, each as the VCO gives it:
+    ``type``, ``id``, ``logicalId`` and ``data``. A type with no entry is answered with
+    an empty list."""
     objects: dict[int, dict[str, Any]]
-    """Object ID to enterprise object: ``id``, ``logicalId``, ``name``, ``type``, ``object`` and ``data``."""
+    """Object ID to enterprise object: ``id``, ``logicalId``, ``name``, ``type``,
+    ``object`` and ``data``."""
     skipped_objects: set[int]
-    """Objects a sent ref row points at in vain: the row is skipped, as the VCO skips a row whose insert fails."""
+    """Objects a sent ref row points at in vain: the row is skipped, as the VCO skips a
+    row whose insert fails."""
     processor_refs: dict[int, dict[str, Any]]
-    """Module ID to the refs an inline processor returns, which replace the ordinary rows of an update that sends none."""
+    """Module ID to the refs an inline processor returns, which replace the ordinary
+    rows of an update that sends none."""
     edges: dict[int, dict[str, Any]]
-    """Edge ID to Edge: ``id``, ``logicalId``, ``name`` and ``cluster`` (the cluster ID, or None)."""
+    """Edge ID to Edge: ``id``, ``logicalId``, ``name`` and ``cluster`` (the cluster ID,
+    or None)."""
     vpn_check: bool
-    """Whether a profile device settings update is checked against the hub rows of its refs."""
+    """Whether a profile device settings update is checked against the hub rows of its
+    refs."""
     fail_calls: set[str]
-    """Method names whose next call is answered with ``simulated failure``, and then removed."""
+    """Method names whose next call is answered with ``simulated failure``, and then
+    removed."""
 
     def __init__(
         self,

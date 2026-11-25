@@ -9,7 +9,8 @@ import importlib.util
 
 if importlib.util.find_spec("polars") is None:
     raise ModuleNotFoundError(
-        "pyvelo.analytics requires polars; install it with: pip install 'pyvelo[analytics]'",
+        "pyvelo.analytics requires polars; "
+        "install it with: pip install 'pyvelo[analytics]'",
         name="polars",
     )
 

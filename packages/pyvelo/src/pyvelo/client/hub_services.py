@@ -79,7 +79,8 @@ class HubListField:
 
     role: Literal["hub", "bridge", "backhaul"]
     path: tuple[str, ...]
-    """The wire keys from the segment entry to the list: ``("vpn", "backHaulEdges")``."""
+    """The wire keys from the segment entry to the list:
+    ``("vpn", "backHaulEdges")``."""
 
 
 @functools.cache
@@ -358,7 +359,8 @@ def missing_service_error(
                 f"{path} names the hub {hub!r} and no service for it: the row "
                 "that goes with the rule points at the hub's service for this "
                 "profile and segment, so it cannot be added. Give the entry's "
-                f"logicalId, the hub's service: {patch_text(path.child('logical_id'))}, "
+                "logicalId, the hub's service: "
+                f"{patch_text(path.child('logical_id'))}, "
                 "or add the hub through apply, which fills it."
             ),
         )

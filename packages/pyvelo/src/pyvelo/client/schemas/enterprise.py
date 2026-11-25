@@ -890,7 +890,8 @@ class EnterpriseAddressResult(VcoModel):
     model_config: ClassVar[ConfigDict] = ConfigDict(extra="allow")
 
 
-# --- get_enterprise_all_alerts_recipients (enterprise/getEnterpriseAllAlertsRecipients) ---
+# --- get_enterprise_all_alerts_recipients
+# (enterprise/getEnterpriseAllAlertsRecipients) ---
 
 
 class GetEnterpriseAllAlertsRecipients(VcoModel):

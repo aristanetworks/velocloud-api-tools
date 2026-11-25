@@ -37,19 +37,24 @@ class RefOwner:
     """A field that holds an identity a ref row goes with."""
 
     name: str
-    """The ref name: the stub's ``ref``, else the marker's default, else the ``OwnsRef`` name."""
+    """The ref name: the stub's ``ref``, else the marker's default, else the ``OwnsRef``
+    name."""
     marker: OwnsRef | RefOnly
     identity_type: type
     value: object
-    """The identity: a ``uuid.UUID`` (text that parses as one is made one) or an ``int``."""
+    """The identity: a ``uuid.UUID`` (text that parses as one is made one) or an
+    ``int``."""
     segment_id: int | None
-    """The ``segmentId`` of the segment the owner sits in; for a ``RefOnly`` owner and an ``OwnsRef`` with ``per_segment``, else ``None``."""
+    """The ``segmentId`` of the segment the owner sits in; for a ``RefOnly`` owner and
+    an ``OwnsRef`` with ``per_segment``, else ``None``."""
     segment_name: str | None
     """That segment's name, under the same rule."""
     path: Path
-    """The field's path in python names: ``segments["Global Segment"].dns.primary_provider.service``."""
+    """The field's path in python names:
+    ``segments["Global Segment"].dns.primary_provider.service``."""
     holder: VcoModel | None = field(default=None, compare=False, repr=False)
-    """The model that holds the field, for a message that names more than the identity (the hub of a backhaul entry)."""
+    """The model that holds the field, for a message that names more than the identity
+    (the hub of a backhaul entry)."""
 
 
 @dataclass(frozen=True)

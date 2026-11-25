@@ -620,13 +620,14 @@ class ModuleWriteError(VcoError):
     lost_edits: tuple[PlannedChange, ...]
     applied: tuple[PlannedChange, ...]
     left_out: tuple[PlannedChange, ...]
-    """Planned changes the VCO stores otherwise than as sent (``ResponseCheck.left_out``)."""
+    """Planned changes the VCO stores otherwise than as sent
+    (``ResponseCheck.left_out``)."""
     server_changes: tuple[ServerChange, ...]
     completed: tuple[ModuleWrite[Any], ...]
     """The earlier writes of the same save, which are stored. Set by the save."""
     stored_parts: dict[Path, ItemPart]
-    """For each item of every keyed list the check walks that the module as stored
-    holds too, by its path, the part that names it there (``ResponseCheck.stored_parts``)."""
+    """For each item of every keyed list the check walks that the module as stored holds
+    too, by its path, the part that names it there (``ResponseCheck.stored_parts``)."""
 
     def __init__(  # noqa: PLR0913 (existing: split it when it next changes)
         self,
@@ -749,16 +750,16 @@ class ModuleWriteError(VcoError):
         """The patch that redoes the lost edits on ``module``, the module as stored.
 
         It is plain JSON (``json.loads(json.dumps(patch)) == patch``), rooted
-        at the module, so
-        ``await pipeline.apply(state, module=error.module_name, patch=error.redo_patch())``
-        takes it, and so does ``error.module.data.merge_patch(error.redo_patch())``
-        without a state. Each lost edit is redone from what is stored to what
-        was meant: an added item goes back in its place, a lost order is made
-        again by the moves from the stored order, and each item is named as the
-        stored list names it, so an edit to "the second rule" still reaches
-        that rule when another writer put one in front of it. An item the plan
-        added is added again, never set on the item another writer has under
-        its name or at its place: where that name is taken, ``apply`` refuses.
+        at the module, so ``await pipeline.apply(state,
+        module=error.module_name, patch=error.redo_patch())`` takes it, and so
+        does ``error.module.data.merge_patch(error.redo_patch())`` without a
+        state. Each lost edit is redone from what is stored to what was meant:
+        an added item goes back in its place, a lost order is made again by the
+        moves from the stored order, and each item is named as the stored list
+        names it, so an edit to "the second rule" still reaches that rule when
+        another writer put one in front of it. An item the plan added is added
+        again, never set on the item another writer has under its name or at
+        its place: where that name is taken, ``apply`` refuses.
 
         A clash is an edit whose value was also changed on the VCO, and
         redoing it overwrites that change: it is left out unless
@@ -970,7 +971,8 @@ def _provider_value(edits: Sequence[PlannedChange]) -> object:
 
 
 _SEGMENT_REF: Final = "deviceSettings:segment"
-"""The ref name of a segment's row; ``ref_owners.SEGMENT_REF``, which this module cannot import (a cycle)."""
+"""The ref name of a segment's row; ``ref_owners.SEGMENT_REF``, which this module cannot
+import (a cycle)."""
 
 
 def _json_objects(value: object) -> list[dict[str, object]]:
@@ -1472,7 +1474,10 @@ class WriteOutcomeUnknownError(ModuleWriteError):
                 "the changes below are stored already is not known."
             )
         elif self.answer == "counted":
-            said = "The VCO counted the write, so the changes below are most likely stored."
+            said = (
+                "The VCO counted the write, so the changes below are most likely "
+                "stored."
+            )
         else:
             said = "Whether the changes below are stored is not known."
         lines = [said, "planned, not checked:"]
@@ -1597,7 +1602,8 @@ class DetachedObjectError(VcoError):
 
 
 PRECONDITION_FAILED: Final = "UPDATE_CONFIGURATION_MODULE_PRECONDITION_FAILED"
-"""The code of the VCO's refusal of a stale module version, in ``error.data.error[]``."""
+"""The code of the VCO's refusal of a stale module version, in
+``error.data.error[]``."""
 
 
 def _lists_precondition(data: object) -> bool:

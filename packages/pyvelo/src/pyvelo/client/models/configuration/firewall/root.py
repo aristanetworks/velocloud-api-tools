@@ -219,7 +219,8 @@ class FirewallData(Layered[L]):
         its content, and on the edge layer it is bound to the profile's segment,
         so its keys can be localized. Raises ``UnboundError`` if the data is not
         bound to a profile (see :meth:`bind_profile`) and ``ValueError`` if the
-        profile has no such segment. Use :meth:`get_segment` to look up without creating.
+        profile has no such segment. Use :meth:`get_segment` to look up without
+        creating.
         """
         # FirewallSegment[layer], where the layer is this data's own.
         segment_class: Any = FirewallSegment

@@ -182,7 +182,8 @@ def output_table(rows: list[BgpNeighborRow], enterprise_id: int, vco_host: str) 
     edge_count = len({r.edge_id for r in rows})
     segment_count = len({r.segment_name for r in rows})
     console.print(
-        f"\nTotal: {len(rows)} BGP neighbors across {edge_count} edges ({segment_count} segments)"
+        f"\nTotal: {len(rows)} BGP neighbors across {edge_count} edges "
+        f"({segment_count} segments)"
     )
 
 

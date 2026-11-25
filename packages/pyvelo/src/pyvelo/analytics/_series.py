@@ -28,8 +28,10 @@ def denormalize_timeseries(
 
         [
             {name: "app1", time_series: [
-                {metric: "bytesRx", start_time: ..., tick_interval: 300000, data: [1,2,3]},
-                {metric: "bytesTx", start_time: ..., tick_interval: 300000, data: [4,5,6]},
+                {metric: "bytesRx", start_time: ..., tick_interval: 300000,
+                 data: [1,2,3]},
+                {metric: "bytesTx", start_time: ..., tick_interval: 300000,
+                 data: [4,5,6]},
             ]},
             ...
         ]

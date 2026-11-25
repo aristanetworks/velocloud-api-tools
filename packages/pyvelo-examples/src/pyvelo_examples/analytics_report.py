@@ -113,7 +113,11 @@ def build_html(sections: list[tuple[str, str]], title: str) -> str:
     parts = [
         "<!DOCTYPE html>",
         "<html><head>",
-        "<meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; script-src 'none'; style-src 'unsafe-inline'\">",
+        (
+            '<meta http-equiv="Content-Security-Policy" '
+            "content=\"default-src 'none'; script-src 'none'; "
+            "style-src 'unsafe-inline'\">"
+        ),
         f"<title>{escape(title)}</title>",
         "<style>",
         (
@@ -335,7 +339,10 @@ async def fetch_edge_series(
         sections.append(
             (
                 f"Flow by Application — {edge_name}",
-                '<p class="no-data">Unavailable; check VIEW_FLOW_STATS access and the local log.</p>',
+                (
+                    '<p class="no-data">Unavailable; check VIEW_FLOW_STATS access '
+                    "and the local log.</p>"
+                ),
             )
         )
 

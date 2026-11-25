@@ -79,7 +79,8 @@ class ModuleWrite[M: ConfigurationModuleBase]:
     plan: ModulePlan
     applied: tuple[PlannedChange, ...] = ()
     left_out: tuple[PlannedChange, ...] = ()
-    """Planned changes the VCO stores otherwise than as sent (``ResponseCheck.left_out``)."""
+    """Planned changes the VCO stores otherwise than as sent
+    (``ResponseCheck.left_out``)."""
     server_changes: tuple[ServerChange, ...] = ()
 
     @override
@@ -113,10 +114,12 @@ is added here. A firewall rule's ``ruleLogicalId`` and a WAN link's
 """
 
 type RowId = tuple[str, object, object]
-"""A ref row's identity: its name, ``logicalId`` and ``segmentLogicalId``; a field a row lacks is None."""
+"""A ref row's identity: its name, ``logicalId`` and ``segmentLogicalId``; a field a row
+lacks is None."""
 
 _NOT_COMPARED = PROCESSOR_REF_NAMES | APPEND_ONLY_REF_NAMES
-"""Ref names whose rows are never applied or lost: their difference is a server change."""
+"""Ref names whose rows are never applied or lost: their difference is a server
+change."""
 
 
 def _entries(refs: object) -> list[tuple[str, dict[str, Any]]]:
@@ -373,18 +376,18 @@ def check_module_write[M: ConfigurationModuleBase](
     After ``"refused"`` or ``"stale"``, or ``"row"`` with no change found
     stored, a left-out change whose stored value is the one read is a lost
     edit: the write did not reach it. A refused or stale write is returned only
-    when a change is found stored and none is lost or left out. A ``"row"`` or ``"counted"`` write
-    is returned when no change is lost. Otherwise this raises
-    ``ConfigConflictError`` after a refusal (``stated``) or for a stale write
-    (not ``stated``, and not ``sent``), for an insert
+    when a change is found stored and none is lost or left out. A ``"row"`` or
+    ``"counted"`` write is returned when no change is lost. Otherwise this
+    raises ``ConfigConflictError`` after a refusal (``stated``) or for a stale
+    write (not ``stated``, and not ``sent``), for an insert
     ``WriteNotAppliedError``, ``ConfigConflictError`` (not ``stated``) for a
     row with none of the changes stored and each value as read, and
     ``WriteNotAppliedError`` for anything else and for every ``"counted"``
     write. ``RefsDroppedError`` takes the place of ``WriteNotAppliedError``
-    when every lost edit is a ref row. After a ``"row"`` answer to an update
-    it needs a change applied (a data edit beside the ref change): with none,
-    the write is a conflict. An insert and a ``"counted"`` write are never
-    inferred to be conflicts, so they raise it with none applied too.
+    when every lost edit is a ref row. After a ``"row"`` answer to an update it
+    needs a change applied (a data edit beside the ref change): with none, the
+    write is a conflict. An insert and a ``"counted"`` write are never inferred
+    to be conflicts, so they raise it with none applied too.
     """
     if not isinstance(stored, type(module)):
         raise TypeError(

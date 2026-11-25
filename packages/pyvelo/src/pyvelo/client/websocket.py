@@ -517,7 +517,8 @@ class VcoWebSocket:
                 list(self._pending.keys()),
             )
             raise VcoWebSocketTimeoutError(
-                f"Timeout after {timeout:.1f}s waiting for {action} response (key={key})",
+                f"Timeout after {timeout:.1f}s waiting for {action} response "
+                f"(key={key})",
                 timeout=timeout,
             ) from None
         except Exception:
