@@ -284,7 +284,7 @@ class ResolverRegistry:
           resolve(SegmentIdentity, "Global Segment")  # identity type + name
         """
         if isinstance(key, type):
-            # resolve(IdentityType, name)
+            # Called as resolve(IdentityType, name).
             resolver = self._resolvers.get(key)
             if resolver is None:
                 raise LookupError(f"No resolver registered for {key.__name__}")

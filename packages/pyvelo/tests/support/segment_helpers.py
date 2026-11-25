@@ -22,7 +22,7 @@ from refs_helpers import CONFIG, DS_ID, QOS_ID
 
 FW_ID = 12
 
-# (segment_id, name, logical_id, object_id)
+# A segment as its ID, name, logical ID and object ID.
 type Segment = tuple[int, str, str, int]
 
 GLOBAL: Final[Segment] = (

@@ -728,7 +728,7 @@ def test_an_owned_is_not_a_condition() -> None:
 
 
 def test_an_owned_equals_only_an_owned() -> None:
-    assert (Owned(True) == True) is False
+    assert (Owned(True) == True) is False  # noqa: E712 (the == is what this checks)
     assert Owned(True) == Owned(True)
 
 

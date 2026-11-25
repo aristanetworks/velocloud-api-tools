@@ -422,7 +422,7 @@ class EnterpriseProxyCloneableEnterpriseItem(VcoModel):
 
 
 # --- get_enterprise_proxy_enterprises_with_property ---
-# (enterpriseProxy/getEnterpriseProxyEnterprisesWithProperty)
+# (enterpriseProxy/getEnterpriseProxyEnterprisesWithProperty)  # noqa: ERA001 (a method name)
 
 
 class GetEnterpriseProxyEnterprisesWithProperty(VcoModel):
