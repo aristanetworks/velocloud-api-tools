@@ -24,16 +24,17 @@ class ServiceMixin(Protocol):
     ) -> EnterpriseServiceLicenseResult:
         """Get the service license information for an enterprise.
 
-        Returns the service license details for the specified enterprise, including the license
-        type (e.g., Standard, Advanced, Premium), license expiration date, licensed edge count,
-        active edge count, and feature entitlements. The service license determines which SD-WAN
-        features are available to the enterprise, such as enhanced firewall, URL filtering, IDS/IPS,
-        and advanced analytics. Useful for license compliance auditing, capacity planning, and
-        verifying feature entitlements.
+        Returns the service license details for the specified enterprise, including the
+        license type (e.g., Standard, Advanced, Premium), license expiration date,
+        licensed edge count, active edge count, and feature entitlements. The service
+        license determines which SD-WAN features are available to the enterprise, such
+        as enhanced firewall, URL filtering, IDS/IPS, and advanced analytics. Useful for
+        license compliance auditing, capacity planning, and verifying feature
+        entitlements.
 
         Returns:
-            Service license object with license type, edition, expiration date, licensed/active
-            edge counts, bandwidth tier, and feature entitlement details
+            Service license object with license type, edition, expiration date,
+            licensed/active edge counts, bandwidth tier, and feature entitlement details
         """
         return await self.portal(
             "service/getEnterpriseServiceLicense",

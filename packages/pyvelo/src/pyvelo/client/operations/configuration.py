@@ -116,7 +116,9 @@ def _module_layer(level: ConfigContext | None) -> type[Edge | Profile]:
 def _require_level_for_a_firewall_row(
     request: InsertConfigurationModule, level: ConfigContext | None
 ) -> None:
-    """``TypeError`` when the insert *request* is for a firewall module, asks for its row back and names no *level*; nothing has been sent.
+    """``TypeError`` when the insert *request* for a firewall module names no *level*.
+
+    It is raised when the request asks for its row back; nothing has been sent.
 
     A firewall row is of the edge layer or the profile layer and the answer
     does not say which; reading it as the wrong one would not raise.
@@ -148,13 +150,19 @@ class _UnleveledAnswer(
         ]
     ]
 ):
-    """An update's answer when the layer of a row is not known: a firewall row stays the JSON object it came as, as its layer cannot be told; anything else is read as it is for an update."""
+    """An update's answer when the layer of a row is not known.
+
+    A firewall row stays the JSON object it came as, as its layer cannot be told;
+    anything else is read as it is for an update.
+    """
 
     model_config: ClassVar[ConfigDict] = ConfigDict(hide_input_in_errors=True)
 
 
 def _unleveled_firewall_row(answer: dict[str, Any]) -> LayerUnknownError:
-    """The ``LayerUnknownError`` for *answer*, the firewall row an update was answered with when it was given no level.
+    """The ``LayerUnknownError`` for the firewall row *answer*.
+
+    *answer* is the row an update was answered with when it was given no level.
 
     The request of an update does not name its module, so this cannot be known
     before it is sent. The error carries the row as the VCO answered it.
@@ -172,11 +180,17 @@ def _unleveled_firewall_row(answer: dict[str, Any]) -> LayerUnknownError:
 
 
 class _RawConfiguration(RootModel[dict[str, Any]]):
-    """A configuration as the JSON object it came as: its layer is not known until its ``name`` is read."""
+    """A configuration as the JSON object it came as.
+
+    Its layer is not known until its ``name`` is read.
+    """
 
 
 class _ConfigurationRows(VcoModel):
-    """A configuration read with its modules, each module row left as the JSON object it came as."""
+    """A configuration read with its modules.
+
+    Each module row is left as the JSON object it came as.
+    """
 
     modules: list[dict[str, Any]] | MISSING = MISSING
 
@@ -189,7 +203,10 @@ def _unknown_outcome(
     answer: WriteAnswer,
     module_id: int,
 ) -> WriteOutcomeUnknownError:
-    """The error for a write that was sent, or was about to be sent again, and whose module as stored could not be read."""
+    """The error for a write whose module as stored could not be read.
+
+    The write was sent, or was about to be sent again.
+    """
     return WriteOutcomeUnknownError(
         module_id,
         module.version or "",
@@ -203,7 +220,9 @@ def _unknown_outcome(
 async def _read_rows(
     client: VcoClientBaseProtocol, configuration_id: int, enterprise_id: int | None
 ) -> list[dict[str, Any]]:
-    """The module rows of configuration *configuration_id*, each left as the JSON object it came as.
+    """The module rows of configuration *configuration_id*.
+
+    Each is left as the JSON object it came as.
 
     Raises ``ValidationError`` when what the VCO answers is not a
     configuration; an error of the request itself propagates.
@@ -223,7 +242,9 @@ async def _read_rows(
 def _parse_row(
     module: ConfigurationModuleBase, row: dict[str, Any]
 ) -> ConfigurationModuleBase:
-    """The module row *row* as a module at the config level of *module*, or at none when it has none.
+    """The module row *row* as a module at the config level of *module*.
+
+    It is parsed at no config level when *module* has none.
 
     Of the layer of *module* (a firewall module's class is chosen by it).
     Raises ``ValidationError`` when the row does not parse.
@@ -244,7 +265,9 @@ async def _read_version(
     module: ConfigurationModuleBase,
     enterprise_id: int | None,
 ) -> str | None:
-    """The ``version`` the VCO holds for *module* now: the row with its ID, read without its data; None when no row has it.
+    """The ``version`` the VCO holds for *module* now.
+
+    It is read from the row with its ID, without its data; None when no row has it.
 
     One request: ``configuration/getConfigurationModules`` with ``noData``,
     filtered to the module's name. Raises ``ValueError`` when *module* has no
@@ -272,7 +295,9 @@ async def _read_held(
     plan: ModulePlan,
     enterprise_id: int | None,
 ) -> ConfigurationModuleBase:
-    """*module* as the VCO holds it now, read with its refs from its configuration, before anything is sent.
+    """*module* as the VCO holds it now, read before anything is sent.
+
+    It is read with its refs from its configuration.
 
     Raises ``ConfigConflictError`` with nothing sent and no module when the
     configuration no longer holds the module, and ``ValueError`` when
@@ -306,7 +331,9 @@ async def _check_stale[M: ConfigurationModuleBase](
     plan: ModulePlan,
     enterprise_id: int | None,
 ) -> ModuleWrite[M]:
-    """The outcome of *plan* for a module whose version on the VCO is not the one read, with nothing sent.
+    """The outcome of *plan* for a stale module, with nothing sent.
+
+    A module is stale when its version on the VCO is not the one read.
 
     The module is read with its refs, as the VCO holds it now
     (``_read_held``). It is returned as the write when it already holds the
@@ -330,7 +357,9 @@ async def _read_stored(  # noqa: PLR0913 (existing: split it when it next change
     answer: WriteAnswer,
     module_id: int | None = None,
 ) -> ConfigurationModuleBase:
-    """*module* as the VCO holds it, read from its configuration after a write that returned no row.
+    """*module* as the VCO holds it, read after a write that returned no row.
+
+    It is read from its configuration.
 
     It is the module with *module_id*, by default the ID of *module* (for an
     insert, the ID the VCO answered). Only that module's row is parsed, as an
@@ -388,7 +417,7 @@ async def _read_named(
     plan: ModulePlan,
     enterprise_id: int | None,
 ) -> ConfigurationModuleBase | None:
-    """The module of the name of *plan* that the configuration of *module* already holds, or None.
+    """The module of the name of *plan* already held by the configuration of *module*.
 
     Of several rows of that name it is the one with the highest ID, the last
     inserted. Only that row is parsed, as ``_read_stored`` parses its row.
@@ -469,7 +498,10 @@ def _require_this_module[M: ConfigurationModuleBase](
     *,
     answer: WriteAnswer,
 ) -> M:
-    """*stored*, when it is the module *module* was written as; otherwise raises ``WriteOutcomeUnknownError``."""
+    """*stored*, when it is the module *module* was written as.
+
+    Otherwise raises ``WriteOutcomeUnknownError``.
+    """
     mismatch = _not_this_module(module, plan, stored)
     if mismatch is not None:
         raise _unknown_outcome(
@@ -498,7 +530,11 @@ class ConfigurationMixin(Protocol):
     async def get_configuration(
         self: VcoClientBaseProtocol, request: GetConfiguration
     ) -> EdgeConfiguration | EnterpriseConfigurationProfile:
-        """Retrieve a configuration by ID, optionally with its modules. The ID can be for an enterprise profile or for an edge configuration. Edge configuration IDs can be retrieved in the edge's configuration stack and subsequently passed to this tool.
+        """Retrieve a configuration by ID, optionally with its modules.
+
+        The ID can be for an enterprise profile or for an edge configuration. Edge
+        configuration IDs can be retrieved in the edge's configuration stack and
+        subsequently passed to this tool.
 
         The layer comes from the answer: a configuration named ``Edge Specific
         Profile`` is an ``EdgeConfiguration``, any other an
@@ -579,7 +615,7 @@ class ConfigurationMixin(Protocol):
         *,
         level: ConfigContext | None = None,
     ) -> InsertConfigurationModuleResult | AnyStoredModule:
-        """Insert a new configuration module into a profile or edge-specific configuration.
+        """Insert a new module into a profile or edge-specific configuration.
 
         With ``return_data`` the result is the module row as stored, validated
         as a module at config level *level* and of the layer it names. A
@@ -716,7 +752,9 @@ class ConfigurationMixin(Protocol):
         *,
         enterprise_id: int | None = None,
     ) -> ModuleWrite[M] | None:
-        """The version read that ``write_module`` makes before an update that sends refs, made on its own.
+        """The version read of ``write_module``, made on its own.
+
+        It is the read ``write_module`` makes before an update that sends refs.
 
         A save that changes the VCO's other objects before it writes *module*
         (the role calls of a hub list edit) calls this first: a module that
@@ -764,7 +802,9 @@ class ConfigurationMixin(Protocol):
         resolvers: IdentityLookup | None = None,
         profile_device_settings: ConfigurationModuleBase | None = None,
     ) -> ModuleWrite[M]:
-        """Send *plan*, made by ``plan_module`` for *module*, and check what the VCO stored.
+        """Send *plan* for *module* and check what the VCO stored.
+
+        *plan* is made by ``plan_module`` for *module*.
 
         An update or an insert, as the plan says, at the config level of
         *module*, asking for the module row as stored. When the VCO answers
@@ -1121,13 +1161,14 @@ class ConfigurationMixin(Protocol):
     ) -> GetApplicationsResult:
         """Get all applications identifiable through Deep Packet Inspection (DPI).
 
-        Returns the complete application map of all applications that the VeloCloud DPI engine
-        can identify in network traffic. The application map includes well-known SaaS applications
-        (e.g., Office 365, Salesforce, Zoom), protocol-based applications, and custom-defined
-        applications. Each entry includes the application name, category, and identification
-        signatures. This map is used by business policies and QoS rules to steer and prioritize
-        traffic by application. Useful for building application-aware policies and understanding
-        what applications the SD-WAN can classify.
+        Returns the complete application map of all applications that the VeloCloud DPI
+        engine can identify in network traffic. The application map includes well-known
+        SaaS applications (e.g., Office 365, Salesforce, Zoom), protocol-based
+        applications, and custom-defined applications. Each entry includes the
+        application name, category, and identification signatures. This map is used by
+        business policies and QoS rules to steer and prioritize traffic by application.
+        Useful for building application-aware policies and understanding what
+        applications the SD-WAN can classify.
 
         Returns:
             Application map with application names, IDs, categories, and DPI signatures
@@ -1144,17 +1185,18 @@ class ConfigurationMixin(Protocol):
     ) -> GetApplicationsResult:
         """Get all first-packet routable applications for an enterprise.
 
-        Returns all applications that support first-packet routing, meaning the SD-WAN can
-        identify and route traffic for these applications from the very first packet without
-        waiting for DPI classification to complete. First-packet routing uses DNS-based or
-        IP-based identification to immediately steer traffic to the correct path (direct internet,
-        VPN, or gateway). This enables latency-sensitive applications to be correctly routed
-        without the delay of full DPI analysis. Useful for understanding which applications
-        benefit from immediate path selection.
+        Returns all applications that support first-packet routing, meaning the SD-WAN
+        can identify and route traffic for these applications from the very first packet
+        without waiting for DPI classification to complete. First-packet routing uses
+        DNS-based or IP-based identification to immediately steer traffic to the correct
+        path (direct internet, VPN, or gateway). This enables latency-sensitive
+        applications to be correctly routed without the delay of full DPI analysis.
+        Useful for understanding which applications benefit from immediate path
+        selection.
 
         Returns:
-            Array of first-packet routable application objects with application name, ID,
-            and routing classification data
+            Array of first-packet routable application objects with application name,
+            ID, and routing classification data
         """
         return await self.portal(
             "configuration/getRoutableApplications",

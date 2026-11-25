@@ -193,7 +193,10 @@ class EnterpriseMixin(Protocol):
         self: VcoClientBaseProtocol,
         request: GetEnterpriseServices,
     ) -> Sequence[AnyEnterpriseService]:
-        """List enterprise network services such as cloud security, DNS, and data centers."""
+        """List enterprise network services.
+
+        These include cloud security, DNS, and data centers.
+        """
         return await self.portal_list(
             "enterprise/getEnterpriseServices",
             request,
@@ -220,7 +223,10 @@ class EnterpriseMixin(Protocol):
     async def insert_enterprise_service(
         self: VcoClientBaseProtocol, request: InsertEnterpriseService
     ) -> InsertionConfirmation:
-        """Create a new enterprise service (DNS, authentication, syslog, netflow, cloud security, etc.)."""
+        """Create a new enterprise service.
+
+        The service may be DNS, authentication, syslog, netflow, cloud security, etc.
+        """
         return await self.portal(
             "enterprise/insertEnterpriseService",
             request,
@@ -253,7 +259,10 @@ class EnterpriseMixin(Protocol):
         self: VcoClientBaseProtocol,
         request: GetEnterprisePrivateNetworks,
     ) -> Sequence[PrivateNetwork]:
-        """List private network names in an enterprise. These objects are referenced within WAN configuration modules."""
+        """List private network names in an enterprise.
+
+        These objects are referenced within WAN configuration modules.
+        """
         return await self.portal_list(
             "enterprise/getEnterprisePrivateNetworks",
             request,
@@ -265,7 +274,10 @@ class EnterpriseMixin(Protocol):
         self: VcoClientBaseProtocol,
         request: GetObjectGroups,
     ) -> Sequence[AnyObjectGroup]:
-        """List object groups (address groups, port groups) used in firewall and business policies."""
+        """List object groups used in firewall and business policies.
+
+        Object groups are address groups and port groups.
+        """
         return await self.portal_list(
             "enterprise/getObjectGroups",
             request,
@@ -275,7 +287,10 @@ class EnterpriseMixin(Protocol):
     async def insert_object_group(
         self: VcoClientBaseProtocol, request: InsertObjectGroup
     ) -> InsertionConfirmation:
-        """Create a new object group (address group or port group) for use in firewall and business policies."""
+        """Create a new object group for use in firewall and business policies.
+
+        An object group is an address group or a port group.
+        """
         return await self.portal(
             "enterprise/insertObjectGroup",
             request,
@@ -295,7 +310,10 @@ class EnterpriseMixin(Protocol):
     async def delete_object_group(
         self: VcoClientBaseProtocol, request: DeleteObjectGroup
     ) -> RowsModifiedConfirmation:
-        """Delete an object group. Fails if the object group is still referenced by profiles or edges."""
+        """Delete an object group.
+
+        Fails if the object group is still referenced by profiles or edges.
+        """
         return await self.portal(
             "enterprise/deleteObjectGroup",
             request,
@@ -376,15 +394,15 @@ class EnterpriseMixin(Protocol):
     ) -> EnterpriseResult:
         """Get enterprise (customer) details from VeloCloud Orchestrator.
 
-        Retrieves core identity, account, service, gateway-pool, and operator-profile data for
-        one customer enterprise. The target may be selected by integer ID or logical UUID; an
-        enterprise-scoped session can infer its own enterprise. The optional ``with`` value
-        ``enterpriseProxy`` includes the associated partner/MSP. Use an Edge-list operation to
-        enumerate the enterprise's Edges.
+        Retrieves core identity, account, service, gateway-pool, and operator-profile
+        data for one customer enterprise. The target may be selected by integer ID or
+        logical UUID; an enterprise-scoped session can infer its own enterprise. The
+        optional ``with`` value ``enterpriseProxy`` includes the associated partner/MSP.
+        Use an Edge-list operation to enumerate the enterprise's Edges.
 
         Returns:
-            Enterprise object with its IDs, name, account and service status, gateway pool,
-            operator profile, and optional enterpriseProxy relationship
+            Enterprise object with its IDs, name, account and service status, gateway
+            pool, operator profile, and optional enterpriseProxy relationship
         """
         return await self.portal(
             "enterprise/getEnterprise",
@@ -399,15 +417,16 @@ class EnterpriseMixin(Protocol):
     ) -> Sequence[EnterpriseUser]:
         """Get all admin users for an enterprise.
 
-        Returns all enterprise administrator users for the specified enterprise. Each user object
-        includes identity, role, active/locked/native status, last login, user type, and access
-        level. The request ``id`` and ``enterpriseId`` fields both identify the target
-        enterprise; this endpoint does not select an individual user. This operation is useful
-        for read-only access audits; it does not create or modify users or API tokens.
+        Returns all enterprise administrator users for the specified enterprise. Each
+        user object includes identity, role, active/locked/native status, last login,
+        user type, and access level. The request ``id`` and ``enterpriseId`` fields both
+        identify the target enterprise; this endpoint does not select an individual
+        user. This operation is useful for read-only access audits; it does not create
+        or modify users or API tokens.
 
         Returns:
-            Array of enterprise user objects with identity, role, status, lastLogin, userType,
-            and accessLevel fields
+            Array of enterprise user objects with identity, role, status, lastLogin,
+            userType, and accessLevel fields
         """
         return await self.portal_list(
             "enterprise/getEnterpriseUsers",
@@ -422,16 +441,18 @@ class EnterpriseMixin(Protocol):
     ) -> EnterpriseGatewayHandoffResult:
         """Get the gateway handoff configuration for an enterprise.
 
-        Returns the gateway handoff configuration for the specified enterprise, which defines how
-        traffic is handed off from VeloCloud gateways to the enterprise's data center or cloud
-        infrastructure. This includes VLAN tagging, QoS mapping, NAT settings, and per-segment
-        handoff rules. In the SD-WAN architecture, gateways act as traffic aggregation points,
-        and the handoff configuration determines how gateway-routed traffic reaches its final
-        destination. Useful for troubleshooting gateway-to-datacenter connectivity and verifying
-        handoff policies.
+        Returns the gateway handoff configuration for the specified enterprise, which
+        defines how traffic is handed off from VeloCloud gateways to the enterprise's
+        data center or cloud infrastructure. This includes VLAN tagging, QoS mapping,
+        NAT settings, and per-segment handoff rules. In the SD-WAN architecture,
+        gateways act as traffic aggregation points, and the handoff configuration
+        determines how gateway-routed traffic reaches its final destination. Useful for
+        troubleshooting gateway-to-datacenter connectivity and verifying handoff
+        policies.
 
         Returns:
-            Gateway handoff configuration including VLAN, QoS, NAT, and per-segment handoff rules
+            Gateway handoff configuration including VLAN, QoS, NAT, and per-segment
+            handoff rules
         """
         return await self.portal(
             "enterprise/getEnterpriseGatewayHandoff",
@@ -446,16 +467,17 @@ class EnterpriseMixin(Protocol):
     ) -> EnterpriseCapabilitiesResult:
         """Get all feature capabilities enabled or disabled for an enterprise.
 
-        Returns the full set of enterprise capabilities (feature flags) such as BGP, COS mapping,
-        PKI, stateful firewall, enhanced firewall, segmentation, and other advanced features.
-        Each capability indicates whether the feature is currently enabled or disabled for the
-        enterprise. These capabilities are typically managed by the operator or partner and control
-        which features are available to the enterprise admin. Useful for verifying feature
-        entitlements and understanding available functionality.
+        Returns the full set of enterprise capabilities (feature flags) such as BGP, COS
+        mapping, PKI, stateful firewall, enhanced firewall, segmentation, and other
+        advanced features. Each capability indicates whether the feature is currently
+        enabled or disabled for the enterprise. These capabilities are typically managed
+        by the operator or partner and control which features are available to the
+        enterprise admin. Useful for verifying feature entitlements and understanding
+        available functionality.
 
         Returns:
-            Object mapping capability names to their enabled/disabled status (e.g., enableBGP,
-            enablePKI, enableStatefulFirewall, enableSegmentation)
+            Object mapping capability names to their enabled/disabled status (e.g.,
+            enableBGP, enablePKI, enableStatefulFirewall, enableSegmentation)
         """
         return await self.portal(
             "enterprise/getEnterpriseCapabilities",
@@ -470,11 +492,12 @@ class EnterpriseMixin(Protocol):
     ) -> Sequence[EnterpriseAddressResult]:
         """Get public IP addresses for management and control entities of an enterprise.
 
-        Returns all public IP address information for the Orchestrator(s), Gateway(s), and
-        datacenter(s) associated with the specified enterprise. These are the IP addresses used
-        for management plane and control plane communication in the SD-WAN overlay. Useful for
-        firewall whitelisting, verifying control plane connectivity, and understanding the
-        network infrastructure serving an enterprise.
+        Returns all public IP address information for the Orchestrator(s), Gateway(s),
+        and datacenter(s) associated with the specified enterprise. These are the IP
+        addresses used for management plane and control plane communication in the
+        SD-WAN overlay. Useful for firewall whitelisting, verifying control plane
+        connectivity, and understanding the network infrastructure serving an
+        enterprise.
 
         Returns:
             Array of IP address records for Orchestrators, Gateways, and datacenters
@@ -493,14 +516,15 @@ class EnterpriseMixin(Protocol):
     ) -> EnterpriseAllAlertsRecipientsResult:
         """Get all recipients configured to receive all alerts for an enterprise.
 
-        Returns the list of email addresses and webhook endpoints configured to receive all
-        alert notifications for the specified enterprise. These are global alert recipients
-        that receive every triggered alert regardless of alert type. Useful for auditing alert
-        notification configuration and verifying that the correct personnel are receiving
-        enterprise-wide alerts.
+        Returns the list of email addresses and webhook endpoints configured to receive
+        all alert notifications for the specified enterprise. These are global alert
+        recipients that receive every triggered alert regardless of alert type. Useful
+        for auditing alert notification configuration and verifying that the correct
+        personnel are receiving enterprise-wide alerts.
 
         Returns:
-            List of alert recipient configurations including email addresses and webhook URLs
+            List of alert recipient configurations including email addresses and webhook
+            URLs
         """
         return await self.portal(
             "enterprise/getEnterpriseAllAlertsRecipients",
@@ -515,11 +539,12 @@ class EnterpriseMixin(Protocol):
     ) -> EnterpriseRateLimitsResult:
         """Get API rate limit settings for an enterprise.
 
-        Returns the rate limit configuration for the specified enterprise, including concurrency
-        limits (maximum simultaneous API requests) and leaky-bucket limits (maximum requests per
-        time window). These limits prevent any single enterprise from monopolizing VCO API
-        resources. When limits are exceeded, the API returns HTTP 429 responses. Useful for
-        understanding API usage constraints and diagnosing rate-limiting issues.
+        Returns the rate limit configuration for the specified enterprise, including
+        concurrency limits (maximum simultaneous API requests) and leaky-bucket limits
+        (maximum requests per time window). These limits prevent any single enterprise
+        from monopolizing VCO API resources. When limits are exceeded, the API returns
+        HTTP 429 responses. Useful for understanding API usage constraints and
+        diagnosing rate-limiting issues.
 
         Returns:
             Rate limit configuration including concurrency limits, burst limits, and
@@ -538,11 +563,12 @@ class EnterpriseMixin(Protocol):
     ) -> EnterprisePropertyResult:
         """Get a specific enterprise property by name.
 
-        Retrieves a single enterprise property identified by name. Enterprise properties are
-        key-value pairs that store enterprise-level settings, feature flags, and configuration
-        metadata. Properties control various behaviors such as edge software management policies,
-        analytics settings, and operational preferences. Useful for querying specific configuration
-        values without fetching the entire enterprise object.
+        Retrieves a single enterprise property identified by name. Enterprise properties
+        are key-value pairs that store enterprise-level settings, feature flags, and
+        configuration metadata. Properties control various behaviors such as edge
+        software management policies, analytics settings, and operational preferences.
+        Useful for querying specific configuration values without fetching the entire
+        enterprise object.
 
         Returns:
             Property object with name, value, dataType, and metadata
@@ -558,14 +584,15 @@ class EnterpriseMixin(Protocol):
         self: VcoClientBaseProtocol,
         request: GetEnterpriseDefaultOperatorConfiguration,
     ) -> EnterpriseDefaultOperatorConfigurationResult:
-        """Get the default operator configuration (software image/profile) assigned to an enterprise.
+        """Get the default operator configuration assigned to an enterprise.
 
-        Returns the default operator profile that serves as the base configuration layer for the
-        enterprise. Operator profiles (also called Software Images) are managed by the network
-        operator and define default settings for device configuration, control plane behavior,
-        and available features. The default operator profile is inherited by all enterprise
-        configuration profiles unless overridden. Useful for understanding the baseline
-        configuration an enterprise inherits from the operator.
+        Returns the default operator profile that serves as the base configuration layer
+        for the enterprise. Operator profiles (also called Software Images) are managed
+        by the network operator and define default settings for device configuration,
+        control plane behavior, and available features. The default operator profile is
+        inherited by all enterprise configuration profiles unless overridden. Useful for
+        understanding the baseline configuration an enterprise inherits from the
+        operator.
 
         Returns:
             Operator configuration profile object with modules, version, and settings
@@ -583,12 +610,13 @@ class EnterpriseMixin(Protocol):
     ) -> EnterpriseDistributedCostCalculationResult:
         """Get the distributed cost calculation property for an enterprise.
 
-        Returns whether distributed cost calculation is enabled for the specified enterprise.
-        Distributed cost calculation controls how routing cost metrics are computed across the
-        SD-WAN overlay, affecting path selection and traffic steering decisions. When enabled,
-        edges participate in distributed route cost computation rather than relying solely on
-        centralized orchestrator-based calculations. Useful for understanding routing behavior
-        and verifying advanced routing configuration.
+        Returns whether distributed cost calculation is enabled for the specified
+        enterprise. Distributed cost calculation controls how routing cost metrics are
+        computed across the SD-WAN overlay, affecting path selection and traffic
+        steering decisions. When enabled, edges participate in distributed route cost
+        computation rather than relying solely on centralized orchestrator-based
+        calculations. Useful for understanding routing behavior and verifying advanced
+        routing configuration.
 
         Returns:
             Distributed cost calculation property with enabled/disabled status
@@ -606,11 +634,12 @@ class EnterpriseMixin(Protocol):
     ) -> EnterpriseMaximumSegmentsResult:
         """Get the maximum number of network segments allowed for an enterprise.
 
-        Returns the maximum segments limit configured for the specified enterprise. Network
-        segments in VeloCloud SD-WAN provide isolated routing domains (similar to VRFs) that
-        enable traffic separation across the overlay. The maximum segments setting caps how many
-        segments an enterprise can define, which is constrained by operator policy and licensing.
-        Useful for capacity planning and understanding segmentation limits.
+        Returns the maximum segments limit configured for the specified enterprise.
+        Network segments in VeloCloud SD-WAN provide isolated routing domains (similar
+        to VRFs) that enable traffic separation across the overlay. The maximum segments
+        setting caps how many segments an enterprise can define, which is constrained by
+        operator policy and licensing. Useful for capacity planning and understanding
+        segmentation limits.
 
         Returns:
             Maximum segments value for the enterprise
@@ -628,12 +657,13 @@ class EnterpriseMixin(Protocol):
     ) -> EnterpriseOperatorConfigurationResult:
         """Get the operator profile assigned to an enterprise.
 
-        Fetches the operator profile (Software Image) currently assigned to the target enterprise,
-        with optional module details. The operator profile defines the base-layer configuration
-        that all enterprise profiles inherit from, including device settings defaults, control
-        plane behavior, and feature availability. Operator profiles are managed by the network
-        operator and determine the software image and default policies for edges. Useful for
-        understanding the foundation configuration layer and its module settings.
+        Fetches the operator profile (Software Image) currently assigned to the target
+        enterprise, with optional module details. The operator profile defines the
+        base-layer configuration that all enterprise profiles inherit from, including
+        device settings defaults, control plane behavior, and feature availability.
+        Operator profiles are managed by the network operator and determine the software
+        image and default policies for edges. Useful for understanding the foundation
+        configuration layer and its module settings.
 
         Returns:
             Operator profile object with profile metadata, software version, and
@@ -652,11 +682,12 @@ class EnterpriseMixin(Protocol):
     ) -> Sequence[EnterpriseSpecificOperatorConfigurationsResult]:
         """Get all operator configurations specifically assigned to an enterprise.
 
-        Returns the set of operator configurations (Software Images) that have been explicitly
-        assigned to the enterprise by the operator or partner. Unlike the default operator
-        configuration, these are additional operator profiles that the enterprise can select
-        from when configuring edge profiles. Useful for understanding which software images
-        and operator-level configurations are available to the enterprise.
+        Returns the set of operator configurations (Software Images) that have been
+        explicitly assigned to the enterprise by the operator or partner. Unlike the
+        default operator configuration, these are additional operator profiles that the
+        enterprise can select from when configuring edge profiles. Useful for
+        understanding which software images and operator-level configurations are
+        available to the enterprise.
 
         Returns:
             Array of operator configuration profiles assigned to the enterprise
@@ -672,13 +703,14 @@ class EnterpriseMixin(Protocol):
         self: VcoClientBaseProtocol,
         request: GetEnterprisesMissingGateway,
     ) -> Sequence[EnterprisesMissingGatewayResult]:
-        """Get the list of enterprises that are missing required gateway type assignments.
+        """Get the enterprises that are missing required gateway type assignments.
 
-        Returns enterprises that do not have a complete gateway assignment, meaning they lack
-        the required gateway types (e.g., primary, secondary, or super gateways) needed for
-        proper SD-WAN operation. Edges require gateway assignments for cloud-routed traffic,
-        multi-path optimization, and Non-VeloCloud Site connectivity. Useful for identifying
-        enterprises with incomplete deployments that may experience connectivity issues.
+        Returns enterprises that do not have a complete gateway assignment, meaning they
+        lack the required gateway types (e.g., primary, secondary, or super gateways)
+        needed for proper SD-WAN operation. Edges require gateway assignments for
+        cloud-routed traffic, multi-path optimization, and Non-VeloCloud Site
+        connectivity. Useful for identifying enterprises with incomplete deployments
+        that may experience connectivity issues.
 
         Returns:
             Array of enterprise objects that have missing gateway type assignments
@@ -696,11 +728,12 @@ class EnterpriseMixin(Protocol):
     ) -> Sequence[EnterprisesWithPropertyResult]:
         """Get all enterprises that have a specific property name and value.
 
-        Searches across all enterprises to find those that have a particular enterprise property
-        set with the specified value. Enterprise properties are key-value pairs that store
-        configuration metadata, feature flags, and operational settings. Useful for identifying
-        which enterprises have specific features enabled, finding enterprises with particular
-        configuration settings, or auditing property usage across the VCO.
+        Searches across all enterprises to find those that have a particular enterprise
+        property set with the specified value. Enterprise properties are key-value pairs
+        that store configuration metadata, feature flags, and operational settings.
+        Useful for identifying which enterprises have specific features enabled, finding
+        enterprises with particular configuration settings, or auditing property usage
+        across the VCO.
 
         Returns:
             Array of enterprise objects that have the specified property and value
@@ -718,11 +751,12 @@ class EnterpriseMixin(Protocol):
     ) -> AuthMigrationStatusResult:
         """Get the authentication migration status for one or more enterprises.
 
-        Returns the status of authentication system migration (e.g., from local authentication
-        to SSO/SAML or from legacy to modern auth) for the specified enterprises. This is used
-        during orchestrator-wide authentication upgrades to track which enterprises have been
-        migrated, are in progress, or still need migration. Useful for planning and monitoring
-        authentication infrastructure transitions.
+        Returns the status of authentication system migration (e.g., from local
+        authentication to SSO/SAML or from legacy to modern auth) for the specified
+        enterprises. This is used during orchestrator-wide authentication upgrades to
+        track which enterprises have been migrated, are in progress, or still need
+        migration. Useful for planning and monitoring authentication infrastructure
+        transitions.
 
         Returns:
             Migration status for each specified enterprise, including migration state
@@ -741,16 +775,17 @@ class EnterpriseMixin(Protocol):
     ) -> Sequence[EnterpriseApiTokenResult]:
         """Get all API tokens provisioned for an enterprise.
 
-        Returns all API tokens that have been created within the specified enterprise context.
-        API tokens provide programmatic access to the VCO API and are typically longer-lived
-        than session cookies. Each token record includes the token name, creation date, expiration,
-        associated user, and current status. Note that the actual token value is only available
-        at creation time. Useful for auditing API access, managing token lifecycle, and reviewing
-        programmatic access to the enterprise.
+        Returns all API tokens that have been created within the specified enterprise
+        context. API tokens provide programmatic access to the VCO API and are typically
+        longer-lived than session cookies. Each token record includes the token name,
+        creation date, expiration, associated user, and current status. Note that the
+        actual token value is only available at creation time. Useful for auditing API
+        access, managing token lifecycle, and reviewing programmatic access to the
+        enterprise.
 
         Returns:
-            Array of API token objects with name, creation date, expiration, associated user,
-            and status
+            Array of API token objects with name, creation date, expiration, associated
+            user, and status
         """
         return await self.portal_list(
             "enterprise/getApiTokens",
@@ -765,15 +800,16 @@ class EnterpriseMixin(Protocol):
     ) -> Sequence[EnterpriseSecurityObjectResult]:
         """Get all security objects defined for an enterprise.
 
-        Returns all security objects configured for the specified enterprise. Security objects
-        include address groups (collections of IP addresses/subnets), service groups (collections
-        of ports/protocols), and FQDN groups that can be referenced in firewall rules, business
-        policies, and other security configurations. Useful for reviewing the reusable security
-        building blocks available for policy configuration and auditing security object definitions.
+        Returns all security objects configured for the specified enterprise. Security
+        objects include address groups (collections of IP addresses/subnets), service
+        groups (collections of ports/protocols), and FQDN groups that can be referenced
+        in firewall rules, business policies, and other security configurations. Useful
+        for reviewing the reusable security building blocks available for policy
+        configuration and auditing security object definitions.
 
         Returns:
-            Array of security objects including address groups, service groups, and FQDN groups
-            with their member definitions
+            Array of security objects including address groups, service groups, and FQDN
+            groups with their member definitions
         """
         return await self.portal_list(
             "enterprise/getSecurityObjects",
@@ -788,16 +824,17 @@ class EnterpriseMixin(Protocol):
     ) -> Sequence[EnterpriseAlertConfigurationResult]:
         """Get all alert configurations for an enterprise.
 
-        Returns all alert configuration rules for the specified enterprise. Alert configurations
-        define which events trigger alert notifications, the severity levels, notification
-        recipients (email, webhook), and any filtering criteria (e.g., specific edges or links).
-        These configurations control the alerting behavior across the enterprise's SD-WAN
-        deployment. Useful for auditing alert policies, understanding notification routing,
-        and troubleshooting missing or excessive alerts.
+        Returns all alert configuration rules for the specified enterprise. Alert
+        configurations define which events trigger alert notifications, the severity
+        levels, notification recipients (email, webhook), and any filtering criteria
+        (e.g., specific edges or links). These configurations control the alerting
+        behavior across the enterprise's SD-WAN deployment. Useful for auditing alert
+        policies, understanding notification routing, and troubleshooting missing or
+        excessive alerts.
 
         Returns:
-            Array of alert configuration objects with alert type, enabled status, severity,
-            recipients, and filtering criteria
+            Array of alert configuration objects with alert type, enabled status,
+            severity, recipients, and filtering criteria
         """
         return await self.portal_list(
             "enterprise/getEnterpriseAlertConfigurations",
@@ -812,12 +849,13 @@ class EnterpriseMixin(Protocol):
     ) -> EnterpriseRouteTableResult:
         """Get the composite enterprise route table.
 
-        Returns the full enterprise route table, optionally scoped by profile(s). The returned
-        routes include static routes, directly connected routes, and learned routes (from BGP,
-        OSPF, or other dynamic routing protocols). Each route entry includes the destination
-        prefix, next hop, metric, route type, advertising edge, and segment association.
-        Useful for troubleshooting routing issues, verifying route advertisement, and
-        understanding the overall routing topology across the enterprise's SD-WAN overlay.
+        Returns the full enterprise route table, optionally scoped by profile(s). The
+        returned routes include static routes, directly connected routes, and learned
+        routes (from BGP, OSPF, or other dynamic routing protocols). Each route entry
+        includes the destination prefix, next hop, metric, route type, advertising edge,
+        and segment association. Useful for troubleshooting routing issues, verifying
+        route advertisement, and understanding the overall routing topology across the
+        enterprise's SD-WAN overlay.
 
         Returns:
             Route table containing static, connected, and learned routes with prefix,
@@ -836,16 +874,17 @@ class EnterpriseMixin(Protocol):
     ) -> EnterpriseRouteConfigurationResult:
         """Get enterprise global routing preferences.
 
-        Returns all global routing preferences for the specified enterprise, including enterprise
-        route advertisement policy, routing preferences (overlay vs underlay), OSPF settings,
-        and BGP advertisement policy. These preferences govern how routes are distributed across
-        the SD-WAN overlay, which routes are advertised to BGP/OSPF peers, and how route
-        preferences are calculated. Useful for understanding and troubleshooting routing behavior
-        across the enterprise deployment.
+        Returns all global routing preferences for the specified enterprise, including
+        enterprise route advertisement policy, routing preferences (overlay vs
+        underlay), OSPF settings, and BGP advertisement policy. These preferences govern
+        how routes are distributed across the SD-WAN overlay, which routes are
+        advertised to BGP/OSPF peers, and how route preferences are calculated. Useful
+        for understanding and troubleshooting routing behavior across the enterprise
+        deployment.
 
         Returns:
-            Global routing preferences including route advertisement, OSPF, BGP advertisement
-            policy, and overlay/underlay routing preferences
+            Global routing preferences including route advertisement, OSPF, BGP
+            advertisement policy, and overlay/underlay routing preferences
         """
         return await self.portal(
             "enterprise/getEnterpriseRouteConfiguration",
@@ -860,12 +899,12 @@ class EnterpriseMixin(Protocol):
     ) -> EnterpriseUseNsdPolicyResult:
         """Get the "Use NSD Policy" property for an enterprise.
 
-        Returns whether Non-SD-WAN Destination (NSD) services can be considered in overlay flow
-        control (OFC) routing decisions for the specified enterprise. When enabled, traffic
-        steering policies can route traffic through NSD services (e.g., cloud security providers
-        or third-party data centers) as part of the SD-WAN routing decision. Useful for
-        understanding whether NSD-based routing is active and for troubleshooting traffic
-        steering to third-party services.
+        Returns whether Non-SD-WAN Destination (NSD) services can be considered in
+        overlay flow control (OFC) routing decisions for the specified enterprise. When
+        enabled, traffic steering policies can route traffic through NSD services (e.g.,
+        cloud security providers or third-party data centers) as part of the SD-WAN
+        routing decision. Useful for understanding whether NSD-based routing is active
+        and for troubleshooting traffic steering to third-party services.
 
         Returns:
             NSD policy property indicating whether NSD routing is enabled or disabled
@@ -883,16 +922,17 @@ class EnterpriseMixin(Protocol):
     ) -> Sequence[EnterpriseAlertItem]:
         """Get past triggered alerts for an enterprise.
 
-        Returns alerts that have been triggered for the specified enterprise, such as edge
-        offline alerts, link down alerts, HA failover alerts, and other configured alert types.
-        Each alert includes the trigger time, alert type, severity, affected entity (edge, link),
-        and current state. Alerts are generated when enterprise-configured alert rules match
-        detected events. Useful for monitoring network health, investigating incidents, and
-        reviewing historical alert activity.
+        Returns alerts that have been triggered for the specified enterprise, such as
+        edge offline alerts, link down alerts, HA failover alerts, and other configured
+        alert types. Each alert includes the trigger time, alert type, severity,
+        affected entity (edge, link), and current state. Alerts are generated when
+        enterprise-configured alert rules match detected events. Useful for monitoring
+        network health, investigating incidents, and reviewing historical alert
+        activity.
 
         Returns:
-            Array of triggered alert objects with alertType, triggerTime, severity, affected
-            entity details, and alert state
+            Array of triggered alert objects with alertType, triggerTime, severity,
+            affected entity details, and alert state
         """
         return await self.portal_list(
             "enterprise/getEnterpriseAlerts",
@@ -909,15 +949,15 @@ class EnterpriseMixin(Protocol):
     ) -> EnterpriseUserResult:
         """Get a specific enterprise admin user by ID or username.
 
-        Retrieves the specified enterprise user object including username, email, role, login
-        status, last login time, two-factor authentication settings, and other account attributes.
-        Enterprise users are administrator accounts that can manage the enterprise's SD-WAN
-        configuration, monitor edges, and access reports. Useful for retrieving specific user
-        account details and verifying user permissions.
+        Retrieves the specified enterprise user object including username, email, role,
+        login status, last login time, two-factor authentication settings, and other
+        account attributes. Enterprise users are administrator accounts that can manage
+        the enterprise's SD-WAN configuration, monitor edges, and access reports. Useful
+        for retrieving specific user account details and verifying user permissions.
 
         Returns:
-            Enterprise user object with username, email, role, roleId, isActive, lastLogin,
-            and authentication configuration
+            Enterprise user object with username, email, role, roleId, isActive,
+            lastLogin, and authentication configuration
         """
         return await self.portal(
             "enterpriseUser/getEnterpriseUser",
@@ -932,10 +972,11 @@ class EnterpriseMixin(Protocol):
     ) -> Sequence[EnterpriseUserApiTokenItem]:
         """Get all API tokens owned by a specific enterprise user.
 
-        Returns all API tokens allocated to the specified enterprise user. API tokens provide
-        programmatic access to the VCO API with the same permissions as the owning user. Each
-        token record includes creation date, expiration, and status. Useful for auditing which
-        API tokens a user has created and managing token lifecycle for automation accounts.
+        Returns all API tokens allocated to the specified enterprise user. API tokens
+        provide programmatic access to the VCO API with the same permissions as the
+        owning user. Each token record includes creation date, expiration, and status.
+        Useful for auditing which API tokens a user has created and managing token
+        lifecycle for automation accounts.
 
         Returns:
             Array of API token objects with name, creation date, expiration, and status
@@ -953,10 +994,11 @@ class EnterpriseMixin(Protocol):
     ) -> EnterpriseUsersStatusResult:
         """Get the login and account status for multiple enterprise users.
 
-        Returns status information for the specified enterprise users in a single batch request.
-        Status includes whether the user account is active, locked, or disabled, as well as
-        last login time and session state. Useful for bulk auditing of user account status
-        across an enterprise and identifying inactive or locked accounts.
+        Returns status information for the specified enterprise users in a single batch
+        request. Status includes whether the user account is active, locked, or
+        disabled, as well as last login time and session state. Useful for bulk auditing
+        of user account status across an enterprise and identifying inactive or locked
+        accounts.
 
         Returns:
             Status information for each specified user, including active/locked state,
@@ -969,7 +1011,9 @@ class EnterpriseMixin(Protocol):
         )
 
     async def determine_user_type(self: VcoClientBaseProtocol) -> UserType:
-        """Determine whether the authenticated token belongs to an enterprise, MSP, or operator user.
+        """Determine which kind of user the authenticated token belongs to.
+
+        The user is an enterprise, MSP, or operator user.
 
         Probes three endpoints in order with empty requests (the VCO infers identity
         from the token context). Short-circuits on the first successful response.
@@ -1054,7 +1098,7 @@ class EnterpriseMixin(Protocol):
     async def disable_cluster_to_edge_bridge(
         self: VcoClientBaseProtocol, request: DisableClusterToEdgeBridge
     ) -> EnterpriseServiceBase:
-        """Remove site-to-site bridge designation from a cluster on a profile segment."""
+        """Remove a cluster's site-to-site bridge designation on a profile segment."""
         return await self.portal(
             "enterprise/disableClusterForEdgeToEdgeBridge",
             request,

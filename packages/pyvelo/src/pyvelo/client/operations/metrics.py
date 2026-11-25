@@ -172,8 +172,8 @@ class MetricsMixin(Protocol):
         """Get flow metric aggregate data by application for an edge.
 
         Returns flow metric summaries (bytes, packets, duration) for the specified edge
-        over the given time interval, grouped by application (e.g., HTTP, Office365, Zoom).
-        Each entry in the result corresponds to a single application.
+        over the given time interval, grouped by application (e.g., HTTP, Office365,
+        Zoom). Each entry in the result corresponds to a single application.
 
         Returns:
             Array of flow data objects, one per application, with traffic metrics
@@ -205,12 +205,13 @@ class MetricsMixin(Protocol):
     ) -> EdgeStatusMetricsResult:
         """Get edge healthStats metric summaries for an interval.
 
-        Returns min, max, and average values of edge health metrics over the given
-        time interval. Metrics include tunnel count, CPU usage, memory usage,
-        flow count, handoff queue drops, route count, NAT count, and utilization percentages.
+        Returns min, max, and average values of edge health metrics over the given time
+        interval. Metrics include tunnel count, CPU usage, memory usage, flow count,
+        handoff queue drops, route count, NAT count, and utilization percentages.
 
         Returns:
-            Object with min/max/avg values for each requested metric (e.g., tunnelCount, cpuPct, memoryPct, flowCount)
+            Object with min/max/avg values for each requested metric (e.g., tunnelCount,
+            cpuPct, memoryPct, flowCount)
         """
         return await self.portal(
             "metrics/getEdgeStatusMetrics", request, EdgeStatusMetricsResult
@@ -239,10 +240,10 @@ class MetricsMixin(Protocol):
     ) -> Sequence[FlowVisibilityItem]:
         """Get individual flow stats for an edge.
 
-        Returns detailed per-flow statistics showing individual network flows (connections)
-        traversing the edge. Each entry corresponds to a single flow with source/destination,
-        application, bytes transferred, and routing information. Useful for deep traffic
-        inspection and troubleshooting specific connections.
+        Returns detailed per-flow statistics showing individual network flows
+        (connections) traversing the edge. Each entry corresponds to a single flow with
+        source/destination, application, bytes transferred, and routing information.
+        Useful for deep traffic inspection and troubleshooting specific connections.
 
         Returns:
             Flow rows, without VCO's per-page "other" summary row
@@ -312,10 +313,10 @@ class MetricsMixin(Protocol):
     ) -> Sequence[EdgeCategoryMetricsItem]:
         """Get flow metric aggregate data by application category for an edge.
 
-        Returns flow metric summaries grouped by application category (e.g., "Voice & Video",
-        "Cloud Services", "Social Networking", "Web"). Categories are logical groupings of
-        applications defined in the VCO. Each entry corresponds to a category of application
-        traffic that has traversed the edge.
+        Returns flow metric summaries grouped by application category (e.g., "Voice &
+        Video", "Cloud Services", "Social Networking", "Web"). Categories are logical
+        groupings of applications defined in the VCO. Each entry corresponds to a
+        category of application traffic that has traversed the edge.
 
         Returns:
             Array of flow data objects, one per application category
@@ -330,9 +331,10 @@ class MetricsMixin(Protocol):
     ) -> Sequence[EdgeDestMetricsItem]:
         """Get flow metric aggregate data by destination for an edge.
 
-        Returns flow metric summaries grouped by traffic destination (domain/IP).
-        Each entry corresponds to a distinct destination that the edge sent traffic to.
-        Useful for identifying top bandwidth consumers and traffic patterns by destination.
+        Returns flow metric summaries grouped by traffic destination (domain/IP). Each
+        entry corresponds to a distinct destination that the edge sent traffic to.
+        Useful for identifying top bandwidth consumers and traffic patterns by
+        destination.
 
         Returns:
             Array of flow data objects, one per traffic destination
@@ -438,9 +440,10 @@ class MetricsMixin(Protocol):
     ) -> Sequence[EdgeCategorySeriesItem]:
         """Get flow metric time series data by application category for an edge.
 
-        Returns timestamped flow metrics grouped by application category (e.g., "Voice & Video",
-        "Cloud Services", "Social Networking", "Web") over the given interval. Each entry
-        corresponds to a category of application traffic with its time series data.
+        Returns timestamped flow metrics grouped by application category (e.g., "Voice &
+        Video", "Cloud Services", "Social Networking", "Web") over the given interval.
+        Each entry corresponds to a category of application traffic with its time series
+        data.
 
         Returns:
             Array of per-category time series flow data
@@ -490,8 +493,8 @@ class MetricsMixin(Protocol):
         """Get flow metric time series data by network segment for an edge.
 
         Returns timestamped flow metrics grouped by segment ID over the given interval.
-        Segments are isolated virtual network partitions within SD-WAN (similar to VRFs/VLANs).
-        Each entry corresponds to a segment with its time series data.
+        Segments are isolated virtual network partitions within SD-WAN (similar to
+        VRFs/VLANs). Each entry corresponds to a segment with its time series data.
 
         Returns:
             Array of per-segment time series flow data
@@ -506,15 +509,15 @@ class MetricsMixin(Protocol):
     ) -> GatewayStatusMetricsResult:
         """Get Gateway health metric summaries (min, max, average) for a time interval.
 
-        Fetches health metric summaries for a target gateway over the specified time interval.
-        Gateways in VeloCloud SD-WAN serve as regional hub nodes that handle VCMP tunnel
-        termination, multi-path optimization, and traffic routing between edges and the
-        network backbone. Monitoring gateway health is critical for ensuring optimal SD-WAN
-        performance. Available metrics include: tunnelCount (active VCMP tunnels),
-        tunnelCountV6 (IPv6 tunnels), cpuPct (CPU utilization percentage), memoryPct
-        (memory utilization percentage), flowCount (active flow count), handoffQueueDrops
-        (packets dropped in handoff queues), and connectedEdges (number of edges connected
-        to this gateway).
+        Fetches health metric summaries for a target gateway over the specified time
+        interval. Gateways in VeloCloud SD-WAN serve as regional hub nodes that handle
+        VCMP tunnel termination, multi-path optimization, and traffic routing between
+        edges and the network backbone. Monitoring gateway health is critical for
+        ensuring optimal SD-WAN performance. Available metrics include: tunnelCount
+        (active VCMP tunnels), tunnelCountV6 (IPv6 tunnels), cpuPct (CPU utilization
+        percentage), memoryPct (memory utilization percentage), flowCount (active flow
+        count), handoffQueueDrops (packets dropped in handoff queues), and
+        connectedEdges (number of edges connected to this gateway).
 
         Returns:
             Object containing min, max, and average values for each requested metric
@@ -535,9 +538,10 @@ class MetricsMixin(Protocol):
         interval. Unlike the summary endpoint (get_gateway_status_metrics) which returns
         min/max/average aggregates, this returns data points over time, enabling trend
         analysis and visualization of gateway health. Each metric produces its own time
-        series with regular tick intervals. Use this to chart gateway CPU, memory, tunnel
-        count, flow count, or handoff queue drops over time to identify performance
-        degradation, capacity issues, or correlate gateway health with network events.
+        series with regular tick intervals. Use this to chart gateway CPU, memory,
+        tunnel count, flow count, or handoff queue drops over time to identify
+        performance degradation, capacity issues, or correlate gateway health with
+        network events.
 
         Returns:
             Object with a "series" array containing one time series per metric, each
@@ -551,20 +555,23 @@ class MetricsMixin(Protocol):
     async def get_edge_firewall_idps_metrics(
         self: VcoClientBaseProtocol, request: GetEdgeFirewallIdpsMetrics
     ) -> Sequence[FirewallIdpsMetricsItem]:
-        """Get aggregate Firewall IDPS (Intrusion Detection and Prevention System) metrics for a specific edge.
+        """Get aggregate Firewall IDPS metrics for a specific edge.
 
-        Returns Firewall IDPS summaries for the specified enterprise and edge over the given
-        time interval, grouped by dimension (e.g., signatureName, threatImpact, alert,
-        threatSourceIp, threatSourceGeoCountry, threatTargetIp). Each entry corresponds to a
-        single dimension value. The Enhanced Firewall Service (EFS) IDPS engine inspects
-        traffic for known threat signatures and reports detections. Use this to investigate
-        security threats detected on a specific edge, including threat counts, severity
-        levels, signature categories, and source/target IP addresses.
+        IDPS is the Intrusion Detection and Prevention System.
+
+        Returns Firewall IDPS summaries for the specified enterprise and edge over the
+        given time interval, grouped by dimension (e.g., signatureName, threatImpact,
+        alert, threatSourceIp, threatSourceGeoCountry, threatTargetIp). Each entry
+        corresponds to a single dimension value. The Enhanced Firewall Service (EFS)
+        IDPS engine inspects traffic for known threat signatures and reports detections.
+        Use this to investigate security threats detected on a specific edge, including
+        threat counts, severity levels, signature categories, and source/target IP
+        addresses.
 
         Returns:
-            Array of aggregate IDPS data objects, each containing threat counts, signature
-            IDs, threat impact levels (HIGH/MEDIUM/LOW), and signature categories
-            (e.g., "command-and-control", "trojan-activity")
+            Array of aggregate IDPS data objects, each containing threat counts,
+            signature IDs, threat impact levels (HIGH/MEDIUM/LOW), and signature
+            categories (e.g., "command-and-control", "trojan-activity")
         """
         return await self.portal_list(
             "metrics/getEdgeFirewallIdpsMetrics", request, FirewallIdpsMetricsItem
@@ -576,17 +583,17 @@ class MetricsMixin(Protocol):
     ) -> Sequence[FirewallIdpsSeriesItem]:
         """Get Firewall IDPS time series data for a specific edge by dimension.
 
-        Returns Firewall IDPS time series for the specified enterprise or edge over the given
-        time interval, grouped by dimension (e.g., threatImpact). Each entry corresponds to a
-        single dimension value and contains a time series of threat counts at regular tick
-        intervals. Use this to visualize IDPS threat activity trends over time, broken down
-        by severity level (HIGH, MEDIUM, LOW), to identify spikes or patterns in intrusion
-        detection events on a specific edge.
+        Returns Firewall IDPS time series for the specified enterprise or edge over the
+        given time interval, grouped by dimension (e.g., threatImpact). Each entry
+        corresponds to a single dimension value and contains a time series of threat
+        counts at regular tick intervals. Use this to visualize IDPS threat activity
+        trends over time, broken down by severity level (HIGH, MEDIUM, LOW), to identify
+        spikes or patterns in intrusion detection events on a specific edge.
 
         Returns:
-            Array of time series objects, each with a dimension name (e.g., "HIGH", "MEDIUM",
-            "LOW"), containing series data with metric name, start time, tick interval, data
-            points array, total, min, and max values
+            Array of time series objects, each with a dimension name (e.g., "HIGH",
+            "MEDIUM", "LOW"), containing series data with metric name, start time, tick
+            interval, data points array, total, min, and max values
         """
         return await self.portal_list(
             "metrics/getEdgeFirewallIdpsSeries", request, FirewallIdpsSeriesItem
@@ -598,13 +605,14 @@ class MetricsMixin(Protocol):
     ) -> Sequence[FirewallMaliciousIpMetricsItem]:
         """Get aggregate Firewall Malicious IP metrics for a specific edge.
 
-        Returns Firewall Malicious IP summaries for the specified enterprise and edge over the
-        given time interval, grouped by dimension (e.g., destIp, action, ipCategory, sourceIp,
-        threatSourceGeoCountry). Each entry corresponds to a single dimension value. The
-        Enhanced Firewall Service (EFS) malicious IP engine checks traffic against known
-        malicious IP address databases and can monitor or block connections. Use this to
-        investigate malicious IP activity on a specific edge, including which IPs were
-        flagged, what actions were taken (block/monitor), and the geographic origin of threats.
+        Returns Firewall Malicious IP summaries for the specified enterprise and edge
+        over the given time interval, grouped by dimension (e.g., destIp, action,
+        ipCategory, sourceIp, threatSourceGeoCountry). Each entry corresponds to a
+        single dimension value. The Enhanced Firewall Service (EFS) malicious IP engine
+        checks traffic against known malicious IP address databases and can monitor or
+        block connections. Use this to investigate malicious IP activity on a specific
+        edge, including which IPs were flagged, what actions were taken (block/monitor),
+        and the geographic origin of threats.
 
         Returns:
             Array of aggregate malicious IP data objects with threat counts
@@ -623,13 +631,14 @@ class MetricsMixin(Protocol):
     ) -> Sequence[FirewallUrlCategoryMetricsItem]:
         """Get aggregate URL category filtering metrics for a specific edge.
 
-        Returns URL category summaries for the specified enterprise and edge over the given
-        time interval, grouped by dimension (e.g., urlCategory, action, sourceIp). Each entry
-        corresponds to a single dimension value. The Enhanced Firewall Service (EFS) URL
-        filtering engine categorizes web traffic into content categories (e.g., "Gambling",
-        "News", "Social Networking") and can allow, monitor, or block access. Use this to
-        understand web browsing patterns by category on a specific edge and to see which
-        categories are being blocked or monitored by URL filtering policies.
+        Returns URL category summaries for the specified enterprise and edge over the
+        given time interval, grouped by dimension (e.g., urlCategory, action, sourceIp).
+        Each entry corresponds to a single dimension value. The Enhanced Firewall
+        Service (EFS) URL filtering engine categorizes web traffic into content
+        categories (e.g., "Gambling", "News", "Social Networking") and can allow,
+        monitor, or block access. Use this to understand web browsing patterns by
+        category on a specific edge and to see which categories are being blocked or
+        monitored by URL filtering policies.
 
         Returns:
             Array of aggregate URL category data objects with counts per category
@@ -647,13 +656,14 @@ class MetricsMixin(Protocol):
     ) -> Sequence[FirewallUrlReputationMetricsItem]:
         """Get aggregate URL reputation metrics for a specific edge.
 
-        Returns URL reputation summaries for the specified edge over the given time interval,
-        grouped by dimension (e.g., domainName, sourceIp, urlRisk, action). Each entry
-        corresponds to a single dimension value. The Enhanced Firewall Service (EFS) URL
-        reputation engine scores URLs by risk level (high, medium, low, trustworthy,
-        suspicious) and can allow, monitor, or block access based on reputation. Use this
-        to identify risky domains accessed from a specific edge, see which source IPs are
-        visiting high-risk URLs, and review actions taken by the URL reputation policy.
+        Returns URL reputation summaries for the specified edge over the given time
+        interval, grouped by dimension (e.g., domainName, sourceIp, urlRisk, action).
+        Each entry corresponds to a single dimension value. The Enhanced Firewall
+        Service (EFS) URL reputation engine scores URLs by risk level (high, medium,
+        low, trustworthy, suspicious) and can allow, monitor, or block access based on
+        reputation. Use this to identify risky domains accessed from a specific edge,
+        see which source IPs are visiting high-risk URLs, and review actions taken by
+        the URL reputation policy.
 
         Returns:
             Array of aggregate URL reputation data objects with counts per dimension
@@ -673,18 +683,19 @@ class MetricsMixin(Protocol):
     ) -> Sequence[FirewallIdpsMetricsItem]:
         """Get aggregate Firewall IDPS metrics across all edges in the enterprise.
 
-        Returns Firewall IDPS summaries for the entire enterprise over the specified time
-        interval, grouped by dimension (e.g., signatureName, threatImpact, alert,
-        threatSourceIp, threatSourceGeoCountry, threatTargetIp, edgeLogicalId). Each entry
-        corresponds to a single dimension value. Unlike the edge-level IDPS metrics, this
-        provides a consolidated view of intrusion detection events across all edges in the
-        enterprise. Use this to get an enterprise-wide security posture, identify the most
-        common threat signatures, or find which edges are seeing the most IDPS activity.
+        Returns Firewall IDPS summaries for the entire enterprise over the specified
+        time interval, grouped by dimension (e.g., signatureName, threatImpact, alert,
+        threatSourceIp, threatSourceGeoCountry, threatTargetIp, edgeLogicalId). Each
+        entry corresponds to a single dimension value. Unlike the edge-level IDPS
+        metrics, this provides a consolidated view of intrusion detection events across
+        all edges in the enterprise. Use this to get an enterprise-wide security
+        posture, identify the most common threat signatures, or find which edges are
+        seeing the most IDPS activity.
 
         Returns:
-            Array of aggregate IDPS data objects, each containing threat counts, signature
-            IDs, threat impact levels (HIGH/MEDIUM/LOW), and signature categories
-            (e.g., "command-and-control", "trojan-activity")
+            Array of aggregate IDPS data objects, each containing threat counts,
+            signature IDs, threat impact levels (HIGH/MEDIUM/LOW), and signature
+            categories (e.g., "command-and-control", "trojan-activity")
         """
         return await self.portal_list(
             "metrics/getEnterpriseFirewallIdpsMetrics",
@@ -696,14 +707,16 @@ class MetricsMixin(Protocol):
     async def get_enterprise_firewall_edge_count_metrics(
         self: VcoClientBaseProtocol, request: GetEnterpriseFirewallEdgeCountMetrics
     ) -> EnterpriseFirewallEdgeCountMetricsResult:
-        """Get total and impacted Edge counts for an enterprise based on Enhanced Firewall Service (EFS) records.
+        """Get total and impacted Edge counts for an enterprise.
 
-        Returns the total number of edges in the enterprise as well as the number of edges
-        that are protected by the Enhanced Firewall Service (EFS). This provides a quick
-        overview of EFS deployment coverage across the enterprise. Use this to determine
-        how many edges have EFS enabled and how many have been impacted by security events
-        (IDPS detections, malicious IP blocks, URL filtering hits) during the specified
-        time interval.
+        The counts are based on Enhanced Firewall Service (EFS) records.
+
+        Returns the total number of edges in the enterprise as well as the number of
+        edges that are protected by the Enhanced Firewall Service (EFS). This provides a
+        quick overview of EFS deployment coverage across the enterprise. Use this to
+        determine how many edges have EFS enabled and how many have been impacted by
+        security events (IDPS detections, malicious IP blocks, URL filtering hits)
+        during the specified time interval.
 
         Returns:
             Object with totalEdgesCount (total edges in enterprise) and
@@ -719,15 +732,17 @@ class MetricsMixin(Protocol):
     async def get_enterprise_firewall_edge_summary_metrics(
         self: VcoClientBaseProtocol, request: GetEnterpriseFirewallEdgeSummaryMetrics
     ) -> Sequence[FirewallEdgeSummaryMetricsItem]:
-        """Get aggregate Firewall Edge Summary based on actions taken for various security engine types.
+        """Get aggregate Firewall Edge Summary.
 
-        Returns a per-edge summary of Enhanced Firewall Service (EFS) activity across the
-        enterprise for the specified time interval, broken down by security engine type:
-        IDPS (Intrusion Detection/Prevention), URL Filtering (category-based web filtering),
-        URL Reputation (risk-based URL scoring), and Malicious IP (known bad IP blocking).
-        Each entry corresponds to a single edge and shows the actions taken (allow, monitor,
-        block) for each engine type. Use this to compare firewall activity across edges and
-        identify which edges have the most security events.
+        The summary is based on actions taken for various security engine types.
+
+        Returns a per-edge summary of Enhanced Firewall Service (EFS) activity across
+        the enterprise for the specified time interval, broken down by security engine
+        type: IDPS (Intrusion Detection/Prevention), URL Filtering (category-based web
+        filtering), URL Reputation (risk-based URL scoring), and Malicious IP (known bad
+        IP blocking). Each entry corresponds to a single edge and shows the actions
+        taken (allow, monitor, block) for each engine type. Use this to compare firewall
+        activity across edges and identify which edges have the most security events.
 
         Returns:
             Array of per-edge summary objects, each containing action counts for
@@ -743,15 +758,16 @@ class MetricsMixin(Protocol):
     async def get_enterprise_firewall_malicious_ip_metrics(
         self: VcoClientBaseProtocol, request: GetEnterpriseFirewallMaliciousIpMetrics
     ) -> Sequence[FirewallMaliciousIpMetricsItem]:
-        """Get aggregate Firewall Malicious IP metrics across all edges in the enterprise.
+        """Get aggregate Firewall Malicious IP metrics across all enterprise edges.
 
-        Returns Firewall Malicious IP summaries for the entire enterprise over the specified
-        time interval, grouped by dimension (e.g., destIp, action, ipCategory, sourceIp,
-        threatSourceGeoCountry). Each entry corresponds to a single dimension value. Unlike
-        the edge-level malicious IP metrics, this provides a consolidated view across all
-        edges. Use this to get an enterprise-wide view of malicious IP activity, including
-        which destination IPs are flagged, which source IPs are communicating with malicious
-        hosts, and the geographic distribution of threat sources.
+        Returns Firewall Malicious IP summaries for the entire enterprise over the
+        specified time interval, grouped by dimension (e.g., destIp, action, ipCategory,
+        sourceIp, threatSourceGeoCountry). Each entry corresponds to a single dimension
+        value. Unlike the edge-level malicious IP metrics, this provides a consolidated
+        view across all edges. Use this to get an enterprise-wide view of malicious IP
+        activity, including which destination IPs are flagged, which source IPs are
+        communicating with malicious hosts, and the geographic distribution of threat
+        sources.
 
         Returns:
             Array of aggregate malicious IP data objects with threat counts
@@ -768,15 +784,16 @@ class MetricsMixin(Protocol):
     async def get_enterprise_firewall_url_category_metrics(
         self: VcoClientBaseProtocol, request: GetEnterpriseFirewallUrlCategoryMetrics
     ) -> Sequence[FirewallUrlCategoryMetricsItem]:
-        """Get aggregate URL category filtering metrics across all edges in the enterprise.
+        """Get aggregate URL category filtering metrics across all enterprise edges.
 
         Returns URL category summaries for the entire enterprise over the specified time
-        interval, grouped by dimension (e.g., urlCategory, action, sourceIp, edgeLogicalId).
-        Each entry corresponds to a single dimension value. Unlike the edge-level URL category
-        metrics, this provides a consolidated view across all edges. Use this to understand
-        enterprise-wide web browsing patterns by content category, identify which URL
-        categories are most frequently blocked or monitored, and see which edges or source
-        IPs generate the most URL filtering events.
+        interval, grouped by dimension (e.g., urlCategory, action, sourceIp,
+        edgeLogicalId). Each entry corresponds to a single dimension value. Unlike the
+        edge-level URL category metrics, this provides a consolidated view across all
+        edges. Use this to understand enterprise-wide web browsing patterns by content
+        category, identify which URL categories are most frequently blocked or
+        monitored, and see which edges or source IPs generate the most URL filtering
+        events.
 
         Returns:
             Array of aggregate URL category data objects with counts per dimension
@@ -794,12 +811,13 @@ class MetricsMixin(Protocol):
     ) -> Sequence[FirewallUrlReputationMetricsItem]:
         """Get aggregate URL reputation metrics across all edges in the enterprise.
 
-        Returns URL reputation summaries for the entire enterprise over the specified time
-        interval, grouped by dimension (e.g., domainName, edgeLogicalId). Each entry
-        corresponds to a single dimension value. Unlike the edge-level URL reputation metrics,
-        this provides a consolidated view across all edges. Use this to identify the riskiest
-        domains accessed enterprise-wide, see which edges are visiting high-risk URLs, and
-        review the overall URL reputation posture across the organization.
+        Returns URL reputation summaries for the entire enterprise over the specified
+        time interval, grouped by dimension (e.g., domainName, edgeLogicalId). Each
+        entry corresponds to a single dimension value. Unlike the edge-level URL
+        reputation metrics, this provides a consolidated view across all edges. Use this
+        to identify the riskiest domains accessed enterprise-wide, see which edges are
+        visiting high-risk URLs, and review the overall URL reputation posture across
+        the organization.
 
         Returns:
             Array of aggregate URL reputation data objects with risk-level counts
@@ -816,16 +834,17 @@ class MetricsMixin(Protocol):
     async def get_nsd_tunnel_stats(
         self: VcoClientBaseProtocol, request: GetNsdTunnelStats
     ) -> Sequence[NsdTunnelStatsResultItem]:
-        """Get NSD (Non SD-WAN Destination) Gateway tunnel stats metric time series for a time interval.
+        """Get NSD Gateway tunnel stats metric time series for a time interval.
 
         Fetches stats metric time series for a target Non SD-WAN Destination (NSD) via
-        Gateway over the specified time interval. NSDs are external endpoints (e.g., cloud
-        security services, third-party data centers) that are connected to the VeloCloud
-        SD-WAN fabric via IPsec tunnels through gateways. Gateway-based NSD tunnels route
-        traffic from edges through VeloCloud gateways before reaching the NSD. Available
-        metrics include packetsRx, packetsTx, totalPackets, bytesRx, bytesTx, totalBytes,
-        and flowCount. Use this to monitor throughput and traffic volume on gateway-to-NSD
-        IPsec tunnels to ensure connectivity and performance to external services.
+        Gateway over the specified time interval. NSDs are external endpoints (e.g.,
+        cloud security services, third-party data centers) that are connected to the
+        VeloCloud SD-WAN fabric via IPsec tunnels through gateways. Gateway-based NSD
+        tunnels route traffic from edges through VeloCloud gateways before reaching the
+        NSD. Available metrics include packetsRx, packetsTx, totalPackets, bytesRx,
+        bytesTx, totalBytes, and flowCount. Use this to monitor throughput and traffic
+        volume on gateway-to-NSD IPsec tunnels to ensure connectivity and performance to
+        external services.
 
         Returns:
             Time series object with NSD tunnel stats including data center public IP and
@@ -840,16 +859,17 @@ class MetricsMixin(Protocol):
     async def get_nsd_edge_tunnel_stats(
         self: VcoClientBaseProtocol, request: GetNsdEdgeTunnelStats
     ) -> Sequence[NsdEdgeTunnelStatsResultItem]:
-        """Get NSD (Non SD-WAN Destination) Edge tunnel stats metric time series for a time interval.
+        """Get NSD Edge tunnel stats metric time series for a time interval.
 
-        Fetches stats metric time series for a target Non SD-WAN Destination (NSD) via Edge
-        over the specified time interval. Edge-based NSD tunnels connect directly from an
-        edge to an external endpoint (e.g., cloud security services like Zscaler, Palo Alto
-        Prisma) via IPsec, bypassing the gateway. This is commonly used for direct cloud
-        security insertion or branch-to-cloud connectivity. Available metrics include
-        packetsRx, packetsTx, totalPackets, bytesRx, bytesTx, and totalBytes. Use this to
-        monitor throughput and traffic volume on edge-to-NSD IPsec tunnels to verify
-        connectivity and performance to external services from a specific edge.
+        Fetches stats metric time series for a target Non SD-WAN Destination (NSD) via
+        Edge over the specified time interval. Edge-based NSD tunnels connect directly
+        from an edge to an external endpoint (e.g., cloud security services like
+        Zscaler, Palo Alto Prisma) via IPsec, bypassing the gateway. This is commonly
+        used for direct cloud security insertion or branch-to-cloud connectivity.
+        Available metrics include packetsRx, packetsTx, totalPackets, bytesRx, bytesTx,
+        and totalBytes. Use this to monitor throughput and traffic volume on edge-to-NSD
+        IPsec tunnels to verify connectivity and performance to external services from a
+        specific edge.
 
         Returns:
             Time series object with NSD Edge tunnel stats including NVS public IP and
