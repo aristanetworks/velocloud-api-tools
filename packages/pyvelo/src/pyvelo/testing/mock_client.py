@@ -1,4 +1,7 @@
-"""Testing helpers for the configuration pipeline: a client over a ``ModuleStore`` and firewall module builders."""
+"""Testing helpers for the configuration pipeline.
+
+A client over a ``ModuleStore`` and firewall module builders.
+"""
 
 from __future__ import annotations
 
@@ -128,7 +131,10 @@ def make_firewall_module(
     *,
     layer: type[Edge | Profile] = Edge,
 ) -> FirewallConfigurationModule[Edge] | FirewallConfigurationModule[Profile]:
-    """A firewall module of the layer *layer* (``Edge`` unless said otherwise), with *segments*."""
+    """A firewall module of the layer *layer*, with *segments*.
+
+    The layer is ``Edge`` unless said otherwise.
+    """
     if layer is Edge:
         data = FirewallData[Edge](
             segments=cast("list[FirewallSegment[Edge]]", segments or [])
@@ -159,7 +165,9 @@ def _register_stack(
 
 
 class MockVcoClient(VcoClient):
-    """Mock VCO client that records its API calls and serves configurations from a store.
+    """Mock VCO client that records its API calls.
+
+    It serves configurations from a store.
 
     An edge's configuration stack, module updates, inserts and the
     configurations the store holds go through the real client code to
@@ -228,12 +236,17 @@ class MockVcoClient(VcoClient):
     def add_service(
         self, object_id: int, *, logical_id: str, name: str, type_: str
     ) -> None:
-        """Have the store hold the network service *object_id*, which a ref row can point at."""
+        """Have the store hold the network service *object_id*.
+
+        A ref row can point at it.
+        """
         self.store.add_object(object_id, logical_id=logical_id, name=name, type_=type_)
 
     @classmethod
     def for_state(cls, state: ConfigState, *, conditional_check: bool = False) -> Self:
-        """A client whose store holds the configurations of *state*: its edge one, if any, and its profile one.
+        """A client whose store holds the configurations of *state*.
+
+        Its edge one, if any, and its profile one.
 
         A state with an edge configuration also gets the stack of both, for
         every edge.
@@ -257,7 +270,10 @@ class MockVcoClient(VcoClient):
     async def get_configuration(
         self, request: GetConfiguration
     ) -> EdgeConfiguration | EnterpriseConfigurationProfile:
-        """The configuration from the store when it holds it; else the stack's profile."""
+        """The configuration from the store when it holds it.
+
+        Else the stack's profile.
+        """
         self.calls.append(("get_configuration", request))
         if request.id_ in self.store.configurations:
             return await super().get_configuration(request)

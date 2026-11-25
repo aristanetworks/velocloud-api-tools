@@ -157,7 +157,10 @@ def profile_segment_id(
 def _profile_segment_entry(
     profile_segments: Sequence[Mapping[str, object]] | None, selector: object
 ) -> Mapping[str, object] | None:
-    """The profile segment entry *selector* names (``profile_segment_name``), or None."""
+    """The profile segment entry *selector* names, or None.
+
+    See ``profile_segment_name``.
+    """
     if profile_segments is None:
         raise UnboundError(
             f"segment {selector!r}: this object is not bound to a profile; "
@@ -178,7 +181,10 @@ def _profile_segment_entry(
 
 
 def _segment_name(entry: Mapping[str, object]) -> str | None:
-    """``entry["segment"]["name"]``, or None if any step is missing or it is not a string."""
+    """``entry["segment"]["name"]``, or None.
+
+    None if any step is missing or it is not a string.
+    """
     descriptor = entry.get("segment")
     name = descriptor.get("name") if is_dict(descriptor) else None
     return name if isinstance(name, str) else None
@@ -290,7 +296,9 @@ def bind_profile_layers(
     profile_data: object,
     profile_class: type[Layered[Profile]],
 ) -> list[dict[str, Any]]:
-    """Link *data* to the profile module it inherits from, and return the profile's segments for ``_profile_segments``.
+    """Link *data* to the profile module it inherits from.
+
+    Return the profile's segments for ``_profile_segments``.
 
     *profile_data* is the profile module's raw ``data`` (anything else, as for
     an edge whose profile has no such module, is a profile with no segments).

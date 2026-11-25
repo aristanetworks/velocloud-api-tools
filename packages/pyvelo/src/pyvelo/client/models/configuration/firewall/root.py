@@ -39,12 +39,18 @@ from .stateful import StatefulFirewallSettings
 
 
 def profile_false_wins(profile_value: object) -> bool:
-    """The VCO's rule for ``firewall_enabled``: a profile that has it off turns it off for every edge."""
+    """The VCO's rule for ``firewall_enabled``.
+
+    A profile that has it off turns it off for every edge.
+    """
     return profile_value is False
 
 
 class StatefulLocal(VcoModel):
-    """What the group ``stateful`` stores when it is local: every member, all required."""
+    """What the group ``stateful`` stores when it is local.
+
+    Every member, all required.
+    """
 
     stateful_firewall_settings: StatefulFirewallSettings
     stateful_firewall_settings_v6: StatefulFirewallSettings
@@ -52,7 +58,10 @@ class StatefulLocal(VcoModel):
 
 
 class NetworkProtectionLocal(VcoModel):
-    """What the group ``network_protection`` stores when it is local: every member, all required."""
+    """What the group ``network_protection`` stores when it is local.
+
+    Every member, all required.
+    """
 
     network_protection_settings: NetworkProtectionSettings
     network_protection_settings_v6: NetworkProtectionSettings

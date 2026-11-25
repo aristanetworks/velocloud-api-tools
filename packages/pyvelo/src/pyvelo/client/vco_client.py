@@ -143,7 +143,10 @@ class VcoClient(VcoClientProtocol):
         json_data: dict[str, Any] | None = None,
         content: str | None = None,
     ) -> httpx.Response:
-        """Send an HTTP request with rate limiting, concurrency control, and 429 retry."""
+        """Send an HTTP request.
+
+        The request has rate limiting, concurrency control, and 429 retry.
+        """
         started = time.monotonic()
         attempts = rate_limited = 0
         status = None

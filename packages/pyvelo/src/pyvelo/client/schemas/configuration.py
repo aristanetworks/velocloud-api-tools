@@ -203,7 +203,9 @@ class ConfigurationModuleBase(VcoModel):
         return self._additions
 
     def _segments_to_add_to(self) -> tuple[VcoModel, list[Any]]:
-        """The module's data and its ``segments`` list, for a profile module that has them.
+        """The module's data and its ``segments`` list.
+
+        For a profile module that has them.
 
         Raises ``ValueError`` for a module that is not at the profile level or
         whose data has no ``segments`` list.
@@ -223,14 +225,19 @@ class ConfigurationModuleBase(VcoModel):
         )
 
     def _parse_as(self, model_type: type[VcoModel], raw: object) -> Any:
-        """*raw* parsed as *model_type* the way this module was first parsed, at its config level."""
+        """*raw* parsed as *model_type* the way this module was first parsed.
+
+        It is parsed at the module's config level.
+        """
         context = {"config_level": self.config_context}
         if self._raw_mode == "json":
             return model_type.model_validate_json(json.dumps(raw), context=context)
         return model_type.model_validate(raw, context=context)
 
     def add_segment_entry(self, entry: Mapping[str, object]) -> VcoModel:
-        """Add the segment *entry* to this profile module, and return its item of ``data.segments``.
+        """Add the segment *entry* to this profile module.
+
+        Return its item of ``data.segments``.
 
         *entry* is the raw entry, as ``new_segment_entry`` makes it. It is
         recorded as an ``AddedSegment`` (a copy of it), which makes it part of
@@ -264,7 +271,9 @@ class ConfigurationModuleBase(VcoModel):
     def add_default_entries(
         self, segment_id: int, entries: Sequence[Mapping[str, object]]
     ) -> None:
-        """Insert the raw QoS rules *entries* into the ``defaults`` of segment *segment_id*.
+        """Insert the raw QoS rules *entries* into a segment's ``defaults``.
+
+        The segment is *segment_id*.
 
         They are recorded as an ``AddedDefaults``, part of the baseline the
         module is planned against, and inserted, parsed as ``QosRule``, into
@@ -307,7 +316,10 @@ class ConfigurationModuleBase(VcoModel):
         )
 
     def _raw_defaults_of(self, segment_id: int) -> list[object]:
-        """The raw ``defaults`` of segment *segment_id* in the raw data plus the additions so far; empty when it has none."""
+        """The raw ``defaults`` of segment *segment_id*; empty when it has none.
+
+        They are read from the raw data plus the additions so far.
+        """
         if self._raw_data is MISSING:
             return []
         raw = with_additions(self._raw_data, self._additions)
@@ -319,7 +331,9 @@ class ConfigurationModuleBase(VcoModel):
         return []
 
     def defaults_rule_id(self, segment_id: object, name: str) -> str:
-        """The ``ruleLogicalId`` kept for the repaired default *name* of segment *segment_id*.
+        """The ``ruleLogicalId`` kept for the repaired default *name*.
+
+        The default is of segment *segment_id*.
 
         A new ``uuid4`` text the first time, the same every time after, so a
         plan, a re-plan and a plan of a copy of this module send one ID. A
@@ -333,7 +347,9 @@ class ConfigurationModuleBase(VcoModel):
     def with_data_parsed_from(
         self, raw_data: object, *, additions: Sequence[SegmentAddition] = ()
     ) -> Self:
-        """A copy of this module whose ``data`` is *raw_data* parsed, and whose raw snapshot is this module's.
+        """A copy of this module whose ``data`` is *raw_data* parsed.
+
+        Its raw snapshot is this module's.
 
         The data is parsed at this module's config level, and its ``RefOnly``
         fields are filled from the refs of the snapshot, as a read does.
@@ -394,7 +410,10 @@ class QosConfigurationModule(ConfigurationModuleBase, Generic[L]):  # noqa: UP04
     @property
     @override
     def config_context(self) -> ConfigContext | None:
-        """The level of the layer this module is for: ``EDGE`` or ``PROFILE``, none for the others."""
+        """The level of the layer this module is for.
+
+        ``EDGE`` or ``PROFILE``, none for the others.
+        """
         return self.data.config_context
 
     def mutable_data(self) -> QosData[L]:
@@ -408,7 +427,10 @@ class FirewallConfigurationModule(ConfigurationModuleBase, Generic[L]):  # noqa:
     @property
     @override
     def config_context(self) -> ConfigContext | None:
-        """The level of the layer this module is for: ``EDGE`` or ``PROFILE``, none for the others."""
+        """The level of the layer this module is for.
+
+        ``EDGE`` or ``PROFILE``, none for the others.
+        """
         return self.data.config_context
 
     def mutable_data(self) -> FirewallData[L]:
@@ -440,13 +462,19 @@ type AnyStoredModule = AnyConfigurationModule[Edge] | AnyConfigurationModule[Pro
 
 
 class ConfigurationModuleList(RootModel[list[AnyConfigurationModule[L]]], Generic[L]):  # noqa: UP046 (one shared constrained L, as a TypeVar)
-    """A list of module rows of one layer; a row that does not parse is refused without quoting it."""
+    """A list of module rows of one layer.
+
+    A row that does not parse is refused without quoting it.
+    """
 
     model_config: ClassVar[ConfigDict] = ConfigDict(hide_input_in_errors=True)
 
 
 def _wrong_module(module: object, expected: type) -> TypeError:
-    """The error for a module of a configuration's ``modules`` whose class is not the one its name has."""
+    """The error for a module whose class is not the one its name has.
+
+    The module is one of a configuration's ``modules``.
+    """
     return TypeError(
         f"the {getattr(module, 'name', '?')} module is a "
         f"{type(module).__name__}, not a {expected.__name__}"
@@ -654,7 +682,9 @@ class InsertConfigurationModuleResult(VcoModel):
 
 
 def _module_names() -> frozenset[str]:
-    """The ``name`` of each module class of ``AnyConfigurationModule``, whatever the layer.
+    """The ``name`` of each module class of ``AnyConfigurationModule``.
+
+    Whatever the layer.
 
     The alias stays a plain union with a layer variable in its QoS and firewall
     members (``QosConfigurationModule[X]``), and those classes have their ``name``
@@ -677,7 +707,9 @@ _MODULE_NAMES = _module_names()
 
 
 def _module_or_count(value: object) -> str:
-    """``"module"`` for a module or a row whose ``name`` the models know; else ``"count"``.
+    """``"module"`` for a module or a row whose ``name`` the models know.
+
+    Else ``"count"``.
 
     The answer to a write is told by its shape, not by which form validates, so
     a module row that fails validation raises its own error, as on any read.
@@ -701,7 +733,9 @@ class UpdateConfigurationModuleResult(
     ],
     Generic[L],  # noqa: UP046 (one shared constrained L, as a TypeVar)
 ):
-    """An update's answer when it asks for data: the module row as stored, of the layer ``L``.
+    """An update's answer when it asks for data.
+
+    The module row as stored, of the layer ``L``.
 
     A VCO that ignores ``returnData`` answers with a row count.
     """
@@ -717,7 +751,9 @@ class InsertedConfigurationModule(
     ],
     Generic[L],  # noqa: UP046 (one shared constrained L, as a TypeVar)
 ):
-    """An insert's answer when it asks for data: the module row as stored, of the layer ``L``.
+    """An insert's answer when it asks for data.
+
+    The module row as stored, of the layer ``L``.
 
     A VCO that ignores ``returnData`` answers with the new ID and a row count.
     """
@@ -757,7 +793,10 @@ class GetConfigurationModules(VcoModel):
 
 
 class ConfigurationModuleVersion(VcoModel):
-    """A module row as ``getConfigurationModules`` answers with ``noData``: its identity and ``version``, with no data and no refs."""
+    """A module row as ``getConfigurationModules`` answers with ``noData``.
+
+    Its identity and ``version``, with no data and no refs.
+    """
 
     id_: Annotated[int, Alias("id")]
     name: str

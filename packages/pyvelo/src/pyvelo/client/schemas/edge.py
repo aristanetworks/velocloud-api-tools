@@ -467,7 +467,10 @@ class GatewayHandOffs(VcoModel):
 
 
 class EdgeGatewayAssignmentResult(VcoModel):
-    """Edge gateway assignment view showing primary, secondary, and data-center gateways."""
+    """Edge gateway assignment view.
+
+    It shows primary, secondary, and data-center gateways.
+    """
 
     model_config: ClassVar[ConfigDict] = ConfigDict(extra="allow")
 
@@ -536,7 +539,9 @@ class CompositeModuleBase(VcoModel):
 
     @property
     def raw_data(self) -> object:
-        """``data`` exactly as the server composed it, as validated; ``MISSING`` if the input had none.
+        """``data`` exactly as the server composed it, as validated.
+
+        ``MISSING`` if the input had none.
 
         The models drop a key they do not know, so this is what a comparison
         with the composed data reads.

@@ -1,7 +1,9 @@
 # The cycle is through ``pyvelo.client.exceptions``, whose annotation-only imports name
 # ``module_check``, which imports this module for ``APPEND_ONLY_REF_NAMES``.
 # pyright: reportImportCycles=false
-"""The ref rows an edit adds and removes, and the complete refs to send, by difference of the declared owners.
+"""The ref rows an edit adds and removes, and the complete refs to send.
+
+Both follow by difference of the declared owners.
 
 A ref row goes with an identity that the data holds (``OwnsRef``) or that only
 the row says (``RefOnly``). ``derive_refs`` compares the owners of a
@@ -112,7 +114,10 @@ _ONLY_THE_EDIT = "the plan changes only what the edit adds or removes"
 
 @dataclass(frozen=True)
 class PlanWarning:
-    """Something about the module as read that disagrees, and that the plan leaves as it is."""
+    """Something about the module as read that disagrees.
+
+    The plan leaves it as it is.
+    """
 
     code: str
     """``"ref_without_owner"``, ``"owner_without_ref"`` or ``"several_refs"``."""
@@ -174,7 +179,10 @@ class _Context:
 
 
 def _object_ids(raw_refs: object, given: Mapping[int, int] | None) -> dict[int, int]:
-    """``segmentId`` to the segment's object ID: the module's own segment rows, over those *given*."""
+    """``segmentId`` to the segment's object ID.
+
+    From the module's own segment rows, over those *given*.
+    """
     return {**(given or {}), **segment_object_ids(raw_refs)}
 
 
@@ -211,7 +219,9 @@ def row_field(row: dict[object, object], field: str) -> object:
 
 
 def same_identity(identity: object, held: object) -> bool:
-    """Whether *held* (a row's value) is *identity*: UUIDs as lower-case text, ints as ints.
+    """Whether *held* (a row's value) is *identity*.
+
+    UUIDs are compared as lower-case text, ints as ints.
 
     *identity* may be a ``UUID`` or its text (as ``RefChange.value`` holds it).
     """
@@ -312,7 +322,11 @@ def _wrong_service_type(
 def _segment_object_id(
     owner: RefOwner, context: _Context, resolvers: IdentityLookup | None
 ) -> int:
-    """The ``segmentObjectId`` of the row for *owner*: from the segment rows the module has or was given, else the segment resolver."""
+    """The ``segmentObjectId`` of the row for *owner*.
+
+    It comes from the segment rows the module has or was given, else from the
+    segment resolver.
+    """
     found = (
         None if owner.segment_id is None else context.object_ids.get(owner.segment_id)
     )
@@ -368,7 +382,10 @@ def _new_row(
     resolvers: IdentityLookup | None,
     hub_services: HubServiceTable | None,
 ) -> tuple[dict[str, Any], int | None]:
-    """The row to add for *owner* and its ``segmentObjectId`` (``None`` for a ref with no segment)."""
+    """The row to add for *owner* and its ``segmentObjectId``.
+
+    The ``segmentObjectId`` is ``None`` for a ref with no segment.
+    """
     segment_object_id: int | None = None
     if owner.identity_type is HubService:
         if hub_services is None:
@@ -506,7 +523,10 @@ def sends_refs_always(
 def changed_owners(
     baseline: VcoModel, current: VcoModel, level: ConfigContext | None
 ) -> tuple[RefOwner, ...]:
-    """The owners that *baseline* has and *current* has not, then those *current* has and *baseline* has not.
+    """The owners that only one of *baseline* and *current* has.
+
+    First those *baseline* has and *current* has not, then those *current* has
+    and *baseline* has not.
 
     Owners are told apart as ``derive_refs`` tells them (ref name, identity
     and segment), so an owner that moved to another place with the same
@@ -532,7 +552,9 @@ def derive_refs(  # noqa: C901, PLR0912, PLR0913 (existing: split it when it nex
     hub_services: HubServiceTable | None = None,
     segment_object_ids: Mapping[int, int] | None = None,
 ) -> DerivedRefs:
-    """The rows the edit from *baseline* to *current* adds and removes, and the refs to send.
+    """The ref changes of the edit from *baseline* to *current*.
+
+    The rows it adds and removes, and the refs to send.
 
     *baseline* is the module's data as read, with its ``RefOnly`` fields
     filled from its refs, and *current* the data now; ``None`` for either (a
