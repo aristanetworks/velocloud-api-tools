@@ -337,7 +337,7 @@ class RemovesTheModuleDuringTheWrite(MockVcoClient):
         return stored
 
 
-async def test_a_stored_insert_the_state_could_not_take_back_is_written_and_unconfirmed() -> (
+async def test_a_stored_insert_the_state_could_not_take_back_is_written_and_unconfirmed() -> (  # noqa: E501 (a test's name)
     None
 ):
     state = make_state()

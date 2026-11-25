@@ -771,7 +771,7 @@ async def _reconcile_unrefused(
 
 
 @pytest.mark.live_write
-async def test_missing_device_settings_segment_is_added_as_a_placeholder_the_orchestrator_accepts(
+async def test_missing_device_settings_segment_is_added_as_a_placeholder_the_orchestrator_accepts(  # noqa: E501 (a test's name)
     lab: Lab, pipeline: ConfigPipeline
 ) -> None:
     case = DEVICE_SETTINGS_CASE

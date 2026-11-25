@@ -129,7 +129,7 @@ def test_the_segment_is_the_enclosing_item_of_the_root_segments_list() -> None:
     assert all(s.segment is None for s in outside)
 
 
-def test_the_item_of_the_segments_list_has_no_segment_for_its_own_field_in_the_root() -> (
+def test_the_item_of_the_segments_list_has_no_segment_for_its_own_field_in_the_root() -> (  # noqa: E501 (a test's name)
     None
 ):
     sites = _sites(_root())
@@ -203,7 +203,7 @@ def test_a_list_of_items_that_hold_nothing_costs_no_key_lookups(
     assert not any(s.name == "name" for s in sites)
 
 
-def test_a_field_filter_gives_only_the_wanted_fields_and_still_reaches_below_the_others() -> (
+def test_a_field_filter_gives_only_the_wanted_fields_and_still_reaches_below_the_others() -> (  # noqa: E501 (a test's name)
     None
 ):
     asked: list[str] = []

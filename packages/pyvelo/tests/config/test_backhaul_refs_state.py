@@ -223,7 +223,7 @@ async def test_the_save_of_a_profile_rule_writes_the_row_the_store_keeps() -> No
     assert stored["segmentObjectId"] == GLOBAL[3]
 
 
-async def test_the_save_of_an_edge_rule_writes_the_row_and_the_service_knows_its_edge() -> (
+async def test_the_save_of_an_edge_rule_writes_the_row_and_the_service_knows_its_edge() -> (  # noqa: E501 (a test's name)
     None
 ):
     state = await an_edge()

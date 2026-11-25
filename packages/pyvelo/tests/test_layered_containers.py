@@ -223,7 +223,7 @@ async def test_get_configuration_modules_needs_the_layer(
     assert type(listed) is FirewallConfigurationModule[Edge]
 
 
-async def test_a_firewall_insert_that_asks_for_its_row_names_the_layer_before_it_is_sent(
+async def test_a_firewall_insert_that_asks_for_its_row_names_the_layer_before_it_is_sent(  # noqa: E501 (a test's name)
     mock_vco_client: MockVcoClientFactory,
 ) -> None:
     store = ModuleStore()

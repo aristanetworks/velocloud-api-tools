@@ -1,12 +1,15 @@
-"""Fetch analytics metrics for all edges in an enterprise and display as Polars tables.
+r"""Fetch analytics metrics for all edges in an enterprise and display as Polars tables.
 
 Discovers edges from the given enterprise-id, then pulls flow, health, link,
 and firewall metrics for each connected edge over the last hour.
 
 Usage:
-    uv run --package pyvelo-examples python -m pyvelo_examples.analytics_overview --enterprise-id 123
-    uv run --package pyvelo-examples python -m pyvelo_examples.analytics_overview --enterprise-id 123 --env .credentials/lab.env
-    uv run --package pyvelo-examples python -m pyvelo_examples.analytics_overview --enterprise-id 123 --hours 24
+    uv run --package pyvelo-examples python -m pyvelo_examples.analytics_overview \
+        --enterprise-id 123
+    uv run --package pyvelo-examples python -m pyvelo_examples.analytics_overview \
+        --enterprise-id 123 --env .credentials/lab.env
+    uv run --package pyvelo-examples python -m pyvelo_examples.analytics_overview \
+        --enterprise-id 123 --hours 24
 """
 
 import argparse

@@ -489,7 +489,7 @@ async def test_a_provider_assigned_during_its_write_is_reported() -> None:
     assert state.plan().changed == ()
 
 
-async def test_a_provider_changed_behind_the_guard_of_a_detached_object_is_reported() -> (
+async def test_a_provider_changed_behind_the_guard_of_a_detached_object_is_reported() -> (  # noqa: E501 (a test's name)
     None
 ):
     pipeline, _, state = await loaded_profile()
@@ -657,7 +657,7 @@ async def test_a_profile_save_rebases_qos_after_device_settings() -> None:
     )
 
 
-async def test_a_profile_save_raises_a_conflict_where_the_propagation_reached_an_edit() -> (
+async def test_a_profile_save_raises_a_conflict_where_the_propagation_reached_an_edit() -> (  # noqa: E501 (a test's name)
     None
 ):
     state = profile_with_qos()
@@ -691,7 +691,7 @@ async def test_a_profile_save_raises_a_conflict_where_the_propagation_reached_an
     assert rate_limit(state.profile.qos).value == 7
 
 
-async def test_a_module_listed_before_device_settings_is_written_after_it_and_rebased() -> (
+async def test_a_module_listed_before_device_settings_is_written_after_it_and_rebased() -> (  # noqa: E501 (a test's name)
     None
 ):
     state = profile_with_qos(qos_first=True)

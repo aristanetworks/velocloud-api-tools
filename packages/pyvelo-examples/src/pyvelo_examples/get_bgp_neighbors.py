@@ -1,9 +1,12 @@
-"""Get all BGP neighbors configured across edges in an enterprise.
+r"""Get all BGP neighbors configured across edges in an enterprise.
 
 Usage:
-    uv run --package pyvelo-examples python -m pyvelo_examples.get_bgp_neighbors --enterprise-id 123
-    uv run --package pyvelo-examples python -m pyvelo_examples.get_bgp_neighbors --enterprise-id 123 --format csv
-    uv run --package pyvelo-examples python -m pyvelo_examples.get_bgp_neighbors --enterprise-id 123 --segment "Global Segment"
+    uv run --package pyvelo-examples python -m pyvelo_examples.get_bgp_neighbors \
+        --enterprise-id 123
+    uv run --package pyvelo-examples python -m pyvelo_examples.get_bgp_neighbors \
+        --enterprise-id 123 --format csv
+    uv run --package pyvelo-examples python -m pyvelo_examples.get_bgp_neighbors \
+        --enterprise-id 123 --segment "Global Segment"
 """
 
 import argparse

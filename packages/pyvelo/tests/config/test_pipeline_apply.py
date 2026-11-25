@@ -1405,7 +1405,7 @@ async def test_dry_run_refuses_what_the_save_refuses() -> None:
 
 
 @pytest.mark.asyncio
-async def test_plus_add_of_a_segment_the_edge_has_under_another_name_says_what_to_do() -> (
+async def test_plus_add_of_a_segment_the_edge_has_under_another_name_says_what_to_do() -> (  # noqa: E501 (a test's name)
     None
 ):
     state = _renamed_guest_state()

@@ -211,7 +211,7 @@ async def test_an_edge_rule_on_a_new_qos_module_inserts_its_backhaul_row() -> No
     assert state.plan().changed == ()
 
 
-async def test_an_entry_built_by_assignment_without_its_service_is_refused_at_plan() -> (
+async def test_an_entry_built_by_assignment_without_its_service_is_refused_at_plan() -> (  # noqa: E501 (a test's name)
     None
 ):
     state = await a_profile()
@@ -232,7 +232,7 @@ async def test_an_entry_built_by_assignment_without_its_service_is_refused_at_pl
     assert "backhaul_edges" in error.value.path
 
 
-async def test_a_segment_added_with_a_rule_on_a_hub_it_has_no_service_for_is_refused() -> (
+async def test_a_segment_added_with_a_rule_on_a_hub_it_has_no_service_for_is_refused() -> (  # noqa: E501 (a test's name)
     None
 ):
     state = await a_profile()
@@ -253,7 +253,7 @@ async def test_a_segment_added_with_a_rule_on_a_hub_it_has_no_service_for_is_ref
     assert state.profile.qos.model_dump() == before
 
 
-async def test_an_entry_that_lacked_its_service_as_read_does_not_stop_another_edit() -> (
+async def test_an_entry_that_lacked_its_service_as_read_does_not_stop_another_edit() -> (  # noqa: E501 (a test's name)
     None
 ):
     unserved = {

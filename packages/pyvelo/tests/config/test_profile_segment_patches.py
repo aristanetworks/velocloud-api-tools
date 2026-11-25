@@ -400,7 +400,7 @@ async def test_an_unknown_name_raises_resolution_error_and_changes_nothing() -> 
     assert all(state.module(name).additions == () for name in MODULES)
 
 
-async def test_no_segment_resolver_raises_patch_error_with_the_lookup_error_as_cause() -> (
+async def test_no_segment_resolver_raises_patch_error_with_the_lookup_error_as_cause() -> (  # noqa: E501 (a test's name)
     None
 ):
     state = await global_only()
@@ -472,7 +472,7 @@ async def test_an_add_to_a_module_the_profile_lacks_raises_patch_error(
     assert state.plan().render() == before
 
 
-async def test_a_patch_without_segment_ops_to_a_module_the_profile_lacks_keeps_its_error() -> (
+async def test_a_patch_without_segment_ops_to_a_module_the_profile_lacks_keeps_its_error() -> (  # noqa: E501 (a test's name)
     None
 ):
     state = await global_only()
@@ -603,7 +603,7 @@ async def test_an_add_of_defaults_given_as_changes_takes_the_assignments_ids() -
     ]
 
 
-async def test_a_list_item_that_copies_an_entry_takes_the_assignments_defaults_ids() -> (
+async def test_a_list_item_that_copies_an_entry_takes_the_assignments_defaults_ids() -> (  # noqa: E501 (a test's name)
     None
 ):
     state = await global_only()
@@ -718,7 +718,7 @@ async def test_every_other_removal_raises(module: str, form: str) -> None:
     assert state.plan().render() == rendered
 
 
-async def test_removing_a_segment_device_settings_has_raises_even_from_qos_without_it() -> (
+async def test_removing_a_segment_device_settings_has_raises_even_from_qos_without_it() -> (  # noqa: E501 (a test's name)
     None
 ):
     # Guest is in device settings and firewall; QoS lacks it. Removing it from

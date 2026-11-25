@@ -179,7 +179,7 @@ def test_device_settings_placeholder_has_empty_static_routes() -> None:
     assert guest.config_context is ConfigContext.EDGE
 
 
-def test_a_placeholder_is_empty_in_each_module_and_has_what_the_orchestrator_needs() -> (
+def test_a_placeholder_is_empty_in_each_module_and_has_what_the_orchestrator_needs() -> (  # noqa: E501 (a test's name)
     None
 ):
     profile_segments = [

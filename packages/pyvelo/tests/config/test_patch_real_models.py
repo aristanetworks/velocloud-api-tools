@@ -536,7 +536,7 @@ def bgp_settings(bgp: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-async def test_a_patch_inside_inherited_bgp_is_listed_on_the_plan_and_copies_nothing() -> (
+async def test_a_patch_inside_inherited_bgp_is_listed_on_the_plan_and_copies_nothing() -> (  # noqa: E501 (a test's name)
     None
 ):
     edge_bgp: dict[str, Any] = {
@@ -944,7 +944,7 @@ def test_field_changes_show_nothing_for_a_read() -> None:
 # --- names ------------------------------------------------------------------
 
 
-async def test_an_application_name_with_no_application_resolver_is_refused_at_the_field() -> (
+async def test_an_application_name_with_no_application_resolver_is_refused_at_the_field() -> (  # noqa: E501 (a test's name)
     None
 ):
     state = make_state({"firewall": firewall(fw_rule("a"))}, {"firewall": firewall()})

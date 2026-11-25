@@ -419,7 +419,7 @@ def test_with_additions_inserts_defaults_into_an_unset_list() -> None:
     assert "defaults" not in raw["segments"][0]
 
 
-def test_with_additions_refuses_a_segment_that_is_there_and_defaults_that_have_none() -> (
+def test_with_additions_refuses_a_segment_that_is_there_and_defaults_that_have_none() -> (  # noqa: E501 (a test's name)
     None
 ):
     raw = {"segments": [qos_entry(GLOBAL)]}

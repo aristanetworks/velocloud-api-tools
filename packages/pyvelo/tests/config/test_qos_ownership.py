@@ -187,7 +187,7 @@ async def test_a_disabled_rate_limit_is_local_and_null_inherits_it() -> None:
     assert stored.effective.qos.service_rate_limit.origin is Origin.PROFILE
 
 
-async def test_a_patch_into_the_cos_mapping_of_a_segment_the_edge_lacks_localizes_from_the_profile_segment() -> (
+async def test_a_patch_into_the_cos_mapping_of_a_segment_the_edge_lacks_localizes_from_the_profile_segment() -> (  # noqa: E501 (a test's name)
     None
 ):
     state = state_of(EDGE_QOS)
@@ -271,7 +271,7 @@ def flag_off_edge() -> dict[str, Any]:
     }
 
 
-async def test_a_patch_into_a_cos_mapping_stored_with_its_flag_off_changes_only_what_it_names() -> (
+async def test_a_patch_into_a_cos_mapping_stored_with_its_flag_off_changes_only_what_it_names() -> (  # noqa: E501 (a test's name)
     None
 ):
     edge = flag_off_edge()
@@ -299,7 +299,7 @@ async def test_a_patch_into_a_cos_mapping_stored_with_its_flag_off_changes_only_
     ]
 
 
-async def test_the_keep_patch_of_the_flag_off_warning_leaves_the_values_as_read_with_the_flag_on() -> (
+async def test_the_keep_patch_of_the_flag_off_warning_leaves_the_values_as_read_with_the_flag_on() -> (  # noqa: E501 (a test's name)
     None
 ):
     edge = flag_off_edge()

@@ -477,7 +477,7 @@ def box(*ports: dict[str, object]) -> dict[str, object]:
     return {"ports": list(ports)}
 
 
-def test_an_edit_below_a_map_entry_is_applied_and_a_sibling_key_is_a_server_change() -> (
+def test_an_edit_below_a_map_entry_is_applied_and_a_sibling_key_is_a_server_change() -> (  # noqa: E501 (a test's name)
     None
 ):
     p1: dict[str, object] = {"name": "p1", "speed": 1}

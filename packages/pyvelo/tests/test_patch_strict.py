@@ -89,7 +89,7 @@ def test_null_raises_where_the_type_has_neither(name: str) -> None:
     assert "a change cannot unset it" in error.message
 
 
-def test_null_in_a_built_model_where_the_type_has_neither_says_to_leave_the_key_out() -> (
+def test_null_in_a_built_model_where_the_type_has_neither_says_to_leave_the_key_out() -> (  # noqa: E501 (a test's name)
     None
 ):
     error = raises_at(Root(), {"maybe": {"v": None}}, "maybe.v")

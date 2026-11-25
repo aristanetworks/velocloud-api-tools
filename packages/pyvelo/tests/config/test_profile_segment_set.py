@@ -145,7 +145,7 @@ async def test_removing_an_orphan_from_firewall_is_accepted() -> None:
     assert plan.segment_warnings == ()
 
 
-async def test_removing_a_segment_from_device_settings_raises_even_when_qos_lacks_it() -> (
+async def test_removing_a_segment_from_device_settings_raises_even_when_qos_lacks_it() -> (  # noqa: E501 (a test's name)
     None
 ):
     state = await state_of(["Global", "Guest"], ["Global"], ["Global", "Guest"])
@@ -256,7 +256,7 @@ def guest_defaults(data: dict[str, Any]) -> dict[str, dict[str, Any]]:
     return {d["name"]: d for d in guest["defaults"]}
 
 
-async def test_the_repair_takes_conditional_backhaul_from_device_settings_as_it_is_now() -> (
+async def test_the_repair_takes_conditional_backhaul_from_device_settings_as_it_is_now() -> (  # noqa: E501 (a test's name)
     None
 ):
     state = await lacking_defaults_state()

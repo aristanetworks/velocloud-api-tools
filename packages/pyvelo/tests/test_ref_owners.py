@@ -219,7 +219,7 @@ def test_fill_falls_back_to_the_segment_logical_id() -> None:
     assert primary_of(module).service == UUID(DNS_A)
 
 
-def test_a_row_of_another_segment_is_not_taken_by_logical_id_when_its_object_is_known() -> (
+def test_a_row_of_another_segment_is_not_taken_by_logical_id_when_its_object_is_known() -> (  # noqa: E501 (a test's name)
     None
 ):
     # The segment rows say object 502 is segment 1; the row's logical ID is

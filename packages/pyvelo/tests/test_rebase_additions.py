@@ -129,7 +129,7 @@ def test_a_fresh_module_that_holds_several_added_segments_reports_each() -> None
     assert (error.stated, error.sent) == (False, False)
 
 
-def test_a_fresh_module_that_lacks_the_segment_added_defaults_go_into_is_a_conflict() -> (
+def test_a_fresh_module_that_lacks_the_segment_added_defaults_go_into_is_a_conflict() -> (  # noqa: E501 (a test's name)
     None
 ):
     qos = qos_at("q1", qos_entry(GLOBAL, defaults=MISSING))

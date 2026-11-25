@@ -164,7 +164,7 @@ def assert_detached_and_replaced(
     assert state.edge.firewall.segments[0].firewall_logging_enabled is True
 
 
-async def test_three_modules_three_updates_and_a_version_read_for_the_one_with_segments() -> (
+async def test_three_modules_three_updates_and_a_version_read_for_the_one_with_segments() -> (  # noqa: E501 (a test's name)
     None
 ):
     state = three_module_state()
@@ -394,7 +394,7 @@ async def test_redo_after_a_conflict_saves_without_a_reload(
     ]
 
 
-async def test_a_conflict_found_before_sending_puts_the_module_as_read_in_the_state() -> (
+async def test_a_conflict_found_before_sending_puts_the_module_as_read_in_the_state() -> (  # noqa: E501 (a test's name)
     None
 ):
     state = three_module_state()

@@ -140,7 +140,7 @@ def test_localize_cos_mapping_in_a_placeholder_copies_the_profile_segment_s() ->
     assert profile.raw_data["segments"][0]["cosMapping"] == COS_PROFILE
 
 
-def test_a_localized_cos_mapping_of_a_segment_the_profile_gives_the_default_is_written_whole() -> (
+def test_a_localized_cos_mapping_of_a_segment_the_profile_gives_the_default_is_written_whole() -> (  # noqa: E501 (a test's name)
     None
 ):
     edge, profile = bound({"segments": []}, {"segments": [segment_of("Guest")]})

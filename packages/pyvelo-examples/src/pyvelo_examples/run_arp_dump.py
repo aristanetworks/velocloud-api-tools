@@ -1,9 +1,12 @@
-"""Run ARP_DUMP on all connected edges and display results in a table.
+r"""Run ARP_DUMP on all connected edges and display results in a table.
 
 Usage:
-    uv run --package pyvelo-examples python -m pyvelo_examples.run_arp_dump --env .credentials/lab.env
-    uv run --package pyvelo-examples python -m pyvelo_examples.run_arp_dump --env .credentials/lab.env --enterprise-id 123
-    uv run --package pyvelo-examples python -m pyvelo_examples.run_arp_dump --env .credentials/lab.env --edge-name "branch-01"
+    uv run --package pyvelo-examples python -m pyvelo_examples.run_arp_dump \
+        --env .credentials/lab.env
+    uv run --package pyvelo-examples python -m pyvelo_examples.run_arp_dump \
+        --env .credentials/lab.env --enterprise-id 123
+    uv run --package pyvelo-examples python -m pyvelo_examples.run_arp_dump \
+        --env .credentials/lab.env --edge-name "branch-01"
 """
 
 import argparse

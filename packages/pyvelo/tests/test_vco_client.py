@@ -825,7 +825,7 @@ class TestTransport:
         with pytest.raises(VcoClientNotInitializedError):
             _ = await client.portal("test/getStuff", request, SampleResult)
 
-    async def test_a_transport_that_closes_with_the_client_is_entered_again_by_the_next_async_with(
+    async def test_a_transport_that_closes_with_the_client_is_entered_again_by_the_next_async_with(  # noqa: E501 (a test's name)
         self, json_rpc_response: JsonRpcResponseFactory
     ) -> None:
         class HoldsConnections(httpx.AsyncBaseTransport):

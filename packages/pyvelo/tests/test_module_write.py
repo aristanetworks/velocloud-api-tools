@@ -197,7 +197,7 @@ def test_lossy_assignment_raises() -> None:
     assert exc.value.fields == ["inbound"]
 
 
-def test_a_profile_assigns_the_display_default_of_an_inheritable_and_it_is_written() -> (
+def test_a_profile_assigns_the_display_default_of_an_inheritable_and_it_is_written() -> (  # noqa: E501 (a test's name)
     None
 ):
     # An Inheritable field of a profile has a display default, not a model
@@ -755,7 +755,7 @@ def test_the_order_of_the_edges_own_segments_is_the_callers() -> None:
     assert segment_names(plan.data) == ["Branch", "Global Segment", "Guest", "Voice"]
 
 
-def test_a_reconciled_segment_is_written_after_the_edges_own_wherever_the_model_has_it() -> (
+def test_a_reconciled_segment_is_written_after_the_edges_own_wherever_the_model_has_it() -> (  # noqa: E501 (a test's name)
     None
 ):
     mod, profile = bound(EDGE_RAW, PROFILE_RAW)
@@ -1188,7 +1188,7 @@ DS_PLACEHOLDER: dict[str, Any] = {
 }
 
 
-def test_an_unrelated_edit_adds_a_device_settings_segment_with_empty_static_routes() -> (
+def test_an_unrelated_edit_adds_a_device_settings_segment_with_empty_static_routes() -> (  # noqa: E501 (a test's name)
     None
 ):
     mod, profile = ds(DS_EDGE_RAW), ds(DS_PROFILE_RAW, module_id=2)
@@ -1212,7 +1212,7 @@ def test_the_device_settings_placeholder_copies_nothing_of_the_profile_segment()
     assert DS_PROFILE_RAW["segments"][1]["routes"]["static"]  # the profile is untouched
 
 
-def test_a_device_settings_segment_the_edge_drops_comes_back_with_empty_static_routes() -> (
+def test_a_device_settings_segment_the_edge_drops_comes_back_with_empty_static_routes() -> (  # noqa: E501 (a test's name)
     None
 ):
     raw = copy.deepcopy(DS_EDGE_RAW)
@@ -1464,7 +1464,7 @@ def bgp_module(**flag: bool) -> DeviceSettingsConfigurationModule:
     return mod
 
 
-def test_a_patch_inside_an_inherited_section_turns_its_override_on_and_the_plan_says_so() -> (
+def test_a_patch_inside_an_inherited_section_turns_its_override_on_and_the_plan_says_so() -> (  # noqa: E501 (a test's name)
     None
 ):
     mod = bgp_module(override=False)
@@ -1823,7 +1823,7 @@ async def plan_with_refs(refs: dict[str, Any] | None) -> ModulePlan:
     return dataclasses.replace(plan_module(module, current), refs=refs)
 
 
-async def test_with_hub_rows_puts_an_added_row_in_the_refs_and_lists_it_as_a_change() -> (
+async def test_with_hub_rows_puts_an_added_row_in_the_refs_and_lists_it_as_a_change() -> (  # noqa: E501 (a test's name)
     None
 ):
     existing = hub_ref_row(601)
@@ -1871,7 +1871,7 @@ async def test_with_hub_rows_matches_a_removed_row_by_object_and_segment() -> No
     assert result.refs == {HUB_ROW_REF: [same_object_other_segment]}
 
 
-async def test_with_hub_rows_refuses_a_row_to_remove_that_the_refs_lack_and_a_plan_with_no_refs() -> (
+async def test_with_hub_rows_refuses_a_row_to_remove_that_the_refs_lack_and_a_plan_with_no_refs() -> (  # noqa: E501 (a test's name)
     None
 ):
     plan = await plan_with_refs({HUB_ROW_REF: hub_ref_row(601)})

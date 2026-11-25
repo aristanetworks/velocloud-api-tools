@@ -294,7 +294,7 @@ def test_by_flag_localize_forces_the_flag() -> None:
     assert _dump(e)["affinity"] == {"override": True, "affinity": ["a"]}
 
 
-def test_localize_keeps_a_present_object_of_a_presence_wins_field_with_its_flag_off() -> (
+def test_localize_keeps_a_present_object_of_a_presence_wins_field_with_its_flag_off() -> (  # noqa: E501 (a test's name)
     None
 ):
     # The backend runs with the object the edge stores, so localizing it keeps
@@ -313,7 +313,7 @@ def test_localize_keeps_a_present_object_of_a_presence_wins_field_with_its_flag_
     assert p.segments[0].mapping.value == 9
 
 
-def test_localize_of_a_presence_wins_object_with_its_flag_absent_sets_only_the_flag() -> (
+def test_localize_of_a_presence_wins_object_with_its_flag_absent_sets_only_the_flag() -> (  # noqa: E501 (a test's name)
     None
 ):
     e, _ = _bound(
@@ -339,7 +339,7 @@ def test_localize_of_a_presence_wins_field_with_nothing_stored_copies_the_profil
     assert e.segments[0].mapping.localize() == Flagged(override=True, value=9)
 
 
-def test_localize_of_a_by_flag_field_without_presence_wins_still_copies_the_profile() -> (
+def test_localize_of_a_by_flag_field_without_presence_wins_still_copies_the_profile() -> (  # noqa: E501 (a test's name)
     None
 ):
     e, _ = _bound(

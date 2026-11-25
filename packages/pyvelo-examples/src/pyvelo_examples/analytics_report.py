@@ -1,13 +1,16 @@
-"""Fetch analytics time-series data and render an HTML report with inline SVG charts.
+r"""Fetch analytics time-series data and render an HTML report with inline SVG charts.
 
 Discovers connected edges, then pulls link throughput, health, and flow
 series for each edge. Charts are rendered via matplotlib and embedded as
 inline SVG in a self-contained HTML file.
 
 Usage:
-    uv run --package pyvelo-examples python -m pyvelo_examples.analytics_report --enterprise-id 123
-    uv run --package pyvelo-examples python -m pyvelo_examples.analytics_report --enterprise-id 123 --hours 24
-    uv run --package pyvelo-examples python -m pyvelo_examples.analytics_report --enterprise-id 123 --output report.html
+    uv run --package pyvelo-examples python -m pyvelo_examples.analytics_report \
+        --enterprise-id 123
+    uv run --package pyvelo-examples python -m pyvelo_examples.analytics_report \
+        --enterprise-id 123 --hours 24
+    uv run --package pyvelo-examples python -m pyvelo_examples.analytics_report \
+        --enterprise-id 123 --output report.html
 """
 
 import argparse

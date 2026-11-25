@@ -138,7 +138,7 @@ def test_a_fixed_list_error_keeps_its_module_paths_and_message_through_copies() 
         assert str(copied) == str(error)
 
 
-def test_a_dangling_reference_error_keeps_its_references_and_message_through_copies() -> (
+def test_a_dangling_reference_error_keeps_its_references_and_message_through_copies() -> (  # noqa: E501 (a test's name)
     None
 ):
     references = (
@@ -209,7 +209,7 @@ def test_errors_built_from_several_values_survive_pickling() -> None:
             assert vars(copied) == vars(error)
 
 
-def test_a_refs_not_loaded_error_keeps_its_module_paths_and_message_through_copies() -> (
+def test_a_refs_not_loaded_error_keeps_its_module_paths_and_message_through_copies() -> (  # noqa: E501 (a test's name)
     None
 ):
     paths = (Path(("segments", 0, "dns")),)
@@ -419,7 +419,7 @@ def test_a_resolution_error_keeps_its_message_and_attributes_through_copies() ->
     assert error.__notes__ == ["looked in the cache"]
 
 
-def test_a_resolver_not_loaded_error_keeps_its_class_message_and_identity_type_through_copies() -> (
+def test_a_resolver_not_loaded_error_keeps_its_class_message_and_identity_type_through_copies() -> (  # noqa: E501 (a test's name)
     None
 ):
     error = ResolverNotLoadedError(NetworkServiceIdentity)
@@ -434,7 +434,7 @@ def test_a_resolver_not_loaded_error_keeps_its_class_message_and_identity_type_t
         assert copied.__notes__ == ["while resolving a ref"]
 
 
-def test_a_hub_service_not_found_error_keeps_its_class_message_and_attributes_through_copies() -> (
+def test_a_hub_service_not_found_error_keeps_its_class_message_and_attributes_through_copies() -> (  # noqa: E501 (a test's name)
     None
 ):
     error = HubServiceNotFoundError(

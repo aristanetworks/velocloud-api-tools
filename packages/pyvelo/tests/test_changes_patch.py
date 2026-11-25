@@ -295,7 +295,7 @@ def test_random_edits_to_a_keyed_list_round_trip(seed: int) -> None:
         assert patched(old, patch) == new
 
 
-def test_an_added_item_whose_key_reads_as_a_position_or_a_new_item_is_added_by_its_body() -> (
+def test_an_added_item_whose_key_reads_as_a_position_or_a_new_item_is_added_by_its_body() -> (  # noqa: E501 (a test's name)
     None
 ):
     old = doc({"rules": [A, B]})

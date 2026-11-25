@@ -435,7 +435,7 @@ def _dangling_hub(
     return findings.dangling
 
 
-def test_the_advice_for_a_hub_adds_it_to_the_hub_list_and_the_backhaul_list_of_its_segment() -> (
+def test_the_advice_for_a_hub_adds_it_to_the_hub_list_and_the_backhaul_list_of_its_segment() -> (  # noqa: E501 (a test's name)
     None
 ):
     (reference,) = _dangling_hub(named=True)

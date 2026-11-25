@@ -519,7 +519,7 @@ async def test_a_wrong_display_default_is_differs() -> None:
     assert str(finding.origin) == "factory"
 
 
-async def test_a_nested_key_the_server_lacks_under_a_display_default_is_information() -> (
+async def test_a_nested_key_the_server_lacks_under_a_display_default_is_information() -> (  # noqa: E501 (a test's name)
     None
 ):
     pipeline, state, client = await loaded()

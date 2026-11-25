@@ -231,7 +231,7 @@ LOST_SEGMENT = [
 
 
 @pytest.mark.parametrize(("with_defaults", "expected"), LOST_SEGMENT)
-async def test_a_qos_write_that_lost_the_segment_leaves_a_plan_that_raises_segment_set_error(
+async def test_a_qos_write_that_lost_the_segment_leaves_a_plan_that_raises_segment_set_error(  # noqa: E501 (a test's name)
     *, with_defaults: bool, expected: type[ModuleWriteError]
 ) -> None:
     state = await global_only(with_defaults=with_defaults)

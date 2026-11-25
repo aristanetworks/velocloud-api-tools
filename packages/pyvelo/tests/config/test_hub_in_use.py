@@ -171,7 +171,7 @@ async def used_hub_save() -> tuple[ConfigPipeline, ModuleStore, ConfigState]:
     return pipeline, store, state
 
 
-async def test_removing_a_hub_that_an_edge_uses_warns_and_names_the_edge_and_goes_on() -> (
+async def test_removing_a_hub_that_an_edge_uses_warns_and_names_the_edge_and_goes_on() -> (  # noqa: E501 (a test's name)
     None
 ):
     pipeline, store, state = await used_hub_save()
@@ -305,7 +305,7 @@ async def test_a_dry_run_with_refuse_raises_the_same_error() -> None:
     assert writes(store) == []
 
 
-async def test_a_hub_that_only_leaves_the_backhaul_list_is_not_in_use_in_that_sense() -> (
+async def test_a_hub_that_only_leaves_the_backhaul_list_is_not_in_use_in_that_sense() -> (  # noqa: E501 (a test's name)
     None
 ):
     state = await profile_with(HUB_A, HUB_B)
@@ -321,7 +321,7 @@ async def test_a_hub_that_only_leaves_the_backhaul_list_is_not_in_use_in_that_se
 
 
 @pytest.mark.parametrize("leaves_the_hub_list", [True, False])
-async def test_the_services_read_asks_for_edge_qos_usage_only_when_a_hub_leaves_the_hub_list(
+async def test_the_services_read_asks_for_edge_qos_usage_only_when_a_hub_leaves_the_hub_list(  # noqa: E501 (a test's name)
     *,
     leaves_the_hub_list: bool,
 ) -> None:
@@ -421,7 +421,7 @@ def test_hubs_in_use_counts_only_rows_whose_ref_is_the_backhaul_ref_name() -> No
     assert in_use([step], service) == {step: ((70, "Branch-2"),)}
 
 
-def test_hubs_in_use_leaves_out_a_hub_no_row_uses_and_a_service_that_was_not_asked_for() -> (
+def test_hubs_in_use_leaves_out_a_hub_no_row_uses_and_a_service_that_was_not_asked_for() -> (  # noqa: E501 (a test's name)
     None
 ):
     used, unused = removal(HUB_A), removal(HUB_B)

@@ -518,7 +518,7 @@ def test_removed_item_without_a_key_is_removed_by_its_alt_key() -> None:
     assert rebase(raw, before, after, Rs) == {"rules": [item("a", "1", x=1)]}
 
 
-def test_removed_item_with_a_repeated_key_and_a_repeated_alt_key_replaces_the_list() -> (
+def test_removed_item_with_a_repeated_key_and_a_repeated_alt_key_replaces_the_list() -> (  # noqa: E501 (a test's name)
     None
 ):
     raw = {"rules": [item("a", "1", x=1), item("a", "1", x=2), item("b", "3", x=3)]}

@@ -467,7 +467,7 @@ def test_refusal_form_walks_the_chain_to_the_refusal() -> None:
     assert live.refusal_form(error) == "refused" + unread
 
 
-async def test_refusal_form_finds_the_refusal_a_read_that_found_no_module_was_raised_in() -> (
+async def test_refusal_form_finds_the_refusal_a_read_that_found_no_module_was_raised_in() -> (  # noqa: E501 (a test's name)
     None
 ):
     unread = ", and the module as stored could not be read"
@@ -1391,7 +1391,7 @@ async def test_a_restore_of_a_module_with_segments_sends_the_refs_as_read(
     assert list(backups.iterdir()) == []
 
 
-async def test_a_write_of_a_module_with_segments_carries_the_refs_but_not_the_append_only_ones(
+async def test_a_write_of_a_module_with_segments_carries_the_refs_but_not_the_append_only_ones(  # noqa: E501 (a test's name)
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     fake = ds_lab()

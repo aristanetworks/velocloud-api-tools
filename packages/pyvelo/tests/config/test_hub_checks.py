@@ -146,7 +146,7 @@ async def test_the_hub_list_on_with_no_hub_raises() -> None:
     assert_names(error, "edgeToEdgeHub.enabled", "empty", lists=(HUB_LIST,))
 
 
-async def test_turning_the_hub_list_off_while_it_lists_hubs_says_to_remove_them_first() -> (
+async def test_turning_the_hub_list_off_while_it_lists_hubs_says_to_remove_them_first() -> (  # noqa: E501 (a test's name)
     None
 ):
     state = await profile_of(ds_with_vpn(GLOBAL, hubs=(HUB_A,)), HUB_A)
@@ -466,7 +466,7 @@ async def test_another_hub_broken_the_same_way_is_an_error() -> None:
     ],
     ids=["hub-list-off", "vpn-off"],
 )
-async def test_a_segment_with_its_hub_list_or_vpn_off_as_read_warns_for_an_unrelated_edit(
+async def test_a_segment_with_its_hub_list_or_vpn_off_as_read_warns_for_an_unrelated_edit(  # noqa: E501 (a test's name)
     ds: dict[str, Any], text: str
 ) -> None:
     state = await profile_of(ds, HUB_A)
@@ -497,7 +497,7 @@ async def test_adding_a_hub_to_a_segment_already_off_as_read_raises(
     assert_names(error, text, "Hub-B", lists=(HUB_LIST,))
 
 
-async def test_adding_a_listed_hub_to_another_list_of_a_segment_with_the_vpn_off_raises() -> (
+async def test_adding_a_listed_hub_to_another_list_of_a_segment_with_the_vpn_off_raises() -> (  # noqa: E501 (a test's name)
     None
 ):
     # Hub-A is in the hub list as read, with vpn.enabled off: the backhaul
@@ -516,7 +516,7 @@ async def test_adding_a_listed_hub_to_another_list_of_a_segment_with_the_vpn_off
     [("edgeToEdgeDetail", "vpnHubs"), ("backHaulEdges",)],
     ids=["bridge", "backhaul"],
 )
-async def test_adding_a_listed_hub_to_another_list_of_a_segment_with_the_hub_list_off_raises(
+async def test_adding_a_listed_hub_to_another_list_of_a_segment_with_the_hub_list_off_raises(  # noqa: E501 (a test's name)
     path: tuple[str, ...],
 ) -> None:
     # Enabling a bridge or backhaul sets the hub role too, on a segment whose

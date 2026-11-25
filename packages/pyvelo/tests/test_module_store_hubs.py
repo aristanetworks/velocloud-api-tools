@@ -226,7 +226,7 @@ def test_the_services_read_filters_by_type_and_parses_as_any_service() -> None:
     ]
 
 
-def test_the_services_read_answers_configuration_and_qos_usage_only_with_configuration() -> (
+def test_the_services_read_answers_configuration_and_qos_usage_only_with_configuration() -> (  # noqa: E501 (a test's name)
     None
 ):
     store = make_store()

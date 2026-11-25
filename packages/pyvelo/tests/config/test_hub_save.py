@@ -387,7 +387,7 @@ async def test_each_list_and_kind_sends_its_call_with_the_ids_of_the_step(
     assert (again.steps, again.changed) == ((), ())
 
 
-async def test_a_removed_edge_hubs_service_is_deleted_by_the_call_and_its_row_left_out() -> (
+async def test_a_removed_edge_hubs_service_is_deleted_by_the_call_and_its_row_left_out() -> (  # noqa: E501 (a test's name)
     None
 ):
     state = await state_before("hub", HUB_A, "disable")
@@ -592,7 +592,7 @@ async def test_a_module_write_after_a_step_fails_as_a_save_step_error() -> None:
     assert state.plan().changed == ()
 
 
-async def test_a_qos_write_after_a_step_and_the_device_settings_fails_as_a_save_step_error() -> (
+async def test_a_qos_write_after_a_step_and_the_device_settings_fails_as_a_save_step_error() -> (  # noqa: E501 (a test's name)
     None
 ):
     state = await two_lists_state()
@@ -727,7 +727,7 @@ async def test_a_stale_version_refreshes_the_state_as_a_write_without_steps_does
     assert result.steps == ()
 
 
-async def test_a_duplicate_service_of_a_later_step_is_refused_before_the_first_step_is_sent() -> (
+async def test_a_duplicate_service_of_a_later_step_is_refused_before_the_first_step_is_sent() -> (  # noqa: E501 (a test's name)
     None
 ):
     # Hub-B's service is held twice in the segment: the second step cannot be
@@ -767,7 +767,7 @@ async def test_a_duplicate_service_of_a_later_step_is_refused_before_the_first_s
     assert calls(store) == []
 
 
-async def test_a_failure_of_the_services_read_before_any_step_propagates_unchanged() -> (
+async def test_a_failure_of_the_services_read_before_any_step_propagates_unchanged() -> (  # noqa: E501 (a test's name)
     None
 ):
     state = await two_lists_state()
@@ -869,7 +869,7 @@ async def test_a_module_the_version_read_finds_stored_is_not_written_again() -> 
     assert state.plan().changed == ()
 
 
-async def test_a_stored_write_the_version_read_finds_counts_as_done_before_the_steps() -> (
+async def test_a_stored_write_the_version_read_finds_counts_as_done_before_the_steps() -> (  # noqa: E501 (a test's name)
     None
 ):
     state = await two_lists_state()
@@ -903,7 +903,7 @@ async def test_a_stored_write_the_version_read_finds_counts_as_done_before_the_s
     assert state.plan().changed == ()
 
 
-async def test_a_stored_write_found_before_a_failed_first_services_read_is_in_the_progress() -> (
+async def test_a_stored_write_found_before_a_failed_first_services_read_is_in_the_progress() -> (  # noqa: E501 (a test's name)
     None
 ):
     state = await two_lists_state()
@@ -1032,7 +1032,7 @@ async def test_a_rebased_qos_write_keeps_its_backhaul_row() -> None:
     assert state.plan().changed == ()
 
 
-async def test_a_rebased_qos_write_takes_its_backhaul_row_from_the_stored_device_settings() -> (
+async def test_a_rebased_qos_write_takes_its_backhaul_row_from_the_stored_device_settings() -> (  # noqa: E501 (a test's name)
     None
 ):
     state = await a_profile()

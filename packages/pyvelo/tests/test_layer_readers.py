@@ -627,7 +627,7 @@ class _Guarded(Layered[L]):
         return value
 
 
-def test_a_field_validator_on_an_inheritable_refuses_alike_through_set_local_and_a_patch() -> (
+def test_a_field_validator_on_an_inheritable_refuses_alike_through_set_local_and_a_patch() -> (  # noqa: E501 (a test's name)
     None
 ):
     edge = _Guarded[Edge].model_validate({"level": 1})

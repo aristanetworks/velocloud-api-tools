@@ -103,7 +103,7 @@ def change_after(plan: ModulePlan, path: str) -> object:
 # --- a patch on an inherited value starts from the profile ------------------
 
 
-async def test_a_patch_into_an_inherited_section_the_profile_lacks_copies_the_display_default() -> (
+async def test_a_patch_into_an_inherited_section_the_profile_lacks_copies_the_display_default() -> (  # noqa: E501 (a test's name)
     None
 ):
     state = state_of({"segments": [global_segment()]})
@@ -309,7 +309,7 @@ async def test_a_missing_edge_module_inserts_only_local_content() -> None:
     assert "allow-all" not in str(plan.data)
 
 
-async def test_a_patch_on_an_inherited_object_of_a_missing_module_copies_it_into_the_insert() -> (
+async def test_a_patch_on_an_inherited_object_of_a_missing_module_copies_it_into_the_insert() -> (  # noqa: E501 (a test's name)
     None
 ):
     profile_segments = copy.deepcopy(PROFILE_FW["segments"])

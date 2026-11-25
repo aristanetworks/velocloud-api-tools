@@ -282,7 +282,7 @@ async def test_load_resolvers_with_a_loaded_type_reloads_the_states_resolver() -
     assert [m for m, _ in client.store.requests] == []  # and nothing else
 
 
-async def test_load_resolvers_copies_the_pipelines_resolver_for_a_type_the_state_lacks() -> (
+async def test_load_resolvers_copies_the_pipelines_resolver_for_a_type_the_state_lacks() -> (  # noqa: E501 (a test's name)
     None
 ):
     client = served(profile_state())
@@ -299,7 +299,7 @@ async def test_load_resolvers_copies_the_pipelines_resolver_for_a_type_the_state
     assert list(registered.identities()) == []
 
 
-async def test_load_resolvers_refuses_a_type_neither_the_state_nor_the_pipeline_has() -> (
+async def test_load_resolvers_refuses_a_type_neither_the_state_nor_the_pipeline_has() -> (  # noqa: E501 (a test's name)
     None
 ):
     state = profile_state()

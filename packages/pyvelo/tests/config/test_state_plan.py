@@ -401,7 +401,7 @@ async def test_apply_creates_the_edge_segment_entry_on_write_only() -> None:
 _DENY: dict[str, object] = {"action": {"allow_or_deny": "deny"}, "match": {}}
 
 
-async def test_first_patch_to_a_module_the_edge_lacks_keeps_the_profiles_segment_order() -> (
+async def test_first_patch_to_a_module_the_edge_lacks_keeps_the_profiles_segment_order() -> (  # noqa: E501 (a test's name)
     None
 ):
     state = make_state(edge_modules=[])

@@ -1,4 +1,4 @@
-"""Live tests of the configuration write path (``plan_module`` / ``update_module``).
+r"""Live tests of the configuration write path (``plan_module`` / ``update_module``).
 
 A save sends a module's raw data as it was read, with only the caller's changes
 applied, under the version it was read at, and returns the module as stored.
@@ -55,7 +55,8 @@ to write, PYVELO_IT_WRITE_HOST and PYVELO_IT_WRITE_ENTERPRISE_ID: see
 ``live_support``.
 
 Run:
-    uv run --env-file .env pytest -m integration packages/pyvelo/tests/integration/test_config_save_live.py
+    uv run --env-file .env pytest -m integration \
+        packages/pyvelo/tests/integration/test_config_save_live.py
 """
 
 from __future__ import annotations
