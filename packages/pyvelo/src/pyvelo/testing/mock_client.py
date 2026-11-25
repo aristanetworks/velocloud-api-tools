@@ -128,13 +128,13 @@ def make_firewall_module(
     """A firewall module of the layer *layer* (``Edge`` unless said otherwise), with *segments*."""
     if layer is Edge:
         data = FirewallData[Edge](
-            segments=cast(list[FirewallSegment[Edge]], segments or [])
+            segments=cast("list[FirewallSegment[Edge]]", segments or [])
         )
         return FirewallConfigurationModule[Edge].model_validate(
             _firewall_row(mod_id, config_id, data)
         )
     profile_data = FirewallData[Profile](
-        segments=cast(list[FirewallSegment[Profile]], segments or [])
+        segments=cast("list[FirewallSegment[Profile]]", segments or [])
     )
     return FirewallConfigurationModule[Profile].model_validate(
         _firewall_row(mod_id, config_id, profile_data)

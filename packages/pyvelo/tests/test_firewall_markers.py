@@ -35,17 +35,17 @@ def _make_rule(name: str = "test-rule") -> FirewallOutboundRule:
 
 
 class TestKeyFieldMarkers:
-    def test_firewall_data_segments_has_key_field(self):
+    def test_firewall_data_segments_has_key_field(self) -> None:
         """FirewallData.segments should be keyed by segment.name, alt key segment.segment_id."""
         fi = FirewallData.model_fields["segments"]
         assert get_key_spec(fi) == KeySpec(("segment.name",), alt="segment.segment_id")
 
-    def test_firewall_segment_outbound_has_key_field(self):
+    def test_firewall_segment_outbound_has_key_field(self) -> None:
         """FirewallSegment.outbound should be keyed by name, alt key rule_logical_id."""
         fi = FirewallSegment.model_fields["outbound"]
         assert get_key_spec(fi) == KeySpec(("name",), alt="rule_logical_id")
 
-    def test_firewall_data_inbound_has_key_field(self):
+    def test_firewall_data_inbound_has_key_field(self) -> None:
         """FirewallData.inbound should be keyed by name, alt key rule_logical_id."""
         fi = FirewallData.model_fields["inbound"]
         assert get_key_spec(fi) == KeySpec(("name",), alt="rule_logical_id")
@@ -54,7 +54,7 @@ class TestKeyFieldMarkers:
 class TestNoOverrideFlag:
     """A firewall segment has no outbound override flag: the VCO has none."""
 
-    def test_firewall_segment_declares_no_override_flag(self):
+    def test_firewall_segment_declares_no_override_flag(self) -> None:
         flagged = [
             name
             for name, fi in FirewallSegment.model_fields.items()
@@ -62,14 +62,14 @@ class TestNoOverrideFlag:
         ]
         assert flagged == []
 
-    def test_firewall_segment_has_no_outbound_override_field(self):
+    def test_firewall_segment_has_no_outbound_override_field(self) -> None:
         assert "outbound_override" not in FirewallSegment.model_fields
         assert "outbound_override" not in _make_segment().model_dump()
         assert "outboundOverride" not in _make_segment().model_dump(by_alias=True)
 
 
 class TestMergeWithMarkers:
-    def test_keyed_merge_adds_rule(self):
+    def test_keyed_merge_adds_rule(self) -> None:
         """Merging a rule into outbound by key should add the rule."""
         seg = _make_segment()
         seg.outbound.append(_make_rule("existing-rule"))
@@ -99,7 +99,7 @@ class TestMergeWithMarkers:
         assert "existing-rule" in names
         assert "new-rule" in names
 
-    def test_keyed_merge_deletes_rule(self):
+    def test_keyed_merge_deletes_rule(self) -> None:
         """delete() under a key should delete the rule."""
         seg = _make_segment()
         seg.outbound.append(_make_rule("delete-me"))
@@ -122,7 +122,7 @@ class TestMergeWithMarkers:
         assert len(segment.outbound) == 1
         assert segment.outbound[0].name == "keep-me"
 
-    def test_outbound_change_sets_no_override_flag(self):
+    def test_outbound_change_sets_no_override_flag(self) -> None:
         """Modifying outbound rules changes the rules and nothing else."""
         seg = _make_segment()
         before = seg.model_dump(mode="json", by_alias=True)
@@ -153,11 +153,11 @@ class TestOutboundRuleMatchKeepsItsConfigLevel:
     @pytest.mark.parametrize("level", [ConfigContext.EDGE, ConfigContext.PROFILE])
     def test_a_match_keeps_the_config_level_it_was_validated_at(
         self, version: str, level: ConfigContext
-    ):
+    ) -> None:
         match = OutboundRuleMatch.model_validate(
             {"ipVersion": version}, context={"config_level": level}
         )
         assert match.config_context is level
 
-    def test_a_match_validated_without_a_level_has_none(self):
+    def test_a_match_validated_without_a_level_has_none(self) -> None:
         assert OutboundRuleMatch.model_validate({}).config_context is None

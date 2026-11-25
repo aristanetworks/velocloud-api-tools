@@ -201,7 +201,7 @@ def copy_profile_segments(profile_data: object) -> list[dict[str, Any]]:
     if not is_list(segments):
         return []
     return [
-        cast(dict[str, Any], copy.deepcopy(entry))
+        cast("dict[str, Any]", copy.deepcopy(entry))
         for entry in segments
         if is_dict(entry)
     ]
@@ -296,6 +296,6 @@ def bind_profile_layers(
         return segments
     raw: dict[str, Any] = {"segments": []}
     if is_dict(profile_data):
-        raw = {**cast(dict[str, Any], profile_data), "segments": segments}
+        raw = {**cast("dict[str, Any]", profile_data), "segments": segments}
     bind_layers(cast("Layered[Edge]", data), profile_class.model_validate(raw))
     return segments

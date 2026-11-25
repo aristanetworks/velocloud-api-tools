@@ -22,7 +22,7 @@ def interval() -> ApiInterval:
 
 
 class TestLinkRequestSchemas:
-    def test_link_series_accepts_numeric_link_ids(self, interval: ApiInterval):
+    def test_link_series_accepts_numeric_link_ids(self, interval: ApiInterval) -> None:
         request = GetEdgeLinkSeries(
             enterprise_id=1,
             edge_id=2,
@@ -32,7 +32,9 @@ class TestLinkRequestSchemas:
 
         assert request.links == [17]
 
-    def test_link_series_rejects_internal_link_uuid(self, interval: ApiInterval):
+    def test_link_series_rejects_internal_link_uuid(
+        self, interval: ApiInterval
+    ) -> None:
         with pytest.raises(ValidationError):
             _ = GetEdgeLinkSeries.model_validate(
                 {
@@ -43,7 +45,7 @@ class TestLinkRequestSchemas:
                 }
             )
 
-    def test_qoe_request_accepts_numeric_link_ids(self, interval: ApiInterval):
+    def test_qoe_request_accepts_numeric_link_ids(self, interval: ApiInterval) -> None:
         request = GetLinkQualityEvents.model_validate(
             {
                 "enterpriseId": 1,
@@ -56,7 +58,9 @@ class TestLinkRequestSchemas:
         payload = request.model_dump(by_alias=True, exclude_unset=True)
         assert payload["links"] == [17]
 
-    def test_qoe_request_rejects_internal_link_uuid(self, interval: ApiInterval):
+    def test_qoe_request_rejects_internal_link_uuid(
+        self, interval: ApiInterval
+    ) -> None:
         with pytest.raises(ValidationError):
             _ = GetLinkQualityEvents.model_validate(
                 {
@@ -87,11 +91,13 @@ class TestLinkAnalyticsRequests:
             return GetLinkQualityEventsResult()
 
     def _analytics(self, client: FakeClient) -> Analytics:
-        protocol = cast(VcoClientProtocol, cast(object, client))
+        protocol = cast("VcoClientProtocol", cast("object", client))
         return Analytics(protocol, enterprise_id=1)
 
     @pytest.mark.anyio
-    async def test_link_series_passes_numeric_link_ids(self, interval: ApiInterval):
+    async def test_link_series_passes_numeric_link_ids(
+        self, interval: ApiInterval
+    ) -> None:
         client = self.FakeClient()
 
         _ = await self._analytics(client).get_edge_link_series(
@@ -103,7 +109,9 @@ class TestLinkAnalyticsRequests:
         assert client.link_series_requests[0].links == [17]
 
     @pytest.mark.anyio
-    async def test_qoe_request_passes_numeric_link_ids(self, interval: ApiInterval):
+    async def test_qoe_request_passes_numeric_link_ids(
+        self, interval: ApiInterval
+    ) -> None:
         client = self.FakeClient()
 
         _ = await self._analytics(client).get_edge_qoe_series(

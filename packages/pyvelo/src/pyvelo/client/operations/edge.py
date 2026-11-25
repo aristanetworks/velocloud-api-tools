@@ -76,8 +76,7 @@ class EdgeMixin(Protocol):
     async def get_edge_configuration_stack(
         self: VcoClientBaseProtocol, request: GetEdgeConfigurationStack
     ) -> GetEdgeConfigurationStackResult:
-        """
-        Get the full configuration stack for an edge.
+        """Get the full configuration stack for an edge.
 
         Returns the complete configuration profile (including all modules) of the specified
         Edge. The stack includes edge-specific overrides and the assigned enterprise profile.
@@ -100,8 +99,7 @@ class EdgeMixin(Protocol):
     async def get_edge_sdwan_peers(
         self: VcoClientBaseProtocol, request: GetEdgeSdwanPeers
     ) -> Sequence[EdgeSdwanPeerEntry]:
-        """
-        Get SD-WAN peers that have established overlay paths with an edge.
+        """Get SD-WAN peers that have established overlay paths with an edge.
 
         Returns the list of SD-WAN peers (other edges and gateways) that have active VCMP
         (VeloCloud Multi-Path Protocol) tunnels with the specified edge. Optionally supports

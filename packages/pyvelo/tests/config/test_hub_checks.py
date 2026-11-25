@@ -74,7 +74,9 @@ async def profile_of(
     )
 
 
-async def edit(state: ConfigState, vpn: dict[str, Any], segment: str = GLOBAL[1]):
+async def edit(
+    state: ConfigState, vpn: dict[str, Any], segment: str = GLOBAL[1]
+) -> None:
     patch = {"segments": {segment: {"vpn": vpn}}}
     _ = await ConfigPipeline(client=None).apply(state, module=DS, patch=patch)
 
@@ -102,7 +104,7 @@ async def refused(state: ConfigState) -> HubListError:
     return planned.value
 
 
-def assert_names(error: HubListError, *texts: str, lists: tuple[str, ...] = ()):
+def assert_names(error: HubListError, *texts: str, lists: tuple[str, ...] = ()) -> None:
     assert error.segment == GLOBAL[1]
     assert GLOBAL[1] in str(error)
     for text in texts:
@@ -117,7 +119,7 @@ def as_read_warnings(state: ConfigState):
 # --- rule 1: the Branch-to-Hub list and its flag -----------------------------------
 
 
-async def test_a_hub_listed_with_the_hub_list_off_raises():
+async def test_a_hub_listed_with_the_hub_list_off_raises() -> None:
     state = await profile_of(ds_with_vpn(GLOBAL))
     await edit(state, {"edgeToEdgeHub": {"vpnHubs": add(HUB_A.name)}})
 
@@ -127,7 +129,7 @@ async def test_a_hub_listed_with_the_hub_list_off_raises():
     assert error.hubs == ("Hub-A",)
 
 
-async def test_the_hub_list_on_with_no_hub_raises():
+async def test_the_hub_list_on_with_no_hub_raises() -> None:
     state = await profile_of(ds_with_vpn(GLOBAL))
     await edit(state, {"edgeToEdgeHub": {"enabled": True}})
 
@@ -136,7 +138,9 @@ async def test_the_hub_list_on_with_no_hub_raises():
     assert_names(error, "edgeToEdgeHub.enabled", "empty", lists=(HUB_LIST,))
 
 
-async def test_turning_the_hub_list_off_while_it_lists_hubs_says_to_remove_them_first():
+async def test_turning_the_hub_list_off_while_it_lists_hubs_says_to_remove_them_first() -> (
+    None
+):
     state = await profile_of(ds_with_vpn(GLOBAL, hubs=(HUB_A,)), HUB_A)
     await edit(state, {"edgeToEdgeHub": {"enabled": False}})
 
@@ -146,7 +150,7 @@ async def test_turning_the_hub_list_off_while_it_lists_hubs_says_to_remove_them_
     assert '"_op": "delete"' in str(error)
 
 
-async def test_the_hub_list_emptied_while_it_is_on_raises():
+async def test_the_hub_list_emptied_while_it_is_on_raises() -> None:
     state = await profile_of(ds_with_vpn(GLOBAL, hubs=(HUB_A,)), HUB_A)
     await edit(state, {"edgeToEdgeHub": {"vpnHubs": remove(HUB_A.name)}})
 
@@ -170,7 +174,7 @@ async def test_the_hub_list_emptied_while_it_is_on_raises():
         ),
     ],
 )
-async def test_a_hub_listed_twice_raises(list_path: str, ds: dict[str, Any]):
+async def test_a_hub_listed_twice_raises(list_path: str, ds: dict[str, Any]) -> None:
     state = await profile_of(ds, HUB_A)
     vpn = state.profile.device_settings.segments[0].vpn
     holder = {
@@ -195,7 +199,7 @@ async def test_a_hub_listed_twice_raises(list_path: str, ds: dict[str, Any]):
 )
 async def test_the_advice_for_a_hub_listed_twice_is_accepted_and_mends_it(
     list_path: str, ds: dict[str, Any]
-):
+) -> None:
     state = await profile_of(ds, HUB_A)
     vpn = state.profile.device_settings.segments[0].vpn
     holder = {
@@ -229,7 +233,7 @@ def _nested(list_path: str, change: dict[str, Any]) -> dict[str, Any]:
 # --- rule 3: Edge to Edge through hubs needs a bridge hub ------------------------
 
 
-async def test_edge_to_edge_through_hubs_with_no_bridge_hub_raises():
+async def test_edge_to_edge_through_hubs_with_no_bridge_hub_raises() -> None:
     state = await profile_of(ds_with_vpn(GLOBAL, hubs=(HUB_A,)), HUB_A)
     await edit(
         state, {"edgeToEdge": True, "edgeToEdgeDetail": {"useCloudGateway": False}}
@@ -238,7 +242,7 @@ async def test_edge_to_edge_through_hubs_with_no_bridge_hub_raises():
     assert_names(await refused(state), "useCloudGateway", lists=(BRIDGE_LIST,))
 
 
-async def test_edge_to_edge_through_the_cloud_gateway_needs_no_bridge_hub():
+async def test_edge_to_edge_through_the_cloud_gateway_needs_no_bridge_hub() -> None:
     state = await profile_of(ds_with_vpn(GLOBAL, hubs=(HUB_A,)), HUB_A)
     await edit(state, {"edgeToEdge": True})
 
@@ -258,7 +262,7 @@ async def test_edge_to_edge_through_the_cloud_gateway_needs_no_bridge_hub():
 )
 async def test_a_hub_that_is_not_in_the_hub_list_cannot_be_added_to_another(
     path: tuple[str, ...], list_path: str
-):
+) -> None:
     state = await profile_of(ds_with_vpn(GLOBAL, hubs=(HUB_A,)), HUB_A)
     change: Any = add(HUB_B.name)
     for key in reversed(path):
@@ -271,7 +275,7 @@ async def test_a_hub_that_is_not_in_the_hub_list_cannot_be_added_to_another(
     assert error.hubs == ("Hub-B",)
 
 
-async def test_a_hub_left_in_backhaul_after_leaving_the_hub_list_raises():
+async def test_a_hub_left_in_backhaul_after_leaving_the_hub_list_raises() -> None:
     ds = ds_with_vpn(GLOBAL, hubs=(HUB_A, HUB_B), backhaul=(HUB_A,))
     state = await profile_of(ds, HUB_A, HUB_B)
     await edit(state, {"edgeToEdgeHub": {"vpnHubs": remove(HUB_A.name)}})
@@ -281,7 +285,7 @@ async def test_a_hub_left_in_backhaul_after_leaving_the_hub_list_raises():
     assert_names(error, "Hub-A", "backhaul", lists=(HUB_LIST, BACKHAUL_LIST))
 
 
-async def test_a_hub_removed_from_every_list_is_allowed():
+async def test_a_hub_removed_from_every_list_is_allowed() -> None:
     ds = ds_with_vpn(GLOBAL, hubs=(HUB_A, HUB_B), backhaul=(HUB_A,))
     state = await profile_of(ds, HUB_A, HUB_B)
     await edit(
@@ -300,14 +304,16 @@ async def test_a_hub_removed_from_every_list_is_allowed():
 # --- rule 5: a segment with hubs has its VPN on ----------------------------------
 
 
-async def test_a_hub_listed_with_the_vpn_off_raises():
+async def test_a_hub_listed_with_the_vpn_off_raises() -> None:
     state = await profile_of(ds_with_vpn(GLOBAL, enabled=False))
     await edit(state, {"edgeToEdgeHub": {"enabled": True, "vpnHubs": add(HUB_A.name)}})
 
     assert_names(await refused(state), "vpn.enabled", lists=(HUB_LIST,))
 
 
-async def test_turning_the_vpn_off_while_it_lists_hubs_says_to_remove_them_first():
+async def test_turning_the_vpn_off_while_it_lists_hubs_says_to_remove_them_first() -> (
+    None
+):
     state = await profile_of(ds_with_vpn(GLOBAL, hubs=(HUB_A,)), HUB_A)
     await edit(state, {"enabled": False})
 
@@ -332,7 +338,7 @@ async def with_entry_added(
         vpn.backhaul_edges.append(hub)
 
 
-async def test_an_added_cluster_member_raises():
+async def test_an_added_cluster_member_raises() -> None:
     state = await profile_of(ds_with_vpn(GLOBAL))
     await with_entry_added(state, hub_entry(MEMBER))
 
@@ -341,7 +347,7 @@ async def test_an_added_cluster_member_raises():
     assert_names(error, "Member-1", "member of a hub cluster", lists=(HUB_LIST,))
 
 
-async def test_an_added_edge_that_is_no_hub_of_the_enterprise_raises():
+async def test_an_added_edge_that_is_no_hub_of_the_enterprise_raises() -> None:
     state = await profile_of(ds_with_vpn(GLOBAL), loaded=(HUB_A, HUB_B, CLUSTER))
     await with_entry_added(state, hub_entry(NOT_A_HUB))
 
@@ -350,7 +356,7 @@ async def test_an_added_edge_that_is_no_hub_of_the_enterprise_raises():
     assert_names(error, "Branch-1", "no Edge or hub cluster", lists=(HUB_LIST,))
 
 
-async def test_an_added_edge_listed_as_a_cluster_raises():
+async def test_an_added_edge_listed_as_a_cluster_raises() -> None:
     state = await profile_of(ds_with_vpn(GLOBAL))
     await with_entry_added(state, hub_entry(HUB_A) | {"type": "edgeHubCluster"})
 
@@ -360,7 +366,7 @@ async def test_an_added_edge_listed_as_a_cluster_raises():
     assert error.hubs == ("Hub-A",)
 
 
-async def test_an_added_cluster_listed_as_an_edge_raises():
+async def test_an_added_cluster_listed_as_an_edge_raises() -> None:
     state = await profile_of(ds_with_vpn(GLOBAL))
     await with_entry_added(state, hub_entry(CLUSTER) | {"type": "edgeHub"})
 
@@ -369,7 +375,7 @@ async def test_an_added_cluster_listed_as_an_edge_raises():
     assert_names(error, "Cluster-1", "edgeHub", "a hub cluster", lists=(HUB_LIST,))
 
 
-async def test_an_added_hub_with_another_hubs_name_raises():
+async def test_an_added_hub_with_another_hubs_name_raises() -> None:
     state = await profile_of(ds_with_vpn(GLOBAL))
     await with_entry_added(state, hub_entry(HUB_A) | {"name": HUB_B.name})
 
@@ -378,7 +384,7 @@ async def test_an_added_hub_with_another_hubs_name_raises():
     assert_names(error, "Hub-B", "Hub-A", lists=(HUB_LIST,))
 
 
-async def test_an_added_hubs_name_is_compared_without_regard_to_case():
+async def test_an_added_hubs_name_is_compared_without_regard_to_case() -> None:
     state = await profile_of(ds_with_vpn(GLOBAL))
     await with_entry_added(state, hub_entry(HUB_A) | {"name": HUB_A.name.upper()})
 
@@ -387,7 +393,7 @@ async def test_an_added_hubs_name_is_compared_without_regard_to_case():
     ]
 
 
-async def test_an_added_hub_of_the_enterprise_passes():
+async def test_an_added_hub_of_the_enterprise_passes() -> None:
     state = await profile_of(ds_with_vpn(GLOBAL))
     await edit(
         state,
@@ -405,25 +411,26 @@ def broken_as_read() -> dict[str, Any]:
     return ds_with_vpn(GLOBAL, hubs=(HUB_B,), backhaul=(HUB_A,))
 
 
-async def test_a_rule_already_broken_as_read_warns():
+async def test_a_rule_already_broken_as_read_warns() -> None:
     state = await profile_of(broken_as_read(), HUB_A, HUB_B)
     await edit(state, {"conditionalBackhaul": True})
 
     (warning,) = as_read_warnings(state)
 
     assert warning.code == "hub_list_as_read"
-    assert "Hub-A" in warning.message and GLOBAL[1] in warning.message
+    assert "Hub-A" in warning.message
+    assert GLOBAL[1] in warning.message
     assert warning in state.plan().warnings
     assert state.plan().steps == ()
 
 
-async def test_a_rule_broken_as_read_with_no_edit_warns_nowhere():
+async def test_a_rule_broken_as_read_with_no_edit_warns_nowhere() -> None:
     state = await profile_of(broken_as_read(), HUB_A, HUB_B)
 
     assert as_read_warnings(state) == []
 
 
-async def test_another_hub_broken_the_same_way_is_an_error():
+async def test_another_hub_broken_the_same_way_is_an_error() -> None:
     state = await profile_of(broken_as_read(), HUB_A, HUB_B)
     await edit(state, {"backHaulEdges": add(CLUSTER.name)})
 
@@ -447,13 +454,14 @@ async def test_another_hub_broken_the_same_way_is_an_error():
 )
 async def test_a_segment_with_its_hub_list_or_vpn_off_as_read_warns_for_an_unrelated_edit(
     ds: dict[str, Any], text: str
-):
+) -> None:
     state = await profile_of(ds, HUB_A)
     await edit(state, {"conditionalBackhaul": True})
 
     (warning,) = as_read_warnings(state)
 
-    assert text in warning.message and "Hub-A" in warning.message
+    assert text in warning.message
+    assert "Hub-A" in warning.message
 
 
 @pytest.mark.parametrize(
@@ -466,7 +474,7 @@ async def test_a_segment_with_its_hub_list_or_vpn_off_as_read_warns_for_an_unrel
 )
 async def test_adding_a_hub_to_a_segment_already_off_as_read_raises(
     ds: dict[str, Any], text: str
-):
+) -> None:
     state = await profile_of(ds, HUB_A, HUB_B)
     await edit(state, {"edgeToEdgeHub": {"vpnHubs": add(HUB_B.name)}})
 
@@ -475,7 +483,9 @@ async def test_adding_a_hub_to_a_segment_already_off_as_read_raises(
     assert_names(error, text, "Hub-B", lists=(HUB_LIST,))
 
 
-async def test_adding_a_listed_hub_to_another_list_of_a_segment_with_the_vpn_off_raises():
+async def test_adding_a_listed_hub_to_another_list_of_a_segment_with_the_vpn_off_raises() -> (
+    None
+):
     # Hub-A is in the hub list as read, with vpn.enabled off: the backhaul
     # enable for it would be planned on a segment whose VPN is off.
     ds = ds_with_vpn(GLOBAL, enabled=False, hubs=(HUB_A,))
@@ -494,7 +504,7 @@ async def test_adding_a_listed_hub_to_another_list_of_a_segment_with_the_vpn_off
 )
 async def test_adding_a_listed_hub_to_another_list_of_a_segment_with_the_hub_list_off_raises(
     path: tuple[str, ...],
-):
+) -> None:
     # Enabling a bridge or backhaul sets the hub role too, on a segment whose
     # Branch-to-Hub list is off.
     ds = ds_with_vpn(GLOBAL, hubs=(HUB_A,), hub_list_enabled=False)
@@ -519,7 +529,7 @@ async def test_adding_a_listed_hub_to_another_list_of_a_segment_with_the_hub_lis
 )
 async def test_removing_a_hub_from_one_list_of_a_segment_already_off_still_warns(
     ds: dict[str, Any],
-):
+) -> None:
     state = await profile_of(ds, HUB_A)
     await edit(state, {"backHaulEdges": remove(HUB_A.name)})
 
@@ -531,7 +541,7 @@ async def test_removing_a_hub_from_one_list_of_a_segment_already_off_still_warns
     ]
 
 
-async def test_segments_with_no_vpn_change_are_not_checked():
+async def test_segments_with_no_vpn_change_are_not_checked() -> None:
     state = await profile_of(broken_as_read(), HUB_A, HUB_B)
     patch = {"segments": {GLOBAL[1]: {"ospf": {"enabled": True}}}}
     _ = await ConfigPipeline(client=None).apply(state, module=DS, patch=patch)
@@ -543,7 +553,7 @@ async def test_segments_with_no_vpn_change_are_not_checked():
 # --- the checks need the hub resolver only for an added hub --------------------------
 
 
-async def test_a_plan_with_no_hub_change_needs_no_hub_resolver():
+async def test_a_plan_with_no_hub_change_needs_no_hub_resolver() -> None:
     # profile_state registers no HubIdentity resolver at all.
     state = await profile_state(
         [ds_with_vpn(GLOBAL, hubs=(HUB_A,)), ds_entry(GUEST)],
@@ -561,7 +571,7 @@ async def test_a_plan_with_no_hub_change_needs_no_hub_resolver():
     assert [w for w in plan.check_warnings if w.code == "hub_list_as_read"] == []
 
 
-async def test_an_added_hub_needs_a_loaded_hub_resolver_to_be_checked():
+async def test_an_added_hub_needs_a_loaded_hub_resolver_to_be_checked() -> None:
     state = await profile_of(ds_with_vpn(GLOBAL))
     await edit(
         state,

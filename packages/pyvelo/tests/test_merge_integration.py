@@ -50,7 +50,7 @@ class TestFullMergeScenario:
             ]
         )
 
-    def test_nested_keyed_merge(self):
+    def test_nested_keyed_merge(self) -> None:
         """Merge a rule update into a specific segment by name."""
         m = self._make_config()
         _ = m.merge_patch(
@@ -62,7 +62,7 @@ class TestFullMergeScenario:
         # Override triggered because rules change is not EdgeLocal
         assert global_seg.override is True
 
-    def test_add_rule_to_segment(self):
+    def test_add_rule_to_segment(self) -> None:
         """Add a new rule to an existing segment."""
         m = self._make_config()
         _ = m.merge_patch(
@@ -86,7 +86,7 @@ class TestFullMergeScenario:
         assert len(global_seg.rules) == 3
         assert global_seg.rules[2].name == "new-rule"
 
-    def test_delete_rule_from_segment(self):
+    def test_delete_rule_from_segment(self) -> None:
         """Delete a rule from a segment."""
         m = self._make_config()
         _ = m.merge_patch({"segments": {"Global": {"rules": {"block-ssh": delete()}}}})
@@ -94,13 +94,13 @@ class TestFullMergeScenario:
         assert len(global_seg.rules) == 1
         assert global_seg.rules[0].name == "allow-all"
 
-    def test_edge_local_change_no_override(self):
+    def test_edge_local_change_no_override(self) -> None:
         """EdgeLocal field change doesn't trigger override."""
         m = self._make_config()
         _ = m.merge_patch({"segments": {"Global": {"cidr_ip": "10.0.0.1"}}})
         assert m.segments[0].override is False
 
-    def test_mixed_edge_local_and_normal_triggers_override(self):
+    def test_mixed_edge_local_and_normal_triggers_override(self) -> None:
         """Mixed EdgeLocal + normal change triggers override."""
         m = self._make_config()
         _ = m.merge_patch(
@@ -115,7 +115,7 @@ class TestFullMergeScenario:
         )
         assert m.segments[0].override is True
 
-    def test_pci_segment_unchanged(self):
+    def test_pci_segment_unchanged(self) -> None:
         """Unmentioned segments are untouched."""
         m = self._make_config()
         _ = m.merge_patch(

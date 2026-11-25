@@ -98,10 +98,12 @@ def test_null_on_a_member_inherits_the_group() -> None:
 def test_a_scalar_sets_local() -> None:
     e, _ = _bound()
     _ = e.merge_patch({"enabled": True, "level": 4})
-    assert e.enabled.is_local and e.enabled.local is True
+    assert e.enabled.is_local
+    assert e.enabled.local is True
     assert e.level.local == 4
     dump = _dump(e)
-    assert dump["enabled"] is True and dump["level"] == 4
+    assert dump["enabled"] is True
+    assert dump["level"] == 4
     # A value equal to what the profile gives is the edge's own all the same.
     _ = e.merge_patch({"enabled": False})
     assert _dump(e)["enabled"] is False

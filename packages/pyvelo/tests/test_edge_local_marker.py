@@ -13,14 +13,14 @@ class Network(VcoModel):
 
 
 class TestEdgeLocalMarker:
-    def test_processed_marker_in_metadata(self):
+    def test_processed_marker_in_metadata(self) -> None:
         fi = Network.model_fields["cidr_ip"]
         assert is_edge_local(fi)
 
-    def test_non_edge_local_has_no_marker(self):
+    def test_non_edge_local_has_no_marker(self) -> None:
         fi = Network.model_fields["advertise"]
         assert not is_edge_local(fi)
 
-    def test_model_validates_normally(self):
+    def test_model_validates_normally(self) -> None:
         m = Network(cidr_ip="10.0.0.1", cidr_prefix=24, advertise=False)
         assert m.cidr_ip == "10.0.0.1"

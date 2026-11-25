@@ -51,7 +51,7 @@ def dump(m: VcoModel) -> dict[str, object]:
 RAW = {"boxes": {"b1": {"ports": [{"name": "p1"}]}}}
 
 
-def test_items_of_a_keyed_list_below_a_map_are_rebased_one_by_one():
+def test_items_of_a_keyed_list_below_a_map_are_rebased_one_by_one() -> None:
     raw = {"boxes": {"b1": {"ports": [port("p1", x=1), port("p2", x=2)], "u": 1}}}
     before = {"boxes": {"b1": {"label": "", "ports": [dumped("p1"), dumped("p2")]}}}
     after = {
@@ -66,7 +66,7 @@ def test_items_of_a_keyed_list_below_a_map_are_rebased_one_by_one():
     ]
 
 
-def test_a_change_below_a_map_is_written_to_the_key_as_read():
+def test_a_change_below_a_map_is_written_to_the_key_as_read() -> None:
     raw = {"boxes": {"b1": {"ports": [port("p1", ping_response=False)]}}}
     before = {
         "boxes": {"b1": {"label": "", "ports": [dumped("p1", pingResponse=False)]}}
@@ -77,7 +77,7 @@ def test_a_change_below_a_map_is_written_to_the_key_as_read():
     }
 
 
-def test_map_entries_added_and_removed():
+def test_map_entries_added_and_removed() -> None:
     raw = {"boxes": {"b1": {"ports": [port("p1", x=1)], "u": 1}, "b2": {"u": 2}}}
     before = {
         "boxes": {
@@ -95,7 +95,7 @@ def test_map_entries_added_and_removed():
     ]
 
 
-def test_the_default_of_an_absent_key_below_a_map_is_lossy():
+def test_the_default_of_an_absent_key_below_a_map_is_lossy() -> None:
     base, cur = Boxes.model_validate(RAW), Boxes.model_validate(RAW)
     cur.boxes["b1"].label = ""
     cur.boxes["b1"].ports[0].speed = 0
@@ -108,7 +108,7 @@ def test_the_default_of_an_absent_key_below_a_map_is_lossy():
     ]
 
 
-def test_a_field_the_level_omits_below_a_map_is_lossy():
+def test_a_field_the_level_omits_below_a_map_is_lossy() -> None:
     level = ConfigContext.PROFILE
 
     def at_level(m: VcoModel) -> dict[str, object]:
@@ -123,7 +123,7 @@ def test_a_field_the_level_omits_below_a_map_is_lossy():
     ]
 
 
-def test_a_generated_default_below_a_map_is_carried():
+def test_a_generated_default_below_a_map_is_carried() -> None:
     base, cur = Boxes.model_validate(RAW), Boxes.model_validate(RAW)
     before, after = dump(base), dump(cur)
     assert after != before  # each parse made its own tag
@@ -131,7 +131,7 @@ def test_a_generated_default_below_a_map_is_carried():
     assert after == before
 
 
-def test_is_override_flag_follows_a_map():
+def test_is_override_flag_follows_a_map() -> None:
     assert is_override_flag(Boxes, Path.parse("boxes.b1.ports[p1].override"))
     assert not is_override_flag(Boxes, Path.parse("boxes.b1.ports[p1].speed"))
     assert not is_override_flag(Boxes, Path.parse("boxes.b1.label"))

@@ -68,7 +68,7 @@ IPV6 = Rewrites(ipv6=True)
 NOTE_READDED = Rewrites(readded=(("sub", "note"),))
 
 
-def test_server_owned_field_is_left_out():
+def test_server_owned_field_is_left_out() -> None:
     check = check_response({"stamp": "s1"}, {"stamp": "s2"}, {"stamp": "s9"}, Box)
     assert check.applied == ()
     assert check.not_applied == ()
@@ -79,7 +79,7 @@ def test_server_owned_field_is_left_out():
     assert change.stored == "s9"
 
 
-def test_server_owned_inside_an_added_item():
+def test_server_owned_inside_an_added_item() -> None:
     check = check_response(
         {"items": []},
         {"items": [{"name": "a", "stamp": "s1"}]},
@@ -92,14 +92,14 @@ def test_server_owned_inside_an_added_item():
     assert change.stored == "s9"
 
 
-def test_owned_key_kept_as_read_is_left_out_with_no_server_change():
+def test_owned_key_kept_as_read_is_left_out_with_no_server_change() -> None:
     check = check_response({"stamp": "s1"}, {"stamp": "s2"}, {"stamp": "s1"}, Box)
     assert_paths(check, left_out=["stamp"])
     (change,) = check.left_out
     assert change.stored == "s1"
 
 
-def test_owned_key_missing_from_an_added_item_is_no_server_change():
+def test_owned_key_missing_from_an_added_item_is_no_server_change() -> None:
     check = check_response(
         {"items": []},
         {"items": [{"name": "a", "stamp": "s1"}]},
@@ -110,7 +110,7 @@ def test_owned_key_missing_from_an_added_item_is_no_server_change():
     assert check.server_changes == ()
 
 
-def test_server_owned_inside_an_unkeyed_model_list():
+def test_server_owned_inside_an_unkeyed_model_list() -> None:
     sent = {"plain": [{"name": "a", "stamp": "s1"}]}
     stored = {"plain": [{"name": "a", "stamp": "s9"}]}
 
@@ -122,7 +122,7 @@ def test_server_owned_inside_an_unkeyed_model_list():
     assert_paths(unmarked, not_applied=["plain"])
 
 
-def test_server_owned_under_a_dropped_container_is_left_out():
+def test_server_owned_under_a_dropped_container_is_left_out() -> None:
     check = check_response(
         {"items": [{"name": "a", "stamp": "s1"}]},
         {"items": [{"name": "a", "stamp": "s2"}]},
@@ -135,7 +135,7 @@ def test_server_owned_under_a_dropped_container_is_left_out():
     assert change.stored is MISSING
 
 
-def test_the_same_on_an_unmarked_field_is_not_applied():
+def test_the_same_on_an_unmarked_field_is_not_applied() -> None:
     check = check_response(
         {"rules": []},
         {"rules": [{"name": "a", "ruleId": "i1"}]},
@@ -145,7 +145,7 @@ def test_the_same_on_an_unmarked_field_is_not_applied():
     assert_paths(check, not_applied=["rules[a]"])
 
 
-def test_server_owned_by_pattern():
+def test_server_owned_by_pattern() -> None:
     check = check_response(
         {"x": {"conn": {"name": "a"}}},
         {"x": {"conn": {"name": "b"}}},
@@ -155,7 +155,7 @@ def test_server_owned_by_pattern():
     assert_paths(check, left_out=["x.conn.name"], server_changes=["x.conn.name"])
 
 
-def test_ipv6_in_canonical_form_is_the_same_value():
+def test_ipv6_in_canonical_form_is_the_same_value() -> None:
     check = check_response(
         {"addr": "::"},
         {"addr": "2001:DB8::1/64"},
@@ -168,7 +168,7 @@ def test_ipv6_in_canonical_form_is_the_same_value():
     assert change.stored == "2001:db8::1/64"
 
 
-def test_without_the_flag_it_is_not_applied():
+def test_without_the_flag_it_is_not_applied() -> None:
     check = check_response(
         {"addr": "::"}, {"addr": "2001:DB8::1/64"}, {"addr": "2001:db8::1/64"}
     )
@@ -178,7 +178,7 @@ def test_without_the_flag_it_is_not_applied():
 
 
 @pytest.mark.parametrize(("sent", "stored"), [("A", "a"), ("10.0.0.2", "10.0.0.02")])
-def test_ipv6_flag_equates_nothing_else(sent: str, stored: str):
+def test_ipv6_flag_equates_nothing_else(sent: str, stored: str) -> None:
     check = check_response(
         {"addr": "::"}, {"addr": sent}, {"addr": stored}, rewrites=IPV6
     )
@@ -200,7 +200,7 @@ def canonical(item: dict[str, object]) -> dict[str, object]:
     return {**item, "dest": str(item["dest"]).lower()}
 
 
-def test_ipv6_key_in_canonical_form_pairs():
+def test_ipv6_key_in_canonical_form_pairs() -> None:
     check = check_response(
         {"routes": []},
         {"routes": [V6_ROUTE]},
@@ -215,7 +215,7 @@ def test_ipv6_key_in_canonical_form_pairs():
     assert (change.as_read, change.stored) == (MISSING, "2001:db8:1::")
 
 
-def test_ipv6_key_without_the_flag_does_not_pair():
+def test_ipv6_key_without_the_flag_does_not_pair() -> None:
     check = check_response(
         {"routes": []},
         {"routes": [V6_ROUTE]},
@@ -229,7 +229,7 @@ def test_ipv6_key_without_the_flag_does_not_pair():
     )
 
 
-def test_ipv6_keys_pair_by_key_in_canonical_form_in_any_order():
+def test_ipv6_keys_pair_by_key_in_canonical_form_in_any_order() -> None:
     other = {**V6_ROUTE, "dest": "2001:DB8:2::"}
     other_path = 'routes["2001:DB8:2::",64,"fe80::1",GE3]'
     check = check_response(
@@ -247,7 +247,7 @@ def test_ipv6_keys_pair_by_key_in_canonical_form_in_any_order():
     )
 
 
-def test_ipv6_keys_that_repeat_pair_in_order_in_canonical_form():
+def test_ipv6_keys_that_repeat_pair_in_order_in_canonical_form() -> None:
     sent = [{**V6_ROUTE, "cost": 1}, {**V6_ROUTE, "cost": 2}]
     check = check_response(
         {"routes": []},
@@ -263,7 +263,7 @@ def test_ipv6_keys_that_repeat_pair_in_order_in_canonical_form():
     )
 
 
-def test_ipv6_alt_key_in_canonical_form_pairs():
+def test_ipv6_alt_key_in_canonical_form_pairs() -> None:
     # The two rules share a name, so only the alt key tells which is which.
     sent = [
         {"name": "a", "ruleId": "2001:DB8::1"},
@@ -285,7 +285,7 @@ def test_ipv6_alt_key_in_canonical_form_pairs():
     assert server_change_at(check, "rules[#0].ruleId").stored == "2001:db8::1"
 
 
-def test_refused_removal_of_an_ipv6_keyed_item_pairs_in_canonical_form():
+def test_refused_removal_of_an_ipv6_keyed_item_pairs_in_canonical_form() -> None:
     check = check_response(
         {"routes": [V6_ROUTE]},
         {"routes": []},
@@ -296,7 +296,7 @@ def test_refused_removal_of_an_ipv6_keyed_item_pairs_in_canonical_form():
     assert_paths(check, not_applied=[V6_ROUTE_PATH])
 
 
-def test_ipv6_flag_pairs_no_other_key_text():
+def test_ipv6_flag_pairs_no_other_key_text() -> None:
     check = check_response(
         {"routes": []},
         {"routes": [V6_ROUTE]},
@@ -311,7 +311,7 @@ def test_ipv6_flag_pairs_no_other_key_text():
     )
 
 
-def test_removed_key_the_vco_adds_back():
+def test_removed_key_the_vco_adds_back() -> None:
     check = check_response(
         {"sub": {"v": 1, "note": "n"}},
         {"sub": {"v": 1}},
@@ -325,7 +325,7 @@ def test_removed_key_the_vco_adds_back():
     assert change.stored == "d"
 
 
-def test_the_same_without_the_pattern_is_not_applied():
+def test_the_same_without_the_pattern_is_not_applied() -> None:
     check = check_response(
         {"sub": {"v": 1, "note": "n"}},
         {"sub": {"v": 1}},
@@ -335,7 +335,7 @@ def test_the_same_without_the_pattern_is_not_applied():
     assert_paths(check, not_applied=["sub.note"])
 
 
-def test_readded_under_a_keyed_item():
+def test_readded_under_a_keyed_item() -> None:
     check = check_response(
         {"rules": [{"name": "a", "sub": {"v": 1}}]},
         {"rules": [{"name": "a"}]},
@@ -346,7 +346,7 @@ def test_readded_under_a_keyed_item():
     assert_paths(check, left_out=["rules[a].sub"], server_changes=["rules[a].sub"])
 
 
-def test_removed_and_gone_is_applied_all_the_same():
+def test_removed_and_gone_is_applied_all_the_same() -> None:
     check = check_response(
         {"sub": {"v": 1, "note": "n"}},
         {"sub": {"v": 1}},
@@ -369,11 +369,11 @@ def test_removed_and_gone_is_applied_all_the_same():
         (("**", "fips"), "fips.x", False),
     ],
 )
-def test_matches(pattern: PathPattern, path: str, expected: bool):
+def test_matches(pattern: PathPattern, path: str, expected: bool) -> None:
     assert matches(Path.parse(path), pattern) is expected
 
 
-def test_removed_key_the_vco_adds_back_inside_a_list_compared_whole():
+def test_removed_key_the_vco_adds_back_inside_a_list_compared_whole() -> None:
     check = check_response(
         {"hops": [{"ip": "10.0.0.1", "cost": 5}]},
         {"hops": [{"ip": "10.0.0.1"}]},
@@ -387,7 +387,7 @@ def test_removed_key_the_vco_adds_back_inside_a_list_compared_whole():
     assert (change.as_read, change.stored) == (MISSING, 0)
 
 
-def test_owned_key_removed_inside_a_list_compared_whole_and_kept_by_the_vco():
+def test_owned_key_removed_inside_a_list_compared_whole_and_kept_by_the_vco() -> None:
     check = check_response(
         {"plain": [{"name": "a", "stamp": "s1"}]},
         {"plain": [{"name": "b"}]},
@@ -399,7 +399,7 @@ def test_owned_key_removed_inside_a_list_compared_whole_and_kept_by_the_vco():
     assert paths(check.server_changes) == ["plain[#0].stamp"]
 
 
-def test_server_change_below_a_list_compared_whole_has_no_value_read():
+def test_server_change_below_a_list_compared_whole_has_no_value_read() -> None:
     check = check_response(
         {"hops": [{"ip": "2001:DB8::1"}]},
         {"hops": [{"ip": "2001:DB8::2"}]},
@@ -412,7 +412,7 @@ def test_server_change_below_a_list_compared_whole_has_no_value_read():
     assert (change.as_read, change.stored) == (MISSING, "2001:db8::2")
 
 
-def test_changed_value_at_a_readded_path_that_is_not_stored_is_not_applied():
+def test_changed_value_at_a_readded_path_that_is_not_stored_is_not_applied() -> None:
     check = check_response(
         {"sub": {"v": 1, "note": "n"}},
         {"sub": {"v": 1, "note": "m"}},
@@ -425,7 +425,7 @@ def test_changed_value_at_a_readded_path_that_is_not_stored_is_not_applied():
     assert check.server_changes == ()
 
 
-def test_owned_key_stored_as_sent_is_no_server_change():
+def test_owned_key_stored_as_sent_is_no_server_change() -> None:
     check = check_response({"stamp": "s1"}, {"stamp": "s2"}, {"stamp": "s2"}, Box)
     assert paths(check.left_out) == ["stamp"]
     assert check.server_changes == ()

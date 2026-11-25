@@ -2,7 +2,7 @@
 
 import copy
 import uuid
-from typing import Annotated, Any
+from typing import Annotated, Any, Never
 
 import pytest
 from pydantic import MISSING, Field
@@ -63,12 +63,12 @@ Json = dict[str, Any]
 
 OMITTED = (
     "the composer keeps only the segments in use on the edge "
-    + "(VLANs, routed interfaces, loopbacks and the Global Segment)"
+    "(VLANs, routed interfaces, loopbacks and the Global Segment)"
 )
 SECRET = "a secret value is not compared"
 UNRESOLVED = (
     "the rule's security service group, or an object it names, "
-    + "is not among the enterprise's security objects"
+    "is not among the enterprise's security objects"
 )
 GROUP = "a9000000-0000-4000-8000-000000000000"
 CATEGORY: Json = {
@@ -330,7 +330,7 @@ def categories(comparison: EffectiveComparison) -> dict[str, EffectiveCategory]:
 # --- a matching view ------------------------------------------------------
 
 
-async def test_a_matching_view_has_no_findings():
+async def test_a_matching_view_has_no_findings() -> None:
     pipeline, state, _ = await loaded()
     comparison = await pipeline.compare_effective(state)
     assert comparison.findings == ()
@@ -340,7 +340,7 @@ async def test_a_matching_view_has_no_findings():
 
 async def test_the_comparison_loads_a_resolver_the_plan_needs_as_a_save_does(
     monkeypatch: pytest.MonkeyPatch,
-):
+) -> None:
     pipeline, state, _ = await loaded()
     plan = state.plan
     asked: list[type] = []
@@ -364,11 +364,11 @@ async def test_the_comparison_loads_a_resolver_the_plan_needs_as_a_save_does(
 
 async def test_a_resolver_that_stays_not_loaded_stops_the_comparison(
     monkeypatch: pytest.MonkeyPatch,
-):
+) -> None:
     pipeline, state, _ = await loaded()
     loads: list[type] = []
 
-    def needs_the_services(*_args: Any, **_kwargs: Any):
+    def needs_the_services(*_args: Any, **_kwargs: Any) -> Never:
         raise ResolverNotLoadedError(NetworkServiceIdentity)
 
     async def load_resolvers(_state: ConfigState, *identities: type) -> None:
@@ -382,25 +382,25 @@ async def test_a_resolver_that_stays_not_loaded_stops_the_comparison(
     assert loads == [NetworkServiceIdentity]  # one load, never two
 
 
-async def test_an_edge_with_no_firewall_row_compares_the_profiles_values():
+async def test_an_edge_with_no_firewall_row_compares_the_profiles_values() -> None:
     pipeline, state, _ = await loaded(None)
     comparison = await pipeline.compare_effective(state)
     assert comparison.findings == ()
 
 
-async def test_the_constants_say_what_is_converted_and_what_is_a_finding():
+async def test_the_constants_say_what_is_converted_and_what_is_a_finding() -> None:
     assert CONVERTED_MODULES == ("firewall", "QOS")
-    assert UNMODELED_KEYS == {"firewall": frozenset({"etm"}), "QOS": frozenset()}
+    assert {"firewall": frozenset({"etm"}), "QOS": frozenset()} == UNMODELED_KEYS
     assert [module_attribute(name) for name in ("firewall", "QOS")] == [
         "firewall",
         "qos",
     ]
     assert EFFECTIVE_IGNORES == ()
-    assert FINDINGS == {
+    assert {
         EffectiveCategory.DIFFERS,
         EffectiveCategory.CLIENT_ONLY,
         EffectiveCategory.SERVER_ONLY,
-    }
+    } == FINDINGS
     assert [c.value for c in EffectiveCategory] == [
         "differs",
         "client_only",
@@ -414,7 +414,7 @@ async def test_the_constants_say_what_is_converted_and_what_is_a_finding():
 # --- one test per category --------------------------------------------------
 
 
-async def test_differs():
+async def test_differs() -> None:
     pipeline, state, client = await loaded()
     composed_modules(client)["syslog_forwarding"] = False
     comparison = await pipeline.compare_effective(state)
@@ -433,7 +433,7 @@ async def test_differs():
     assert "edge" in line
 
 
-async def test_client_only():
+async def test_client_only() -> None:
     profile = {**PROFILE, "syslog_forwarding": True}
     pipeline, state, client = await loaded({"segments": []}, profile)
     del composed_modules(client)["syslog_forwarding"]
@@ -451,7 +451,7 @@ async def test_client_only():
     assert "profile" in line
 
 
-async def test_server_only():
+async def test_server_only() -> None:
     pipeline, state, client = await loaded()
     composed_modules(client)["composerKey"] = {"added": 1}
     services = defaults(state)["services"]
@@ -471,7 +471,7 @@ async def test_server_only():
     assert "client (none)" in line
 
 
-async def test_factory_where_the_server_has_no_value():
+async def test_factory_where_the_server_has_no_value() -> None:
     pipeline, state, client = await loaded()
     composed_modules(client)["securityFeatures"] = defaults(state)["securityFeatures"]
     comparison = await pipeline.compare_effective(state)
@@ -493,7 +493,7 @@ async def test_factory_where_the_server_has_no_value():
     assert "display default" in line
 
 
-async def test_a_wrong_display_default_is_differs():
+async def test_a_wrong_display_default_is_differs() -> None:
     pipeline, state, client = await loaded()
     composed_modules(client)["stateful_firewall_enabled"] = True
     comparison = await pipeline.compare_effective(state)
@@ -505,7 +505,9 @@ async def test_a_wrong_display_default_is_differs():
     assert str(finding.origin) == "factory"
 
 
-async def test_a_nested_key_the_server_lacks_under_a_display_default_is_information():
+async def test_a_nested_key_the_server_lacks_under_a_display_default_is_information() -> (
+    None
+):
     pipeline, state, client = await loaded()
     services = copy.deepcopy(defaults(state)["services"])
     del services["ssh"]["allowSelectedIp"]
@@ -517,10 +519,11 @@ async def test_a_nested_key_the_server_lacks_under_a_display_default_is_informat
     assert entry.category is EffectiveCategory.FACTORY
     assert entry.server is MISSING
     assert str(entry.origin) == "factory"
-    assert entry.reason and "display default" in entry.reason
+    assert entry.reason
+    assert "display default" in entry.reason
 
 
-async def test_a_nested_value_that_differs_under_a_display_default_is_differs():
+async def test_a_nested_value_that_differs_under_a_display_default_is_differs() -> None:
     pipeline, state, client = await loaded()
     services = copy.deepcopy(defaults(state)["services"])
     services["ssh"]["enabled"] = True
@@ -533,7 +536,7 @@ async def test_a_nested_value_that_differs_under_a_display_default_is_differs():
     assert str(finding.origin) == "factory"
 
 
-async def test_a_stored_empty_list_the_server_lacks_is_client_only():
+async def test_a_stored_empty_list_the_server_lacks_is_client_only() -> None:
     profile = {
         **PROFILE,
         "services": {"ssh": {"enabled": False, "allowSelectedIp": []}},
@@ -549,7 +552,7 @@ async def test_a_stored_empty_list_the_server_lacks_is_client_only():
     assert str(finding.origin) == "profile"
 
 
-async def test_an_empty_list_only_the_server_has_is_server_only():
+async def test_an_empty_list_only_the_server_has_is_server_only() -> None:
     profile = {**PROFILE, "services": {"ssh": {"enabled": False}}}
     pipeline, state, client = await loaded(EDGE, profile)
     composed_modules(client)["services"]["ssh"]["allowSelectedIp"] = []
@@ -561,7 +564,7 @@ async def test_an_empty_list_only_the_server_has_is_server_only():
     assert finding.server == []
 
 
-async def test_an_ignored_path_is_reported_with_its_reason():
+async def test_an_ignored_path_is_reported_with_its_reason() -> None:
     _, state, client = await loaded()
     server = composed_modules(client)
     server["syslog_forwarding"] = False
@@ -593,7 +596,7 @@ async def test_an_ignored_path_is_reported_with_its_reason():
     assert "the VCO turns it off" in comparison.render()
 
 
-async def test_an_ignore_matches_whole_parts_only():
+async def test_an_ignore_matches_whole_parts_only() -> None:
     _, state, client = await loaded()
     server = composed_modules(client)
     server["syslog_forwarding"] = False
@@ -602,7 +605,7 @@ async def test_an_ignore_matches_whole_parts_only():
     assert [e.path for e in entries if e.category in FINDINGS] == ["syslog_forwarding"]
 
 
-async def test_unconverted():
+async def test_unconverted() -> None:
     pipeline, state, client = await loaded()
     server = composed_modules(client)
     server["inbound"] = [inbound("in1")]
@@ -628,7 +631,7 @@ async def test_unconverted():
     assert "unconverted" in line
 
 
-async def test_a_stored_rules_logging_flags_match_the_server():
+async def test_a_stored_rules_logging_flags_match_the_server() -> None:
     flags = {"hostedLoggingEnabled": False, "syslogForwardingEnabled": True}
     edge = {**EDGE, "segments": [segment(0, "Global Segment", {**rule("e1"), **flags})]}
     pipeline, state, _ = await loaded(edge)
@@ -640,7 +643,7 @@ async def test_a_stored_rules_logging_flags_match_the_server():
         assert f"segments[0].outbound[0].{key}" not in found
 
 
-async def test_a_logging_flag_the_view_lacks_is_server_only():
+async def test_a_logging_flag_the_view_lacks_is_server_only() -> None:
     pipeline, state, client = await loaded()
     first = composed_modules(client)["segments"][0]["outbound"][0]
     first["hostedLoggingEnabled"] = False
@@ -685,7 +688,7 @@ def security_reads(client: MockVcoClient) -> list[str]:
     ]
 
 
-async def test_the_composers_security_keys_match_the_group():
+async def test_the_composers_security_keys_match_the_group() -> None:
     pipeline, state, _ = await grouped()
     comparison = await pipeline.compare_effective(state)
 
@@ -694,7 +697,7 @@ async def test_the_composers_security_keys_match_the_group():
         assert not [e for e in comparison.entries if f"outbound[0].{key}" in e.path]
 
 
-async def test_a_security_key_that_differs_from_its_object_is_differs():
+async def test_a_security_key_that_differs_from_its_object_is_differs() -> None:
     pipeline, state, client = await grouped()
     first = composed_modules(client)["segments"][0]["outbound"][0]
     first["urlCategoryFiltering"]["unknownCategoryAction"] = "block"
@@ -715,7 +718,7 @@ async def test_a_security_key_that_differs_from_its_object_is_differs():
     assert entry.reason is None
 
 
-async def test_an_expected_security_key_the_server_lacks_is_client_only():
+async def test_an_expected_security_key_the_server_lacks_is_client_only() -> None:
     pipeline, state, client = await grouped()
     first = composed_modules(client)["segments"][0]["outbound"][0]
     del first["urlReputationFiltering"]
@@ -730,7 +733,7 @@ async def test_an_expected_security_key_the_server_lacks_is_client_only():
     assert finding.source == "segments[0].outbound[0].securityServiceGroup"
 
 
-async def test_a_profile_rules_security_keys_carry_the_profile_origin():
+async def test_a_profile_rules_security_keys_carry_the_profile_origin() -> None:
     profile_rule = {**rule("p1"), "securityServiceGroup": GROUP}
     profile = {**PROFILE, "segments": [segment(0, "Global Segment", profile_rule)]}
     pipeline, state, client = await loaded(profile=profile)
@@ -752,7 +755,7 @@ async def test_a_profile_rules_security_keys_carry_the_profile_origin():
     assert finding.source == "segments[0].outbound[0].securityServiceGroup"
 
 
-async def test_a_security_key_on_a_rule_without_a_group_is_server_only():
+async def test_a_security_key_on_a_rule_without_a_group_is_server_only() -> None:
     pipeline, state, client = await grouped(group=None, composer_adds=False)
     first = composed_modules(client)["segments"][0]["outbound"][0]
     first["atp_action"] = copy.deepcopy(ATP)
@@ -765,7 +768,7 @@ async def test_a_security_key_on_a_rule_without_a_group_is_server_only():
     assert finding.reason is None
 
 
-async def test_an_unknown_group_reports_its_reason():
+async def test_an_unknown_group_reports_its_reason() -> None:
     unknown = "00000000-0000-4000-8000-000000000000"
     pipeline, state, _ = await grouped(group=unknown)
     comparison = await pipeline.compare_effective(state)
@@ -781,7 +784,7 @@ async def test_an_unknown_group_reports_its_reason():
     assert UNRESOLVED in comparison.render()
 
 
-async def test_an_object_the_group_names_that_is_missing_reports_its_reason():
+async def test_an_object_the_group_names_that_is_missing_reports_its_reason() -> None:
     pipeline, state, client = await grouped()
     client.store.security_objects["idps"] = []
     comparison = await pipeline.compare_effective(state)
@@ -792,7 +795,7 @@ async def test_an_object_the_group_names_that_is_missing_reports_its_reason():
     assert finding.reason == UNRESOLVED
 
 
-async def test_security_objects_are_read_only_when_a_rule_names_a_group():
+async def test_security_objects_are_read_only_when_a_rule_names_a_group() -> None:
     pipeline, state, client = await loaded()
     _ = await pipeline.compare_effective(state)
     assert security_reads(client) == []
@@ -806,7 +809,7 @@ async def test_security_objects_are_read_only_when_a_rule_names_a_group():
     assert {p["enterpriseId"] for p in reads} == {ENTERPRISE_ID}
 
 
-async def test_only_the_key_of_a_missing_object_carries_the_reason():
+async def test_only_the_key_of_a_missing_object_carries_the_reason() -> None:
     pipeline, state, client = await grouped()
     client.store.security_objects["securityServiceGroup"][0]["data"] = {
         "urlCategoryFiltering": {"id": 99}
@@ -829,7 +832,9 @@ async def test_only_the_key_of_a_missing_object_carries_the_reason():
         assert entry.category is EffectiveCategory.SERVER_ONLY
 
 
-async def test_a_rule_in_a_segment_with_another_id_than_its_position_is_compared():
+async def test_a_rule_in_a_segment_with_another_id_than_its_position_is_compared() -> (
+    None
+):
     group_rule = {**rule("p2"), "securityServiceGroup": GROUP}
     profile = {
         **PROFILE,
@@ -872,7 +877,7 @@ class StoredFirewall(Layered[L]):
     ] = Field(default_factory=list)
 
 
-def test_a_security_key_a_layer_stores_is_compared_as_stored():
+def test_a_security_key_a_layer_stores_is_compared_as_stored() -> None:
     stored: Json = {"atp_enabled": False}
     profile = StoredFirewall[Profile].model_validate(
         {
@@ -920,7 +925,7 @@ def test_a_security_key_a_layer_stores_is_compared_as_stored():
     assert entry.source == "segments[0].outbound[0]"
 
 
-async def test_another_rule_key_the_view_lacks_is_still_a_finding():
+async def test_another_rule_key_the_view_lacks_is_still_a_finding() -> None:
     pipeline, state, client = await loaded()
     composed_modules(client)["segments"][0]["outbound"][0]["somethingNew"] = 1
     comparison = await pipeline.compare_effective(state)
@@ -944,7 +949,7 @@ class SecretData(Layered[L]):
     )
 
 
-def test_a_secret_is_ignored_with_its_reason():
+def test_a_secret_is_ignored_with_its_reason() -> None:
     profile = SecretData[Profile].model_validate(
         {
             "login": {"user": "u", "password": "s3cret-a"},
@@ -973,7 +978,7 @@ def test_a_secret_is_ignored_with_its_reason():
 # --- how items are matched --------------------------------------------------
 
 
-async def test_a_segment_the_composer_omits_is_ignored():
+async def test_a_segment_the_composer_omits_is_ignored() -> None:
     pipeline, state, client = await loaded()
     segments = composed_modules(client)["segments"]
     composed_modules(client)["segments"] = [
@@ -989,7 +994,7 @@ async def test_a_segment_the_composer_omits_is_ignored():
     assert OMITTED in comparison.render()
 
 
-async def test_an_answer_with_no_segments_key_omits_every_segment():
+async def test_an_answer_with_no_segments_key_omits_every_segment() -> None:
     pipeline, state, client = await loaded()
     del composed_modules(client)["segments"]
     comparison = await pipeline.compare_effective(state)
@@ -1004,7 +1009,7 @@ async def test_an_answer_with_no_segments_key_omits_every_segment():
     assert "segments" not in found
 
 
-async def test_a_segment_only_the_server_has_is_server_only():
+async def test_a_segment_only_the_server_has_is_server_only() -> None:
     pipeline, state, client = await loaded()
     extra = segment(9, "Extra", rule("x"))
     composed_modules(client)["segments"].append(extra)
@@ -1017,7 +1022,7 @@ async def test_a_segment_only_the_server_has_is_server_only():
     assert finding.server == extra
 
 
-async def test_segment_order_is_not_compared():
+async def test_segment_order_is_not_compared() -> None:
     pipeline, state, client = await loaded()
     composed_modules(client)["segments"].reverse()
     first = await pipeline.compare_effective(state)
@@ -1028,7 +1033,7 @@ async def test_segment_order_is_not_compared():
     assert {e.path for e in first.entries} == {e.path for e in second.entries}
 
 
-async def test_a_difference_inside_a_segment_is_found_by_the_segments_id():
+async def test_a_difference_inside_a_segment_is_found_by_the_segments_id() -> None:
     pipeline, state, client = await loaded()
     composed_modules(client)["segments"].reverse()
     composed_modules(client)["segments"][0]["segment"]["name"] = "Renamed"
@@ -1039,7 +1044,7 @@ async def test_a_difference_inside_a_segment_is_found_by_the_segments_id():
     assert (finding.client, finding.server) == ("Guest", "Renamed")
 
 
-async def test_additive_rules_compare_by_position():
+async def test_additive_rules_compare_by_position() -> None:
     pipeline, state, client = await loaded()
     # The view's order is the edge's rules, then the profile's.
     composed_modules(client)["segments"][0]["outbound"].reverse()
@@ -1060,7 +1065,7 @@ async def test_additive_rules_compare_by_position():
     )
 
 
-async def test_an_additive_rule_the_server_lacks_is_client_only():
+async def test_an_additive_rule_the_server_lacks_is_client_only() -> None:
     pipeline, state, client = await loaded()
     del composed_modules(client)["segments"][0]["outbound"][1]
     comparison = await pipeline.compare_effective(state)
@@ -1071,7 +1076,7 @@ async def test_an_additive_rule_the_server_lacks_is_client_only():
     assert str(finding.origin) == "profile"
 
 
-async def test_an_absent_list_is_an_empty_one():
+async def test_an_absent_list_is_an_empty_one() -> None:
     pipeline, state, client = await loaded()
     for entry in composed_modules(client)["segments"]:
         entry.pop("outbound", None)
@@ -1089,7 +1094,7 @@ def composed_calls(client: MockVcoClient) -> list[Json]:
     ]
 
 
-async def test_qos_is_compared_by_default():
+async def test_qos_is_compared_by_default() -> None:
     pipeline, state, client = await loaded()
     comparison = await pipeline.compare_effective(state)
 
@@ -1099,7 +1104,7 @@ async def test_qos_is_compared_by_default():
     assert params["modules"] == ["firewall", "QOS"]
 
 
-async def test_a_qos_display_default_the_server_lacks_is_factory():
+async def test_a_qos_display_default_the_server_lacks_is_factory() -> None:
     pipeline, state, client = await loaded()
     assert "serviceRateLimit" not in composed_qos(client)
     comparison = await pipeline.compare_effective(state, modules=["QOS"])
@@ -1128,7 +1133,7 @@ async def test_a_qos_display_default_the_server_lacks_is_factory():
 @pytest.mark.parametrize("profile_value", [None, cos_mapping(realtime_high=35)])
 async def test_a_cos_mapping_with_its_flag_off_matches_a_server_that_uses_it(
     profile_value: Json | None,
-):
+) -> None:
     profile_voice = qos_segment(3, "Voice")
     if profile_value is not None:
         profile_voice["cosMapping"] = profile_value
@@ -1153,7 +1158,7 @@ async def test_a_cos_mapping_with_its_flag_off_matches_a_server_that_uses_it(
     assert not [e for e in comparison.entries if e.path == "segments[3].cosMapping"]
 
 
-async def test_qos_rules_are_compared_edge_first():
+async def test_qos_rules_are_compared_edge_first() -> None:
     pipeline, state, client = await loaded()
     comparison = await pipeline.compare_effective(state, modules=["QOS"])
     assert comparison.findings == ()
@@ -1172,7 +1177,7 @@ async def test_qos_rules_are_compared_edge_first():
     assert (str(first.origin), str(second.origin)) == ("edge", "profile")
 
 
-async def test_qos_web_proxy_is_unconverted():
+async def test_qos_web_proxy_is_unconverted() -> None:
     pipeline, state, client = await loaded()
     proxy = {"providers": [{"name": "provider"}]}
     composed_qos(client)["segments"][0]["webProxy"] = proxy
@@ -1187,7 +1192,9 @@ async def test_qos_web_proxy_is_unconverted():
 
 
 @pytest.mark.parametrize("modules", [["QOS"], None])
-async def test_qos_is_not_searched_for_security_groups(modules: list[str] | None):
+async def test_qos_is_not_searched_for_security_groups(
+    modules: list[str] | None,
+) -> None:
     edge_rule = {**qos_rule("e1"), "securityServiceGroup": GROUP}
     profile_rule = {**qos_rule("p1"), "securityServiceGroup": GROUP}
     pipeline, state, client = await loaded(
@@ -1205,7 +1212,7 @@ async def test_qos_is_not_searched_for_security_groups(modules: list[str] | None
 
 async def test_security_objects_reach_the_firewall_comparison_only(
     monkeypatch: pytest.MonkeyPatch,
-):
+) -> None:
     pipeline, state, client = await grouped()
     given: dict[str, SecurityObjects | None] = {}
     compare = compare_module
@@ -1224,7 +1231,7 @@ async def test_security_objects_reach_the_firewall_comparison_only(
     assert given["QOS"] is None
 
 
-async def test_qos_alone_can_be_compared():
+async def test_qos_alone_can_be_compared() -> None:
     pipeline, state, client = await loaded()
     # A firewall difference is not reported when only QoS is compared.
     composed_modules(client)["stateful_firewall_enabled"] = True
@@ -1243,7 +1250,7 @@ async def test_qos_alone_can_be_compared():
 # --- the preconditions ----------------------------------------------------------
 
 
-async def test_pending_changes_raise_value_error():
+async def test_pending_changes_raise_value_error() -> None:
     pipeline, state, client = await loaded()
     await pipeline.apply(state, module="firewall", patch={"syslog_forwarding": False})
     with pytest.raises(ValueError, match=r"not saved"):
@@ -1251,7 +1258,7 @@ async def test_pending_changes_raise_value_error():
     assert not [m for m, _ in client.store.requests if "ComposedModules" in m]
 
 
-async def test_a_profile_state_raises_value_error():
+async def test_a_profile_state_raises_value_error() -> None:
     profile_config = EnterpriseConfigurationProfile.model_validate(
         {
             "name": "P",
@@ -1275,7 +1282,7 @@ async def test_a_profile_state_raises_value_error():
         _ = await pipeline.compare_effective(state)
 
 
-async def test_a_state_that_does_not_know_its_edge_raises_value_error():
+async def test_a_state_that_does_not_know_its_edge_raises_value_error() -> None:
     _, loaded_state, _ = await loaded()
     assert loaded_state.edge_config is not None
     state = ConfigState(
@@ -1288,13 +1295,13 @@ async def test_a_state_that_does_not_know_its_edge_raises_value_error():
         _ = await ConfigPipeline(MockVcoClient()).compare_effective(state)
 
 
-async def test_a_module_that_is_not_converted_raises_value_error():
+async def test_a_module_that_is_not_converted_raises_value_error() -> None:
     pipeline, state, _ = await loaded()
     with pytest.raises(ValueError, match=r"deviceSettings.*firewall, QOS"):
         _ = await pipeline.compare_effective(state, modules=["deviceSettings"])
 
 
-async def test_modules_can_be_named():
+async def test_modules_can_be_named() -> None:
     pipeline, state, client = await loaded()
     comparison = await pipeline.compare_effective(state, modules=["firewall"])
     assert comparison.findings == ()
@@ -1304,7 +1311,7 @@ async def test_modules_can_be_named():
     assert params["modules"] == ["firewall"]
 
 
-async def test_a_null_composed_module_raises_composed_module_error():
+async def test_a_null_composed_module_raises_composed_module_error() -> None:
     pipeline, state, client = await loaded()
     client.store.composed[EDGE_ID] = {"firewall": None}
     with pytest.raises(ComposedModuleError, match="null") as raised:
@@ -1313,7 +1320,7 @@ async def test_a_null_composed_module_raises_composed_module_error():
     assert IntentComposedModuleError is ComposedModuleError
 
 
-async def test_a_module_missing_from_the_answer_raises_composed_module_error():
+async def test_a_module_missing_from_the_answer_raises_composed_module_error() -> None:
     pipeline, state, client = await loaded()
     client.store.composed[EDGE_ID] = {}
     with pytest.raises(ComposedModuleError, match="no firewall module") as raised:
@@ -1321,7 +1328,7 @@ async def test_a_module_missing_from_the_answer_raises_composed_module_error():
     assert raised.value.module == "firewall"
 
 
-async def test_an_edge_the_store_has_no_answer_for_is_an_error():
+async def test_an_edge_the_store_has_no_answer_for_is_an_error() -> None:
     pipeline, state, client = await loaded()
     del client.store.composed[EDGE_ID]
     with pytest.raises(VcoError):
@@ -1331,7 +1338,7 @@ async def test_an_edge_the_store_has_no_answer_for_is_an_error():
 # --- what is sent -----------------------------------------------------------------
 
 
-async def test_the_request_does_not_ask_for_encrypted_keys():
+async def test_the_request_does_not_ask_for_encrypted_keys() -> None:
     pipeline, state, client = await loaded()
     _ = await pipeline.compare_effective(state)
 
@@ -1344,7 +1351,7 @@ async def test_the_request_does_not_ask_for_encrypted_keys():
     assert params["modules"] == ["firewall", "QOS"]
 
 
-async def test_the_profile_half_is_read_again():
+async def test_the_profile_half_is_read_again() -> None:
     pipeline, state, client = await loaded({"segments": EDGE["segments"]})
     # Someone changes the profile after the state was loaded, and the VCO composes it.
     client.store.other_writer(
@@ -1368,7 +1375,7 @@ async def test_the_profile_half_is_read_again():
     assert methods.count("edge/getEdgeConfigurationModules") == 1
 
 
-async def test_the_state_is_not_changed_by_a_comparison():
+async def test_the_state_is_not_changed_by_a_comparison() -> None:
     pipeline, state, client = await loaded({"segments": EDGE["segments"]})
     client.store.other_writer(
         PROFILE_MODULE_ID,
@@ -1392,7 +1399,7 @@ async def test_the_state_is_not_changed_by_a_comparison():
 # --- the comparison's text --------------------------------------------------------
 
 
-async def test_render_is_by_module_then_path_with_a_header_per_module():
+async def test_render_is_by_module_then_path_with_a_header_per_module() -> None:
     entries = (
         EffectiveDifference(
             "firewall",

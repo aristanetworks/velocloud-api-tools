@@ -670,14 +670,14 @@ def _found_codes(exc: VcoOperationError) -> list[tuple[str, str]]:
     data: object = exc.data
     if not isinstance(data, dict):
         return []
-    entries = cast(dict[str, object], data).get("error")
+    entries = cast("dict[str, object]", data).get("error")
     if not isinstance(entries, list):
         return []
     found: list[tuple[str, str]] = []
-    for entry in cast(list[object], entries):
+    for entry in cast("list[object]", entries):
         if not isinstance(entry, dict):
             continue
-        fields = cast(dict[str, object], entry)
+        fields = cast("dict[str, object]", entry)
         code, path = fields.get("code"), fields.get("path")
         if isinstance(code, str) and re.fullmatch(r"[A-Z][A-Z0-9_]*", code):
             found.append((code, _shown_field(path) if isinstance(path, str) else ""))
@@ -693,7 +693,7 @@ def _states_errors(exc: VcoOperationError) -> bool:
     data: object = exc.data
     if not isinstance(data, dict):
         return False
-    entries = cast(dict[str, object], data).get("error")
+    entries = cast("dict[str, object]", data).get("error")
     return isinstance(entries, list) and bool(entries)
 
 
@@ -1504,9 +1504,9 @@ SEGMENT_DRIFT_KEY = "routeMapsVersion"
 
 def _segment_key(entry: object) -> object:
     if isinstance(entry, dict):
-        descriptor = cast(dict[str, object], entry).get("segment")
+        descriptor = cast("dict[str, object]", entry).get("segment")
         if isinstance(descriptor, dict):
-            return cast(dict[str, object], descriptor).get("segmentId")
+            return cast("dict[str, object]", descriptor).get("segmentId")
     return None
 
 
@@ -1522,15 +1522,15 @@ def settle(name: ConfigurationModuleName, before: object, after: object) -> obje
         or not isinstance(after, dict)
     ):
         return after
-    settled = copy.deepcopy(cast(dict[str, Any], after))
+    settled = copy.deepcopy(cast("dict[str, Any]", after))
     had = {
-        _segment_key(entry): SEGMENT_DRIFT_KEY in cast(dict[str, object], entry)
-        for entry in cast(dict[str, Any], before).get("segments") or []
+        _segment_key(entry): SEGMENT_DRIFT_KEY in cast("dict[str, object]", entry)
+        for entry in cast("dict[str, Any]", before).get("segments") or []
         if isinstance(entry, dict)
     }
     for entry in settled.get("segments") or []:
         if isinstance(entry, dict) and not had.get(_segment_key(entry), False):
-            _ = cast(dict[str, object], entry).pop(SEGMENT_DRIFT_KEY, None)
+            _ = cast("dict[str, object]", entry).pop(SEGMENT_DRIFT_KEY, None)
     return settled
 
 
@@ -1549,10 +1549,10 @@ def has_key(value: object, key: str) -> bool:
     if isinstance(value, dict):
         return any(
             k == key or has_key(v, key)
-            for k, v in cast(dict[str, object], value).items()
+            for k, v in cast("dict[str, object]", value).items()
         )
     if isinstance(value, list):
-        return any(has_key(v, key) for v in cast(list[object], value))
+        return any(has_key(v, key) for v in cast("list[object]", value))
     return False
 
 
@@ -1639,7 +1639,7 @@ def _backup_refs(name: ConfigurationModuleName, refs: object) -> object:
         return None
     return {
         key: value
-        for key, value in cast(dict[str, object], refs).items()
+        for key, value in cast("dict[str, object]", refs).items()
         if "clientConnector" not in key
     }
 
@@ -1803,7 +1803,7 @@ async def restore(site: Site, original: Original | None) -> None:
 
 def ref_names(refs: object) -> list[str]:
     """The names of the refs; their content (IDs, login tokens) is not stable."""
-    return sorted(cast(dict[str, object], refs)) if isinstance(refs, dict) else []
+    return sorted(cast("dict[str, object]", refs)) if isinstance(refs, dict) else []
 
 
 @contextmanager
@@ -2073,7 +2073,7 @@ def value_at(document: object, path: Path) -> object:
     for part in path.parts:
         if not isinstance(value, dict) or not isinstance(part, str):
             return MISSING
-        value = cast(dict[str, object], value).get(part, MISSING)
+        value = cast("dict[str, object]", value).get(part, MISSING)
     return value
 
 
@@ -2125,12 +2125,12 @@ class Answer:
 def _method_of(content: str | None) -> str:
     """The JSON-RPC method of a request body, or ``""`` where it cannot be read."""
     try:
-        request = cast(object, json.loads(content or ""))
+        request = cast("object", json.loads(content or ""))
     except ValueError:
         return ""
     if not isinstance(request, dict):
         return ""
-    method = cast(dict[str, object], request).get("method")
+    method = cast("dict[str, object]", request).get("method")
     return method if isinstance(method, str) else ""
 
 
@@ -2176,16 +2176,16 @@ def answer_form(answer: Answer) -> str:
     if is_precondition_answer(text):
         return f"refused with the precondition error ({status})"
     try:
-        document = cast(object, json.loads(text))
+        document = cast("object", json.loads(text))
     except ValueError:
         return f"an answer that is not JSON ({status})"
     if isinstance(document, dict):
-        fields = cast(dict[str, object], document)
+        fields = cast("dict[str, object]", document)
         if isinstance(fields.get("error"), dict):
             return f"refused with another error ({status})"
         result = fields.get("result")
         if isinstance(result, dict):
-            row = cast(dict[str, object], result)
+            row = cast("dict[str, object]", result)
             if "data" in row:
                 return f"not refused: the module row ({status})"
             rows = row.get("rows")
@@ -2269,7 +2269,7 @@ def failure_text(error: BaseException) -> str | None:
         )
     entries = getattr(error, "errors", None)
     if isinstance(entries, list):
-        listed = cast(list[object], entries)
+        listed = cast("list[object]", entries)
         codes = sorted(
             {
                 code
@@ -2299,7 +2299,7 @@ def redact_report(
     if item.get_closest_marker("integration") is None:
         return
     # Only a test function has fixtures; ``Item`` is the signature the hook has.
-    if "lab" not in cast(list[str], getattr(item, "fixturenames", [])):
+    if "lab" not in cast("list[str]", getattr(item, "fixturenames", [])):
         return
     text = failure_text(call.excinfo.value)
     if text is None:

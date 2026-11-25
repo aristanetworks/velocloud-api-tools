@@ -60,7 +60,7 @@ def hops() -> Root:
 # ---------------------------------------------------------------------------
 
 
-def test_change_by_key():
+def test_change_by_key() -> None:
     root = abc()
     b = root.rules[1]
     _ = root.merge_patch({"rules": {"b": {"priority": 5}}})
@@ -69,19 +69,19 @@ def test_change_by_key():
     assert names(root) == ["a", "b", "c"]
 
 
-def test_change_by_position():
+def test_change_by_position() -> None:
     root = abc()
     _ = root.merge_patch({"rules": {at(2): {"priority": 5}}})
     assert root.rules[2].priority == 5
 
 
-def test_key_wins_over_syntax():
+def test_key_wins_over_syntax() -> None:
     root = Root(rules=[Rule(name="a"), Rule(name="#0"), Rule(name="+x")])
     _ = root.merge_patch({"rules": {"#0": {"priority": 1}, "+x": {"priority": 2}}})
     assert [r.priority for r in root.rules] == [0, 1, 2]
 
 
-def test_add_appends():
+def test_add_appends() -> None:
     root = abc()
     _ = root.merge_patch({"rules": {"z": add({"priority": 1})}})
     assert names(root) == ["a", "b", "c", "z"]
@@ -98,7 +98,7 @@ def test_add_appends():
         (add(after=at(0)), "a z b c"),
     ],
 )
-def test_add_with_each_place(op: dict[str, object], expected: str):
+def test_add_with_each_place(op: dict[str, object], expected: str) -> None:
     root = abc()
     _ = root.merge_patch({"rules": {"z": op}})
     assert names(root) == expected.split()
@@ -112,7 +112,7 @@ def test_add_with_each_place(op: dict[str, object], expected: str):
         ({"z": add({"name": "y"})}, "rules[z]"),
     ],
 )
-def test_add_refusals(patch: dict[str, object], path: str):
+def test_add_refusals(patch: dict[str, object], path: str) -> None:
     _ = raises_at(abc(), {"rules": patch}, path)
 
 
@@ -125,7 +125,7 @@ def test_add_refusals(patch: dict[str, object], path: str):
 )
 def test_refusals_come_before_any_change(
     field: str, start: Callable[[], VcoModel], ops: dict[str, object], path: str
-):
+) -> None:
     # _merge_model has no trial copy: a refusal raised after the change to the
     # first entry would leave that change behind.
     model = start()
@@ -136,7 +136,7 @@ def test_refusals_come_before_any_change(
     assert model.model_dump() == dump
 
 
-def test_delete():
+def test_delete() -> None:
     root = abc()
     _ = root.merge_patch({"rules": {"b": delete()}})
     assert names(root) == ["a", "c"]
@@ -149,20 +149,20 @@ def test_delete():
         ({"a": move(after="b")}, "b a c"),
     ],
 )
-def test_move(patch: dict[str, object], expected: str):
+def test_move(patch: dict[str, object], expected: str) -> None:
     root = abc()
     _ = root.merge_patch({"rules": patch})
     assert names(root) == expected.split()
 
 
-def test_change_and_move_together():
+def test_change_and_move_together() -> None:
     root = abc()
     _ = root.merge_patch({"rules": {"c": {"priority": 5, "_position": "first"}}})
     assert names(root) == ["c", "a", "b"]
     assert root.rules[0].priority == 5
 
 
-def test_rename_to_a_free_key():
+def test_rename_to_a_free_key() -> None:
     root = abc()
     b = root.rules[1]
     _ = root.merge_patch({"rules": {"b": {"name": "x"}}})
@@ -170,7 +170,7 @@ def test_rename_to_a_free_key():
     assert root.rules[1] is b
 
 
-def test_rename_to_a_taken_key_raises():
+def test_rename_to_a_taken_key_raises() -> None:
     root = abc()
     dump = root.model_dump()
     with pytest.raises(PatchError):
@@ -178,13 +178,13 @@ def test_rename_to_a_taken_key_raises():
     assert root.model_dump() == dump
 
 
-def test_unmatched_plain_object_raises():
+def test_unmatched_plain_object_raises() -> None:
     error = raises_at(abc(), {"rules": {"zz": {"priority": 1}}}, "rules[zz]")
     assert "add(" in str(error)
 
 
 @pytest.mark.parametrize("value", [None, 3, [1]])
-def test_null_scalar_and_list_item_values_raise(value: object):
+def test_null_scalar_and_list_item_values_raise(value: object) -> None:
     error = raises_at(abc(), {"rules": {"a": value}}, "rules[a]")
     if value is None:
         assert "delete()" in str(error)
@@ -198,30 +198,30 @@ def test_null_scalar_and_list_item_values_raise(value: object):
         {"a": move(before="b"), "b": delete()},
     ],
 )
-def test_anchor_errors(patch: dict[str, object]):
+def test_anchor_errors(patch: dict[str, object]) -> None:
     with pytest.raises(PatchError):
         _ = abc().merge_patch({"rules": patch})
 
 
-def test_two_selectors_for_one_item_raise():
+def test_two_selectors_for_one_item_raise() -> None:
     with pytest.raises(PatchError):
         _ = abc().merge_patch({"rules": {"a": {"priority": 1}, at(0): {"priority": 2}}})
 
 
-def test_duplicate_key_in_the_list_raises_and_lists_the_matches():
+def test_duplicate_key_in_the_list_raises_and_lists_the_matches() -> None:
     root = Root(rules=[Rule(name="a"), Rule(name="a"), Rule(name="b")])
     error = raises_at(root, {"rules": {"a": {"priority": 1}}}, "rules[a]")
     assert "#0" in str(error)
     assert "#1" in str(error)
 
 
-def test_duplicate_is_reachable_by_position():
+def test_duplicate_is_reachable_by_position() -> None:
     root = Root(rules=[Rule(name="a"), Rule(name="a"), Rule(name="b")])
     _ = root.merge_patch({"rules": {at(1): {"priority": 1}}})
     assert [r.priority for r in root.rules] == [0, 1, 0]
 
 
-def test_order_rule():
+def test_order_rule() -> None:
     root = abc()
     _ = root.merge_patch(
         {
@@ -237,14 +237,14 @@ def test_order_rule():
     assert root.rules[1].priority == 9
 
 
-def test_position_is_counted_in_the_list_as_it_was():
+def test_position_is_counted_in_the_list_as_it_was() -> None:
     root = abc()
     _ = root.merge_patch({"rules": {at(0): delete(), at(2): {"priority": 5}}})
     assert names(root) == ["b", "c"]
     assert root.rules[1].priority == 5
 
 
-def test_int_selector_names_the_item():
+def test_int_selector_names_the_item() -> None:
     root = Root(rules=[Rule(name="10")])
     _ = root.merge_patch({"rules": {10: {"priority": 1}}})
     assert root.rules[0].priority == 1
@@ -259,24 +259,24 @@ class MaybeNamedHolder(VcoModel):
     items: Annotated[list[MaybeNamed], KeyField("name")] = Field(default_factory=list)
 
 
-def test_item_without_a_key_is_named_by_position_only():
+def test_item_without_a_key_is_named_by_position_only() -> None:
     holder = MaybeNamedHolder(items=[MaybeNamed(), MaybeNamed(name="a")])
     _ = raises_at(holder, {"items": {"None": {"v": 1}}}, "items[None]")
     _ = holder.merge_patch({"items": {at(0): {"v": 1}}})
     assert [i.v for i in holder.items] == [1, 0]
 
 
-def test_list_value_replaces_a_keyed_list():
+def test_list_value_replaces_a_keyed_list() -> None:
     root = abc()
     _ = root.merge_patch({"rules": [{"name": "x"}, {"name": "y"}]})
     assert names(root) == ["x", "y"]
 
 
-def test_list_value_with_a_repeated_key_raises():
+def test_list_value_with_a_repeated_key_raises() -> None:
     _ = raises_at(abc(), {"rules": [{"name": "x"}, {"name": "x"}]}, "rules")
 
 
-def test_one_add_object_serves_two_lists():
+def test_one_add_object_serves_two_lists() -> None:
     op = add({"priority": 1})
     first, second = abc(), abc()
     _ = first.merge_patch({"rules": {"z": op}})
@@ -294,11 +294,11 @@ def test_one_add_object_serves_two_lists():
 )
 def test_list_value_item_with_an_unknown_key_raises(
     field: str, value: list[object], path: str
-):
+) -> None:
     _ = raises_at(Root(), {field: value}, path)
 
 
-def test_select_items():
+def test_select_items() -> None:
     root = Root(rules=[Rule(name="a"), Rule(name="a"), Rule(name="10")])
     assert select_items(root, "rules", "a") == [0, 1]
     assert select_items(root, "rules", 10) == [2]
@@ -309,7 +309,7 @@ def test_select_items():
     assert select_items(hops(), "hops", "10.0.0.1") == []
 
 
-def test_select_items_in_a_map_names_an_entry_by_its_key():
+def test_select_items_in_a_map_names_an_entry_by_its_key() -> None:
     root = Root(by_name={"LO1": Sub(v=1), "LO2": Sub(v=2)})
     assert select_items(root, "by_name", "LO2") == [1]
     assert select_items(root, "by_name", "nope") == []
@@ -318,7 +318,7 @@ def test_select_items_in_a_map_names_an_entry_by_its_key():
 
 
 @pytest.mark.parametrize("field", ["labels", "count"])
-def test_select_items_refuses_a_field_that_is_neither(field: str):
+def test_select_items_refuses_a_field_that_is_neither(field: str) -> None:
     with pytest.raises(
         TypeError, match=f"Root.{field} is not a list or a map of models"
     ):
@@ -341,12 +341,12 @@ def test_select_items_refuses_a_field_that_is_neither(field: str):
 )
 def test_key_selector_is_the_simplest_text_that_reads_back_as_the_key(
     key: str | int | tuple[str | int, ...], text: str
-):
+) -> None:
     assert key_selector(key) == text
     assert selector_of(Key(key)) == text
 
 
-def test_selector_of_a_position_is_at():
+def test_selector_of_a_position_is_at() -> None:
     assert selector_of(2) == at(2) == "#2"
 
 
@@ -443,7 +443,7 @@ ROUTES = [
 )
 def test_item_selector_names_that_item_and_no_other(
     root: Root, field: str, selectors: list[str | None]
-):
+) -> None:
     found = [item_selector(root, field, n) for n in range(len(selectors))]
     assert found == selectors
     for position, selector in enumerate(found):
@@ -451,7 +451,7 @@ def test_item_selector_names_that_item_and_no_other(
             assert select_items(root, field, selector) == [position]
 
 
-def test_item_selector_is_what_a_patch_takes():
+def test_item_selector_is_what_a_patch_takes() -> None:
     root = Root(
         rules=[Rule(name="a", rule_id="r1"), Rule(name="a", rule_id="r2")],
         routes=ROUTES[:2],
@@ -465,7 +465,7 @@ def test_item_selector_is_what_a_patch_takes():
     assert [r.cost for r in root.routes] == [0, 5]
 
 
-def test_item_selector_raises_for_no_such_item_and_for_no_list():
+def test_item_selector_raises_for_no_such_item_and_for_no_list() -> None:
     with pytest.raises(IndexError, match="Root.rules has no item at position 0"):
         _ = item_selector(Root(), "rules", 0)
     with pytest.raises(IndexError, match="Root.rules has no item at position -1"):
@@ -474,7 +474,7 @@ def test_item_selector_raises_for_no_such_item_and_for_no_list():
         _ = item_selector(Root(), "labels", 0)
 
 
-def test_an_empty_object_on_an_item_changes_nothing():
+def test_an_empty_object_on_an_item_changes_nothing() -> None:
     root = Root(rules=[Rule(name="a"), Rule(name="b")], by_name={"x": Sub()})
     dump = root.model_dump()
     fields_set = set(root.model_fields_set)
@@ -495,7 +495,7 @@ def test_an_empty_object_on_an_item_changes_nothing():
 )
 def test_an_empty_object_still_has_to_name_one_item_that_exists(
     patch: dict[str, object], path: str
-):
+) -> None:
     root = Root(rules=[Rule(name="a")], names=["a"], by_name={"x": Sub()})
     _ = raises_at(root, patch, path)
 
@@ -509,13 +509,13 @@ def values() -> Root:
     return Root(names=["a", "b", "c"], ports=[80, 443])
 
 
-def test_value_add_and_delete():
+def test_value_add_and_delete() -> None:
     root = values()
     _ = root.merge_patch({"names": {"z": add(), "b": delete()}})
     assert root.names == ["a", "c", "z"]
 
 
-def test_value_add_is_validated_as_the_element():
+def test_value_add_is_validated_as_the_element() -> None:
     root = values()
     _ = root.merge_patch({"ports": {"8080": add()}})
     assert root.ports == [80, 443, 8080]
@@ -530,7 +530,7 @@ def test_value_add_is_validated_as_the_element():
         ({at(0): delete()}, ["b", "c"]),
     ],
 )
-def test_value_move_and_position(patch: dict[str, object], expected: list[str]):
+def test_value_move_and_position(patch: dict[str, object], expected: list[str]) -> None:
     root = values()
     _ = root.merge_patch({"names": patch})
     assert root.names == expected
@@ -545,11 +545,11 @@ def test_value_move_and_position(patch: dict[str, object], expected: list[str]):
         ({"zz": delete()}, "names[zz]"),
     ],
 )
-def test_value_refusals(patch: dict[str, object], path: str):
+def test_value_refusals(patch: dict[str, object], path: str) -> None:
     _ = raises_at(values(), {"names": patch}, path)
 
 
-def test_list_value_replaces_a_value_list():
+def test_list_value_replaces_a_value_list() -> None:
     root = values()
     _ = root.merge_patch({"names": ["x", "x"]})
     assert root.names == ["x", "x"]
@@ -560,7 +560,7 @@ def test_list_value_replaces_a_value_list():
 # ---------------------------------------------------------------------------
 
 
-def test_positional_change_delete_add():
+def test_positional_change_delete_add() -> None:
     root = hops()
     _ = root.merge_patch(
         {
@@ -575,7 +575,7 @@ def test_positional_change_delete_add():
     assert root.hops[0].cost == 5
 
 
-def test_two_new_items_need_tags():
+def test_two_new_items_need_tags() -> None:
     root = hops()
     _ = root.merge_patch(
         {
@@ -598,11 +598,11 @@ def test_two_new_items_need_tags():
         ({"+": add({"cost": 1})}, 'hops["+"]'),
     ],
 )
-def test_positional_refusals(patch: dict[str, object], path: str):
+def test_positional_refusals(patch: dict[str, object], path: str) -> None:
     _ = raises_at(hops(), {"hops": patch}, path)
 
 
-def test_declared_positional_primitives():
+def test_declared_positional_primitives() -> None:
     root = hops()
     _ = root.merge_patch({"seq": {at(0): delete()}})
     assert root.seq == ["b"]
@@ -614,7 +614,7 @@ def test_declared_positional_primitives():
     assert "list value" in str(error)
 
 
-def test_list_value_replaces_a_positional_list():
+def test_list_value_replaces_a_positional_list() -> None:
     root = hops()
     _ = root.merge_patch({"hops": [{"ip": "1.1.1.1"}]})
     assert root.hops == [Hop(ip="1.1.1.1")]
@@ -625,14 +625,14 @@ def test_list_value_replaces_a_positional_list():
 # ---------------------------------------------------------------------------
 
 
-def test_untyped_takes_a_list_only():
+def test_untyped_takes_a_list_only() -> None:
     root = Root()
     _ = root.merge_patch({"blobs": [{"a": 1}]})
     assert root.blobs == [{"a": 1}]
     _ = raises_at(Root(), {"blobs": {"a": {"b": 1}}}, "blobs")
 
 
-def test_map_change_add_delete():
+def test_map_change_add_delete() -> None:
     root = Root(by_name={"x": Sub()})
     x = root.by_name["x"]
     _ = root.merge_patch({"by_name": {"x": {"v": 1}, "y": add({"v": 2}), "x2": add()}})
@@ -656,11 +656,11 @@ def test_map_change_add_delete():
         (3, "by_name"),
     ],
 )
-def test_map_refusals(value: object, path: str):
+def test_map_refusals(value: object, path: str) -> None:
     _ = raises_at(Root(by_name={"x": Sub()}), {"by_name": value}, path)
 
 
-def test_plain_dict_is_replaced():
+def test_plain_dict_is_replaced() -> None:
     root = Root(labels={"x": "y"})
     _ = root.merge_patch({"labels": {"a": "b"}})
     assert root.labels == {"a": "b"}
@@ -680,7 +680,7 @@ class SubOrHop(VcoModel):
     m: dict[str, Sub | Hop] = Field(default_factory=dict)
 
 
-def test_map_add_validates_the_key():
+def test_map_add_validates_the_key() -> None:
     model = ByModel(m={"e510": Sub()})
     _ = raises_at(model, {"m": {"bogus": add()}}, "m[bogus]")
     assert list(model.m) == ["e510"]
@@ -688,21 +688,22 @@ def test_map_add_validates_the_key():
     assert list(model.m) == ["e510", "e610"]
 
 
-def test_map_key_keeps_its_type():
+def test_map_key_keeps_its_type() -> None:
     model = ById(m={1: Sub()})
     one = model.m[1]
     _ = model.merge_patch({"m": {"2": add()}})
     assert list(model.m) == [1, 2]
     assert all(type(key) is int for key in model.m)
     _ = model.merge_patch({"m": {"1": {"v": 5}}})
-    assert model.m[1] is one and one.v == 5
+    assert model.m[1] is one
+    assert one.v == 5
     _ = model.merge_patch({"m": {1: {"v": 6}}})
     assert one.v == 6
     _ = model.merge_patch({"m": {"1": delete()}})
     assert list(model.m) == [2]
 
 
-def test_a_device_settings_map_refuses_an_unknown_model_class():
+def test_a_device_settings_map_refuses_an_unknown_model_class() -> None:
     data = DeviceSettingsData.model_validate(
         {
             "lan": {"networks": [], "interfaces": []},
@@ -717,7 +718,7 @@ def test_a_device_settings_map_refuses_an_unknown_model_class():
     assert list(data.models) == ["edge510"]
 
 
-def test_list_inside_a_new_item_as_add_entries():
+def test_list_inside_a_new_item_as_add_entries() -> None:
     root = abc()
     _ = root.merge_patch(
         {"rules": {"z": add({"tags": {"t1": add(), "t2": add(first=True)}})}}
@@ -729,7 +730,9 @@ def test_list_inside_a_new_item_as_add_entries():
     "tags",
     [{"t1": delete()}, {"t1": add(before="t0")}],
 )
-def test_list_inside_a_new_item_refuses_other_operations(tags: dict[str, object]):
+def test_list_inside_a_new_item_refuses_other_operations(
+    tags: dict[str, object],
+) -> None:
     _ = raises_at(abc(), {"rules": {"z": add({"tags": tags})}}, "rules[z].tags[t1]")
 
 
@@ -737,14 +740,14 @@ class UnsetRules(VcoModel):
     rules: Annotated[list[Rule] | MISSING, KeyField("name")] = MISSING
 
 
-def test_unset_keyed_list_is_created_by_an_add():
+def test_unset_keyed_list_is_created_by_an_add() -> None:
     model = UnsetRules()
     _ = model.merge_patch({"rules": {"z": add()}})
     assert model.rules == [Rule(name="z")]
 
 
 @pytest.mark.parametrize("selector", ["+", "+lo", "#0", "#7"])
-def test_map_add_takes_a_key_not_a_new_item_or_position_selector(selector: str):
+def test_map_add_takes_a_key_not_a_new_item_or_position_selector(selector: str) -> None:
     root = Root(by_name={"x": Sub()})
     error = raises_at(
         root, {"by_name": {selector: add({"v": 1})}}, f'by_name["{selector}"]'
@@ -753,14 +756,14 @@ def test_map_add_takes_a_key_not_a_new_item_or_position_selector(selector: str):
     assert list(root.by_name) == ["x"]
 
 
-def test_a_map_entry_whose_key_reads_as_a_selector_is_still_named_by_it():
+def test_a_map_entry_whose_key_reads_as_a_selector_is_still_named_by_it() -> None:
     root = Root(by_name={"+": Sub(), "#0": Sub()})
     _ = root.merge_patch({"by_name": {"+": {"v": 1}, "#0": delete()}})
     assert {k: s.v for k, s in root.by_name.items()} == {"+": 1}
 
 
 @pytest.mark.parametrize("selector", ["+", "+tag"])
-def test_value_list_add_takes_the_value_not_a_new_item_selector(selector: str):
+def test_value_list_add_takes_the_value_not_a_new_item_selector(selector: str) -> None:
     root = values()
     error = raises_at(root, {"names": {selector: add()}}, f'names["{selector}"]')
     assert "add()" in error.message
@@ -768,7 +771,7 @@ def test_value_list_add_takes_the_value_not_a_new_item_selector(selector: str):
     assert root.names == ["a", "b", "c"]
 
 
-def test_a_value_spelled_like_a_selector_is_still_named_by_it():
+def test_a_value_spelled_like_a_selector_is_still_named_by_it() -> None:
     root = Root(names=["+x", "a"])
     error = raises_at(root, {"names": {"+x": add()}}, 'names["+x"]')
     assert "already in the list" in error.message
@@ -794,7 +797,7 @@ class DnsHolder(VcoModel):
     dns: Dns | MISSING = MISSING
 
 
-def test_an_object_on_a_model_or_list_field_that_holds_a_model_merges_into_it():
+def test_an_object_on_a_model_or_list_field_that_holds_a_model_merges_into_it() -> None:
     dns = Dns(primary=Provider(ref="a"))
     held = dns.primary
     _ = dns.merge_patch({"primary": {"note": "n"}})
@@ -802,13 +805,13 @@ def test_an_object_on_a_model_or_list_field_that_holds_a_model_merges_into_it():
     assert dns.primary == Provider(ref="a", note="n")
 
 
-def test_an_object_on_an_unset_model_or_list_field_builds_the_model():
+def test_an_object_on_an_unset_model_or_list_field_builds_the_model() -> None:
     dns = Dns(primary=Provider(ref="a"))
     _ = dns.merge_patch({"backup": {"ref": "b"}})
     assert dns.backup == Provider(ref="b")
 
 
-def test_a_built_model_takes_an_object_or_a_list_for_a_model_or_list_field():
+def test_a_built_model_takes_an_object_or_a_list_for_a_model_or_list_field() -> None:
     holder = DnsHolder()
     _ = holder.merge_patch({"dns": {"primary": {"ref": "a"}, "backup": [{"ref": "b"}]}})
     assert holder.dns == Dns(primary=Provider(ref="a"), backup=[Provider(ref="b")])
@@ -817,14 +820,14 @@ def test_a_built_model_takes_an_object_or_a_list_for_a_model_or_list_field():
     )
 
 
-def test_a_model_or_list_field_that_holds_a_list_takes_item_operations():
+def test_a_model_or_list_field_that_holds_a_list_takes_item_operations() -> None:
     dns = Dns(primary=[Provider(ref="a"), Provider(ref="b")])
     _ = dns.merge_patch({"primary": {at(0): {"note": "n"}, "+": add({"ref": "c"})}})
     assert isinstance(dns.primary, list)
     assert [(p.ref, p.note) for p in dns.primary] == [("a", "n"), ("b", ""), ("c", "")]
 
 
-def test_a_list_value_on_a_model_or_list_field_makes_it_a_list():
+def test_a_list_value_on_a_model_or_list_field_makes_it_a_list() -> None:
     dns = Dns(primary=Provider(ref="a"))
     _ = dns.merge_patch({"primary": [{"ref": "b"}]})
     assert dns.primary == [Provider(ref="b")]
@@ -835,7 +838,7 @@ def test_a_list_value_on_a_model_or_list_field_makes_it_a_list():
 # ---------------------------------------------------------------------------
 
 
-def test_selector_in_another_case_selects():
+def test_selector_in_another_case_selects() -> None:
     fw = fresh()
     _ = fw.merge_patch(
         {
@@ -853,7 +856,7 @@ def test_selector_in_another_case_selects():
     assert [r.name for r in fw.segments[0].outbound] == ["r1"]
 
 
-def test_add_by_name_adds_the_resolvers_name():
+def test_add_by_name_adds_the_resolvers_name() -> None:
     fw = fresh()
     _ = fw.merge_patch({"segments": {"guest": add({"outbound": []})}}, resolvers=Fake())
     meta = fw.segments[1].segment
@@ -864,7 +867,7 @@ def test_add_by_name_adds_the_resolvers_name():
     )
 
 
-def test_plus_add_by_name_adds_the_resolvers_name():
+def test_plus_add_by_name_adds_the_resolvers_name() -> None:
     fw = fresh()
     _ = fw.merge_patch(
         {"segments": {"+": add({"segment": {"name": "guest"}, "outbound": []})}},
@@ -878,7 +881,7 @@ def test_plus_add_by_name_adds_the_resolvers_name():
     )
 
 
-def test_plus_add_of_an_unknown_name_raises():
+def test_plus_add_of_an_unknown_name_raises() -> None:
     fw = fresh()
     dump = copy.deepcopy(fw.model_dump())
     with pytest.raises(ResolutionError) as exc:
@@ -897,7 +900,7 @@ def test_plus_add_of_an_unknown_name_raises():
 )
 def test_add_by_name_without_a_resolver_does_not_take_another_segments_ids(
     op: dict[str, object],
-):
+) -> None:
     # FirewallData's SegmentMetadata defaults segmentId to 0: Global Segment's.
     fw = fresh()
     dump = copy.deepcopy(fw.model_dump())
@@ -912,7 +915,7 @@ def global_and(fw: FirewallData[Edge], new: dict[str, object]) -> dict[str, obje
     return {"segments": [fw.segments[0].model_dump(by_alias=True), new]}
 
 
-def test_list_value_item_by_name_takes_the_resolvers_ids():
+def test_list_value_item_by_name_takes_the_resolvers_ids() -> None:
     fw = fresh()
     _ = fw.merge_patch(
         global_and(fw, {"segment": {"name": "guest"}, "outbound": []}),
@@ -926,7 +929,7 @@ def test_list_value_item_by_name_takes_the_resolvers_ids():
     )
 
 
-def test_list_value_item_of_an_unknown_name_raises():
+def test_list_value_item_of_an_unknown_name_raises() -> None:
     fw = fresh()
     dump = copy.deepcopy(fw.model_dump())
     with pytest.raises(ResolutionError) as exc:
@@ -938,7 +941,7 @@ def test_list_value_item_of_an_unknown_name_raises():
     assert fw.model_dump() == dump
 
 
-def test_list_value_cannot_give_a_new_segment_another_segments_ids():
+def test_list_value_cannot_give_a_new_segment_another_segments_ids() -> None:
     # Without a resolver, Guest would get segmentId 0: Global Segment's.
     fw = fresh()
     dump = copy.deepcopy(fw.model_dump())
@@ -949,7 +952,7 @@ def test_list_value_cannot_give_a_new_segment_another_segments_ids():
 
 
 @pytest.mark.parametrize("op", [{"outbound": []}, add()])
-def test_unknown_name_raises_resolution_error(op: dict[str, object]):
+def test_unknown_name_raises_resolution_error(op: dict[str, object]) -> None:
     fw = fresh()
     dump = copy.deepcopy(fw.model_dump())
     with pytest.raises(ResolutionError) as exc:

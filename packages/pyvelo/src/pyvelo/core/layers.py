@@ -170,7 +170,7 @@ class Default:
         if (value is _UNSET) == (factory is None):
             raise TypeError(
                 "Default takes a value or a factory, not both and not neither: "
-                + "Default(True) or Default(factory=list)"
+                "Default(True) or Default(factory=list)"
             )
         self._value = value
         self._factory = factory
@@ -234,7 +234,7 @@ def kind_default(
     if (value is _NO_VALUE) == (factory is None):
         raise TypeError(
             "kind_default takes a value or a factory, not both and not neither: "
-            + 'kind_default("") or kind_default(factory=list)'
+            'kind_default("") or kind_default(factory=list)'
         )
     if factory is not None:
         return Field(default_factory=factory)
@@ -251,8 +251,8 @@ T = TypeVar("T")
 def _refuse_effective(_value: object) -> object:
     raise TypeError(
         "the effective view is computed from an edge layer and a profile layer, "
-        + "not validated from data: validate the model for the Edge or Profile "
-        + "layer, and read state.effective for the view"
+        "not validated from data: validate the model for the Edge or Profile "
+        "layer, and read state.effective for the view"
     )
 
 
@@ -572,7 +572,7 @@ def display_default(field_info: FieldInfo) -> object:
     if default is None:
         raise TypeError(
             f"{field_info!r} is not an Inheritable field: only that kind has a "
-            + "display default"
+            "display default"
         )
     return default.make()
 
@@ -595,7 +595,7 @@ def profile_stores(model: "Layered[Profile]", name: str) -> bool:
     if default is None:
         raise TypeError(
             f"{type(model).__name__}.{name} is not an Inheritable field: only that "
-            + "kind has a display default, which says whether a profile stores it"
+            "kind has a display default, which says whether a profile stores it"
         )
     return _is_stored(model, name, default)
 
@@ -658,7 +658,7 @@ def inner_adapter(model_cls: type[VcoModel], name: str) -> TypeAdapter[object]:
 
 _READ_ONLY_MESSAGE = (
     "{model}.{name}: this is the {layer} layer, which is computed or read from the "
-    + "server and not edited; edit state.edge or state.profile"
+    "server and not edited; edit state.edge or state.profile"
 )
 
 
@@ -688,22 +688,22 @@ def _refuse_validators_after_the_kind(cls: type[VcoModel], name: str) -> None:
         if info.mode != "before" and (name in info.fields or "*" in info.fields):
             raise TypeError(
                 f"{cls.__name__}.{name}: the {info.mode} field validator "
-                + f"{function!r} would be given an Owned when the edge layer is "
-                + "parsed and the value on every other path. Put the validation "
-                + "inside the kind's type argument, where every path runs it on "
-                + "the value: Inheritable[Annotated[T, AfterValidator(check)]]; "
-                + "a before validator is allowed"
+                f"{function!r} would be given an Owned when the edge layer is "
+                "parsed and the value on every other path. Put the validation "
+                "inside the kind's type argument, where every path runs it on "
+                "the value: Inheritable[Annotated[T, AfterValidator(check)]]; "
+                "a before validator is allowed"
             )
     for marker in cls.model_fields[name].metadata:
         if isinstance(marker, _OUTSIDE_VALIDATOR_MARKERS):
             kind = type(marker).__name__
             raise TypeError(
                 f"{cls.__name__}.{name}: the {kind} in the field's Annotated, "
-                + "outside the kind, would be given an Owned when the edge layer "
-                + "is parsed and the value on every other path. Put it inside "
-                + "the kind's type argument, where every path runs it on the "
-                + f"value: Inheritable[Annotated[T, {kind}(check)]]; a "
-                + "BeforeValidator is allowed there"
+                "outside the kind, would be given an Owned when the edge layer "
+                "is parsed and the value on every other path. Put it inside "
+                "the kind's type argument, where every path runs it on the "
+                f"value: Inheritable[Annotated[T, {kind}(check)]]; a "
+                "BeforeValidator is allowed there"
             )
 
 
@@ -740,7 +740,7 @@ class Layered(VcoModel, Generic[L]):  # noqa: UP046 (one shared constrained L, a
         name = cls.__name__
         raise TypeError(
             f"{name} is generic over its layer and has none: parametrize it, "
-            + f"{name}[Edge] or {name}[Profile], before validating or building it"
+            f"{name}[Edge] or {name}[Profile], before validating or building it"
         )
 
     @property
@@ -765,9 +765,9 @@ class Layered(VcoModel, Generic[L]):  # noqa: UP046 (one shared constrained L, a
             base = cls.__pydantic_generic_metadata__["origin"] or cls
             raise TypeError(
                 f"{cls.__name__}: the effective view is computed from an edge layer "
-                + "and a profile layer, not validated from data: validate "
-                + f"{base.__name__}[Edge] or {base.__name__}[Profile], and read "
-                + "state.effective for the view"
+                "and a profile layer, not validated from data: validate "
+                f"{base.__name__}[Edge] or {base.__name__}[Profile], and read "
+                "state.effective for the view"
             )
         model = handler(data)
         # A field of the other layer holds MISSING, whatever its default says.
@@ -860,29 +860,29 @@ class Layered(VcoModel, Generic[L]):  # noqa: UP046 (one shared constrained L, a
                 if defaults != 1:
                     raise TypeError(
                         f"{cls.__name__}.{name}: an Inheritable field needs exactly "
-                        + "one Default, its display default (Default(True), "
-                        + f"Default(factory=list)); found {defaults}"
+                        "one Default, its display default (Default(True), "
+                        f"Default(factory=list)); found {defaults}"
                     )
                 if sum(isinstance(m, ByPresence | ByFlag) for m in found.metadata) != 1:
                     raise TypeError(
                         f"{cls.__name__}.{name}: an Inheritable field needs exactly "
-                        + "one encoding, ByPresence() or ByFlag(...), which says "
-                        + "how the edge stores an override"
+                        "one encoding, ByPresence() or ByFlag(...), which says "
+                        "how the edge stores an override"
                     )
                 _refuse_validators_after_the_kind(cls, name)
             elif defaults:
                 raise TypeError(
                     f"{cls.__name__}.{name}: only an Inheritable field has a display "
-                    + "Default; the other kinds use the field's own default"
+                    "Default; the other kinds use the field's own default"
                 )
             if found.kind is not Kind.INHERITABLE and any(
                 isinstance(m, Authority) for m in found.metadata
             ):
                 raise TypeError(
                     f"{cls.__name__}.{name}: Authority replaces the effective value "
-                    + "of an Inheritable field with the profile's; this field is "
-                    + f"{found.kind.value}, which has no profile value to replace it "
-                    + "with"
+                    "of an Inheritable field with the profile's; this field is "
+                    f"{found.kind.value}, which has no profile value to replace it "
+                    "with"
                 )
         check_groups(cls)
 
@@ -900,11 +900,11 @@ class Layered(VcoModel, Generic[L]):  # noqa: UP046 (one shared constrained L, a
             key = wire_name(cls, name)
             raise TypeError(
                 f"{cls.__name__}.{name}: the edge layer holds who owns this "
-                + "value, and assigning a plain value would lose that. Use "
-                + f".{name}.set_local(value) to override the profile, "
-                + f".{name}.inherit() to inherit it, .{name}.localize() to "
-                + "copy the profile's value in and edit it; in a patch, "
-                + f'{{"{key}": <value>}} overrides and {{"{key}": null}} inherits'
+                "value, and assigning a plain value would lose that. Use "
+                f".{name}.set_local(value) to override the profile, "
+                f".{name}.inherit() to inherit it, .{name}.localize() to "
+                "copy the profile's value in and edit it; in a patch, "
+                f'{{"{key}": <value>}} overrides and {{"{key}": null}} inherits'
             )
 
     @override

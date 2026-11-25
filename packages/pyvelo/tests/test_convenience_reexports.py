@@ -2,7 +2,7 @@
 
 
 class TestValidationReexports:
-    def test_imports_from_config(self):
+    def test_imports_from_config(self) -> None:
         from pyvelo.config import (
             ValidationResult,
             ValidatorRegistry,
@@ -15,7 +15,7 @@ class TestValidationReexports:
 
 
 class TestSaveErrorReexports:
-    def test_save_errors_are_importable_from_client_and_top_level(self):
+    def test_save_errors_are_importable_from_client_and_top_level(self) -> None:
         import pyvelo
         import pyvelo.client
         from pyvelo.client import exceptions
@@ -45,7 +45,7 @@ class TestSaveErrorReexports:
 
 
 class TestPatchToolReexports:
-    def test_the_names_a_tool_over_patches_uses_come_from_pyvelo_core(self):
+    def test_the_names_a_tool_over_patches_uses_come_from_pyvelo_core(self) -> None:
         import pyvelo.core
         from pyvelo.core import base, fields, merge, patch, rebase
 
@@ -66,7 +66,7 @@ class TestPatchToolReexports:
             assert getattr(pyvelo.core, name) is getattr(home, name), name
             assert name in pyvelo.core.__all__, name
 
-    def test_the_kind_of_a_patch_error_comes_from_pyvelo_core(self):
+    def test_the_kind_of_a_patch_error_comes_from_pyvelo_core(self) -> None:
         import pyvelo.core
         from pyvelo.core import patch
 

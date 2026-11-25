@@ -97,8 +97,8 @@ def _diff_values(
         if isinstance(cur, dict) and isinstance(des, dict):
             changes.extend(
                 _diff_values(
-                    cast(dict[str, object], cur),
-                    cast(dict[str, object], des),
+                    cast("dict[str, object]", cur),
+                    cast("dict[str, object]", des),
                     path,
                 )
             )
@@ -106,8 +106,8 @@ def _diff_values(
             changes.append(
                 FieldChange(
                     path=path,
-                    current=cast(object, cur),
-                    desired=cast(object, des),
+                    current=cast("object", cur),
+                    desired=cast("object", des),
                 )
             )
     return changes
@@ -120,7 +120,7 @@ def _index_by_key(
     by_key: dict[object, BaseModel] = {}
     repeated: dict[object, None] = {}
     for item in items:
-        key = cast(object, getattr(item, key_field))
+        key = cast("object", getattr(item, key_field))
         if key in by_key:
             repeated[key] = None
         by_key[key] = item
@@ -161,8 +161,8 @@ def diff_intents(
     for key in sorted(current_by_key.keys() & desired_by_key.keys(), key=repr):
         cur = current_by_key[key]
         des = desired_by_key[key]
-        cur_d = cast(dict[str, object], cur.model_dump(mode="json"))
-        des_d = cast(dict[str, object], des.model_dump(mode="json"))
+        cur_d = cast("dict[str, object]", cur.model_dump(mode="json"))
+        des_d = cast("dict[str, object]", des.model_dump(mode="json"))
         if cur_d == des_d:
             changes.append(Unchanged(key=key, item=cur))
         else:

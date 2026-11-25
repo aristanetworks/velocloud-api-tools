@@ -355,10 +355,10 @@ def missing_service_error(
             path=str(path),
             message=(
                 f"{path} names the hub {hub!r} and no service for it: the row "
-                + "that goes with the rule points at the hub's service for this "
-                + "profile and segment, so it cannot be added. Give the entry's "
-                + f"logicalId, the hub's service: {patch_text(path.child('logical_id'))}, "
-                + "or add the hub through apply, which fills it."
+                "that goes with the rule points at the hub's service for this "
+                "profile and segment, so it cannot be added. Give the entry's "
+                f"logicalId, the hub's service: {patch_text(path.child('logical_id'))}, "
+                "or add the hub through apply, which fills it."
             ),
         )
     return None

@@ -1002,7 +1002,7 @@ class EnterpriseMixin(Protocol):
         except VcoError:
             pass
 
-        raise VcoUserTypeUnknownError()
+        raise VcoUserTypeUnknownError
 
     # --- Cluster Hub Enable/Disable ---
 

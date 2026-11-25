@@ -81,7 +81,7 @@ EXAMPLES: list[tuple[tuple[PathPart, ...], str]] = [
 
 
 @pytest.mark.parametrize(("parts", "text"), EXAMPLES)
-def test_rendering(parts: tuple[PathPart, ...], text: str):
+def test_rendering(parts: tuple[PathPart, ...], text: str) -> None:
     path = Path(parts)
     assert path == text
     assert str(path) == text
@@ -89,7 +89,9 @@ def test_rendering(parts: tuple[PathPart, ...], text: str):
 
 
 @pytest.mark.parametrize(("parts", "text"), EXAMPLES)
-def test_parse_is_the_inverse_of_rendering(parts: tuple[PathPart, ...], text: str):
+def test_parse_is_the_inverse_of_rendering(
+    parts: tuple[PathPart, ...], text: str
+) -> None:
     assert Path.parse(text).parts == parts
     assert Path.parse(str(Path(parts))).parts == parts
 
@@ -153,7 +155,7 @@ def _random_parts(rng: random.Random) -> tuple[PathPart, ...]:
 
 
 @pytest.mark.parametrize("seed", range(5))
-def test_random_paths_round_trip(seed: int):
+def test_random_paths_round_trip(seed: int) -> None:
     rng = random.Random(seed)
     for _ in range(300):
         parts = _random_parts(rng)
@@ -161,7 +163,7 @@ def test_random_paths_round_trip(seed: int):
         assert Path.parse(str(path)).parts == parts, str(path)
 
 
-def test_distinct_parts_render_distinctly():
+def test_distinct_parts_render_distinctly() -> None:
     rng = random.Random(99)
     seen: dict[str, tuple[PathPart, ...]] = {}
     for _ in range(2000):
@@ -209,23 +211,23 @@ def test_distinct_parts_render_distinctly():
         "a[x,#1]",
     ],
 )
-def test_parse_rejects_malformed_text(text: str):
+def test_parse_rejects_malformed_text(text: str) -> None:
     with pytest.raises(ValueError):
         _ = Path.parse(text)
 
 
-def test_composite_key_renders_and_parses_back():
+def test_composite_key_renders_and_parses_back() -> None:
     path = Path(("routes", Key(("10.0.0.0", 24, "192.168.1.1", "GE3")), "cost"))
     assert path == 'routes["10.0.0.0",24,"192.168.1.1",GE3].cost'
     assert Path.parse(str(path)).parts == path.parts
 
 
 @pytest.mark.parametrize("value", [("a", 1), ("a,b", "1"), ("", True)])
-def test_key_text_round_trips(value: tuple[str | int | bool, ...]):
+def test_key_text_round_trips(value: tuple[str | int | bool, ...]) -> None:
     assert parse_key_text(key_text(value)) == value
 
 
-def test_key_text_of_a_composite_key():
+def test_key_text_of_a_composite_key() -> None:
     assert (
         key_text(("10.0.0.0", 24, "192.168.1.1", "GE3"))
         == '"10.0.0.0",24,"192.168.1.1",GE3'
@@ -235,12 +237,12 @@ def test_key_text_of_a_composite_key():
 
 
 @pytest.mark.parametrize("text", ["", "a,", ",a", "a b", '"a', "#1", "a]"])
-def test_parse_key_text_rejects_what_key_text_does_not_write(text: str):
+def test_parse_key_text_rejects_what_key_text_does_not_write(text: str) -> None:
     with pytest.raises(ValueError):
         _ = parse_key_text(text)
 
 
-def test_a_path_is_its_text_for_comparison_and_hashing():
+def test_a_path_is_its_text_for_comparison_and_hashing() -> None:
     path = Path(("segments", Key("A"), "name"))
     assert path == "segments[A].name"
     assert hash(path) == hash("segments[A].name")
@@ -249,7 +251,7 @@ def test_a_path_is_its_text_for_comparison_and_hashing():
     assert isinstance(path, str)
 
 
-def test_child_appends_one_part():
+def test_child_appends_one_part() -> None:
     root = Path(())
     path = root.child("segments").child(Key("Global Segment")).child("rules").child(0)
     assert path == 'segments["Global Segment"].rules[#0]'
@@ -257,12 +259,12 @@ def test_child_appends_one_part():
     assert root.parts == ()
 
 
-def test_a_str_is_not_a_sequence_of_parts():
+def test_a_str_is_not_a_sequence_of_parts() -> None:
     with pytest.raises(TypeError):
         _ = Path("segments")
 
 
-def test_copy_and_pickle_keep_the_structure():
+def test_copy_and_pickle_keep_the_structure() -> None:
     path = Path(("segments", Key("Corp.Guest v2"), 3))
     for clone in (
         copy.copy(path),
@@ -274,7 +276,7 @@ def test_copy_and_pickle_keep_the_structure():
         assert clone.parts == path.parts
 
 
-def test_raw_change_accepts_plain_text_and_equals_a_produced_change():
+def test_raw_change_accepts_plain_text_and_equals_a_produced_change() -> None:
     change = RawChange("segments[A].rules[r1].port", 1, 2)
     assert isinstance(change.path, Path)
     assert change.path.parts == ("segments", Key("A"), "rules", Key("r1"), "port")
@@ -283,7 +285,7 @@ def test_raw_change_accepts_plain_text_and_equals_a_produced_change():
     assert raw_changes(old, new, Root) == [change]
 
 
-def test_raw_changes_address_a_key_with_special_characters():
+def test_raw_changes_address_a_key_with_special_characters() -> None:
     name = "Corp.Guest v2"
     old = {"segments": [seg(name, 0, [{"name": "r1", "port": 1}])]}
     new = {"segments": [seg(name, 0, [{"name": "r1", "port": 2}, {"name": "r2"}])]}
@@ -302,13 +304,13 @@ def test_raw_changes_address_a_key_with_special_characters():
     assert changes[1].path.parts == ("segments", Key(name), "rules", Key("r2"))
 
 
-def test_raw_changes_use_a_structured_name_for_odd_object_keys():
+def test_raw_changes_use_a_structured_name_for_odd_object_keys() -> None:
     (change,) = raw_changes({"a": {"x.y": 1}}, {"a": {"x.y": 2}})
     assert change.path == 'a."x.y"'
     assert change.path.parts == ("a", "x.y")
 
 
-def test_lossy_assignments_address_a_key_with_special_characters():
+def test_lossy_assignments_address_a_key_with_special_characters() -> None:
     raw = {
         "segments": [
             seg("Corp.Guest v2", 0, [{"name": "r1"}]),
@@ -338,7 +340,7 @@ def test_lossy_assignments_address_a_key_with_special_characters():
     assert paths[1].parts == ("segments", Key("0"), "rules", Key("r1"), "port")
 
 
-def test_rename_is_one_change_at_the_old_key():
+def test_rename_is_one_change_at_the_old_key() -> None:
     raw = {"rules": [item("a", "1", x=1)]}
     before = {"rules": [item("a", "1", port=0)]}
     after = {"rules": [item("b", "1", port=0)]}
@@ -346,7 +348,7 @@ def test_rename_is_one_change_at_the_old_key():
     assert raw_changes(raw, payload, Rs) == [RawChange("rules[a].name", "a", "b")]
 
 
-def test_change_in_a_repeated_name_is_reported_by_position():
+def test_change_in_a_repeated_name_is_reported_by_position() -> None:
     raw = {"rules": [item("a", "1", x=1), item("a", "2", x=2)]}
     before = {"rules": [item("a", "1", port=0), item("a", "2", port=0)]}
     after = {"rules": [item("a", "1", port=0), item("a", "2", port=5)]}
@@ -354,7 +356,7 @@ def test_change_in_a_repeated_name_is_reported_by_position():
     assert raw_changes(raw, payload, Rs) == [RawChange("rules[#1].port", MISSING, 5)]
 
 
-def test_python_path_names_each_field_as_a_patch_does():
+def test_python_path_names_each_field_as_a_patch_does() -> None:
     path = Path.parse('segments["Corp.Guest v2"].segment.segmentId')
     assert python_path(path, Root) == 'segments["Corp.Guest v2"].segment.segment_id'
     assert python_path(Path.parse("loggingEnabled"), Root) == "logging_enabled"
@@ -368,7 +370,7 @@ def test_python_path_names_each_field_as_a_patch_does():
     )
 
 
-def test_python_path_keeps_a_name_the_model_has_no_field_for():
+def test_python_path_keeps_a_name_the_model_has_no_field_for() -> None:
     assert python_path(Path.parse("futureKey.innerKey"), Root) == "futureKey.innerKey"
     path = Path.parse("segments[A].rules[r1].futureKey")
     assert python_path(path, Root) == path
@@ -379,7 +381,7 @@ def test_python_path_keeps_a_name_the_model_has_no_field_for():
     assert python_path(Path.parse("loggingEnabled"), None) == "loggingEnabled"
 
 
-def test_python_path_goes_through_a_map_of_models():
+def test_python_path_goes_through_a_map_of_models() -> None:
     path = Path.parse("loopbackInterfaces.LO1.disableV4")
     assert python_path(path, DeviceSettingsData) == (
         "loopback_interfaces.LO1.disable_ipv4"

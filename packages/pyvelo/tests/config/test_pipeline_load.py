@@ -43,7 +43,7 @@ def _make_stack() -> GetEdgeConfigurationStackResult:
 
 
 @pytest.mark.asyncio
-async def test_load_by_edge_id():
+async def test_load_by_edge_id() -> None:
     """Load by numeric edge ID should fetch config stack."""
     client = MockVcoClient(stack=_make_stack())
     pipeline = ConfigPipeline(client)
@@ -68,7 +68,7 @@ async def test_load_by_edge_id():
 
 
 @pytest.mark.asyncio
-async def test_load_takes_snapshot():
+async def test_load_takes_snapshot() -> None:
     """Loading should take a snapshot for later diff detection."""
     client = MockVcoClient(stack=_make_stack())
     pipeline = ConfigPipeline(client)
@@ -85,7 +85,7 @@ async def test_load_takes_snapshot():
 
 
 @pytest.mark.asyncio
-async def test_load_by_edge_name():
+async def test_load_by_edge_name() -> None:
     """Load by edge name should resolve name via EdgeResolver first."""
     client = MockVcoClient(
         stack=_make_stack(),
@@ -114,7 +114,7 @@ async def test_load_by_edge_name():
 
 
 @pytest.mark.asyncio
-async def test_load_by_name_is_strict():
+async def test_load_by_name_is_strict() -> None:
     client = MockVcoClient(
         stack=_make_stack(),
         edges=[
@@ -134,7 +134,7 @@ async def test_load_by_name_is_strict():
 
 
 @pytest.mark.asyncio
-async def test_load_profile_by_id():
+async def test_load_profile_by_id() -> None:
     """load_profile by numeric ID should fetch profile config."""
     client = MockVcoClient(stack=_make_stack())
     pipeline = ConfigPipeline(client)
@@ -151,7 +151,7 @@ async def test_load_profile_by_id():
 
 
 @pytest.mark.asyncio
-async def test_load_profile_refuses_an_edge_specific_configuration():
+async def test_load_profile_refuses_an_edge_specific_configuration() -> None:
     client = MockVcoClient(stack=_make_stack())  # its store holds 10 and 20
     pipeline = ConfigPipeline(client)
 
@@ -209,7 +209,7 @@ def _raw_stack() -> GetEdgeConfigurationStackResult:
 
 
 @pytest.mark.asyncio
-async def test_two_loads_are_two_reads_and_a_second_load_sees_the_save():
+async def test_two_loads_are_two_reads_and_a_second_load_sees_the_save() -> None:
     client = MockVcoClient(stack=_raw_stack())
     client.store.issue_rule_ids = True
     pipeline = ConfigPipeline(client)
@@ -245,7 +245,7 @@ async def test_two_loads_are_two_reads_and_a_second_load_sees_the_save():
 
 
 @pytest.mark.asyncio
-async def test_a_client_seeded_from_a_state_serves_that_edges_stack():
+async def test_a_client_seeded_from_a_state_serves_that_edges_stack() -> None:
     first = await ConfigPipeline(MockVcoClient(stack=_raw_stack())).load(42)
     client = MockVcoClient.for_state(first)
     loaded = await ConfigPipeline(client).load(42)
@@ -255,7 +255,7 @@ async def test_a_client_seeded_from_a_state_serves_that_edges_stack():
 
 
 @pytest.mark.asyncio
-async def test_load_by_name_without_a_resolver_says_what_to_register():
+async def test_load_by_name_without_a_resolver_says_what_to_register() -> None:
     client = MockVcoClient(stack=_make_stack())
     with pytest.raises(LookupError) as exc:
         _ = await ConfigPipeline(client).load("branch-nyc", enterprise_id=1)
@@ -295,7 +295,7 @@ async def listed_services(client: MockVcoClient) -> list[tuple[int, str, str]]:
 
 
 @pytest.mark.asyncio
-async def test_the_mock_client_holds_the_services_it_adds_as_objects():
+async def test_the_mock_client_holds_the_services_it_adds_as_objects() -> None:
     client = MockVcoClient()
     logical_id = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
     client.add_service(701, logical_id=logical_id, name="dns-a", type_="dnsService")
@@ -311,7 +311,7 @@ async def test_the_mock_client_holds_the_services_it_adds_as_objects():
 
 
 @pytest.mark.asyncio
-async def test_the_mock_client_holds_the_segment_it_answers_as_an_object():
+async def test_the_mock_client_holds_the_segment_it_answers_as_an_object() -> None:
     client = MockVcoClient()
     (segment,) = await client.get_enterprise_network_segments(
         GetEnterpriseNetworkSegments()

@@ -16,7 +16,7 @@ from pyvelo.core import (
 from pyvelo.core.fields import FixedList, KeyField
 from pyvelo.core.layers import L
 
-from ..common import SegmentMetadata
+from pyvelo.client.models.configuration.common import SegmentMetadata
 from .common import CosMappingInputType
 from .rule import QosRule
 

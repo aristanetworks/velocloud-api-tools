@@ -184,7 +184,7 @@ def role_call_params(hub: Hub) -> dict[str, Any]:
 def sent_refs(store: ModuleStore) -> dict[str, Any]:
     """The refs of the last update the store got."""
     updates = [p for m, p in store.requests if m == UPDATE]
-    return cast(dict[str, Any], updates[-1]["_update"]["refs"])
+    return cast("dict[str, Any]", updates[-1]["_update"]["refs"])
 
 
 def stored_rows(store: ModuleStore, name: str) -> list[dict[str, Any]]:
@@ -223,7 +223,7 @@ async def two_lists_state() -> ConfigState:
 # -- the order of a save -------------------------------------------------------
 
 
-async def test_a_hub_added_by_name_to_two_lists_is_enabled_and_carried():
+async def test_a_hub_added_by_name_to_two_lists_is_enabled_and_carried() -> None:
     state = await two_lists_state()
     pipeline, store = hub_pipeline(state, vpn_check=True)
 
@@ -269,7 +269,7 @@ async def test_a_hub_added_by_name_to_two_lists_is_enabled_and_carried():
     assert (again.steps, again.changed) == ((), ())
 
 
-async def test_the_plan_the_save_shows_lists_the_rows_it_carries():
+async def test_the_plan_the_save_shows_lists_the_rows_it_carries() -> None:
     state = await two_lists_state()
     pipeline, store = hub_pipeline(state, vpn_check=True)
     result = await pipeline.save(state)
@@ -280,7 +280,7 @@ async def test_the_plan_the_save_shows_lists_the_rows_it_carries():
     assert store.requests[-1][0] == UPDATE
 
 
-async def test_the_role_calls_name_the_enterprise_when_the_state_knows_it():
+async def test_the_role_calls_name_the_enterprise_when_the_state_knows_it() -> None:
     state = await two_lists_state()
     state.resolver_context.enterprise_id = 7
     pipeline, store = hub_pipeline(state, vpn_check=True)
@@ -327,7 +327,7 @@ async def state_before(role: Role, hub: Hub, action: str) -> ConfigState:
 @pytest.mark.parametrize("action", ["enable", "disable"])
 async def test_each_list_and_kind_sends_its_call_with_the_ids_of_the_step(
     action: Literal["enable", "disable"], role: Role, hub: Hub
-):
+) -> None:
     state = await state_before(role, hub, action)
     pipeline, store = hub_pipeline(state, vpn_check=True)
     rows_as_read = {
@@ -367,7 +367,9 @@ async def test_each_list_and_kind_sends_its_call_with_the_ids_of_the_step(
     assert (again.steps, again.changed) == ((), ())
 
 
-async def test_a_removed_edge_hubs_service_is_deleted_by_the_call_and_its_row_left_out():
+async def test_a_removed_edge_hubs_service_is_deleted_by_the_call_and_its_row_left_out() -> (
+    None
+):
     state = await state_before("hub", HUB_A, "disable")
     pipeline, store = hub_pipeline(state, vpn_check=True)
     assert services_of(store, "edgeHub")
@@ -379,10 +381,10 @@ async def test_a_removed_edge_hubs_service_is_deleted_by_the_call_and_its_row_le
 
 
 def services_of(store: ModuleStore, kind: str) -> list[dict[str, Any]]:
-    return cast(list[dict[str, Any]], store.handle(SERVICES, {"type": kind}))
+    return cast("list[dict[str, Any]]", store.handle(SERVICES, {"type": kind}))
 
 
-async def test_the_rows_of_hubs_that_stay_are_sent_as_read():
+async def test_the_rows_of_hubs_that_stay_are_sent_as_read() -> None:
     ds = ds_with_vpn(GLOBAL, hubs=(HUB_A, CLUSTER))
     state = await profile_of(
         [ds, ds_entry(GUEST)],
@@ -407,7 +409,7 @@ async def test_the_rows_of_hubs_that_stay_are_sent_as_read():
 # -- a second save -------------------------------------------------------------
 
 
-async def test_a_repeated_save_skips_the_steps_already_in_place():
+async def test_a_repeated_save_skips_the_steps_already_in_place() -> None:
     state = await two_lists_state()
     pipeline, store = hub_pipeline(state, vpn_check=True)
     store.fail_calls.add("edge/enableEdgeForBackHaul")
@@ -416,7 +418,8 @@ async def test_a_repeated_save_skips_the_steps_already_in_place():
         _ = await pipeline.save(state)
 
     first = failed.value
-    assert first.step is not None and first.step.role == "backhaul"
+    assert first.step is not None
+    assert first.step.role == "backhaul"
     assert [s.role for s in first.steps_done] == ["hub"]
     assert UPDATE not in methods(store)
     store.requests.clear()
@@ -437,7 +440,7 @@ async def test_a_repeated_save_skips_the_steps_already_in_place():
     assert state.plan().steps == ()
 
 
-async def test_a_dry_run_sends_no_step_and_says_which_are_in_place():
+async def test_a_dry_run_sends_no_step_and_says_which_are_in_place() -> None:
     state = await two_lists_state()
     pipeline, store = hub_pipeline(state, vpn_check=True)
     store.fail_calls.add("edge/enableEdgeForBackHaul")
@@ -456,7 +459,7 @@ async def test_a_dry_run_sends_no_step_and_says_which_are_in_place():
     assert result.dry_run
 
 
-async def test_a_dry_run_before_anything_is_sent_would_send_every_step():
+async def test_a_dry_run_before_anything_is_sent_would_send_every_step() -> None:
     state = await two_lists_state()
     pipeline, store = hub_pipeline(state, vpn_check=True)
 
@@ -469,7 +472,7 @@ async def test_a_dry_run_before_anything_is_sent_would_send_every_step():
 
 async def test_a_disable_answered_null_counts_as_done(
     monkeypatch: pytest.MonkeyPatch,
-):
+) -> None:
     ds = ds_with_vpn(GLOBAL, hubs=(HUB_A,), backhaul=(HUB_A,))
     state = await profile_of(
         [ds, ds_entry(GUEST)], service_row(HUB_A, "hub", "backhaul")
@@ -492,7 +495,7 @@ async def test_a_disable_answered_null_counts_as_done(
     assert "edge/disableEdgeForBackHaul" in methods(store)
 
 
-async def test_a_cluster_disable_with_no_role_data_is_in_place_and_not_sent():
+async def test_a_cluster_disable_with_no_role_data_is_in_place_and_not_sent() -> None:
     ds = ds_with_vpn(GLOBAL, hubs=(CLUSTER,))
     row = service_row(CLUSTER, "hub")
     row["data"] = {}
@@ -507,7 +510,7 @@ async def test_a_cluster_disable_with_no_role_data_is_in_place_and_not_sent():
     assert stored_rows(store, CLUSTER_HUB_REF) == []
 
 
-async def test_an_unpredicted_cluster_failure_is_a_save_step_error():
+async def test_an_unpredicted_cluster_failure_is_a_save_step_error() -> None:
     state = await state_before("hub", CLUSTER, "disable")
     pipeline, store = hub_pipeline(state, vpn_check=True)
     store.fail_calls.add("enterprise/disableClusterForEdgeHub")
@@ -516,7 +519,8 @@ async def test_an_unpredicted_cluster_failure_is_a_save_step_error():
         _ = await pipeline.save(state)
 
     error = failed.value
-    assert error.step is not None and error.step.hub.name == CLUSTER.name
+    assert error.step is not None
+    assert error.step.hub.name == CLUSTER.name
     assert (error.module_name, error.steps_done, error.written) == (None, (), ())
     assert isinstance(error.__cause__, VcoError)
     assert "simulated failure" in str(error.__cause__)
@@ -526,7 +530,8 @@ async def test_an_unpredicted_cluster_failure_is_a_save_step_error():
     assert progress.pending == (DS,)
     message = str(error)
     assert "disable hub for cluster Cluster-1 on segment Global Segment" in message
-    assert "Nothing is undone" in message and "Save again" in message
+    assert "Nothing is undone" in message
+    assert "Save again" in message
     assert UPDATE not in methods(store)
     # The state keeps the edits: a second save sends it.
     result = await pipeline.save(state)
@@ -536,7 +541,7 @@ async def test_an_unpredicted_cluster_failure_is_a_save_step_error():
 # -- a failure after a step ---------------------------------------------------
 
 
-async def test_a_module_write_after_a_step_fails_as_a_save_step_error():
+async def test_a_module_write_after_a_step_fails_as_a_save_step_error() -> None:
     state = await two_lists_state()
     pipeline, store = hub_pipeline(state, vpn_check=True)
     store.fail_writes.add(1)
@@ -545,9 +550,11 @@ async def test_a_module_write_after_a_step_fails_as_a_save_step_error():
         _ = await pipeline.save(state)
 
     error = failed.value
-    assert error.module_name == DS and error.step is None
+    assert error.module_name == DS
+    assert error.step is None
     assert [s.role for s in error.steps_done] == ["hub", "backhaul"]
-    assert error.steps_in_place == () and error.written == ()
+    assert error.steps_in_place == ()
+    assert error.written == ()
     assert isinstance(error.__cause__, VcoError)
     progress = save_progress(error)
     assert progress is not None
@@ -565,7 +572,9 @@ async def test_a_module_write_after_a_step_fails_as_a_save_step_error():
     assert state.plan().changed == ()
 
 
-async def test_a_qos_write_after_a_step_and_the_device_settings_fails_as_a_save_step_error():
+async def test_a_qos_write_after_a_step_and_the_device_settings_fails_as_a_save_step_error() -> (
+    None
+):
     state = await two_lists_state()
     _ = await ConfigPipeline(client=None).apply(
         state,
@@ -585,7 +594,8 @@ async def test_a_qos_write_after_a_step_and_the_device_settings_fails_as_a_save_
         _ = await pipeline.save(state)
 
     error = failed.value
-    assert error.module_name == "QOS" and error.step is None
+    assert error.module_name == "QOS"
+    assert error.step is None
     assert [s.role for s in error.steps_done] == ["hub", "backhaul"]
     assert error.written == (DS,)
     assert isinstance(error.__cause__, VcoError)
@@ -599,7 +609,7 @@ async def test_a_qos_write_after_a_step_and_the_device_settings_fails_as_a_save_
     assert state.plan().steps == ()
 
 
-async def test_a_conflict_of_the_module_write_after_a_step_is_the_cause():
+async def test_a_conflict_of_the_module_write_after_a_step_is_the_cause() -> None:
     state = await two_lists_state()
     pipeline, store = hub_pipeline(state, vpn_check=True)
     store.conditional_check = True
@@ -629,7 +639,9 @@ async def test_a_conflict_of_the_module_write_after_a_step_is_the_cause():
     assert methods(store).count(VERSION) == 1  # the write did not read it again
 
 
-async def test_a_module_write_that_fails_with_no_step_sent_propagates_unchanged():
+async def test_a_module_write_that_fails_with_no_step_sent_propagates_unchanged() -> (
+    None
+):
     # Hub-A's service has the hub role already, so the one step is in place.
     ds = ds_with_vpn(GLOBAL, enabled=True, hub_list_enabled=False)
     state = await profile_of(
@@ -646,7 +658,7 @@ async def test_a_module_write_that_fails_with_no_step_sent_propagates_unchanged(
     assert calls(store) == []
 
 
-async def test_a_stale_version_stops_before_the_first_step():
+async def test_a_stale_version_stops_before_the_first_step() -> None:
     state = await two_lists_state()
     pipeline, store = hub_pipeline(state, vpn_check=True)
 
@@ -663,7 +675,9 @@ async def test_a_stale_version_stops_before_the_first_step():
     assert services_of(store, "edgeHub") == []
 
 
-async def test_a_stale_version_refreshes_the_state_as_a_write_without_steps_does():
+async def test_a_stale_version_refreshes_the_state_as_a_write_without_steps_does() -> (
+    None
+):
     state = await two_lists_state()
     pipeline, store = hub_pipeline(state, vpn_check=True)
     held = state.module(DS)
@@ -678,7 +692,8 @@ async def test_a_stale_version_refreshes_the_state_as_a_write_without_steps_does
 
     error = failed.value
     assert error.module is not None
-    assert state.module(DS) is error.module and state.module(DS) is not held
+    assert state.module(DS) is error.module
+    assert state.module(DS) is not held
     assert error.lost_edits
     assert save_progress(error) is None
     store.requests.clear()
@@ -687,11 +702,14 @@ async def test_a_stale_version_refreshes_the_state_as_a_write_without_steps_does
     # to plan, so it sends nothing and meets no conflict.
     result = await pipeline.save(state)
 
-    assert methods(store) == [] and calls(store) == []
+    assert methods(store) == []
+    assert calls(store) == []
     assert result.steps == ()
 
 
-async def test_a_duplicate_service_of_a_later_step_is_refused_before_the_first_step_is_sent():
+async def test_a_duplicate_service_of_a_later_step_is_refused_before_the_first_step_is_sent() -> (
+    None
+):
     # Hub-B's service is held twice in the segment: the second step cannot be
     # told apart, and the first (Hub-A, enabled) is not sent before it is known.
     state = await profile_of(
@@ -729,7 +747,9 @@ async def test_a_duplicate_service_of_a_later_step_is_refused_before_the_first_s
     assert calls(store) == []
 
 
-async def test_a_failure_of_the_services_read_before_any_step_propagates_unchanged():
+async def test_a_failure_of_the_services_read_before_any_step_propagates_unchanged() -> (
+    None
+):
     state = await two_lists_state()
     pipeline, store = hub_pipeline(state, vpn_check=True)
     store.fail_calls.add(SERVICES)
@@ -742,7 +762,7 @@ async def test_a_failure_of_the_services_read_before_any_step_propagates_unchang
     assert save_progress(failed.value) is None
 
 
-async def test_a_failure_of_the_second_services_read_is_a_save_step_error():
+async def test_a_failure_of_the_second_services_read_is_a_save_step_error() -> None:
     state = await two_lists_state()
     pipeline, store = hub_pipeline(state, vpn_check=True)
     original = pipeline.client.get_enterprise_services
@@ -760,13 +780,14 @@ async def test_a_failure_of_the_second_services_read_is_a_save_step_error():
     with pytest.raises(SaveStepError) as failed:
         _ = await pipeline.save(state)
 
-    assert failed.value.step is None and failed.value.module_name is None
+    assert failed.value.step is None
+    assert failed.value.module_name is None
     assert [s.role for s in failed.value.steps_done] == ["hub", "backhaul"]
     assert "after its steps" in str(failed.value)
     assert UPDATE not in methods(store)
 
 
-async def test_a_cancellation_of_a_step_propagates_unchanged():
+async def test_a_cancellation_of_a_step_propagates_unchanged() -> None:
     state = await two_lists_state()
     pipeline, _ = hub_pipeline(state, vpn_check=True)
     cancelled = asyncio.CancelledError()
@@ -781,10 +802,11 @@ async def test_a_cancellation_of_a_step_propagates_unchanged():
 
     assert raised.value is cancelled
     progress = save_progress(cancelled)
-    assert progress is not None and progress.pending == (DS,)
+    assert progress is not None
+    assert progress.pending == (DS,)
 
 
-def test_a_keyboard_interrupt_of_a_step_propagates_unchanged():
+def test_a_keyboard_interrupt_of_a_step_propagates_unchanged() -> None:
     interrupt = KeyboardInterrupt()
 
     async def scenario() -> None:
@@ -806,7 +828,7 @@ def test_a_keyboard_interrupt_of_a_step_propagates_unchanged():
 # -- a write whose answer was lost ----------------------------------------------
 
 
-async def test_a_module_the_version_read_finds_stored_is_not_written_again():
+async def test_a_module_the_version_read_finds_stored_is_not_written_again() -> None:
     state = await two_lists_state()
     pipeline, store = hub_pipeline(state, vpn_check=True)
     store.lose_answers.add(1)
@@ -827,7 +849,9 @@ async def test_a_module_the_version_read_finds_stored_is_not_written_again():
     assert state.plan().changed == ()
 
 
-async def test_a_stored_write_the_version_read_finds_counts_as_done_before_the_steps():
+async def test_a_stored_write_the_version_read_finds_counts_as_done_before_the_steps() -> (
+    None
+):
     state = await two_lists_state()
     pipeline, store = hub_pipeline(state, vpn_check=True)
     store.lose_answers.add(1)
@@ -859,7 +883,9 @@ async def test_a_stored_write_the_version_read_finds_counts_as_done_before_the_s
     assert state.plan().changed == ()
 
 
-async def test_a_stored_write_found_before_a_failed_first_services_read_is_in_the_progress():
+async def test_a_stored_write_found_before_a_failed_first_services_read_is_in_the_progress() -> (
+    None
+):
     state = await two_lists_state()
     pipeline, store = hub_pipeline(state, vpn_check=True)
     store.lose_answers.add(1)
@@ -877,7 +903,7 @@ async def test_a_stored_write_found_before_a_failed_first_services_read_is_in_th
     assert state.plan().changed == ()
 
 
-async def test_a_hub_row_the_vco_leaves_out_of_the_stored_module_is_refused():
+async def test_a_hub_row_the_vco_leaves_out_of_the_stored_module_is_refused() -> None:
     state = await two_lists_state()
     pipeline, store = hub_pipeline(state, vpn_check=True)
 
@@ -902,7 +928,7 @@ async def test_a_hub_row_the_vco_leaves_out_of_the_stored_module_is_refused():
 # -- the rows ------------------------------------------------------------------
 
 
-async def test_a_row_the_refs_as_read_already_hold_is_not_added_twice():
+async def test_a_row_the_refs_as_read_already_hold_is_not_added_twice() -> None:
     # Hub-A's service has the hub role and a row, but the list does not hold it.
     ds = ds_with_vpn(GLOBAL, enabled=True, hub_list_enabled=False)
     state = await profile_of(
@@ -919,7 +945,7 @@ async def test_a_row_the_refs_as_read_already_hold_is_not_added_twice():
     assert len(stored_rows(store, EDGE_HUB_REF)) == 1
 
 
-async def test_a_plan_without_steps_saves_as_before():
+async def test_a_plan_without_steps_saves_as_before() -> None:
     state = await profile_of([ds_entry(GLOBAL), ds_entry(GUEST)])
     state.profile.device_settings.segments[0].vpn.conditional_backhaul = True
     pipeline, store = hub_pipeline(state, vpn_check=True)
@@ -937,7 +963,7 @@ def rows_of_ref(held: Any) -> list[dict[str, Any]]:
     return held if isinstance(held, list) else [held]
 
 
-async def test_a_rebased_qos_write_keeps_its_backhaul_row():
+async def test_a_rebased_qos_write_keeps_its_backhaul_row() -> None:
     state = await a_profile()
     state.profile.device_settings.segments[0].vpn.conditional_backhaul = True
     use_hub(state.profile.qos, HUB_A, SERVICE_A)
@@ -980,7 +1006,9 @@ async def test_a_rebased_qos_write_keeps_its_backhaul_row():
     assert state.plan().changed == ()
 
 
-async def test_a_rebased_qos_write_takes_its_backhaul_row_from_the_stored_device_settings():
+async def test_a_rebased_qos_write_takes_its_backhaul_row_from_the_stored_device_settings() -> (
+    None
+):
     state = await a_profile()
     state.profile.device_settings.segments[0].vpn.conditional_backhaul = True
     use_hub(state.profile.qos, HUB_A, SERVICE_A)
@@ -1063,7 +1091,7 @@ def edge_service(
     )
 
 
-def test_two_services_for_one_hub_and_segment_are_a_hub_list_error():
+def test_two_services_for_one_hub_and_segment_are_a_hub_list_error() -> None:
     services = HubServices(
         edge_hubs=(edge_service(601, HUB_A), edge_service(602, HUB_A))
     )
@@ -1079,7 +1107,7 @@ def test_two_services_for_one_hub_and_segment_are_a_hub_list_error():
     )
 
 
-def test_a_service_with_no_configuration_row_for_the_module_is_not_the_hubs():
+def test_a_service_with_no_configuration_row_for_the_module_is_not_the_hubs() -> None:
     services = HubServices(edge_hubs=(edge_service(601, HUB_A),))
     assert (
         services.edge_service(uuid.UUID(HUB_A.logical_id), CONFIG, DS_ID + 1, GLOBAL[3])
@@ -1104,7 +1132,7 @@ def cluster_service(data: dict[str, Any]) -> EdgeHubClusterService:
     )
 
 
-def test_cluster_roles_are_those_of_the_profile_and_segment():
+def test_cluster_roles_are_those_of_the_profile_and_segment() -> None:
     roles = {"edgeHub": True, "edgeToEdgeBridge": False, "backHaulEdge": True}
     cluster = cluster_service(
         {str(CONFIG): {str(GLOBAL[0]): {"roles": roles}}, "autoRebalance": True}
@@ -1121,7 +1149,7 @@ def test_cluster_roles_are_those_of_the_profile_and_segment():
     assert HubServices.cluster_roles(cluster_service({}), CONFIG, GLOBAL[0]) is None
 
 
-def test_a_hub_found_by_its_logical_id():
+def test_a_hub_found_by_its_logical_id() -> None:
     services = HubServices(clusters=(cluster_service({}),))
     assert services.cluster(uuid.UUID(CLUSTER.logical_id)) is not None
     assert services.cluster(uuid.UUID(HUB_A.logical_id)) is None
@@ -1130,7 +1158,7 @@ def test_a_hub_found_by_its_logical_id():
 @pytest.mark.parametrize("qos_usage", [False, True])
 async def test_the_services_read_asks_for_the_qos_usage_only_when_told_to(
     qos_usage: bool,
-):
+) -> None:
     state = await profile_of([ds_entry(GLOBAL), ds_entry(GUEST)])
     pipeline, store = hub_pipeline(state)
 
@@ -1147,7 +1175,7 @@ async def test_the_services_read_asks_for_the_qos_usage_only_when_told_to(
     )
 
 
-def test_an_enable_of_a_hub_whose_role_is_set_is_in_place():
+def test_an_enable_of_a_hub_whose_role_is_set_is_in_place() -> None:
     services = HubServices(
         edge_hubs=(edge_service(601, HUB_A, roles=(True, False, True)),)
     )
@@ -1159,7 +1187,7 @@ def test_an_enable_of_a_hub_whose_role_is_set_is_in_place():
         )
 
 
-def test_an_edge_disable_is_in_place_only_with_no_service():
+def test_an_edge_disable_is_in_place_only_with_no_service() -> None:
     services = HubServices(
         edge_hubs=(edge_service(601, HUB_A, roles=(True, False, False)),)
     )
@@ -1169,7 +1197,7 @@ def test_an_edge_disable_is_in_place_only_with_no_service():
     assert in_place(other, services, configuration_id=CONFIG, module_id=DS_ID)
 
 
-def test_a_cluster_disable_is_in_place_when_its_role_is_off_or_it_has_no_data():
+def test_a_cluster_disable_is_in_place_when_its_role_is_off_or_it_has_no_data() -> None:
     roles = {"edgeHub": True, "edgeToEdgeBridge": False, "backHaulEdge": True}
     with_roles = HubServices(
         clusters=(cluster_service({str(CONFIG): {str(GLOBAL[0]): {"roles": roles}}}),)
@@ -1191,7 +1219,7 @@ def test_a_cluster_disable_is_in_place_when_its_role_is_off_or_it_has_no_data():
     )
 
 
-async def test_a_step_with_no_ids_to_call_with_is_refused():
+async def test_a_step_with_no_ids_to_call_with_is_refused() -> None:
     state = await profile_of([ds_entry(GLOBAL), ds_entry(GUEST)])
     pipeline, store = hub_pipeline(state)
     with pytest.raises(ValueError, match="no Edge ID to call the VCO with"):
@@ -1215,7 +1243,7 @@ async def test_a_step_with_no_ids_to_call_with_is_refused():
     assert calls(store) == []
 
 
-def test_a_hub_enabled_with_no_service_afterwards_is_refused():
+def test_a_hub_enabled_with_no_service_afterwards_is_refused() -> None:
     with pytest.raises(HubServiceNotFoundError):
         _ = hub_rows(
             {},
@@ -1227,7 +1255,7 @@ def test_a_hub_enabled_with_no_service_afterwards_is_refused():
         )
 
 
-def test_the_as_read_rows_of_hubs_that_left_the_hub_list_are_the_rows_removed():
+def test_the_as_read_rows_of_hubs_that_left_the_hub_list_are_the_rows_removed() -> None:
     as_read = refs(service_row(HUB_A, "hub"), service_row(CLUSTER, "hub"))
     steps = [
         step_of("disable", "hub", HUB_A, added=False),
@@ -1247,7 +1275,7 @@ def test_the_as_read_rows_of_hubs_that_left_the_hub_list_are_the_rows_removed():
     assert removed == [as_read[EDGE_HUB_REF], as_read[CLUSTER_HUB_REF]]
 
 
-def test_the_row_of_a_hub_that_stays_in_the_hub_list_is_never_removed():
+def test_the_row_of_a_hub_that_stays_in_the_hub_list_is_never_removed() -> None:
     as_read = refs(service_row(HUB_A, "hub"))
 
     _, removed = hub_rows(
@@ -1262,7 +1290,7 @@ def test_the_row_of_a_hub_that_stays_in_the_hub_list_is_never_removed():
     assert removed == []
 
 
-def test_a_bridge_or_backhaul_step_makes_no_row():
+def test_a_bridge_or_backhaul_step_makes_no_row() -> None:
     as_read = refs(service_row(HUB_A, "hub", "backhaul"))
     steps = [
         step_of("disable", "backhaul", HUB_A, added=False),
@@ -1279,7 +1307,7 @@ def test_a_bridge_or_backhaul_step_makes_no_row():
     ) == ([], [])
 
 
-def test_the_row_of_an_added_hub_is_the_five_fields_of_its_service():
+def test_the_row_of_an_added_hub_is_the_five_fields_of_its_service() -> None:
     added, removed = hub_rows(
         refs(),
         [

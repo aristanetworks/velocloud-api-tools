@@ -65,7 +65,7 @@ def base() -> Root:
 )
 def test_a_refusal_that_names_a_helper_names_its_json_form(
     patch: dict[str, object], helper: str
-):
+) -> None:
     with pytest.raises(PatchError) as exc:
         _ = base().merge_patch(patch)
     message = exc.value.message
@@ -75,13 +75,13 @@ def test_a_refusal_that_names_a_helper_names_its_json_form(
             assert form in message
 
 
-def test_a_built_map_refusal_names_the_json_form():
+def test_a_built_map_refusal_names_the_json_form() -> None:
     with pytest.raises(PatchError) as exc:
         _ = ById().merge_patch({"m": {"1": {"v": 1}}})
     assert '{"_op": "add", ...}' in exc.value.message
 
 
-def test_the_null_refusal_does_not_speak_of_missing():
+def test_the_null_refusal_does_not_speak_of_missing() -> None:
     with pytest.raises(PatchError) as exc:
         _ = base().merge_patch({"flag": None})
     assert exc.value.message == (
@@ -167,13 +167,13 @@ KINDS: list[tuple[dict[str, object], str]] = [
 
 
 @pytest.mark.parametrize(("patch", "kind"), KINDS)
-def test_each_refusal_has_its_kind(patch: dict[str, object], kind: str):
+def test_each_refusal_has_its_kind(patch: dict[str, object], kind: str) -> None:
     with pytest.raises(PatchError) as exc:
         _ = base().merge_patch(patch)
     assert exc.value.kind == kind
 
 
-def test_kinds_of_refusals_that_need_another_model_or_call():
+def test_kinds_of_refusals_that_need_another_model_or_call() -> None:
     calls = [
         (
             lambda: ById(m={1: Sub()}).merge_patch({"m": {"1": {"v": 1}, 1: {"v": 2}}}),
@@ -202,7 +202,7 @@ def test_kinds_of_refusals_that_need_another_model_or_call():
         assert exc.value.kind == kind
 
 
-def test_the_kinds_are_these_thirteen():
+def test_the_kinds_are_these_thirteen() -> None:
     assert set(get_args(PatchErrorKind.__value__)) == {kind for _, kind in KINDS} | {
         "address",
         "segment_rule",

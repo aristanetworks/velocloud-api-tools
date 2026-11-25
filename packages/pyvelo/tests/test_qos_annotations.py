@@ -8,41 +8,41 @@ from pyvelo.core.fields import get_key_spec, get_resolvable
 
 
 class TestQosKeyFields:
-    def test_segments_keyed(self):
+    def test_segments_keyed(self) -> None:
         assert get_key_spec(QosData.model_fields["segments"]) == KeySpec(
             ("segment.name",), alt="segment.segment_id"
         )
 
-    def test_rules_keyed(self):
+    def test_rules_keyed(self) -> None:
         assert get_key_spec(QosSegment.model_fields["rules"]) == KeySpec(
             ("name",), alt="rule_logical_id"
         )
 
-    def test_defaults_keyed(self):
+    def test_defaults_keyed(self) -> None:
         assert get_key_spec(QosSegment.model_fields["defaults"]) == KeySpec(
             ("name",), alt="rule_logical_id"
         )
 
 
 class TestQosResolvable:
-    def test_application_id(self):
+    def test_application_id(self) -> None:
         r = get_resolvable(QosRuleMatch.model_fields["application_id"])
         assert r is not None
         assert r.attribute == "id"
 
-    def test_source_address_group(self):
+    def test_source_address_group(self) -> None:
         r = get_resolvable(QosRuleMatch.model_fields["source_address_group"])
         assert r is not None
         assert r.attribute == "logical_id"
 
-    def test_destination_address_group(self):
+    def test_destination_address_group(self) -> None:
         r = get_resolvable(QosRuleMatch.model_fields["destination_address_group"])
         assert r is not None
 
-    def test_source_port_group(self):
+    def test_source_port_group(self) -> None:
         r = get_resolvable(QosRuleMatch.model_fields["source_port_group"])
         assert r is not None
 
-    def test_destination_port_group(self):
+    def test_destination_port_group(self) -> None:
         r = get_resolvable(QosRuleMatch.model_fields["destination_port_group"])
         assert r is not None

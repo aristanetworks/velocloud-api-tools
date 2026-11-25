@@ -46,7 +46,7 @@ def _make_config(name: str) -> EdgeConfiguration | EnterpriseConfigurationProfil
 
 
 class TestConfigState:
-    def test_take_snapshot_stores_deep_copy(self):
+    def test_take_snapshot_stores_deep_copy(self) -> None:
         edge_config = _make_config("Edge Specific Profile")
         profile_config = _make_config("Default Profile")
         assert isinstance(edge_config, EdgeConfiguration)
@@ -68,7 +68,7 @@ class TestConfigState:
         assert isinstance(snap, EdgeConfiguration)
         assert snap.firewall.data.firewall_enabled.is_local is False
 
-    def test_get_changed_modules_detects_change(self):
+    def test_get_changed_modules_detects_change(self) -> None:
         edge_config = _make_config("Edge Specific Profile")
         profile_config = _make_config("Default Profile")
         assert isinstance(edge_config, EdgeConfiguration)
@@ -88,7 +88,7 @@ class TestConfigState:
         changed = state.get_changed_modules()
         assert "firewall" in changed
 
-    def test_get_changed_modules_no_change(self):
+    def test_get_changed_modules_no_change(self) -> None:
         edge_config = _make_config("Edge Specific Profile")
         profile_config = _make_config("Default Profile")
         assert isinstance(edge_config, EdgeConfiguration)
@@ -106,7 +106,7 @@ class TestConfigState:
         changed = state.get_changed_modules()
         assert changed == []
 
-    def test_profile_target_type_diffs_profile_config(self):
+    def test_profile_target_type_diffs_profile_config(self) -> None:
         profile_config = _make_config("Default Profile")
         assert isinstance(profile_config, EnterpriseConfigurationProfile)
 
@@ -140,11 +140,11 @@ class TestGetFieldChanges:
         state.take_snapshot()
         return state, edge_config
 
-    def test_no_changes_returns_empty(self):
+    def test_no_changes_returns_empty(self) -> None:
         state, _ = self._state_with_snapshot()
         assert state.get_field_changes() == []
 
-    def test_scalar_change_emits_field_change(self):
+    def test_scalar_change_emits_field_change(self) -> None:
         from pyvelo.config.state import ConfigFieldChange
 
         state, edge_config = self._state_with_snapshot()
@@ -159,7 +159,7 @@ class TestGetFieldChanges:
             for c in changes
         )
 
-    def test_filter_by_module_name(self):
+    def test_filter_by_module_name(self) -> None:
         state, edge_config = self._state_with_snapshot()
         edge_config.firewall.data.firewall_enabled.set_local(False)
         # Only ask about a different module - should be empty
@@ -167,7 +167,7 @@ class TestGetFieldChanges:
         # Ask about the actual mutated module - should be non-empty
         assert state.get_field_changes(module_name="firewall")
 
-    def test_a_reorder_of_a_keyed_list_is_one_order_change(self):
+    def test_a_reorder_of_a_keyed_list_is_one_order_change(self) -> None:
         """Reordering a KeyField list is one change at the list, as in the plan."""
         from datetime import datetime
 
@@ -228,7 +228,7 @@ class TestGetFieldChanges:
         assert [c.path for c in planned.changes] == ["segments"]
 
 
-def test_field_changes_address_a_composite_key():
+def test_field_changes_address_a_composite_key() -> None:
     route = StaticRoute(
         destination="10.0.0.0",
         netmask="255.255.255.0",
@@ -308,7 +308,7 @@ def _wan_state(links: list[dict[str, object]]) -> tuple[ConfigState, WanData]:
     return state, data
 
 
-def test_field_changes_show_an_edit_to_a_keyless_item():
+def test_field_changes_show_an_edit_to_a_keyless_item() -> None:
     # Neither link has an internalId, so neither has a key.
     state, data = _wan_state(
         [{"name": "A", "type": "WIRED"}, {"name": "B", "type": "WIRED"}]
@@ -321,12 +321,12 @@ def test_field_changes_show_an_edit_to_a_keyless_item():
 def _isps(state: ConfigState) -> tuple[str, list[object], list[object]]:
     """The one WAN change of *state*: its path, and the ``isp`` of each link before and after."""
     (change,) = state.get_field_changes(module_name="WAN")
-    before = cast(list[dict[str, object]], change.before)
-    after = cast(list[dict[str, object]], change.after)
+    before = cast("list[dict[str, object]]", change.before)
+    after = cast("list[dict[str, object]]", change.after)
     return str(change.path), [x["isp"] for x in before], [x["isp"] for x in after]
 
 
-def test_field_changes_show_an_edit_among_repeated_keys():
+def test_field_changes_show_an_edit_among_repeated_keys() -> None:
     link_id = "00000000-0000-0000-0000-000000000001"
     state, data = _wan_state(
         [
@@ -338,7 +338,7 @@ def test_field_changes_show_an_edit_among_repeated_keys():
     assert _isps(state) == ("links", [None, None], ["x", None])
 
 
-def test_field_changes_take_a_module_by_either_name():
+def test_field_changes_take_a_module_by_either_name() -> None:
     link_id = "00000000-0000-0000-0000-000000000001"
     state, data = _wan_state([{"internalId": link_id, "name": "A", "type": "WIRED"}])
     _ = data.merge_patch({"links": {"A": {"isp": "x"}}})
@@ -352,14 +352,14 @@ def test_field_changes_take_a_module_by_either_name():
     assert state.get_field_changes(module_name="firewall") == []
 
 
-def test_field_changes_of_a_name_that_is_no_module_raise():
+def test_field_changes_of_a_name_that_is_no_module_raise() -> None:
     state, _ = _wan_state([])
     with pytest.raises(ValueError, match="Unknown module: 'no-such-module'"):
         _ = state.get_field_changes(module_name="no-such-module")
 
 
 class TestSaveResult:
-    def test_save_result_defaults(self):
+    def test_save_result_defaults(self) -> None:
         result = SaveResult()
         assert result.modules_updated == []
         assert result.modules_inserted == []
@@ -367,6 +367,6 @@ class TestSaveResult:
 
 
 class TestValidationWarning:
-    def test_warning_defaults(self):
+    def test_warning_defaults(self) -> None:
         w = ValidationWarning(path="firewall.segments", message="test", code="TEST")
         assert w.severity == "warning"

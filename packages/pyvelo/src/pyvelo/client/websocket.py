@@ -350,7 +350,6 @@ class VcoWebSocket:
         against pending futures using progressively less specific keys:
         ``(action, logicalId, test)`` → ``(action, logicalId)`` → ``(action,)``.
         """
-
         action = msg.get("action", "")
         logger.info("Received action=%s", action or "(protocol)")
         logger.debug("Received WS message: %s", msg)

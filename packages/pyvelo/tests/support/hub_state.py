@@ -166,7 +166,7 @@ def _hub_rows(state: ConfigState) -> list[tuple[str, dict[str, Any]]]:
             held = refs.get(name)
             rows = held if is_list(held) else [held]
             found.extend(
-                (name, cast(dict[str, Any], row)) for row in rows if is_dict(row)
+                (name, cast("dict[str, Any]", row)) for row in rows if is_dict(row)
             )
     return found
 

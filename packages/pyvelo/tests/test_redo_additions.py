@@ -57,7 +57,7 @@ def lost_write(
     return caught.value
 
 
-def test_a_lost_added_segment_is_redone_as_an_add_with_its_edits():
+def test_a_lost_added_segment_is_redone_as_an_add_with_its_edits() -> None:
     module = qos_module()
     plan = with_guest(module, edited=True)
     original = new_segment_entry("QOS", identity(GUEST))["rules"][0]["name"]
@@ -74,7 +74,7 @@ def test_a_lost_added_segment_is_redone_as_an_add_with_its_edits():
     assert error.not_redone() == ()
 
 
-def test_a_lost_added_segment_with_no_edits_is_a_bare_add():
+def test_a_lost_added_segment_with_no_edits_is_a_bare_add() -> None:
     module = qos_module()
     plan = with_guest(module)
     assert plan.changes == ()
@@ -85,7 +85,7 @@ def test_a_lost_added_segment_with_no_edits_is_a_bare_add():
     assert error.not_redone() == ()
 
 
-def test_a_lost_repaired_default_is_neither_redone_nor_listed():
+def test_a_lost_repaired_default_is_neither_redone_nor_listed() -> None:
     module = qos_module(with_defaults=False)
     plan = with_guest(module)
     (missing,) = [m for m in plan.missing_defaults if m.repaired]
@@ -102,7 +102,9 @@ def test_a_lost_repaired_default_is_neither_redone_nor_listed():
     assert error.not_redone() == ()
 
 
-def test_a_lost_repaired_default_of_a_list_that_held_some_is_not_redone_either():
+def test_a_lost_repaired_default_of_a_list_that_held_some_is_not_redone_either() -> (
+    None
+):
     kept = [
         entry
         for entry in qos_entry(GLOBAL)["defaults"]

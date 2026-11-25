@@ -37,7 +37,7 @@ class IntentError(Exception):
         attributes = dict(self.__dict__)
         if "__notes__" in attributes:
             # A shallow copy must not add its notes to this error's list.
-            attributes["__notes__"] = list(cast(list[str], attributes["__notes__"]))
+            attributes["__notes__"] = list(cast("list[str]", attributes["__notes__"]))
         return (_rebuild_error, (type(self), self.args), attributes)
 
 
@@ -61,8 +61,8 @@ class SaveValidationError(IntentError):
         summary = ", ".join(f"{e.path}: {e.message}" for e in self.errors)
         super().__init__(
             f"save blocked by {len(self.errors)} validator error(s): {summary}. "
-            + "Fix them and save again; a save with dry_run=True returns the "
-            + "errors without raising"
+            "Fix them and save again; a save with dry_run=True returns the "
+            "errors without raising"
         )
 
 
@@ -95,9 +95,9 @@ class LayerNotSavedError(IntentError):
             load = "load()"
         super().__init__(
             f"this state saves its {saved} layer only, and its {layer} layer "
-            + f"was edited: {edited}. Those edits are not saved. To change the "
-            + f"{layer}, load it with {load} and make the edits there. They are "
-            + "reported this once: the next plan or save goes ahead without them."
+            f"was edited: {edited}. Those edits are not saved. To change the "
+            f"{layer}, load it with {load} and make the edits there. They are "
+            "reported this once: the next plan or save goes ahead without them."
         )
 
 

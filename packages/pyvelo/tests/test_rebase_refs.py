@@ -84,7 +84,7 @@ def rebased(
     return onto, onto_plan
 
 
-def test_a_rebased_plan_adds_its_row_to_the_fresh_refs():
+def test_a_rebased_plan_adds_its_row_to_the_fresh_refs() -> None:
     row_b = qos_row(HUB_B, SERVICE_B_ID, SERVICE_B)
     module = qos_at(
         "q1",
@@ -115,7 +115,7 @@ def test_a_rebased_plan_adds_its_row_to_the_fresh_refs():
     assert onto_plan.data["serviceRateLimit"]["enabled"] is True
 
 
-def test_a_row_the_fresh_refs_hold_already_is_sent_once():
+def test_a_row_the_fresh_refs_hold_already_is_sent_once() -> None:
     row_a = qos_row(HUB_A, SERVICE_A_ID, SERVICE_A)
     module = qos_at("q1", [rule("r1"), rule("r2")], {OTHER_REF: OTHER_ROW})
     plan = planned(module, edited(module, r1=[backhaul_entry(HUB_A, SERVICE_A)]))
@@ -135,7 +135,7 @@ def test_a_row_the_fresh_refs_hold_already_is_sent_once():
     assert rows_of(onto_plan) == [row_a]
 
 
-def test_a_removal_of_a_row_that_is_already_gone_sends_no_clash():
+def test_a_removal_of_a_row_that_is_already_gone_sends_no_clash() -> None:
     row_a = qos_row(HUB_A, SERVICE_A_ID, SERVICE_A)
     module = qos_at(
         "q1",

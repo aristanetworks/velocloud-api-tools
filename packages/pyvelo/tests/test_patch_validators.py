@@ -97,7 +97,7 @@ def on() -> Flow:
 )
 def test_a_change_that_a_model_validator_refuses_raises_at_the_model(
     patch: dict[str, object], path: str
-):
+) -> None:
     site = Site(flow=on(), flows=[on()], by_name={"x": on()})
     dump = copy.deepcopy(site.model_dump())
     error = raises_at(site, patch, path)
@@ -144,7 +144,7 @@ def one_flow() -> VcoModel:
 )
 def test_a_refused_patch_leaves_the_model_alone(
     make: Callable[[], VcoModel], patch: dict[str, object]
-):
+) -> None:
     model = make()
     before = snapshot(model)
     with pytest.raises(PatchError):
@@ -152,14 +152,16 @@ def test_a_refused_patch_leaves_the_model_alone(
     assert snapshot(model) == before
 
 
-def test_a_model_validator_runs_on_the_model_merge_patch_is_called_on():
+def test_a_model_validator_runs_on_the_model_merge_patch_is_called_on() -> None:
     flow = on()
     error = raises_at(flow, {"collectors": []}, "")
     assert "a collector is required when enabled" in error.message
     assert flow.collectors == ["c"]
 
 
-def test_model_validators_see_the_whole_change_in_whatever_order_it_is_written():
+def test_model_validators_see_the_whole_change_in_whatever_order_it_is_written() -> (
+    None
+):
     site = Site(flow=on())
     _ = site.merge_patch({"flow": {"collectors": [], "enabled": False}})
     assert site.flow == Flow()
@@ -176,23 +178,24 @@ def test_model_validators_see_the_whole_change_in_whatever_order_it_is_written()
 )
 def test_a_change_cannot_move_an_item_to_another_type_of_its_union(
     patch: dict[str, object], path: str
-):
+) -> None:
     site = Site(ports=[Wired(name="GE1")], uplink=Wired(name="GE1"))
     error = raises_at(site, patch, path)
     assert "Wired" in error.message
     assert site.ports[0].name == "GE1"
-    assert site.uplink is not None and site.uplink.name == "GE1"
+    assert site.uplink is not None
+    assert site.uplink.name == "GE1"
     _ = site.merge_patch({"ports": {"GE1": {"name": "GE2"}}})
     assert site.ports[0].name == "GE2"
 
 
-def test_a_model_validator_that_rewrites_does_not_undo_the_patch():
+def test_a_model_validator_that_rewrites_does_not_undo_the_patch() -> None:
     site = Site()
     _ = site.merge_patch({"creds": {"user": "u"}})
     assert site.creds.user == "u"
 
 
-def test_an_item_of_the_second_list_type_of_a_field_can_be_changed():
+def test_an_item_of_the_second_list_type_of_a_field_can_be_changed() -> None:
     site = Site(spares=[Wireless(name="WLAN9", ssid="s")])
     _ = site.merge_patch({"spares": {at(0): {"ssid": "t"}}})
     assert site.spares == [Wireless(name="WLAN9", ssid="t")]
@@ -267,7 +270,7 @@ def unions() -> DeviceSettingsData:
 )
 def test_a_change_that_keeps_its_type_applies_to_each_routed_interface_type(
     name: str, kind: str
-):
+) -> None:
     data = unions()
     _ = data.merge_patch({"routed_interfaces": {name: {"disabled": True}}})
     assert data.routed_interfaces is not None
@@ -281,7 +284,7 @@ def test_a_change_that_keeps_its_type_applies_to_each_routed_interface_type(
 )
 def test_a_change_that_keeps_its_type_applies_to_each_nsd_route_type(
     position: int, kind: str
-):
+) -> None:
     data = unions()
     patch = {"routes": {"nsd": {at(position): {"cost": 9}}}}
     _ = data.merge_patch({"segments": {"Global Segment": patch}})
@@ -292,7 +295,7 @@ def test_a_change_that_keeps_its_type_applies_to_each_nsd_route_type(
     assert route.cost == 9
 
 
-def test_a_nested_union_field_can_be_changed_and_cannot_change_type():
+def test_a_nested_union_field_can_be_changed_and_cannot_change_type() -> None:
     data = unions()
     patch = {"SFP2": {"dsl_settings": {"properties": {"profile": "30a"}}}}
     _ = data.merge_patch({"routed_interfaces": patch})
@@ -314,7 +317,7 @@ class Dicty(VcoModel):
         return handler({**data, "v": data["v"]})
 
 
-def test_a_validator_that_takes_its_input_to_be_a_dict_raises_a_patch_error():
+def test_a_validator_that_takes_its_input_to_be_a_dict_raises_a_patch_error() -> None:
     dicty = Dicty.model_validate({"v": 1})
     error = raises_at(dicty, {"v": 2}, "")
     assert "a validator of Dicty failed" in error.message

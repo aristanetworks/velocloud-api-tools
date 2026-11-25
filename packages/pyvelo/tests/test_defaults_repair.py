@@ -65,7 +65,7 @@ def qos_module(
 def raw_of(
     module: QosConfigurationModule[Edge] | QosConfigurationModule[Profile],
 ) -> dict[str, Any]:
-    return cast(dict[str, Any], module.raw_data)
+    return cast("dict[str, Any]", module.raw_data)
 
 
 def edit_global(module: QosConfigurationModule[Profile]) -> None:
@@ -84,43 +84,44 @@ def names_of(rules: list[dict[str, Any]]) -> list[str]:
 # --- the pairing --------------------------------------------------------------
 
 
-def test_pair_defaults_of_a_complete_list():
+def test_pair_defaults_of_a_complete_list() -> None:
     pairing = pair_defaults(present(*DEFAULT_NAMES))
     assert (pairing.missing, pairing.unknown, pairing.clash) == ((), (), ())
 
 
-def test_pair_defaults_of_no_list_misses_all_four():
+def test_pair_defaults_of_no_list_misses_all_four() -> None:
     for defaults in (MISSING, None, []):
         pairing = pair_defaults(defaults)
         assert pairing.missing == DEFAULT_NAMES
         assert (pairing.unknown, pairing.clash) == ((), ())
 
 
-def test_pair_defaults_pairs_a_shared_match_one_to_one():
+def test_pair_defaults_pairs_a_shared_match_one_to_one() -> None:
     pairing = pair_defaults(present(ANY_UDP))
     assert pairing.missing == (INTERNET_UDP, INTERNET_OTHER, ANY_OTHER)
 
 
-def test_insert_defaults_places_each_after_its_nearest_earlier_pair():
+def test_insert_defaults_places_each_after_its_nearest_earlier_pair() -> None:
     items: list[object] = [*present(INTERNET_OTHER, ANY_OTHER)]
     added = [copy.deepcopy(TEMPLATE[name]) for name in (INTERNET_UDP, ANY_UDP)]
     placed = insert_defaults(items, added)
-    assert names_of(cast(list[dict[str, Any]], placed)) == [
+    assert names_of(cast("list[dict[str, Any]]", placed)) == [
         INTERNET_UDP,
         INTERNET_OTHER,
         ANY_UDP,
         ANY_OTHER,
     ]
-    assert placed[1] is items[0] and placed[3] is items[1]
+    assert placed[1] is items[0]
+    assert placed[3] is items[1]
     assert len(items) == 2  # the list given is unchanged
 
 
-def test_insert_defaults_into_no_list_gives_the_entries():
+def test_insert_defaults_into_no_list_gives_the_entries() -> None:
     entries = [copy.deepcopy(TEMPLATE[name]) for name in DEFAULT_NAMES]
     assert insert_defaults(None, entries) == entries
 
 
-def test_repaired_entry_is_the_template_entry_with_an_id_and_the_flag():
+def test_repaired_entry_is_the_template_entry_with_an_id_and_the_flag() -> None:
     entry = repaired_entry(ANY_UDP, "abc", None)
     assert entry == {**TEMPLATE[ANY_UDP], "ruleLogicalId": "abc"}
     assert "allowConditionalBh" not in entry["action"]
@@ -145,7 +146,7 @@ def check_repaired(plan: Any, names: list[str], *, written_as: list[str]) -> Non
     assert f"  repaired defaults: Guest: {', '.join(names)}" in plan.render()
 
 
-def test_a_segment_with_no_defaults_is_repaired_with_the_four():
+def test_a_segment_with_no_defaults_is_repaired_with_the_four() -> None:
     module = qos_module(MISSING)
     edit_global(module)
     plan = plan_module(module)
@@ -165,14 +166,14 @@ def test_a_segment_with_no_defaults_is_repaired_with_the_four():
     assert str(change.path).endswith(".name")
 
 
-def test_an_empty_list_is_repaired_with_the_four():
+def test_an_empty_list_is_repaired_with_the_four() -> None:
     module = qos_module([])
     edit_global(module)
     plan = plan_module(module)
     check_repaired(plan, list(DEFAULT_NAMES), written_as=list(DEFAULT_NAMES))
 
 
-def test_three_of_four_get_the_one_missing_in_its_place():
+def test_three_of_four_get_the_one_missing_in_its_place() -> None:
     kept = present(INTERNET_UDP, INTERNET_OTHER, ANY_OTHER)
     module = qos_module(kept)
     edit_global(module)
@@ -185,7 +186,7 @@ def test_three_of_four_get_the_one_missing_in_its_place():
     assert new["ruleLogicalId"] not in {rule["ruleLogicalId"] for rule in kept}
 
 
-def test_a_shared_match_pairs_one_to_one():
+def test_a_shared_match_pairs_one_to_one() -> None:
     kept = present(ANY_UDP)
     module = qos_module(kept)
     edit_global(module)
@@ -198,7 +199,7 @@ def test_a_shared_match_pairs_one_to_one():
     assert guest_defaults_of(plan.data)[2] == kept[0]
 
 
-def test_four_matches_under_other_names_are_not_repaired():
+def test_four_matches_under_other_names_are_not_repaired() -> None:
     others = present(INTERNET_UDP, INTERNET_OTHER, ANY_UDP, ANY_OTHER)
     for rule, name in zip(others, ("a", "b", "c", "d"), strict=True):
         rule["name"] = name
@@ -210,7 +211,7 @@ def test_four_matches_under_other_names_are_not_repaired():
     assert guest_defaults_of(plan.data) == others
 
 
-def test_an_unknown_item_leaves_the_list_alone():
+def test_an_unknown_item_leaves_the_list_alone() -> None:
     kept = present(INTERNET_UDP, INTERNET_OTHER, ANY_OTHER)
     extra = present(ANY_UDP)[0]
     extra["name"] = "Custom"
@@ -222,11 +223,12 @@ def test_an_unknown_item_leaves_the_list_alone():
     assert guest_defaults_of(plan.data) == kept
     (warning,) = plan.warnings
     assert (warning.code, warning.path) == ("defaults_not_template", GUEST_DEFAULTS)
-    assert "Guest" in warning.message and "Custom" in warning.message
+    assert "Guest" in warning.message
+    assert "Custom" in warning.message
     assert plan.missing_defaults == ()
 
 
-def test_a_repair_that_would_repeat_a_name_leaves_the_list_alone():
+def test_a_repair_that_would_repeat_a_name_leaves_the_list_alone() -> None:
     # Named like Any-Other, but it matches the UDP entries: it pairs with
     # Internet-UDP, and adding Any-Other would repeat its name.
     odd = present(ANY_OTHER)[0]
@@ -241,7 +243,7 @@ def test_a_repair_that_would_repeat_a_name_leaves_the_list_alone():
     assert plan.missing_defaults == ()
 
 
-def test_a_module_with_nothing_else_to_write_is_not_written():
+def test_a_module_with_nothing_else_to_write_is_not_written() -> None:
     module = qos_module(MISSING)
     plan = plan_module(module)
     assert plan.operation == "none"
@@ -257,7 +259,7 @@ def test_a_module_with_nothing_else_to_write_is_not_written():
     assert not any(line.startswith("  repaired defaults") for line in lines)
 
 
-def test_the_repaired_ids_are_the_same_on_a_re_plan_and_on_a_copy():
+def test_the_repaired_ids_are_the_same_on_a_re_plan_and_on_a_copy() -> None:
     module = qos_module(MISSING)
     edit_global(module)
     first = plan_module(module)
@@ -265,7 +267,7 @@ def test_the_repaired_ids_are_the_same_on_a_re_plan_and_on_a_copy():
     assert plan_module(copy.deepcopy(module)).data == first.data
 
 
-def test_with_data_parsed_from_does_not_share_the_repaired_ids():
+def test_with_data_parsed_from_does_not_share_the_repaired_ids() -> None:
     module = qos_module(MISSING)
     edit_global(module)
     first = plan_module(module)
@@ -279,7 +281,7 @@ def test_with_data_parsed_from_does_not_share_the_repaired_ids():
     assert first.missing_defaults  # the plan made before the copy is unchanged
 
 
-def test_allow_conditional_bh_follows_the_mapping():
+def test_allow_conditional_bh_follows_the_mapping() -> None:
     def repaired(mapping: dict[int, bool] | None) -> list[dict[str, Any]]:
         module = qos_module(MISSING)
         edit_global(module)
@@ -295,7 +297,7 @@ def test_allow_conditional_bh_follows_the_mapping():
         assert "allowConditionalBh" not in rule["action"]
 
 
-def test_repair_defaults_false_turns_the_repair_off_and_keeps_the_warning():
+def test_repair_defaults_false_turns_the_repair_off_and_keeps_the_warning() -> None:
     module = qos_module(MISSING)
     edit_global(module)
     plan = plan_module(module, repair_defaults=False)
@@ -310,7 +312,7 @@ def test_repair_defaults_false_turns_the_repair_off_and_keeps_the_warning():
     assert "  missing defaults: Guest" in plan.render()
 
 
-def test_carried_repairs_are_used_as_given():
+def test_carried_repairs_are_used_as_given() -> None:
     module = qos_module(MISSING)
     edit_global(module)
     carried = {
@@ -323,7 +325,7 @@ def test_carried_repairs_are_used_as_given():
     ]
 
 
-def test_the_edge_level_repairs_nothing():
+def test_the_edge_level_repairs_nothing() -> None:
     entry = qos_entry(GUEST, defaults=MISSING, rules=rules_of_template())
     del entry["cosMapping"]  # the template's is stored with its flag off
     row = make_module_json(
@@ -344,7 +346,7 @@ def test_the_edge_level_repairs_nothing():
 
 async def test_update_module_repairs_by_default_and_not_with_repair_defaults_false(
     mock_vco_client: MockVcoClientFactory,
-):
+) -> None:
     for repair in (True, False):
         module = qos_module(MISSING)
         store = store_of(module)
@@ -362,14 +364,16 @@ async def test_update_module_repairs_by_default_and_not_with_repair_defaults_fal
             assert "defaults" not in guest
 
 
-def test_added_defaults_are_placed_in_template_order_in_the_data_and_the_baseline():
+def test_added_defaults_are_placed_in_template_order_in_the_data_and_the_baseline() -> (
+    None
+):
     module = qos_module(present(INTERNET_OTHER, ANY_OTHER))
     added = [copy.deepcopy(TEMPLATE[name]) for name in (INTERNET_UDP, ANY_UDP)]
     for rule in added:
         rule["ruleLogicalId"] = str(uuid.uuid4())
     module.add_default_entries(GUEST_ID, added)
     expected = [INTERNET_UDP, INTERNET_OTHER, ANY_UDP, ANY_OTHER]
-    parsed = cast(list[QosRule], module.data.segments[1].defaults)
+    parsed = cast("list[QosRule]", module.data.segments[1].defaults)
     assert [rule.name for rule in parsed] == expected
     plan = plan_module(module, via_pipeline=True)
     assert plan.changes == ()

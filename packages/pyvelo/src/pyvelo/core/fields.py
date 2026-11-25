@@ -311,7 +311,7 @@ NoneIsTrue = Lenient(_none_to_true)
 NoneIsZero = Lenient(_none_to_zero)
 
 
-def _audit(info: ValidationInfo, v: Any, reason: str):
+def _audit(info: ValidationInfo, v: Any, reason: str) -> None:
     ctx = info.context or {}
     audit = ctx.get("audit")
     if audit is None or not isinstance(audit, list):
@@ -332,7 +332,7 @@ def DefaultingModel[T](
     *,
     default_factory: Callable[..., Any] | None = None,
 ) -> BeforeValidator:
-    adapter: TypeAdapter[Any] = TypeAdapter(cast(Any, model_type))
+    adapter: TypeAdapter[Any] = TypeAdapter(cast("Any", model_type))
 
     if default_factory is None:
         default_factory = model_type  # pyright: ignore[reportAssignmentType]  # ty: ignore[invalid-assignment]
@@ -387,7 +387,7 @@ class Alias:
 
     __slots__: ClassVar[tuple[str, ...]] = ("key",)
 
-    def __init__(self, key: str):
+    def __init__(self, key: str) -> None:
         self.key: str = key
 
 
@@ -471,7 +471,7 @@ class Normalizer:
 
     __slots__: ClassVar[tuple[str, ...]] = ("fn",)
 
-    def __init__(self, fn: Callable[..., Any]):
+    def __init__(self, fn: Callable[..., Any]) -> None:
         self.fn: Callable[..., Any] = fn
 
 
@@ -480,7 +480,9 @@ class ContextDefault:
 
     __slots__: ClassVar[tuple[str, ...]] = ("edge", "profile")
 
-    def __init__(self, *, edge: Any = CONTEXT_NOT_SET, profile: Any = CONTEXT_NOT_SET):
+    def __init__(
+        self, *, edge: Any = CONTEXT_NOT_SET, profile: Any = CONTEXT_NOT_SET
+    ) -> None:
         self.edge: Any = edge
         self.profile: Any = profile
 
@@ -759,7 +761,7 @@ class OwnsRef:
             if self.by not in field_names:
                 raise TypeError(
                     f"{self.identity.__name__} has no field '{self.by}'. "
-                    + f"Available: {', '.join(sorted(field_names))}"
+                    f"Available: {', '.join(sorted(field_names))}"
                 )
 
 

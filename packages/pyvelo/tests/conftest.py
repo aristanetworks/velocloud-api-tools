@@ -31,16 +31,16 @@ __all__ = [
 @pytest.fixture
 def json_rpc_response() -> JsonRpcResponseFactory:
     """Factory fixture for JSON-RPC responses."""
-    return cast(JsonRpcResponseFactory, make_jsonrpc_response)
+    return cast("JsonRpcResponseFactory", make_jsonrpc_response)
 
 
 @pytest.fixture
 def make_segment_resolver() -> SegmentResolverFactory:
     """Factory fixture for building SegmentResolver from fake segment dicts."""
-    return cast(SegmentResolverFactory, _make_segment_resolver)
+    return cast("SegmentResolverFactory", _make_segment_resolver)
 
 
 @pytest.fixture
 async def mock_vco_client() -> MockVcoClientFactory:
     """Factory that creates a VcoClient backed by a MockTransport."""
-    return cast(MockVcoClientFactory, mock_vco_client_factory())
+    return cast("MockVcoClientFactory", mock_vco_client_factory())

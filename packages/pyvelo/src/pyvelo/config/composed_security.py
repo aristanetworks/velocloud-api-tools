@@ -87,7 +87,7 @@ SECURITY_OBJECT_TYPES: tuple[SecurityObjectType, ...] = (
 
 UNRESOLVED = (
     "the rule's security service group, or an object it names, "
-    + "is not among the enterprise's security objects"
+    "is not among the enterprise's security objects"
 )
 
 

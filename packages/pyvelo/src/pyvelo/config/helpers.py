@@ -25,25 +25,25 @@ class _UniqueKeyLoader(yaml.SafeLoader):
         if node is None:
             return None
         self._refuse_repeated_keys(node, set())
-        return cast(object, self.construct_document(node))  # pyright: ignore[reportUnknownMemberType]
+        return cast("object", self.construct_document(node))  # pyright: ignore[reportUnknownMemberType]
 
     def _refuse_repeated_keys(self, node: yaml.Node, visited: set[int]) -> None:
         if id(node) in visited:
             return
         visited.add(id(node))
         if isinstance(node, yaml.SequenceNode):
-            for item in cast(list[yaml.Node], node.value):
+            for item in cast("list[yaml.Node]", node.value):
                 self._refuse_repeated_keys(item, visited)
         elif isinstance(node, yaml.MappingNode):
             seen: set[object] = set()
             for key_node, value_node in cast(
-                list[tuple[yaml.Node, yaml.Node]], node.value
+                "list[tuple[yaml.Node, yaml.Node]]", node.value
             ):
                 self._refuse_repeated_keys(value_node, visited)
                 if key_node.tag == "tag:yaml.org,2002:merge":
                     continue
                 self._refuse_repeated_keys(key_node, visited)
-                key = cast(object, self.construct_object(key_node, deep=True))  # pyright: ignore[reportUnknownMemberType]
+                key = cast("object", self.construct_object(key_node, deep=True))  # pyright: ignore[reportUnknownMemberType]
                 if isinstance(key, Hashable) and key in seen:
                     raise yaml.constructor.ConstructorError(
                         None,
@@ -68,7 +68,7 @@ def load_config[T: BaseModel](path: str | Path, model: type[T]) -> T:
     """
     with open(path) as f:
         try:
-            data = cast(object, yaml.load(f, Loader=_UniqueKeyLoader))
+            data = cast("object", yaml.load(f, Loader=_UniqueKeyLoader))
         except yaml.YAMLError as error:
             raise ConfigInputError(f"{path}: not valid YAML: {error}") from error
     try:

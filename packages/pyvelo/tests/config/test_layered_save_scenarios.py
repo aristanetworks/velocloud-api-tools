@@ -59,7 +59,7 @@ def global_segment(*rules: dict[str, Any]) -> dict[str, Any]:
     return {"segment": desc(0, "Global Segment"), "outbound": list(rules)}
 
 
-async def test_inherited_section_survives_unrelated_edit():
+async def test_inherited_section_survives_unrelated_edit() -> None:
     raw: dict[str, Any] = {
         "segments": [global_segment()],
         "syslog_forwarding": False,
@@ -76,7 +76,7 @@ async def test_inherited_section_survives_unrelated_edit():
     assert "stateful_firewall_enabled" not in payload
 
 
-async def test_explicit_local_false_survives():
+async def test_explicit_local_false_survives() -> None:
     raw: dict[str, Any] = {"segments": [global_segment()], "syslog_forwarding": False}
     state = edge_state(raw)
     client = MockVcoClient.for_state(state)
@@ -88,7 +88,7 @@ async def test_explicit_local_false_survives():
     assert payload["syslog_forwarding"] is False
 
 
-async def test_snake_case_logging_key_is_edited_in_place():
+async def test_snake_case_logging_key_is_edited_in_place() -> None:
     raw: dict[str, Any] = {
         "segments": [global_segment()],
         "firewall_logging_enabled": False,
@@ -104,7 +104,7 @@ async def test_snake_case_logging_key_is_edited_in_place():
     assert "firewallLoggingEnabled" not in payload
 
 
-async def test_edge_rules_add_delete_reorder():
+async def test_edge_rules_add_delete_reorder() -> None:
     raw: dict[str, Any] = {
         "segments": [global_segment(rule("a", keep=1), rule("b", keep=2))]
     }
@@ -135,7 +135,7 @@ async def test_edge_rules_add_delete_reorder():
     assert "allow-all" not in str(payload)  # the profile's rule is not copied in
 
 
-async def test_missing_module_insert_has_only_local_content():
+async def test_missing_module_insert_has_only_local_content() -> None:
     state = make_state(edge_modules=[])
     client = MockVcoClient.for_state(state)
     await ConfigPipeline(client).apply(
@@ -164,7 +164,7 @@ async def test_missing_module_insert_has_only_local_content():
     assert "allow-all" not in str(req.data)
 
 
-async def test_segment_key_in_another_case_edits_the_segment_it_names():
+async def test_segment_key_in_another_case_edits_the_segment_it_names() -> None:
     state = make_state()
     client = MockVcoClient.for_state(state)
     state.resolvers = await segment_resolvers()
@@ -187,7 +187,7 @@ async def test_segment_key_in_another_case_edits_the_segment_it_names():
 @pytest.mark.parametrize("with_resolver", [False, True])
 async def test_new_segment_by_name_takes_the_profiles_descriptor(
     key: str, with_resolver: bool
-):
+) -> None:
     state = make_state()
     client = MockVcoClient.for_state(state)
     if with_resolver:
@@ -207,7 +207,7 @@ async def test_new_segment_by_name_takes_the_profiles_descriptor(
     assert [r["name"] for r in segments[1]["outbound"]] == ["x"]
 
 
-async def test_segment_the_profile_lacks_is_refused_without_a_resolver():
+async def test_segment_the_profile_lacks_is_refused_without_a_resolver() -> None:
     client, state = MockVcoClient(), make_state()
     pipeline = ConfigPipeline(client)
     with pytest.raises(LookupError, match="Nowhere"):
@@ -219,7 +219,7 @@ async def test_segment_the_profile_lacks_is_refused_without_a_resolver():
     assert client.calls == []
 
 
-async def test_a_patch_that_names_one_segment_twice_is_refused():
+async def test_a_patch_that_names_one_segment_twice_is_refused() -> None:
     state = make_state()
     with pytest.raises(PatchError, match="Guest"):
         await ConfigPipeline(MockVcoClient()).apply(
@@ -229,7 +229,7 @@ async def test_a_patch_that_names_one_segment_twice_is_refused():
         )
 
 
-async def test_deleting_an_edge_segment_the_profile_has_leaves_an_empty_one():
+async def test_deleting_an_edge_segment_the_profile_has_leaves_an_empty_one() -> None:
     raw: dict[str, Any] = {
         "segments": [
             global_segment(),
@@ -249,7 +249,7 @@ async def test_deleting_an_edge_segment_the_profile_has_leaves_an_empty_one():
     ]
 
 
-async def test_setting_a_default_on_a_key_the_edge_lacks_is_refused():
+async def test_setting_a_default_on_a_key_the_edge_lacks_is_refused() -> None:
     raw: dict[str, Any] = {"segments": [global_segment()]}
     state = edge_state(raw)
     client = MockVcoClient.for_state(state)
@@ -260,7 +260,7 @@ async def test_setting_a_default_on_a_key_the_edge_lacks_is_refused():
     assert client.calls == []
 
 
-async def test_setting_one_member_of_an_inherited_group_is_refused_at_once():
+async def test_setting_one_member_of_an_inherited_group_is_refused_at_once() -> None:
     raw: dict[str, Any] = {"segments": [global_segment()]}
     state = edge_state(raw)
     with pytest.raises(GroupOwnershipError, match="atp"):
@@ -286,7 +286,7 @@ def profile_client(raw: dict[str, Any] = PROFILE_FW) -> MockVcoClient:
     )
 
 
-async def test_edit_to_a_section_the_edge_dump_omits_is_refused():
+async def test_edit_to_a_section_the_edge_dump_omits_is_refused() -> None:
     raw: dict[str, Any] = {
         "lan": {"networks": [], "interfaces": []},
         "segments": [{"segment": desc(0, "Global Segment")}],
@@ -304,7 +304,7 @@ async def test_edit_to_a_section_the_edge_dump_omits_is_refused():
     assert client.calls == []
 
 
-async def test_profile_target_save():
+async def test_profile_target_save() -> None:
     client = profile_client()
     state = await ConfigPipeline(client).load_profile(20)
     state.profile.firewall.firewall_enabled = False
@@ -315,7 +315,7 @@ async def test_profile_target_save():
     assert client.insert_requests == []
 
 
-async def test_profile_target_apply_adds_a_rule():
+async def test_profile_target_apply_adds_a_rule() -> None:
     client = profile_client()
     pipeline = ConfigPipeline(client)
     state = await pipeline.load_profile(20)
@@ -341,7 +341,7 @@ async def test_profile_target_apply_adds_a_rule():
     assert req.update.data["segments"][1] == PROFILE_FW["segments"][1]
 
 
-async def test_dry_run_reports_the_plan():
+async def test_dry_run_reports_the_plan() -> None:
     client, state = MockVcoClient(), make_state()
     state.edge.firewall.firewall_enabled.set_local(False)
     result = await ConfigPipeline(client).save(state, dry_run=True)
@@ -381,7 +381,7 @@ def state_over_profile_with_services(
     return state
 
 
-async def test_a_loaded_edge_localizes_from_the_profiles_firewall_data():
+async def test_a_loaded_edge_localizes_from_the_profiles_firewall_data() -> None:
     state = state_over_profile_with_services(
         [
             make_module_json(
@@ -400,7 +400,7 @@ async def test_a_loaded_edge_localizes_from_the_profiles_firewall_data():
     assert [str(c.path) for c in plan.changes] == ["services"]
 
 
-async def test_a_created_module_localizes_from_the_profiles_firewall_data():
+async def test_a_created_module_localizes_from_the_profiles_firewall_data() -> None:
     state = state_over_profile_with_services([])
     client = MockVcoClient.for_state(state)
     await ConfigPipeline(client).apply(
@@ -414,7 +414,7 @@ async def test_a_created_module_localizes_from_the_profiles_firewall_data():
     assert services["ssh"]["enabled"] is False
 
 
-async def test_a_replaced_module_localizes_from_the_profiles_firewall_data():
+async def test_a_replaced_module_localizes_from_the_profiles_firewall_data() -> None:
     row = make_module_json(
         "firewall",
         {"segments": [global_segment()]},

@@ -73,17 +73,17 @@ def _make_state(modules: list[AnyConfigurationModule[Profile]]) -> ConfigState:
 
 
 class TestValidationResult:
-    def test_empty_is_valid(self):
+    def test_empty_is_valid(self) -> None:
         r = ValidationResult()
         assert r.is_valid is True
 
-    def test_with_errors_is_invalid(self):
+    def test_with_errors_is_invalid(self) -> None:
         r = ValidationResult(
             errors=[ValidationError(path="x", message="bad", code="err")]
         )
         assert r.is_valid is False
 
-    def test_with_only_warnings_is_valid(self):
+    def test_with_only_warnings_is_valid(self) -> None:
         r = ValidationResult(
             warnings=[
                 ValidationError(path="x", message="warn", code="w", severity="warning")
@@ -91,7 +91,7 @@ class TestValidationResult:
         )
         assert r.is_valid is True
 
-    def test_merge(self):
+    def test_merge(self) -> None:
         r1 = ValidationResult(errors=[ValidationError(path="a", message="a", code="a")])
         r2 = ValidationResult(
             errors=[ValidationError(path="b", message="b", code="b")],
@@ -108,7 +108,7 @@ class TestValidationResult:
 
 
 class TestValidatorRegistry:
-    def test_register_and_run(self):
+    def test_register_and_run(self) -> None:
         registry = ValidatorRegistry()
 
         @validator(
@@ -124,7 +124,7 @@ class TestValidatorRegistry:
         result = registry.run(state, phase="write")
         assert len(result.errors) == 1
 
-    def test_phase_filtering(self):
+    def test_phase_filtering(self) -> None:
         registry = ValidatorRegistry()
 
         @validator(
@@ -157,7 +157,7 @@ class TestValidatorRegistry:
         assert len(result.errors) == 1
         assert result.errors[0].path == "r"
 
-    def test_module_filtering(self):
+    def test_module_filtering(self) -> None:
         registry = ValidatorRegistry()
 
         @validator(
@@ -194,7 +194,7 @@ class TestValidatorRegistry:
         assert len(result.errors) == 1
         assert result.errors[0].path == "qos"
 
-    def test_multi_module_validator(self):
+    def test_multi_module_validator(self) -> None:
         registry = ValidatorRegistry()
 
         @validator(
@@ -230,7 +230,7 @@ class TestValidatorRegistry:
         )
         assert len(result.errors) == 0
 
-    def test_no_module_filter_runs_all(self):
+    def test_no_module_filter_runs_all(self) -> None:
         registry = ValidatorRegistry()
 
         @validator(
@@ -260,7 +260,7 @@ class TestValidatorRegistry:
 
 
 class TestPipelineValidation:
-    def test_validate_standalone(self):
+    def test_validate_standalone(self) -> None:
         registry = ValidatorRegistry()
 
         @validator(
@@ -278,7 +278,7 @@ class TestPipelineValidation:
         assert not result.is_valid
         assert len(result.errors) == 1
 
-    def test_build_default_pipeline_takes_validators(self):
+    def test_build_default_pipeline_takes_validators(self) -> None:
         registry = ValidatorRegistry()
 
         @validator(modules=[], phases=["write"], registry=registry)
@@ -294,7 +294,7 @@ class TestPipelineValidation:
         # The name resolvers are still registered.
         assert isinstance(pipeline.resolvers.get_resolver(EdgeResolver), EdgeResolver)
 
-    def test_validators_are_registered_on_a_pipeline_after_it_is_built(self):
+    def test_validators_are_registered_on_a_pipeline_after_it_is_built(self) -> None:
         pipeline = build_default_pipeline(MockVcoClient())
         assert pipeline.validate(_make_state([])).is_valid
 
@@ -308,7 +308,7 @@ class TestPipelineValidation:
         assert [e.code for e in pipeline.validate(_make_state([])).errors] == ["test"]
 
     @pytest.mark.anyio
-    async def test_a_default_pipeline_save_is_blocked_by_its_validators(self):
+    async def test_a_default_pipeline_save_is_blocked_by_its_validators(self) -> None:
         pipeline = build_default_pipeline(MockVcoClient())
 
         @validator(modules=[], phases=["write"], registry=pipeline.validators)
@@ -335,7 +335,7 @@ class TestPipelineValidation:
         assert [e.code for e in dry.validation_errors] == ["test"]
 
     @pytest.mark.anyio
-    async def test_save_blocked_by_validation_errors(self):
+    async def test_save_blocked_by_validation_errors(self) -> None:
         registry = ValidatorRegistry()
 
         @validator(modules=[], phases=["write"], registry=registry)
@@ -369,7 +369,7 @@ class TestPipelineValidation:
         assert result.modules_updated == ["firewall"]
 
     @pytest.mark.anyio
-    async def test_save_with_validation_disabled(self):
+    async def test_save_with_validation_disabled(self) -> None:
         registry = ValidatorRegistry()
 
         @validator(modules=[], phases=["write"], registry=registry)
@@ -398,7 +398,7 @@ class TestPipelineValidation:
         assert result.modules_updated == ["firewall"]
 
 
-def test_a_save_validation_error_says_what_to_do():
+def test_a_save_validation_error_says_what_to_do() -> None:
     error = SaveValidationError([ValidationError("a.b", "too long", "too_long")])
     message = str(error)
     assert message.startswith("save blocked by 1 validator error(s): a.b: too long")

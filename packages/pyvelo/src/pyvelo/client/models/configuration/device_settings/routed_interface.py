@@ -28,7 +28,7 @@ from pyvelo.core import (
 from pyvelo.core.fields import Lenient, RefersTo
 from pyvelo.core.identity import SegmentIdentity
 
-from ..common import OverlayAddressPreferenceType
+from pyvelo.client.models.configuration.common import OverlayAddressPreferenceType
 from .common import (
     DhcpServerOption,
     InterfaceL2,
@@ -396,11 +396,11 @@ def _routed_interface_discriminator(v: Any) -> str:
         prefix = name.rstrip("0123456789")
         if prefix == "LAG":
             return "lag"
-        elif prefix == "SFP":
+        if prefix == "SFP":
             return _sfp_discriminator(v)
-        elif prefix in ("CELL", "CELL_"):
+        if prefix in ("CELL", "CELL_"):
             return "cell"
-        elif prefix == "USB":
+        if prefix == "USB":
             return "usb"
     return "ge"
 

@@ -92,7 +92,7 @@ def row(raw: dict[str, Any], *, module_id: int = 1, configuration_id: int = 10):
 # --- a stack parses each layer into its class -----------------------------
 
 
-def test_a_stack_parses_each_layer_into_its_class():
+def test_a_stack_parses_each_layer_into_its_class() -> None:
     edge = EdgeConfiguration.model_validate(
         {"name": "Edge Specific Profile", "modules": [row(EDGE_RAW)]}
     )
@@ -117,7 +117,7 @@ def test_a_stack_parses_each_layer_into_its_class():
     assert profile.firewall.data.segments[1].config_context is PROFILE
 
 
-def test_a_module_list_is_of_the_layer_it_is_parametrized_with():
+def test_a_module_list_is_of_the_layer_it_is_parametrized_with() -> None:
     rows = [row(EDGE_RAW)]
     text = json.dumps(rows)
     edge = ConfigurationModuleList[Edge]
@@ -137,7 +137,7 @@ def test_a_module_list_is_of_the_layer_it_is_parametrized_with():
     )
 
 
-def test_new_edge_module_is_an_edge_firewall_module():
+def test_new_edge_module_is_an_edge_firewall_module() -> None:
     module = new_edge_module(ConfigurationModuleName.FIREWALL, 10)
     assert type(module) is FirewallConfigurationModule[Edge]
     assert type(module.data) is FirewallData[Edge]
@@ -145,7 +145,7 @@ def test_new_edge_module_is_an_edge_firewall_module():
     assert module.config_context is EDGE
 
 
-def test_an_unparametrized_firewall_module_does_not_validate():
+def test_an_unparametrized_firewall_module_does_not_validate() -> None:
     with pytest.raises(TypeError, match=r"FirewallData\[Edge\] or FirewallData\[Prof"):
         _ = FirewallConfigurationModule.model_validate(row(EDGE_RAW))
     with pytest.raises(TypeError, match="parametrize"):
@@ -154,7 +154,7 @@ def test_an_unparametrized_firewall_module_does_not_validate():
         _ = FirewallData.model_validate({"segments": []})
 
 
-def test_the_classes_of_a_layer_pickle():
+def test_the_classes_of_a_layer_pickle() -> None:
     module = FirewallConfigurationModule[Profile].model_validate(
         row(PROFILE_RAW, module_id=2)
     )
@@ -180,7 +180,7 @@ async def test_get_configuration_validates_into_the_layer_it_learns(
     name: str,
     config_class: type,
     layer: type,
-):
+) -> None:
     store = ModuleStore()
     store.add_configuration(
         {"id": 10, "name": name, "modules": [row(EDGE_RAW, configuration_id=10)]}
@@ -201,7 +201,7 @@ async def test_get_configuration_validates_into_the_layer_it_learns(
 
 async def test_get_configuration_modules_needs_the_layer(
     mock_vco_client: MockVcoClientFactory,
-):
+) -> None:
     store = ModuleStore()
     store.add_configuration({"id": 10, "name": "Default Profile"})
     store.rows[1] = row(PROFILE_RAW)
@@ -220,7 +220,7 @@ async def test_get_configuration_modules_needs_the_layer(
 
 async def test_a_firewall_insert_that_asks_for_its_row_names_the_layer_before_it_is_sent(
     mock_vco_client: MockVcoClientFactory,
-):
+) -> None:
     store = ModuleStore()
     store.add_configuration({"id": 10, "name": "Default Profile"})
     client = await mock_vco_client(store)
@@ -238,7 +238,7 @@ async def test_a_firewall_insert_that_asks_for_its_row_names_the_layer_before_it
 
 async def test_an_update_answered_with_a_firewall_row_names_the_layer(
     mock_vco_client: MockVcoClientFactory,
-):
+) -> None:
     store = ModuleStore()
     store.add_configuration({"id": 10, "name": "Default Profile"})
     store.rows[1] = row(PROFILE_RAW)
@@ -266,7 +266,7 @@ async def test_an_update_answered_with_a_firewall_row_names_the_layer(
 
 async def test_a_write_that_does_not_ask_for_its_row_needs_no_layer(
     mock_vco_client: MockVcoClientFactory,
-):
+) -> None:
     store = ModuleStore()
     store.add_configuration({"id": 10, "name": "Default Profile"})
     client = await mock_vco_client(store)
@@ -296,7 +296,7 @@ def composed_response() -> dict[str, Any]:
     }
 
 
-def test_the_composed_read_is_typed_composed():
+def test_the_composed_read_is_typed_composed() -> None:
     for result in (
         EdgeConfigurationModulesResult.model_validate(composed_response()),
         EdgeConfigurationModulesResult.model_validate_json(
@@ -313,7 +313,7 @@ def test_the_composed_read_is_typed_composed():
         assert not hasattr(firewall.data, "future_key")
 
 
-def test_a_composed_module_cannot_be_edited():
+def test_a_composed_module_cannot_be_edited() -> None:
     result = EdgeConfigurationModulesResult.model_validate(composed_response())
     firewall = require_present(result.firewall)
     assert isinstance(firewall, CompositeFirewallModule)
@@ -321,7 +321,7 @@ def test_a_composed_module_cannot_be_edited():
         firewall.data.firewall_enabled = False
 
 
-def test_the_raw_data_of_a_composed_module_shares_nothing_with_the_input():
+def test_the_raw_data_of_a_composed_module_shares_nothing_with_the_input() -> None:
     response = composed_response()
     result = EdgeConfigurationModulesResult.model_validate(response)
     response["firewall"]["data"]["futureKey"]["kept"].clear()
@@ -330,7 +330,7 @@ def test_the_raw_data_of_a_composed_module_shares_nothing_with_the_input():
     assert firewall.raw_data == COMPOSED
 
 
-def test_the_composed_read_asks_for_encrypted_keys_only_when_told_to():
+def test_the_composed_read_asks_for_encrypted_keys_only_when_told_to() -> None:
     plain = GetEdgeConfigurationModules(edge_id=1)
     assert plain.encrypt_keys is MISSING
     assert "encryptKeys" not in plain.model_dump(by_alias=True, mode="json")
@@ -387,7 +387,7 @@ async def test_a_firewall_save_is_unchanged(
     edit: Any,
     paths: list[str],
     sent: dict[str, Any] | None,
-):
+) -> None:
     level = EDGE if layer is Edge else PROFILE
     module = FirewallConfigurationModule[layer].model_validate(row(raw))
     edit(module)
@@ -436,7 +436,7 @@ def qos_row(*, module_id: int = 3, configuration_id: int = 10) -> dict[str, Any]
     )
 
 
-def test_a_qos_row_is_typed_by_its_layer():
+def test_a_qos_row_is_typed_by_its_layer() -> None:
     edge = EdgeConfiguration.model_validate(
         {"name": "Edge Specific Profile", "modules": [qos_row()]}
     )
@@ -477,7 +477,7 @@ def test_a_qos_row_is_typed_by_its_layer():
         _ = QosConfigurationModule.model_validate(qos_row())
 
 
-def test_new_edge_module_is_an_edge_qos_module():
+def test_new_edge_module_is_an_edge_qos_module() -> None:
     module = new_edge_module(ConfigurationModuleName.QOS, 10)
     assert type(module) is QosConfigurationModule[Edge]
     assert type(module.data) is QosData[Edge]
@@ -485,7 +485,7 @@ def test_new_edge_module_is_an_edge_qos_module():
     assert module.config_context is EDGE
 
 
-def test_a_qos_segment_made_by_the_data_is_of_its_layer():
+def test_a_qos_segment_made_by_the_data_is_of_its_layer() -> None:
     guest = {"segments": [{"segment": desc(2, "Guest")}]}
     edge = QosData[Edge].model_validate({"segments": []})
     edge.bind_profile(guest)
@@ -500,7 +500,7 @@ def test_a_qos_segment_made_by_the_data_is_of_its_layer():
     assert profile.get_segment(name="Guest") is made_for_the_profile
 
 
-def test_a_qos_module_planned_at_each_layer_writes_the_raw_data():
+def test_a_qos_module_planned_at_each_layer_writes_the_raw_data() -> None:
     edge = QosConfigurationModule[Edge].model_validate(qos_row())
     assert plan_module(edge, level=EDGE).operation == "none"
     profile = QosConfigurationModule[Profile].model_validate(qos_row())

@@ -723,13 +723,13 @@ def _is_empty_entry(entry: object) -> bool:
     """
     if not isinstance(entry, dict):
         return False
-    fields = cast(dict[str, object], entry)
+    fields = cast("dict[str, object]", entry)
     if set(fields) - {SEGMENT_DRIFT_KEY} != {"segment", "routes"}:
         return False
     routes = fields["routes"]
     return isinstance(routes, dict) and all(
         isinstance(value, list) and not value
-        for value in cast(dict[str, object], routes).values()
+        for value in cast("dict[str, object]", routes).values()
     )
 
 
@@ -737,7 +737,8 @@ def _empty_shared_segments(
     edge: dict[str, Any], profile: dict[str, Any]
 ) -> list[object]:
     """The IDs of the segments, other than the Global one, that both layers have and
-    whose entry on the edge is empty (``_is_empty_entry``)."""
+    whose entry on the edge is empty (``_is_empty_entry``).
+    """
     in_profile = [_segment_id(s) for s in profile.get("segments") or []]
     return [
         found

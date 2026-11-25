@@ -14,7 +14,7 @@ from ._type_support import JsonObject, require_present
 def _schema_object(value: object) -> JsonObject:
     if not isinstance(value, dict):
         raise TypeError("expected a JSON object")
-    return cast(JsonObject, value)
+    return cast("JsonObject", value)
 
 
 def _property_description(schema: JsonObject, field: str) -> str:
@@ -27,11 +27,11 @@ def _property_description(schema: JsonObject, field: str) -> str:
 
 
 class TestFlowVisibilitySortOrder:
-    def test_sort_order_field_in_schema(self):
+    def test_sort_order_field_in_schema(self) -> None:
         schema = GetEdgeFlowVisibilityMetrics.model_json_schema()
         assert "sortOrder" in schema["properties"]
 
-    def test_sort_order_round_trip(self):
+    def test_sort_order_round_trip(self) -> None:
         obj = GetEdgeFlowVisibilityMetrics.model_validate(
             {
                 "edgeId": 1,
@@ -43,18 +43,18 @@ class TestFlowVisibilitySortOrder:
         assert obj.sort == FlowVisibilityMetric.TOTAL_BYTES
         assert obj.sort_order == SortDirection.DESC
 
-    def test_sort_description_mentions_sort_order(self):
-        schema = cast(JsonObject, GetEdgeFlowVisibilityMetrics.model_json_schema())
+    def test_sort_description_mentions_sort_order(self) -> None:
+        schema = cast("JsonObject", GetEdgeFlowVisibilityMetrics.model_json_schema())
         desc = _property_description(schema, "sort")
         assert "sortOrder" in desc
 
-    def test_sort_by_description_guides_to_sort(self):
-        schema = cast(JsonObject, GetEdgeFlowVisibilityMetrics.model_json_schema())
+    def test_sort_by_description_guides_to_sort(self) -> None:
+        schema = cast("JsonObject", GetEdgeFlowVisibilityMetrics.model_json_schema())
         desc = _property_description(schema, "sortBy")
         assert "attribute" in desc
         assert "sort" in desc.lower()
 
-    def test_sort_by_round_trip(self):
+    def test_sort_by_round_trip(self) -> None:
         obj = GetEdgeFlowVisibilityMetrics.model_validate(
             {
                 "edgeId": 1,

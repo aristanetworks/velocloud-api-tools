@@ -50,7 +50,7 @@ def failing_registry() -> ValidatorRegistry:
     return registry
 
 
-async def test_a_save_blocked_by_a_validator_raises_and_sends_nothing():
+async def test_a_save_blocked_by_a_validator_raises_and_sends_nothing() -> None:
     state = make_state()
     client = MockVcoClient.for_state(state)
     pipeline = ConfigPipeline(client, validator_registry=failing_registry())
@@ -67,7 +67,9 @@ async def test_a_save_blocked_by_a_validator_raises_and_sends_nothing():
     assert save_progress(exc.value) is None  # nothing was sent
 
 
-async def test_a_dry_run_returns_the_validator_errors_with_what_it_would_write():
+async def test_a_dry_run_returns_the_validator_errors_with_what_it_would_write() -> (
+    None
+):
     state = make_state()
     client = MockVcoClient.for_state(state)
     pipeline = ConfigPipeline(client, validator_registry=failing_registry())
@@ -83,7 +85,7 @@ async def test_a_dry_run_returns_the_validator_errors_with_what_it_would_write()
         result.raise_for_errors()
 
 
-async def test_the_result_says_whether_it_was_a_dry_run_and_what_was_written():
+async def test_the_result_says_whether_it_was_a_dry_run_and_what_was_written() -> None:
     state = three_module_state()
     client = MockVcoClient.for_state(state)
     pipeline = ConfigPipeline(client)
@@ -102,7 +104,7 @@ async def test_the_result_says_whether_it_was_a_dry_run_and_what_was_written():
     assert result.modules_updated == [FIREWALL]
 
 
-async def test_a_request_error_carries_what_was_written_and_what_was_not():
+async def test_a_request_error_carries_what_was_written_and_what_was_not() -> None:
     state = three_module_state()
     client = MockVcoClient.for_state(state)
     client.store.fail_writes = {2}
@@ -122,7 +124,7 @@ async def test_a_request_error_carries_what_was_written_and_what_was_not():
     assert changed(state) == ["QOS", "WAN"]
 
 
-async def test_a_write_error_carries_the_same_and_keeps_completed():
+async def test_a_write_error_carries_the_same_and_keeps_completed() -> None:
     state = three_module_state()
     client = MockVcoClient.for_state(state)
     client.store.other_writer(4, lambda row: row["data"].update(futureKey=1))
@@ -138,7 +140,7 @@ async def test_a_write_error_carries_the_same_and_keeps_completed():
     assert (progress.failed, progress.pending) == ("QOS", ("WAN",))
 
 
-async def test_a_cancelled_save_carries_them_too():
+async def test_a_cancelled_save_carries_them_too() -> None:
     state = three_module_state()
     client = Gated.over(state)
     edit_all(state)
@@ -158,7 +160,7 @@ async def test_a_cancelled_save_carries_them_too():
     )
 
 
-async def test_a_timeout_around_a_save_leads_to_the_same_progress():
+async def test_a_timeout_around_a_save_leads_to_the_same_progress() -> None:
     state = three_module_state()
     client = Gated.over(state)
     edit_all(state)
@@ -172,7 +174,7 @@ async def test_a_timeout_around_a_save_leads_to_the_same_progress():
     assert (progress.failed, progress.pending) == ("firewall", ("QOS", "WAN"))
 
 
-async def test_an_edit_during_the_save_counts_its_module_as_written():
+async def test_an_edit_during_the_save_counts_its_module_as_written() -> None:
     state = three_module_state()
     client = Gated.over(state)
     edit_all(state)
@@ -190,5 +192,5 @@ async def test_an_edit_during_the_save_counts_its_module_as_written():
     assert (progress.failed, progress.pending) == (None, ("QOS", "WAN"))
 
 
-def test_an_error_that_is_not_from_a_save_has_no_progress():
+def test_an_error_that_is_not_from_a_save_has_no_progress() -> None:
     assert save_progress(ValueError("not from a save")) is None

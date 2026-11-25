@@ -130,12 +130,12 @@ def owner_of(owners: tuple[RefOwner, ...], name: str) -> RefOwner:
 # --- the fill -------------------------------------------------------------
 
 
-def test_a_provider_is_filled_from_the_row_of_its_segment():
+def test_a_provider_is_filled_from_the_row_of_its_segment() -> None:
     module = primary_module()
     assert primary_of(module).service == UUID(DNS_A)
 
 
-def test_a_provider_is_filled_with_the_row_of_its_own_segment_only():
+def test_a_provider_is_filled_with_the_row_of_its_own_segment_only() -> None:
     module = ds_module(
         [
             segment_entry(0, "Global Segment", SEG0, dns=dns(primary=True)),
@@ -156,7 +156,7 @@ def test_a_provider_is_filled_with_the_row_of_its_own_segment_only():
     assert services == [UUID(DNS_A), UUID(DNS_B)]
 
 
-def test_a_provider_with_no_row_is_none():
+def test_a_provider_with_no_row_is_none() -> None:
     module = ds_module(
         [segment_entry(0, "Global Segment", SEG0, dns=dns(primary=True))],
         global_segment_refs(),
@@ -165,7 +165,7 @@ def test_a_provider_with_no_row_is_none():
     assert provider.service is None
 
 
-def test_a_module_with_no_refs_key_has_none_for_every_provider():
+def test_a_module_with_no_refs_key_has_none_for_every_provider() -> None:
     module = ds_module(
         [segment_entry(0, "Global Segment", SEG0, dns=dns(primary=True))], MISSING
     )
@@ -173,7 +173,7 @@ def test_a_module_with_no_refs_key_has_none_for_every_provider():
     assert provider.service is None
 
 
-def test_a_module_whose_refs_were_not_read_leaves_the_field_missing():
+def test_a_module_whose_refs_were_not_read_leaves_the_field_missing() -> None:
     module = primary_module(refs_loaded=False)
     provider = primary_of(module)
     assert provider.service is MISSING
@@ -181,26 +181,26 @@ def test_a_module_whose_refs_were_not_read_leaves_the_field_missing():
     assert primary_module().refs_loaded is True
 
 
-def test_refs_loaded_is_in_no_dump():
+def test_refs_loaded_is_in_no_dump() -> None:
     module = primary_module(refs_loaded=False)
     assert "refs_loaded" not in module.model_dump()
     assert "refsLoaded" not in module.model_dump(by_alias=True)
     assert "service" not in str(module.data.model_dump(mode="json", by_alias=True))
 
 
-def test_a_module_validated_with_no_context_counts_as_loaded():
+def test_a_module_validated_with_no_context_counts_as_loaded() -> None:
     row = primary_module().model_dump(mode="json", by_alias=True)
     module = DeviceSettingsConfigurationModule.model_validate(row)
     assert module.refs_loaded is True
 
 
-def test_the_level_of_the_context_is_kept_beside_refs_loaded():
+def test_the_level_of_the_context_is_kept_beside_refs_loaded() -> None:
     module = primary_module(refs_loaded=False, level=ConfigContext.EDGE)
     assert module.config_context is ConfigContext.EDGE
     assert module.data.config_context is ConfigContext.EDGE
 
 
-def test_data_validated_alone_leaves_the_field_missing():
+def test_data_validated_alone_leaves_the_field_missing() -> None:
     module = primary_module()
     again = type(module.data).model_validate(
         module.data.model_dump(mode="json", by_alias=True)
@@ -208,7 +208,7 @@ def test_data_validated_alone_leaves_the_field_missing():
     assert primary_of(again).service is MISSING
 
 
-def test_fill_falls_back_to_the_segment_logical_id():
+def test_fill_falls_back_to_the_segment_logical_id() -> None:
     # No deviceSettings:segment row: the row's segmentLogicalId names the segment.
     module = ds_module(
         [segment_entry(0, "Global Segment", SEG0, dns=dns(primary=True))],
@@ -217,7 +217,9 @@ def test_fill_falls_back_to_the_segment_logical_id():
     assert primary_of(module).service == UUID(DNS_A)
 
 
-def test_a_row_of_another_segment_is_not_taken_by_logical_id_when_its_object_is_known():
+def test_a_row_of_another_segment_is_not_taken_by_logical_id_when_its_object_is_known() -> (
+    None
+):
     # The segment rows say object 502 is segment 1; the row's logical ID is
     # that of segment 0, but the object ID is looked at first.
     module = ds_module(
@@ -233,7 +235,7 @@ def test_a_row_of_another_segment_is_not_taken_by_logical_id_when_its_object_is_
     assert primary_of(module).service is None
 
 
-def test_the_first_matching_row_in_read_order_is_taken():
+def test_the_first_matching_row_in_read_order_is_taken() -> None:
     module = ds_module(
         [segment_entry(0, "Global Segment", SEG0, dns=dns(primary=True))],
         global_segment_refs(
@@ -248,7 +250,7 @@ def test_the_first_matching_row_in_read_order_is_taken():
     assert primary_of(module).service == UUID(DNS_B)
 
 
-def test_a_stub_ref_names_the_row():
+def test_a_stub_ref_names_the_row() -> None:
     module = ds_module(
         [
             segment_entry(
@@ -274,7 +276,7 @@ def test_a_stub_ref_names_the_row():
     assert [o.name for o in primary] == [BACKUP]
 
 
-def test_an_effective_style_stub_with_no_ref_is_filled_and_keeps_no_ref():
+def test_an_effective_style_stub_with_no_ref_is_filled_and_keeps_no_ref() -> None:
     module = ds_module(
         [segment_entry(0, "Global Segment", SEG0, dns=dns())],
         global_segment_refs(
@@ -287,7 +289,7 @@ def test_an_effective_style_stub_with_no_ref_is_filled_and_keeps_no_ref():
     assert "service" not in backup.model_fields_set
 
 
-def test_authentication_is_filled_from_its_row():
+def test_authentication_is_filled_from_its_row() -> None:
     module = ds_module(
         [
             segment_entry(
@@ -310,7 +312,7 @@ def test_authentication_is_filled_from_its_row():
     assert authentication.service == UUID(AUTH)
 
 
-def test_a_field_outside_any_segment_takes_a_row_with_no_segment():
+def test_a_field_outside_any_segment_takes_a_row_with_no_segment() -> None:
     holder = DnsPrimaryProvider(ref=PRIMARY)
     refs = {
         PRIMARY: [
@@ -325,7 +327,7 @@ def test_a_field_outside_any_segment_takes_a_row_with_no_segment():
     assert holder.service is None
 
 
-def test_the_fill_is_not_an_edit():
+def test_the_fill_is_not_an_edit() -> None:
     module = primary_module()
     assert plan_module(module).operation == "none"
     provider = primary_of(module)
@@ -333,7 +335,7 @@ def test_the_fill_is_not_an_edit():
     assert provider.model_fields_set == {"ref"}
 
 
-def test_the_data_is_dumped_as_it_was_read():
+def test_the_data_is_dumped_as_it_was_read() -> None:
     module = primary_module()
     dumped = module.data.model_dump(mode="json", by_alias=True)
     raw = module.raw_data
@@ -348,7 +350,7 @@ def test_the_data_is_dumped_as_it_was_read():
 # --- the declarations ------------------------------------------------------
 
 
-def test_the_declarations_are_the_specs():
+def test_the_declarations_are_the_specs() -> None:
     assert get_owns_ref(DeviceSegment.model_fields["segment"]) == OwnsRef(
         "deviceSettings:segment",
         SegmentIdentity,
@@ -385,13 +387,14 @@ def test_the_declarations_are_the_specs():
 # --- the owners ------------------------------------------------------------
 
 
-def test_owners_found_in_a_profile_module():
+def test_owners_found_in_a_profile_module() -> None:
     module = primary_module()
     owners = ref_owners(module.data, ConfigContext.PROFILE)
     assert {o.name for o in owners} == {"deviceSettings:segment", PRIMARY}
     segment = owner_of(owners, "deviceSettings:segment")
     assert segment.value == 0
-    assert segment.segment_id is None and segment.segment_name is None
+    assert segment.segment_id is None
+    assert segment.segment_name is None
     assert segment.identity_type is SegmentIdentity
     assert isinstance(segment.marker, OwnsRef)
     provider = owner_of(owners, PRIMARY)
@@ -403,14 +406,14 @@ def test_owners_found_in_a_profile_module():
     assert provider.path == PRIMARY_PATH
 
 
-def test_level_keeps_the_segment_name_from_being_derived_on_an_edge():
+def test_level_keeps_the_segment_name_from_being_derived_on_an_edge() -> None:
     module = primary_module(level=ConfigContext.EDGE)
     owners = ref_owners(module.data, ConfigContext.EDGE)
     assert [o.name for o in owners] == [PRIMARY]
     assert [o.name for o in ref_owners(module.data, None)] == [PRIMARY]
 
 
-def test_a_segment_is_the_one_of_the_item_the_owner_sits_in():
+def test_a_segment_is_the_one_of_the_item_the_owner_sits_in() -> None:
     module = ds_module(
         [
             segment_entry(0, "Global Segment", SEG0, dns=dns(primary=True)),
@@ -439,7 +442,7 @@ def test_a_segment_is_the_one_of_the_item_the_owner_sits_in():
     }
 
 
-def test_a_css_provider_owns_its_row_and_an_empty_one_owns_none():
+def test_a_css_provider_owns_its_row_and_an_empty_one_owns_none() -> None:
     module = ds_module(
         [
             segment_entry(
@@ -459,7 +462,7 @@ def test_a_css_provider_owns_its_row_and_an_empty_one_owns_none():
     assert css[0].path == 'segments["Global Segment"].css.provider.logical_id'
 
 
-def test_a_provider_given_as_a_list_is_not_an_owner():
+def test_a_provider_given_as_a_list_is_not_an_owner() -> None:
     module = ds_module(
         [
             segment_entry(
@@ -474,8 +477,9 @@ def test_a_provider_given_as_a_list_is_not_an_owner():
         ],
         global_segment_refs(**{PRIMARY: primary_row()}),
     )
-    (listed,) = cast(list[DnsProvider], dns_of(module.data).primary_provider)
-    assert type(listed) is DnsProvider and listed.ref == PRIMARY
+    (listed,) = cast("list[DnsProvider]", dns_of(module.data).primary_provider)
+    assert type(listed) is DnsProvider
+    assert listed.ref == PRIMARY
     owners = ref_owners(module.data, ConfigContext.PROFILE)
     assert [o.name for o in owners] == ["deviceSettings:segment"]
     assert ref_only_values(module.data) == {
@@ -483,7 +487,7 @@ def test_a_provider_given_as_a_list_is_not_an_owner():
     }
 
 
-def test_none_missing_and_empty_text_hold_no_identity():
+def test_none_missing_and_empty_text_hold_no_identity() -> None:
     module = ds_module(
         [segment_entry(0, "Global Segment", SEG0, dns=dns(primary=True))],
         global_segment_refs(),
@@ -494,7 +498,7 @@ def test_none_missing_and_empty_text_hold_no_identity():
     assert [o.name for o in owners] == ["deviceSettings:segment"]
 
 
-def test_ref_owners_normalises_uuid_text():
+def test_ref_owners_normalises_uuid_text() -> None:
     module = primary_module()
     from_uuid = ref_owners(module.data, ConfigContext.PROFILE)
     # Assignment does not validate: a caller can write text.
@@ -505,7 +509,7 @@ def test_ref_owners_normalises_uuid_text():
     assert isinstance(owner_of(from_text, PRIMARY).value, uuid.UUID)
 
 
-def test_ref_owners_normalises_uuid_text_of_an_owns_ref_identity():
+def test_ref_owners_normalises_uuid_text_of_an_owns_ref_identity() -> None:
     module = ds_module(
         [
             segment_entry(
@@ -516,12 +520,13 @@ def test_ref_owners_normalises_uuid_text_of_an_owns_ref_identity():
     )
     from_uuid = ref_owners(module.data, ConfigContext.PROFILE)
     css = module.data.segments[0].css
-    assert css is not MISSING and css.provider is not MISSING
+    assert css is not MISSING
+    assert css.provider is not MISSING
     css.provider.logical_id = str(CSS)  # pyright: ignore[reportAttributeAccessIssue]
     assert ref_owners(module.data, ConfigContext.PROFILE) == from_uuid
 
 
-def test_ref_only_values_hold_every_field_reached():
+def test_ref_only_values_hold_every_field_reached() -> None:
     module = ds_module(
         [
             segment_entry(
@@ -547,7 +552,7 @@ def test_ref_only_values_hold_every_field_reached():
     }
 
 
-def test_the_walk_takes_the_items_of_segments_and_no_other_list():
+def test_the_walk_takes_the_items_of_segments_and_no_other_list() -> None:
     # A provider sits in a list in the data of a DnsProvider-typed list field: no owner.
     module = ds_module(
         [
@@ -568,7 +573,7 @@ def test_the_walk_takes_the_items_of_segments_and_no_other_list():
     }
 
 
-def test_segment_object_ids_come_from_the_segment_rows():
+def test_segment_object_ids_come_from_the_segment_rows() -> None:
     refs: dict[str, Any] = {
         "deviceSettings:segment": [
             segment_row(0, SEG0_OBJECT, SEG0),
@@ -590,7 +595,7 @@ def test_segment_object_ids_come_from_the_segment_rows():
 
 async def test_get_configuration_modules_and_an_insert_answer_are_not_loaded(
     mock_vco_client: MockVcoClientFactory,
-):
+) -> None:
     store = store_with_services()
     store.add_configuration({"id": CONFIG, "name": "Profile"})
     ds = ds_module(
@@ -643,7 +648,7 @@ async def test_get_configuration_modules_and_an_insert_answer_are_not_loaded(
     assert updated.refs_loaded is True
 
 
-def test_a_module_list_validated_with_the_flag_is_not_loaded():
+def test_a_module_list_validated_with_the_flag_is_not_loaded() -> None:
     row = primary_module().model_dump(mode="json", by_alias=True)
     parsed = ConfigurationModuleList[Profile].model_validate(
         [row], context={"refs_loaded": False}
@@ -652,12 +657,12 @@ def test_a_module_list_validated_with_the_flag_is_not_loaded():
 
 
 @pytest.mark.parametrize("loaded", [True, False])
-def test_a_module_copy_keeps_whether_its_refs_were_read(loaded: bool):
+def test_a_module_copy_keeps_whether_its_refs_were_read(loaded: bool) -> None:
     module = primary_module(refs_loaded=loaded)
     assert copy.deepcopy(module).refs_loaded is loaded
 
 
-def test_only_the_classes_that_can_hold_an_owner_are_walked():
+def test_only_the_classes_that_can_hold_an_owner_are_walked() -> None:
     assert can_hold_owner(DeviceSettingsData) is True
     assert can_hold_owner(DeviceSegment) is True
     assert can_hold_owner(SegmentDns) is True
@@ -673,7 +678,7 @@ def test_only_the_classes_that_can_hold_an_owner_are_walked():
     assert can_hold_owner(SegmentMetadata) is False
 
 
-def test_the_data_of_a_module_that_holds_no_owner_has_none():
+def test_the_data_of_a_module_that_holds_no_owner_has_none() -> None:
     row = make_module_json("firewall", {"segments": []}, configuration_id=CONFIG)
     module = FirewallConfigurationModule[Profile].model_validate(row)
     assert ref_owners(module.data, ConfigContext.PROFILE) == ()

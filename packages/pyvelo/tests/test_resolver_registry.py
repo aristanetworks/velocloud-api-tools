@@ -53,7 +53,7 @@ class BarIdentity:
 
 def _no_client() -> VcoClientProtocol:
     """A client for a resolver that never calls the VCO."""
-    return cast(VcoClientProtocol, cast(object, None))
+    return cast("VcoClientProtocol", cast("object", None))
 
 
 @dataclass(frozen=True)
@@ -200,13 +200,13 @@ class OnlyLookupsResolver(BaseResolver[FooIdentity]):
 
 
 class TestResolverContext:
-    def test_defaults(self):
+    def test_defaults(self) -> None:
         ctx = ResolverContext()
         assert ctx.enterprise_id is None
         assert ctx.edge_id is None
         assert ctx.configuration_id is None
 
-    def test_with_values(self):
+    def test_with_values(self) -> None:
         ctx = ResolverContext(enterprise_id=1, edge_id=2, configuration_id=3)
         assert ctx.enterprise_id == 1
         assert ctx.edge_id == 2
@@ -214,7 +214,7 @@ class TestResolverContext:
 
 
 class TestResolverProtocol:
-    def test_mock_satisfies_protocol(self):
+    def test_mock_satisfies_protocol(self) -> None:
         resolver = MockFooResolver()
         assert isinstance(resolver, Resolver)
 
@@ -234,7 +234,7 @@ class TestResolverRegistry:
 
     def test_register_and_set_context(
         self, registry: ResolverRegistry, foo_resolver: MockFooResolver
-    ):
+    ) -> None:
         registry.register(foo_resolver)
         ctx = ResolverContext(enterprise_id=1)
         registry.set_context(ctx)
@@ -242,21 +242,23 @@ class TestResolverRegistry:
 
     async def test_resolve(
         self, registry: ResolverRegistry, foo_resolver: MockFooResolver
-    ):
+    ) -> None:
         registry.register(foo_resolver)
         await foo_resolver.load(ResolverContext())
         result = await registry.resolve(FooIdentity, "alpha")
         assert result.id == 1
         assert result.logical_id == uuid.UUID(int=1)
 
-    async def test_resolve_unknown_identity_type(self, registry: ResolverRegistry):
+    async def test_resolve_unknown_identity_type(
+        self, registry: ResolverRegistry
+    ) -> None:
         with pytest.raises(LookupError, match="No resolver registered") as caught:
             _ = await registry.resolve(FooIdentity, "anything")
         assert not isinstance(caught.value, ResolutionError)
 
     async def test_resolve_unknown_name(
         self, registry: ResolverRegistry, foo_resolver: MockFooResolver
-    ):
+    ) -> None:
         registry.register(foo_resolver)
         await foo_resolver.load(ResolverContext())
         with pytest.raises(KeyError, match="Unknown Foo"):
@@ -267,7 +269,7 @@ class TestResolverRegistry:
         registry: ResolverRegistry,
         foo_resolver: MockFooResolver,
         bar_resolver: MockBarResolver,
-    ):
+    ) -> None:
         registry.register(foo_resolver)
         registry.register(bar_resolver)
         await foo_resolver.load(ResolverContext())
@@ -278,12 +280,12 @@ class TestResolverRegistry:
         assert foo.id == 1
         assert bar.id == 10
 
-    def test_context_default_none(self, registry: ResolverRegistry):
+    def test_context_default_none(self, registry: ResolverRegistry) -> None:
         assert registry.current_context is None
 
     def test_context_manager_scopes_then_restores(
         self, registry: ResolverRegistry, foo_resolver: MockFooResolver
-    ):
+    ) -> None:
         registry.register(foo_resolver)
         outer = ResolverContext(enterprise_id=1)
         inner = ResolverContext(enterprise_id=2)
@@ -295,7 +297,7 @@ class TestResolverRegistry:
 
     def test_context_manager_restores_on_exception(
         self, registry: ResolverRegistry, foo_resolver: MockFooResolver
-    ):
+    ) -> None:
         registry.register(foo_resolver)
         outer = ResolverContext(enterprise_id=1)
         registry.set_context(outer)
@@ -306,7 +308,9 @@ class TestResolverRegistry:
             raise RuntimeError("boom")
         assert registry.current_context is outer
 
-    async def test_context_manager_clears_caches(self, registry: ResolverRegistry):
+    async def test_context_manager_clears_caches(
+        self, registry: ResolverRegistry
+    ) -> None:
         # Register a real BaseResolver-style resolver so _clear is exercised.
         class CountedResolver(BaseResolver[FooIdentity]):
             identity_type: type[FooIdentity] = FooIdentity
@@ -340,7 +344,7 @@ class TestResolverRegistry:
 
     def test_resolver_for_gives_the_resolver_of_an_identity_type_or_none(
         self, registry: ResolverRegistry, foo_resolver: MockFooResolver
-    ):
+    ) -> None:
         assert registry.resolver_for(FooIdentity) is None
         registry.register(foo_resolver)
         assert registry.resolver_for(FooIdentity) is foo_resolver
@@ -350,7 +354,7 @@ class TestResolverRegistry:
         self,
         registry: ResolverRegistry,
         make_segment_resolver: SegmentResolverFactory,
-    ):
+    ) -> None:
         loaded = await make_segment_resolver([{"name": "Guest", "segment_id": 1}])
         registry.register(loaded)
         registry.set_context(ResolverContext(enterprise_id=1))
@@ -369,7 +373,7 @@ class TestResolverRegistry:
 
     def test_unloaded_refuses_a_resolver_it_cannot_copy(
         self, registry: ResolverRegistry
-    ):
+    ) -> None:
         registry.register(NoCopyResolver())
         with pytest.raises(
             TypeError, match=r"NoCopyResolver has no unloaded\(\) method"

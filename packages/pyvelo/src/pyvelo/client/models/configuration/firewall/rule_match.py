@@ -6,7 +6,7 @@ from pyvelo.core import Alias, VcoModel
 from pyvelo.core.fields import Normalizer, Resolvable
 from pyvelo.core.identity import ApplicationIdentity
 
-from ..common import (
+from pyvelo.client.models.configuration.common import (
     AddressGroupRef,
     AddressType,
     RuleMatchType,

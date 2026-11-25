@@ -49,7 +49,7 @@ class ResolutionError(KeyError):
         attributes = dict(self.__dict__)
         if "__notes__" in attributes:
             # A shallow copy must not add its notes to this error's list.
-            attributes["__notes__"] = list(cast(list[str], attributes["__notes__"]))
+            attributes["__notes__"] = list(cast("list[str]", attributes["__notes__"]))
         return (_rebuild_resolution_error, (type(self), self.args), attributes)
 
     @override
@@ -526,10 +526,10 @@ class HubServiceNotFoundError(ResolutionError):
         }
         return (
             f"{self.path} names the hub {self.hub!r}, which has no service for "
-            + f"this profile in the segment {self.segment!r}, so the row that "
-            + "goes with the rule cannot be added: the VCO would store a row "
-            + "that points at nothing. A hub gets its service when a save of "
-            + "the profile's device settings adds it to the segment's "
-            + "Branch-to-Hub list, so save the hub first and the rule after. "
-            + f"To add the hub to the list, send the patch {json.dumps(add)}."
+            f"this profile in the segment {self.segment!r}, so the row that "
+            "goes with the rule cannot be added: the VCO would store a row "
+            "that points at nothing. A hub gets its service when a save of "
+            "the profile's device settings adds it to the segment's "
+            "Branch-to-Hub list, so save the hub first and the rule after. "
+            f"To add the hub to the list, send the patch {json.dumps(add)}."
         )

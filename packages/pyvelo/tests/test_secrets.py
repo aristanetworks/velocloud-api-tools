@@ -127,7 +127,7 @@ def ds(raw: dict[str, Any]) -> DeviceSettingsConfigurationModule:
 
 async def test_a_row_that_does_not_parse_raises_without_its_values(
     mock_vco_client: MockVcoClientFactory,
-):
+) -> None:
     store = ModuleStore()
     bad = {k: v for k, v in neighbor().items() if k != "neighborAS"}
     store.add_configuration(
@@ -146,15 +146,17 @@ async def test_a_row_that_does_not_parse_raises_without_its_values(
     with pytest.raises(ValidationError) as exc:
         _ = await client.get_configuration(request)
     text = "".join(traceback.format_exception(exc.value))
-    assert "neighborAS" in text and "Field required" in text
-    assert OLD not in text and "input_value" not in text
+    assert "neighborAS" in text
+    assert "Field required" in text
+    assert OLD not in text
+    assert "input_value" not in text
     # The values are still there for a program that asks for them.
     assert exc.value.errors()[0]["input"]["md5Password"] == OLD
 
 
 async def test_a_write_whose_answer_does_not_parse_raises_without_its_values(
     mock_vco_client: MockVcoClientFactory,
-):
+) -> None:
     def without_its_as(new: dict[str, Any], _old: dict[str, Any] | None) -> None:
         del new["data"]["segments"][0]["bgp"]["neighbors"][0]["neighborAS"]
 
@@ -168,13 +170,15 @@ async def test_a_write_whose_answer_does_not_parse_raises_without_its_values(
     assert isinstance(exc.value.__cause__, ValidationError)
     # The traceback prints the cause under the error.
     text = "".join(traceback.format_exception(exc.value))
-    assert "neighborAS" in text and "Field required" in text
-    assert OLD not in text and "input_value" not in text
+    assert "neighborAS" in text
+    assert "Field required" in text
+    assert OLD not in text
+    assert "input_value" not in text
 
 
 async def test_a_write_whose_row_read_back_does_not_parse_raises_without_its_values(
     mock_vco_client: MockVcoClientFactory,
-):
+) -> None:
     def without_its_as(new: dict[str, Any], _old: dict[str, Any] | None) -> None:
         del new["data"]["segments"][0]["bgp"]["neighbors"][0]["neighborAS"]
 
@@ -189,8 +193,10 @@ async def test_a_write_whose_row_read_back_does_not_parse_raises_without_its_val
     cause = exc.value.__cause__
     assert isinstance(cause, ValidationError)
     text = "".join(traceback.format_exception(exc.value))
-    assert "neighborAS" in text and "Field required" in text
-    assert OLD not in text and "input_value" not in text
+    assert "neighborAS" in text
+    assert "Field required" in text
+    assert OLD not in text
+    assert "input_value" not in text
     assert cause.errors()[0]["input"]["md5Password"] == OLD
 
 
@@ -226,7 +232,8 @@ def assert_chain_quotes_no_input(error: BaseException) -> None:
         if linked is not None:
             assert isinstance(linked, ValidationError)
             for text in (str(linked), repr(linked)):
-                assert "input_value" not in text and OLD not in text
+                assert "input_value" not in text
+                assert OLD not in text
 
 
 @pytest.mark.parametrize(
@@ -241,13 +248,14 @@ def assert_chain_quotes_no_input(error: BaseException) -> None:
 )
 def test_the_cause_of_a_patch_error_does_not_quote_the_patch(
     patch: dict[str, object],
-):
+) -> None:
     with pytest.raises(PatchError) as exc:
         _ = Holder().merge_patch(patch)
     cause = exc.value.__cause__
     assert isinstance(cause, ValidationError)
     for text in (str(cause), repr(cause)):
-        assert "input_value" not in text and OLD not in text
+        assert "input_value" not in text
+        assert OLD not in text
     assert_chain_quotes_no_input(exc.value)
 
 
@@ -255,19 +263,22 @@ def test_the_cause_of_a_patch_error_does_not_quote_the_patch(
 @pytest.mark.parametrize("wrap", [False, True])
 def test_a_field_typed_as_a_model_does_not_quote_a_value_that_is_not_one(
     field: str, wrap: bool
-):
+) -> None:
     value: object = [OLD] if wrap else OLD
     with pytest.raises(PatchError) as exc:
         _ = Holder().merge_patch({field: value})
     cause = exc.value.__cause__
     assert isinstance(cause, ValidationError)
     for text in (str(cause), repr(cause), str(exc.value)):
-        assert "input_value" not in text and OLD not in text
+        assert "input_value" not in text
+        assert OLD not in text
     assert cause.errors()[0]["input"] == value
     assert_chain_quotes_no_input(exc.value)
 
 
-def test_no_field_of_the_models_quotes_a_patch_value_in_the_cause_of_its_error():
+def test_no_field_of_the_models_quotes_a_patch_value_in_the_cause_of_its_error() -> (
+    None
+):
     """Give every field the module data classes reach a text that none of them accepts."""
     refused = 0
     for cls in reachable_classes():
@@ -283,7 +294,7 @@ def test_no_field_of_the_models_quotes_a_patch_value_in_the_cause_of_its_error()
     assert refused > 1000
 
 
-def test_every_list_field_still_builds_its_adapters():
+def test_every_list_field_still_builds_its_adapters() -> None:
     """No list or map field of the models refuses the setting on the adapters built for it."""
     built = 0
     for cls in reachable_classes():
@@ -310,7 +321,7 @@ class Marked(VcoModel):
     password: Annotated[str, Secret()] = ""
 
 
-def test_is_secret():
+def test_is_secret() -> None:
     assert is_secret(Marked.model_fields["password"]) is True
     assert is_secret(Marked.model_fields["plain"]) is False
 
@@ -357,14 +368,14 @@ def reachable_fields() -> dict[str, bool]:
     }
 
 
-def test_the_secret_fields_of_the_module_data_are_the_recorded_set():
+def test_the_secret_fields_of_the_module_data_are_the_recorded_set() -> None:
     fields = reachable_fields()
     assert frozenset(name for name, marked in fields.items() if marked) == SECRET_FIELDS
     looks = {name for name in fields if LOOKS_SECRET.search(name.split(".")[1])}
     assert looks - SECRET_FIELDS == NOT_SECRET
 
 
-def test_the_credentials_of_enterprise_services_are_marked():
+def test_the_credentials_of_enterprise_services_are_marked() -> None:
     marked = {
         f"{cls.__name__}.{name}"
         for cls in vars(service_data).values()
@@ -488,13 +499,13 @@ def test_the_credentials_of_enterprise_services_are_marked():
         (Path(("nope", "password")), "kept", "kept"),
     ],
 )
-def test_hide_secrets(path: Path, value: object, hidden: object):
+def test_hide_secrets(path: Path, value: object, hidden: object) -> None:
     given = copy.deepcopy(value)
     assert hide_secrets(DeviceSettingsData, path, value) == hidden
     assert value == given  # the value given is not changed
 
 
-def test_hide_secrets_without_a_model_hides_nothing():
+def test_hide_secrets_without_a_model_hides_nothing() -> None:
     assert hide_secrets(None, Path(("a", "password")), "kept") == "kept"
 
 
@@ -506,7 +517,7 @@ def rotated() -> DeviceSettingsConfigurationModule:
     return module
 
 
-def test_shown_hides_the_secrets_of_the_model_at_the_path():
+def test_shown_hides_the_secrets_of_the_model_at_the_path() -> None:
     path = Path((*NEIGHBOR.parts, "md5Password"))
     assert shown(OLD) == f'"{OLD}"'
     assert shown(OLD, model=DeviceSettingsData, path=path) == '"***"'
@@ -521,26 +532,28 @@ def test_shown_hides_the_secrets_of_the_model_at_the_path():
     )
 
 
-def test_a_plan_shows_no_secret_and_keeps_it_on_the_change():
+def test_a_plan_shows_no_secret_and_keeps_it_on_the_change() -> None:
     plan = plan_module(rotated())
     (change,) = plan.changes
     assert (change.before, change.after) == (OLD, NEW)
     text = plan.render()
-    assert OLD not in text and NEW not in text
+    assert OLD not in text
+    assert NEW not in text
     assert f'{NEIGHBOR}.md5Password: "***" -> "***"' in text
     assert plan.model is DeviceSettingsData
 
 
-def test_a_plan_made_from_a_dict_hides_secrets_too():
+def test_a_plan_made_from_a_dict_hides_secrets_too() -> None:
     module = ds({**settings(), "snmp": {"snmpv2c": {"community": OLD}}})
     plan = plan_module(module, {**settings(), "snmp": {"snmpv2c": {"community": NEW}}})
     assert plan.model is DeviceSettingsData
     text = plan.render()
-    assert OLD not in text and NEW not in text
+    assert OLD not in text
+    assert NEW not in text
     assert 'snmp.snmpv2c.community: "***" -> "***"' in text
 
 
-def test_the_repr_of_a_plan_and_of_a_write_hold_no_data():
+def test_the_repr_of_a_plan_and_of_a_write_hold_no_data() -> None:
     module = rotated()
     plan = plan_module(module)
     assert repr(plan) == (
@@ -554,7 +567,7 @@ def test_the_repr_of_a_plan_and_of_a_write_hold_no_data():
     )
 
 
-def test_a_write_error_shows_no_secret_and_keeps_it_on_the_change():
+def test_a_write_error_shows_no_secret_and_keeps_it_on_the_change() -> None:
     module = rotated()
     stored = as_stored(module, settings(neighbor(OTHER)))
     with pytest.raises(ModuleWriteError) as exc:
@@ -563,10 +576,11 @@ def test_a_write_error_shows_no_secret_and_keeps_it_on_the_change():
     assert (lost.as_read, lost.intended, lost.stored) == (OLD, NEW, OTHER)
     text = "".join(traceback.format_exception(exc.value))
     assert not any(secret in text for secret in (OLD, NEW, OTHER))
-    assert f"{NEIGHBOR}.md5Password" in text and text.count("***") == 3
+    assert f"{NEIGHBOR}.md5Password" in text
+    assert text.count("***") == 3
 
 
-def test_a_write_error_hides_what_another_writer_stored():
+def test_a_write_error_hides_what_another_writer_stored() -> None:
     module = ds(settings(neighbor(OLD)))
     require_present(module.data.segments[0].bgp).asn = "65010"
     stored = as_stored(module, settings(neighbor(OTHER)))
@@ -575,10 +589,11 @@ def test_a_write_error_hides_what_another_writer_stored():
     assert [str(c.path) for c in exc.value.server_changes] == [
         f"{NEIGHBOR}.md5Password"
     ]
-    assert OLD not in str(exc.value) and OTHER not in str(exc.value)
+    assert OLD not in str(exc.value)
+    assert OTHER not in str(exc.value)
 
 
-def test_a_write_error_does_not_show_a_ref_row():
+def test_a_write_error_does_not_show_a_ref_row() -> None:
     module = ds(settings())
     row = {"id": 101, "enterpriseObjectId": 5, "data": {"sharedSecret": OLD}}
     lost = PlannedChange(Path.parse("auth[5]"), MISSING, row, MISSING, part="refs")
@@ -591,10 +606,12 @@ def test_a_write_error_does_not_show_a_ref_row():
         lost_edits=[lost],
     )
     (line,) = [line for line in str(error).splitlines() if "auth[5]" in line]
-    assert OLD not in line and "(nothing)" in line and "***" in line
+    assert OLD not in line
+    assert "(nothing)" in line
+    assert "***" in line
 
 
-def test_an_unknown_outcome_shows_no_secret_of_what_it_sent():
+def test_an_unknown_outcome_shows_no_secret_of_what_it_sent() -> None:
     error = WriteOutcomeUnknownError(
         1,
         "v1",
@@ -604,7 +621,8 @@ def test_an_unknown_outcome_shows_no_secret_of_what_it_sent():
         plan=plan_module(rotated()),
     )
     text = str(error)
-    assert OLD not in text and NEW not in text
+    assert OLD not in text
+    assert NEW not in text
     assert 'md5Password: read "***", meant "***"' in text
 
 
@@ -643,7 +661,7 @@ def entries(text: str, key: str) -> int:
     return sum(1 for line in text.splitlines() if key in line)
 
 
-def test_the_message_of_a_write_error_is_bounded():
+def test_the_message_of_a_write_error_is_bounded() -> None:
     module = logging_on_500_rules()
     other = firewall(500)
     for item in other["segments"][0]["outbound"]:
@@ -663,7 +681,7 @@ def test_the_message_of_a_write_error_is_bounded():
     assert entries(error.render(limit=1), ".loggingEnabled:") == 1
 
 
-def test_the_message_of_an_unknown_outcome_is_bounded():
+def test_the_message_of_an_unknown_outcome_is_bounded() -> None:
     error = WriteOutcomeUnknownError(
         1,
         "v1",
@@ -678,7 +696,7 @@ def test_the_message_of_an_unknown_outcome_is_bounded():
     assert entries(error.render(limit=None), ".loggingEnabled:") == 500
 
 
-def test_hide_secrets_walks_a_tuple_as_it_walks_a_list():
+def test_hide_secrets_walks_a_tuple_as_it_walks_a_list() -> None:
     item = ({"neighborIp": "192.0.2.1", "md5Password": OLD},)
     path = Path((*SEGMENT, "bgp", "neighbors"))
     assert hide_secrets(DeviceSettingsData, path, item) == [

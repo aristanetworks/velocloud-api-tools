@@ -154,7 +154,7 @@ class BaseResolver[IdentityT]:
         ID that is not there is told from a name that is not.
         """
         self._require_loaded()
-        name = self._reverse.get(attribute, {}).get(cast(Any, value))
+        name = self._reverse.get(attribute, {}).get(cast("Any", value))
         if name is None:
             raise ResolutionError(
                 name=str(value),
@@ -216,7 +216,7 @@ class ResolverRegistry:
         twin = ResolverRegistry()
         for resolver in self._resolvers.values():
             make_copy = cast(
-                Callable[[], Resolver[Any]] | None,
+                "Callable[[], Resolver[Any]] | None",
                 getattr(resolver, "unloaded", None),
             )
             if make_copy is None:
@@ -284,15 +284,12 @@ class ResolverRegistry:
             if name is None:
                 raise TypeError("name is required when resolving by identity type")
             return await resolver.resolve(name)
-        else:
-            # Key-based API: resolve(SegmentName("value"))
-            identity_type = type(key).identity_type
-            resolver = self._resolvers.get(identity_type)
-            if resolver is None:
-                raise LookupError(
-                    f"No resolver registered for {identity_type.__name__}"
-                )
-            return await resolver.resolve_key(key)
+        # Key-based API: resolve(SegmentName("value"))
+        identity_type = type(key).identity_type
+        resolver = self._resolvers.get(identity_type)
+        if resolver is None:
+            raise LookupError(f"No resolver registered for {identity_type.__name__}")
+        return await resolver.resolve_key(key)
 
     @overload
     def lookup[T](self, key: IdentityKey[T]) -> T: ...
@@ -420,14 +417,13 @@ def resolution_error(
     if original_suggestions:
         formatted = "\n".join(f"  - {s}" for s in original_suggestions)
         parts.append(f"Did you mean:\n{formatted}")
+    elif len(available_list) > 20:
+        shown = ", ".join(available_list[:20])
+        parts.append(
+            f"Available ({len(available_list)} total, showing first 20): {shown}"
+        )
     else:
-        if len(available_list) > 20:
-            shown = ", ".join(available_list[:20])
-            parts.append(
-                f"Available ({len(available_list)} total, showing first 20): {shown}"
-            )
-        else:
-            parts.append(f"Available: {', '.join(available_list)}")
+        parts.append(f"Available: {', '.join(available_list)}")
     return ResolutionError(
         name=name,
         identity_type=entity_label,

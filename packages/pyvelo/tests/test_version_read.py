@@ -88,7 +88,7 @@ def elsewhere(row: dict[str, Any]) -> None:
 
 async def test_a_write_that_sends_refs_reads_the_version_first(
     mock_vco_client: MockVcoClientFactory,
-):
+) -> None:
     module, plan = await provider_set()
     store = a_store_holding(module)
     client = await mock_vco_client(store)
@@ -96,14 +96,15 @@ async def test_a_write_that_sends_refs_reads_the_version_first(
     assert methods(store) == [VERSION, UPDATE]
     method, params = store.requests[0]
     assert (method, params["configurationId"]) == (VERSION, CONFIG)
-    assert params["noData"] is True and params["modules"] == ["deviceSettings"]
+    assert params["noData"] is True
+    assert params["modules"] == ["deviceSettings"]
     assert store.requests[1][1]["version"] == "v1"
     assert write.module.version == store.rows[DS_ID]["version"]
 
 
 async def test_the_version_read_is_not_a_read_of_the_data(
     mock_vco_client: MockVcoClientFactory,
-):
+) -> None:
     module, plan = await provider_set()
     store = a_store_holding(module)
     client = await mock_vco_client(store)
@@ -113,7 +114,7 @@ async def test_the_version_read_is_not_a_read_of_the_data(
 
 async def test_a_changed_version_is_a_conflict_before_anything_is_sent(
     mock_vco_client: MockVcoClientFactory,
-):
+) -> None:
     module, plan = await provider_set(with_data_change=True)
     store = a_store_holding(module)
     store.other_writer(DS_ID, elsewhere)
@@ -143,7 +144,7 @@ async def test_a_changed_version_is_a_conflict_before_anything_is_sent(
 
 async def test_the_headline_says_nothing_was_sent_and_not_that_the_vco_refused(
     mock_vco_client: MockVcoClientFactory,
-):
+) -> None:
     module, plan = await provider_set()
     store = a_store_holding(module)
     store.other_writer(DS_ID, elsewhere)
@@ -159,7 +160,7 @@ async def test_the_headline_says_nothing_was_sent_and_not_that_the_vco_refused(
 
 async def test_a_conflict_before_sending_is_the_same_with_the_vcos_check_on(
     mock_vco_client: MockVcoClientFactory,
-):
+) -> None:
     module, plan = await provider_set()
     store = a_store_holding(module, conditional_check=True)
     store.other_writer(DS_ID, elsewhere)
@@ -172,7 +173,7 @@ async def test_a_conflict_before_sending_is_the_same_with_the_vcos_check_on(
 
 async def test_a_conflict_before_sending_survives_pickle_and_copy(
     mock_vco_client: MockVcoClientFactory,
-):
+) -> None:
     module, plan = await provider_set()
     store = a_store_holding(module)
     store.other_writer(DS_ID, elsewhere)
@@ -190,7 +191,7 @@ async def test_a_conflict_before_sending_survives_pickle_and_copy(
 
 async def test_a_retry_whose_changes_are_stored_passes_without_sending(
     mock_vco_client: MockVcoClientFactory,
-):
+) -> None:
     module, plan = await provider_set(with_data_change=True)
     store = a_store_holding(module)
     client = await mock_vco_client(store)
@@ -209,7 +210,7 @@ async def test_a_retry_whose_changes_are_stored_passes_without_sending(
 
 async def test_a_retry_after_a_lost_answer_passes_without_a_second_update(
     mock_vco_client: MockVcoClientFactory,
-):
+) -> None:
     module, plan = await provider_set(with_data_change=True)
     store = a_store_holding(module)
     store.lose_answers.add(1)
@@ -224,7 +225,7 @@ async def test_a_retry_after_a_lost_answer_passes_without_a_second_update(
 
 async def test_a_write_that_sends_no_refs_has_no_version_read(
     mock_vco_client: MockVcoClientFactory,
-):
+) -> None:
     module = fw({"segments": [], "firewall_enabled": True}, layer=Edge)
     module.data.firewall_enabled.set_local(False)
     store = store_of(module)
@@ -235,7 +236,7 @@ async def test_a_write_that_sends_no_refs_has_no_version_read(
 
 async def test_a_device_settings_edit_with_no_segments_has_no_version_read(
     mock_vco_client: MockVcoClientFactory,
-):
+) -> None:
     module = DeviceSettingsConfigurationModule.model_validate(
         make_module_json(
             "deviceSettings",
@@ -254,7 +255,9 @@ async def test_a_device_settings_edit_with_no_segments_has_no_version_read(
     assert methods(store) == [UPDATE]
 
 
-async def test_an_insert_has_no_version_read(mock_vco_client: MockVcoClientFactory):
+async def test_an_insert_has_no_version_read(
+    mock_vco_client: MockVcoClientFactory,
+) -> None:
     module = new_edge_module(ConfigurationModuleName.QOS, 10)
     assert isinstance(module, QosConfigurationModule)
     module.data.segments.append(
@@ -279,7 +282,7 @@ async def test_an_insert_has_no_version_read(mock_vco_client: MockVcoClientFacto
 
 async def test_a_module_with_no_version_stays_unconditional(
     mock_vco_client: MockVcoClientFactory,
-):
+) -> None:
     module, plan = await provider_set()
     module = module.model_copy(update={"version": None})
     assert plan.refs is not None
@@ -291,7 +294,7 @@ async def test_a_module_with_no_version_stays_unconditional(
 
 async def test_a_module_that_is_gone_is_a_conflict_with_no_module(
     mock_vco_client: MockVcoClientFactory,
-):
+) -> None:
     module, plan = await provider_set()
     store = a_store_holding(module)
     del store.rows[DS_ID]
@@ -328,7 +331,7 @@ def failing(
 
 async def test_an_error_of_the_version_read_propagates_and_nothing_is_sent(
     mock_vco_client: MockVcoClientFactory,
-):
+) -> None:
     module, plan = await provider_set()
     store = a_store_holding(module)
     client = await mock_vco_client(failing(store, VERSION))
@@ -339,7 +342,7 @@ async def test_an_error_of_the_version_read_propagates_and_nothing_is_sent(
 
 async def test_an_error_of_the_heavier_read_propagates_and_nothing_is_sent(
     mock_vco_client: MockVcoClientFactory,
-):
+) -> None:
     module, plan = await provider_set()
     store = a_store_holding(module)
     store.other_writer(DS_ID, elsewhere)
@@ -349,7 +352,7 @@ async def test_an_error_of_the_heavier_read_propagates_and_nothing_is_sent(
     assert methods(store) == [VERSION, GET]
 
 
-def test_a_version_row_has_no_data():
+def test_a_version_row_has_no_data() -> None:
     row = ConfigurationModuleVersion.model_validate(
         {"id": 10, "name": "deviceSettings", "version": "5", "configurationId": 1}
     )
@@ -362,7 +365,7 @@ def test_a_version_row_has_no_data():
 
 async def test_the_version_row_of_another_module_of_the_name_is_not_this_one(
     mock_vco_client: MockVcoClientFactory,
-):
+) -> None:
     """Of several rows of a name, the version compared is that of the module's own ID."""
     module, plan = await provider_set()
     store = a_store_holding(module)

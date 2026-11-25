@@ -45,7 +45,7 @@ class SegmentResolverFactory(Protocol):
 
 def parse_json_object(content: bytes | str) -> JsonObject:
     """Decode a JSON object at the stdlib parser's untyped boundary."""
-    return cast(JsonObject, json.loads(content))
+    return cast("JsonObject", json.loads(content))
 
 
 class MockPaginatedClient[RequestT: BaseModel, ItemT: BaseModel]:
@@ -61,7 +61,7 @@ class MockPaginatedClient[RequestT: BaseModel, ItemT: BaseModel]:
 
     @property
     def protocol(self) -> VcoClientProtocol:
-        return cast(VcoClientProtocol, cast(object, self))
+        return cast("VcoClientProtocol", cast("object", self))
 
     async def portal_paginated(
         self, _method: str, request: RequestT, _item_type: type[ItemT]
@@ -80,7 +80,7 @@ class MockListClient[RequestT: BaseModel, ItemT: BaseModel]:
 
     @property
     def protocol(self) -> VcoClientProtocol:
-        return cast(VcoClientProtocol, cast(object, self))
+        return cast("VcoClientProtocol", cast("object", self))
 
     async def portal_list(
         self,

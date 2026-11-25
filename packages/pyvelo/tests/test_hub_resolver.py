@@ -65,7 +65,9 @@ async def loaded(
     return registry, resolver
 
 
-async def test_a_load_makes_three_requests(mock_vco_client: MockVcoClientFactory):
+async def test_a_load_makes_three_requests(
+    mock_vco_client: MockVcoClientFactory,
+) -> None:
     store = store_with_hubs()
 
     _ = await loaded(mock_vco_client, store)
@@ -85,7 +87,7 @@ async def test_a_load_makes_three_requests(mock_vco_client: MockVcoClientFactory
 
 async def test_an_edge_that_is_no_member_is_an_edge_identity(
     mock_vco_client: MockVcoClientFactory,
-):
+) -> None:
     registry, _ = await loaded(mock_vco_client, store_with_hubs())
 
     found = registry.lookup(HubIdentity, "Hub-A")
@@ -97,7 +99,9 @@ async def test_an_edge_that_is_no_member_is_an_edge_identity(
     assert registry.lookup(HubIdentity, NOT_A_HUB.name) == edge_identity(NOT_A_HUB)
 
 
-async def test_a_cluster_is_a_cluster_identity(mock_vco_client: MockVcoClientFactory):
+async def test_a_cluster_is_a_cluster_identity(
+    mock_vco_client: MockVcoClientFactory,
+) -> None:
     registry, _ = await loaded(mock_vco_client, store_with_hubs())
 
     found = registry.lookup(HubIdentity, "Cluster-1")
@@ -110,7 +114,7 @@ async def test_a_cluster_is_a_cluster_identity(mock_vco_client: MockVcoClientFac
 
 async def test_lookups_by_name_logical_id_and_edge_id(
     mock_vco_client: MockVcoClientFactory,
-):
+) -> None:
     registry, _ = await loaded(mock_vco_client, store_with_hubs())
     expected = edge_identity(HUB_B)
 
@@ -136,7 +140,9 @@ async def test_lookups_by_name_logical_id_and_edge_id(
     ]
 
 
-async def test_a_cluster_member_is_no_identity(mock_vco_client: MockVcoClientFactory):
+async def test_a_cluster_member_is_no_identity(
+    mock_vco_client: MockVcoClientFactory,
+) -> None:
     registry, resolver = await loaded(mock_vco_client, store_with_hubs())
     member = uuid.UUID(MEMBER.logical_id)
 
@@ -155,7 +161,7 @@ async def test_a_cluster_member_is_no_identity(mock_vco_client: MockVcoClientFac
 
 async def test_an_unknown_name_lists_the_close_ones(
     mock_vco_client: MockVcoClientFactory,
-):
+) -> None:
     registry, _ = await loaded(mock_vco_client, store_with_hubs())
 
     with pytest.raises(ResolutionError, match="Hub-A") as caught:
@@ -167,7 +173,7 @@ async def test_an_unknown_name_lists_the_close_ones(
 
 async def test_a_shared_hub_name_asks_for_the_logical_id(
     mock_vco_client: MockVcoClientFactory,
-):
+) -> None:
     store = store_with_hubs()
     store.add_cluster(51, logical_id=str(SHARED), name="Hub-A")
     registry, _ = await loaded(mock_vco_client, store)
@@ -176,7 +182,8 @@ async def test_a_shared_hub_name_asks_for_the_logical_id(
         _ = registry.lookup(HubIdentity, "Hub-A")
 
     message = str(caught.value)
-    assert HUB_A.logical_id in message and str(SHARED) in message
+    assert HUB_A.logical_id in message
+    assert str(SHARED) in message
     assert "logical ID" in message
     assert sorted(caught.value.candidates) == sorted([HUB_A.logical_id, str(SHARED)])
     by_edge = registry.lookup(HubLogicalId(uuid.UUID(HUB_A.logical_id)))
@@ -191,7 +198,7 @@ async def test_a_shared_hub_name_asks_for_the_logical_id(
 
 async def test_lookup_by_finds_a_hub_whose_name_another_hub_shares(
     mock_vco_client: MockVcoClientFactory,
-):
+) -> None:
     # An Edge and a cluster both named Hub-A: the name index keeps one of them.
     store = store_with_hubs()
     store.add_cluster(51, logical_id=str(SHARED), name="Hub-A")
@@ -206,7 +213,7 @@ async def test_lookup_by_finds_a_hub_whose_name_another_hub_shares(
 
 async def test_before_its_load_the_resolver_says_it_is_not_loaded(
     mock_vco_client: MockVcoClientFactory,
-):
+) -> None:
     client = await mock_vco_client(store_with_hubs())
     resolver = HubResolver(client)
     registry = ResolverRegistry()
@@ -228,13 +235,15 @@ async def test_before_its_load_the_resolver_says_it_is_not_loaded(
 
 async def test_an_unloaded_copy_holds_nothing_and_loads_on_its_own(
     mock_vco_client: MockVcoClientFactory,
-):
+) -> None:
     _, resolver = await loaded(mock_vco_client, store_with_hubs())
 
     twin = resolver.unloaded()
 
-    assert not twin.loaded and twin.identities() == []
-    assert resolver.loaded and len(resolver.identities()) == 4
+    assert not twin.loaded
+    assert twin.identities() == []
+    assert resolver.loaded
+    assert len(resolver.identities()) == 4
     await twin.load(ResolverContext(enterprise_id=1))
     assert len(twin.identities()) == 4
     assert twin.is_cluster_member(uuid.UUID(MEMBER.logical_id))
@@ -242,7 +251,7 @@ async def test_an_unloaded_copy_holds_nothing_and_loads_on_its_own(
 
 async def test_a_reload_replaces_what_was_loaded(
     mock_vco_client: MockVcoClientFactory,
-):
+) -> None:
     store = store_with_hubs()
     _, resolver = await loaded(mock_vco_client, store)
     del store.edges[HUB_B.id]
@@ -256,7 +265,7 @@ async def test_a_reload_replaces_what_was_loaded(
     ]
 
 
-async def test_the_fixture_builds_a_loaded_resolver():
+async def test_the_fixture_builds_a_loaded_resolver() -> None:
     resolver = await make_hub_resolver(
         [edge_identity(HUB_A), cluster_identity(CLUSTER)],
         members=[(uuid.UUID(MEMBER.logical_id), MEMBER.name)],

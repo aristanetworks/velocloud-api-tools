@@ -60,14 +60,14 @@ class Ports(VcoModel):
     either: Port | None = None
 
 
-def test_a_map_key_that_is_a_field_alias_keeps_its_text():
+def test_a_map_key_that_is_a_field_alias_keeps_its_text() -> None:
     place = _python_place(("by_name", "MaxRate", "peerAddress"), (Table,))
     assert place == Path(("by_name", "MaxRate", "peer_address"))
     place = _python_place(("by_name", "max_rate", "MaxRate"), (Table,))
     assert place == Path(("by_name", "max_rate", "max_rate"))
 
 
-def test_a_union_tag_that_is_a_field_name_keeps_its_text():
+def test_a_union_tag_that_is_a_field_name_keeps_its_text() -> None:
     place = _python_place(("ports", 0, "SsidName", "SsidName"), (Ports,))
     assert place == Path(("ports", 0, "SsidName", "ssid_name"))
     place = _python_place(("either", "peer_address", "peer_address"), (Ports,))
@@ -77,7 +77,9 @@ def test_a_union_tag_that_is_a_field_name_keeps_its_text():
     assert place == Path(("entry", "max_rate"))
 
 
-def test_a_merged_model_that_is_not_valid_names_its_fields_as_a_patch_writes_them():
+def test_a_merged_model_that_is_not_valid_names_its_fields_as_a_patch_writes_them() -> (
+    None
+):
     bad = Entry.model_construct(max_rate=0, peer_address=5)
     table = Table.model_construct(by_name={"MaxRate": bad}, entry=Entry())
     with (

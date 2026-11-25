@@ -94,7 +94,7 @@ def make_file_dump_hook(dump_dir: Path) -> ExchangeHook:
 
     def _write_response(path: Path, response: httpx.Response) -> None:
         try:
-            body = cast(object, response.json())
+            body = cast("object", response.json())
         except ValueError:
             _ = path.write_bytes(response.content)
         else:
@@ -196,7 +196,7 @@ class VcoClientProtocol(
     def _http_client(self) -> httpx.AsyncClient:
         if self._http is not None:
             return self._http
-        raise VcoClientNotInitializedError()
+        raise VcoClientNotInitializedError
 
     # -- Transport hook (overridden by VcoClient for retry/rate-limiting) ----
 

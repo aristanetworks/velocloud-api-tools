@@ -45,7 +45,7 @@ def guest_added(
     return plan_module(module, via_pipeline=True)
 
 
-def test_rebase_onto_carries_the_additions():
+def test_rebase_onto_carries_the_additions() -> None:
     qos = qos_at("q1", qos_entry(GLOBAL))
     plan = guest_added(qos)
     assert [str(c.path) for c in plan.changes] == ["segments[Guest].rules[Box].name"]
@@ -67,7 +67,7 @@ def test_rebase_onto_carries_the_additions():
     ]
 
 
-def test_rebase_onto_carries_the_repaired_entries():
+def test_rebase_onto_carries_the_repaired_entries() -> None:
     qos = qos_at("q1", qos_entry(GLOBAL, defaults=MISSING))
     plan = guest_added(qos, edited=False)
     (missing,) = [m for m in plan.missing_defaults if m.repaired]
@@ -82,7 +82,7 @@ def test_rebase_onto_carries_the_repaired_entries():
     assert rebased_plan.changes == plan.changes == ()
 
 
-def test_a_fresh_module_that_holds_an_added_segment_is_a_conflict():
+def test_a_fresh_module_that_holds_an_added_segment_is_a_conflict() -> None:
     qos = qos_at("q1", qos_entry(GLOBAL))
     plan = guest_added(qos)
     fresh = qos_at("q2", qos_entry(GLOBAL), qos_entry(GUEST))
@@ -104,7 +104,7 @@ def test_a_fresh_module_that_holds_an_added_segment_is_a_conflict():
     assert clash.clash
 
 
-def test_a_fresh_module_that_holds_several_added_segments_reports_each():
+def test_a_fresh_module_that_holds_several_added_segments_reports_each() -> None:
     qos = qos_at("q1", qos_entry(GLOBAL))
     for segment in (GUEST, VOICE):
         _ = qos.add_segment_entry(new_segment_entry("QOS", identity(segment)))
@@ -123,7 +123,9 @@ def test_a_fresh_module_that_holds_several_added_segments_reports_each():
     assert (error.stated, error.sent) == (False, False)
 
 
-def test_a_fresh_module_that_lacks_the_segment_added_defaults_go_into_is_a_conflict():
+def test_a_fresh_module_that_lacks_the_segment_added_defaults_go_into_is_a_conflict() -> (
+    None
+):
     qos = qos_at("q1", qos_entry(GLOBAL, defaults=MISSING))
     rules = new_segment_entry("QOS", identity(GLOBAL))["defaults"]
     qos.add_default_entries(GLOBAL[0], rules)
@@ -144,7 +146,9 @@ def test_a_fresh_module_that_lacks_the_segment_added_defaults_go_into_is_a_confl
     )
 
 
-def test_a_fresh_module_that_holds_the_segment_added_defaults_go_into_is_rebased():
+def test_a_fresh_module_that_holds_the_segment_added_defaults_go_into_is_rebased() -> (
+    None
+):
     qos = qos_at("q1", qos_entry(GLOBAL, defaults=MISSING))
     rules = new_segment_entry("QOS", identity(GLOBAL))["defaults"]
     qos.add_default_entries(GLOBAL[0], rules)

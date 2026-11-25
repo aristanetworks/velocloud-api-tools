@@ -319,12 +319,12 @@ class Owned[T]:
         key = f" ({self._field})" if self._field else ""
         raise TypeError(
             f"an Owned{key} is not a condition: it holds what the edge stores "
-            + "at the key, and a test of it would be true whatever that is, "
-            + "and a comparison with a plain value is always False. Read "
-            + ".local (the edge's own value, MISSING when it inherits), "
-            + ".stored (what the key holds) or .is_local (whether the edge "
-            + "overrides the profile); the value the edge runs with is "
-            + "state.effective.<module>.<field>.value"
+            "at the key, and a test of it would be true whatever that is, "
+            "and a comparison with a plain value is always False. Read "
+            ".local (the edge's own value, MISSING when it inherits), "
+            ".stored (what the key holds) or .is_local (whether the edge "
+            "overrides the profile); the value the edge runs with is "
+            "state.effective.<module>.<field>.value"
         )
 
     @override
@@ -422,8 +422,8 @@ def _null_is_inherit(owner: Layered[Edge], field: str) -> PatchError:
     key = _key(owner, field)
     return PatchError(
         f"null is not a local value of {key}: a null at this key means the edge "
-        + f"inherits it, so nothing would be overridden; call .{field}.inherit() "
-        + f'or send {{"{key}": null}} to inherit, or give a value',
+        f"inherits it, so nothing would be overridden; call .{field}.inherit() "
+        f'or send {{"{key}": null}} to inherit, or give a value',
         Path((field,)),
         "null",
     )
@@ -456,10 +456,10 @@ def _unbound(owner: Layered[Edge] | None, field: str) -> Exception:
     key = _key(owner, field) if owner is not None else "<key>"
     return UnboundError(
         f"{where}: localize copies the profile's value, and this object does not "
-        + "know its profile, because it was not read from a loaded state. Take "
-        + "the object from the state (state.edge.<module>), where it is bound "
-        + "to its profile; or give the value yourself with .set_local(value), "
-        + f'or in a patch {{"{key}": <value>}}'
+        "know its profile, because it was not read from a loaded state. Take "
+        "the object from the state (state.edge.<module>), where it is bound "
+        "to its profile; or give the value yourself with .set_local(value), "
+        f'or in a patch {{"{key}": <value>}}'
     )
 
 
@@ -494,33 +494,33 @@ def _refuse_member(
     if intent == "inherit":
         message = (
             f'{where} is a member of the group "{group.name}", whose members '
-            + "change ownership together: a group with some members inherited "
-            + "and others local is a state the VCO UI does not recognize. "
-            + f"Inherit the whole group with .{handle}.inherit(), or in a patch "
-            + f'send {{"{anchor_key}": null}}'
+            "change ownership together: a group with some members inherited "
+            "and others local is a state the VCO UI does not recognize. "
+            f"Inherit the whole group with .{handle}.inherit(), or in a patch "
+            f'send {{"{anchor_key}": null}}'
         )
     else:
         member_key = _key(owner, field)
         message = (
             f'{where} is a member of the group "{group.name}", which the edge '
-            + "inherits, and a group with some members inherited and others "
-            + "local is a state the VCO UI does not recognize, so "
+            "inherits, and a group with some members inherited and others "
+            "local is a state the VCO UI does not recognize, so "
         )
         if intent == "set_local":
             message += (
                 "setting one member would leave the others behind. Make the "
-                + f"group local first, with .{handle}.set_local(bundle) or "
-                + f".{handle}.localize(), or in a patch send the member "
-                + f'alone, {{"{member_key}": <value>}}, which copies the '
-                + "group from the profile and then sets that member"
+                f"group local first, with .{handle}.set_local(bundle) or "
+                f".{handle}.localize(), or in a patch send the member "
+                f'alone, {{"{member_key}": <value>}}, which copies the '
+                "group from the profile and then sets that member"
             )
         else:
             message += (
                 "localizing one member would leave the others behind. "
-                + f"Localize the whole group with .{handle}.localize(), or in a "
-                + f'patch send the member alone, {{"{member_key}": <value>}}, '
-                + "which copies the group from the profile and then sets "
-                + "that member"
+                f"Localize the whole group with .{handle}.localize(), or in a "
+                f'patch send the member alone, {{"{member_key}": <value>}}, '
+                "which copies the group from the profile and then sets "
+                "that member"
             )
     raise GroupOwnershipError(message, group=group.name, field=field)
 
@@ -565,8 +565,8 @@ class OwnedGroup:
         if layer is not Edge:
             raise AttributeError(
                 f"{type(obj).__name__} has no group handle {self.attribute!r}: "
-                + f"the {layer.__name__} layer has no coupled groups, its members "
-                + "are plain values; the handle is on the edge layer"
+                f"the {layer.__name__} layer has no coupled groups, its members "
+                "are plain values; the handle is on the edge layer"
             )
         return self.handle(obj)
 
@@ -611,14 +611,14 @@ def check_groups(cls: type[Layered[Any]]) -> None:
             if field_kind(info).kind is not Kind.INHERITABLE:
                 raise TypeError(
                     f"{cls.__name__}.{name}: MemberOf marks an Inheritable field, "
-                    + "the only kind that is owned by the edge or inherited"
+                    "the only kind that is owned by the edge or inherited"
                 )
             if marker.group not in groups:
                 raise TypeError(
                     f"{cls.__name__}.{name}: MemberOf({marker.group!r}) names a "
-                    + "group the class does not declare; declare it with "
-                    + f'{marker.group}: ClassVar[OwnedGroup] = OwnedGroup("{marker.group}", '
-                    + "anchor=..., bundle=...)"
+                    "group the class does not declare; declare it with "
+                    f'{marker.group}: ClassVar[OwnedGroup] = OwnedGroup("{marker.group}", '
+                    "anchor=..., bundle=...)"
                 )
             members[marker.group].append(name)
     for group in groups.values():
@@ -627,8 +627,8 @@ def check_groups(cls: type[Layered[Any]]) -> None:
         if anchor is None or group.anchor not in named:
             raise TypeError(
                 f"{cls.__name__}: the anchor {group.anchor!r} of the group "
-                + f"{group.name!r} is not an Inheritable field marked "
-                + f"MemberOf({group.name!r}); the anchor is one of the members"
+                f"{group.name!r} is not an Inheritable field marked "
+                f"MemberOf({group.name!r}); the anchor is one of the members"
             )
         bundle_fields = set(group.bundle.model_fields)
         if bundle_fields != set(named):
@@ -636,7 +636,7 @@ def check_groups(cls: type[Layered[Any]]) -> None:
             extra = sorted(bundle_fields - set(named))
             raise TypeError(
                 f"{cls.__name__}: the bundle {group.bundle.__name__} of the group "
-                + f"{group.name!r} has the fields of its members and no others"
+                f"{group.name!r} has the fields of its members and no others"
                 + (f"; it lacks {missing}" if missing else "")
                 + (f"; it has {extra} too" if extra else "")
             )
@@ -677,9 +677,9 @@ class GroupHandle:
         if not isinstance(bundle, self._group.bundle):
             raise TypeError(
                 f"{self._group.attribute}.set_local takes a {self._group.bundle.__name__} "
-                + f"with every member of the group, not a {type(bundle).__name__}; "
-                + "a text-driven caller sends every member in a patch: "
-                + "{"
+                f"with every member of the group, not a {type(bundle).__name__}; "
+                "a text-driven caller sends every member in a patch: "
+                "{"
                 + ", ".join(
                     f'"{_key(self._owner, name)}": ...'
                     for name in self._group.members(type(self._owner))
@@ -741,7 +741,7 @@ def bind_layers(edge: Layered[Edge], profile: Layered[Profile] | None) -> None:
     if type(edge).layer() is not EdgeLayer:
         raise TypeError(
             "bind_layers links an edge layer, Data[Edge], to its profile layer, "
-            + f"Data[Profile]; got {type(edge).__name__}"
+            f"Data[Profile]; got {type(edge).__name__}"
         )
     edge._binding = Binding(profile)
     for name, info in type(edge).model_fields.items():

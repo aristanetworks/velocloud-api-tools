@@ -93,7 +93,7 @@ def walk_fields(
                 yield from walk(value, here, segment, root=False)
             elif listed:
                 spec = get_key_spec(field_info)
-                for position, item in enumerate(cast(list[object], value)):
+                for position, item in enumerate(cast("list[object]", value)):
                     if not isinstance(item, VcoModel) or not wanted(item):
                         continue
                     key = item_key(item, spec.paths) if spec is not None else None
@@ -101,7 +101,7 @@ def walk_fields(
                     inside = item if root and name == "segments" else segment
                     yield from walk(item, here.child(part), inside, root=False)
             elif mapped:
-                for key, item in cast(dict[object, object], value).items():
+                for key, item in cast("dict[object, object]", value).items():
                     if isinstance(item, VcoModel) and wanted(item):
                         yield from walk(item, here.child(str(key)), segment, root=False)
 

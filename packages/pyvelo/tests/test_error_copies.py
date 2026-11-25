@@ -73,7 +73,7 @@ def copies(error: Exception) -> list[Any]:
     return [pickle.loads(pickle.dumps(error)), copy.copy(error), copy.deepcopy(error)]
 
 
-def test_a_conflict_survives_pickling_and_copying():
+def test_a_conflict_survives_pickling_and_copying() -> None:
     error = lost_write()
     for copied in copies(error):
         assert type(copied) is ConfigConflictError
@@ -97,7 +97,7 @@ def test_a_conflict_survives_pickling_and_copying():
         assert [write.name for write in copied.completed] == ["QOS"]
 
 
-def test_the_other_write_errors_survive_pickling():
+def test_the_other_write_errors_survive_pickling() -> None:
     module = fw({"segments": [], "future": 1}, layer=Edge)
     plan = plan_module(module, {"segments": [], "future": 2})
     stored = as_stored(module, {"segments": [], "future": 3})
@@ -123,7 +123,7 @@ def test_the_other_write_errors_survive_pickling():
     )
 
 
-def test_a_fixed_list_error_keeps_its_module_paths_and_message_through_copies():
+def test_a_fixed_list_error_keeps_its_module_paths_and_message_through_copies() -> None:
     paths = (Path(("segments", Key("Guest"), "defaults")),)
     error = FixedListError("QOS", [(paths[0], "the list is gone")])
     for copied in copies(error):
@@ -132,7 +132,9 @@ def test_a_fixed_list_error_keeps_its_module_paths_and_message_through_copies():
         assert str(copied) == str(error)
 
 
-def test_a_dangling_reference_error_keeps_its_references_and_message_through_copies():
+def test_a_dangling_reference_error_keeps_its_references_and_message_through_copies() -> (
+    None
+):
     references = (
         Reference(
             "deviceSettings",
@@ -152,7 +154,7 @@ def test_a_dangling_reference_error_keeps_its_references_and_message_through_cop
         assert str(copied) == str(error)
 
 
-def test_a_hub_list_error_keeps_its_attributes_and_message_through_copies():
+def test_a_hub_list_error_keeps_its_attributes_and_message_through_copies() -> None:
     error = HubListError(
         "a hub needs its role",
         segment="Global Segment",
@@ -171,7 +173,7 @@ def test_a_hub_list_error_keeps_its_attributes_and_message_through_copies():
         assert str(copied) == str(error)
 
 
-def test_a_segment_set_error_keeps_its_attributes_and_message_through_copies():
+def test_a_segment_set_error_keeps_its_attributes_and_message_through_copies() -> None:
     error = SegmentSetError(
         "one module cannot add a segment",
         module_name="QOS",
@@ -188,7 +190,7 @@ def test_a_segment_set_error_keeps_its_attributes_and_message_through_copies():
         assert str(copied) == str(error)
 
 
-def test_errors_built_from_several_values_survive_pickling():
+def test_errors_built_from_several_values_survive_pickling() -> None:
     path = Path(("segments", 0, "outbound"))
     operation = VcoOperationError("update", "boom", code=5, data={"x": 1})
     lossy = LossyFieldError("firewall", [path], [path])
@@ -201,7 +203,9 @@ def test_errors_built_from_several_values_survive_pickling():
             assert vars(copied) == vars(error)
 
 
-def test_a_refs_not_loaded_error_keeps_its_module_paths_and_message_through_copies():
+def test_a_refs_not_loaded_error_keeps_its_module_paths_and_message_through_copies() -> (
+    None
+):
     paths = (Path(("segments", 0, "dns")),)
     for error in (
         RefsNotLoadedError("deviceSettings", paths),
@@ -216,7 +220,7 @@ def test_a_refs_not_loaded_error_keeps_its_module_paths_and_message_through_copi
             assert str(copied) == str(error)
 
 
-def test_a_refs_dropped_error_keeps_the_refs_as_read_through_copies():
+def test_a_refs_dropped_error_keeps_the_refs_as_read_through_copies() -> None:
     plan = plan_module(fw({"segments": []}, layer=Edge))
     error = RefsDroppedError(
         1,
@@ -233,7 +237,7 @@ def test_a_refs_dropped_error_keeps_the_refs_as_read_through_copies():
         assert str(copied) == str(error)
 
 
-def test_notes_and_attributes_set_after_the_error_was_raised_survive():
+def test_notes_and_attributes_set_after_the_error_was_raised_survive() -> None:
     error = lost_write()
     error.add_note("saved: QOS")
     error.attached = {"failed": "firewall"}  # pyright: ignore[reportAttributeAccessIssue]
@@ -243,7 +247,7 @@ def test_notes_and_attributes_set_after_the_error_was_raised_survive():
         assert str(copied) == str(error)
 
 
-def test_a_copy_does_not_share_the_error_s_notes_or_attributes():
+def test_a_copy_does_not_share_the_error_s_notes_or_attributes() -> None:
     error = VcoOperationError("update", "boom", data={"x": [1]})
     error.add_note("one")
     shallow = copy.copy(error)
@@ -263,7 +267,7 @@ def all_subclasses(cls: type) -> set[type]:
     return found
 
 
-def test_every_error_of_the_module_round_trips():
+def test_every_error_of_the_module_round_trips() -> None:
     path = Path(("segments", 0))
     plan = plan_module(fw({"segments": []}, layer=Edge))
     errors: list[VcoError] = [
@@ -353,7 +357,7 @@ def test_every_error_of_the_module_round_trips():
             assert vars(copied).keys() == vars(error).keys()
 
 
-def test_an_attribute_that_refers_back_to_the_error_survives():
+def test_an_attribute_that_refers_back_to_the_error_survives() -> None:
     error = VcoOperationError("update", "boom", code=5)
     error.me = error  # pyright: ignore[reportAttributeAccessIssue]
     error.add_note("one")
@@ -369,7 +373,7 @@ def test_an_attribute_that_refers_back_to_the_error_survives():
     assert error.__notes__ == ["one"]
 
 
-def test_a_composed_module_error_keeps_its_module_through_copies():
+def test_a_composed_module_error_keeps_its_module_through_copies() -> None:
     error = ComposedModuleError("the firewall module is null", module="firewall")
     for copied in copies(error):
         assert type(copied) is ComposedModuleError
@@ -377,7 +381,7 @@ def test_a_composed_module_error_keeps_its_module_through_copies():
         assert str(copied) == "the firewall module is null"
 
 
-def test_the_stored_parts_of_a_write_error_survive_a_deep_copy():
+def test_the_stored_parts_of_a_write_error_survive_a_deep_copy() -> None:
     parts = {Path(("segments", 0)): 0, Path(("segments", 1)): Key("b")}
     error = ConfigConflictError(
         1, "v1", "stale", module_name="firewall", stored_parts=parts
@@ -387,7 +391,7 @@ def test_the_stored_parts_of_a_write_error_survive_a_deep_copy():
     assert copy.deepcopy(error).stored_parts is not error.stored_parts
 
 
-def test_a_resolution_error_keeps_its_message_and_attributes_through_copies():
+def test_a_resolution_error_keeps_its_message_and_attributes_through_copies() -> None:
     error = ResolutionError(
         name="Corp", identity_type=SegmentIdentity, candidates=["Corporate", "Core"]
     )
@@ -409,7 +413,9 @@ def test_a_resolution_error_keeps_its_message_and_attributes_through_copies():
     assert error.__notes__ == ["looked in the cache"]
 
 
-def test_a_resolver_not_loaded_error_keeps_its_class_message_and_identity_type_through_copies():
+def test_a_resolver_not_loaded_error_keeps_its_class_message_and_identity_type_through_copies() -> (
+    None
+):
     error = ResolverNotLoadedError(NetworkServiceIdentity)
     error.add_note("while resolving a ref")
     for copied in copies(error):
@@ -422,7 +428,9 @@ def test_a_resolver_not_loaded_error_keeps_its_class_message_and_identity_type_t
         assert copied.__notes__ == ["while resolving a ref"]
 
 
-def test_a_hub_service_not_found_error_keeps_its_class_message_and_attributes_through_copies():
+def test_a_hub_service_not_found_error_keeps_its_class_message_and_attributes_through_copies() -> (
+    None
+):
     error = HubServiceNotFoundError(
         hub="Hub-A",
         segment="Global Segment",
@@ -447,7 +455,7 @@ def test_a_hub_service_not_found_error_keeps_its_class_message_and_attributes_th
     assert isinstance(error, ResolutionError)
 
 
-def test_a_resolution_error_given_its_own_message_keeps_it():
+def test_a_resolution_error_given_its_own_message_keeps_it() -> None:
     error = ResolutionError(
         name="x", identity_type="thing", candidates=[], message="no such thing"
     )
@@ -456,7 +464,7 @@ def test_a_resolution_error_given_its_own_message_keeps_it():
         assert copied.identity_type == "thing"
 
 
-def test_a_patch_error_keeps_its_path_kind_and_notes_through_copies():
+def test_a_patch_error_keeps_its_path_kind_and_notes_through_copies() -> None:
     error = PatchError("no such field", Path(("segments", 0, "name")), "unknown_field")
     error.add_note("in the second patch")
     for copied in copies(error):
@@ -471,7 +479,7 @@ def test_a_patch_error_keeps_its_path_kind_and_notes_through_copies():
         assert copied.__notes__ == ["in the second patch"]
 
 
-def test_a_dangling_reference_error_for_an_edge_keeps_that_through_copies():
+def test_a_dangling_reference_error_for_an_edge_keeps_that_through_copies() -> None:
     reference = Reference("QOS", Path(("x",)), uuid.UUID(int=5), "backhaul_hub", 2)
     error = DanglingReferenceError([reference], on_edge=True)
     for copied in copies(error):
@@ -479,7 +487,9 @@ def test_a_dangling_reference_error_for_an_edge_keeps_that_through_copies():
         assert str(copied) == str(error)
 
 
-def test_a_hub_service_message_names_the_hub_by_logical_id_when_it_has_no_name():
+def test_a_hub_service_message_names_the_hub_by_logical_id_when_it_has_no_name() -> (
+    None
+):
     logical_id = str(uuid.UUID(int=7))
     named = HubServiceNotFoundError(hub="Hub-A", segment="Global Segment", path="p")
     unnamed = HubServiceNotFoundError(

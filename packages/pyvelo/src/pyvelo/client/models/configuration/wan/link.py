@@ -5,7 +5,7 @@ from pydantic import MISSING, Field, field_validator
 
 from pyvelo.core import Alias, ServerOwned, VcoModel
 
-from ..common import AddressType
+from pyvelo.client.models.configuration.common import AddressType
 from .common import (
     BandwidthMeasurement,
     DiscoveryMode,

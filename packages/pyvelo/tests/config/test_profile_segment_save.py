@@ -127,7 +127,7 @@ def guest_stripped(new: dict[str, Any], old: dict[str, Any] | None) -> None:
         ]
 
 
-async def test_assign_and_save_sends_three_updates_device_settings_first():
+async def test_assign_and_save_sends_three_updates_device_settings_first() -> None:
     state = await global_only()
     pipeline, store = module_store_pipeline(state)
     _ = await pipeline.assign_segment(state, "Guest")
@@ -156,14 +156,15 @@ async def test_assign_and_save_sends_three_updates_device_settings_first():
     ]
 
 
-async def test_a_rebased_module_keeps_its_added_segment_and_repairs():
+async def test_a_rebased_module_keeps_its_added_segment_and_repairs() -> None:
     state = await global_only(with_defaults=False)
     pipeline, store = module_store_pipeline(state)
     _ = await pipeline.assign_segment(state, "Guest")
     plan = state.plan()
     (qos_plan,) = [m for m in plan.modules if m.name == QOS]
     (repair,) = qos_plan.missing_defaults
-    assert repair.repaired and len(repair.names) == 4
+    assert repair.repaired
+    assert len(repair.names) == 4
     planned = copy.deepcopy(qos_plan.data["segments"])
     versions = after_device_settings(
         store, (QOS_ID, rate_enabled), (FW_ID, a_new_version)
@@ -173,7 +174,8 @@ async def test_a_rebased_module_keeps_its_added_segment_and_repairs():
     result = await pipeline.save(state)
 
     assert [str(m) for m in result.modules_updated] == [DS, QOS, FIREWALL]
-    assert versions[QOS_ID] != read[QOS_ID] and versions[FW_ID] != read[FW_ID]
+    assert versions[QOS_ID] != read[QOS_ID]
+    assert versions[FW_ID] != read[FW_ID]
     _, qos_sent, fw_sent = updates(store)
     assert (qos_sent["version"], fw_sent["version"]) == (
         versions[QOS_ID],
@@ -190,7 +192,7 @@ async def test_a_rebased_module_keeps_its_added_segment_and_repairs():
     assert state.plan().changed == ()
 
 
-async def test_a_fresh_module_that_already_has_the_segment_is_a_conflict():
+async def test_a_fresh_module_that_already_has_the_segment_is_a_conflict() -> None:
     state = await global_only()
     pipeline, store = module_store_pipeline(state)
     _ = await pipeline.assign_segment(state, "Guest")
@@ -224,7 +226,7 @@ LOST_SEGMENT = [
 @pytest.mark.parametrize(("with_defaults", "expected"), LOST_SEGMENT)
 async def test_a_qos_write_that_lost_the_segment_leaves_a_plan_that_raises_segment_set_error(
     with_defaults: bool, expected: type[ModuleWriteError]
-):
+) -> None:
     state = await global_only(with_defaults=with_defaults)
     pipeline, store = module_store_pipeline(state)
     _ = await pipeline.assign_segment(state, "Guest")
@@ -244,7 +246,7 @@ async def test_a_qos_write_that_lost_the_segment_leaves_a_plan_that_raises_segme
 @pytest.mark.parametrize(("with_defaults", "expected"), LOST_SEGMENT)
 async def test_the_redo_of_a_lost_added_segment_assigns_it_again(
     with_defaults: bool, expected: type[ModuleWriteError]
-):
+) -> None:
     state = await global_only(with_defaults=with_defaults)
     pipeline, store = module_store_pipeline(state)
     _ = await pipeline.apply(

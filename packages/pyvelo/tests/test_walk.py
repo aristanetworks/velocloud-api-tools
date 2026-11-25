@@ -85,29 +85,29 @@ def _paths(sites: list[FieldSite], name: str) -> list[Path]:
     return [site.path for site in sites if site.name == name]
 
 
-def test_the_fields_of_the_root_and_of_a_sub_model_are_found_with_their_paths():
+def test_the_fields_of_the_root_and_of_a_sub_model_are_found_with_their_paths() -> None:
     sites = _sites(_root())
     assert _paths(sites, "top") == [Path(("top",))]
     assert Path(("top", "value")) in _paths(sites, "value")
 
 
-def test_a_keyed_list_names_its_items_by_key():
+def test_a_keyed_list_names_its_items_by_key() -> None:
     paths = _paths(_sites(_root()), "name")
     assert Path(("segments", Key("Guest"), "entries", Key("e1"), "name")) in paths
 
 
-def test_a_positional_list_names_its_items_by_position():
+def test_a_positional_list_names_its_items_by_position() -> None:
     paths = _paths(_sites(_root()), "value")
     assert Path(("other", 0, "value")) in paths
     assert Path(("segments", Key("Guest"), "steps", 1, "value")) in paths
 
 
-def test_a_map_names_its_items_by_key():
+def test_a_map_names_its_items_by_key() -> None:
     paths = _paths(_sites(_root()), "value")
     assert Path(("segments", Key("Guest"), "by_name", "x", "value")) in paths
 
 
-def test_a_site_holds_the_model_the_name_and_the_field_info():
+def test_a_site_holds_the_model_the_name_and_the_field_info() -> None:
     root = _root()
     site = next(s for s in _sites(root) if s.path == Path(("top", "value")))
     assert site.model is root.top
@@ -115,7 +115,7 @@ def test_a_site_holds_the_model_the_name_and_the_field_info():
     assert site.field_info is Leaf.model_fields["value"]
 
 
-def test_the_segment_is_the_enclosing_item_of_the_root_segments_list():
+def test_the_segment_is_the_enclosing_item_of_the_root_segments_list() -> None:
     root = _root()
     sites = _sites(root)
     inside = [s for s in sites if s.path.parts[:2] == ("segments", Key("Guest"))]
@@ -126,13 +126,15 @@ def test_the_segment_is_the_enclosing_item_of_the_root_segments_list():
     assert all(s.segment is None for s in outside)
 
 
-def test_the_item_of_the_segments_list_has_no_segment_for_its_own_field_in_the_root():
+def test_the_item_of_the_segments_list_has_no_segment_for_its_own_field_in_the_root() -> (
+    None
+):
     sites = _sites(_root())
     own = [s for s in sites if s.path == Path(("segments",))]
     assert [s.segment for s in own] == [None]
 
 
-def test_a_class_that_holds_nothing_is_not_walked():
+def test_a_class_that_holds_nothing_is_not_walked() -> None:
     seen: list[type[VcoModel]] = []
 
     def holds(model_cls: type[VcoModel]) -> bool:
@@ -146,7 +148,7 @@ def test_a_class_that_holds_nothing_is_not_walked():
     assert Path(("top", "value")) in [s.path for s in sites]
 
 
-def test_the_answer_for_a_class_is_asked_once():
+def test_the_answer_for_a_class_is_asked_once() -> None:
     asked: list[type[VcoModel]] = []
 
     def holds(model_cls: type[VcoModel]) -> bool:
@@ -158,7 +160,7 @@ def test_the_answer_for_a_class_is_asked_once():
     assert asked.count(Leaf) == 1
 
 
-def test_a_big_class_is_skipped_whole():
+def test_a_big_class_is_skipped_whole() -> None:
     sites = _sites(_root())
     assert Path(("segments", Key("Guest"), "big")) in _paths(sites, "big")
     assert not any(s.name == "items" for s in sites)
@@ -166,7 +168,7 @@ def test_a_big_class_is_skipped_whole():
 
 def test_a_list_of_items_that_hold_nothing_costs_no_key_lookups(
     monkeypatch: pytest.MonkeyPatch,
-):
+) -> None:
     class Quiet(VcoModel):
         name: str
 
@@ -198,7 +200,9 @@ def test_a_list_of_items_that_hold_nothing_costs_no_key_lookups(
     assert not any(s.name == "name" for s in sites)
 
 
-def test_a_field_filter_gives_only_the_wanted_fields_and_still_reaches_below_the_others():
+def test_a_field_filter_gives_only_the_wanted_fields_and_still_reaches_below_the_others() -> (
+    None
+):
     asked: list[str] = []
 
     def wants(field_info: object) -> bool:
@@ -217,7 +221,7 @@ def test_a_field_filter_gives_only_the_wanted_fields_and_still_reaches_below_the
     assert all(s.segment is not None for s in sites if s.path.parts[0] == "segments")
 
 
-def test_the_field_filter_is_asked_once_for_each_field_of_a_class():
+def test_the_field_filter_is_asked_once_for_each_field_of_a_class() -> None:
     asked: list[str] = []
 
     def wants(field_info: object) -> bool:

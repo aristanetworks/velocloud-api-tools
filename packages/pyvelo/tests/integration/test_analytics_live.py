@@ -65,7 +65,7 @@ class TestEdgeFlowMetrics:
         ctx: VcoTestContext,
         interval: ApiInterval,
         group_by: FlowGroupBy,
-    ):
+    ) -> None:
         with skip_on_vco_limitation():
             frame = await analytics.get_edge_flow_metrics(
                 edge_id=ctx.first_edge.id, interval=interval, group_by=group_by
@@ -79,7 +79,7 @@ class TestEdgeFlowMetrics:
         ctx: VcoTestContext,
         interval: ApiInterval,
         limit: int,
-    ):
+    ) -> None:
         frame = await analytics.get_edge_flow_metrics(
             edge_id=ctx.first_edge.id,
             interval=interval,
@@ -92,7 +92,7 @@ class TestEdgeFlowMetrics:
 
     async def test_with_metric_subset(
         self, analytics: Analytics, ctx: VcoTestContext, interval: ApiInterval
-    ):
+    ) -> None:
         frame = await analytics.get_edge_flow_metrics(
             edge_id=ctx.first_edge.id,
             interval=interval,
@@ -105,7 +105,7 @@ class TestEdgeFlowMetrics:
 
     async def test_with_filter_values(
         self, analytics: Analytics, ctx: VcoTestContext, interval: ApiInterval
-    ):
+    ) -> None:
         frame = await analytics.get_edge_flow_metrics(
             edge_id=ctx.first_edge.id,
             interval=interval,
@@ -116,7 +116,7 @@ class TestEdgeFlowMetrics:
 
     async def test_with_structured_filter(
         self, analytics: Analytics, ctx: VcoTestContext, interval: ApiInterval
-    ):
+    ) -> None:
         frame = await analytics.get_edge_flow_metrics(
             edge_id=ctx.first_edge.id,
             interval=interval,
@@ -149,7 +149,7 @@ class TestEdgeFlowMetricsNameDtype:
         interval: ApiInterval,
         group_by: FlowGroupBy,
         limit: int,
-    ):
+    ) -> None:
         with skip_on_vco_limitation():
             frame = await analytics.get_edge_flow_metrics(
                 edge_id=ctx.first_edge.id,
@@ -187,7 +187,7 @@ class TestEdgeFlowSeries:
         ctx: VcoTestContext,
         interval: ApiInterval,
         group_by: FlowGroupBy,
-    ):
+    ) -> None:
         frame = await analytics.get_edge_flow_series(
             edge_id=ctx.first_edge.id, interval=interval, group_by=group_by
         )
@@ -195,7 +195,7 @@ class TestEdgeFlowSeries:
 
     async def test_with_limits(
         self, analytics: Analytics, ctx: VcoTestContext, interval: ApiInterval
-    ):
+    ) -> None:
         frame = await analytics.get_edge_flow_series(
             edge_id=ctx.first_edge.id,
             interval=interval,
@@ -219,7 +219,7 @@ class TestEnterpriseFlowMetrics:
     )
     async def test_view_by(
         self, analytics: Analytics, interval: ApiInterval, view_by: BasicMetricViewBy
-    ):
+    ) -> None:
         with skip_on_vco_limitation():
             frame = await analytics.get_enterprise_flow_metrics(
                 interval=interval, view_by=view_by
@@ -229,7 +229,7 @@ class TestEnterpriseFlowMetrics:
     @pytest.mark.parametrize("limit", [1, 2, 3, 5, 10])
     async def test_small_limits(
         self, analytics: Analytics, interval: ApiInterval, limit: int
-    ):
+    ) -> None:
         frame = await analytics.get_enterprise_flow_metrics(
             interval=interval,
             view_by=BasicMetricViewBy.APPLICATION,
@@ -241,7 +241,7 @@ class TestEnterpriseFlowMetrics:
 
     async def test_with_metric_subset(
         self, analytics: Analytics, interval: ApiInterval
-    ):
+    ) -> None:
         frame = await analytics.get_enterprise_flow_metrics(
             interval=interval,
             view_by=BasicMetricViewBy.APPLICATION,
@@ -251,7 +251,9 @@ class TestEnterpriseFlowMetrics:
         )
         assert_frame_valid(frame)
 
-    async def test_with_filter(self, analytics: Analytics, interval: ApiInterval):
+    async def test_with_filter(
+        self, analytics: Analytics, interval: ApiInterval
+    ) -> None:
         frame = await analytics.get_enterprise_flow_metrics(
             interval=interval,
             view_by=BasicMetricViewBy.DEST_FQDN,
@@ -276,7 +278,7 @@ class TestEnterpriseFlowMetrics:
 class TestEdgeLinkMetrics:
     async def test_defaults(
         self, analytics: Analytics, ctx: VcoTestContext, interval: ApiInterval
-    ):
+    ) -> None:
         frame = await analytics.get_edge_link_metrics(
             edge_id=ctx.first_edge.id, interval=interval
         )
@@ -284,7 +286,7 @@ class TestEdgeLinkMetrics:
 
     async def test_with_throughput_metrics(
         self, analytics: Analytics, ctx: VcoTestContext, interval: ApiInterval
-    ):
+    ) -> None:
         frame = await analytics.get_edge_link_metrics(
             edge_id=ctx.first_edge.id,
             interval=interval,
@@ -295,7 +297,7 @@ class TestEdgeLinkMetrics:
 
     async def test_with_qoe_metrics(
         self, analytics: Analytics, ctx: VcoTestContext, interval: ApiInterval
-    ):
+    ) -> None:
         frame = await analytics.get_edge_link_metrics(
             edge_id=ctx.first_edge.id,
             interval=interval,
@@ -313,7 +315,7 @@ class TestEdgeLinkMetrics:
 class TestEdgeLinkSeries:
     async def test_defaults(
         self, analytics: Analytics, ctx: VcoTestContext, interval: ApiInterval
-    ):
+    ) -> None:
         frame = await analytics.get_edge_link_series(
             edge_id=ctx.first_edge.id, interval=interval
         )
@@ -321,7 +323,7 @@ class TestEdgeLinkSeries:
 
     async def test_with_limit(
         self, analytics: Analytics, ctx: VcoTestContext, interval: ApiInterval
-    ):
+    ) -> None:
         frame = await analytics.get_edge_link_series(
             edge_id=ctx.first_edge.id,
             interval=interval,
@@ -332,13 +334,13 @@ class TestEdgeLinkSeries:
 
 
 class TestAggregateLinkMetrics:
-    async def test_defaults(self, analytics: Analytics, interval: ApiInterval):
+    async def test_defaults(self, analytics: Analytics, interval: ApiInterval) -> None:
         frame = await analytics.get_aggregate_link_metrics(interval=interval)
         assert_frame_valid(frame, check_other=False)
 
     async def test_with_metric_subset(
         self, analytics: Analytics, interval: ApiInterval
-    ):
+    ) -> None:
         frame = await analytics.get_aggregate_link_metrics(
             interval=interval,
             metrics=[
@@ -357,7 +359,7 @@ class TestAggregateLinkMetrics:
 class TestEdgeInterfaceMetrics:
     async def test_defaults(
         self, analytics: Analytics, ctx: VcoTestContext, interval: ApiInterval
-    ):
+    ) -> None:
         frame = await analytics.get_edge_interface_metrics(
             edge_id=ctx.first_edge.id, interval=interval
         )
@@ -365,7 +367,7 @@ class TestEdgeInterfaceMetrics:
 
     async def test_with_metric_subset(
         self, analytics: Analytics, ctx: VcoTestContext, interval: ApiInterval
-    ):
+    ) -> None:
         frame = await analytics.get_edge_interface_metrics(
             edge_id=ctx.first_edge.id,
             interval=interval,
@@ -382,7 +384,7 @@ class TestEdgeInterfaceMetrics:
 class TestEdgeInterfaceSeries:
     async def test_defaults(
         self, analytics: Analytics, ctx: VcoTestContext, interval: ApiInterval
-    ):
+    ) -> None:
         frame = await analytics.get_edge_interface_series(
             edge_id=ctx.first_edge.id, interval=interval
         )
@@ -390,7 +392,7 @@ class TestEdgeInterfaceSeries:
 
     async def test_with_max_samples(
         self, analytics: Analytics, ctx: VcoTestContext, interval: ApiInterval
-    ):
+    ) -> None:
         frame = await analytics.get_edge_interface_series(
             edge_id=ctx.first_edge.id, interval=interval, max_samples=10
         )
@@ -405,7 +407,7 @@ class TestEdgeInterfaceSeries:
 class TestEdgePathMetrics:
     async def test_defaults(
         self, analytics: Analytics, ctx: VcoTestContext, interval: ApiInterval
-    ):
+    ) -> None:
         if ctx.sdwan_gateway_peer is None:
             pytest.skip("No SD-WAN gateway peer discovered")
         frame = await analytics.get_edge_path_metrics(
@@ -417,7 +419,7 @@ class TestEdgePathMetrics:
 
     async def test_with_metric_subset(
         self, analytics: Analytics, ctx: VcoTestContext, interval: ApiInterval
-    ):
+    ) -> None:
         if ctx.sdwan_gateway_peer is None:
             pytest.skip("No SD-WAN gateway peer discovered")
         frame = await analytics.get_edge_path_metrics(
@@ -436,7 +438,7 @@ class TestEdgePathMetrics:
 class TestEdgePathSeries:
     async def test_defaults(
         self, analytics: Analytics, ctx: VcoTestContext, interval: ApiInterval
-    ):
+    ) -> None:
         peer = ctx.sdwan_gateway_peer
         if peer is None or not peer.src_link_internal_id:
             pytest.skip("No SD-WAN gateway peer path links discovered")
@@ -459,7 +461,7 @@ class TestEdgePathSeries:
 
     async def test_view_by_peer(
         self, analytics: Analytics, ctx: VcoTestContext, interval: ApiInterval
-    ):
+    ) -> None:
         peer = ctx.sdwan_gateway_peer
         if peer is None or not peer.src_link_internal_id:
             pytest.skip("No SD-WAN gateway peer path links discovered")
@@ -506,7 +508,7 @@ class TestEdgeFirewallMetrics:
         ctx: VcoTestContext,
         interval: ApiInterval,
         fw_type: FirewallType,
-    ):
+    ) -> None:
         frame = await analytics.get_edge_firewall_metrics(
             edge_id=ctx.first_edge.id,
             interval=interval,
@@ -517,7 +519,7 @@ class TestEdgeFirewallMetrics:
 
     async def test_with_limit(
         self, analytics: Analytics, ctx: VcoTestContext, interval: ApiInterval
-    ):
+    ) -> None:
         frame = await analytics.get_edge_firewall_metrics(
             edge_id=ctx.first_edge.id,
             interval=interval,
@@ -532,7 +534,7 @@ class TestEdgeFirewallMetrics:
 class TestEdgeFirewallSeries:
     async def test_defaults(
         self, analytics: Analytics, ctx: VcoTestContext, interval: ApiInterval
-    ):
+    ) -> None:
         frame = await analytics.get_edge_firewall_series(
             edge_id=ctx.first_edge.id, interval=interval, max_samples=20
         )
@@ -550,7 +552,7 @@ class TestEnterpriseFirewallMetrics:
         analytics: Analytics,
         interval: ApiInterval,
         ent_type: EnterpriseFirewallType,
-    ):
+    ) -> None:
         frame = await analytics.get_enterprise_firewall_metrics(
             interval=interval, type=ent_type
         )
@@ -565,7 +567,7 @@ class TestEnterpriseFirewallMetrics:
 class TestEdgeHealth:
     async def test_metrics_defaults(
         self, analytics: Analytics, ctx: VcoTestContext, interval: ApiInterval
-    ):
+    ) -> None:
         frame = await analytics.get_edge_health_metrics(
             edge_id=ctx.first_edge.id, interval=interval
         )
@@ -573,7 +575,7 @@ class TestEdgeHealth:
 
     async def test_metrics_subset(
         self, analytics: Analytics, ctx: VcoTestContext, interval: ApiInterval
-    ):
+    ) -> None:
         frame = await analytics.get_edge_health_metrics(
             edge_id=ctx.first_edge.id,
             interval=interval,
@@ -583,7 +585,7 @@ class TestEdgeHealth:
 
     async def test_series_defaults(
         self, analytics: Analytics, ctx: VcoTestContext, interval: ApiInterval
-    ):
+    ) -> None:
         frame = await analytics.get_edge_health_series(
             edge_id=ctx.first_edge.id, interval=interval
         )
@@ -591,7 +593,7 @@ class TestEdgeHealth:
 
     async def test_series_subset(
         self, analytics: Analytics, ctx: VcoTestContext, interval: ApiInterval
-    ):
+    ) -> None:
         frame = await analytics.get_edge_health_series(
             edge_id=ctx.first_edge.id,
             interval=interval,
@@ -607,7 +609,7 @@ class TestEdgeHealth:
 class TestGatewayHealth:
     async def test_metrics_defaults(
         self, analytics: Analytics, ctx: VcoTestContext, interval: ApiInterval
-    ):
+    ) -> None:
         if not ctx.gateways:
             pytest.skip("No gateway discovered")
         frame = await analytics.get_gateway_health_metrics(
@@ -617,7 +619,7 @@ class TestGatewayHealth:
 
     async def test_metrics_subset(
         self, analytics: Analytics, ctx: VcoTestContext, interval: ApiInterval
-    ):
+    ) -> None:
         if not ctx.gateways:
             pytest.skip("No gateway discovered")
         frame = await analytics.get_gateway_health_metrics(
@@ -629,7 +631,7 @@ class TestGatewayHealth:
 
     async def test_series_defaults(
         self, analytics: Analytics, ctx: VcoTestContext, interval: ApiInterval
-    ):
+    ) -> None:
         if not ctx.gateways:
             pytest.skip("No gateway discovered")
         frame = await analytics.get_gateway_health_series(
@@ -646,7 +648,7 @@ class TestGatewayHealth:
 class TestEdgeQoeSeries:
     async def test_defaults(
         self, analytics: Analytics, ctx: VcoTestContext, interval: ApiInterval
-    ):
+    ) -> None:
         frame = await analytics.get_edge_qoe_series(
             edge_id=ctx.first_edge.id, interval=interval
         )
@@ -654,7 +656,7 @@ class TestEdgeQoeSeries:
 
     async def test_with_max_samples(
         self, analytics: Analytics, ctx: VcoTestContext, interval: ApiInterval
-    ):
+    ) -> None:
         frame = await analytics.get_edge_qoe_series(
             edge_id=ctx.first_edge.id, interval=interval, max_samples=10
         )
@@ -667,14 +669,14 @@ class TestEdgeQoeSeries:
 
 
 class TestNniMetrics:
-    async def test_defaults(self, analytics: Analytics, interval: ApiInterval):
+    async def test_defaults(self, analytics: Analytics, interval: ApiInterval) -> None:
         with skip_on_vco_limitation():
             frame = await analytics.get_nni_metrics(interval=interval)
         assert_frame_valid(frame, check_other=False)
 
     async def test_with_metric_subset(
         self, analytics: Analytics, interval: ApiInterval
-    ):
+    ) -> None:
         with skip_on_vco_limitation():
             frame = await analytics.get_nni_metrics(
                 interval=interval, metrics=[NniMetric.BYTES_RX, NniMetric.BYTES_TX]
@@ -683,14 +685,14 @@ class TestNniMetrics:
 
 
 class TestNniSeries:
-    async def test_defaults(self, analytics: Analytics, interval: ApiInterval):
+    async def test_defaults(self, analytics: Analytics, interval: ApiInterval) -> None:
         with skip_on_vco_limitation():
             frame = await analytics.get_nni_series(interval=interval)
         assert_frame_valid(frame, check_other=False)
 
     async def test_with_metric_subset(
         self, analytics: Analytics, interval: ApiInterval
-    ):
+    ) -> None:
         with skip_on_vco_limitation():
             frame = await analytics.get_nni_series(
                 interval=interval,
@@ -706,11 +708,13 @@ class TestNniSeries:
 
 
 class TestCollectEvents:
-    async def test_defaults(self, analytics: Analytics, interval: ApiInterval):
+    async def test_defaults(self, analytics: Analytics, interval: ApiInterval) -> None:
         frame = await analytics.collect_events(interval=interval, max_items=100)
         assert isinstance(frame, MetricFrame)
 
-    async def test_with_event_types(self, analytics: Analytics, interval: ApiInterval):
+    async def test_with_event_types(
+        self, analytics: Analytics, interval: ApiInterval
+    ) -> None:
         from pyvelo.client.enums.event import EventType
 
         frame = await analytics.collect_events(
@@ -720,7 +724,9 @@ class TestCollectEvents:
         )
         assert isinstance(frame, MetricFrame)
 
-    async def test_with_severity(self, analytics: Analytics, interval: ApiInterval):
+    async def test_with_severity(
+        self, analytics: Analytics, interval: ApiInterval
+    ) -> None:
         from pyvelo.client.enums.event import EventSeverity
 
         frame = await analytics.collect_events(
@@ -730,35 +736,35 @@ class TestCollectEvents:
         )
         assert isinstance(frame, MetricFrame)
 
-    async def test_max_items(self, analytics: Analytics, interval: ApiInterval):
+    async def test_max_items(self, analytics: Analytics, interval: ApiInterval) -> None:
         frame = await analytics.collect_events(interval=interval, max_items=20)
         assert isinstance(frame, MetricFrame)
         assert len(frame) <= 20
 
 
 class TestCollectEdges:
-    async def test_defaults(self, analytics: Analytics):
+    async def test_defaults(self, analytics: Analytics) -> None:
         frame = await analytics.collect_edges()
         assert isinstance(frame, MetricFrame)
         assert len(frame) > 0
 
-    async def test_with_state_filter(self, analytics: Analytics):
+    async def test_with_state_filter(self, analytics: Analytics) -> None:
         from pyvelo.client.enums.edge import EdgeState
 
         frame = await analytics.collect_edges(edge_state=[EdgeState.CONNECTED])
         assert isinstance(frame, MetricFrame)
 
-    async def test_max_items(self, analytics: Analytics):
+    async def test_max_items(self, analytics: Analytics) -> None:
         frame = await analytics.collect_edges(max_items=5)
         assert isinstance(frame, MetricFrame)
         assert len(frame) <= 5
 
 
 class TestCollectConfigurations:
-    async def test_defaults(self, analytics: Analytics):
+    async def test_defaults(self, analytics: Analytics) -> None:
         frame = await analytics.collect_configurations()
         assert isinstance(frame, MetricFrame)
 
-    async def test_without_edge_count(self, analytics: Analytics):
+    async def test_without_edge_count(self, analytics: Analytics) -> None:
         frame = await analytics.collect_configurations(with_edge_count=False)
         assert isinstance(frame, MetricFrame)

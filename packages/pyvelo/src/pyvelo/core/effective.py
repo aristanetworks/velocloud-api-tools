@@ -71,9 +71,9 @@ class Resolved[T]:
     def __bool__(self) -> bool:
         raise TypeError(
             f"a Resolved ({self.source}) is not a condition: it holds the value "
-            + "with its origin and source, and a test of it would be true "
-            + "whatever the value is. Test .value (the value the edge runs "
-            + "with), or read .origin to see where it comes from"
+            "with its origin and source, and a test of it would be true "
+            "whatever the value is. Test .value (the value the edge runs "
+            "with), or read .origin to see where it comes from"
         )
 
 
@@ -113,15 +113,15 @@ def effective_view[M: Layered[Any]](
     if model.layer() is not Effective:
         raise TypeError(
             f"effective_view builds the Effective layer, and {model.__name__} is "
-            + f"the {model.layer().__name__} layer: give the [Effective] class of "
-            + "the same model, Data[Effective]"
+            f"the {model.layer().__name__} layer: give the [Effective] class of "
+            "the same model, Data[Effective]"
         )
     for layer, name in ((edge, "edge"), (profile, "profile")):
         if layer is not None and _base(type(layer)) is not _base(model):
             raise TypeError(
                 f"effective_view: the {name} layer is a {type(layer).__name__} and "
-                + f"the view a {model.__name__}, which are not one model; give "
-                + "the layers and the view of the same model"
+                f"the view a {model.__name__}, which are not one model; give "
+                "the layers and the view of the same model"
             )
     return _build(model, edge, profile, "", "")
 
@@ -195,11 +195,8 @@ def _inheritable(
         stored: object = owned.stored  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
         encoding = found.encoding
         present = stored is not MISSING and stored is not None
-        if (
-            owned.is_local
-            or present
-            and isinstance(encoding, ByFlag)
-            and encoding.presence_wins
+        if owned.is_local or (
+            present and isinstance(encoding, ByFlag) and encoding.presence_wins
         ):
             resolved = Resolved(Origin.EDGE, _copy(stored), edge_source)
 
@@ -329,9 +326,9 @@ def _children(
     if spec is None:
         raise TypeError(
             f"{cls.__name__}.{name}: a list of Layered models is matched between "
-            + "the edge layer and the profile layer by key, and this list has "
-            + 'none: declare it with KeyField, as in Annotated[list[Seg[L]], KeyField("segment.name", '
-            + 'alt="segment.segment_id")]'
+            "the edge layer and the profile layer by key, and this list has "
+            'none: declare it with KeyField, as in Annotated[list[Seg[L]], KeyField("segment.name", '
+            'alt="segment.segment_id")]'
         )
     edge_items = _layered_items(edge_value)
     profile_items = _layered_items(profile_value)

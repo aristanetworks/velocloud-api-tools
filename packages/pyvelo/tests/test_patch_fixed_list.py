@@ -54,26 +54,26 @@ def given(index: int, **changes: Any) -> dict[str, Any]:
     return {**item.model_dump(mode="json"), **changes}
 
 
-def test_the_marker_is_read_from_the_field():
+def test_the_marker_is_read_from_the_field() -> None:
     fixed = get_fixed_list(FixedSegment.model_fields["defaults"])
     assert fixed == FixedList(editable=("action",))
     assert get_fixed_list(FixedSegment.model_fields["label"]) is None
 
 
-def test_an_action_change_is_merged():
+def test_an_action_change_is_merged() -> None:
     seg = segment()
     _ = seg.merge_patch({"defaults": {"Beta": {"action": {"route": "cloud"}}}})
     assert seg.defaults[1].action == {"route": "cloud"}  # pyright: ignore[reportIndexIssue]
     assert [r.name for r in seg.defaults] == ["Alpha", "Beta", "Gamma"]  # pyright: ignore[reportGeneralTypeIssues]
 
 
-def test_a_change_selected_by_the_alt_key_is_merged():
+def test_a_change_selected_by_the_alt_key_is_merged() -> None:
     seg = segment()
     _ = seg.merge_patch({"defaults": {str(IDS[2]): {"action": {"route": "cloud"}}}})
     assert seg.defaults[2].action == {"route": "cloud"}  # pyright: ignore[reportIndexIssue]
 
 
-def test_a_match_change_is_refused():
+def test_a_match_change_is_refused() -> None:
     error = refusal(segment(), {"defaults": {"Beta": {"match": {"port": 9}}}})
     assert error.path == "defaults[Beta]"
     assert "match" in error.message
@@ -81,7 +81,7 @@ def test_a_match_change_is_refused():
     assert '{"defaults": {"Beta": {"action": {...}}}}' in error.message
 
 
-def test_a_change_of_a_fixed_and_an_editable_field_is_refused():
+def test_a_change_of_a_fixed_and_an_editable_field_is_refused() -> None:
     error = refusal(
         segment(),
         {"defaults": {"Beta": {"match": {"port": 9}, "action": {"route": "x"}}}},
@@ -89,13 +89,13 @@ def test_a_change_of_a_fixed_and_an_editable_field_is_refused():
     assert error.path == "defaults[Beta]"
 
 
-def test_a_rename_is_refused():
+def test_a_rename_is_refused() -> None:
     error = refusal(segment(), {"defaults": {"Beta": {"name": "Delta"}}})
     assert error.path == "defaults[Beta]"
     assert "name" in error.message
 
 
-def test_an_alt_key_change_is_refused():
+def test_an_alt_key_change_is_refused() -> None:
     error = refusal(segment(), {"defaults": {"Beta": {"rule_id": str(uuid.uuid4())}}})
     assert error.path == "defaults[Beta]"
     assert "ruleId" in error.message
@@ -122,19 +122,19 @@ def test_an_alt_key_change_is_refused():
 )
 def test_add_delete_move_and_a_position_are_refused(
     op: dict[object, object], path: str
-):
+) -> None:
     error = refusal(segment(), {"defaults": op})
     assert error.path == path
     assert "only" in error.message
     assert '{"defaults": {' in error.message
 
 
-def test_add_to_an_unset_list_is_refused():
+def test_add_to_an_unset_list_is_refused() -> None:
     error = refusal(FixedSegment(), {"defaults": {"A": add()}})
     assert error.path == "defaults[A]"
 
 
-def test_a_list_value_changed_only_in_actions_is_taken():
+def test_a_list_value_changed_only_in_actions_is_taken() -> None:
     seg = segment()
     value = [given(i) for i in range(3)]
     value[1]["action"] = {"route": "cloud"}
@@ -151,7 +151,7 @@ def without_alt_key(item: dict[str, Any]) -> dict[str, Any]:
     return {k: v for k, v in item.items() if k not in ("rule_id", "ruleId")}
 
 
-def test_a_list_value_without_alt_keys_keeps_the_current_ones():
+def test_a_list_value_without_alt_keys_keeps_the_current_ones() -> None:
     seg = segment()
     value = [without_alt_key(given(i)) for i in range(3)]
     assert all("ruleId" not in item and "rule_id" not in item for item in value)
@@ -162,7 +162,9 @@ def test_a_list_value_without_alt_keys_keeps_the_current_ones():
 
 
 @pytest.mark.parametrize("name", ["rule_id", "ruleId"])
-def test_a_list_value_that_gives_another_alt_key_under_any_name_is_refused(name: str):
+def test_a_list_value_that_gives_another_alt_key_under_any_name_is_refused(
+    name: str,
+) -> None:
     value = [without_alt_key(given(i)) for i in range(3)]
     value[1][name] = str(uuid.uuid4())
     error = refusal(segment(), {"defaults": value})
@@ -172,7 +174,7 @@ def test_a_list_value_that_gives_another_alt_key_under_any_name_is_refused(name:
 @pytest.mark.parametrize("name", ["rule_id", "ruleId"])
 def test_a_list_value_that_gives_the_current_alt_key_under_any_name_is_taken(
     name: str,
-):
+) -> None:
     seg = segment()
     value = [without_alt_key(given(i)) for i in range(3)]
     for index, item in enumerate(value):
@@ -183,7 +185,7 @@ def test_a_list_value_that_gives_the_current_alt_key_under_any_name_is_taken(
     assert seg.defaults[2].action == {"route": "cloud"}  # pyright: ignore[reportIndexIssue]
 
 
-def test_a_list_value_that_gives_another_alt_key_says_to_leave_it_out():
+def test_a_list_value_that_gives_another_alt_key_says_to_leave_it_out() -> None:
     value = [without_alt_key(given(i)) for i in range(3)]
     value[1]["ruleId"] = str(uuid.uuid4())
     error = refusal(segment(), {"defaults": value})
@@ -193,7 +195,9 @@ def test_a_list_value_that_gives_another_alt_key_says_to_leave_it_out():
     )
 
 
-def test_a_list_value_that_changes_a_field_other_than_the_alt_key_does_not_say_it():
+def test_a_list_value_that_changes_a_field_other_than_the_alt_key_does_not_say_it() -> (
+    None
+):
     error = refusal(segment(), {"defaults": [given(0), given(1, match={}), given(2)]})
     assert "keeps the current one" not in error.message
 
@@ -229,25 +233,25 @@ def _other_alt_key() -> list[dict[str, Any]]:
 )
 def test_a_list_value_that_reorders_drops_adds_or_changes_a_match_is_refused(
     build: Callable[[], list[dict[str, Any]]],
-):
+) -> None:
     error = refusal(segment(), {"defaults": build()})
     assert error.path.startswith("defaults")
     assert "action" in error.message
 
 
-def test_a_list_value_item_that_is_not_an_object_is_refused():
+def test_a_list_value_item_that_is_not_an_object_is_refused() -> None:
     with pytest.raises(PatchError):
         _ = segment().merge_patch({"defaults": ["Alpha", "Beta", "Gamma"]})
 
 
-def test_a_list_value_where_there_was_none_is_refused():
+def test_a_list_value_where_there_was_none_is_refused() -> None:
     seg = FixedSegment()
     error = refusal(seg, {"defaults": [given(0)]})
     assert error.path == "defaults"
     assert "none" in error.message or "unset" in error.message
 
 
-def test_a_list_value_where_the_list_is_none_is_refused():
+def test_a_list_value_where_the_list_is_none_is_refused() -> None:
     seg = FixedSegment.model_construct(defaults=None)
     error = refusal(seg, {"defaults": [given(0)]})
     assert error.path == "defaults"
@@ -264,7 +268,7 @@ def test_a_list_value_where_the_list_is_none_is_refused():
     ],
     ids=["match", "delete", "rename", "alt-key", "list-value"],
 )
-def test_each_refusal_leaves_the_model_as_it_was(patch: dict[str, object]):
+def test_each_refusal_leaves_the_model_as_it_was(patch: dict[str, object]) -> None:
     seg = segment()
     dump = copy.deepcopy(seg.model_dump())
     fields_set = set(seg.model_fields_set)
@@ -279,7 +283,7 @@ class Holder(VcoModel):
     )
 
 
-def test_operations_on_the_fixed_list_of_an_item_the_patch_adds_are_refused():
+def test_operations_on_the_fixed_list_of_an_item_the_patch_adds_are_refused() -> None:
     holder = Holder()
     error = refusal(
         holder,
@@ -293,7 +297,7 @@ def test_operations_on_the_fixed_list_of_an_item_the_patch_adds_are_refused():
     assert holder.segments == []
 
 
-def test_a_list_value_in_an_item_the_patch_adds_is_left_to_plan():
+def test_a_list_value_in_an_item_the_patch_adds_is_left_to_plan() -> None:
     holder = Holder()
     _ = holder.merge_patch(
         {"segments": {"S": add({"defaults": [{"name": "A", "match": {"port": 1}}]})}}
@@ -305,7 +309,7 @@ def qos() -> QosData[Profile]:
     return QosData[Profile].model_validate({"segments": [qos_entry(GUEST)]})
 
 
-def test_qos_defaults_take_an_action_edit_by_name():
+def test_qos_defaults_take_an_action_edit_by_name() -> None:
     data = qos()
     _ = data.merge_patch(
         {
@@ -323,7 +327,7 @@ def test_qos_defaults_take_an_action_edit_by_name():
     assert defaults["Default-Any-Other"].action.route_type == "edge2Any"
 
 
-def test_qos_defaults_refuse_a_match_edit():
+def test_qos_defaults_refuse_a_match_edit() -> None:
     data = qos()
     dump = copy.deepcopy(data.model_dump())
     error = refusal(
@@ -340,7 +344,7 @@ def test_qos_defaults_refuse_a_match_edit():
     assert data.model_dump() == dump
 
 
-def test_qos_rules_of_a_segment_stay_editable():
+def test_qos_rules_of_a_segment_stay_editable() -> None:
     data = qos()
     rule = copy.deepcopy(qos_entry(GUEST)["defaults"][0])
     rule["name"] = "R"
@@ -349,7 +353,7 @@ def test_qos_rules_of_a_segment_stay_editable():
     assert [r.name for r in data.segments[0].rules] == ["R"]
 
 
-def test_a_qos_round_trip_without_rule_ids_keeps_the_rule_ids():
+def test_a_qos_round_trip_without_rule_ids_keeps_the_rule_ids() -> None:
     entry = qos_entry(GUEST)
     sent_ids = [r["ruleLogicalId"] for r in entry["defaults"]]
     data = QosData[Profile].model_validate({"segments": [entry]})

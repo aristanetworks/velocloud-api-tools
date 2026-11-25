@@ -240,7 +240,7 @@ def ref_owners(data: VcoModel, level: ConfigContext | None) -> tuple[RefOwner, .
             if resolvable is None:
                 raise TypeError(
                     f"the RefOnly field {site.path} has no Resolvable; "
-                    + "declare the identity type that gives the object_id of a new row"
+                    "declare the identity type that gives the object_id of a new row"
                 )
             identity_type = resolvable.identity_type
             name = _ref_name(site, ref_only.default)

@@ -941,8 +941,8 @@ class ConfigPipeline:
                         path=module_plan.name,
                         message=(
                             "an earlier insert of this module may have reached the VCO; "
-                            + "the save reads the configuration first, and takes a module "
-                            + "of this name it finds there as the insert's answer"
+                            "the save reads the configuration first, and takes a module "
+                            "of this name it finds there as the insert's answer"
                         ),
                         code="insert_unconfirmed",
                     )
@@ -1185,12 +1185,12 @@ class ConfigPipeline:
             if paths:
                 error = DetachedObjectError(
                     f"{mod.name}: the module was edited while this save was writing it, at: "
-                    + f"{', '.join(paths)}. The write is stored without those edits and the "
-                    + "state holds the module as stored; take the objects from the state again "
-                    + "and redo them. A path that is a placeholder a lookup added "
-                    + "(segment(name), for a segment the edge only inherits) is no edit "
-                    + "and needs no redo. To edit a state from another task while a save "
-                    + "may run, use apply, or hold state.lock around the edit",
+                    f"{', '.join(paths)}. The write is stored without those edits and the "
+                    "state holds the module as stored; take the objects from the state again "
+                    "and redo them. A path that is a placeholder a lookup added "
+                    "(segment(name), for a segment the edge only inherits) is no edit "
+                    "and needs no redo. To edit a state from another task while a save "
+                    "may run, use apply, or hold state.lock around the edit",
                     paths,
                 )
                 note = _written_note(done)
@@ -1213,7 +1213,7 @@ class ConfigPipeline:
             """
             stored = error.module
             if isinstance(stored, type(mod)) and state.find_module(mod.name) is mod:
-                state.replace_module(mod, cast(AnyStoredModule, stored))
+                state.replace_module(mod, cast("AnyStoredModule", stored))
                 return True
             return False
 
@@ -1395,18 +1395,18 @@ class ConfigPipeline:
                 )
                 raise ComposedModuleError(
                     f"edge/getEdgeConfigurationModules {said} of edge {edge_id}. "
-                    + "The VCO hides a composition error that way, so there is "
-                    + "nothing to compare the view with. Open the edge in the VCO "
-                    + "to see why its modules do not compose, or compare the other "
-                    + f"modules with modules=[...] (not {name!r})",
+                    "The VCO hides a composition error that way, so there is "
+                    "nothing to compare the view with. Open the edge in the VCO "
+                    "to see why its modules do not compose, or compare the other "
+                    f"modules with modules=[...] (not {name!r})",
                     module=name,
                 )
             if not isinstance(data, dict):
                 raise ComposedModuleError(
                     f"edge/getEdgeConfigurationModules gave the {name} module of "
-                    + f"edge {edge_id} no data object, so there is nothing to "
-                    + "compare the view with. Read the module with "
-                    + "get_edge_configuration_modules to see what the VCO sent",
+                    f"edge {edge_id} no data object, so there is nothing to "
+                    "compare the view with. Read the module with "
+                    "get_edge_configuration_modules to see what the VCO sent",
                     module=name,
                 )
             module_view = cast("Layered[Effective]", getattr(view, attribute))
@@ -1743,22 +1743,22 @@ def _prepare_segment(
             return entry, entry
         raise PatchError(
             f"segment {name!r} is already in the edge layer, as {entry!r}: change "
-            + f"it with a plain object under {entry!r}, not an add",
+            f"it with a plain object under {entry!r}, not an add",
             where,
             "exists",
         )
     if op.kind == "add":
         raise PatchError(
             f"the edge has segment {name!r} by inheritance from its profile: "
-            + 'change it with a plain object, not {"_op": "add"} (add())',
+            'change it with a plain object, not {"_op": "add"} (add())',
             where,
             "segment_rule",
         )
     if op.kind == "delete":
         raise PatchError(
             f"the edge layer has no entry to delete for segment {name!r}, which "
-            + "it inherits from its profile: leave it out of the patch, as "
-            + '{"_op": "delete"} (delete()) removes only an entry the edge layer holds',
+            "it inherits from its profile: leave it out of the patch, as "
+            '{"_op": "delete"} (delete()) removes only an entry the edge layer holds',
             where,
             "segment_rule",
         )
@@ -1788,10 +1788,10 @@ def _refuse_place_for(
         return
     raise PatchError(
         f"the edge inherits segment {name!r} from its profile and had no entry "
-        + "of its own for it when it was read. A save writes such a segment "
-        + "after the edge's own, in the profile's order, so it cannot be given a "
-        + 'place. For a move, such as {"_position": "first"} (`move(first=True)`), '
-        + 'drop the entry. For a change, drop "_position" and keep the fields',
+        "of its own for it when it was read. A save writes such a segment "
+        "after the edge's own, in the profile's order, so it cannot be given a "
+        'place. For a move, such as {"_position": "first"} (`move(first=True)`), '
+        'drop the entry. For a change, drop "_position" and keep the fields',
         where,
         "segment_rule",
     )
@@ -1826,13 +1826,13 @@ def _refuse_place_by_inherited(
         return
     raise PatchError(
         f"the place is given by segment {anchor!r}, which the edge inherits "
-        + "from its profile and had no entry of its own for when it was read. "
-        + "A save writes such a segment after the edge's own, in the profile's "
-        + "order, so a place before or after it cannot be stored. Place the "
-        + 'segment "first" or "last" ({"_position": "first"} (`move(first=True)`)), '
-        + "or before or after one of the edge's own segments "
-        + '({"_position": {"before": "<own segment>"}} '
-        + '(`move(before="<own segment>")`))',
+        "from its profile and had no entry of its own for when it was read. "
+        "A save writes such a segment after the edge's own, in the profile's "
+        "order, so a place before or after it cannot be stored. Place the "
+        'segment "first" or "last" ({"_position": "first"} (`move(first=True)`)), '
+        "or before or after one of the edge's own segments "
+        '({"_position": {"before": "<own segment>"}} '
+        '(`move(before="<own segment>")`))',
         where,
         "segment_rule",
     )

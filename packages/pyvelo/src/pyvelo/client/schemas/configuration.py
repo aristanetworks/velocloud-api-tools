@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import copy
-import datetime
+import datetime as dt
 import json
 import uuid
 from collections.abc import Mapping, Sequence
@@ -207,7 +207,7 @@ class ConfigurationModuleBase(VcoModel):
         data: object = getattr(self, "data", MISSING)
         segments: object = getattr(data, "segments", MISSING)
         if isinstance(data, VcoModel) and isinstance(segments, list):
-            return data, cast(list[Any], segments)
+            return data, cast("list[Any]", segments)
         raise ValueError(
             f"The data of module {self.id_} has no `segments`, so it has no "
             "segment to add to."
@@ -553,7 +553,7 @@ def new_edge_module(
         raise ValueError(
             f"Module {name.value!r} cannot be inserted as an empty edge layer"
         )
-    now = datetime.datetime.now(datetime.UTC)
+    now = dt.datetime.now(dt.UTC)
     row: dict[str, Any] = {
         "id": 0,
         "type": "ENTERPRISE",
@@ -638,13 +638,15 @@ def _module_names() -> frozenset[str]:
     members (``QosConfigurationModule[X]``), and those classes have their ``name``
     as any other.
     """
-    union = cast(object, get_args(cast(object, AnyConfigurationModule.__value__))[0])
-    modules = cast(tuple[type[ConfigurationModuleBase], ...], get_args(union))
+    union = cast(
+        "object", get_args(cast("object", AnyConfigurationModule.__value__))[0]
+    )
+    modules = cast("tuple[type[ConfigurationModuleBase], ...]", get_args(union))
     return frozenset(
         name
         for module in modules
         for name in cast(
-            tuple[str, ...], get_args(module.model_fields["name"].annotation)
+            "tuple[str, ...]", get_args(module.model_fields["name"].annotation)
         )
     )
 

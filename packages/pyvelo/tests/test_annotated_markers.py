@@ -33,7 +33,7 @@ def _normalize_ssm(value: str) -> str:
 
 def _compact(model: VcoModel, **extra_ctx: object) -> JsonObject:
     ctx: dict[str, object] = {**_COMPACT, **extra_ctx}
-    return cast(JsonObject, model.model_dump(by_alias=False, context=ctx))
+    return cast("JsonObject", model.model_dump(by_alias=False, context=ctx))
 
 
 # ---------------------------------------------------------------------------
@@ -88,17 +88,17 @@ class AliasNormalizer(VcoModel):
 
 
 class TestAliasMarker:
-    def test_validates_from_vco_key(self):
+    def test_validates_from_vco_key(self) -> None:
         m = AliasModel.model_validate({"type": "LDAP", "DHGroup": 14})
         assert m.type_ == "LDAP"
         assert m.dh_group == 14
 
-    def test_validates_from_python_name(self):
+    def test_validates_from_python_name(self) -> None:
         m = AliasModel(type_="LDAP", dh_group=14)
         assert m.type_ == "LDAP"
         assert m.dh_group == 14
 
-    def test_serializes_to_vco_key(self):
+    def test_serializes_to_vco_key(self) -> None:
         m = AliasModel(type_="LDAP", dh_group=14)
         d = m.model_dump()
         assert "type" in d
@@ -106,24 +106,24 @@ class TestAliasMarker:
         assert d["type"] == "LDAP"
         assert d["DHGroup"] == 14
 
-    def test_round_trip(self):
+    def test_round_trip(self) -> None:
         original = {"type": "LDAP", "DHGroup": 14}
         m = AliasModel.model_validate(original)
         dumped = m.model_dump()
         assert dumped["type"] == "LDAP"
         assert dumped["DHGroup"] == 14
 
-    def test_missing_default(self):
+    def test_missing_default(self) -> None:
         m = AliasModel()
         assert m.dh_group is MISSING
 
-    def test_compact_drops_defaults(self):
+    def test_compact_drops_defaults(self) -> None:
         m = AliasModel()
         d = _compact(m)
         assert "type_" not in d
         assert "dh_group" not in d
 
-    def test_compact_keeps_non_defaults(self):
+    def test_compact_keeps_non_defaults(self) -> None:
         m = AliasModel(type_="LDAP", dh_group=14)
         d = _compact(m)
         assert d["type_"] == "LDAP"
@@ -136,25 +136,25 @@ class TestAliasMarker:
 
 
 class TestEdgeOnlyMarker:
-    def test_omitted_at_profile(self):
+    def test_omitted_at_profile(self) -> None:
         m = EdgeOnlyModel(override=True, enabled=True)
         d = _compact(m, config_level=ConfigContext.PROFILE)
         assert "override" not in d
         assert "enabled" not in d
 
-    def test_kept_at_edge(self):
+    def test_kept_at_edge(self) -> None:
         m = EdgeOnlyModel(override=False, enabled=True)
         d = _compact(m, config_level=ConfigContext.EDGE)
         assert d["override"] is False
         assert d["enabled"] is True
 
-    def test_default_dropped_at_edge(self):
+    def test_default_dropped_at_edge(self) -> None:
         m = EdgeOnlyModel()
         d = _compact(m, config_level=ConfigContext.EDGE)
         assert "override" not in d
         assert "enabled" not in d
 
-    def test_vco_format_omits_at_profile(self):
+    def test_vco_format_omits_at_profile(self) -> None:
         m = EdgeOnlyModel(override=True, enabled=True).for_profile()
         d = m.model_dump(by_alias=False)
         assert "override" not in d
@@ -168,12 +168,12 @@ class TestEdgeOnlyMarker:
 
 
 class TestProfileOnlyMarker:
-    def test_omitted_at_edge(self):
+    def test_omitted_at_edge(self) -> None:
         m = ProfileOnlyModel(defaults=["rule1"])
         d = _compact(m, config_level=ConfigContext.EDGE)
         assert "defaults" not in d
 
-    def test_kept_at_profile(self):
+    def test_kept_at_profile(self) -> None:
         m = ProfileOnlyModel(defaults=["rule1"])
         d = _compact(m, config_level=ConfigContext.PROFILE)
         assert d["defaults"] == ["rule1"]
@@ -185,7 +185,7 @@ class TestProfileOnlyMarker:
 
 
 class TestNormMarker:
-    def test_equivalent_representations_dropped(self):
+    def test_equivalent_representations_dropped(self) -> None:
         # Normalizers run at compact serialization time, not validation time.
         # Only test values that are valid for list[int].
         for equivalent in ([], [0]):
@@ -195,12 +195,12 @@ class TestNormMarker:
                 f"Expected area to be dropped for value {equivalent!r}"
             )
 
-    def test_default_factory_value_dropped(self):
+    def test_default_factory_value_dropped(self) -> None:
         m = NormModel()
         d = _compact(m)
         assert "area" not in d
 
-    def test_real_value_kept(self):
+    def test_real_value_kept(self) -> None:
         m = NormModel(area=[1, 2])
         d = _compact(m)
         assert d["area"] == [1, 2]
@@ -212,23 +212,23 @@ class TestNormMarker:
 
 
 class TestCtxDefaultMarker:
-    def test_profile_uses_none_default(self):
+    def test_profile_uses_none_default(self) -> None:
         m = CtxDefaultModel()
         d = _compact(m, config_level=ConfigContext.PROFILE)
         # default_factory=list produces [], but profile default is None, so [] != None -> kept
         assert d["routed_interfaces"] == []
 
-    def test_profile_none_matches_ctx_default(self):
+    def test_profile_none_matches_ctx_default(self) -> None:
         m = CtxDefaultModel(routed_interfaces=None)
         d = _compact(m, config_level=ConfigContext.PROFILE)
         assert "routed_interfaces" not in d
 
-    def test_edge_empty_list_matches_field_default(self):
+    def test_edge_empty_list_matches_field_default(self) -> None:
         m = CtxDefaultModel()
         d = _compact(m, config_level=ConfigContext.EDGE)
         assert "routed_interfaces" not in d
 
-    def test_edge_populated_list_kept(self):
+    def test_edge_populated_list_kept(self) -> None:
         m = CtxDefaultModel(routed_interfaces=["eth0"])
         d = _compact(m, config_level=ConfigContext.EDGE)
         assert d["routed_interfaces"] == ["eth0"]
@@ -240,43 +240,43 @@ class TestCtxDefaultMarker:
 
 
 class TestComposition:
-    def test_none_is_false_plus_edge_only(self):
+    def test_none_is_false_plus_edge_only(self) -> None:
         m = ComposedModel.model_validate({"override": None})
         assert m.override is False
 
-    def test_edge_only_omits_at_profile(self):
+    def test_edge_only_omits_at_profile(self) -> None:
         m = ComposedModel(override=False, enabled=True)
         d = _compact(m, config_level=ConfigContext.PROFILE)
         assert "override" not in d
         assert "enabled" not in d
 
-    def test_edge_only_keeps_non_default_at_edge(self):
+    def test_edge_only_keeps_non_default_at_edge(self) -> None:
         m = ComposedModel(override=False, enabled=True)
         d = _compact(m, config_level=ConfigContext.EDGE)
         assert d["override"] is False
         assert d["enabled"] is True
 
-    def test_alias_plus_edge_only(self):
+    def test_alias_plus_edge_only(self) -> None:
         m = AliasEdgeOnly(base_dhcp_addr=42)
         d = _compact(m, config_level=ConfigContext.EDGE)
         assert d["base_dhcp_addr"] == 42
 
-    def test_alias_plus_edge_only_omits_at_profile(self):
+    def test_alias_plus_edge_only_omits_at_profile(self) -> None:
         m = AliasEdgeOnly(base_dhcp_addr=42)
         d = _compact(m, config_level=ConfigContext.PROFILE)
         assert "base_dhcp_addr" not in d
 
-    def test_alias_plus_edge_only_serializes_vco_key(self):
+    def test_alias_plus_edge_only_serializes_vco_key(self) -> None:
         m = AliasEdgeOnly(base_dhcp_addr=42)
         d = m.model_dump()
         assert "baseDhcpAddr" in d
 
-    def test_alias_plus_norm(self):
+    def test_alias_plus_norm(self) -> None:
         m = AliasNormalizer.model_validate({"ssm": "any"})
         d = _compact(m)
         assert "ssm" not in d
 
-    def test_alias_plus_norm_real_value_kept(self):
+    def test_alias_plus_norm_real_value_kept(self) -> None:
         m = AliasNormalizer(ssm="10.0.0.1")
         d = _compact(m)
         assert d["ssm"] == "10.0.0.1"
@@ -297,21 +297,21 @@ class ChildModel(ParentModel):
 
 
 class TestInheritance:
-    def test_parent_alias_works_in_child(self):
+    def test_parent_alias_works_in_child(self) -> None:
         m = ChildModel.model_validate({"aliasedKey": "override"})
         assert m.aliased == "override"
 
-    def test_parent_edge_only_works_in_child(self):
+    def test_parent_edge_only_works_in_child(self) -> None:
         m = ChildModel(edge=False)
         d = _compact(m, config_level=ConfigContext.PROFILE)
         assert "edge" not in d
 
-    def test_child_serializes_parent_alias(self):
+    def test_child_serializes_parent_alias(self) -> None:
         m = ChildModel(aliased="val")
         d = m.model_dump()
         assert d["aliasedKey"] == "val"
 
-    def test_child_compact_drops_parent_defaults(self):
+    def test_child_compact_drops_parent_defaults(self) -> None:
         m = ChildModel()
         d = _compact(m)
         assert "aliased" not in d

@@ -132,8 +132,9 @@ def set_primary(data: DeviceSettingsData, value: UUID | None, index: int = 0) ->
 
 def set_css(data: DeviceSettingsData, value: UUID | str, index: int = 0) -> None:
     css = data.segments[index].css
-    assert css is not MISSING and css.provider is not MISSING
-    css.provider.logical_id = cast(Any, value)
+    assert css is not MISSING
+    assert css.provider is not MISSING
+    css.provider.logical_id = cast("Any", value)
 
 
 def primary_row(
@@ -176,19 +177,19 @@ def refs_of(derived: DerivedRefs) -> dict[str, Any]:
     return derived.refs
 
 
-def test_the_name_sets_are_the_ones_of_the_plan():
-    assert APPEND_ONLY_REF_NAMES == {
+def test_the_name_sets_are_the_ones_of_the_plan() -> None:
+    assert {
         "deviceSettings:vnfs:edge",
         "objectGroup:addressGroup",
         "objectGroup:portGroup",
-    }
+    } == APPEND_ONLY_REF_NAMES
     assert len(PROCESSOR_REF_NAMES) == 13
     assert "deviceSettings:vnfs:edge" in PROCESSOR_REF_NAMES
     assert "deviceSettings:wssIntegration" in PROCESSOR_REF_NAMES
-    assert ALWAYS_SEND_REFS == {"deviceSettings", "QOS"}
+    assert {"deviceSettings", "QOS"} == ALWAYS_SEND_REFS
 
 
-async def test_setting_a_provider_adds_exactly_one_five_field_row():
+async def test_setting_a_provider_adds_exactly_one_five_field_row() -> None:
     module = ds_module(
         [segment_entry(0, "Global Segment", SEG0, dns=dns(primary=True))],
         {SEGMENT: segment_row(0, SEG0_OBJECT, SEG0)},
@@ -197,7 +198,8 @@ async def test_setting_a_provider_adds_exactly_one_five_field_row():
     set_primary(current, UUID(DNS_A))
     derived = derive(module, current, await table_registry(DNS_A_IDENTITY))
     (change,) = derived.changes
-    assert change.added and change.name == PRIMARY
+    assert change.added
+    assert change.name == PRIMARY
     assert change.row == {
         "configurationId": CONFIG,
         "moduleId": DS_ID,
@@ -215,7 +217,7 @@ async def test_setting_a_provider_adds_exactly_one_five_field_row():
     assert derived.warnings == ()
 
 
-async def test_changing_a_provider_swaps_its_row_and_keeps_the_others():
+async def test_changing_a_provider_swaps_its_row_and_keeps_the_others() -> None:
     module = ds_module(
         [segment_entry(0, "Global Segment", SEG0, dns=dns(primary=True, backup=True))],
         global_refs(**{PRIMARY: primary_row(), BACKUP: backup_row()}),
@@ -227,7 +229,8 @@ async def test_changing_a_provider_swaps_its_row_and_keeps_the_others():
     added = [c for c in derived.changes if c.added]
     assert len(derived.changes) == 2
     assert [c.row for c in removed] == [primary_row()]
-    assert removed[0].value == DNS_A and removed[0].owner == PRIMARY_PATH
+    assert removed[0].value == DNS_A
+    assert removed[0].owner == PRIMARY_PATH
     assert removed[0].segment_object_id == SEG0_OBJECT
     assert added[0].row["enterpriseObjectId"] == 702
     assert added[0].value == DNS_B
@@ -237,7 +240,7 @@ async def test_changing_a_provider_swaps_its_row_and_keeps_the_others():
     assert refs[SEGMENT] == segment_row(0, SEG0_OBJECT, SEG0)
 
 
-def test_clearing_a_provider_removes_its_row_and_leaves_its_name_out():
+def test_clearing_a_provider_removes_its_row_and_leaves_its_name_out() -> None:
     module = ds_module(
         [segment_entry(0, "Global Segment", SEG0, dns=dns(primary=True, backup=True))],
         global_refs(**{PRIMARY: primary_row(), BACKUP: backup_row()}),
@@ -246,14 +249,16 @@ def test_clearing_a_provider_removes_its_row_and_leaves_its_name_out():
     set_primary(current, None)
     derived = derive(module, current)
     (change,) = derived.changes
-    assert not change.added and change.row == primary_row()
-    assert change.owner == PRIMARY_PATH and change.value == DNS_A
+    assert not change.added
+    assert change.row == primary_row()
+    assert change.owner == PRIMARY_PATH
+    assert change.value == DNS_A
     refs = refs_of(derived)
     assert PRIMARY not in refs
     assert refs[BACKUP] == backup_row()
 
 
-async def test_an_owns_ref_identity_added_and_removed():
+async def test_an_owns_ref_identity_added_and_removed() -> None:
     module = ds_module(
         [segment_entry(0, "Global Segment", SEG0, css={"provider": {"logicalId": ""}})],
         global_refs(),
@@ -262,7 +267,9 @@ async def test_an_owns_ref_identity_added_and_removed():
     set_css(current, UUID(CSS))
     derived = derive(module, current, await table_registry(CSS_IDENTITY))
     (added,) = derived.changes
-    assert added.added and added.name == CSS_PROVIDER and added.owner is None
+    assert added.added
+    assert added.name == CSS_PROVIDER
+    assert added.owner is None
     assert added.row == {
         "configurationId": CONFIG,
         "moduleId": DS_ID,
@@ -270,7 +277,8 @@ async def test_an_owns_ref_identity_added_and_removed():
         "ref": CSS_PROVIDER,
         "segmentObjectId": SEG0_OBJECT,
     }
-    assert added.value == CSS and added.match == "logicalId"
+    assert added.value == CSS
+    assert added.match == "logicalId"
 
     with_row = ds_module(
         [
@@ -286,19 +294,21 @@ async def test_an_owns_ref_identity_added_and_removed():
     set_css(cleared, "")
     derived = derive(with_row, cleared)
     (removed,) = derived.changes
-    assert not removed.added and removed.name == CSS_PROVIDER
+    assert not removed.added
+    assert removed.name == CSS_PROVIDER
     assert removed.row["enterpriseObjectId"] == 704
     assert CSS_PROVIDER not in refs_of(derived)
 
 
-def test_no_edit_to_an_owner_changes_nothing():
+def test_no_edit_to_an_owner_changes_nothing() -> None:
     module = primary_module(**{BACKUP: backup_row()})
     derived = derive(module, edited(module))
-    assert derived.changes == () and derived.warnings == ()
+    assert derived.changes == ()
+    assert derived.warnings == ()
     assert derived.refs == module.raw_refs
 
 
-def test_untouched_names_keep_their_shape_and_changed_ones_are_lists():
+def test_untouched_names_keep_their_shape_and_changed_ones_are_lists() -> None:
     two = [
         hub_row(DNS_A, 801),
         hub_row(DNS_B, 802),
@@ -312,7 +322,7 @@ def test_untouched_names_keep_their_shape_and_changed_ones_are_lists():
     assert refs[SEGMENT] == segment_row(0, SEG0_OBJECT, SEG0)
 
 
-def test_append_only_names_are_not_sent():
+def test_append_only_names_are_not_sent() -> None:
     module = primary_module(
         **{
             "deviceSettings:vnfs:edge": {
@@ -330,7 +340,7 @@ def test_append_only_names_are_not_sent():
     assert PRIMARY in refs
 
 
-def test_an_undeclared_name_is_sent_as_read():
+def test_an_undeclared_name_is_sent_as_read() -> None:
     hub = hub_row(DNS_A, 801)
     site = service_row("deviceSettings:css:site", CSS, 704, SEG0_OBJECT, SEG0)
     module = primary_module(
@@ -344,16 +354,17 @@ def test_an_undeclared_name_is_sent_as_read():
 
 
 @pytest.mark.parametrize("segments", [None, [], "x", {"a": 1}, MISSING])
-def test_segments_in_the_payload_must_be_a_non_empty_list(segments: object):
+def test_segments_in_the_payload_must_be_a_non_empty_list(segments: object) -> None:
     module = primary_module()
     payload: dict[str, Any] = {} if segments is MISSING else {"segments": segments}
     assert derive(module, edited(module), payload=payload).refs is None
 
 
-def test_a_module_without_segments_and_no_change_sends_no_refs():
+def test_a_module_without_segments_and_no_change_sends_no_refs() -> None:
     module = ds_module([], {SEGMENT: segment_row(0, SEG0_OBJECT, SEG0)})
     derived = derive(module, edited(module))
-    assert derived.refs is None and derived.changes == ()
+    assert derived.refs is None
+    assert derived.changes == ()
 
     row = make_module_json(
         "firewall", {"segments": []}, configuration_id=CONFIG, refs={"x": {}}
@@ -367,26 +378,29 @@ def test_a_module_without_segments_and_no_change_sends_no_refs():
         level=ConfigContext.EDGE,
         resolvers=None,
     )
-    assert result.refs is None and result.changes == ()
+    assert result.refs is None
+    assert result.changes == ()
 
 
-def test_a_new_module_without_rows_to_send_carries_no_refs():
+def test_a_new_module_without_rows_to_send_carries_no_refs() -> None:
     module = primary_module()
     module._is_new = True  # pyright: ignore[reportPrivateUsage]
     derived = derive(module, edited(module))
-    assert derived.changes == () and derived.refs is None
+    assert derived.changes == ()
+    assert derived.refs is None
 
 
-def test_a_plan_of_plain_data_derives_nothing():
+def test_a_plan_of_plain_data_derives_nothing() -> None:
     module = primary_module()
     derived = derive(module, None)
-    assert derived.changes == () and derived.warnings == ()
+    assert derived.changes == ()
+    assert derived.warnings == ()
     assert derived.refs is None
     full = derive(module, None, payload={"segments": [{}]})
     assert full.refs == module.raw_refs
 
 
-def test_rows_that_disagree_as_read_warn_and_are_left_alone():
+def test_rows_that_disagree_as_read_warn_and_are_left_alone() -> None:
     module = ds_module(
         [
             segment_entry(
@@ -414,7 +428,7 @@ def test_rows_that_disagree_as_read_warn_and_are_left_alone():
         assert "only what the edit adds or removes" in warning.message
 
 
-def test_a_row_with_no_owner_in_a_segment_the_data_has_names_the_segment():
+def test_a_row_with_no_owner_in_a_segment_the_data_has_names_the_segment() -> None:
     module = ds_module(
         [segment_entry(0, "Global Segment", SEG0, dns=dns(), css={})],
         global_refs(
@@ -427,7 +441,7 @@ def test_a_row_with_no_owner_in_a_segment_the_data_has_names_the_segment():
     assert warning.path == f"refs {CSS_PROVIDER} (Global Segment)"
 
 
-def test_no_warnings_when_the_refs_were_not_read():
+def test_no_warnings_when_the_refs_were_not_read() -> None:
     module = ds_module(
         [
             segment_entry(
@@ -440,7 +454,7 @@ def test_no_warnings_when_the_refs_were_not_read():
     assert derive(module, edited(module)).warnings == ()
 
 
-def test_two_rows_for_one_provider_warn_and_the_other_row_stays():
+def test_two_rows_for_one_provider_warn_and_the_other_row_stays() -> None:
     other = primary_row(DNS_B, 702)
     module = ds_module(
         [segment_entry(0, "Global Segment", SEG0, dns=dns(primary=True))],
@@ -458,7 +472,7 @@ def test_two_rows_for_one_provider_warn_and_the_other_row_stays():
     assert derived.warnings[0].path == f"refs {PRIMARY} (Global Segment)"
 
 
-def test_a_removed_row_is_found_by_the_segment_object_id():
+def test_a_removed_row_is_found_by_the_segment_object_id() -> None:
     module = ds_module(
         [
             segment_entry(0, "Global Segment", SEG0, dns=dns(primary=True)),
@@ -484,7 +498,9 @@ def test_a_removed_row_is_found_by_the_segment_object_id():
     assert refs_of(derived)[PRIMARY] == [primary_row()]
 
 
-def test_a_removed_row_is_found_by_the_segment_logical_id_without_segment_rows():
+def test_a_removed_row_is_found_by_the_segment_logical_id_without_segment_rows() -> (
+    None
+):
     module = ds_module(
         [
             segment_entry(0, "Global Segment", SEG0, dns=dns(primary=True)),
@@ -505,7 +521,7 @@ def test_a_removed_row_is_found_by_the_segment_logical_id_without_segment_rows()
     assert refs_of(derived)[PRIMARY] == [primary_row()]
 
 
-def test_identities_are_compared_as_lower_case_text():
+def test_identities_are_compared_as_lower_case_text() -> None:
     module = ds_module(
         [segment_entry(0, "Global Segment", SEG0, dns=dns(primary=True))],
         global_refs(**{PRIMARY: primary_row(DNS_A.upper())}),
@@ -519,7 +535,7 @@ def test_identities_are_compared_as_lower_case_text():
     assert PRIMARY not in refs_of(derived)
 
 
-async def test_a_new_row_takes_the_segment_object_id_from_the_resolver():
+async def test_a_new_row_takes_the_segment_object_id_from_the_resolver() -> None:
     module = ds_module(
         [segment_entry(0, "Global Segment", SEG0, dns=dns(primary=True))], {}
     )
@@ -531,7 +547,9 @@ async def test_a_new_row_takes_the_segment_object_id_from_the_resolver():
     assert change.segment_object_id == SEG0_OBJECT
 
 
-async def test_a_new_row_prefers_the_module_s_own_segment_rows_to_the_resolver():
+async def test_a_new_row_prefers_the_module_s_own_segment_rows_to_the_resolver() -> (
+    None
+):
     module = primary_module()
     current = edited(module)
     set_primary(current, UUID(DNS_B))
@@ -541,7 +559,7 @@ async def test_a_new_row_prefers_the_module_s_own_segment_rows_to_the_resolver()
     assert added[0].row["segmentObjectId"] == SEG0_OBJECT
 
 
-async def test_a_new_authentication_row():
+async def test_a_new_authentication_row() -> None:
     module = ds_module(
         [
             segment_entry(
@@ -555,7 +573,8 @@ async def test_a_new_authentication_row():
     assert isinstance(authentication, SegmentAuthentication)
     authentication.service = UUID(AUTH)
     (change,) = derive(module, current, await table_registry(AUTH_IDENTITY)).changes
-    assert change.name == AUTHENTICATION and change.row["enterpriseObjectId"] == 703
+    assert change.name == AUTHENTICATION
+    assert change.row["enterpriseObjectId"] == 703
 
 
 def set_backup(data: DeviceSettingsData, value: UUID | None, index: int = 0) -> None:
@@ -602,7 +621,7 @@ SERVICE_OF_TYPE = {
 }
 
 
-def test_the_service_types_are_those_of_the_four_provider_refs():
+def test_the_service_types_are_those_of_the_four_provider_refs() -> None:
     assert SERVICE_TYPES == {
         PRIMARY: "dns",
         BACKUP: "dns",
@@ -612,17 +631,18 @@ def test_the_service_types_are_those_of_the_four_provider_refs():
 
 
 @pytest.mark.parametrize("name", sorted(SERVICE_TYPES))
-async def test_a_provider_of_the_type_its_ref_wants_gets_a_row(name: str):
+async def test_a_provider_of_the_type_its_ref_wants_gets_a_row(name: str) -> None:
     wanted = SERVICE_OF_TYPE[SERVICE_TYPES[name]]
     (change,) = (await provider_edit(name, wanted)).changes
-    assert change.added and change.name == name
+    assert change.added
+    assert change.name == name
     assert change.row["enterpriseObjectId"] == wanted.object_id
 
 
 @pytest.mark.parametrize("name", sorted(SERVICE_TYPES))
 async def test_a_provider_of_another_type_is_refused_with_the_types_and_the_patch(
     name: str,
-):
+) -> None:
     wanted = SERVICE_TYPES[name]
     other = next(s for t, s in SERVICE_OF_TYPE.items() if t != wanted)
     with pytest.raises(ResolutionError) as caught:
@@ -636,7 +656,7 @@ async def test_a_provider_of_another_type_is_refused_with_the_types_and_the_patc
     assert "sets it" in message
 
 
-def test_a_new_row_without_resolvers_is_not_loaded():
+def test_a_new_row_without_resolvers_is_not_loaded() -> None:
     module = primary_module()
     current = edited(module)
     set_primary(current, UUID(DNS_B))
@@ -645,7 +665,7 @@ def test_a_new_row_without_resolvers_is_not_loaded():
     assert caught.value.identity_type is NetworkServiceIdentity
 
 
-async def test_a_segment_resolver_that_is_not_loaded_is_named():
+async def test_a_segment_resolver_that_is_not_loaded_is_named() -> None:
     module = ds_module(
         [segment_entry(0, "Global Segment", SEG0, dns=dns(primary=True))], {}
     )
@@ -658,7 +678,7 @@ async def test_a_segment_resolver_that_is_not_loaded_is_named():
     assert caught.value.identity_type is SegmentIdentity
 
 
-async def test_an_unknown_service_names_the_owner():
+async def test_an_unknown_service_names_the_owner() -> None:
     module = primary_module()
     current = edited(module)
     set_primary(current, UUID(DNS_B))
@@ -671,7 +691,7 @@ async def test_an_unknown_service_names_the_owner():
     assert DNS_B in message
 
 
-async def test_an_unknown_segment_names_the_owner():
+async def test_an_unknown_segment_names_the_owner() -> None:
     module = ds_module(
         [segment_entry(0, "Global Segment", SEG0, dns=dns(primary=True))], {}
     )
@@ -682,7 +702,7 @@ async def test_an_unknown_segment_names_the_owner():
     assert PRIMARY_PATH in str(caught.value)
 
 
-async def test_an_insert_row_has_no_module_id():
+async def test_an_insert_row_has_no_module_id() -> None:
     module = ds_module(
         [segment_entry(0, "Global Segment", SEG0, dns=dns(primary=True))],
         global_refs(),
@@ -701,7 +721,7 @@ async def test_an_insert_row_has_no_module_id():
     assert refs_of(derived)[PRIMARY] == [change.row]
 
 
-async def test_the_segment_row_is_derived_on_a_profile_only():
+async def test_the_segment_row_is_derived_on_a_profile_only() -> None:
     voice = DeviceSegment.model_validate(segment_entry(1, "Voice", SEG1))
     registry = await table_registry(SEG1_IDENTITY)
 
@@ -714,9 +734,13 @@ async def test_the_segment_row_is_derived_on_a_profile_only():
     current.segments.append(voice)
     derived = derive(profile, current, registry)
     (change,) = derived.changes
-    assert change.added and change.name == SEGMENT and change.owner is None
-    assert change.match == "data.segmentId" and change.value == 1
-    assert change.segment is None and change.segment_object_id is None
+    assert change.added
+    assert change.name == SEGMENT
+    assert change.owner is None
+    assert change.match == "data.segmentId"
+    assert change.value == 1
+    assert change.segment is None
+    assert change.segment_object_id is None
     assert change.row == {
         "configurationId": CONFIG,
         "moduleId": DS_ID,
@@ -735,7 +759,7 @@ async def test_the_segment_row_is_derived_on_a_profile_only():
     assert derive(edge, current, registry).changes == ()
 
 
-def test_removing_a_segment_removes_its_segment_row():
+def test_removing_a_segment_removes_its_segment_row() -> None:
     profile = ds_module(
         [
             segment_entry(0, "Global Segment", SEG0),
@@ -752,12 +776,13 @@ def test_removing_a_segment_removes_its_segment_row():
     del current.segments[1]
     derived = derive(profile, current)
     (change,) = derived.changes
-    assert not change.added and change.value == 1
+    assert not change.added
+    assert change.value == 1
     assert change.row == segment_row(1, SEG1_OBJECT, SEG1)
     assert refs_of(derived)[SEGMENT] == [segment_row(0, SEG0_OBJECT, SEG0)]
 
 
-def test_the_rows_as_read_are_not_changed_by_a_derivation():
+def test_the_rows_as_read_are_not_changed_by_a_derivation() -> None:
     module = primary_module(**{BACKUP: backup_row()})
     before = copy.deepcopy(module.raw_refs)
     current = edited(module)
@@ -766,7 +791,7 @@ def test_the_rows_as_read_are_not_changed_by_a_derivation():
     assert module.raw_refs == before
 
 
-def test_a_change_is_frozen():
+def test_a_change_is_frozen() -> None:
     module = primary_module()
     current = edited(module)
     set_primary(current, None)
@@ -776,7 +801,7 @@ def test_a_change_is_frozen():
         change.name = "x"  # pyright: ignore[reportAttributeAccessIssue]
 
 
-def test_the_owners_that_changed_need_no_refs_and_no_resolvers():
+def test_the_owners_that_changed_need_no_refs_and_no_resolvers() -> None:
     module = ds_module(
         [segment_entry(0, "Global Segment", SEG0, dns=dns(primary=True, backup=True))],
         MISSING,
@@ -798,7 +823,9 @@ def test_the_owners_that_changed_need_no_refs_and_no_resolvers():
     assert removed.path == PRIMARY_PATH
 
 
-def test_a_write_always_sends_its_refs_for_a_module_with_segments_that_is_not_new():
+def test_a_write_always_sends_its_refs_for_a_module_with_segments_that_is_not_new() -> (
+    None
+):
     module = primary_module()
     assert sends_refs_always(module, {"segments": [{}]}) is True
     assert sends_refs_always(module, {"segments": []}) is False

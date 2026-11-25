@@ -27,7 +27,7 @@ from .test_version_read import (
 
 async def test_a_version_that_is_the_one_read_answers_none_after_one_request(
     mock_vco_client: MockVcoClientFactory,
-):
+) -> None:
     module, plan = await provider_set()
     store = a_store_holding(module)
     client = await mock_vco_client(store)
@@ -38,7 +38,7 @@ async def test_a_version_that_is_the_one_read_answers_none_after_one_request(
 
 async def test_a_changed_version_with_the_changes_already_stored_answers_that_write(
     mock_vco_client: MockVcoClientFactory,
-):
+) -> None:
     module, plan = await provider_set(with_data_change=True)
     store = a_store_holding(module)
     client = await mock_vco_client(store)
@@ -54,7 +54,7 @@ async def test_a_changed_version_with_the_changes_already_stored_answers_that_wr
 
 async def test_a_changed_version_without_the_changes_is_a_conflict_and_sends_nothing(
     mock_vco_client: MockVcoClientFactory,
-):
+) -> None:
     module, plan = await provider_set(with_data_change=True)
     store = a_store_holding(module)
     store.other_writer(DS_ID, elsewhere)
@@ -69,7 +69,7 @@ async def test_a_changed_version_without_the_changes_is_a_conflict_and_sends_not
 
 async def test_a_module_without_a_version_is_not_read(
     mock_vco_client: MockVcoClientFactory,
-):
+) -> None:
     module, plan = await provider_set()
     module = module.model_copy(update={"version": None})
     store = a_store_holding(module)
@@ -80,7 +80,7 @@ async def test_a_module_without_a_version_is_not_read(
 
 async def test_a_module_without_a_configuration_is_not_read(
     mock_vco_client: MockVcoClientFactory,
-):
+) -> None:
     module, plan = await provider_set()
     module = module.model_copy(update={"configuration_id": None})
     store = a_store_holding(module)
@@ -91,7 +91,7 @@ async def test_a_module_without_a_configuration_is_not_read(
 
 async def test_a_plan_that_sends_no_refs_is_not_read(
     mock_vco_client: MockVcoClientFactory,
-):
+) -> None:
     module = DeviceSettingsConfigurationModule.model_validate(
         make_module_json(
             "deviceSettings",
@@ -112,7 +112,7 @@ async def test_a_plan_that_sends_no_refs_is_not_read(
 
 async def test_a_plan_for_another_module_is_refused_before_a_request(
     mock_vco_client: MockVcoClientFactory,
-):
+) -> None:
     module, plan = await provider_set()
     other = DeviceSettingsConfigurationModule.model_validate(
         make_module_json(
@@ -131,7 +131,7 @@ async def test_a_plan_for_another_module_is_refused_before_a_request(
 
 async def test_version_checked_sends_no_version_read(
     mock_vco_client: MockVcoClientFactory,
-):
+) -> None:
     module, plan = await provider_set()
     store = a_store_holding(module)
     client = await mock_vco_client(store)
@@ -141,7 +141,7 @@ async def test_version_checked_sends_no_version_read(
 
 async def test_version_checked_leaves_the_conditional_update_to_refuse_a_stale_write(
     mock_vco_client: MockVcoClientFactory,
-):
+) -> None:
     module, plan = await provider_set(with_data_change=True)
     store: ModuleStore = a_store_holding(module, conditional_check=True)
     store.other_writer(DS_ID, elsewhere)
@@ -154,7 +154,7 @@ async def test_version_checked_leaves_the_conditional_update_to_refuse_a_stale_w
 
 async def test_version_checked_does_not_skip_the_read_that_decides_a_rebase(
     mock_vco_client: MockVcoClientFactory,
-):
+) -> None:
     module, plan = await provider_set(with_data_change=True)
     store = a_store_holding(module)
     client = await mock_vco_client(store)

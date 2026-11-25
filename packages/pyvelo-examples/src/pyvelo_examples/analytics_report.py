@@ -22,10 +22,10 @@ from html import escape
 from pathlib import Path
 from typing import cast
 
-import matplotlib
+import matplotlib as mpl
 import polars as pl
 
-matplotlib.use("Agg")
+mpl.use("Agg")
 
 import matplotlib.pyplot as plt
 from matplotlib.axes import Axes
@@ -149,7 +149,7 @@ def _setup_axes(ax: Axes) -> None:
 
 def plot_link_series(df: pl.DataFrame) -> Figure:
     fig, ax = plt.subplots(figsize=(10, 4))
-    links = cast(list[object], df["link_name"].unique().to_list())
+    links = cast("list[object]", df["link_name"].unique().to_list())
     for link in links:
         ldf = df.filter(pl.col("link_name") == link).sort("timestamp")
         if "bytes_rx" in ldf.columns:
@@ -218,7 +218,7 @@ def plot_flow_series(df: pl.DataFrame) -> Figure:
                 break
 
     if group_col and group_col in df.columns:
-        groups = cast(list[object], df[group_col].unique().to_list())
+        groups = cast("list[object]", df[group_col].unique().to_list())
         for group in groups:
             gdf = df.filter(pl.col(group_col) == group).sort("timestamp")
             metric_col = (

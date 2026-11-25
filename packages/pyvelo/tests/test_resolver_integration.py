@@ -124,7 +124,9 @@ def _make_config() -> FirewallConfig:
 
 
 class TestResolverMergeIntegration:
-    def test_resolve_segment_id_in_nested_merge(self, registry: ResolverRegistry):
+    def test_resolve_segment_id_in_nested_merge(
+        self, registry: ResolverRegistry
+    ) -> None:
         """Resolve segment name to ID during nested merge patch."""
         config = _make_config()
         _ = config.merge_patch(
@@ -134,7 +136,7 @@ class TestResolverMergeIntegration:
         pci = config.segments[1]
         assert pci.segment.segment_id == 1
 
-    def test_resolve_logical_id_in_merge(self, registry: ResolverRegistry):
+    def test_resolve_logical_id_in_merge(self, registry: ResolverRegistry) -> None:
         """Resolve segment name to logical_id during merge."""
         config = _make_config()
         _ = config.merge_patch(
@@ -144,7 +146,7 @@ class TestResolverMergeIntegration:
         global_seg = config.segments[0]
         assert global_seg.segment.logical_id == DMZ_UUID
 
-    def test_resolve_plus_rules_merge(self, registry: ResolverRegistry):
+    def test_resolve_plus_rules_merge(self, registry: ResolverRegistry) -> None:
         """Combine resolvable field + keyed list merge + override flags."""
         config = _make_config()
         _ = config.merge_patch(
@@ -174,7 +176,9 @@ class TestResolverMergeIntegration:
         # Override triggered (rules are not EdgeLocal)
         assert global_seg.override is True
 
-    def test_raw_ids_still_work_with_resolvers(self, registry: ResolverRegistry):
+    def test_raw_ids_still_work_with_resolvers(
+        self, registry: ResolverRegistry
+    ) -> None:
         """Passing raw int IDs should work even when resolvers are provided."""
         config = _make_config()
         _ = config.merge_patch(
@@ -183,7 +187,9 @@ class TestResolverMergeIntegration:
         )
         assert config.segments[1].segment.segment_id == 99
 
-    def test_edge_local_with_resolve_no_override(self, registry: ResolverRegistry):
+    def test_edge_local_with_resolve_no_override(
+        self, registry: ResolverRegistry
+    ) -> None:
         """EdgeLocal changes + resolve should not trigger override."""
         config = _make_config()
         _ = config.merge_patch(
@@ -198,12 +204,12 @@ class TestResolverMergeIntegration:
         )
         assert config.segments[0].override is False
 
-    def test_lookup_by_id_key(self, registry: ResolverRegistry):
+    def test_lookup_by_id_key(self, registry: ResolverRegistry) -> None:
         """An ID key looks up the segment, for the YAML export scenario."""
         assert registry.lookup(SegmentId(1)).name == "PCI"
         assert registry.lookup(SegmentLogicalId(GLOBAL_UUID)).name == "Global Segment"
 
-    def test_unknown_segment_name_clear_error(self, registry: ResolverRegistry):
+    def test_unknown_segment_name_clear_error(self, registry: ResolverRegistry) -> None:
         """Resolution failure produces a clear error message."""
         config = _make_config()
         with pytest.raises(KeyError, match="Unknown segment.*Nonexistent"):
@@ -216,7 +222,7 @@ class TestResolverMergeIntegration:
                 resolvers=registry,
             )
 
-    def test_no_resolvers_no_resolution(self):
+    def test_no_resolvers_no_resolution(self) -> None:
         """Without resolvers, string values are assigned directly."""
         config = _make_config()
         # Passing a string to a Resolvable field without resolvers
@@ -226,7 +232,9 @@ class TestResolverMergeIntegration:
         )
         assert config.segments[1].segment.name == "Renamed PCI"
 
-    def test_pci_untouched_when_only_global_patched(self, registry: ResolverRegistry):
+    def test_pci_untouched_when_only_global_patched(
+        self, registry: ResolverRegistry
+    ) -> None:
         """Unmentioned segments are not affected."""
         config = _make_config()
         _ = config.merge_patch(

@@ -131,7 +131,7 @@ EDITS = [
 @pytest.mark.parametrize(("rules", "path"), EDITS)
 async def test_apply_of_an_outbound_rule_writes_the_rule_only(
     level: str, rules: dict[str, Any], path: str
-):
+) -> None:
     state = edge_state() if level == "edge" else await profile_state()
     client = MockVcoClient.for_state(state)
     pipeline = ConfigPipeline(client)
@@ -168,7 +168,7 @@ STRAY: dict[str, Any] = {
 STRAY_PATH = 'segments["Global Segment"].outboundOverride'
 
 
-async def test_a_stray_override_key_with_no_edit_is_reported_and_not_written():
+async def test_a_stray_override_key_with_no_edit_is_reported_and_not_written() -> None:
     state = edge_state(STRAY)
     client = MockVcoClient.for_state(state)
     plan = state.plan()
@@ -177,10 +177,11 @@ async def test_a_stray_override_key_with_no_edit_is_reported_and_not_written():
     assert STRAY_PATH in plan.render()
 
     result = await ConfigPipeline(client).save(state)
-    assert result.modules_updated == [] and client.update_requests == []
+    assert result.modules_updated == []
+    assert client.update_requests == []
 
 
-async def test_a_stray_override_key_is_dropped_when_the_module_is_written():
+async def test_a_stray_override_key_is_dropped_when_the_module_is_written() -> None:
     state = edge_state(STRAY)
     client = MockVcoClient.for_state(state)
     pipeline = ConfigPipeline(client)

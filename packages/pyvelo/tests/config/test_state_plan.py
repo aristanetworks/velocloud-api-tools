@@ -104,7 +104,7 @@ def make_state(*, edge_modules: list[dict[str, Any]] | None = None) -> ConfigSta
     return state
 
 
-def test_plan_reports_missing_segments_without_changes():
+def test_plan_reports_missing_segments_without_changes() -> None:
     plan = make_state().plan()
     assert [(m.name, m.operation, m.reconciled_segments) for m in plan.modules] == [
         ("firewall", "none", ("Guest",))
@@ -117,7 +117,7 @@ def test_plan_reports_missing_segments_without_changes():
     )
 
 
-def test_the_flag_off_warning_reaches_config_plan_warnings():
+def test_the_flag_off_warning_reaches_config_plan_warnings() -> None:
     cos = {"lsInputType": "weight", "override": False}
     edge_qos = make_module_json(
         "QOS",
@@ -142,7 +142,7 @@ def test_the_flag_off_warning_reaches_config_plan_warnings():
     assert f"warning: {flagged[0].message}" in plan.render()
 
 
-def test_plan_names_its_target():
+def test_plan_names_its_target() -> None:
     state = make_state()
     assert state.plan().target == "edge, enterprise 5, configuration 10"
     state.resolver_context.edge_id = 101
@@ -156,7 +156,7 @@ def test_plan_names_its_target():
     assert profile.plan().render().splitlines()[0] == 'profile "P", configuration 20'
 
 
-async def test_save_sends_raw_payload_version_and_reconciles():
+async def test_save_sends_raw_payload_version_and_reconciles() -> None:
     state = make_state()
     client = MockVcoClient.for_state(state)
     state.edge.firewall.firewall_enabled.set_local(False)
@@ -172,10 +172,11 @@ async def test_save_sends_raw_payload_version_and_reconciles():
         "firewall_enabled": False,
     }
     assert result.modules_updated == [ConfigurationModuleName.FIREWALL]
-    assert result.plan is not None and result.plan.changed[0].name == "firewall"
+    assert result.plan is not None
+    assert result.plan.changed[0].name == "firewall"
 
 
-async def test_state_keeps_working_after_a_write():
+async def test_state_keeps_working_after_a_write() -> None:
     state = make_state()
     client = MockVcoClient.for_state(state)
     pipeline = ConfigPipeline(client)
@@ -192,7 +193,7 @@ async def test_state_keeps_working_after_a_write():
     assert [m.name for m in state.plan().changed] == ["firewall"]
 
 
-def test_write_errors_are_exported_from_the_package():
+def test_write_errors_are_exported_from_the_package() -> None:
     import pyvelo.config
 
     assert pyvelo.config.ModuleWriteError is ModuleWriteError
@@ -225,7 +226,7 @@ def test_write_errors_are_exported_from_the_package():
     assert not hasattr(pyvelo.config, "StateSpentError")
 
 
-def test_patch_error_is_exported_from_the_package():
+def test_patch_error_is_exported_from_the_package() -> None:
     import pyvelo.config
     from pyvelo.core import PatchError
 
@@ -233,7 +234,7 @@ def test_patch_error_is_exported_from_the_package():
     assert "PatchError" in pyvelo.config.__all__
 
 
-def test_the_types_a_save_hands_back_are_exported_from_the_package():
+def test_the_types_a_save_hands_back_are_exported_from_the_package() -> None:
     import pyvelo.config
     from pyvelo.client.exceptions import LossyFieldError
     from pyvelo.client.module_check import ModuleWrite
@@ -257,7 +258,7 @@ def test_the_types_a_save_hands_back_are_exported_from_the_package():
         assert name in pyvelo.config.__all__, name
 
 
-def test_the_kind_of_a_patch_error_is_exported_from_the_package():
+def test_the_kind_of_a_patch_error_is_exported_from_the_package() -> None:
     import pyvelo.config
     from pyvelo.core.patch import PatchErrorKind
 
@@ -265,7 +266,7 @@ def test_the_kind_of_a_patch_error_is_exported_from_the_package():
     assert "PatchErrorKind" in pyvelo.config.__all__
 
 
-async def test_no_edit_save_does_not_call():
+async def test_no_edit_save_does_not_call() -> None:
     state = make_state()
     client = MockVcoClient.for_state(state)
     result = await ConfigPipeline(client).save(state)
@@ -278,7 +279,7 @@ async def test_no_edit_save_does_not_call():
 )
 async def test_conflict_propagates(
     conditional_check: bool, raised: type[ConfigConflictError | WriteNotAppliedError]
-):
+) -> None:
     # Another writer changed the path edited here: a VCO with the check off
     # stores nothing and returns its row, which the check finds a clash in.
     state = make_state()
@@ -291,7 +292,7 @@ async def test_conflict_propagates(
     assert clash.clash
 
 
-async def test_missing_edge_module_is_inserted_from_an_empty_layer():
+async def test_missing_edge_module_is_inserted_from_an_empty_layer() -> None:
     state = make_state()
     client = MockVcoClient.for_state(state)
     qos = state.edge.qos  # no QOS row on the edge
@@ -310,14 +311,15 @@ async def test_missing_edge_module_is_inserted_from_an_empty_layer():
     )
     result = await ConfigPipeline(client).save(state)
     (req,) = client.insert_requests
-    assert req.configuration_id == 10 and req.name == "QOS"
+    assert req.configuration_id == 10
+    assert req.name == "QOS"
     assert req.data["segments"] == [{"segment": desc(0, "Global Segment"), "rules": []}]
     assert set(req.data) == {"segments", "serviceRateLimit"}
     assert result.modules_inserted == [ConfigurationModuleName.QOS]
     assert client.update_requests == []
 
 
-def test_views_and_module_errors():
+def test_views_and_module_errors() -> None:
     state = make_state()
     assert state.profile.firewall.segments[1].segment.name == "Guest"
     with pytest.raises(ValueError):
@@ -332,7 +334,7 @@ def test_views_and_module_errors():
         _ = profile_only.edge
 
 
-async def test_load_profile_keeps_raw_snapshots():
+async def test_load_profile_keeps_raw_snapshots() -> None:
     raw = make_module_json(
         "firewall", copy.deepcopy(PROFILE_FW), module_id=2, configuration_id=20
     )
@@ -352,14 +354,14 @@ async def test_load_profile_keeps_raw_snapshots():
     assert state.plan().changed == ()
 
 
-def test_state_binds_edge_layers_and_untouched_placeholder_is_no_change():
+def test_state_binds_edge_layers_and_untouched_placeholder_is_no_change() -> None:
     state = make_state()
     guest = state.edge.firewall.segment("Guest")
     assert guest.outbound == []
     assert state.plan().changed == ()
 
 
-async def test_rule_added_in_a_reconciled_segment():
+async def test_rule_added_in_a_reconciled_segment() -> None:
     state = make_state()
     client = MockVcoClient.for_state(state)
     await ConfigPipeline(client).apply(
@@ -385,12 +387,12 @@ async def test_rule_added_in_a_reconciled_segment():
     assert segs[1] == {"segment": desc(2, "Guest"), "outbound": []}
 
 
-def test_new_empty_module_is_bound():
+def test_new_empty_module_is_bound() -> None:
     state = make_state()
     assert state.edge.qos.segment("Global Segment").rules == []
 
 
-async def test_apply_creates_the_edge_segment_entry_on_write_only():
+async def test_apply_creates_the_edge_segment_entry_on_write_only() -> None:
     pipeline = ConfigPipeline(MockVcoClient())
     with pytest.raises(ValueError):
         make_state().edge.firewall.get_segment(name="Guest")
@@ -408,7 +410,9 @@ async def test_apply_creates_the_edge_segment_entry_on_write_only():
 _DENY: dict[str, object] = {"action": {"allow_or_deny": "deny"}, "match": {}}
 
 
-async def test_first_patch_to_a_module_the_edge_lacks_keeps_the_profiles_segment_order():
+async def test_first_patch_to_a_module_the_edge_lacks_keeps_the_profiles_segment_order() -> (
+    None
+):
     state = make_state(edge_modules=[])
     client = MockVcoClient.for_state(state)
     pipeline = ConfigPipeline(client)
@@ -433,7 +437,7 @@ async def test_first_patch_to_a_module_the_edge_lacks_keeps_the_profiles_segment
     assert [r["name"] for r in request.data["segments"][1]["outbound"]] == ["tmp"]
 
 
-async def test_two_patches_that_cancel_out_leave_no_insert_pending():
+async def test_two_patches_that_cancel_out_leave_no_insert_pending() -> None:
     state = make_state(edge_modules=[])
     client = MockVcoClient.for_state(state)
     pipeline = ConfigPipeline(client)

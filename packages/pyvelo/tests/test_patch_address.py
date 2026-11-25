@@ -35,41 +35,41 @@ class NoSeg(VcoModel):
     n: int = 0
 
 
-def test_no_address_returns_the_patch():
+def test_no_address_returns_the_patch() -> None:
     assert nest_patch(Outer, {"a": 1}) == {"a": 1}
 
 
-def test_no_address_needs_a_mapping():
+def test_no_address_needs_a_mapping() -> None:
     with pytest.raises(TypeError):
         _ = nest_patch(Outer, 3)
     with pytest.raises(TypeError):
         _ = nest_patch(Outer, None)
 
 
-def test_path():
+def test_path() -> None:
     assert nest_patch(Outer, 5, path="sub.n") == {"sub": {"n": 5}}
 
 
-def test_segment():
+def test_segment() -> None:
     assert nest_patch(Outer, {"x": 1}, segment="S") == {"segments": {"S": {"x": 1}}}
 
 
-def test_segment_and_path():
+def test_segment_and_path() -> None:
     nested = nest_patch(Outer, None, segment="S", path="mid.leaf")
     assert nested == {"segments": {"S": {"mid": {"leaf": None}}}}
 
 
-def test_part_by_alias_is_nested_by_python_name():
+def test_part_by_alias_is_nested_by_python_name() -> None:
     assert nest_patch(Outer, 2, path="sub.DHGroup") == {"sub": {"dh_group": 2}}
     assert nest_patch(Outer, 2, path="sub.dhGroup") == {"sub": {"dh_group": 2}}
 
 
-def test_last_part_may_be_a_list():
+def test_last_part_may_be_a_list() -> None:
     nested = nest_patch(Outer, [], segment="S", path="rules")
     assert nested == {"segments": {"S": {"rules": []}}}
 
 
-def test_unknown_part_names_the_class_the_part_and_the_fields():
+def test_unknown_part_names_the_class_the_part_and_the_fields() -> None:
     with pytest.raises(PatchError) as exc:
         _ = nest_patch(Outer, 1, path="nope")
     assert "Outer" in exc.value.message
@@ -79,14 +79,14 @@ def test_unknown_part_names_the_class_the_part_and_the_fields():
     assert exc.value.path == Path.parse("nope")
 
 
-def test_unknown_part_after_resolved_ones_is_at_the_walked_path():
+def test_unknown_part_after_resolved_ones_is_at_the_walked_path() -> None:
     with pytest.raises(PatchError) as exc:
         _ = nest_patch(Outer, 1, path="sub.nope.x")
     assert "Mid" in exc.value.message
     assert exc.value.path == Path.parse("sub.nope")
 
 
-def test_unknown_part_under_a_segment_is_at_its_nested_path():
+def test_unknown_part_under_a_segment_is_at_its_nested_path() -> None:
     with pytest.raises(PatchError) as exc:
         _ = nest_patch(Outer, 1, segment="S", path="mid.nope")
     assert "Mid" in exc.value.message
@@ -103,19 +103,19 @@ def test_unknown_part_under_a_segment_is_at_its_nested_path():
         (".sub", Path(("",))),
     ],
 )
-def test_bad_addresses(path: str, where: Path):
+def test_bad_addresses(path: str, where: Path) -> None:
     with pytest.raises(PatchError) as exc:
         _ = nest_patch(Outer, 1, path=path)
     assert exc.value.path == where
 
 
-def test_segment_for_a_class_with_no_segments_field():
+def test_segment_for_a_class_with_no_segments_field() -> None:
     with pytest.raises(PatchError, match="NoSeg has no segments field") as exc:
         _ = nest_patch(NoSeg, {}, segment="S")
     assert exc.value.path == Path(("segments",))
 
 
-def test_the_nested_patch_is_a_checked_copy():
+def test_the_nested_patch_is_a_checked_copy() -> None:
     patch: dict[str, object] = {"x": [1]}
     nested = cast(
         "dict[str, dict[str, dict[str, object]]]", nest_patch(Outer, patch, segment="S")
@@ -129,12 +129,12 @@ def test_the_nested_patch_is_a_checked_copy():
     assert plain["x"] is not patch["x"]
 
 
-def test_a_value_that_is_not_json_raises_under_its_address():
+def test_a_value_that_is_not_json_raises_under_its_address() -> None:
     with pytest.raises(PatchError) as exc:
         _ = nest_patch(Outer, {"x": {1, 2}}, segment="S", path="mid")
     assert exc.value.path == Path(("segments", Key("S"), "mid", "x"))
 
 
-def test_no_address_needs_a_dict():
+def test_no_address_needs_a_dict() -> None:
     with pytest.raises(TypeError):
         _ = nest_patch(Outer, MappingProxyType({"sub": {"n": 1}}))

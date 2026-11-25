@@ -24,7 +24,7 @@ from pyvelo.core.fields import (
 )
 from pyvelo.core.identity import SegmentIdentity
 
-from ..common import (
+from pyvelo.client.models.configuration.common import (
     copy_profile_segments,
     find_segment,
     get_or_create_segment,

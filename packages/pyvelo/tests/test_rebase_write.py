@@ -163,7 +163,7 @@ async def device_settings_written(
 
 async def test_a_changed_module_is_rebased_and_written_with_the_fresh_version(
     mock_vco_client: MockVcoClientFactory,
-):
+) -> None:
     ds, ds_plan = device_settings()
     qos = qos_module()
     store = a_store(ds, qos, enabled)
@@ -198,7 +198,7 @@ async def test_a_changed_module_is_rebased_and_written_with_the_fresh_version(
 
 async def test_a_clash_raises_a_conflict_and_sends_nothing(
     mock_vco_client: MockVcoClientFactory,
-):
+) -> None:
     ds, ds_plan = device_settings()
     qos = qos_module()
     store = a_store(ds, qos, rate_to(7))
@@ -228,7 +228,7 @@ async def test_a_clash_raises_a_conflict_and_sends_nothing(
 
 async def test_an_unchanged_version_writes_as_planned(
     mock_vco_client: MockVcoClientFactory,
-):
+) -> None:
     ds, ds_plan = device_settings()
     qos = qos_module()
     store = a_store(ds, qos, None)
@@ -244,7 +244,7 @@ async def test_an_unchanged_version_writes_as_planned(
 
 async def test_without_rebase_a_changed_version_of_a_refs_write_is_a_conflict(
     mock_vco_client: MockVcoClientFactory,
-):
+) -> None:
     ds, ds_plan = device_settings()
     qos = qos_module()
     store = a_store(ds, qos, enabled)
@@ -262,7 +262,7 @@ async def test_without_rebase_a_changed_version_of_a_refs_write_is_a_conflict(
 
 async def test_a_write_that_sends_no_refs_is_not_read_without_rebase(
     mock_vco_client: MockVcoClientFactory,
-):
+) -> None:
     qos = qos_module()
     store = store_of(qos)
     client = await mock_vco_client(store)
@@ -276,7 +276,7 @@ async def test_a_write_that_sends_no_refs_is_not_read_without_rebase(
 
 async def test_a_change_the_other_writer_made_too_is_written_as_nothing(
     mock_vco_client: MockVcoClientFactory,
-):
+) -> None:
     ds, ds_plan = device_settings()
     qos = qos_module()
     store = a_store(ds, qos, rate_to(5))
@@ -299,7 +299,7 @@ async def test_a_change_the_other_writer_made_too_is_written_as_nothing(
 
 async def test_a_module_gone_from_its_configuration_is_a_conflict_without_a_module(
     mock_vco_client: MockVcoClientFactory,
-):
+) -> None:
     qos = qos_module()
     store = store_of(qos)
     store.other_writer(QOS_ID, enabled)
@@ -324,7 +324,7 @@ async def test_a_module_gone_from_its_configuration_is_a_conflict_without_a_modu
 
 async def test_a_list_the_other_writer_added_to_is_a_conflict_and_not_replaced(
     mock_vco_client: MockVcoClientFactory,
-):
+) -> None:
     ds, ds_plan = device_settings()
     qos = qos_module()
     store = a_store(ds, qos, a_guest_segment)
@@ -352,7 +352,7 @@ def repaired_defaults(plan: ModulePlan) -> list[dict[str, Any]]:
     return plan.data["segments"][0]["defaults"]
 
 
-def test_a_rebase_carries_the_repaired_defaults_as_planned():
+def test_a_rebase_carries_the_repaired_defaults_as_planned() -> None:
     qos = qos_module(with_defaults=False)
     plan = rate_set(qos, 5)
     assert len(repaired_defaults(plan)) == 4
@@ -366,7 +366,7 @@ def test_a_rebase_carries_the_repaired_defaults_as_planned():
     assert [str(c.path) for c in rebased_plan.changes] == ["serviceRateLimit.value"]
 
 
-def test_a_rebase_keeps_the_repair_turned_off():
+def test_a_rebase_keeps_the_repair_turned_off() -> None:
     qos = qos_module(with_defaults=False)
     plan = plan_module(qos, _edited(qos), repair_defaults=False)
     assert plan.repair_defaults is False

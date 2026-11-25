@@ -27,7 +27,7 @@ def private_imports(path: pathlib.Path) -> list[str]:
     return found
 
 
-def test_only_the_engines_of_the_core_import_private_names():
+def test_only_the_engines_of_the_core_import_private_names() -> None:
     core = pathlib.Path(pyvelo.__file__).parent / "core"
     files = [
         path

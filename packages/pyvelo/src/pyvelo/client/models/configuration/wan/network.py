@@ -5,7 +5,7 @@ from pydantic import MISSING
 
 from pyvelo.core import Alias, Secret, VcoModel
 
-from ..common import AddressType
+from pyvelo.client.models.configuration.common import AddressType
 from .common import NetworkType, WanMode
 
 

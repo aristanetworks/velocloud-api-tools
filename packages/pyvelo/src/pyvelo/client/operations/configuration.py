@@ -116,10 +116,10 @@ def _require_level_for_a_firewall_row(
     if request.return_data is True and level is None and request.name == "firewall":
         raise TypeError(
             "the insert asks for the firewall module row back (return_data), and "
-            + "that row is read as a module of the edge layer or of the profile "
-            + "layer, which the answer does not say: pass "
-            + "level=ConfigContext.EDGE or level=ConfigContext.PROFILE. Nothing "
-            + "was sent"
+            "that row is read as a module of the edge layer or of the profile "
+            "layer, which the answer does not say: pass "
+            "level=ConfigContext.EDGE or level=ConfigContext.PROFILE. Nothing "
+            "was sent"
         )
 
 
@@ -154,10 +154,10 @@ def _unleveled_firewall_row(answer: dict[str, Any]) -> LayerUnknownError:
     module_id = answer.get("id")
     return LayerUnknownError(
         "the update was sent and the VCO answered with the module's row, so the "
-        + "write is most likely stored; the row could not be read without its "
-        + "layer, which it does not say. Read the module again, or call with "
-        + "level=ConfigContext.EDGE or level=ConfigContext.PROFILE; the row is "
-        + "on .answer",
+        "write is most likely stored; the row could not be read without its "
+        "layer, which it does not say. Read the module again, or call with "
+        "level=ConfigContext.EDGE or level=ConfigContext.PROFILE; the row is "
+        "on .answer",
         module_id=module_id if isinstance(module_id, int) else None,
         answer=dict(answer),
     )
@@ -469,7 +469,7 @@ def _require_this_module[M: ConfigurationModuleBase](
             answer=answer,
             module_id=stored.id_ if plan.operation == "insert" else module.id_,
         )
-    return cast(M, stored)  # _not_this_module found it of the class of module
+    return cast("M", stored)  # _not_this_module found it of the class of module
 
 
 class ConfigurationMixin(Protocol):
@@ -1161,7 +1161,6 @@ class ConfigurationMixin(Protocol):
         Returns:
             Object with separate sections for routable and all application details
         """
-
         return await self.portal(
             "configuration/getApplications",
             request,

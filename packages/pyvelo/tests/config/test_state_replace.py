@@ -134,7 +134,7 @@ def replace_firewall(
     """Replace the edge firewall module by it as stored with *data* (EDGE_FW by default)."""
     old = state.module("firewall")
     assert isinstance(old, FirewallConfigurationModule)
-    old = cast(FirewallConfigurationModule[Edge], old)  # the state's edge layer
+    old = cast("FirewallConfigurationModule[Edge]", old)  # the state's edge layer
     new = as_stored(old, copy.deepcopy(EDGE_FW) if data is None else data)
     state.replace_module(old, new)
     return old, new
@@ -154,7 +154,7 @@ def outbound_path(name: str) -> Path:
     return Path(("data", "segments", Key("Global Segment"), "outbound", Key(name)))
 
 
-def test_replace_puts_the_stored_module_in_the_state():
+def test_replace_puts_the_stored_module_in_the_state() -> None:
     state = make_state()
     state.edge.firewall.firewall_enabled.set_local(False)
 
@@ -168,7 +168,7 @@ def test_replace_puts_the_stored_module_in_the_state():
     assert state.get_field_changes() == []
 
 
-def test_replace_binds_the_new_module_to_the_profile():
+def test_replace_binds_the_new_module_to_the_profile() -> None:
     expected = make_state().edge.firewall.segment("Guest")
     state = make_state()
 
@@ -180,7 +180,7 @@ def test_replace_binds_the_new_module_to_the_profile():
     assert any(s is guest for s in new.data.segments)
 
 
-def test_replace_leaves_the_other_modules_edits():
+def test_replace_leaves_the_other_modules_edits() -> None:
     state = make_state([fw_row(), qos_row()])
     state.edge.firewall.firewall_enabled.set_local(False)
     state.edge.qos.service_rate_limit.set_local(
@@ -195,7 +195,7 @@ def test_replace_leaves_the_other_modules_edits():
     ]
 
 
-def test_objects_taken_before_are_detached():
+def test_objects_taken_before_are_detached() -> None:
     state = make_state()
     segment = state.edge.firewall.segment("Global Segment")
 
@@ -205,16 +205,19 @@ def test_objects_taken_before_are_detached():
         DetachedObjectError, match=r"FirewallSegment\[Edge\]\.firewall_logging"
     ):
         segment.firewall_logging_enabled = True
-    assert old.is_detached and old.data.is_detached and segment.is_detached
+    assert old.is_detached
+    assert old.data.is_detached
+    assert segment.is_detached
     assert new.is_detached is False
     assert new.data.is_detached is False
     state.edge.firewall.segment("Global Segment").firewall_logging_enabled = True
     snapshot = state.snapshot_for_target()
-    assert snapshot is not None and snapshot.modules is not MISSING
+    assert snapshot is not None
+    assert snapshot.modules is not MISSING
     assert not any(m.is_detached for m in snapshot.modules)
 
 
-def test_in_place_edit_is_reported_by_the_next_plan():
+def test_in_place_edit_is_reported_by_the_next_plan() -> None:
     state = make_state()
     old_segment = state.edge.firewall.segment("Global Segment")
     rules = old_segment.outbound
@@ -232,7 +235,7 @@ def test_in_place_edit_is_reported_by_the_next_plan():
     assert old.is_detached
 
 
-def test_it_is_reported_once():
+def test_it_is_reported_once() -> None:
     state = make_state()
     old_segment = state.edge.firewall.segment("Global Segment")
     rules = old_segment.outbound
@@ -253,7 +256,7 @@ def test_it_is_reported_once():
     assert old_segment.is_detached
 
 
-def test_in_place_edits_of_two_replaced_modules_are_one_report():
+def test_in_place_edits_of_two_replaced_modules_are_one_report() -> None:
     state = make_state([fw_row(), qos_row()])
     fw_segment = state.edge.firewall.segment("Global Segment")
     qos = state.edge.qos
@@ -271,12 +274,12 @@ def test_in_place_edits_of_two_replaced_modules_are_one_report():
     assert exc.value.paths == [outbound_path("new"), removed]
     assert str(exc.value) == (
         f"firewall: {IN_PLACE}{outbound_path('new')}{REDO}\n"
-        + f"QOS: {IN_PLACE}{removed}{REDO}"
+        f"QOS: {IN_PLACE}{removed}{REDO}"
     )
     assert state.plan().changed == ()
 
 
-def test_an_object_moved_by_an_in_place_edit_is_not_reported_again():
+def test_an_object_moved_by_an_in_place_edit_is_not_reported_again() -> None:
     state = make_state()
     segment = state.edge.firewall.segment("Global Segment")
     old, _ = replace_firewall(state)
@@ -297,7 +300,7 @@ def test_an_object_moved_by_an_in_place_edit_is_not_reported_again():
     assert segment.is_detached
 
 
-def test_dropped_objects_cost_nothing():
+def test_dropped_objects_cost_nothing() -> None:
     state = make_state()
     old = state.module("firewall")
     ref = weakref.ref(old.data)
@@ -320,7 +323,7 @@ def test_dropped_objects_cost_nothing():
     assert state._replaced == []  # pyright: ignore[reportPrivateUsage]
 
 
-def test_a_held_model_the_dump_leaves_out_does_not_break_plan():
+def test_a_held_model_the_dump_leaves_out_does_not_break_plan() -> None:
     state = make_state([ds_row()])
     old = state.module("deviceSettings")
     assert isinstance(old, DeviceSettingsConfigurationModule)
@@ -337,7 +340,7 @@ def test_a_held_model_the_dump_leaves_out_does_not_break_plan():
         vpn.enabled = True
 
 
-def test_replace_of_a_module_that_is_not_in_the_state_raises():
+def test_replace_of_a_module_that_is_not_in_the_state_raises() -> None:
     state = make_state()
     twin = make_state().module("firewall")  # equal to the state's, not the same object
 
@@ -351,7 +354,7 @@ def test_replace_of_a_module_that_is_not_in_the_state_raises():
         unset.replace_module(twin, as_stored(twin, copy.deepcopy(EDGE_FW)))
 
 
-def test_an_inserted_module_is_replaced_and_no_longer_new():
+def test_an_inserted_module_is_replaced_and_no_longer_new() -> None:
     state = make_state()
     made = state.module("qos", create=True)
     assert made.is_new
@@ -364,17 +367,19 @@ def test_an_inserted_module_is_replaced_and_no_longer_new():
     with pytest.raises(ValueError, match="read from the VCO"):
         state.drop_module(new)
     snapshot = state.snapshot_for_target()
-    assert snapshot is not None and snapshot.modules is not MISSING
+    assert snapshot is not None
+    assert snapshot.modules is not MISSING
     assert [m.name for m in snapshot.modules] == ["firewall", "QOS"]
     stored = snapshot.modules[1]
-    assert stored is not new and dump(stored) == dump(new)
+    assert stored is not new
+    assert dump(stored) == dump(new)
     assert state.get_field_changes() == []
 
 
 WEB: dict[str, Any] = {"name": "web", "match": {}, "action": {"allow_or_deny": "allow"}}
 
 
-def test_a_deep_copy_of_a_detached_rule_can_go_into_the_state():
+def test_a_deep_copy_of_a_detached_rule_can_go_into_the_state() -> None:
     raw = copy.deepcopy(EDGE_FW)
     raw["segments"][0]["outbound"] = [WEB]
     row = make_module_json(
@@ -399,7 +404,7 @@ def test_a_deep_copy_of_a_detached_rule_can_go_into_the_state():
     assert held.name == "web"
 
 
-def test_a_held_model_that_is_not_a_vco_model_is_compared():
+def test_a_held_model_that_is_not_a_vco_model_is_compared() -> None:
     raw: dict[str, Any] = {
         "lan": {},
         "segments": [

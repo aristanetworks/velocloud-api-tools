@@ -130,13 +130,13 @@ def models_in(value: object) -> Iterator[VcoModel]:
     if isinstance(value, VcoModel):
         yield value
         for name in type(value).model_fields:
-            yield from models_in(cast(object, getattr(value, name)))
+            yield from models_in(cast("object", getattr(value, name)))
         yield from models_in(list((value.model_extra or {}).values()))
     elif isinstance(value, list | tuple):
-        for item in cast(Iterable[object], value):
+        for item in cast("Iterable[object]", value):
             yield from models_in(item)
     elif isinstance(value, dict):
-        for item in cast(dict[object, object], value).values():
+        for item in cast("dict[object, object]", value).values():
             yield from models_in(item)
 
 
@@ -158,7 +158,9 @@ def assert_detached_and_replaced(
     assert state.edge.firewall.segments[0].firewall_logging_enabled is True
 
 
-async def test_three_modules_three_updates_and_a_version_read_for_the_one_with_segments():
+async def test_three_modules_three_updates_and_a_version_read_for_the_one_with_segments() -> (
+    None
+):
     state = three_module_state()
     client = MockVcoClient.for_state(state)
     edit_all(state)
@@ -176,7 +178,7 @@ async def test_three_modules_three_updates_and_a_version_read_for_the_one_with_s
     assert result.modules_updated == [FIREWALL, QOS, ConfigurationModuleName.WAN]
 
 
-async def test_plan_after_a_save_is_empty():
+async def test_plan_after_a_save_is_empty() -> None:
     state = make_state()
     client = MockVcoClient.for_state(state)
     state.edge.firewall.firewall_enabled.set_local(False)
@@ -187,7 +189,7 @@ async def test_plan_after_a_save_is_empty():
     assert state.get_field_changes() == []
 
 
-async def test_second_edit_and_save_carries_the_returned_version():
+async def test_second_edit_and_save_carries_the_returned_version() -> None:
     state = make_state()
     client = MockVcoClient.for_state(state)
     pipeline = ConfigPipeline(client)
@@ -205,7 +207,7 @@ async def test_second_edit_and_save_carries_the_returned_version():
     assert data_of(client.store, 1)["syslog_forwarding"] is True
 
 
-async def test_apply_works_after_a_save():
+async def test_apply_works_after_a_save() -> None:
     state = make_state()
     client = MockVcoClient.for_state(state)
     pipeline = ConfigPipeline(client)
@@ -224,7 +226,7 @@ async def test_apply_works_after_a_save():
     assert len(client.update_requests) == 2
 
 
-async def test_added_keys_are_reported_and_not_planned_again():
+async def test_added_keys_are_reported_and_not_planned_again() -> None:
     state = make_state()
     client = MockVcoClient.for_state(state)
     client.store.on_store.append(lambda new, _: new["data"].update(added=1))
@@ -234,11 +236,11 @@ async def test_added_keys_are_reported_and_not_planned_again():
 
     assert paths(result.server_changes[FIREWALL]) == ["added"]
     assert state.plan().changed == ()
-    raw = cast(dict[str, object], state.module("firewall").raw_data)
+    raw = cast("dict[str, object]", state.module("firewall").raw_data)
     assert raw["added"] == 1
 
 
-async def test_left_out_changes_are_in_the_save_result():
+async def test_left_out_changes_are_in_the_save_result() -> None:
     web = {"name": "web", "action": {"allow_or_deny": "allow"}, "match": {}}
     raw = copy.deepcopy(EDGE_FW)
     raw["segments"][0]["outbound"] = [{**web, "ruleLogicalId": "l1"}]
@@ -268,7 +270,7 @@ async def test_left_out_changes_are_in_the_save_result():
     assert state.plan().changed == ()
 
 
-async def test_a_module_a_save_cannot_write_raises_before_any_request():
+async def test_a_module_a_save_cannot_write_raises_before_any_request() -> None:
     state = make_state(
         edge_modules=[
             make_module_json(
@@ -301,7 +303,7 @@ async def test_a_module_a_save_cannot_write_raises_before_any_request():
     assert changed(state) == ["firewall", "analyticsSettings"]
 
 
-async def test_request_two_of_three_fails():
+async def test_request_two_of_three_fails() -> None:
     state = three_module_state()
     client = MockVcoClient.for_state(state)
     client.store.fail_writes = {2}
@@ -340,7 +342,7 @@ async def test_request_two_of_three_fails():
 @pytest.mark.parametrize("conditional_check", [False, True])
 async def test_conflict_refreshes_the_state_and_carries_the_plan(
     conditional_check: bool,
-):
+) -> None:
     state = make_state()
     client = MockVcoClient.for_state(state, conditional_check=conditional_check)
     client.store.other_writer(1, other_writer_edit)
@@ -350,7 +352,8 @@ async def test_conflict_refreshes_the_state_and_carries_the_plan(
         _ = await ConfigPipeline(client).save(state)
 
     error = exc.value
-    assert error.plan is not None and error.plan.name == "firewall"
+    assert error.plan is not None
+    assert error.plan.name == "firewall"
     assert state.module("firewall").version == client.store.rows[1]["version"]
     assert state.plan().changed == ()
     text = str(error)
@@ -359,7 +362,9 @@ async def test_conflict_refreshes_the_state_and_carries_the_plan(
 
 
 @pytest.mark.parametrize("conditional_check", [False, True])
-async def test_redo_after_a_conflict_saves_without_a_reload(conditional_check: bool):
+async def test_redo_after_a_conflict_saves_without_a_reload(
+    conditional_check: bool,
+) -> None:
     state = make_state()
     client = MockVcoClient.for_state(state, conditional_check=conditional_check)
     client.store.other_writer(1, other_writer_edit)
@@ -381,7 +386,9 @@ async def test_redo_after_a_conflict_saves_without_a_reload(conditional_check: b
     ]
 
 
-async def test_a_conflict_found_before_sending_puts_the_module_as_read_in_the_state():
+async def test_a_conflict_found_before_sending_puts_the_module_as_read_in_the_state() -> (
+    None
+):
     state = three_module_state()
     client = MockVcoClient.for_state(state)
     client.store.other_writer(4, lambda row: row["data"].update(futureKey=1))
@@ -402,7 +409,7 @@ async def test_a_conflict_found_before_sending_puts_the_module_as_read_in_the_st
     assert state.plan().changed == ()
 
 
-async def test_a_module_gone_from_its_configuration_keeps_the_state_as_it_was():
+async def test_a_module_gone_from_its_configuration_keeps_the_state_as_it_was() -> None:
     state = three_module_state()
     client = MockVcoClient.for_state(state)
     qos = state.module("QOS")
@@ -423,7 +430,7 @@ async def test_a_module_gone_from_its_configuration_keeps_the_state_as_it_was():
     assert [m.name for m in state.plan().changed] == ["QOS"]
 
 
-async def test_failure_at_module_two_reports_module_one():
+async def test_failure_at_module_two_reports_module_one() -> None:
     state = three_module_state()
     client = MockVcoClient.for_state(state)
     client.store.other_writer(4, lambda row: row["data"].update(futureKey=1))
@@ -439,7 +446,7 @@ async def test_failure_at_module_two_reports_module_one():
     assert [str(c.path) for c in wan.changes] == [LINK_DESCRIPTION]
 
 
-async def test_not_applied_refreshes_the_state_too():
+async def test_not_applied_refreshes_the_state_too() -> None:
     state = make_state()
     client = MockVcoClient.for_state(state)
 
@@ -460,7 +467,7 @@ async def test_not_applied_refreshes_the_state_too():
     assert state.plan().changed == ()
 
 
-async def test_objects_are_detached_after_a_save():
+async def test_objects_are_detached_after_a_save() -> None:
     state = make_state()
     client = MockVcoClient.for_state(state)
     seg = state.edge.firewall.segments[0]
@@ -473,7 +480,9 @@ async def test_objects_are_detached_after_a_save():
 
 
 @pytest.mark.parametrize("conditional_check", [False, True])
-async def test_objects_are_detached_after_a_save_that_raised(conditional_check: bool):
+async def test_objects_are_detached_after_a_save_that_raised(
+    conditional_check: bool,
+) -> None:
     # The module as stored is the row returned, or read after the refusal.
     state = make_state()
     client = MockVcoClient.for_state(state, conditional_check=conditional_check)
@@ -488,7 +497,7 @@ async def test_objects_are_detached_after_a_save_that_raised(conditional_check: 
     assert_detached_and_replaced(state, seg, old_data)
 
 
-async def test_objects_of_an_unsaved_module_are_not_detached():
+async def test_objects_of_an_unsaved_module_are_not_detached() -> None:
     state = three_module_state()
     client = MockVcoClient.for_state(state)
     links = state.edge.wan.links
@@ -506,7 +515,7 @@ async def test_objects_of_an_unsaved_module_are_not_detached():
     assert [str(c.path) for c in wan.changes] == [LINK_DESCRIPTION]
 
 
-async def test_in_place_edit_on_a_detached_object_is_reported_by_plan():
+async def test_in_place_edit_on_a_detached_object_is_reported_by_plan() -> None:
     held = Path(("data", "segments", Key("Global Segment"), "outbound", Key("new")))
 
     async def saved() -> tuple[ConfigState, MockVcoClient, FirewallSegment[Edge]]:
@@ -562,11 +571,11 @@ async def saved_insert() -> tuple[ConfigState, MockVcoClient, ConfigPipeline, in
     return state, client, pipeline, inserted
 
 
-async def test_insert_refreshes_and_is_no_longer_new():
+async def test_insert_refreshes_and_is_no_longer_new() -> None:
     _ = await saved_insert()
 
 
-async def test_a_module_inserted_is_updated_by_the_next_save():
+async def test_a_module_inserted_is_updated_by_the_next_save() -> None:
     state, client, pipeline, inserted = await saved_insert()
     state.edge.qos.service_rate_limit.set_local(
         ServiceRateLimit(enabled=True, input_type="percent", value=50)
@@ -580,7 +589,7 @@ async def test_a_module_inserted_is_updated_by_the_next_save():
     assert second.modules_inserted == []
 
 
-async def test_dry_run_sends_nothing_and_detaches_nothing():
+async def test_dry_run_sends_nothing_and_detaches_nothing() -> None:
     state = make_state()
     client = MockVcoClient.for_state(state)
     seg = state.edge.firewall.segments[0]
@@ -596,7 +605,9 @@ async def test_dry_run_sends_nothing_and_detaches_nothing():
     assert changed(state) == ["firewall"]
 
 
-async def test_a_save_whose_answer_does_not_parse_keeps_the_edits_in_the_state():
+async def test_a_save_whose_answer_does_not_parse_keeps_the_edits_in_the_state() -> (
+    None
+):
     def without_an_action(new: dict[str, Any], _old: dict[str, Any] | None) -> None:
         new["data"]["segments"][0]["outbound"] = [{"name": "a", "match": {}}]
 
@@ -619,7 +630,7 @@ async def test_a_save_whose_answer_does_not_parse_keeps_the_edits_in_the_state()
     assert [m.name for m in state.plan().changed] == ["firewall"]
 
 
-async def test_the_repr_of_a_save_result_holds_no_module_data():
+async def test_the_repr_of_a_save_result_holds_no_module_data() -> None:
     settings: dict[str, Any] = {
         "lan": {"networks": [], "interfaces": []},
         "segments": [
@@ -666,8 +677,10 @@ async def test_the_repr_of_a_save_result_holds_no_module_data():
     result = await ConfigPipeline(client).save(state)
     assert client.store.rows[4]["data"]["segments"][0]["bgp"]["ASN"] == "65010"
     for text in (repr(preview), repr(result)):
-        assert "OLD-md5-made-up" not in text and "neighborIp" not in text
-        assert text.startswith("SaveResult(") and "modules_updated=[" in text
+        assert "OLD-md5-made-up" not in text
+        assert "neighborIp" not in text
+        assert text.startswith("SaveResult(")
+        assert "modules_updated=[" in text
     assert "server_changes={'deviceSettings': 0, 'firewall': 0}" in repr(result)
     assert "left_out={'deviceSettings': 0, 'firewall': 0}" in repr(result)
     assert "ModuleWrite(name='deviceSettings', operation='update'" in repr(result)

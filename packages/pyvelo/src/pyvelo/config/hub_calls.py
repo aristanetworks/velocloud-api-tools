@@ -371,7 +371,7 @@ async def send_step(
         segment_object_id=step.segment_object_id,
         enterprise_id=enterprise_id if enterprise_id is not None else MISSING,
     )
-    send = cast(Callable[[_RoleRequest], Awaitable[object]], getattr(client, method))
+    send = cast("Callable[[_RoleRequest], Awaitable[object]]", getattr(client, method))
     _ = await send(request)
 
 
@@ -469,7 +469,7 @@ def _row_of_hub(
         else:
             logical_id = row.get("logicalId")
         if str(logical_id).lower() == str(step.hub.logical_id):
-            return cast(dict[str, object], row)
+            return cast("dict[str, object]", row)
     return None
 
 

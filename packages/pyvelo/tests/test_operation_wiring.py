@@ -31,7 +31,7 @@ def _discover_operations() -> list[tuple[str, type[object], str]]:
         for name in sorted(vars(mixin)):
             if name.startswith("_"):
                 continue
-            attr = cast(object, getattr(mixin, name))
+            attr = cast("object", getattr(mixin, name))
             if callable(attr):
                 ops.append((name, mixin, f"{mixin.__name__}.{name}"))
     return ops
@@ -52,13 +52,13 @@ def _operation_signature(method: Callable[..., object]) -> inspect.Signature:
 
 
 class TestOperationDiscovery:
-    def test_mixins_found(self):
+    def test_mixins_found(self) -> None:
         """VcoClientProtocol should compose multiple operation mixins."""
         assert len(_MIXIN_CLASSES) > 20, (
             f"Expected 20+ mixins, found {len(_MIXIN_CLASSES)}"
         )
 
-    def test_operations_found(self):
+    def test_operations_found(self) -> None:
         """Should discover a large number of operation methods."""
         assert len(_ALL_OPERATIONS) > 200, (
             f"Expected 200+ operations, found {len(_ALL_OPERATIONS)}"
@@ -70,44 +70,44 @@ class TestSignatureConformance:
     _SYNC_FACTORIES: ClassVar[set[str]] = {"RemoteDiagnosticsMixin.websocket"}
 
     @pytest.mark.parametrize(
-        "method_name,mixin,qualified",
+        ("method_name", "mixin", "qualified"),
         _ALL_OPERATIONS,
         ids=[q for _, _, q in _ALL_OPERATIONS],
     )
     def test_operation_is_async(
         self, method_name: str, mixin: type[object], qualified: str
-    ):
+    ) -> None:
         """All operations should be async (except known sync factories)."""
         if qualified in self._SYNC_FACTORIES:
             pytest.skip(f"{qualified} is a sync factory, not a coroutine")
-        method = cast(Callable[..., object], getattr(mixin, method_name))
+        method = cast("Callable[..., object]", getattr(mixin, method_name))
         assert inspect.iscoroutinefunction(method), f"{qualified} is not async"
 
     @pytest.mark.parametrize(
-        "method_name,mixin,qualified",
+        ("method_name", "mixin", "qualified"),
         _ALL_OPERATIONS,
         ids=[q for _, _, q in _ALL_OPERATIONS],
     )
     def test_operation_has_return_annotation(
         self, method_name: str, mixin: type[object], qualified: str
-    ):
+    ) -> None:
         """All operations should declare a return type."""
-        method = cast(Callable[..., object], getattr(mixin, method_name))
+        method = cast("Callable[..., object]", getattr(mixin, method_name))
         sig = _operation_signature(method)
-        assert cast(object, sig.return_annotation) is not inspect.Parameter.empty, (
+        assert cast("object", sig.return_annotation) is not inspect.Parameter.empty, (
             f"{qualified} has no return type annotation"
         )
 
     @pytest.mark.parametrize(
-        "method_name,mixin,qualified",
+        ("method_name", "mixin", "qualified"),
         _ALL_OPERATIONS,
         ids=[q for _, _, q in _ALL_OPERATIONS],
     )
     def test_operation_has_self_parameter(
         self, method_name: str, mixin: type[object], qualified: str
-    ):
+    ) -> None:
         """All operations should have 'self' as first parameter."""
-        method = cast(Callable[..., object], getattr(mixin, method_name))
+        method = cast("Callable[..., object]", getattr(mixin, method_name))
         sig = _operation_signature(method)
         params = list(sig.parameters.keys())
         assert len(params) >= 1 and params[0] == "self", (
@@ -193,20 +193,20 @@ _ALL_API_CALLS = _collect_all_api_calls()
 
 
 class TestPortalMethodNames:
-    def test_api_calls_discovered(self):
+    def test_api_calls_discovered(self) -> None:
         """Should discover portal/rest calls across operation files."""
         assert len(_ALL_API_CALLS) > 100, (
             f"Expected 100+ API calls, found {len(_ALL_API_CALLS)}"
         )
 
     @pytest.mark.parametrize(
-        "file,call_type,method_str,lineno",
+        ("file", "call_type", "method_str", "lineno"),
         [c for c in _ALL_API_CALLS if c[1] == "portal"],
         ids=[f"{c[0]}:{c[3]}" for c in _ALL_API_CALLS if c[1] == "portal"],
     )
     def test_portal_method_format(
         self, file: str, call_type: str, method_str: str, lineno: int
-    ):
+    ) -> None:
         """Portal method strings should follow 'domain/methodName' format."""
         assert call_type == "portal"
         parts = method_str.split("/")
@@ -222,13 +222,13 @@ class TestPortalMethodNames:
         )
 
     @pytest.mark.parametrize(
-        "file,call_type,method_str,lineno",
+        ("file", "call_type", "method_str", "lineno"),
         [c for c in _ALL_API_CALLS if c[1] == "rest"],
         ids=[f"{c[0]}:{c[3]}" for c in _ALL_API_CALLS if c[1] == "rest"],
     )
     def test_rest_method_format(
         self, file: str, call_type: str, method_str: str, lineno: int
-    ):
+    ) -> None:
         """REST calls should use valid HTTP methods."""
         assert call_type == "rest"
         http_method = method_str.split(" ", 1)[0]
@@ -242,7 +242,7 @@ class TestPortalMethodNames:
 
 
 class TestNoOrphanedMixins:
-    def test_all_mixins_composed(self):
+    def test_all_mixins_composed(self) -> None:
         """Every *Mixin class in operations/ should appear in VcoClientProtocol's MRO."""
         composed_names = {cls.__name__ for cls in _MIXIN_CLASSES}
 

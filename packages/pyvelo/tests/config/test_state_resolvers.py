@@ -152,7 +152,7 @@ async def to_guest(pipeline: ConfigPipeline, state: ConfigState) -> None:
     )
 
 
-async def test_a_name_resolves_in_the_enterprise_of_its_state():
+async def test_a_name_resolves_in_the_enterprise_of_its_state() -> None:
     client = TwoEnterprises()
     pipeline = ConfigPipeline(client)
     first = await pipeline.load(101, enterprise_id=1)
@@ -167,7 +167,7 @@ async def test_a_name_resolves_in_the_enterprise_of_its_state():
     assert stored["segmentId"] == 1
 
 
-async def test_states_loaded_at_once_each_resolve_in_their_own_enterprise():
+async def test_states_loaded_at_once_each_resolve_in_their_own_enterprise() -> None:
     pipeline = ConfigPipeline(TwoEnterprises())
 
     first, second = await asyncio.gather(
@@ -179,7 +179,7 @@ async def test_states_loaded_at_once_each_resolve_in_their_own_enterprise():
     assert (vlan_segment(first), vlan_segment(second)) == (1, 2)
 
 
-async def test_each_state_has_its_own_copy_of_the_pipelines_resolvers():
+async def test_each_state_has_its_own_copy_of_the_pipelines_resolvers() -> None:
     client = TwoEnterprises()
     registered = SegmentResolver(client)
     registry = ResolverRegistry()
@@ -203,7 +203,7 @@ async def test_each_state_has_its_own_copy_of_the_pipelines_resolvers():
     assert first.resolvers.current_context is first.resolver_context
 
 
-async def test_a_state_built_by_hand_resolves_only_what_it_is_given():
+async def test_a_state_built_by_hand_resolves_only_what_it_is_given() -> None:
     state = make_state()
     patch: dict[str, object] = {"segments": {"Nope": {"outbound": {}}}}
     pipeline = ConfigPipeline(MockVcoClient())
@@ -221,7 +221,7 @@ async def test_a_state_built_by_hand_resolves_only_what_it_is_given():
         _ = await pipeline.apply(state, module="firewall", patch=patch)
 
 
-async def test_load_resolvers_with_an_identity_loads_only_that_resolver():
+async def test_load_resolvers_with_an_identity_loads_only_that_resolver() -> None:
     pipeline, client, state = await loaded_profile()
     segments = state.resolvers.get_resolver(SegmentResolver)
     state.resolvers.set_context(ResolverContext(enterprise_id=99))
@@ -237,7 +237,7 @@ async def test_load_resolvers_with_an_identity_loads_only_that_resolver():
     assert state.resolvers.current_context is state.resolver_context
 
 
-async def test_load_resolvers_with_an_identity_the_state_lacks_registers_it():
+async def test_load_resolvers_with_an_identity_the_state_lacks_registers_it() -> None:
     client = served(profile_state())
     pipeline = ConfigPipeline(client)
     registered = NetworkServiceResolver(client)
@@ -250,7 +250,8 @@ async def test_load_resolvers_with_an_identity_the_state_lacks_registers_it():
 
     own = state.resolvers.get_resolver(NetworkServiceResolver)
     assert own is not registered  # an unloaded copy of the pipeline's
-    assert own.loaded and not registered.loaded
+    assert own.loaded
+    assert not registered.loaded
     assert state.resolvers.current_context is state.resolver_context
 
     # A pipeline with none of its own gives the state a new one.
@@ -259,7 +260,7 @@ async def test_load_resolvers_with_an_identity_the_state_lacks_registers_it():
     assert other.resolvers.get_resolver(NetworkServiceResolver).loaded
 
 
-async def test_load_resolvers_with_no_identity_leaves_the_services_unloaded():
+async def test_load_resolvers_with_no_identity_leaves_the_services_unloaded() -> None:
     client = served(profile_state())
     state = profile_state()
 
@@ -269,7 +270,7 @@ async def test_load_resolvers_with_no_identity_leaves_the_services_unloaded():
     assert SERVICES not in [m for m, _ in client.store.requests]
 
 
-async def test_load_resolvers_with_a_loaded_type_reloads_the_states_resolver():
+async def test_load_resolvers_with_a_loaded_type_reloads_the_states_resolver() -> None:
     pipeline, client, state = await loaded_profile()
     segments = state.resolvers.get_resolver(SegmentResolver)
     calls = len(client.calls)
@@ -281,7 +282,9 @@ async def test_load_resolvers_with_a_loaded_type_reloads_the_states_resolver():
     assert [m for m, _ in client.store.requests] == []  # and nothing else
 
 
-async def test_load_resolvers_copies_the_pipelines_resolver_for_a_type_the_state_lacks():
+async def test_load_resolvers_copies_the_pipelines_resolver_for_a_type_the_state_lacks() -> (
+    None
+):
     client = served(profile_state())
     pipeline = ConfigPipeline(client)
     registered = SegmentResolver(client)
@@ -296,7 +299,9 @@ async def test_load_resolvers_copies_the_pipelines_resolver_for_a_type_the_state
     assert list(registered.identities()) == []
 
 
-async def test_load_resolvers_refuses_a_type_neither_the_state_nor_the_pipeline_has():
+async def test_load_resolvers_refuses_a_type_neither_the_state_nor_the_pipeline_has() -> (
+    None
+):
     state = profile_state()
     pipeline = ConfigPipeline(MockVcoClient())
 
@@ -305,4 +310,5 @@ async def test_load_resolvers_refuses_a_type_neither_the_state_nor_the_pipeline_
 
     message = str(error.value)
     assert "SegmentIdentity" in message
-    assert "pipeline.resolvers" in message and "state.resolvers" in message
+    assert "pipeline.resolvers" in message
+    assert "state.resolvers" in message

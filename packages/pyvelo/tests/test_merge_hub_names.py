@@ -53,7 +53,7 @@ def entry(hub: Hub) -> dict[str, Any]:
     return {"name": hub.name, "type": hub.type_, "logicalId": hub.logical_id}
 
 
-async def test_an_edge_named_once_fills_its_type_and_logical_id():
+async def test_an_edge_named_once_fills_its_type_and_logical_id() -> None:
     model = EdgeToEdgeHub()
 
     _ = model.merge_patch(
@@ -63,7 +63,7 @@ async def test_an_edge_named_once_fills_its_type_and_logical_id():
     assert hub_list(model) == [entry(HUB_A)]
 
 
-async def test_a_cluster_named_once_fills_its_type_and_logical_id():
+async def test_a_cluster_named_once_fills_its_type_and_logical_id() -> None:
     model = EdgeToEdgeHub()
 
     _ = model.merge_patch(
@@ -74,7 +74,7 @@ async def test_a_cluster_named_once_fills_its_type_and_logical_id():
     assert model.vpn_hubs[0].type_ == "edgeHubCluster"
 
 
-async def test_an_edge_given_by_logical_id_takes_its_name():
+async def test_an_edge_given_by_logical_id_takes_its_name() -> None:
     model = EdgeToEdgeHub()
 
     _ = model.merge_patch(
@@ -85,7 +85,7 @@ async def test_an_edge_given_by_logical_id_takes_its_name():
     assert hub_list(model) == [entry(HUB_A)]
 
 
-async def test_a_cluster_given_by_logical_id_takes_its_name_and_type():
+async def test_a_cluster_given_by_logical_id_takes_its_name_and_type() -> None:
     model = EdgeToEdgeHub()
 
     _ = model.merge_patch(
@@ -96,7 +96,7 @@ async def test_a_cluster_given_by_logical_id_takes_its_name_and_type():
     assert hub_list(model) == [entry(CLUSTER)]
 
 
-async def test_an_unknown_logical_id_raises_resolution_error():
+async def test_an_unknown_logical_id_raises_resolution_error() -> None:
     model = EdgeToEdgeHub()
     unknown = "99999999-9999-4999-8999-999999999999"
 
@@ -109,7 +109,7 @@ async def test_an_unknown_logical_id_raises_resolution_error():
     assert model.vpn_hubs == []
 
 
-async def test_a_cluster_members_logical_id_is_refused():
+async def test_a_cluster_members_logical_id_is_refused() -> None:
     model = EdgeToEdgeHub()
 
     with pytest.raises(ResolutionError, match=MEMBER.logical_id):
@@ -119,7 +119,7 @@ async def test_a_cluster_members_logical_id_is_refused():
         )
 
 
-async def test_a_body_giving_the_type_keeps_it():
+async def test_a_body_giving_the_type_keeps_it() -> None:
     model = EdgeToEdgeHub()
 
     _ = model.merge_patch(
@@ -130,7 +130,7 @@ async def test_a_body_giving_the_type_keeps_it():
     assert hub_list(model) == [entry(HUB_A)]
 
 
-async def test_a_body_giving_the_cluster_type_keeps_it():
+async def test_a_body_giving_the_cluster_type_keeps_it() -> None:
     model = EdgeToEdgeHub()
 
     _ = model.merge_patch(
@@ -151,7 +151,7 @@ async def test_a_body_giving_the_cluster_type_keeps_it():
     assert hub_list(model) == [entry(CLUSTER)]
 
 
-async def test_a_shared_name_given_with_its_logical_id_adds_that_hub():
+async def test_a_shared_name_given_with_its_logical_id_adds_that_hub() -> None:
     resolver = await make_hub_resolver(
         [
             identity(HUB_A),
@@ -175,7 +175,7 @@ async def test_a_shared_name_given_with_its_logical_id_adds_that_hub():
     ]
 
 
-async def test_a_selector_by_label_deletes_the_entry():
+async def test_a_selector_by_label_deletes_the_entry() -> None:
     model = EdgeToEdgeHub.model_validate(
         {"vpnHubs": [entry(HUB_A), entry(HUB_B)], "enabled": True}
     )
@@ -187,7 +187,7 @@ async def test_a_selector_by_label_deletes_the_entry():
     assert hub_list(model) == [entry(HUB_B)]
 
 
-async def test_a_hub_already_in_the_list_is_refused_under_its_name_and_its_id():
+async def test_a_hub_already_in_the_list_is_refused_under_its_name_and_its_id() -> None:
     model = EdgeToEdgeHub.model_validate({"vpnHubs": [entry(HUB_A)]})
     registry = await hub_registry()
 
@@ -204,7 +204,7 @@ async def test_a_hub_already_in_the_list_is_refused_under_its_name_and_its_id():
     assert hub_list(model) == [entry(HUB_A)]
 
 
-async def test_a_hub_is_added_to_the_bridge_list_the_same_way():
+async def test_a_hub_is_added_to_the_bridge_list_the_same_way() -> None:
     model = EdgeToEdgeDetail()
 
     _ = model.merge_patch(
@@ -218,7 +218,7 @@ async def test_a_hub_is_added_to_the_bridge_list_the_same_way():
     ]
 
 
-async def test_an_unknown_name_raises_resolution_error():
+async def test_an_unknown_name_raises_resolution_error() -> None:
     model = EdgeToEdgeHub()
 
     with pytest.raises(ResolutionError, match="Hub-Z"):
@@ -227,7 +227,7 @@ async def test_an_unknown_name_raises_resolution_error():
         )
 
 
-async def test_a_name_with_a_resolver_not_loaded_asks_for_the_load():
+async def test_a_name_with_a_resolver_not_loaded_asks_for_the_load() -> None:
     resolver = (await make_hub_resolver([identity(HUB_A)])).unloaded()
     registry = ResolverRegistry()
     registry.register(resolver)
@@ -276,7 +276,7 @@ def backhaul(route: RouteConfig) -> list[dict[str, Any]]:
     ]
 
 
-async def test_a_backhaul_hub_named_once_fills_its_edge_ids_and_type():
+async def test_a_backhaul_hub_named_once_fills_its_edge_ids_and_type() -> None:
     route = RouteConfig()
 
     _ = route.merge_patch(
@@ -294,7 +294,7 @@ async def test_a_backhaul_hub_named_once_fills_its_edge_ids_and_type():
     ]
 
 
-async def test_a_backhaul_cluster_named_once_fills_a_null_edge_id():
+async def test_a_backhaul_cluster_named_once_fills_a_null_edge_id() -> None:
     route = RouteConfig()
 
     _ = route.merge_patch(
@@ -313,7 +313,7 @@ async def test_a_backhaul_cluster_named_once_fills_a_null_edge_id():
     ]
 
 
-async def test_a_backhaul_hub_given_by_logical_id_takes_its_name_and_ids():
+async def test_a_backhaul_hub_given_by_logical_id_takes_its_name_and_ids() -> None:
     route = RouteConfig()
 
     _ = route.merge_patch(
@@ -332,7 +332,7 @@ async def test_a_backhaul_hub_given_by_logical_id_takes_its_name_and_ids():
     ]
 
 
-async def test_a_backhaul_body_giving_the_type_keeps_it():
+async def test_a_backhaul_body_giving_the_type_keeps_it() -> None:
     route = RouteConfig()
 
     _ = route.merge_patch(
@@ -343,7 +343,7 @@ async def test_a_backhaul_body_giving_the_type_keeps_it():
     assert [e.type_ for e in backhaul_edges(route)] == ["edgeHub"]
 
 
-async def test_an_unknown_backhaul_name_raises_resolution_error():
+async def test_an_unknown_backhaul_name_raises_resolution_error() -> None:
     with pytest.raises(ResolutionError, match="Hub-Z"):
         _ = RouteConfig().merge_patch(
             {"backhaulEdges": {"+": add({"name": "Hub-Z"})}},

@@ -140,15 +140,11 @@ def _camel_to_snake(name: str) -> str:
     result: list[str] = []
     for i, c in enumerate(name):
         if c.isupper():
-            if (
+            if (i > 0 and not name[i - 1].isupper()) or (
                 i > 0
-                and not name[i - 1].isupper()
-                or (
-                    i > 0
-                    and i + 1 < len(name)
-                    and name[i - 1].isupper()
-                    and not name[i + 1].isupper()
-                )
+                and i + 1 < len(name)
+                and name[i - 1].isupper()
+                and not name[i + 1].isupper()
             ):
                 result.append("_")
             result.append(c.lower())

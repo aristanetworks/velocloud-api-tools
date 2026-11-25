@@ -66,14 +66,14 @@ SG_UUID1 = uuid.UUID("cccccccc-cccc-cccc-cccc-cccccccccccc")
 
 @final
 class FakeProfile:
-    def __init__(self, id_: int, name: str):
+    def __init__(self, id_: int, name: str) -> None:
         self.id_: int = id_
         self.name: str = name
 
 
 @final
 class FakeApp:
-    def __init__(self, id_: int, name: str, display_name: str | None = None):
+    def __init__(self, id_: int, name: str, display_name: str | None = None) -> None:
         self.id_: int = id_
         self.name: str = name
         self.display_name: str | None = display_name
@@ -81,19 +81,19 @@ class FakeApp:
 
 @final
 class FakeAppResult:
-    def __init__(self, applications: list[FakeApp]):
+    def __init__(self, applications: list[FakeApp]) -> None:
         self.applications: list[FakeApp] = applications
 
 
 @final
 class FakeAllAppsResult:
-    def __init__(self, applications: list[FakeApp]):
+    def __init__(self, applications: list[FakeApp]) -> None:
         self.all: FakeAppResult = FakeAppResult(applications)
 
 
 @final
 class FakeObjectGroup:
-    def __init__(self, id_: int, name: str, logical_id: uuid.UUID):
+    def __init__(self, id_: int, name: str, logical_id: uuid.UUID) -> None:
         self.id_: int = id_
         self.name: str = name
         self.logical_id: uuid.UUID = logical_id
@@ -101,7 +101,7 @@ class FakeObjectGroup:
 
 @final
 class FakeLicense:
-    def __init__(self, id_: int, license_id: int, name: str, sku: str):
+    def __init__(self, id_: int, license_id: int, name: str, sku: str) -> None:
         self.id_: int = id_
         self.license_id: int = license_id
         self.name: str = name
@@ -122,7 +122,7 @@ class FakeResolverClient:
 
     @property
     def protocol(self) -> VcoClientProtocol:
-        return cast(VcoClientProtocol, cast(object, self))
+        return cast("VcoClientProtocol", cast("object", self))
 
     async def get_enterprise_configurations(
         self, request: GetEnterpriseConfigurations
@@ -170,27 +170,29 @@ class TestProfileResolver:
         await r.load(ResolverContext(enterprise_id=1))
         return r
 
-    async def test_resolve(self, resolver: ProfileResolver):
+    async def test_resolve(self, resolver: ProfileResolver) -> None:
         identity = await resolver.resolve("Default Profile")
         assert identity.name == "Default Profile"
         assert identity.id == 10
 
-    async def test_resolve_second(self, resolver: ProfileResolver):
+    async def test_resolve_second(self, resolver: ProfileResolver) -> None:
         identity = await resolver.resolve("Branch Profile")
         assert identity.name == "Branch Profile"
         assert identity.id == 20
 
-    async def test_resolve_unknown(self, resolver: ProfileResolver):
+    async def test_resolve_unknown(self, resolver: ProfileResolver) -> None:
         with pytest.raises(KeyError, match="Unknown profile"):
             _ = await resolver.resolve("nonexistent")
 
-    async def test_lookup_key_by_id(self, resolver: ProfileResolver):
+    async def test_lookup_key_by_id(self, resolver: ProfileResolver) -> None:
         assert resolver.lookup_key(ProfileId(10)).name == "Default Profile"
 
-    def test_identity_type(self, mock_client: FakeResolverClient):
+    def test_identity_type(self, mock_client: FakeResolverClient) -> None:
         assert ProfileResolver(mock_client.protocol).identity_type is ProfileIdentity
 
-    async def test_load_passes_enterprise_id(self, mock_client: FakeResolverClient):
+    async def test_load_passes_enterprise_id(
+        self, mock_client: FakeResolverClient
+    ) -> None:
         r = ProfileResolver(mock_client.protocol)
         await r.load(ResolverContext(enterprise_id=42))
         request = mock_client.profile_requests[0]
@@ -221,23 +223,25 @@ class TestApplicationResolver:
         await r.load(ResolverContext(enterprise_id=1))
         return r
 
-    async def test_resolve_by_display_name(self, resolver: ApplicationResolver):
+    async def test_resolve_by_display_name(self, resolver: ApplicationResolver) -> None:
         identity = await resolver.resolve("Office 365")
         assert identity.id == 100
         assert identity.name == "Office 365"
 
-    async def test_resolve_fallback_to_name(self, resolver: ApplicationResolver):
+    async def test_resolve_fallback_to_name(
+        self, resolver: ApplicationResolver
+    ) -> None:
         identity = await resolver.resolve("ssh")
         assert identity.id == 300
 
-    async def test_resolve_unknown(self, resolver: ApplicationResolver):
+    async def test_resolve_unknown(self, resolver: ApplicationResolver) -> None:
         with pytest.raises(KeyError, match="Unknown application"):
             _ = await resolver.resolve("nonexistent")
 
-    async def test_lookup_key_by_id(self, resolver: ApplicationResolver):
+    async def test_lookup_key_by_id(self, resolver: ApplicationResolver) -> None:
         assert resolver.lookup_key(ApplicationId(200)).name == "Zoom"
 
-    def test_identity_type(self, mock_client: FakeResolverClient):
+    def test_identity_type(self, mock_client: FakeResolverClient) -> None:
         assert (
             ApplicationResolver(mock_client.protocol).identity_type
             is ApplicationIdentity
@@ -265,29 +269,33 @@ class TestAddressGroupResolver:
         await r.load(ResolverContext(enterprise_id=1))
         return r
 
-    async def test_resolve(self, resolver: AddressGroupResolver):
+    async def test_resolve(self, resolver: AddressGroupResolver) -> None:
         identity = await resolver.resolve("RFC1918")
         assert identity.name == "RFC1918"
         assert identity.id == 50
         assert identity.logical_id == AG_UUID1
 
-    async def test_resolve_unknown(self, resolver: AddressGroupResolver):
+    async def test_resolve_unknown(self, resolver: AddressGroupResolver) -> None:
         with pytest.raises(KeyError, match="Unknown address group"):
             _ = await resolver.resolve("nonexistent")
 
-    async def test_lookup_key_by_id(self, resolver: AddressGroupResolver):
+    async def test_lookup_key_by_id(self, resolver: AddressGroupResolver) -> None:
         assert resolver.lookup_key(AddressGroupId(51)).name == "Branch Subnets"
 
-    async def test_lookup_key_by_logical_id(self, resolver: AddressGroupResolver):
+    async def test_lookup_key_by_logical_id(
+        self, resolver: AddressGroupResolver
+    ) -> None:
         assert resolver.lookup_key(AddressGroupLogicalId(AG_UUID1)).name == "RFC1918"
 
-    def test_identity_type(self, mock_client: FakeResolverClient):
+    def test_identity_type(self, mock_client: FakeResolverClient) -> None:
         assert (
             AddressGroupResolver(mock_client.protocol).identity_type
             is AddressGroupIdentity
         )
 
-    async def test_load_uses_address_group_type(self, mock_client: FakeResolverClient):
+    async def test_load_uses_address_group_type(
+        self, mock_client: FakeResolverClient
+    ) -> None:
         r = AddressGroupResolver(mock_client.protocol)
         await r.load(ResolverContext(enterprise_id=1))
         request = mock_client.object_group_requests[0]
@@ -314,26 +322,28 @@ class TestServiceGroupResolver:
         await r.load(ResolverContext(enterprise_id=1))
         return r
 
-    async def test_resolve(self, resolver: ServiceGroupResolver):
+    async def test_resolve(self, resolver: ServiceGroupResolver) -> None:
         identity = await resolver.resolve("Web Ports")
         assert identity.name == "Web Ports"
         assert identity.id == 60
         assert identity.logical_id == SG_UUID1
 
-    async def test_resolve_unknown(self, resolver: ServiceGroupResolver):
+    async def test_resolve_unknown(self, resolver: ServiceGroupResolver) -> None:
         with pytest.raises(KeyError, match="Unknown service group"):
             _ = await resolver.resolve("nonexistent")
 
-    async def test_lookup_key_by_id(self, resolver: ServiceGroupResolver):
+    async def test_lookup_key_by_id(self, resolver: ServiceGroupResolver) -> None:
         assert resolver.lookup_key(ServiceGroupId(60)).name == "Web Ports"
 
-    def test_identity_type(self, mock_client: FakeResolverClient):
+    def test_identity_type(self, mock_client: FakeResolverClient) -> None:
         assert (
             ServiceGroupResolver(mock_client.protocol).identity_type
             is ServiceGroupIdentity
         )
 
-    async def test_load_uses_port_group_type(self, mock_client: FakeResolverClient):
+    async def test_load_uses_port_group_type(
+        self, mock_client: FakeResolverClient
+    ) -> None:
         r = ServiceGroupResolver(mock_client.protocol)
         await r.load(ResolverContext(enterprise_id=1))
         request = mock_client.object_group_requests[0]
@@ -361,42 +371,42 @@ class TestLicenseResolver:
         await r.load(ResolverContext(enterprise_id=1))
         return r
 
-    async def test_resolve_by_name(self, resolver: LicenseResolver):
+    async def test_resolve_by_name(self, resolver: LicenseResolver) -> None:
         identity = await resolver.resolve("Enterprise 1G")
         assert identity.name == "Enterprise 1G"
         assert identity.id == 100
         assert identity.license_id == 200
         assert identity.sku == "ENT-BWR-1G"
 
-    async def test_resolve_unknown(self, resolver: LicenseResolver):
+    async def test_resolve_unknown(self, resolver: LicenseResolver) -> None:
         with pytest.raises(KeyError, match="Unknown license"):
             _ = await resolver.resolve("nonexistent")
 
-    async def test_resolve_key_name(self, resolver: LicenseResolver):
+    async def test_resolve_key_name(self, resolver: LicenseResolver) -> None:
         identity = await resolver.resolve_key(LicenseName("Premium 2G"))
         assert identity.id == 101
 
-    async def test_resolve_key_sku(self, resolver: LicenseResolver):
+    async def test_resolve_key_sku(self, resolver: LicenseResolver) -> None:
         identity = await resolver.resolve_key(LicenseSku("ENT-BWR-1G"))
         assert identity.name == "Enterprise 1G"
 
-    async def test_resolve_key_id(self, resolver: LicenseResolver):
+    async def test_resolve_key_id(self, resolver: LicenseResolver) -> None:
         identity = await resolver.resolve_key(LicenseId(101))
         assert identity.name == "Premium 2G"
 
-    async def test_lookup_key_by_id(self, resolver: LicenseResolver):
+    async def test_lookup_key_by_id(self, resolver: LicenseResolver) -> None:
         assert resolver.lookup_key(LicenseId(100)).name == "Enterprise 1G"
 
-    async def test_lookup_key_by_sku(self, resolver: LicenseResolver):
+    async def test_lookup_key_by_sku(self, resolver: LicenseResolver) -> None:
         assert resolver.lookup_key(LicenseSku("PRM-BWR-2G")).name == "Premium 2G"
 
-    async def test_lookup_by_license_id(self, resolver: LicenseResolver):
+    async def test_lookup_by_license_id(self, resolver: LicenseResolver) -> None:
         registry = ResolverRegistry()
         registry.register(resolver)
         found = registry.lookup_by(LicenseIdentity, lambda i: i.license_id, 200)
         assert found.name == "Enterprise 1G"
 
-    def test_identity_type(self, mock_client: FakeResolverClient):
+    def test_identity_type(self, mock_client: FakeResolverClient) -> None:
         assert LicenseResolver(mock_client.protocol).identity_type is LicenseIdentity
 
 
@@ -411,11 +421,11 @@ def _fake_client(**answers: object) -> VcoClientProtocol:
     client = AsyncMock()
     for method, answer in answers.items():
         getattr(client, method).return_value = answer
-    return cast(VcoClientProtocol, client)
+    return cast("VcoClientProtocol", client)
 
 
 def _erased[T](resolver: BaseResolver[T]) -> BaseResolver[object]:
-    return cast(BaseResolver[object], cast(object, resolver))
+    return cast("BaseResolver[object]", cast("object", resolver))
 
 
 async def _loaded[T](resolver: BaseResolver[T]) -> BaseResolver[object]:

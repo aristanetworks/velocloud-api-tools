@@ -65,7 +65,7 @@ def _validate_device_config(**data: object) -> DeviceConfig:
 
 
 class TestValidData:
-    def test_valid_dict_validates_normally(self):
+    def test_valid_dict_validates_normally(self) -> None:
         m = _validate_device_config(
             name="edge1",
             link={"autonegotiation": False, "speed": "1000M", "mtu": 9000},  # type: ignore[arg-type]
@@ -76,12 +76,12 @@ class TestValidData:
         assert m.link.mtu == 9000
         assert m.multicast.enabled is True
 
-    def test_model_instance_passes_through(self):
+    def test_model_instance_passes_through(self) -> None:
         link = LinkSettings(speed="2500M")
         m = DeviceConfig(link=link, multicast=MulticastSettings())
         assert m.link.speed == "2500M"
 
-    def test_partial_dict_fills_model_defaults(self):
+    def test_partial_dict_fills_model_defaults(self) -> None:
         m = _validate_device_config(link={"mtu": 9000}, multicast={})
         assert m.link.autonegotiation is True
         assert m.link.speed == "100M"
@@ -89,7 +89,7 @@ class TestValidData:
         assert m.multicast.enabled is False
         assert m.multicast.type_ == "IGMP_V2"
 
-    def test_empty_dict_produces_default_values(self):
+    def test_empty_dict_produces_default_values(self) -> None:
         m = _validate_device_config(link={}, multicast={})
         assert m.link == LinkSettings()
         assert m.multicast == MulticastSettings()
@@ -101,23 +101,23 @@ class TestValidData:
 
 
 class TestInvalidDataFallback:
-    def test_wrong_type_produces_default(self):
+    def test_wrong_type_produces_default(self) -> None:
         """A non-dict/non-model value should fail validation and use default."""
         m = _validate_device_config(link="garbage", multicast=42)
         assert m.link == LinkSettings()
         assert m.multicast == MulticastSettings()
 
-    def test_none_produces_default(self):
+    def test_none_produces_default(self) -> None:
         m = _validate_device_config(link=None, multicast=None)
         assert m.link == LinkSettings()
         assert m.multicast == MulticastSettings()
 
-    def test_list_produces_default(self):
+    def test_list_produces_default(self) -> None:
         m = _validate_device_config(link=[1, 2, 3], multicast=[])
         assert m.link == LinkSettings()
         assert m.multicast == MulticastSettings()
 
-    def test_invalid_field_values_produce_default(self):
+    def test_invalid_field_values_produce_default(self) -> None:
         """If nested field validation fails, the whole sub-model is defaulted."""
         m = _validate_device_config(
             link={"mtu": "not_a_number"},  # type: ignore[arg-type]
@@ -133,13 +133,13 @@ class TestInvalidDataFallback:
 
 
 class TestDefaultFactory:
-    def test_omitted_field_gets_default_instance(self):
+    def test_omitted_field_gets_default_instance(self) -> None:
         m = DeviceConfig()
         assert isinstance(m.link, LinkSettings)
         assert isinstance(m.multicast, MulticastSettings)
         assert m.link == LinkSettings()
 
-    def test_each_instance_gets_fresh_default(self):
+    def test_each_instance_gets_fresh_default(self) -> None:
         """Default factory should produce independent instances."""
         m1 = DeviceConfig()
         m2 = DeviceConfig()
@@ -153,18 +153,18 @@ class TestDefaultFactory:
 
 
 class TestAlias:
-    def test_alias_accepted_on_input(self):
+    def test_alias_accepted_on_input(self) -> None:
         m = WithAlias.model_validate(
             {"networkSettings": {"speed": "1000M", "mtu": 9000}}
         )
         assert m.net.speed == "1000M"
         assert m.net.mtu == 9000
 
-    def test_alias_invalid_data_produces_default(self):
+    def test_alias_invalid_data_produces_default(self) -> None:
         m = WithAlias.model_validate({"networkSettings": "bad"})
         assert m.net == LinkSettings()
 
-    def test_python_name_also_accepted(self):
+    def test_python_name_also_accepted(self) -> None:
         m = WithAlias.model_validate({"net": {"speed": "2500M"}})
         assert m.net.speed == "2500M"
 
@@ -175,7 +175,7 @@ class TestAlias:
 
 
 class TestAudit:
-    def test_audit_entry_recorded_on_failure(self):
+    def test_audit_entry_recorded_on_failure(self) -> None:
         audit: list[dict[str, object]] = []
         _ = DeviceConfig.model_validate(
             {"link": "invalid", "multicast": {}},
@@ -190,7 +190,7 @@ class TestAudit:
         assert isinstance(reason, str)
         assert "failed model validation" in reason
 
-    def test_no_audit_entry_on_valid_data(self):
+    def test_no_audit_entry_on_valid_data(self) -> None:
         audit: list[dict[str, object]] = []
         _ = DeviceConfig.model_validate(
             {"link": {"mtu": 9000}, "multicast": {}},
@@ -198,7 +198,7 @@ class TestAudit:
         )
         assert len(audit) == 0
 
-    def test_multiple_failures_produce_multiple_entries(self):
+    def test_multiple_failures_produce_multiple_entries(self) -> None:
         audit: list[dict[str, object]] = []
         _ = DeviceConfig.model_validate(
             {"link": None, "multicast": None},
@@ -208,7 +208,7 @@ class TestAudit:
         fields = {e["field"] for e in audit}
         assert fields == {"link", "multicast"}
 
-    def test_no_audit_key_in_context_is_safe(self):
+    def test_no_audit_key_in_context_is_safe(self) -> None:
         """Validation should work even without audit in context."""
         m = DeviceConfig.model_validate(
             {"link": "bad"},
@@ -223,19 +223,19 @@ class TestAudit:
 
 
 class TestCompactSerialization:
-    def test_default_instance_omitted_in_compact(self):
+    def test_default_instance_omitted_in_compact(self) -> None:
         m = DeviceConfig()
         d = m.model_dump(by_alias=False, context=_COMPACT)
         assert "link" not in d
         assert "multicast" not in d
 
-    def test_non_default_kept_in_compact(self):
+    def test_non_default_kept_in_compact(self) -> None:
         m = DeviceConfig(link=LinkSettings(mtu=9000))
         d = m.model_dump(by_alias=False, context=_COMPACT)
         assert "link" in d
         assert d["link"]["mtu"] == 9000
 
-    def test_fallen_back_default_omitted_in_compact(self):
+    def test_fallen_back_default_omitted_in_compact(self) -> None:
         """A field that fell back to default via invalid data is still a default."""
         m = _validate_device_config(link="garbage", multicast={})
         d = m.model_dump(by_alias=False, context=_COMPACT)
@@ -249,12 +249,12 @@ class TestCompactSerialization:
 
 
 class TestCoexistence:
-    def test_alongside_missing_field(self):
+    def test_alongside_missing_field(self) -> None:
         m = WithOptional(tag="hello")
         assert m.tag == "hello"
         assert m.link == LinkSettings()
 
-    def test_missing_field_stays_missing(self):
+    def test_missing_field_stays_missing(self) -> None:
         m = WithOptional()
         assert m.tag is MISSING
         assert isinstance(m.link, LinkSettings)

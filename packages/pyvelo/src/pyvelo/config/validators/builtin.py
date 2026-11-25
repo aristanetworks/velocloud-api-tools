@@ -78,7 +78,7 @@ def _walk_model_for_keys(
         if spec is not None and isinstance(val, list):
             # Keys compare in string form, part by part (24 and "24" are one).
             seen_keys: dict[KeyForm, int] = {}
-            for i, item in enumerate(cast(list[object], val)):
+            for i, item in enumerate(cast("list[object]", val)):
                 form = key_form(item_key(item, spec.paths))
                 if form is not None:
                     if form in seen_keys:

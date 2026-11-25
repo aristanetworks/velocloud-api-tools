@@ -7,7 +7,7 @@ operations as plain JSON values; ``parse_item_op`` reads one back and
 ``checked_patch`` is the check every patch passes once, at entry.
 """
 
-import datetime
+import datetime as dt
 import math
 import re
 from collections.abc import Iterator, Mapping
@@ -314,8 +314,8 @@ def parse_item_op(value: object, path: Path) -> ItemOp:
     if not isinstance(value, dict):
         raise PatchError(
             f"an item operation is an object, not {type(value).__name__}; write "
-            + 'a plain object, {"_op": "add", ...} (add(...)) or {"_op": "delete"} '
-            + "(delete())",
+            'a plain object, {"_op": "add", ...} (add(...)) or {"_op": "delete"} '
+            "(delete())",
             path,
             "operation",
         )
@@ -327,8 +327,8 @@ def parse_item_op(value: object, path: Path) -> ItemOp:
     if has_op and op not in ("add", "delete"):
         raise PatchError(
             f'_op is "add" or "delete", not {op!r}; write {{"_op": "add", ...}} '
-            + '(add(...)) or {"_op": "delete"} (delete()), a change as a plain '
-            + 'object, and a move as {"_position": ...} (move(...))',
+            '(add(...)) or {"_op": "delete"} (delete()), a change as a plain '
+            'object, and a move as {"_position": ...} (move(...))',
             path,
             "operation",
         )
@@ -451,7 +451,7 @@ def _not_json_message(value: object) -> str:
         message += "; write a UUID as its text, str(value)"
     elif isinstance(value, Enum):
         message += "; give an Enum member as its value, member.value"
-    elif isinstance(value, (datetime.date, datetime.time)):
+    elif isinstance(value, (dt.date, dt.time)):
         message += "; write a date or a time as its text, value.isoformat()"
     elif isinstance(value, (set, frozenset, tuple, Iterator)):
         message += "; give a set, a tuple or a generator as a list, list(value)"

@@ -132,7 +132,7 @@ def _entries(refs: object) -> list[tuple[str, dict[str, Any]]]:
     for name, value in refs.items():
         for entry in value if is_list(value) else [value]:
             if is_dict(entry):
-                entries.append((str(name), cast(dict[str, Any], entry)))
+                entries.append((str(name), cast("dict[str, Any]", entry)))
     return entries
 
 
@@ -175,7 +175,7 @@ def _stored_row(
             for name, row in entries
             if name == change.name
             and same_identity(
-                change.value, row_field(cast(dict[object, object], row), change.match)
+                change.value, row_field(cast("dict[object, object]", row), change.match)
             )
             and (
                 change.segment_object_id is None

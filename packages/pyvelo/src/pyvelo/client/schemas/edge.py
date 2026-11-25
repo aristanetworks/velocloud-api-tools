@@ -514,7 +514,7 @@ class CompositeModuleBase(VcoModel):
         if not isinstance(value, Mapping):
             # An existing instance keeps the snapshot it already has.
             return handler(value)
-        source = cast(Mapping[object, object], value)
+        source = cast("Mapping[object, object]", value)
         try:
             raw_data = capture_key(source, "data", info.mode)
         except PydanticSerializationError:

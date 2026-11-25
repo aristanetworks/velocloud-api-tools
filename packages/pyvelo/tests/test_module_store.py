@@ -114,7 +114,7 @@ def update_refs(store: ModuleStore, module_id: int, refs: object) -> dict[str, A
     params = update(
         data, version=None, refs=refs, module_id=module_id, return_data=True
     )
-    return cast(dict[str, Any], store.handle(UPDATE, params))
+    return cast("dict[str, Any]", store.handle(UPDATE, params))
 
 
 def refs_store() -> ModuleStore:
@@ -144,25 +144,25 @@ def change_elsewhere(row: dict[str, Any]) -> None:
 
 def error_code(error: RpcError) -> object:
     """The ``code`` of the first entry of a ``validationError``."""
-    data = cast(dict[str, list[dict[str, object]]], error.data)
+    data = cast("dict[str, list[dict[str, object]]]", error.data)
     return data["error"][0]["code"]
 
 
-def test_update_stores_and_answers_rows():
+def test_update_stores_and_answers_rows() -> None:
     store = make_store()
     assert store.handle(UPDATE, update(EDITED)) == {"rows": 1}
     assert store.rows[1]["data"] == EDITED
     assert store.rows[1]["version"] != "v1"
 
 
-def test_update_with_return_data_answers_the_row():
+def test_update_with_return_data_answers_the_row() -> None:
     store = make_store()
     answer = store.handle(UPDATE, update({"segments": []}, return_data=True))
     assert answer == store.rows[1]
     assert {"id", "name", "version", "data"} <= set(store.rows[1])
 
 
-def test_stale_version_with_the_check_off():
+def test_stale_version_with_the_check_off() -> None:
     store = make_store()
     store.other_writer(1, change_elsewhere)
     current = copy.deepcopy(store.rows[1])
@@ -171,7 +171,7 @@ def test_stale_version_with_the_check_off():
     assert store.rows[1] == current
 
 
-def test_stale_version_with_the_check_on():
+def test_stale_version_with_the_check_on() -> None:
     store = make_store(conditional_check=True)
     store.other_writer(1, change_elsewhere)
     current = copy.deepcopy(store.rows[1])
@@ -183,14 +183,14 @@ def test_stale_version_with_the_check_on():
     assert store.rows[1] == current
 
 
-def test_no_version_writes_unconditionally():
+def test_no_version_writes_unconditionally() -> None:
     store = make_store(conditional_check=True)
     store.other_writer(1, change_elsewhere)
     assert store.handle(UPDATE, update(EDITED, version=None)) == {"rows": 1}
     assert store.rows[1]["data"] == EDITED
 
 
-def test_refs_are_replaced_only_when_sent():
+def test_refs_are_replaced_only_when_sent() -> None:
     store = make_store()
     _ = store.handle(UPDATE, update(RAW, version=None))
     assert store.rows[1]["refs"] == REFS
@@ -205,7 +205,7 @@ def test_refs_are_replaced_only_when_sent():
     assert "refs" not in store.rows[1]
 
 
-def test_hooks_change_what_is_stored():
+def test_hooks_change_what_is_stored() -> None:
     store = make_store()
     before = copy.deepcopy(store.rows[1])
     received: list[dict[str, Any] | None] = []
@@ -221,7 +221,7 @@ def test_hooks_change_what_is_stored():
     assert received == [before]
 
 
-def test_fail_writes():
+def test_fail_writes() -> None:
     store = make_store()
     store.fail_writes = {2}
     _ = store.handle(INSERT, insert({"segments": []}))  # writes count together
@@ -233,13 +233,13 @@ def test_fail_writes():
     assert store.rows[1]["data"] == {"n": 3}
 
 
-def test_return_data_can_be_ignored():
+def test_return_data_can_be_ignored() -> None:
     store = make_store(return_data=False)
     answer = store.handle(UPDATE, update({"segments": []}, return_data=True))
     assert answer == {"rows": 1}
 
 
-def test_insert_issues_an_id_and_a_version():
+def test_insert_issues_an_id_and_a_version() -> None:
     store = make_store()
     data: dict[str, Any] = {"segments": [], "rules": []}
     assert store.handle(INSERT, insert(data)) == {"id": 2, "rows": 1}
@@ -251,7 +251,7 @@ def test_insert_issues_an_id_and_a_version():
     assert store.rows[3]["version"] != row["version"]
 
 
-def test_get_configuration_serves_its_modules():
+def test_get_configuration_serves_its_modules() -> None:
     store = make_store()
     store.add_configuration({"id": 20, "name": "P"})
     store.rows[2] = make_module_json("firewall", {}, module_id=2, configuration_id=20)
@@ -267,7 +267,7 @@ def test_get_configuration_serves_its_modules():
     }
 
 
-def test_unknown_module_and_unknown_method():
+def test_unknown_module_and_unknown_method() -> None:
     store = make_store()
     with pytest.raises(RpcError) as unknown_module:
         _ = store.handle(UPDATE, update({}, module_id=7))
@@ -281,7 +281,7 @@ def test_unknown_module_and_unknown_method():
     assert unknown_method.value.code == -32601
 
 
-async def test_as_an_httpx_handler(mock_vco_client: MockVcoClientFactory):
+async def test_as_an_httpx_handler(mock_vco_client: MockVcoClientFactory) -> None:
     store = make_store()
     client = await mock_vco_client(store)
     result = await client.update_configuration_module(
@@ -297,7 +297,7 @@ async def test_as_an_httpx_handler(mock_vco_client: MockVcoClientFactory):
     assert store.requests[0][1]["version"] == "v1"
 
 
-def test_store_of_holds_the_rows_and_their_configurations():
+def test_store_of_holds_the_rows_and_their_configurations() -> None:
     m1 = (
         FirewallConfigurationModule[Edge]
         .model_validate(
@@ -322,7 +322,7 @@ def test_store_of_holds_the_rows_and_their_configurations():
     assert store.return_data is True
 
 
-def test_as_stored_is_the_module_validated_from_json():
+def test_as_stored_is_the_module_validated_from_json() -> None:
     module = (
         FirewallConfigurationModule[Edge]
         .model_validate(
@@ -342,7 +342,7 @@ def test_as_stored_is_the_module_validated_from_json():
     assert module.data.firewall_enabled.local is True
 
 
-def test_a_store_of_one_enterprise_refuses_a_request_that_does_not_name_it():
+def test_a_store_of_one_enterprise_refuses_a_request_that_does_not_name_it() -> None:
     store = ModuleStore(enterprise_id=7)
     store.add_configuration({"id": 10, "name": "Edge Specific Profile"})
     store.rows[1] = make_module_json(
@@ -365,7 +365,7 @@ def test_a_store_of_one_enterprise_refuses_a_request_that_does_not_name_it():
     assert store.rows[1]["data"] == edited
 
 
-def test_a_store_of_no_enterprise_takes_any_request():
+def test_a_store_of_no_enterprise_takes_any_request() -> None:
     store = ModuleStore()
     store.add_configuration({"id": 10, "name": "Edge Specific Profile"})
     assert store.handle(GET_CONFIGURATION, {"id": 10, "enterpriseId": 8}) == {
@@ -376,7 +376,7 @@ def test_a_store_of_no_enterprise_takes_any_request():
 
 async def test_lose_answers_stores_the_write_and_then_times_out(
     mock_vco_client: MockVcoClientFactory,
-):
+) -> None:
     store = make_store()
     store.lose_answers = {1, 3}
     client = await mock_vco_client(store)
@@ -398,7 +398,7 @@ async def test_lose_answers_stores_the_write_and_then_times_out(
 
 async def test_lose_answers_leaves_an_error_answered(
     mock_vco_client: MockVcoClientFactory,
-):
+) -> None:
     store = make_store(conditional_check=True)
     store.lose_answers = {1}
     client = await mock_vco_client(store)
@@ -454,7 +454,7 @@ def stack_store() -> ModuleStore:
     return store
 
 
-def test_the_store_serves_an_edges_stack_from_its_rows():
+def test_the_store_serves_an_edges_stack_from_its_rows() -> None:
     store = stack_store()
     store.add_stack(10, 20, edge_id=42)
     answer = store.handle(STACK, {"edgeId": 42})
@@ -463,7 +463,7 @@ def test_the_store_serves_an_edges_stack_from_its_rows():
         {"id": 20, "name": "Profile 20", "modules": []},
     ]
     store.rows[11]["data"]["firewall_enabled"] = False
-    again = cast(list[dict[str, Any]], store.handle(STACK, {"edgeId": 42}))
+    again = cast("list[dict[str, Any]]", store.handle(STACK, {"edgeId": 42}))
     assert again[0]["modules"][0]["data"]["firewall_enabled"] is False
     with pytest.raises(RpcError) as unknown:
         _ = store.handle(STACK, {"edgeId": 7})
@@ -472,7 +472,7 @@ def test_the_store_serves_an_edges_stack_from_its_rows():
     assert store.handle(STACK, {"edgeId": 7}) == again
 
 
-def test_a_module_given_under_another_configuration_is_refused():
+def test_a_module_given_under_another_configuration_is_refused() -> None:
     store = ModuleStore()
     row = make_module_json("firewall", {}, module_id=1, configuration_id=99)
     with pytest.raises(
@@ -487,7 +487,9 @@ def test_a_module_given_under_another_configuration_is_refused():
         store.add_configuration({"name": "P"})
 
 
-def test_a_module_id_held_by_another_configuration_is_refused_and_nothing_changes():
+def test_a_module_id_held_by_another_configuration_is_refused_and_nothing_changes() -> (
+    None
+):
     store = ModuleStore()
     first = make_module_json("firewall", {}, module_id=1, configuration_id=10)
     store.add_configuration({"id": 10, "name": "P", "modules": [first]})
@@ -495,7 +497,8 @@ def test_a_module_id_held_by_another_configuration_is_refused_and_nothing_change
     with pytest.raises(ValueError) as exc:
         store.add_configuration({"id": 20, "name": "Q", "modules": [clash]})
     message = str(exc.value)
-    assert "module 1" in message and "configuration 20" in message
+    assert "module 1" in message
+    assert "configuration 20" in message
     assert "configuration 10 already holds a module with that id" in message
     assert store.rows[1]["name"] == "firewall"
     assert store.rows[1]["configurationId"] == 10
@@ -504,7 +507,7 @@ def test_a_module_id_held_by_another_configuration_is_refused_and_nothing_change
     store.add_configuration({"id": 10, "name": "P", "modules": [first]})
 
 
-def test_a_module_row_without_an_id_is_refused_and_nothing_is_stored():
+def test_a_module_row_without_an_id_is_refused_and_nothing_is_stored() -> None:
     store = ModuleStore()
     good = make_module_json("firewall", {}, module_id=1, configuration_id=10)
     nameless = {k: v for k, v in good.items() if k != "id"}
@@ -526,7 +529,7 @@ def test_a_module_row_without_an_id_is_refused_and_nothing_is_stored():
 )
 def test_a_request_without_a_required_key_is_answered_with_an_error(
     method: str, params: dict[str, Any], missing: str
-):
+) -> None:
     store = stack_store()
     with pytest.raises(RpcError) as exc:
         _ = store.handle(method, params)
@@ -535,7 +538,7 @@ def test_a_request_without_a_required_key_is_answered_with_an_error(
     assert set(store.rows) == {11}
 
 
-def test_a_hook_cannot_change_the_stored_row_through_old():
+def test_a_hook_cannot_change_the_stored_row_through_old() -> None:
     store = stack_store()
 
     def hook(_row: dict[str, Any], old: dict[str, Any] | None) -> None:
@@ -548,7 +551,7 @@ def test_a_hook_cannot_change_the_stored_row_through_old():
     assert "touched" not in kept["data"]
 
 
-def test_the_store_issues_firewall_rule_ids_as_a_vco_does():
+def test_the_store_issues_firewall_rule_ids_as_a_vco_does() -> None:
     store = stack_store()
     store.issue_rule_ids = True
     data = copy.deepcopy(RULES)
@@ -572,7 +575,7 @@ def test_the_store_issues_firewall_rule_ids_as_a_vco_does():
     assert all(len(r["ruleLogicalId"]) == 22 for r in stored)
 
 
-def test_the_store_issues_a_qos_rule_id_only_where_there_is_none():
+def test_the_store_issues_a_qos_rule_id_only_where_there_is_none() -> None:
     store = ModuleStore(issue_rule_ids=True)
     store.add_configuration({"id": 10, "name": "P"})
     data: dict[str, Any] = {
@@ -608,7 +611,7 @@ def test_the_store_issues_a_qos_rule_id_only_where_there_is_none():
 )
 def test_a_refused_request_takes_no_write_number_and_changes_nothing(
     method: str, params: dict[str, Any]
-):
+) -> None:
     store = stack_store()
     store.fail_writes = {1}
     before = copy.deepcopy(store.rows)
@@ -622,7 +625,7 @@ def test_a_refused_request_takes_no_write_number_and_changes_nothing(
     assert failed.value.message == "simulated failure"
 
 
-def test_a_read_without_its_key_is_answered_with_an_error():
+def test_a_read_without_its_key_is_answered_with_an_error() -> None:
     store = stack_store()
     store.add_stack(10, 20)
     for method, missing in ((GET_CONFIGURATION, "id"), (STACK, "edgeId")):
@@ -632,7 +635,7 @@ def test_a_read_without_its_key_is_answered_with_an_error():
         assert f"missing required property: {missing}" in str(exc.value.data)
 
 
-def test_a_refused_configuration_stores_nothing_and_says_what_to_do():
+def test_a_refused_configuration_stores_nothing_and_says_what_to_do() -> None:
     store = ModuleStore()
     good = make_module_json("firewall", {}, module_id=1, configuration_id=10)
     bad = make_module_json("qos", {}, module_id=2, configuration_id=99)
@@ -644,20 +647,23 @@ def test_a_refused_configuration_stores_nothing_and_says_what_to_do():
     assert not store.configurations
 
 
-def test_a_new_row_is_completed_from_its_object():
+def test_a_new_row_is_completed_from_its_object() -> None:
     store = refs_store()
     row = ref_row(10, 701, PRIMARY, segmentObjectId=501)
     stored = update_refs(store, 10, {PRIMARY: [row]})
     got = stored["refs"][PRIMARY]
-    assert got["logicalId"] == DNS_A and got["name"] == "dns-a"
+    assert got["logicalId"] == DNS_A
+    assert got["name"] == "dns-a"
     assert (got["type"], got["object"]) == ("dnsService", "NETWORK_SERVICE")
     assert got["data"] == {}
-    assert got["segmentLogicalId"] == SEG0 and isinstance(got["id"], int)
-    assert got["configurationId"] == 10 and got["segmentObjectId"] == 501
+    assert got["segmentLogicalId"] == SEG0
+    assert isinstance(got["id"], int)
+    assert got["configurationId"] == 10
+    assert got["segmentObjectId"] == 501
     assert store.rows[10]["refs"] == stored["refs"]
 
 
-def test_a_row_of_an_unknown_object_is_stored_as_sent_with_an_id():
+def test_a_row_of_an_unknown_object_is_stored_as_sent_with_an_id() -> None:
     store = refs_store()
     row = ref_row(10, 999, PRIMARY)
     got = update_refs(store, 10, {PRIMARY: [row]})["refs"][PRIMARY]
@@ -665,7 +671,7 @@ def test_a_row_of_an_unknown_object_is_stored_as_sent_with_an_id():
     assert isinstance(got["id"], int)
 
 
-def test_a_row_without_a_required_id_is_dropped():
+def test_a_row_without_a_required_id_is_dropped() -> None:
     store = refs_store()
     whole = ref_row(10, 701, PRIMARY)
     for key in ("configurationId", "moduleId", "enterpriseObjectId"):
@@ -678,7 +684,7 @@ def test_a_row_without_a_required_id_is_dropped():
         assert "refs" not in update_refs(store, 10, refs)
 
 
-def test_rows_group_under_their_ref_one_as_an_object_several_as_a_list():
+def test_rows_group_under_their_ref_one_as_an_object_several_as_a_list() -> None:
     store = refs_store()
     store.add_object(702, logical_id=DNS_B, name="dns-b", type_="dnsService")
     refs = {
@@ -697,16 +703,17 @@ def test_rows_group_under_their_ref_one_as_an_object_several_as_a_list():
     assert got["null"]["enterpriseObjectId"] == 701
 
 
-def test_a_row_with_no_ref_of_an_unknown_object_is_grouped_under_null():
+def test_a_row_with_no_ref_of_an_unknown_object_is_grouped_under_null() -> None:
     store = refs_store()
     row = ref_row(10, 999, PRIMARY)
     del row["ref"]  # a row with no ref key, of an object the store does not know
     got = update_refs(store, 10, {"ignored": [row]})["refs"]
     assert list(got) == ["null"]
-    assert got["null"]["enterpriseObjectId"] == 999 and "ref" not in got["null"]
+    assert got["null"]["enterpriseObjectId"] == 999
+    assert "ref" not in got["null"]
 
 
-def test_a_row_that_fails_is_skipped_and_the_others_are_stored():
+def test_a_row_that_fails_is_skipped_and_the_others_are_stored() -> None:
     store = refs_store()
     store.add_object(702, logical_id=DNS_B, name="dns-b", type_="dnsService")
     store.skipped_objects.add(701)
@@ -716,7 +723,7 @@ def test_a_row_that_fails_is_skipped_and_the_others_are_stored():
     assert got[BACKUP]["enterpriseObjectId"] == 702
 
 
-def test_an_insert_sets_the_module_id_of_the_rows_it_is_given():
+def test_an_insert_sets_the_module_id_of_the_rows_it_is_given() -> None:
     store = refs_store()
     row = ref_row(10, 701, PRIMARY)
     del row["moduleId"]
@@ -727,7 +734,7 @@ def test_an_insert_sets_the_module_id_of_the_rows_it_is_given():
         "refs": {PRIMARY: [row]},
         "returnData": True,
     }
-    answer = cast(dict[str, Any], store.handle(INSERT, params))
+    answer = cast("dict[str, Any]", store.handle(INSERT, params))
     assert answer["refs"][PRIMARY]["moduleId"] == answer["id"] == 11
     assert answer["refs"][PRIMARY]["logicalId"] == DNS_A
 
@@ -743,7 +750,7 @@ def append_only_store() -> ModuleStore:
     return store
 
 
-def test_append_only_rows_stay_when_refs_are_replaced():
+def test_append_only_rows_stay_when_refs_are_replaced() -> None:
     store = append_only_store()
     stored = update_refs(store, 10, {})
     assert list(stored["refs"]) == [ADDRESS_GROUP]
@@ -754,7 +761,7 @@ def test_append_only_rows_stay_when_refs_are_replaced():
     assert got[ADDRESS_GROUP]["id"] == 77
 
 
-def test_sent_append_only_rows_are_added_to_the_stored_ones():
+def test_sent_append_only_rows_are_added_to_the_stored_ones() -> None:
     store = append_only_store()
     sent = {ADDRESS_GROUP: [ref_row(10, 701, ADDRESS_GROUP)]}
     got = update_refs(store, 10, sent)["refs"][ADDRESS_GROUP]
@@ -762,7 +769,7 @@ def test_sent_append_only_rows_are_added_to_the_stored_ones():
     assert got[0]["id"] == 77
 
 
-def test_processor_rows_replace_the_refs_when_none_are_sent():
+def test_processor_rows_replace_the_refs_when_none_are_sent() -> None:
     store = append_only_store()
     css_site = {"id": 5, "enterpriseObjectId": 9}
     store.processor_refs[10] = {
@@ -784,7 +791,7 @@ def test_processor_rows_replace_the_refs_when_none_are_sent():
     assert len(store.processor_refs[10]["deviceSettings:wssIntegration"]) == 2
 
 
-def test_processor_rows_do_not_apply_when_refs_are_sent_or_segments_are_empty():
+def test_processor_rows_do_not_apply_when_refs_are_sent_or_segments_are_empty() -> None:
     store = append_only_store()
     store.processor_refs[10] = {"deviceSettings:css:site": {"id": 5}}
     kept = copy.deepcopy(store.rows[10]["refs"])
@@ -806,7 +813,7 @@ def test_processor_rows_do_not_apply_when_refs_are_sent_or_segments_are_empty():
     assert store.rows[10]["refs"] == kept
 
 
-def test_processor_rows_apply_to_a_qos_module():
+def test_processor_rows_apply_to_a_qos_module() -> None:
     store = refs_store()
     store.rows[10]["name"] = "QOS"
     store.processor_refs[10] = {"deviceSettings:css:site": {"id": 5}}
@@ -814,7 +821,7 @@ def test_processor_rows_apply_to_a_qos_module():
     assert store.rows[10]["refs"] == {"deviceSettings:css:site": {"id": 5}}
 
 
-def test_row_ids_are_new_on_every_replacement():
+def test_row_ids_are_new_on_every_replacement() -> None:
     store = refs_store()
     sent = {PRIMARY: [ref_row(10, 701, PRIMARY)]}
     first = update_refs(store, 10, sent)["refs"][PRIMARY]["id"]
@@ -822,14 +829,14 @@ def test_row_ids_are_new_on_every_replacement():
     assert first != second
 
 
-def test_get_configuration_modules_without_data():
+def test_get_configuration_modules_without_data() -> None:
     store = refs_store()
     store.rows[11] = make_module_json("firewall", {}, module_id=11, configuration_id=10)
     store.rows[12] = make_module_json("QOS", {}, module_id=12, configuration_id=20)
     sent = {PRIMARY: [ref_row(10, 701, PRIMARY)]}
     _ = update_refs(store, 10, sent)
     asked = {"configurationId": 10, "noData": True, "modules": ["deviceSettings"]}
-    answer = cast(list[dict[str, Any]], store.handle(GET_MODULES, asked))
+    answer = cast("list[dict[str, Any]]", store.handle(GET_MODULES, asked))
     assert [r["name"] for r in answer] == ["deviceSettings"]
     assert "data" not in answer[0]
     assert answer[0]["version"] == store.rows[10]["version"]
@@ -837,7 +844,7 @@ def test_get_configuration_modules_without_data():
     answer[0]["refs"].clear()  # the answer is a copy
     assert store.rows[10]["refs"]
     both = cast(
-        list[dict[str, Any]],
+        "list[dict[str, Any]]",
         store.handle(GET_MODULES, {"configurationId": 10, "modules": []}),
     )
     assert [r["name"] for r in both] == ["deviceSettings", "firewall"]
@@ -846,7 +853,7 @@ def test_get_configuration_modules_without_data():
     assert every == both
 
 
-def test_get_enterprise_services_lists_the_network_service_objects():
+def test_get_enterprise_services_lists_the_network_service_objects() -> None:
     store = refs_store()
     store.enterprise_id = 7
     got = store.handle(GET_SERVICES, {"enterpriseId": 7})
@@ -866,10 +873,10 @@ def test_get_enterprise_services_lists_the_network_service_objects():
 COMPOSED = "edge/getEdgeConfigurationModules"
 
 
-def test_the_store_serves_the_modules_it_composes_for_an_edge():
+def test_the_store_serves_the_modules_it_composes_for_an_edge() -> None:
     store = ModuleStore()
     store.composed[42] = {"firewall": copy.deepcopy(RULES), "QOS": None}
-    answer = cast(dict[str, Any], store.handle(COMPOSED, {"edgeId": 42}))
+    answer = cast("dict[str, Any]", store.handle(COMPOSED, {"edgeId": 42}))
     assert set(answer) == {"firewall", "QOS"}
     assert answer["QOS"] is None  # a module that does not compose is null
     assert answer["firewall"]["data"] == RULES
@@ -877,14 +884,14 @@ def test_the_store_serves_the_modules_it_composes_for_an_edge():
     assert "refs" not in answer["firewall"]
 
     only = cast(
-        dict[str, Any], store.handle(COMPOSED, {"edgeId": 42, "modules": ["QOS"]})
+        "dict[str, Any]", store.handle(COMPOSED, {"edgeId": 42, "modules": ["QOS"]})
     )
     assert set(only) == {"QOS"}
     answer["firewall"]["data"]["segments"].clear()
     assert store.composed[42]["firewall"] == RULES  # the answer is a copy
 
 
-def test_an_edge_with_no_composed_modules_is_unknown():
+def test_an_edge_with_no_composed_modules_is_unknown() -> None:
     store = ModuleStore()
     with pytest.raises(RpcError) as unknown:
         _ = store.handle(COMPOSED, {"edgeId": 7})
@@ -896,7 +903,7 @@ def test_an_edge_with_no_composed_modules_is_unknown():
 
 async def test_the_client_reads_the_composed_modules_and_the_store_records_the_request(
     mock_vco_client: MockVcoClientFactory,
-):
+) -> None:
     from pyvelo.client.enums.configuration import ConfigurationModuleName
     from pyvelo.client.schemas.edge import GetEdgeConfigurationModules
 
@@ -908,7 +915,8 @@ async def test_the_client_reads_the_composed_modules_and_the_store_records_the_r
             edge_id=42, modules=[ConfigurationModuleName.FIREWALL], encrypt_keys=True
         )
     )
-    assert result.firewall is not None and result.firewall is not MISSING
+    assert result.firewall is not None
+    assert result.firewall is not MISSING
     assert result.firewall.raw_data == RULES
     ((method, params),) = store.requests
     assert method == COMPOSED

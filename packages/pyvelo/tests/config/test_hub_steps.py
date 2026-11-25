@@ -151,7 +151,7 @@ def step(
 
 @pytest.mark.parametrize("role", ROLES)
 @pytest.mark.parametrize("hub", [HUB_A, CLUSTER], ids=lambda h: h.kind)
-async def test_a_hub_added_to_a_list_plans_an_enable(role: Role, hub: Hub):
+async def test_a_hub_added_to_a_list_plans_an_enable(role: Role, hub: Hub) -> None:
     # A bridge or backhaul hub is a hub of the segment already.
     ds = ds_entry(GLOBAL) if role == "hub" else ds_with_vpn(GLOBAL, hubs=(hub,))
     rows = () if role == "hub" else (service_row(hub, 1, "hub"),)
@@ -165,7 +165,7 @@ async def test_a_hub_added_to_a_list_plans_an_enable(role: Role, hub: Hub):
 @pytest.mark.parametrize("hub", [HUB_A, CLUSTER], ids=lambda h: h.kind)
 async def test_a_hub_removed_from_a_list_plans_a_disable_without_ids(
     role: Role, hub: Hub
-):
+) -> None:
     # In the other two lists too, so that it is only the one list that changes.
     ds = ds_with_vpn(GLOBAL, hubs=(hub,), bridges=(hub,), backhaul=(hub,))
     state = await profile_of(
@@ -185,7 +185,7 @@ async def test_a_hub_removed_from_a_list_plans_a_disable_without_ids(
     assert planned.gives is None
 
 
-async def test_an_enable_gives_a_service_and_a_disable_gives_nothing():
+async def test_an_enable_gives_a_service_and_a_disable_gives_nothing() -> None:
     state = await profile_of([ds_entry(GLOBAL), ds_entry(GUEST)])
     await edit(state, "hub", add_hub(HUB_A.name), hub_list=True, vpn=True)
 
@@ -193,7 +193,7 @@ async def test_an_enable_gives_a_service_and_a_disable_gives_nothing():
     assert planned.gives == "service"
 
 
-async def test_a_step_renders_as_a_line():
+async def test_a_step_renders_as_a_line() -> None:
     assert (
         step("enable", "backhaul", HUB_A).render()
         == "enable backhaul for Hub-A on segment Global Segment"
@@ -204,7 +204,7 @@ async def test_a_step_renders_as_a_line():
     )
 
 
-async def test_the_ui_order():
+async def test_the_ui_order() -> None:
     ds = [
         ds_with_vpn(
             GLOBAL,
@@ -233,7 +233,7 @@ async def test_the_ui_order():
     ]
 
 
-async def test_a_hub_removed_from_the_hub_list_gets_no_other_disable():
+async def test_a_hub_removed_from_the_hub_list_gets_no_other_disable() -> None:
     ds = ds_with_vpn(GLOBAL, hubs=(HUB_A,), bridges=(HUB_A,), backhaul=(HUB_A,))
     state = await profile_of(
         [ds, ds_entry(GUEST)], service_row(HUB_A, 1, "hub", "bridge", "backhaul")
@@ -244,7 +244,7 @@ async def test_a_hub_removed_from_the_hub_list_gets_no_other_disable():
     assert state.plan().steps == (step("disable", "hub", HUB_A),)
 
 
-async def test_two_segments_follow_the_segments_order():
+async def test_two_segments_follow_the_segments_order() -> None:
     # Guest is first in the module, and is edited last.
     state = await profile_of([ds_entry(GUEST), ds_entry(GLOBAL)])
     for segment in (GLOBAL, GUEST):
@@ -258,7 +258,7 @@ async def test_two_segments_follow_the_segments_order():
     )
 
 
-async def test_hubs_follow_the_order_of_their_list():
+async def test_hubs_follow_the_order_of_their_list() -> None:
     ds = ds_with_vpn(GLOBAL, hubs=(HUB_A, HUB_B))
     state = await profile_of(
         [ds, ds_entry(GUEST)],
@@ -271,15 +271,16 @@ async def test_hubs_follow_the_order_of_their_list():
     assert [s.hub.name for s in state.plan().steps] == ["Hub-B", "Hub-A"]
 
 
-async def test_a_repeated_plan_derives_the_same_steps():
+async def test_a_repeated_plan_derives_the_same_steps() -> None:
     state = await profile_of([ds_entry(GLOBAL), ds_entry(GUEST)])
     await edit(state, "hub", add_hub(HUB_A.name), hub_list=True, vpn=True)
 
     first = state.plan().steps
-    assert first and state.plan().steps == first
+    assert first
+    assert state.plan().steps == first
 
 
-async def test_a_plan_with_no_list_change_has_no_steps():
+async def test_a_plan_with_no_list_change_has_no_steps() -> None:
     ds = ds_with_vpn(GLOBAL, hubs=(HUB_A,))
     state = await profile_of([ds, ds_entry(GUEST)], service_row(HUB_A, 1, "hub"))
     state.profile.device_settings.segments[0].vpn.conditional_backhaul = True
@@ -287,7 +288,7 @@ async def test_a_plan_with_no_list_change_has_no_steps():
     assert state.plan().steps == ()
 
 
-async def test_an_edge_target_has_no_steps():
+async def test_an_edge_target_has_no_steps() -> None:
     ds = ds_with_vpn(GLOBAL, hubs=(HUB_A,))
     state = await hub_edge_state(
         [ds_entry(GLOBAL)],
@@ -304,7 +305,7 @@ async def test_an_edge_target_has_no_steps():
     assert plan.check_warnings == ()
 
 
-async def test_removals_need_no_hub_resolver():
+async def test_removals_need_no_hub_resolver() -> None:
     ds = ds_with_vpn(GLOBAL, hubs=(HUB_A,), backhaul=(HUB_A,))
     # profile_state registers no HubIdentity resolver at all.
     state = await profile_state(
@@ -319,7 +320,7 @@ async def test_removals_need_no_hub_resolver():
     assert state.plan().steps == (step("disable", "hub", HUB_A),)
 
 
-async def test_an_added_hub_needs_the_resolver():
+async def test_an_added_hub_needs_the_resolver() -> None:
     state = await profile_of([ds_entry(GLOBAL), ds_entry(GUEST)])
     await edit(state, "hub", add_hub(HUB_A.name), hub_list=True, vpn=True)
     state.resolvers.register(state.resolvers.get_resolver(HubResolver).unloaded())
@@ -334,7 +335,7 @@ async def test_an_added_hub_needs_the_resolver():
     assert result.plan.steps == (step("enable", "hub", HUB_A),)
 
 
-async def test_render_shows_the_steps_first():
+async def test_render_shows_the_steps_first() -> None:
     ds = ds_with_vpn(GLOBAL, hubs=(HUB_B,))
     state = await profile_of([ds, ds_entry(GUEST)], service_row(HUB_B, 1, "hub"))
     await edit(state, "hub", remove_hub(HUB_B.name))
@@ -350,14 +351,16 @@ async def test_render_shows_the_steps_first():
     assert lines[4].startswith(f"{DS}: update")
 
 
-async def test_a_plan_without_steps_renders_no_steps_block():
+async def test_a_plan_without_steps_renders_no_steps_block() -> None:
     state = await profile_of([ds_entry(GLOBAL), ds_entry(GUEST)])
     state.profile.device_settings.segments[0].vpn.enabled = True
 
     assert "steps:" not in state.plan().render()
 
 
-async def test_a_segment_with_no_row_takes_its_object_from_the_segment_resolver():
+async def test_a_segment_with_no_row_takes_its_object_from_the_segment_resolver() -> (
+    None
+):
     ds = [ds_entry(GLOBAL), ds_with_vpn(GUEST, hubs=(HUB_A,))]
     state = await hub_profile_state(
         ds,
@@ -382,7 +385,7 @@ async def a_loaded_resolver() -> HubResolver:
     return state.resolvers.get_resolver(HubResolver)
 
 
-async def test_derive_steps_names_a_removal_by_its_entry_alone():
+async def test_derive_steps_names_a_removal_by_its_entry_alone() -> None:
     as_read = settings(ds_with_vpn(GLOBAL, hubs=(HUB_A,)))
     now = copy.deepcopy(as_read)
     now.segments[0].vpn.hub_edges.vpn_hubs.clear()
@@ -394,7 +397,7 @@ async def test_derive_steps_names_a_removal_by_its_entry_alone():
     assert steps == (step("disable", "hub", HUB_A),)
 
 
-async def test_derive_steps_needs_the_resolver_for_an_added_hub():
+async def test_derive_steps_needs_the_resolver_for_an_added_hub() -> None:
     as_read = settings(ds_with_vpn(GLOBAL))
     now = copy.deepcopy(as_read)
     now.segments[0].vpn.hub_edges.vpn_hubs.append(
@@ -416,7 +419,7 @@ async def test_derive_steps_needs_the_resolver_for_an_added_hub():
     assert steps == (step("enable", "hub", HUB_A),)
 
 
-async def test_derive_steps_reordering_is_no_step():
+async def test_derive_steps_reordering_is_no_step() -> None:
     as_read = settings(ds_with_vpn(GLOBAL, hubs=(HUB_A, HUB_B)))
     now = copy.deepcopy(as_read)
     now.segments[0].vpn.hub_edges.vpn_hubs.reverse()
@@ -434,7 +437,7 @@ def disagreements(state: ConfigState):
     return [w for w in state.plan().check_warnings if w.code == "hub_roles_disagree"]
 
 
-async def test_roles_that_disagree_with_the_lists_warn():
+async def test_roles_that_disagree_with_the_lists_warn() -> None:
     ds = ds_with_vpn(GLOBAL, hubs=(HUB_A,), backhaul=(HUB_A,))
     state = await profile_of(
         [ds, ds_entry(GUEST)],
@@ -450,7 +453,7 @@ async def test_roles_that_disagree_with_the_lists_warn():
     assert f"warning: {warning.message}" in state.plan().render()
 
 
-async def test_roles_that_agree_with_the_lists_do_not_warn():
+async def test_roles_that_agree_with_the_lists_do_not_warn() -> None:
     ds = ds_with_vpn(
         GLOBAL, hubs=(HUB_A, CLUSTER), bridges=(CLUSTER,), backhaul=(HUB_A,)
     )
@@ -463,7 +466,7 @@ async def test_roles_that_agree_with_the_lists_do_not_warn():
     assert disagreements(state) == []
 
 
-async def test_a_clusters_roles_are_read_from_its_data_for_the_segment():
+async def test_a_clusters_roles_are_read_from_its_data_for_the_segment() -> None:
     ds = ds_with_vpn(GLOBAL, hubs=(CLUSTER,), bridges=(CLUSTER,))
     state = await profile_of(
         [ds, ds_entry(GUEST)],
@@ -472,10 +475,11 @@ async def test_a_clusters_roles_are_read_from_its_data_for_the_segment():
 
     (warning,) = disagreements(state)
 
-    assert CLUSTER.name in warning.message and "bridge" in warning.message
+    assert CLUSTER.name in warning.message
+    assert "bridge" in warning.message
 
 
-async def test_role_disagreements_reads_a_clusters_data_by_configuration():
+async def test_role_disagreements_reads_a_clusters_data_by_configuration() -> None:
     ds = ds_with_vpn(GLOBAL, hubs=(CLUSTER,), bridges=(CLUSTER,))
     row = service_row(CLUSTER, 2, "hub", "bridge")
     by_segment = row["data"][str(CONFIG)]  # the cluster's own data: by configuration
@@ -486,12 +490,13 @@ async def test_role_disagreements_reads_a_clusters_data_by_configuration():
     by_segment[str(GLOBAL[0])]["roles"]["edgeToEdgeBridge"] = False
     (warning,) = role_disagreements(settings(ds), all_refs, CONFIG)
 
-    assert warning.code == "hub_roles_disagree" and "bridge" in warning.message
+    assert warning.code == "hub_roles_disagree"
+    assert "bridge" in warning.message
     # Another profile's roles are not this profile's.
     assert role_disagreements(settings(ds), all_refs, CONFIG + 1) == ()
 
 
-async def test_a_hub_with_no_row_is_not_a_role_disagreement():
+async def test_a_hub_with_no_row_is_not_a_role_disagreement() -> None:
     ds = ds_with_vpn(GLOBAL, hubs=(HUB_A,))
     state = await profile_of([ds, ds_entry(GUEST)])
 

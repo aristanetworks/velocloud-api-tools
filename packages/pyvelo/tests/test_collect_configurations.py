@@ -31,7 +31,7 @@ def _make_client(
 
 class TestCollectConfigurationsRequest:
     @pytest.mark.anyio
-    async def test_includes_edge_count_by_default(self):
+    async def test_includes_edge_count_by_default(self) -> None:
         client = _make_client([_make_profile()])
         analytics = Analytics(client.protocol, enterprise_id=1)
         _ = await analytics.collect_configurations()
@@ -40,7 +40,7 @@ class TestCollectConfigurationsRequest:
         assert "edgeCount" in req.with_
 
     @pytest.mark.anyio
-    async def test_without_edge_count(self):
+    async def test_without_edge_count(self) -> None:
         client = _make_client([_make_profile()])
         analytics = Analytics(client.protocol, enterprise_id=1)
         _ = await analytics.collect_configurations(with_edge_count=False)
@@ -48,7 +48,7 @@ class TestCollectConfigurationsRequest:
         assert req.with_ is MISSING
 
     @pytest.mark.anyio
-    async def test_enterprise_id_passed(self):
+    async def test_enterprise_id_passed(self) -> None:
         client = _make_client([_make_profile()])
         analytics = Analytics(client.protocol, enterprise_id=42)
         _ = await analytics.collect_configurations()
@@ -58,7 +58,7 @@ class TestCollectConfigurationsRequest:
 
 class TestCollectConfigurationsOutput:
     @pytest.mark.anyio
-    async def test_returns_metric_frame_with_expected_columns(self):
+    async def test_returns_metric_frame_with_expected_columns(self) -> None:
         client = _make_client([_make_profile()])
         analytics = Analytics(client.protocol, enterprise_id=1)
         result = await analytics.collect_configurations()
@@ -80,7 +80,7 @@ class TestCollectConfigurationsOutput:
         assert result.columns == expected
 
     @pytest.mark.anyio
-    async def test_enum_values_are_strings(self):
+    async def test_enum_values_are_strings(self) -> None:
         client = _make_client([_make_profile()])
         analytics = Analytics(client.protocol, enterprise_id=1)
         result = await analytics.collect_configurations()
@@ -89,14 +89,14 @@ class TestCollectConfigurationsOutput:
         assert isinstance(row["configuration_type"], str)
 
     @pytest.mark.anyio
-    async def test_id_column_mapped(self):
+    async def test_id_column_mapped(self) -> None:
         client = _make_client([_make_profile(id_=99)])
         analytics = Analytics(client.protocol, enterprise_id=1)
         result = await analytics.collect_configurations()
         assert result.rows[0]["id"] == 99
 
     @pytest.mark.anyio
-    async def test_max_items_limits_results(self):
+    async def test_max_items_limits_results(self) -> None:
         profiles = [_make_profile(id_=i, name=f"p{i}") for i in range(5)]
         client = _make_client(profiles)
         analytics = Analytics(client.protocol, enterprise_id=1)
@@ -104,7 +104,7 @@ class TestCollectConfigurationsOutput:
         assert len(result) == 2
 
     @pytest.mark.anyio
-    async def test_empty_result(self):
+    async def test_empty_result(self) -> None:
         client = _make_client([])
         analytics = Analytics(client.protocol, enterprise_id=1)
         result = await analytics.collect_configurations()
@@ -127,7 +127,7 @@ class TestCollectConfigurationsOutput:
         assert result.columns == expected
 
     @pytest.mark.anyio
-    async def test_chainable_with_frame_ops(self):
+    async def test_chainable_with_frame_ops(self) -> None:
         profiles = [
             _make_profile(id_=1, name="Default", edge_count=10),
             _make_profile(id_=2, name="Branch", edge_count=5),

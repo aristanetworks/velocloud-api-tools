@@ -286,7 +286,7 @@ class LayerView[X: (Edge, Profile)]:
             profile=self._profile,
         )
         assert isinstance(module, FirewallConfigurationModule)
-        return cast(FirewallData[X], module.data)  # the module is of this layer
+        return cast("FirewallData[X]", module.data)  # the module is of this layer
 
     @property
     def qos(self) -> QosData[X]:
@@ -298,7 +298,7 @@ class LayerView[X: (Edge, Profile)]:
             profile=self._profile,
         )
         assert isinstance(module, QosConfigurationModule)
-        return cast(QosData[X], module.data)  # the module is of this layer
+        return cast("QosData[X]", module.data)  # the module is of this layer
 
     @property
     def device_settings(self) -> DeviceSettingsData:
@@ -361,11 +361,11 @@ class EffectiveView:
         profile_module = _find_module(self._profile, name)
         edge_data = None
         if edge_module is not None:
-            edge_data = cast(Layered[Edge], cast(object, edge_module.data))
+            edge_data = cast("Layered[Edge]", cast("object", edge_module.data))
         if profile_module is None:
             profile_data = profile_class.model_validate({"segments": []})
         else:
-            profile_data = cast(Layered[Profile], cast(object, profile_module.data))
+            profile_data = cast("Layered[Profile]", cast("object", profile_module.data))
         return effective_view(edge_data, profile_data, effective_class)
 
 
@@ -473,14 +473,14 @@ def _at(doc: object, place: _Place) -> object:
         if isinstance(part, int):
             if not isinstance(doc, list):
                 return MISSING
-            items = cast(list[object], doc)
+            items = cast("list[object]", doc)
             if part >= len(items):
                 return MISSING
             doc = items[part]
         else:
             if not isinstance(doc, dict):
                 return MISSING
-            entries = cast(dict[str, object], doc)
+            entries = cast("dict[str, object]", doc)
             if part not in entries:
                 return MISSING
             doc = entries[part]
@@ -493,10 +493,10 @@ def _put(doc: object, place: _Place, value: object) -> object:
         return value
     part, rest = place[0], place[1:]
     if isinstance(part, int):
-        items = list(cast(list[object], doc))
+        items = list(cast("list[object]", doc))
         items[part] = _put(items[part], rest, value)
         return items
-    entries = dict(cast(dict[str, object], doc))
+    entries = dict(cast("dict[str, object]", doc))
     entries[part] = _put(entries[part], rest, value)
     return entries
 
@@ -522,7 +522,7 @@ class StateLock(asyncio.Lock):
         if task is not None and task is self._holder:
             raise RuntimeError(
                 "this task already holds the lock of this state. apply and save take "
-                + "the lock themselves: call them outside the `async with state.lock:` block"
+                "the lock themselves: call them outside the `async with state.lock:` block"
             )
         _ = await super().acquire()
         self._holder = task
@@ -702,7 +702,7 @@ class ConfigState:
                 f"module {module.name!r} was read from the VCO; only a new one is dropped"
             )
         self.unconfirmed_inserts.discard(module.name)
-        config = cast(_AnyConfiguration, self.target_config)
+        config = cast("_AnyConfiguration", self.target_config)
         if config.modules is MISSING:
             return
         config.modules[:] = [m for m in config.modules if m is not module]
@@ -741,7 +741,7 @@ class ConfigState:
         assignment to it does not raise. The state keeps no strong reference to
         *old*. Raises ``ValueError`` if *old* is not in the target config.
         """
-        config = cast(_AnyConfiguration, self.target_config)
+        config = cast("_AnyConfiguration", self.target_config)
         modules = [] if config.modules is MISSING else config.modules
         index = next((i for i, m in enumerate(modules) if m is old), None)
         if index is None:
@@ -750,7 +750,7 @@ class ConfigState:
         self.unconfirmed_inserts.discard(old.name)
         if config is self.edge_config:
             _bind_to_profile(new, self.profile_config)
-        snapshot = cast(_AnyConfiguration | None, self.snapshot_for_target())
+        snapshot = cast("_AnyConfiguration | None", self.snapshot_for_target())
         if snapshot is not None:
             stored = copy.deepcopy(new)
             if snapshot.modules is MISSING:
@@ -804,8 +804,8 @@ class ConfigState:
         raise DetachedObjectError(
             "\n".join(
                 f"{name}: objects taken from the state before a save were changed "
-                + f"in place at: {', '.join(paths)}. The state holds the module as "
-                + "stored; take the objects from the state again and redo the change"
+                f"in place at: {', '.join(paths)}. The state holds the module as "
+                "stored; take the objects from the state again and redo the change"
                 for name, paths in found
             ),
             [path for _, paths in found for path in paths],
@@ -826,7 +826,7 @@ class ConfigState:
             layer, current = "edge", self.edge_config
         else:
             return
-        snapshot = cast(_AnyConfiguration | None, self._snapshot.get(layer))
+        snapshot = cast("_AnyConfiguration | None", self._snapshot.get(layer))
         if snapshot is None or snapshot.modules is MISSING:
             return
         if current.modules is MISSING:
@@ -1596,7 +1596,7 @@ class SaveResult:
         for item in fields(self):
             value: object = getattr(self, item.name)
             if item.name in counted:
-                counts = cast(dict[object, tuple[object, ...]], value)
+                counts = cast("dict[object, tuple[object, ...]]", value)
                 value = {str(name): len(entries) for name, entries in counts.items()}
             parts.append(f"{item.name}={value!r}")
         return f"{type(self).__name__}({', '.join(parts)})"

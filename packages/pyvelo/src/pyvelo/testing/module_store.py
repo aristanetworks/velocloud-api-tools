@@ -708,7 +708,7 @@ class ModuleStore:
             answer["edgeId"] = obj["edgeId"]
         if "version" in obj:
             answer["version"] = str(obj["version"])
-        requested = cast(list[str], with_)
+        requested = cast("list[str]", with_)
         if "configuration" in requested:
             answer["configuration"] = self._configuration_usage(obj)
             if "edgeQOSUsage" in requested:
@@ -903,7 +903,9 @@ class ModuleStore:
         data = new.get("data")
         entries: list[Any] = []
         if isinstance(data, dict):
-            entries = cast(list[Any], cast(dict[str, Any], data).get("segments") or [])
+            entries = cast(
+                "list[Any]", cast("dict[str, Any]", data).get("segments") or []
+            )
         hub_rows = [
             (name, row)
             for name, row in _ref_pairs(new)
@@ -912,7 +914,7 @@ class ModuleStore:
         for entry in entries:
             if not isinstance(entry, dict):
                 continue
-            entry = cast(dict[str, Any], entry)
+            entry = cast("dict[str, Any]", entry)
             mine = [
                 (name, row)
                 for name, row in hub_rows
@@ -937,7 +939,9 @@ class ModuleStore:
             if vpn.get("enabled"):
                 listed = {
                     str(hub.get("logicalId")).lower()
-                    for hub in cast(list[dict[str, Any]], hub_list.get("vpnHubs") or [])
+                    for hub in cast(
+                        "list[dict[str, Any]]", hub_list.get("vpnHubs") or []
+                    )
                 }
                 held = {
                     str(
@@ -973,7 +977,7 @@ class ModuleStore:
             return False
         if row["id"] not in self.processor_refs or not isinstance(data, dict):
             return False
-        segments = cast(dict[str, Any], data).get("segments")
+        segments = cast("dict[str, Any]", data).get("segments")
         return isinstance(segments, list) and bool(segments)
 
     def _replace_refs(
@@ -1107,7 +1111,7 @@ def _all_pairs(refs: object) -> list[tuple[str, dict[str, Any]]]:
         return []
     return [
         (name, row)
-        for name, value in cast(dict[str, Any], refs).items()
+        for name, value in cast("dict[str, Any]", refs).items()
         for row in _flatten({name: value})
     ]
 
@@ -1122,10 +1126,10 @@ def _rule_lists(row: dict[str, Any] | None, module: str) -> list[list[dict[str, 
     data = None if row is None else row.get("data")
     if not isinstance(data, dict):
         return []
-    data = cast(dict[str, Any], data)
+    data = cast("dict[str, Any]", data)
     segments = [
-        cast(dict[str, Any], s)
-        for s in cast(list[Any], data.get("segments") or [])
+        cast("dict[str, Any]", s)
+        for s in cast("list[Any]", data.get("segments") or [])
         if isinstance(s, dict)
     ]
     if module == "firewall":
@@ -1139,8 +1143,8 @@ def _rule_lists(row: dict[str, Any] | None, module: str) -> list[list[dict[str, 
         if isinstance(rules, list):
             found.append(
                 [
-                    cast(dict[str, Any], r)
-                    for r in cast(list[Any], rules)
+                    cast("dict[str, Any]", r)
+                    for r in cast("list[Any]", rules)
                     if isinstance(r, dict)
                 ]
             )
@@ -1160,10 +1164,10 @@ def _flatten(refs: object) -> list[dict[str, Any]]:
     if not isinstance(refs, dict):
         return []
     found: list[dict[str, Any]] = []
-    for value in cast(dict[str, Any], refs).values():
-        for entry in cast(list[Any], value) if isinstance(value, list) else [value]:
+    for value in cast("dict[str, Any]", refs).values():
+        for entry in cast("list[Any]", value) if isinstance(value, list) else [value]:
             if isinstance(entry, dict):
-                found.append(copy.deepcopy(cast(dict[str, Any], entry)))
+                found.append(copy.deepcopy(cast("dict[str, Any]", entry)))
     return found
 
 
@@ -1173,7 +1177,7 @@ def _append_only_rows(refs: object) -> list[tuple[str, dict[str, Any]]]:
         return []
     return [
         (name, row)
-        for name, value in cast(dict[str, Any], refs).items()
+        for name, value in cast("dict[str, Any]", refs).items()
         if name in APPEND_ONLY_REF_NAMES
         for row in _flatten({name: value})
     ]

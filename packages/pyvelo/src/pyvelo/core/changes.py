@@ -471,12 +471,14 @@ def _write(plans: list[_Plan], stored_parts: Mapping[Path, ItemPart] | None) -> 
         elif plan.kind in ("delete", "map_delete"):
             node[plan.key] = {"_op": "delete"}
         elif plan.kind == "add":
-            assert plan.item is not None and plan.list_path is not None
+            assert plan.item is not None
+            assert plan.list_path is not None
             selector = _added_selector(plan.item, node)
             node[selector] = {"_op": "add", **cast("_Node", plan.value)}
             entries[plan.list_path, plan.item] = (node, selector)
         elif plan.kind == "set":
-            assert plan.item is not None and plan.list_path is not None
+            assert plan.item is not None
+            assert plan.list_path is not None
             entry = node.get(plan.key)
             if not isinstance(entry, dict):
                 entry = node[plan.key] = {}

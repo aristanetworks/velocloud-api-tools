@@ -18,7 +18,7 @@ from test_write_back import (  # pyright: ignore[reportImplicitRelativeImport]
 )
 
 
-def test_plan_refuses_an_edit_of_the_profile_layer_of_an_edge_state():
+def test_plan_refuses_an_edit_of_the_profile_layer_of_an_edge_state() -> None:
     state = make_state()
     state.profile.firewall.firewall_enabled = False
     state.profile.firewall.segments[1].firewall_logging_enabled = True
@@ -42,7 +42,7 @@ def test_plan_refuses_an_edit_of_the_profile_layer_of_an_edge_state():
     assert state.plan().changed == ()  # reported once
 
 
-async def test_save_sends_nothing_when_the_profile_layer_was_edited():
+async def test_save_sends_nothing_when_the_profile_layer_was_edited() -> None:
     state = make_state()
     client = MockVcoClient.for_state(state)
     state.edge.firewall.firewall_enabled.set_local(False)
@@ -59,14 +59,14 @@ async def test_save_sends_nothing_when_the_profile_layer_was_edited():
     assert "firewall_enabled" not in data_of(client.store, 2)  # the profile's row
 
 
-def test_reading_the_profile_layer_is_no_edit():
+def test_reading_the_profile_layer_is_no_edit() -> None:
     state = make_state()
     assert state.profile.firewall.segments[1].segment.name == "Guest"
     assert state.profile.qos.segments[0].rules == []
     assert state.plan().changed == ()
 
 
-def test_a_later_profile_edit_is_reported_again():
+def test_a_later_profile_edit_is_reported_again() -> None:
     state = make_state()
     state.profile.firewall.firewall_enabled = False
     with pytest.raises(LayerNotSavedError):
@@ -77,7 +77,7 @@ def test_a_later_profile_edit_is_reported_again():
     assert exc.value.fields == {"firewall": ["syslog_forwarding"]}
 
 
-async def test_a_profile_state_plans_its_profile_edits():
+async def test_a_profile_state_plans_its_profile_edits() -> None:
     client = MockVcoClient.for_state(make_state())
     profile = await ConfigPipeline(client).load_profile(20)
     profile.profile.firewall.firewall_enabled = False

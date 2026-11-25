@@ -225,7 +225,7 @@ def test_no_edit_round_trip(
     name: str,
     build: Callable[[random.Random], dict[str, object]],
     level: ConfigContext,
-):
+) -> None:
     rng = random.Random(seed)
     raw = build(rng)
     if level is ConfigContext.PROFILE:

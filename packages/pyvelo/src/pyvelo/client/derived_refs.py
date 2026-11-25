@@ -249,12 +249,12 @@ def _unknown_identity(owner: RefOwner, caught: ResolutionError) -> ResolutionErr
     if isinstance(marker, OwnsRef) and marker.value is not None:
         advice = (
             f"Use a {label} that exists: add the {label} to the profile first, "
-            + "or give the segment entry the segment ID of one that does."
+            "or give the segment entry the segment ID of one that does."
         )
     else:
         advice = (
             f"Give the name or the logical ID of a {label} that exists: "
-            + f"{patch_text(owner.path)} sets it."
+            f"{patch_text(owner.path)} sets it."
         )
     return ResolutionError(
         name=caught.name,
@@ -262,7 +262,7 @@ def _unknown_identity(owner: RefOwner, caught: ResolutionError) -> ResolutionErr
         candidates=[],
         message=(
             f"{owner.path} names the {label} {owner.value}, which the VCO does "
-            + f"not have, so the row it goes with cannot be added. {advice}"
+            f"not have, so the row it goes with cannot be added. {advice}"
         ),
     )
 
@@ -274,7 +274,7 @@ def _identity(
     if resolvers is None:
         raise ResolverNotLoadedError(identity_type)
     return resolvers.lookup_by(
-        cast(type[object], identity_type), operator.attrgetter(by), value
+        cast("type[object]", identity_type), operator.attrgetter(by), value
     )
 
 
@@ -297,10 +297,10 @@ def _wrong_service_type(
         candidates=[],
         message=(
             f"{owner.path} names the service {service.name!r}, which is of type "
-            + f"{service.type_!r}, and the field wants a service of type "
-            + f"{wanted!r}, so the row it goes with would name a service it "
-            + "cannot use. Give the name or the logical ID of a service of type "
-            + f"{wanted!r}: {patch_text(owner.path)} sets it."
+            f"{service.type_!r}, and the field wants a service of type "
+            f"{wanted!r}, so the row it goes with would name a service it "
+            "cannot use. Give the name or the logical ID of a service of type "
+            f"{wanted!r}: {patch_text(owner.path)} sets it."
         ),
     )
 
@@ -327,9 +327,9 @@ def _segment_object_id(
             candidates=[],
             message=(
                 f"{owner.path} sits in the segment with segment ID "
-                + f"{owner.segment_id}, which the VCO does not have, so "
-                + "the row cannot be added. Add the segment to the profile "
-                + "first, or use one that exists."
+                f"{owner.segment_id}, which the VCO does not have, so "
+                "the row cannot be added. Add the segment to the profile "
+                "first, or use one that exists."
             ),
         ) from caught
 
@@ -351,8 +351,8 @@ def _no_service(
         path=error.path,
         message=(
             f"{error} No device settings of the profile were given to look "
-            + "in: pass the profile's device settings module as "
-            + "profile_device_settings= (a ConfigState does)."
+            "in: pass the profile's device settings module as "
+            "profile_device_settings= (a ConfigState does)."
         ),
     )
 
@@ -426,7 +426,7 @@ def _warnings(
                         "owner_without_ref",
                         path,
                         f"The data holds {owner.value} at {owner.path}, but the module has "
-                        + f"no {owner.name} row for it. The row is left missing: {_ONLY_THE_EDIT}.",
+                        f"no {owner.name} row for it. The row is left missing: {_ONLY_THE_EDIT}.",
                     )
                 )
         else:
@@ -442,8 +442,8 @@ def _warnings(
                         "several_refs",
                         path,
                         f"The module has {len(of_segment)} {owner.name} rows for one "
-                        + f"segment, and {owner.path} shows the first. Every row is left "
-                        + f"as it is: {_ONLY_THE_EDIT}, and a change removes only the row shown.",
+                        f"segment, and {owner.path} shows the first. Every row is left "
+                        f"as it is: {_ONLY_THE_EDIT}, and a change removes only the row shown.",
                     )
                 )
     for name in sorted(declared_ref_names(type(baseline), level)):
@@ -472,7 +472,7 @@ def _warnings(
                     "ref_without_owner",
                     _warning_path(name, segment_name),
                     f"The module has a {name} row that nothing in the data names. "
-                    + f"The row is left as it is: {_ONLY_THE_EDIT}.",
+                    f"The row is left as it is: {_ONLY_THE_EDIT}.",
                 )
             )
     return found
@@ -583,11 +583,11 @@ def derive_refs(
                 added=False,
                 name=owner.name,
                 segment=owner.segment_name,
-                row=cast(dict[str, Any], row),
+                row=cast("dict[str, Any]", row),
                 match=_match_field(owner),
                 value=_json_value(owner.value),
                 segment_object_id=(
-                    cast(int | None, row.get("segmentObjectId"))
+                    cast("int | None", row.get("segmentObjectId"))
                     if _is_per_segment(owner)
                     else None
                 ),

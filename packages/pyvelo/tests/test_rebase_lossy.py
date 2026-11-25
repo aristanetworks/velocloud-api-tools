@@ -32,39 +32,39 @@ RAW = {
 }
 
 
-def test_assigning_the_default_on_an_absent_key_is_lossy():
+def test_assigning_the_default_on_an_absent_key_is_lossy() -> None:
     base, cur = Root.model_validate(RAW), Root.model_validate(RAW)
     cur.logging_enabled = False
     assert lossy(base, cur) == ["logging_enabled"]
 
 
-def test_assigning_a_different_value_is_not_lossy():
+def test_assigning_a_different_value_is_not_lossy() -> None:
     base, cur = Root.model_validate(RAW), Root.model_validate(RAW)
     cur.logging_enabled = True
     assert lossy(base, cur) == []
 
 
-def test_key_present_in_raw_is_not_lossy():
+def test_key_present_in_raw_is_not_lossy() -> None:
     raw = {**RAW, "loggingEnabled": False}
     base, cur = Root.model_validate(raw), Root.model_validate(raw)
     cur.logging_enabled = False
     assert lossy(base, cur) == []
 
 
-def test_nested_through_keyed_lists():
+def test_nested_through_keyed_lists() -> None:
     base, cur = Root.model_validate(RAW), Root.model_validate(RAW)
     cur.segments[0].rules[0].port = 0
     assert lossy(base, cur) == ["segments[A].rules[r1].port"]
 
 
-def test_missing_and_none_are_not_lossy():
+def test_missing_and_none_are_not_lossy() -> None:
     base, cur = Opt.model_validate({}), Opt.model_validate({})
     cur.label = None
     cur.extra = MISSING
     assert lossy(base, cur) == []
 
 
-def test_items_only_in_current_are_ignored():
+def test_items_only_in_current_are_ignored() -> None:
     base, cur = Root.model_validate(RAW), Root.model_validate(RAW)
     cur.segments.append(
         type(cur.segments[0]).model_validate({"segment": {"segmentId": 1, "name": "B"}})
@@ -85,25 +85,25 @@ class Outer(VcoModel):
     items: list[Inner] = Field(default_factory=list)
 
 
-def test_nested_model_absent_from_raw_is_walked():
+def test_nested_model_absent_from_raw_is_walked() -> None:
     base, cur = Outer.model_validate({}), Outer.model_validate({})
     cur.inner.x = 0
     assert lossy(base, cur) == ["inner.x"]
 
 
-def test_assigned_model_equal_to_its_default_is_one_path():
+def test_assigned_model_equal_to_its_default_is_one_path() -> None:
     base, cur = Outer.model_validate({}), Outer.model_validate({})
     cur.inner = Inner(x=0)
     assert lossy(base, cur) == ["inner"]
 
 
-def test_field_absent_from_raw_and_changed_is_written_whole():
+def test_field_absent_from_raw_and_changed_is_written_whole() -> None:
     base, cur = Outer.model_validate({}), Outer.model_validate({})
     cur.inner = Inner(x=0, y=5)  # x is the default, but the whole value is written
     assert lossy(base, cur) == []
 
 
-def test_unkeyed_list_pairs_by_position_when_lengths_match():
+def test_unkeyed_list_pairs_by_position_when_lengths_match() -> None:
     raw = {"items": [{"y": 1}, {"x": 1}]}
     base, cur = Outer.model_validate(raw), Outer.model_validate(raw)
     cur.items[0].x = 0
@@ -111,7 +111,7 @@ def test_unkeyed_list_pairs_by_position_when_lengths_match():
     assert lossy(base, cur) == ["items[#0].x", "items[#1].y"]
 
 
-def test_unkeyed_list_of_other_length_is_not_walked():
+def test_unkeyed_list_of_other_length_is_not_walked() -> None:
     raw = {"items": [{"y": 1}]}
     base, cur = Outer.model_validate(raw), Outer.model_validate(raw)
     cur.items[0].x = 0
@@ -119,7 +119,7 @@ def test_unkeyed_list_of_other_length_is_not_walked():
     assert lossy(base, cur) == []
 
 
-def test_keyed_items_are_paired_by_key_not_position():
+def test_keyed_items_are_paired_by_key_not_position() -> None:
     raw = {
         "segments": [
             {"segment": {"segmentId": 0, "name": "A"}, "rules": [{"name": "r1"}]},
@@ -132,7 +132,7 @@ def test_keyed_items_are_paired_by_key_not_position():
     assert lossy(base, cur) == ["segments[B].rules[r1].port"]
 
 
-def test_keyed_list_with_repeated_keys_is_walked_by_position_when_unchanged():
+def test_keyed_list_with_repeated_keys_is_walked_by_position_when_unchanged() -> None:
     # rebase keeps raw whole when the list is unchanged, so the assignment is dropped
     raw = {
         "segments": [
@@ -147,7 +147,7 @@ def test_keyed_list_with_repeated_keys_is_walked_by_position_when_unchanged():
     assert lossy(base, cur) == ["segments[A].rules[#0].port"]
 
 
-def test_keyed_list_with_repeated_keys_changed_elsewhere_is_not_walked():
+def test_keyed_list_with_repeated_keys_changed_elsewhere_is_not_walked() -> None:
     # a changed list is written whole from the dump, so the assignment is kept
     raw = {
         "segments": [
@@ -172,14 +172,14 @@ class Opt2s(VcoModel):
     rules: Annotated[list[Opt2], KeyField("name")] = Field(default_factory=list)
 
 
-def test_keyed_list_with_a_missing_key_is_walked_by_position_when_unchanged():
+def test_keyed_list_with_a_missing_key_is_walked_by_position_when_unchanged() -> None:
     raw = {"rules": [{"name": "r1"}, {"port": 1}]}
     base, cur = Opt2s.model_validate(raw), Opt2s.model_validate(raw)
     cur.rules[0].port = 0
     assert lossy(base, cur) == ["rules[#0].port"]
 
 
-def test_keyed_list_with_a_missing_key_changed_elsewhere_is_not_walked():
+def test_keyed_list_with_a_missing_key_changed_elsewhere_is_not_walked() -> None:
     raw = {"rules": [{"name": "r1"}, {"port": 1}]}
     base, cur = Opt2s.model_validate(raw), Opt2s.model_validate(raw)
     cur.rules[0].port = 0
@@ -187,7 +187,7 @@ def test_keyed_list_with_a_missing_key_changed_elsewhere_is_not_walked():
     assert lossy(base, cur) == []
 
 
-def test_unkeyed_list_changed_elsewhere_is_not_walked():
+def test_unkeyed_list_changed_elsewhere_is_not_walked() -> None:
     # the list is written whole from the dump, which includes the assigned default
     raw = {"items": [{"y": 1}]}
     base, cur = Outer.model_validate(raw), Outer.model_validate(raw)
@@ -196,21 +196,21 @@ def test_unkeyed_list_changed_elsewhere_is_not_walked():
     assert lossy(base, cur) == []
 
 
-def test_unkeyed_list_unchanged_is_walked_by_position():
+def test_unkeyed_list_unchanged_is_walked_by_position() -> None:
     raw = {"items": [{"y": 1}]}
     base, cur = Outer.model_validate(raw), Outer.model_validate(raw)
     cur.items[0].x = 0
     assert lossy(base, cur) == ["items[#0].x"]
 
 
-def test_item_whose_key_changed_is_not_paired():
+def test_item_whose_key_changed_is_not_paired() -> None:
     base, cur = Root.model_validate(RAW), Root.model_validate(RAW)
     cur.segments[0].segment.name = "Z"
     cur.segments[0].rules[0].port = 0
     assert lossy(base, cur) == []
 
 
-def test_lossy_and_carry_pair_by_alt_key():
+def test_lossy_and_carry_pair_by_alt_key() -> None:
     raw = {"rules": [{"name": "a", "rid": "1"}]}
     base, cur = Rs.model_validate(raw), Rs.model_validate(raw)
     cur.rules[0].name = "b"
@@ -218,7 +218,7 @@ def test_lossy_and_carry_pair_by_alt_key():
     assert lossy(base, cur) == ["rules[a].port"]
 
 
-def test_a_default_assigned_beside_a_removed_same_named_item_is_lossy():
+def test_a_default_assigned_beside_a_removed_same_named_item_is_lossy() -> None:
     raw = {
         "rules": [
             {"name": "a", "rid": "1"},
@@ -246,7 +246,7 @@ class Gens(VcoModel):
     )
 
 
-def test_a_generated_alt_key_carried_by_position_does_not_pair_items():
+def test_a_generated_alt_key_carried_by_position_does_not_pair_items() -> None:
     # Two items of one name and no ID: rebase writes the changed list whole, so
     # the assignment inside it is kept. The IDs that carrying copies over by
     # position must not pair the items as if the document had them.
@@ -259,7 +259,7 @@ def test_a_generated_alt_key_carried_by_position_does_not_pair_items():
     assert find_lossy_assignments(base, cur, before, after) == []
 
 
-def test_dumps_that_do_not_line_up_with_the_model_are_not_walked():
+def test_dumps_that_do_not_line_up_with_the_model_are_not_walked() -> None:
     base, cur = Root.model_validate(RAW), Root.model_validate(RAW)
     cur.segments[0].rules[0].port = 0
     assert find_lossy_assignments(base, cur, {}, {}) == []
@@ -292,7 +292,7 @@ def lossy_at(level: ConfigContext, base: VcoModel, cur: VcoModel) -> list[Path]:
     return find_lossy_assignments(base, cur, at_level(base), at_level(cur), level)
 
 
-def test_an_override_flag_the_level_omits_is_not_the_callers_assignment():
+def test_an_override_flag_the_level_omits_is_not_the_callers_assignment() -> None:
     base, cur = (
         Section.model_validate({"value": 1}),
         Section.model_validate({"value": 1}),
@@ -302,7 +302,7 @@ def test_an_override_flag_the_level_omits_is_not_the_callers_assignment():
     assert lossy_at(PROFILE, base, cur) == []
 
 
-def test_an_override_flag_the_level_keeps_is_still_checked():
+def test_an_override_flag_the_level_keeps_is_still_checked() -> None:
     base, cur = (
         Section.model_validate({"value": 1}),
         Section.model_validate({"value": 1}),
@@ -311,13 +311,13 @@ def test_an_override_flag_the_level_keeps_is_still_checked():
     assert lossy_at(EDGE, base, cur) == ["override"]
 
 
-def test_a_change_to_a_field_the_level_omits_is_lost_and_reported():
+def test_a_change_to_a_field_the_level_omits_is_lost_and_reported() -> None:
     base, cur = Section.model_validate({}), Section.model_validate({})
     cur.note = "x"
     assert lossy_at(PROFILE, base, cur) == ["note"]
 
 
-def test_a_field_the_level_omits_that_did_not_change_is_not_reported():
+def test_a_field_the_level_omits_that_did_not_change_is_not_reported() -> None:
     base, cur = (
         Section.model_validate({"note": "n"}),
         Section.model_validate({"note": "n"}),
@@ -326,7 +326,7 @@ def test_a_field_the_level_omits_that_did_not_change_is_not_reported():
     assert lossy_at(PROFILE, base, cur) == []
 
 
-def test_a_nested_value_is_compared_by_data_not_by_config_level():
+def test_a_nested_value_is_compared_by_data_not_by_config_level() -> None:
     raw = {"items": [{"note": "n", "value": 1}]}
     base, cur = Holder.model_validate(raw), Holder.model_validate(raw)
     _ = cur.for_edge()  # the baseline has no level; the data are the same
@@ -334,14 +334,14 @@ def test_a_nested_value_is_compared_by_data_not_by_config_level():
     assert lossy_at(EDGE, base, cur) == []
 
 
-def test_the_level_defaults_to_the_level_of_the_model():
+def test_the_level_defaults_to_the_level_of_the_model() -> None:
     base, cur = Section.model_validate({}), Section.model_validate({})
     _ = cur.for_profile()
     cur.note = "x"
     assert find_lossy_assignments(base, cur, dump(base), dump(cur)) == ["note"]
 
 
-def test_is_override_flag_follows_keyed_lists_only():
+def test_is_override_flag_follows_keyed_lists_only() -> None:
     assert is_override_flag(Section, Path.parse("override"))
     assert not is_override_flag(Section, Path.parse("value"))
     assert is_override_flag(Holder, Path.parse("section.override"))
@@ -359,7 +359,9 @@ class Tagging(VcoModel):
     mine: Annotated[Tagged, EdgeOnly] = Field(default_factory=Tagged)
 
 
-def test_a_default_generated_per_parse_in_a_field_the_level_omits_is_not_a_change():
+def test_a_default_generated_per_parse_in_a_field_the_level_omits_is_not_a_change() -> (
+    None
+):
     base, cur = Tagging.model_validate({}), Tagging.model_validate({})
     assert base.mine.tag != cur.mine.tag
     assert lossy_at(PROFILE, base, cur) == []

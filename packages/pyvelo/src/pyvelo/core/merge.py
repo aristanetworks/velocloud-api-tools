@@ -193,7 +193,7 @@ def nest_patch(
             if sub is None:
                 raise PatchError(
                     f"{cls.__name__}.{name} does not hold a single sub-model, "
-                    + "so the path cannot continue past it",
+                    "so the path cannot continue past it",
                     where,
                     "address",
                 )
@@ -277,7 +277,7 @@ def _field_name(names: Mapping[str, str], owner: str, key: object, path: Path) -
     if text.startswith("_"):
         raise PatchError(
             f"unknown directive {text!r}: the only directives are "
-            + f"{' and '.join(_DIRECTIVES)}, on a list item",
+            f"{' and '.join(_DIRECTIVES)}, on a list item",
             where,
             "operation",
         )
@@ -408,9 +408,9 @@ def _refuse_profile_only(
         key = wire_name(type(model), name)
         raise PatchError(
             f"{key!r} belongs to the profile: the edge layer holds none, and one "
-            + "stored there would be added to the profile's by the VCO, not "
-            + "replace it. Send this patch to the profile's state, and leave "
-            + f"{key!r} out of an edge's",
+            "stored there would be added to the profile's by the VCO, not "
+            "replace it. Send this patch to the profile's state, and leave "
+            f"{key!r} out of an edge's",
             path,
             "invalid_value",
         )
@@ -512,14 +512,14 @@ def _refuse_flag_key(
                 inherit = json.dumps(_inherit_patch(wire_name(type(model), name), path))
                 raise PatchError(
                     f"{key!r} is the flag that says whether the edge overrides the "
-                    + "profile here, and it follows the value, so a patch cannot "
-                    + "set it (it would leave a local value that is not local, "
-                    + "or make the profile's value the edge's without a copy). "
-                    + f"Leave {key!r} out: an object given overrides it "
-                    + "(merged into the edge's value, or into a copy of the "
-                    + "profile's when the edge stores none; set_local() stores "
-                    + "the whole object it is given instead) and null inherits it "
-                    + f"(inherit()); to inherit, send {inherit}",
+                    "profile here, and it follows the value, so a patch cannot "
+                    "set it (it would leave a local value that is not local, "
+                    "or make the profile's value the edge's without a copy). "
+                    f"Leave {key!r} out: an object given overrides it "
+                    "(merged into the edge's value, or into a copy of the "
+                    "profile's when the edge stores none; set_local() stores "
+                    "the whole object it is given instead) and null inherits it "
+                    f"(inherit()); to inherit, send {inherit}",
                     path.child(encoding.flag),
                     "invalid_value",
                 )
@@ -621,7 +621,7 @@ def _refuse_bool_as_number(given: object, stored: object, path: Path) -> None:
         word = "true" if given else "false"
         raise PatchError(
             f"{word} is a boolean, which this value does not take: "
-            + f"it would be read as {stored!r}; send a number",
+            f"it would be read as {stored!r}; send a number",
             path,
             "invalid_value",
         )
@@ -718,7 +718,8 @@ def _without_input(exc: ValidationError) -> ValidationError:
             _ = ValidationError.from_exception_data("", [detail])
         except KeyError:  # an error type of a validator of ours, not pydantic's
             detail["type"] = PydanticCustomError(
-                cast(LiteralString, error["type"]), cast(LiteralString, error["msg"])
+                cast("LiteralString", error["type"]),
+                cast("LiteralString", error["msg"]),
             )
         details.append(detail)
     return ValidationError.from_exception_data(exc.title, details, hide_input=True)
@@ -775,9 +776,9 @@ def _check_merged(model: VcoModel, validate: Callable[..., object], path: Path) 
     except Exception as exc:
         raise PatchError(
             f"a validator of {name} failed on the changed model with "
-            + f"{type(exc).__name__}: {exc}; the model validators of {name} "
-            + "must accept a model instance, as well as the dict a response "
-            + "gives them",
+            f"{type(exc).__name__}: {exc}; the model validators of {name} "
+            "must accept a model instance, as well as the dict a response "
+            "gives them",
             path,
             "invalid_value",
         ) from exc
@@ -1005,11 +1006,11 @@ def _require_ids_for_name(
     if unset:
         raise LookupError(
             f"Cannot add {key!r} by name: no loaded {identity_type.__name__} "
-            + "resolver or profile entry has it, and the patch does not give "
-            + f"{', '.join(unset)} (at {where}). Give "
-            + f"{'it' if len(unset) == 1 else 'them'} in the body, or register a "
-            + f"{identity_type.__name__} resolver (the resolvers given to the "
-            + "merge; state.resolvers of a ConfigState)"
+            "resolver or profile entry has it, and the patch does not give "
+            f"{', '.join(unset)} (at {where}). Give "
+            f"{'it' if len(unset) == 1 else 'them'} in the body, or register a "
+            f"{identity_type.__name__} resolver (the resolvers given to the "
+            "merge; state.resolvers of a ConfigState)"
         )
 
 
@@ -1555,9 +1556,9 @@ def _refuse_two_readings(
         shown.append(", ".join(texts))
     raise PatchError(
         f"{_show_selector(selector)} is ambiguous: written as a quoted key "
-        + f"(key_text) it names {shown[0]}, and as parts split at the commas "
-        + f"it names {shown[1]}. Write the key in its quoted form, as shown "
-        + "for the item, to choose",
+        f"(key_text) it names {shown[0]}, and as parts split at the commas "
+        f"it names {shown[1]}. Write the key in its quoted form, as shown "
+        "for the item, to choose",
         where,
         "several_items",
     )
@@ -1933,8 +1934,8 @@ def _check_list_value(
             if form in seen:
                 raise PatchError(
                     f"items #{seen[form]} and #{index} have one key, "
-                    + f"{_show_key(key)}: the items of a keyed list have "
-                    + "distinct keys",
+                    f"{_show_key(key)}: the items of a keyed list have "
+                    "distinct keys",
                     path,
                     "duplicate",
                 )
@@ -1945,9 +1946,9 @@ def _check_list_value(
                 first = seen_alt[alt]
                 raise PatchError(
                     f"items #{first} and #{index} have one alt key, {alt!r}: "
-                    + "the items of a keyed list have distinct alt keys; "
-                    + f"{_show_item(spec, built[first], first)} holds it "
-                    + f"already, so give item #{index} another alt key",
+                    "the items of a keyed list have distinct alt keys; "
+                    f"{_show_item(spec, built[first], first)} holds it "
+                    f"already, so give item #{index} another alt key",
                     path,
                     "duplicate",
                 )
@@ -1981,9 +1982,9 @@ def _fixed_form(spec: _ListSpec, key: object, path: Path) -> str:
     editable = spec.fixed.editable[0] if spec.fixed.editable else "..."
     return (
         "{"
-        + f"{json.dumps(_fixed_field(path))}: {{{json.dumps(str(key))}: "
-        + f"{{{json.dumps(editable)}: {{...}}}}"
-        + "}}"
+        f"{json.dumps(_fixed_field(path))}: {{{json.dumps(str(key))}: "
+        f"{{{json.dumps(editable)}: {{...}}}}"
+        "}}"
     )
 
 
@@ -1992,8 +1993,8 @@ def _fixed_rule(spec: _ListSpec, path: Path) -> str:
     assert spec.fixed is not None
     return (
         f"{_fixed_field(path)} is a fixed list: its entries, their keys and "
-        + "their order are fixed, and only "
-        + f"{' and '.join(spec.fixed.editable)} of an entry may change"
+        "their order are fixed, and only "
+        f"{' and '.join(spec.fixed.editable)} of an entry may change"
     )
 
 
@@ -2016,8 +2017,8 @@ def _check_fixed_op(
     if new_only:
         raise PatchError(
             f"{_fixed_rule(spec, path)}: this patch builds the item, so the "
-            + "list has no entries to edit yet; give its entries as a list "
-            + "value, or leave them out",
+            "list has no entries to edit yet; give its entries as a list "
+            "value, or leave them out",
             where,
             "fixed_list",
         )
@@ -2028,7 +2029,7 @@ def _check_fixed_op(
     form = _fixed_form(spec, "<key>" if first is None else first, path)
     raise PatchError(
         f"{_fixed_rule(spec, path)}: a {what} is not an edit of an entry's "
-        + f"{' or '.join(spec.fixed.editable)}. To edit an entry, send {form}",
+        f"{' or '.join(spec.fixed.editable)}. To edit an entry, send {form}",
         where,
         "fixed_list",
     )
@@ -2057,8 +2058,8 @@ def _check_fixed_change(
     key = item_key(item, spec.key_paths)
     raise PatchError(
         f"{_fixed_rule(spec, path)}: this patch changes "
-        + f"{_fixed_differences(before, after)} of {_show_item(spec, item, 0)}. "
-        + "To edit the entry, send the editable fields only, "
+        f"{_fixed_differences(before, after)} of {_show_item(spec, item, 0)}. "
+        "To edit the entry, send the editable fields only, "
         + _fixed_form(spec, "<key>" if key is None else key, path),
         where,
         "fixed_list",
@@ -2081,14 +2082,15 @@ def _check_fixed_value(
     its model made up. Anything else raises ``PatchError`` at *path* or at
     the item.
     """
-    assert spec.fixed is not None and spec.item_type is not None
+    assert spec.fixed is not None
+    assert spec.item_type is not None
     rule = _fixed_rule(spec, path)
     if not is_list(current):
         raise PatchError(
             f"{rule}: a list value cannot build the list where there was "
-            + "none. Leave the field out of the patch: its entries come from "
-            + "the template when the segment is assigned, or are repaired "
-            + "when the module is written",
+            "none. Leave the field out of the patch: its entries come from "
+            "the template when the segment is assigned, or are repaired "
+            "when the module is written",
             path,
             "fixed_list",
         )
@@ -2097,7 +2099,7 @@ def _check_fixed_value(
         shown = ", ".join(repr(str(k)) for k in keys)
         raise PatchError(
             f"{rule}: a list value must give the current entries ({shown}) "
-            + "in that order, and no other. To edit an entry, send "
+            "in that order, and no other. To edit an entry, send "
             + _fixed_form(spec, "<key>" if not keys else keys[0], path),
             path,
             "fixed_list",
@@ -2111,13 +2113,14 @@ def _check_fixed_value(
         ):
             _copy_path(old, new, spec.alt_path)
         before, after = _fixed_dump(spec, old), _fixed_dump(spec, new)
-        assert before is not None and after is not None
+        assert before is not None
+        assert after is not None
         if before != after:
             key = item_key(old, spec.key_paths)
             raise PatchError(
                 f"{rule}: the list value changes "
-                + f"{_fixed_differences(before, after)} of "
-                + f"{_show_item(spec, old, index)}. "
+                f"{_fixed_differences(before, after)} of "
+                f"{_show_item(spec, old, index)}. "
                 + _alt_key_advice(spec, old, new)
                 + "Give each entry as it is, "
                 + "with its editable fields changed, or send "
@@ -2247,8 +2250,8 @@ def _merge_items(
             if other is not entry.slot and _alt_key(spec, other.value) == alt:
                 raise PatchError(
                     f"{_show_item(spec, other.value, index)} already has the "
-                    + f"alt key {alt!r}: give this item another alt key, or "
-                    + "change that item instead",
+                    f"alt key {alt!r}: give this item another alt key, or "
+                    "change that item instead",
                     entry.path,
                     "exists",
                 )
@@ -2317,7 +2320,7 @@ def _resolve_items(
         elif new_only:
             raise PatchError(
                 f"a {op.kind} in a list the patch builds has nothing to name: "
-                + 'write {"_op": "add", ...} entries (add(...)) or a list value',
+                'write {"_op": "add", ...} entries (add(...)) or a list value',
                 where,
                 "operation",
             )
@@ -2404,14 +2407,14 @@ def _check_add(
         if spec.item_type is None:
             raise PatchError(
                 "a list of values named by position has no body to build an item "
-                + "from: give a list value",
+                "from: give a list value",
                 where,
                 "operation",
             )
         if not is_new(selector):
             raise PatchError(
                 "a new item of a list named by position goes under "
-                + '"+" or "+tag": write {"+": {"_op": "add", ...}} ("+": add(...))',
+                '"+" or "+tag": write {"+": {"_op": "add", ...}} ("+": add(...))',
                 where,
                 "selector",
             )
@@ -2438,17 +2441,17 @@ def _check_add(
     if is_new(selector):
         raise PatchError(
             f"{str(selector)!r} names no value: an add in a list of values takes "
-            + "the value itself as its selector, "
-            + 'as in {"<value>": {"_op": "add"}} (`{"<value>": add()}`); a '
-            + 'value that starts with "+" cannot be added under its own text, '
-            + "so give the whole list as a list value",
+            "the value itself as its selector, "
+            'as in {"<value>": {"_op": "add"}} (`{"<value>": add()}`); a '
+            'value that starts with "+" cannot be added under its own text, '
+            "so give the whole list as a list value",
             where,
             "selector",
         )
     if op.body:
         raise PatchError(
             "an add in a list of values takes no fields: "
-            + 'write {"_op": "add"} (add()) under the value',
+            'write {"_op": "add"} (add()) under the value',
             where,
             "operation",
         )
@@ -2510,7 +2513,7 @@ def _check_keyed_add(
         if key is not None and _with_key(items, spec, key):
             raise PatchError(
                 f"the body gives the key {_show_key(key)}, which is already in the "
-                + f"list{_CHANGE_IT_IN_LIST}",
+                f"list{_CHANGE_IT_IN_LIST}",
                 where,
                 "exists",
             )
@@ -2539,7 +2542,7 @@ def _check_keyed_add(
         if not from_body and given is not None and str(given) != str(part):
             raise PatchError(
                 f"the body gives {key_path} {str(given)!r}, and the selector "
-                + f"{_show_key(key)}: an add takes the key from its selector",
+                f"{_show_key(key)}: an add takes the key from its selector",
                 where,
                 "operation",
             )
@@ -2551,8 +2554,8 @@ def _check_change(spec: _ListSpec, where: Path) -> None:
     if spec.item_type is None:
         raise PatchError(
             "an entry of a list of values has no fields to change: "
-            + 'add it with {"_op": "add"} (add()), '
-            + 'remove it with {"_op": "delete"} (delete()), or give a list value',
+            'add it with {"_op": "add"} (add()), '
+            'remove it with {"_op": "delete"} (delete()), or give a list value',
             where,
             "operation",
         )
@@ -2578,7 +2581,7 @@ def _named_item(
     if selection.position is not None:
         raise PatchError(
             f"there is no item at position {selection.position}: "
-            + f"the list has {len(items)}",
+            f"the list has {len(items)}",
             where,
             "no_item",
         )
@@ -2590,14 +2593,14 @@ def _named_item(
         )
         raise PatchError(
             f"{str(selector)!r} is not a position: the items of this list are "
-            + f'named by "#n" (at(n)){hint}',
+            f'named by "#n" (at(n)){hint}',
             where,
             "selector",
         )
     if selection.new:
         raise PatchError(
             f"{str(selector)!r} names a new item, which only "
-            + '{"_op": "add", ...} (add(...)) takes',
+            '{"_op": "add", ...} (add(...)) takes',
             where,
             "operation",
         )
@@ -2620,7 +2623,7 @@ def _named_item(
                 if op.kind == "change":
                     message += (
                         '; to add an item, write {"+": {"_op": "add", ...}} '
-                        + '("+": add({...})) with its fields'
+                        '("+": add({...})) with its fields'
                     )
                 raise PatchError(message, where, "selector")
             message = f"no item has the {what} {shown}; {form}"
@@ -2661,7 +2664,7 @@ def _names_several(
         )
     return (
         f"{subject} names {len(positions)} items: {', '.join(shown)}; "
-        + "select one of them"
+        "select one of them"
     )
 
 
@@ -2712,7 +2715,7 @@ def _new_list_item(
             shown = item_key(new, spec.key_paths) if spec.kind == "keyed" else None
             raise PatchError(
                 f"{_show_key(form if shown is None else shown)} is already in the "
-                + f"list{_CHANGE_IT_IN_LIST}",
+                f"list{_CHANGE_IT_IN_LIST}",
                 entry.path,
                 "exists",
             )
@@ -2722,8 +2725,8 @@ def _new_list_item(
             if _alt_key(spec, slot.value) == alt:
                 raise PatchError(
                     f"{alt!r} is already in the list as an alt key, that of "
-                    + f"{_show_item(spec, slot.value, index)}: give the new "
-                    + "item another alt key, or change that item instead",
+                    f"{_show_item(spec, slot.value, index)}: give the new "
+                    "item another alt key, or change that item instead",
                     entry.path,
                     "exists",
                 )
@@ -2781,9 +2784,9 @@ def _merge_map(
             ):
                 raise PatchError(
                     f"{text!r} names no entry of a map: an add takes the new "
-                    + "entry's key as its selector, "
-                    + 'as in {"<key>": {"_op": "add", ...}} '
-                    + '(`{"<key>": add(...)}`)',
+                    "entry's key as its selector, "
+                    'as in {"<key>": {"_op": "add", ...}} '
+                    '(`{"<key>": add(...)}`)',
                     where,
                     "selector",
                 )
@@ -2792,14 +2795,14 @@ def _merge_map(
             if text in keys:
                 raise PatchError(
                     f"{text!r} is already in the map; to change it, write a plain "
-                    + 'object under its key (no "_op")',
+                    'object under its key (no "_op")',
                     where,
                     "exists",
                 )
         elif new_only:
             raise PatchError(
                 f"a {op.kind} in a map the patch builds has nothing to name: "
-                + 'write {"_op": "add", ...} entries (add(...))',
+                'write {"_op": "add", ...} entries (add(...))',
                 where,
                 "operation",
             )

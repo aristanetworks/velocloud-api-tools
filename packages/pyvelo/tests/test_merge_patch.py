@@ -25,47 +25,47 @@ class WithAlias(VcoModel):
 
 
 class TestScalarMerge:
-    def test_merge_single_field(self):
+    def test_merge_single_field(self) -> None:
         m = Outer(name="original", value=1)
         _ = m.merge_patch({"name": "updated"})
         assert m.name == "updated"
         assert m.value == 1  # unchanged
 
-    def test_merge_multiple_fields(self):
+    def test_merge_multiple_fields(self) -> None:
         m = Outer(name="a", value=1)
         _ = m.merge_patch({"name": "b", "value": 2})
         assert m.name == "b"
         assert m.value == 2
 
-    def test_absent_keys_unchanged(self):
+    def test_absent_keys_unchanged(self) -> None:
         m = Outer(name="keep", value=42, optional="present")
         _ = m.merge_patch({"value": 0})
         assert m.name == "keep"
         assert m.optional == "present"
 
-    def test_null_sets_missing(self):
+    def test_null_sets_missing(self) -> None:
         m = Outer(optional="present")
         _ = m.merge_patch({"optional": None})
         assert m.optional is MISSING
 
-    def test_returns_self(self):
+    def test_returns_self(self) -> None:
         m = Outer()
         result = m.merge_patch({"name": "x"})
         assert result is m
 
-    def test_merge_with_snake_case_keys(self):
+    def test_merge_with_snake_case_keys(self) -> None:
         m = WithAlias(display_name="old")
         _ = m.merge_patch({"display_name": "new"})
         assert m.display_name == "new"
 
-    def test_merge_with_camel_case_keys(self):
+    def test_merge_with_camel_case_keys(self) -> None:
         m = WithAlias(display_name="old")
         _ = m.merge_patch({"displayName": "new"})
         assert m.display_name == "new"
 
 
 class TestSubModelMerge:
-    def test_merge_into_missing_submodel_preserves_defaults(self):
+    def test_merge_into_missing_submodel_preserves_defaults(self) -> None:
         class OptionalOuter(VcoModel):
             inner: Inner | MISSING = MISSING
 
@@ -75,19 +75,19 @@ class TestSubModelMerge:
         assert m.inner.x == 99
         assert m.inner.y == "default"
 
-    def test_dict_merges_into_sub_model(self):
+    def test_dict_merges_into_sub_model(self) -> None:
         m = Outer(inner=Inner(x=1, y="keep"))
         _ = m.merge_patch({"inner": {"x": 99}})
         assert m.inner.x == 99
         assert m.inner.y == "keep"  # unchanged
 
-    def test_nested_merge_preserves_identity(self):
+    def test_nested_merge_preserves_identity(self) -> None:
         m = Outer()
         original_inner = m.inner
         _ = m.merge_patch({"inner": {"x": 5}})
         assert m.inner is original_inner  # same object, mutated in-place
 
-    def test_deeply_nested_merge(self):
+    def test_deeply_nested_merge(self) -> None:
         class Deep(VcoModel):
             level: int = 0
 
@@ -105,7 +105,7 @@ class TestSubModelMerge:
 
 
 class TestMergeDirectivesRefused:
-    def test_underscore_keys_raise(self):
+    def test_underscore_keys_raise(self) -> None:
         m = Outer(name="test")
         with pytest.raises(PatchError):
             _ = m.merge_patch({"name": "updated", "_position": 0, "_custom": "x"})

@@ -72,12 +72,12 @@ def _as_mapping(value: object) -> Mapping[str, object]:
     """Return a JSON object as a read-only mapping, or an empty mapping."""
     if isinstance(value, dict):
         # JSON object keys are strings; `json.loads` guarantees that for parsed input.
-        return cast(Mapping[str, object], value)
+        return cast("Mapping[str, object]", value)
     return {}
 
 
 def _as_list(value: object) -> list[object]:
-    return cast(list[object], value) if isinstance(value, list) else []
+    return cast("list[object]", value) if isinstance(value, list) else []
 
 
 def _text(value: object, default: str = "") -> str:
@@ -100,7 +100,7 @@ def parse_arp_json(data: object) -> list[ArpEntry]:
     if not isinstance(output_str, str) or not output_str:
         return []
 
-    output = cast(object, json.loads(output_str))
+    output = cast("object", json.loads(output_str))
     arp = _as_mapping(_as_mapping(output).get("ARP_DUMP"))
 
     entries: list[ArpEntry] = []

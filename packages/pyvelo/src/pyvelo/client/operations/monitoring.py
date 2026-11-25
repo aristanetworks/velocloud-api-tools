@@ -611,8 +611,7 @@ class MonitoringMixin(Protocol):
     async def get_link_quality_events(
         self: VcoClientBaseProtocol, request: GetLinkQualityEvents
     ) -> GetLinkQualityEventsResult:
-        """
-        Get per-link and overall Quality of Experience (QoE) scores for an Edge.
+        """Get per-link and overall Quality of Experience (QoE) scores for an Edge.
 
         Fetches link quality data from the VeloCloud Orchestrator that measures the quality of
         each WAN link attached to an Edge over a specified time interval. For each link, the

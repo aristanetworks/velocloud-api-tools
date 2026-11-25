@@ -65,7 +65,7 @@ __all__ = [
 
 OMITTED_SEGMENT = (
     "the composer keeps only the segments in use on the edge "
-    + "(VLANs, routed interfaces, loopbacks and the Global Segment)"
+    "(VLANs, routed interfaces, loopbacks and the Global Segment)"
 )
 SECRET_NOT_COMPARED = "a secret value is not compared"
 UNCONVERTED_FIELD = "the library does not model this yet, so the view has no value"
@@ -161,7 +161,7 @@ class EffectiveDifference:
         """The entry as one line."""
         line = (
             f"{self.category.value} {self.path}: "
-            + f"client {_show(self.client)}, server {_show(self.server)}"
+            f"client {_show(self.client)}, server {_show(self.server)}"
         )
         notes: list[str] = []
         if self.origin is not None:

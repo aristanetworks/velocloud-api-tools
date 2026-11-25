@@ -1,4 +1,4 @@
-from ..common import SegmentMetadata
+from pyvelo.client.models.configuration.common import SegmentMetadata
 from .common import (
     FirewallInboundRuleActionType,
     FirewallRuleAction,

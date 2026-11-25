@@ -74,7 +74,7 @@ def _make_fw_segments() -> list[FirewallSegment[Edge]]:
 
 
 class TestDeviceSettingsDataGetSegment:
-    def test_lookup_by_name_and_id(self):
+    def test_lookup_by_name_and_id(self) -> None:
         data = _make_device_data()
 
         by_name = data.get_segment(name="Engineering")
@@ -83,46 +83,46 @@ class TestDeviceSettingsDataGetSegment:
         assert by_name.segment.segment_id == 1
         assert by_id.segment.name == "Global Segment"
 
-    def test_requires_name_or_segment_id(self):
+    def test_requires_name_or_segment_id(self) -> None:
         data = _make_device_data()
         with pytest.raises(ValueError, match="Provide name or segment_id"):
             _ = data.get_segment()
 
-    def test_not_found(self):
+    def test_not_found(self) -> None:
         data = _make_device_data()
         with pytest.raises(ValueError, match="Segment not found"):
             _ = data.get_segment(name="Missing")
 
 
 class TestQosDataGetSegment:
-    def test_lookup_by_name(self):
+    def test_lookup_by_name(self) -> None:
         data = QosData[Edge](segments=_make_qos_segments())
         seg = data.get_segment(name="Sales")
         assert seg.segment.segment_id == 2
 
-    def test_lookup_by_id(self):
+    def test_lookup_by_id(self) -> None:
         data = QosData[Edge](segments=_make_qos_segments())
         seg = data.get_segment(segment_id=0)
         assert seg.segment.name == "Global Segment"
 
-    def test_not_found(self):
+    def test_not_found(self) -> None:
         data = QosData[Edge](segments=_make_qos_segments())
         with pytest.raises(ValueError, match="Segment not found"):
             _ = data.get_segment(name="Missing")
 
-    def test_requires_name_or_segment_id(self):
+    def test_requires_name_or_segment_id(self) -> None:
         data = QosData[Edge](segments=_make_qos_segments())
         with pytest.raises(ValueError, match="Provide name or segment_id"):
             _ = data.get_segment()
 
 
 class TestFirewallDataGetSegment:
-    def test_lookup_by_name(self):
+    def test_lookup_by_name(self) -> None:
         data = FirewallData[Edge](segments=_make_fw_segments())
         seg = data.get_segment(name="Global Segment")
         assert seg.segment.segment_id == 0
 
-    def test_not_found(self):
+    def test_not_found(self) -> None:
         data = FirewallData[Edge](segments=_make_fw_segments())
         with pytest.raises(ValueError, match="Segment not found"):
             _ = data.get_segment(name="Missing")

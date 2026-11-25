@@ -15,7 +15,7 @@ _COMPACT = {"compact": True}
 
 
 def _compact(model: VcoModel) -> JsonObject:
-    return cast(JsonObject, model.model_dump(by_alias=False, context=_COMPACT))
+    return cast("JsonObject", model.model_dump(by_alias=False, context=_COMPACT))
 
 
 def _normalize_port(value: object) -> object:
@@ -53,12 +53,12 @@ class HasList(VcoModel):
 
 
 class TestMissingDrop:
-    def test_missing_field_omitted(self):
+    def test_missing_field_omitted(self) -> None:
         m = Outer()
         d = _compact(m)
         assert "optional" not in d
 
-    def test_present_field_kept(self):
+    def test_present_field_kept(self) -> None:
         m = Outer(optional="hello")
         d = _compact(m)
         assert d["optional"] == "hello"
@@ -70,55 +70,55 @@ class TestMissingDrop:
 
 
 class TestDefaultValueDrop:
-    def test_string_default_dropped(self):
+    def test_string_default_dropped(self) -> None:
         m = Outer()
         d = _compact(m)
         assert "source_ip" not in d
         assert "hostname" not in d
 
-    def test_int_default_dropped(self):
+    def test_int_default_dropped(self) -> None:
         m = Outer()
         d = _compact(m)
         assert "dscp" not in d
 
-    def test_non_default_scalar_values_kept(self):
+    def test_non_default_scalar_values_kept(self) -> None:
         m = Outer(source_ip="10.0.0.1", hostname="edge1", dscp=46)
         d = _compact(m)
         assert d["source_ip"] == "10.0.0.1"
         assert d["hostname"] == "edge1"
         assert d["dscp"] == 46
 
-    def test_static_default_dropped(self):
+    def test_static_default_dropped(self) -> None:
         """Fields at their static default are omitted."""
         m = Outer()
         d = _compact(m)
         assert "name" not in d
 
-    def test_factory_default_dropped(self):
+    def test_factory_default_dropped(self) -> None:
         """Fields at their default_factory output are omitted (e.g. empty list)."""
         m = Outer()
         d = _compact(m)
         assert "tags" not in d
 
-    def test_non_default_static_and_factory_values_kept(self):
+    def test_non_default_static_and_factory_values_kept(self) -> None:
         m = Outer(name="my_rule", tags=["prod"])
         d = _compact(m)
         assert d["name"] == "my_rule"
         assert d["tags"] == ["prod"]
 
-    def test_missing_typed_field_not_dropped_at_default(self):
+    def test_missing_typed_field_not_dropped_at_default(self) -> None:
         """MISSING-typed field with non-MISSING value is kept."""
         m = Outer(optional="hello")
         d = _compact(m)
         assert d["optional"] == "hello"
 
-    def test_inner_model_at_default_dropped(self):
+    def test_inner_model_at_default_dropped(self) -> None:
         """Nested model equal to default_factory output is omitted."""
         m = Outer()
         d = _compact(m)
         assert "inner" not in d
 
-    def test_inner_model_non_default_kept(self):
+    def test_inner_model_non_default_kept(self) -> None:
         m = Outer(inner=Inner(x=5))
         d = _compact(m)
         assert "inner" in d
@@ -130,7 +130,7 @@ class TestDefaultValueDrop:
 
 
 class TestPythonNames:
-    def test_uses_python_names(self):
+    def test_uses_python_names(self) -> None:
         m = Outer(source_ip="10.0.0.1")
         d = _compact(m)
         assert "source_ip" in d
@@ -143,24 +143,24 @@ class TestPythonNames:
 
 
 class TestNestedModels:
-    def test_nested_model_compacted(self):
+    def test_nested_model_compacted(self) -> None:
         m = Outer(inner=Inner(x=5, y="hello"))
         d = _compact(m)
         assert d["inner"] == {"x": 5, "y": "hello"}
 
-    def test_nested_all_defaults_dropped(self):
+    def test_nested_all_defaults_dropped(self) -> None:
         """Inner at all defaults is omitted (equals default_factory output)."""
         m = Outer()
         d = _compact(m)
         assert "inner" not in d
 
-    def test_nested_missing_typed_present_kept(self):
+    def test_nested_missing_typed_present_kept(self) -> None:
         """inner_optional accepts MISSING; when explicitly set, kept even at defaults."""
         m = Outer(inner_optional=Inner())
         d = _compact(m)
         assert "inner_optional" in d
 
-    def test_nested_missing_typed_absent(self):
+    def test_nested_missing_typed_absent(self) -> None:
         """inner_optional=MISSING is dropped entirely."""
         m = Outer()
         d = _compact(m)
@@ -168,19 +168,19 @@ class TestNestedModels:
 
 
 class TestListOfModels:
-    def test_list_of_models_compacted(self):
+    def test_list_of_models_compacted(self) -> None:
         m = HasList(items=[Inner(x=5, y="a"), Inner(x=0, y="b")])
         d = _compact(m)
         # Inner(x=5, y="a") -> {"x": 5, "y": "a"} (both non-default)
         # Inner(x=0, y="b") -> {"y": "b"} (x=0 dropped as default, y non-default)
         assert d["items"] == [{"x": 5, "y": "a"}, {"y": "b"}]
 
-    def test_empty_list_dropped(self):
+    def test_empty_list_dropped(self) -> None:
         m = HasList()
         d = _compact(m)
         assert "items" not in d
 
-    def test_nonempty_list_kept(self):
+    def test_nonempty_list_kept(self) -> None:
         m = HasList(items=[Inner(x=5)])
         d = _compact(m)
         assert "items" in d
@@ -192,7 +192,7 @@ class TestListOfModels:
 
 
 class TestRoundTrip:
-    def test_roundtrip_preserves_values(self):
+    def test_roundtrip_preserves_values(self) -> None:
         original = Outer(
             source_ip="10.0.0.1",
             hostname="edge1",
@@ -214,7 +214,7 @@ class TestRoundTrip:
         assert restored.inner.x == 5
         assert restored.inner.y == "hello"
 
-    def test_roundtrip_defaults_filled(self):
+    def test_roundtrip_defaults_filled(self) -> None:
         """Omitted fields get their defaults back on load."""
         m = Outer()
         compacted = _compact(m)
@@ -229,7 +229,7 @@ class TestRoundTrip:
         assert restored.inner.x == 0
         assert restored.inner.y == "kept"
 
-    def test_roundtrip_nested(self):
+    def test_roundtrip_nested(self) -> None:
         m = HasList(items=[Inner(x=5), Inner(x=0)])
         compacted = _compact(m)
         restored = HasList.model_validate(compacted)
@@ -248,9 +248,9 @@ class NormalizedPort(VcoModel):
 
 
 class TestNormalize:
-    def test_both_representations_dropped(self):
+    def test_both_representations_dropped(self) -> None:
         assert "port" not in _compact(NormalizedPort(port=-1))
         assert "port" not in _compact(NormalizedPort(port=0))
 
-    def test_real_value_kept(self):
+    def test_real_value_kept(self) -> None:
         assert _compact(NormalizedPort(port=8080))["port"] == 8080

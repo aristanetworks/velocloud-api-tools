@@ -151,7 +151,7 @@ def _make_state(
 
 class TestResolveModuleName:
     @pytest.mark.asyncio
-    async def test_firewall(self):
+    async def test_firewall(self) -> None:
         pipeline = ConfigPipeline(client=None)
         state = _make_state()
         state = await pipeline.apply(
@@ -161,7 +161,7 @@ class TestResolveModuleName:
         assert state.edge_config.firewall.data.firewall_enabled.local is False
 
     @pytest.mark.asyncio
-    async def test_device_settings_snake_case(self):
+    async def test_device_settings_snake_case(self) -> None:
         pipeline = ConfigPipeline(client=None)
         state = _make_state(include_device_settings=True)
         state = await pipeline.apply(
@@ -170,7 +170,7 @@ class TestResolveModuleName:
         assert ConfigurationModuleName.DEVICE_SETTINGS in state.get_changed_modules()
 
     @pytest.mark.asyncio
-    async def test_qos_uppercase(self):
+    async def test_qos_uppercase(self) -> None:
         pipeline = ConfigPipeline(client=None)
         state = _make_state(include_qos=True)
         state = await pipeline.apply(
@@ -181,7 +181,7 @@ class TestResolveModuleName:
         assert ConfigurationModuleName.QOS in state.get_changed_modules()
 
     @pytest.mark.asyncio
-    async def test_unknown_raises(self):
+    async def test_unknown_raises(self) -> None:
         pipeline = ConfigPipeline(client=None)
         state = _make_state()
         with pytest.raises(ValueError, match="Unknown module"):
@@ -189,7 +189,7 @@ class TestResolveModuleName:
 
 
 @pytest.mark.asyncio
-async def test_apply_simple_patch():
+async def test_apply_simple_patch() -> None:
     """Apply a simple scalar patch to firewall module."""
     pipeline = ConfigPipeline(client=None)
     state = _make_state()
@@ -205,7 +205,7 @@ async def test_apply_simple_patch():
 
 
 @pytest.mark.asyncio
-async def test_apply_keyed_list_merge():
+async def test_apply_keyed_list_merge() -> None:
     """Apply a patch that merges into a KeyField list (segments by name)."""
     pipeline = ConfigPipeline(client=None)
 
@@ -248,7 +248,7 @@ async def test_apply_keyed_list_merge():
 
 
 @pytest.mark.asyncio
-async def test_apply_detects_change():
+async def test_apply_detects_change() -> None:
     """After apply, get_changed_modules should report the module as changed."""
     pipeline = ConfigPipeline(client=None)
     state = _make_state()
@@ -265,7 +265,7 @@ async def test_apply_detects_change():
 
 
 @pytest.mark.asyncio
-async def test_apply_camel_case_module_name():
+async def test_apply_camel_case_module_name() -> None:
     """Public module names should resolve the canonical camelCase spelling."""
     pipeline = ConfigPipeline(client=None)
     state = _make_state(include_device_settings=True)
@@ -327,7 +327,7 @@ def _block_ssh_patch() -> dict[str, object]:
 
 
 @pytest.mark.asyncio
-async def test_apply_ntp_enabled():
+async def test_apply_ntp_enabled() -> None:
     state = _profile_state(_ds_module(ntp=Ntp(enabled=False)))
     state = await ConfigPipeline(client=None).apply(
         state, module="device_settings", path="ntp", patch={"enabled": True}
@@ -338,7 +338,7 @@ async def test_apply_ntp_enabled():
 
 
 @pytest.mark.asyncio
-async def test_apply_adds_a_firewall_rule_to_a_segment():
+async def test_apply_adds_a_firewall_rule_to_a_segment() -> None:
     segment = make_firewall_segment("Global Segment", 0, layer=Profile)
     state = _profile_state(
         make_firewall_module(mod_id=1, config_id=20, segments=[segment], layer=Profile)
@@ -355,7 +355,7 @@ async def test_apply_adds_a_firewall_rule_to_a_segment():
 
 
 @pytest.mark.asyncio
-async def test_apply_to_a_segment_the_profile_lacks_changes_nothing():
+async def test_apply_to_a_segment_the_profile_lacks_changes_nothing() -> None:
     segment = make_firewall_segment("Global Segment", 0, layer=Profile)
     state = _profile_state(
         make_firewall_module(mod_id=1, config_id=20, segments=[segment], layer=Profile)
@@ -378,7 +378,7 @@ async def test_apply_to_a_segment_the_profile_lacks_changes_nothing():
 
 
 @pytest.mark.asyncio
-async def test_two_applies_in_a_row():
+async def test_two_applies_in_a_row() -> None:
     segment = make_firewall_segment("Global Segment", 0, layer=Profile)
     state = _profile_state(
         _ds_module(ntp=Ntp(enabled=False)),
@@ -404,7 +404,7 @@ async def test_two_applies_in_a_row():
 
 
 @pytest.mark.asyncio
-async def test_apply_dns():
+async def test_apply_dns() -> None:
     dns = SegmentDns(
         primary_provider=DnsPrimaryProvider(ref="deviceSettings:dns:primaryProvider"),
         backup_provider=DnsBackupProvider(ref="deviceSettings:dns:backupProvider"),
@@ -426,7 +426,7 @@ async def test_apply_dns():
 
 
 @pytest.mark.asyncio
-async def test_apply_updates_a_vlan():
+async def test_apply_updates_a_vlan() -> None:
     network = LanNetwork(name="Corp", vlan_id=100, cidr_ip="10.0.1.0")
     state = _profile_state(_ds_module(lan=LanSettings(networks=[network])))
     state = await ConfigPipeline(client=None).apply(
@@ -469,7 +469,7 @@ async def _segment_resolvers() -> ResolverRegistry:
 
 
 @pytest.mark.asyncio
-async def test_change_of_an_inherited_segment_adds_the_placeholder():
+async def test_change_of_an_inherited_segment_adds_the_placeholder() -> None:
     state = make_raw_state()
     _ = await ConfigPipeline(client=None).apply(
         state, module="firewall", patch=_guest_rule_patch()
@@ -481,7 +481,7 @@ async def test_change_of_an_inherited_segment_adds_the_placeholder():
 
 
 @pytest.mark.asyncio
-async def test_inherited_segment_by_another_case_and_by_id():
+async def test_inherited_segment_by_another_case_and_by_id() -> None:
     for selector in ("guest", "2"):
         state = make_raw_state()
         _ = await ConfigPipeline(client=None).apply(
@@ -519,7 +519,9 @@ def _own_guest_state() -> ConfigState:
         ),
     ],
 )
-async def test_a_place_for_an_inherited_segment_is_refused(entry: dict[str, object]):
+async def test_a_place_for_an_inherited_segment_is_refused(
+    entry: dict[str, object],
+) -> None:
     state = make_raw_state()
     before = state.plan().render()
     with pytest.raises(PatchError, match="inherits segment 'Guest'") as exc:
@@ -540,7 +542,7 @@ async def test_a_place_for_an_inherited_segment_is_refused(entry: dict[str, obje
 
 
 @pytest.mark.asyncio
-async def test_a_placeholder_an_earlier_patch_added_is_still_inherited():
+async def test_a_placeholder_an_earlier_patch_added_is_still_inherited() -> None:
     state = make_raw_state()
     pipeline = ConfigPipeline(client=None)
     _ = await pipeline.apply(state, module="firewall", patch=_guest_rule_patch())
@@ -558,7 +560,7 @@ async def test_a_placeholder_an_earlier_patch_added_is_still_inherited():
 
 
 @pytest.mark.asyncio
-async def test_no_segment_of_a_module_the_state_created_takes_a_place():
+async def test_no_segment_of_a_module_the_state_created_takes_a_place() -> None:
     state = make_raw_state(edge_modules=[])
     with pytest.raises(PatchError, match="inherits segment 'Global Segment'"):
         _ = await ConfigPipeline(client=None).apply(
@@ -570,7 +572,7 @@ async def test_no_segment_of_a_module_the_state_created_takes_a_place():
 
 
 @pytest.mark.asyncio
-async def test_a_place_before_or_after_an_inherited_segment_is_refused():
+async def test_a_place_before_or_after_an_inherited_segment_is_refused() -> None:
     after_guest: dict[str, object] = {
         "segments": {"Global Segment": move(after="Guest")}
     }
@@ -607,7 +609,7 @@ async def test_a_place_before_or_after_an_inherited_segment_is_refused():
 
 
 @pytest.mark.asyncio
-async def test_a_move_among_the_edges_own_segments_is_written():
+async def test_a_move_among_the_edges_own_segments_is_written() -> None:
     state = _own_guest_state()
     client = MockVcoClient.for_state(state)
     pipeline = ConfigPipeline(client)
@@ -623,7 +625,7 @@ async def test_a_move_among_the_edges_own_segments_is_written():
 
 
 @pytest.mark.asyncio
-async def test_once_a_save_wrote_its_entry_the_segment_is_the_edges_own():
+async def test_once_a_save_wrote_its_entry_the_segment_is_the_edges_own() -> None:
     state = make_raw_state()
     client = MockVcoClient.for_state(state)
     pipeline = ConfigPipeline(client)
@@ -639,7 +641,7 @@ async def test_once_a_save_wrote_its_entry_the_segment_is_the_edges_own():
 
 
 @pytest.mark.asyncio
-async def test_add_of_an_inherited_segment_raises():
+async def test_add_of_an_inherited_segment_raises() -> None:
     state = make_raw_state()
     with pytest.raises(PatchError, match="plain object") as exc:
         _ = await ConfigPipeline(client=None).apply(
@@ -651,7 +653,7 @@ async def test_add_of_an_inherited_segment_raises():
 
 
 @pytest.mark.asyncio
-async def test_plus_add_of_an_inherited_segment_raises():
+async def test_plus_add_of_an_inherited_segment_raises() -> None:
     state = make_raw_state()
     patch: dict[str, object] = {"segments": {"+": add({"segment": {"name": "Guest"}})}}
     with pytest.raises(PatchError, match="plain object") as exc:
@@ -664,7 +666,7 @@ async def test_plus_add_of_an_inherited_segment_raises():
 
 
 @pytest.mark.asyncio
-async def test_delete_of_an_inherited_segment_raises_and_makes_no_placeholder():
+async def test_delete_of_an_inherited_segment_raises_and_makes_no_placeholder() -> None:
     state = make_raw_state()
     with pytest.raises(PatchError, match="no entry to delete") as exc:
         _ = await ConfigPipeline(client=None).apply(
@@ -676,7 +678,7 @@ async def test_delete_of_an_inherited_segment_raises_and_makes_no_placeholder():
 
 
 @pytest.mark.asyncio
-async def test_segment_named_twice_raises():
+async def test_segment_named_twice_raises() -> None:
     state = make_raw_state()
     patch: dict[str, object] = {
         "segments": {"Guest": {"outbound": {}}, "guest": {"outbound": {}}}
@@ -690,7 +692,7 @@ async def test_segment_named_twice_raises():
 
 
 @pytest.mark.asyncio
-async def test_segment_neither_layer_has_is_left_to_merge_patch():
+async def test_segment_neither_layer_has_is_left_to_merge_patch() -> None:
     patch: dict[str, object] = {"segments": {"Nope": {"outbound": {}}}}
     state = make_raw_state()
     with pytest.raises(PatchError, match="no item has the key") as exc:
@@ -709,7 +711,7 @@ async def test_segment_neither_layer_has_is_left_to_merge_patch():
 
 
 @pytest.mark.asyncio
-async def test_failed_apply_leaves_the_plan_as_it_was():
+async def test_failed_apply_leaves_the_plan_as_it_was() -> None:
     state = make_raw_state()
     before = state.plan().render()
     patch: dict[str, object] = {
@@ -724,7 +726,7 @@ async def test_failed_apply_leaves_the_plan_as_it_was():
 
 
 @pytest.mark.asyncio
-async def test_failed_apply_removes_the_module_it_created():
+async def test_failed_apply_removes_the_module_it_created() -> None:
     state = make_raw_state(edge_modules=[])
     before = state.plan().render()
     with pytest.raises(PatchError, match="no_such_key"):
@@ -736,7 +738,7 @@ async def test_failed_apply_removes_the_module_it_created():
 
 
 @pytest.mark.asyncio
-async def test_good_apply_on_an_edge_with_no_firewall_row_plans_an_insert():
+async def test_good_apply_on_an_edge_with_no_firewall_row_plans_an_insert() -> None:
     state = make_raw_state(edge_modules=[])
     _ = await ConfigPipeline(client=None).apply(
         state, module="firewall", patch={"firewall_enabled": False}
@@ -747,7 +749,7 @@ async def test_good_apply_on_an_edge_with_no_firewall_row_plans_an_insert():
 
 
 @pytest.mark.asyncio
-async def test_failed_apply_restores_an_unset_modules_list():
+async def test_failed_apply_restores_an_unset_modules_list() -> None:
     state = ConfigState(
         edge_config=EdgeConfiguration(name="Edge Specific Profile", id_=10),
         profile_config=make_raw_state().profile_config,
@@ -766,7 +768,7 @@ async def test_failed_apply_restores_an_unset_modules_list():
     assert edge_config.model_dump() == dump
 
 
-def test_drop_module_refuses_a_module_that_is_not_new():
+def test_drop_module_refuses_a_module_that_is_not_new() -> None:
     state = make_raw_state()
     firewall = state.find_module("firewall")
     assert firewall is not None
@@ -776,7 +778,7 @@ def test_drop_module_refuses_a_module_that_is_not_new():
 
 
 @pytest.mark.asyncio
-async def test_selector_in_another_case_names_the_edge_entry():
+async def test_selector_in_another_case_names_the_edge_entry() -> None:
     state = make_raw_state()
     _ = await ConfigPipeline(client=None).apply(
         state, module="firewall", patch={"segments": {"global segment": delete()}}
@@ -797,7 +799,7 @@ def _renamed_guest_state() -> ConfigState:
 
 
 @pytest.mark.asyncio
-async def test_edge_entry_under_another_name_is_the_profiles_segment():
+async def test_edge_entry_under_another_name_is_the_profiles_segment() -> None:
     pipeline = ConfigPipeline(client=None)
     state = _renamed_guest_state()
     _ = await pipeline.apply(state, module="firewall", patch=_guest_rule_patch())
@@ -827,7 +829,7 @@ async def test_edge_entry_under_another_name_is_the_profiles_segment():
 
 
 @pytest.mark.asyncio
-async def test_an_empty_object_for_an_inherited_segment_adds_no_placeholder():
+async def test_an_empty_object_for_an_inherited_segment_adds_no_placeholder() -> None:
     state = make_raw_state()
     before = state.plan().render()
     pipeline = ConfigPipeline(client=None)
@@ -842,7 +844,7 @@ async def test_an_empty_object_for_an_inherited_segment_adds_no_placeholder():
 
 
 @pytest.mark.asyncio
-async def test_an_empty_object_counts_as_a_selector_of_its_segment():
+async def test_an_empty_object_counts_as_a_selector_of_its_segment() -> None:
     state = make_raw_state()
     patch: dict[str, object] = {
         "segments": {"Guest": {}, "2": {"outbound": {"block": add(_DENY)}}}
@@ -855,7 +857,7 @@ async def test_an_empty_object_counts_as_a_selector_of_its_segment():
 
 
 @pytest.mark.asyncio
-async def test_an_empty_object_for_a_segment_neither_layer_has_raises():
+async def test_an_empty_object_for_a_segment_neither_layer_has_raises() -> None:
     state = make_raw_state()
     with pytest.raises(PatchError, match="no item has the key"):
         _ = await ConfigPipeline(client=None).apply(
@@ -913,7 +915,7 @@ def _profile_segment_names(state: ConfigState) -> list[list[str]]:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("module", ["firewall", "qos", "device_settings"])
-async def test_profile_target_refuses_a_segment_delete(module: str):
+async def test_profile_target_refuses_a_segment_delete(module: str) -> None:
     # An add assigns the segment (test_profile_segment_patches.py). A delete of
     # a segment that all three modules have removes it from all three.
     state = _segment_profile_state("Global Segment")
@@ -929,7 +931,7 @@ async def test_profile_target_refuses_a_segment_delete(module: str):
 
 
 @pytest.mark.asyncio
-async def test_profile_target_changes_and_moves_a_segment():
+async def test_profile_target_changes_and_moves_a_segment() -> None:
     state = _segment_profile_state("Global Segment", "Guest")
     patch: dict[str, object] = {
         "segments": {
@@ -1012,7 +1014,7 @@ _REDESCRIBED = "a patch cannot change which segments a profile has"
 )
 async def test_profile_target_keeps_its_segments_whatever_the_patch_form(
     call: dict[str, object], detail: str
-):
+) -> None:
     state = _segment_profile_state("Global Segment", "Guest")
     state.take_snapshot()
     before = state.plan().render()
@@ -1026,7 +1028,7 @@ async def test_profile_target_keeps_its_segments_whatever_the_patch_form(
 
 
 @pytest.mark.asyncio
-async def test_profile_target_refuses_a_descriptor_rewritten_into_anothers_id():
+async def test_profile_target_refuses_a_descriptor_rewritten_into_anothers_id() -> None:
     state = _segment_profile_state("Global Segment", "Guest")
     with pytest.raises(PatchError):
         _ = await ConfigPipeline(client=None).apply(
@@ -1041,7 +1043,7 @@ async def test_profile_target_refuses_a_descriptor_rewritten_into_anothers_id():
 @pytest.mark.parametrize("module", ["firewall", "qos", "device_settings"])
 async def test_profile_target_refuses_an_empty_segments_list_in_each_module(
     module: str,
-):
+) -> None:
     state = _segment_profile_state("Global Segment", "Guest")
     with pytest.raises(PatchError, match=_REDESCRIBED):
         _ = await ConfigPipeline(client=None).apply(
@@ -1051,7 +1053,7 @@ async def test_profile_target_refuses_an_empty_segments_list_in_each_module(
 
 
 @pytest.mark.asyncio
-async def test_profile_target_takes_a_list_that_keeps_every_descriptor():
+async def test_profile_target_takes_a_list_that_keeps_every_descriptor() -> None:
     state = _segment_profile_state("Global Segment", "Guest")
     segments: list[dict[str, object]] = [
         {"segment": desc(2, "Guest"), "outbound": [_BLOCK_SSH]},
@@ -1068,7 +1070,7 @@ async def test_profile_target_takes_a_list_that_keeps_every_descriptor():
 
 
 @pytest.mark.asyncio
-async def test_edge_target_still_takes_a_list_for_segments():
+async def test_edge_target_still_takes_a_list_for_segments() -> None:
     state = make_raw_state()
     _ = await ConfigPipeline(client=None).apply(
         state, module="firewall", patch={"segments": []}
@@ -1138,7 +1140,7 @@ _ADDRESSED: list[tuple[str, dict[str, object], dict[str, object], bool]] = [
 )
 async def test_addressed_call_equals_its_nested_form(
     addressed: dict[str, object], nested: dict[str, object], changes: bool
-):
+) -> None:
     pipeline = ConfigPipeline(client=None)
     by_address, by_patch = make_raw_state(), make_raw_state()
     _ = await pipeline.apply(by_address, module="firewall", **addressed)  # pyright: ignore[reportArgumentType]
@@ -1148,7 +1150,9 @@ async def test_addressed_call_equals_its_nested_form(
 
 
 @pytest.mark.asyncio
-async def test_addressed_apply_on_an_edge_with_no_firewall_row_plans_an_insert():
+async def test_addressed_apply_on_an_edge_with_no_firewall_row_plans_an_insert() -> (
+    None
+):
     state = make_raw_state(edge_modules=[])
     _ = await ConfigPipeline(client=None).apply(
         state,
@@ -1163,7 +1167,7 @@ async def test_addressed_apply_on_an_edge_with_no_firewall_row_plans_an_insert()
 
 
 @pytest.mark.asyncio
-async def test_addressed_apply_adds_the_placeholder():
+async def test_addressed_apply_adds_the_placeholder() -> None:
     state = make_raw_state()
     _ = await ConfigPipeline(client=None).apply(
         state, module="firewall", segment="Guest", path="outbound", patch=_BLOCK
@@ -1172,7 +1176,7 @@ async def test_addressed_apply_adds_the_placeholder():
 
 
 @pytest.mark.asyncio
-async def test_bad_address_raises_and_changes_nothing():
+async def test_bad_address_raises_and_changes_nothing() -> None:
     state = make_raw_state()
     before = state.plan().render()
     pipeline = ConfigPipeline(client=None)
@@ -1185,7 +1189,7 @@ async def test_bad_address_raises_and_changes_nothing():
 
 
 @pytest.mark.asyncio
-async def test_segment_for_a_module_with_no_segments_raises():
+async def test_segment_for_a_module_with_no_segments_raises() -> None:
     wan = make_module_json("WAN", {}, module_id=7, configuration_id=20)
     state = ConfigState(
         edge_config=None,
@@ -1203,7 +1207,7 @@ async def test_segment_for_a_module_with_no_segments_raises():
 
 
 @pytest.mark.asyncio
-async def test_bad_address_removes_the_module_it_created():
+async def test_bad_address_removes_the_module_it_created() -> None:
     state = make_raw_state(edge_modules=[])
     before = state.plan().render()
     with pytest.raises(PatchError, match="no field 'nope'"):
@@ -1215,7 +1219,7 @@ async def test_bad_address_removes_the_module_it_created():
 
 
 @pytest.mark.asyncio
-async def test_non_mapping_patch_without_an_address_raises_type_error():
+async def test_non_mapping_patch_without_an_address_raises_type_error() -> None:
     state = make_raw_state()
     with pytest.raises(TypeError):
         _ = await ConfigPipeline(client=None).apply(state, module="firewall", patch=3)
@@ -1228,7 +1232,7 @@ async def test_non_mapping_patch_without_an_address_raises_type_error():
 )
 async def test_apply_refuses_a_default_for_a_key_the_edge_layer_lacks(
     patch: dict[str, object], field: str
-):
+) -> None:
     state = make_raw_state()
     with pytest.raises(LossyFieldError) as exc:
         _ = await ConfigPipeline(client=None).apply(
@@ -1264,7 +1268,7 @@ async def test_apply_refuses_a_default_for_a_key_the_edge_layer_lacks(
 )
 async def test_apply_of_a_value_for_an_inheritable_key_the_edge_lacks_makes_it_local(
     patch: dict[str, object], paths: list[str]
-):
+) -> None:
     state = make_raw_state()
     _ = await ConfigPipeline(client=None).apply(state, module="firewall", patch=patch)
     (plan,) = state.plan().changed
@@ -1272,7 +1276,9 @@ async def test_apply_of_a_value_for_an_inheritable_key_the_edge_lacks_makes_it_l
 
 
 @pytest.mark.asyncio
-async def test_apply_refuses_an_edit_to_a_section_the_edge_layer_does_not_write():
+async def test_apply_refuses_an_edit_to_a_section_the_edge_layer_does_not_write() -> (
+    None
+):
     raw: dict[str, object] = {
         "lan": {"networks": [], "interfaces": []},
         "segments": [{"segment": desc(0, "Global Segment")}],
@@ -1301,7 +1307,7 @@ async def test_apply_refuses_an_edit_to_a_section_the_edge_layer_does_not_write(
 
 
 @pytest.mark.asyncio
-async def test_a_refused_edit_removes_the_module_apply_created():
+async def test_a_refused_edit_removes_the_module_apply_created() -> None:
     state = make_raw_state(edge_modules=[])
     with pytest.raises(LossyFieldError) as exc:
         _ = await ConfigPipeline(client=None).apply(
@@ -1313,7 +1319,7 @@ async def test_a_refused_edit_removes_the_module_apply_created():
 
 
 @pytest.mark.asyncio
-async def test_the_same_patches_apply_on_a_profile():
+async def test_the_same_patches_apply_on_a_profile() -> None:
     state = _segment_profile_state("Global Segment")
     state.take_snapshot()
     _ = await ConfigPipeline(client=None).apply(
@@ -1322,7 +1328,7 @@ async def test_the_same_patches_apply_on_a_profile():
     assert [m.name for m in state.plan().changed] == ["firewall"]
 
 
-def test_lossy_error_says_why_and_what_to_do():
+def test_lossy_error_says_why_and_what_to_do() -> None:
     state = make_raw_state()
     state.edge.firewall.inbound = []
     with pytest.raises(LossyFieldError) as exc:
@@ -1364,7 +1370,7 @@ def _control_plane_state() -> ConfigState:
 
 
 @pytest.mark.asyncio
-async def test_apply_refuses_a_module_a_save_does_not_write():
+async def test_apply_refuses_a_module_a_save_does_not_write() -> None:
     state = _control_plane_state()
     with pytest.raises(PatchError, match="controlPlane: a save does not write") as exc:
         _ = await ConfigPipeline(client=None).apply(
@@ -1382,7 +1388,7 @@ async def test_apply_refuses_a_module_a_save_does_not_write():
 
 
 @pytest.mark.asyncio
-async def test_dry_run_refuses_what_the_save_refuses():
+async def test_dry_run_refuses_what_the_save_refuses() -> None:
     state = _control_plane_state()
     state.profile_config.control_plane.data.gateway_selection.mode = "static"
     state.profile.firewall.firewall_enabled = False
@@ -1397,7 +1403,9 @@ async def test_dry_run_refuses_what_the_save_refuses():
 
 
 @pytest.mark.asyncio
-async def test_plus_add_of_a_segment_the_edge_has_under_another_name_says_what_to_do():
+async def test_plus_add_of_a_segment_the_edge_has_under_another_name_says_what_to_do() -> (
+    None
+):
     state = _renamed_guest_state()
     patch: dict[str, object] = {"segments": {"+": add({"segment": {"name": "Guest"}})}}
     with pytest.raises(
@@ -1411,7 +1419,7 @@ async def test_plus_add_of_a_segment_the_edge_has_under_another_name_says_what_t
 
 
 @pytest.mark.asyncio
-async def test_delete_of_an_inherited_segment_says_what_to_do():
+async def test_delete_of_an_inherited_segment_says_what_to_do() -> None:
     state = make_raw_state()
     with pytest.raises(PatchError, match="no entry to delete") as exc:
         _ = await ConfigPipeline(client=None).apply(

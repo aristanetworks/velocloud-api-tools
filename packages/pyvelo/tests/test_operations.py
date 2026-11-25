@@ -57,7 +57,7 @@ UPDATE = "configuration/updateConfigurationModule"
 
 
 class TestUpdateConfigurationModuleErrors:
-    async def test_raises_on_error_field(self):
+    async def test_raises_on_error_field(self) -> None:
         """update_configuration_module should raise when result.error is set."""
         client = VcoClient("test.velocloud.net", "test-token")
 
@@ -69,7 +69,7 @@ class TestUpdateConfigurationModuleErrors:
         with pytest.raises(VcoOperationError, match="update configuration module"):
             _ = await client.update_configuration_module(AsyncMock())
 
-    async def test_success_returns_none(self):
+    async def test_success_returns_none(self) -> None:
         """update_configuration_module should return None on success."""
         client = VcoClient("test.velocloud.net", "test-token")
 
@@ -81,7 +81,7 @@ class TestUpdateConfigurationModuleErrors:
 
 
 class TestInsertConfigurationModuleErrors:
-    async def test_raises_on_error_field(self):
+    async def test_raises_on_error_field(self) -> None:
         """insert_configuration_module should raise when result.error is set."""
         client = VcoClient("test.velocloud.net", "test-token")
 
@@ -93,7 +93,7 @@ class TestInsertConfigurationModuleErrors:
         with pytest.raises(VcoOperationError, match="insert configuration module"):
             _ = await client.insert_configuration_module(AsyncMock())
 
-    async def test_success_returns_result(self):
+    async def test_success_returns_result(self) -> None:
         """insert_configuration_module should return the result on success."""
         client = VcoClient("test.velocloud.net", "test-token")
 
@@ -111,7 +111,7 @@ class TestGetConfiguration:
 
     async def test_edge_specific_profile_is_an_edge_configuration(
         self, mock_vco_client: MockVcoClientFactory
-    ):
+    ) -> None:
         store = ModuleStore()
         store.add_configuration({"id": 10, "name": "Edge Specific Profile"})
         client = await mock_vco_client(store)
@@ -122,7 +122,7 @@ class TestGetConfiguration:
 
     async def test_profile_name_is_a_profile_configuration(
         self, mock_vco_client: MockVcoClientFactory
-    ):
+    ) -> None:
         store = ModuleStore()
         store.add_configuration({"id": 20, "name": "Quick Start Profile"})
         client = await mock_vco_client(store)
@@ -198,7 +198,7 @@ class TestUpdateModule:
 
     async def test_sends_raw_payload_with_version(
         self, mock_vco_client: MockVcoClientFactory
-    ):
+    ) -> None:
         module = self._fw(
             {"segments": [], "future": 1}, layer=Edge, module_id=42, version="1700"
         )
@@ -233,7 +233,9 @@ class TestUpdateModule:
             )
         ]
 
-    async def test_no_change_sends_nothing(self, mock_vco_client: MockVcoClientFactory):
+    async def test_no_change_sends_nothing(
+        self, mock_vco_client: MockVcoClientFactory
+    ) -> None:
         module = self._fw({"segments": []}, layer=Edge)
         client, store = await self._make_client(mock_vco_client, module)
         _ = await client.update_module(module, module.mutable_data())
@@ -241,21 +243,22 @@ class TestUpdateModule:
 
     async def test_null_version_and_enterprise_are_omitted(
         self, mock_vco_client: MockVcoClientFactory
-    ):
+    ) -> None:
         module = self._fw({"segments": []}, layer=Edge, version=None)
         client, store = await self._make_client(mock_vco_client, module)
         data = module.mutable_data()
         data.firewall_enabled.set_local(False)
         _ = await client.update_module(module, data)
         (req,) = self._updates(store)
-        assert req.version is MISSING and req.enterprise_id is MISSING
+        assert req.version is MISSING
+        assert req.enterprise_id is MISSING
 
-    def test_update_module_has_no_refs_parameter(self):
+    def test_update_module_has_no_refs_parameter(self) -> None:
         parameters = inspect.signature(VcoClient.update_module).parameters
         assert "refs" not in parameters
         assert "resolvers" in parameters
 
-    async def test_update_module_passes_resolvers_to_the_plan(self):
+    async def test_update_module_passes_resolvers_to_the_plan(self) -> None:
         module = ds_module(
             [segment_entry(0, "Global Segment", SEG0, dns=dns(primary=True))],
             {"deviceSettings:segment": segment_row(0, SEG0_OBJECT, SEG0)},
@@ -288,7 +291,7 @@ class TestUpdateModule:
 
     async def test_profile_argument_reconciles_segments(
         self, mock_vco_client: MockVcoClientFactory
-    ):
+    ) -> None:
         seg = {
             "segment": {"segmentId": 2, "name": "Guest"},
             "outbound": [
@@ -308,13 +311,17 @@ class TestUpdateModule:
             {"segment": {"segmentId": 2, "name": "Guest"}, "outbound": []}
         ]
 
-    async def test_new_module_is_rejected(self, mock_vco_client: MockVcoClientFactory):
+    async def test_new_module_is_rejected(
+        self, mock_vco_client: MockVcoClientFactory
+    ) -> None:
         mod = new_edge_module(ConfigurationModuleName.FIREWALL, 10)
         client, _ = await self._make_client(mock_vco_client, mod)
         with pytest.raises(ValueError, match="insert"):
             _ = await client.update_module(mod, mod.data)
 
-    async def test_unsupported_type_raises(self, mock_vco_client: MockVcoClientFactory):
+    async def test_unsupported_type_raises(
+        self, mock_vco_client: MockVcoClientFactory
+    ) -> None:
         """update_module should raise TypeError for unsupported data types."""
         client, _store = await self._make_client(mock_vco_client)
         module = self._make_module()
@@ -323,14 +330,14 @@ class TestUpdateModule:
             _ = await client.update_module(
                 module,
                 cast(
-                    DeviceSettingsData | QosData[Edge] | WanData | FirewallData[Edge],
+                    "DeviceSettingsData | QosData[Edge] | WanData | FirewallData[Edge]",
                     object(),
                 ),
             )
 
 
 class TestDeleteEdgeErrors:
-    async def test_raises_on_error_field(self):
+    async def test_raises_on_error_field(self) -> None:
         """delete_edge should raise when result.error is set."""
         client = VcoClient("test.velocloud.net", "test-token")
 
@@ -342,7 +349,7 @@ class TestDeleteEdgeErrors:
         with pytest.raises(VcoOperationError, match="delete edge"):
             await client.delete_edge(AsyncMock())
 
-    async def test_success_returns_none(self):
+    async def test_success_returns_none(self) -> None:
         """delete_edge should return None on success."""
         client = VcoClient("test.velocloud.net", "test-token")
 

@@ -214,7 +214,7 @@ def missing_segments(
             continue
         seen.append(segment_id)  # a profile that repeats an id still gets one entry
         missing.append(
-            placeholder_segment(cast(Mapping[str, object], entry), module_name)
+            placeholder_segment(cast("Mapping[str, object]", entry), module_name)
         )
     return missing
 
@@ -427,8 +427,8 @@ def with_hub_rows(
     def held(name: str) -> list[dict[str, Any]]:
         value = refs.get(name)
         if is_list(value):
-            return [cast(dict[str, Any], row) for row in value]
-        return [] if value is None else [cast(dict[str, Any], value)]
+            return [cast("dict[str, Any]", row) for row in value]
+        return [] if value is None else [cast("dict[str, Any]", value)]
 
     for row in removed:
         name = str(row["ref"])
@@ -649,7 +649,7 @@ def read_data(
 
 
 def _segment_name(placeholder: Mapping[str, Any]) -> str:
-    descriptor = cast(Mapping[str, object], placeholder["segment"])
+    descriptor = cast("Mapping[str, object]", placeholder["segment"])
     name = descriptor.get("name")
     return name if isinstance(name, str) else str(descriptor.get("segmentId"))
 
@@ -703,7 +703,7 @@ def _with_reconciled_segments(
 
 def _plain_json(value: Mapping[str, object]) -> dict[str, Any]:
     """A new dict of *value* as the request would write it: plain JSON, sharing nothing with it."""
-    return cast(dict[str, Any], to_jsonable_python(dict(value), by_alias=True))
+    return cast("dict[str, Any]", to_jsonable_python(dict(value), by_alias=True))
 
 
 def _segment_names(data: object) -> dict[object, str]:
@@ -712,7 +712,7 @@ def _segment_names(data: object) -> dict[object, str]:
     if not is_list(segments):
         return {}
     return {
-        segment_id: _segment_name(cast(Mapping[str, Any], entry))
+        segment_id: _segment_name(cast("Mapping[str, Any]", entry))
         for entry in segments
         if (segment_id := segment_id_of(entry)) is not None
     }
@@ -844,7 +844,7 @@ def _check_hub_lists(module_name: str, as_read: object, payload: object) -> None
         before = read_by_id.get(segment_id_of(entry))
         if before is None:
             continue
-        name = _segment_name(cast(Mapping[str, Any], entry))
+        name = _segment_name(cast("Mapping[str, Any]", entry))
         for field in hub_list_fields():
             path = field.path
             read, written = _hub_list(before, path), _hub_list(entry, path)
@@ -902,13 +902,13 @@ def _defaults_findings(
     for entry in segments if is_list(segments) else []:
         if not is_dict(entry):
             continue
-        name = _segment_name(cast(Mapping[str, Any], entry))
+        name = _segment_name(cast("Mapping[str, Any]", entry))
         pairing = pair_defaults(entry.get("defaults", MISSING))
         if not pairing.missing:
             continue
         path = _defaults_path(name)
         if pairing.unknown or pairing.clash:
-            items = cast(list[Any], entry.get("defaults"))
+            items = cast("list[Any]", entry.get("defaults"))
             parts: list[str] = []
             if pairing.unknown:
                 known = [
@@ -1005,7 +1005,7 @@ def plan_module(
     name = str(_attribute(module, "name"))
     current = data if data is not None else _attribute(module, "data")
     if isinstance(current, Mapping):
-        current = _plain_json(cast(Mapping[str, object], current))
+        current = _plain_json(cast("Mapping[str, object]", current))
     if level is None and isinstance(current, VcoModel):
         level = current.config_context
     if level is None:  # a mapping, or a model built by hand, has no level of its own
@@ -1016,7 +1016,7 @@ def plan_module(
         payload = (
             wire_dump(current, level)
             if isinstance(current, VcoModel)
-            else cast(dict[str, Any], current)
+            else cast("dict[str, Any]", current)
         )
         model_type = type(current) if isinstance(current, VcoModel) else None
         drop_legacy_keys(payload, name)
@@ -1049,7 +1049,7 @@ def plan_module(
         after = wire_dump(current, level)
         carry_unset_defaults(baseline, current, before, after)
         payload = cast(
-            dict[str, Any],
+            "dict[str, Any]",
             copy.deepcopy(
                 rebase(
                     planned_from,
@@ -1066,10 +1066,10 @@ def plan_module(
     else:
         baseline = ref_baseline = None
         model_type = None
-        topped_up = dict(cast(Mapping[str, Any], current))
+        topped_up = dict(cast("Mapping[str, Any]", current))
         if extra:  # only for an object, so *reconciled* is one
             topped_up = _with_reconciled_segments(
-                topped_up, cast(dict[str, Any], reconciled), extra
+                topped_up, cast("dict[str, Any]", reconciled), extra
             )
         payload = copy.deepcopy(topped_up)
 
@@ -1157,7 +1157,7 @@ def plan_module(
                     else repaired_entry(
                         n,
                         module.defaults_rule_id(segment_id, n),
-                        conditional_backhaul.get(cast(int, segment_id))
+                        conditional_backhaul.get(cast("int", segment_id))
                         if conditional_backhaul is not None
                         else None,
                     )
@@ -1191,7 +1191,7 @@ def plan_module(
         and layered is not None
         and issubclass(layered, Layered)
     ):
-        held = payload if changed else cast(Mapping[str, object], raw)
+        held = payload if changed else cast("Mapping[str, object]", raw)
         flag_off = [
             _flag_off_warning(found) for found in unflagged_in_use_at(layered, held)
         ]
@@ -1199,7 +1199,7 @@ def plan_module(
     return ModulePlan(
         name=name,
         operation=operation,
-        data=payload if changed else copy.deepcopy(cast(dict[str, Any], raw)),
+        data=payload if changed else copy.deepcopy(cast("dict[str, Any]", raw)),
         refs=derived_refs if changed else None,
         changes=changes,
         reconciled_segments=tuple(
@@ -1250,11 +1250,11 @@ def _without_repairs(
             if not (is_dict(entry) and segment_id_of(entry) == missing.segment_id):
                 continue
             kept: list[object] = []
-            for rule in cast(list[object], entry.get("defaults", [])):
+            for rule in cast("list[object]", entry.get("defaults", [])):
                 name = rule.get("name") if is_dict(rule) else None
                 if is_dict(rule) and name in missing.names:
-                    carried[(str(missing.segment_id), cast(str, name))] = cast(
-                        dict[str, Any], rule
+                    carried[(str(missing.segment_id), cast("str", name))] = cast(
+                        "dict[str, Any]", rule
                     )
                 else:
                     kept.append(rule)

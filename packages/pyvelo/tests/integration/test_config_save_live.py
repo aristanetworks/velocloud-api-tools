@@ -141,7 +141,7 @@ def data_of(module: ConfigurationModuleBase) -> EditableData:
     data: object = getattr(module, "data", None)
     if not isinstance(data, DeviceSettingsData | WanData | QosData | FirewallData):
         pytest.fail(f"the data of a module is a {type(data).__name__}", pytrace=False)
-    return cast(EditableData, data)
+    return cast("EditableData", data)
 
 
 # ---------------------------------------------------------------------------

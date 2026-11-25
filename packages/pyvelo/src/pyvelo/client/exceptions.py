@@ -58,7 +58,7 @@ class VcoError(Exception):
         attributes = dict(self.__dict__)
         if "__notes__" in attributes:
             # A shallow copy must not add its notes to this error's list.
-            attributes["__notes__"] = list(cast(list[str], attributes["__notes__"]))
+            attributes["__notes__"] = list(cast("list[str]", attributes["__notes__"]))
         return (_rebuild_error, (type(self), self.args), attributes)
 
 
@@ -779,7 +779,7 @@ class ModuleWriteError(VcoError):
                 plan, edit
             ):
                 if is_added:
-                    added.append(selector_of(cast(Key, edit.path.parts[1])))
+                    added.append(selector_of(cast("Key", edit.path.parts[1])))
                 for change in _changes_below(plan, edit.path):
                     owner[id(change)] = edit
                     changes.append(change)
@@ -1047,7 +1047,7 @@ def _set_provider(
     object under its python name: ``merge_patch`` refuses both for one field.
     The segment's object is the one a data entry of the patch has, if any.
     """
-    owner = cast(Path, edits[0].owner)
+    owner = cast("Path", edits[0].owner)
     object_ids = [
         key.value[1]
         for edit in edits
@@ -1349,7 +1349,7 @@ class RefsDroppedError(WriteNotAppliedError):
                 "(null for a clear), for each field whose segment error.module has:"
             )
         for edit in _first(owners, limit):
-            owner = cast(Path, edit.owner)
+            owner = cast("Path", edit.owner)
             if edit.intended is MISSING:
                 lines.append(
                     f"  to clear {owner} again, send the patch "
@@ -1546,13 +1546,13 @@ def _lists_precondition(data: object) -> bool:
     """Whether the ``data`` of a JSON-RPC error lists an ``error[]`` entry with the code ``PRECONDITION_FAILED``."""
     if not isinstance(data, Mapping):
         return False
-    entries = cast(Mapping[str, object], data).get("error")
+    entries = cast("Mapping[str, object]", data).get("error")
     if not isinstance(entries, list):
         return False
     return any(
         isinstance(entry, Mapping)
-        and cast(Mapping[str, object], entry).get("code") == PRECONDITION_FAILED
-        for entry in cast(list[object], entries)
+        and cast("Mapping[str, object]", entry).get("code") == PRECONDITION_FAILED
+        for entry in cast("list[object]", entries)
     )
 
 
@@ -1563,7 +1563,7 @@ def is_precondition_failure(error: VcoOperationError) -> bool:
     not the module's current one with a ``validationError`` whose data lists an
     error with the code ``PRECONDITION_FAILED``, and writes nothing.
     """
-    return _lists_precondition(cast(object, error.data))
+    return _lists_precondition(cast("object", error.data))
 
 
 def is_precondition_answer(text: str) -> bool:
@@ -1575,15 +1575,15 @@ def is_precondition_answer(text: str) -> bool:
     object whose data lists the code.
     """
     try:
-        answer = cast(object, json.loads(text))
+        answer = cast("object", json.loads(text))
     except ValueError:
         return False
     if not isinstance(answer, Mapping):
         return False
-    error = cast(Mapping[str, object], answer).get("error")
+    error = cast("Mapping[str, object]", answer).get("error")
     if not isinstance(error, Mapping):
         return False
-    return _lists_precondition(cast(Mapping[str, object], error).get("data"))
+    return _lists_precondition(cast("Mapping[str, object]", error).get("data"))
 
 
 def is_version_conflict(*, error: str | None, rows: int | None) -> bool:

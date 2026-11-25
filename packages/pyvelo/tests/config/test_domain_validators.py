@@ -77,7 +77,7 @@ def _make_state(modules: list[AnyConfigurationModule[Profile]]) -> ConfigState:
 
 
 class TestOverlappingSubnets:
-    def test_non_overlapping_passes(self):
+    def test_non_overlapping_passes(self) -> None:
         """Non-overlapping subnets in same segment should pass."""
         ds_mod = DeviceSettingsConfigurationModule(
             name="deviceSettings",
@@ -109,7 +109,7 @@ class TestOverlappingSubnets:
         result = validate_no_overlapping_subnets.validate(state)
         assert result.is_valid
 
-    def test_overlapping_detected(self):
+    def test_overlapping_detected(self) -> None:
         """Overlapping subnets in same segment should be flagged."""
         ds_mod = DeviceSettingsConfigurationModule(
             name="deviceSettings",
@@ -142,7 +142,7 @@ class TestOverlappingSubnets:
         assert not result.is_valid
         assert any("overlaps" in e.message for e in result.errors)
 
-    def test_different_segments_no_overlap(self):
+    def test_different_segments_no_overlap(self) -> None:
         """Same subnet in different segments should not be flagged."""
         ds_mod = DeviceSettingsConfigurationModule(
             name="deviceSettings",
@@ -177,7 +177,7 @@ class TestOverlappingSubnets:
         result = validate_no_overlapping_subnets.validate(state)
         assert result.is_valid
 
-    def test_no_device_settings_module(self):
+    def test_no_device_settings_module(self) -> None:
         """No errors when deviceSettings module is absent."""
         state = _make_state([])
         result = validate_no_overlapping_subnets.validate(state)
@@ -185,7 +185,7 @@ class TestOverlappingSubnets:
 
 
 class TestRuleNamesUnique:
-    def test_unique_rule_names_pass(self):
+    def test_unique_rule_names_pass(self) -> None:
         """Unique rule names should pass."""
         fw_mod = FirewallConfigurationModule[Profile](
             name="firewall",
@@ -219,7 +219,7 @@ class TestRuleNamesUnique:
         result = validate_rule_names_unique.validate(state)
         assert result.is_valid
 
-    def test_duplicate_firewall_rule_names(self):
+    def test_duplicate_firewall_rule_names(self) -> None:
         """Duplicate firewall rule names should be flagged."""
         fw_mod = FirewallConfigurationModule[Profile](
             name="firewall",
@@ -254,7 +254,7 @@ class TestRuleNamesUnique:
         assert not result.is_valid
         assert any("Duplicate rule name" in e.message for e in result.errors)
 
-    def test_no_modules(self):
+    def test_no_modules(self) -> None:
         """No errors when modules are absent."""
         state = _make_state([])
         result = validate_rule_names_unique.validate(state)
@@ -262,7 +262,7 @@ class TestRuleNamesUnique:
 
 
 class TestInterfaceFirewallConsistency:
-    def test_no_errors_without_both_modules(self):
+    def test_no_errors_without_both_modules(self) -> None:
         """No errors when not both modules present."""
         state = _make_state([])
         result = validate_interface_firewall_consistency.validate(state)

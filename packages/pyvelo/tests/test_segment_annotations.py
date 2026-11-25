@@ -20,61 +20,61 @@ from pyvelo.core.fields import get_key_spec, has_override_flag
 
 
 class TestSegmentOverrideFlags:
-    def test_bfd(self):
+    def test_bfd(self) -> None:
         assert has_override_flag(SegmentBfd.model_fields["override"])
 
-    def test_edge_direct(self):
+    def test_edge_direct(self) -> None:
         assert has_override_flag(SegmentEdgeDirect.model_fields["override"])
 
-    def test_handoff_gateways(self):
+    def test_handoff_gateways(self) -> None:
         assert has_override_flag(SegmentHandoffGateways.model_fields["override"])
 
-    def test_multicast(self):
+    def test_multicast(self) -> None:
         assert has_override_flag(SegmentMulticast.model_fields["override"])
 
-    def test_nat(self):
+    def test_nat(self) -> None:
         assert has_override_flag(SegmentNat.model_fields["override"])
 
-    def test_netflow(self):
+    def test_netflow(self) -> None:
         assert has_override_flag(SegmentNetflow.model_fields["override"])
 
-    def test_syslog(self):
+    def test_syslog(self) -> None:
         assert has_override_flag(SegmentSyslog.model_fields["override"])
 
-    def test_dns(self):
+    def test_dns(self) -> None:
         assert has_override_flag(SegmentDns.model_fields["override"])
 
-    def test_css(self):
+    def test_css(self) -> None:
         assert has_override_flag(SegmentCss.model_fields["override"])
 
-    def test_ecmp(self):
+    def test_ecmp(self) -> None:
         assert has_override_flag(SegmentEcmp.model_fields["override"])
 
-    def test_bgp(self):
+    def test_bgp(self) -> None:
         assert has_override_flag(SegmentBgp.model_fields["override"])
 
-    def test_css_default_is_false(self):
+    def test_css_default_is_false(self) -> None:
         css = SegmentCss.model_validate({})
         assert css.override is False
 
 
 class TestSegmentKeyFields:
-    def test_bgp_neighbors(self):
+    def test_bgp_neighbors(self) -> None:
         assert get_key_spec(BgpBase.model_fields["neighbors"]) == KeySpec(
             ("neighbor_ip",), alt="id_"
         )
 
-    def test_bgp_filters(self):
+    def test_bgp_filters(self) -> None:
         assert get_key_spec(BgpBase.model_fields["filters"]) == KeySpec(
             ("name",), alt="id_"
         )
 
-    def test_icmp_probes(self):
+    def test_icmp_probes(self) -> None:
         assert get_key_spec(SegmentRoutes.model_fields["icmp_probes"]) == KeySpec(
             ("name",), alt="logical_id"
         )
 
-    def test_icmp_responders(self):
+    def test_icmp_responders(self) -> None:
         assert get_key_spec(SegmentRoutes.model_fields["icmp_responders"]) == KeySpec(
             ("name",), alt="logical_id"
         )

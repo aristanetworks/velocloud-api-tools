@@ -65,9 +65,12 @@ def _bound(
 
 def test_by_presence_counts_false_zero_and_empty_as_local() -> None:
     e = _edge(enabled=False, level=0, settings={})
-    assert e.enabled.is_local and e.enabled.local is False
-    assert e.level.is_local and e.level.local == 0
-    assert e.settings.is_local and e.settings.local == Settings()
+    assert e.enabled.is_local
+    assert e.enabled.local is False
+    assert e.level.is_local
+    assert e.level.local == 0
+    assert e.settings.is_local
+    assert e.settings.local == Settings()
     for name in ("enabled", "level", "settings"):
         assert getattr(_edge(**{name: None}), name).is_local is False
         assert getattr(_edge(), name).is_local is False
@@ -648,7 +651,7 @@ class _IdMod(Layered[L]):
     )
 
 
-def test_localize_clears_server_owned_fields_at_every_depth():
+def test_localize_clears_server_owned_fields_at_every_depth() -> None:
     profile = _IdMod[Profile].model_validate(
         {
             "segments": [],
@@ -677,7 +680,7 @@ def test_localize_clears_server_owned_fields_at_every_depth():
     assert profile.holder.items[0].counter == 9
 
 
-def test_clear_server_owned_changes_the_model_in_place():
+def test_clear_server_owned_changes_the_model_in_place() -> None:
     from pyvelo.core.owned import clear_server_owned
 
     item = _Item(name="a", rule_id="1")
@@ -717,7 +720,7 @@ def test_clear_server_owned_reads_the_kind_and_walks_into_owned() -> None:
     assert instance.note.stored.rule_logical_id is MISSING
 
 
-def test_an_owned_is_not_a_condition():
+def test_an_owned_is_not_a_condition() -> None:
     owned = Owned(True)
     with pytest.raises(TypeError, match=r"\.local.*\.stored.*\.is_local") as caught:
         bool(owned)
@@ -728,7 +731,7 @@ def test_an_owned_is_not_a_condition():
             pass
 
 
-def test_an_owned_equals_only_an_owned():
+def test_an_owned_equals_only_an_owned() -> None:
     assert (Owned(True) == True) is False
     assert Owned(True) == Owned(True)
 

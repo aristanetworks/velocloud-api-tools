@@ -101,7 +101,7 @@ def _held_segment_ids(module: AnyStoredModule) -> set[int]:
         return set()
     return {
         item.segment.segment_id
-        for item in cast(list[Any], segments)
+        for item in cast("list[Any]", segments)
         if getattr(item, "segment", None) is not None
     }
 
@@ -530,7 +530,7 @@ class _SegmentReader:
         entries = raw.get("segments") if is_dict(raw) else None
         return next(
             (
-                cast(Mapping[str, Any], entry)
+                cast("Mapping[str, Any]", entry)
                 for entry in (entries if is_list(entries) else [])
                 if segment_id_of(entry) == identity.segment_id
             ),

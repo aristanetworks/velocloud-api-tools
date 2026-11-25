@@ -35,7 +35,7 @@ def all_subclasses(cls: type) -> set[type]:
     return found
 
 
-def test_every_error_of_the_module_round_trips():
+def test_every_error_of_the_module_round_trips() -> None:
     errors: list[Exception] = [
         IntentError("plain"),
         ConfigInputError("bad input"),
@@ -67,7 +67,7 @@ def test_every_error_of_the_module_round_trips():
             assert copied.__notes__ == ["a note"]
 
 
-def test_the_attributes_of_the_save_errors_are_kept():
+def test_the_attributes_of_the_save_errors_are_kept() -> None:
     invalid = SaveValidationError([ValidationError("a.b", "too long", "too_long")])
     layer = LayerNotSavedError("edge", "profile", {"qos": ["rate", "burst"]})
     for copied in copies(invalid):
@@ -78,7 +78,7 @@ def test_the_attributes_of_the_save_errors_are_kept():
         assert (copied.layer, copied.fields) == ("edge", {"qos": ["rate", "burst"]})
 
 
-def test_the_attributes_of_a_save_step_error_are_kept():
+def test_the_attributes_of_a_save_step_error_are_kept() -> None:
     failed, done, in_place = a_step(), a_step("disable", "Hub-B"), a_step("enable", "C")
     error = SaveStepError(
         "VcoOperationError: boom",
@@ -97,14 +97,14 @@ def test_the_attributes_of_a_save_step_error_are_kept():
         assert str(copied) == str(error)
 
 
-def test_an_attribute_that_refers_back_to_the_error_survives():
+def test_an_attribute_that_refers_back_to_the_error_survives() -> None:
     error = ConfigInputError("bad")
     error.me = error  # pyright: ignore[reportAttributeAccessIssue]
     for copied in copies(error)[::2]:
         assert copied.me is copied
 
 
-def test_a_copy_does_not_share_the_error_s_notes():
+def test_a_copy_does_not_share_the_error_s_notes() -> None:
     error = ConfigInputError("bad")
     error.add_note("one")
     shallow = copy.copy(error)

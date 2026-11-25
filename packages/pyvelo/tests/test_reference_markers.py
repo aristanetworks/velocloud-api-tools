@@ -86,7 +86,7 @@ def _fields(
             todo.extend(field_models(field_info))
 
 
-def test_every_refers_to_names_a_set_some_provides_declares():
+def test_every_refers_to_names_a_set_some_provides_declares() -> None:
     provided = {p.name for _, _, fi in _fields() if (p := get_provides(fi)) is not None}
     referred = {
         r.name for _, _, fi in _fields() if (r := get_refers_to(fi)) is not None
@@ -95,7 +95,7 @@ def test_every_refers_to_names_a_set_some_provides_declares():
     assert provided == referred == {"segment", "backhaul_hub"}
 
 
-def test_per_segment_agrees_on_both_sides():
+def test_per_segment_agrees_on_both_sides() -> None:
     per_segment: dict[str, set[bool]] = {}
     for _, _, fi in _fields():
         if (provides := get_provides(fi)) is not None:
@@ -105,7 +105,7 @@ def test_per_segment_agrees_on_both_sides():
     assert per_segment == {"segment": {False}, "backhaul_hub": {True}}
 
 
-def test_the_declared_references():
+def test_the_declared_references() -> None:
     found = {
         f"{cls.__name__}.{name}": refers
         for cls, name, fi in _fields()
@@ -126,7 +126,7 @@ def test_the_declared_references():
         )
 
 
-def test_the_declared_providers():
+def test_the_declared_providers() -> None:
     found = {
         f"{cls.__name__}.{name}": provides
         for cls, name, fi in _fields()
@@ -140,7 +140,7 @@ def test_the_declared_providers():
     }
 
 
-def test_a_provides_key_names_a_field_of_the_items():
+def test_a_provides_key_names_a_field_of_the_items() -> None:
     for cls, name, fi in _fields():
         if (provides := get_provides(fi)) is None:
             continue
@@ -151,7 +151,7 @@ def test_a_provides_key_names_a_field_of_the_items():
         assert leaf in item.model_fields, f"{cls.__name__}.{name}"
 
 
-def test_the_hub_roles():
+def test_the_hub_roles() -> None:
     found = {
         f"{cls.__name__}.{name}": role.role
         for cls, name, fi in _fields((DeviceSettingsData,))
@@ -165,7 +165,7 @@ def test_the_hub_roles():
     assert HubRole("hub") == get_hub_role(EdgeToEdgeHub.model_fields["vpn_hubs"])
 
 
-def test_the_hub_list_fields_are_the_marked_fields_with_their_wire_paths():
+def test_the_hub_list_fields_are_the_marked_fields_with_their_wire_paths() -> None:
     from pyvelo.client.hub_services import hub_list_fields
 
     marked = [
@@ -182,7 +182,7 @@ def test_the_hub_list_fields_are_the_marked_fields_with_their_wire_paths():
     assert len(hub_list_fields()) == len(marked)
 
 
-def test_the_hub_lists_are_keyed_by_logical_id_and_labelled_by_name():
+def test_the_hub_lists_are_keyed_by_logical_id_and_labelled_by_name() -> None:
     for model, name in (
         (EdgeToEdgeHub, "vpn_hubs"),
         (EdgeToEdgeDetail, "vpn_hubs"),
@@ -196,7 +196,7 @@ def test_the_hub_lists_are_keyed_by_logical_id_and_labelled_by_name():
     )
 
 
-def test_a_hub_list_and_a_backhaul_entry_round_trip():
+def test_a_hub_list_and_a_backhaul_entry_round_trip() -> None:
     entry = ds_with_vpn(
         GLOBAL, hubs=(HUB_A,), bridges=(HUB_B,), backhaul=(CLUSTER,), edge_to_edge=True
     )
@@ -218,14 +218,14 @@ def test_a_hub_list_and_a_backhaul_entry_round_trip():
     ]
 
 
-def test_a_backhaul_entry_without_edge_id_dumps_without_it():
+def test_a_backhaul_entry_without_edge_id_dumps_without_it() -> None:
     entry = backhaul_entry(HUB_A, "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")
     del entry["edgeId"]
     parsed = BackhaulEdge.model_validate(entry)
     assert parsed.model_dump(by_alias=True, mode="json") == entry
 
 
-def test_a_backhaul_entry_without_edge_logical_id_round_trips_unchanged():
+def test_a_backhaul_entry_without_edge_logical_id_round_trips_unchanged() -> None:
     entry = backhaul_entry(HUB_A, "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")
     del entry["edgeLogicalId"]
     del entry["edgeId"]
@@ -234,7 +234,7 @@ def test_a_backhaul_entry_without_edge_logical_id_round_trips_unchanged():
     assert parsed.model_dump(by_alias=True, mode="json") == entry
 
 
-def test_the_alt_key_selects_a_backhaul_entry_by_its_service():
+def test_the_alt_key_selects_a_backhaul_entry_by_its_service() -> None:
     service = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
     other = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
     route = RouteConfig.model_validate(
@@ -251,7 +251,7 @@ def test_the_alt_key_selects_a_backhaul_entry_by_its_service():
     ]
 
 
-def test_the_hub_lists_take_an_added_entry_by_name_key():
+def test_the_hub_lists_take_an_added_entry_by_name_key() -> None:
     vpn = SegmentVpn.model_validate(ds_with_vpn(GLOBAL, hubs=(HUB_A,))["vpn"])
     vpn.merge_patch({"hub_edges": {"vpn_hubs": {HUB_A.logical_id: delete()}}})
     assert vpn.hub_edges.vpn_hubs == []
@@ -262,7 +262,7 @@ def test_the_hub_lists_take_an_added_entry_by_name_key():
     ]
 
 
-def test_resolvable_attrs_exist():
+def test_resolvable_attrs_exist() -> None:
     # The Resolvable checks run at class creation: importing the models above did not raise.
     for model, name, attribute in (
         (VpnHub, "type_", "type_"),
@@ -302,6 +302,6 @@ def test_resolvable_attrs_exist():
     assert HubLogicalId.identity_type is HubIdentity
 
 
-def test_the_markers_are_frozen():
+def test_the_markers_are_frozen() -> None:
     with pytest.raises(dataclasses.FrozenInstanceError):
         HubRole("hub").role = "bridge"  # pyright: ignore[reportAttributeAccessIssue]

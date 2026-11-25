@@ -58,7 +58,7 @@ def objects(*extra: dict[str, Any], group: Mapping[str, Any] | None = None):
     )
 
 
-def test_the_constants_name_the_keys_and_the_types_read():
+def test_the_constants_name_the_keys_and_the_types_read() -> None:
     assert SYNTHETIC_RULE_KEYS == (
         "atp_action",
         "urlCategoryFiltering",
@@ -72,7 +72,7 @@ def test_the_constants_name_the_keys_and_the_types_read():
     )
 
 
-def test_the_url_filters_are_the_named_objects_data():
+def test_the_url_filters_are_the_named_objects_data() -> None:
     expected = expected_rule_keys(GROUP, objects())
 
     assert expected.unresolved == frozenset()
@@ -80,7 +80,7 @@ def test_the_url_filters_are_the_named_objects_data():
     assert expected.values["urlReputationFiltering"] == REPUTATION_DATA
 
 
-def test_atp_action_follows_the_named_idps_object():
+def test_atp_action_follows_the_named_idps_object() -> None:
     expected = expected_rule_keys(GROUP, objects())
     assert expected.values["atp_action"] == {
         "atp_enabled": True,
@@ -108,13 +108,13 @@ def test_atp_action_follows_the_named_idps_object():
     }
 
 
-def test_the_group_is_found_by_its_logical_id_in_any_case():
+def test_the_group_is_found_by_its_logical_id_in_any_case() -> None:
     expected = expected_rule_keys(GROUP.upper(), objects())
     assert expected.unresolved == frozenset()
     assert set(expected.values) == set(SYNTHETIC_RULE_KEYS)
 
 
-def test_a_group_without_a_kind_expects_no_key_for_it():
+def test_a_group_without_a_kind_expects_no_key_for_it() -> None:
     only_urls = objects(group={"urlCategoryFiltering": {"id": 7}})
     expected = expected_rule_keys(GROUP, only_urls)
 
@@ -122,7 +122,7 @@ def test_a_group_without_a_kind_expects_no_key_for_it():
     assert set(expected.values) == {"urlCategoryFiltering"}
 
 
-def test_a_malicious_ip_object_the_group_names_expects_no_key():
+def test_a_malicious_ip_object_the_group_names_expects_no_key() -> None:
     named = objects(
         row("maliciousIpFiltering", 5, "c3", {"anything": 1}),
         group={"maliciousIpFiltering": {"id": 5}},
@@ -132,7 +132,7 @@ def test_a_malicious_ip_object_the_group_names_expects_no_key():
     assert expected.unresolved == frozenset()
 
 
-def test_an_unknown_group_or_object_is_unresolved_with_its_reason():
+def test_an_unknown_group_or_object_is_unresolved_with_its_reason() -> None:
     unknown_group = expected_rule_keys(
         "00000000-0000-4000-8000-000000000000", objects()
     )
@@ -161,7 +161,7 @@ def rule_dump(*segments: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def test_a_rule_is_found_at_the_path_the_effective_dump_gives_its_segment():
+def test_a_rule_is_found_at_the_path_the_effective_dump_gives_its_segment() -> None:
     dump = rule_dump(
         {"segmentId": 0, "name": "Global Segment"},
         {"segmentId": 3, "name": "Guest"},
@@ -176,7 +176,7 @@ def test_a_rule_is_found_at_the_path_the_effective_dump_gives_its_segment():
     ]
 
 
-def test_the_objects_are_looked_up_by_type_and_id():
+def test_the_objects_are_looked_up_by_type_and_id() -> None:
     found = objects()
     assert found.group(GROUP) is not None
     assert found.group("00000000-0000-4000-8000-000000000000") is None

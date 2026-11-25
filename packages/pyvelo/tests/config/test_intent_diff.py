@@ -29,12 +29,12 @@ class Nested(BaseModel):
 
 
 class TestEmptyLists:
-    def test_both_empty(self):
+    def test_both_empty(self) -> None:
         result = diff_intents([], [], "name")
         assert result.changes == []
         assert not result.has_changes
 
-    def test_current_empty(self):
+    def test_current_empty(self) -> None:
         desired = [Item(name="a", value=1)]
         result = diff_intents([], desired, "name")
         assert len(result.added) == 1
@@ -42,7 +42,7 @@ class TestEmptyLists:
         assert result.added[0].item == desired[0]
         assert result.has_changes
 
-    def test_desired_empty(self):
+    def test_desired_empty(self) -> None:
         current = [Item(name="a", value=1)]
         result = diff_intents(current, [], "name")
         assert len(result.removed) == 1
@@ -55,7 +55,7 @@ class TestEmptyLists:
 
 
 class TestChangeTypes:
-    def test_added(self):
+    def test_added(self) -> None:
         desired = [Item(name="new", value=42)]
         result = diff_intents([], desired, "name")
         assert len(result.changes) == 1
@@ -63,7 +63,7 @@ class TestChangeTypes:
         assert isinstance(added, Added)
         assert added.key == "new"
 
-    def test_removed(self):
+    def test_removed(self) -> None:
         current = [Item(name="old", value=1)]
         result = diff_intents(current, [], "name")
         assert len(result.changes) == 1
@@ -71,14 +71,14 @@ class TestChangeTypes:
         assert isinstance(removed, Removed)
         assert removed.key == "old"
 
-    def test_unchanged(self):
+    def test_unchanged(self) -> None:
         item = Item(name="same", value=5, tag="x")
         result = diff_intents([item], [Item(name="same", value=5, tag="x")], "name")
         assert len(result.changes) == 1
         assert isinstance(result.unchanged[0], Unchanged)
         assert not result.has_changes
 
-    def test_modified_single_field(self):
+    def test_modified_single_field(self) -> None:
         current = [Item(name="a", value=1)]
         desired = [Item(name="a", value=2)]
         result = diff_intents(current, desired, "name")
@@ -90,7 +90,7 @@ class TestChangeTypes:
         assert len(mod.changes) == 1
         assert mod.changes[0] == FieldChange(path="value", current=1, desired=2)
 
-    def test_modified_multiple_fields(self):
+    def test_modified_multiple_fields(self) -> None:
         current = [Item(name="a", value=1, tag="old")]
         desired = [Item(name="a", value=2, tag="new")]
         result = diff_intents(current, desired, "name")
@@ -104,7 +104,7 @@ class TestChangeTypes:
 
 
 class TestNestedDiff:
-    def test_nested_field_change(self):
+    def test_nested_field_change(self) -> None:
         current = [Nested(name="n", inner=Item(name="x", value=1))]
         desired = [Nested(name="n", inner=Item(name="x", value=2))]
         result = diff_intents(current, desired, "name")
@@ -112,7 +112,7 @@ class TestNestedDiff:
         assert len(mod.changes) == 1
         assert mod.changes[0] == FieldChange(path="inner.value", current=1, desired=2)
 
-    def test_nested_multiple_changes(self):
+    def test_nested_multiple_changes(self) -> None:
         current = [Nested(name="n", inner=Item(name="x", value=1, tag="a"))]
         desired = [Nested(name="n", inner=Item(name="y", value=2, tag="a"))]
         result = diff_intents(current, desired, "name")
@@ -120,7 +120,7 @@ class TestNestedDiff:
         paths = {c.path for c in mod.changes}
         assert paths == {"inner.name", "inner.value"}
 
-    def test_nested_unchanged(self):
+    def test_nested_unchanged(self) -> None:
         item = Nested(name="n", inner=Item(name="x", value=1))
         result = diff_intents(
             [item], [Nested(name="n", inner=Item(name="x", value=1))], "name"
@@ -132,7 +132,7 @@ class TestNestedDiff:
 
 
 class TestMixedChanges:
-    def test_mixed(self):
+    def test_mixed(self) -> None:
         current = [
             Item(name="keep", value=1),
             Item(name="change", value=1),
@@ -159,7 +159,7 @@ class TestMixedChanges:
 
 
 class TestDiffResult:
-    def test_all_unchanged(self):
+    def test_all_unchanged(self) -> None:
         items = [Item(name="a", value=1), Item(name="b", value=2)]
         result = diff_intents(
             items, [Item(name="a", value=1), Item(name="b", value=2)], "name"
@@ -170,7 +170,7 @@ class TestDiffResult:
         assert result.removed == []
         assert result.modified == []
 
-    def test_empty_result(self):
+    def test_empty_result(self) -> None:
         result = DiffResult(changes=[])
         assert not result.has_changes
         assert result.added == []
@@ -183,7 +183,7 @@ class TestDiffResult:
 
 
 class TestIntegerKeyField:
-    def test_integer_key(self):
+    def test_integer_key(self) -> None:
         current = [Item(name="a", value=1), Item(name="b", value=2)]
         desired = [Item(name="a", value=1), Item(name="c", value=3)]
         result = diff_intents(current, desired, "value")
@@ -196,7 +196,7 @@ class TestIntegerKeyField:
 
 
 class TestSharedKeys:
-    def test_items_that_share_a_key_are_refused(self):
+    def test_items_that_share_a_key_are_refused(self) -> None:
         current = [Item(name="web", value=80)]
         desired = [
             Item(name="web", value=8080),

@@ -32,7 +32,7 @@ def test_the_typing_cases_module_imports() -> None:
     assert callable(_cases)
 
 
-def test_a_state_view_gives_the_data_of_its_layer():
+def test_a_state_view_gives_the_data_of_its_layer() -> None:
     state = make_state()
     assert type(state.edge.firewall) is FirewallData[Edge]
     assert type(state.profile.firewall) is FirewallData[Profile]
@@ -42,7 +42,7 @@ def test_a_state_view_gives_the_data_of_its_layer():
     assert type(state.profile.qos) is QosData[Profile]
 
 
-def test_the_test_builders_take_the_layer_they_build():
+def test_the_test_builders_take_the_layer_they_build() -> None:
     edge = make_firewall_module(mod_id=1, config_id=10)
     profile = make_firewall_module(mod_id=2, config_id=20, layer=Profile)
     assert type(edge) is FirewallConfigurationModule[Edge]

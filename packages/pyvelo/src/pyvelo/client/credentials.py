@@ -28,7 +28,7 @@ def get_vco_credentials(env_file: str | Path | None = None) -> tuple[str, str]:
         except ModuleNotFoundError as exc:
             raise ModuleNotFoundError(
                 "Loading an env file requires python-dotenv; install it with: "
-                + "pip install 'pyvelo[dotenv]'",
+                "pip install 'pyvelo[dotenv]'",
                 name="dotenv",
             ) from exc
         path = Path(env_file)

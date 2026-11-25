@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import datetime as _dt
+import datetime as dt
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, Protocol
 
@@ -22,7 +22,7 @@ from pyvelo.client.schemas.diagnostic_bundles import (
 if TYPE_CHECKING:
     from pyvelo.client._client_protocol import VcoClientBaseProtocol
 
-_MIN_TS = _dt.datetime.min.replace(tzinfo=_dt.UTC)
+_MIN_TS = dt.datetime.min.replace(tzinfo=dt.UTC)
 
 
 class DiagnosticBundlesMixin(Protocol):

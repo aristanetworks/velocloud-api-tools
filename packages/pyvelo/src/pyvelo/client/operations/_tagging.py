@@ -44,7 +44,7 @@ def domain_tag[F: Callable[..., object]](*tags: str) -> Callable[[F], F]:
     """
 
     def decorator(fn: F) -> F:
-        cast(_Tagged, fn).__pyvelo_domain_tags__ = set(tags)
+        cast("_Tagged", fn).__pyvelo_domain_tags__ = set(tags)
         return fn
 
     return decorator
@@ -52,4 +52,4 @@ def domain_tag[F: Callable[..., object]](*tags: str) -> Callable[[F], F]:
 
 def get_domain_tags(fn: Callable[..., object]) -> set[str] | None:
     """Read domain tags from a decorated function, or None if untagged."""
-    return cast(set[str] | None, getattr(fn, "__pyvelo_domain_tags__", None))
+    return cast("set[str] | None", getattr(fn, "__pyvelo_domain_tags__", None))

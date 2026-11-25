@@ -32,7 +32,7 @@ patch
 
 from __future__ import annotations
 
-import datetime
+import datetime as dt
 import functools
 import sys
 import types
@@ -423,11 +423,11 @@ def _raise_detached(model: VcoModel, name: str) -> Never:
 
     raise DetachedObjectError(
         f"{type(model).__name__}.{name}: this object was replaced by a write; "
-        + "take it again from the module as stored "
-        + "(after a save: state.edge.<module> or state.profile.<module>; "
-        + "after update_module: the module it returned, "
-        + "or error.module after a write error), "
-        + "or put a deep copy of it there (copy.deepcopy)"
+        "take it again from the module as stored "
+        "(after a save: state.edge.<module> or state.profile.<module>; "
+        "after update_module: the module it returned, "
+        "or error.module after a write error), "
+        "or put a deep copy of it there (copy.deepcopy)"
     )
 
 
@@ -1256,7 +1256,9 @@ class ContextFieldInfo:
 class ContextView:
     """Attribute-access proxy for context-specific field metadata."""
 
-    def __init__(self, model_cls: type[VcoModel], config_context: ConfigContext):
+    def __init__(
+        self, model_cls: type[VcoModel], config_context: ConfigContext
+    ) -> None:
         self._model_cls: type[VcoModel] = model_cls
         self._context: ConfigContext = config_context
         self._cache: dict[str, ContextFieldInfo] = {}
@@ -1333,7 +1335,7 @@ class PaginatedVcoModel(VcoModel):
 class JsonRpcRequest[ParamsT](VcoModel):
     jsonrpc: Literal["2.0"] = Field(default="2.0")
     id_: Annotated[int | str | None, Alias("id")] = Field(
-        default_factory=lambda: int(1000 * datetime.datetime.now().timestamp())
+        default_factory=lambda: int(1000 * dt.datetime.now().timestamp())
     )
     method: str
     params: ParamsT | None = Field(default=None)
@@ -1476,7 +1478,7 @@ class Tinyint(IntEnum):
     ONE = 1
 
 
-_EPOCH = datetime.datetime.fromtimestamp(0, datetime.UTC)
+_EPOCH = dt.datetime.fromtimestamp(0, dt.UTC)
 
 
 def check_time_is_never(timestamp: object) -> object:
@@ -1492,9 +1494,7 @@ def check_time_is_never(timestamp: object) -> object:
         timezone_name = timezone_label[:-1] if timezone_label.endswith(")") else ""
         if separator and timezone_name.replace("_", "").isalnum():
             try:
-                return datetime.datetime.strptime(
-                    date_part, "%a %b %d %Y %H:%M:%S GMT%z"
-                )
+                return dt.datetime.strptime(date_part, "%a %b %d %Y %H:%M:%S GMT%z")
             except ValueError:
                 pass
 

@@ -40,7 +40,7 @@ from pyvelo.core.fields import (
 )
 from pyvelo.core.identity import HubIdentity, NetworkServiceIdentity, SegmentIdentity
 
-from ..common import SegmentMetadata
+from pyvelo.client.models.configuration.common import SegmentMetadata
 from .common import (
     AdvertiseDefaultRoutes,
     AdvertiseDefaultRoutesMethod,

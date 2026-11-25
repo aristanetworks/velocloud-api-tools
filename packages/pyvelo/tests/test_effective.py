@@ -355,7 +355,7 @@ def test_a_value_localized_from_a_display_default_still_saves_as_before() -> Non
     assert saved == {"a": 1, "b": False}
 
 
-def test_a_resolved_is_not_a_condition():
+def test_a_resolved_is_not_a_condition() -> None:
     resolved = Resolved(Origin.EDGE, True, "enabled")
     with pytest.raises(TypeError, match=r"\.value"):
         bool(resolved)

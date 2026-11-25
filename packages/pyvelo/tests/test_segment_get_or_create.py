@@ -63,21 +63,22 @@ def edge_fw() -> FirewallData[Edge]:
     )
 
 
-def test_existing_segment_is_returned_without_binding():
+def test_existing_segment_is_returned_without_binding() -> None:
     fw = edge_fw()
     assert fw.segment("Global Segment") is fw.segments[0]
 
 
-def test_unbound_missing_segment_raises():
+def test_unbound_missing_segment_raises() -> None:
     with pytest.raises(UnboundError, match="Guest"):
         edge_fw().segment("Guest")
 
 
-def test_placeholder_is_created_once_and_inherits_everything():
+def test_placeholder_is_created_once_and_inherits_everything() -> None:
     fw = edge_fw()
     fw.bind_profile(PROFILE)
     guest = fw.segment("Guest")
-    assert fw.segment("Guest") is guest and fw.segments[-1] is guest
+    assert fw.segment("Guest") is guest
+    assert fw.segments[-1] is guest
     assert (guest.segment.segment_id, guest.outbound) == (2, [])
     assert guest.config_context is ConfigContext.EDGE
     with pytest.raises(ValueError, match="Nope"):
@@ -86,7 +87,7 @@ def test_placeholder_is_created_once_and_inherits_everything():
         fw.get_segment(name="Nope")  # get-or-raise is unchanged
 
 
-def test_same_id_under_another_name_is_reused():
+def test_same_id_under_another_name_is_reused() -> None:
     fw = FirewallData[Edge].model_validate(
         {"segments": [{"segment": desc(2, "Old Guest Name"), "outbound": []}]}
     )
@@ -95,15 +96,16 @@ def test_same_id_under_another_name_is_reused():
     assert len(fw.segments) == 1
 
 
-def test_profile_segment_is_found_ignoring_case():
+def test_profile_segment_is_found_ignoring_case() -> None:
     fw = edge_fw()
     fw.bind_profile(PROFILE)
     guest = fw.segment("guest")
     assert (guest.segment.name, guest.segment.segment_id) == ("Guest", 2)
-    assert fw.segment("GUEST") is guest and len(fw.segments) == 2
+    assert fw.segment("GUEST") is guest
+    assert len(fw.segments) == 2
 
 
-def test_an_exact_profile_name_wins_over_one_that_differs_in_case():
+def test_an_exact_profile_name_wins_over_one_that_differs_in_case() -> None:
     fw = edge_fw()
     fw.bind_profile(
         {"segments": [PROFILE["segments"][1], {"segment": desc(3, "guest")}]}
@@ -111,14 +113,14 @@ def test_an_exact_profile_name_wins_over_one_that_differs_in_case():
     assert fw.segment("guest").segment.segment_id == 3
 
 
-def test_a_name_the_profile_lacks_in_any_case_still_raises():
+def test_a_name_the_profile_lacks_in_any_case_still_raises() -> None:
     fw = edge_fw()
     fw.bind_profile(PROFILE)
     with pytest.raises(ValueError, match="Profile segments: Global Segment, Guest"):
         fw.segment("Gest")
 
 
-def test_profile_segment_name():
+def test_profile_segment_name() -> None:
     segments = PROFILE["segments"]
     assert profile_segment_name(segments, "Guest") == "Guest"
     assert profile_segment_name(segments, "GUEST") == "Guest"
@@ -150,13 +152,13 @@ def test_profile_segment_name():
         _ = edge_fw().profile_segment_id("Guest")
 
 
-def test_qos_placeholder_has_empty_rules():
+def test_qos_placeholder_has_empty_rules() -> None:
     qos = QosData[Edge].model_validate({"segments": []})
     qos.bind_profile(PROFILE)
     assert qos.segment("Guest").rules == []
 
 
-def test_device_settings_placeholder_has_empty_static_routes():
+def test_device_settings_placeholder_has_empty_static_routes() -> None:
     ds = DeviceSettingsData.model_validate(
         {"lan": {"networks": [], "interfaces": []}, "segments": []}
     ).for_edge()
@@ -171,12 +173,15 @@ def test_device_settings_placeholder_has_empty_static_routes():
         }
     )
     guest = ds.segment("Guest")
-    assert ds.segment("Guest") is guest and ds.segments[-1] is guest
+    assert ds.segment("Guest") is guest
+    assert ds.segments[-1] is guest
     assert (guest.segment.segment_id, require_present(guest.routes).static) == (2, [])
     assert guest.config_context is ConfigContext.EDGE
 
 
-def test_a_placeholder_is_empty_in_each_module_and_has_what_the_orchestrator_needs():
+def test_a_placeholder_is_empty_in_each_module_and_has_what_the_orchestrator_needs() -> (
+    None
+):
     profile_segments = [
         {
             "segment": desc(2, "Guest"),
@@ -202,14 +207,13 @@ def test_a_placeholder_is_empty_in_each_module_and_has_what_the_orchestrator_nee
     }
 
 
-def test_bind_tolerates_odd_profile_data():
+def test_bind_tolerates_odd_profile_data() -> None:
     fw = edge_fw()
     fw.bind_profile({"segments": None})
     with pytest.raises(ValueError):
         fw.segment("Guest")
-    assert hasattr(DeviceSettingsData, "segment") and hasattr(
-        DeviceSettingsData, "bind_profile"
-    )
+    assert hasattr(DeviceSettingsData, "segment")
+    assert hasattr(DeviceSettingsData, "bind_profile")
 
 
 _PROFILE_SEGMENTS = [{"segment": {"name": "S", "segmentId": 3}}]
@@ -240,7 +244,7 @@ def _made_after_binding(*, bound: bool) -> Seg[Edge]:
     )
 
 
-def test_a_placeholder_made_after_binding_localizes_from_the_profile_segment():
+def test_a_placeholder_made_after_binding_localizes_from_the_profile_segment() -> None:
     seg = _made_after_binding(bound=True)
     assert not seg.mapping.is_local
     mapping = seg.mapping.localize()
@@ -248,7 +252,7 @@ def test_a_placeholder_made_after_binding_localizes_from_the_profile_segment():
     assert seg.mapping.is_local
 
 
-def test_a_placeholder_of_an_unbound_layer_refuses_localize():
+def test_a_placeholder_of_an_unbound_layer_refuses_localize() -> None:
     seg = _made_after_binding(bound=False)
     with pytest.raises(UnboundError):
         seg.mapping.localize()

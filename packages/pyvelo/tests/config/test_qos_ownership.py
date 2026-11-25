@@ -123,7 +123,7 @@ async def apply(state: ConfigState, patch: dict[str, Any]) -> None:
 # --- the effective view -----------------------------------------------------
 
 
-async def test_the_effective_qos_view_gives_each_value_its_origin():
+async def test_the_effective_qos_view_gives_each_value_its_origin() -> None:
     state = state_of({**EDGE_QOS, "qoe": QOE})
     view = state.effective.qos
     assert view.qoe.origin is Origin.EDGE
@@ -136,7 +136,9 @@ async def test_the_effective_qos_view_gives_each_value_its_origin():
     assert state.effective.qos.qoe.origin is Origin.FACTORY
 
 
-async def test_the_effective_qos_view_of_an_edge_without_a_row_creates_nothing():
+async def test_the_effective_qos_view_of_an_edge_without_a_row_creates_nothing() -> (
+    None
+):
     state = state_of(None)
     before = state.plan().render()
     modules_before = state.edge_config.modules if state.edge_config else None
@@ -155,7 +157,7 @@ async def test_the_effective_qos_view_of_an_edge_without_a_row_creates_nothing()
 # --- a patch on an inherited value starts from the profile ------------------
 
 
-async def test_a_disabled_rate_limit_is_local_and_null_inherits_it():
+async def test_a_disabled_rate_limit_is_local_and_null_inherits_it() -> None:
     state = state_of(EDGE_QOS)
     await apply(state, {"serviceRateLimit": {"enabled": False}})
     assert changed_paths(state) == ["serviceRateLimit"]
@@ -177,7 +179,9 @@ async def test_a_disabled_rate_limit_is_local_and_null_inherits_it():
     assert stored.effective.qos.service_rate_limit.origin is Origin.PROFILE
 
 
-async def test_a_patch_into_the_cos_mapping_of_a_segment_the_edge_lacks_localizes_from_the_profile_segment():
+async def test_a_patch_into_the_cos_mapping_of_a_segment_the_edge_lacks_localizes_from_the_profile_segment() -> (
+    None
+):
     state = state_of(EDGE_QOS)
     await apply(
         state,
@@ -205,7 +209,7 @@ async def test_a_patch_into_the_cos_mapping_of_a_segment_the_edge_lacks_localize
     assert voice.cos_mapping.realtime.high.value == 35
 
 
-async def test_a_patch_naming_the_cos_mapping_flag_is_refused():
+async def test_a_patch_naming_the_cos_mapping_flag_is_refused() -> None:
     state = state_of(EDGE_QOS)
     before = state.plan().render()
     with pytest.raises(PatchError, match="'override' is the flag") as caught:
@@ -221,7 +225,7 @@ async def test_a_patch_naming_the_cos_mapping_flag_is_refused():
     assert state.plan().render() == before
 
 
-async def test_an_edge_patch_of_defaults_is_refused():
+async def test_an_edge_patch_of_defaults_is_refused() -> None:
     state = state_of(EDGE_QOS)
     before = state.plan().render()
     patch: dict[str, Any] = {
@@ -238,7 +242,7 @@ async def test_an_edge_patch_of_defaults_is_refused():
     assert state.plan().render() == before
 
 
-async def test_a_failed_qos_patch_leaves_a_localized_value_inherited():
+async def test_a_failed_qos_patch_leaves_a_localized_value_inherited() -> None:
     state = state_of(EDGE_QOS)
     with pytest.raises(PatchError, match="qoe"):
         await apply(state, {"serviceRateLimit": {"enabled": False}, "qoe": "abc"})
@@ -256,7 +260,9 @@ def flag_off_edge() -> dict[str, Any]:
     }
 
 
-async def test_a_patch_into_a_cos_mapping_stored_with_its_flag_off_changes_only_what_it_names():
+async def test_a_patch_into_a_cos_mapping_stored_with_its_flag_off_changes_only_what_it_names() -> (
+    None
+):
     edge = flag_off_edge()
     state = state_of(edge)
     voice = state.effective.qos.get_segment(name="Voice")
@@ -282,7 +288,9 @@ async def test_a_patch_into_a_cos_mapping_stored_with_its_flag_off_changes_only_
     ]
 
 
-async def test_the_keep_patch_of_the_flag_off_warning_leaves_the_values_as_read_with_the_flag_on():
+async def test_the_keep_patch_of_the_flag_off_warning_leaves_the_values_as_read_with_the_flag_on() -> (
+    None
+):
     edge = flag_off_edge()
     state = state_of(edge)
     (warning,) = [w for w in state.plan().warnings if w.code == "flag_off_in_use"]
