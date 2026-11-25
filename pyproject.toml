@@ -16,10 +16,132 @@ pyvelo = { workspace = true }
 [tool.ruff]
 target-version = "py313"
 
+[tool.ruff.lint]
+# Every rule is on, so a ruff upgrade turns new rules on too. A rule the code
+# does not meet is listed below with the reason, or as not yet met.
+select = ["ALL"]
+ignore = [
+    # Off for good.
+    "COM812",  # conflicts with the formatter
+    "ISC001",  # conflicts with the formatter
+    "CPY001",  # the licence is in LICENSE, not in a header in each file
+    "ANN401",  # VCO payloads are JSON, so Any is how the wire types are written
+    "SLF001",  # basedpyright's reportPrivateUsage checks this, with its own ignores
+    "TRY003",  # an exception's message is written where it is raised
+    "EM101",   # an exception's message is written where it is raised
+    "EM102",   # an exception's message is written where it is raised
+    "RUF036",  # the convention is X | None | MISSING: the unset sentinel goes last
+    # Off until the code meets them: turn one on, fix what it reports, and
+    # remove its line here.
+    "A002",
+    "ANN201",
+    "ANN202",
+    "ANN204",
+    "ARG005",
+    "ASYNC109",
+    "ASYNC240",
+    "B905",
+    "C420",
+    "C901",
+    "D100",
+    "D101",
+    "D102",
+    "D103",
+    "D104",
+    "D105",
+    "D106",
+    "D107",
+    "D202",
+    "D205",
+    "D209",
+    "D212",
+    "D403",
+    "D417",
+    "DTZ001",
+    "DTZ005",
+    "E501",
+    "E712",
+    "ERA001",
+    "FBT001",
+    "FBT002",
+    "FBT003",
+    "FURB110",
+    "FURB171",
+    "G003",
+    "G004",
+    "ICN001",
+    "ISC003",
+    "N802",
+    "N803",
+    "N806",
+    "N815",
+    "N818",
+    "PERF401",
+    "PERF403",
+    "PLC0415",
+    "PLR0911",
+    "PLR0912",
+    "PLR0913",
+    "PLR0915",
+    "PLR0917",
+    "PLR2004",
+    "PLR5501",
+    "PLW0108",
+    "PLW0603",
+    "PLW2901",
+    "PT006",
+    "PT011",
+    "PT012",
+    "PT018",
+    "PTH123",
+    "PYI051",
+    "RET504",
+    "RET505",
+    "RSE102",
+    "RUF021",
+    "RUF043",
+    "RUF071",
+    "S101",
+    "S104",
+    "S105",
+    "S301",
+    "S311",
+    "S506",
+    "SIM105",
+    "SIM108",
+    "SIM300",
+    "SLOT000",
+    "T201",
+    "TC001",
+    "TC002",
+    "TC003",
+    "TC006",
+    "TID252",
+    "TRY300",
+    "TRY301",
+    "TRY400",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"packages/pyvelo/tests/**" = [
+    "S101",    # pytest asserts
+    "D1",      # a test's name says what it checks
+    "PLR2004", # expected values are written inline
+    "INP001",  # tests are not a package; pytest puts tests/support on the path
+]
+"packages/pyvelo-examples/**" = [
+    "T201",    # the examples are scripts that print their results
+]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
-addopts = ["-ra", "-q", "-m", "not integration"]
+addopts = ["-ra", "-q", "-m", "not integration", "--strict-markers", "--strict-config"]
+xfail_strict = true
+filterwarnings = ["error"]
 testpaths = ["packages/pyvelo/tests"]
 pythonpath = ["packages/pyvelo/tests/support"]
 markers = [
@@ -28,9 +150,9 @@ markers = [
 ]
 
 [tool.basedpyright]
-typeCheckingMode = "recommended"
+typeCheckingMode = "all"
 enableExperimentalFeatures = true
-include = ["packages/pyvelo"]
+include = ["packages/pyvelo", "packages/pyvelo-examples"]
 extraPaths = ["packages/pyvelo/tests/support"]
 defineConstant = { DEBUG = true }
 reportMissingImports = "error"
