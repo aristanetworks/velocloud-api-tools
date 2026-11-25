@@ -2,11 +2,12 @@
 
 import uuid
 from dataclasses import dataclass
-from typing import ClassVar, cast, override
+from typing import ClassVar, assert_type, cast, override
 
 import pytest
 from pyvelo.config.resolver import Resolver, ResolverContext, ResolverRegistry
 from pyvelo.config.resolvers.segment import SegmentResolver
+from pyvelo.core.identity import SegmentIdentity, SegmentName
 
 from ._type_support import SegmentResolverFactory
 
@@ -296,3 +297,20 @@ class TestResolverRegistry:
             TypeError, match=r"MockFooResolver has no unloaded\(\) method"
         ):
             _ = registry.unloaded()
+
+
+@pytest.fixture
+async def segment_registry(
+    make_segment_resolver: SegmentResolverFactory,
+) -> ResolverRegistry:
+    registry = ResolverRegistry()
+    registry.register(await make_segment_resolver([{"name": "Guest", "segment_id": 1}]))
+    return registry
+
+
+async def test_resolve_returns_the_key_s_identity_type(
+    segment_registry: ResolverRegistry,
+) -> None:
+    found = await segment_registry.resolve(SegmentName("Guest"))
+    _ = assert_type(found, SegmentIdentity)
+    assert found.segment_id == 1

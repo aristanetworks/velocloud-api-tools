@@ -9,10 +9,10 @@ from dataclasses import dataclass
 from typing import Any, ClassVar, Protocol, Self, cast, overload, runtime_checkable
 
 from pyvelo.client.protocol import VcoClientProtocol
+from pyvelo.core.identity import IdentityKey, ResolverNotLoadedError, entity_label
 
 # ResolutionError lives in pyvelo.core.identity; re-exported so this import path keeps working.
 from pyvelo.core.identity import ResolutionError as ResolutionError  # noqa: PLC0414
-from pyvelo.core.identity import ResolverNotLoadedError, entity_label
 
 
 @dataclass
@@ -223,7 +223,7 @@ class ResolverRegistry:
         return self._context
 
     @overload
-    async def resolve(self, key: Any) -> Any: ...
+    async def resolve[T](self, key: IdentityKey[T]) -> T: ...
     @overload
     async def resolve[T](self, key: type[T], name: str) -> T: ...
 
@@ -253,7 +253,7 @@ class ResolverRegistry:
             return await resolver.resolve_key(key)
 
     @overload
-    def resolve_sync(self, key: Any) -> Any: ...
+    def resolve_sync[T](self, key: IdentityKey[T]) -> T: ...
     @overload
     def resolve_sync[T](self, key: type[T], name: str) -> T: ...
 

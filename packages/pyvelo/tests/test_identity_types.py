@@ -1,8 +1,10 @@
 """Tests for identity key types (frozen dataclasses) and identity dataclasses."""
 
 import uuid
+from dataclasses import dataclass
 
 import pytest
+from pyvelo.core import identity
 from pyvelo.core.identity import (
     AddressGroupId,
     AddressGroupIdentity,
@@ -15,6 +17,9 @@ from pyvelo.core.identity import (
     EdgeIdentity,
     EdgeLogicalId,
     EdgeName,
+    HubIdentity,
+    HubLogicalId,
+    IdentityKey,
     LicenseId,
     LicenseIdentity,
     LicenseName,
@@ -234,3 +239,29 @@ class TestIdentityDataclasses:
         )
         with pytest.raises(AttributeError):
             si.segment_id = 1  # pyright: ignore[reportAttributeAccessIssue]
+
+
+def test_a_key_names_its_identity_type() -> None:
+    assert SegmentId(2).identity_type is SegmentIdentity
+    assert HubLogicalId.identity_type is HubIdentity
+    assert isinstance(SegmentName("Guest"), IdentityKey)
+
+
+def test_every_key_class_is_an_identity_key() -> None:
+    keys = [
+        obj
+        for obj in vars(identity).values()
+        if isinstance(obj, type)
+        and issubclass(obj, IdentityKey)
+        and obj is not IdentityKey
+    ]
+    assert len(keys) == 31  # every key class of the module today
+    assert all(k.identity_type.__name__.endswith("Identity") for k in keys)
+
+
+def test_a_key_without_an_identity_type_is_refused() -> None:
+    with pytest.raises(TypeError, match=r"IdentityKey\[SomeIdentity\]"):
+
+        @dataclass(frozen=True)
+        class Bare(IdentityKey):  # pyright: ignore[reportMissingTypeArgument]
+            value: int
