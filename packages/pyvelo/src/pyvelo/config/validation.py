@@ -1,4 +1,7 @@
-"""Validation framework: types, registry, and decorator for incremental config validation."""
+"""Validation framework: types, registry, and decorator.
+
+They are for incremental config validation.
+"""
 
 from collections.abc import Callable
 from dataclasses import dataclass, field

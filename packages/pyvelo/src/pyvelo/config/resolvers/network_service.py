@@ -122,7 +122,10 @@ class NetworkServiceResolver(BaseResolver[NetworkServiceIdentity]):
         self._services.clear()
 
     def _one(self, attribute: str, value: object) -> NetworkServiceIdentity:
-        """The loaded service whose ``attribute`` is *value*, also one that shares its name."""
+        """The loaded service whose ``attribute`` is *value*.
+
+        It finds also a service that shares its name.
+        """
         for service in self._services:
             if getattr(service, attribute) == value:
                 return service

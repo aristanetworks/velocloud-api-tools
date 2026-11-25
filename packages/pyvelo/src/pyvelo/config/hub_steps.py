@@ -1,4 +1,6 @@
-"""The role steps of a save: a hub added to or removed from a segment's ``vpn`` hub lists.
+"""The role steps of a save.
+
+A role step is a hub added to or removed from a segment's ``vpn`` hub lists.
 
 A hub in the hub, bridge or backhaul list of a profile segment works only when
 its service has the role, which the VCO's role calls set (the UI's enable and
@@ -69,7 +71,10 @@ _ORDER: Final[tuple[tuple[Action, Role], ...]] = (
     ("enable", "backhaul"),
     ("enable", "bridge"),
 )
-"""The order of the UI's role calls: every disable before any enable, and a role after the hub role it needs."""
+"""The order of the UI's role calls.
+
+Every disable comes before any enable, and a role after the hub role it needs.
+"""
 
 
 @dataclass(frozen=True)
@@ -104,11 +109,18 @@ class HubStep:
 
     @property
     def gives(self) -> Literal["service"] | None:
-        """What the call makes: ``"service"`` for an enable (the hub's service for the segment), else None."""
+        """What the call makes: ``"service"`` for an enable, else None.
+
+        For an enable it is the hub's service for the segment.
+        """
         return "service" if self.action == "enable" else None
 
     def render(self) -> str:
-        """The step as a line: ``enable backhaul for Hub-A on segment Global Segment`` (``for cluster Cluster-1`` for a cluster)."""
+        """The step as a line.
+
+        For example ``enable backhaul for Hub-A on segment Global Segment``
+        (``for cluster Cluster-1`` for a cluster).
+        """
         who = (
             f"cluster {self.hub.name}" if self.hub.kind == "cluster" else self.hub.name
         )
@@ -123,7 +135,10 @@ def _key(hub: VpnHub) -> _Key:
 
 
 def hub_lists_of(data: DeviceSettingsData) -> dict[int, dict[Role, list[VpnHub]]]:
-    """The hub lists of each segment of *data*, by segment ID and role: the fields marked ``HubRole``."""
+    """The hub lists of each segment of *data*, by segment ID and role.
+
+    They are the fields marked ``HubRole``.
+    """
     found: dict[int, dict[Role, list[VpnHub]]] = {}
     for site in walk_fields(
         data,
@@ -132,7 +147,8 @@ def hub_lists_of(data: DeviceSettingsData) -> dict[int, dict[Role, list[VpnHub]]
     ):
         role = get_hub_role(site.field_info)
         if role is None or not isinstance(site.segment, DeviceSegment):
-            continue  # the walk gives only marked fields, and those outside a segment are not its
+            # the walk gives only marked fields, and those outside a segment are not its
+            continue
         stored: object = getattr(site.model, site.name)
         held = unwrap(stored)
         hubs = [h for h in held if isinstance(h, VpnHub)] if is_list(held) else []
@@ -157,7 +173,10 @@ class _Difference:
 def _differences(
     as_read: DeviceSettingsData, now: DeviceSettingsData
 ) -> Iterator[_Difference]:
-    """The changes of each hub list, segment by segment in the order of *now*, by ``(type, logical ID)``."""
+    """The changes of each hub list, by ``(type, logical ID)``.
+
+    They go segment by segment in the order of *now*.
+    """
     lists_read, lists_now = hub_lists_of(as_read), hub_lists_of(now)
     for segment in now.segments:
         was = lists_read.get(_segment_id(segment), {})
@@ -174,21 +193,30 @@ def _differences(
 def changed_segment_ids(
     as_read: DeviceSettingsData, now: DeviceSettingsData
 ) -> tuple[int, ...]:
-    """The IDs of the segments whose hub lists change, in the order of *now*: the segments ``derive_steps`` needs an object ID for."""
+    """The IDs of the segments whose hub lists change, in the order of *now*.
+
+    They are the segments ``derive_steps`` needs an object ID for.
+    """
     return tuple(
         dict.fromkeys(_segment_id(d.segment) for d in _differences(as_read, now))
     )
 
 
 class _AddedHubs:
-    """The identity of each hub the edit adds, found by logical ID in a loaded ``HubResolver``."""
+    """The identity of each hub the edit adds.
+
+    Each is found by logical ID in a loaded ``HubResolver``.
+    """
 
     def __init__(self, hubs: HubResolver | None) -> None:
         self._hubs: HubResolver | None = hubs
         self._found: dict[uuid.UUID, HubIdentity] | None = None
 
     def ref(self, hub: VpnHub) -> HubRef:
-        """The ``HubRef`` of *hub*, with its Edge or cluster ID. Raises ``ResolverNotLoadedError`` when the resolver is None or not loaded."""
+        """The ``HubRef`` of *hub*, with its Edge or cluster ID.
+
+        Raises ``ResolverNotLoadedError`` when the resolver is None or not loaded.
+        """
         if self._found is None:
             if self._hubs is None or not self._hubs.loaded:
                 raise ResolverNotLoadedError(HubIdentity)
@@ -232,7 +260,9 @@ def derive_steps(
     segment_object_ids: Mapping[int, int],
     hubs: HubResolver | None,
 ) -> tuple[HubStep, ...]:
-    """The role steps that make the hub lists of *as_read* those of *now*, in the UI's order.
+    """The role steps that make the hub lists of *as_read* those of *now*.
+
+    The steps are in the UI's order.
 
     Segments are matched by ``segment_id``, and a hub by ``(type, logical ID)``
     of its list entry, so a reorder is no step. The order is: disable backhaul,
@@ -322,7 +352,10 @@ def _hub_roles(
     configuration_id: int,
     object_ids: dict[int, int],
 ) -> dict[object, object] | None:
-    """The roles the as-read row of *hub* for *segment* holds, or None when it has no row."""
+    """The roles the as-read row of *hub* for *segment* holds.
+
+    None when it has no row.
+    """
     if hub.type_ == "edgeHubCluster":
         for row in rows_named(raw_refs, CLUSTER_HUB_REF):
             if row.get("configurationId") != configuration_id:
@@ -351,7 +384,10 @@ def _hub_roles(
 def role_disagreements(
     as_read: DeviceSettingsData, raw_refs: object, configuration_id: int
 ) -> tuple[ValidationWarning, ...]:
-    """A ``hub_roles_disagree`` warning for each hub of a segment whose as-read roles do not match the lists it is in.
+    """A ``hub_roles_disagree`` warning for each hub whose as-read roles disagree.
+
+    A warning is for a hub of a segment whose as-read roles do not match the lists it is
+    in.
 
     *raw_refs* are the refs of the profile's device settings module as read
     and *configuration_id* the profile's. A hub's row says (``roles``) whether
@@ -397,7 +433,10 @@ def role_disagreements(
             if problems:
                 warnings.append(
                     ValidationWarning(
-                        path=f'deviceSettings: segments["{descriptor.name}"].vpn[{hub.name}]',
+                        path=(
+                            f'deviceSettings: segments["{descriptor.name}"]'
+                            f".vpn[{hub.name}]"
+                        ),
                         message=(
                             f"hub {hub.name!r} in segment {descriptor.name!r}: "
                             + "; ".join(problems)
@@ -425,7 +464,10 @@ _APPLY: Final = '(`pipeline.apply(state, module="deviceSettings", patch=...)`)'
 
 
 def _patch(segment: str, path: tuple[str, ...], change: object) -> str:
-    """The patch text of a ``deviceSettings`` edit that sets *change* at *path* of *segment*."""
+    """The patch text of a ``deviceSettings`` edit.
+
+    The edit sets *change* at *path* of *segment*.
+    """
     node: object = change
     for key in reversed(path):
         node = {key: node}
@@ -433,7 +475,10 @@ def _patch(segment: str, path: tuple[str, ...], change: object) -> str:
 
 
 def list_path(role: Role) -> str:
-    """The dotted wire path of the list of *role*, from a segment: ``vpn.edgeToEdgeHub.vpnHubs`` for the Branch-to-Hub list."""
+    """The dotted wire path of the list of *role*, from a segment.
+
+    For the Branch-to-Hub list it is ``vpn.edgeToEdgeHub.vpnHubs``.
+    """
     return ".".join(_LIST_PATHS[role])
 
 
@@ -443,7 +488,10 @@ def _list_text(role: Role) -> str:
 
 
 def _removal(segment: str, role: Role, hubs: Sequence[VpnHub]) -> str:
-    """The patch that removes *hubs* from the list of *role* of *segment*, with the helper beside it."""
+    """The patch that removes *hubs* from the list of *role* of *segment*.
+
+    The helper is given beside it.
+    """
     change = {h.name: {"_op": "delete"} for h in hubs}
     return (
         f"{_patch(segment, _LIST_PATHS[role], change)} (`delete()` in Python) {_APPLY}"
@@ -451,7 +499,9 @@ def _removal(segment: str, role: Role, hubs: Sequence[VpnHub]) -> str:
 
 
 def _repeats_removal(segment: str, role: Role, hubs: Sequence[VpnHub]) -> str:
-    """The patch that removes the repeats from the list *hubs* of *role* of *segment*: every entry after the first of a logical ID, by position.
+    """The patch that removes the repeats from the list *hubs* of *role* of *segment*.
+
+    The repeats are every entry after the first of a logical ID, by position.
 
     A hub that is listed twice has no selector of its own (its name names both
     entries), so each repeat is named by its place in the list as it is now
@@ -470,7 +520,10 @@ def _repeats_removal(segment: str, role: Role, hubs: Sequence[VpnHub]) -> str:
 
 
 def _addition(segment: str, role: Role, hub_name: str) -> str:
-    """The patch that adds the hub named *hub_name* to the list of *role* of *segment*."""
+    """The patch that adds the hub named *hub_name*.
+
+    It adds it to the list of *role* of *segment*.
+    """
     change = {"+": {"_op": "add", "name": hub_name}}
     return f"{_patch(segment, _LIST_PATHS[role], change)} {_APPLY}"
 
@@ -478,7 +531,10 @@ def _addition(segment: str, role: Role, hub_name: str) -> str:
 def hub_in_use_message(
     segment: str, hub: str, edges: Sequence[tuple[int, str]], *, refuse: bool
 ) -> str:
-    """What a removal of the Edge hub *hub* from the Branch-to-Hub list of *segment* does to the *edges* whose QoS rules use it, and what to do.
+    """What a removal of the Edge hub *hub* does to the *edges* that use it.
+
+    The removal is from the Branch-to-Hub list of *segment*, the *edges* are those whose
+    QoS rules use it, and the text says what to do.
 
     *refuse* is the message of the error (the save sends no step), else that
     of the warning (the save goes on).
@@ -648,7 +704,11 @@ def _broken_rules(
                 ", which is empty: they could not reach one another. Add a "
                 f"hub with {_addition(name, 'bridge', '<hub name>')}"
                 " or turn `useCloudGateway` on with "
-                f"{_flag(name, ('vpn', 'edgeToEdgeDetail', 'useCloudGateway'), value=True)}.",
+                f"{
+                    _flag(
+                        name, ('vpn', 'edgeToEdgeDetail', 'useCloudGateway'), value=True
+                    )
+                }.",
                 ["bridge"],
             )
         )
@@ -689,11 +749,11 @@ def _broken_rules(
             )
         else:
             how = (
-                f"{' and '.join(_list_text(r) for r in filled)} hold "
-                f"{_names(listed)} while `vpn.enabled` is off, so the hubs would "
-                "be listed for a segment that does not use them. Turn it on with "
-                f"{_flag(name, ('vpn', 'enabled'), value=True)} or remove the hubs, for "
-                f"example {_removal(name, filled[0], lists[filled[0]])}."
+                f"{' and '.join(_list_text(r) for r in filled)} hold {_names(listed)} "
+                "while `vpn.enabled` is off, so the hubs would be listed for a segment "
+                "that does not use them. Turn it on with "
+                f"{_flag(name, ('vpn', 'enabled'), value=True)} or remove the hubs, "
+                f"for example {_removal(name, filled[0], lists[filled[0]])}."
             )
         problems.append(
             _problem(
@@ -713,7 +773,10 @@ def _hub_problems(
     added: Sequence[VpnHub],
     hubs: HubResolver,
 ) -> list[_Problem]:
-    """The rule-6 problems of the hubs *added* to the list of *role* of *segment*, against the loaded *hubs*."""
+    """The rule-6 problems of the hubs *added* to the list of *role* of *segment*.
+
+    They are found against the loaded *hubs*.
+    """
     name = segment.segment.name
     prefix = f"deviceSettings: segment {name!r}: "
     problems: list[_Problem] = []
@@ -733,9 +796,9 @@ def _hub_problems(
             )
         elif identity is None:
             message = (
-                f"{prefix}{entry} is no Edge or hub cluster of the enterprise, "
-                "so no role can be set on a service it names. Give the name of "
-                f"an Edge or a hub cluster: {_addition(name, role, '<Edge or cluster name>')}."
+                f"{prefix}{entry} is no Edge or hub cluster of the enterprise, so no "
+                "role can be set on a service it names. Give the name of an Edge or a "
+                f"hub cluster: {_addition(name, role, '<Edge or cluster name>')}."
             )
         elif identity.type_ != hub.type_:
             kind = "an Edge" if identity.kind == "edge" else "a hub cluster"
@@ -764,7 +827,9 @@ def check_hub_lists(  # noqa: C901 (existing: split it when it next changes)
     *,
     hubs: HubResolver | None,
 ) -> tuple[ValidationWarning, ...]:
-    """Refuse a hub list edit that breaks the UI's rules, before any call; warn of a rule broken as read.
+    """Refuse a hub list edit that breaks the UI's rules, before any call.
+
+    Warn of a rule broken as read.
 
     The segments checked are those whose ``vpn`` differs in value from the module as
     read (the lists and the flags among it), matched by ``segment_id``, and

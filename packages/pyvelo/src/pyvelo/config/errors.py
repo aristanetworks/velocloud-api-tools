@@ -16,7 +16,10 @@ if TYPE_CHECKING:
 
 
 def _rebuild_error(cls: type[IntentError], args: tuple[Any, ...]) -> IntentError:
-    """Build an error of *cls* without calling its constructor; its attributes arrive as state."""
+    """Build an error of *cls* without calling its constructor.
+
+    Its attributes arrive as state.
+    """
     error = cls.__new__(cls)
     error.args = args
     return error

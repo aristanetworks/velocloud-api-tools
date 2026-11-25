@@ -33,13 +33,13 @@ for a side that has no value there.
    applied when ``D`` holds the payload's value (``_beyond``): ``D`` may hold
    more keys than the payload, but not a key ``R`` had and the payload lacks.
 
-A path names an item of a keyed list as ``raw_changes`` does: by its key, or
-by its position ``#n`` where the key repeats or there is none. An item that
-was read is named as read, also when it was renamed or moved; an added item by
-its key or position in the payload; an item only the VCO has by its key or
-position in the stored data. So two entries share a path only where a key
-repeats or an item has none; their values tell them apart. A keyed list in which an added item
-would have the name of an item as read is compared whole (rule 5).
+A path names an item of a keyed list as ``raw_changes`` does: by its key, or by its
+position ``#n`` where the key repeats or there is none. An item that was read is named
+as read, also when it was renamed or moved; an added item by its key or position in the
+payload; an item only the VCO has by its key or position in the stored data. So two
+entries share a path only where a key repeats or an item has none; their values tell
+them apart. A keyed list in which an added item would have the name of an item as read
+is compared whole (rule 5).
 
 The VCO stores some values otherwise than as sent; ``Rewrites`` says where.
 A key it owns (a field marked ``ServerOwned``, or a path a pattern matches)
@@ -100,7 +100,11 @@ from .rebase import (
 )
 
 type PathPattern = tuple[str, ...]
-"""The names of a path, in order. ``*`` is any one part (a name, a keyed item, a position); ``**`` is any number of parts, none included."""
+"""The names of a path, in order.
+
+``*`` is any one part (a name, a keyed item, a position); ``**`` is any number of parts,
+none included.
+"""
 
 
 @dataclass(frozen=True, slots=True)
@@ -156,7 +160,10 @@ class PlannedChange:
     place: ItemPlace | None = None
     """Where an added item of a keyed list was planned to go."""
     moves: tuple[ItemMove, ...] | None = None
-    """Not None for the order entry of a keyed list: the moves that put the stored order right."""
+    """Not None for the order entry of a keyed list.
+
+    It is the moves that put the stored order right.
+    """
     owner: Path | None = None
     """For a ``refs`` entry of a ``RefOnly`` owner: the owner's path in python names."""
 
@@ -322,7 +329,7 @@ class _ModelList:
 
 
 type _CheckNode = Node | _ModelList
-"""What a JSON value is known to be, as ``Node`` says, or a list of models without a key."""
+"""What a JSON value is known to be (as ``Node`` says), or a keyless list of models."""
 
 
 def _rebase_node(node: _CheckNode) -> Node:
@@ -366,7 +373,10 @@ def _is_owned(rewrites: Rewrites, node: _CheckNode, key: object, path: Path) -> 
 def _is_owned_below(
     rewrites: Rewrites, path: Path, node: _CheckNode, below: Path
 ) -> bool:
-    """Whether *below*, a path under *path* (whose node is *node*), is a key the VCO owns."""
+    """Whether *below*, a path under *path*, is a key the VCO owns.
+
+    The node of *path* is *node*.
+    """
     parts = below.parts[len(path.parts) :]
     if not parts or not isinstance(parts[-1], str):
         return False
@@ -513,7 +523,7 @@ def _walk_keyed_list(  # noqa: C901, PLR0913, PLR0917 (existing: split it when i
     d_keys = set(key_forms(d, node))
 
     def record(item_path: Path, k: int) -> None:
-        """Note the part that names item *k* of *d*, when a selector can name it alone."""
+        """Note the part naming item *k* of *d*, when a selector can name it alone."""
         part = d_parts[k]
         if isinstance(part, int) and f"#{part}" in d_keys:
             return
@@ -606,7 +616,7 @@ def _canonical_form(form: KeyForm | None) -> KeyForm | None:
 
 
 def _canonical_ipv6(text: str) -> str:
-    """*text* in canonical ``IPv6Interface`` form, or as it is when it does not parse as one."""
+    """*text* in canonical ``IPv6Interface`` form, or as it is if it does not parse."""
     try:
         return str(IPv6Interface(text))
     except ValueError:

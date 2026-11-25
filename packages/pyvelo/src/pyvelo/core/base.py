@@ -171,7 +171,10 @@ def _level_from_context(context: object) -> ConfigContext | None:
 
 
 def _field_alias(field_info: FieldInfo, python_name: str) -> str:
-    """Get the field's serialization key. Falls back to the camelCase alias_generator."""
+    """Get the field's serialization key.
+
+    Falls back to the camelCase alias_generator.
+    """
     if field_info.serialization_alias is not None:
         return field_info.serialization_alias
     if field_info.alias is not None:
@@ -401,7 +404,9 @@ type _Place = tuple[str | int, ...]
 
 
 def _models_inside(value: object, place: _Place) -> Iterator[tuple[_Place, BaseModel]]:
-    """Every pydantic model in *value*, at any depth, with its place; *value* is at *place*.
+    """Every pydantic model in *value*, at any depth, with its place.
+
+    *value* is at *place*.
 
     Walks as ``_propagate_context`` does: fields, extra values, lists and
     dicts. A model comes before the models inside it. A field is named by its
@@ -448,11 +453,16 @@ def _raise_detached(model: VcoModel, name: str) -> Never:
 # ---------------------------------------------------------------------------
 
 _REF_FILLING_HOOKS: set[Callable[..., object]] = set()
-"""The hooks ``_install_ref_filling`` put on classes, to tell them from a class's own."""
+"""The hooks ``_install_ref_filling`` put on classes.
+
+They are kept to tell them from a class's own.
+"""
 
 
 def ref_only_fields(model_cls: type[VcoModel]) -> Mapping[str, str | None]:
-    """The ``RefOnly`` fields of *model_cls*, each with the default ref name of its marker.
+    """The ``RefOnly`` fields of *model_cls*.
+
+    Each comes with the default ref name of its marker.
 
     Computed once, when the class is complete. Empty for a class with none.
     """
@@ -460,7 +470,9 @@ def ref_only_fields(model_cls: type[VcoModel]) -> Mapping[str, str | None]:
 
 
 def _fill_ref(model: VcoModel, name: str) -> None:
-    """Give *model* the default ref name of its ``RefOnly`` field *name*, if it holds a value and has no ``ref``.
+    """Give *model* the default ref name of its ``RefOnly`` field *name*.
+
+    It does so if the field holds a value and *model* has no ``ref``.
 
     A value is anything but ``None`` and ``MISSING``. The ref name is that of
     the sibling field ``ref``; a model with none, and a marker with no default,
@@ -476,7 +488,10 @@ def _fill_ref(model: VcoModel, name: str) -> None:
 
 
 def _install_ref_filling(cls: type[VcoModel]) -> None:  # noqa: C901 (existing: split it when it next changes)
-    """Make assignment, a constructor keyword and a patch set a ``RefOnly`` field, and fill the ``ref``.
+    """Make the ways to set a ``RefOnly`` field fill the ``ref``.
+
+    Assignment, a constructor keyword and a patch each set the field and fill the
+    ``ref``.
 
     Each is a hook put on *cls* itself, and only on a class that has such a
     field: the base class pays nothing, for the instances of every other
@@ -584,7 +599,10 @@ class VcoModel(BaseModel):
     _detached: bool = PrivateAttr(default=False)
     _ref_only_fields: ClassVar[Mapping[str, str | None]] = types.MappingProxyType({})
     _ref_only_keys: ClassVar[Mapping[str, str]] = types.MappingProxyType({})
-    """The keys that name a ``RefOnly`` field (its python name and its alias), each with the field."""
+    """The keys that name a ``RefOnly`` field, each with the field.
+
+    A field is named by its python name and by its alias.
+    """
 
     @override
     def model_post_init(self, validation_context: object, /) -> None:
@@ -611,7 +629,9 @@ class VcoModel(BaseModel):
 
     @property
     def is_detached(self) -> bool:
-        """Whether a write replaced this object (``mark_detached``); then it takes no edit.
+        """Whether a write replaced this object (``mark_detached``).
+
+        An object a write replaced takes no edit.
 
         A save marks the modules it replaces, and so does ``update_module``.
         """
@@ -622,7 +642,9 @@ class VcoModel(BaseModel):
         return private is not None and private.get("_detached") is True
 
     def check_not_detached(self, name: str) -> None:
-        """Raise ``DetachedObjectError`` naming *name* if a write replaced this object (``is_detached``).
+        """Raise ``DetachedObjectError`` naming *name* if a write replaced this object.
+
+        That is what ``is_detached`` says.
 
         For an edit that is not an assignment to a field of this model, such
         as an ``Owned`` intent, which has to refuse as an assignment does.
@@ -738,7 +760,9 @@ class VcoModel(BaseModel):
         by_alias: bool,
         compact_value: Callable[[object], object] | None,
     ) -> JsonObject:
-        """The last step of a dump of this model, full or compact; a subclass changes *dumped* here.
+        """The last step of a dump of this model, full or compact.
+
+        A subclass changes *dumped* here.
 
         *dumped* has the keys of the fields as ``by_alias`` says. A full dump
         holds each field as pydantic serialized it. A compact one holds each
@@ -999,7 +1023,9 @@ def _unwrap_annotated(tp: object) -> object:
 
 
 def _held_type(fi: FieldInfo) -> object:
-    """The type a field holds: its annotation, or the type inside its kind (``field_kind``).
+    """The type a field holds: its annotation, or the type inside its kind.
+
+    The kind is the one ``field_kind`` finds.
 
     ``FieldInfo.annotation`` of a converted field is the carrier, so every
     reader of a field's type reads it here.
@@ -1036,7 +1062,9 @@ def _field_accepts_none(fi: FieldInfo) -> bool:  # pyright: ignore[reportUnusedF
 
 
 def _id_type(fi: FieldInfo) -> object | None:  # pyright: ignore[reportUnusedFunction]  # imported by core.merge
-    """The ID type of a Resolvable field: its annotation without ``MISSING``, ``None`` and ``Annotated``.
+    """The ID type of a Resolvable field.
+
+    It is the field's annotation without ``MISSING``, ``None`` and ``Annotated``.
 
     None unless exactly one type is left.
     """
@@ -1053,7 +1081,10 @@ def _id_adapter(id_type: object) -> TypeAdapter[object]:
 
 
 def _field_model_type(fi: FieldInfo) -> type[VcoModel] | None:  # pyright: ignore[reportUnusedFunction]  # imported by core.merge and core.rebase
-    """Get the VcoModel class from an annotation like ``T`` or ``T | MISSING | None``."""
+    """Get the VcoModel class from an annotation.
+
+    The annotation is like ``T`` or ``T | MISSING | None``.
+    """
     return next(
         (m for m in _union_members(_held_type(fi)) if _is_vco_model_type(m)), None
     )
@@ -1170,7 +1201,10 @@ def _is_model_members(members: Iterable[object]) -> bool:
 
 
 def _members_without_missing_and_none(annotation: object) -> list[object]:
-    """The union members of *annotation* as written, without ``MISSING`` and ``None``."""
+    """The union members of *annotation* as written.
+
+    ``MISSING`` and ``None`` are left out.
+    """
     return [
         inner
         for member in _union_members(_unwrap_annotated(annotation))
@@ -1337,7 +1371,10 @@ class PaginatedVcoModel(VcoModel):
 
     @property
     def max_pages(self) -> int:
-        """The most pages ``portal_paginated_list`` collects for this request; 0 means no cap."""
+        """The most pages ``portal_paginated_list`` collects for this request.
+
+        0 means no cap.
+        """
         return self._max_pages
 
     @max_pages.setter
@@ -1351,11 +1388,17 @@ class PaginatedVcoModel(VcoModel):
 
     @property
     def page_next_link(self) -> str | None:
-        """The cursor of the next page when paging last stopped, or None when there is none."""
+        """The cursor of the next page when paging last stopped.
+
+        None when there is none.
+        """
         return self._page_next_link
 
     def record_page_cursor(self, next_page_link: str | None) -> None:
-        """Record where paging over this request stopped: the next page's cursor, or None when VCO has no more."""
+        """Record where paging over this request stopped.
+
+        That is the next page's cursor, or None when VCO has no more.
+        """
         self._page_has_more = next_page_link is not None
         self._page_next_link = next_page_link
 

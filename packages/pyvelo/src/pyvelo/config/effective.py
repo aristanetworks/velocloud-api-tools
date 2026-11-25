@@ -83,15 +83,27 @@ class EffectiveCategory(StrEnum):
     DIFFERS = "differs"
     """Both sides have a value and they differ. A finding."""
     CLIENT_ONLY = "client_only"
-    """The view gives an ``EDGE`` or ``PROFILE`` value the server's answer lacks. A finding."""
+    """The view gives an ``EDGE`` or ``PROFILE`` value the server's answer lacks.
+
+    A finding.
+    """
     SERVER_ONLY = "server_only"
     """The server's answer has a value the view lacks. A finding."""
     FACTORY = "factory"
-    """The view gives a display default where the server has no value, or the same one. Information."""
+    """The view gives a display default where the server has no value, or the same one.
+
+    Information.
+    """
     IGNORED = "ignored"
-    """The path is on the ignore list, is a secret, or is a segment the composer left out. Reported with its reason."""
+    """The path is ignored, so it is reported with its reason.
+
+    It is on the ignore list, is a secret, or is a segment the composer left out.
+    """
     UNCONVERTED = "unconverted"
-    """The path is not converted yet, so the view has no value to compare. Information."""
+    """The path is not converted yet. Information.
+
+    The view has no value to compare there.
+    """
 
 
 FINDINGS: frozenset[EffectiveCategory] = frozenset(
@@ -104,23 +116,36 @@ FINDINGS: frozenset[EffectiveCategory] = frozenset(
 """The categories that say the view and the VCO disagree."""
 
 CONVERTED_MODULES: tuple[str, ...] = ("firewall", "QOS")
-"""The modules whose effective view exists: what ``compare_effective`` compares when it is given none."""
+"""The modules whose effective view exists.
+
+They are what ``compare_effective`` compares when it is given none.
+"""
 
 UNMODELED_KEYS: Mapping[str, frozenset[str]] = {
     "firewall": frozenset({"etm"}),
     "QOS": frozenset(),
 }
-"""Keys of a module that no model declares, as paths (``[*]`` for any one list item): reported as ``unconverted`` and not as ``server_only``."""
+"""Keys of a module that no model declares, as paths.
+
+``[*]`` stands for any one list item. Each is reported as ``unconverted`` and not as
+``server_only``.
+"""
 
 
 def module_attribute(name: str) -> str:
-    """The attribute of ``EffectiveView`` and of the VCO's composed-modules answer that holds the module *name* (a wire name): ``QOS`` is ``qos``, any other is its own."""
+    """The attribute that holds the module *name* (a wire name).
+
+    It is the attribute of ``EffectiveView`` and of the VCO's composed-modules answer:
+    ``QOS`` is ``qos``, any other is its own.
+    """
     return "qos" if name == "QOS" else name
 
 
 @dataclass(frozen=True)
 class EffectiveIgnore:
-    """A divergence that is known and understood: its module, the path it applies to, and why.
+    """A divergence that is known and understood.
+
+    It holds its module, the path it applies to, and why.
 
     *path* is matched against whole parts of a wire path (a key, or a
     ``[...]`` list item), from its start: ``segments[*].outbound[0]`` matches
@@ -134,7 +159,10 @@ class EffectiveIgnore:
 
 
 EFFECTIVE_IGNORES: tuple[EffectiveIgnore, ...] = ()
-"""The known divergences, each with its reason. An entry is added only after the divergence is understood, so that none is hidden."""
+"""The known divergences, each with its reason.
+
+An entry is added only after the divergence is understood, so that none is hidden.
+"""
 
 
 @dataclass(frozen=True)
@@ -221,7 +249,9 @@ def compare_module(
     ignores: Sequence[EffectiveIgnore],
     security_objects: SecurityObjects | None = None,
 ) -> list[EffectiveDifference]:
-    """The differences between *view* and *server*, the raw data the VCO composed for *module*.
+    """The differences between *view* and *server*.
+
+    *server* is the raw data the VCO composed for *module*.
 
     The ignores of other modules are not applied. See the module's text for how
     the two are matched.
@@ -251,7 +281,9 @@ def _expect_security_keys(
     reasons: dict[str, str],
     objects: SecurityObjects,
 ) -> None:
-    """Add the keys the composer adds to each rule of *client* that names a group, expected from *objects*.
+    """Add the keys the composer adds to each rule of *client* that names a group.
+
+    The keys are expected from *objects*.
 
     The expected values go in the dump, and a ``Resolved`` for each in
     *resolved* (the rule's origin, a source of its ``securityServiceGroup``).
@@ -303,7 +335,9 @@ def _same(client: object, server: object) -> bool:
 
 
 def _built_empty(client: object, server: object) -> bool:
-    """The view holds an empty list it built itself and the server has none: no difference.
+    """The view holds an empty list it built itself and the server has none.
+
+    That is no difference.
 
     Only where the view materialises the list (an ``Additive`` list, which is
     always there, and ``segments``); a stored empty list the server lacks is
@@ -313,7 +347,10 @@ def _built_empty(client: object, server: object) -> bool:
 
 
 def _model_of(annotation: object) -> type[VcoModel] | None:
-    """The model a value of *annotation* is, or its items are, or its non-``None`` variant is; ``None`` if it is plain."""
+    """The model a value of *annotation* is; ``None`` if it is plain.
+
+    The model may also be what its items are, or what its non-``None`` variant is.
+    """
     if isinstance(annotation, type):
         return annotation if issubclass(annotation, VcoModel) else None
     origin = get_origin(annotation)
@@ -354,7 +391,10 @@ def _dig(item: object, keys: tuple[str, ...]) -> object:
 
 
 class _Comparison:
-    """One run of ``compare_module``: the entries found so far and what it needs to attribute them."""
+    """One run of ``compare_module``.
+
+    It holds the entries found so far and what it needs to attribute them.
+    """
 
     def __init__(
         self,
@@ -438,7 +478,10 @@ class _Comparison:
         )
 
     def unmodeled(self, path: str) -> bool:
-        """Whether *path* is a key of this module that no model declares (``UNMODELED_KEYS``)."""
+        """Whether *path* is a key of this module that no model declares.
+
+        Those keys are ``UNMODELED_KEYS``.
+        """
         where = _parts(path)
         return any(
             len(pattern) == len(where) and _matches(pattern, where)
@@ -464,7 +507,10 @@ class _Comparison:
         server: Mapping[str, object],
         path: str,
     ) -> None:
-        """Compare the fields of *view* (its dump is *client*) with *server*, and then the keys of *server* that no field names."""
+        """Compare the fields of *view* (its dump is *client*) with *server*.
+
+        Then compare the keys of *server* that no field names.
+        """
         cls = type(view)
         known: set[str] = set()
         for name, info in cls.model_fields.items():
@@ -699,7 +745,10 @@ class _Comparison:
     def absent_from_server(
         self, path: str, client: object, cover: Resolved[object] | None
     ) -> None:
-        """The view has a value the server lacks: information under a display default, else a finding."""
+        """The view has a value the server lacks.
+
+        That is information under a display default, else a finding.
+        """
         display = cover is not None and cover.origin is Origin.FACTORY
         self.emit(
             path,
@@ -718,7 +767,9 @@ class _Comparison:
         cover: Resolved[object] | None,
         typ: type[VcoModel] | None,
     ) -> None:
-        """Both sides have a value: compare them down to the leaves, finding a secret by the model's field.
+        """Both sides have a value: compare them down to the leaves.
+
+        A secret is found by the model's field.
 
         A key with a ``Resolved`` of its own (a key expected from the security
         objects) is attributed to it, and what is below it too.

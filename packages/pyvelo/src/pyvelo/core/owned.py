@@ -1,4 +1,7 @@
-"""``Owned``: what an inheritable field holds on the edge layer, the encodings that say how it is stored, and the ways to change who owns it.
+"""``Owned``: what an inheritable field holds on the edge layer.
+
+Here too are the encodings that say how it is stored, and the ways to change who owns
+it.
 
 An edge layer may override a value its profile layer provides. ``Owned[T]``
 keeps what the edge stores at the key, and whether that counts as an override
@@ -84,7 +87,9 @@ type Encoding = ByPresence | ByFlag
 
 @dataclass(frozen=True)
 class MemberOf:
-    """Annotated marker: this ``Inheritable`` field is a member of the coupled group *group*.
+    """Annotated marker: this ``Inheritable`` field is a member of a coupled group.
+
+    The group is the one named *group*.
 
     Usage: ``Annotated[Inheritable[bool], ByPresence(), MemberOf("stateful"),
     Default(False)]``. The group is declared once on the class with an
@@ -95,7 +100,9 @@ class MemberOf:
 
 
 class Binding:
-    """The profile-layer model an edge-layer model inherits from, or ``None``: it has no counterpart.
+    """The profile-layer model an edge-layer model inherits from, or ``None``.
+
+    ``None`` when it has no counterpart.
 
     ``bind_layers`` sets one on each model it reaches. A deep copy keeps it
     and shares the profile: the copy inherits from the same profile.
@@ -211,7 +218,9 @@ class Owned[T]:
         self._inherit()
 
     def localize(self) -> T:
-        """Copy the profile's value in as the edge's own, and return it to be edited in place.
+        """Copy the profile's value in as the edge's own, and return it.
+
+        It is returned to be edited in place.
 
         The value is the profile's, or the field's display default when the
         profile does not store one or the edge has no profile, copied deep;
@@ -238,7 +247,11 @@ class Owned[T]:
     # -- the work, with no check of the group (the group handle does those) ----
 
     def _refuse(self, intent: str) -> None:
-        """Raise if the intent *intent* may not be made now: the module was replaced, or the field belongs to a group and the intent would split it."""
+        """Raise if the intent *intent* may not be made now.
+
+        It may not when the module was replaced, or when the field belongs to a group
+        and the intent would split it.
+        """
         owner = self._owner
         if owner is None:
             return
@@ -273,7 +286,10 @@ class Owned[T]:
         return value
 
     def _parent_value(self) -> object:
-        """A deep copy of what the profile gives this field, or the display default; ``UnboundError`` if unbound."""
+        """A deep copy of what the profile gives this field, or the display default.
+
+        ``UnboundError`` if unbound.
+        """
         from .layers import display_default, profile_stores  # noqa: PLC0415 (layers imports this module)
 
         owner = self._owner
@@ -295,7 +311,10 @@ class Owned[T]:
         return clear_server_owned(copy.deepcopy(getattr(parent, self._field)))
 
     def _kept_object(self) -> object | None:
-        """The stored object of a ``presence_wins`` field when the backend runs with it although its flag is off, else ``None``."""
+        """The stored object of a ``presence_wins`` field in use, else ``None``.
+
+        It is in use when the backend runs with it although its flag is off.
+        """
         encoding = self._encoding
         stored = self.stored
         if (
@@ -308,7 +327,11 @@ class Owned[T]:
         return None
 
     def _localize_source(self) -> object:
-        """What ``localize`` makes local: the object the backend already uses (``_kept_object``), else the profile's value."""
+        """What ``localize`` makes local.
+
+        That is the object the backend already uses (``_kept_object``), else the
+        profile's value.
+        """
         kept = self._kept_object()
         return self._parent_value() if kept is None else kept
 
@@ -320,7 +343,10 @@ class Owned[T]:
         return value
 
     def _store_copy(self, value: object) -> None:
-        """Make *value*, a copy of the parent's, the local value; a ``null`` cannot be local, so nothing changes."""
+        """Make *value*, a copy of the parent's, the local value.
+
+        A ``null`` cannot be local, so nothing changes.
+        """
         if value is not None:
             self.stored = self._flagged(value)  # pyright: ignore[reportAttributeAccessIssue]
 
@@ -358,7 +384,9 @@ class Owned[T]:
 
 
 def as_stored(value: object) -> object:
-    """*value* as a stored one: a model has every field set, recursively, as a model read from its own JSON has.
+    """*value* as a stored one: a model has every field set, recursively.
+
+    It has them set as a model read from its own JSON has.
 
     A display default is built from the model's defaults, so most of its
     fields are not *set*, and a dump that leaves out what was never set would
@@ -372,7 +400,9 @@ def as_stored(value: object) -> object:
 
 
 def clear_server_owned(value: object) -> object:
-    """*value*, a copy the caller owns, with every ``ServerOwned`` field of every model inside it cleared.
+    """*value*, a copy the caller owns, with every ``ServerOwned`` field cleared.
+
+    That is every such field of every model inside it.
 
     A field the VCO assigns (a rule's ``ruleLogicalId``) holds an ID that
     belongs to the profile's object, not to the copy the edge makes of it, so
@@ -444,7 +474,9 @@ def _null_is_inherit(owner: Layered[Edge], field: str) -> PatchError:
 
 
 def _validate_inner(owner: Layered[Edge], field: str, value: object) -> object:
-    """*value* validated as the inner type of *field* of *owner*, as ``merge_patch`` validates a patched value.
+    """*value* validated as the inner type of *field* of *owner*.
+
+    It is validated as ``merge_patch`` validates a patched value.
 
     ``validate_patched_value`` does it, so a refusal is the one a patch of the
     field gives: the same ``PatchError``, at the python name of the field.
@@ -540,7 +572,9 @@ def _refuse_member(
 
 
 class OwnedGroup:
-    """Declares a coupled group on a ``Layered`` class: members that change ownership together.
+    """Declares a coupled group on a ``Layered`` class.
+
+    The members of a group change ownership together.
 
     A class variable: ``stateful: ClassVar[OwnedGroup] = OwnedGroup("stateful",
     anchor="stateful_firewall_settings", bundle=StatefulLocal)``. Its members
@@ -620,7 +654,10 @@ def groups_of(cls: type) -> dict[str, OwnedGroup]:
 
 
 def check_groups(cls: type[Layered[Any]]) -> None:
-    """Check the groups of *cls*; ``TypeError`` for the first declaration that is wrong."""
+    """Check the groups of *cls*.
+
+    ``TypeError`` for the first declaration that is wrong.
+    """
     from .layers import Kind, field_kind  # noqa: PLC0415 (layers imports this module)
 
     groups = groups_of(cls)
@@ -638,8 +675,8 @@ def check_groups(cls: type[Layered[Any]]) -> None:
                 raise TypeError(
                     f"{cls.__name__}.{name}: MemberOf({marker.group!r}) names a "
                     "group the class does not declare; declare it with "
-                    f'{marker.group}: ClassVar[OwnedGroup] = OwnedGroup("{marker.group}", '
-                    "anchor=..., bundle=...)"
+                    f"{marker.group}: ClassVar[OwnedGroup] = "
+                    f'OwnedGroup("{marker.group}", anchor=..., bundle=...)'
                 )
             members[marker.group].append(name)
     for group in groups.values():
@@ -664,7 +701,11 @@ def check_groups(cls: type[Layered[Any]]) -> None:
 
 
 class GroupHandle:
-    """The coupled group *group* of one edge-layer model: ``is_local``, ``inherit``, ``set_local`` and ``localize`` for every member at once."""
+    """The coupled group *group* of one edge-layer model.
+
+    It has ``is_local``, ``inherit``, ``set_local`` and ``localize`` for every member at
+    once.
+    """
 
     def __init__(self, group: OwnedGroup, owner: Layered[Edge]) -> None:
         """The handle of *group* on the edge-layer model *owner*."""
@@ -691,15 +732,18 @@ class GroupHandle:
             owned._inherit()
 
     def set_local(self, bundle: VcoModel) -> None:
-        """Make every member local, each from the field of *bundle* (an instance of the group's bundle model) that has its name.
+        """Make every member local, each from the field of *bundle* that has its name.
+
+        *bundle* is an instance of the group's bundle model.
 
         Every member is validated before any is changed.
         """
         self._check("set_local")
         if not isinstance(bundle, self._group.bundle):
             raise TypeError(
-                f"{self._group.attribute}.set_local takes a {self._group.bundle.__name__} "
-                f"with every member of the group, not a {type(bundle).__name__}; "
+                f"{self._group.attribute}.set_local takes a "
+                f"{self._group.bundle.__name__} with every member of the group, "
+                f"not a {type(bundle).__name__}; "
                 "a text-driven caller sends every member in a patch: "
                 "{"
                 + ", ".join(
@@ -717,7 +761,10 @@ class GroupHandle:
             getattr(self._owner, name).stored = value
 
     def localize(self) -> None:
-        """Make every member local, copied from the profile; one that is local already is kept, and so is a ``presence_wins`` object the edge stores with its flag off (``Owned.localize``).
+        """Make every member local, copied from the profile.
+
+        One that is local already is kept, and so is a ``presence_wins`` object the edge
+        stores with its flag off (``Owned.localize``).
 
         The members are edited through their own ``Owned``
         (``fw.stateful_firewall_settings.local.udp_flow_timeout = 600``). It
@@ -739,7 +786,9 @@ class GroupHandle:
 
 
 def bind_layers(edge: Layered[Edge], profile: Layered[Profile] | None) -> None:
-    """Link an edge-layer model to the profile-layer model it inherits from, and the models below each to theirs.
+    """Link an edge-layer model to the profile-layer model it inherits from.
+
+    The models below each are linked to theirs.
 
     ``Owned.localize`` and a group's ``localize`` copy from the profile, which
     they find through this. The roots are bound to each other. Below them, a
@@ -795,7 +844,9 @@ def bind_layers(edge: Layered[Edge], profile: Layered[Profile] | None) -> None:
 
 
 def bind_new_item(owner: Layered[Edge], field: str, item: Layered[Edge]) -> None:
-    """Bind *item*, an entry just added to *owner*'s keyed list *field*, to the profile's entry with the same identity.
+    """Bind *item* to the profile's entry with the same identity.
+
+    *item* is an entry just added to *owner*'s keyed list *field*.
 
     ``bind_layers`` binds the entries a list holds when it runs; an entry added
     after that is bound here, so ``localize`` in it copies from the profile's
@@ -823,7 +874,10 @@ def bind_new_item(owner: Layered[Edge], field: str, item: Layered[Edge]) -> None
 
 
 def _profile_models(value: object) -> list[Layered[Profile]]:
-    """The ``Layered`` models in *value*: the model itself, or those among the items of a list."""
+    """The ``Layered`` models in *value*.
+
+    That is the model itself, or those among the items of a list.
+    """
     from .layers import Layered  # noqa: PLC0415 (layers imports this module)
 
     items = cast("list[object]", value) if isinstance(value, list) else [value]
@@ -835,7 +889,10 @@ def _profile_models(value: object) -> list[Layered[Profile]]:
 def item_identity(
     item: object, paths: tuple[str, ...], alt: str | None
 ) -> tuple[str, object]:
-    """What names *item* in its list: its alt key if the list has one and it has a value, else its key."""
+    """What names *item* in its list: its alt key, else its key.
+
+    The alt key names it if the list has one and it has a value.
+    """
     if alt is not None:
         found = item_value_at(item, alt)
         if found not in (None, MISSING):
@@ -858,7 +915,10 @@ def item_value_at(item: object, path: str) -> object:
 
 @dataclass(frozen=True)
 class UnflaggedInUse:
-    """An object stored at a ``presence_wins`` field with its flag off (``unflagged_in_use_at``)."""
+    """An object stored at a ``presence_wins`` field with its flag off.
+
+    ``unflagged_in_use_at`` returns these.
+    """
 
     steps: tuple[tuple[str, str | None], ...]
     """The route to the field in wire keys: each step is a key and, when it
@@ -868,7 +928,10 @@ class UnflaggedInUse:
 
     @property
     def path(self) -> str:
-        """The route as ``segments["Voice"].cosMapping``: keys joined by ``.``, an item as ``[<json of its key>]``."""
+        """The route as ``segments["Voice"].cosMapping``.
+
+        Keys are joined by ``.``, and an item is written as ``[<json of its key>]``.
+        """
         return ".".join(
             key if item is None else f"{key}[{json.dumps(item)}]"
             for key, item in self.steps
@@ -880,14 +943,20 @@ class UnflaggedInUse:
         return self.steps[-1][0]
 
     def inherit_patch(self) -> dict[str, object]:
-        """The patch that makes the field inherit: ``{"segments": {"Voice": {"cosMapping": null}}}``."""
+        """The patch that makes the field inherit.
+
+        For example, ``{"segments": {"Voice": {"cosMapping": null}}}``.
+        """
         patch: object = None
         for key, item in reversed(self.steps):
             patch = {key: patch if item is None else {item: patch}}
         return cast("dict[str, object]", patch)
 
     def keep_patch(self) -> dict[str, object]:
-        """The patch that keeps the stored object and turns its flag on: ``{"segments": {"Voice": {"cosMapping": {}}}}``."""
+        """The patch that keeps the stored object and turns its flag on.
+
+        For example, ``{"segments": {"Voice": {"cosMapping": {}}}}``.
+        """
         patch: object = {}
         for key, item in reversed(self.steps):
             patch = {key: patch if item is None else {item: patch}}
@@ -895,7 +964,10 @@ class UnflaggedInUse:
 
 
 def _wire_value(model: type[VcoModel], item: object, path: str) -> object:
-    """The value at the python-name *path* below *item*, a raw dict of *model*, read under wire keys; None when a step is absent."""
+    """The value at the python-name *path* below *item*; None when a step is absent.
+
+    *item* is a raw dict of *model*, read under wire keys.
+    """
     from .base import field_models, is_dict, wire_name  # noqa: PLC0415 (base imports this module)
 
     value: object = item
@@ -912,7 +984,10 @@ def _wire_value(model: type[VcoModel], item: object, path: str) -> object:
 def unflagged_in_use_at(  # noqa: C901 (existing: split it when it next changes)
     model: type[Layered[Any]], data: Mapping[str, object]
 ) -> list[UnflaggedInUse]:
-    """Every object in raw *data* that the backend uses although its flag is off (``unflagged_in_use``)."""
+    """Every object in raw *data* that the backend uses although its flag is off.
+
+    See also ``unflagged_in_use``.
+    """
     from .base import field_models, is_dict, is_list, wire_name  # noqa: PLC0415 (base imports this module)
     from .layers import Kind, Layered, field_kind  # noqa: PLC0415 (layers imports this module)
 
@@ -970,7 +1045,7 @@ def unflagged_in_use_at(  # noqa: C901 (existing: split it when it next changes)
 def unflagged_in_use(
     model: type[Layered[Any]], data: Mapping[str, object]
 ) -> list[str]:
-    """The path of every object in raw *data* that the backend uses although its flag is off.
+    """The path of every object in raw *data* the backend uses although its flag is off.
 
     *data* is read as *model*'s wire keys. A field declared
     ``ByFlag(..., presence_wins=True)`` is read by the backend composer

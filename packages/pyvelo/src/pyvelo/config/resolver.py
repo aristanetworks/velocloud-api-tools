@@ -20,7 +20,8 @@ from typing import (
 from pyvelo.client.protocol import VcoClientProtocol
 from pyvelo.core.identity import IdentityKey, ResolverNotLoadedError, entity_label
 
-# ResolutionError lives in pyvelo.core.identity; re-exported so this import path keeps working.
+# ResolutionError lives in pyvelo.core.identity; re-exported so this import path keeps
+# working.
 from pyvelo.core.identity import ResolutionError as ResolutionError  # noqa: PLC0414
 
 
@@ -52,7 +53,10 @@ class Resolver[IdentityT](Protocol):
         ...
 
     def lookup_key(self, key: IdentityKey[IdentityT]) -> IdentityT:
-        """Key object -> typed identity, from the loaded tables. Dispatches on key type."""
+        """Key object -> typed identity, from the loaded tables.
+
+        Dispatches on key type.
+        """
         ...
 
     async def resolve(self, name: str) -> IdentityT:
@@ -177,7 +181,10 @@ class BaseResolver[IdentityT]:
         self.loaded = False
 
     def _require_loaded(self) -> None:
-        """Raise ``ResolverNotLoadedError`` when this resolver needs a load and has none."""
+        """Raise ``ResolverNotLoadedError`` if this resolver is not loaded.
+
+        That is when it needs a load and has none.
+        """
         if self.requires_load and not self.loaded:
             raise ResolverNotLoadedError(self.identity_type)
 
@@ -331,7 +338,9 @@ class ResolverRegistry:
         accessor: Callable[[T], object],
         value: object,
     ) -> T:
-        """The first loaded identity of *identity_type* for which ``accessor(identity) == value``.
+        """The first loaded identity of *identity_type* whose accessor gives *value*.
+
+        It is the first for which ``accessor(identity) == value``.
 
         The scan covers ``identities()``, in its order, so it finds an identity
         that another one of the same name hides from the name lookups (an Edge

@@ -1,4 +1,7 @@
-"""HubResolver: resolves an Edge or a hub cluster of an enterprise, by name or logical ID."""
+"""HubResolver: resolves an Edge or a hub cluster of an enterprise.
+
+It resolves one by name or logical ID.
+"""
 
 import uuid
 from typing import ClassVar, Self, override
@@ -135,7 +138,10 @@ class HubResolver(BaseResolver[HubIdentity]):
 
     @override
     async def load(self, context: ResolverContext) -> None:
-        """Read the Edges, the clusters and their members of the enterprise, and populate the lookup tables."""
+        """Read the hubs of the enterprise, and populate the lookup tables.
+
+        It reads the Edges, the clusters and their members.
+        """
         edge_request = GetEnterpriseEdgeList()
         cluster_request = GetEnterpriseServices(
             type_=EnterpriseServiceType.EDGE_HUB_CLUSTER
@@ -212,12 +218,18 @@ class HubResolver(BaseResolver[HubIdentity]):
         return list(self._hubs)
 
     def is_cluster_member(self, logical_id: uuid.UUID) -> bool:
-        """True if the Edge with *logical_id* is a member of a hub cluster, so no hub of its own."""
+        """True if the Edge with *logical_id* is a member of a hub cluster.
+
+        Such an Edge is no hub of its own.
+        """
         self._require_loaded()
         return logical_id in self._members
 
     def member_name(self, logical_id: uuid.UUID) -> str | None:
-        """The name of the cluster member Edge with *logical_id*, or None if it is no member."""
+        """The name of the cluster member Edge with *logical_id*.
+
+        None if it is no member.
+        """
         self._require_loaded()
         return self._members.get(logical_id)
 

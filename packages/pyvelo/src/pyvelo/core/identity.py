@@ -71,7 +71,10 @@ class ResolutionError(KeyError):
 
 
 def entity_label(identity_type: type) -> str:
-    """The words of an identity type's name without ``Identity``: ``"network service"`` for ``NetworkServiceIdentity``."""
+    """The words of an identity type's name without ``Identity``.
+
+    For ``NetworkServiceIdentity`` they are ``"network service"``.
+    """
     name = identity_type.__name__.removesuffix("Identity")
     return re.sub(r"(?<=[a-z])(?=[A-Z])", " ", name).lower()
 
@@ -105,20 +108,25 @@ class ResolverNotLoadedError(ResolutionError):
 def _rebuild_resolution_error(
     cls: type[ResolutionError], args: tuple[Any, ...]
 ) -> ResolutionError:
-    """Build an error of *cls* without calling its constructor; its attributes arrive as state."""
+    """Build an error of *cls* without calling its constructor.
+
+    Its attributes arrive as state.
+    """
     error = cls.__new__(cls)
     error.args = args
     return error
 
 
 class IdentityKey[IdentityT]:
-    """Base of every lookup key: a key of ``IdentityKey[SegmentIdentity]`` resolves to a ``SegmentIdentity``.
+    """Base of every lookup key.
 
-    A key class names its identity type in its base, ``class SegmentId(IdentityKey[SegmentIdentity])``,
-    and ``identity_type`` is set from it, so the registry finds the resolver
-    for a key and a type checker knows what resolving the key returns. A
-    subclass of a concrete key inherits its parent's identity type. A class
-    whose bases name none raises ``TypeError``.
+    A key of ``IdentityKey[SegmentIdentity]`` resolves to a ``SegmentIdentity``.
+
+    A key class names its identity type in its base,
+    ``class SegmentId(IdentityKey[SegmentIdentity])``, and ``identity_type`` is set from
+    it, so the registry finds the resolver for a key and a type checker knows what
+    resolving the key returns. A subclass of a concrete key inherits its parent's
+    identity type. A class whose bases name none raises ``TypeError``.
     """
 
     identity_type: ClassVar[type[Any]]
@@ -502,7 +510,10 @@ class LicenseName(IdentityKey[LicenseIdentity]):
 
 @dataclass(frozen=True)
 class NetworkServiceIdentity:
-    """An enterprise network service; ``type_`` is its type text as the VCO answers it."""
+    """An enterprise network service.
+
+    ``type_`` is its type text as the VCO answers it.
+    """
 
     name: str
     logical_id: uuid.UUID

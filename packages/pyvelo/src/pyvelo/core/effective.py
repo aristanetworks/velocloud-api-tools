@@ -62,7 +62,10 @@ class Origin(StrEnum):
 
 @dataclass(frozen=True)
 class Resolved[T]:
-    """An effective value with its *origin* and its *source*, the wire path in the layer it came from."""
+    """An effective value with its *origin* and its *source*.
+
+    The source is the wire path in the layer it came from.
+    """
 
     origin: Origin
     value: T
@@ -89,7 +92,9 @@ class Resolved[T]:
 def effective_view[M: Layered[Any]](
     edge: Layered[Edge] | None, profile: Layered[Profile], model: type[M]
 ) -> M:
-    """The effective view of *edge* over *profile*: an instance of *model*, the ``[Effective]`` class of the same ``Layered`` class.
+    """The effective view of *edge* over *profile*, an instance of *model*.
+
+    *model* is the ``[Effective]`` class of the same ``Layered`` class.
 
     *edge* is ``None`` for an edge with no row for the module: every origin is
     then ``PROFILE`` or ``FACTORY``. The view is read-only, holds copies of the
@@ -150,7 +155,10 @@ def _build[M: Layered[Any]](
     edge_at: str,
     profile_at: str,
 ) -> M:
-    """The view of one model: *edge_at* and *profile_at* are where each layer holds it (a source prefix)."""
+    """The view of one model.
+
+    *edge_at* and *profile_at* are where each layer holds it (a source prefix).
+    """
     own_at = profile_at if profile is not None else edge_at
     values: dict[str, Any] = {}
     for name, info in cls.model_fields.items():
@@ -228,7 +236,10 @@ def _layer_only(  # noqa: PLR0913, PLR0917 (existing: split it when it next chan
     layer_at: str,
     own_at: str,
 ) -> object:
-    """An ``EdgeOnly`` or ``ProfileOnly`` field: *layer*'s value, or the field's default when the layer is not there."""
+    """The value of an ``EdgeOnly`` or ``ProfileOnly`` field.
+
+    It is *layer*'s value, or the field's default when the layer is not there.
+    """
     value: object = MISSING if layer is None else getattr(layer, name)
     if value is not MISSING:
         return Resolved(origin, _copy(value), _join(layer_at, key))
@@ -329,9 +340,9 @@ def _children(  # noqa: PLR0913, PLR0917 (existing: split it when it next change
     spec = get_key_spec(cls.model_fields[name])
     if spec is None:
         raise TypeError(
-            f"{cls.__name__}.{name}: a list of Layered models is matched between "
-            "the edge layer and the profile layer by key, and this list has "
-            'none: declare it with KeyField, as in Annotated[list[Seg[L]], KeyField("segment.name", '
+            f"{cls.__name__}.{name}: a list of Layered models is matched between the "
+            "edge layer and the profile layer by key, and this list has none: declare "
+            'it with KeyField, as in Annotated[list[Seg[L]], KeyField("segment.name", '
             'alt="segment.segment_id")]'
         )
     edge_items = _layered_items(edge_value)
@@ -383,18 +394,18 @@ def effective_dump(
 ) -> tuple[JsonObject, dict[str, Resolved[object]]]:
     """The view as wire JSON, and the ``Resolved`` of each wire path in it.
 
-    The JSON has the wire keys (aliases) and the values as JSON mode writes
-    them; a key is absent where the view has ``MISSING`` (an ``Unconverted``
-    field), or a ``Resolved`` of it (an ``EdgeOnly`` or ``ProfileOnly`` field
-    whose layer holds none, and has no default). A stored value (``EDGE`` or ``PROFILE``) is written as stored: the
-    fields of a model it was not given are left out, which is what the server
-    composes from the same data. A display default (``FACTORY``) is written
-    whole. Each ``Resolved`` is written as its value. The map has an entry for
-    each ``Resolved`` of the view, an item of an ``Additive`` list included,
-    under its path in the view: dotted wire keys, a keyed ``Layered`` child as
-    ``segments[<segmentId>]`` (the alt key; the key where the list has none)
-    and any other list item as ``[<index>]``. That is not the ``Resolved``'s
-    own ``source``, which is its place in the layer it came from.
+    The JSON has the wire keys (aliases) and the values as JSON mode writes them; a key
+    is absent where the view has ``MISSING`` (an ``Unconverted`` field), or a
+    ``Resolved`` of it (an ``EdgeOnly`` or ``ProfileOnly`` field whose layer holds none,
+    and has no default). A stored value (``EDGE`` or ``PROFILE``) is written as stored:
+    the fields of a model it was not given are left out, which is what the server
+    composes from the same data. A display default (``FACTORY``) is written whole. Each
+    ``Resolved`` is written as its value. The map has an entry for each ``Resolved`` of
+    the view, an item of an ``Additive`` list included, under its path in the view:
+    dotted wire keys, a keyed ``Layered`` child as ``segments[<segmentId>]`` (the alt
+    key; the key where the list has none) and any other list item as ``[<index>]``. That
+    is not the ``Resolved``'s own ``source``, which is its place in the layer it came
+    from.
     """
     found: dict[str, Resolved[object]] = {}
     return _dump_model(view, "", found), found
@@ -453,7 +464,11 @@ def _dump_list(
 
 
 def _identity_text(item: object, spec: KeySpec) -> str | None:
-    """The text of *item*'s identity in its list: the alt key's value, else the key as ``item_key_text`` writes it; ``None`` for an item with neither."""
+    """The text of *item*'s identity in its list.
+
+    It is the alt key's value, else the key as ``item_key_text`` writes it; ``None`` for
+    an item with neither.
+    """
     kind, found = item_identity(item, spec.paths, spec.alt)
     if kind == "alt":
         return str(found)
@@ -464,5 +479,9 @@ _ANY: TypeAdapter[object] = TypeAdapter(object)
 
 
 def _json(value: object, *, full: bool = False) -> object:
-    """*value* as JSON mode writes it; unless *full*, a model leaves out the fields it was not given (the stored data, not the defaults the model fills in)."""
+    """*value* as JSON mode writes it.
+
+    Unless *full*, a model leaves out the fields it was not given (the stored data, not
+    the defaults the model fills in).
+    """
     return _ANY.dump_python(value, mode="json", by_alias=True, exclude_unset=not full)

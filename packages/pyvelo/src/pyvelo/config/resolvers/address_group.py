@@ -1,4 +1,7 @@
-"""AddressGroupResolver — resolves address group names to AddressGroupIdentity via VCO API."""
+"""AddressGroupResolver — resolves address group names to AddressGroupIdentity.
+
+Resolution is via the VCO API.
+"""
 
 from typing import override
 

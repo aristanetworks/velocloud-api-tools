@@ -1,4 +1,7 @@
-"""ConfigPipeline: orchestration layer for load → apply → save configuration workflow."""
+"""ConfigPipeline: the orchestration layer of a configuration workflow.
+
+The workflow is load → apply → save.
+"""
 
 from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -125,12 +128,18 @@ class _StepRun:
     in_place: list[HubStep] = field(default_factory=list)
     outcomes: list[StepOutcome] = field(default_factory=list)
     warnings: list[ValidationWarning] = field(default_factory=list)
-    """The ``hub_in_use`` warnings: the edges whose QoS rules use a hub a step removes."""
+    """The ``hub_in_use`` warnings.
+
+    The edges whose QoS rules use a hub a step removes.
+    """
     calling: bool = False
     """Whether a call was made, which may have reached the VCO."""
 
     def progress(self) -> SaveProgress:
-        """The progress of a save that stopped in its steps: the writes stored so far, and the modules not yet written."""
+        """The progress of a save that stopped in its steps.
+
+        The writes stored so far, and the modules not yet written.
+        """
         stored = {write.name for write in self.done}
         return SaveProgress(
             completed=tuple(self.done),
@@ -139,7 +148,10 @@ class _StepRun:
         )
 
     def error(self, error: Exception, *, step: HubStep | None = None) -> SaveStepError:
-        """The ``SaveStepError`` for *error*, raised at *step* (None after the steps), with the progress attached."""
+        """The ``SaveStepError`` for *error*, raised at *step*.
+
+        *step* is None after the steps. The error has the progress attached.
+        """
         raised = SaveStepError(
             f"{type(error).__name__}: {error}",
             step=step,
@@ -152,7 +164,10 @@ class _StepRun:
 
 
 def _leaves_a_hub_list(steps: Sequence[HubStep]) -> bool:
-    """Whether a step removes an Edge hub from a Branch-to-Hub list, which asks for the services' QoS usage."""
+    """Whether a step removes an Edge hub from a Branch-to-Hub list.
+
+    Such a step asks for the services' QoS usage.
+    """
     return any(
         s.action == "disable" and s.role == "hub" and s.hub.kind == "edge"
         for s in steps
@@ -165,7 +180,10 @@ def _hubs_in_use_warnings(
     module: DeviceSettingsConfigurationModule,
     on_hub_in_use: Literal["warn", "refuse"],
 ) -> list[ValidationWarning]:
-    """The ``hub_in_use`` warnings for the hubs *steps* remove that edge QoS rules use, or, with ``"refuse"``, ``HubListError`` for them."""
+    """The ``hub_in_use`` warnings for the hubs *steps* remove that edge QoS rules use.
+
+    Or, with ``"refuse"``, ``HubListError`` for them.
+    """
     return report_hubs_in_use(
         hubs_in_use(
             steps,
@@ -178,7 +196,10 @@ def _hubs_in_use_warnings(
 
 
 def _profile_device_settings(state: ConfigState) -> DeviceSettingsConfigurationModule:
-    """The device settings module of a profile state, the module the role steps are for."""
+    """The device settings module of a profile state.
+
+    It is the module the role steps are for.
+    """
     module = state.module(ConfigurationModuleName.DEVICE_SETTINGS)
     if not isinstance(module, DeviceSettingsConfigurationModule):
         raise TypeError(
@@ -399,7 +420,9 @@ class ConfigPipeline:
         segment: str | None = None,
         path: str | None = None,
     ) -> ConfigState:
-        """Apply *patch* to the data of *module* on the state's target, at an address if one is given.
+        """Apply *patch* to the data of *module* on the state's target.
+
+        The patch goes at an address if one is given.
 
         The patch format is ``VcoModel.merge_patch``'s: values validated as
         on parse, unknown keys refused, list items named by selector and
@@ -650,7 +673,10 @@ class ConfigPipeline:
         nested: Mapping[str, object],
         loaded: set[type],
     ) -> ProfileSegmentPatch:
-        """The segment rules of a patch to a profile module (``prepare_profile_segments``), loading a resolver it asks for."""
+        """The segment rules of a patch to a profile module.
+
+        From ``prepare_profile_segments``, loading a resolver it asks for.
+        """
         while True:
             try:
                 return await prepare_profile_segments(
@@ -732,7 +758,10 @@ class ConfigPipeline:
     async def _resolve_segment(
         self, state: ConfigState, name: str, loaded: set[type]
     ) -> SegmentIdentity:
-        """The identity of segment *name* by the state's segment resolver, loading it if it is registered and not loaded."""
+        """The identity of segment *name* by the state's segment resolver.
+
+        The resolver is loaded if it is registered and not loaded.
+        """
         if state.resolvers.resolver_for(SegmentIdentity) is None:
             raise LookupError(
                 "This state has no segment resolver, so the name "
@@ -776,28 +805,25 @@ class ConfigPipeline:
            in ``SaveResult.validation_errors`` instead, with the modules it
            would write in ``modules_updated`` and ``modules_inserted``.
         3. Send each changed module, in order, as an update or an insert with
-           ``returnData`` (``write_module``), and replace the state's module
-           with the one the VCO stored (:meth:`ConfigState.replace_module`).
-           A module written after a profile's device settings is rebased
-           (``write_module(..., rebase=True)``): the device settings write can
-           change it too, so its version is read first, and a changed one
-           makes the save read the module and apply your edits to it. Only a
-           path you edited that the other change also reached raises
-           ``ConfigConflictError``; what changed beside your edits is in
-           ``SaveResult.server_changes``, each with ``merged`` true.
-           Per module, ``SaveResult.left_out`` holds the planned changes the
-           VCO stores its own way (a field it owns, a default it adds back
-           where the plan removed it): neither applied nor lost, each with
-           the value read, the value sent and the value stored. ``SaveResult.server_changes``
-           holds what the VCO stored otherwise than sent, at paths that are
-           not lost edits: what it or another writer changed beside the
-           plan, an ID it issued, an IPv6 address in canonical form, the
-           value it stored at a left-out change. A value stored as it was
-           read is not listed there; a left-out change kept so is in
-           ``left_out``. In a list compared whole (a keyed list read with an
-           item that has no key) nothing is left out: a value stored at an
-           owned field otherwise than sent is a server change with
-           ``as_read`` ``MISSING``.
+           ``returnData`` (``write_module``), and replace the state's module with the
+           one the VCO stored (:meth:`ConfigState.replace_module`). A module written
+           after a profile's device settings is rebased
+           (``write_module(..., rebase=True)``): the device settings write can change it
+           too, so its version is read first, and a changed one makes the save read the
+           module and apply your edits to it. Only a path you edited that the other
+           change also reached raises ``ConfigConflictError``; what changed beside your
+           edits is in ``SaveResult.server_changes``, each with ``merged`` true. Per
+           module, ``SaveResult.left_out`` holds the planned changes the VCO stores its
+           own way (a field it owns, a default it adds back where the plan removed it):
+           neither applied nor lost, each with the value read, the value sent and the
+           value stored. ``SaveResult.server_changes`` holds what the VCO stored
+           otherwise than sent, at paths that are not lost edits: what it or another
+           writer changed beside the plan, an ID it issued, an IPv6 address in canonical
+           form, the value it stored at a left-out change. A value stored as it was read
+           is not listed there; a left-out change kept so is in ``left_out``. In a list
+           compared whole (a keyed list read with an item that has no key) nothing is
+           left out: a value stored at an owned field otherwise than sent is a server
+           change with ``as_read`` ``MISSING``.
 
         A profile whose edit adds a hub to a segment's hub, bridge or backhaul
         list, or removes one, has role steps (``ConfigPlan.steps``), which a
@@ -947,9 +973,9 @@ class ConfigPipeline:
                     ValidationWarning(
                         path=module_plan.name,
                         message=(
-                            "an earlier insert of this module may have reached the VCO; "
-                            "the save reads the configuration first, and takes a module "
-                            "of this name it finds there as the insert's answer"
+                            "an earlier insert of this module may have reached the "
+                            "VCO; the save reads the configuration first, and takes a "
+                            "module of this name it finds there as the insert's answer"
                         ),
                         code="insert_unconfirmed",
                     )
@@ -970,7 +996,9 @@ class ConfigPipeline:
         warnings: list[ValidationWarning],
         on_hub_in_use: Literal["warn", "refuse"],
     ) -> tuple[StepOutcome, ...]:
-        """What a save would do with each step of *plan*, from one read of the hub services: sends nothing.
+        """What a save would do with each step of *plan*; sends nothing.
+
+        It is decided from one read of the hub services.
 
         The ``hub_in_use`` warnings are added to *warnings*, or ``HubListError``
         is raised for *on_hub_in_use* ``"refuse"``.
@@ -1006,7 +1034,9 @@ class ConfigPipeline:
         device_settings_stored: bool,
         on_hub_in_use: Literal["warn", "refuse"],
     ) -> _StepRun:
-        """Send the role steps of *plan*, and have the device settings plan in *changed* carry the rows they made.
+        """Send the role steps of *plan*.
+
+        Then have the device settings plan in *changed* carry the rows they made.
 
         Reads the hub services, adds the ``hub_in_use`` warnings to the run
         (``HubListError`` with *on_hub_in_use* ``"refuse"``, before any step),
@@ -1098,7 +1128,10 @@ class ConfigPipeline:
         result: SaveResult,
         on_hub_in_use: Literal["warn", "refuse"],
     ) -> SaveResult:
-        """Send the role steps of *plan*, if it has any, then write each changed module, in order, and put the module as stored in *state*.
+        """Send the role steps of *plan*, then write each changed module.
+
+        The steps are sent if it has any. The modules are written in order, and each
+        module as stored is put in *state*.
 
         Raises ``TypeError`` before the first request when a changed module is
         not one a save writes. A ``ModuleWriteError`` puts the module as
@@ -1141,7 +1174,10 @@ class ConfigPipeline:
             )
 
         def progress_of(error: BaseException) -> SaveProgress:
-            """The progress of this save, attached to *error*: the writes stored, the module being written and the modules after it."""
+            """The progress of this save, attached to *error*.
+
+            The writes stored, the module being written and the modules after it.
+            """
             stored = {write.name for write in done}
             progress = SaveProgress(
                 completed=tuple(done),
@@ -1154,7 +1190,9 @@ class ConfigPipeline:
             return progress
 
         def store_write(at: int, write: ModuleWrite[Any]) -> None:
-            """Count *write* of the module at *at* as stored, and put the module as stored in the state.
+            """Count *write* of the module at *at* as stored.
+
+            Also put the module as stored in the state.
 
             Raises ``DetachedObjectError`` for an edit made while it was written.
             """
@@ -1191,13 +1229,14 @@ class ConfigPipeline:
             result.written = tuple(done)
             if paths:
                 error = DetachedObjectError(
-                    f"{mod.name}: the module was edited while this save was writing it, at: "
-                    f"{', '.join(paths)}. The write is stored without those edits and the "
-                    "state holds the module as stored; take the objects from the state again "
-                    "and redo them. A path that is a placeholder a lookup added "
-                    "(segment(name), for a segment the edge only inherits) is no edit "
-                    "and needs no redo. To edit a state from another task while a save "
-                    "may run, use apply, or hold state.lock around the edit",
+                    f"{mod.name}: the module was edited while this save was writing "
+                    f"it, at: {', '.join(paths)}. The write is stored without those "
+                    "edits and the state holds the module as stored; take the objects "
+                    "from the state again and redo them. A path that is a placeholder "
+                    "a lookup added (segment(name), for a segment the edge only "
+                    "inherits) is no edit and needs no redo. To edit a state from "
+                    "another task while a save may run, use apply, or hold state.lock "
+                    "around the edit",
                     paths,
                 )
                 note = _written_note(done)
@@ -1211,7 +1250,9 @@ class ConfigPipeline:
                 raise error
 
         def put_stored(mod: _WritableModule, error: ModuleWriteError) -> bool:
-            """Put the module *error* carries in the state in place of *mod*, and say whether it did.
+            """Put the module *error* carries in the state in place of *mod*.
+
+            Say whether it did.
 
             The module is of the class of *mod* (``write_module`` checks it), or
             None when it could not be read: then the state keeps *mod*. It is
@@ -1319,7 +1360,9 @@ class ConfigPipeline:
     async def compare_effective(  # noqa: C901 (existing: split it when it next changes)
         self, state: ConfigState, *, modules: Sequence[str] | None = None
     ) -> EffectiveComparison:
-        """Check the client's effective view of an edge against the modules the VCO composes for it.
+        """Check the client's effective view of an edge against the VCO's modules.
+
+        The modules are those the VCO composes for the edge.
 
         Reads ``edge/getEdgeConfigurationModules`` for the edge *state* was
         loaded for, without ``encryptKeys`` (a VCO may refuse the parameter),
@@ -1437,7 +1480,10 @@ class ConfigPipeline:
     async def _read_security_objects(
         self, enterprise_id: int | None
     ) -> SecurityObjects:
-        """The enterprise's security service groups and the objects they name (``SECURITY_OBJECT_TYPES``), one read for each."""
+        """The enterprise's security service groups and the objects they name.
+
+        The objects are of ``SECURITY_OBJECT_TYPES``; one read for each.
+        """
         rows: list[dict[str, object]] = []
         for type_ in SECURITY_OBJECT_TYPES:
             ask = GetEnterpriseSecurityObjects(type_=type_)
@@ -1454,7 +1500,7 @@ class ConfigPipeline:
         return self._validators.run(state, phase="write")
 
     async def load_resolvers(self, state: ConfigState, *identities: type) -> None:
-        """Give *state* resolvers of its own, or load the ones it has for some identity types.
+        """Give *state* its own resolvers, or load those it has for some identity types.
 
         With no *identities*, as ``load`` and ``load_profile`` do it for the
         state they return. Call it for a state built another way, such as from
@@ -1487,7 +1533,9 @@ class ConfigPipeline:
             await resolver.load(state.resolver_context)
 
     def _state_resolver(self, state: ConfigState, identity: type) -> Resolver[Any]:
-        """The resolver of *state* for *identity*, registered first when the state has none.
+        """The resolver of *state* for *identity*.
+
+        It is registered first when the state has none.
 
         The state's own, else an unloaded copy of the pipeline's, else, for
         ``NetworkServiceIdentity``, a new ``NetworkServiceResolver`` and, for
@@ -1514,7 +1562,9 @@ class ConfigPipeline:
     async def _plan_loading(
         self, state: ConfigState, *, repair_defaults: bool = True
     ) -> ConfigPlan:
-        """Plan *state*, loading a resolver the plan finds not loaded, once per identity type.
+        """Plan *state*, loading a resolver the plan finds not loaded.
+
+        A resolver is loaded once per identity type.
 
         A second ``ResolverNotLoadedError`` for a type that was loaded
         propagates: the load did not give the plan what it needs.
@@ -1580,7 +1630,10 @@ def build_default_pipeline(
 
 
 def _converted(modules: Sequence[str] | None) -> tuple[str, ...]:
-    """The converted modules *modules* names (all of them for ``None``); ``ValueError`` for another."""
+    """The converted modules *modules* names (all of them for ``None``).
+
+    ``ValueError`` for another.
+    """
     if modules is None:
         return CONVERTED_MODULES
     names: list[str] = []
@@ -1686,7 +1739,8 @@ def _prepare_segments(
             if name is not None:
                 if name in named:
                     raise PatchError(
-                        f"{named[name]} names segment {name!r} too: one selector per segment",
+                        f"{named[name]} names segment {name!r} too: "
+                        "one selector per segment",
                         where,
                         "duplicate",
                     )
@@ -1705,7 +1759,9 @@ def _prepare_segment(  # noqa: C901, PLR0911, PLR0913, PLR0917 (existing: split 
     resolvers: IdentityResolver | None,
     inherited: frozenset[str],
 ) -> tuple[object, str | None]:
-    """The selector to merge one segment entry under, and the segment it names (``_prepare_segments``).
+    """The selector to merge one segment entry under, and the segment it names.
+
+    For ``_prepare_segments``.
 
     The segment is None where the entry is left to ``merge_patch`` without
     naming one, and for ``"+"``. The selector is ``_LEFT_OUT`` for an empty
@@ -1782,7 +1838,9 @@ def _refuse_place_for(
     where: Path,
     inherited: frozenset[str],
 ) -> None:
-    """Refuse a ``move``, or a change with a ``_position``, of segment *name* if the edge only inherits it.
+    """Refuse to move or place segment *name* if the edge only inherits it.
+
+    Moving it is a ``move``, placing it a change with a ``_position``.
 
     Raises ``PatchError`` at *where*. A save writes the segments in
     *inherited* after the edge's own, in the profile's order, so a place for
@@ -1810,7 +1868,9 @@ def _refuse_place_by_inherited(
     resolvers: IdentityResolver | None,
     inherited: frozenset[str],
 ) -> None:
-    """Refuse a ``_position`` of *op* given ``before`` or ``after`` a segment the edge only inherits.
+    """Refuse a ``_position`` of *op* that anchors on an inherited segment.
+
+    That is ``before`` or ``after`` a segment the edge only inherits.
 
     Raises ``PatchError`` at *where*. An anchor that names no segment, in the
     layer or the profile, is left to ``merge_patch``.
@@ -1869,7 +1929,9 @@ def _refuse_segment_ops_to_a_missing_module(
     segment: str | None,
     path: str | None,
 ) -> None:
-    """Raise ``PatchError`` for a patch with segment operations to a module of three that the profile lacks.
+    """Raise ``PatchError`` for segment operations to a module the profile lacks.
+
+    The patch has segment operations, and the module is one of the three.
 
     A profile target only, for device settings, QoS and firewall: an ``add``,
     a ``delete`` or a list value for ``segments`` works on all three modules,
@@ -1899,7 +1961,10 @@ def _refuse_segment_ops_to_a_missing_module(
 
 
 def _device_settings_as_read(state: ConfigState) -> object:
-    """The raw data of the target's device settings module as read; ``MISSING`` when it has none."""
+    """The raw data of the target's device settings module as read.
+
+    ``MISSING`` when it has none.
+    """
     module = state.find_module("deviceSettings")
     return MISSING if module is None else module.raw_data
 
@@ -1910,7 +1975,9 @@ def _try_assigning(
     prepared: ProfileSegmentPatch,
     unserved: Collection[Path],
 ) -> None:
-    """Try *prepared*, the patch to profile module *mod* and the assignments it needs, on copies of the three modules.
+    """Try *prepared* on copies of the three modules.
+
+    *prepared* is the patch to profile module *mod* and the assignments it needs.
 
     The patch is merged into the copy of *mod* after the assignments, and
     must pass ``check_profile_segments``; each copy is then planned.
@@ -2035,7 +2102,9 @@ async def _write_module(  # noqa: PLR0913 (existing: split it when it next chang
     resolvers: IdentityLookup,
     profile_device_settings: DeviceSettingsConfigurationModule | None,
 ) -> ModuleWrite[Any]:
-    """``client.write_module`` with ``version_checked`` passed only when it is true: a save without steps calls it as it always did.
+    """``client.write_module``, with ``version_checked`` passed only when it is true.
+
+    A save without steps calls it as it always did.
 
     *resolvers* and *profile_device_settings* are for the rebase's derivation
     of the module's refs, and make no difference to a write that is not rebased.

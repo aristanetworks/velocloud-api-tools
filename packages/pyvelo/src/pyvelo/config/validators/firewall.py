@@ -49,7 +49,10 @@ def validate_rule_names_unique(state: ConfigStateLike) -> ValidationResult:  # n
                             result.errors.append(
                                 ValidationError(
                                     path=f"firewall.segments[{seg_name}].outbound[{i}]",
-                                    message=f"Duplicate rule name {name!r} (first at index {seen_firewall_names[name]})",
+                                    message=(
+                                        f"Duplicate rule name {name!r} "
+                                        f"(first at index {seen_firewall_names[name]})"
+                                    ),
                                     code="duplicate_rule_name",
                                 )
                             )
@@ -70,7 +73,10 @@ def validate_rule_names_unique(state: ConfigStateLike) -> ValidationResult:  # n
                             result.errors.append(
                                 ValidationError(
                                     path=f"QOS.segments[{seg_name}].rules[{i}]",
-                                    message=f"Duplicate rule name {name!r} (first at index {seen_qos_names[name]})",
+                                    message=(
+                                        f"Duplicate rule name {name!r} "
+                                        f"(first at index {seen_qos_names[name]})"
+                                    ),
                                     code="duplicate_rule_name",
                                 )
                             )

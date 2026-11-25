@@ -53,11 +53,17 @@ class _Plan:
     kind: Literal["value", "add", "delete", "set", "order", "map_add", "map_delete"]
     steps: tuple[str, ...]
     key: str = ""
-    """The field name of a value, the selector of a delete or a set, the key of a map entry."""
+    """The field name of a value, the selector of a delete or a set.
+
+    For a map entry it is the key of the entry.
+    """
     value: object = None
     """The value of a field, or the fields of an item that is added or set."""
     list_path: Path | None = None
-    """Where the keyed list of an added item, an item that is set, or an order entry is."""
+    """Where the keyed list of an item or of an order entry is.
+
+    The item is an added item or an item that is set.
+    """
     item: ItemPart | None = None
     """How the changes name the item an add adds or a set sets."""
     moves: tuple[tuple[ItemMove, str], ...] = ()
@@ -78,7 +84,10 @@ class _Plan:
 
 @dataclass(frozen=True, slots=True)
 class _Placed:
-    """An item of a keyed list that gets a ``_position``, and the plan that places it."""
+    """An item of a keyed list that gets a ``_position``.
+
+    It comes with the plan that places it.
+    """
 
     plan: _Plan
     item: ItemPart
@@ -133,7 +142,10 @@ def patch_of(
 def _stored(
     stored_parts: Mapping[Path, ItemPart] | None, list_path: Path, part: ItemPart
 ) -> ItemPart | None:
-    """The part that names the item *part* names in the stored list; None if it has none."""
+    """The part that names the item *part* names in the stored list.
+
+    None if it has none.
+    """
     if stored_parts is None:
         return part
     return stored_parts.get(list_path.child(part))
@@ -220,7 +232,10 @@ def _order_plan(
     list_path: Path,
     stored_parts: Mapping[Path, ItemPart] | None,
 ) -> _Plan | None:
-    """The plan of the order entry of a keyed list: its moves, each by the selector of its item."""
+    """The plan of the order entry of a keyed list.
+
+    It is its moves, each by the selector of its item.
+    """
     moves: list[tuple[ItemMove, str]] = []
     for move in change.moves or ():
         selector = _selector(stored_parts, list_path, move.item)
@@ -238,7 +253,9 @@ def _object(value: object) -> _Node | None:
 
 
 def _nulls_writable(body: _Node, fields: Mapping[str, FieldInfo]) -> bool:
-    """Whether every ``None`` in *body*, the fields of an item that exists, is written by a ``null``.
+    """Whether every ``None`` in *body* is written by a ``null``.
+
+    *body* is the fields of an item that exists.
 
     For an item that exists, a patch's ``null`` unsets a field that takes
     ``MISSING``, so it writes ``None`` only where the field takes that and not
@@ -264,7 +281,9 @@ def _item_plan(  # noqa: PLR0913, PLR0917 (existing: split it when it next chang
     stored_parts: Mapping[Path, ItemPart] | None,
     fields: Mapping[str, FieldInfo] | None,
 ) -> _Plan | None:
-    """The plan of a change that ends at an item of a keyed list: add, delete, or set its fields.
+    """The plan of a change that ends at an item of a keyed list.
+
+    It adds, deletes, or sets the item's fields.
 
     *fields* are the fields of the items of the list. A set is left out whole
     when it gives a field a ``None`` that a patch's ``null`` cannot write.
@@ -293,7 +312,10 @@ def _item_plan(  # noqa: PLR0913, PLR0917 (existing: split it when it next chang
 
 
 def _map_plan(change: RawChange, steps: tuple[str, ...], key: str) -> _Plan | None:
-    """The plan of a change that ends at an entry of a map of models: add or delete it."""
+    """The plan of a change that ends at an entry of a map of models.
+
+    It adds or deletes the entry.
+    """
     after = _object(change.after)
     if change.before is MISSING and after is not None:
         if key.startswith("+") or position_of(key) is not None:
@@ -341,7 +363,9 @@ def _value_plan(
 def _new_map_plan(
     change: RawChange, steps: tuple[str, ...], name: str, entries: _Node
 ) -> _Plan | None:
-    """The plan of a map of models that was not there and now has *entries*: one add each.
+    """The plan of a map of models that was not there and now has *entries*.
+
+    It is one add each.
 
     A patch's object on a map is item operations, so the entries are written
     as adds. Left out when the map was there, or when an entry is not an object
@@ -359,7 +383,10 @@ def _new_map_plan(
 
 
 def _repeats_a_key(items: list[object], spec: _ListSpec) -> bool:
-    """Whether two *items* of a keyed list value have one key: ``merge_patch`` refuses that."""
+    """Whether two *items* of a keyed list value have one key.
+
+    ``merge_patch`` refuses that.
+    """
     if spec.item_type is None:
         return False
     forms = [
@@ -393,7 +420,10 @@ def _placed_by_list(plans: Iterable[_Plan]) -> dict[Path, dict[ItemPart, _Placed
 def _anchor(
     placed: Mapping[ItemPart, _Placed], item: ItemPart
 ) -> tuple[int, ItemPart | None]:
-    """How many placed items are between *item* and the item its run follows, and that item (None: first)."""
+    """How many placed items are between *item* and the item its run follows.
+
+    The item it follows is returned too (None: first).
+    """
     depth, after = 0, placed[item].place.after
     while after is not None and after in placed and depth < len(placed):
         depth, after = depth + 1, placed[after].place.after
@@ -427,7 +457,10 @@ def _follows_an_item_there(
     list_path: Path,
     stored_parts: Mapping[Path, ItemPart] | None,
 ) -> bool:
-    """Whether the item the run of *item* follows can be named: it is first, or the stored list has the item."""
+    """Whether the item the run of *item* follows can be named.
+
+    It can when it is first, or when the stored list has the item.
+    """
     _, after = _anchor(placed, item)
     if after is None:
         return True

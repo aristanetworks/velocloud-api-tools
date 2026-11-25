@@ -1,4 +1,7 @@
-"""ApplicationResolver — resolves application names to ApplicationIdentity via VCO API."""
+"""ApplicationResolver — resolves application names to ApplicationIdentity.
+
+Resolution is via the VCO API.
+"""
 
 from typing import override
 
@@ -18,7 +21,8 @@ class ApplicationResolver(BaseResolver[ApplicationIdentity]):
     """Resolves an application identifier to an :class:`ApplicationIdentity`.
 
     Accepts:
-        - :class:`ApplicationName`: human-readable application name (display or canonical).
+        - :class:`ApplicationName`: human-readable application name (display or
+          canonical).
         - :class:`ApplicationId`: numeric application ID.
 
     Loads via ``configuration/getIdentifiableApplications``.

@@ -33,7 +33,10 @@ class FieldSite:
     """The field's python name."""
     field_info: FieldInfo
     path: Path
-    """The field's path in python names: ``segments["Global Segment"].dns.primary_provider``."""
+    """The field's path in python names.
+
+    For example, ``segments["Global Segment"].dns.primary_provider``.
+    """
     segment: VcoModel | None
     """The item of the root's ``segments`` list that holds the field, else ``None``."""
 

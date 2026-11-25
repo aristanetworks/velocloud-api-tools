@@ -30,7 +30,9 @@ def _is_tuple(value: object) -> TypeIs[tuple[object, ...]]:
 
 
 def _under(classes: _Classes, key: object) -> tuple[bool, _Classes, bool] | None:
-    """The field JSON key *key* names in *classes*: is it secret, what it holds, is it a map.
+    """The field JSON key *key* names in *classes*.
+
+    Whether it is secret, what it holds, and whether it is a map.
 
     None when no class has a field read from *key*. With several classes a
     field is secret if it is in any of them, and holds what it holds in each.

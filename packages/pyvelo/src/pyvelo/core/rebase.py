@@ -64,7 +64,10 @@ type KeyValue = KeyScalar | tuple[KeyScalar, ...]
 
 @dataclass(frozen=True, slots=True)
 class Key:
-    """A keyed-list item, identified by its ``KeyField`` value (a tuple for a composite key)."""
+    """A keyed-list item, identified by its ``KeyField`` value.
+
+    The value is a tuple for a composite key.
+    """
 
     value: KeyValue
 
@@ -128,7 +131,10 @@ def key_form(key: KeyValue | None) -> KeyForm | None:
 
 
 def key_part(value: object) -> KeyScalar:
-    """One part of a key: a scalar as it is, anything else (a ``UUID``) in string form."""
+    """One part of a key: a scalar as it is.
+
+    Anything else (a ``UUID``) is in string form.
+    """
     return value if isinstance(value, (str, int, float)) else str(value)
 
 
@@ -248,7 +254,9 @@ def _parse_key_parts(
 
 
 def parse_key_text(text: str) -> tuple[KeyScalar, ...]:
-    """The parts of the key that ``key_text`` writes as *text*; one part for a single key.
+    """The parts of the key that ``key_text`` writes as *text*.
+
+    There is one part for a single key.
 
     Raises ``ValueError`` if *text* is not what ``key_text`` writes.
     """
@@ -331,11 +339,17 @@ def _name(key: object) -> str:
 
 
 type ItemPart = Key | int
-"""How a keyed-list item is named: by its key, or by its position where the key repeats or is absent."""
+"""How a keyed-list item is named.
+
+It is named by its key, or by its position where the key repeats or is absent.
+"""
 
 
 def item_text(part: ItemPart) -> str:
-    """An item's name as text: the key as ``Path`` writes it, or ``#n`` for a position."""
+    """An item's name as text.
+
+    It is the key as ``Path`` writes it, or ``#n`` for a position.
+    """
     if isinstance(part, Key):
         return key_text(part.value)
     return f"#{part}"
@@ -425,7 +439,10 @@ class ModelMap:
 
 
 type Node = type[VcoModel] | KeyedList | ModelMap | None
-"""What a JSON value is known to be: a model, a keyed list, a map of models, or nothing (untyped)."""
+"""What a JSON value is known to be.
+
+It is a model, a keyed list, a map of models, or nothing (untyped).
+"""
 
 
 # ---------------------------------------------------------------------------
@@ -593,7 +610,10 @@ def _unique(keys: list[KeyForm | None]) -> set[KeyForm]:
 
 @dataclass(frozen=True, slots=True)
 class Pairing:
-    """How the items of a keyed list *old* became the items of *new* (``pair_items``)."""
+    """How the items of a keyed list *old* became the items of *new*.
+
+    It is what ``pair_items`` gives.
+    """
 
     pairs: tuple[tuple[int, int], ...]
     """(index in *old*, index in *new*) of each item on both sides, in *new* order."""
@@ -631,7 +651,9 @@ def pair_items(
     *,
     old_alt_read: Sequence[bool] | None = None,
 ) -> Pairing | None:
-    """Pair the items of keyed list *old* with those of *new*, or None to replace it whole.
+    """Pair the items of keyed list *old* with those of *new*.
+
+    None means the list is replaced whole.
 
     First by alt key, for each alt-key value that occurs once on each side;
     then the items left by key, for each key that occurs once on each side
@@ -920,10 +942,12 @@ def item_names(
 
 
 def staying(order: Sequence[int]) -> set[int]:
-    """The positions in *order* of a longest increasing run: the items that need not move."""
-    tails: list[
-        int
-    ] = []  # tails[k]: the position in order of the last value of the run of length k + 1
+    """The positions in *order* of a longest increasing run.
+
+    They are the items that need not move.
+    """
+    # tails[k]: the position in order of the last value of the run of length k + 1
+    tails: list[int] = []
     values: list[int] = []  # order[tails[k]]
     before: list[
         int
@@ -1071,7 +1095,9 @@ def python_path(path: Path, model: type[VcoModel] | None) -> Path:
 
 
 def is_override_flag(model: type[VcoModel], path: Path) -> bool:
-    """Whether *path*, as ``find_lossy_assignments`` gives it, ends at an ``OverrideFlag`` of *model*.
+    """Whether *path* ends at an ``OverrideFlag`` of *model*.
+
+    *path* is as ``find_lossy_assignments`` gives it.
 
     A path of ``raw_changes`` is accepted too: its names are keys as written
     (``bgp``, ``loopbackInterfaces``), and each is read through the model's
@@ -1251,7 +1277,9 @@ def _was_read(item: object, path: str) -> bool:
 def _keyed_pairs(
     baseline: list[object], before: list[object], after: list[object], node: Node
 ) -> list[tuple[PathPart, int, int]] | None:
-    """The items a keyed list has on both sides, as (part, index in *before*, index in *after*).
+    """The items a keyed list has on both sides.
+
+    Each is (part, index in *before*, index in *after*).
 
     The part is the item's key in *before*, or its position there where that
     key is not unique. None unless *node* is a keyed list that ``pair_items``
