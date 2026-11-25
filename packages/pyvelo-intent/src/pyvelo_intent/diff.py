@@ -113,6 +113,27 @@ def _diff_values(
     return changes
 
 
+def _index_by_key(
+    items: Sequence[BaseModel], key_field: str, side: str
+) -> dict[object, BaseModel]:
+    """Index items by their key field, refusing a key that is there twice."""
+    by_key: dict[object, BaseModel] = {}
+    repeated: dict[object, None] = {}
+    for item in items:
+        key = cast(object, getattr(item, key_field))
+        if key in by_key:
+            repeated[key] = None
+        by_key[key] = item
+    if repeated:
+        keys = ", ".join(repr(key) for key in repeated)
+        raise ValueError(
+            f"the {side} items share a {key_field}: {keys}. diff_intents pairs "
+            "items by that field, so each value must be there once; diff by a "
+            "field that is unique, or remove the repeats"
+        )
+    return by_key
+
+
 def diff_intents(
     current: Sequence[BaseModel],
     desired: Sequence[BaseModel],
@@ -122,13 +143,10 @@ def diff_intents(
 
     Returns a DiffResult with Added, Removed, Modified, and Unchanged entries.
     Uses model_dump(mode="json") for symmetric field-level comparison.
+    Raises ``ValueError`` when two items of one side share a key.
     """
-    current_by_key: dict[object, BaseModel] = {
-        cast(object, getattr(m, key_field)): m for m in current
-    }
-    desired_by_key: dict[object, BaseModel] = {
-        cast(object, getattr(m, key_field)): m for m in desired
-    }
+    current_by_key = _index_by_key(current, key_field, "current")
+    desired_by_key = _index_by_key(desired, key_field, "desired")
 
     changes: list[Change] = []
 

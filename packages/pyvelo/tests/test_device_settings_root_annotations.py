@@ -2,6 +2,8 @@
 
 from pyvelo.client.models.configuration.device_settings.root import (
     DeviceSettingsData,
+    ModelInterfaces,
+    ModelLanInterfaces,
     Ntp,
     NtpServer,
 )
@@ -24,6 +26,13 @@ class TestDeviceSettingsKeyFields:
         spec = get_key_spec(Ntp.model_fields["servers"])
         assert spec is not None
         assert spec.paths == ("server",)
+
+    def test_model_entry_interface_lists_keyed_by_name(self):
+        for field in (
+            ModelInterfaces.model_fields["routed_interfaces"],
+            ModelLanInterfaces.model_fields["interfaces"],
+        ):
+            assert get_key_spec(field) == KeySpec(("name",))
 
 
 class TestDeviceSettingsOverrideFlags:

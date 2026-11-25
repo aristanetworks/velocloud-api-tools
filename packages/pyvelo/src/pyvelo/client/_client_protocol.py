@@ -89,6 +89,7 @@ class VcoClientBaseProtocol(Protocol):
         plan: ModulePlan,
         *,
         enterprise_id: int | None = None,
+        if_absent: bool = False,
     ) -> ModuleWrite[M]: ...
 
     def _on_stale_websocket_closed(self, task: asyncio.Task[None]) -> None: ...

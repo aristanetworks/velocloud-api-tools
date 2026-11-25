@@ -32,7 +32,7 @@ def edge_state(raw: dict[str, Any]) -> ConfigState:
 
 
 async def segment_resolvers() -> ResolverRegistry:
-    """Resolvers that know the profile's segments, as ``ConfigPipeline.load`` leaves them."""
+    """Resolvers that know the profile's segments, as ``ConfigPipeline.load`` gives a state."""
     registry = ResolverRegistry()
     registry.register(
         await make_segment_resolver(
@@ -165,7 +165,8 @@ async def test_missing_module_insert_has_only_local_content():
 async def test_segment_key_in_another_case_edits_the_segment_it_names():
     state = make_state()
     client = MockVcoClient.for_state(state)
-    pipeline = ConfigPipeline(client, resolvers=await segment_resolvers())
+    state.resolvers = await segment_resolvers()
+    pipeline = ConfigPipeline(client)
     await pipeline.apply(
         state,
         module="firewall",
@@ -187,8 +188,9 @@ async def test_new_segment_by_name_takes_the_profiles_descriptor(
 ):
     state = make_state()
     client = MockVcoClient.for_state(state)
-    resolvers = await segment_resolvers() if with_resolver else None
-    pipeline = ConfigPipeline(client, resolvers=resolvers)
+    if with_resolver:
+        state.resolvers = await segment_resolvers()
+    pipeline = ConfigPipeline(client)
     await pipeline.apply(
         state,
         module="firewall",
@@ -249,9 +251,7 @@ async def test_setting_a_default_on_an_inherited_key_is_refused():
     raw: dict[str, Any] = {"segments": [global_segment()]}
     state = edge_state(raw)
     client = MockVcoClient.for_state(state)
-    await ConfigPipeline(client).apply(
-        state, module="firewall", patch={"atp_enabled": False}
-    )
+    state.edge.firewall.atp_enabled = False
     with pytest.raises(LossyFieldError) as refused:
         await ConfigPipeline(client).save(state)
     assert refused.value.fields == ["atp_enabled"]
@@ -279,9 +279,7 @@ async def test_edit_to_a_section_the_edge_dump_omits_is_refused():
     )
     state = make_state(edge_modules=[row])
     client = MockVcoClient.for_state(state)
-    await ConfigPipeline(client).apply(
-        state, module="device_settings", patch={"ntp": {"enabled": True}}
-    )
+    _ = state.edge.device_settings.merge_patch({"ntp": {"enabled": True}})
     with pytest.raises(LossyFieldError) as refused:
         await ConfigPipeline(client).save(state)
     assert refused.value.fields == ["ntp"]
@@ -313,7 +311,9 @@ async def test_profile_target_apply_adds_a_rule():
     result = await pipeline.save(state, dry_run=True)
     assert result.plan is not None
     assert result.plan.render().startswith(
-        'firewall: update\n  + segments["Global Segment"].outbound[block]: '
+        'profile "P", configuration 20\nfirewall: update\n'
+        '  + segments["Global Segment"].outbound[block] '
+        "(after allow-all): "
     )
     await pipeline.save(state)
     (req,) = client.update_requests

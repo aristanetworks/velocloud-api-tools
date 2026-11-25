@@ -3,13 +3,15 @@
 import asyncio
 from collections.abc import Awaitable, Callable
 from types import CoroutineType
-from typing import cast
+from typing import cast, override
 from unittest.mock import patch
 
 import httpx
 import pytest
 from pyvelo.client.exceptions import (
     VcoApiError,
+    VcoClientNotInitializedError,
+    VcoCredentialsError,
     VcoEmptyResultError,
     VcoOperationError,
     VcoRateLimitError,
@@ -794,6 +796,76 @@ class TestRateLimiter:
         assert len(sleep_calls) == 0
 
 
+class TestTransport:
+    async def test_a_client_over_a_transport_is_connected_and_keeps_it_under_async_with(
+        self, json_rpc_response: JsonRpcResponseFactory
+    ):
+        from pyvelo.client import VcoClient
+        from pyvelo.testing import make_transport
+
+        seen: list[httpx.Request] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen.append(request)
+            return httpx.Response(
+                200, json=json_rpc_response(result={"name": "x", "value": 0})
+            )
+
+        client = VcoClient(
+            "vco.example.invalid", "made-up-token", transport=make_transport(handler)
+        )
+        request = SampleRequest(enterprise_id=1)
+        _ = await client.portal("test/getStuff", request, SampleResult)
+        async with client as entered:
+            assert entered is client
+            _ = await client.portal("test/getStuff", request, SampleResult)
+        assert [str(r.url) for r in seen] == ["https://vco.example.invalid/portal/"] * 2
+        assert [r.headers["Authorization"] for r in seen] == ["Token made-up-token"] * 2
+        assert seen[0].headers["Content-Type"] == "application/json"
+        with pytest.raises(VcoClientNotInitializedError):
+            _ = await client.portal("test/getStuff", request, SampleResult)
+
+    async def test_a_transport_that_closes_with_the_client_is_entered_again_by_the_next_async_with(
+        self, json_rpc_response: JsonRpcResponseFactory
+    ):
+        from pyvelo.client import VcoClient
+
+        class HoldsConnections(httpx.AsyncBaseTransport):
+            """Like a pool: closing it ends its connections until it is entered again."""
+
+            def __init__(self) -> None:
+                self.closed: bool = False
+                self.closings: int = 0
+                self.sent: int = 0
+
+            async def __aenter__(self):
+                self.closed = False
+                return self
+
+            @override
+            async def aclose(self) -> None:
+                self.closed = True
+                self.closings += 1
+
+            @override
+            async def handle_async_request(
+                self, request: httpx.Request
+            ) -> httpx.Response:
+                assert not self.closed, "request sent over a closed transport"
+                self.sent += 1
+                return httpx.Response(
+                    200, json=json_rpc_response(result={"name": "x", "value": 0})
+                )
+
+        transport = HoldsConnections()
+        client = VcoClient("vco.example.invalid", "made-up-token", transport=transport)
+        request = SampleRequest(enterprise_id=1)
+        for _ in range(2):
+            async with client:
+                _ = await client.portal("test/getStuff", request, SampleResult)
+        assert (transport.sent, transport.closings) == (2, 2)
+
+
 class TestVcoAuth:
     """VcoAuth should accept tokens with or without a prefix."""
 
@@ -821,7 +893,6 @@ class TestVcoAuth:
     ):
         """A token that already starts with 'Token ' must not be double-prefixed."""
         from pyvelo.client import VcoClient
-        from pyvelo.client.auth import VcoAuth
         from pyvelo.testing import make_transport
 
         def handler(request: httpx.Request) -> httpx.Response:
@@ -831,11 +902,10 @@ class TestVcoAuth:
                 json=json_rpc_response(result={"name": "x", "value": 0}),
             )
 
-        client = VcoClient("test.velocloud.net", "Token already-prefixed")
-        client._http = httpx.AsyncClient(
-            auth=VcoAuth("Token already-prefixed"),
+        client = VcoClient(
+            "test.velocloud.net",
+            "Token already-prefixed",
             transport=make_transport(handler),
-            base_url="https://test.velocloud.net",
         )
         _ = await client.portal(
             "test/getStuff", SampleRequest(enterprise_id=1), SampleResult
@@ -846,7 +916,6 @@ class TestVcoAuth:
     ):
         """A token with an arbitrary prefix like 'RandomPrefix ' must be sent verbatim."""
         from pyvelo.client import VcoClient
-        from pyvelo.client.auth import VcoAuth
         from pyvelo.testing import make_transport
 
         def handler(request: httpx.Request) -> httpx.Response:
@@ -856,12 +925,85 @@ class TestVcoAuth:
                 json=json_rpc_response(result={"name": "x", "value": 0}),
             )
 
-        client = VcoClient("test.velocloud.net", "RandomPrefix my-jwt")
-        client._http = httpx.AsyncClient(
-            auth=VcoAuth("RandomPrefix my-jwt"),
+        client = VcoClient(
+            "test.velocloud.net",
+            "RandomPrefix my-jwt",
             transport=make_transport(handler),
-            base_url="https://test.velocloud.net",
         )
         _ = await client.portal(
             "test/getStuff", SampleRequest(enterprise_id=1), SampleResult
         )
+
+    REFUSED = (
+        "The API token has a character that cannot be sent in an HTTP header: a "
+        "line break, a tab, another control character or a character that is not "
+        "ASCII. The token is not shown here. Check where it comes from, for "
+        "example a file with more than one line or text pasted with its formatting."
+    )
+
+    async def test_whitespace_around_the_token_is_stripped(
+        self, json_rpc_response: JsonRpcResponseFactory
+    ):
+        from pyvelo.client import VcoClient
+        from pyvelo.testing import make_transport
+
+        seen: list[httpx.Request] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen.append(request)
+            return httpx.Response(
+                200, json=json_rpc_response(result={"name": "x", "value": 0})
+            )
+
+        client = VcoClient(
+            "vco.example.invalid",
+            "  made-up-token\r\n",
+            transport=make_transport(handler),
+        )
+        _ = await client.portal(
+            "test/getStuff", SampleRequest(enterprise_id=1), SampleResult
+        )
+        assert seen[0].headers["Authorization"] == "Token made-up-token"
+
+    @pytest.mark.parametrize(
+        "token",
+        [
+            "zzSECRETzz\nX-Injected: 1",
+            "zzSECRETzz\x00",
+            "Token\tzzSECRETzz",
+            "zzSECRETzz\x7f",
+            "zzSECRETzz\u00e9",
+        ],
+    )
+    def test_a_token_no_header_can_carry_is_refused_and_not_shown(self, token: str):
+        from pyvelo.client import VcoAuth, VcoClient
+
+        with pytest.raises(VcoCredentialsError) as exc:
+            _ = VcoClient("vco.example.invalid", token)
+        assert str(exc.value) == self.REFUSED
+        assert "SECRET" not in repr(exc.value)
+        with pytest.raises(VcoCredentialsError) as direct:
+            _ = VcoAuth(token)
+        assert str(direct.value) == self.REFUSED
+
+    @pytest.mark.parametrize("token", ["", "   ", "\r\n"])
+    def test_an_empty_token_is_refused(self, token: str):
+        from pyvelo.client import VcoAuth, VcoClient
+
+        expected = (
+            "The API token is empty. Give the token, or check the file or "
+            "variable it is read from."
+        )
+        with pytest.raises(VcoCredentialsError) as exc:
+            _ = VcoClient("vco.example.invalid", token)
+        assert str(exc.value) == expected
+        with pytest.raises(VcoCredentialsError) as direct:
+            _ = VcoAuth(token)
+        assert str(direct.value) == expected
+
+    def test_vco_auth_strips_and_keeps_a_prefix(self):
+        from pyvelo.client import VcoAuth
+
+        request = httpx.Request("POST", "https://vco.example.invalid/portal/")
+        sent = next(VcoAuth(" Bearer made-up-token\n").auth_flow(request))
+        assert sent.headers["Authorization"] == "Bearer made-up-token"

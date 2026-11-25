@@ -9,18 +9,25 @@ raw JSON and the model as it is now) is applied to it.
 After the plan: ``VcoClient.write_module`` sends it as an update or an insert
 (the requests are built here) that asks for the module as stored
 (``returnData``), and reads the module back when the VCO answers without it.
+An update none of whose changes the check can find stored is sent without
+``returnData`` and read back too: the VCO then answers with a row count, which
+says whether it stored the write, and a row cannot.
 ``check_module_write`` (``pyvelo.client.module_check``) then compares what the
 VCO stored with what the plan meant to change. When every planned change is
 stored, the write returns the module as stored, with what else the VCO
 changed (``server_changes``); otherwise it raises ``ConfigConflictError`` or
-``WriteNotAppliedError``, which list the lost edits.
+``WriteNotAppliedError``, which list the lost edits, or
+``WriteOutcomeUnknownError`` when the module as stored could not be read.
 
 Segment reconciliation: an edge module may lack a segment entry that its profile
 has. The write then carries an empty entry for it (the profile's descriptor and
 no rules; a deviceSettings entry also has an empty ``routes.static``, which the
-Orchestrator requires), so the edge layer has a place to hold the segment. It
-never writes only to reconcile: with no change from the caller the plan is
-``none``. A segment the caller deletes from the edge layer that the profile has
+Orchestrator requires), so the edge layer has a place to hold the segment.
+Those entries follow the edge's own, in the profile's order, also when the caller's
+data already holds one, in whatever place (a lookup added its placeholder, which
+the caller may have edited): a lookup never changes what is written.
+Reconciliation never writes only to reconcile: with no change from the caller the
+plan is ``none``. A segment the caller deletes from the edge layer that the profile has
 comes back as that empty entry: the edge cannot drop what it inherits.
 
 Legacy keys: a firewall segment entry has no ``outboundOverride`` (the VCO and the
@@ -34,9 +41,10 @@ import copy
 import json
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any, Final, Literal, cast
+from typing import Any, Final, Literal, cast, override
 
 from pydantic import MISSING
+from pydantic_core import to_jsonable_python
 
 from pyvelo.client.exceptions import LossyFieldError
 from pyvelo.client.models.configuration.common import (
@@ -57,8 +65,8 @@ from pyvelo.client.schemas.configuration import (
 )
 from pyvelo.core import ConfigContext, VcoModel
 from pyvelo.core.base import (
-    _is_dict,  # pyright: ignore[reportPrivateUsage]
-    _is_list,  # pyright: ignore[reportPrivateUsage]
+    is_dict,
+    is_list,
 )
 from pyvelo.core.rebase import (
     Path,
@@ -69,6 +77,7 @@ from pyvelo.core.rebase import (
     raw_changes,
     rebase,
 )
+from pyvelo.core.show import moves_text, shown, shown_together
 
 type _Operation = Literal["none", "update", "insert"]
 
@@ -106,13 +115,13 @@ def missing_segments(
     """
     if module_name not in SEGMENT_LISTS:
         return []
-    if not (_is_dict(edge_data) and _is_dict(profile_data)):
+    if not (is_dict(edge_data) and is_dict(profile_data)):
         return []
     profile_segments = profile_data.get("segments")
     edge_segments: object = edge_data.get("segments")
     if edge_segments is None:
         edge_segments = []
-    if not (_is_list(profile_segments) and _is_list(edge_segments)):
+    if not (is_list(profile_segments) and is_list(edge_segments)):
         return []
     seen = [segment_id_of(entry) for entry in edge_segments]
     missing: list[dict[str, Any]] = []
@@ -147,23 +156,62 @@ class ModulePlan:
     Always listed; a write also lists each as a ``-`` change. A plan that would
     write nothing else is ``none`` and leaves them.
     """
+    overrides_turned_on: tuple[Path, ...] = ()
+    """Each section or item whose override flag this write turns on.
+
+    From this write on the edge layer's own values apply there and the
+    profile's no longer do; nothing is copied from the profile. A flag inside a
+    list that is written whole is part of that list's change and is not listed.
+    """
+    model: type[VcoModel] | None = None
+    """The class of the module's data: that of the data planned when it is a
+    model, else that of ``module.data`` when it is one. It tells ``render`` which
+    values are secrets; a plan made from a dict still has it."""
+
+    @override
+    def __repr__(self) -> str:
+        return (
+            f"ModulePlan(name={self.name!r}, operation={self.operation!r}, "
+            f"changes={len(self.changes)})"
+        )
 
     def render(self) -> str:
+        """The plan as text: a headline, then a line for each change.
+
+        ``+ path: value`` is a key or an item that is added; an item added to a
+        keyed list has its place after the path, ``(first)`` or ``(after
+        other)``. ``- path`` is one that is removed. ``~ path: before -> after``
+        is a value that changes. ``~ path: order: moves`` is a keyed list whose
+        items change place: it names up to five moves, each with its new place,
+        and counts the rest. A value is shown as JSON, cut to 80 characters;
+        the two values of a ``~`` line are cut where they first differ. A
+        secret is shown as ``"***"``; the changes keep the real values.
+        """
         lines = [f"{self.name}: {self.operation}"]
         for change in self.changes:
-            if change.before is MISSING:
-                lines.append(f"  + {change.path}: {_json(change.after)}")
+            if change.moves is not None:
+                lines.append(f"  ~ {change.path}: order: {moves_text(change.moves)}")
+            elif change.before is MISSING:
+                place = f" ({change.place})" if change.place is not None else ""
+                after = shown(change.after, model=self.model, path=change.path)
+                lines.append(f"  + {change.path}{place}: {after}")
             elif change.after is MISSING:
                 lines.append(f"  - {change.path}")
             else:
-                lines.append(
-                    f"  ~ {change.path}: {_json(change.before)} -> {_json(change.after)}"
+                before, after = shown_together(
+                    change.before, change.after, model=self.model, path=change.path
                 )
+                lines.append(f"  ~ {change.path}: {before} -> {after}")
         if self.refs is not None:
             lines.append("  refs: replaced")
         if self.reconciled_segments:
             label = "missing" if self.operation == "none" else "reconciled"
             lines.append(f"  {label} segments: {', '.join(self.reconciled_segments)}")
+        for path in self.overrides_turned_on:
+            lines.append(
+                f"  override turned on: {path} (the edge's own values apply there "
+                "from now on, and the profile's no longer do)"
+            )
         if self.legacy_keys and self.operation == "none":
             lines.append(
                 "  legacy keys (dropped when the module is written): "
@@ -229,13 +277,13 @@ def insert_request(
 def drop_legacy_keys(data: object, module_name: str) -> None:
     """Remove from *data*'s segment entries the keys that *module_name* does not have."""
     keys = LEGACY_SEGMENT_KEYS.get(module_name)
-    if not (keys and _is_dict(data)):
+    if not (keys and is_dict(data)):
         return
     segments = data.get("segments")
-    if not _is_list(segments):
+    if not is_list(segments):
         return
     for entry in segments:
-        if _is_dict(entry):
+        if is_dict(entry):
             for key in keys:
                 _ = entry.pop(key, None)
 
@@ -250,14 +298,39 @@ def legacy_key_paths(data: object, module_name: str) -> tuple[Path, ...]:
     return tuple(c.path for c in raw_changes(data, stripped, model))
 
 
-def _json(value: object) -> str:
-    return json.dumps(value, sort_keys=True)
+def _overrides_turned_on(
+    changes: tuple[RawChange, ...], model_type: type[VcoModel] | None
+) -> tuple[Path, ...]:
+    """The section or item of each change that turns an override flag on.
+
+    A flag turned on is one whose value was ``false`` or absent and is now
+    ``true``. Nothing without a model: a plain dict has no flags to tell.
+    """
+    if model_type is None:
+        return ()
+    return tuple(
+        Path(change.path.parts[:-1])
+        for change in changes
+        if change.after is True
+        and change.before is not True
+        and is_override_flag(model_type, change.path)
+    )
 
 
 def _attribute(obj: object, name: str) -> object:
     """``getattr`` typed ``object``; ``MISSING`` if there is no such attribute."""
     value: object = getattr(obj, name, MISSING)
     return value
+
+
+def _document_model(
+    planned: type[VcoModel] | None, module: ConfigurationModuleBase
+) -> type[VcoModel] | None:
+    """The class of the data planned, else that of ``module.data``, else None."""
+    if planned is not None:
+        return planned
+    data = _attribute(module, "data")
+    return type(data) if isinstance(data, VcoModel) else None
 
 
 def _reparse[M: VcoModel](
@@ -277,47 +350,54 @@ def _segment_name(placeholder: Mapping[str, Any]) -> str:
 
 def _add_segments(data: object, entries: list[dict[str, Any]]) -> None:
     """Append *entries* to the ``segments`` of *data*, an absent or null one included."""
-    if not (entries and _is_dict(data)):
+    if not (entries and is_dict(data)):
         return
     segments = data.get("segments")
-    if _is_list(segments):
+    if is_list(segments):
         segments.extend(entries)
     else:  # absent or null
         data["segments"] = list(entries)
 
 
-def _with_baseline_segments(
+def _with_reconciled_segments(
     current: dict[str, Any],
     baseline: dict[str, Any],
     extra: list[dict[str, Any]],
 ) -> dict[str, Any]:
-    """*current*, plus the baseline's version of each reconciled segment it lacks.
+    """*current* with the reconciled segments after its own, in the profile's order.
 
-    The caller's data has no entry for a segment that only reconciliation adds.
-    Without one it would read as the caller deleting it (typed data, in the
-    rebase) or as a change to ``segments`` (a plain dict, which is the payload).
-    An absent or null ``segments`` in *current* is an empty list.
+    The segments of *extra* are the ones reconciliation adds. *current* may hold
+    an entry for one (a lookup added its placeholder, which the caller may have
+    edited), in whatever place; it is kept as it is and moved to where the
+    reconciled data has it. One *current* lacks is the baseline's. Without the
+    baseline's entry the segment would read as the caller deleting it (typed
+    data, in the rebase) or as a change to ``segments`` (a plain dict, which is
+    the payload). The entries of the edge's own segments keep the caller's
+    order. An absent or null ``segments`` in *current* is an empty list.
     """
     current_segments: object = current.get("segments")
     if current_segments is None:
         current_segments = []
     baseline_segments = baseline.get("segments")
-    if not (_is_list(current_segments) and _is_list(baseline_segments)):
+    if not (extra and is_list(current_segments) and is_list(baseline_segments)):
         return current
-    have = [segment_id_of(entry) for entry in current_segments]
-    added: list[object] = []
-    for placeholder in extra:
-        segment_id = segment_id_of(placeholder)
-        if segment_id in have:
-            continue
-        entry = next(
-            (e for e in baseline_segments if segment_id_of(e) == segment_id), None
-        )
-        if entry is not None:
-            added.append(entry)
-    if not added:
-        return current
-    return {**current, "segments": [*current_segments, *added]}
+    ids = [segment_id_of(placeholder) for placeholder in extra]
+    own = [e for e in current_segments if segment_id_of(e) not in ids]
+    reconciled: list[object] = []
+    for segment_id in ids:
+        entries = [e for e in current_segments if segment_id_of(e) == segment_id]
+        if not entries:
+            baseline_entry = next(
+                (e for e in baseline_segments if segment_id_of(e) == segment_id), None
+            )
+            entries = [] if baseline_entry is None else [baseline_entry]
+        reconciled.extend(entries)
+    return {**current, "segments": [*own, *reconciled]}
+
+
+def _plain_json(value: Mapping[str, object]) -> dict[str, Any]:
+    """A new dict of *value* as the request would write it: plain JSON, sharing nothing with it."""
+    return cast(dict[str, Any], to_jsonable_python(dict(value), by_alias=True))
 
 
 def _plan_refs(
@@ -332,7 +412,7 @@ def _plan_refs(
         after: dict[str, Any] = wire_dump(current, level)
         model_type: type[VcoModel] | None = type(current)
     elif isinstance(current, Mapping):
-        after = copy.deepcopy(dict(cast(Mapping[str, Any], current)))
+        after = _plain_json(current)
         model_type = None
     else:  # MISSING, None: the module has no refs to send
         return None
@@ -362,9 +442,15 @@ def plan_module(
 
     Raises ``LossyFieldError`` if the caller assigned a value that cannot reach
     the written data (the default of a key that was absent when read).
+
+    A mapping given as *data* or *refs* is converted as the request would write
+    it (a ``UUID`` or a ``datetime`` becomes its text), so the plan holds plain
+    JSON that shares nothing with the caller's objects.
     """
     name = str(_attribute(module, "name"))
     current = data if data is not None else _attribute(module, "data")
+    if isinstance(current, Mapping):
+        current = _plain_json(cast(Mapping[str, object], current))
     if level is None and isinstance(current, VcoModel):
         level = current.config_context
     refs_out = _plan_refs(module, refs, level)
@@ -374,7 +460,7 @@ def plan_module(
         payload = (
             wire_dump(current, level)
             if isinstance(current, VcoModel)
-            else copy.deepcopy(dict(cast(Mapping[str, Any], current)))
+            else cast(dict[str, Any], current)
         )
         model_type = type(current) if isinstance(current, VcoModel) else None
         drop_legacy_keys(payload, name)
@@ -385,6 +471,7 @@ def plan_module(
             refs=refs_out,
             changes=tuple(raw_changes({}, payload, model_type)),
             reconciled_segments=(),
+            model=_document_model(model_type, module),
         )
 
     inherited = profile if level is not ConfigContext.PROFILE else None
@@ -406,7 +493,7 @@ def plan_module(
                 rebase(
                     reconciled,
                     before,
-                    _with_baseline_segments(after, before, extra),
+                    _with_reconciled_segments(after, before, extra),
                     model_type,
                 )
             ),
@@ -419,7 +506,7 @@ def plan_module(
         model_type = None
         topped_up = dict(cast(Mapping[str, Any], current))
         if extra:  # only for an object, so *reconciled* is one
-            topped_up = _with_baseline_segments(
+            topped_up = _with_reconciled_segments(
                 topped_up, cast(dict[str, Any], reconciled), extra
             )
         payload = copy.deepcopy(topped_up)
@@ -437,14 +524,17 @@ def plan_module(
     legacy = legacy_key_paths(reconciled, name)
     if changed:  # never a write just to strip them
         drop_legacy_keys(payload, name)
+    changes = tuple(raw_changes(reconciled, payload, model_type))
     return ModulePlan(
         name=name,
         operation=operation,
         data=payload if changed else copy.deepcopy(cast(dict[str, Any], raw)),
         refs=refs_out,
-        changes=tuple(raw_changes(reconciled, payload, model_type)),
+        changes=changes,
         reconciled_segments=tuple(
             _segment_name(entry) for entry in [*extra, *restored]
         ),
         legacy_keys=legacy,
+        overrides_turned_on=_overrides_turned_on(changes, model_type),
+        model=_document_model(model_type, module),
     )

@@ -154,6 +154,11 @@ def is_server_owned(field_info: FieldInfo) -> bool:
     return any(isinstance(m, ServerOwned) for m in field_info.metadata)
 
 
+def is_secret(field_info: FieldInfo) -> bool:
+    """Check if a field is marked with ``Secret``."""
+    return any(isinstance(m, Secret) for m in field_info.metadata)
+
+
 # ---------------------------------------------------------------------------
 # Annotated validators
 # ---------------------------------------------------------------------------
@@ -172,11 +177,6 @@ _none_to_missing = _none_to(MISSING)
 _none_to_false = _none_to(False)
 _none_to_true = _none_to(True)
 _none_to_zero = _none_to(0)
-
-NoneIsMissing = BeforeValidator(_none_to_missing)
-NoneIsFalse = BeforeValidator(_none_to_false)
-NoneIsTrue = BeforeValidator(_none_to_true)
-NoneIsZero = BeforeValidator(_none_to_zero)
 
 
 def _coerce_int(v: Any) -> Any:
@@ -210,6 +210,27 @@ def _in_patch(info: ValidationInfo) -> bool:
     patch is an error, not something to tolerate.
     """
     return bool((info.context or {}).get("patch"))
+
+
+def Lenient(rewrite: Callable[[Any], Any]) -> BeforeValidator:
+    """Annotated marker: *rewrite* a value on parse, to tolerate a bad one from the VCO.
+
+    Not in a patch (see ``_in_patch``): there the value is left as it is, and
+    the field's type accepts it or raises.
+
+    Usage: ``lease: Annotated[int, Lenient(lambda v: 86400 if v is None else v)]``
+    """
+
+    def _validator(v: Any, info: ValidationInfo) -> Any:
+        return v if _in_patch(info) else rewrite(v)
+
+    return BeforeValidator(_validator)
+
+
+NoneIsMissing = Lenient(_none_to_missing)
+NoneIsFalse = Lenient(_none_to_false)
+NoneIsTrue = Lenient(_none_to_true)
+NoneIsZero = Lenient(_none_to_zero)
 
 
 def _audit(info: ValidationInfo, v: Any, reason: str):
@@ -456,6 +477,17 @@ class ServerOwned:
 
 
 @dataclass(frozen=True, slots=True)
+class Secret:
+    """Annotated marker: the field holds a configuration secret (a password, a key, a community string).
+
+    ``hide_secrets`` shows ``***`` in its place; the value itself is read,
+    compared and written like any other.
+
+    Usage: ``password: Annotated[str, Secret()] = ""``
+    """
+
+
+@dataclass(frozen=True, slots=True)
 class _ProcessedResolvable:
     """Stored in FieldInfo.metadata by _apply_vco_markers."""
 
@@ -517,9 +549,7 @@ def apply_vco_markers(cls: type[BaseModel]) -> None:
                         _ProcessedCtxDefaults(ContextDefaults(profile=MISSING))
                     )
                     already.add(_ProcessedCtxDefaults)
-                fi.metadata.append(
-                    BeforeValidator(lambda v, _info: False if v is None else v)
-                )
+                fi.metadata.append(Lenient(_none_to_false))
             elif (
                 isinstance(m, EdgeLocal)
                 or (isinstance(m, type) and issubclass(m, EdgeLocal))

@@ -1,7 +1,7 @@
 import uuid
 from typing import Annotated, Any, Literal, get_args
 
-from pydantic import MISSING, BeforeValidator, Field, PrivateAttr, SerializeAsAny
+from pydantic import MISSING, Field, PrivateAttr, SerializeAsAny
 
 from pyvelo.core import (
     Alias,
@@ -11,9 +11,10 @@ from pyvelo.core import (
     NoneIsMissing,
     Positional,
     ProfileOnly,
+    Secret,
     VcoModel,
 )
-from pyvelo.core.fields import KeyField, OverrideFlag
+from pyvelo.core.fields import KeyField, Lenient, OverrideFlag
 
 from ..common import (
     copy_profile_segments,
@@ -108,7 +109,7 @@ class Ntp(VcoModel):
 
 class Md5AuthKey(VcoModel):
     key_number: int | None = None
-    key: str
+    key: Annotated[str, Secret()]
 
 
 class NtpServer(VcoModel):
@@ -169,8 +170,10 @@ class GlobalIpv6Settings(VcoModel):
 
 class EdgeSnmpV2c(VcoModel):
     enabled: bool = False
-    community: str = ""
-    community_list: Annotated[list[str], Positional()] = Field(default_factory=list)
+    community: Annotated[str, Secret()] = ""
+    community_list: Annotated[list[str], Positional(), Secret()] = Field(
+        default_factory=list
+    )
     allowed_ips: list[str] = Field(default_factory=list)
 
 
@@ -180,9 +183,9 @@ def _none_to_md5(v: Any) -> Any:
 
 class SnmpV3User(VcoModel):
     name: str
-    passphrase: str | None = None
+    passphrase: Annotated[str | None, Secret()] = None
     authentication_algorithm: Annotated[
-        SnmpV3AuthenticationAlgorithm, BeforeValidator(_none_to_md5), Alias("authAlg")
+        SnmpV3AuthenticationAlgorithm, Lenient(_none_to_md5), Alias("authAlg")
     ] = "MD5"
     encryption_algorithm: Annotated[SnmpV3EncryptionAlgorithm, Alias("encrAlg")] = "AES"
     authentication: bool | MISSING = MISSING
@@ -257,11 +260,13 @@ class EdgeWirelessLinkManagement(VcoModel):
 
 
 class ModelLanInterfaces(VcoModel):
-    interfaces: list[SerializeAsAny[LanInterface]]
+    interfaces: Annotated[list[SerializeAsAny[LanInterface]], KeyField("name")]
 
 
 class ModelInterfaces(VcoModel):
-    routed_interfaces: list[SerializeAsAny[RoutedInterface]]
+    routed_interfaces: Annotated[
+        list[SerializeAsAny[RoutedInterface]], KeyField("name")
+    ]
     lan: ModelLanInterfaces
 
 
@@ -339,7 +344,7 @@ class DeviceSettingsData(VcoModel):
     snmp: Annotated[
         EdgeSnmp | MISSING, ContextDefault(edge=MISSING, profile=EdgeSnmp)
     ] = MISSING
-    zscaler: Annotated[EdgeZscaler, BeforeValidator(_empty_string_to_zscaler)] = Field(
+    zscaler: Annotated[EdgeZscaler, Lenient(_empty_string_to_zscaler)] = Field(
         default_factory=EdgeZscaler
     )
     auto_sim_switchover: Annotated[EdgeAutoSimSwitchover | MISSING, EdgeOnly] = MISSING

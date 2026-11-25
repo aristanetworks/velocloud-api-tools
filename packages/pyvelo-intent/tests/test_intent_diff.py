@@ -1,5 +1,6 @@
 """Tests for the generic intent diff engine."""
 
+import pytest
 from pydantic import BaseModel
 from pyvelo_intent.diff import (
     Added,
@@ -192,3 +193,23 @@ class TestIntegerKeyField:
         assert result.removed[0].key == 2
         assert len(result.unchanged) == 1
         assert result.unchanged[0].key == 1
+
+
+class TestSharedKeys:
+    def test_items_that_share_a_key_are_refused(self):
+        current = [Item(name="web", value=80)]
+        desired = [
+            Item(name="web", value=8080),
+            Item(name="web", value=80),
+            Item(name="ssh", value=22),
+            Item(name="ssh", value=2222),
+        ]
+        with pytest.raises(ValueError) as exc:
+            _ = diff_intents(current, desired, "name")
+        assert str(exc.value) == (
+            "the desired items share a name: 'web', 'ssh'. diff_intents pairs "
+            "items by that field, so each value must be there once; diff by a "
+            "field that is unique, or remove the repeats"
+        )
+        with pytest.raises(ValueError, match="the current items share a name: 'web'"):
+            _ = diff_intents([*current, *current], [], "name")

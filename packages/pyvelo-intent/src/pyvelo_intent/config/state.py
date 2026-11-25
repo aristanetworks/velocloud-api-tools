@@ -1,18 +1,22 @@
 """ConfigState: holds edge/profile configuration with snapshot for diff-on-save."""
 
+import asyncio
 import copy
+import json
 import weakref
-from dataclasses import dataclass, field
-from typing import Literal, Protocol, cast, runtime_checkable
+from dataclasses import dataclass, field, fields
+from typing import Any, Literal, Protocol, cast, override, runtime_checkable
 
 from pydantic import MISSING, BaseModel
 from pyvelo.client.enums.configuration import ConfigurationModuleName
 from pyvelo.client.exceptions import DetachedObjectError
+from pyvelo.client.models.configuration.common import segment_id_of
 from pyvelo.client.models.configuration.device_settings.root import DeviceSettingsData
 from pyvelo.client.models.configuration.firewall.root import FirewallData
 from pyvelo.client.models.configuration.qos.root import QosData
 from pyvelo.client.models.configuration.wan.root import WanData
-from pyvelo.client.module_write import ModulePlan, plan_module
+from pyvelo.client.module_check import ModuleWrite
+from pyvelo.client.module_write import ModulePlan, missing_segments, plan_module
 from pyvelo.client.schemas.configuration import (
     AnyConfigurationModule,
     ConfigurationBase,
@@ -24,21 +28,14 @@ from pyvelo.client.schemas.configuration import (
     WanConfigurationModule,
     new_edge_module,
 )
-from pyvelo.config.resolver import ResolverContext
+from pyvelo.config.resolver import ResolverContext, ResolverRegistry
 from pyvelo.config.validation import ValidationError
 from pyvelo.core import ConfigContext, VcoModel
-from pyvelo.core.fields import get_key_spec
-from pyvelo.core.rebase import (
-    KeyForm,
-    Path,
-    item_key,
-    item_key_text,
-    key_form,
-    raw_changes,
-)
+from pyvelo.core.rebase import ItemMove, ItemPlace, Path, python_path, raw_changes
 from pyvelo.core.response_check import PlannedChange, ServerChange
 
 from pyvelo_intent.config.module_names import resolve_module_name
+from pyvelo_intent.errors import LayerNotSavedError
 
 
 @dataclass
@@ -51,28 +48,68 @@ class ValidationWarning:
 
 @dataclass(frozen=True)
 class ConfigFieldChange:
-    """A single per-field difference between snapshot and current state.
+    """One change of :meth:`ConfigState.plan`: its module, and its path in python names.
 
     Attributes:
-        module: User-facing module name (e.g. ``"firewall"``).
-        path: Dotted path to the changed field, with bracketed segments using
-            the KeyField key value (e.g. ``"lan.networks[100].name"``). The
-            path round-trips conceptually into a ``merge_patch`` patch.
-        before: Snapshot value, or ``MISSING`` if the field was unset.
-        after: Current value, or ``MISSING`` if the field is now unset.
+        module: The module's VCO name (e.g. ``"firewall"``, ``"WAN"``).
+        path: Where the change is, in the names a patch uses
+            (``segments["Global Segment"].outbound[block-ssh].name``).
+        before: The value as read, a JSON value, or ``MISSING`` where there
+            was none. For a keyed list whose items change place, the item
+            names in the order read.
+        after: The value as it is now, a JSON value, or ``MISSING`` where
+            there is none; the item names in the new order for a reorder.
+        place: Where an item added to a keyed list goes, else None.
+        moves: For the order of a keyed list, each item that changes place
+            with its new place, else None.
     """
 
     module: str
-    path: str
+    path: Path
     before: object
     after: object
+    place: ItemPlace | None = None
+    moves: tuple[ItemMove, ...] | None = None
 
 
 @dataclass(frozen=True)
 class ConfigPlan:
-    """What a save of a whole :class:`ConfigState` writes: one plan per module."""
+    """What a save of a whole ConfigState writes: one plan per module.
+
+    render() is the text to show before a save. Its first line names what is
+    written: "edge 101, enterprise 1, configuration 10" or
+    'profile "Branch", enterprise 1, configuration 20' (an ID that is not known
+    is left out). Then, for each module of the target, its name and what the
+    save does with it (none, update or insert), followed by a line for each
+    change:
+
+    - "+ path: value" is a key or an item that is added. An item added to a
+      keyed list has its place after the path: "(first)" or "(after other)".
+    - "- path" is a key or an item that is removed.
+    - "~ path: old -> new" is a value that changes.
+    - "~ path: order: item first; item after other" is a keyed list whose items
+      change order: the items that move, each with its new place.
+    - "refs: replaced" says the module's refs are sent.
+    - "reconciled segments: A, B" are the profile's segments the write adds to
+      the edge module as empty entries; with "none" the line reads "missing
+      segments".
+    - "override turned on: path (...)" is a section or an item of an edge whose
+      override flag the changes turn on: from this save on the edge's own
+      values apply there, and the profile's no longer do.
+    - "legacy keys (dropped when the module is written): ..." are keys the VCO
+      does not know, on a module with nothing else to write.
+
+    Paths are in the names the VCO uses. A value is JSON, cut to 80 characters;
+    the two values of a "~" line are cut where they first differ. A secret
+    shows as ``"***"``.
+
+    Attributes:
+        modules: The plan of each module of the target.
+        target: What the plan is for (the first line of ``render()``), or "".
+    """
 
     modules: tuple[ModulePlan, ...]
+    target: str = ""
 
     @property
     def changed(self) -> tuple[ModulePlan, ...]:
@@ -80,15 +117,19 @@ class ConfigPlan:
         return tuple(m for m in self.modules if m.operation != "none")
 
     def render(self) -> str:
-        return "\n".join(m.render() for m in self.modules)
+        lines = [m.render() for m in self.modules]
+        return "\n".join([self.target, *lines] if self.target else lines)
 
 
 class LayerView:
     """Read-only access to the data of one config layer's modules.
 
-    Each property is the module's ``data``, ready to read or edit in place.
-    *profile* is the profile layer an edge layer inherits from; a module this
-    view creates is bound to it.
+    Each property is the module's ``data``, ready to read or edit in place. An
+    edit is saved only through the state's target layer (``state.edge`` of an
+    edge state, ``state.profile`` of a profile state); an edit of the other
+    layer is reported by the next ``ConfigState.plan``. *profile* is the
+    profile layer an edge layer inherits from; a module this view creates is
+    bound to it.
     """
 
     def __init__(
@@ -153,7 +194,7 @@ class _Replaced:
     name: str
     model: type[VcoModel]
     dump: object
-    nodes: list[tuple[_Place, weakref.ref[VcoModel]]]
+    nodes: list[tuple[_Place, weakref.ref[BaseModel]]]
 
     def changed_paths(self) -> list[Path]:
         """Where the objects still alive were changed in place since ``dump``, each once.
@@ -195,7 +236,7 @@ class _Replaced:
         return list(dict.fromkeys(change.path for change in changes))
 
 
-def _dump(model: VcoModel) -> object:
+def _dump(model: BaseModel) -> object:
     return model.model_dump(mode="json", by_alias=True)
 
 
@@ -233,23 +274,64 @@ def _put(doc: object, place: _Place, value: object) -> object:
     return entries
 
 
+class StateLock(asyncio.Lock):
+    """An ``asyncio.Lock`` that knows the task that holds it.
+
+    A task that holds the lock and asks for it again would wait for itself
+    without end. Here ``acquire`` raises ``RuntimeError`` at once instead, so
+    ``ConfigPipeline.apply`` and ``save``, which take the lock themselves, fail
+    loudly when called inside an ``async with state.lock:`` block.
+
+    The check sees only the calling task. A task that holds the lock and waits,
+    inside the block, for another task that calls ``apply`` or ``save`` still
+    deadlocks: that task waits for the lock, and nothing here can tell.
+    """
+
+    _holder: asyncio.Task[object] | None = None
+
+    @override
+    async def acquire(self) -> Literal[True]:
+        task = asyncio.current_task()
+        if task is not None and task is self._holder:
+            raise RuntimeError(
+                "this task already holds the lock of this state. apply and save take "
+                + "the lock themselves: call them outside the `async with state.lock:` block"
+            )
+        _ = await super().acquire()
+        self._holder = task
+        return True
+
+    @override
+    def release(self) -> None:
+        super().release()
+        self._holder = None
+
+
 @dataclass
 class ConfigState:
-    """Holds the loaded configuration state with snapshot for diff detection.
+    """Holds the loaded configuration state.
 
-    After load, a snapshot is taken for the per-field diff. A save is planned
-    from each module's raw data as read (see :meth:`plan`), which is what
-    decides which modules changed.
+    ``take_snapshot`` keeps a copy of the configuration as loaded
+    (``snapshot_for_target``). :meth:`plan` compares the layer this state does
+    not save with it; the changes of a plan come from the data as read, not
+    from the snapshot. A save is planned from each module's raw data as read
+    (see :meth:`plan`), which is what decides which modules changed.
 
     A state continues after a save: each module written is replaced by the
     module the VCO stored (:meth:`replace_module`), so the next plan starts
     from what the VCO holds and the state takes more edits and saves. So
     does a save that raised ``ConfigConflictError`` or
     ``WriteNotAppliedError`` with the module as stored (``error.module``):
-    the edits to that module are gone, and ``error.lost_edits`` lists the
-    ones to redo. Objects taken from the state before a save belong to the
-    modules it replaced, and are detached: an edit through one raises
-    ``DetachedObjectError``, at once or at the next :meth:`plan`.
+    the edits to that module are gone, and ``error.lost_edits`` lists them;
+    ``error.redo_patch()`` is the patch that redoes them (``error.not_redone()``
+    lists those it leaves out). Objects taken from the state before a save
+    belong to the modules it replaced, and are detached: an edit through one
+    raises ``DetachedObjectError``, at once or at the next :meth:`plan`.
+
+    After a save that raised ``WriteOutcomeUnknownError``, or failed with any
+    other error once an insert was sent, the state keeps the new module as it
+    is and remembers the insert in ``unconfirmed_inserts``: the next save
+    reads the configuration for a module of that name before it inserts.
 
     The edge layer's module data is bound to the profile layer (see
     ``bind_profile`` on the module data), so a segment the edge layer lacks can
@@ -264,6 +346,25 @@ class ConfigState:
         default_factory=dict, repr=False
     )
     load_warnings: list[ValidationWarning] = field(default_factory=list)
+    resolvers: ResolverRegistry = field(
+        default_factory=ResolverRegistry, repr=False, compare=False
+    )
+    """The resolvers that turn the names in a patch for this state into IDs."""
+    lock: StateLock = field(
+        default_factory=StateLock, init=False, repr=False, compare=False
+    )
+    """Held by ``ConfigPipeline.apply`` and ``save`` for the whole call, so that
+    they run one after the other. Code that edits the state by assignment from
+    another task may hold it around the edit (``async with state.lock:``).
+    ``apply`` and ``save`` called by the task that holds it raise
+    ``RuntimeError``. Do not wait, inside the block, for another task that calls
+    them: that task waits for the lock."""
+    unconfirmed_inserts: set[str] = field(
+        default_factory=set, init=False, repr=False, compare=False
+    )
+    """The new modules an insert was sent for whose answer was not read: the VCO
+    may hold them. The next save reads the configuration before it inserts one
+    of them."""
     _made_into_unset: list[tuple[AnyConfigurationModule, bool]] = field(
         default_factory=list, repr=False
     )
@@ -328,6 +429,33 @@ class ConfigState:
             self._made_into_unset.append((module, was_set))
         return module
 
+    def inherited_segment_ids(self, module: AnyConfigurationModule) -> frozenset[str]:
+        """The ``segmentId``, in string form, of each segment *module* only inherits.
+
+        *module* is an edge module of this state. These are the segments of
+        the profile's module of the same name that *module* had no entry for
+        when it was read: the ones a save writes an entry for after the edge's
+        own (:func:`~pyvelo.client.module_write.missing_segments`), so a patch
+        cannot give them a place. Empty for a profile target, for a profile
+        with no module of that name, and for a module that has no
+        ``segments``. A module the state created has no segments as read, so
+        every segment of the profile is in it. After a save the module is the
+        one the VCO stored, which has the entries the save wrote.
+        """
+        if self.target_type != "edge":
+            return frozenset()
+        profile_module = _find_module(self.profile_config, module.name)
+        if profile_module is None:
+            return frozenset()
+        missing = missing_segments(
+            module.raw_data, profile_module.raw_data, module.name
+        )
+        return frozenset(
+            str(segment_id)
+            for entry in missing
+            if (segment_id := segment_id_of(entry)) is not None
+        )
+
     def find_module(
         self, name: ConfigurationModuleName | str
     ) -> AnyConfigurationModule | None:
@@ -339,12 +467,14 @@ class ConfigState:
 
         A ``modules`` list that the creation set, where it was unset, is unset
         again once it is empty. Raises ``ValueError`` for a module that is not
-        new (``is_new``): one read from the VCO is never dropped.
+        new (``is_new``): one read from the VCO is never dropped. The module's
+        name leaves ``unconfirmed_inserts``.
         """
         if not module.is_new:
             raise ValueError(
                 f"module {module.name!r} was read from the VCO; only a new one is dropped"
             )
+        self.unconfirmed_inserts.discard(module.name)
         config = self.target_config
         if config.modules is MISSING:
             return
@@ -365,18 +495,22 @@ class ConfigState:
     ) -> None:
         """Put *new*, the module as the VCO stored it, where *old* is in the target config.
 
-        An edge module is bound to the profile layer. The per-field snapshot
-        takes a copy of *new*, so neither :meth:`plan` nor
-        :meth:`get_field_changes` shows what was written; the other modules
-        keep their edits. *old* and every model inside it are detached: an
-        assignment raises ``DetachedObjectError``, and so does the next
+        An edge module is bound to the profile layer. The snapshot takes a
+        copy of *new*, and a later :meth:`plan` starts from *new*, so it does
+        not show what was written; the other modules keep their edits. The
+        module's name leaves ``unconfirmed_inserts``.
+        *old* and every model inside it are detached: an assignment raises
+        ``DetachedObjectError``, and so does the next
         :meth:`plan` after an in-place change to a list or dict they hold. So
         does a lookup through a detached layer that adds a placeholder
         (``segment("Guest")``), on purpose: it usually comes before an edit
-        that would be lost. A plain list or dict still held after every model
-        of its module is dropped is not compared, because a list cannot be
-        weakly referenced; nor is a model the module's dump leaves out (a
-        field absent at its level). The state keeps no strong reference to
+        that would be lost. A plain list or dict is compared only while the
+        model it is a field of, or one that contains that model, is alive,
+        because a list cannot be weakly referenced; holding an item of the list
+        does not keep it compared. Nor is a model the module's dump leaves out
+        (a field absent at its level). A pydantic model inside that is not a
+        ``VcoModel`` (a segment's ``vrrp``) is compared like the others, but an
+        assignment to it does not raise. The state keeps no strong reference to
         *old*. Raises ``ValueError`` if *old* is not in the target config.
         """
         config = self.target_config
@@ -385,6 +519,7 @@ class ConfigState:
         if index is None:
             raise ValueError(f"module {old.name!r} is not in the target config")
         modules[index] = new
+        self.unconfirmed_inserts.discard(old.name)
         if config is self.edge_config:
             _bind_to_profile(new, self.profile_config)
         snapshot = self.snapshot_for_target()
@@ -402,7 +537,7 @@ class ConfigState:
                 else:
                     snapshot.modules[at] = stored
         self._made_into_unset = [e for e in self._made_into_unset if e[0] is not old]
-        # Last: a copy of a detached object is detached too.
+        # Last: the steps above work on *old* as a live module.
         nodes = old.mark_detached()
         dump = _dump(old)
         self._replaced.append(
@@ -444,6 +579,50 @@ class ConfigState:
             [path for _, paths in found for path in paths],
         )
 
+    def _check_unsaved_layer(self) -> None:
+        """Raise ``LayerNotSavedError`` if the layer a save does not write was edited.
+
+        The layer is compared with the copy ``take_snapshot`` took. For each
+        module that differs, the snapshot's copy becomes the module as it is
+        now, so the edits are reported once. A state with no snapshot is not
+        checked.
+        """
+        if self.target_type == "edge":
+            layer, current = "profile", self.profile_config
+        elif self.edge_config is not None:
+            layer, current = "edge", self.edge_config
+        else:
+            return
+        snapshot = self._snapshot.get(layer)
+        if snapshot is None or snapshot.modules is MISSING:
+            return
+        if current.modules is MISSING:
+            return
+        held = {m.name: i for i, m in enumerate(snapshot.modules)}
+        fields: dict[str, list[str]] = {}
+        for module in current.modules:
+            index = held.get(module.name)
+            data = module.data
+            if index is None or not isinstance(data, VcoModel):
+                continue
+            before = snapshot.modules[index].data
+            if not isinstance(before, VcoModel):
+                continue
+            changes = raw_changes(_dump(before), _dump(data), type(data))
+            if not changes:
+                continue
+            fields[module.name] = list(dict.fromkeys(str(c.path) for c in changes))
+            snapshot.modules[index] = copy.deepcopy(module)
+        if not fields:
+            return
+        profile_id = self.profile_config.id_
+        raise LayerNotSavedError(
+            layer,
+            self.target_type,
+            fields,
+            profile_id if isinstance(profile_id, int) else None,
+        )
+
     @property
     def edge(self) -> LayerView:
         """The edge layer's module data. Raises ``ValueError`` without an edge layer."""
@@ -466,25 +645,57 @@ class ConfigState:
         First, raises ``DetachedObjectError`` naming the paths if objects of a
         module :meth:`replace_module` replaced were changed in place; once for
         those changes, so the next call plans.
+
+        Then raises ``LayerNotSavedError`` if the layer this state does not
+        save (the profile layer of an edge state) was edited, naming the
+        fields; once for those edits, so the next call plans.
         """
         self._check_detached()
+        self._check_unsaved_layer()
         config = self.target_config
+        target = self._target_text()
         if config.modules is MISSING:
-            return ConfigPlan(modules=())
+            return ConfigPlan(modules=(), target=target)
+        return ConfigPlan(
+            modules=tuple(self.plan_module(mod) for mod in config.modules),
+            target=target,
+        )
+
+    def _target_text(self) -> str:
+        """What a plan is for: ``edge 101, enterprise 1, configuration 10``."""
+        config = self.target_config
+        if self.target_type == "edge":
+            edge_id = self.resolver_context.edge_id
+            text = "edge" if edge_id is None else f"edge {edge_id}"
+        else:
+            text = f"profile {json.dumps(config.name)}"
+        if self.resolver_context.enterprise_id is not None:
+            text += f", enterprise {self.resolver_context.enterprise_id}"
+        if isinstance(config.id_, int):
+            text += f", configuration {config.id_}"
+        return text
+
+    def plan_module(
+        self, module: AnyConfigurationModule, data: VcoModel | None = None
+    ) -> ModulePlan:
+        """Plan the write of one *module* of the target config, as :meth:`plan` plans it.
+
+        With *data*, that is planned in place of the module's own data: the
+        way to ask whether a change to *module* could be written before it is
+        made. Raises ``LossyFieldError`` if the module, or *data*, holds an
+        edit that cannot be written. Does not check for detached objects.
+        """
         level = (
             ConfigContext.PROFILE
             if self.target_type == "profile"
             else ConfigContext.EDGE
         )
-        plans: list[ModulePlan] = []
-        for mod in config.modules:
-            profile_mod = (
-                _find_module(self.profile_config, mod.name)
-                if level is ConfigContext.EDGE
-                else None
-            )
-            plans.append(plan_module(mod, level=level, profile=profile_mod))
-        return ConfigPlan(modules=tuple(plans))
+        profile_mod = (
+            _find_module(self.profile_config, module.name)
+            if level is ConfigContext.EDGE
+            else None
+        )
+        return plan_module(module, data, level=level, profile=profile_mod)
 
     def get_changed_modules(self) -> list[ConfigurationModuleName]:
         """Names of the modules that a save would write.
@@ -497,57 +708,104 @@ class ConfigState:
         self,
         module_name: str | None = None,
     ) -> list[ConfigFieldChange]:
-        """Per-field diff between snapshot and current state.
+        """The changes of :meth:`plan`, one entry each, in python names.
 
-        If ``module_name`` is None, returns changes across all changed
-        modules. KeyField-annotated lists are diffed by key (additions,
-        removals, per-key recursive diff), so reordering does not appear as
-        a change; one with an item without a key, or a key repeated, is
-        diffed by position. The path format describes the field a user would
-        patch via a ``merge_patch`` dict.
+        With *module_name*, only that module's: the python or the VCO name
+        (``"wan"`` or ``"WAN"``). A module the target does not have has none.
+        Raises ``ValueError`` for a name that is no module. Raises what
+        :meth:`plan` raises: ``LossyFieldError``, ``DetachedObjectError`` and
+        ``LayerNotSavedError``, the last once for a set of edits, as it does
+        for :meth:`get_changed_modules`.
 
-        MISSING is preserved as the sentinel rather than rendered as None.
+        These are the changes a save writes, so a read changes nothing and a
+        rename is one change. Each path is in the names a patch uses, and the
+        values are JSON, as in the plan; the order of a keyed list is one
+        entry whose ``moves`` say which items change place.
         """
-        if self.target_type == "edge" and self.edge_config is not None:
-            current_config = self.edge_config
-        else:
-            current_config = self.profile_config
-        snapshot_config = self.snapshot_for_target()
-
-        if snapshot_config is None or current_config.modules is MISSING:
-            return []
-
-        snapshot_modules: dict[str, AnyConfigurationModule] = {}
-        if snapshot_config.modules is not MISSING:
-            for mod in snapshot_config.modules:
-                snapshot_modules[mod.name] = mod
-
+        wanted = None if module_name is None else resolve_module_name(module_name)
         changes: list[ConfigFieldChange] = []
-        for mod in current_config.modules:
-            if module_name is not None and mod.name != module_name:
+        for module in self.plan().modules:
+            if wanted is not None and module.name != wanted:
                 continue
-            snap_mod = snapshot_modules.get(mod.name)
-            current_data = mod.data
-            snapshot_data = snap_mod.data if snap_mod is not None else MISSING
-            _diff_value(
-                module=mod.name,
-                path="",
-                before=snapshot_data,
-                after=current_data,
-                out=changes,
+            held = _find_module(self.target_config, module.name)
+            data = None if held is None else held.data
+            model = type(data) if isinstance(data, VcoModel) else None
+            changes.extend(
+                ConfigFieldChange(
+                    module=module.name,
+                    path=python_path(change.path, model),
+                    before=change.before,
+                    after=change.after,
+                    place=change.place,
+                    moves=change.moves,
+                )
+                for change in module.changes
             )
         return changes
+
+
+_PROGRESS_ATTRIBUTE = "_save_progress"
+
+
+@dataclass(frozen=True)
+class SaveProgress:
+    """How far a save got when it raised.
+
+    Attributes:
+        completed: The writes stored before the error, in order.
+        failed: The name of the module whose write raised, or None when the
+            error came after a write was stored (an edit made while a module
+            was written).
+        pending: The names of the planned modules that were not sent.
+    """
+
+    completed: tuple[ModuleWrite[Any], ...]
+    failed: str | None
+    pending: tuple[str, ...]
+
+    def attach(self, error: BaseException) -> None:
+        """Set this on *error*, for :func:`save_progress`; an error whose class takes no attributes is left as it is."""
+        try:
+            setattr(error, _PROGRESS_ATTRIBUTE, self)
+        except (AttributeError, TypeError):
+            pass
+
+
+def save_progress(error: BaseException) -> SaveProgress | None:
+    """The progress a save attached to *error*, or None.
+
+    Looks at *error*, then at the error behind it (``__cause__``, else
+    ``__context__``), so it answers for the ``TimeoutError`` that
+    ``asyncio.timeout`` raises from a cancelled save. None for an error that
+    did not come from a save that had started to write.
+    """
+    seen: set[int] = set()
+    current: BaseException | None = error
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        progress = getattr(current, _PROGRESS_ATTRIBUTE, None)
+        if isinstance(progress, SaveProgress):
+            return progress
+        current = current.__cause__ or current.__context__
+    return None
 
 
 @dataclass
 class SaveResult:
     """Outcome of ``ConfigPipeline.save``.
 
-    Validator errors are collected into ``validation_errors`` rather than
-    raised, so callers can inspect them. Most CLI / scripting callers should
-    follow up with :meth:`raise_for_errors` to surface failures as exceptions.
+    A save that is not a dry run raises :class:`SaveValidationError` when a
+    write-time validator reports an error, and sends nothing. A dry run
+    collects the errors in ``validation_errors`` and returns;
+    :meth:`raise_for_errors` raises them. ``modules_updated`` and
+    ``modules_inserted`` are what the plan updates and inserts, written when
+    ``written`` names them.
     """
 
+    dry_run: bool = False
+    """Whether the save that returned this sent nothing on purpose."""
+    written: tuple[ModuleWrite[Any], ...] = ()
+    """The writes this save stored, in order; empty for a dry run and for a save with nothing to change."""
     modules_updated: list[ConfigurationModuleName] = field(default_factory=list)
     modules_inserted: list[ConfigurationModuleName] = field(default_factory=list)
     plan: ConfigPlan | None = None
@@ -574,6 +832,22 @@ class SaveResult:
     # Optional count for downstream integrations managing enterprise objects.
     # ConfigPipeline leaves this at zero.
     objects_applied: int = 0
+
+    @override
+    def __repr__(self) -> str:
+        """The dataclass ``repr``, with the number of entries per module for ``server_changes`` and ``left_out``.
+
+        The entries hold configuration values, so they are not printed.
+        """
+        counted = ("server_changes", "left_out")
+        parts: list[str] = []
+        for item in fields(self):
+            value: object = getattr(self, item.name)
+            if item.name in counted:
+                counts = cast(dict[object, tuple[object, ...]], value)
+                value = {str(name): len(entries) for name, entries in counts.items()}
+            parts.append(f"{item.name}={value!r}")
+        return f"{type(self).__name__}({', '.join(parts)})"
 
     @property
     def is_valid(self) -> bool:
@@ -640,122 +914,3 @@ def _module_of(
         return new
     # Raises ValueError, the same as for any module the config does not have.
     return config.get_module(name)
-
-
-# ---------------------------------------------------------------------------
-# Per-field diff helpers
-# ---------------------------------------------------------------------------
-
-
-def _diff_value(
-    *,
-    module: str,
-    path: str,
-    before: object,
-    after: object,
-    out: list[ConfigFieldChange],
-) -> None:
-    """Walk two parallel values and append a ConfigFieldChange per leaf difference.
-
-    KeyField-annotated lists are diffed by key. Sub-models recurse field by
-    field. Scalars compare via equality.
-    """
-    if before is MISSING and after is MISSING:
-        return
-    if before is MISSING or after is MISSING:
-        out.append(
-            ConfigFieldChange(module=module, path=path, before=before, after=after)
-        )
-        return
-    if isinstance(before, BaseModel) and isinstance(after, BaseModel):
-        if type(before) is not type(after):
-            out.append(
-                ConfigFieldChange(module=module, path=path, before=before, after=after)
-            )
-            return
-        for field_name, field_info in type(after).model_fields.items():
-            child_path = f"{path}.{field_name}" if path else field_name
-            before_val = cast(object, getattr(before, field_name, MISSING))
-            after_val = cast(object, getattr(after, field_name, MISSING))
-            spec = get_key_spec(field_info)
-            if (
-                spec is not None
-                and isinstance(before_val, list)
-                and isinstance(after_val, list)
-            ):
-                _diff_keyed_list(
-                    module=module,
-                    path=child_path,
-                    key_paths=spec.paths,
-                    before=cast(list[object], before_val),
-                    after=cast(list[object], after_val),
-                    out=out,
-                )
-            else:
-                _diff_value(
-                    module=module,
-                    path=child_path,
-                    before=before_val,
-                    after=after_val,
-                    out=out,
-                )
-        return
-    if isinstance(before, list) and isinstance(after, list):
-        before_items = cast(list[object], before)
-        after_items = cast(list[object], after)
-        if len(before_items) != len(after_items):
-            out.append(
-                ConfigFieldChange(module=module, path=path, before=before, after=after)
-            )
-            return
-        for i, (b, a) in enumerate(zip(before_items, after_items, strict=True)):
-            _diff_value(module=module, path=f"{path}[{i}]", before=b, after=a, out=out)
-        return
-    if before != after:
-        out.append(
-            ConfigFieldChange(module=module, path=path, before=before, after=after)
-        )
-
-
-def _diff_keyed_list(
-    *,
-    module: str,
-    path: str,
-    key_paths: tuple[str, ...],
-    before: list[object],
-    after: list[object],
-    out: list[ConfigFieldChange],
-) -> None:
-    """Diff two lists of BaseModel items by their KeyField key value.
-
-    Items are matched by key in string form, part by part (``key_form``). The
-    path names an item by ``item_key_text``: the value of a one-part key, a
-    composite key as ``key_text`` writes it
-    (``static["10.0.0.0",24,"192.168.1.1",GE3]``), as the item before had it.
-
-    When an item on either side has no key, or a key is repeated on either
-    side, items cannot be matched by key: the lists are diffed by position,
-    as a list without a ``KeyField`` is (``_diff_value``).
-    """
-    keys_before = [key_form(item_key(item, key_paths)) for item in before]
-    keys_after = [key_form(item_key(item, key_paths)) for item in after]
-    if any(
-        None in keys or len(set(keys)) != len(keys)
-        for keys in (keys_before, keys_after)
-    ):
-        _diff_value(module=module, path=path, before=before, after=after, out=out)
-        return
-    by_key_before: dict[KeyForm | None, object] = dict(
-        zip(keys_before, before, strict=True)
-    )
-    by_key_after: dict[KeyForm | None, object] = dict(
-        zip(keys_after, after, strict=True)
-    )
-    all_keys: list[KeyForm | None] = list(by_key_before.keys()) + [
-        k for k in by_key_after if k not in by_key_before
-    ]
-    for key in all_keys:
-        b = by_key_before.get(key, MISSING)
-        a = by_key_after.get(key, MISSING)
-        text = item_key_text(a if b is MISSING else b, key_paths)
-        _diff_value(module=module, path=f"{path}[{text}]", before=b, after=a, out=out)

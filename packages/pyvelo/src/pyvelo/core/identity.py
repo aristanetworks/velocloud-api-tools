@@ -10,7 +10,7 @@ for an entity, using plain int/uuid.UUID types.
 
 import uuid
 from dataclasses import dataclass
-from typing import Annotated, Any, ClassVar, NewType
+from typing import Annotated, Any, ClassVar, NewType, cast, override
 
 from pydantic import BeforeValidator, PlainSerializer
 
@@ -20,8 +20,11 @@ from pyvelo.core.enums import ModelNumber, NetworkSegmentType
 class ResolutionError(KeyError):
     """Raised when a resolver cannot find a name.
 
-    Inherits from ``KeyError`` for backwards compatibility with consumers that
-    catch the historical exception type.
+    It is a ``KeyError``, so a caller that catches a missing key catches it.
+    Like the client errors, it is pickled and copied from its class, its
+    ``args`` and its attributes (notes included), not by calling the
+    constructor again, which takes keywords only. ``__cause__``,
+    ``__context__`` and the traceback are not carried.
     """
 
     def __init__(
@@ -37,6 +40,19 @@ class ResolutionError(KeyError):
         self.candidates = candidates
         super().__init__(message or self._default_message())
 
+    @override
+    def __reduce__(self) -> tuple[Any, ...]:
+        attributes = dict(self.__dict__)
+        if "__notes__" in attributes:
+            # A shallow copy must not add its notes to this error's list.
+            attributes["__notes__"] = list(cast(list[str], attributes["__notes__"]))
+        return (_rebuild_resolution_error, (type(self), self.args), attributes)
+
+    @override
+    def __str__(self) -> str:
+        # KeyError prints the repr of its argument, with quotes and a literal \n.
+        return str(self.args[0])
+
     def _default_message(self) -> str:
         label = (
             self.identity_type
@@ -47,6 +63,15 @@ class ResolutionError(KeyError):
             cands = "\n".join(f"  - {c}" for c in self.candidates)
             return f"Unknown {label}: {self.name!r}.\nDid you mean:\n{cands}"
         return f"Unknown {label}: {self.name!r}."
+
+
+def _rebuild_resolution_error(
+    cls: type[ResolutionError], args: tuple[Any, ...]
+) -> ResolutionError:
+    """Build an error of *cls* without calling its constructor; its attributes arrive as state."""
+    error = cls.__new__(cls)
+    error.args = args
+    return error
 
 
 # ---------------------------------------------------------------------------

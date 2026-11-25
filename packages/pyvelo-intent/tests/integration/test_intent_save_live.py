@@ -10,11 +10,11 @@ prove that on a lab: they edit through the pipeline, save, read the module back
 and compare it with what was there, then put everything back.
 
 Every test that writes does so inside ``restoring`` (see
-``_intent_live_support``), which restores the module and checks that it is
+``live_support``), which restores the module and checks that it is
 restored whether or not the test passes. A test that finds no suitable target
 skips. Edits are synthetic and inert: a copy of a rule after the rule it copies,
 a QoE threshold, a link description, a LAN network's OSPF cost, a syslog flag.
-A write error is reported by its class and redacted paths (``_outcome``): its
+A write error is reported by its class and redacted paths (``outcome``): its
 own message names lab entities and shows their values.
 
 Server-managed keys seen in what the Orchestrator stores (the only ones allowed;
@@ -24,7 +24,7 @@ for a value stored otherwise at a planned path):
 
 * ``ruleLogicalId``: assigned to a rule that was added without one.
 * ``routeMapsVersion``: added to a deviceSettings segment entry that lacks it
-  (accepted drift, see ``_intent_live_support.settle``).
+  (accepted drift, see ``live_support.settle``).
 * refs: the Orchestrator re-derives a deviceSettings module's refs from its data
   when the data changes and drops one whose object is gone; a firewall or WAN
   module's refs stay as they were. The tests never write refs and restore data
@@ -45,8 +45,17 @@ on, ``ConfigConflictError``. A VCO that ignores ``returnData`` answers
 Seen on the lab (first write-back run, 2026-11-22): the module row as stored,
 so the check is off and ``returnData`` is honoured; a stale save of the same
 value raised ``WriteNotAppliedError``, of another value ``ConfigConflictError``.
+Three tests record what no assertion can know in advance: the level a module
+of an edge comes back at after a refused save
+(``test_refused_edge_save_refreshes_the_state``), what the Orchestrator stores
+for an IPv6 key sent in upper case (``test_an_ipv6_key_in_upper_case_is_recorded``,
+which needs a marked edge with an IPv6 static route of prefix 48 or longer to
+copy), and the read-back of an insert answered with an ID alone
+(``test_an_insert_answered_with_an_id_is_read_back``).
 
-Requires VCO_HOST and VCO_TOKEN (VCO_ENTERPRISE_ID if the token needs one).
+Requires VCO_HOST and VCO_TOKEN (VCO_ENTERPRISE_ID if the token needs one), and
+to write, PYVELO_IT_WRITE_HOST and PYVELO_IT_WRITE_ENTERPRISE_ID: see
+``live_support``.
 
 Run:
     uv run --env-file .env pytest -m integration packages/pyvelo-intent/tests/integration
@@ -56,30 +65,45 @@ from __future__ import annotations
 
 import copy
 import uuid
-from collections.abc import Awaitable, Callable, Iterable, Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from typing import Any, Literal, cast
 
 import pytest
-from _intent_live_support import (  # pyright: ignore[reportImplicitRelativeImport]
+from live_support import (
     SEGMENT_DRIFT_KEY,
+    SERVER_ASSIGNED_KEYS,
+    DataRefused,
     EdgeLayout,
     Lab,
     Site,
     changes_between,
     check,
+    check_as_read,
+    check_entries,
     check_no_override_flag,
+    check_paths,
     delete_module,
     describe,
     effective_data,
     expect,
     has_key,
+    outcome,
+    read_backs,
+    record,
+    record_answers,
+    record_refusal,
     redact,
     ref_names,
     refusal_codes,
+    refusal_form,
     restoring,
+    same_value,
     settle,
     synthetic_name,
+    value_at,
+    where,
+    without_return_data,
     write_data,
 )
 from pydantic import MISSING
@@ -91,20 +115,18 @@ from pyvelo.client import (
     WriteNotAppliedError,
 )
 from pyvelo.client.enums.configuration import ConfigurationModuleName as Name
-from pyvelo.client.exceptions import is_precondition_failure
 from pyvelo.client.models.configuration import (
     DeviceSettingsData,
     FirewallData,
     QosData,
     WanData,
 )
+from pyvelo.client.models.configuration.device_settings.segment import StaticRoute
 from pyvelo.client.models.configuration.qos.qoe import QoeSettings
 from pyvelo.client.models.configuration.qos.root import ServiceRateLimit
-from pyvelo.client.module_check import data_model
 from pyvelo.client.module_write import ModulePlan
 from pyvelo.client.schemas.configuration import (
     AnyConfigurationModule,
-    ConfigurationModuleBase,
     DeviceSettingsConfigurationModule,
     EdgeConfiguration,
     EnterpriseConfigurationProfile,
@@ -119,16 +141,12 @@ from pyvelo.core import ConfigContext, VcoModel
 from pyvelo.core.rebase import Key, Path, RawChange, raw_changes
 from pyvelo.core.response_check import (
     PathPattern,
-    PlannedChange,
     ServerChange,
     matches,
 )
-from pyvelo_intent import ConfigPipeline, ConfigState, SaveResult, add
+from pyvelo_intent import ConfigPipeline, ConfigState, PatchError, SaveResult, add
 
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio(loop_scope="session")]
-
-SERVER_ASSIGNED_KEYS = frozenset({"ruleLogicalId"})
-"""Keys the Orchestrator adds to a new item; an added item is compared without them."""
 
 
 @dataclass
@@ -213,121 +231,14 @@ def stack_reads(vco_client: VcoClient, monkeypatch: pytest.MonkeyPatch) -> list[
 # ---------------------------------------------------------------------------
 
 
-def _where(changes: Iterable[PlannedChange | ServerChange]) -> str:
-    """The paths of *changes*, redacted, with ``refs`` before a refs entry."""
-    shown = [
-        f"refs {redact(c.path)}" if c.part == "refs" else redact(c.path)
-        for c in changes
-    ]
-    return ", ".join(shown) or "none"
-
-
-def _stored_otherwise(lost_edits: Iterable[PlannedChange]) -> list[Path]:
-    """Where in each lost edit the value stored is not the value sent, at the deepest path."""
-    return [
-        Path((*change.path.parts, *inner.path.parts))
-        for change in lost_edits
-        for inner in raw_changes(change.intended, change.stored)
-    ]
-
-
-def _outcome(error: ModuleWriteError) -> str:
-    """*error* as its class and its paths, redacted.
-
-    Its own message names segments and rules of the lab and shows their
-    values, so a test reports this in its place. Where a lost edit was
-    stored otherwise than sent is a candidate for ``MODULE_REWRITES``.
-    """
-    kind = type(error).__name__
-    if isinstance(error, ConfigConflictError):
-        kind += f" ({error.detail})"
-    otherwise = ", ".join(redact(p) for p in _stored_otherwise(error.lost_edits))
-    return (
-        f"{kind} on the {error.module_name or 'unnamed'} module: "
-        f"lost edits {_where(error.lost_edits)}; "
-        f"stored otherwise than sent at {otherwise or 'none'}; "
-        f"applied {_where(error.applied)}; "
-        f"server changes {_where(error.server_changes)}"
-    )
-
-
 async def _save(pipeline: ConfigPipeline, state: ConfigState) -> SaveResult:
-    """``pipeline.save``; a write error fails the test with ``_outcome`` alone."""
+    """``pipeline.save``; a write error fails the test with ``outcome`` alone."""
     try:
         return await pipeline.save(state)
     except ModuleWriteError as error:
         # Failed outside the handler: the error must not be chained to the report.
-        message = _outcome(error)
+        message = outcome(error)
     pytest.fail(message, pytrace=False)
-
-
-def _refusal_form(error: ModuleWriteError) -> str:
-    """How the Orchestrator refused the stale write that raised *error*.
-
-    ``write_module`` raises the outcome from the refusal the client raised:
-    a ``ConfigConflictError`` from the precondition error, or one for a row
-    count of zero. When the module could not be read back after the refusal,
-    the refusal is the outcome's context instead (the outcome was raised
-    while handling it). An outcome with neither was checked against the
-    module row the Orchestrator answered with.
-    """
-    refusal = error.__cause__ if error.__cause__ is not None else error.__context__
-    if not isinstance(refusal, ConfigConflictError):
-        return "the module row as stored"
-    reason = refusal.__cause__
-    if isinstance(reason, VcoOperationError) and is_precondition_failure(reason):
-        return "the precondition error"
-    return "a row count of zero"
-
-
-def _record_refusal(
-    capsys: pytest.CaptureFixture[str], label: str, error: ModuleWriteError
-) -> None:
-    """Print, past the capture, the form of the refusal and the error it made."""
-    with capsys.disabled():
-        print(
-            f"\n{label}: refused with {_refusal_form(error)} ({type(error).__name__})"
-        )
-
-
-def _check_entries(
-    label: str,
-    what: str,
-    changes: Sequence[PlannedChange | ServerChange],
-    expected: Sequence[Path],
-) -> None:
-    got = sorted(str(c.path) for c in changes)
-    want = sorted(str(p) for p in expected)
-    check(
-        got == want,
-        f"{label}: {what} lists {_where(changes)}; expected "
-        f"{', '.join(redact(p) for p in expected) or 'none'}",
-    )
-
-
-def _check_as_read(
-    label: str, held: ConfigurationModuleBase, read: ConfigurationModuleBase
-) -> None:
-    """*held* is the module as a read made right after shows it: its version and raw data."""
-    check(
-        held.version == read.version,
-        f"{label}: the module held has another version than a read made right after",
-    )
-    check(
-        held.raw_data == read.raw_data,
-        f"{label}: the module held differs from a read made right after: "
-        + describe(raw_changes(read.raw_data, held.raw_data, data_model(read))),
-    )
-
-
-def _value_at(document: object, path: Path) -> object:
-    """The value at *path*, a path of names only, in a JSON document; ``MISSING`` if there is none."""
-    value = document
-    for part in path.parts:
-        if not isinstance(value, dict) or not isinstance(part, str):
-            return MISSING
-        value = cast(dict[str, object], value).get(part, MISSING)
-    return value
 
 
 async def _set_at(
@@ -340,33 +251,6 @@ async def _set_at(
     _ = await pipeline.apply(state, module=module, patch=patch)
 
 
-def _same_value(a: object, b: object) -> bool:
-    """Equal, but for the keys the Orchestrator assigns to an item it was given."""
-
-    def bare(value: object) -> object:
-        if isinstance(value, dict):
-            return {
-                k: v
-                for k, v in value.items()  # pyright: ignore[reportUnknownVariableType]
-                if k not in SERVER_ASSIGNED_KEYS
-            }
-        return value
-
-    return bare(a) == bare(b)
-
-
-def _check_paths(
-    label: str, what: str, changes: Sequence[RawChange], expected: Sequence[Path]
-) -> None:
-    got = sorted(str(c.path) for c in changes)
-    want = sorted(str(p) for p in expected)
-    check(
-        got == want,
-        f"{label}: {what} lists {describe(changes)}; expected "
-        f"{', '.join(redact(p) for p in expected)}",
-    )
-
-
 def _check_stored_as_sent(
     label: str, stored: Sequence[RawChange], plan: ModulePlan
 ) -> None:
@@ -375,8 +259,8 @@ def _check_stored_as_sent(
         planned = sent.get(str(change.path))
         check(
             planned is not None
-            and _same_value(change.before, planned.before)
-            and _same_value(change.after, planned.after),
+            and same_value(change.before, planned.before)
+            and same_value(change.after, planned.after),
             f"{label}: {redact(change.path)} was stored other than as sent",
         )
 
@@ -399,32 +283,32 @@ def _raw(module: AnyConfigurationModule) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-def _unedited(where: str, state: ConfigState, failures: list[str]) -> int:
+def _unedited(label: str, state: ConfigState, failures: list[str]) -> int:
     config = state.target_config
     modules = [] if config.modules is MISSING else config.modules
     plan = state.plan()
     for module, module_plan in zip(modules, plan.modules, strict=True):
         if module_plan.operation != "none" or module_plan.changes:
             failures.append(
-                f"{where} {module.name}: planned {module_plan.operation} "
+                f"{label} {module.name}: planned {module_plan.operation} "
                 f"({describe(module_plan.changes)})"
             )
         elif module_plan.data != module.raw_data:
-            failures.append(f"{where} {module.name}: plan.data differs from raw_data")
+            failures.append(f"{label} {module.name}: plan.data differs from raw_data")
     return len(modules)
 
 
 async def _save_nothing(
-    where: str, pipeline: ConfigPipeline, state: ConfigState, failures: list[str]
+    label: str, pipeline: ConfigPipeline, state: ConfigState, failures: list[str]
 ) -> None:
     """Save a state with no edit: it must return without sending, and stay usable."""
     try:
         result = await pipeline.save(state)
     except WriteRefused:
-        failures.append(f"{where}: save with no edit tried to write")
+        failures.append(f"{label}: save with no edit tried to write")
         return
     if result.modules_updated or result.modules_inserted:
-        failures.append(f"{where}: save with no edit reports a write")
+        failures.append(f"{label}: save with no edit reports a write")
 
 
 async def test_no_edit_plans_nothing_and_sends_nothing(
@@ -475,7 +359,7 @@ async def _copy_last_rule(pipeline: ConfigPipeline, state: ConfigState) -> Path:
     )
     segment = next(s.segment.name for s in module.data.segments if s.outbound)
     rules = [
-        rule.model_dump(by_alias=False, context={"compact": True})
+        rule.model_dump(mode="json", by_alias=False, context={"compact": True})
         for rule in state.profile.firewall.segment(segment).outbound
     ]
     name = synthetic_name()
@@ -489,6 +373,7 @@ async def _copy_last_rule(pipeline: ConfigPipeline, state: ConfigState) -> Path:
     return Path(("segments", Key(segment), "outbound", Key(name)))
 
 
+@pytest.mark.live_write
 async def test_profile_rule_added_through_apply_reads_back_as_that_rule_only(
     lab: Lab, pipeline: ConfigPipeline
 ) -> None:
@@ -502,7 +387,7 @@ async def test_profile_rule_added_through_apply_reads_back_as_that_rule_only(
         expected = [await _copy_last_rule(pipeline, state)]
         plan = _planned(state, Name.FIREWALL)
         check(plan.operation == "update", f"planned {plan.operation}, expected update")
-        _check_paths("rule edit", "the plan", plan.changes, expected)
+        check_paths("rule edit", "the plan", plan.changes, expected)
 
         result = await _save(pipeline, state)
         check(
@@ -514,7 +399,7 @@ async def test_profile_rule_added_through_apply_reads_back_as_that_rule_only(
         stored = changes_between(
             Name.FIREWALL, original.data, after.raw_data, FirewallData
         )
-        _check_paths("rule edit", "the profile read back", stored, expected)
+        check_paths("rule edit", "the profile read back", stored, expected)
         _check_stored_as_sent("rule edit", stored, plan)
         check_no_override_flag("rule edit", original.data, plan.data, after.raw_data)
 
@@ -525,6 +410,7 @@ def _profile_has_qoe(module: AnyConfigurationModule) -> bool:
     )
 
 
+@pytest.mark.live_write
 async def test_profile_scalar_edit_through_apply_reads_back_as_that_edit_only(
     lab: Lab, pipeline: ConfigPipeline
 ) -> None:
@@ -546,13 +432,13 @@ async def test_profile_scalar_edit_through_apply_reads_back_as_that_edit_only(
 
         expected = [Path(("qoe", "voice", "latency", "yellow"))]
         plan = _planned(state, Name.QOS)
-        _check_paths("profile edit", "the plan", plan.changes, expected)
+        check_paths("profile edit", "the plan", plan.changes, expected)
         result = await _save(pipeline, state)
         check(result.modules_updated == [Name.QOS], f"saved {result.modules_updated}")
 
         after = await site.read_present()
         stored = changes_between(Name.QOS, original.data, after.raw_data, QosData)
-        _check_paths("profile edit", "the profile read back", stored, expected)
+        check_paths("profile edit", "the profile read back", stored, expected)
         _check_stored_as_sent("profile edit", stored, plan)
 
 
@@ -660,9 +546,13 @@ DEVICE_SETTINGS_CASE = Reconcile(
 
 
 async def _lacking_layout(lab: Lab, case: Reconcile) -> EdgeLayout:
-    """An edge whose *case* module lacks a segment its profile has and takes a write, or skip."""
+    """An edge whose *case* module lacks a segment its profile has and takes a write.
+
+    Skip where no marked edge lacks one; fail where some do and every one
+    refuses a write of its own data.
+    """
     candidates: list[EdgeLayout] = []
-    for layout in lab.layouts:
+    for layout in lab.require_edge_targets():
         edge_module = await lab.edge_site(layout, case.name).read()
         profile_module = await lab.profile_site(layout.profile_id, case.name).read()
         if edge_module is None or profile_module is None:
@@ -671,11 +561,8 @@ async def _lacking_layout(lab: Lab, case: Reconcile) -> EdgeLayout:
             candidates.append(layout)
     if not candidates:
         pytest.skip(f"no edge {case.name.value} module lacks a segment its profile has")
-    layout = await lab.first_writable(candidates, case.name)
-    if layout is None:
-        pytest.skip(
-            f"no edge {case.name.value} module that lacks a segment takes a write"
-        )
+    layout = await lab.first_writable_or_fail(candidates, case.name)
+    assert layout is not None  # every candidate is a marked edge
     return layout
 
 
@@ -708,16 +595,14 @@ async def _reconcile(
             f"the plan reconciles {len(plan.reconciled_segments)} segment(s); "
             f"the edge lacks {len(lacking)}",
         )
-        _check_paths("edit", "the plan", plan.changes, expected)
+        check_paths("edit", "the plan", plan.changes, expected)
         _ = await _save(pipeline, state)
 
         written = await site.read_present()
         after = _json_object(settle(case.name, before, written.raw_data))
         stored = raw_changes(before, after, case.model)
         outside = [c for c in stored if c.path.parts[0] != "segments"]
-        _check_paths(
-            "edit", "the module read back, outside segments", outside, expected
-        )
+        check_paths("edit", "the module read back, outside segments", outside, expected)
         _check_stored_as_sent("edit", outside, plan)
 
         placeholders = [
@@ -750,6 +635,7 @@ async def _reconcile(
         )
 
 
+@pytest.mark.live_write
 async def test_unrelated_edit_adds_the_missing_segments_as_empty_placeholders(
     lab: Lab, pipeline: ConfigPipeline
 ) -> None:
@@ -811,13 +697,14 @@ async def _reconcile_unrefused(
     check(refused is None, f"the Orchestrator refused the write: {refused}")
 
 
+@pytest.mark.live_write
 async def test_missing_device_settings_segment_is_added_as_a_placeholder_the_orchestrator_accepts(
     lab: Lab, pipeline: ConfigPipeline
 ) -> None:
     case = DEVICE_SETTINGS_CASE
     lacking: list[EdgeLayout] = []
     sharing: list[EdgeLayout] = []
-    for layout in lab.layouts:
+    for layout in lab.require_edge_targets():
         edge_module = await lab.edge_site(layout, case.name).read()
         profile_module = await lab.profile_site(layout.profile_id, case.name).read()
         if edge_module is None or profile_module is None:
@@ -831,8 +718,9 @@ async def test_missing_device_settings_segment_is_added_as_a_placeholder_the_orc
             sharing.append(layout)
 
     # An edge that already lacks a segment its profile has; a module that
-    # refuses its own unchanged data is no target (it would refuse anything).
-    target = await lab.first_writable(lacking, case.name)
+    # refuses its own unchanged data is passed over (it would refuse anything),
+    # and the test fails where every such edge refuses.
+    target = await lab.first_writable_or_fail(lacking, case.name)
     if target is not None:
         own = lab.edge_site(target, case.name)
         refs_own = ref_names((await own.read_present()).raw_refs)
@@ -846,11 +734,11 @@ async def test_missing_device_settings_segment_is_added_as_a_placeholder_the_orc
     # Else make an edge lack one: take out a non-Global segment entry that is
     # already empty (nothing in it is lost) from a module that takes a write,
     # and put it back afterwards.
-    target = await lab.first_writable(sharing, case.name)
+    target = await lab.first_writable_or_fail(sharing, case.name)
     if target is None:
         pytest.skip(
-            "no edge deviceSettings module that takes a write lacks a segment "
-            "entry of its profile's, or has an empty one besides the Global one"
+            "no marked edge deviceSettings module lacks a segment entry of its "
+            "profile's, or has an empty one besides the Global one"
         )
     site = lab.edge_site(target, case.name)
     profile_site = lab.profile_site(target.profile_id, case.name)
@@ -864,7 +752,7 @@ async def test_missing_device_settings_segment_is_added_as_a_placeholder_the_orc
         refused: str | None = None
         try:
             await write_data(site, module, data)
-        except VcoOperationError as exc:
+        except DataRefused as exc:
             refused = refusal_codes(exc)
         if refused is not None:
             pytest.skip(
@@ -897,6 +785,7 @@ def _placeholders(
     ]
 
 
+@pytest.mark.live_write
 async def test_an_insert_returns_its_row(
     lab: Lab, pipeline: ConfigPipeline, writes: Writes
 ) -> None:
@@ -905,9 +794,12 @@ async def test_an_insert_returns_its_row(
     The state then holds the row the insert returned, no longer new, and a
     second edit saves as an update of it.
     """
-    layout = next((e for e in lab.layouts if not e.has(Name.QOS)), None)
+    lab.require_edge_targets(replace_modules=True)
+    layout = next(iter(lab.edges_lacking(Name.QOS)), None)
     if layout is None:
-        pytest.skip("every edge already has a QoS module of its own")
+        pytest.skip(
+            "no edge marked pyvelo-it-replace-modules lacks a QoS module of its own"
+        )
     profile_module = await lab.profile_site(layout.profile_id, Name.QOS).read()
     if profile_module is None:
         pytest.skip("the profile of an edge with no QoS module has none either")
@@ -967,7 +859,7 @@ async def test_an_insert_returns_its_row(
             inserted.id_ == stored.id_,
             "the state's module has another ID than the module inserted",
         )
-        _check_as_read("insert", inserted, stored)
+        check_as_read("insert", inserted, stored)
 
         # A second edit, from the state as the insert left it, is an update.
         writes.inserts.clear()
@@ -991,7 +883,7 @@ async def test_an_insert_returns_its_row(
             "the update does not carry the version the insert returned",
         )
         updated = await site.read_present()
-        _check_paths(
+        check_paths(
             "update after the insert",
             "the module read back",
             changes_between(Name.QOS, stored.raw_data, updated.raw_data, QosData),
@@ -1021,6 +913,7 @@ def _firewall_that_comes_back_whole(module: AnyConfigurationModule) -> bool:
     )
 
 
+@pytest.mark.live_write
 async def test_edge_firewall_deleted_and_inserted_again_reads_back_as_sent(
     lab: Lab, pipeline: ConfigPipeline, writes: Writes
 ) -> None:
@@ -1029,6 +922,7 @@ async def test_edge_firewall_deleted_and_inserted_again_reads_back_as_sent(
         _firewall_that_comes_back_whole,
         "with no refs, no rule IDs and no inbound or NAT content, which an insert "
         "would not give back or which a lab edge may depend on",
+        replace_modules=True,
     )
     site = lab.edge_site(layout, Name.FIREWALL)
     async with restoring(site) as original:
@@ -1103,7 +997,7 @@ VIDEO_RED = Path(("qoe", "video", "latency", "red"))
 def _qoe_red_thresholds(module: AnyConfigurationModule) -> bool:
     """Whether *module* is a QoS module whose raw data has the red latency thresholds of voice and video."""
     return _profile_has_qoe(module) and all(
-        isinstance(_value_at(module.raw_data, path), int)
+        isinstance(value_at(module.raw_data, path), int)
         for path in (VOICE_RED, VIDEO_RED)
     )
 
@@ -1125,6 +1019,7 @@ STALE_CASES = [
 ]
 
 
+@pytest.mark.live_write
 @pytest.mark.parametrize("case", STALE_CASES, ids=[c.id for c in STALE_CASES])
 async def test_second_save_from_an_older_state_is_refused_and_refreshes_the_state(
     lab: Lab,
@@ -1142,8 +1037,8 @@ async def test_second_save_from_an_older_state_is_refused_and_refreshes_the_stat
         older = await pipeline.load_profile(profile_id, enterprise_id=lab.enterprise_id)
         # Reporting thresholds, which steer nothing; a red one raised stays above
         # its yellow one.
-        kept = expect(_value_at(original.data, case.newer), int, "a threshold") + 1
-        as_read = expect(_value_at(original.data, case.older), int, "a threshold")
+        kept = expect(value_at(original.data, case.newer), int, "a threshold") + 1
+        as_read = expect(value_at(original.data, case.older), int, "a threshold")
         redone = as_read + 2
         await _set_at(pipeline, newer, "QOS", case.newer, kept)
         await _set_at(pipeline, older, "QOS", case.older, redone)
@@ -1155,28 +1050,28 @@ async def test_second_save_from_an_older_state_is_refused_and_refreshes_the_stat
         with pytest.raises((ConfigConflictError, WriteNotAppliedError)) as caught:
             _ = await pipeline.save(older)
         error = caught.value
-        _record_refusal(capsys, f"stale save, {case.id}", error)
+        record_refusal(capsys, f"stale save, {case.id}", error)
         if case.newer != case.older:
             # Nothing the older state planned is stored, and nothing there moved.
             check(
                 isinstance(error, ConfigConflictError),
-                f"the stale save raised {_outcome(error)}",
+                f"the stale save raised {outcome(error)}",
             )
 
         # The error, and the state, hold the module as stored: the newer state's.
         now = await site.read_present()
         check(
-            _value_at(now.raw_data, case.newer) == kept,
+            value_at(now.raw_data, case.newer) == kept,
             "the module does not hold the newer state's edit",
         )
         check(error.module is not None, "the error carries no module")
         assert error.module is not None
-        _check_as_read("the error's module", error.module, now)
-        _check_as_read("the refused state's module", older.module("QOS"), now)
+        check_as_read("the error's module", error.module, now)
+        check_as_read("the refused state's module", older.module("QOS"), now)
         check(not older.plan().changed, "the refused state still plans a write")
 
         # The lost edit is the older state's; the server changes are the newer's.
-        _check_entries("stale save", "lost_edits", error.lost_edits, [case.older])
+        check_entries("stale save", "lost_edits", error.lost_edits, [case.older])
         (lost,) = error.lost_edits
         check(
             lost.as_read == as_read and lost.intended == redone,
@@ -1193,25 +1088,25 @@ async def test_second_save_from_an_older_state_is_refused_and_refreshes_the_stat
                 not lost.clash, "the lost edit is a clash, though nothing moved there"
             )
             server = [case.newer]
-        _check_entries("stale save", "server_changes", error.server_changes, server)
+        check_entries("stale save", "server_changes", error.server_changes, server)
 
         # The same state redoes the edit and saves, with no reload.
         await _set_at(pipeline, older, "QOS", case.older, redone)
         _ = await _save(pipeline, older)
         after = await site.read_present()
-        _check_paths(
+        check_paths(
             "redo",
             "the module read back",
             changes_between(Name.QOS, original.data, after.raw_data, QosData),
             list(dict.fromkeys([case.newer, case.older])),
         )
         check(
-            _value_at(after.raw_data, case.older) == redone,
+            value_at(after.raw_data, case.older) == redone,
             "the module does not hold the redone edit",
         )
         if case.newer != case.older:
             check(
-                _value_at(after.raw_data, case.newer) == kept,
+                value_at(after.raw_data, case.newer) == kept,
                 "the module no longer holds the newer state's edit",
             )
 
@@ -1230,6 +1125,7 @@ def _device_settings_with_refs(module: AnyConfigurationModule) -> bool:
     )
 
 
+@pytest.mark.live_write
 async def test_save_of_a_data_edit_sends_no_refs(
     lab: Lab, pipeline: ConfigPipeline, writes: Writes
 ) -> None:
@@ -1267,6 +1163,7 @@ def _firewall_segment_with_letters(module: AnyConfigurationModule) -> bool:
     )
 
 
+@pytest.mark.live_write
 async def test_segment_named_in_another_case_is_edited_in_place_not_duplicated(
     lab: Lab, pipeline: ConfigPipeline
 ) -> None:
@@ -1300,13 +1197,13 @@ async def test_segment_named_in_another_case_is_edited_in_place_not_duplicated(
         )
         plan = _planned(state, Name.FIREWALL)
         expected = [Path(("segments", Key(name), "firewall_logging_enabled"))]
-        _check_paths("edit by another case", "the plan", plan.changes, expected)
+        check_paths("edit by another case", "the plan", plan.changes, expected)
         _ = await _save(pipeline, state)
 
         written = await site.read_present()
         after = _json_object(written.raw_data)
         stored = raw_changes(before, after, FirewallData)
-        _check_paths("edit by another case", "the module read back", stored, expected)
+        check_paths("edit by another case", "the module read back", stored, expected)
         check(
             len(after["segments"]) == len(before["segments"]),
             "a segment was added: the other-case key did not find the existing one",
@@ -1341,6 +1238,7 @@ def _first_link(state: ConfigState) -> tuple[str, str]:
     return str(links[0].internal_id), links[0].addressing_version
 
 
+@pytest.mark.live_write
 async def test_save_then_edit_and_save_again_without_a_reload(
     lab: Lab, pipeline: ConfigPipeline, writes: Writes, stack_reads: list[int]
 ) -> None:
@@ -1366,7 +1264,7 @@ async def test_save_then_edit_and_save_again_without_a_reload(
         reloads = len(stack_reads)
 
         saved = await site.read_present()
-        _check_as_read("after the first save", state.module("WAN"), saved)
+        check_as_read("after the first save", state.module("WAN"), saved)
         check(
             saved.version != loaded, "the first save did not change the module version"
         )
@@ -1392,9 +1290,9 @@ async def test_save_then_edit_and_save_again_without_a_reload(
         )
 
         read = await site.read_present()
-        _check_as_read("after the second save", state.module("WAN"), read)
+        check_as_read("after the second save", state.module("WAN"), read)
         stored = changes_between(Name.WAN, original.data, read.raw_data, WanData)
-        _check_paths(
+        check_paths(
             "two saves",
             "the module read back",
             stored,
@@ -1531,6 +1429,7 @@ def _known_rewrite(case: Rewrite, change: ServerChange) -> bool:
     return any(matches(change.path, pattern) for pattern in case.known)
 
 
+@pytest.mark.live_write
 @pytest.mark.parametrize("case", REWRITE_CASES, ids=[c.id for c in REWRITE_CASES])
 async def test_server_changes_hold_only_known_rewrites(
     lab: Lab, pipeline: ConfigPipeline, case: Rewrite
@@ -1540,7 +1439,7 @@ async def test_server_changes_hold_only_known_rewrites(
         assert original is not None
         state = await load()
         required = await case.edit(pipeline, state)
-        # A rewrite at a path the edit planned fails here, by _outcome.
+        # A rewrite at a path the edit planned fails here, by outcome.
         result = await _save(pipeline, state)
         check(
             result.modules_updated == [case.name] and not result.modules_inserted,
@@ -1552,7 +1451,7 @@ async def test_server_changes_hold_only_known_rewrites(
         unknown = [c for c in found if not _known_rewrite(case, c)]
         check(
             not unknown,
-            f"{case.id}: server changes beyond the known rewrites: {_where(unknown)}. "
+            f"{case.id}: server changes beyond the known rewrites: {where(unknown)}. "
             "A key only the Orchestrator adds goes in the known list here "
             "(Rewrite.known, or SERVER_ASSIGNED_KEYS, and the module header); a "
             "value it stores otherwise at a planned path goes in MODULE_REWRITES",
@@ -1563,3 +1462,281 @@ async def test_server_changes_hold_only_known_rewrites(
             not missing,
             f"{case.id}: no server change at {', '.join(redact(p) for p in missing)}",
         )
+
+
+# ---------------------------------------------------------------------------
+# 11. A refused save at edge level
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.live_write
+@pytest.mark.parametrize("read_back", [False, True], ids=["as-answered", "read-back"])
+async def test_refused_edge_save_refreshes_the_state(
+    lab: Lab,
+    pipeline: ConfigPipeline,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    read_back: bool,
+) -> None:
+    """A stale save of an edge module leaves the state holding the module as stored, to save again.
+
+    ``read-back`` sends the writes without ``returnData``, so the
+    Orchestrator answers with a row count and the module is read back from
+    the edge's configuration. Either way the module must come back at the
+    level it was loaded at: an edge state's modules are loaded without one.
+    """
+    layout = await lab.pick_writable_edge(
+        Name.WAN, _wan_link, "with a link that has an internal ID"
+    )
+    site = lab.edge_site(layout, Name.WAN)
+    async with restoring(site) as original:
+        assert original is not None
+        if read_back:
+            without_return_data(lab.client, monkeypatch)
+        newer = await pipeline.load(layout.edge_id, enterprise_id=lab.enterprise_id)
+        older = await pipeline.load(layout.edge_id, enterprise_id=lab.enterprise_id)
+        link = _first_link(older)
+        loaded = older.module("WAN").config_context
+        kept, refused, redone = synthetic_name(), synthetic_name(), synthetic_name()
+        for state, text in ((newer, kept), (older, refused)):
+            _ = await pipeline.apply(
+                state, module="WAN", patch={"links": {link: {"description": text}}}
+            )
+        _ = await _save(pipeline, newer)
+
+        with pytest.raises((ConfigConflictError, WriteNotAppliedError)) as caught:
+            _ = await pipeline.save(older)
+        error = caught.value
+        now = await site.read_present()
+        check(error.module is not None, "the error carries no module")
+        assert error.module is not None
+        level = error.module.config_context
+        record(
+            capsys,
+            f"refused edge save, {'read back' if read_back else 'as answered'}: "
+            f"{refusal_form(error)} ({type(error).__name__}); the module was loaded "
+            f"at level {loaded or 'none'} and comes back at level {level or 'none'}",
+        )
+        check(
+            level is loaded,
+            "the module comes back from a refused save at another level than it "
+            "was loaded at",
+        )
+        check_as_read("the error's module", error.module, now)
+        check_as_read("the refused state's module", older.module("WAN"), now)
+        check(not older.plan().changed, "the refused state still plans a write")
+        path = Path(("links", Key(link), "description"))
+        check_entries("refused edge save", "lost_edits", error.lost_edits, [path])
+        (lost,) = error.lost_edits
+        check(
+            lost.intended == refused and lost.stored == kept and lost.clash,
+            "the lost edit is not the refused description, a clash with the newer "
+            "state's",
+        )
+
+        # The same state redoes the edit and saves, with no reload.
+        _ = await pipeline.apply(
+            older, module="WAN", patch={"links": {link: {"description": redone}}}
+        )
+        _ = await _save(pipeline, older)
+        after = await site.read_present()
+        stored = changes_between(Name.WAN, original.data, after.raw_data, WanData)
+        check_paths("redo", "the module read back", stored, [path])
+        check(stored[0].after == redone, "the module does not hold the redone edit")
+
+
+# ---------------------------------------------------------------------------
+# 12. An IPv6 key in upper case
+# ---------------------------------------------------------------------------
+
+
+def _v6_route(data: object) -> tuple[str, StaticRoute] | None:
+    """The segment name and the route of the first IPv6 static route with a prefix of 48 or longer."""
+    if not isinstance(data, DeviceSettingsData):
+        return None
+    for segment in data.segments:
+        routes = segment.routes
+        if routes is MISSING:
+            continue
+        for route in routes.static_v6:
+            prefix = str(route.cidr_prefix)
+            if prefix.isdecimal() and int(prefix) >= 48:
+                return segment.segment.name, route
+    return None
+
+
+def _v6_route_source(module: AnyConfigurationModule) -> bool:
+    return _v6_route(module.data) is not None
+
+
+def _v6_destinations(module: AnyConfigurationModule, description: str) -> list[str]:
+    """The destination of each IPv6 static route of *module* that has *description*."""
+    data = expect(module.data, DeviceSettingsData, "the deviceSettings data")
+    return [
+        route.destination
+        for segment in data.segments
+        if segment.routes is not MISSING
+        for route in segment.routes.static_v6
+        if route.description == description
+    ]
+
+
+@pytest.mark.live_write
+async def test_an_ipv6_key_in_upper_case_is_recorded(
+    lab: Lab, pipeline: ConfigPipeline, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """What the Orchestrator stores for an IPv6 key sent in upper case, and whether the save passes.
+
+    A copy of an IPv6 static route the edge has, to a prefix of the
+    documentation range and not advertised, is added through ``apply`` with
+    its destination in upper case. The run records whether the destination
+    is stored as sent or in lower case, and what applying the same ``add``
+    again does to the state: a key stored in another text is not found by its
+    selector, and the item is planned a second time. Nothing of that second
+    apply is saved.
+    """
+    layout = await lab.pick_writable_edge(
+        Name.DEVICE_SETTINGS,
+        _v6_route_source,
+        "with an IPv6 static route of prefix 48 or longer to copy",
+    )
+    site = lab.edge_site(layout, Name.DEVICE_SETTINGS)
+    async with restoring(site) as original:
+        assert original is not None
+        state = await pipeline.load(layout.edge_id, enterprise_id=lab.enterprise_id)
+        found = _v6_route(state.edge.device_settings)
+        check(found is not None, "the state has no IPv6 static route to copy")
+        assert found is not None
+        segment, source = found
+        # A group of A000 to FFFF: upper case differs from the canonical text
+        # only by its case.
+        sent = f"2001:DB8:{0xA000 + uuid.uuid4().int % 0x6000:X}::"
+        name = synthetic_name()
+        key = (sent, source.cidr_prefix, source.gateway, source.wan_interface)
+        body: dict[str, Any] = {
+            field: value
+            for field, value in source.model_dump(
+                mode="json", by_alias=False, context={"compact": True}
+            ).items()
+            if field not in ("destination", "cidr_prefix", "gateway", "wan_interface")
+        }
+        body.update(description=name, advertise=False)
+        patch = {key: add(body)}
+
+        async def apply() -> None:
+            _ = await pipeline.apply(
+                state,
+                module="device_settings",
+                segment=segment,
+                path="routes.static_v6",
+                patch=patch,
+            )
+
+        await apply()
+        plan = _planned(state, Name.DEVICE_SETTINGS)
+        route = Path(("segments", Key(segment), "routes", "staticV6", Key(key)))
+        check_paths("IPv6 route", "the plan", plan.changes, [route])
+
+        saved = "passed"
+        try:
+            _ = await pipeline.save(state)
+        except ModuleWriteError as error:
+            saved = f"raised {outcome(error)}"
+        kept = _v6_destinations(await site.read_present(), name)
+        if len(kept) != 1:
+            form = f"in {len(kept)} routes"
+        elif kept[0] == sent:
+            form = "as sent"
+        elif kept[0] == sent.lower():
+            form = "in lower case"
+        else:
+            form = "in another text"
+        try:
+            await apply()
+        except PatchError as error:
+            again = (
+                "is refused: the item is there"
+                if error.kind == "exists"
+                else f"is refused ({error.kind})"
+            )
+        else:
+            again = "plans a second item" if state.plan().changed else "plans nothing"
+        record(
+            capsys,
+            f"an IPv6 key in upper case: the save {saved}; the destination is stored "
+            f"{form}; applying the same add again {again}",
+        )
+        check(saved == "passed", f"the save of an IPv6 key in upper case {saved}")
+        check(
+            form in ("as sent", "in lower case"),
+            f"the destination of the added route is stored {form}",
+        )
+
+
+# ---------------------------------------------------------------------------
+# 13. An insert answered with an ID is read back
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.live_write
+async def test_an_insert_answered_with_an_id_is_read_back(
+    lab: Lab,
+    pipeline: ConfigPipeline,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A missing edge QoS module, inserted without ``returnData``, is read back by the ID answered.
+
+    As from a VCO that ignores ``returnData`` (``without_return_data``): the
+    insert is answered with the new module's ID, and the state must then hold
+    the module as a read made right after shows it.
+    """
+    lab.require_edge_targets(replace_modules=True)
+    layout = next(iter(lab.edges_lacking(Name.QOS)), None)
+    if layout is None:
+        pytest.skip(
+            "no edge marked pyvelo-it-replace-modules lacks a QoS module of its own"
+        )
+    site = lab.edge_site(layout, Name.QOS)
+    async with restoring(site) as original:
+        assert original is None
+        without_return_data(lab.client, monkeypatch)
+        answers = record_answers(lab.client, monkeypatch)
+        state = await pipeline.load(layout.edge_id, enterprise_id=lab.enterprise_id)
+        # A disabled service rate limit: new content that limits nothing.
+        state.edge.qos.service_rate_limit = ServiceRateLimit.model_validate(
+            {"enabled": False, "inputType": "percent", "value": 1}
+        )
+        plan = _planned(state, Name.QOS)
+        check(plan.operation == "insert", f"planned {plan.operation}, expected insert")
+        result = await _save(pipeline, state)
+        check(
+            result.modules_inserted == [Name.QOS] and not result.modules_updated,
+            f"inserted {result.modules_inserted}, updated {result.modules_updated}",
+        )
+        check(
+            read_backs(answers) == 1,
+            f"the insert was read back {read_backs(answers)} time(s), expected once",
+        )
+
+        stored = await site.read_present()
+        inserted = state.module("QOS")
+        check(not inserted.is_new, "the inserted module is still new in the state")
+        check(
+            inserted.id_ == stored.id_,
+            "the state's module has another ID than the module inserted",
+        )
+        check_as_read("insert", inserted, stored)
+        check(
+            stored.raw_data == plan.data,
+            "the inserted module does not read back as it was sent: "
+            + describe(raw_changes(plan.data, stored.raw_data)),
+        )
+        record(
+            capsys,
+            "an insert without returnData: answered with an ID, and read back as "
+            f"stored at level {inserted.config_context or 'none'}",
+        )
+
+        await delete_module(site, stored.id_)
+        check(await site.read() is None, "the inserted module is still there")

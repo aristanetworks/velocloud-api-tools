@@ -1,6 +1,7 @@
 """Tests for nest_patch: the address of an addressed apply."""
 
-from typing import Annotated
+from types import MappingProxyType
+from typing import Annotated, cast
 
 import pytest
 from pydantic import MISSING, Field
@@ -112,3 +113,28 @@ def test_segment_for_a_class_with_no_segments_field():
     with pytest.raises(PatchError, match="NoSeg has no segments field") as exc:
         _ = nest_patch(NoSeg, {}, segment="S")
     assert exc.value.path == Path(("segments",))
+
+
+def test_the_nested_patch_is_a_checked_copy():
+    patch: dict[str, object] = {"x": [1]}
+    nested = cast(
+        "dict[str, dict[str, dict[str, object]]]", nest_patch(Outer, patch, segment="S")
+    )
+    assert nested == {"segments": {"S": {"x": [1]}}}
+    assert nested["segments"]["S"] is not patch
+    assert nested["segments"]["S"]["x"] is not patch["x"]
+    plain = nest_patch(Outer, patch)
+    assert plain == patch
+    assert plain is not patch
+    assert plain["x"] is not patch["x"]
+
+
+def test_a_value_that_is_not_json_raises_under_its_address():
+    with pytest.raises(PatchError) as exc:
+        _ = nest_patch(Outer, {"x": {1, 2}}, segment="S", path="mid")
+    assert exc.value.path == Path(("segments", Key("S"), "mid", "x"))
+
+
+def test_no_address_needs_a_dict():
+    with pytest.raises(TypeError):
+        _ = nest_patch(Outer, MappingProxyType({"sub": {"n": 1}}))

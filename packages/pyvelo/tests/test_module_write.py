@@ -1,5 +1,6 @@
 import copy
 import json
+import uuid
 from typing import Any
 
 import pytest
@@ -8,6 +9,7 @@ from pyvelo.client.enums.configuration import ConfigurationModuleName
 from pyvelo.client.exceptions import LossyFieldError
 from pyvelo.client.models.configuration import FirewallData
 from pyvelo.client.models.configuration.firewall.rules import FirewallOutboundRule
+from pyvelo.client.models.configuration.firewall.segment import FirewallSegment
 from pyvelo.client.module_write import missing_segments, plan_module
 from pyvelo.client.schemas.configuration import (
     ConfigurationModuleList,
@@ -17,7 +19,7 @@ from pyvelo.client.schemas.configuration import (
     QosConfigurationModule,
     new_edge_module,
 )
-from pyvelo.core import ConfigContext, VcoModel, add, delete
+from pyvelo.core import ConfigContext, VcoModel, add, at, delete
 from pyvelo.core.rebase import Key
 from pyvelo.testing import make_module_json
 
@@ -95,6 +97,34 @@ def test_edit_is_written_to_the_snake_case_key_as_read():
     plan = plan_module(mod, level=EDGE)
     assert plan.data["firewall_logging_enabled"] is True
     assert "firewallLoggingEnabled" not in plan.data
+
+
+def test_the_logging_flag_is_written_in_snake_case_where_the_key_was_absent():
+    raw: dict[str, Any] = {
+        "firewall_enabled": True,
+        "segments": [{"segment": desc(0, "Global Segment"), "outbound": []}],
+    }
+    mod = fw(raw)
+    mod.data.firewall_logging_enabled = True
+    mod.data.segments[0].firewall_logging_enabled = True
+    plan = plan_module(mod, level=ConfigContext.PROFILE)
+    assert plan.data["firewall_logging_enabled"] is True
+    assert plan.data["segments"][0]["firewall_logging_enabled"] is True
+    assert "firewallLoggingEnabled" not in plan.data
+    assert "firewallLoggingEnabled" not in plan.data["segments"][0]
+    assert sorted(str(c.path) for c in plan.changes) == [
+        "firewall_logging_enabled",
+        'segments["Global Segment"].firewall_logging_enabled',
+    ]
+
+
+def test_the_logging_flag_dumps_in_snake_case():
+    assert "firewall_logging_enabled" in FirewallData().model_dump(by_alias=True)
+    segment = FirewallSegment.model_validate(
+        {"segment": desc(0, "Global Segment"), "firewall_logging_enabled": True}
+    )
+    dumped = segment.model_dump(by_alias=True, mode="json")
+    assert dumped["firewall_logging_enabled"] is True
 
 
 def test_inserted_rules_keep_order_and_unknown_segment_keys():
@@ -323,8 +353,71 @@ def test_change_paths_quote_keys_with_special_characters():
     assert (
         plan.render()
         .splitlines()[1]
-        .startswith('  + segments["Global Segment"].outbound[b]: ')
+        .startswith('  + segments["Global Segment"].outbound[b] (first): ')
     )
+
+
+def raw_rule(name: str) -> dict[str, Any]:
+    return {"name": name, "match": {}, "action": {"allow_or_deny": "allow"}}
+
+
+RULES_RAW: dict[str, Any] = {
+    **EDGE_RAW,
+    "segments": [
+        {
+            "segment": desc(0, "Global Segment"),
+            "outbound": [raw_rule("a"), raw_rule("b"), raw_rule("c")],
+        }
+    ],
+}
+OUTBOUND = 'segments["Global Segment"].outbound'
+
+
+def test_render_shows_where_an_added_rule_goes():
+    first, last = fw(RULES_RAW), fw(RULES_RAW)
+    first.data.segments[0].outbound.insert(0, rule("x"))
+    last.data.segments[0].outbound.append(rule("x"))
+    at_first = plan_module(first, level=EDGE).render().splitlines()
+    at_last = plan_module(last, level=EDGE).render().splitlines()
+    assert at_first[1].startswith(f'  + {OUTBOUND}[x] (first): {{"action": ')
+    assert at_last[1].startswith(f'  + {OUTBOUND}[x] (after c): {{"action": ')
+    assert at_first[1].endswith("…") and len(at_first[1]) < 150
+
+
+def test_render_of_a_move_is_one_short_line_beside_the_edit():
+    mod = fw(RULES_RAW)
+    rules = mod.data.segments[0].outbound
+    rules.insert(0, rules.pop())
+    rules[1].logging_enabled = True
+    assert plan_module(mod, level=EDGE).render().splitlines() == [
+        "firewall: update",
+        f"  + {OUTBOUND}[a].loggingEnabled: true",
+        f"  ~ {OUTBOUND}: order: c first",
+    ]
+
+
+def test_render_names_five_moves_and_counts_the_rest():
+    raw = copy.deepcopy(RULES_RAW)
+    raw["segments"][0]["outbound"] = [raw_rule(f"r{n}") for n in range(9)]
+    mod = fw(raw)
+    mod.data.segments[0].outbound.reverse()
+    assert plan_module(mod, level=EDGE).render().splitlines()[1] == (
+        f"  ~ {OUTBOUND}: order: r8 first; r7 after r8; r6 after r7; r5 after r6; "
+        "r4 after r5; and 3 more"
+    )
+
+
+def test_render_cuts_two_long_values_where_they_differ():
+    old, new = list(range(60)), [*range(55), 99, *range(56, 60)]
+    mod = fw({**EDGE_RAW, "futureTopLevel": old})
+    plan = plan_module(mod, {**EDGE_RAW, "futureTopLevel": new}, level=EDGE)
+    assert plan.render().splitlines() == [
+        "firewall: update",
+        (
+            "  ~ futureTopLevel: …50, 51, 52, 53, 54, 55, 56, 57, 58, 59] "
+            "-> …50, 51, 52, 53, 54, 99, 56, 57, 58, 59]"
+        ),
+    ]
 
 
 def test_lossy_error_carries_structured_paths():
@@ -349,9 +442,9 @@ def test_lossy_error_carries_structured_paths():
     assert exc.value.fields == [
         'segments["Global Segment"].outbound[r1].logging_enabled'
     ]
-    assert str(exc.value) == (
-        "firewall: assignment cannot be expressed on save for: "
-        'segments["Global Segment"].outbound[r1].logging_enabled'
+    assert str(exc.value).startswith(
+        "firewall: a save cannot write these edits: "
+        'segments["Global Segment"].outbound[r1].logging_enabled. '
     )
 
 
@@ -500,6 +593,95 @@ def test_dict_data_keeps_its_own_version_of_a_reconciled_segment():
     assert len(plan.data["segments"]) == 2
 
 
+# --- where the reconciled segments are written ------------------------------
+
+THREE_SEGMENTS_RAW: dict[str, Any] = {
+    "segments": [
+        {"segment": desc(0, "Global Segment"), "outbound": []},
+        {"segment": desc(2, "Guest"), "outbound": []},
+        {"segment": desc(3, "Voice"), "outbound": []},
+    ]
+}
+
+
+def bound(
+    raw: dict[str, Any], profile_raw: dict[str, Any]
+) -> tuple[FirewallConfigurationModule, FirewallConfigurationModule]:
+    """An edge module of *raw* bound to a profile module of *profile_raw*, and that one."""
+    mod, profile = fw(raw), fw(profile_raw, module_id=2)
+    mod.data.bind_profile(profile.raw_data)
+    return mod, profile
+
+
+def segment_names(data: dict[str, Any]) -> list[str]:
+    return [s["segment"]["name"] for s in data["segments"]]
+
+
+def test_a_placeholder_for_a_later_profile_segment_plans_nothing():
+    for looked_up in (["Voice"], ["Voice", "Guest"], ["Guest", "Voice"]):
+        mod, profile = bound(EDGE_RAW, THREE_SEGMENTS_RAW)
+        for name in looked_up:
+            assert mod.data.segment(name).outbound == []
+        plan = plan_module(mod, level=EDGE, profile=profile)
+        assert (plan.operation, plan.data, plan.changes) == ("none", EDGE_RAW, ())
+        assert plan.reconciled_segments == ("Guest", "Voice")
+
+
+def test_an_edit_in_a_later_missing_segment_is_planned_at_the_item():
+    mod, profile = bound(EDGE_RAW, THREE_SEGMENTS_RAW)
+    mod.data.segment("Voice").outbound.append(rule("block"))
+    plan = plan_module(mod, level=EDGE, profile=profile)
+    assert plan.operation == "update"
+    assert [str(c.path) for c in plan.changes] == ["segments[Voice].outbound[block]"]
+    assert segment_names(plan.data) == ["Global Segment", "Guest", "Voice"]
+    assert plan.data["segments"][0] == EDGE_RAW["segments"][0]
+    assert plan.data["segments"][1] == THREE_SEGMENTS_RAW["segments"][1]
+
+
+def test_a_created_module_has_its_segments_in_the_profiles_order():
+    mod = new_edge_module(ConfigurationModuleName.FIREWALL, 10)
+    assert isinstance(mod, FirewallConfigurationModule)
+    profile = fw(PROFILE_RAW, module_id=2)
+    mod.data.bind_profile(profile.raw_data)
+    guest = mod.data.segment("Guest")  # the model now holds Guest alone
+    assert plan_module(mod, level=EDGE, profile=profile).operation == "none"
+    guest.outbound.append(rule("tmp"))
+    plan = plan_module(mod, level=EDGE, profile=profile)
+    assert plan.operation == "insert"
+    assert [str(c.path) for c in plan.changes] == ["segments[Guest].outbound[tmp]"]
+    assert segment_names(plan.data) == ["Global Segment", "Guest"]
+    del guest.outbound[0]
+    plan = plan_module(mod, level=EDGE, profile=profile)
+    assert (plan.operation, plan.changes) == ("none", ())
+
+
+def test_the_order_of_the_edges_own_segments_is_the_callers():
+    raw = copy.deepcopy(EDGE_RAW)
+    raw["segments"].append({"segment": desc(9, "Branch"), "outbound": []})
+    mod, profile = bound(raw, THREE_SEGMENTS_RAW)
+    _ = mod.data.segment("Voice")
+    mod.data.segments.reverse()  # Voice, Branch, Global Segment
+    plan = plan_module(mod, level=EDGE, profile=profile)
+    assert plan.operation == "update"
+    assert segment_names(plan.data) == ["Branch", "Global Segment", "Guest", "Voice"]
+
+
+def test_a_reconciled_segment_is_written_after_the_edges_own_wherever_the_model_has_it():
+    mod, profile = bound(EDGE_RAW, PROFILE_RAW)
+    _ = mod.data.segment("Guest")
+    mod.data.segments.reverse()  # Guest, Global Segment
+    plan = plan_module(mod, level=EDGE, profile=profile)
+    assert (plan.operation, plan.data) == ("none", EDGE_RAW)
+
+
+def test_dict_data_with_its_reconciled_segments_in_another_order_plans_nothing():
+    mod, profile = fw(EDGE_RAW), fw(THREE_SEGMENTS_RAW, module_id=2)
+    data = copy.deepcopy(EDGE_RAW)
+    data["segments"].append(copy.deepcopy(THREE_SEGMENTS_RAW["segments"][2]))
+    plan = plan_module(mod, data, level=EDGE, profile=profile)
+    assert (plan.operation, plan.data, plan.changes) == ("none", EDGE_RAW, ())
+
+
 # --- levels at which a field is not part of the wire form ------------------
 
 PROFILE = ConfigContext.PROFILE
@@ -590,6 +772,146 @@ def test_override_flag_the_document_lacks_is_named_as_one():
         plan_module(mod, level=EDGE)
     assert exc.value.fields == ['segments["Global Segment"].bfd.override']
     assert "override flag" in str(exc.value)
+
+
+LOOPBACK_RAW: dict[str, Any] = {
+    **DS_RAW,
+    "loopbackInterfaces": {
+        "LO1": {"cidrIp": "10.0.0.1", "cidrPrefix": 32, "ping_response": False}
+    },
+}
+
+
+def test_the_default_of_an_absent_key_below_the_loopback_map_is_refused():
+    mod = ds(LOOPBACK_RAW)
+    _ = mod.data.for_edge()
+    _ = mod.data.merge_patch({"loopback_interfaces": {"LO1": {"advertise": True}}})
+    with pytest.raises(LossyFieldError) as exc:
+        plan_module(mod, level=EDGE)
+    assert exc.value.fields == ["loopback_interfaces.LO1.advertise"]
+
+
+def test_an_edit_below_the_loopback_map_is_written_to_the_key_as_read():
+    mod = ds(LOOPBACK_RAW)
+    _ = mod.data.for_edge()
+    _ = mod.data.merge_patch({"loopback_interfaces": {"LO1": {"ping_response": True}}})
+    plan = plan_module(mod, level=EDGE)
+    assert [(str(c.path), c.before, c.after) for c in plan.changes] == [
+        ("loopbackInterfaces.LO1.ping_response", False, True)
+    ]
+    assert plan.data["loopbackInterfaces"] == {
+        "LO1": {"cidrIp": "10.0.0.1", "cidrPrefix": 32, "ping_response": True}
+    }
+
+
+def model_interface(name: str) -> dict[str, Any]:
+    """A routed interface of a profile's model entry, with keys and values the models do not keep."""
+    return {
+        "name": name,
+        "disabled": False,
+        "ospf": {"enabled": False, "area": ""},
+        "l2": {"autonegotiation": True, "MTU": 1500, "futureKey": {"enabled": True}},
+    }
+
+
+def model_lan_interface(name: str) -> dict[str, Any]:
+    return {"name": name, "disabled": False, "vendorKey": name.lower()}
+
+
+MODELS_RAW: dict[str, Any] = {
+    **DS_RAW,
+    "models": {
+        "edge510": {
+            "routedInterfaces": [model_interface("GE3"), model_interface("GE4")],
+            "lan": {
+                "interfaces": [model_lan_interface("GE1"), model_lan_interface("GE2")]
+            },
+        },
+        "edge6X0": {
+            "routedInterfaces": [model_interface("GE3")],
+            "lan": {"interfaces": []},
+        },
+    },
+}
+
+
+def test_one_edit_to_a_profile_interface_writes_that_interface_alone():
+    mod = ds(MODELS_RAW)
+    _ = mod.data.for_profile()
+    _ = mod.data.merge_patch(
+        {
+            "models": {
+                "edge510": {
+                    "routed_interfaces": {"GE3": {"disabled": True}},
+                    "lan": {"interfaces": {"GE2": {"disabled": True}}},
+                }
+            }
+        }
+    )
+    plan = plan_module(mod, level=PROFILE)
+    assert [(str(c.path), c.before, c.after) for c in plan.changes] == [
+        ("models.edge510.routedInterfaces[GE3].disabled", False, True),
+        ("models.edge510.lan.interfaces[GE2].disabled", False, True),
+    ]
+    expected = copy.deepcopy(MODELS_RAW)
+    expected["models"]["edge510"]["routedInterfaces"][0]["disabled"] = True
+    expected["models"]["edge510"]["lan"]["interfaces"][1]["disabled"] = True
+    assert plan.data == expected
+
+
+def test_an_edge_only_field_below_the_models_map_is_refused_on_a_profile():
+    mod = ds(MODELS_RAW)
+    _ = mod.data.for_profile()
+    _ = mod.data.merge_patch(
+        {"models": {"edge510": {"routed_interfaces": {at(0): {"description": "up"}}}}}
+    )
+    with pytest.raises(LossyFieldError) as exc:
+        plan_module(mod, level=PROFILE)
+    assert exc.value.fields == ["models.edge510.routed_interfaces[GE3].description"]
+
+
+def test_a_list_inside_a_lag_interface_is_written_whole():
+    """Known limit: a list inside an interface that is not a plain port is typed as
+    that of a plain port, so one edit in it is written as the whole list and the
+    keys of its other items that the models do not know are dropped."""
+    raw = {
+        **DS_RAW,
+        "models": {
+            "edge510": {
+                "routedInterfaces": [
+                    {
+                        "name": "LAG1",
+                        "disabled": False,
+                        "slaveInterfaces": [
+                            {"name": "GE5", "portPriority": 1},
+                            {"name": "GE6", "portPriority": 2, "futureSlave": True},
+                        ],
+                    }
+                ],
+                "lan": {"interfaces": []},
+            }
+        },
+    }
+    mod = ds(raw)
+    _ = mod.data.for_profile()
+    _ = mod.data.merge_patch(
+        {
+            "models": {
+                "edge510": {
+                    "routed_interfaces": {
+                        "LAG1": {"slave_interfaces": {"GE5": {"port_priority": 5}}}
+                    }
+                }
+            }
+        }
+    )
+    plan = plan_module(mod, level=PROFILE)
+    assert [str(c.path) for c in plan.changes] == [
+        "models.edge510.routedInterfaces[LAG1].slaveInterfaces"
+    ]
+    slaves = plan.data["models"]["edge510"]["routedInterfaces"][0]["slaveInterfaces"]
+    assert slaves[0]["portPriority"] == 5
+    assert slaves[1] == {"name": "GE6", "portPriority": 2}
 
 
 # --- defaults generated per parse are not the caller's change --------------
@@ -810,6 +1132,26 @@ def test_a_device_settings_segment_in_a_profile_without_routes_still_gets_static
     assert written == DS_PLACEHOLDER
 
 
+def test_a_device_settings_placeholder_for_a_later_segment_plans_nothing():
+    profile_raw: dict[str, Any] = copy.deepcopy(DS_PROFILE_RAW)
+    profile_raw["segments"].append(
+        {"segment": desc(3, "Voice"), "routes": {"static": []}}
+    )
+    mod, profile = ds(DS_EDGE_RAW), ds(profile_raw, module_id=2)
+    mod.data.bind_profile(profile.raw_data)
+    _ = mod.data.segment("Voice")
+    plan = plan_module(mod, level=EDGE, profile=profile)
+    assert (plan.operation, plan.data, plan.changes) == ("none", DS_EDGE_RAW, ())
+    mod.data.lan.networks[0].cost += 1
+    plan = plan_module(mod, level=EDGE, profile=profile)
+    assert [str(c.path) for c in plan.changes] == ["lan.networks[1].cost"]
+    assert plan.data["segments"] == [
+        DS_EDGE_RAW["segments"][0],
+        DS_PLACEHOLDER,
+        {"segment": desc(3, "Voice"), "routes": {"static": []}},
+    ]
+
+
 # A firewall segment has no outbound override flag: the VCO and the edge have no
 # such key, so a rule edit must write the rule and nothing else, at either level.
 # The regression guard is that FirewallSegment declares no such field (see
@@ -999,3 +1341,138 @@ def test_a_refs_only_change_to_a_firewall_module_also_drops_a_stray_override_key
     assert [str(c.path) for c in plan.changes] == [STRAY_PATH]
     assert f"  - {STRAY_PATH}" in plan.render().splitlines()
     assert [str(k) for k in plan.legacy_keys] == [STRAY_PATH]
+
+
+# --- override flags a write turns on -----------------------------------------
+
+BGP = 'segments["Global Segment"].bgp'
+OVERRIDE_NOTE = (
+    "(the edge's own values apply there from now on, and the profile's no longer do)"
+)
+ADD_NEIGHBOR: dict[str, Any] = {
+    "segments": {
+        "Global Segment": {
+            "bgp": {"neighbors": {"10.0.0.2": add({"neighbor_as": "65002"})}}
+        }
+    }
+}
+
+
+def bgp_module(**flag: bool) -> DeviceSettingsConfigurationModule:
+    """Edge device settings whose one segment has an empty BGP section; *flag* is its ``override`` key, if any."""
+    bgp = {**flag, "enabled": False, "ASN": "", "neighbors": [], "filters": []}
+    segment = {"segment": desc(0, "Global Segment"), "bgp": bgp}
+    mod = ds({**DS_RAW, "segments": [segment]})
+    _ = mod.data.for_edge()
+    return mod
+
+
+def test_a_patch_inside_an_inherited_section_turns_its_override_on_and_the_plan_says_so():
+    mod = bgp_module(override=False)
+    _ = mod.data.merge_patch(ADD_NEIGHBOR)
+    plan = plan_module(mod, level=EDGE)
+    assert [p.parts for p in plan.overrides_turned_on] == [
+        ("segments", Key("Global Segment"), "bgp")
+    ]
+    lines = plan.render().splitlines()
+    assert lines[0] == "deviceSettings: update"
+    assert lines[1] == f"  ~ {BGP}.override: false -> true"
+    assert lines[2].startswith(f'  + {BGP}.neighbors["10.0.0.2"] (first): ')
+    assert lines[3:] == [f"  override turned on: {BGP} {OVERRIDE_NOTE}"]
+    # The edge layer's own section is sent; nothing of a profile's is in it.
+    sent = plan.data["segments"][0]["bgp"]
+    assert (sent["override"], sent["enabled"], sent["ASN"]) == (True, False, "")
+    assert [n["neighborIp"] for n in sent["neighbors"]] == ["10.0.0.2"]
+
+
+def test_a_flag_that_was_on_is_not_listed():
+    mod = bgp_module(override=True)
+    _ = mod.data.merge_patch(ADD_NEIGHBOR)
+    plan = plan_module(mod, level=EDGE)
+    assert plan.operation == "update"
+    assert plan.overrides_turned_on == ()
+    assert "override turned on" not in plan.render()
+
+
+def test_a_flag_the_patch_sets_alone_is_listed_too():
+    mod = bgp_module(override=False)
+    _ = mod.data.merge_patch(
+        {"segments": {"Global Segment": {"bgp": {"override": True}}}}
+    )
+    plan = plan_module(mod, level=EDGE)
+    assert [str(c.path) for c in plan.changes] == [f"{BGP}.override"]
+    assert [str(p) for p in plan.overrides_turned_on] == [BGP]
+
+
+def test_the_flag_of_a_list_item_is_listed_at_the_item():
+    mod = ds(DS_EDGE_RAW)
+    _ = mod.data.for_edge()
+    _ = mod.data.merge_patch({"lan": {"networks": {"1": {"cost": 11}}}})
+    plan = plan_module(mod, level=EDGE)
+    assert [str(c.path) for c in plan.changes] == [
+        "lan.networks[1].cost",
+        "lan.networks[1].override",
+    ]
+    assert [str(p) for p in plan.overrides_turned_on] == ["lan.networks[1]"]
+    assert (
+        plan.render().splitlines()[-1]
+        == f"  override turned on: lan.networks[1] {OVERRIDE_NOTE}"
+    )
+
+
+def test_a_plan_that_turns_no_flag_on_lists_none():
+    mod = ds(DS_EDGE_RAW)
+    assert plan_module(mod, level=EDGE).overrides_turned_on == ()
+    mod.data.lan.networks[0].cost += 1  # an assignment sets no flag
+    plan = plan_module(mod, level=EDGE)
+    assert (plan.operation, plan.overrides_turned_on) == ("update", ())
+
+
+def test_a_profile_has_no_override_flag_to_turn_on():
+    mod = ds({**DS_RAW, "ntp": {"enabled": False, "servers": []}})
+    _ = mod.data.for_profile()
+    _ = mod.data.merge_patch({"ntp": {"enabled": True}})
+    plan = plan_module(mod, level=PROFILE)
+    assert [str(c.path) for c in plan.changes] == ["ntp.enabled"]
+    assert plan.overrides_turned_on == ()
+
+
+def test_a_section_read_without_its_flag_still_refuses_the_patch():
+    mod = bgp_module()
+    _ = mod.data.merge_patch(ADD_NEIGHBOR)
+    with pytest.raises(LossyFieldError) as exc:
+        plan_module(mod, level=EDGE)
+    assert exc.value.fields == [f"{BGP}.override"]
+    assert [str(p) for p in exc.value.override_flags] == [f"{BGP}.override"]
+
+
+def test_data_and_refs_given_as_dicts_are_planned_as_plain_json():
+    row1 = {"enterpriseObjectId": 5, "logicalId": "a5"}
+    qos = QosConfigurationModule.model_validate(
+        make_module_json("QOS", {"segments": []}, refs={"a": [row1]})
+    )
+    row2 = {"enterpriseObjectId": 6, "logicalId": uuid.UUID(int=6)}
+    data = {"segments": [], "stamp": uuid.UUID(int=7)}
+    refs = {"a": [row1, row2]}
+
+    plan = plan_module(qos, data, refs=refs)
+
+    assert plan.data == {
+        "segments": [],
+        "stamp": "00000000-0000-0000-0000-000000000007",
+    }
+    assert plan.refs == {
+        "a": [row1, {**row2, "logicalId": "00000000-0000-0000-0000-000000000006"}]
+    }
+    assert json.loads(json.dumps([plan.data, plan.refs])) == [plan.data, plan.refs]
+    # What the caller gave is not changed, and not shared with the plan.
+    assert isinstance(row2["logicalId"], uuid.UUID)
+    assert plan.refs is not None
+    assert plan.refs["a"][0] is not row1
+
+
+def test_a_value_given_in_its_text_form_or_as_an_object_plans_the_same():
+    raw = {"segments": [], "stamp": "00000000-0000-0000-0000-000000000007"}
+    qos = QosConfigurationModule.model_validate(make_module_json("QOS", raw))
+    plan = plan_module(qos, {"segments": [], "stamp": uuid.UUID(int=7)})
+    assert plan.operation == "none"

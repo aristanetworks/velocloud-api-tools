@@ -2,6 +2,7 @@
 
 from typing import cast
 
+import httpx
 import pytest
 from pyvelo.client.enums.configuration import ConfigurationModuleName
 from pyvelo.client.schemas.configuration import (
@@ -11,7 +12,7 @@ from pyvelo.client.schemas.configuration import (
 )
 from pyvelo.config.resolver import ResolverContext
 from pyvelo_intent.config.pipeline import ConfigPipeline
-from pyvelo_intent.config.state import ConfigState, SaveResult
+from pyvelo_intent.config.state import ConfigState
 from pyvelo_intent.testing import MockVcoClient, make_firewall_module
 
 
@@ -47,6 +48,7 @@ async def test_save_no_changes():
 
     assert result.modules_updated == []
     assert result.modules_inserted == []
+    assert (result.server_changes, result.left_out) == ({}, {})
     assert len(client.calls) == 0
 
 
@@ -89,18 +91,6 @@ async def test_save_dry_run():
 
 
 @pytest.mark.asyncio
-async def test_save_result_type():
-    """SaveResult should have correct types."""
-    result = SaveResult(
-        modules_updated=[ConfigurationModuleName.FIREWALL],
-        modules_inserted=[ConfigurationModuleName.QOS],
-    )
-    assert result.modules_updated == [ConfigurationModuleName.FIREWALL]
-    assert result.modules_inserted == [ConfigurationModuleName.QOS]
-    assert result.warnings == []
-
-
-@pytest.mark.asyncio
 async def test_keyword_built_module_saves_only_the_change():
     state = _make_state()
     client = MockVcoClient.for_state(state)
@@ -126,6 +116,23 @@ async def test_mock_client_seeds_from_a_state_and_records_requests():
     (request,) = client.update_requests
     assert request.configuration_module_id == 1
     assert client.store.rows[1]["data"] == request.update.data
+    assert [method for method, _ in client.store.requests] == [
+        "configuration/updateConfigurationModule"
+    ]
+
+
+@pytest.mark.asyncio
+async def test_mock_client_under_async_with_still_talks_to_its_store():
+    state = _make_state()
+    client = MockVcoClient.for_state(state)
+    async with client:
+        # Checked before anything is sent: without the store's transport a
+        # request would leave the machine.
+        http = client._http_client()  # pyright: ignore[reportPrivateUsage]
+        assert isinstance(http._transport, httpx.MockTransport)  # pyright: ignore[reportPrivateUsage]
+        assert state.edge_config is not None
+        state.edge_config.firewall.data.firewall_enabled = False
+        _ = await ConfigPipeline(client).save(state)
     assert [method for method, _ in client.store.requests] == [
         "configuration/updateConfigurationModule"
     ]

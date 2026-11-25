@@ -8,6 +8,7 @@ from pyvelo.client.exceptions import (
     DetachedObjectError,
     ModuleWriteError,
     WriteNotAppliedError,
+    WriteOutcomeUnknownError,
 )
 from pyvelo.client.schemas.configuration import (
     ConfigurationBase,
@@ -17,7 +18,7 @@ from pyvelo.client.schemas.configuration import (
 )
 from pyvelo.config.resolver import ResolverContext
 from pyvelo.testing import make_module_json
-from pyvelo_intent import add
+from pyvelo_intent import add, delete
 from pyvelo_intent.config.pipeline import ConfigPipeline
 from pyvelo_intent.config.state import ConfigState
 from pyvelo_intent.testing import MockVcoClient
@@ -104,7 +105,25 @@ def test_plan_reports_missing_segments_without_changes():
         ("firewall", "none", ("Guest",))
     ]
     assert plan.changed == ()
-    assert plan.render() == "firewall: none\n  missing segments: Guest"
+    assert plan.render() == (
+        "edge, enterprise 5, configuration 10\n"
+        "firewall: none\n"
+        "  missing segments: Guest"
+    )
+
+
+def test_plan_names_its_target():
+    state = make_state()
+    assert state.plan().target == "edge, enterprise 5, configuration 10"
+    state.resolver_context.edge_id = 101
+    assert state.plan().target == "edge 101, enterprise 5, configuration 10"
+    profile = ConfigState(
+        edge_config=None,
+        profile_config=state.profile_config,
+        target_type="profile",
+        resolver_context=ResolverContext(),
+    )
+    assert profile.plan().render().splitlines()[0] == 'profile "P", configuration 20'
 
 
 async def test_save_sends_raw_payload_version_and_reconciles():
@@ -149,11 +168,13 @@ def test_write_errors_are_exported_from_the_package():
     assert pyvelo_intent.ModuleWriteError is ModuleWriteError
     assert pyvelo_intent.ConfigConflictError is ConfigConflictError
     assert pyvelo_intent.WriteNotAppliedError is WriteNotAppliedError
+    assert pyvelo_intent.WriteOutcomeUnknownError is WriteOutcomeUnknownError
     assert pyvelo_intent.DetachedObjectError is DetachedObjectError
     assert {
         "ModuleWriteError",
         "ConfigConflictError",
         "WriteNotAppliedError",
+        "WriteOutcomeUnknownError",
         "DetachedObjectError",
     } <= set(pyvelo_intent.__all__)
     assert not hasattr(pyvelo_intent, "StateSpentError")
@@ -165,6 +186,43 @@ def test_patch_error_is_exported_from_the_package():
 
     assert pyvelo_intent.PatchError is PatchError
     assert "PatchError" in pyvelo_intent.__all__
+
+
+def test_the_types_a_save_hands_back_are_exported_from_the_package():
+    import pyvelo_intent
+    import pyvelo_intent.config
+    from pyvelo.client.exceptions import LossyFieldError
+    from pyvelo.client.module_check import ModuleWrite
+    from pyvelo.client.module_write import ModulePlan
+    from pyvelo.config.resolver import ResolutionError
+    from pyvelo.core.response_check import PlannedChange, ServerChange
+    from pyvelo_intent.config.state import ConfigFieldChange, ConfigPlan
+
+    exported = {
+        "LossyFieldError": LossyFieldError,
+        "ResolutionError": ResolutionError,
+        "PlannedChange": PlannedChange,
+        "ServerChange": ServerChange,
+        "ConfigPlan": ConfigPlan,
+        "ConfigFieldChange": ConfigFieldChange,
+        "ModulePlan": ModulePlan,
+        "ModuleWrite": ModuleWrite,
+    }
+    for name, value in exported.items():
+        assert getattr(pyvelo_intent, name) is value, name
+        assert name in pyvelo_intent.__all__, name
+    assert pyvelo_intent.config.ConfigPlan is ConfigPlan
+    assert "ConfigPlan" in pyvelo_intent.config.__all__
+    assert pyvelo_intent.config.ConfigFieldChange is ConfigFieldChange
+    assert "ConfigFieldChange" in pyvelo_intent.config.__all__
+
+
+def test_the_kind_of_a_patch_error_is_exported_from_the_package():
+    import pyvelo_intent
+    from pyvelo.core.patch import PatchErrorKind
+
+    assert pyvelo_intent.PatchErrorKind is PatchErrorKind
+    assert "PatchErrorKind" in pyvelo_intent.__all__
 
 
 async def test_no_edit_save_does_not_call():
@@ -304,3 +362,51 @@ async def test_apply_creates_the_edge_segment_entry_on_write_only():
         patch={"block": add({"action": {"allow_or_deny": "deny"}, "match": {}})},
     )
     assert [r.name for r in state.edge.firewall.segment("Guest").outbound] == ["block"]
+
+
+_DENY: dict[str, object] = {"action": {"allow_or_deny": "deny"}, "match": {}}
+
+
+async def test_first_patch_to_a_module_the_edge_lacks_keeps_the_profiles_segment_order():
+    state = make_state(edge_modules=[])
+    client = MockVcoClient.for_state(state)
+    pipeline = ConfigPipeline(client)
+    _ = await pipeline.apply(
+        state,
+        module="firewall",
+        segment="Guest",
+        path="outbound",
+        patch={"tmp": add(_DENY)},
+    )
+    (module,) = state.plan().changed
+    assert module.operation == "insert"
+    assert [str(c.path) for c in module.changes] == ["segments[Guest].outbound[tmp]"]
+    assert module.reconciled_segments == ("Global Segment", "Guest")
+    result = await pipeline.save(state)
+    assert result.modules_inserted == [ConfigurationModuleName.FIREWALL]
+    (request,) = client.insert_requests
+    assert [s["segment"] for s in request.data["segments"]] == [
+        desc(0, "Global Segment"),
+        desc(2, "Guest"),
+    ]
+    assert [r["name"] for r in request.data["segments"][1]["outbound"]] == ["tmp"]
+
+
+async def test_two_patches_that_cancel_out_leave_no_insert_pending():
+    state = make_state(edge_modules=[])
+    client = MockVcoClient.for_state(state)
+    pipeline = ConfigPipeline(client)
+    for patch in ({"tmp": add(_DENY)}, {"tmp": delete()}):
+        _ = await pipeline.apply(
+            state, module="firewall", segment="Guest", path="outbound", patch=patch
+        )
+    plan = state.plan()
+    assert plan.changed == ()
+    assert plan.render() == (
+        "edge, enterprise 5, configuration 10\n"
+        "firewall: none\n"
+        "  missing segments: Global Segment, Guest"
+    )
+    result = await pipeline.save(state)
+    assert (result.modules_inserted, result.modules_updated) == ([], [])
+    assert client.calls == []

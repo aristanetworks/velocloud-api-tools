@@ -85,3 +85,16 @@ def test_is_server_owned():
 
 def test_server_owned_is_exported():
     assert "ServerOwned" in pyvelo.core.__all__
+
+
+def test_a_new_firewall_rule_has_no_id_and_a_new_qos_rule_has_one():
+    import uuid
+
+    from pydantic import MISSING
+    from pyvelo.client.models.configuration.firewall.rules import FirewallOutboundRule
+    from pyvelo.client.models.configuration.qos.rule import QosRule
+
+    firewall_id = FirewallOutboundRule.model_fields["rule_logical_id"]
+    assert is_server_owned(firewall_id) and firewall_id.default is MISSING
+    qos_id = QosRule.model_fields["rule_logical_id"]
+    assert not is_server_owned(qos_id) and qos_id.default_factory is uuid.uuid4

@@ -19,12 +19,14 @@ from pyvelo.core import (
     GatewayLogicalId,
     NoneIsFalse,
     Positional,
+    Secret,
     VcoModel,
 )
 from pyvelo.core.fields import (
     DefaultingModel,
     DefaultingScalar,
     KeyField,
+    Lenient,
     NoneIsTrue,
     OverrideFlag,
     ProfileOnly,
@@ -183,10 +185,10 @@ class SegmentMulticast(VcoModel):
     rp: MulticastRp = Field(default_factory=MulticastRp)
     pim_on_wan_overlay: PimOnWanOverlay = Field(default_factory=PimOnWanOverlay)
     pim_keep_alive_timer_seconds: Annotated[
-        int, BeforeValidator(lambda v: 210 if v is None else v)
+        int, Lenient(lambda v: 210 if v is None else v)
     ] = 210
     pim_prune_interval_seconds: Annotated[
-        int, BeforeValidator(lambda v: 5 if v is None else v)
+        int, Lenient(lambda v: 5 if v is None else v)
     ] = 5
     igmp_host_query_interval_seconds: None = None
     igmp_max_query_response: None = None
@@ -307,7 +309,7 @@ class BgpNeighbor(VcoModel):
     holdtime: str = "180"
     connect: str = "120"
     enable_md5: bool = False
-    md5_password: str = ""
+    md5_password: Annotated[str, Secret()] = ""
     id_: Annotated[uuid.UUID, Alias("id")] = Field(default_factory=uuid.uuid4)
 
 
@@ -343,15 +345,15 @@ class BgpBase(VcoModel):
     propagate_uplink: Annotated[bool, NoneIsFalse] = False
     overlay_prefix: Annotated[bool, NoneIsTrue] = True
     connected_routes: Annotated[bool, NoneIsTrue] = True
-    ospf: Annotated[BgpOspfConfig, BeforeValidator(_none_to_empty_object)] = Field(
+    ospf: Annotated[BgpOspfConfig, Lenient(_none_to_empty_object)] = Field(
         default_factory=BgpOspfConfig
     )
     disable_as_path_carry_over: Annotated[
         bool, NoneIsFalse, Alias("disableASPathCarryOver")
     ] = False
-    default_route: Annotated[
-        BgpDefaultRoute, BeforeValidator(_none_to_empty_object)
-    ] = Field(default_factory=BgpDefaultRoute)
+    default_route: Annotated[BgpDefaultRoute, Lenient(_none_to_empty_object)] = Field(
+        default_factory=BgpDefaultRoute
+    )
     neighbors: Annotated[list[BgpNeighbor], KeyField("neighbor_ip", alt="id_")] = Field(
         default_factory=list
     )
@@ -767,7 +769,7 @@ CssConfig = CssConfigGre | CssConfigZscalerIpsec | CssConfigGenericIpsec
 
 class CssIpsecSiteData(VcoModel):
     ike_id: str
-    psk: str
+    psk: Annotated[str, Secret()]
     ike_id_type: Literal["FQDN"] = "FQDN"
     psk_type: Literal["alpha"] = "alpha"
 

@@ -8,7 +8,7 @@ concurrency-safe and independent.
 Requires env vars:  VCO_HOST, VCO_TOKEN, VCO_ENTERPRISE_ID
 
 Run:
-    VCO_HOST=... VCO_TOKEN=... VCO_ENTERPRISE_ID=... uv run pytest tests/integration/ -v
+    uv run --env-file .env pytest -m "integration and not live_write" packages/pyvelo/tests/integration/test_analytics_live.py
 """
 
 from __future__ import annotations

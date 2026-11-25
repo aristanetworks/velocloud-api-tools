@@ -19,13 +19,19 @@ target-version = "py313"
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
 addopts = ["-ra", "-q", "-m", "not integration"]
 testpaths = ["packages/pyvelo/tests", "packages/pyvelo-intent/tests"]
-markers = ["integration: live VCO integration tests (require VCO_HOST + VCO_TOKEN)"]
+pythonpath = ["packages/pyvelo/tests/support"]
+markers = [
+    "integration: live tests against a real Orchestrator (VCO_HOST and VCO_TOKEN); deselected by default",
+    "live_write: live tests that write to the Orchestrator (PYVELO_IT_WRITE_HOST and PYVELO_IT_WRITE_ENTERPRISE_ID as well)",
+]
 
 [tool.basedpyright]
 enableExperimentalFeatures = true
 include = ["packages/pyvelo", "packages/pyvelo-intent"]
+extraPaths = ["packages/pyvelo/tests/support"]
 defineConstant = { DEBUG = true }
 reportMissingImports = "error"
 reportMissingTypeStubs = false

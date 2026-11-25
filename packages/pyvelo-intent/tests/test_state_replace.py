@@ -21,7 +21,7 @@ from pyvelo.config.resolver import ResolverContext
 from pyvelo.core import VcoModel
 from pyvelo.core.rebase import Key, Path
 from pyvelo.testing import as_stored, make_module_json
-from pyvelo_intent.config.state import ConfigPlan, ConfigState, SaveResult
+from pyvelo_intent.config.state import ConfigPlan, ConfigState
 
 
 def desc(sid: int, name: str) -> dict[str, object]:
@@ -367,6 +367,61 @@ def test_an_inserted_module_is_replaced_and_no_longer_new():
     assert state.get_field_changes() == []
 
 
-def test_save_result_has_server_changes():
-    assert SaveResult().server_changes == {}
-    assert SaveResult().left_out == {}
+WEB: dict[str, Any] = {"name": "web", "match": {}, "action": {"allow_or_deny": "allow"}}
+
+
+def test_a_deep_copy_of_a_detached_rule_can_go_into_the_state():
+    raw = copy.deepcopy(EDGE_FW)
+    raw["segments"][0]["outbound"] = [WEB]
+    row = make_module_json(
+        "firewall", raw, module_id=1, configuration_id=10, version="e1"
+    )
+    state = make_state([row])
+    held = state.edge.firewall.segment("Global Segment").outbound[0]
+    old = state.module("firewall")
+    assert isinstance(old, FirewallConfigurationModule)
+    state.replace_module(old, as_stored(old, copy.deepcopy(raw)))
+    assert held.is_detached
+
+    again = copy.deepcopy(held)
+    again.name = "web-2"
+    state.edge.firewall.segment("Global Segment").outbound.append(again)
+
+    (module,) = state.plan().changed
+    assert [str(change.path) for change in module.changes] == [
+        'segments["Global Segment"].outbound[web-2]'
+    ]
+    assert again.is_detached is False
+    assert held.name == "web"
+
+
+def test_a_held_model_that_is_not_a_vco_model_is_compared():
+    raw: dict[str, Any] = {
+        "lan": {},
+        "segments": [
+            {
+                "segment": desc(0, "Global Segment"),
+                "vrrp": {"enabled": False, "data": []},
+            }
+        ],
+    }
+    row = make_module_json(
+        "deviceSettings", raw, module_id=5, configuration_id=10, version="e1"
+    )
+    state = make_state([row])
+    old = state.module("deviceSettings")
+    assert isinstance(old, DeviceSettingsConfigurationModule)
+    vrrp = old.data.segments[0].vrrp
+    assert vrrp is not MISSING
+    state.replace_module(old, as_stored(old, copy.deepcopy(raw)))
+    del old
+    _ = gc.collect()  # only the vrrp object is held now
+
+    vrrp.root = {"enabled": True, "data": []}
+
+    with pytest.raises(DetachedObjectError) as exc:
+        _ = state.plan()
+    assert exc.value.paths == [
+        Path(("data", "segments", Key("Global Segment"), "vrrp", "enabled"))
+    ]
+    assert state.plan().changed == ()

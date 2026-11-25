@@ -18,7 +18,8 @@ from pyvelo.core import (
     move,
 )
 from pyvelo.core.fields import get_key_spec
-from pyvelo.core.rebase import Path
+from pyvelo.core.merge import select_items
+from pyvelo.core.rebase import Key, Path, item_key, key_text
 
 from .patch_models import Link, Root, Route, Rule
 
@@ -129,6 +130,80 @@ def test_key_and_alt_selectors_for_one_item_raise():
     assert root.rules[0].priority == 0
 
 
+def ids(root: Root) -> list[tuple[str, object]]:
+    return [(rule.name, rule.rule_id) for rule in root.rules]
+
+
+def test_a_change_cannot_give_an_item_another_items_alt_key():
+    root = two()
+    with pytest.raises(PatchError) as exc:
+        _ = root.merge_patch({"rules": {"b": {"rule_id": "i1"}}})
+    assert exc.value.path == Path.parse("rules[b]")
+    assert "item 'a' already has the alt key 'i1'" in exc.value.message
+    assert "another alt key" in exc.value.message
+    assert ids(root) == [("a", "i1"), ("b", "i2")]
+
+
+def test_alt_keys_may_be_swapped_in_one_patch():
+    root = two()
+    _ = root.merge_patch({"rules": {"a": {"rule_id": "i2"}, "b": {"rule_id": "i1"}}})
+    assert ids(root) == [("a", "i2"), ("b", "i1")]
+
+
+def test_an_add_cannot_bring_an_alt_key_that_is_in_the_list():
+    root = two()
+    with pytest.raises(PatchError) as exc:
+        _ = root.merge_patch({"rules": {"c": add({"rule_id": "i1"})}})
+    assert exc.value.path == Path.parse("rules[c]")
+    assert "'i1'" in exc.value.message
+    assert "item 'a'" in exc.value.message
+    assert "another alt key" in exc.value.message
+    assert ids(root) == [("a", "i1"), ("b", "i2")]
+    with pytest.raises(PatchError) as exc:
+        _ = two().merge_patch(
+            {"rules": {"c": add({"rule_id": "i9"}), "d": add({"rule_id": "i9"})}}
+        )
+    assert exc.value.path == Path.parse("rules[d]")
+
+
+def test_an_add_may_take_an_alt_key_the_same_patch_frees():
+    root = two()
+    _ = root.merge_patch(
+        {"rules": {"a": {"rule_id": "i8"}, "c": add({"rule_id": "i1"})}}
+    )
+    assert ids(root) == [("a", "i8"), ("b", "i2"), ("c", "i1")]
+    root = two()
+    _ = root.merge_patch({"rules": {"a": delete(), "c": add({"rule_id": "i1"})}})
+    assert ids(root) == [("b", "i2"), ("c", "i1")]
+
+
+def test_a_change_cannot_take_an_alt_key_that_a_delete_in_the_same_patch_frees():
+    # Selectors are resolved against the list as it was, as for a rename.
+    root = two()
+    with pytest.raises(PatchError) as exc:
+        _ = root.merge_patch({"rules": {"a": delete(), "b": {"rule_id": "i1"}}})
+    assert exc.value.path == Path.parse("rules[b]")
+    assert ids(root) == [("a", "i1"), ("b", "i2")]
+
+
+def test_a_list_value_cannot_repeat_an_alt_key():
+    root = two()
+    value = [{"name": "x", "rule_id": "i"}, {"name": "y", "rule_id": "i"}]
+    with pytest.raises(PatchError) as exc:
+        _ = root.merge_patch({"rules": value})
+    assert exc.value.path == Path.parse("rules")
+    assert "#0" in exc.value.message and "#1" in exc.value.message
+    assert "item 'x' holds it already" in exc.value.message
+    assert "give item #1 another alt key" in exc.value.message
+    assert ids(root) == [("a", "i1"), ("b", "i2")]
+
+
+def test_items_read_with_one_alt_key_can_still_be_changed():
+    root = Root(rules=[Rule(name="a", rule_id="i"), Rule(name="b", rule_id="i")])
+    _ = root.merge_patch({"rules": {"a": {"priority": 1}, "c": add()}})
+    assert [r.priority for r in root.rules] == [1, 0, 0]
+
+
 # --- composite keys and labels -------------------------------------------------
 
 R1_KEY = ("10.0.0.0", 24, "192.168.1.1", "GE3")
@@ -237,6 +312,86 @@ def test_comma_in_a_single_key_is_not_composite():
     root = Root(rules=[Rule(name="a,b")])
     _ = root.merge_patch({"rules": {"a,b": {"priority": 1}}})
     assert root.rules[0].priority == 1
+
+
+R1_TEXT = "10.0.0.0,24,192.168.1.1,GE3"
+R2_TEXT = "10.1.0.0,16,192.168.1.1,"
+
+
+def message_of(model: VcoModel, patch: dict[str, object]) -> str:
+    with pytest.raises(PatchError) as exc:
+        _ = model.merge_patch(patch)
+    return exc.value.message
+
+
+def test_a_composite_key_is_selected_by_its_parts_joined_with_commas():
+    root = routes()
+    _ = root.merge_patch({"routes": {R1_TEXT: {"cost": 5}, R2_TEXT: {"cost": 6}}})
+    assert costs(root) == [5, 6]
+    assert select_items(routes(), "routes", R2_TEXT) == [1]
+
+    root = routes()
+    _ = root.merge_patch({"routes": {R2_TEXT: move(before=R1_TEXT)}})
+    assert [route.dest for route in root.routes] == ["10.1.0.0", "10.0.0.0"]
+
+    root = routes()
+    _ = root.merge_patch({"routes": {R1_TEXT: delete()}})
+    assert [route.dest for route in root.routes] == ["10.1.0.0"]
+
+
+def test_an_add_under_the_comma_form_writes_the_parts_as_text():
+    root = routes()
+    _ = root.merge_patch({"routes": {"10.2.0.0,24,192.168.1.1,GE4": add({"cost": 1})}})
+    new = root.routes[2]
+    assert (new.dest, new.prefix, new.gw, new.intf) == (
+        "10.2.0.0",
+        "24",
+        "192.168.1.1",
+        "GE4",
+    )
+    assert "already in the list" in message_of(routes(), {"routes": {R1_TEXT: add()}})
+
+
+def test_a_part_that_holds_a_comma_needs_the_quoted_form():
+    root = Root(routes=[Route(dest="a,b", prefix=1, gw="g")])
+    with pytest.raises(PatchError):
+        _ = root.merge_patch({"routes": {"a,b,1,g,": {"cost": 1}}})
+    _ = root.merge_patch({"routes": {'"a,b",1,g,""': {"cost": 1}}})
+    assert costs(root) == [1]
+
+
+def test_the_comma_split_is_tried_when_the_written_form_names_no_item():
+    # Read as key_text writes it, "d,true,g,e" has the part True, not "true".
+    root = Root(routes=[Route(dest="d", prefix="true", gw="g", intf="e")])
+    _ = root.merge_patch({"routes": {"d,true,g,e": {"cost": 1}}})
+    assert costs(root) == [1]
+
+
+@pytest.mark.parametrize(
+    ("ops", "starts"),
+    [
+        ({"10.0.0.0/24": {"cost": 5}}, "'10.0.0.0/24' is not a key of this list"),
+        (
+            {"10.9.0.0,24,192.168.1.1,GE3": {"cost": 5}},
+            "no item has the key '10.9.0.0,24,192.168.1.1,GE3'",
+        ),
+        ({"10.0.0.0/24": add()}, "'10.0.0.0/24' is not a key of this list"),
+    ],
+)
+def test_a_composite_key_refusal_shows_how_a_key_is_written(
+    ops: dict[str, object], starts: str
+):
+    message = message_of(routes(), {"routes": ops})
+    assert message.startswith(starts)
+    assert (
+        "its 4 parts (dest, prefix, gw, intf) joined by commas, as in " + R1_TEXT
+    ) in message
+
+
+def test_the_example_key_is_quoted_when_a_part_holds_a_comma():
+    root = Root(routes=[Route(dest="a,b", prefix=1, gw="g")])
+    assert 'as in "a,b",1,g,""' in message_of(root, {"routes": {"x": delete()}})
+    assert "as in" not in message_of(Root(), {"routes": {"x": delete()}})
 
 
 def test_select_by_label():
@@ -415,3 +570,62 @@ def test_add_under_a_name_where_the_key_is_composite_points_to_plus():
     assert exc.value.path == Path.parse("links[Backup]")
     assert '"+"' in str(exc.value)
     assert len(root.links) == 3
+
+
+def true_and_True() -> Root:
+    """Two routes that differ in the one part ``true`` / ``True``: the text ``..,true,..`` is two keys."""
+    return Root(
+        routes=[
+            Route(dest="a", prefix=24, gw="true", intf="GE3"),
+            Route(dest="a", prefix=24, gw="True", intf="GE3"),
+        ]
+    )
+
+
+AMBIGUOUS_TEXT = "a,24,true,GE3"
+
+
+def test_a_text_two_readings_take_to_different_items_is_refused_not_guessed():
+    root = true_and_True()
+    with pytest.raises(PatchError) as exc:
+        _ = root.merge_patch({"routes": {AMBIGUOUS_TEXT: {"cost": 5}}})
+    assert exc.value.path == Path(("routes", Key(("a", 24, True, "GE3"))))
+    message = exc.value.message
+    assert "ambiguous" in message
+    assert "#0" in message
+    assert "#1" in message
+    assert "quoted form" in message
+    assert costs(root) == [0, 0]
+
+
+def test_the_quoted_form_a_refusal_gives_selects_the_item_it_names():
+    for index in (0, 1):
+        key = item_key(true_and_True().routes[index], ("dest", "prefix", "gw", "intf"))
+        assert key is not None
+        text = key_text(key)
+        root = true_and_True()
+        assert select_items(root, "routes", text) == [index]
+        _ = root.merge_patch({"routes": {text: {"cost": 5}}})
+        assert costs(root) == [5 if i == index else 0 for i in (0, 1)]
+    with pytest.raises(PatchError, match="ambiguous") as exc:
+        _ = true_and_True().merge_patch({"routes": {AMBIGUOUS_TEXT: {"cost": 5}}})
+    for index in (0, 1):
+        key = item_key(true_and_True().routes[index], ("dest", "prefix", "gw", "intf"))
+        assert key is not None
+        assert key_text(key) in exc.value.message
+
+
+def test_an_anchor_two_readings_take_to_different_items_is_refused():
+    root = true_and_True()
+    root.routes.append(Route(dest="z", prefix=8, gw="g", intf="e"))
+    with pytest.raises(PatchError, match="ambiguous"):
+        _ = root.merge_patch({"routes": {"z,8,g,e": move(before=AMBIGUOUS_TEXT)}})
+
+
+def test_the_example_of_a_composite_key_selects_its_item():
+    root = true_and_True()
+    message = message_of(root, {"routes": {"zz": {"cost": 1}}})
+    example = message.split(", as in ")[1].split(";")[0]
+    assert select_items(root, "routes", example) == [0]
+    _ = root.merge_patch({"routes": {example: {"cost": 5}}})
+    assert costs(root) == [5, 0]

@@ -3,7 +3,7 @@
 Provides:
 - VcoModel base class with compact and context-aware serialization
 - ``VcoModel.merge_patch``: recursive merge of a partial dict into a model
-- ``VcoModel.mark_detached``: a model a save replaced refuses edits
+- ``VcoModel.mark_detached``: a model a write replaced refuses edits
 - ContextView / ContextFieldInfo for field metadata introspection
 - JsonRpc request/response/error models
 - Pagination, API filters, and utility types
@@ -40,6 +40,7 @@ from dataclasses import dataclass
 from enum import Enum, IntEnum, auto
 from typing import (
     Annotated,
+    Any,
     ClassVar,
     Literal,
     Never,
@@ -112,11 +113,11 @@ class IdentityResolver(Protocol):
 # elements still has to check their types.
 
 
-def _is_list(value: object) -> TypeIs[list[object]]:
+def is_list(value: object) -> TypeIs[list[object]]:
     return isinstance(value, list)
 
 
-def _is_dict(value: object) -> TypeIs[dict[object, object]]:
+def is_dict(value: object) -> TypeIs[dict[object, object]]:
     return isinstance(value, dict)
 
 
@@ -322,9 +323,9 @@ def _compact_value(
         return _compact_dump(value, by_alias=by_alias, inherited_level=level)
     if isinstance(value, BaseModel):
         return value.model_dump(by_alias=by_alias)
-    if _is_list(value):
+    if is_list(value):
         return [_compact_value(v, by_alias=by_alias, level=level) for v in value]
-    if _is_dict(value):
+    if is_dict(value):
         return {
             k: _compact_value(v, by_alias=by_alias, level=level)
             for k, v in value.items()
@@ -336,10 +337,10 @@ def _propagate_context(value: object, level: ConfigContext) -> None:
     """Set the config level on every VcoModel inside *value*, at any depth."""
     if isinstance(value, VcoModel):
         _ = value.for_context(level)
-    elif _is_list(value):
+    elif is_list(value):
         for item in value:
             _propagate_context(item, level)
-    elif _is_dict(value):
+    elif is_dict(value):
         for item in value.values():
             _propagate_context(item, level)
 
@@ -348,14 +349,17 @@ type _Place = tuple[str | int, ...]
 """Where a model is from another: dump keys (``str``) and list positions (``int``)."""
 
 
-def _models_inside(value: object, place: _Place) -> Iterator[tuple[_Place, VcoModel]]:
-    """Every VcoModel in *value*, at any depth, with its place; *value* is at *place*.
+def _models_inside(value: object, place: _Place) -> Iterator[tuple[_Place, BaseModel]]:
+    """Every pydantic model in *value*, at any depth, with its place; *value* is at *place*.
 
     Walks as ``_propagate_context`` does: fields, extra values, lists and
     dicts. A model comes before the models inside it. A field is named by its
     dump key (its alias), a dict entry by its key as text, as in a JSON dump.
+    A pydantic model that is not a ``VcoModel`` is yielded and not entered.
     """
-    if isinstance(value, VcoModel):
+    if isinstance(value, BaseModel) and not isinstance(value, VcoModel):
+        yield place, value
+    elif isinstance(value, VcoModel):
         yield place, value
         for name, field_info in type(value).model_fields.items():
             key = _field_alias(field_info, name)
@@ -363,10 +367,10 @@ def _models_inside(value: object, place: _Place) -> Iterator[tuple[_Place, VcoMo
         extra: Mapping[str, object] = value.model_extra or {}
         for key, item in extra.items():
             yield from _models_inside(item, (*place, key))
-    elif _is_list(value):
+    elif is_list(value):
         for index, item in enumerate(value):
             yield from _models_inside(item, (*place, index))
-    elif _is_dict(value):
+    elif is_dict(value):
         for key, item in value.items():
             text = key if isinstance(key, str) else str(key)
             yield from _models_inside(item, (*place, text))
@@ -377,8 +381,12 @@ def _raise_detached(model: VcoModel, name: str) -> Never:
     from pyvelo.client.exceptions import DetachedObjectError  # it imports pyvelo.core
 
     raise DetachedObjectError(
-        f"{type(model).__name__}.{name}: this object was replaced by a save; "
-        + "take it from the state again (state.edge.<module> or state.profile.<module>)"
+        f"{type(model).__name__}.{name}: this object was replaced by a write; "
+        + "take it again from the module as stored "
+        + "(after a save: state.edge.<module> or state.profile.<module>; "
+        + "after update_module: the module it returned, "
+        + "or error.module after a write error), "
+        + "or put a deep copy of it there (copy.deepcopy)"
     )
 
 
@@ -394,6 +402,7 @@ class VcoModel(BaseModel):
         serialize_by_alias=True,
         validate_by_alias=True,
         validate_by_name=True,
+        hide_input_in_errors=True,
     )
 
     _config_context: ConfigContext | None = PrivateAttr(default=None)
@@ -413,31 +422,49 @@ class VcoModel(BaseModel):
             _raise_detached(self, name)
         super().__setattr__(name, value)
 
+    @override
+    def __deepcopy__(self, memo: dict[int, Any] | None = None) -> Self:
+        # A deep copy shares nothing with the module a write replaced, so it is
+        # a new object. Each nested model is copied through here too.
+        copied = super().__deepcopy__(memo)
+        if copied.is_detached:
+            copied._detached = False
+        return copied
+
     @property
     def is_detached(self) -> bool:
-        """Whether a save replaced this object (``mark_detached``); then it takes no edit."""
+        """Whether a write replaced this object (``mark_detached``); then it takes no edit.
+
+        A save marks the modules it replaces, and so does ``update_module``.
+        """
         try:
             private = self.__pydantic_private__
         except AttributeError:  # not set yet: in __new__, or while unpickling
             return False
         return private is not None and private.get("_detached") is True
 
-    def mark_detached(self) -> list[tuple[tuple[str | int, ...], VcoModel]]:
-        """Mark this model and every VcoModel inside it as replaced by a save.
+    def mark_detached(self) -> list[tuple[tuple[str | int, ...], BaseModel]]:
+        """Mark this model and every VcoModel inside it as replaced by a write.
 
         Returns each of them with where it is from here: the dump key of each
-        field on the way, and the position of each list item.
+        field on the way, and the position of each list item. It also returns
+        each pydantic model inside that is not a ``VcoModel`` (a segment's
+        ``vrrp``), without marking it: it has no guard, so an assignment to it
+        does not raise, and a change through it is found by comparing dumps.
 
         A marked model raises ``DetachedObjectError`` on assignment to an
         attribute whose name does not start with ``_``, and on
         ``merge_patch``; reading it is fine. A change in place of a plain
         ``list`` or ``dict`` it holds passes no attribute guard: such changes
-        are found by comparing dumps, at the places returned. A copy of a
-        marked model is marked too.
+        are found by comparing dumps, at the places returned. A deep copy of a
+        marked model is not marked: it shares nothing with the module that was
+        replaced. A shallow copy is, because it holds the same lists and nested
+        models.
         """
         marked = list(_models_inside(self, ()))
         for _, model in marked:
-            model._detached = True
+            if isinstance(model, VcoModel):
+                model._detached = True
         return marked
 
     @override
@@ -532,6 +559,19 @@ class VcoModel(BaseModel):
     ) -> Self:
         """Merge *patch*, a JSON object, into this model in place; return self.
 
+        **JSON.** *patch* is a ``dict`` (``TypeError`` otherwise) that holds what
+        ``json.loads`` returns: dicts, lists, strings, finite numbers, booleans and
+        ``None``, nested at most 64 levels deep (``patch.MAX_PATCH_DEPTH``). A
+        selector may also be an ``int``, a ``UUID`` or the tuple of a composite
+        key's parts. Anything else raises ``PatchError`` where it sits: a tuple, a
+        set or a generator for a list, another mapping type for a dict, an object
+        for its text, ``NaN`` or an infinity. This holds from Python too:
+        ``None`` unsets a field, not ``MISSING``, and a model is given as its
+        JSON-mode dump (``model_dump(mode="json")``). The patch is copied before
+        it is merged (``patch.checked_patch``): the model shares no object with
+        it, and a member of an ``IntEnum`` or ``StrEnum`` is copied as its plain
+        ``int`` or ``str``.
+
         **Fields.** A key names a field by its python name, an alias or its
         camelCase form. Absent keys leave their fields as they are. For a key
         that names a field:
@@ -539,31 +579,47 @@ class VcoModel(BaseModel):
         - an object, on a field that holds a sub-model: merged into it, or
           built from the patch when the field is unset;
         - an object or a list, on a list field: see *Lists*;
+        - an object, on a field that takes one sub-model or a list of them
+          (``Model | list[Model]``): the sub-model, merged or built as
+          above, unless the field holds a list, when it is item operations.
+          A list value makes the field a list;
         - an object, on a map of models (``dict[K, Model]``): item
           operations by map key;
         - ``null``: unsets the field if its type includes ``MISSING``, sets
           ``None`` if it includes ``None`` and not ``MISSING``, and raises
-          otherwise;
+          otherwise. The same holds in an item or sub-model the patch builds,
+          except that a field whose type includes both is ``None`` there:
+          leaving the key out leaves it unset, and the item's own JSON dump
+          writes ``null`` for ``None``;
         - anything else: replaces the value.
 
         Every value assigned is first validated as pydantic validates the
         field when it parses a response: the same coercions and constraints,
-        the field's validators and the model's config. The one difference:
-        a ``DefaultingScalar`` or ``DefaultingModel`` field does not fall back
-        to its default, so a bad value raises. These are the field
-        validators of what the patch assigns: the model validators
-        (``@model_validator``) of a model that already exists do not run when
-        a patch changes it. An item or sub-model built whole from the patch
-        is validated whole, its model validators included. So a patch that
-        deletes every netflow collector while ``enabled`` stays true is
-        accepted, though parsing that state would refuse it. A key that
-        names no field raises, at every depth, items and sub-models built
-        from the patch included, and so do two keys that name one field
-        (``rule_id`` and ``ruleId``). Keys that start with ``_`` are
-        directives: only ``_op`` and ``_position``, and only on a list item's
-        value. ``OverrideFlag`` fields are set to True when a sibling that is
-        not ``EdgeLocal`` changes. A ``Resolvable`` field given a name resolves it to an ID
-        with *resolvers*.
+        the field's validators and the model's config. The one difference: a
+        field that tolerates a bad value from the VCO (``DefaultingScalar``,
+        ``DefaultingModel``, ``Lenient``, ``NoneIsFalse`` and its siblings)
+        does not in a patch, so the bad value raises. A boolean is taken only
+        where the field holds one: ``true`` for a number raises. After the
+        merge, every model the patch changed is checked as the parser would
+        check it: its ``after`` and ``wrap`` model validators
+        (``@model_validator``; a ``before`` one takes raw input, not a model)
+        run, and where it sits in a union of several models (a field, or the
+        items of a list) it must still be the member its fields select. A
+        change that fails raises ``PatchError`` at the model's path: a patch
+        that deletes every netflow collector while ``enabled`` stays true
+        raises at the netflow block, so set ``enabled`` in the same patch. The
+        check runs on a copy: a validator that rewrites values does not change
+        what the patch wrote. An item or sub-model built whole from the patch is
+        validated whole, its model validators included. A key that names no
+        field raises, at every depth, items and sub-models built from the
+        patch included, and so do two keys that name one field (``rule_id``
+        and ``ruleId``). Keys that start with ``_`` are directives: only
+        ``_op`` and ``_position``, and only on a list item's value.
+        ``OverrideFlag`` fields are set to True when a sibling that is not
+        ``EdgeLocal`` changes. On an edge layer the layer's own section then
+        applies in place of the profile's, with nothing copied from the
+        profile. A ``Resolvable`` field given a name resolves it to an ID with
+        *resolvers*.
 
         **Lists.** Each list field has a kind (``list_kind``):
 
@@ -572,7 +628,8 @@ class VcoModel(BaseModel):
         - value (``list[str]`` or ``list[int]`` without ``Positional()``): by
           the value or a position;
         - positional (``Positional()``, or a list of models that declares
-          nothing): by position;
+          nothing, which ``list_kind`` reports as ``"undeclared"``): by
+          position;
         - untyped (``list[Any]``, ``list[dict]``): not at all; it takes a
           list value only;
         - map (``dict[K, Model]``): by map key. It takes an object only and
@@ -582,7 +639,8 @@ class VcoModel(BaseModel):
           anything else is a plain value.
 
         A list value replaces the list, its items validated; a keyed list's
-        items must have distinct keys. In a list keyed by a ``NameOf`` field,
+        items must have distinct keys, and distinct alt keys where the list
+        has one. In a list keyed by a ``NameOf`` field,
         an item given as an object is treated as an ``add`` under its name:
         it takes the resolver's name and IDs, and one that gets its IDs from
         neither a resolver nor its own fields raises ``LookupError``.
@@ -591,9 +649,11 @@ class VcoModel(BaseModel):
         **Selectors.** In a keyed list, tried in this order:
 
         1. the key, compared in string form (``"10"`` names VLAN 10). For a
-           composite key (``KeyField`` with several fields), a tuple of the
-           parts or its string form (``rebase.key_text``), the parts compared
-           in string form;
+           composite key (``KeyField`` with several fields): its parts joined by
+           commas (``10.0.0.0,24,192.168.1.1,GE3``), the parts compared in
+           string form; a part that holds a comma or a quote needs the form
+           ``rebase.key_text`` writes (``"a,b",24,...``), which is tried first;
+           in Python also a tuple of the parts;
         2. ``at(n)``, which is ``"#n"``: the item at position ``n``, counted
            from 0 in the list as it was before the patch (any kind of list);
         3. ``"+"`` or ``"+tag"``: a new item, for ``add`` only; the tag only
@@ -614,18 +674,21 @@ class VcoModel(BaseModel):
         **Item operations.** The value under a selector:
 
         - a plain object: a change, merged into the item. It may change the
-          key (a rename) to one no other item has. A list of values takes
-          none.
+          key (a rename) to one no other item has. It may change the alt key
+          to one no other item has. A list of values takes none. An empty
+          object changes nothing; it must still name one item.
         - ``add(body, **place)``, which is ``{"_op": "add", ...}``: a new
           item built from *body*, validated whole. In a keyed list the
           selector is the key and is written into the item; a body that gives
           another key raises, and so does a key that is already in the list,
-          as a key or as another item's alt key. Under ``"+"`` the key is
-          whatever the body gives; in a list keyed by a ``NameOf`` field a
-          name in the body is an ``add`` under that name. In a value list the
-          selector is the value and ``add`` takes no body. A positional list
-          of models takes ``add`` under ``"+"`` only, one of values none (give
-          a list value), and ``at(n)`` never takes one.
+          as a key or as another item's alt key. A body that gives an alt
+          key another item has raises too. Under ``"+"`` the key is whatever
+          the body gives; in a list keyed by a ``NameOf`` field a name in the
+          body is an ``add`` under that name. In a value list the selector
+          is the value and ``add`` takes no body; in a map it is the new key.
+          Neither takes ``"+"``, and a map takes no ``"#n"``. A positional
+          list of models takes ``add`` under ``"+"`` only, one of values none
+          (give a list value), and ``at(n)`` never takes one.
         - ``delete()``, which is ``{"_op": "delete"}``: the item is removed.
           It carries nothing else.
         - ``move(**place)``, which is ``{"_position": P}``: the item moves.
@@ -640,17 +703,20 @@ class VcoModel(BaseModel):
         Every selector and anchor is resolved against the list as it was;
         then come changes, then deletes, then adds and moves in the order
         written (in a map: changes, deletes, adds). In an item or sub-model
-        the patch builds, a list field takes a list value or an object of
-        ``add`` entries only.
+        the patch builds, a field that takes only a list takes a list value
+        or an object of ``add`` entries only.
 
         **Errors.** A patch that cannot be applied raises ``PatchError`` (a
-        ``ValueError``) whose ``path`` is where in the patch it failed; a
-        pydantic ``ValidationError`` behind it is its ``__cause__``. Resolver
-        errors keep their types. All or nothing: a patch that raises,
-        ``PatchError``, ``ResolutionError`` or ``LookupError``, leaves self as
-        it was, the same dump and the same ``model_fields_set``. On an object
-        a save replaced (``is_detached``) it raises ``DetachedObjectError``
-        before anything else.
+        ``ValueError``) whose ``path`` is where in the patch it failed and
+        whose ``kind`` says which sort of refusal it is
+        (``patch.PatchErrorKind``); a pydantic ``ValidationError`` behind it
+        is its ``__cause__``. Resolver errors keep their types. A name on a
+        field whose resolver is not registered raises ``PatchError`` at the
+        field, unless the text can be the ID. All or nothing: a patch that
+        raises, ``PatchError``, ``ResolutionError`` or ``LookupError``, leaves
+        self as it was, the same dump and the same ``model_fields_set``. On an
+        object a write replaced (``is_detached``: a save or ``update_module``
+        did it) it raises ``DetachedObjectError`` before anything else.
         """
         if self.is_detached:
             _raise_detached(self, "merge_patch")
@@ -764,7 +830,7 @@ def _variant_names(variants: Iterable[type[VcoModel]]) -> str:
 
 
 @dataclass(frozen=True)
-class _ListItemType:
+class ListItemType:
     """The VcoModel element type of a ``list[...]`` field.
 
     It is either a single model class or a discriminated union of them. In
@@ -780,7 +846,10 @@ class _ListItemType:
 
     @functools.cached_property
     def _union_adapter(self) -> TypeAdapter[VcoModel]:
-        return TypeAdapter[VcoModel](self.annotation)  # pyright: ignore[reportArgumentType]
+        return TypeAdapter[VcoModel](
+            self.annotation,  # pyright: ignore[reportArgumentType]
+            config=ConfigDict(hide_input_in_errors=True),
+        )
 
     def validate(self, value: object, *, context: JsonObject | None = None) -> VcoModel:
         if len(self.variants) == 1:
@@ -797,7 +866,7 @@ class _ListItemType:
         return _merged_fields(self.variants)
 
 
-def _list_item_type(fi: FieldInfo) -> _ListItemType | None:
+def list_item_type(fi: FieldInfo) -> ListItemType | None:
     """Get the VcoModel element type of a ``list[T]`` field, or None.
 
     Handles plain ``list[Model]`` and
@@ -809,7 +878,7 @@ def _list_item_type(fi: FieldInfo) -> _ListItemType | None:
         element: object = args[0]
         inner = _unwrap_annotated(element)
         if _is_vco_model_type(inner):
-            return _ListItemType(inner, (inner,))
+            return ListItemType(inner, (inner,))
 
         variants = tuple(
             v
@@ -817,13 +886,20 @@ def _list_item_type(fi: FieldInfo) -> _ListItemType | None:
             if _is_vco_model_type(v)
         )
         if len(variants) >= 2:
-            return _ListItemType(element, variants)
+            return ListItemType(element, variants)
         if len(variants) == 1:
-            return _ListItemType(variants[0], variants)
+            return ListItemType(variants[0], variants)
     return None
 
 
 type ListKind = Literal["keyed", "value", "positional", "undeclared", "untyped", "map"]
+"""How the items of a list field are told apart (``list_kind``).
+
+``"undeclared"`` is a list of models with neither ``KeyField`` nor
+``Positional()``. A patch names its items as it names those of a
+``"positional"`` list, by position; the value is kept apart so that such
+lists can be counted and declared.
+"""
 
 
 def _is_model_members(members: Iterable[object]) -> bool:
@@ -842,6 +918,49 @@ def _members_without_missing_and_none(annotation: object) -> list[object]:
     ]
 
 
+def wire_name(model: type[VcoModel], name: str) -> str:
+    """The JSON key field *name* of *model* is written under.
+
+    Raises ``ValueError`` if *model* has no field of that name.
+    """
+    field_info = model.model_fields.get(name)
+    if field_info is None:
+        raise ValueError(f"{model.__name__} has no field '{name}'")
+    return _field_alias(field_info, name)
+
+
+def python_name(model: type[VcoModel], key: str) -> str | None:
+    """The python name of the field of *model* that *key* names, or None.
+
+    *key* is any key a patch accepts for a field: its python name, an alias,
+    or its camelCase form. This is the mapping *model* has (``_alias_map``).
+    """
+    return model._alias_map().get(key)  # pyright: ignore[reportPrivateUsage]
+
+
+def field_models(field_info: FieldInfo) -> tuple[type[VcoModel], ...]:
+    """Every ``VcoModel`` class the value of a field can hold, in the order written.
+
+    The field's own class, the classes of the items of a list, the classes of
+    the values of a map and the variants of a union, each once. ``MISSING``,
+    ``None`` and plain types add nothing, so a field of plain values gives an
+    empty tuple.
+    """
+    found: dict[type[VcoModel], None] = {}
+    _collect_models(field_info.annotation, found)
+    return tuple(found)
+
+
+def _collect_models(annotation: object, found: dict[type[VcoModel], None]) -> None:
+    """Add to *found* the ``VcoModel`` classes *annotation* is made of, in order."""
+    annotation = _unwrap_annotated(annotation)
+    if _is_vco_model_type(annotation):
+        _ = found.setdefault(annotation)
+    elif get_origin(annotation) in (*_UNION_ORIGINS, list, dict, tuple):
+        for member in get_args(annotation):
+            _collect_models(member, found)
+
+
 def list_kind(field_info: FieldInfo) -> ListKind | None:
     """How a list field's items are told apart, or None if it is not a list.
 
@@ -852,7 +971,7 @@ def list_kind(field_info: FieldInfo) -> ListKind | None:
     set aside.
     """
     is_dict_of_models = False
-    is_list = False
+    has_list = False
     element_kind: Literal["model", "value", "other"] = "other"
     for member in _members_without_missing_and_none(field_info.annotation):
         origin = get_origin(member)
@@ -861,15 +980,15 @@ def list_kind(field_info: FieldInfo) -> ListKind | None:
             value_members = _members_without_missing_and_none(args[1])
             is_dict_of_models = is_dict_of_models or _is_model_members(value_members)
         elif member is list or origin is list:
-            is_list = True
+            has_list = True
             element_members = _members_without_missing_and_none(args[0]) if args else []
             if _is_model_members(element_members):
                 element_kind = "model"
             elif element_members and all(m in (str, int) for m in element_members):
                 element_kind = "value"
-    if is_dict_of_models and not is_list:
+    if is_dict_of_models and not has_list:
         return "map"
-    if not is_list:
+    if not has_list:
         return None
     if get_key_spec(field_info) is not None:
         return "keyed"
@@ -1035,7 +1154,7 @@ def _looks_like_bare_filter(v: Mapping[object, object]) -> bool:
 
 
 def _api_filters_discriminator(v: object) -> str | None:
-    if _is_dict(v):
+    if is_dict(v):
         if "and_" in v or "and" in v:
             return "and"
         if "or_" in v or "or" in v:
@@ -1070,7 +1189,7 @@ def _wrap_bare_filter(v: object) -> object:
     """
     if isinstance(v, ApiFilter):
         return ApiFiltersAnd(and_=[v])
-    if _is_dict(v):
+    if is_dict(v):
         if "anyOf" in v or "oneOf" in v:
             return {"or": v.get("anyOf") or v.get("oneOf")}
         if "allOf" in v:

@@ -15,16 +15,32 @@ from collections.abc import AsyncGenerator, Generator
 from contextlib import contextmanager
 
 import httpx
+import live_support as live
 import pytest
 import pytest_asyncio
+from live_support import Lab, discover_lab
 from pyvelo.analytics import Analytics
 from pyvelo.analytics.frame import MetricFrame
 from pyvelo.client import VcoClient
 from pyvelo.client.exceptions import VcoOperationError
 from pyvelo.core import ApiInterval
 
-from ._config_live import Lab, discover_lab
 from ._discovery import VcoTestContext, discover
+
+
+@pytest.hookimpl(wrapper=True)
+def pytest_runtest_makereport(
+    item: pytest.Item, call: pytest.CallInfo[None]
+) -> Generator[None, pytest.TestReport, pytest.TestReport]:
+    """Keep lab data out of the report of a failed live configuration test."""
+    report = yield
+    live.redact_report(item, call, report)
+    return report
+
+
+def pytest_terminal_summary(terminalreporter: pytest.TerminalReporter) -> None:
+    """Name the backup of every module a live test did not put back."""
+    live.report_leftover_backups(terminalreporter.write_line)
 
 
 def _env(name: str, required: bool = False) -> str | None:
@@ -44,12 +60,15 @@ def interval() -> ApiInterval:
 
 @pytest_asyncio.fixture(scope="session", loop_scope="session")
 async def vco_client() -> AsyncGenerator[VcoClient]:
-    host = _env("VCO_HOST", required=True)
-    token = _env("VCO_TOKEN", required=True)
-    assert host is not None
-    assert token is not None
-    async with VcoClient(vco_fqdn=host, token=token) as client:
+    async with live.connect() as client:
         yield client
+
+
+@pytest.fixture(autouse=True)
+def live_write_marker(request: pytest.FixtureRequest) -> Generator[None]:
+    """Only a test marked ``live_write`` may write to the Orchestrator."""
+    with live.writer_test(request.node.get_closest_marker("live_write") is not None):
+        yield
 
 
 @pytest.fixture(scope="session")

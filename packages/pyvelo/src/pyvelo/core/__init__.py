@@ -1,11 +1,15 @@
 """VcoModel base class, field declaration toolkit, and API types.
 
-This package is split into three submodules:
+This package is split into these submodules:
 - base: VcoModel base class, serialization, and API types
 - fields: Field declaration markers, validators, and helpers
 - identity: NewType ID aliases and identity dataclasses
+- patch: the patch helpers (add, delete, move, at) and PatchError
+- merge: applying a patch to a model, and selecting items of a list
+- rebase: the path and key types that locate a change
+- secrets: hide_secrets, which shows a value without its secrets
 
-All public symbols are re-exported here for backwards compatibility.
+This package exports the public names of those submodules; ``__all__`` lists them.
 """
 
 from .base import (
@@ -22,6 +26,7 @@ from .base import (
     JsonRpcError,
     JsonRpcRequest,
     JsonRpcResponse,
+    ListKind,
     PaginatedResult,
     PaginatedVcoModel,
     PaginationMetadata,
@@ -30,8 +35,12 @@ from .base import (
     VcoModel,
     VcoTimestamp,
     check_time_is_never,
+    field_models,
+    list_kind,
     missing_or,
+    python_name,
     value_or,
+    wire_name,
 )
 from .fields import (
     Alias,
@@ -55,12 +64,16 @@ from .fields import (
     Positional,
     ProfileOnly,
     Resolvable,
+    Secret,
     ServerOwned,
     get_key_spec,
+    get_name_of,
     get_normalizer,
     get_resolvable,
     has_override_flag,
     is_edge_local,
+    is_positional,
+    is_secret,
     is_server_owned,
 )
 from .identity import (
@@ -101,7 +114,20 @@ from .identity import (
     ServiceGroupLogicalId,
     ServiceGroupName,
 )
-from .patch import PatchError, add, at, delete, move
+from .merge import item_selector, nest_patch, select_items
+from .patch import (
+    PatchError,
+    PatchErrorKind,
+    add,
+    at,
+    delete,
+    key_selector,
+    move,
+    position_of,
+    selector_of,
+)
+from .rebase import Key, Path, item_key_text, key_text
+from .secrets import hide_secrets
 
 __all__ = [
     "AddressGroupId",
@@ -141,6 +167,7 @@ __all__ = [
     "JsonRpcError",
     "JsonRpcRequest",
     "JsonRpcResponse",
+    "Key",
     "KeyField",
     "KeySpec",
     "LicenseId",
@@ -152,6 +179,7 @@ __all__ = [
     "LinkInternalId",
     "LinkLogicalId",
     "LinkName",
+    "ListKind",
     "NameOf",
     "NoneIsFalse",
     "NoneIsMissing",
@@ -163,6 +191,8 @@ __all__ = [
     "PaginatedVcoModel",
     "PaginationMetadata",
     "PatchError",
+    "PatchErrorKind",
+    "Path",
     "Positional",
     "ProfileId",
     "ProfileIdentity",
@@ -170,6 +200,7 @@ __all__ = [
     "ProfileOnly",
     "Resolvable",
     "RowsModifiedConfirmation",
+    "Secret",
     "SegmentId",
     "SegmentIdentity",
     "SegmentLogicalId",
@@ -187,13 +218,29 @@ __all__ = [
     "at",
     "check_time_is_never",
     "delete",
+    "field_models",
     "get_key_spec",
+    "get_name_of",
     "get_normalizer",
     "get_resolvable",
     "has_override_flag",
+    "hide_secrets",
     "is_edge_local",
+    "is_positional",
+    "is_secret",
     "is_server_owned",
+    "item_key_text",
+    "item_selector",
+    "key_selector",
+    "key_text",
+    "list_kind",
     "missing_or",
     "move",
+    "nest_patch",
+    "position_of",
+    "python_name",
+    "select_items",
+    "selector_of",
     "value_or",
+    "wire_name",
 ]

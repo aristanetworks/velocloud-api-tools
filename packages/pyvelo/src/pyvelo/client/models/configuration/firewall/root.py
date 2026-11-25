@@ -40,9 +40,9 @@ class FirewallData(VcoModel):
         bool, Alias("syslog_forwarding"), DefaultingScalar(bool, default=False)
     ] = False
 
-    firewall_logging_enabled: Annotated[bool, DefaultingScalar(bool, default=False)] = (
-        False
-    )
+    firewall_logging_enabled: Annotated[
+        bool, Alias("firewall_logging_enabled"), DefaultingScalar(bool, default=False)
+    ] = False
     atp_enabled: Annotated[
         bool, Alias("atp_enabled"), DefaultingScalar(bool, default=False)
     ] = False

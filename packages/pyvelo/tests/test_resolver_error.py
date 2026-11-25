@@ -5,6 +5,10 @@ from pyvelo.config.resolver import resolution_error
 
 
 class TestResolutionError:
+    def test_prints_as_its_message(self):
+        err = resolution_error("edge", "Branch-NY", ["Branch-NYC", "DC-Primary"])
+        assert str(err) == "Unknown edge: 'Branch-NY'.\nDid you mean:\n  - Branch-NYC"
+
     def test_close_match_suggests_candidates(self):
         err = resolution_error(
             "application",

@@ -4,14 +4,14 @@ from typing import Annotated, Any, Literal
 
 from pydantic import MISSING, ConfigDict, Discriminator, Field
 
-from pyvelo.core import Alias, VcoModel
+from pyvelo.core import Alias, Secret, VcoModel
 
 from .common import ProviderCategory, RoutingPolicy, TunnelingProtocol, TunnelMode
 
 
 class RadiusServer(VcoModel):
     port: int
-    secret: str | MISSING = MISSING
+    secret: Annotated[str | MISSING, Secret()] = MISSING
     server: str | MISSING = MISSING
     accounting_port: int | Literal[""] | MISSING = MISSING
 
@@ -36,7 +36,7 @@ class TacacsServer(VcoModel):
 
 class TacacsServiceData(VcoModel):
     type_: Annotated[Literal["Tacacs"], Alias("type")] = "Tacacs"
-    shared_secret: str
+    shared_secret: Annotated[str, Secret()]
     servers: list[TacacsServer]
 
 
@@ -155,7 +155,7 @@ class IaasSubscription(VcoModel):
 
 class AzureVendorSpecificData(VcoModel):
     client_id: str
-    client_secret: str
+    client_secret: Annotated[str, Secret()]
     tenant_id: str
     subscription: IaasSubscription
 
@@ -168,9 +168,9 @@ class AzureSubscriptionData(VcoModel):
 class ZscalerVendorSpecificData(VcoModel):
     api_host: str
     api_path: str
-    api_token: str
+    api_token: Annotated[str, Secret()]
     domain: str
-    password: str
+    password: Annotated[str, Secret()]
     username: str
 
 
@@ -181,9 +181,9 @@ class ZscalerSubscriptionData(VcoModel):
 
 
 class AwsVendorSpecificData(VcoModel):
-    access_key: str
-    secret_key: str
-    session_token: str | MISSING = MISSING
+    access_key: Annotated[str, Secret()]
+    secret_key: Annotated[str, Secret()]
+    session_token: Annotated[str | MISSING, Secret()] = MISSING
 
 
 class AwsSubscriptionData(VcoModel):
@@ -193,7 +193,7 @@ class AwsSubscriptionData(VcoModel):
 
 class SseVendorSpecificData(VcoModel):
     username: str
-    password: str
+    password: Annotated[str, Secret()]
     cloud_type: str | MISSING = MISSING
     tenant_id: str | MISSING = MISSING
     expiry: bool | MISSING = MISSING
@@ -255,7 +255,7 @@ class NetflowFilterData(VcoModel):
 
 class LocalUiCredentialsData(VcoModel):
     configuration_id: int | MISSING = MISSING
-    password: str
+    password: Annotated[str, Secret()]
     username: str
 
 
@@ -310,7 +310,7 @@ class EdgeHubClusterServiceData(VcoModel):
 
 class BaseCloudSecurityCredentials(VcoModel):
     username: str
-    password: str
+    password: Annotated[str, Secret()]
     validated: bool
 
 
@@ -321,7 +321,7 @@ class SymantecCloudSecurityCredentials(BaseCloudSecurityCredentials):
 class ZscalerCloudSecurityCredentials(BaseCloudSecurityCredentials):
     api_host: str | None
     api_path: str
-    api_token: str | MISSING = MISSING
+    api_token: Annotated[str | MISSING, Secret()] = MISSING
 
 
 class L7HealthCheck(VcoModel):

@@ -11,14 +11,16 @@ from collections.abc import Iterable, Iterator
 from typing import Any, cast
 
 import pytest
-from pydantic import MISSING
+from pydantic import MISSING, ValidationError
 from pyvelo.client.enums.configuration import ConfigurationModuleName
 from pyvelo.client.exceptions import (
     ConfigConflictError,
     DetachedObjectError,
     VcoOperationError,
     WriteNotAppliedError,
+    WriteOutcomeUnknownError,
 )
+from pyvelo.client.models.configuration.device_settings.segment import SegmentBgp
 from pyvelo.client.models.configuration.firewall.rules import FirewallOutboundRule
 from pyvelo.client.models.configuration.firewall.segment import FirewallSegment
 from pyvelo.client.models.configuration.qos.root import ServiceRateLimit
@@ -29,7 +31,7 @@ from pyvelo.core.response_check import PlannedChange, ServerChange
 from pyvelo.testing import ModuleStore, make_module_json
 from pyvelo_intent import add
 from pyvelo_intent.config.pipeline import ConfigPipeline
-from pyvelo_intent.config.state import ConfigState
+from pyvelo_intent.config.state import ConfigState, save_progress
 from pyvelo_intent.testing import MockVcoClient
 from test_state_plan import (  # pyright: ignore[reportImplicitRelativeImport]
     EDGE_FW,
@@ -301,7 +303,12 @@ async def test_request_two_of_three_fails():
         _ = await pipeline.save(state)
 
     assert exc.value.code == -32603
-    assert exc.value.__notes__ == ["written before this failure: firewall (update)"]
+    progress = save_progress(exc.value)
+    assert progress is not None
+    assert [(w.name, w.operation) for w in progress.completed] == [
+        ("firewall", "update")
+    ]
+    assert (progress.failed, progress.pending) == ("QOS", ("WAN",))
     assert state.module("firewall").version == client.store.rows[1]["version"]
     assert {m.name: m.operation for m in state.plan().modules}["firewall"] == "none"
     assert changed(state) == ["QOS", "WAN"]
@@ -521,3 +528,80 @@ async def test_dry_run_sends_nothing_and_detaches_nothing():
     assert seg.is_detached is False
     assert state.module("firewall").is_detached is False
     assert changed(state) == ["firewall"]
+
+
+async def test_a_save_whose_answer_does_not_parse_keeps_the_edits_in_the_state():
+    def without_an_action(new: dict[str, Any], _old: dict[str, Any] | None) -> None:
+        new["data"]["segments"][0]["outbound"] = [{"name": "a", "match": {}}]
+
+    state = make_state()
+    client = MockVcoClient.for_state(state)
+    client.store.on_store.append(without_an_action)
+    state.edge.firewall.firewall_enabled = False
+
+    with pytest.raises(WriteOutcomeUnknownError) as exc:
+        _ = await ConfigPipeline(client).save(state)
+
+    error = exc.value
+    assert error.answer == "row"
+    assert error.module is None
+    assert error.completed == ()
+    assert isinstance(error.__cause__, ValidationError)
+    assert client.store.rows[1]["data"]["firewall_enabled"] is False
+    # The state is as it was: the module as read, at its version, with the edit.
+    assert state.module("firewall").version == "e1"
+    assert [m.name for m in state.plan().changed] == ["firewall"]
+
+
+async def test_the_repr_of_a_save_result_holds_no_module_data():
+    settings: dict[str, Any] = {
+        "lan": {"networks": [], "interfaces": []},
+        "segments": [
+            {
+                "segment": desc(0, "Global Segment"),
+                "bgp": {
+                    "enabled": True,
+                    "override": True,
+                    "ASN": "65000",
+                    "neighbors": [
+                        {
+                            "neighborIp": "192.0.2.1",
+                            "neighborAS": "65001",
+                            "md5Password": "OLD-md5-made-up",
+                        }
+                    ],
+                },
+            }
+        ],
+    }
+    state = make_state(
+        edge_modules=[
+            make_module_json(
+                "firewall",
+                {"firewall_enabled": True, "segments": []},
+                module_id=1,
+                configuration_id=10,
+            ),
+            make_module_json(
+                "deviceSettings", settings, module_id=4, configuration_id=10
+            ),
+        ]
+    )
+    state.edge.firewall.firewall_enabled = False
+    bgp = state.edge.device_settings.segments[0].bgp
+    assert isinstance(bgp, SegmentBgp)
+    bgp.asn = "65010"
+    client = MockVcoClient.for_state(state)
+    preview = await ConfigPipeline(client).save(state, dry_run=True)
+    for name in ("firewall", "deviceSettings"):
+        assert f"ModulePlan(name='{name}', operation='update', changes=1)" in repr(
+            preview
+        )
+    result = await ConfigPipeline(client).save(state)
+    assert client.store.rows[4]["data"]["segments"][0]["bgp"]["ASN"] == "65010"
+    for text in (repr(preview), repr(result)):
+        assert "OLD-md5-made-up" not in text and "neighborIp" not in text
+        assert text.startswith("SaveResult(") and "modules_updated=[" in text
+    assert "server_changes={'firewall': 0, 'deviceSettings': 0}" in repr(result)
+    assert "left_out={'firewall': 0, 'deviceSettings': 0}" in repr(result)
+    assert "ModuleWrite(name='deviceSettings', operation='update'" in repr(result)

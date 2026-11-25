@@ -3,7 +3,7 @@ from typing import Annotated
 
 from pydantic import MISSING
 
-from pyvelo.core import Alias, VcoModel
+from pyvelo.core import Alias, Secret, VcoModel
 
 from ..common import AddressType
 from .common import NetworkType, WanMode
@@ -34,4 +34,4 @@ class WanNetwork(VcoModel):
     dial_number: str | None | MISSING = MISSING
     isp_key: str | None | MISSING = MISSING
     username: str | None | MISSING = MISSING
-    password: str | None | MISSING = MISSING
+    password: Annotated[str | None | MISSING, Secret()] = MISSING

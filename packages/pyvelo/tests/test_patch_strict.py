@@ -1,19 +1,25 @@
 """Strict patches: fields, validation, unknown keys, all or nothing."""
 
 import copy
-from enum import IntEnum
+import datetime
+import ipaddress
+import json
+import pickle
+import uuid
+from enum import Enum, IntEnum, StrEnum
+from types import MappingProxyType
 from typing import Annotated, Literal
 
 import pytest
 from pydantic import MISSING, Discriminator, Field, ValidationError, field_validator
 from pyvelo.client.models.configuration.device_settings import NatRule
-from pyvelo.config.resolver import ResolutionError
+from pyvelo.config.resolver import ResolutionError, ResolverRegistry
 from pyvelo.core import Alias, PatchError, VcoModel, add
-from pyvelo.core.fields import KeyField, Resolvable
+from pyvelo.core.fields import KeyField, Lenient, NoneIsFalse, Resolvable
 from pyvelo.core.identity import SegmentIdentity
 from pyvelo.core.rebase import Path
 
-from .patch_models import Root, Rule, Sub
+from .patch_models import Hop, Root, Rule, Sub
 from .test_write_safe_resolution import Fake
 
 
@@ -26,8 +32,22 @@ def raises_at(model: VcoModel, patch: dict[str, object], path: str) -> PatchErro
 
 def test_patch_error_text():
     assert issubclass(PatchError, ValueError)
-    assert str(PatchError("bad", Path.parse("sub.v"))) == "sub.v: bad"
-    assert str(PatchError("bad", Path(()))) == "bad"
+    error = PatchError("bad", Path.parse("sub.v"), "invalid_value")
+    assert str(error) == "sub.v: bad"
+    assert (error.message, error.path, error.kind) == (
+        "bad",
+        Path.parse("sub.v"),
+        "invalid_value",
+    )
+    assert error.args == ("bad", Path.parse("sub.v"), "invalid_value")
+    assert str(PatchError("bad", Path(()), "invalid_value")) == "bad"
+    for again in (pickle.loads(pickle.dumps(error)), copy.deepcopy(error)):
+        assert type(again) is PatchError
+        assert (again.message, again.path, again.kind) == (
+            "bad",
+            Path.parse("sub.v"),
+            "invalid_value",
+        )
 
 
 def test_object_merges_into_a_sub_model():
@@ -65,7 +85,13 @@ def test_null_sets_none_where_the_type_has_none():
 
 @pytest.mark.parametrize("name", ["flag", "sub", "count"])
 def test_null_raises_where_the_type_has_neither(name: str):
-    _ = raises_at(Root(), {name: None}, name)
+    error = raises_at(Root(), {name: None}, name)
+    assert "a change cannot unset it" in error.message
+
+
+def test_null_in_a_built_model_where_the_type_has_neither_says_to_leave_the_key_out():
+    error = raises_at(Root(), {"maybe": {"v": None}}, "maybe.v")
+    assert error.message.endswith("leave the key out")
 
 
 def test_value_replaces_and_is_coerced():
@@ -313,6 +339,53 @@ def test_resolver_error_changes_nothing_and_keeps_its_type():
     assert model.model_dump() == dump
 
 
+class Bound(VcoModel):
+    segment_id: Annotated[int, Resolvable(SegmentIdentity, "segment_id")] = 0
+    segment_ref: Annotated[str, Resolvable(SegmentIdentity, "name")] = ""
+
+
+class Either(VcoModel):
+    segment_id: Annotated[int | str, Resolvable(SegmentIdentity, "segment_id")] = 0
+
+
+class Member(VcoModel):
+    name: str
+    segment_id: Annotated[int, Resolvable(SegmentIdentity, "segment_id")]
+
+
+class Members(VcoModel):
+    members: Annotated[list[Member], KeyField("name")] = Field(default_factory=list)
+
+
+def test_a_name_with_no_resolver_registered_is_refused_at_its_field():
+    empty = ResolverRegistry()
+    with pytest.raises(PatchError) as exc:
+        _ = Bound().merge_patch({"segment_id": "Guest"}, resolvers=empty)
+    assert exc.value.path == Path.parse("segment_id")
+    assert "'Guest'" in exc.value.message
+    assert "SegmentIdentity" in exc.value.message
+    assert isinstance(exc.value.__cause__, LookupError)
+    assert not isinstance(exc.value.__cause__, ResolutionError)
+    with pytest.raises(PatchError) as exc:
+        _ = Members().merge_patch(
+            {"members": {"m": add({"segment_id": "Guest"})}}, resolvers=empty
+        )
+    assert exc.value.path == Path.parse("members[m].segment_id")
+    assert "SegmentIdentity" in exc.value.message
+
+
+def test_an_id_needs_no_resolver():
+    empty = ResolverRegistry()
+    model = Bound()
+    _ = model.merge_patch(
+        {"segment_id": "7", "segment_ref": "any text"}, resolvers=empty
+    )
+    assert (model.segment_id, model.segment_ref) == (7, "any text")
+    members = Members()
+    _ = members.merge_patch({"members": {"m": add({"segment_id": 7})}}, resolvers=empty)
+    assert members.members[0].segment_id == 7
+
+
 def test_patch_is_not_mutated():
     root = Root(rules=[Rule(name="a")])
     patch: dict[str, object] = {
@@ -325,3 +398,347 @@ def test_patch_is_not_mutated():
     before = copy.deepcopy(patch)
     _ = root.merge_patch(patch)
     assert patch == before
+
+
+@pytest.mark.parametrize(
+    ("patch", "path", "text"),
+    [
+        ({"rules": (r for r in [{"name": "x"}])}, "rules", "generator"),
+        ({"rules": reversed([{"name": "x"}])}, "rules", "list_reverseiterator"),
+        ({"rules": ({"name": "x"},)}, "rules", "tuple"),
+        ({"names": {"a", "b"}}, "names", "set"),
+        ({"sub": MappingProxyType({"v": 1})}, "sub", "mappingproxy"),
+        ({"title": uuid.UUID(int=1)}, "title", "UUID"),
+        ({"blobs": [{"a": float("nan")}]}, "blobs[#0].a", "nan"),
+        ({"count": float("inf")}, "count", "inf"),
+        ({"rules": {True: {"priority": 1}}}, "rules", "True"),
+        ({"rules": {None: {"priority": 1}}}, "rules", "None"),
+    ],
+)
+def test_a_value_that_is_not_json_raises(
+    patch: dict[str, object], path: str, text: str
+):
+    root = Root(rules=[Rule(name="a")], names=["a"])
+    dump = copy.deepcopy(root.model_dump())
+    error = raises_at(root, patch, path)
+    assert text in error.message
+    assert root.model_dump() == dump
+
+
+def nested(levels: int) -> object:
+    return json.loads('{"x":' * levels + "1" + "}" * levels)
+
+
+def test_nesting_is_bounded():
+    # The patch, the list and 62 objects are levels 0 to 63; one more is too deep.
+    root = Root()
+    _ = root.merge_patch({"blobs": [nested(62)]})
+    assert root.blobs == [nested(62)]
+    with pytest.raises(PatchError) as exc:
+        _ = Root().merge_patch({"blobs": [nested(63)]})
+    assert "64" in exc.value.message
+    assert "split it into smaller patches" in exc.value.message
+    assert "segment or path" in exc.value.message
+    assert len(exc.value.path.parts) == 64
+
+
+def test_the_model_shares_no_object_with_the_patch():
+    patch: dict[str, object] = {"blobs": [{"who": {"tags": ["x"]}}]}
+    first, second = Root(), Root()
+    _ = first.merge_patch(patch)
+    _ = second.merge_patch(patch)
+    first.blobs[0]["who"]["tags"].append("edited")
+    assert second.blobs == [{"who": {"tags": ["x"]}}]
+    assert patch == {"blobs": [{"who": {"tags": ["x"]}}]}
+
+
+def test_a_patch_that_is_not_a_dict_is_a_type_error():
+    root = Root()
+    with pytest.raises(TypeError, match="write .*<field>.*: value"):
+        _ = root.merge_patch(MappingProxyType({"count": 1}))
+    with pytest.raises(TypeError, match="dict"):
+        _ = root.merge_patch(json.loads('[["count", 1]]'))
+    assert root.count == 0
+
+
+class Colour(Enum):
+    RED = "red"
+
+
+@pytest.mark.parametrize(
+    ("value", "remedy"),
+    [
+        (uuid.UUID(int=1), "str(value)"),
+        (Colour.RED, "member.value"),
+        (datetime.date(2026, 1, 1), "isoformat()"),
+        (datetime.time(1, 2), "isoformat()"),
+        ({"a"}, "as a list"),
+        (("a",), "as a list"),
+        ((x for x in "a"), "as a list"),
+    ],
+)
+def test_a_value_that_is_not_json_says_what_to_write_instead(
+    value: object, remedy: str
+):
+    error = raises_at(Root(), {"blobs": [{"a": value}]}, "blobs[#0].a")
+    assert remedy in error.message
+
+
+@pytest.mark.parametrize("value", [uuid.UUID(int=1), Colour.RED])
+def test_a_uuid_or_enum_member_points_to_the_json_dump(value: object):
+    error = raises_at(Root(), {"title": value}, "title")
+    assert 'model_dump(mode="json")' in error.message
+
+
+@pytest.mark.parametrize(
+    ("patch", "path", "text"),
+    [
+        ({"sub": Sub(v=1)}, "sub", "Sub"),
+        ({"rules": [Rule(name="x")]}, "rules[#0]", "Rule"),
+        ({"maybe": MISSING}, "maybe", "MISSING"),
+        ({"title": Colour.RED}, "title", "Colour"),
+        ({"title": ipaddress.IPv4Address("10.0.0.1")}, "title", "IPv4Address"),
+        ({"title": datetime.datetime(2026, 1, 1)}, "title", "datetime"),
+    ],
+)
+def test_a_python_object_is_not_a_json_value(
+    patch: dict[str, object], path: str, text: str
+):
+    root = Root(rules=[Rule(name="a")], maybe=Sub())
+    dump = copy.deepcopy(root.model_dump())
+    error = raises_at(root, patch, path)
+    assert error.message.startswith(f"{text} is not a JSON value")
+    assert root.model_dump() == dump
+
+
+class Count(IntEnum):
+    ONE = 1
+
+
+class Word(StrEnum):
+    HELLO = "hello"
+
+
+class Ratio(float):
+    pass
+
+
+def test_a_subclass_of_a_json_scalar_is_stored_as_the_plain_value():
+    root = Root()
+    _ = root.merge_patch(
+        {
+            "blobs": [
+                {"n": Count.ONE, "w": Word.HELLO, "r": Ratio(0.5), "k": [Count.ONE]}
+            ]
+        }
+    )
+    (blob,) = root.blobs
+    assert blob == {"n": 1, "w": "hello", "r": 0.5, "k": [1]}
+    assert {key: type(value) for key, value in blob.items() if key != "k"} == {
+        "n": int,
+        "w": str,
+        "r": float,
+    }
+    assert type(blob["k"][0]) is int
+
+
+def test_a_subclass_of_str_as_a_key_is_stored_as_the_plain_key():
+    root = Root()
+    _ = root.merge_patch({"blobs": [{"inner": {Word.HELLO: 1}}]})
+    (blob,) = root.blobs
+    (key,) = blob["inner"]
+    assert key == "hello"
+    assert type(key) is str
+
+
+def test_from_python_a_patch_is_json_too():
+    root = Root(rules=[Rule(name="a")], maybe=Sub(v=1))
+    _ = root.merge_patch(
+        {"maybe": None, "sub": Sub(v=2).model_dump(mode="json"), "title": "red"}
+    )
+    assert root.maybe is MISSING
+    assert root.sub == Sub(v=2)
+
+
+class Net(VcoModel):
+    name: str
+    advertise: Annotated[bool, NoneIsFalse] = True
+    lease: Annotated[int, Lenient(lambda v: 86400 if v is None else v)] = 86400
+    passive: Annotated[bool, Lenient(lambda v: True if v in (None, "") else v)] = True
+    note: str | None = "n"
+    opt: int | MISSING = 5
+    both: int | None | MISSING = MISSING
+
+
+class Nets(VcoModel):
+    nets: Annotated[list[Net], KeyField("name")] = Field(default_factory=list)
+    one: Net | MISSING = MISSING
+
+
+def test_tolerant_fields_still_tolerate_on_parse():
+    net = Net.model_validate(
+        {"name": "n", "advertise": None, "lease": None, "passive": ""}
+    )
+    assert (net.advertise, net.lease, net.passive) == (False, 86400, True)
+
+
+@pytest.mark.parametrize(
+    ("patch", "path"),
+    [
+        ({"nets": {"new": add({"advertise": None})}}, "nets[new].advertise"),
+        ({"nets": {"new": add({"lease": None})}}, "nets[new].lease"),
+        ({"nets": [{"name": "new", "advertise": None}]}, "nets[new].advertise"),
+        ({"one": {"name": "new", "advertise": None}}, "one.advertise"),
+        ({"nets": {"corp": {"passive": ""}}}, "nets[corp].passive"),
+        ({"nets": {"new": add({"passive": ""})}}, "nets[new]"),
+        ({"nets": [{"name": "new", "passive": ""}]}, "nets"),
+    ],
+)
+def test_null_and_empty_text_are_not_coerced_in_a_patch(
+    patch: dict[str, object], path: str
+):
+    model = Nets(nets=[Net(name="corp")])
+    _ = raises_at(model, patch, path)
+    assert [(n.name, n.advertise, n.passive) for n in model.nets] == [
+        ("corp", True, True)
+    ]
+    assert model.one is MISSING
+
+
+def test_null_in_a_built_item_follows_the_null_rule():
+    model = Nets()
+    _ = model.merge_patch(
+        {"nets": {"new": add({"note": None, "opt": None, "both": None})}}
+    )
+    new = model.nets[0]
+    assert new.note is None
+    assert new.opt is MISSING
+    # A field that takes both is None in a built item, as a dump writes it ...
+    assert new.both is None
+    # ... and unset by a change, where leaving the key out would change nothing.
+    _ = model.merge_patch({"nets": {"new": {"both": None}}})
+    assert new.both is MISSING
+
+
+class Leaf(VcoModel):
+    both: int | None | MISSING = MISSING
+
+
+class Loose(VcoModel):
+    both: int | None | MISSING = MISSING
+    inner: Leaf | MISSING = MISSING
+
+
+class LooseHolder(VcoModel):
+    sub: Loose | MISSING = MISSING
+    by_name: dict[str, Loose] = Field(default_factory=dict)
+
+
+def test_null_in_a_sub_model_the_patch_builds_follows_the_null_rule():
+    holder = LooseHolder()
+    _ = holder.merge_patch({"sub": {"both": None}})
+    assert isinstance(holder.sub, Loose)
+    assert holder.sub.both is None
+    # A change to the sub-model that now exists unsets the field.
+    _ = holder.merge_patch({"sub": {"both": None}})
+    assert holder.sub.both is MISSING
+
+
+def test_null_in_a_map_entry_the_patch_builds_follows_the_null_rule():
+    holder = LooseHolder()
+    _ = holder.merge_patch({"by_name": {"a": add({"both": None})}})
+    assert holder.by_name["a"].both is None
+    _ = holder.merge_patch({"by_name": {"a": {"both": None}}})
+    assert holder.by_name["a"].both is MISSING
+
+
+def test_null_in_a_sub_model_inside_a_built_sub_model_follows_the_null_rule():
+    holder = LooseHolder()
+    _ = holder.merge_patch({"sub": {"inner": {"both": None}}})
+    assert isinstance(holder.sub, Loose)
+    assert isinstance(holder.sub.inner, Leaf)
+    assert holder.sub.inner.both is None
+    _ = holder.merge_patch({"sub": {"inner": {"both": None}}})
+    assert isinstance(holder.sub.inner, Leaf)
+    assert holder.sub.inner.both is MISSING
+
+
+@pytest.mark.parametrize(
+    ("patch", "path"),
+    [
+        ({"count": True}, "count"),
+        ({"rules": {"a": {"priority": False}}}, "rules[a].priority"),
+        ({"rules": {"z": add({"priority": True})}}, "rules[z].priority"),
+        ({"rules": [{"name": "x", "priority": True}]}, "rules[x].priority"),
+        ({"ports": [80, True]}, "ports[#1]"),
+        ({"need": {"name": "n", "priority": True}}, "need.priority"),
+        ({"need": {"name": "n", "sub": {"v": True}}}, "need.sub.v"),
+        (
+            {"routes": {"+": add({"dest": "d", "prefix": True, "gw": "g"})}},
+            'routes["+"].prefix',
+        ),
+    ],
+)
+def test_a_boolean_is_not_taken_for_a_number(patch: dict[str, object], path: str):
+    root = Root(rules=[Rule(name="a")])
+    dump = copy.deepcopy(root.model_dump())
+    error = raises_at(root, patch, path)
+    assert "true" in error.message or "false" in error.message
+    assert error.message.endswith("send a number")
+    assert root.model_dump() == dump
+
+
+def test_a_boolean_is_taken_where_the_field_holds_one():
+    root = Root()
+    _ = root.merge_patch({"flag": True, "safe": True, "blobs": [{"a": True}]})
+    assert (root.flag, root.safe, root.blobs) == (True, True, [{"a": True}])
+
+
+def test_a_field_whose_id_can_be_text_takes_the_name_as_it_is_with_no_resolver():
+    model = Either()
+    _ = model.merge_patch({"segment_id": "Guest"}, resolvers=ResolverRegistry())
+    assert model.segment_id == "Guest"
+
+
+class Tunnel(VcoModel):
+    name: str
+    dh_group: Annotated[int, Alias("DHGroup")] = 0
+    peer_address: str
+    next_hops: list[Hop] = Field(default_factory=list)
+
+
+class Tunnels(VcoModel):
+    tunnels: Annotated[list[Tunnel], KeyField("name")] = Field(default_factory=list)
+    main: Tunnel | MISSING = MISSING
+    spares: dict[str, Tunnel] = Field(default_factory=dict)
+
+
+BAD_TUNNEL: dict[str, object] = {"dh_group": "x", "next_hops": [{"cost": "y"}]}
+INT = "Input should be a valid integer, unable to parse string as an integer"
+
+
+def test_validation_messages_name_fields_as_a_patch_writes_them():
+    error = raises_at(Tunnels(), {"tunnels": {"t": add(BAD_TUNNEL)}}, "tunnels[t]")
+    assert error.message == (
+        f"invalid value: dh_group: {INT}; peer_address: Field required; "
+        f"next_hops[#0].ip: Field required; next_hops[#0].cost: {INT}"
+    )
+    error = raises_at(Tunnels(), {"main": {"name": "m", **BAD_TUNNEL}}, "main")
+    assert f"dh_group: {INT}; peer_address: Field required" in error.message
+    error = raises_at(
+        Tunnels(), {"tunnels": [{"name": "t", "peerAddress": 5}]}, "tunnels"
+    )
+    assert error.message == (
+        "invalid value: [#0].peer_address: Input should be a valid string"
+    )
+    error = raises_at(
+        Tunnels(), {"spares": {"s": add({"name": "s", "peerAddress": 5})}}, "spares[s]"
+    )
+    assert (
+        error.message == "invalid value: peer_address: Input should be a valid string"
+    )
+
+
+def test_a_field_value_has_no_name_in_its_message():
+    error = raises_at(Root(), {"count": "abc"}, "count")
+    assert error.message == f"invalid value: {INT}"

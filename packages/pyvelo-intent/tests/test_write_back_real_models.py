@@ -7,16 +7,17 @@ save's ``server_changes`` (or the error's lists) and the stored row. The edge
 configuration is 10 and its first module 11; the profile is 20.
 """
 
+import json
 import uuid
 from collections.abc import Iterable
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from pydantic import MISSING
 from pyvelo.client.enums.configuration import ConfigurationModuleName
-from pyvelo.client.exceptions import ConfigConflictError
+from pyvelo.client.exceptions import ConfigConflictError, WriteNotAppliedError
 from pyvelo.core.response_check import PlannedChange, ServerChange
-from pyvelo_intent import add, move
+from pyvelo_intent import add, at, delete, move
 from pyvelo_intent.config.pipeline import ConfigPipeline
 from pyvelo_intent.config.state import ConfigState
 from pyvelo_intent.testing import MockVcoClient
@@ -319,11 +320,50 @@ async def test_refused_reorder_and_edit_list_both(conditional_check: bool):
     )
     assert paths(exc.value.server_changes) == ["futureKey"]
     text = str(exc.value)
-    assert f'  {rules}: read ["a", "b", "c", "d"], meant ["d", "a", "b", "c"]' in text
+    assert (
+        f'  {rules}: order: d first: read ["a", "b", "c", "d"], '
+        'meant ["d", "a", "b", "c"], stored ["a", "b", "c", "d"]'
+    ) in text
     assert '{"action"' not in text  # no rule body: one renders as {"action": ...
     assert qos_rules(state) == ["a", "b", "c", "d"]
     assert state.plan().changed == ()
     assert_state_is_the_stored_row(state, client, "QOS")
+
+
+@pytest.mark.parametrize("conditional_check", [False, True])
+async def test_refused_delete_of_a_same_named_rule_is_the_one_lost_edit(
+    conditional_check: bool,
+):
+    rules = [
+        fw_rule("web", ruleLogicalId="l1", futureKey=1),
+        fw_rule("web", ruleLogicalId="l2"),
+        fw_rule("ssh", ruleLogicalId="l3", futureKey=3),
+    ]
+    state = make_state({"firewall": firewall(*rules)}, {"firewall": firewall()})
+    client = MockVcoClient.for_state(state, conditional_check=conditional_check)
+    client.store.other_writer(MODULE, other_writer_edit)
+    pipeline = ConfigPipeline(client)
+    _ = await pipeline.apply(
+        state,
+        module="firewall",
+        segment=SEGMENT,
+        path="outbound",
+        patch={"l2": delete()},
+    )
+
+    with pytest.raises(ConfigConflictError) as exc:
+        _ = await pipeline.save(state)
+
+    (lost,) = exc.value.lost_edits
+    assert (str(lost.path), lost.as_read, lost.intended, lost.stored) == (
+        f"{OUTBOUND}[#1]",
+        rules[1],
+        MISSING,
+        rules[1],
+    )
+    assert paths(exc.value.server_changes) == ["futureKey"]
+    assert state.plan().changed == ()
+    assert_state_is_the_stored_row(state, client, "firewall")
 
 
 @pytest.mark.parametrize("conditional_check", [False, True])
@@ -354,3 +394,244 @@ async def test_reconciled_segment_is_a_lost_edit_when_refused(conditional_check:
     assert paths(exc.value.server_changes) == ["futureKey"]
     assert [s.segment.name for s in state.edge.firewall.segments] == [SEGMENT]
     assert_state_is_the_stored_row(state, client, "firewall")
+
+
+# --- redoing lost edits ---------------------------------------------------------
+
+DENY: dict[str, Any] = {"action": {"allow_or_deny": "deny"}, "match": {"dport_low": 22}}
+
+
+def outbound_ops(patch: dict[str, object], segment: str = SEGMENT) -> dict[str, Any]:
+    """The item operations *patch* has for the outbound rules of *segment*."""
+    segments = cast(dict[str, dict[str, dict[str, Any]]], patch["segments"])
+    return segments[segment]["outbound"]
+
+
+def stored_rules(client: MockVcoClient, segment: int = 0) -> list[dict[str, Any]]:
+    """The outbound rules of a segment of the firewall row the store holds."""
+    return client.store.rows[MODULE]["data"]["segments"][segment]["outbound"]
+
+
+@pytest.mark.parametrize("conditional_check", [False, True])
+async def test_redo_patch_redoes_a_place_and_a_move(conditional_check: bool):
+    raw = firewall(
+        fw_rule("block-ssh", ruleLogicalId="l1"),
+        fw_rule("allow-branch-erp", ruleLogicalId="l2"),
+    )
+    state = make_state({"firewall": raw}, {"firewall": firewall()})
+    client = MockVcoClient.for_state(state, conditional_check=conditional_check)
+    pipeline = ConfigPipeline(client)
+    _ = await pipeline.apply(
+        state,
+        module="firewall",
+        segment=SEGMENT,
+        path="outbound",
+        patch={
+            "block-rdp": add(DENY, first=True),
+            "block-ssh": {"logging_enabled": True},
+            "allow-branch-erp": move(first=True),
+        },
+    )
+    (first,) = state.plan().changed
+    client.store.other_writer(MODULE, other_writer_edit)
+
+    with pytest.raises(ConfigConflictError) as exc:
+        _ = await pipeline.save(state)
+
+    error = exc.value
+    assert paths(error.lost_edits) == [
+        OUTBOUND,
+        f"{OUTBOUND}[block-rdp]",
+        f"{OUTBOUND}[block-ssh].loggingEnabled",
+    ]
+    assert error.not_redone() == ()
+    patch = error.redo_patch()
+    assert json.loads(json.dumps(patch)) == patch  # plain JSON, as a patch must be
+    _ = await pipeline.apply(state, module=error.module_name, patch=patch)
+    (second,) = state.plan().changed
+    assert second.changes == first.changes
+    assert second.render() == first.render()
+
+    _ = await pipeline.save(state)
+    assert [(r["name"], r.get("loggingEnabled")) for r in stored_rules(client)] == [
+        ("allow-branch-erp", None),
+        ("block-rdp", False),
+        ("block-ssh", True),
+    ]
+    assert state.plan().changed == ()
+
+
+async def test_redo_patch_leaves_a_clash_out_unless_asked():
+    raw = firewall(fw_rule("allow-web", ruleLogicalId="l1", match={"dport_high": 443}))
+    state = make_state({"firewall": raw}, {"firewall": firewall()})
+    client = MockVcoClient.for_state(state, conditional_check=True)
+    pipeline = ConfigPipeline(client)
+    _ = await pipeline.apply(
+        state,
+        module="firewall",
+        segment=SEGMENT,
+        path="outbound",
+        patch={
+            "block-ssh": add(DENY, before="allow-web"),
+            "allow-web": {"match": {"dport_high": 8080}},
+        },
+    )
+
+    def same_port(row: dict[str, Any]) -> None:
+        row["data"]["segments"][0]["outbound"][0]["match"]["dport_high"] = 8443
+
+    client.store.other_writer(MODULE, same_port)
+    with pytest.raises(ConfigConflictError) as exc:
+        _ = await pipeline.save(state)
+
+    error = exc.value
+    assert paths(error.not_redone()) == [f"{OUTBOUND}[allow-web].match.dport_high"]
+    assert list(outbound_ops(error.redo_patch())) == ["block-ssh"]
+    assert error.not_redone(include_clashes=True) == ()
+    with_clashes = outbound_ops(error.redo_patch(include_clashes=True))
+    assert list(with_clashes) == ["allow-web", "block-ssh"]
+    assert with_clashes["allow-web"] == {"match": {"destination_port_high": 8080}}
+
+    _ = await pipeline.apply(state, module=error.module_name, patch=error.redo_patch())
+    _ = await pipeline.save(state)
+    assert [(r["name"], r["match"]["dport_high"]) for r in stored_rules(client)] == [
+        ("block-ssh", -1),
+        ("allow-web", 8443),
+    ]
+
+
+async def test_redo_patch_names_an_item_as_the_stored_list_does():
+    # Two rules share a name, so each is named by its position.
+    raw = firewall(
+        fw_rule("d", ruleLogicalId="l1"),
+        fw_rule("d", ruleLogicalId="l2"),
+        fw_rule("x", ruleLogicalId="l3"),
+    )
+    state = make_state({"firewall": raw}, {"firewall": firewall()})
+    client = MockVcoClient.for_state(state, conditional_check=True)
+    pipeline = ConfigPipeline(client)
+    _ = await pipeline.apply(
+        state,
+        module="firewall",
+        segment=SEGMENT,
+        path="outbound",
+        patch={at(1): {"logging_enabled": True}},
+    )
+
+    def theirs_first(row: dict[str, Any]) -> None:
+        rules = row["data"]["segments"][0]["outbound"]
+        rules.insert(0, fw_rule("theirs", ruleLogicalId="l9"))
+
+    client.store.other_writer(MODULE, theirs_first)
+    with pytest.raises(ConfigConflictError) as exc:
+        _ = await pipeline.save(state)
+
+    error = exc.value
+    assert paths(error.lost_edits) == [f"{OUTBOUND}[#1].loggingEnabled"]
+    assert outbound_ops(error.redo_patch()) == {"#2": {"logging_enabled": True}}
+    _ = await pipeline.apply(state, module=error.module_name, patch=error.redo_patch())
+    _ = await pipeline.save(state)
+    assert [
+        (r["ruleLogicalId"], r.get("loggingEnabled")) for r in stored_rules(client)
+    ] == [("l9", None), ("l1", None), ("l2", True), ("l3", None)]
+
+
+async def test_redo_patch_leaves_out_an_add_whose_place_is_gone():
+    raw = firewall(
+        fw_rule("block-ssh", ruleLogicalId="l1"),
+        fw_rule("allow-branch-erp", ruleLogicalId="l2"),
+    )
+    state = make_state({"firewall": raw}, {"firewall": firewall()})
+    client = MockVcoClient.for_state(state, conditional_check=True)
+    pipeline = ConfigPipeline(client)
+    _ = await pipeline.apply(
+        state,
+        module="firewall",
+        segment=SEGMENT,
+        path="outbound",
+        patch={
+            "block-rdp": add(DENY, after="block-ssh"),
+            "allow-branch-erp": {"logging_enabled": True},
+        },
+    )
+
+    def remove_block_ssh(row: dict[str, Any]) -> None:
+        del row["data"]["segments"][0]["outbound"][0]
+
+    client.store.other_writer(MODULE, remove_block_ssh)
+    with pytest.raises(ConfigConflictError) as exc:
+        _ = await pipeline.save(state)
+
+    error = exc.value
+    assert paths(error.not_redone()) == [f"{OUTBOUND}[block-rdp]"]
+    assert outbound_ops(error.redo_patch()) == {
+        "allow-branch-erp": {"logging_enabled": True}
+    }
+
+
+async def test_redo_patch_redoes_the_change_made_in_a_reconciled_segment():
+    state = make_state(
+        {"firewall": firewall(fw_rule("a", ruleLogicalId="l1"))},
+        {"firewall": firewall(guest=True)},
+    )
+    client = MockVcoClient.for_state(state, conditional_check=True)
+    pipeline = ConfigPipeline(client)
+    _ = await pipeline.apply(
+        state,
+        module="firewall",
+        segment="Guest",
+        path="outbound",
+        patch={"r": add(DENY)},
+    )
+    (first,) = state.plan().changed
+    client.store.other_writer(MODULE, other_writer_edit)
+    with pytest.raises(ConfigConflictError) as exc:
+        _ = await pipeline.save(state)
+
+    error = exc.value
+    assert paths(error.lost_edits) == ["segments[Guest]"]
+    patch = error.redo_patch()
+    assert list(outbound_ops(patch, "Guest")) == ["r"]
+    assert error.not_redone() == ()
+    _ = await pipeline.apply(state, module=error.module_name, patch=patch)
+    (second,) = state.plan().changed
+    assert second.changes == first.changes
+    assert second.reconciled_segments == ("Guest",)
+    _ = await pipeline.save(state)
+    assert [r["name"] for r in stored_rules(client, segment=1)] == ["r"]
+
+
+async def test_an_added_rule_stored_in_another_place_is_redone_as_a_move():
+    raw = firewall(fw_rule("a", ruleLogicalId="l1"), fw_rule("b", ruleLogicalId="l2"))
+    state = make_state({"firewall": raw}, {"firewall": firewall()})
+    client = MockVcoClient.for_state(state)
+    pipeline = ConfigPipeline(client)
+
+    def new_rules_last(new: dict[str, Any], _: dict[str, Any] | None) -> None:
+        """Store the rules that have no ID yet after the others."""
+        rules: list[dict[str, Any]] = new["data"]["segments"][0]["outbound"]
+        rules.sort(key=lambda rule: "ruleLogicalId" not in rule)
+
+    client.store.on_store.append(new_rules_last)
+    _ = await pipeline.apply(
+        state,
+        module="firewall",
+        segment=SEGMENT,
+        path="outbound",
+        patch={"x": add(DENY, first=True)},
+    )
+    with pytest.raises(WriteNotAppliedError) as exc:
+        _ = await pipeline.save(state)
+
+    error = exc.value
+    assert paths(error.applied) == [f"{OUTBOUND}[x]"]
+    (order,) = error.lost_edits
+    assert (str(order.path), order.is_order, order.clash) == (OUTBOUND, True, False)
+    assert (order.intended, order.stored) == (["x", "a", "b"], ["a", "b", "x"])
+    assert error.redo_patch() == {
+        "segments": {SEGMENT: {"outbound": {"x": {"_position": "first"}}}}
+    }
+    client.store.on_store.clear()
+    _ = await pipeline.apply(state, module=error.module_name, patch=error.redo_patch())
+    _ = await pipeline.save(state)
+    assert [r["name"] for r in stored_rules(client)] == ["x", "a", "b"]

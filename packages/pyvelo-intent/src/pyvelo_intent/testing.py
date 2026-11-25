@@ -7,9 +7,7 @@ from collections.abc import Sequence
 from datetime import UTC, datetime
 from typing import Self, override
 
-import httpx
 from pydantic import MISSING
-from pyvelo.client.auth import VcoAuth
 from pyvelo.client.enums.configuration import ConfigurationModuleType
 from pyvelo.client.enums.enterprise import NetworkSegmentType
 from pyvelo.client.models.configuration.common import SegmentMetadata
@@ -84,14 +82,30 @@ def make_firewall_module(
     )
 
 
-class MockVcoClient(VcoClient):
-    """Mock VCO client that records its API calls and serves module writes from a store.
+def _register_stack(
+    store: ModuleStore, edge: ConfigurationBase, profile: ConfigurationBase
+) -> None:
+    """Have *store* answer the stack of every edge with the two configurations."""
+    match (edge.id_, profile.id_):
+        case (int() as edge_id, int() as profile_id):
+            store.add_stack(edge_id, profile_id)
+        case _:
+            raise ValueError(
+                "the mock client can serve a stack only of configurations that "
+                "have an ID; give the edge and profile configurations an id_"
+            )
 
-    Module updates, inserts and the configurations the store holds go through
-    the real client code to ``store``, a :class:`~pyvelo.testing.ModuleStore`;
-    seed it with :meth:`seed`, or build the client with :meth:`for_state`. A
-    ``stack`` seeds it with both its configurations. The other calls are
-    answered here.
+
+class MockVcoClient(VcoClient):
+    """Mock VCO client that records its API calls and serves configurations from a store.
+
+    An edge's configuration stack, module updates, inserts and the
+    configurations the store holds go through the real client code to
+    ``store``, a :class:`~pyvelo.testing.ModuleStore`; seed it with
+    :meth:`seed`, or build the client with :meth:`for_state`. A ``stack`` seeds
+    it with both its configurations and is served for every edge. A load reads
+    the stack from the store, as new objects each time, so a second load sees
+    what a save stored. The other calls are answered here.
     """
 
     store: ModuleStore
@@ -103,7 +117,8 @@ class MockVcoClient(VcoClient):
         *,
         conditional_check: bool = False,
     ) -> None:
-        super().__init__(_HOST, "test-token")
+        self.store = ModuleStore(conditional_check=conditional_check)
+        super().__init__(_HOST, "test-token", transport=make_transport(self.store))
         self.stack: GetEdgeConfigurationStackResult | None = stack
         self._edges: Sequence[GetEnterpriseEdgesItem] = (
             edges if edges is not None else []
@@ -111,14 +126,9 @@ class MockVcoClient(VcoClient):
         self.calls: list[tuple[str, object]] = []
         self.update_requests: list[UpdateConfigurationModule] = []
         self.insert_requests: list[InsertConfigurationModule] = []
-        self.store = ModuleStore(conditional_check=conditional_check)
-        self._http: httpx.AsyncClient | None = httpx.AsyncClient(
-            auth=VcoAuth("test-token"),
-            transport=make_transport(self.store),
-            base_url=f"https://{_HOST}",
-        )
         if stack is not None:
             _ = self.seed(*stack)
+            _register_stack(self.store, *stack)
 
     def seed(self, *configs: ConfigurationBase) -> Self:
         """Put *configs* and their modules in the store, as the VCO holds them.
@@ -137,10 +147,15 @@ class MockVcoClient(VcoClient):
 
     @classmethod
     def for_state(cls, state: ConfigState, *, conditional_check: bool = False) -> Self:
-        """A client whose store holds the configurations of *state*: its edge one, if any, and its profile one."""
+        """A client whose store holds the configurations of *state*: its edge one, if any, and its profile one.
+
+        A state with an edge configuration also gets the stack of both, for
+        every edge.
+        """
         client = cls(conditional_check=conditional_check)
         if state.edge_config is not None:
             _ = client.seed(state.edge_config)
+            _register_stack(client.store, state.edge_config, state.profile_config)
         return client.seed(state.profile_config)
 
     @override
@@ -148,9 +163,9 @@ class MockVcoClient(VcoClient):
         self, request: GetEdgeConfigurationStack
     ) -> GetEdgeConfigurationStackResult:
         self.calls.append(("get_edge_configuration_stack", request))
-        if self.stack is None:
+        if not self.store.stacks:
             raise RuntimeError("No configuration stack was provided to the mock client")
-        return self.stack
+        return await super().get_edge_configuration_stack(request)
 
     @override
     async def get_configuration(self, request: GetConfiguration) -> ConfigurationBase:

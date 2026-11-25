@@ -242,7 +242,8 @@ def test_ipv6_keys_pair_by_key_in_canonical_form_in_any_order():
     assert_paths(
         check,
         applied=[V6_ROUTE_PATH, other_path],
-        server_changes=[f"{V6_ROUTE_PATH}.dest", f"{other_path}.dest", "routes"],
+        not_applied=["routes"],
+        server_changes=[f"{V6_ROUTE_PATH}.dest", f"{other_path}.dest"],
     )
 
 
@@ -278,6 +279,7 @@ def test_ipv6_alt_key_in_canonical_form_pairs():
     assert_paths(
         check,
         applied=["rules[#0]", "rules[#1]"],
+        not_applied=["rules"],
         server_changes=["rules[#0].ruleId", "rules[#1].ruleId"],
     )
     assert server_change_at(check, "rules[#0].ruleId").stored == "2001:db8::1"
@@ -369,3 +371,61 @@ def test_removed_and_gone_is_applied_all_the_same():
 )
 def test_matches(pattern: PathPattern, path: str, expected: bool):
     assert matches(Path.parse(path), pattern) is expected
+
+
+def test_removed_key_the_vco_adds_back_inside_a_list_compared_whole():
+    check = check_response(
+        {"hops": [{"ip": "10.0.0.1", "cost": 5}]},
+        {"hops": [{"ip": "10.0.0.1"}]},
+        {"hops": [{"ip": "10.0.0.1", "cost": 0}]},
+        Root,
+        rewrites=Rewrites(readded=(("hops", "*", "cost"),)),
+    )
+    assert check.not_applied == ()
+    assert paths(check.applied) == ["hops"]
+    change = server_change_at(check, "hops[#0].cost")
+    assert (change.as_read, change.stored) == (MISSING, 0)
+
+
+def test_owned_key_removed_inside_a_list_compared_whole_and_kept_by_the_vco():
+    check = check_response(
+        {"plain": [{"name": "a", "stamp": "s1"}]},
+        {"plain": [{"name": "b"}]},
+        {"plain": [{"name": "b", "stamp": "s1"}]},
+        Box,
+    )
+    assert check.not_applied == ()
+    assert paths(check.applied) == ["plain"]
+    assert paths(check.server_changes) == ["plain[#0].stamp"]
+
+
+def test_server_change_below_a_list_compared_whole_has_no_value_read():
+    check = check_response(
+        {"hops": [{"ip": "2001:DB8::1"}]},
+        {"hops": [{"ip": "2001:DB8::2"}]},
+        {"hops": [{"ip": "2001:db8::2"}]},
+        Root,
+        rewrites=IPV6,
+    )
+    assert_paths(check, applied=["hops"], server_changes=["hops[#0].ip"])
+    change = server_change_at(check, "hops[#0].ip")
+    assert (change.as_read, change.stored) == (MISSING, "2001:db8::2")
+
+
+def test_changed_value_at_a_readded_path_that_is_not_stored_is_not_applied():
+    check = check_response(
+        {"sub": {"v": 1, "note": "n"}},
+        {"sub": {"v": 1, "note": "m"}},
+        {"sub": {"v": 1, "note": "n"}},
+        Root,
+        rewrites=NOTE_READDED,
+    )
+    assert paths(check.not_applied) == ["sub.note"]
+    assert check.left_out == ()
+    assert check.server_changes == ()
+
+
+def test_owned_key_stored_as_sent_is_no_server_change():
+    check = check_response({"stamp": "s1"}, {"stamp": "s2"}, {"stamp": "s2"}, Box)
+    assert paths(check.left_out) == ["stamp"]
+    assert check.server_changes == ()

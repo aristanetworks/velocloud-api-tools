@@ -6,6 +6,9 @@ from typing import ClassVar, cast, override
 
 import pytest
 from pyvelo.config.resolver import Resolver, ResolverContext, ResolverRegistry
+from pyvelo.config.resolvers.segment import SegmentResolver
+
+from ._type_support import SegmentResolverFactory
 
 # ---------------------------------------------------------------------------
 # Test identity types
@@ -255,3 +258,33 @@ class TestResolverRegistry:
             assert resolver.cleared == 1
             with pytest.raises(KeyError, match="Unknown foo"):
                 _ = await resolver.resolve("alpha")
+
+    async def test_unloaded_copies_each_resolver_with_nothing_loaded(
+        self,
+        registry: ResolverRegistry,
+        make_segment_resolver: SegmentResolverFactory,
+    ):
+        loaded = await make_segment_resolver([{"name": "Guest", "segment_id": 1}])
+        registry.register(loaded)
+        registry.set_context(ResolverContext(enterprise_id=1))
+
+        copy = registry.unloaded()
+
+        assert copy.current_context is None
+        twin = copy.get_resolver(SegmentResolver)
+        assert twin is not loaded
+        assert list(twin.identities()) == []
+        assert [i.name for i in loaded.identities()] == ["Guest"]
+        await twin.load(ResolverContext())  # the same client answers
+        with registry.context(ResolverContext(enterprise_id=9)):  # clears the original
+            assert list(loaded.identities()) == []
+            assert [i.name for i in twin.identities()] == ["Guest"]
+
+    def test_unloaded_refuses_a_resolver_it_cannot_copy(
+        self, registry: ResolverRegistry, foo_resolver: MockFooResolver
+    ):
+        registry.register(foo_resolver)
+        with pytest.raises(
+            TypeError, match=r"MockFooResolver has no unloaded\(\) method"
+        ):
+            _ = registry.unloaded()

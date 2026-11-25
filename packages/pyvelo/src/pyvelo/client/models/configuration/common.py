@@ -9,8 +9,8 @@ from pyvelo.client.enums.enterprise import NetworkSegmentType
 from pyvelo.client.exceptions import UnboundError
 from pyvelo.core import Alias, ConfigContext, VcoModel
 from pyvelo.core.base import (
-    _is_dict,  # pyright: ignore[reportPrivateUsage]
-    _is_list,  # pyright: ignore[reportPrivateUsage]
+    is_dict,
+    is_list,
 )
 from pyvelo.core.fields import NameOf, Resolvable
 from pyvelo.core.identity import (
@@ -67,10 +67,10 @@ it ("static route is missing"), and accepts it empty.
 
 def segment_id_of(raw_segment: object) -> object | None:
     """``raw_segment["segment"]["segmentId"]``, or None if any step is missing."""
-    if not _is_dict(raw_segment):
+    if not is_dict(raw_segment):
         return None
     descriptor = raw_segment.get("segment")
-    if not _is_dict(descriptor):
+    if not is_dict(descriptor):
         return None
     return descriptor.get("segmentId")
 
@@ -166,7 +166,7 @@ def _profile_segment_entry(
 def _segment_name(entry: Mapping[str, object]) -> str | None:
     """``entry["segment"]["name"]``, or None if any step is missing or it is not a string."""
     descriptor = entry.get("segment")
-    name = descriptor.get("name") if _is_dict(descriptor) else None
+    name = descriptor.get("name") if is_dict(descriptor) else None
     return name if isinstance(name, str) else None
 
 
@@ -191,15 +191,15 @@ def copy_profile_segments(profile_data: object) -> list[dict[str, Any]]:
     An empty list if *profile_data* is not an object or has no ``segments`` list;
     entries that are not objects are dropped.
     """
-    if not _is_dict(profile_data):
+    if not is_dict(profile_data):
         return []
     segments = profile_data.get("segments")
-    if not _is_list(segments):
+    if not is_list(segments):
         return []
     return [
         cast(dict[str, Any], copy.deepcopy(entry))
         for entry in segments
-        if _is_dict(entry)
+        if is_dict(entry)
     ]
 
 

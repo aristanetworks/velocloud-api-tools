@@ -22,6 +22,7 @@ from pyvelo.client.exceptions import (
     VcoWebSocketTimeoutError,
     VcoWebSocketValidationError,
     WriteNotAppliedError,
+    WriteOutcomeUnknownError,
 )
 from pyvelo.client.protocol import (
     Exchange,
@@ -62,6 +63,7 @@ __all__ = [
     "VcoWebSocketTimeoutError",
     "VcoWebSocketValidationError",
     "WriteNotAppliedError",
+    "WriteOutcomeUnknownError",
     "get_vco_credentials",
     "make_file_dump_hook",
 ]
