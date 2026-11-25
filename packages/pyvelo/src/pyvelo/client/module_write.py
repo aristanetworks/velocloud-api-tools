@@ -6,6 +6,15 @@ does not know, values it coerced and defaults it added never reach the VCO. Only
 what the caller changed (the difference between the module as re-parsed from the
 raw JSON and the model as it is now) is applied to it.
 
+After the plan: ``VcoClient.write_module`` sends it as an update or an insert
+(the requests are built here) that asks for the module as stored
+(``returnData``), and reads the module back when the VCO answers without it.
+``check_module_write`` (``pyvelo.client.module_check``) then compares what the
+VCO stored with what the plan meant to change. When every planned change is
+stored, the write returns the module as stored, with what else the VCO
+changed (``server_changes``); otherwise it raises ``ConfigConflictError`` or
+``WriteNotAppliedError``, which list the lost edits.
+
 Segment reconciliation: an edge module may lack a segment entry that its profile
 has. The write then carries an empty entry for it (the profile's descriptor and
 no rules; a deviceSettings entry also has an empty ``routes.static``, which the
@@ -39,6 +48,11 @@ from pyvelo.client.models.configuration.firewall.root import FirewallData
 from pyvelo.client.schemas.configuration import (
     ConfigurationModuleBase,
     ConfigurationModuleUpdate,
+    FirewallConfigurationModule,
+    InsertConfigurationModule,
+    InsertFirewallConfigurationModule,
+    InsertQosConfigurationModule,
+    QosConfigurationModule,
     UpdateConfigurationModule,
 )
 from pyvelo.core import ConfigContext, VcoModel
@@ -159,9 +173,16 @@ class ModulePlan:
 
 
 def update_request(
-    module: ConfigurationModuleBase, plan: ModulePlan, enterprise_id: int | None
+    module: ConfigurationModuleBase,
+    plan: ModulePlan,
+    enterprise_id: int | None,
+    *,
+    return_data: bool = True,
 ) -> UpdateConfigurationModule:
-    """The request that writes *plan* to *module*, at the version it was read."""
+    """The request that writes *plan* to *module*, at the version it was read.
+
+    With *return_data* it asks for the module row as stored.
+    """
     return UpdateConfigurationModule(
         configuration_module_id=module.id_,
         enterprise_id=enterprise_id if enterprise_id is not None else MISSING,
@@ -170,7 +191,39 @@ def update_request(
             data=plan.data,
             refs=plan.refs if plan.refs is not None else MISSING,
         ),
+        return_data=True if return_data else MISSING,
     )
+
+
+def insert_request(
+    module: ConfigurationModuleBase, plan: ModulePlan, enterprise_id: int | None
+) -> InsertConfigurationModule:
+    """The request that inserts *plan* as a new module of *module*'s configuration, asking for its row.
+
+    Only a firewall or QoS module is inserted (``TypeError`` otherwise); a QoS
+    one carries the plan's refs. Raises ``ValueError`` if *module* has no
+    ``configuration_id``.
+    """
+    configuration_id = module.configuration_id
+    if configuration_id is None:
+        raise ValueError("Cannot insert module: it has no configuration ID")
+    enterprise = enterprise_id if enterprise_id is not None else MISSING
+    if isinstance(module, FirewallConfigurationModule):
+        return InsertFirewallConfigurationModule(
+            configuration_id=configuration_id,
+            data=plan.data,
+            enterprise_id=enterprise,
+            return_data=True,
+        )
+    if isinstance(module, QosConfigurationModule):
+        return InsertQosConfigurationModule(
+            configuration_id=configuration_id,
+            data=plan.data,
+            refs=plan.refs,
+            enterprise_id=enterprise,
+            return_data=True,
+        )
+    raise TypeError(f"Cannot insert module type: {type(module).__name__}")
 
 
 def drop_legacy_keys(data: object, module_name: str) -> None:

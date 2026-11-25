@@ -140,12 +140,16 @@ class TestBackup:
 class FakeClient:
     """A client whose updates are refused, with text that names a lab entity."""
 
-    async def update_configuration_module(self, request: object) -> None:
+    async def update_configuration_module(
+        self, request: object, *, level: object = None
+    ) -> None:
         raise VcoOperationError("update", "refused for secret-lab-name")
 
 
 class RefusingClient(FakeClient):
-    async def insert_configuration_module(self, request: object) -> None:
+    async def insert_configuration_module(
+        self, request: object, *, level: object = None
+    ) -> None:
         raise VcoOperationError(
             "insert",
             "validationError",

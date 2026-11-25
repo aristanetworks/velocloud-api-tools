@@ -4,7 +4,7 @@ import copy
 import datetime
 import uuid
 from collections.abc import Mapping
-from typing import Annotated, Any, Literal, Self, TypeIs, overload
+from typing import Annotated, Any, Literal, Self, TypeIs, cast, get_args, overload
 
 from pydantic import (
     MISSING,
@@ -13,6 +13,7 @@ from pydantic import (
     ModelWrapValidatorHandler,
     PrivateAttr,
     RootModel,
+    Tag,
     ValidationInfo,
     model_validator,
 )
@@ -40,6 +41,7 @@ from pyvelo.core import (
     Alias,
     ConfigContext,
     NoneIsMissing,
+    RowsModifiedConfirmation,
     Tinyint,
     VcoModel,
     VcoTimestamp,
@@ -386,6 +388,8 @@ class UpdateConfigurationModule(VcoModel):
     enterprise_id: Annotated[int | MISSING, NoneIsMissing] = MISSING
     version: Annotated[str | MISSING, NoneIsMissing] = MISSING
     update: Annotated[ConfigurationModuleUpdate, Alias("_update")]
+    return_data: bool | MISSING = MISSING
+    """``True`` asks for the module row as stored in place of a row count."""
 
 
 class InsertConfigurationModuleResult(VcoModel):
@@ -394,11 +398,69 @@ class InsertConfigurationModuleResult(VcoModel):
     error: str | None | MISSING = MISSING
 
 
+def _module_names() -> frozenset[str]:
+    """The ``name`` of each module class of ``AnyConfigurationModule``."""
+    union = cast(object, get_args(cast(object, AnyConfigurationModule.__value__))[0])
+    modules = cast(tuple[type[ConfigurationModuleBase], ...], get_args(union))
+    return frozenset(
+        name
+        for module in modules
+        for name in cast(
+            tuple[str, ...], get_args(module.model_fields["name"].annotation)
+        )
+    )
+
+
+_MODULE_NAMES = _module_names()
+
+
+def _module_or_count(value: object) -> str:
+    """``"module"`` for a module or a row whose ``name`` the models know; else ``"count"``.
+
+    The answer to a write is told by its shape, not by which form validates, so
+    a module row that fails validation raises its own error, as on any read.
+    """
+    if isinstance(value, ConfigurationModuleBase):
+        return "module"
+    if _is_mapping(value):
+        name = value.get("name")
+        if isinstance(name, str) and name in _MODULE_NAMES:
+            return "module"
+    return "count"
+
+
+UpdateConfigurationModuleResult = RootModel[
+    Annotated[
+        Annotated[AnyConfigurationModule, Tag("module")]
+        | Annotated[RowsModifiedConfirmation, Tag("count")],
+        Discriminator(_module_or_count),
+    ]
+]
+"""An update's answer when it asks for data: the module row as stored.
+
+A VCO that ignores ``returnData`` answers with a row count.
+"""
+
+InsertedConfigurationModule = RootModel[
+    Annotated[
+        Annotated[AnyConfigurationModule, Tag("module")]
+        | Annotated[InsertConfigurationModuleResult, Tag("count")],
+        Discriminator(_module_or_count),
+    ]
+]
+"""An insert's answer when it asks for data: the module row as stored.
+
+A VCO that ignores ``returnData`` answers with the new ID and a row count.
+"""
+
+
 class InsertConfigurationModuleBase(VcoModel):
     description: str | None = ""
     configuration_id: Annotated[int, Resolvable(ProfileIdentity, "id")]
     enterprise_id: Annotated[int | MISSING, NoneIsMissing] = MISSING
     type_: Annotated[ConfigurationScope, Alias("type")] = ConfigurationScope.ENTERPRISE
+    return_data: bool | MISSING = MISSING
+    """``True`` asks for the module row as stored in place of its ID."""
 
 
 class InsertQosConfigurationModule(InsertConfigurationModuleBase):
@@ -528,10 +590,12 @@ __all__ = [
     "GetRoutableApplications",
     "InsertConfigurationModule",
     "InsertConfigurationModuleResult",
+    "InsertedConfigurationModule",
     "OperatorConfiguration",
     "OperatorConfigurationModule",
     "QosConfigurationModule",
     "UpdateConfigurationModule",
+    "UpdateConfigurationModuleResult",
     "WanConfigurationModule",
     "new_edge_module",
 ]

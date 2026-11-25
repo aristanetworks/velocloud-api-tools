@@ -1,24 +1,21 @@
 """ConfigPipeline: orchestration layer for load → apply → save configuration workflow."""
 
 from collections.abc import Mapping, Sequence
-from typing import Protocol, TypeIs, runtime_checkable
+from typing import Any, Protocol, TypeIs, runtime_checkable
 
 from pydantic import MISSING
 from pyvelo.client.enums.configuration import ConfigurationModuleName
 from pyvelo.client.enums.profiles import GetConfigurationWith
-from pyvelo.client.exceptions import UnboundError
-from pyvelo.client.module_write import ModulePlan, update_request
+from pyvelo.client.exceptions import ModuleWriteError, UnboundError
+from pyvelo.client.module_check import ModuleWrite
 from pyvelo.client.protocol import VcoClientProtocol
 from pyvelo.client.schemas.configuration import (
     AnyConfigurationModule,
-    ConfigurationBase,
     DeviceSettingsConfigurationModule,
     EdgeConfiguration,
     EnterpriseConfigurationProfile,
     FirewallConfigurationModule,
     GetConfiguration,
-    InsertFirewallConfigurationModule,
-    InsertQosConfigurationModule,
     QosConfigurationModule,
     WanConfigurationModule,
 )
@@ -40,8 +37,12 @@ from pyvelo.core.rebase import Key, Path
 from pyvelo_intent.config.module_names import (
     resolve_module_name as _resolve_module_name,
 )
-from pyvelo_intent.config.state import ConfigState, SaveResult, ValidationWarning
-from pyvelo_intent.errors import StateSpentError
+from pyvelo_intent.config.state import (
+    ConfigPlan,
+    ConfigState,
+    SaveResult,
+    ValidationWarning,
+)
 
 
 class ConfigPipeline:
@@ -275,10 +276,8 @@ class ConfigPipeline:
         downstream (reconciler, YAML export) can distinguish "unset" from
         "explicitly set".
 
-        Raises :class:`StateSpentError` if the state has already written, and
-        ``ValueError`` for an unknown *module*.
+        Raises ``ValueError`` for an unknown *module*.
         """
-        _require_unspent(state)
         internal_name = _resolve_module_name(module)
         existing = state.find_module(internal_name)
         mod = (
@@ -323,13 +322,37 @@ class ConfigPipeline:
 
         1. Plan the write of every module (:meth:`ConfigState.plan`).
         2. Run write-time validators on the changed modules. Errors block save.
-        3. Send an update or insert for each changed module, in order. The
-           state is spent from the first request on, even if a request fails.
+        3. Send each changed module, in order, as an update or an insert with
+           ``returnData`` (``write_module``), and replace the state's module
+           with the one the VCO stored (:meth:`ConfigState.replace_module`).
+           Per module, ``SaveResult.left_out`` holds the planned changes the
+           VCO stores its own way (a field it owns, a default it adds back
+           where the plan removed it, the removal of a row of an append-only
+           ref): neither applied nor lost, each with the value read, the
+           value sent and the value stored. ``SaveResult.server_changes``
+           holds what the VCO stored otherwise than sent, at paths that are
+           not lost edits: what it or another writer changed beside the
+           plan, an ID it issued, an IPv6 address in canonical form, the
+           value it stored at a left-out change. A value stored as it was
+           read is not listed there; a left-out change kept so is in
+           ``left_out``. In a list compared whole (a keyed list read with an
+           item that has no key) nothing is left out: a value stored at an
+           owned field otherwise than sent is a server change with
+           ``as_read`` ``MISSING``.
 
-        ``dry_run`` stops after step 2 and leaves the state usable. Raises
-        :class:`StateSpentError` if the state has already written.
+        A later :meth:`ConfigState.plan` is empty, and the state takes more
+        edits and saves. Objects taken from the state before the save belong
+        to the replaced modules and are detached: an edit through one raises
+        ``DetachedObjectError``.
+
+        After ``ConfigConflictError`` or ``WriteNotAppliedError`` the state
+        holds the module as stored, when the error carries it
+        (``error.module``): redo the edits in ``error.lost_edits`` and save
+        again. ``error.completed`` are the writes of this save before it. Any
+        other error of a request leaves that module and the later ones with
+        their edits, and carries a note that names the modules written before
+        it. ``dry_run`` stops after step 2 and sends nothing.
         """
-        _require_unspent(state)
         plan = state.plan()
         result = SaveResult(plan=plan)
 
@@ -358,18 +381,48 @@ class ConfigPipeline:
 
         if dry_run:
             return result
+        return await self._send(state, plan, result)
 
-        state.mark_spent()
+    async def _send(
+        self, state: ConfigState, plan: ConfigPlan, result: SaveResult
+    ) -> SaveResult:
+        """Write each changed module of *plan*, in order, and put the module as stored in *state*.
+
+        Raises ``TypeError`` before the first request when a changed module is
+        not one a save writes. A ``ModuleWriteError`` puts the module as
+        stored in *state* too, when it carries one, and gets the writes before
+        it as ``completed``. Any other error gets a note that names them, if
+        there are any.
+        """
         enterprise_id = state.resolver_context.enterprise_id
-        for module_plan in plan.changed:
-            mod = state.module(module_plan.name)
-            if module_plan.operation == "insert":
-                await self._insert_module(
-                    mod, state.target_config, enterprise_id, module_plan
+        # Each write replaces only its own module, so these stay the state's.
+        modules = [_require_writable(state.module(p.name)) for p in plan.changed]
+        done: list[ModuleWrite[Any]] = []
+        for module_plan, mod in zip(plan.changed, modules, strict=True):
+            try:
+                write = await self.client.write_module(
+                    mod, module_plan, enterprise_id=enterprise_id
                 )
-            else:
-                await self._update_module(mod, enterprise_id, module_plan)
-
+            except ModuleWriteError as error:
+                stored = error.module
+                # Of the class of mod (write_module checks it), or None when
+                # the module could not be read: then the state keeps mod.
+                if isinstance(stored, type(mod)):
+                    state.replace_module(mod, stored)
+                error.completed = tuple(done)
+                raise
+            except Exception as error:
+                if done:
+                    error.add_note(
+                        "written before this failure: "
+                        + ", ".join(f"{w.name} ({w.operation})" for w in done)
+                    )
+                raise
+            state.replace_module(mod, write.module)
+            done.append(write)
+            name = ConfigurationModuleName(write.name)
+            result.server_changes[name] = write.server_changes
+            result.left_out[name] = write.left_out
         return result
 
     def validate(self, state: ConfigState) -> ValidationResult:
@@ -401,56 +454,6 @@ class ConfigPipeline:
             await resolver.load(context)
         except LookupError:
             pass
-
-    async def _update_module(
-        self,
-        mod: AnyConfigurationModule,
-        enterprise_id: int | None,
-        plan: ModulePlan,
-    ) -> None:
-        """Send update_configuration_module API call."""
-        if not isinstance(
-            mod,
-            DeviceSettingsConfigurationModule
-            | QosConfigurationModule
-            | WanConfigurationModule
-            | FirewallConfigurationModule,
-        ):
-            raise TypeError(f"Cannot update module type: {type(mod).__name__}")
-
-        await self.client.update_configuration_module(
-            update_request(mod, plan, enterprise_id)
-        )
-
-    async def _insert_module(
-        self,
-        mod: AnyConfigurationModule,
-        config: ConfigurationBase,
-        enterprise_id: int | None,
-        plan: ModulePlan,
-    ) -> None:
-        """Send insert_configuration_module API call."""
-        config_id = config.id_
-        if config_id is MISSING or config_id is None:
-            raise ValueError("Cannot insert module: configuration has no ID")
-
-        if isinstance(mod, FirewallConfigurationModule):
-            request = InsertFirewallConfigurationModule(
-                configuration_id=config_id,
-                data=plan.data,
-                enterprise_id=enterprise_id if enterprise_id is not None else MISSING,
-            )
-        elif isinstance(mod, QosConfigurationModule):
-            request = InsertQosConfigurationModule(
-                configuration_id=config_id,
-                data=plan.data,
-                refs=plan.refs,
-                enterprise_id=enterprise_id if enterprise_id is not None else MISSING,
-            )
-        else:
-            raise TypeError(f"Cannot insert module type: {type(mod).__name__}")
-
-        _ = await self.client.insert_configuration_module(request)
 
 
 def build_default_pipeline(client: VcoClientProtocol) -> ConfigPipeline:
@@ -668,9 +671,25 @@ def _added_segment_name(op: ItemOp) -> str | None:
     return None if name is None else str(name)
 
 
-def _require_unspent(state: ConfigState) -> None:
-    if state.spent:
-        raise StateSpentError
+type _WritableModule = (
+    DeviceSettingsConfigurationModule
+    | QosConfigurationModule
+    | WanConfigurationModule
+    | FirewallConfigurationModule
+)
+
+
+def _require_writable(mod: AnyConfigurationModule) -> _WritableModule:
+    """*mod*, if it is a module a save writes; else ``TypeError``."""
+    if not isinstance(
+        mod,
+        DeviceSettingsConfigurationModule
+        | QosConfigurationModule
+        | WanConfigurationModule
+        | FirewallConfigurationModule,
+    ):
+        raise TypeError(f"Cannot update module type: {type(mod).__name__}")
+    return mod
 
 
 def _validation_error_to_warning(err: ValidatorError) -> ValidationWarning:

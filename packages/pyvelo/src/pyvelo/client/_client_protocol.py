@@ -14,10 +14,20 @@ from typing import TYPE_CHECKING, Any, Literal, Protocol
 import httpx
 from pydantic import BaseModel
 
-from pyvelo.core import PaginatedVcoModel, VcoModel
+from pyvelo.core import ConfigContext, PaginatedVcoModel, VcoModel
 
 if TYPE_CHECKING:
-    from pyvelo.client.schemas.configuration import UpdateConfigurationModule
+    from pyvelo.client.module_check import ModuleWrite
+    from pyvelo.client.module_write import ModulePlan
+    from pyvelo.client.schemas.configuration import (
+        AnyConfigurationModule,
+        ConfigurationBase,
+        ConfigurationModuleBase,
+        GetConfiguration,
+        InsertConfigurationModule,
+        InsertConfigurationModuleResult,
+        UpdateConfigurationModule,
+    )
 
 
 class VcoClientBaseProtocol(Protocol):
@@ -56,7 +66,29 @@ class VcoClientBaseProtocol(Protocol):
     ) -> Sequence[T]: ...
 
     async def update_configuration_module(
-        self, request: UpdateConfigurationModule
-    ) -> None: ...
+        self,
+        request: UpdateConfigurationModule,
+        *,
+        level: ConfigContext | None = None,
+    ) -> AnyConfigurationModule | None: ...
+
+    async def insert_configuration_module(
+        self,
+        request: InsertConfigurationModule,
+        *,
+        level: ConfigContext | None = None,
+    ) -> InsertConfigurationModuleResult | AnyConfigurationModule: ...
+
+    async def get_configuration(
+        self, request: GetConfiguration
+    ) -> ConfigurationBase: ...
+
+    async def write_module[M: ConfigurationModuleBase](
+        self,
+        module: M,
+        plan: ModulePlan,
+        *,
+        enterprise_id: int | None = None,
+    ) -> ModuleWrite[M]: ...
 
     def _on_stale_websocket_closed(self, task: asyncio.Task[None]) -> None: ...

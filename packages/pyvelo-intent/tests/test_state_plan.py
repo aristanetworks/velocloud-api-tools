@@ -3,7 +3,12 @@ from typing import Any
 
 import pytest
 from pyvelo.client.enums.configuration import ConfigurationModuleName
-from pyvelo.client.exceptions import ConfigConflictError
+from pyvelo.client.exceptions import (
+    ConfigConflictError,
+    DetachedObjectError,
+    ModuleWriteError,
+    WriteNotAppliedError,
+)
 from pyvelo.client.schemas.configuration import (
     ConfigurationBase,
     EdgeConfiguration,
@@ -15,7 +20,6 @@ from pyvelo.testing import make_module_json
 from pyvelo_intent import add
 from pyvelo_intent.config.pipeline import ConfigPipeline
 from pyvelo_intent.config.state import ConfigState
-from pyvelo_intent.errors import StateSpentError
 from pyvelo_intent.testing import MockVcoClient
 
 
@@ -104,7 +108,8 @@ def test_plan_reports_missing_segments_without_changes():
 
 
 async def test_save_sends_raw_payload_version_and_reconciles():
-    client, state = MockVcoClient(), make_state()
+    state = make_state()
+    client = MockVcoClient.for_state(state)
     state.edge.firewall.firewall_enabled = False
     result = await ConfigPipeline(client).save(state)
     (req,) = client.update_requests
@@ -121,26 +126,37 @@ async def test_save_sends_raw_payload_version_and_reconciles():
     assert result.plan is not None and result.plan.changed[0].name == "firewall"
 
 
-async def test_state_is_spent_after_a_write_and_not_after_dry_run():
-    client, state = MockVcoClient(), make_state()
+async def test_state_keeps_working_after_a_write():
+    state = make_state()
+    client = MockVcoClient.for_state(state)
     pipeline = ConfigPipeline(client)
     state.edge.firewall.firewall_enabled = False
     dry = await pipeline.save(state, dry_run=True)
-    assert state.spent is False and client.calls == []
+    assert client.calls == []
     assert dry.modules_updated == [ConfigurationModuleName.FIREWALL]
     await pipeline.save(state)
-    assert state.spent is True
-    with pytest.raises(StateSpentError):
-        await pipeline.save(state)
-    with pytest.raises(StateSpentError):
-        await pipeline.apply(state, module="firewall", patch={"firewall_enabled": True})
+    assert len(client.calls) == 1
+    again = await pipeline.save(state)
+    assert len(client.calls) == 1
+    assert (again.modules_updated, again.modules_inserted) == ([], [])
+    await pipeline.apply(state, module="firewall", patch={"firewall_enabled": True})
+    assert [m.name for m in state.plan().changed] == ["firewall"]
 
 
-def test_state_spent_error_is_exported_from_the_package():
+def test_write_errors_are_exported_from_the_package():
     import pyvelo_intent
 
-    assert pyvelo_intent.StateSpentError is StateSpentError
-    assert "StateSpentError" in pyvelo_intent.__all__
+    assert pyvelo_intent.ModuleWriteError is ModuleWriteError
+    assert pyvelo_intent.ConfigConflictError is ConfigConflictError
+    assert pyvelo_intent.WriteNotAppliedError is WriteNotAppliedError
+    assert pyvelo_intent.DetachedObjectError is DetachedObjectError
+    assert {
+        "ModuleWriteError",
+        "ConfigConflictError",
+        "WriteNotAppliedError",
+        "DetachedObjectError",
+    } <= set(pyvelo_intent.__all__)
+    assert not hasattr(pyvelo_intent, "StateSpentError")
 
 
 def test_patch_error_is_exported_from_the_package():
@@ -151,22 +167,35 @@ def test_patch_error_is_exported_from_the_package():
     assert "PatchError" in pyvelo_intent.__all__
 
 
-async def test_no_edit_save_does_not_spend_or_call():
-    client, state = MockVcoClient(), make_state()
+async def test_no_edit_save_does_not_call():
+    state = make_state()
+    client = MockVcoClient.for_state(state)
     result = await ConfigPipeline(client).save(state)
-    assert (client.calls, state.spent, result.modules_updated) == ([], False, [])
+    assert (client.calls, result.modules_updated) == ([], [])
 
 
-async def test_conflict_propagates_and_spends_the_state():
-    client, state = MockVcoClient(conflict=True), make_state()
+@pytest.mark.parametrize(
+    ("conditional_check", "raised"),
+    [(True, ConfigConflictError), (False, WriteNotAppliedError)],
+)
+async def test_conflict_propagates(
+    conditional_check: bool, raised: type[ConfigConflictError | WriteNotAppliedError]
+):
+    # Another writer changed the path edited here: a VCO with the check off
+    # stores nothing and returns its row, which the check finds a clash in.
+    state = make_state()
+    client = MockVcoClient.for_state(state, conditional_check=conditional_check)
+    client.store.other_writer(1, lambda row: row["data"].update(firewall_enabled=True))
     state.edge.firewall.firewall_enabled = False
-    with pytest.raises(ConfigConflictError):
+    with pytest.raises(raised) as exc:
         await ConfigPipeline(client).save(state)
-    assert state.spent is True
+    (clash,) = [c for c in exc.value.lost_edits if str(c.path) == "firewall_enabled"]
+    assert clash.clash
 
 
 async def test_missing_edge_module_is_inserted_from_an_empty_layer():
-    client, state = MockVcoClient(), make_state()
+    state = make_state()
+    client = MockVcoClient.for_state(state)
     qos = state.edge.qos  # no QOS row on the edge
     assert qos.segments == []
     assert state.plan().changed == ()  # reading it plans nothing
@@ -232,7 +261,8 @@ def test_state_binds_edge_layers_and_untouched_placeholder_is_no_change():
 
 
 async def test_rule_added_in_a_reconciled_segment():
-    client, state = MockVcoClient(), make_state()
+    state = make_state()
+    client = MockVcoClient.for_state(state)
     await ConfigPipeline(client).apply(
         state,
         module="firewall",

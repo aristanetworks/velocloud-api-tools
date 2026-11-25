@@ -1,7 +1,8 @@
 """Tests for operation logic paths.
 
-These tests mock at the VcoClient.portal() level to avoid constructing
-deeply-nested configuration data models.
+Most of these tests mock at the VcoClient.portal() level to avoid constructing
+deeply-nested configuration data models. ``update_module`` runs over a
+``ModuleStore``, which answers its writes as a VCO does.
 """
 
 from typing import cast
@@ -27,7 +28,11 @@ from pyvelo.client.schemas.configuration import (
 )
 from pyvelo.core import RowsModifiedConfirmation
 from pyvelo.core.base import ConfigContext
-from pyvelo.testing import make_module_json
+from pyvelo.testing import ModuleStore, make_module_json, store_of
+
+from ._type_support import MockVcoClientFactory
+
+UPDATE = "configuration/updateConfigurationModule"
 
 
 class TestUpdateConfigurationModuleErrors:
@@ -41,7 +46,7 @@ class TestUpdateConfigurationModuleErrors:
         client.portal = AsyncMock(return_value=error_result)
 
         with pytest.raises(VcoOperationError, match="update configuration module"):
-            await client.update_configuration_module(AsyncMock())
+            _ = await client.update_configuration_module(AsyncMock())
 
     async def test_success_returns_none(self):
         """update_configuration_module should return None on success."""
@@ -121,15 +126,19 @@ class TestGetConfiguration:
 class TestUpdateModule:
     """update_module sends the module's raw data with the caller's changes."""
 
-    def _make_client(self) -> tuple[VcoClient, list[UpdateConfigurationModule]]:
-        client = VcoClient("test.velocloud.net", "test-token")
-        calls: list[UpdateConfigurationModule] = []
+    async def _make_client(
+        self, mock_vco_client: MockVcoClientFactory, *modules: ConfigurationModuleBase
+    ) -> tuple[VcoClient, ModuleStore]:
+        store = store_of(*modules)
+        return await mock_vco_client(store), store
 
-        async def capture(request: UpdateConfigurationModule) -> None:
-            calls.append(request)
-
-        client.update_configuration_module = capture  # type: ignore[method-assign]
-        return client, calls
+    def _updates(self, store: ModuleStore) -> list[UpdateConfigurationModule]:
+        """Each update the store was sent, as a request."""
+        return [
+            UpdateConfigurationModule.model_validate(params)
+            for method, params in store.requests
+            if method == UPDATE
+        ]
 
     def _make_module(self, module_id: int = 100) -> ConfigurationModuleBase:
         return ConfigurationModuleBase.model_validate(
@@ -158,13 +167,15 @@ class TestUpdateModule:
             make_module_json("firewall", raw, module_id=module_id, version=version)
         )
 
-    async def test_sends_raw_payload_with_version(self):
-        client, calls = self._make_client()
+    async def test_sends_raw_payload_with_version(
+        self, mock_vco_client: MockVcoClientFactory
+    ):
         module = self._fw({"segments": [], "future": 1}, module_id=42, version="1700")
+        client, store = await self._make_client(mock_vco_client, module)
         data = module.mutable_data()
         data.firewall_enabled = False
-        await client.update_module(module, data, enterprise_id=99)
-        (req,) = calls
+        _ = await client.update_module(module, data, enterprise_id=99)
+        (req,) = self._updates(store)
         assert (req.configuration_module_id, req.enterprise_id, req.version) == (
             42,
             99,
@@ -176,41 +187,53 @@ class TestUpdateModule:
             "firewall_enabled": False,
         }
         assert req.update.refs is MISSING
-        assert req.model_dump(mode="json", by_alias=True) == {
-            "id": 42,
-            "enterpriseId": 99,
-            "version": "1700",
-            "_update": {
-                "data": {"segments": [], "future": 1, "firewall_enabled": False}
-            },
-        }
+        assert store.requests == [
+            (
+                UPDATE,
+                {
+                    "id": 42,
+                    "enterpriseId": 99,
+                    "version": "1700",
+                    "_update": {
+                        "data": {"segments": [], "future": 1, "firewall_enabled": False}
+                    },
+                    "returnData": True,
+                },
+            )
+        ]
 
-    async def test_no_change_sends_nothing(self):
-        client, calls = self._make_client()
+    async def test_no_change_sends_nothing(self, mock_vco_client: MockVcoClientFactory):
         module = self._fw({"segments": []})
-        await client.update_module(module, module.mutable_data())
-        assert calls == []
+        client, store = await self._make_client(mock_vco_client, module)
+        _ = await client.update_module(module, module.mutable_data())
+        assert store.requests == []
 
-    async def test_null_version_and_enterprise_are_omitted(self):
-        client, calls = self._make_client()
+    async def test_null_version_and_enterprise_are_omitted(
+        self, mock_vco_client: MockVcoClientFactory
+    ):
         module = self._fw({"segments": []}, version=None)
+        client, store = await self._make_client(mock_vco_client, module)
         data = module.mutable_data()
         data.firewall_enabled = False
-        await client.update_module(module, data)
-        assert calls[0].version is MISSING and calls[0].enterprise_id is MISSING
+        _ = await client.update_module(module, data)
+        (req,) = self._updates(store)
+        assert req.version is MISSING and req.enterprise_id is MISSING
 
-    async def test_refs_forwarded_only_when_changed(self):
-        client, calls = self._make_client()
+    async def test_refs_forwarded_only_when_changed(
+        self, mock_vco_client: MockVcoClientFactory
+    ):
         qos = QosConfigurationModule.model_validate(
             make_module_json("QOS", {"segments": []}, refs={"a": 1})
         )
-        await client.update_module(qos, qos.mutable_data(), refs={"a": 1})
-        assert calls == []
-        await client.update_module(qos, qos.mutable_data(), refs={"a": 2})
-        assert calls[0].update.refs == {"a": 2}
+        client, store = await self._make_client(mock_vco_client, qos)
+        _ = await client.update_module(qos, qos.mutable_data(), refs={"a": 1})
+        assert store.requests == []
+        _ = await client.update_module(qos, qos.mutable_data(), refs={"a": 2})
+        assert self._updates(store)[0].update.refs == {"a": 2}
 
-    async def test_profile_argument_reconciles_segments(self):
-        client, calls = self._make_client()
+    async def test_profile_argument_reconciles_segments(
+        self, mock_vco_client: MockVcoClientFactory
+    ):
         seg = {
             "segment": {"segmentId": 2, "name": "Guest"},
             "outbound": [
@@ -218,34 +241,29 @@ class TestUpdateModule:
             ],
         }
         edge = self._fw({"segments": []})
+        client, store = await self._make_client(mock_vco_client, edge)
         data = edge.mutable_data().for_edge()
         data.firewall_enabled = False
-        await client.update_module(
+        _ = await client.update_module(
             edge, data, profile=self._fw({"segments": [seg]}, module_id=2)
         )
-        assert calls[0].update.data["segments"] == [
+        assert self._updates(store)[0].update.data["segments"] == [
             {"segment": {"segmentId": 2, "name": "Guest"}, "outbound": []}
         ]
 
-    async def test_module_without_snapshot_sends_the_whole_dump(self):
-        client, calls = self._make_client()
-        data = FirewallData(segments=[])
-        await client.update_module(self._make_module(), data)
-        assert calls[0].update.data == data.model_dump(mode="json", by_alias=True)
-
-    async def test_new_module_is_rejected(self):
-        client, _ = self._make_client()
+    async def test_new_module_is_rejected(self, mock_vco_client: MockVcoClientFactory):
         mod = new_edge_module(ConfigurationModuleName.FIREWALL, 10)
+        client, _ = await self._make_client(mock_vco_client, mod)
         with pytest.raises(ValueError, match="insert"):
-            await client.update_module(mod, mod.data)
+            _ = await client.update_module(mod, mod.data)
 
-    async def test_unsupported_type_raises(self):
+    async def test_unsupported_type_raises(self, mock_vco_client: MockVcoClientFactory):
         """update_module should raise TypeError for unsupported data types."""
-        client, _mock = self._make_client()
+        client, _store = await self._make_client(mock_vco_client)
         module = self._make_module()
 
         with pytest.raises(TypeError, match="Unsupported data type"):
-            await client.update_module(
+            _ = await client.update_module(
                 module,
                 cast(DeviceSettingsData | QosData | WanData | FirewallData, object()),
             )

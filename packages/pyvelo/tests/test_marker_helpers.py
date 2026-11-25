@@ -2,6 +2,7 @@
 
 from typing import Annotated
 
+import pyvelo.core
 from pydantic import Field
 from pyvelo.core import VcoModel
 from pyvelo.core.fields import (
@@ -9,10 +10,12 @@ from pyvelo.core.fields import (
     KeyField,
     OverrideFlag,
     Resolvable,
+    ServerOwned,
     get_key_spec,
     get_resolvable,
     has_override_flag,
     is_edge_local,
+    is_server_owned,
 )
 from pyvelo.core.identity import SegmentIdentity
 
@@ -26,6 +29,7 @@ class MarkedModel(VcoModel):
     items: Annotated[list[Item], KeyField("name")] = Field(default_factory=list)
     cidr_ip: Annotated[str, EdgeLocal] = ""
     segment_id: Annotated[int, Resolvable(SegmentIdentity, "segment_id")] = 0
+    stamp: Annotated[str, ServerOwned()] = ""
     plain: str = ""
 
 
@@ -72,3 +76,12 @@ class TestGetResolvable:
     def test_returns_none_for_non_resolvable(self):
         fi = MarkedModel.model_fields["plain"]
         assert get_resolvable(fi) is None
+
+
+def test_is_server_owned():
+    assert is_server_owned(MarkedModel.model_fields["stamp"]) is True
+    assert is_server_owned(MarkedModel.model_fields["plain"]) is False
+
+
+def test_server_owned_is_exported():
+    assert "ServerOwned" in pyvelo.core.__all__

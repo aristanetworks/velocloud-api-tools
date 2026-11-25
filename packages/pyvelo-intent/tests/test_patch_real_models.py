@@ -78,7 +78,7 @@ def change_paths(state: ConfigState) -> list[str]:
 
 async def payload(state: ConfigState) -> dict[str, Any]:
     """The data a save of *state* sends for its one changed module."""
-    client = MockVcoClient()
+    client = MockVcoClient.for_state(state)
     _ = await ConfigPipeline(client).save(state)
     (request,) = client.update_requests
     return request.update.data
