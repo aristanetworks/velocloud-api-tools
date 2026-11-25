@@ -157,7 +157,7 @@ class TestMetricFrameGroupBy:
                 {"cat": "B", "val": 30},
             ],
         )
-        result = f.group_by("cat").agg(sum="val")
+        result = f.group_by("cat").agg(sum_="val")
         result = result.sort("cat")
         assert result.rows[0]["val_sum"] == 30
         assert result.rows[1]["val_sum"] == 30

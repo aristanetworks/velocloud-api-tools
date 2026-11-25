@@ -321,7 +321,7 @@ class VcoClientProtocol(
         self,
         method: str,
         request: PaginatedVcoModel,
-        ItemType: type[T],
+        item_type: type[T],
     ) -> AsyncGenerator[list[T]]:
         """Yield one page per source request until VCO reports no more pages.
 
@@ -333,8 +333,8 @@ class VcoClientProtocol(
         request.record_page_cursor(None)
         page_request = request.model_copy()
 
-        ResultType = PaginatedResult[ItemType]
-        ResponseType = JsonRpcResponse[ResultType]
+        page_type = PaginatedResult[item_type]
+        response_type = JsonRpcResponse[page_type]
 
         while more:
             rpc_request = JsonRpcRequest(method=method, params=page_request)
@@ -347,13 +347,13 @@ class VcoClientProtocol(
 
             self._check_http_status(response)
             try:
-                validated_response = ResponseType.model_validate_json(response.content)
+                validated_response = response_type.model_validate_json(response.content)
             except ValidationError as exc:
                 self._notify_exchange(
-                    content, response, result_type=ItemType, validation_error=exc
+                    content, response, result_type=item_type, validation_error=exc
                 )
                 raise
-            self._notify_exchange(content, response, result_type=ItemType)
+            self._notify_exchange(content, response, result_type=item_type)
             result = self._check_rpc_result(method, validated_response)
 
             meta = result.metadata
@@ -375,7 +375,7 @@ class VcoClientProtocol(
         self,
         method: str,
         request: VcoModel,
-        ResultType: type[T],
+        result_type: type[T],
         *,
         validation_context: dict[str, Any] | None = None,
     ) -> T:
@@ -394,25 +394,25 @@ class VcoClientProtocol(
         )
 
         self._check_http_status(response)
-        ResponseType = JsonRpcResponse[ResultType]
+        response_type = JsonRpcResponse[result_type]
 
         try:
-            validated_response = ResponseType.model_validate_json(
+            validated_response = response_type.model_validate_json(
                 response.content, context=validation_context
             )
         except ValidationError as exc:
             self._notify_exchange(
-                content, response, result_type=ResultType, validation_error=exc
+                content, response, result_type=result_type, validation_error=exc
             )
             raise
-        self._notify_exchange(content, response, result_type=ResultType)
+        self._notify_exchange(content, response, result_type=result_type)
         return self._check_rpc_result(method, validated_response)
 
     async def portal_list[T: BaseModel](
         self,
         method: str,
         request: VcoModel,
-        ItemType: type[T],
+        item_type: type[T],
         *,
         hint: Literal["list"] | None = None,
     ) -> Sequence[T]:
@@ -434,7 +434,7 @@ class VcoClientProtocol(
 
         # Try bare list first, fall back to paginated envelope on structural mismatch.
         try:
-            list_response = JsonRpcResponse[list[ItemType]].model_validate_json(
+            list_response = JsonRpcResponse[list[item_type]].model_validate_json(
                 response.content
             )
         except ValidationError as list_err:
@@ -442,24 +442,24 @@ class VcoClientProtocol(
                 self._notify_exchange(
                     content,
                     response,
-                    result_type=ItemType,
+                    result_type=item_type,
                     validation_error=list_err,
                 )
                 raise
         else:
-            self._notify_exchange(content, response, result_type=ItemType)
+            self._notify_exchange(content, response, result_type=item_type)
             return self._check_rpc_result(method, list_response)
 
         try:
             pag_response = JsonRpcResponse[
-                PaginatedResult[ItemType]
+                PaginatedResult[item_type]
             ].model_validate_json(response.content)
         except ValidationError as exc:
             self._notify_exchange(
-                content, response, result_type=ItemType, validation_error=exc
+                content, response, result_type=item_type, validation_error=exc
             )
             raise
-        self._notify_exchange(content, response, result_type=ItemType)
+        self._notify_exchange(content, response, result_type=item_type)
         page = self._check_rpc_result(method, pag_response)
 
         if page.metadata.more:
@@ -479,7 +479,7 @@ class VcoClientProtocol(
         self,
         method: str,
         request: PaginatedVcoModel,
-        ItemType: type[T],
+        item_type: type[T],
     ) -> Sequence[T]:
         """Collect pages until VCO reports no more or ``request.max_pages`` is hit.
 
@@ -489,7 +489,7 @@ class VcoClientProtocol(
         """
         items: list[T] = []
         page_count = 0
-        async with aclosing(self.portal_paginated(method, request, ItemType)) as pages:
+        async with aclosing(self.portal_paginated(method, request, item_type)) as pages:
             async for page in pages:
                 items.extend(page)
                 page_count += 1

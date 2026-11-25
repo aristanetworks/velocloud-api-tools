@@ -295,7 +295,7 @@ def _in_patch(info: ValidationInfo) -> bool:
     return bool((info.context or {}).get("patch"))
 
 
-def Lenient(rewrite: Callable[[Any], Any]) -> BeforeValidator:
+def Lenient(rewrite: Callable[[Any], Any]) -> BeforeValidator:  # noqa: N802 (an Annotated marker, named like the types it stands beside)
     """Annotated marker: *rewrite* a value on parse, to tolerate a bad one from the VCO.
 
     Not in a patch (see ``_in_patch``): there the value is left as it is, and
@@ -332,7 +332,7 @@ def _audit(info: ValidationInfo, v: Any, reason: str) -> None:
     )
 
 
-def DefaultingModel[T](
+def DefaultingModel[T](  # noqa: N802 (an Annotated marker, named like the types it stands beside)
     model_type: type[T] | UnionType,
     *,
     default_factory: Callable[..., Any] | None = None,
@@ -365,7 +365,7 @@ def DefaultingModel[T](
     return BeforeValidator(_validator)
 
 
-def DefaultingScalar(model_type: Any, *, default: Any) -> BeforeValidator:
+def DefaultingScalar(model_type: Any, *, default: Any) -> BeforeValidator:  # noqa: N802 (an Annotated marker, named like the types it stands beside)
     """Annotated marker: fall back to *default* when validation fails.
 
     Not in a patch (see ``_in_patch``): there a failure raises.

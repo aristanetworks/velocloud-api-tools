@@ -162,9 +162,11 @@ async def main() -> None:
         if enterprise_id is None:
             ent = await client.get_enterprise(GetEnterprise())
             enterprise_id = ent.id_
-            logger.info(f"Auto-discovered enterprise: {ent.name} (ID {enterprise_id})")
+            logger.info(
+                "Auto-discovered enterprise: %s (ID %s)", ent.name, enterprise_id
+            )
 
-        logger.info(f"Fetching edges for enterprise {enterprise_id}...")
+        logger.info("Fetching edges for enterprise %s...", enterprise_id)
         edges = await client.get_enterprise_edges(
             GetEnterpriseEdges(enterprise_id=enterprise_id)
         )
@@ -182,8 +184,9 @@ async def main() -> None:
             return
 
         logger.info(
-            f"{len(connected)} connected edge(s): "
-            + ", ".join(e.name or f"edge-{e.id_}" for e in connected)
+            "%d connected edge(s): %s",
+            len(connected),
+            ", ".join(e.name or f"edge-{e.id_}" for e in connected),
         )
 
         # Enterprise-wide flow metrics
@@ -208,7 +211,7 @@ async def main() -> None:
             edge_name = edge.name
             if not isinstance(edge_name, str) or not edge_name:
                 edge_name = f"edge-{edge.id_}"
-            logger.info(f"Fetching metrics for {edge_name} (ID {edge.id_})...")
+            logger.info("Fetching metrics for %s (ID %s)...", edge_name, edge.id_)
 
             frames = await fetch_edge_metrics(
                 analytics,

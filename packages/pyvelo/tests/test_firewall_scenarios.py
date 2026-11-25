@@ -244,7 +244,7 @@ def test_a_rule_match_keeps_the_vco_s_vlan_type_key_for_key() -> None:
     assert written == stored
 
 
-def test_a_new_outbound_rule_is_written_with_vlan_type_and_not_vlanType() -> None:
+def test_a_new_outbound_rule_is_written_with_vlan_type_and_not_vlanType() -> None:  # noqa: N802 (the VCO key is the point of the test)
     edge, profile = bound({"segments": [{"segment": desc(0, "Global Segment")}]})
     edge.data.segments[0].outbound.append(rule("new"))
     (written,) = payload(edge, profile)["segments"][0]["outbound"]

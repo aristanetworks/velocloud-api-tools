@@ -49,7 +49,7 @@ async def get_edge_firewall_metrics(
     client: VcoClientProtocol,
     edge_id: int,
     interval: ApiInterval,
-    type: FirewallType,
+    type_: FirewallType,
     view_by: str,
     *,
     enterprise_id: int | None = None,
@@ -59,7 +59,7 @@ async def get_edge_firewall_metrics(
     limit_val = limit if limit is not None else MISSING
     eid = enterprise_id if enterprise_id is not None else MISSING
 
-    match type:
+    match type_:
         case FirewallType.IDPS:
             request = GetEdgeFirewallIdpsMetrics(
                 edge_id=edge_id,
@@ -112,7 +112,7 @@ async def get_edge_firewall_metrics(
             result = await client.get_edge_firewall_url_reputation_metrics(request)
             return items_to_frame(result, _URL_REP_FIELDS)
 
-    raise ValueError(f"Unknown firewall type: {type}")  # pyright: ignore[reportUnreachable]  # a caller may pass a value outside the enum
+    raise ValueError(f"Unknown firewall type: {type_}")  # pyright: ignore[reportUnreachable]  # a caller may pass a value outside the enum
 
 
 async def get_edge_firewall_series(
@@ -138,7 +138,7 @@ async def get_edge_firewall_series(
 async def get_enterprise_firewall_metrics(
     client: VcoClientProtocol,
     interval: ApiInterval,
-    type: EnterpriseFirewallType,
+    type_: EnterpriseFirewallType,
     view_by: str | None = None,
     *,
     enterprise_id: int | None = None,
@@ -148,7 +148,7 @@ async def get_enterprise_firewall_metrics(
     limit_val = limit if limit is not None else MISSING
     eid = enterprise_id if enterprise_id is not None else MISSING
 
-    match type:
+    match type_:
         case EnterpriseFirewallType.IDPS:
             request = GetEnterpriseFirewallIdpsMetrics(
                 interval=interval,
@@ -239,7 +239,7 @@ async def get_enterprise_firewall_metrics(
             )
             return items_to_frame(result, _URL_REP_FIELDS)
 
-    raise ValueError(f"Unknown enterprise firewall type: {type}")  # pyright: ignore[reportUnreachable]  # a caller may pass a value outside the enum
+    raise ValueError(f"Unknown enterprise firewall type: {type_}")  # pyright: ignore[reportUnreachable]  # a caller may pass a value outside the enum
 
 
 _IDPS_FIELDS = [

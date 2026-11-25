@@ -49,7 +49,7 @@ MIN_INTERFACE_STATS_VERSION = (6, 4, 0, 0)
 class Status(StrEnum):
     """The outcome of one test: rows, no rows, an error, or not run."""
 
-    PASS = "PASS"
+    PASS = "PASS"  # noqa: S105 (a check status, not a password)
     EMPTY = "EMPTY"
     FAIL = "FAIL"
     SKIP = "SKIP"
@@ -425,7 +425,7 @@ async def run_all_tests(
         )
 
     # --- Edge firewall metrics (all type/view combos) ---
-    _EDGE_FW_VIEWS: list[tuple[FirewallType, str]] = [
+    edge_fw_views: list[tuple[FirewallType, str]] = [
         (FirewallType.IDPS, "signatureName"),
         (FirewallType.IDPS, "threatImpactAlias"),
         (FirewallType.IDPS, "alert"),
@@ -445,7 +445,7 @@ async def run_all_tests(
         (FirewallType.URL_REPUTATION, "urlRisk"),
         (FirewallType.URL_REPUTATION, "action"),
     ]
-    for fw_type, view_by in _EDGE_FW_VIEWS:
+    for fw_type, view_by in edge_fw_views:
         results.append(
             await run_test(
                 f"edge_fw({fw_type.name},{view_by})",
@@ -469,7 +469,7 @@ async def run_all_tests(
     )
 
     # --- Enterprise firewall metrics (all type/view combos) ---
-    _ENT_FW_VIEWS: list[tuple[EnterpriseFirewallType, str | None]] = [
+    ent_fw_views: list[tuple[EnterpriseFirewallType, str | None]] = [
         (EnterpriseFirewallType.IDPS, "signatureName"),
         (EnterpriseFirewallType.IDPS, "threatImpactAlias"),
         (EnterpriseFirewallType.IDPS, "alert"),
@@ -495,7 +495,7 @@ async def run_all_tests(
         (EnterpriseFirewallType.URL_REPUTATION, "action"),
         (EnterpriseFirewallType.URL_REPUTATION, "edgeLogicalId"),
     ]
-    for ent_type, view_by in _ENT_FW_VIEWS:
+    for ent_type, view_by in ent_fw_views:
         label = f"{ent_type.name}" + (f",{view_by}" if view_by else "")
         results.append(
             await run_test(

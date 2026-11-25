@@ -67,7 +67,7 @@ OMITTED_SEGMENT = (
     "the composer keeps only the segments in use on the edge "
     "(VLANs, routed interfaces, loopbacks and the Global Segment)"
 )
-SECRET_NOT_COMPARED = "a secret value is not compared"
+SECRET_NOT_COMPARED = "a secret value is not compared"  # noqa: S105 (a finding's reason, not a password)
 UNCONVERTED_FIELD = "the library does not model this yet, so the view has no value"
 UNMODELED_KEY = "the library does not know this key yet, so the view has no value"
 FACTORY_ABSENT = "the view gives the display default and the server has no value"
@@ -505,9 +505,9 @@ class _Comparison:
         spec = get_key_spec(info)
         if isinstance(held, Layered):
             self.child(cast("Layered[Effective]", held), path, client, server)
-        elif spec is not None and _layered_items(inner) is not None:
+        elif spec is not None and (item_class := _layered_items(inner)) is not None:
             items = cast("list[Layered[Effective]]", held)
-            self.segments(items, inner, spec.alt, spec.paths, path, client, server)
+            self.segments(items, item_class, spec.alt, spec.paths, path, client, server)
         elif kind is Kind.ADDITIVE:
             self.additive(_model_of(inner), path, client, server)
         else:
@@ -545,7 +545,7 @@ class _Comparison:
     def segments(
         self,
         items: list[Layered[Effective]],
-        inner: object,
+        item_class: type[Layered[Any]],
         alt: str | None,
         key_paths: tuple[str, ...],
         path: str,
@@ -573,8 +573,6 @@ class _Comparison:
             else:
                 self.emit(path, EffectiveCategory.DIFFERS, client, server)
             return
-        item_class = _layered_items(inner)
-        assert item_class is not None
         alt_keys = None if alt is None else _wire_path(item_class, alt)
         key_keys = [_wire_path(item_class, p) for p in key_paths]
 

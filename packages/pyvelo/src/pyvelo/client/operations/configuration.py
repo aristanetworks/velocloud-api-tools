@@ -275,11 +275,13 @@ async def _read_held(
     """*module* as the VCO holds it now, read with its refs from its configuration, before anything is sent.
 
     Raises ``ConfigConflictError`` with nothing sent and no module when the
-    configuration no longer holds the module. An error of the read, or a read
+    configuration no longer holds the module, and ``ValueError`` when
+    *module* has no ``configuration_id``. An error of the read, or a read
     that does not parse, propagates.
     """
     configuration_id = module.configuration_id
-    assert configuration_id is not None
+    if configuration_id is None:
+        raise ValueError("the module has no configuration ID to read it by")
     held = await _read_rows(client, configuration_id, enterprise_id)
     row = next((r for r in held if r.get("id") == module.id_), None)
     if row is None:

@@ -381,7 +381,7 @@ def sla_rule(**sla: Any) -> dict[str, Any]:
     return {**copy.deepcopy(RULE), "action": action}
 
 
-def test_a_rule_s_sla_keeps_the_vco_s_lossPct_key_for_key() -> None:
+def test_a_rule_s_sla_keeps_the_vco_s_lossPct_key_for_key() -> None:  # noqa: N802 (the VCO key is the point of the test)
     # The VCO stores the key as lossPct; a loss_pct key is not one the VCO uses.
     raw = {"segments": [segment_of(rules=[sla_rule(lossPct="0.5")])]}
     module = qos_mod(raw, layer=Edge)
@@ -396,7 +396,7 @@ def test_a_rule_s_sla_keeps_the_vco_s_lossPct_key_for_key() -> None:
     assert "loss_pct" not in written["action"]["sla"]
 
 
-def test_a_new_qos_rule_with_an_sla_is_written_with_lossPct_and_not_loss_pct() -> None:
+def test_a_new_qos_rule_with_an_sla_is_written_with_lossPct_and_not_loss_pct() -> None:  # noqa: N802 (the VCO key is the point of the test)
     edge, profile = bound({"segments": [segment_of()]}, {"segments": [segment_of()]})
     edge.data.segments[0].rules.append(QosRule.model_validate(sla_rule()))
     (written,) = payload(edge, profile)["segments"][0]["rules"]

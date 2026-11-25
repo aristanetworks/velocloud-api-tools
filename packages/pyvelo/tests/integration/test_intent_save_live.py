@@ -109,7 +109,7 @@ from live_support import (
     TARGET_MARK,
     WITH_EDGES_MARK,
     Answer,
-    DataRefused,
+    DataRefusedError,
     EdgeLayout,
     HubTarget,
     Lab,
@@ -219,7 +219,7 @@ class Writes:
     inserts: list[InsertConfigurationModule]
 
 
-class WriteRefused(AssertionError):
+class WriteRefusedError(AssertionError):
     """A test that must send nothing tried to write."""
 
 
@@ -233,14 +233,14 @@ def refused_writes(vco_client: VcoClient, monkeypatch: pytest.MonkeyPatch) -> li
     ) -> None:
         del level
         attempts.append("update")
-        raise WriteRefused
+        raise WriteRefusedError
 
     async def refuse_insert(
         _request: InsertConfigurationModule, *, level: ConfigContext | None = None
     ) -> Any:
         del level
         attempts.append("insert")
-        raise WriteRefused
+        raise WriteRefusedError
 
     monkeypatch.setattr(vco_client, "update_configuration_module", refuse_update)
     monkeypatch.setattr(vco_client, "insert_configuration_module", refuse_insert)
@@ -370,7 +370,7 @@ async def _save_nothing(
     """Save a state with no edit: it must return without sending, and stay usable."""
     try:
         result = await pipeline.save(state)
-    except WriteRefused:
+    except WriteRefusedError:
         failures.append(f"{label}: save with no edit tried to write")
         return
     if result.modules_updated or result.modules_inserted:
@@ -820,7 +820,7 @@ async def test_missing_device_settings_segment_is_added_as_a_placeholder_the_orc
         refused: str | None = None
         try:
             await write_data(site, module, data)
-        except DataRefused as exc:
+        except DataRefusedError as exc:
             refused = refusal_codes(exc)
         if refused is not None:
             pytest.skip(

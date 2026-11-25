@@ -58,7 +58,7 @@ passed over. Everything unmarked is read and never written. With nothing
 marked, each test that writes is skipped and says which mark it wants.
 
 A test that writes is marked ``live_write``. The client the suite connects
-(``connect``) refuses, with ``WritesRefused`` and before anything is sent:
+(``connect``) refuses, with ``WritesRefusedError`` and before anything is sent:
 
 * every portal call that is not a read, except the three writes the suite
   makes itself: ``update_configuration_module`` and
@@ -440,14 +440,14 @@ class LiveSuiteError(Exception):
     """The base of the suite's own errors: a message of one names no entity of the lab."""
 
 
-class LabUnreadable(LiveSuiteError):
+class LabUnreadableError(LiveSuiteError):
     """An edge of the lab does not load; the message names no entity."""
 
 
-def _unreadable(index: int, exc: ValidationError) -> LabUnreadable:
+def _unreadable(index: int, exc: ValidationError) -> LabUnreadableError:
     """A ``ValidationError`` as the error types alone: its input is lab data."""
     kinds = sorted({str(error["type"]) for error in exc.errors()})
-    return LabUnreadable(
+    return LabUnreadableError(
         f"edge #{index} does not load: {exc.error_count()} validation error(s) "
         f"of type {', '.join(kinds)}"
     )
@@ -458,7 +458,7 @@ async def discover_layouts(
 ) -> list[EdgeLayout]:
     """Every edge, with its configuration stack as the models read it.
 
-    An edge that does not load raises ``LabUnreadable``: a lab that this suite
+    An edge that does not load raises ``LabUnreadableError``: a lab that this suite
     cannot read is not a lab it can test.
     """
     layouts: list[EdgeLayout] = []
@@ -687,7 +687,7 @@ def _found_codes(exc: VcoOperationError) -> list[tuple[str, str]]:
     return found
 
 
-class DataRefused(VcoOperationError):
+class DataRefusedError(VcoOperationError):
     """A write the Orchestrator refused with a validation error: its message is the codes alone."""
 
 
@@ -719,7 +719,7 @@ def _stored_nothing(exc: BaseException, *, unsent: bool) -> bool:
 def _redacted(exc: VcoOperationError) -> VcoOperationError:
     """*exc* with each error code and field kept and no message; ``refusal_codes`` reads it as it reads *exc*.
 
-    A refusal that states its errors in its data is a ``DataRefused``; any other
+    A refusal that states its errors in its data is a ``DataRefusedError``; any other
     error stays a plain ``VcoOperationError``.
     """
     errors = [
@@ -727,7 +727,7 @@ def _redacted(exc: VcoOperationError) -> VcoOperationError:
         for code, field in _found_codes(exc)
     ]
     if _states_errors(exc):
-        return DataRefused(
+        return DataRefusedError(
             exc.operation, refusal_codes(exc), code=exc.code, data={"error": errors}
         )
     return VcoOperationError(
@@ -801,7 +801,7 @@ ROLE_CALL_NOT_THE_HUB = (
 )
 
 
-class WritesRefused(LiveSuiteError):
+class WritesRefusedError(LiveSuiteError):
     """A write the suite will not send; the message says why and names no entity."""
 
 
@@ -920,20 +920,26 @@ async def check_write_access(
     return WriteAccess(granted=True, refusal="")
 
 
-_marked: bool = False
-"""Whether the test now running is marked ``live_write``; false outside ``writer_test``."""
+@dataclass
+class _Writer:
+    """Whether the test running is a writer, set by ``writer_test``."""
+
+    marked: bool = False
+    """Whether the test now running is marked ``live_write``; false outside ``writer_test``."""
+
+
+_writer = _Writer()
 
 
 @contextmanager
 def writer_test(*, marked: bool) -> Generator[None]:
     """For the length of the block, the test running is a writer (*marked*) or is not."""
-    global _marked
-    before = _marked
-    _marked = marked
+    before = _writer.marked
+    _writer.marked = marked
     try:
         yield
     finally:
-        _marked = before
+        _writer.marked = before
 
 
 _UNKNOWN: object = object()
@@ -974,12 +980,12 @@ class LiveRun:
     """Each module's raw data as the Orchestrator last answered this run's write with, or ``_UNKNOWN``."""
 
     def _check_may_write(self) -> None:
-        if not _marked:
-            raise WritesRefused(NOT_MARKED)
+        if not _writer.marked:
+            raise WritesRefusedError(NOT_MARKED)
         if not self.access.granted:
-            raise WritesRefused(self.access.refusal)
+            raise WritesRefusedError(self.access.refusal)
         if not self.open:
-            raise WritesRefused(OUTSIDE_RESTORING)
+            raise WritesRefusedError(OUTSIDE_RESTORING)
 
     def _covers(self, module_id: int) -> bool:
         """Whether an open block found module *module_id* or inserted it."""
@@ -1005,13 +1011,13 @@ class LiveRun:
             del self.inserted[module_id]
 
     def check_update(self, module_id: int) -> None:
-        """Raise ``WritesRefused`` unless the update of *module_id* is one a block will put back."""
+        """Raise ``WritesRefusedError`` unless the update of *module_id* is one a block will put back."""
         self._check_may_write()
         if not self._covers(module_id):
-            raise WritesRefused(f"an update of a module {NOT_COVERED}")
+            raise WritesRefusedError(f"an update of a module {NOT_COVERED}")
 
     def check_replace(self, configuration_id: int, name: str, what: str) -> None:
-        """Raise ``WritesRefused`` unless an open block is on that configuration's *name* module.
+        """Raise ``WritesRefusedError`` unless an open block is on that configuration's *name* module.
 
         *what* is ``"an insert"`` or ``"a delete"``. The block's site must also
         be one marked for deleting and inserting modules.
@@ -1024,9 +1030,9 @@ class LiveRun:
             and block[0].name.value == name
         ]
         if not blocks:
-            raise WritesRefused(f"{what} of a {name} module {NOT_COVERED}")
+            raise WritesRefusedError(f"{what} of a {name} module {NOT_COVERED}")
         if not any(site.replace_modules for site, _ in blocks):
-            raise WritesRefused(
+            raise WritesRefusedError(
                 f"{what} of a {name} module of an edge that is not marked "
                 f"{REPLACE_MODULES_MARK}; nothing was sent; {REPLACE_MODULES_REMEDY}"
             )
@@ -1038,7 +1044,7 @@ class LiveRun:
         module_id: int,
         target_id: int,
     ) -> None:
-        """Raise ``WritesRefused`` unless the role call is for the named hub on a marked profile a block covers.
+        """Raise ``WritesRefusedError`` unless the role call is for the named hub on a marked profile a block covers.
 
         *kind* is the kind of hub the call is for, *target_id* its ``id``, and
         *configuration_id* and *module_id* the profile and its device settings
@@ -1047,7 +1053,7 @@ class LiveRun:
         """
         self._check_may_write()
         if self.hub is None:
-            raise WritesRefused(ROLE_CALL_NOT_ADMITTED)
+            raise WritesRefusedError(ROLE_CALL_NOT_ADMITTED)
         if not any(
             site.profile
             and site.target
@@ -1056,20 +1062,20 @@ class LiveRun:
             and found == module_id
             for site, found in self.open
         ):
-            raise WritesRefused(ROLE_CALL_NOT_COVERED)
+            raise WritesRefusedError(ROLE_CALL_NOT_COVERED)
         if (kind, target_id) != (self.hub.kind, self.hub.id_):
-            raise WritesRefused(ROLE_CALL_NOT_THE_HUB)
+            raise WritesRefusedError(ROLE_CALL_NOT_THE_HUB)
 
     def check_delete(self, configuration_id: int, name: str, module_id: int) -> None:
-        """Raise ``WritesRefused`` unless a block is on that module and *module_id* is one it found or inserted."""
+        """Raise ``WritesRefusedError`` unless a block is on that module and *module_id* is one it found or inserted."""
         self.check_replace(configuration_id, name, "a delete")
         if not self._covers(module_id):
-            raise WritesRefused(f"a delete of a {name} module {NOT_COVERED}")
+            raise WritesRefusedError(f"a delete of a {name} module {NOT_COVERED}")
 
 
 def require_writes(run: LiveRun) -> None:
     """Fail where the test may not write, skip where this run may not, else return."""
-    if not _marked:
+    if not _writer.marked:
         pytest.fail(NOT_MARKED, pytrace=False)
     if run.access.misconfigured:
         pytest.fail(run.access.refusal, pytrace=False)
@@ -1094,7 +1100,7 @@ def _sends(method: str) -> Generator[None]:
 
 
 def check_call(method: str) -> None:
-    """Raise ``WritesRefused`` for a portal call that is neither a read nor a write already checked.
+    """Raise ``WritesRefusedError`` for a portal call that is neither a read nor a write already checked.
 
     A read is a method whose name, after its namespace, starts with ``get``,
     ``list`` or ``is``. A write passes only from the code that checked it:
@@ -1104,7 +1110,7 @@ def check_call(method: str) -> None:
     """
     if _READ.match(method.rsplit("/", 1)[-1]) or _sending.get() == method:
         return
-    raise WritesRefused(
+    raise WritesRefusedError(
         f"a call to {method}, which is not a read and is not a write the suite "
         "checks; nothing was sent; the live suite writes only module updates and "
         "inserts through the client's own methods, deletes through "
@@ -1293,10 +1299,10 @@ def run_of(client: VcoClient) -> LiveRun:
         return inserted
 
     async def guarded_paginated[T: BaseModel](
-        method: str, request: PaginatedVcoModel, ItemType: type[T]
+        method: str, request: PaginatedVcoModel, item_type: type[T]
     ) -> AsyncGenerator[list[T]]:
         check_call(method)
-        async with aclosing(paginated(method, request, ItemType)) as pages:
+        async with aclosing(paginated(method, request, item_type)) as pages:
             async for page in pages:
                 yield page
 
@@ -1612,7 +1618,7 @@ def _backups() -> pathlib.Path:
     A backup holds lab configuration, so the directory must be outside the
     repository: one inside it is refused.
     """
-    global _backup_dir
+    global _backup_dir  # noqa: PLW0603 (tests reset it with monkeypatch.setattr(live, "_backup_dir", None))
     if _backup_dir is None:
         root = os.environ.get(BACKUP_DIR_ENV)
         if root:
@@ -1905,7 +1911,7 @@ async def own_data_refusal(site: Site) -> str | None:
             return "the module is not there"
         try:
             await write_data(site, module, original.data)
-        except DataRefused as refusal:
+        except DataRefusedError as refusal:
             return refusal.error
     return None
 

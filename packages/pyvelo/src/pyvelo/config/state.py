@@ -288,7 +288,8 @@ class LayerView[X: (Edge, Profile)]:
             create=True,
             profile=self._profile,
         )
-        assert isinstance(module, FirewallConfigurationModule)
+        if not isinstance(module, FirewallConfigurationModule):
+            raise _wrong_module(module, FirewallConfigurationModule)
         return cast("FirewallData[X]", module.data)  # the module is of this layer
 
     @property
@@ -300,7 +301,8 @@ class LayerView[X: (Edge, Profile)]:
             create=True,
             profile=self._profile,
         )
-        assert isinstance(module, QosConfigurationModule)
+        if not isinstance(module, QosConfigurationModule):
+            raise _wrong_module(module, QosConfigurationModule)
         return cast("QosData[X]", module.data)  # the module is of this layer
 
     @property
@@ -309,14 +311,16 @@ class LayerView[X: (Edge, Profile)]:
         module = _module_of(
             self._config, ConfigurationModuleName.DEVICE_SETTINGS, create=False
         )
-        assert isinstance(module, DeviceSettingsConfigurationModule)
+        if not isinstance(module, DeviceSettingsConfigurationModule):
+            raise _wrong_module(module, DeviceSettingsConfigurationModule)
         return module.data
 
     @property
     def wan(self) -> WanData:
         """The WAN data; a layer that has none raises ``ValueError``."""
         module = _module_of(self._config, ConfigurationModuleName.WAN, create=False)
-        assert isinstance(module, WanConfigurationModule)
+        if not isinstance(module, WanConfigurationModule):
+            raise _wrong_module(module, WanConfigurationModule)
         return module.data
 
 
@@ -1642,6 +1646,14 @@ def _bind_to_profile(
         return
     profile_module = _find_module(profile_config, module.name)
     data.bind_profile(profile_module.raw_data if profile_module else MISSING)
+
+
+def _wrong_module(module: object, expected: type) -> TypeError:
+    """The error for a module of a configuration's ``modules`` whose class is not the one its name has."""
+    return TypeError(
+        f"the {getattr(module, 'name', '?')} module is a "
+        f"{type(module).__name__}, not a {expected.__name__}"
+    )
 
 
 def _module_of(

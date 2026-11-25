@@ -8,11 +8,11 @@ import httpx
 from pyvelo.client.exceptions import VcoCredentialsError
 
 _EMPTY_TOKEN = (
-    "The API token is empty. Give the token, or check the file or variable it "
+    "The API token is empty. Give the token, or check the file or variable it "  # noqa: S105 (a message about the token, not one)
     "is read from."
 )
 _UNSENDABLE_TOKEN = (
-    "The API token has a character that cannot be sent in an HTTP header: a "
+    "The API token has a character that cannot be sent in an HTTP header: a "  # noqa: S105 (a message about the token, not one)
     "line break, a tab, another control character or a character that is not "
     "ASCII. The token is not shown here. Check where it comes from, for "
     "example a file with more than one line or text pasted with its formatting."

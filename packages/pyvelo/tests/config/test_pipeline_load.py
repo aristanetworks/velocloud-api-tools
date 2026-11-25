@@ -283,7 +283,7 @@ class ServiceRow(BaseModel):
 
     model_config: ClassVar[ConfigDict] = ConfigDict(extra="allow")
     id: int
-    logicalId: str
+    logicalId: str  # noqa: N815 (the key of the VCO row, which this model reads unaliased)
     name: str
     type: str
 

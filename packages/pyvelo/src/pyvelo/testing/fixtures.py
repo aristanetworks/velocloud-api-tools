@@ -28,10 +28,10 @@ from pyvelo.core.identity import HubIdentity, NetworkServiceIdentity
 def make_jsonrpc_response(
     result: Any = None,
     error: dict[str, Any] | None = None,
-    id: int = 1,
+    id_: int = 1,
 ) -> dict[str, Any]:
     """Build a JSON-RPC 2.0 response envelope."""
-    resp: dict[str, Any] = {"jsonrpc": "2.0", "id": id}
+    resp: dict[str, Any] = {"jsonrpc": "2.0", "id": id_}
     if error is not None:
         resp["error"] = error
     else:

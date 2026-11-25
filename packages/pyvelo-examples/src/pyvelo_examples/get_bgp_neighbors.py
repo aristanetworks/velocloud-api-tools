@@ -262,10 +262,10 @@ async def main() -> None:
     vco_host, vco_token = get_vco_credentials(args.env)
 
     async with VcoClient(vco_host, vco_token) as client:
-        logger.info(f"Fetching edges for enterprise {args.enterprise_id}...")
+        logger.info("Fetching edges for enterprise %s...", args.enterprise_id)
         request = GetEnterpriseEdges(enterprise_id=args.enterprise_id)
         edges = await client.get_enterprise_edges(request)
-        logger.info(f"Found {len(edges)} edges")
+        logger.info("Found %d edges", len(edges))
 
         semaphore = asyncio.Semaphore(args.concurrency)
         all_rows: list[BgpNeighborRow] = []

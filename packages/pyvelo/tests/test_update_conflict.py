@@ -118,7 +118,7 @@ def test_is_version_conflict(
     assert is_version_conflict(error=error, rows=rows) is expected
 
 
-def test_return_data_is_sent_as_returnData() -> None:
+def test_return_data_is_sent_as_returnData() -> None:  # noqa: N802 (the VCO key is the point of the test)
     assert req("1700", return_data=True).model_dump(by_alias=True)["returnData"] is True
     assert "returnData" not in req("1700").model_dump(by_alias=True)
     assert qos_insert(return_data=True).model_dump(by_alias=True)["returnData"] is True

@@ -266,14 +266,16 @@ async def main() -> None:
         if enterprise_id is None:
             ent = await client.get_enterprise(GetEnterprise())
             enterprise_id = ent.id_
-            logger.info(f"Auto-discovered enterprise: {ent.name} (ID {enterprise_id})")
+            logger.info(
+                "Auto-discovered enterprise: %s (ID %s)", ent.name, enterprise_id
+            )
 
         # Discover edges.
-        logger.info(f"Fetching edges for enterprise {enterprise_id}...")
+        logger.info("Fetching edges for enterprise %s...", enterprise_id)
         edges = await client.get_enterprise_edges(
             GetEnterpriseEdges(enterprise_id=enterprise_id)
         )
-        logger.info(f"Found {len(edges)} edges total")
+        logger.info("Found %d edges total", len(edges))
 
         # Filter to connected edges.
         connected = [e for e in edges if e.edge_state == EdgeState.CONNECTED]
@@ -289,10 +291,11 @@ async def main() -> None:
             return
 
         logger.info(
-            f"{len(connected)} connected edge(s) to diagnose: "
-            + ", ".join(
+            "%d connected edge(s) to diagnose: %s",
+            len(connected),
+            ", ".join(
                 e.name if isinstance(e.name, str) and e.name else "?" for e in connected
-            )
+            ),
         )
 
         # Run ARP_DUMP via WebSocket with JSON output.
@@ -310,7 +313,7 @@ async def main() -> None:
                 if not isinstance(lid, UUID):
                     return EdgeArpResult(edge_name=name, error="no logical_id")
 
-                logger.info(f"Running ARP_DUMP on {name}...")
+                logger.info("Running ARP_DUMP on %s...", name)
                 try:
                     data = await ws.run_diagnostic(
                         lid,
@@ -320,7 +323,7 @@ async def main() -> None:
                         timeout=args.timeout,
                     )
                     entries = parse_arp_json(data)
-                    logger.info(f"  {name}: {len(entries)} ARP entries")
+                    logger.info("  %s: %d ARP entries", name, len(entries))
                     return EdgeArpResult(edge_name=name, entries=entries)
                 except VcoWebSocketError as exc:
                     logger.warning(

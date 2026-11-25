@@ -210,7 +210,7 @@ class VcoClient(VcoClientProtocol):
                         retry_after_delay
                         if retry_after_delay is not None
                         else min(_RETRY_BASE_DELAY * (1 << attempt), _RETRY_MAX_DELAY)
-                        + random.uniform(0, _RETRY_JITTER)
+                        + random.uniform(0, _RETRY_JITTER)  # noqa: S311 (retry jitter, not cryptography)
                     )
 
                     logger.warning(

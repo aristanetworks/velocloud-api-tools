@@ -556,7 +556,7 @@ class ValidatorError:
         self.message: str = "secret-lab-name is wrong"
 
 
-class SaveBlocked(Exception):
+class SaveBlockedError(Exception):
     """Shaped as ``SaveValidationError`` of ``pyvelo.config``: ``errors`` with a code each."""
 
     def __init__(self) -> None:
@@ -600,7 +600,7 @@ def test_a_refusal_the_client_already_redacted_still_shows_its_codes() -> None:
         == ("E1 a.b[0]; E_2")
     )
     assert live.failure_text(redacted_error) == (
-        "DataRefused in configuration/updateConfigurationModule: E1 a.b[0]; E_2"
+        "DataRefusedError in configuration/updateConfigurationModule: E1 a.b[0]; E_2"
     )
 
 
@@ -665,8 +665,8 @@ def test_a_write_error_shows_its_outcome() -> None:
 
 
 def test_validator_errors_show_their_codes() -> None:
-    assert live.failure_text(SaveBlocked()) == (
-        "SaveBlocked: 2 error(s) with code A1, B2"
+    assert live.failure_text(SaveBlockedError()) == (
+        "SaveBlockedError: 2 error(s) with code A1, B2"
     )
 
 
@@ -681,7 +681,7 @@ def test_notes_arguments_and_causes_are_never_shown() -> None:
         KeyError("secret-lab-name"),
         PatchError("secret-lab-name", Path(("x",)), "exists"),
         VcoHttpError(502, "secret-lab-name"),
-        SaveBlocked(),
+        SaveBlockedError(),
     ):
         error.add_note("secret-lab-name in a note")
         error.__cause__ = cause
@@ -704,7 +704,7 @@ def test_an_error_of_the_suite_is_its_own_message() -> None:
 
 
 def test_an_unreadable_edge_is_an_error_of_the_suite() -> None:
-    assert issubclass(live.LabUnreadable, live.LiveSuiteError)
+    assert issubclass(live.LabUnreadableError, live.LiveSuiteError)
 
 
 class FakeItem:
@@ -768,7 +768,7 @@ def test_the_line_is_the_one_that_raised() -> None:
 
 
 def test_a_failure_in_a_fixture_is_redacted_too() -> None:
-    error = raising(live.LabUnreadable("edge #3 does not load"))
+    error = raising(live.LabUnreadableError("edge #3 does not load"))
     for when in ("setup", "teardown"):
         shown = redacted(error, when=when)
         assert re.fullmatch("edge #3 does not load" + HERE, shown)
@@ -1147,7 +1147,7 @@ async def test_connect_puts_the_write_guard_on_the_client(
         request = UpdateConfigurationModule(
             configuration_module_id=1, update=ConfigurationModuleUpdate(data={})
         )
-        with pytest.raises(live.WritesRefused, match="live write tests are off"):
+        with pytest.raises(live.WritesRefusedError, match="live write tests are off"):
             _ = await client.update_configuration_module(request)
 
 
@@ -1166,7 +1166,7 @@ async def test_without_the_opt_in_restoring_skips_and_nothing_is_sent() -> None:
     with pytest.raises(pytest.skip.Exception, match="live write tests are off"):
         async with live.restoring(site):
             pass
-    with pytest.raises(live.WritesRefused, match="live write tests are off"):
+    with pytest.raises(live.WritesRefusedError, match="live write tests are off"):
         _ = await lab.client.update_configuration_module(qos_update(1))
     assert fake.requests == []
 
@@ -1197,7 +1197,7 @@ async def test_a_test_that_is_not_marked_cannot_write(
             async with live.restoring(site):
                 pass
         assert str(caught.value) == live.NOT_MARKED
-        with pytest.raises(live.WritesRefused) as refused:
+        with pytest.raises(live.WritesRefusedError) as refused:
             _ = await lab.client.update_configuration_module(qos_update(1))
         assert str(refused.value) == live.NOT_MARKED
     assert "updateConfigurationModule" not in fake.methods()
@@ -1208,7 +1208,7 @@ async def test_a_write_outside_a_block_is_refused(
 ) -> None:
     fake = lab_fake()
     lab = await opened(fake, monkeypatch)
-    with pytest.raises(live.WritesRefused) as refused:
+    with pytest.raises(live.WritesRefusedError) as refused:
         _ = await lab.client.update_configuration_module(qos_update(1))
     assert str(refused.value) == live.OUTSIDE_RESTORING
     assert "updateConfigurationModule" not in fake.methods()
@@ -1224,7 +1224,7 @@ async def test_a_block_covers_its_own_module_and_no_other(
         await raise_limit(site, 2)
         assert fake.data(1)["serviceRateLimit"]["value"] == 2
         # Module 2 is the profile's: no block is open on it.
-        with pytest.raises(live.WritesRefused) as refused:
+        with pytest.raises(live.WritesRefusedError) as refused:
             _ = await lab.client.update_configuration_module(qos_update(2))
         assert str(refused.value) == (
             "an update of a module that no open restoring block covers; "
@@ -1249,7 +1249,7 @@ async def test_an_insert_is_covered_by_the_block_of_its_configuration_and_name(
     )
     async with live.restoring(site) as original:
         assert original is None
-        with pytest.raises(live.WritesRefused) as refused:
+        with pytest.raises(live.WritesRefusedError) as refused:
             _ = await lab.client.insert_configuration_module(elsewhere)
         assert str(refused.value) == (
             "an insert of a QOS module that no open restoring block covers; "
@@ -1441,7 +1441,7 @@ async def test_write_module_outside_a_block_is_refused(
     module = await lab.edge_site(lab.layouts[0], Name.QOS).read_present()
     data = copy.deepcopy(QOS)
     data["serviceRateLimit"]["value"] = 2
-    with pytest.raises(live.WritesRefused) as refused:
+    with pytest.raises(live.WritesRefusedError) as refused:
         _ = await lab.client.write_module(module, plan_module(module, data))
     assert str(refused.value) == live.OUTSIDE_RESTORING
     assert "updateConfigurationModule" not in fake.methods()
@@ -1471,14 +1471,14 @@ async def test_a_delete_outside_a_block_or_of_an_uncovered_module_is_refused(
     lab = await opened(fake, monkeypatch)
     site = lab.edge_site(lab.layouts[0], Name.QOS)
     elsewhere = lab.profile_site(20, Name.QOS)
-    with pytest.raises(live.WritesRefused) as outside:
+    with pytest.raises(live.WritesRefusedError) as outside:
         await live.delete_module(site, 1)
     assert str(outside.value) == live.OUTSIDE_RESTORING
     async with live.restoring(site):
         # A module of another configuration, and a module of this one the block did not find.
-        with pytest.raises(live.WritesRefused) as other_site:
+        with pytest.raises(live.WritesRefusedError) as other_site:
             await live.delete_module(elsewhere, 2)
-        with pytest.raises(live.WritesRefused) as other_module:
+        with pytest.raises(live.WritesRefusedError) as other_module:
             await live.delete_module(site, 3)
     for refused in (other_site, other_module):
         assert str(refused.value).endswith(
@@ -1505,7 +1505,7 @@ async def test_a_module_a_block_inserted_is_not_covered_once_the_block_is_closed
         assert set(run.inserted) == {added}
     assert run.inserted == {}
     async with live.restoring(site):
-        with pytest.raises(live.WritesRefused, match="an update of a module"):
+        with pytest.raises(live.WritesRefusedError, match="an update of a module"):
             _ = await lab.client.update_configuration_module(qos_update(added))
 
 
@@ -1573,7 +1573,7 @@ async def test_a_write_that_is_not_the_suites_own_is_refused_even_in_a_block(
     site = lab.edge_site(lab.layouts[0], Name.QOS)
     async with live.restoring(site):
         fake.requests.clear()
-        with pytest.raises(live.WritesRefused) as refused:
+        with pytest.raises(live.WritesRefusedError) as refused:
             _ = await call.send(lab.client)
         sent = list(fake.requests)
     message = str(refused.value)
@@ -1648,7 +1648,7 @@ def test_a_method_that_starts_with_a_read_verb_passes(method: str) -> None:
 def test_any_other_method_is_refused_outside_the_code_that_checked_it(
     method: str,
 ) -> None:
-    with pytest.raises(live.WritesRefused, match=r"^a call to "):
+    with pytest.raises(live.WritesRefusedError, match=r"^a call to "):
         live.check_call(method)
 
 
@@ -1885,13 +1885,13 @@ async def test_an_insert_and_a_delete_need_the_mark_for_modules(
         "of an edge the suite may delete and insert modules of"
     )
     async with live.restoring(site):
-        with pytest.raises(live.WritesRefused) as refused:
+        with pytest.raises(live.WritesRefusedError) as refused:
             await live.delete_module(site, 1)
         assert str(refused.value) == (
             "a delete of a QOS module of an edge that is not marked "
             f"pyvelo-it-replace-modules; nothing was sent; {remedy}"
         )
-        with pytest.raises(live.WritesRefused) as refused:
+        with pytest.raises(live.WritesRefusedError) as refused:
             _ = await lab.client.insert_configuration_module(insert)
         assert str(refused.value) == (
             "an insert of a QOS module of an edge that is not marked "
@@ -1938,7 +1938,7 @@ async def test_any_other_error_of_the_write_is_raised(
     site = lab.edge_site(lab.layouts[0], Name.QOS)
     with pytest.raises(VcoOperationError) as caught:
         _ = await live.accepts_a_write(site)
-    assert not isinstance(caught.value, live.DataRefused)
+    assert not isinstance(caught.value, live.DataRefusedError)
     with pytest.raises(VcoOperationError):
         _ = await lab.pick_writable_edge(Name.QOS)
 
@@ -1981,7 +1981,7 @@ async def test_a_refusal_the_orchestrator_states_is_a_data_refusal(
     lab = await opened(fake, monkeypatch)
     site = lab.edge_site(lab.layouts[0], Name.QOS)
     async with live.restoring(site):
-        with pytest.raises(live.DataRefused) as caught:
+        with pytest.raises(live.DataRefusedError) as caught:
             await raise_limit(site, 2)
     assert caught.value.error == "DS00000001 lan.networks"
     assert "secret-lab-name" not in str(caught.value)
@@ -2247,7 +2247,7 @@ async def test_a_write_refused_for_its_data_leaves_what_the_run_last_saw(
             await raise_limit(site, 2)
             fake.store.other_writer(2, lambda row: row["data"].update(added=1))
             fake.refused.add(2)  # a stated validation refusal stores nothing
-            with pytest.raises(live.DataRefused):
+            with pytest.raises(live.DataRefusedError):
                 await raise_limit(site, 3)
             fake.refused.discard(2)
     assert fake.data(2)["added"] == 1
@@ -2311,7 +2311,9 @@ async def test_a_delete_of_a_module_no_block_covers_names_its_type(
     lab = await opened(fake, monkeypatch)
     site = lab.edge_site(lab.layouts[0], Name.QOS)
     async with live.restoring(site):
-        with pytest.raises(live.WritesRefused, match=r"^a delete of a QOS module "):
+        with pytest.raises(
+            live.WritesRefusedError, match=r"^a delete of a QOS module "
+        ):
             await live.delete_module(site, 3)
     assert 3 in fake.store.rows
 
@@ -2457,7 +2459,7 @@ async def test_the_helpers_sit_behind_the_write_guard(
     fake.requests.clear()
     request = qos_update(1)
     request.return_data = True
-    with pytest.raises(live.WritesRefused) as refused:
+    with pytest.raises(live.WritesRefusedError) as refused:
         _ = await lab.client.update_configuration_module(request)
     assert str(refused.value) == live.OUTSIDE_RESTORING
     assert request.return_data is MISSING  # the wrapper ran, the guard refused
@@ -2557,7 +2559,7 @@ def test_the_role_calls_are_the_twelve_methods_of_the_client() -> None:
         assert callable(getattr(VcoClient, method))
         assert wire.startswith("edge/" if kind == "edge" else "enterprise/")
         assert not live._READ.match(wire.rsplit("/", 1)[-1])  # pyright: ignore[reportPrivateUsage]
-        with pytest.raises(live.WritesRefused, match=r"^a call to "):
+        with pytest.raises(live.WritesRefusedError, match=r"^a call to "):
             live.check_call(wire)
 
 
@@ -2605,7 +2607,7 @@ async def test_a_role_call_is_refused_before_a_hub_is_admitted(
     lab = await hub_opened(fake, monkeypatch)
     kind = live.ROLE_CALLS[method][1]
     async with live.restoring(lab.profile_site(20, DS)):
-        with pytest.raises(live.WritesRefused) as refused:
+        with pytest.raises(live.WritesRefusedError) as refused:
             _ = await getattr(lab.client, method)(
                 role_request(method, EDGE_HUB_ID if kind == "edge" else CLUSTER_ID)
             )
@@ -2621,7 +2623,7 @@ async def test_a_role_call_outside_a_block_is_refused(
     lab = await hub_opened(fake, monkeypatch)
     _ = await live.admit_hub(lab.client, None)
     target = EDGE_HUB_ID if live.ROLE_CALLS[method][1] == "edge" else CLUSTER_ID
-    with pytest.raises(live.WritesRefused) as refused:
+    with pytest.raises(live.WritesRefusedError) as refused:
         _ = await getattr(lab.client, method)(role_request(method, target))
     assert str(refused.value) == live.OUTSIDE_RESTORING
     assert role_requests(fake) == []
@@ -2636,7 +2638,7 @@ async def test_a_role_call_for_a_profile_that_is_not_the_blocks_is_refused(
     _ = await live.admit_hub(lab.client, None)
     async with live.restoring(lab.profile_site(20, DS)):
         for configuration_id, module_id in ((21, DS_MODULE), (10, DS_MODULE), (20, 3)):
-            with pytest.raises(live.WritesRefused) as refused:
+            with pytest.raises(live.WritesRefusedError) as refused:
                 _ = await lab.client.enable_edge_hub(
                     role_request(
                         "enable_edge_hub",
@@ -2667,7 +2669,7 @@ async def test_a_role_call_in_a_block_on_a_profile_that_is_not_a_target_is_refus
 
     with live.writer_test(marked=True):
         run_with(target=True).check_role_call("edge", 20, DS_MODULE, EDGE_HUB_ID)
-        with pytest.raises(live.WritesRefused) as refused:
+        with pytest.raises(live.WritesRefusedError) as refused:
             run_with(target=False).check_role_call("edge", 20, DS_MODULE, EDGE_HUB_ID)
     assert str(refused.value) == live.ROLE_CALL_NOT_COVERED
 
@@ -2684,7 +2686,7 @@ async def test_a_role_call_in_a_block_on_another_module_or_an_edge_is_refused(
     ):
         async with live.restoring(site):
             for configuration_id, module_id in ((20, DS_MODULE), (10, DS_MODULE)):
-                with pytest.raises(live.WritesRefused) as refused:
+                with pytest.raises(live.WritesRefusedError) as refused:
                     _ = await lab.client.enable_edge_hub(
                         role_request(
                             "enable_edge_hub",
@@ -2714,7 +2716,7 @@ async def test_a_role_call_for_another_hub_is_refused(
     lab = await hub_opened(fake, monkeypatch)
     _ = await live.admit_hub(lab.client, None)
     async with live.restoring(lab.profile_site(20, DS)):
-        with pytest.raises(live.WritesRefused) as refused:
+        with pytest.raises(live.WritesRefusedError) as refused:
             _ = await getattr(lab.client, method)(role_request(method, target))
     assert str(refused.value) == live.ROLE_CALL_NOT_THE_HUB
     assert role_requests(fake) == []
@@ -2729,7 +2731,7 @@ async def test_a_role_call_of_a_test_that_is_not_marked_is_refused(
     async with live.restoring(lab.profile_site(20, DS)):
         with (
             live.writer_test(marked=False),
-            pytest.raises(live.WritesRefused) as refused,
+            pytest.raises(live.WritesRefusedError) as refused,
         ):
             _ = await lab.client.enable_edge_hub(
                 role_request("enable_edge_hub", EDGE_HUB_ID)
@@ -2744,7 +2746,7 @@ async def test_a_role_call_without_the_opt_in_is_refused(
     fake = hub_lab()
     monkeypatch.setenv(live.HUB_ENV, EDGE_HUB_LOGICAL_ID)
     lab = await live.discover_lab(client_over(fake), None)
-    with pytest.raises(live.WritesRefused, match="live write tests are off"):
+    with pytest.raises(live.WritesRefusedError, match="live write tests are off"):
         _ = await lab.client.enable_edge_hub(
             role_request("enable_edge_hub", EDGE_HUB_ID)
         )
@@ -2778,7 +2780,9 @@ async def test_the_role_calls_are_still_refused_when_sent_by_hand(
     lab = await hub_opened(fake, monkeypatch)
     _ = await live.admit_hub(lab.client, None)
     async with live.restoring(lab.profile_site(20, DS)):
-        with pytest.raises(live.WritesRefused, match=r"^a call to edge/enableEdge"):
+        with pytest.raises(
+            live.WritesRefusedError, match=r"^a call to edge/enableEdge"
+        ):
             _ = await lab.client.portal(
                 "edge/enableEdgeForEdgeHub",
                 role_request("enable_edge_hub", EDGE_HUB_ID),

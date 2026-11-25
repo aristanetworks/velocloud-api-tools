@@ -350,12 +350,13 @@ def _merge_field(
     # A list, or a map of models: a list value, or item operations. An object
     # on a field that also takes one sub-model is that sub-model, unless the
     # field holds a list.
-    if _list_spec(field_info) is not None and not (
+    spec = _list_spec(field_info)
+    if spec is not None and not (
         is_dict(value)
         and _field_model_types(field_info)
         and not isinstance(_field_value(model, name), list)
     ):
-        _merge_list(model, name, field_info, value, resolvers, path)
+        _merge_list(model, name, field_info, spec, value, resolvers, path)
         return
 
     if is_dict(value):
@@ -459,13 +460,13 @@ def _merge_owned(
     spec = _list_spec(field_info)
     model_types = _field_model_types(field_info)
     if spec is not None and not is_dict(value):
-        _merge_list(model, name, field_info, value, resolvers, path)
+        _merge_list(model, name, field_info, spec, value, resolvers, path)
         return
     if is_dict(value) and (spec is not None or model_types):
         _refuse_flag_key(model, name, field_info, value, path)
         local = owned.localize()
         if spec is not None and not (model_types and not isinstance(local, list)):
-            _merge_list(model, name, field_info, value, resolvers, path)
+            _merge_list(model, name, field_info, spec, value, resolvers, path)
             return
         if isinstance(local, VcoModel):
             _merge_model(local, value, resolvers, path, built=built)
@@ -1177,9 +1178,10 @@ def _build_input(
     names = _field_names_by_key(fields)
     built: JsonObject = {}
 
-    for key, field_name, value in _patch_fields(names, owner, patch, path):
+    for key, field_name, given in _patch_fields(names, owner, patch, path):
         fi = fields[field_name]
         child = path.child(field_name)
+        value = given
         if value is None:
             value = _null_value(fi, field_name, child, built=True)
         elif isinstance(value, str):
@@ -1746,6 +1748,7 @@ def _merge_list(
     model: VcoModel,
     name: str,
     field_info: FieldInfo,
+    spec: _ListSpec,
     value: object,
     resolvers: IdentityResolver | None,
     path: Path,
@@ -1758,8 +1761,6 @@ def _merge_list(
     an object only and an untyped list a list only. Any other value is
     validated as the field's value, which refuses it.
     """
-    spec = _list_spec(field_info)
-    assert spec is not None  # _merge_field checked
     model_cls = type(model)
     held = _field_value(model, name)
     owned = held if isinstance(held, Owned) else None
@@ -1875,25 +1876,25 @@ def _list_value_input(
         return value
     built: list[object] = []
     for index, item in enumerate(value):
-        if is_dict(item):
-            key = _patch_key(item_type.fields, item, spec.key_paths)
-            if (
-                key is not None
-                and spec.name_identity is not None
-                and resolvers is not None
-            ):
-                name = _canonical_name(spec.name_identity, str(key), resolvers)
-                if name != key:
-                    item, key = _inject_key_path(item, spec.key_paths[0], name), name
-            part: PathPart = index if key is None else _key_path_part(key)
-            item = _build_input(
+        if not is_dict(item):
+            built.append(item)
+            continue
+        named = item
+        key = _patch_key(item_type.fields, named, spec.key_paths)
+        if key is not None and spec.name_identity is not None and resolvers is not None:
+            name = _canonical_name(spec.name_identity, str(key), resolvers)
+            if name != key:
+                named, key = _inject_key_path(named, spec.key_paths[0], name), name
+        part: PathPart = index if key is None else _key_path_part(key)
+        built.append(
+            _build_input(
                 item_type.fields,
-                item,
+                named,
                 resolvers,
                 path.child(part),
                 owner=item_type.name,
             )
-        built.append(item)
+        )
     return built
 
 
@@ -1965,6 +1966,28 @@ def _fixed_dump(spec: _ListSpec, item: object) -> JsonObject | None:
     return item.model_dump(mode="json", exclude=set(spec.fixed.editable))
 
 
+def _fixed_of(spec: _ListSpec) -> FixedList:
+    """The ``FixedList`` of *spec*, which its caller found to be one."""
+    if spec.fixed is None:
+        raise AssertionError("the list is not a FixedList")
+    return spec.fixed
+
+
+def _item_type_of(spec: _ListSpec) -> ListItemType:
+    """The item type of *spec*, a list of models (a ``FixedList`` is one)."""
+    if spec.item_type is None:
+        raise AssertionError("the list is not a list of models")
+    return spec.item_type
+
+
+def _fixed_model_dump(spec: _ListSpec, item: object) -> JsonObject:
+    """``_fixed_dump`` of *item*, a model of a ``FixedList``."""
+    dumped = _fixed_dump(spec, item)
+    if dumped is None:
+        raise AssertionError("the item is not a model of a FixedList")
+    return dumped
+
+
 def _fixed_differences(before: JsonObject, after: JsonObject) -> str:
     """The names of the fields in which two ``_fixed_dump`` s differ, for a message."""
     return ", ".join(n for n in {**before, **after} if before.get(n) != after.get(n))
@@ -1981,8 +2004,8 @@ def _fixed_form(spec: _ListSpec, key: object, path: Path) -> str:
 
     *path* is the list's path in the patch; its last part is the field as written.
     """
-    assert spec.fixed is not None
-    editable = spec.fixed.editable[0] if spec.fixed.editable else "..."
+    fixed = _fixed_of(spec)
+    editable = fixed.editable[0] if fixed.editable else "..."
     return (
         "{"
         f"{json.dumps(_fixed_field(path))}: {{{json.dumps(str(key))}: "
@@ -1993,11 +2016,10 @@ def _fixed_form(spec: _ListSpec, key: object, path: Path) -> str:
 
 def _fixed_rule(spec: _ListSpec, path: Path) -> str:
     """The sentence that says what a ``FixedList`` takes, for a message."""
-    assert spec.fixed is not None
     return (
         f"{_fixed_field(path)} is a fixed list: its entries, their keys and "
         "their order are fixed, and only "
-        f"{' and '.join(spec.fixed.editable)} of an entry may change"
+        f"{' and '.join(_fixed_of(spec).editable)} of an entry may change"
     )
 
 
@@ -2016,7 +2038,7 @@ def _check_fixed_op(
     has no entries to edit yet. *where* is the entry's path, *path* the
     list's.
     """
-    assert spec.fixed is not None
+    fixed = _fixed_of(spec)
     if new_only:
         raise PatchError(
             f"{_fixed_rule(spec, path)}: this patch builds the item, so the "
@@ -2032,7 +2054,7 @@ def _check_fixed_op(
     form = _fixed_form(spec, "<key>" if first is None else first, path)
     raise PatchError(
         f"{_fixed_rule(spec, path)}: a {what} is not an edit of an entry's "
-        f"{' or '.join(spec.fixed.editable)}. To edit an entry, send {form}",
+        f"{' or '.join(fixed.editable)}. To edit an entry, send {form}",
         where,
         "fixed_list",
     )
@@ -2054,8 +2076,7 @@ def _check_fixed_change(
     """
     if before is None:
         return
-    after = _fixed_dump(spec, item)
-    assert after is not None
+    after = _fixed_model_dump(spec, item)
     if after == before:
         return
     key = item_key(item, spec.key_paths)
@@ -2085,8 +2106,7 @@ def _check_fixed_value(
     its model made up. Anything else raises ``PatchError`` at *path* or at
     the item.
     """
-    assert spec.fixed is not None
-    assert spec.item_type is not None
+    item_type = _item_type_of(spec)
     rule = _fixed_rule(spec, path)
     if not is_list(current):
         raise PatchError(
@@ -2112,12 +2132,10 @@ def _check_fixed_value(
         if (
             spec.alt_path is not None
             and is_dict(data)
-            and _patch_value(spec.item_type.fields, data, spec.alt_path) is None
+            and _patch_value(item_type.fields, data, spec.alt_path) is None
         ):
             _copy_path(old, new, spec.alt_path)
-        before, after = _fixed_dump(spec, old), _fixed_dump(spec, new)
-        assert before is not None
-        assert after is not None
+        before, after = _fixed_model_dump(spec, old), _fixed_model_dump(spec, new)
         if before != after:
             key = item_key(old, spec.key_paths)
             raise PatchError(
@@ -2135,10 +2153,9 @@ def _check_fixed_value(
 
 def _alt_key_advice(spec: _ListSpec, old: object, new: object) -> str:
     """The sentence that says how to keep the alt key, when *new* gives another than *old*'s; else empty."""
-    assert spec.item_type is not None
     if spec.alt_path is None or _alt_key(spec, old) == _alt_key(spec, new):
         return ""
-    field = spec.item_type.fields.get(spec.alt_path)
+    field = _item_type_of(spec).fields.get(spec.alt_path)
     name = spec.alt_path if field is None else _field_alias(field, spec.alt_path)
     return f"Leave `{name}` out of the item and it keeps the current one. "
 
@@ -2211,13 +2228,15 @@ def _merge_items(
     )
 
     paths = spec.key_paths
-    renamed: list[_ItemEntry] = []
-    alt_changed: list[_ItemEntry] = []
+    renamed: list[tuple[_ItemEntry, _Slot]] = []
+    alt_changed: list[tuple[_ItemEntry, _Slot]] = []
     for entry in entries:
-        if entry.kind != "change" or entry.slot is None:
+        slot = entry.slot
+        if entry.kind != "change" or slot is None:
             continue
-        item = entry.slot.value
-        assert isinstance(item, VcoModel)  # _resolve_items checked it
+        item = slot.value
+        if not isinstance(item, VcoModel):
+            raise TypeError("_resolve_items let a change of a non-model through")
         before = _item_key(item, paths)
         alt_before = _alt_key(spec, item)
         fixed_before = _fixed_dump(spec, item)
@@ -2231,26 +2250,24 @@ def _merge_items(
             entry.path,
         )
         if _item_key(item, paths) != before:
-            renamed.append(entry)
+            renamed.append((entry, slot))
         if _alt_key(spec, item) != alt_before:
-            alt_changed.append(entry)
-    for entry in renamed:
-        assert entry.slot is not None
-        key = item_key(entry.slot.value, paths)
+            alt_changed.append((entry, slot))
+    for entry, slot in renamed:
+        key = item_key(slot.value, paths)
         form = key_form(key)
         if key is not None and any(
-            s is not entry.slot and _item_key(s.value, paths) == form for s in slots
+            s is not slot and _item_key(s.value, paths) == form for s in slots
         ):
             raise PatchError(
                 f"another item has the key {_show_key(key)}", entry.path, "exists"
             )
-    for entry in alt_changed:
-        assert entry.slot is not None
-        alt = _alt_key(spec, entry.slot.value)
+    for entry, slot in alt_changed:
+        alt = _alt_key(spec, slot.value)
         if alt is None:
             continue
         for index, other in enumerate(slots):
-            if other is not entry.slot and _alt_key(spec, other.value) == alt:
+            if other is not slot and _alt_key(spec, other.value) == alt:
                 raise PatchError(
                     f"{_show_item(spec, other.value, index)} already has the "
                     f"alt key {alt!r}: give this item another alt key, or "
@@ -2458,7 +2475,8 @@ def _check_add(
             where,
             "operation",
         )
-    assert spec.element is not None
+    if spec.element is None:
+        raise AssertionError("a list of values has no element adapter")
     new = _validated(spec.element.validate_python, selector, (), where)
     if any(str(item) == str(new) for item in items):
         raise PatchError(
@@ -2845,7 +2863,8 @@ def _merge_map(
     for op, key, where in resolved:
         if op.kind == "change":
             current = entries[key]
-            assert isinstance(current, VcoModel)  # checked above
+            if not isinstance(current, VcoModel):
+                raise TypeError("a change of a map entry that is not a model")
             _merge_model(current, _body(op), resolvers, where)
             _check_merged(current, type(current).model_validate, where)
     for op, key, _ in resolved:
@@ -2853,7 +2872,8 @@ def _merge_map(
             del entries[key]
     for op, key, where in resolved:
         if op.kind == "add":
-            assert spec.map_type is not None  # _new_map_key checked it
+            if spec.map_type is None:
+                raise AssertionError("_new_map_key let an add through")
             entries[key] = _new_model_from_patch(
                 spec.map_type, _body(op), resolvers, where
             )
@@ -2869,7 +2889,8 @@ def _new_map_key(spec: _ListSpec, text: str, where: Path) -> object:
         raise PatchError(
             "this map has no one model type to build from", where, "operation"
         )
-    assert spec.map_key is not None  # a map
+    if spec.map_key is None:
+        raise AssertionError("a map has no key adapter")
     return _validated(spec.map_key.validate_python, text, (), where)
 
 
@@ -2907,7 +2928,7 @@ def _has_non_edge_local_changes(model: VcoModel, before: Mapping[str, object]) -
     change confined to EdgeLocal descendants doesn't count either.
     """
     fields = type(model).model_fields
-    for name, old in before.items():
+    for name, held in before.items():
         fi = fields.get(name)
         if (
             fi is None
@@ -2917,7 +2938,7 @@ def _has_non_edge_local_changes(model: VcoModel, before: Mapping[str, object]) -
         ):
             continue
         new = unwrap(_field_value(model, name))
-        old = unwrap(old)
+        old = unwrap(held)
         if isinstance(new, VcoModel) and type(new) is type(old):
             if _has_non_edge_local_changes(new, _all_field_values(new, old)):
                 return True

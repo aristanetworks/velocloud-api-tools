@@ -245,9 +245,8 @@ def added_segment_name(op: ItemOp) -> str | None:
     return None if name is None else str(name)
 
 
-def _segment_descriptors(layer: object) -> list[dict[str, object]]:
+def _segment_descriptors(layer: VcoModel) -> list[dict[str, object]]:
     """The wire form of the ``segment`` object of each entry of *layer*, in order."""
-    assert isinstance(layer, VcoModel)  # a profile module's data
     dumped = layer.model_dump(mode="json", by_alias=True)
     return [entry["segment"] for entry in dumped["segments"]]
 
@@ -543,7 +542,11 @@ class _SegmentReader:
         self, template: Mapping[str, Any], body: Mapping[object, object], where: Path
     ) -> dict[str, Any]:
         """*body* merged into the entry *template*, as the module's ``segments`` item class parses it, dumped as the wire has it."""
-        assert isinstance(self.data, VcoModel)  # _held_segment_id's read
+        if not isinstance(self.data, VcoModel):
+            raise TypeError(
+                f"the {self.module_name} module's data is not a model to merge "
+                "a segment entry into"
+            )
         (item_type,) = field_models(type(self.data).model_fields["segments"])
         item = item_type.model_validate(
             copy.deepcopy(dict(template)),

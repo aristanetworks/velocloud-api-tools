@@ -1154,9 +1154,10 @@ class EnterpriseRouteTableSubnetString(VcoModel):
         if isinstance(data, str) and ":" in data:
             try:
                 netwk, segment = data.rsplit(":", 1)
-                return {"subnet": netwk, "segment_id": segment}
             except ValueError:
                 pass
+            else:
+                return {"subnet": netwk, "segment_id": segment}
         return data
 
 

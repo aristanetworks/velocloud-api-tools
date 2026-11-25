@@ -409,11 +409,16 @@ async def main() -> None:
     title = f"Analytics Report — Enterprise {enterprise_id} — Last {args.hours}h"
     html = build_html(all_sections, title)
 
-    output = Path(args.output)
-    _ = output.write_text(html)
-    logger.info("Report written to %s", output.resolve())
+    written = await asyncio.to_thread(_write_report, Path(args.output), html)
+    logger.info("Report written to %s", written)
 
-    _ = webbrowser.open(output.resolve().as_uri())
+    _ = webbrowser.open(written.as_uri())
+
+
+def _write_report(output: Path, html: str) -> Path:
+    """Write *html* to *output*; the file's absolute path."""
+    _ = output.write_text(html)
+    return output.resolve()
 
 
 if __name__ == "__main__":

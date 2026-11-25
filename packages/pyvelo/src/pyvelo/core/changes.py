@@ -63,6 +63,18 @@ class _Plan:
     moves: tuple[tuple[ItemMove, str], ...] = ()
     """The items an order entry moves, each with its selector."""
 
+    def listed(self) -> Path:
+        """``list_path``, which a plan of an add, a set or an order has."""
+        if self.list_path is None:
+            raise AssertionError(f"a plan of kind {self.kind} has no list_path")
+        return self.list_path
+
+    def listed_item(self) -> tuple[Path, ItemPart]:
+        """``list_path`` and ``item``, which a plan of an add or a set has."""
+        if self.item is None:
+            raise AssertionError(f"a plan of kind {self.kind} has no item")
+        return self.listed(), self.item
+
 
 @dataclass(frozen=True, slots=True)
 class _Placed:
@@ -471,23 +483,21 @@ def _write(plans: list[_Plan], stored_parts: Mapping[Path, ItemPart] | None) -> 
         elif plan.kind in ("delete", "map_delete"):
             node[plan.key] = {"_op": "delete"}
         elif plan.kind == "add":
-            assert plan.item is not None
-            assert plan.list_path is not None
-            selector = _added_selector(plan.item, node)
+            list_path, item = plan.listed_item()
+            selector = _added_selector(item, node)
             node[selector] = {"_op": "add", **cast("_Node", plan.value)}
-            entries[plan.list_path, plan.item] = (node, selector)
+            entries[list_path, item] = (node, selector)
         elif plan.kind == "set":
-            assert plan.item is not None
-            assert plan.list_path is not None
+            list_path, item = plan.listed_item()
             entry = node.get(plan.key)
             if not isinstance(entry, dict):
                 entry = node[plan.key] = {}
             cast("_Node", entry).update(cast("_Node", plan.value))
-            entries[plan.list_path, plan.item] = (node, plan.key)
+            entries[list_path, item] = (node, plan.key)
         else:
-            assert plan.list_path is not None
+            list_path = plan.listed()
             for move, selector in plan.moves:
-                entries[plan.list_path, move.item] = (node, selector)
+                entries[list_path, move.item] = (node, selector)
     for list_path, placed in _placed_by_list(plans).items():
         # The deepest item of a run first: each is written after the item the run
         # follows, so that the run is in order when the patch is applied.
@@ -499,7 +509,8 @@ def _write(plans: list[_Plan], stored_parts: Mapping[Path, ItemPart] | None) -> 
                 entry["_position"] = "first"
             else:
                 anchor = _selector(stored_parts, list_path, after)
-                assert anchor is not None
+                if anchor is None:
+                    raise AssertionError("_placeable kept a place after no item")
                 entry["_position"] = {"after": anchor}
             node[selector] = entry
     return patch

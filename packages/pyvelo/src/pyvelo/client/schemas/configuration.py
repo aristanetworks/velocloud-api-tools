@@ -445,6 +445,14 @@ class ConfigurationModuleList(RootModel[list[AnyConfigurationModule[L]]], Generi
     model_config: ClassVar[ConfigDict] = ConfigDict(hide_input_in_errors=True)
 
 
+def _wrong_module(module: object, expected: type) -> TypeError:
+    """The error for a module of a configuration's ``modules`` whose class is not the one its name has."""
+    return TypeError(
+        f"the {getattr(module, 'name', '?')} module is a "
+        f"{type(module).__name__}, not a {expected.__name__}"
+    )
+
+
 # The configurations come after ``AnyConfigurationModule`` on purpose: a
 # parametrized base such as ``ConfigurationBase[Edge]`` takes its module list
 # from the alias when it is made, and one made before the alias exists would
@@ -512,31 +520,36 @@ class ConfigurationBase(VcoModel, Generic[L]):  # noqa: UP046 (one shared constr
     @property
     def device_settings(self) -> DeviceSettingsConfigurationModule:
         m = self._get_module(ConfigurationModuleName.DEVICE_SETTINGS)
-        assert isinstance(m, DeviceSettingsConfigurationModule)
+        if not isinstance(m, DeviceSettingsConfigurationModule):
+            raise _wrong_module(m, DeviceSettingsConfigurationModule)
         return m
 
     @property
     def qos(self) -> QosConfigurationModule[L]:
         m = self._get_module(ConfigurationModuleName.QOS)
-        assert isinstance(m, QosConfigurationModule)
+        if not isinstance(m, QosConfigurationModule):
+            raise _wrong_module(m, QosConfigurationModule)
         return m
 
     @property
     def firewall(self) -> FirewallConfigurationModule[L]:
         m = self._get_module(ConfigurationModuleName.FIREWALL)
-        assert isinstance(m, FirewallConfigurationModule)
+        if not isinstance(m, FirewallConfigurationModule):
+            raise _wrong_module(m, FirewallConfigurationModule)
         return m
 
     @property
     def wan(self) -> WanConfigurationModule:
         m = self._get_module(ConfigurationModuleName.WAN)
-        assert isinstance(m, WanConfigurationModule)
+        if not isinstance(m, WanConfigurationModule):
+            raise _wrong_module(m, WanConfigurationModule)
         return m
 
     @property
     def control_plane(self) -> ControlPlaneConfigurationModule:
         m = self._get_module(ConfigurationModuleName.CONTROL_PLANE)
-        assert isinstance(m, ControlPlaneConfigurationModule)
+        if not isinstance(m, ControlPlaneConfigurationModule):
+            raise _wrong_module(m, ControlPlaneConfigurationModule)
         return m
 
 

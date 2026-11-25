@@ -25,7 +25,7 @@ class JsonRpcResponseFactory(Protocol):
         self,
         result: JsonValue = None,
         error: JsonObject | None = None,
-        id: int = 1,
+        id_: int = 1,
     ) -> JsonObject: ...
 
 

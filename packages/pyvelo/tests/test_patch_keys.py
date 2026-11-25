@@ -575,7 +575,7 @@ def test_add_under_a_name_where_the_key_is_composite_points_to_plus() -> None:
     assert len(root.links) == 3
 
 
-def true_and_True() -> Root:
+def true_and_title_true() -> Root:
     """Two routes that differ in the one part ``true`` / ``True``: the text ``..,true,..`` is two keys."""
     return Root(
         routes=[
@@ -589,7 +589,7 @@ AMBIGUOUS_TEXT = "a,24,true,GE3"
 
 
 def test_a_text_two_readings_take_to_different_items_is_refused_not_guessed() -> None:
-    root = true_and_True()
+    root = true_and_title_true()
     with pytest.raises(PatchError) as exc:
         _ = root.merge_patch({"routes": {AMBIGUOUS_TEXT: {"cost": 5}}})
     assert exc.value.path == Path(("routes", Key(("a", 24, True, "GE3"))))
@@ -603,30 +603,34 @@ def test_a_text_two_readings_take_to_different_items_is_refused_not_guessed() ->
 
 def test_the_quoted_form_a_refusal_gives_selects_the_item_it_names() -> None:
     for index in (0, 1):
-        key = item_key(true_and_True().routes[index], ("dest", "prefix", "gw", "intf"))
+        key = item_key(
+            true_and_title_true().routes[index], ("dest", "prefix", "gw", "intf")
+        )
         assert key is not None
         text = key_text(key)
-        root = true_and_True()
+        root = true_and_title_true()
         assert select_items(root, "routes", text) == [index]
         _ = root.merge_patch({"routes": {text: {"cost": 5}}})
         assert costs(root) == [5 if i == index else 0 for i in (0, 1)]
     with pytest.raises(PatchError, match="ambiguous") as exc:
-        _ = true_and_True().merge_patch({"routes": {AMBIGUOUS_TEXT: {"cost": 5}}})
+        _ = true_and_title_true().merge_patch({"routes": {AMBIGUOUS_TEXT: {"cost": 5}}})
     for index in (0, 1):
-        key = item_key(true_and_True().routes[index], ("dest", "prefix", "gw", "intf"))
+        key = item_key(
+            true_and_title_true().routes[index], ("dest", "prefix", "gw", "intf")
+        )
         assert key is not None
         assert key_text(key) in exc.value.message
 
 
 def test_an_anchor_two_readings_take_to_different_items_is_refused() -> None:
-    root = true_and_True()
+    root = true_and_title_true()
     root.routes.append(Route(dest="z", prefix=8, gw="g", intf="e"))
     with pytest.raises(PatchError, match="ambiguous"):
         _ = root.merge_patch({"routes": {"z,8,g,e": move(before=AMBIGUOUS_TEXT)}})
 
 
 def test_the_example_of_a_composite_key_selects_its_item() -> None:
-    root = true_and_True()
+    root = true_and_title_true()
     message = message_of(root, {"routes": {"zz": {"cost": 1}}})
     example = message.split(", as in ")[1].split(";")[0]
     assert select_items(root, "routes", example) == [0]

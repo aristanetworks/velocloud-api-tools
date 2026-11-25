@@ -195,7 +195,8 @@ def _decode_string(text: str, index: int, what: str = "path") -> tuple[str, int]
     except ValueError:
         raise _malformed(text, index, "bad quoted string", what) from None
     value, end = decoded
-    assert isinstance(value, str)  # it starts with a double quote
+    if not isinstance(value, str):  # the caller found a double quote here
+        raise _malformed(text, index, "not a quoted string", what)
     return value, end
 
 

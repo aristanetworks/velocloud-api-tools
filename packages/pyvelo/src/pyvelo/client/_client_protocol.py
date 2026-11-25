@@ -46,7 +46,7 @@ class VcoClientBaseProtocol(Protocol):
         self,
         method: str,
         request: VcoModel,
-        ResultType: type[T],
+        result_type: type[T],
         *,
         validation_context: dict[str, Any] | None = None,
     ) -> T: ...
@@ -55,17 +55,17 @@ class VcoClientBaseProtocol(Protocol):
         self,
         method: str,
         request: VcoModel,
-        ItemType: type[T],
+        item_type: type[T],
         *,
         hint: Literal["list"] | None = None,
     ) -> Sequence[T]: ...
 
     def portal_paginated[T: BaseModel](
-        self, method: str, request: PaginatedVcoModel, ItemType: type[T]
+        self, method: str, request: PaginatedVcoModel, item_type: type[T]
     ) -> AsyncGenerator[list[T]]: ...
 
     async def portal_paginated_list[T: BaseModel](
-        self, method: str, request: PaginatedVcoModel, ItemType: type[T]
+        self, method: str, request: PaginatedVcoModel, item_type: type[T]
     ) -> Sequence[T]: ...
 
     async def update_configuration_module(

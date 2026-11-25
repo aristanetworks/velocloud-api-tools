@@ -518,7 +518,7 @@ class TestEdgeFirewallMetrics:
         frame = await analytics.get_edge_firewall_metrics(
             edge_id=ctx.first_edge.id,
             interval=interval,
-            type=fw_type,
+            type_=fw_type,
             view_by=_FW_VIEW_BY[fw_type],
         )
         assert_frame_valid(frame)
@@ -529,7 +529,7 @@ class TestEdgeFirewallMetrics:
         frame = await analytics.get_edge_firewall_metrics(
             edge_id=ctx.first_edge.id,
             interval=interval,
-            type=FirewallType.IDPS,
+            type_=FirewallType.IDPS,
             view_by="threatSourceIp",
             limit=5,
         )
@@ -560,7 +560,7 @@ class TestEnterpriseFirewallMetrics:
         ent_type: EnterpriseFirewallType,
     ) -> None:
         frame = await analytics.get_enterprise_firewall_metrics(
-            interval=interval, type=ent_type
+            interval=interval, type_=ent_type
         )
         assert_frame_valid(frame)
 

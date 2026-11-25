@@ -507,7 +507,7 @@ def test_a_uuid_or_enum_member_points_to_the_json_dump(value: object) -> None:
         ({"maybe": MISSING}, "maybe", "MISSING"),
         ({"title": Colour.RED}, "title", "Colour"),
         ({"title": ipaddress.IPv4Address("10.0.0.1")}, "title", "IPv4Address"),
-        ({"title": dt.datetime(2026, 1, 1)}, "title", "datetime"),
+        ({"title": dt.datetime(2026, 1, 1, tzinfo=dt.UTC)}, "title", "datetime"),
     ],
 )
 def test_a_python_object_is_not_a_json_value(

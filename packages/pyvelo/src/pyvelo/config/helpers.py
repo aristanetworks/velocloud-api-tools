@@ -68,7 +68,7 @@ def load_config[T: BaseModel](path: str | Path, model: type[T]) -> T:
     """
     with Path(path).open() as f:
         try:
-            data = cast("object", yaml.load(f, Loader=_UniqueKeyLoader))
+            data = cast("object", yaml.load(f, Loader=_UniqueKeyLoader))  # noqa: S506 (_UniqueKeyLoader is a SafeLoader)
         except yaml.YAMLError as error:
             raise ConfigInputError(f"{path}: not valid YAML: {error}") from error
     try:

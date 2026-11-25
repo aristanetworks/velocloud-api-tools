@@ -302,14 +302,12 @@ class EdgeHubClusterServiceData(VcoModel):
             return
 
         segments: dict[str, dict[str, Any]]
-        for config_id, segments in self.model_extra.items():
+        for config_key, segments in self.model_extra.items():
             roles: dict[str, Any]
-            for segment_id, roles in segments.items():
-                config_id = int(config_id)
-                segment_id = int(segment_id)
+            for segment_key, roles in segments.items():
                 if "roles" in roles:
                     segment_roles: EdgeRoles = roles["roles"]
-                    yield (config_id, segment_id, segment_roles)
+                    yield (int(config_key), int(segment_key), segment_roles)
 
 
 # Cloud Security Service Models (provider-specific discriminated unions)

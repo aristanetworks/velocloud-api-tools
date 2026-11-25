@@ -33,38 +33,15 @@ ignore = [
     "RUF036",  # the convention is X | None | MISSING: the unset sentinel goes last
     # Off until the code meets them: turn one on, fix what it reports, and
     # remove its line here.
-    "A002",
-    "ASYNC109",
-    "ASYNC240",
     "C901",
-    "DTZ001",
-    "DTZ005",
     "E501",
     "E712",
     "ERA001",
-    "G003",
-    "G004",
-    "N802",
-    "N803",
-    "N806",
-    "N815",
-    "N818",
     "PLR0911",
     "PLR0912",
     "PLR0913",
     "PLR0915",
     "PLR0917",
-    "PLW0603",
-    "PLW2901",
-    "S101",
-    "S104",
-    "S105",
-    "S301",
-    "S311",
-    "S506",
-    "TRY300",
-    "TRY301",
-    "TRY400",
 ]
 
 [tool.ruff.lint.per-file-ignores]
@@ -73,6 +50,14 @@ ignore = [
     "D1",      # a test's name says what it checks
     "PLR2004", # expected values are written inline
     "INP001",  # tests are not a package; pytest puts tests/support on the path
+    "S104",    # 0.0.0.0 is address data in patches; no test binds a socket
+    "S105",    # names and values of test data, not credentials
+    "S301",    # tests pickle objects they made, to check that they copy
+    "S311",    # seeded random drives the property tests
+    "ASYNC240", # a test lists its own tmp directory; nothing else runs on its loop
+]
+"packages/pyvelo/src/pyvelo/client/enums/event.py" = [
+    "S105",    # VCO event names, such as PASSWORD_RESET, not passwords
 ]
 "packages/pyvelo/src/pyvelo/client/schemas/**" = [
     # Wire classes: the class name and the VCO field names describe them. D100

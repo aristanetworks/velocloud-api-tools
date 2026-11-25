@@ -986,9 +986,10 @@ class EnterpriseMixin(Protocol):
                 GetNetworkEnterprises(),
                 GetNetworkEnterprisesResultItem,
             )
-            return UserType.OPERATOR
         except VcoError:
             pass
+        else:
+            return UserType.OPERATOR
 
         try:
             await self.portal(
@@ -996,9 +997,10 @@ class EnterpriseMixin(Protocol):
                 GetEnterpriseProxy(),
                 EnterpriseProxyResult,
             )
-            return UserType.MSP
         except VcoError:
             pass
+        else:
+            return UserType.MSP
 
         try:
             await self.portal(
@@ -1006,9 +1008,10 @@ class EnterpriseMixin(Protocol):
                 GetEnterprise(),
                 EnterpriseResult,
             )
-            return UserType.ENTERPRISE
         except VcoError:
             pass
+        else:
+            return UserType.ENTERPRISE
 
         raise VcoUserTypeUnknownError
 

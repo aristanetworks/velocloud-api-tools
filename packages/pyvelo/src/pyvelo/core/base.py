@@ -264,11 +264,10 @@ def _equal_after_normalizing(
     Values that cannot be normalized or compared count as not equal.
     """
     try:
-        if norm is not None:
-            return norm(a, level) == norm(b, level)
-        return a == b
+        equal = norm(a, level) == norm(b, level) if norm is not None else a == b
     except (TypeError, ValueError):
         return False
+    return equal
 
 
 def _matches_field_default(value: object, field_info: FieldInfo) -> bool:
@@ -1371,7 +1370,7 @@ class JsonRpcRequest[ParamsT](VcoModel):
 
     jsonrpc: Literal["2.0"] = Field(default="2.0")
     id_: Annotated[int | str | None, Alias("id")] = Field(
-        default_factory=lambda: int(1000 * dt.datetime.now().timestamp())
+        default_factory=lambda: int(1000 * dt.datetime.now(dt.UTC).timestamp())
     )
     method: str
     params: ParamsT | None = Field(default=None)

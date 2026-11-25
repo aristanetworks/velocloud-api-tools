@@ -556,15 +556,17 @@ class ConfigPipeline:
                 else state.module(internal_name, create=True)
             )
             edge = state.target_type == "edge"
+            if not isinstance(mod, _WRITABLE_MODULES):
+                if existing is None:
+                    state.drop_module(mod)
+                raise PatchError(
+                    f"{mod.name}: a save does not write this module (it writes "
+                    "device settings, QoS, WAN and firewall modules), so a "
+                    "patch to it is not applied. Make the change in the VCO",
+                    Path(()),
+                    "address",
+                )
             try:
-                if not isinstance(mod, _WRITABLE_MODULES):
-                    raise PatchError(
-                        f"{mod.name}: a save does not write this module (it writes "
-                        "device settings, QoS, WAN and firewall modules), so a "
-                        "patch to it is not applied. Make the change in the VCO",
-                        Path(()),
-                        "address",
-                    )
                 data = mod.data
                 nested = nest_patch(type(data), patch, segment=segment, path=path)
                 segments = nested.get("segments")
@@ -1696,7 +1698,7 @@ def _prepare_segments(
 
 
 def _prepare_segment(
-    data: VcoModel,
+    data: _SegmentLayer,
     selector: object,
     op: ItemOp,
     where: Path,
@@ -1713,7 +1715,6 @@ def _prepare_segment(
     *inherited*, or one given ``before`` or ``after`` such a segment. This
     comes before a placeholder is added.
     """
-    assert isinstance(data, _SegmentLayer)  # _prepare_segments checked
     _refuse_place_by_inherited(data, op, where, resolvers, inherited)
     new = is_new(selector)
     lookup: object = selector
@@ -1803,7 +1804,7 @@ def _refuse_place_for(
 
 
 def _refuse_place_by_inherited(
-    data: VcoModel,
+    data: _SegmentLayer,
     op: ItemOp,
     where: Path,
     resolvers: IdentityResolver | None,
@@ -1817,7 +1818,6 @@ def _refuse_place_by_inherited(
     place = op.place
     if place is None or place.kind not in ("before", "after") or not inherited:
         return
-    assert isinstance(data, _SegmentLayer)  # _prepare_segment checked
     anchor = place.anchor
     found = _layer_segment(data, anchor, resolvers)
     if found is not None:
@@ -1844,20 +1844,21 @@ def _refuse_place_by_inherited(
 
 
 def _layer_segment(
-    data: VcoModel, selector: object, resolvers: IdentityResolver | None
+    data: _SegmentLayer, selector: object, resolvers: IdentityResolver | None
 ) -> _SegmentEntry | None:
     """The entry of the layer's ``segments`` that *selector* names, or None.
 
     A name a resolver does not know names no entry here: ``merge_patch``
     raises for it, if the profile does not have it either.
     """
+    if not isinstance(data, VcoModel):  # _prepare_segments is given module data
+        raise TypeError(f"the segment layer is a {type(data).__name__}, not a model")
     try:
         positions = select_items(data, "segments", selector, resolvers)
     except ResolutionError:
         return None
     if not positions:
         return None
-    assert isinstance(data, _SegmentLayer)
     return data.segments[positions[0]]
 
 

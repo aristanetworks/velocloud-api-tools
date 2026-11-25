@@ -214,23 +214,23 @@ class VcoWebSocket:
             noop_raw = await ws.receive_text()
             noop = json.loads(noop_raw)
             self._token = noop.get("token")
-            if not self._token:
-                raise VcoWebSocketConnectionError("No session token in noop message")
-        except VcoWebSocketConnectionError:
-            with contextlib.suppress(Exception):
-                await self._ws_cm.__aexit__(None, None, None)
-            self._ws_cm = None
-            self._ws = None
-            raise
         except Exception as exc:
-            with contextlib.suppress(Exception):
-                await self._ws_cm.__aexit__(None, None, None)
-            self._ws_cm = None
-            self._ws = None
+            await self._drop_handshake()
             raise VcoWebSocketConnectionError(
                 f"WebSocket handshake failed: {exc}"
             ) from exc
+        if not self._token:
+            await self._drop_handshake()
+            raise VcoWebSocketConnectionError("No session token in noop message")
         logger.info("WebSocket connected, session token acquired")
+
+    async def _drop_handshake(self) -> None:
+        """Close the transport of a handshake that failed, and forget it."""
+        if self._ws_cm is not None:
+            with contextlib.suppress(Exception):
+                await self._ws_cm.__aexit__(None, None, None)
+        self._ws_cm = None
+        self._ws = None
 
     async def _open(self) -> None:
         self._closing = False
@@ -475,13 +475,14 @@ class VcoWebSocket:
             try:
                 logger.info("Reconnect attempt %d/%d", attempt, _RECONNECT_MAX_ATTEMPTS)
                 await self._establish_connection()
-                logger.info("Reconnected successfully")
-                return
             except Exception:
                 if attempt == _RECONNECT_MAX_ATTEMPTS:
                     raise
                 await asyncio.sleep(backoff)
                 backoff = min(backoff * 2, _RECONNECT_MAX_BACKOFF)
+            else:
+                logger.info("Reconnected successfully")
+                return
 
     # -- Request helper ------------------------------------------------------
 
@@ -491,7 +492,7 @@ class VcoWebSocket:
         data: dict[str, Any],
         key: _Key,
         *,
-        timeout: float = _DEFAULT_TIMEOUT,
+        timeout: float = _DEFAULT_TIMEOUT,  # noqa: ASYNC109 (a timeout drops the pending reply and raises VcoWebSocketTimeoutError)
         dest: str = "",
     ) -> dict[str, Any]:
         """Create a future, register it, send the message, and await."""
@@ -505,12 +506,10 @@ class VcoWebSocket:
         try:
             await self._send(action, data, dest=dest)
             result = await asyncio.wait_for(future, timeout=timeout)
-            logger.info("Response received: action=%s key=%s", action, key)
-            return result
         except TimeoutError:
             self._pending.pop(key, None)
             self._discard_send(key)
-            logger.error(
+            logger.error(  # noqa: TRY400 (the timeout is raised on below; its traceback adds nothing)
                 "Timeout after %.1fs waiting for %s (key=%s, pending=%s)",
                 timeout,
                 action,
@@ -525,6 +524,8 @@ class VcoWebSocket:
             self._pending.pop(key, None)
             self._discard_send(key)
             raise
+        logger.info("Response received: action=%s key=%s", action, key)
+        return result
 
     # -- Helpers -------------------------------------------------------------
 
@@ -563,7 +564,7 @@ class VcoWebSocket:
         parameters: dict[str, str] | None = None,
         *,
         resformat: str | None = None,
-        timeout: float = _DEFAULT_TIMEOUT,
+        timeout: float = _DEFAULT_TIMEOUT,  # noqa: ASYNC109 (a timeout of each attempt, which the retries count)
         max_retries: int = 0,
     ) -> dict[str, Any]:
         """Run a diagnostic test and await the result.
@@ -574,7 +575,8 @@ class VcoWebSocket:
             parameters: Test-specific parameters.
             resformat: Response format (e.g. ``"JSON"`` for structured output).
             timeout: Seconds to wait for the result.
-            max_retries: Number of retry attempts through disconnects.
+            max_retries: Number of retry attempts through disconnects;
+                ``ValueError`` if negative.
         """
         logger.info(
             "Running diagnostic: test=%s edge=%s resformat=%s timeout=%.1fs",
@@ -583,11 +585,13 @@ class VcoWebSocket:
             resformat,
             timeout,
         )
+        if max_retries < 0:
+            raise ValueError(f"max_retries must be 0 or more, not {max_retries}")
         data = self._diagnostic_data(logical_id, test, parameters, resformat)
         key: _Key = ("runDiagnostics", logical_id, test)
-        last_err: Exception | None = None
 
-        for attempt in range(1 + max_retries):
+        attempt = 0
+        while True:
             try:
                 return await self._request(
                     "runDiagnostics",
@@ -599,19 +603,12 @@ class VcoWebSocket:
             except VcoWebSocketValidationError:
                 raise
             except VcoWebSocketError as exc:
-                last_err = exc
-                if attempt < max_retries:
-                    logger.warning(
-                        "Diagnostic attempt %d failed, retrying: %s",
-                        attempt + 1,
-                        exc,
-                    )
-                    continue
-                raise
-
-        # Should be unreachable, but satisfy type checker.
-        assert last_err is not None
-        raise last_err
+                if attempt >= max_retries:
+                    raise
+                attempt += 1
+                logger.warning(
+                    "Diagnostic attempt %d failed, retrying: %s", attempt, exc
+                )
 
     @overload
     async def submit_diagnostic(
@@ -621,7 +618,7 @@ class VcoWebSocket:
         parameters: dict[str, str] | None = ...,
         *,
         resformat: str | None = ...,
-        timeout: float = ...,
+        timeout: float = ...,  # noqa: ASYNC109 (the PendingDiagnostic's, for when it is awaited)
         max_retries: int = ...,
     ) -> PendingDiagnostic[None]: ...
 
@@ -633,7 +630,7 @@ class VcoWebSocket:
         parameters: dict[str, str] | None = ...,
         *,
         resformat: str | None = ...,
-        timeout: float = ...,
+        timeout: float = ...,  # noqa: ASYNC109 (the PendingDiagnostic's, for when it is awaited)
         max_retries: int = ...,
         context: T,
     ) -> PendingDiagnostic[T]: ...
@@ -645,7 +642,7 @@ class VcoWebSocket:
         parameters: dict[str, str] | None = None,
         *,
         resformat: str | None = None,
-        timeout: float = _DEFAULT_TIMEOUT,
+        timeout: float = _DEFAULT_TIMEOUT,  # noqa: ASYNC109 (the PendingDiagnostic's, for when it is awaited)
         max_retries: int = 0,
         context: T | None = None,
     ) -> PendingDiagnostic[T] | PendingDiagnostic[None]:
@@ -700,7 +697,7 @@ class VcoWebSocket:
         segment_id: int,
         enterprise_logical_id: uuid.UUID,
         *,
-        timeout: float = _DEFAULT_TIMEOUT,
+        timeout: float = _DEFAULT_TIMEOUT,  # noqa: ASYNC109 (a timeout drops the pending reply and raises VcoWebSocketTimeoutError)
     ) -> list[GwRouteTableEntry]:
         """Get the gateway route table for a segment.
 

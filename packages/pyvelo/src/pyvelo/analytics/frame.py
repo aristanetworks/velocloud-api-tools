@@ -24,10 +24,10 @@ class GroupByProxy:
         self,
         *exprs: pl.Expr,
         count: str | None = None,
-        sum: str | list[str] | None = None,
+        sum_: str | list[str] | None = None,
         mean: str | list[str] | None = None,
-        min: str | list[str] | None = None,
-        max: str | list[str] | None = None,
+        min_: str | list[str] | None = None,
+        max_: str | list[str] | None = None,
     ) -> MetricFrame:
         """Aggregate each group into one row of a new ``MetricFrame``.
 
@@ -39,10 +39,10 @@ class GroupByProxy:
         if count:
             agg_exprs.append(pl.len().alias(count))
         for label, func in [
-            (sum, "sum"),
+            (sum_, "sum"),
             (mean, "mean"),
-            (min, "min"),
-            (max, "max"),
+            (min_, "min"),
+            (max_, "max"),
         ]:
             if label is None:
                 continue
