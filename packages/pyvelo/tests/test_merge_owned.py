@@ -449,3 +449,19 @@ def test_an_inheritable_change_beside_a_plain_one_leaves_the_flag_to_the_plain_o
     assert model.flag is False
     _ = model.merge_patch({"x": 4, "plain": 1})
     assert model.flag is True
+
+
+def test_an_edge_patch_of_a_profile_only_field_is_refused() -> None:
+    for patch in ({"profile_note": "x"}, {"profileNote": "x"}, {"profile_note": None}):
+        edge = Mod[Edge].model_validate(mod_json())
+        with pytest.raises(
+            PatchError, match="'profileNote' belongs to the profile"
+        ) as raised:
+            _ = edge.merge_patch(patch)
+        assert str(raised.value.path) == "profile_note"
+        assert raised.value.kind == "invalid_value"
+        assert edge.profile_note is MISSING  # pyright: ignore[reportAttributeAccessIssue]
+    # The profile layer takes it as any plain field.
+    profile = Mod[Profile].model_validate(mod_json())
+    _ = profile.merge_patch({"profile_note": "x"})
+    assert profile.profile_note == "x"

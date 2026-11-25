@@ -442,6 +442,22 @@ its three keys, with the settings as the profile has them. A patch that raises
 leaves the group as it was. `state.effective` shows each value an edge uses and
 where it comes from; see "The effective view".
 
+The QoS module works the same way. Its three module-level values
+(`serviceRateLimit`, `qoe`, `qosClientConnector`) are stored by the edge or
+inherited, and a segment's `cosMapping` is the edge's own when it is stored
+with `override` true. A patch on one the edge inherits starts from the
+profile's value (or the display default) and stores it whole:
+`{"serviceRateLimit": {"enabled": false}}` stores the profile's rate limit with
+`enabled` false, and `{"serviceRateLimit": null}` makes the edge inherit again.
+`{"segments": {"Voice": {"cosMapping": {"realtime": {"high": {"value": 40}}}}}}`
+on an edge that has no `Voice` entry makes the entry from the profile's
+segment, with the profile's `cosMapping`, `override` true and that one value
+changed; the plan lists the `cosMapping` as your change. The flag is never
+patched: a patch naming `override` is refused, and `{"cosMapping": null}`
+inherits. A segment's `defaults` belong to the profile: a patch of `defaults`
+on an edge is refused (the VCO would add an edge's to the profile's); patch
+the profile's state.
+
 ## What a save writes
 
 A save sends each changed module's `data` as it was read, with only your
@@ -601,10 +617,10 @@ firewall: update
 - A missing edge firewall or QoS module starts empty. It is inserted once it
   differs from that empty layer: patches that cancel out leave nothing to
   insert. The insert holds the segment entries the save reconciles and what the
-  patches made local: a patch on a firewall value the edge would inherit copies
-  that value from the profile (or the display default) into the insert, as it
-  does for a module the edge has (see "The patch format"); no other profile
-  value is copied.
+  patches made local: a patch on a firewall or QoS value the edge would inherit
+  copies that value from the profile (or the display default) into the insert,
+  as it does for a module the edge has (see "The patch format"); no other
+  profile value is copied.
 - A firewall segment has no `outboundOverride` key in the VCO or on the edge. If
   an older version of this library wrote one into a module, writing that module
   drops it from every segment entry and the plan lists each removal (`-
@@ -662,8 +678,9 @@ firewall: update
 
 ## The effective view
 
-`state.effective.firewall` is what an edge uses, computed on the client from the
-edge layer and the profile layer it inherits from. Each value is a `Resolved`
+`state.effective.firewall` and `state.effective.qos` are what an edge uses,
+computed on the client from the edge layer and the profile layer it inherits
+from. Each value is a `Resolved`
 with the value itself, its `origin` and its `source`:
 
 | Origin | The value is |
@@ -683,6 +700,8 @@ stores.
 fw = state.effective.firewall
 fw.syslog_forwarding.origin  # Origin.EDGE, Origin.PROFILE or Origin.FACTORY
 fw.syslog_forwarding.value  # the value the edge uses
+
+state.effective.qos.service_rate_limit.origin  # the same, for QoS
 ```
 
 The view is the client's reading of rules the VCO applies on its own, so

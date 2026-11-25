@@ -505,7 +505,7 @@ A segment's fields are these kinds:
 | Field | Kind | Meaning |
 |---|---|---|
 | `rules` | `Additive` | the edge's own rules, in the order the caller gives them; the profile's are not copied in, and the effective view lists the edge's first, then the profile's |
-| `defaults` | `ProfileOnly` | the profile's four fixed rules (see "Writing a configuration module"); an edge segment holds none, and a write keeps the `defaults` the edge's data had as read |
+| `defaults` | `ProfileOnly` | the profile's four fixed rules (see "Writing a configuration module"); an edge segment holds none, and a write keeps the `defaults` the edge's data had as read. A `merge_patch` naming a `ProfileOnly` field on an edge layer raises `PatchError` (the VCO would add an edge's to the profile's): patch the profile layer |
 | `cos_mapping` | `Inheritable`, by flag | see below |
 | `web_proxy` | `Unconverted` | as it has always been |
 

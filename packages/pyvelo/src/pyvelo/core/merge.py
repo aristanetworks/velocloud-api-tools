@@ -53,6 +53,7 @@ from .base import (
     list_item_type,
     list_kind,
     python_name,
+    wire_name,
 )
 from .fields import (
     ConfigContext,
@@ -66,7 +67,7 @@ from .fields import (
     is_edge_local,
 )
 from .identity import ResolutionError
-from .layers import Kind, field_kind, inner_adapter
+from .layers import Edge, Kind, Layered, field_kind, inner_adapter
 from .owned import ByFlag, Owned, group_of, unwrap
 from .patch import (
     ItemOp,
@@ -328,6 +329,7 @@ def _merge_field(
     patch builds (``_merge_model``).
     """
     model_cls = type(model)
+    _refuse_profile_only(model, name, field_info, path)
 
     # An edge layer's Inheritable: the patch changes who owns the value.
     held = _field_value(model, name)
@@ -386,6 +388,31 @@ def _merge_field(
         value = _resolve_name(field_info, value, resolvers, path)
 
     setattr(model, name, _validate_field(model_cls, name, value, path))
+
+
+def _refuse_profile_only(
+    model: VcoModel, name: str, field_info: FieldInfo, path: Path
+) -> None:
+    """``PatchError`` if the patch names a ``ProfileOnly`` field of an edge layer's model.
+
+    The edge layer holds none of the field's value, and what a save of the
+    edge sent for it would be added to the profile's by the VCO instead of
+    replacing it: a patch of the field belongs to the profile's state.
+    """
+    if (
+        isinstance(model, Layered)
+        and model.layer() is Edge
+        and field_kind(field_info).kind is Kind.PROFILE_ONLY
+    ):
+        key = wire_name(type(model), name)
+        raise PatchError(
+            f"{key!r} belongs to the profile: the edge layer holds none, and one "
+            + "stored there would be added to the profile's by the VCO, not "
+            + "replace it. Send this patch to the profile's state, and leave "
+            + f"{key!r} out of an edge's",
+            path,
+            "invalid_value",
+        )
 
 
 def _merge_owned(
