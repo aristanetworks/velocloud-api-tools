@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import json
 from collections.abc import Sequence
-from typing import TYPE_CHECKING, Any, Protocol
+from dataclasses import replace
+from typing import TYPE_CHECKING, Any, Protocol, cast
 
 from pydantic import MISSING, ValidationError
 
+from pyvelo.client.enums.configuration import ConfigurationModuleName
 from pyvelo.client.enums.profiles import GetConfigurationWith
 from pyvelo.client.exceptions import (
     ConfigConflictError,
@@ -32,6 +34,7 @@ from pyvelo.client.module_write import (
     ModulePlan,
     insert_request,
     plan_module,
+    rebase_onto,
     update_request,
 )
 from pyvelo.client.operations._tagging import CONFIG, PM_FLOW, domain_tag
@@ -40,8 +43,8 @@ from pyvelo.client.schemas.configuration import (
     ConfigurationBase,
     ConfigurationModuleBase,
     ConfigurationModuleList,
+    ConfigurationModuleVersion,
     DeleteConfiguration,
-    DeviceSettingsRefs,
     GetAllApplicationsResult,
     GetApplicationsResult,
     GetConfiguration,
@@ -59,14 +62,26 @@ from pyvelo.client.schemas.profiles import (
     CreateProfileResult,
 )
 from pyvelo.core import ConfigContext, RowsModifiedConfirmation, VcoModel
+from pyvelo.core.base import IdentityLookup
+from pyvelo.core.response_check import ServerChange
 
 if TYPE_CHECKING:
     from pyvelo.client._client_protocol import VcoClientBaseProtocol
 
 
-def _level_context(level: ConfigContext | None) -> dict[str, ConfigContext] | None:
-    """The validation context that puts a returned module at config level *level*."""
-    return None if level is None else {"config_level": level}
+def _level_context(
+    level: ConfigContext | None, *, refs_loaded: bool = True
+) -> dict[str, object] | None:
+    """The validation context that puts a returned module at config level *level*.
+
+    *refs_loaded* is false for an answer that does not promise the module's refs.
+    """
+    context: dict[str, object] = {}
+    if level is not None:
+        context["config_level"] = level
+    if not refs_loaded:
+        context["refs_loaded"] = False
+    return context or None
 
 
 class _ConfigurationRows(VcoModel):
@@ -124,6 +139,86 @@ def _parse_row(
     return ConfigurationModuleList.model_validate_json(
         json.dumps([row]), context=_level_context(module.config_context)
     ).root[0]
+
+
+async def _read_version(
+    client: VcoClientBaseProtocol,
+    module: ConfigurationModuleBase,
+    enterprise_id: int | None,
+) -> str | None:
+    """The ``version`` the VCO holds for *module* now: the row with its ID, read without its data; None when no row has it.
+
+    One request: ``configuration/getConfigurationModules`` with ``noData``,
+    filtered to the module's name. Raises ``ValueError`` when *module* has no
+    ``configuration_id``. Any error of the request propagates.
+    """
+    configuration_id = module.configuration_id
+    if configuration_id is None:
+        raise ValueError("the module has no configuration ID to read its version by")
+    rows = await client.portal_list(
+        "configuration/getConfigurationModules",
+        GetConfigurationModules(
+            enterprise_id=enterprise_id if enterprise_id is not None else MISSING,
+            configuration_id=configuration_id,
+            no_data=True,
+            modules=[ConfigurationModuleName(str(getattr(module, "name", MISSING)))],
+        ),
+        ConfigurationModuleVersion,
+    )
+    return next((row.version for row in rows if row.id_ == module.id_), None)
+
+
+async def _read_held(
+    client: VcoClientBaseProtocol,
+    module: ConfigurationModuleBase,
+    plan: ModulePlan,
+    enterprise_id: int | None,
+) -> AnyConfigurationModule:
+    """*module* as the VCO holds it now, read with its refs from its configuration, before anything is sent.
+
+    Raises ``ConfigConflictError`` with nothing sent and no module when the
+    configuration no longer holds the module. An error of the read, or a read
+    that does not parse, propagates.
+    """
+    configuration_id = module.configuration_id
+    assert configuration_id is not None
+    held = await _read_rows(client, configuration_id, enterprise_id)
+    row = next((r for r in held if r.get("id") == module.id_), None)
+    if row is None:
+        raise ConfigConflictError(
+            module.id_,
+            module.version or "",
+            (
+                "its configuration no longer holds the module, and nothing was "
+                "sent: read the configuration again to see what is there"
+            ),
+            stated=False,
+            sent=False,
+            module_name=plan.name,
+            plan=plan,
+        )
+    return _parse_row(module, row)
+
+
+async def _check_stale[M: ConfigurationModuleBase](
+    client: VcoClientBaseProtocol,
+    module: M,
+    plan: ModulePlan,
+    enterprise_id: int | None,
+) -> ModuleWrite[M]:
+    """The outcome of *plan* for a module whose version on the VCO is not the one read, with nothing sent.
+
+    The module is read with its refs, as the VCO holds it now
+    (``_read_held``). It is returned as the write when it already holds the
+    plan's changes (a retry of a write whose answer was lost); otherwise this
+    raises ``ConfigConflictError`` (``check_module_write`` with ``"stale"``).
+    """
+    return check_module_write(
+        module,
+        plan,
+        await _read_held(client, module, plan, enterprise_id),
+        answer="stale",
+    )
 
 
 async def _read_stored(
@@ -267,13 +362,13 @@ def _not_this_module(
     return None
 
 
-def _require_this_module(
-    module: ConfigurationModuleBase,
+def _require_this_module[M: ConfigurationModuleBase](
+    module: M,
     plan: ModulePlan,
     stored: ConfigurationModuleBase,
     *,
     answer: WriteAnswer,
-) -> ConfigurationModuleBase:
+) -> M:
     """*stored*, when it is the module *module* was written as; otherwise raises ``WriteOutcomeUnknownError``."""
     mismatch = _not_this_module(module, plan, stored)
     if mismatch is not None:
@@ -284,7 +379,7 @@ def _require_this_module(
             answer=answer,
             module_id=stored.id_ if plan.operation == "insert" else module.id_,
         )
-    return stored
+    return cast(M, stored)  # _not_this_module found it of the class of module
 
 
 class ConfigurationMixin(Protocol):
@@ -339,6 +434,7 @@ class ConfigurationMixin(Protocol):
             "configuration/getConfigurationModules",
             request,
             ConfigurationModuleList,
+            validation_context=_level_context(None, refs_loaded=False),
         )
         return result.root
 
@@ -361,7 +457,7 @@ class ConfigurationMixin(Protocol):
                 "configuration/insertConfigurationModule",
                 request,
                 InsertedConfigurationModule,
-                validation_context=_level_context(level),
+                validation_context=_level_context(level, refs_loaded=False),
             )
             result = answer.root
         else:
@@ -458,6 +554,7 @@ class ConfigurationMixin(Protocol):
         *,
         enterprise_id: int | None = None,
         if_absent: bool = False,
+        rebase: bool = False,
     ) -> ModuleWrite[M]:
         """Send *plan*, made by ``plan_module`` for *module*, and check what the VCO stored.
 
@@ -465,23 +562,59 @@ class ConfigurationMixin(Protocol):
         *module*, asking for the module row as stored. When the VCO answers
         without one (it refused the version, or it ignores ``returnData``), the
         module is read back from its configuration, and only that module's
-        row is parsed; an error of that read request propagates. An update
+        row is parsed; an error of that read request propagates. An insert is
+        always read back, also when the VCO answered with its row, because an
+        insert's row does not promise the module's refs: the module returned
+        has them (``refs_loaded``), and the check runs on it. A QoS insert
+        sends the plan's refs, when it has any, in its one request. An update
         with no change the check can find stored (``has_checkable_change``:
-        every change is to a value the VCO stores its own way, or inside a ref
-        row that keeps its identity) is sent without ``returnData`` and read
-        back. A VCO with its conditional check off answers a stale update
-        that asked for the row with the row as it is, so it looks stored;
-        asked for no row, it answers a refusal with a row count of zero.
+        every change is to a value the VCO stores its own way) is sent
+        without ``returnData`` and read back. A VCO with its conditional
+        check off answers a stale update that asked for the row with the row
+        as it is, so it looks stored; asked for no row, it answers a refusal
+        with a row count of zero.
 
         Sends nothing when the plan's operation is ``none``, and returns
         *module* itself.
+
+        An update whose plan carries refs (``plan.refs`` is not None; a
+        module with a ``version`` and a ``configuration_id``) first reads the
+        module's ``version`` (``_read_version``, one request). With the VCO's
+        precheck off, a stale write is refused for the data but still replaces
+        the refs, so a version that is not the one read is not sent over. The
+        configuration is read with its modules, and the module there is
+        checked as after a refusal (``check_module_write`` with
+        ``"stale"``): it is returned as the write when it already holds the
+        changes (a retry whose first copy was stored), and otherwise
+        ``ConfigConflictError`` is raised with ``sent`` False. Neither read
+        sends anything, and an error of either propagates. A write that sends
+        no refs has no extra request. The read narrows the race and does not
+        close it.
+
+        With *rebase*, every update with a ``version`` reads that version
+        first, refs or none, and a changed one does not end in the check
+        above: the module is read in full and the plan is rebased onto it
+        (``rebase_onto``). The caller's edits go onto the data as it is now,
+        and the rebased plan is sent with the fresh version. What changed
+        under the caller outside those edits is in the write's
+        ``server_changes``, each marked ``merged``, and the write's plan is the
+        rebased one. When the module holds every change already, nothing is
+        sent and the write is that module (operation ``none``). It is for a
+        module written after a profile's device settings, which can change
+        other modules of the profile. ``ConfigConflictError`` is raised with
+        ``sent`` False when a path the plan changes was also changed there,
+        or when a list the plan edits had items added or removed;
+        ``error.module`` is the module as it is now and ``error.version`` the
+        version read. A plan that adds or removes a ref row cannot be rebased
+        (``ValueError``). An insert is not rebased.
 
         With *if_absent*, an insert first reads the configuration: a module of
         the plan's name found there (of several, the one with the highest ID)
         is taken as the insert's answer and checked like one, and nothing is
         inserted. Use it to repeat an insert whose answer was not read. An
         error of that read request itself propagates, as it does for the
-        read-back.
+        read-back. That read holds the refs, so the module found is not read
+        again.
 
         A row the VCO answers with that has no version is replaced by the
         module read from its configuration, so that the module returned
@@ -494,20 +627,28 @@ class ConfigurationMixin(Protocol):
         raises one of:
 
         - ``ConfigConflictError`` when the VCO refused the write's version, or
-          answered with the module as read, unchanged.
+          answered with the module as read, unchanged; or, with nothing sent,
+          when the version read before a write that sends refs found the
+          module changed and not holding the changes. Also with nothing sent,
+          and with no module, when the module is gone from its configuration.
         - ``WriteNotAppliedError`` when the VCO stored the write otherwise than
-          as planned.
+          as planned. ``RefsDroppedError``, a subclass, when every change not
+          stored is a ref row. An update the VCO answered with the module
+          needs a change that is stored beside: a write of ref rows alone
+          that stores none is a conflict.
         - ``WriteOutcomeUnknownError`` when the write was sent, or was about
-          to be sent again, and the module as stored cannot be read: the answer or the row read back does not
-          parse, the read-back does not find the module, or the module the VCO
-          answered with is not this one (another ID, another configuration or
-          another class of module). With *if_absent* it also says that the
-          module found by name does not parse or is not this one.
+          to be sent again, and the module as stored cannot be read: the
+          answer or the row read back does not parse, the read-back does not
+          find the module, or the module the VCO answered with is not this
+          one (another ID, another configuration or another class of
+          module). With *if_absent* it also says that the module found by
+          name does not parse or is not this one.
 
-        The first two always carry the lost edits and the module as stored;
-        ``WriteOutcomeUnknownError`` carries neither. ``error.redo_patch()`` is
-        the patch that redoes the lost edits on that module, and
-        ``error.not_redone()`` the lost edits it leaves out.
+        The first two carry the lost edits and the module as stored, except a
+        conflict about a module gone from its configuration, which has no
+        module; ``WriteOutcomeUnknownError`` carries neither.
+        ``error.redo_patch()`` is the patch that redoes the lost edits on that
+        module, and ``error.not_redone()`` the lost edits it leaves out.
 
         After a refusal, the refusal is the error's cause (its context, when
         the read-back fails). Raises ``ValueError``, before sending, when *plan*
@@ -520,6 +661,7 @@ class ConfigurationMixin(Protocol):
         if plan.operation == "none":
             return ModuleWrite(plan.name, "none", module, plan)
         level = module.config_context
+        merged: tuple[ServerChange, ...] = ()
         refusal: ConfigConflictError | None = None
         answer: WriteAnswer = "row"
         stored: ConfigurationModuleBase | None
@@ -547,17 +689,46 @@ class ConfigurationMixin(Protocol):
                     ) from error
                 if isinstance(inserted, InsertConfigurationModuleResult):
                     answer = "counted"
-                    stored = await _read_stored(
-                        self,
-                        module,
-                        plan,
-                        enterprise_id,
-                        answer=answer,
-                        module_id=inserted.id_,
-                    )
+                    inserted_id = inserted.id_
                 else:
-                    stored = inserted
+                    # The row says what was inserted; it promises no refs.
+                    inserted = _require_this_module(
+                        module, plan, inserted, answer=answer
+                    )
+                    inserted_id = inserted.id_
+                stored = await _read_stored(
+                    self,
+                    module,
+                    plan,
+                    enterprise_id,
+                    answer=answer,
+                    module_id=inserted_id,
+                )
         else:
+            if (
+                (rebase or plan.refs is not None)
+                and module.version
+                and module.configuration_id is not None
+                and await _read_version(self, module, enterprise_id) != module.version
+            ):
+                if not rebase:
+                    return await _check_stale(self, module, plan, enterprise_id)
+                fresh = _require_this_module(
+                    module,
+                    plan,
+                    await _read_held(self, module, plan, enterprise_id),
+                    answer="stale",
+                )
+                rebased, plan, merged = rebase_onto(module, plan, fresh)
+                if plan.operation == "none":
+                    return ModuleWrite(
+                        plan.name,
+                        "none",
+                        fresh,
+                        plan,
+                        server_changes=merged,
+                    )
+                module = rebased
             update = update_request(
                 module,
                 plan,
@@ -589,14 +760,16 @@ class ConfigurationMixin(Protocol):
                     self, module, plan, enterprise_id, answer=answer
                 )
         stored = _require_this_module(module, plan, stored, answer=answer)
-        if answer == "row" and not stored.version:
+        if plan.operation == "update" and answer == "row" and not stored.version:
             # The next write of the module is conditional on this version.
+            # (An insert is already read back.)
             stored = await _read_stored(
                 self, module, plan, enterprise_id, answer=answer, module_id=stored.id_
             )
             stored = _require_this_module(module, plan, stored, answer=answer)
         try:
-            return check_module_write(module, plan, stored, answer=answer)
+            write = check_module_write(module, plan, stored, answer=answer)
+            return replace(write, server_changes=(*merged, *write.server_changes))
         except ModuleWriteError as outcome:
             if refusal is None:
                 raise
@@ -610,15 +783,22 @@ class ConfigurationMixin(Protocol):
         data: DeviceSettingsData | WanData | QosData | FirewallData,
         *,
         enterprise_id: int | None = None,
-        refs: DeviceSettingsRefs | dict[str, Any] | None = None,
         profile: ConfigurationModuleBase | None = None,
+        resolvers: IdentityLookup | None = None,
     ) -> M:
         """Write *data* to *module*: its raw data as read, plus the caller's changes.
 
         Returns the module as stored (``write_module``), of the class of
-        *module*; that is *module* itself when *data* (and *refs*) change
-        nothing, and nothing is sent. Give the *profile*'s module of the same
-        name to reconcile the segments an edge module lacks.
+        *module*; that is *module* itself when *data* changes nothing, and
+        nothing is sent. Give the *profile*'s module of the same name to
+        reconcile the segments an edge module lacks.
+
+        The refs are derived from *data*, not given (``plan_module``): an
+        edit to an owner of a ref row adds or removes the row, and *resolvers*
+        finds the ``enterpriseObjectId`` of an identity it adds. A device
+        settings or QoS module with segments is always written with its
+        refs. ``RefsNotLoadedError`` is raised for a module read without its
+        refs when the edit needs them.
 
         The module passed in is not updated: it still holds the data and the
         ``version`` from before the write. It is marked as replaced (an
@@ -641,7 +821,9 @@ class ConfigurationMixin(Protocol):
         write. Raises ``ConfigConflictError`` if the module changed since it was
         read, and ``WriteNotAppliedError`` if the VCO stored the write
         otherwise than as sent. Each carries the module as stored and the lost
-        edits to redo on it. ``WriteOutcomeUnknownError`` says the write was
+        edits to redo on it, except a ``ConfigConflictError`` for a module gone
+        from its configuration, which has no module (``error.module`` is None,
+        and nothing was sent). ``WriteOutcomeUnknownError`` says the write was
         sent and the module as stored could not be read. The rules that need
         more than this one module are not run here: they need a state
         (``ConfigState``, in pyvelo-intent).
@@ -662,7 +844,7 @@ class ConfigurationMixin(Protocol):
         try:
             write = await self.write_module(
                 module,
-                plan_module(module, data, refs=refs, profile=profile),
+                plan_module(module, data, profile=profile, resolvers=resolvers),
                 enterprise_id=enterprise_id,
             )
         except ModuleWriteError as error:

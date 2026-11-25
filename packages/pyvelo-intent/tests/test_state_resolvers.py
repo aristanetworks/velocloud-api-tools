@@ -23,14 +23,25 @@ from pyvelo.client.schemas.enterprise import (
     GetEnterpriseNetworkSegments,
     NetworkSegment,
 )
-from pyvelo.config.resolver import ResolverRegistry
+from pyvelo.config.resolver import ResolverContext, ResolverRegistry
+from pyvelo.config.resolvers.network_service import NetworkServiceResolver
 from pyvelo.config.resolvers.segment import SegmentResolver
-from pyvelo.core.identity import ResolutionError
+from pyvelo.core.identity import (
+    NetworkServiceIdentity,
+    ResolutionError,
+    SegmentIdentity,
+)
 from pyvelo.testing import make_module_json
 from pyvelo_intent import PatchError
 from pyvelo_intent.config.pipeline import ConfigPipeline
 from pyvelo_intent.config.state import ConfigState
 from pyvelo_intent.testing import MockVcoClient
+from test_save_refs import (  # pyright: ignore[reportImplicitRelativeImport]
+    SERVICES,
+    loaded_profile,
+    profile_state,
+    served,
+)
 from test_state_plan import (  # pyright: ignore[reportImplicitRelativeImport]
     desc,
     make_state,
@@ -209,3 +220,90 @@ async def test_a_state_built_by_hand_resolves_only_what_it_is_given():
     assert state.resolvers.current_context is state.resolver_context
     with pytest.raises(ResolutionError, match="Nope"):
         _ = await pipeline.apply(state, module="firewall", patch=patch)
+
+
+async def test_load_resolvers_with_an_identity_loads_only_that_resolver():
+    pipeline, client, state = await loaded_profile()
+    segments = state.resolvers.get_resolver(SegmentResolver)
+    state.resolvers.set_context(ResolverContext(enterprise_id=99))
+    calls = len(client.calls)
+
+    await pipeline.load_resolvers(state, NetworkServiceIdentity)
+
+    services = state.resolvers.get_resolver(NetworkServiceResolver)
+    assert sorted(i.name for i in services.identities()) == ["dns-a", "dns-b"]
+    assert [m for m, _ in client.store.requests] == [SERVICES]
+    assert len(client.calls) == calls  # the segments were not read again
+    assert state.resolvers.get_resolver(SegmentResolver) is segments
+    assert state.resolvers.current_context is state.resolver_context
+
+
+async def test_load_resolvers_with_an_identity_the_state_lacks_registers_it():
+    client = served(profile_state())
+    pipeline = ConfigPipeline(client)
+    registered = NetworkServiceResolver(client)
+    pipeline.resolvers.register(registered)
+    state = profile_state()
+    with pytest.raises(LookupError):
+        _ = state.resolvers.get_resolver(NetworkServiceResolver)
+
+    await pipeline.load_resolvers(state, NetworkServiceIdentity)
+
+    own = state.resolvers.get_resolver(NetworkServiceResolver)
+    assert own is not registered  # an unloaded copy of the pipeline's
+    assert own.loaded and not registered.loaded
+    assert state.resolvers.current_context is state.resolver_context
+
+    # A pipeline with none of its own gives the state a new one.
+    other = profile_state()
+    await ConfigPipeline(client).load_resolvers(other, NetworkServiceIdentity)
+    assert other.resolvers.get_resolver(NetworkServiceResolver).loaded
+
+
+async def test_load_resolvers_with_no_identity_leaves_the_services_unloaded():
+    client = served(profile_state())
+    state = profile_state()
+
+    await ConfigPipeline(client).load_resolvers(state)
+
+    assert not state.resolvers.get_resolver(NetworkServiceResolver).loaded
+    assert SERVICES not in [m for m, _ in client.store.requests]
+
+
+async def test_load_resolvers_with_a_loaded_type_reloads_the_states_resolver():
+    pipeline, client, state = await loaded_profile()
+    segments = state.resolvers.get_resolver(SegmentResolver)
+    calls = len(client.calls)
+
+    await pipeline.load_resolvers(state, SegmentIdentity)
+
+    assert state.resolvers.get_resolver(SegmentResolver) is segments
+    assert len(client.calls) == calls + 1  # the segments were read again
+    assert [m for m, _ in client.store.requests] == []  # and nothing else
+
+
+async def test_load_resolvers_copies_the_pipelines_resolver_for_a_type_the_state_lacks():
+    client = served(profile_state())
+    pipeline = ConfigPipeline(client)
+    registered = SegmentResolver(client)
+    pipeline.resolvers.register(registered)
+    state = profile_state()
+
+    await pipeline.load_resolvers(state, SegmentIdentity)
+
+    own = state.resolvers.get_resolver(SegmentResolver)
+    assert own is not registered
+    assert [i.name for i in own.identities()] == ["Global Segment"]
+    assert list(registered.identities()) == []
+
+
+async def test_load_resolvers_refuses_a_type_neither_the_state_nor_the_pipeline_has():
+    state = profile_state()
+    pipeline = ConfigPipeline(MockVcoClient())
+
+    with pytest.raises(ValueError) as error:
+        await pipeline.load_resolvers(state, SegmentIdentity)
+
+    message = str(error.value)
+    assert "SegmentIdentity" in message
+    assert "pipeline.resolvers" in message and "state.resolvers" in message

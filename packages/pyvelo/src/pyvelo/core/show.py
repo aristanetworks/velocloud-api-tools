@@ -15,7 +15,7 @@ from typing import Final
 from pydantic import MISSING
 
 from pyvelo.core.base import VcoModel
-from pyvelo.core.rebase import ItemMove, Path
+from pyvelo.core.rebase import ItemMove, Key, Path
 from pyvelo.core.secrets import hide_secrets
 
 VALUE_WIDTH: Final = 80
@@ -107,3 +107,19 @@ def moves_text(moves: Sequence[ItemMove]) -> str:
     if len(moves) > MOVES_SHOWN:
         text += f"; and {len(moves) - MOVES_SHOWN} more"
     return text
+
+
+def patch_text(path: Path, *, clear: bool = False) -> str:
+    """The merge patch that sets the field at *path* to a service, or clears it, as JSON a text-only caller can send.
+
+    The path is in the names a patch is written in; a keyed item is named by
+    its key. The value is a placeholder to replace with the name or the
+    logical ID of a service that exists, or ``null`` with *clear*.
+    """
+    patch: object = (
+        None if clear else "<the name or the logical ID of a service that exists>"
+    )
+    for part in reversed(path.parts):
+        text = str(part.value) if isinstance(part, Key) else str(part)
+        patch = {text: patch}
+    return json.dumps(patch)

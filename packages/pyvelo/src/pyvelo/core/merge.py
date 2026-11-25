@@ -60,6 +60,7 @@ from .fields import (
     ConfigContext,
     get_key_spec,
     get_name_of,
+    get_ref_only,
     get_resolvable,
     has_override_flag,
     is_edge_local,
@@ -381,13 +382,17 @@ def _null_value(field_info: FieldInfo, name: str, path: Path, *, built: bool) ->
     A field whose type takes ``MISSING`` is unset by ``null``, one that takes
     only ``None`` is set to it, and one that takes neither refuses it. A field
     that takes both is unset in a change, where leaving the key out would
-    change nothing. In an item or sub-model the patch *built* it is ``None``:
+    change nothing; a ``RefOnly`` field is the exception, as ``MISSING`` there
+    says the module was read without refs and ``None`` says there is no row,
+    so a clear is ``None``. In an item or sub-model the patch *built* it is ``None``:
     leaving the key out already leaves the field unset, and the JSON dump of
     an item writes ``null`` for ``None``, so a dump builds the same item.
     """
     takes_missing = _field_accepts_missing(field_info)
     takes_none = _field_accepts_none(field_info)
-    if takes_none and (built or not takes_missing):
+    if takes_none and (
+        built or not takes_missing or get_ref_only(field_info) is not None
+    ):
         return None
     if takes_missing:
         return MISSING

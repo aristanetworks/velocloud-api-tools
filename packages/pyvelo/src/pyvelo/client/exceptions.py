@@ -10,12 +10,23 @@ from typing import TYPE_CHECKING, Any, Final, Literal, cast, override
 
 from pydantic import MISSING
 
-from pyvelo.core.base import VcoModel
+from pyvelo.core.base import VcoModel, field_models, is_list, wire_name
 from pyvelo.core.changes import patch_of
-from pyvelo.core.rebase import ItemMove, ItemPart, ItemPlace, Path, RawChange
+from pyvelo.core.patch import selector_of
+from pyvelo.core.rebase import (
+    ItemMove,
+    ItemPart,
+    ItemPlace,
+    Key,
+    KeyedList,
+    Path,
+    RawChange,
+    item_parts,
+    node_child,
+)
 from pyvelo.core.response_check import PlannedChange, ServerChange
 from pyvelo.core.secrets import HIDDEN
-from pyvelo.core.show import moves_text, shown_together
+from pyvelo.core.show import moves_text, patch_text, shown_together
 
 if TYPE_CHECKING:
     from pyvelo.client.module_check import ModuleWrite
@@ -253,13 +264,58 @@ class LossyFieldError(VcoError):
         super().__init__(message)
 
 
-type WriteAnswer = Literal["row", "counted", "refused"]
+class RefsNotLoadedError(VcoError):
+    """Raised when a plan needs the refs of a module that was read without them.
+
+    A module from ``configuration/getConfigurationModules`` (or an insert's
+    answer) carries no refs. An edit to an owner of a ref row then cannot be
+    written, because the row that goes with it is not known, and a write of
+    a device settings or QoS module with segments would let the VCO replace its
+    refs. ``module_name`` is the module; ``paths`` are the owners the edit
+    changed (empty when the write alone is refused).
+    """
+
+    module_name: str
+    paths: tuple[Path, ...]
+
+    def __init__(self, module_name: str, paths: Sequence[Path] = ()) -> None:
+        self.module_name = module_name
+        self.paths = tuple(paths)
+        read = (
+            f"{module_name} was read without its refs (it came from "
+            "configuration/getConfigurationModules)"
+        )
+        how = (
+            "Read the module with its refs and edit that one: send "
+            '`configuration/getConfiguration` with {"id": <configuration ID>, '
+            '"with": ["modules"]} (get_configuration), or '
+            '`edge/getEdgeConfigurationStack` for an edge with {"edgeId": <edge ID>} '
+            '(and "enterpriseId": <enterprise ID> beside it when you are an operator) '
+            "(get_edge_configuration_stack)."
+        )
+        if self.paths:
+            changed = ", ".join(self.paths)
+            message = (
+                f"{read}, so an edit to {changed} cannot be written: the ref rows "
+                f"that go with it are not known. {how}"
+            )
+        else:
+            message = (
+                f"{read}, so a write of it would let the VCO replace its refs, "
+                f"which this module does not have. {how}"
+            )
+        super().__init__(message)
+
+
+type WriteAnswer = Literal["row", "counted", "refused", "stale"]
 """What the VCO said of a module write.
 
 ``"row"``: it answered with a module row. ``"counted"``: it answered with a
 row count of at least one, or an insert's ID, so it says it stored the write.
 ``"refused"``: it refused the write's version (its precondition error, or a
-row count of zero).
+row count of zero). ``"stale"``: nothing was sent, because the module's
+version on the VCO is not the one read (the read before a write that sends
+refs), so the module read now is checked as after a refusal.
 """
 
 
@@ -320,8 +376,9 @@ class ModuleWriteError(VcoError):
     plan: ModulePlan | None
     module: ConfigurationModuleBase | None
     """The module as the VCO holds it now. ``write_module`` sets it on every
-    ``ConfigConflictError`` and ``WriteNotAppliedError``; only
-    ``WriteOutcomeUnknownError`` has None."""
+    ``ConfigConflictError`` and ``WriteNotAppliedError``, except for a
+    ``ConfigConflictError`` whose module is gone from its configuration;
+    ``WriteOutcomeUnknownError`` always has None."""
     lost_edits: tuple[PlannedChange, ...]
     applied: tuple[PlannedChange, ...]
     left_out: tuple[PlannedChange, ...]
@@ -401,7 +458,10 @@ class ModuleWriteError(VcoError):
         """
         lines = [self._headline(), *self._notes(limit)]
         if self.lost_edits:
-            lines.append("lost edits (not stored; `error.redo_patch()` redoes them):")
+            lines.append(
+                "lost edits (not stored; `error.redo_patch()` redoes those it can, "
+                "`error.not_redone()` lists the rest):"
+            )
             for change in _first(self.lost_edits, limit):
                 as_read, intended, stored = self._values(
                     change, change.as_read, change.intended, change.stored
@@ -459,13 +519,17 @@ class ModuleWriteError(VcoError):
 
         A clash is an edit whose value was also changed on the VCO, and
         redoing it overwrites that change: it is left out unless
-        *include_clashes*. A ref row is left out (a patch changes data, not
-        refs), and so is an edit no patch can make or whose item is no longer
-        stored or cannot be named alone. ``not_redone`` lists what is left
-        out. A key the VCO does not know, which a write drops, is neither
-        redone nor listed. A change made in a segment the plan reconciled
-        (the edge had none of its own) is redone in the segment's place, and
-        ``apply`` adds the segment again.
+        *include_clashes*. A ref row of a ``RefOnly`` field (a DNS or
+        authentication provider) is redone by setting the field again, in the
+        segment as the stored list names it: to the service's logical ID for a
+        row added, to ``null`` for a row removed, and to the row added when one
+        is removed and another added at the field. Any other ref row is left
+        out (a patch changes data, not refs), and so is an edit no patch can
+        make or whose item is no longer stored or cannot be named alone.
+        ``not_redone`` lists what is left out. A key the VCO does not know,
+        which a write drops, is neither redone nor listed. A change made in a
+        segment the plan reconciled (the edge had none of its own) is redone in
+        the segment's place, and ``apply`` adds the segment again.
 
         The patch is empty, and nothing is left out, for a
         ``WriteOutcomeUnknownError``: the caller's data still holds the edits.
@@ -496,8 +560,14 @@ class ModuleWriteError(VcoError):
         changes: list[RawChange] = []
         owner: dict[int, PlannedChange] = {}
         left_out: set[int] = set()
+        provider_edits: dict[Path, list[PlannedChange]] = {}
         for edit in self.lost_edits:
-            if edit.part == "refs" or (edit.clash and not include_clashes):
+            if edit.part == "refs":
+                if edit.owner is None:
+                    left_out.add(id(edit))
+                else:
+                    provider_edits.setdefault(edit.owner, []).append(edit)
+            elif edit.clash and not include_clashes:
                 left_out.add(id(edit))
             elif edit.path in plan.legacy_keys:
                 continue
@@ -525,6 +595,24 @@ class ModuleWriteError(VcoError):
                 changes.append(change)
         patch, unwritten = patch_of(changes, type(data), stored_parts=stored_parts)
         left_out.update(id(owner[id(change)]) for change in unwritten)
+        for path, edits in provider_edits.items():
+            stored_adds = [
+                edit
+                for edit in self.applied
+                if edit.part == "refs"
+                and edit.owner == path
+                and edit.as_read is MISSING
+                and edit.intended is not MISSING
+            ]
+            value = _provider_value([*edits, *stored_adds])
+            if (
+                value is MISSING
+                or module is None
+                or not _set_provider(
+                    patch, data, module, plan, stored_parts, edits, value
+                )
+            ):
+                left_out.update(id(edit) for edit in edits)
         return patch, tuple(edit for edit in self.lost_edits if id(edit) in left_out)
 
 
@@ -556,6 +644,195 @@ def _is_reconciled_segment(plan: ModulePlan, edit: PlannedChange) -> bool:
     )
 
 
+def _provider_value(edits: Sequence[PlannedChange]) -> object:
+    """The value that sets a ``RefOnly`` field again, from the refs entries *edits* at it.
+
+    The added row's logical ID as text, or ``None`` for a row removed with none
+    added; ``MISSING`` when an entry is neither. A row added carries only the
+    object it goes with, so its logical ID is the first part of its path's key.
+    A row removed and a row added at one owner are one set, to the added row's;
+    so is a row removed and lost beside a row added and stored (*edits* then
+    holds the stored one too), so that the field is not cleared.
+    """
+    added: object = None
+    for edit in edits:
+        if edit.intended is MISSING:
+            continue
+        key = edit.path.parts[-1]
+        identity = None if not isinstance(key, Key) else key.value
+        if isinstance(identity, tuple):
+            identity = identity[0]
+        if edit.as_read is not MISSING or not isinstance(identity, str):
+            return MISSING
+        added = identity
+    return added
+
+
+_SEGMENT_REF: Final = "deviceSettings:segment"
+"""The ref name of a segment's row; ``ref_owners.SEGMENT_REF``, which this module cannot import (a cycle)."""
+
+
+def _json_objects(value: object) -> list[dict[str, object]]:
+    """The objects of *value*, a list or one object; none for anything else."""
+    items = value if isinstance(value, list) else [value]
+    return [
+        cast("dict[str, object]", item)
+        for item in cast("list[object]", items)
+        if isinstance(item, dict)
+    ]
+
+
+def _json_field(value: object, *names: str) -> object:
+    """The value at *names* below *value*, None where a step is not an object or is absent."""
+    for name in names:
+        if not isinstance(value, dict):
+            return None
+        value = cast("dict[str, object]", value).get(name)
+    return value
+
+
+def _same_logical_id(left: object, right: object) -> bool:
+    return (
+        isinstance(left, str)
+        and isinstance(right, str)
+        and (left.lower() == right.lower())
+    )
+
+
+def _stored_segment(
+    data: VcoModel,
+    module: ConfigurationModuleBase,
+    plan: ModulePlan,
+    stored_parts: Mapping[Path, ItemPart],
+    item: ItemPart,
+    object_ids: Sequence[int],
+) -> ItemPart | None:
+    """The part that names, in the ``segments`` of *module* as stored, the segment the edits were made to; None when it cannot be proved.
+
+    The check records it for an item it walked (a data edit in the segment).
+    Otherwise the segment is found by identity, never by name: another segment
+    may have taken the name. A stored entry is the segment when its
+    ``segmentId`` is that of the stored ``deviceSettings:segment`` row whose
+    ``enterpriseObjectId`` is one of *object_ids* (the ``segmentObjectId`` of
+    the refs entries). When that row has no ``segmentId``, its ``segmentLogicalId``
+    is the row's ``logicalId``; with no such row, it is that of the plan's
+    segment named *item*. Exactly one entry must match, and a key must name it
+    alone.
+    """
+    found = stored_parts.get(Path(("segments", item)))
+    if found is not None:
+        return found
+    node = node_child(type(data), "segments")
+    stored = _json_field(module.raw_data, "segments")
+    if not isinstance(node, KeyedList) or not is_list(stored):
+        return None
+    rows = [
+        row
+        for row in _json_objects(_json_field(module.raw_refs, _SEGMENT_REF))
+        if row.get("enterpriseObjectId") in object_ids
+    ]
+    by_id = {_json_field(row, "data", "segmentId") for row in rows} - {None}
+    if by_id:
+        matches = [
+            part
+            for part, entry in zip(item_parts(stored, node), stored)
+            if _json_field(entry, "segment", "segmentId") in by_id
+        ]
+    else:
+        logical_ids = [row.get("logicalId") for row in rows]
+        if not rows and isinstance(item, Key):
+            logical_ids = [
+                _json_field(entry, "segment", "segmentLogicalId")
+                for entry in _json_objects(_json_field(plan.data, "segments"))
+                if _json_field(entry, "segment", "name") == item.value
+            ]
+        matches = [
+            part
+            for part, entry in zip(item_parts(stored, node), stored)
+            if any(
+                _same_logical_id(
+                    _json_field(entry, "segment", "segmentLogicalId"), known
+                )
+                for known in logical_ids
+            )
+        ]
+    return matches[0] if len(matches) == 1 and isinstance(matches[0], Key) else None
+
+
+def _field_spellings(
+    models: Sequence[type[VcoModel]], names: Sequence[str]
+) -> list[tuple[str, str]] | None:
+    """For each of the fields *names* below one of *models*, its python name and its wire name; None where no model has the field."""
+    name, *rest = names
+    for model in models:
+        field_info = model.model_fields.get(name)
+        if field_info is None:
+            continue
+        below = _field_spellings(field_models(field_info), rest) if rest else []
+        if below is not None:
+            return [(name, wire_name(model, name)), *below]
+    return None
+
+
+def _set_provider(
+    patch: dict[str, object],
+    data: VcoModel,
+    module: ConfigurationModuleBase,
+    plan: ModulePlan,
+    stored_parts: Mapping[Path, ItemPart],
+    edits: Sequence[PlannedChange],
+    value: object,
+) -> bool:
+    """Set the ``RefOnly`` field the refs entries *edits* go with to *value* in *patch*, in the segment as the stored module names it; False when the patch has no place for it.
+
+    The owner is ``segments[<segment>].<fields>`` in python names, and a
+    ``RefOnly`` field is not in a raw dump, so the path is built from its parts.
+    Each field is written by its wire name, unless the patch already has the
+    object under its python name: ``merge_patch`` refuses both for one field.
+    The segment's object is the one a data entry of the patch has, if any.
+    """
+    owner = cast(Path, edits[0].owner)
+    object_ids = [
+        key.value[1]
+        for edit in edits
+        for key in [edit.path.parts[-1]]
+        if isinstance(key, Key)
+        and isinstance(key.value, tuple)
+        and len(key.value) == 2
+        and isinstance(key.value[1], int)
+    ]
+    segment, *names = owner.parts[1:]
+    if isinstance(segment, str) or not all(isinstance(name, str) for name in names):
+        return False
+    models = field_models(type(data).model_fields["segments"])
+    fields = _field_spellings(models, cast("list[str]", names))
+    part = _stored_segment(data, module, plan, stored_parts, segment, object_ids)
+    if fields is None or part is None:
+        return False
+    node = _child(patch, ("segments",))
+    for spellings in ((selector_of(part),), *fields[:-1]):
+        if node is None or node.get("_op") == "delete":
+            return False
+        node = _child(node, spellings)
+    if node is None:
+        return False
+    node[_spelled(node, fields[-1])] = value
+    return True
+
+
+def _spelled(node: dict[str, object], spellings: tuple[str, ...]) -> str:
+    """The key *node* already has for a field, by one of its *spellings*; else the last."""
+    return next((key for key in spellings if key in node), spellings[-1])
+
+
+def _child(
+    node: dict[str, object], spellings: tuple[str, ...]
+) -> dict[str, object] | None:
+    """The object of *node* under a field's key (``_spelled``), made if there is none; None where the key holds something else."""
+    found = node.setdefault(_spelled(node, spellings), {})
+    return cast("dict[str, object]", found) if isinstance(found, dict) else None
+
+
 class ConfigConflictError(ModuleWriteError):
     """Raised when a module write is rejected because its version is stale.
 
@@ -563,14 +840,20 @@ class ConfigConflictError(ModuleWriteError):
     are not all stored. ``stated`` says how the refusal is known. True: the
     VCO said it refused the version (``detail`` says how). False: the VCO
     answered with the module, which holds none of the changes and is as read
-    at each, and the refusal is inferred from that. ``lost_edits`` are the
-    edits to redo, and may be empty after a stated refusal when the check
-    cannot tell what is stored; ``module``, as the VCO holds it, is what to
-    redo them on. ``write_module`` always sets it.
+    at each, and the refusal is inferred from that; or ``sent`` is False.
+    ``sent`` is False when nothing was sent: the module's version on the VCO
+    was not the one read, and the module there did not hold the write's
+    changes (a write that sends refs reads the version first). ``lost_edits``
+    are the edits to redo, and may be empty after a stated refusal when the
+    check cannot tell what is stored; ``module``, as the VCO holds it, is
+    what to redo them on. ``write_module`` always sets it, except when the
+    module is gone from its configuration: ``module`` is then None and
+    ``detail`` says to read the configuration again.
     """
 
     detail: str
     stated: bool
+    sent: bool
 
     def __init__(
         self,
@@ -579,6 +862,7 @@ class ConfigConflictError(ModuleWriteError):
         detail: str,
         *,
         stated: bool = True,
+        sent: bool = True,
         module_name: str = "",
         plan: ModulePlan | None = None,
         module: ConfigurationModuleBase | None = None,
@@ -590,6 +874,7 @@ class ConfigConflictError(ModuleWriteError):
     ) -> None:
         self.detail = detail
         self.stated = stated
+        self.sent = sent
         super().__init__(
             module_id,
             version,
@@ -605,6 +890,12 @@ class ConfigConflictError(ModuleWriteError):
 
     @override
     def _headline(self) -> str:
+        if not self.sent:
+            # ``detail`` says that nothing was sent, and what to do.
+            return (
+                f"Configuration module {self._label()} changed on the VCO since "
+                f"it was read (version {self.version}): {self.detail}"
+            )
         if self.stated:
             return (
                 f"Configuration module {self._label()} changed since it was read "
@@ -681,6 +972,142 @@ class WriteNotAppliedError(ModuleWriteError):
         )
 
 
+class RefsDroppedError(WriteNotAppliedError):
+    """Raised when the VCO stored a module write but not all of its ref rows.
+
+    Every lost edit is a ref row. After an update answered with the module, a
+    change is stored beside them (with none, the write is a conflict); an
+    insert, or a write the VCO only counted, raises this with none stored too.
+    The VCO deletes the module's refs and inserts the rows sent one by one, and it
+    skips on its own a row whose object it cannot resolve while it stores the
+    others. A row the plan added is not stored, or one it removed still is
+    (``lost_edits``; each has ``part == "refs"``, and ``owner`` is the path of
+    the ``RefOnly`` field the row goes with). Nothing was written to put the
+    rows back.
+
+    When the VCO took none of the rows sent, ``every_row_lost`` is true and
+    ``refs_as_read`` holds the rows to put back: the module's refs as read
+    (``MISSING`` when it had none), without the rows of the
+    ``APPEND_ONLY_REF_NAMES`` (``deviceSettings:vnfs:edge``,
+    ``objectGroup:addressGroup`` and ``objectGroup:portGroup``). Those rows are
+    the VCO's own and it keeps them through the write, so sending them back
+    would store them twice; they were not among the rows sent either.
+    """
+
+    refs_as_read: object
+
+    def __init__(
+        self,
+        module_id: int,
+        version: str,
+        *,
+        module_name: str,
+        plan: ModulePlan,
+        module: ConfigurationModuleBase,
+        lost_edits: Sequence[PlannedChange],
+        refs_as_read: object,
+        applied: Sequence[PlannedChange] = (),
+        left_out: Sequence[PlannedChange] = (),
+        server_changes: Sequence[ServerChange] = (),
+        stored_parts: Mapping[Path, ItemPart] | None = None,
+    ) -> None:
+        self.refs_as_read = refs_as_read
+        super().__init__(
+            module_id,
+            version,
+            module_name=module_name,
+            plan=plan,
+            module=module,
+            lost_edits=lost_edits,
+            applied=applied,
+            left_out=left_out,
+            server_changes=server_changes,
+            stored_parts=stored_parts,
+        )
+
+    @property
+    def every_row_lost(self) -> bool:
+        """Whether the VCO took none of the rows sent, and some were sent as read: each of those is a lost edit, and ``refs_as_read`` holds them to put back."""
+        return any(
+            edit.as_read is not MISSING and edit.intended is not MISSING
+            for edit in self.lost_edits
+        )
+
+    @override
+    def _headline(self) -> str:
+        lost = len(self.lost_edits)
+        return (
+            f"Configuration module {self._label()}: {lost} of "
+            f"{lost + len(self.applied)} planned changes are not stored as sent, "
+            "and all of them are ref rows"
+        )
+
+    def _put_back_note(self) -> str:
+        """How to put the rows back when the VCO took none of those sent, for a caller with or without Python."""
+        configuration_id = (
+            "<configuration ID>"
+            if self.module is None or self.module.configuration_id is None
+            else self.module.configuration_id
+        )
+        # Imported here: ``derived_refs`` reaches this module through the models.
+        from pyvelo.client.derived_refs import APPEND_ONLY_REF_NAMES
+
+        names = ", ".join(sorted(APPEND_ONLY_REF_NAMES))
+        return (
+            "The VCO took none of the ref rows this write sent, and the data is "
+            "stored. To put the rows back, send "
+            "configuration/updateConfigurationModule with "
+            f'{{"id": {self.module_id}, "_update": {{"data": <the module\'s '
+            'data as stored now>, "refs": <error.refs_as_read>}} '
+            "(update_configuration_module; error.refs_as_read holds the rows to "
+            "send). If you speak only JSON, read the data as stored now with "
+            "configuration/getConfiguration and "
+            f'{{"id": {configuration_id}, "with": ["modules"]}}, and for "refs" '
+            "send the module's refs from the read this write was planned on (the "
+            "VCO's own now lack the rows it dropped), without the rows named "
+            f"{names}: the VCO keeps those itself and would store them twice."
+        )
+
+    @override
+    def _notes(self, limit: int | None) -> list[str]:
+        if self.every_row_lost:
+            lines = [self._put_back_note()]
+        else:
+            lines = []
+            if any(edit.intended is not MISSING for edit in self.lost_edits):
+                lines.append(
+                    "The VCO skips a ref row whose object it cannot resolve and "
+                    "stores the others. Check that the object of each row "
+                    "added exists on the VCO, then make the change again on "
+                    "error.module."
+                )
+            if any(edit.intended is MISSING for edit in self.lost_edits):
+                lines.append(
+                    "The VCO kept a ref row the plan removed. Clear the field it "
+                    "goes with again on error.module."
+                )
+        owners = [edit for edit in self.lost_edits if edit.owner is not None]
+        if owners:
+            lines.append(
+                "  error.redo_patch() builds these patches with the real value "
+                "(null for a clear), for each field whose segment error.module has:"
+            )
+        for edit in _first(owners, limit):
+            owner = cast(Path, edit.owner)
+            if edit.intended is MISSING:
+                lines.append(
+                    f"  to clear {owner} again, send the patch "
+                    f"{patch_text(owner, clear=True)} (error.module reads it as set)"
+                )
+            else:
+                lines.append(
+                    f"  to set {owner} again, send the patch {patch_text(owner)} "
+                    "(error.module reads it as unset)"
+                )
+        lines.extend(_and_more(len(owners), limit, "lost_edits"))
+        return lines
+
+
 class WriteOutcomeUnknownError(ModuleWriteError):
     """Raised when a module write was sent, or was about to be sent again, and the module as stored could not be read.
 
@@ -750,8 +1177,7 @@ class WriteOutcomeUnknownError(ModuleWriteError):
                 where = f"{change.path}{_place_or_order(change.place, change.moves)}"
                 lines.append(f"  {where}: read {before}, meant {after}")
             lines.extend(_and_more(len(self.plan.changes), limit, "plan.changes"))
-            if self.plan.refs is not None:
-                lines.append("  refs: replaced")
+            lines.extend(self.plan.ref_lines())
         lines.append(
             "Read the configuration again and compare before you write this "
             "module again."

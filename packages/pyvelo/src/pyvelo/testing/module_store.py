@@ -2,7 +2,8 @@
 
 The store is an ``httpx`` handler, so a client built over it runs its own request
 building, parsing and error mapping. It serves module updates and inserts,
-``configuration/getConfiguration`` and, for an edge whose two configurations
+``configuration/getConfiguration``, ``configuration/getConfigurationModules``,
+``enterprise/getEnterpriseServices`` and, for an edge whose two configurations
 it was told (``add_stack``), ``edge/getEdgeConfigurationStack``, and answers
 them the way a VCO does: a stale ``version`` is refused with the precondition
 error when the conditional check is on and updates nothing when it is off,
@@ -10,6 +11,23 @@ error when the conditional check is on and updates nothing when it is off,
 required key missing is refused with the ``validationError`` and changes
 nothing, and with ``issue_rule_ids`` on a stored write gets the rule IDs a VCO
 issues.
+
+Ref rows are stored, completed and served as the VCO does (Appendix D of the
+design). The enterprise objects a row can point at are the store's
+``objects`` (``add_object``). Refs *sent* on an update, or given on an insert,
+replace the module's ordinary rows, which are the rows of every name but the
+three ``APPEND_ONLY_REF_NAMES``; stored rows of those names are kept and sent
+ones are added. A sent row is kept only with a ``configurationId``, a
+``moduleId`` (an insert sets it first) and an ``enterpriseObjectId``, none
+null, and with an object not in ``skipped_objects``, as the VCO skips a row
+whose insert fails. A kept row is stored with a new ``id`` and, when its
+object is known, the object's ``logicalId``, ``name``, ``type``, ``object`` and
+``data`` (and a ``segmentLogicalId`` from its ``segmentObjectId``). Rows are
+grouped under their ``ref``: one row as an object, several as a list. With no
+refs sent the rows stay, except for an update of a ``deviceSettings`` or
+``QOS`` module with segments and an entry in ``processor_refs``: an inline
+processor then returns its own rows, which replace the ordinary ones as given.
+A kept append-only row keeps its ``id``.
 """
 
 import copy
@@ -22,6 +40,7 @@ from typing import Any, cast
 import httpx
 from pydantic import MISSING
 
+from pyvelo.client.derived_refs import APPEND_ONLY_REF_NAMES
 from pyvelo.client.exceptions import PRECONDITION_FAILED
 from pyvelo.client.schemas.configuration import (
     ConfigurationBase,
@@ -38,6 +57,10 @@ _FIXED_TIME = "2024-01-01T00:00:00.000Z"
 _UPDATE_PATH = "configuration.updateConfigurationModule"
 _INSERT_PATH = "configuration.insertConfigurationModule"
 _STACK_PATH = "edge.getEdgeConfigurationStack"
+_MODULES_PATH = "configuration.getConfigurationModules"
+_PROCESSOR_MODULES = ("deviceSettings", "QOS")
+_SERVICE_OBJECT = "NETWORK_SERVICE"
+_REQUIRED_ROW_IDS = ("configurationId", "moduleId", "enterpriseObjectId")
 _RULE_ID = "ruleLogicalId"
 _QOS_LISTS = ("rules", "defaults")
 
@@ -111,6 +134,12 @@ class ModuleStore:
     """Whether a stored write gives its rules the IDs a VCO gives them."""
     stacks: dict[int | None, tuple[int, int]]
     """Edge ID, or None for every edge, to the IDs of its edge and profile configurations."""
+    objects: dict[int, dict[str, Any]]
+    """Object ID to enterprise object: ``id``, ``logicalId``, ``name``, ``type``, ``object`` and ``data``."""
+    skipped_objects: set[int]
+    """Objects a sent ref row points at in vain: the row is skipped, as the VCO skips a row whose insert fails."""
+    processor_refs: dict[int, dict[str, Any]]
+    """Module ID to the refs an inline processor returns, which replace the ordinary rows of an update that sends none."""
 
     def __init__(
         self,
@@ -131,6 +160,10 @@ class ModuleStore:
         self.enterprise_id = enterprise_id
         self.issue_rule_ids = issue_rule_ids
         self.stacks = {}
+        self.objects = {}
+        self.skipped_objects = set()
+        self.processor_refs = {}
+        self._ref_ids: itertools.count[int] = itertools.count(1)
         self._writes: int = 0
         self._rule_count: int = 0
         self._versions: itertools.count[int] = itertools.count(_FIRST_VERSION)
@@ -139,6 +172,8 @@ class ModuleStore:
             "configuration/insertConfigurationModule": self._insert,
             "configuration/getConfiguration": self._get_configuration,
             "edge/getEdgeConfigurationStack": self._get_edge_configuration_stack,
+            "configuration/getConfigurationModules": self._get_configuration_modules,
+            "enterprise/getEnterpriseServices": self._get_enterprise_services,
         }
 
     def add_configuration(self, row: Mapping[str, Any]) -> None:
@@ -188,6 +223,26 @@ class ModuleStore:
         has no stack of its own.
         """
         self.stacks[edge_id] = (edge_configuration_id, profile_configuration_id)
+
+    def add_object(
+        self,
+        object_id: int,
+        *,
+        logical_id: str,
+        name: str,
+        type_: str,
+        object_: str = _SERVICE_OBJECT,
+        data: dict[str, Any] | None = None,
+    ) -> None:
+        """Hold an enterprise object a ref row can point at; a service by default."""
+        self.objects[object_id] = {
+            "id": object_id,
+            "logicalId": logical_id,
+            "name": name,
+            "type": type_,
+            "object": object_,
+            "data": copy.deepcopy(data) if data is not None else {},
+        }
 
     def other_writer(
         self, module_id: int, edit: Callable[[dict[str, Any]], None]
@@ -257,7 +312,9 @@ class ModuleStore:
         new = copy.deepcopy(row)
         new["data"] = copy.deepcopy(data)
         if "refs" in update:
-            _set_refs(new, update["refs"])
+            self._replace_refs(new, update["refs"])
+        elif self._processor_applies(row, data):
+            self._replace_refs_by_processor(new)
         self._prepare(new, row)
         new["version"] = self._new_version()
         self.rows[module_id] = new
@@ -284,7 +341,8 @@ class ModuleStore:
             "name": name,
             "data": copy.deepcopy(data),
         }
-        _set_refs(row, params.get("refs"))
+        if params.get("refs"):
+            self._replace_refs(row, params["refs"], module_id=module_id)
         self._prepare(row, None)
         self.rows[module_id] = row
         if self._returns_data(params):
@@ -305,6 +363,37 @@ class ModuleStore:
             raise _validation_error(_STACK_PATH, f"edge not found with ID: {edge_id}")
         return [self._configuration(i, _STACK_PATH, with_modules=True) for i in ids]
 
+    def _get_configuration_modules(self, params: dict[str, Any]) -> object:
+        config_id = _required(params, "configurationId", _MODULES_PATH)
+        names = params.get("modules") or None
+        no_data = bool(params.get("noData"))
+        answer: list[dict[str, Any]] = []
+        for row in self.rows.values():
+            if row.get("configurationId") != config_id:
+                continue
+            if names is not None and row.get("name") not in names:
+                continue
+            copied = copy.deepcopy(row)
+            if no_data:
+                _ = copied.pop("data", None)
+            answer.append(copied)
+        return answer
+
+    def _get_enterprise_services(self, params: dict[str, Any]) -> object:
+        del params
+        return [
+            {
+                "id": obj["id"],
+                "logicalId": obj["logicalId"],
+                "name": obj["name"],
+                "type": obj["type"],
+                "data": copy.deepcopy(obj["data"]),
+                "enterpriseId": self.enterprise_id,
+            }
+            for obj in self.objects.values()
+            if obj["object"] == _SERVICE_OBJECT
+        ]
+
     # -- helpers ------------------------------------------------------------
 
     def _configuration(
@@ -324,6 +413,71 @@ class ModuleStore:
                 if row.get("configurationId") == config_id
             ]
         return answer
+
+    def _processor_applies(self, row: dict[str, Any], data: object) -> bool:
+        """Whether an update of *row* to *data*, sending no refs, has a processor return its own rows."""
+        if row.get("name") not in _PROCESSOR_MODULES:
+            return False
+        if row["id"] not in self.processor_refs or not isinstance(data, dict):
+            return False
+        segments = cast(dict[str, Any], data).get("segments")
+        return isinstance(segments, list) and bool(segments)
+
+    def _replace_refs(
+        self, row: dict[str, Any], sent: object, *, module_id: int | None = None
+    ) -> None:
+        """Replace the ordinary rows of *row* by the rows in *sent*, completing and skipping them.
+
+        With *module_id*, every sent row gets it as its ``moduleId`` first.
+        """
+        pairs = _append_only_rows(row.get("refs"))
+        ordinary: list[tuple[str, dict[str, Any]]] = []
+        for entry in _flatten(sent):
+            if module_id is not None:
+                entry["moduleId"] = module_id
+            stored = self._stored_row(entry)
+            if stored is None:
+                continue
+            name = stored.get("ref") or "null"
+            target = pairs if name in APPEND_ONLY_REF_NAMES else ordinary
+            target.append((name, stored))
+        _set_refs(row, [*ordinary, *pairs])
+
+    def _replace_refs_by_processor(self, row: dict[str, Any]) -> None:
+        """Replace the ordinary rows of *row* by the processor's, as given; the append-only rows stay."""
+        given = copy.deepcopy(self.processor_refs[row["id"]])
+        kept = _append_only_rows(row.get("refs"))
+        kept += _append_only_rows(given)
+        _set_refs(row, kept, base=given)
+
+    def _stored_row(self, sent: dict[str, Any]) -> dict[str, Any] | None:
+        """The row to store for *sent*, new ``id`` and all; None for a row the VCO skips.
+
+        A row of a known object is stored as five fields and what the object
+        completes; one of an unknown object, as sent.
+        """
+        if any(sent.get(key) is None for key in _REQUIRED_ROW_IDS):
+            return None
+        if sent["enterpriseObjectId"] in self.skipped_objects:
+            return None
+        target = self.objects.get(sent["enterpriseObjectId"])
+        if target is None:
+            return {**sent, "id": next(self._ref_ids)}
+        stored: dict[str, Any] = {
+            "id": next(self._ref_ids),
+            "configurationId": sent["configurationId"],
+            "moduleId": sent["moduleId"],
+            "enterpriseObjectId": sent["enterpriseObjectId"],
+            "ref": sent.get("ref"),
+            "segmentObjectId": sent.get("segmentObjectId"),
+        }
+        for key in ("logicalId", "name", "type", "object", "data"):
+            stored[key] = copy.deepcopy(target[key])
+        segment_id = sent.get("segmentObjectId")
+        segment = self.objects.get(segment_id) if segment_id is not None else None
+        if segment is not None:
+            stored["segmentLogicalId"] = segment["logicalId"]
+        return stored
 
     def _prepare(self, new: dict[str, Any], old: dict[str, Any] | None) -> None:
         """Give *new* its rule IDs, then run the hooks with it and a copy of *old*.
@@ -413,10 +567,55 @@ def _content(rule: dict[str, Any]) -> dict[str, Any]:
     return {k: v for k, v in rule.items() if k not in ("name", _RULE_ID)}
 
 
-def _set_refs(row: dict[str, Any], refs: object) -> None:
-    """Replace the refs of *row* with *refs*; an empty or null value removes them."""
+def _flatten(refs: object) -> list[dict[str, Any]]:
+    """Copies of the rows in *refs*, an object from name to one row or a list of rows.
+
+    Anything else, and an entry that is not an object, has no rows.
+    """
+    if not isinstance(refs, dict):
+        return []
+    found: list[dict[str, Any]] = []
+    for value in cast(dict[str, Any], refs).values():
+        for entry in cast(list[Any], value) if isinstance(value, list) else [value]:
+            if isinstance(entry, dict):
+                found.append(copy.deepcopy(cast(dict[str, Any], entry)))
+    return found
+
+
+def _append_only_rows(refs: object) -> list[tuple[str, dict[str, Any]]]:
+    """The rows of *refs* under an append-only name, each with its name."""
+    if not isinstance(refs, dict):
+        return []
+    return [
+        (name, row)
+        for name, value in cast(dict[str, Any], refs).items()
+        if name in APPEND_ONLY_REF_NAMES
+        for row in _flatten({name: value})
+    ]
+
+
+def _set_refs(
+    row: dict[str, Any],
+    pairs: list[tuple[str, dict[str, Any]]],
+    *,
+    base: dict[str, Any] | None = None,
+) -> None:
+    """Give *row* the refs of *pairs* (name and row), grouped by name; none removes them.
+
+    *base* is refs kept as given, but for the append-only names.
+    """
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for name, entry in pairs:
+        grouped.setdefault(name, []).append(entry)
+    refs: dict[str, Any] = {
+        name: value
+        for name, value in (base or {}).items()
+        if name not in APPEND_ONLY_REF_NAMES
+    }
+    for name, rows in grouped.items():
+        refs[name] = rows[0] if len(rows) == 1 else rows
     if refs:
-        row["refs"] = copy.deepcopy(refs)
+        row["refs"] = refs
     else:
         _ = row.pop("refs", None)
 

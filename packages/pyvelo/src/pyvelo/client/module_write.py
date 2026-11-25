@@ -9,6 +9,8 @@ raw JSON and the model as it is now) is applied to it.
 After the plan: ``VcoClient.write_module`` sends it as an update or an insert
 (the requests are built here) that asks for the module as stored
 (``returnData``), and reads the module back when the VCO answers without it.
+An insert is always read back, with its refs, because its row does not promise
+them.
 An update none of whose changes the check can find stored is sent without
 ``returnData`` and read back too: the VCO then answers with a row count, which
 says whether it stored the write, and a row cannot.
@@ -30,6 +32,23 @@ Reconciliation never writes only to reconcile: with no change from the caller th
 plan is ``none``. A segment the caller deletes from the edge layer that the profile has
 comes back as that empty entry: the edge cannot drop what it inherits.
 
+Refs: the refs of a write are derived from the data, never given. A ref row goes
+with an identity that the data holds or that only the row says (``OwnsRef`` and
+``RefOnly``); the plan compares those identities as read and now
+(``pyvelo.client.derived_refs``). A row is added for one that appeared and
+removed for one that went, and the plan then sends the complete refs, every other
+row as read. A write of a deviceSettings or QOS module with segments always
+sends its refs, as read when nothing changed in them, because the VCO runs its
+processors on every such write. A module read without its refs
+(``module.refs_loaded`` false) cannot be written with an edit to an owner, or
+with segments (``RefsNotLoadedError``); any other plan of it sends no refs.
+
+Rebase: ``rebase_onto`` is the plan of a module that another write changed
+after it was read, applied to the module as it is now: the caller's edits (the
+plan's changes) go onto the fresh data, and the write goes on with the fresh
+version. It is for a module written after a profile's device settings (see
+``VcoClient.write_module``).
+
 Legacy keys: a firewall segment entry has no ``outboundOverride`` (the VCO and the
 edge do not know it), but an older version of this library may have written one.
 A write of a firewall module drops it from every segment entry, and the plan lists
@@ -40,19 +59,31 @@ is reported (``legacy_keys``) and left, never written just to strip it.
 import copy
 import json
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Final, Literal, cast, override
 
 from pydantic import MISSING
 from pydantic_core import to_jsonable_python
 
-from pyvelo.client.exceptions import LossyFieldError
+from pyvelo.client.derived_refs import (
+    PlanWarning,
+    RefChange,
+    changed_owners,
+    derive_refs,
+    sends_refs_always,
+)
+from pyvelo.client.exceptions import (
+    ConfigConflictError,
+    LossyFieldError,
+    RefsNotLoadedError,
+)
 from pyvelo.client.models.configuration.common import (
     SEGMENT_LISTS,
     placeholder_segment,
     segment_id_of,
 )
 from pyvelo.client.models.configuration.firewall.root import FirewallData
+from pyvelo.client.models.configuration.ref_owners import fill_ref_only
 from pyvelo.client.schemas.configuration import (
     ConfigurationModuleBase,
     ConfigurationModuleUpdate,
@@ -65,6 +96,7 @@ from pyvelo.client.schemas.configuration import (
 )
 from pyvelo.core import ConfigContext, VcoModel
 from pyvelo.core.base import (
+    IdentityLookup,
     is_dict,
     is_list,
 )
@@ -77,6 +109,7 @@ from pyvelo.core.rebase import (
     raw_changes,
     rebase,
 )
+from pyvelo.core.response_check import Rewrites, ServerChange, check_response
 from pyvelo.core.show import moves_text, shown, shown_together
 
 type _Operation = Literal["none", "update", "insert"]
@@ -145,7 +178,10 @@ class ModulePlan:
     data: dict[str, Any]
     """The payload; the raw data as read when *operation* is ``none``."""
     refs: dict[str, Any] | None
-    """The complete refs to send, or None to leave refs out."""
+    """The complete refs to send, or None to leave refs out.
+
+    None whenever *operation* is ``none``, and for a module that never carried data.
+    """
     changes: tuple[RawChange, ...]
     """The caller's changes, relative to the raw data with the reconciled segments."""
     reconciled_segments: tuple[str, ...]
@@ -167,6 +203,10 @@ class ModulePlan:
     """The class of the module's data: that of the data planned when it is a
     model, else that of ``module.data`` when it is one. It tells ``render`` which
     values are secrets; a plan made from a dict still has it."""
+    ref_changes: tuple[RefChange, ...] = ()
+    """The ref rows the edit adds and removes, from the difference of the owners."""
+    warnings: tuple[PlanWarning, ...] = ()
+    """What disagrees in the module as read about its refs, and the plan leaves as it is."""
 
     @override
     def __repr__(self) -> str:
@@ -186,6 +226,12 @@ class ModulePlan:
         and counts the rest. A value is shown as JSON, cut to 80 characters;
         the two values of a ``~`` line are cut where they first differ. A
         secret is shown as ``"***"``; the changes keep the real values.
+
+        A ref row the edit adds or removes is ``+ refs <name> (<segment>):
+        <value>`` or ``- refs <name> (<segment>): <value>``, without the
+        segment for a row of the module; ``refs: sent as read`` says an update
+        or insert sends refs with no row changed, and ``warning: <message>``
+        is something about the refs as read that the plan leaves as it is.
         """
         lines = [f"{self.name}: {self.operation}"]
         for change in self.changes:
@@ -202,8 +248,7 @@ class ModulePlan:
                     change.before, change.after, model=self.model, path=change.path
                 )
                 lines.append(f"  ~ {change.path}: {before} -> {after}")
-        if self.refs is not None:
-            lines.append("  refs: replaced")
+        lines.extend(self.ref_lines())
         if self.reconciled_segments:
             label = "missing" if self.operation == "none" else "reconciled"
             lines.append(f"  {label} segments: {', '.join(self.reconciled_segments)}")
@@ -217,7 +262,19 @@ class ModulePlan:
                 "  legacy keys (dropped when the module is written): "
                 + ", ".join(self.legacy_keys)
             )
+        lines.extend(f"  warning: {warning.message}" for warning in self.warnings)
         return "\n".join(lines)
+
+    def ref_lines(self) -> list[str]:
+        """The lines of ``render`` about the refs sent: a line for each row added or removed."""
+        lines: list[str] = []
+        for change in self.ref_changes:
+            sign = "+" if change.added else "-"
+            place = f" ({change.segment})" if change.segment is not None else ""
+            lines.append(f"  {sign} refs {change.name}{place}: {change.value}")
+        if self.refs is not None and not self.ref_changes:
+            lines.append("  refs: sent as read")
+        return lines
 
 
 def update_request(
@@ -249,8 +306,9 @@ def insert_request(
     """The request that inserts *plan* as a new module of *module*'s configuration, asking for its row.
 
     Only a firewall or QoS module is inserted (``TypeError`` otherwise); a QoS
-    one carries the plan's refs. Raises ``ValueError`` if *module* has no
-    ``configuration_id``.
+    one carries the plan's refs when it has any, and a firewall one never does:
+    its request has no ``refs``, and no firewall field declares an owner.
+    Raises ``ValueError`` if *module* has no ``configuration_id``.
     """
     configuration_id = module.configuration_id
     if configuration_id is None:
@@ -267,7 +325,7 @@ def insert_request(
         return InsertQosConfigurationModule(
             configuration_id=configuration_id,
             data=plan.data,
-            refs=plan.refs,
+            refs=plan.refs if plan.refs is not None else MISSING,
             enterprise_id=enterprise,
             return_data=True,
         )
@@ -400,52 +458,34 @@ def _plain_json(value: Mapping[str, object]) -> dict[str, Any]:
     return cast(dict[str, Any], to_jsonable_python(dict(value), by_alias=True))
 
 
-def _plan_refs(
-    module: ConfigurationModuleBase,
-    refs: VcoModel | Mapping[str, object] | None,
-    level: ConfigContext | None,
-) -> dict[str, Any] | None:
-    """The whole refs to send, or None when they are not there or did not change."""
-    current = refs if refs is not None else _attribute(module, "refs")
-    raw = module.raw_refs
-    if isinstance(current, VcoModel):
-        after: dict[str, Any] = wire_dump(current, level)
-        model_type: type[VcoModel] | None = type(current)
-    elif isinstance(current, Mapping):
-        after = _plain_json(current)
-        model_type = None
-    else:  # MISSING, None: the module has no refs to send
-        return None
-    if raw is MISSING or raw is None:
-        candidate: object = after
-    else:
-        before: object = raw
-        if model_type is not None:
-            before = wire_dump(_reparse(model_type, raw, module.raw_mode), level)
-        candidate = copy.deepcopy(rebase(raw, before, after, model_type))
-    return cast(dict[str, Any], candidate) if candidate != raw else None
-
-
 def plan_module(
     module: ConfigurationModuleBase,
     data: VcoModel | Mapping[str, object] | None = None,
     *,
-    refs: VcoModel | Mapping[str, object] | None = None,
     level: ConfigContext | None = None,
     profile: ConfigurationModuleBase | None = None,
+    resolvers: IdentityLookup | None = None,
 ) -> ModulePlan:
     """Plan the write of *module*, with *data* (default ``module.data``) as its data.
 
-    *level* defaults to the config level of *data*. *refs* defaults to
-    ``module.refs``. Give the *profile*'s module of the same name to reconcile
-    the segments an edge module lacks (never at the profile level).
+    *level* defaults to the config level of *data*. Give the *profile*'s module
+    of the same name to reconcile the segments an edge module lacks (never at
+    the profile level).
 
+    The refs are derived from *data* (see the module text): *resolvers* finds
+    the ``enterpriseObjectId`` of an identity the edit adds, and a plan that
+    adds none needs no resolver. Raises ``ResolverNotLoadedError`` (no
+    resolver for it) and ``ResolutionError`` (the VCO does not know the
+    identity) for a row it cannot build, and ``RefsNotLoadedError`` for an
+    edit that needs the refs of a module read without them.
     Raises ``LossyFieldError`` if the caller assigned a value that cannot reach
     the written data (the default of a key that was absent when read).
 
-    A mapping given as *data* or *refs* is converted as the request would write
-    it (a ``UUID`` or a ``datetime`` becomes its text), so the plan holds plain
-    JSON that shares nothing with the caller's objects.
+    A mapping given as *data* is converted as the request would write it (a
+    ``UUID`` or a ``datetime`` becomes its text), so the plan holds plain JSON
+    that shares nothing with the caller's objects. A mapping has no owners to
+    compare, so it changes no ref row; a deviceSettings or QOS module with
+    segments still sends its refs as read.
     """
     name = str(_attribute(module, "name"))
     current = data if data is not None else _attribute(module, "data")
@@ -453,7 +493,6 @@ def plan_module(
         current = _plain_json(cast(Mapping[str, object], current))
     if level is None and isinstance(current, VcoModel):
         level = current.config_context
-    refs_out = _plan_refs(module, refs, level)
 
     raw = module.raw_data
     if raw is MISSING:  # a module object that never carried data
@@ -468,7 +507,7 @@ def plan_module(
             name=name,
             operation="update",
             data=payload,
-            refs=refs_out,
+            refs=None,
             changes=tuple(raw_changes({}, payload, model_type)),
             reconciled_segments=(),
             model=_document_model(model_type, module),
@@ -481,9 +520,12 @@ def plan_module(
     reconciled = copy.deepcopy(raw)
     _add_segments(reconciled, extra)
 
+    baseline: VcoModel | None
     if isinstance(current, VcoModel):
         model_type = type(current)
         baseline = _reparse(model_type, reconciled, module.raw_mode)
+        if module.refs_loaded:
+            fill_ref_only(baseline, module.raw_refs)
         before = wire_dump(baseline, level)
         after = wire_dump(current, level)
         carry_unset_defaults(baseline, current, before, after)
@@ -503,6 +545,7 @@ def plan_module(
             flags = [path for path in lossy if is_override_flag(model_type, path)]
             raise LossyFieldError(name, lossy, flags)
     else:
+        baseline = None
         model_type = None
         topped_up = dict(cast(Mapping[str, Any], current))
         if extra:  # only for an object, so *reconciled* is one
@@ -517,7 +560,31 @@ def plan_module(
         restored = missing_segments(payload, inherited.raw_data, name)
         _add_segments(payload, restored)
 
-    changed = payload != reconciled or refs_out is not None
+    derived_refs: dict[str, Any] | None = None
+    ref_changes: tuple[RefChange, ...] = ()
+    warnings: tuple[PlanWarning, ...] = ()
+    if module.refs_loaded:
+        derived = derive_refs(
+            module,
+            baseline,
+            current if isinstance(current, VcoModel) else None,
+            payload,
+            level=level,
+            resolvers=resolvers,
+        )
+        derived_refs, ref_changes, warnings = (
+            derived.refs,
+            derived.changes,
+            derived.warnings,
+        )
+    elif baseline is not None and isinstance(current, VcoModel):
+        moved = changed_owners(baseline, current, level)
+        if moved:
+            raise RefsNotLoadedError(name, tuple(dict.fromkeys(o.path for o in moved)))
+
+    changed = payload != reconciled or bool(ref_changes)
+    if changed and not module.refs_loaded and sends_refs_always(module, payload):
+        raise RefsNotLoadedError(name)
     operation: _Operation = (
         "none" if not changed else "insert" if module.is_new else "update"
     )
@@ -529,7 +596,7 @@ def plan_module(
         name=name,
         operation=operation,
         data=payload if changed else copy.deepcopy(cast(dict[str, Any], raw)),
-        refs=refs_out,
+        refs=derived_refs if changed else None,
         changes=changes,
         reconciled_segments=tuple(
             _segment_name(entry) for entry in [*extra, *restored]
@@ -537,4 +604,96 @@ def plan_module(
         legacy_keys=legacy,
         overrides_turned_on=_overrides_turned_on(changes, model_type),
         model=_document_model(model_type, module),
+        ref_changes=ref_changes,
+        warnings=warnings,
+    )
+
+
+_REBASE_CLASH = (
+    "the module changed on the VCO after this save wrote device settings, at a "
+    "path this save also changes; nothing was sent"
+)
+_REBASE_LIST = (
+    "the module changed on the VCO after this save wrote device settings, in a "
+    "list this save also changes, so its edits cannot be applied item by item; "
+    "nothing was sent"
+)
+
+
+def rebase_onto[M: ConfigurationModuleBase](
+    module: M, plan: ModulePlan, fresh: ConfigurationModuleBase
+) -> tuple[M, ModulePlan, tuple[ServerChange, ...]]:
+    """*plan*, made for *module* as read, applied to *fresh*, the module as the VCO holds it now.
+
+    Returns the rebased module, its plan and what changed under the caller.
+    The module is of the class of *module*, with the raw snapshot, ``version``
+    and ``refs_loaded`` of *fresh* and the data of *fresh* with the caller's
+    edits (the plan's changes) applied, so that ``plan_module`` of it plans
+    exactly those edits relative to *fresh*: the plan is that. Its operation
+    is ``none`` when *fresh* holds every change already. The server changes
+    are what differs between the payload and *fresh* outside the plan's
+    changes, each marked ``merged``.
+
+    A planned change whose path holds in *fresh* neither the value read nor
+    the value planned is a clash: something else changed it too. So is a list
+    whose items another writer added or removed, when the caller edits an item
+    of it: the items cannot be matched, and the edit would replace the list
+    whole. Raises ``ConfigConflictError`` (not ``stated``, not ``sent``) for
+    either, with *fresh* as its module, the planned changes *fresh* does not
+    hold as the lost edits, and nothing sent. Raises ``ValueError`` for a plan
+    that adds or removes a ref row: the rebase has no owner to carry it, and
+    nothing a profile writes after its device settings declares one.
+    """
+    # Imported here: module_check imports this module.
+    from pyvelo.client.module_check import MODULE_REWRITES, data_model
+
+    if plan.ref_changes:
+        raise ValueError(
+            f"the plan for {plan.name} adds or removes ref rows, and a rebase "
+            "cannot carry them onto another version of the module"
+        )
+    if not isinstance(fresh, type(module)):
+        raise TypeError(
+            f"the module read is a {type(fresh).__name__}, not a {type(module).__name__}"
+        )
+    as_read = {} if module.raw_data is MISSING else module.raw_data
+    model = data_model(module)
+    found = check_response(
+        as_read,
+        plan.data,
+        fresh.raw_data,
+        model,
+        rewrites=MODULE_REWRITES.get(plan.name, Rewrites()),
+    )
+
+    def conflict(detail: str) -> ConfigConflictError:
+        return ConfigConflictError(
+            fresh.id_,
+            module.version or "",
+            detail,
+            stated=False,
+            sent=False,
+            module_name=plan.name,
+            plan=plan,
+            module=fresh,
+            lost_edits=found.not_applied,
+            applied=found.applied,
+            left_out=found.left_out,
+            server_changes=found.server_changes,
+            stored_parts=found.stored_parts,
+        )
+
+    if any(change.clash for change in found.not_applied):
+        raise conflict(_REBASE_CLASH)
+    rebased = fresh.with_data_parsed_from(
+        rebase(fresh.raw_data, as_read, plan.data, model)
+    )
+    rebased_plan = plan_module(rebased, level=module.config_context)
+    planned = {change.path for change in plan.changes}
+    if any(change.path not in planned for change in rebased_plan.changes):
+        raise conflict(_REBASE_LIST)
+    return (
+        rebased,
+        rebased_plan,
+        tuple(replace(change, merged=True) for change in found.server_changes),
     )

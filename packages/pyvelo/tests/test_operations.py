@@ -5,8 +5,10 @@ deeply-nested configuration data models. ``update_module`` runs over a
 ``ModuleStore``, which answers its writes as a VCO does.
 """
 
+import inspect
 from typing import cast
 from unittest.mock import AsyncMock
+from uuid import UUID
 
 import pytest
 from pydantic import MISSING
@@ -14,21 +16,37 @@ from pyvelo.client import VcoClient
 from pyvelo.client.enums.configuration import ConfigurationModuleName
 from pyvelo.client.exceptions import VcoOperationError
 from pyvelo.client.models.configuration.device_settings.root import DeviceSettingsData
+from pyvelo.client.models.configuration.device_settings.segment import (
+    DnsPrimaryProvider,
+    SegmentDns,
+)
 from pyvelo.client.models.configuration.firewall.root import FirewallData
 from pyvelo.client.models.configuration.qos.root import QosData
 from pyvelo.client.models.configuration.wan.root import WanData
+from pyvelo.client.module_check import ModuleWrite
+from pyvelo.client.module_write import ModulePlan
 from pyvelo.client.schemas.configuration import (
     ConfigurationBase,
     ConfigurationModuleBase,
     FirewallConfigurationModule,
     InsertConfigurationModuleResult,
-    QosConfigurationModule,
     UpdateConfigurationModule,
     new_edge_module,
 )
 from pyvelo.core import RowsModifiedConfirmation
 from pyvelo.core.base import ConfigContext
+from pyvelo.core.identity import NetworkServiceIdentity
 from pyvelo.testing import ModuleStore, make_module_json, store_of
+from refs_helpers import (
+    DNS_A,
+    SEG0,
+    SEG0_OBJECT,
+    dns,
+    ds_module,
+    segment_entry,
+    segment_row,
+    table_registry,
+)
 
 from ._type_support import MockVcoClientFactory
 
@@ -219,17 +237,41 @@ class TestUpdateModule:
         (req,) = self._updates(store)
         assert req.version is MISSING and req.enterprise_id is MISSING
 
-    async def test_refs_forwarded_only_when_changed(
-        self, mock_vco_client: MockVcoClientFactory
-    ):
-        qos = QosConfigurationModule.model_validate(
-            make_module_json("QOS", {"segments": []}, refs={"a": 1})
+    def test_update_module_has_no_refs_parameter(self):
+        parameters = inspect.signature(VcoClient.update_module).parameters
+        assert "refs" not in parameters
+        assert "resolvers" in parameters
+
+    async def test_update_module_passes_resolvers_to_the_plan(self):
+        module = ds_module(
+            [segment_entry(0, "Global Segment", SEG0, dns=dns(primary=True))],
+            {"deviceSettings:segment": segment_row(0, SEG0_OBJECT, SEG0)},
         )
-        client, store = await self._make_client(mock_vco_client, qos)
-        _ = await client.update_module(qos, qos.mutable_data(), refs={"a": 1})
-        assert store.requests == []
-        _ = await client.update_module(qos, qos.mutable_data(), refs={"a": 2})
-        assert self._updates(store)[0].update.refs == {"a": 2}
+        data = module.mutable_data()
+        dns_section = data.segments[0].dns
+        assert isinstance(dns_section, SegmentDns)
+        provider = dns_section.primary_provider
+        assert isinstance(provider, DnsPrimaryProvider)
+        provider.service = UUID(DNS_A)
+        resolvers = await table_registry(
+            NetworkServiceIdentity("dns-a", UUID(DNS_A), 701, "dns")
+        )
+        client = VcoClient("test.velocloud.net", "test-token")
+        plans: list[ModulePlan] = []
+
+        async def write_module(
+            module: ConfigurationModuleBase, plan: ModulePlan, **_: object
+        ) -> ModuleWrite[ConfigurationModuleBase]:
+            plans.append(plan)
+            return ModuleWrite(plan.name, plan.operation, module, plan)
+
+        client.write_module = write_module  # pyright: ignore[reportAttributeAccessIssue]
+        _ = await client.update_module(module, data, resolvers=resolvers)
+        (plan,) = plans
+        (change,) = plan.ref_changes
+        assert (change.added, change.row["enterpriseObjectId"]) == (True, 701)
+        assert plan.refs is not None
+        assert plan.refs["deviceSettings:dns:primaryProvider"] == [change.row]
 
     async def test_profile_argument_reconciles_segments(
         self, mock_vco_client: MockVcoClientFactory

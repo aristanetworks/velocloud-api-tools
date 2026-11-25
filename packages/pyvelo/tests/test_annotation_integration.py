@@ -41,12 +41,16 @@ def _make_segment_metadata(name: str, segment_id: int = 0) -> SegmentMetadata:
 
 
 def _make_dns() -> SegmentDns:
-    from pyvelo.client.models.configuration.device_settings.segment import DnsProvider
+    from pyvelo.client.models.configuration.device_settings.segment import (
+        DnsBackupProvider,
+        DnsPrimaryProvider,
+        DnsProvider,
+    )
 
     return SegmentDns(
         override=False,
-        primary_provider=DnsProvider(ref="deviceSettings:dns:primaryProvider"),
-        backup_provider=DnsProvider(ref="deviceSettings:dns:backupProvider"),
+        primary_provider=DnsPrimaryProvider(ref="deviceSettings:dns:primaryProvider"),
+        backup_provider=DnsBackupProvider(ref="deviceSettings:dns:backupProvider"),
         private_providers=DnsProvider(ref="deviceSettings:dns:privateProviders"),
     )
 

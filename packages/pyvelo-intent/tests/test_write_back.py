@@ -156,14 +156,21 @@ def assert_detached_and_replaced(
     assert state.edge.firewall.segments[0].firewall_logging_enabled is True
 
 
-async def test_three_modules_three_requests_and_no_read():
+async def test_three_modules_three_updates_and_a_version_read_for_the_one_with_segments():
     state = three_module_state()
     client = MockVcoClient.for_state(state)
     edit_all(state)
 
     result = await ConfigPipeline(client).save(state)
 
-    assert methods(client.store) == ["updateConfigurationModule"] * 3
+    # The QoS module has a segment, so its update sends refs and reads the
+    # module's version first; nothing reads a configuration.
+    assert methods(client.store) == [
+        "updateConfigurationModule",
+        "getConfigurationModules",
+        "updateConfigurationModule",
+        "updateConfigurationModule",
+    ]
     assert result.modules_updated == [FIREWALL, QOS, ConfigurationModuleName.WAN]
 
 
@@ -315,7 +322,15 @@ async def test_request_two_of_three_fails():
 
     _ = await pipeline.save(state)
 
-    assert methods(client.store) == ["updateConfigurationModule"] * 4
+    # Each attempt at QoS, which has a segment, reads the module's version first.
+    assert methods(client.store) == [
+        "updateConfigurationModule",
+        "getConfigurationModules",
+        "updateConfigurationModule",
+        "getConfigurationModules",
+        "updateConfigurationModule",
+        "updateConfigurationModule",
+    ]
     assert [r.configuration_module_id for r in client.update_requests[2:]] == [4, 5]
     assert state.plan().changed == ()
 
@@ -362,6 +377,48 @@ async def test_redo_after_a_conflict_saves_without_a_reload(conditional_check: b
         *read,
         "updateConfigurationModule",
     ]
+
+
+async def test_a_conflict_found_before_sending_puts_the_module_as_read_in_the_state():
+    state = three_module_state()
+    client = MockVcoClient.for_state(state)
+    client.store.other_writer(4, lambda row: row["data"].update(futureKey=1))
+    state.edge.qos.service_rate_limit = ServiceRateLimit(
+        enabled=True, input_type="percent", value=50
+    )
+
+    with pytest.raises(ConfigConflictError) as exc:
+        _ = await ConfigPipeline(client).save(state)
+
+    error = exc.value
+    assert (error.stated, error.sent) == (False, False)
+    assert methods(client.store) == ["getConfigurationModules", "getConfiguration"]
+    assert error.module is not None
+    assert state.module("QOS") is error.module
+    assert error.module.version == client.store.rows[4]["version"]
+    assert [str(c.path) for c in error.lost_edits] == ["serviceRateLimit"]
+    assert state.plan().changed == ()
+
+
+async def test_a_module_gone_from_its_configuration_keeps_the_state_as_it_was():
+    state = three_module_state()
+    client = MockVcoClient.for_state(state)
+    qos = state.module("QOS")
+    del client.store.rows[4]
+    state.edge.qos.service_rate_limit = ServiceRateLimit(
+        enabled=True, input_type="percent", value=50
+    )
+
+    with pytest.raises(ConfigConflictError) as exc:
+        _ = await ConfigPipeline(client).save(state)
+
+    error = exc.value
+    assert (error.stated, error.sent) == (False, False)
+    assert error.module is None
+    assert "updateConfigurationModule" not in methods(client.store)
+    assert state.module("QOS") is qos
+    assert qos.version == "e1"
+    assert [m.name for m in state.plan().changed] == ["QOS"]
 
 
 async def test_failure_at_module_two_reports_module_one():
@@ -475,7 +532,8 @@ async def test_in_place_edit_on_a_detached_object_is_reported_by_plan():
     assert seg.is_detached
 
 
-async def test_insert_refreshes_and_is_no_longer_new():
+async def saved_insert() -> tuple[ConfigState, MockVcoClient, ConfigPipeline, int]:
+    """A state whose edge had no QoS module, saved: the module is inserted; its ID."""
     state = make_state()  # the edge has no QoS module
     client = MockVcoClient.for_state(state)
     pipeline = ConfigPipeline(client)
@@ -486,10 +544,8 @@ async def test_insert_refreshes_and_is_no_longer_new():
         path="rules",
         patch={"voice": add({"match": {"dport_low": 5060}, "action": QOS_ACTION})},
     )
-
     result = await pipeline.save(state)
-
-    assert methods(client.store) == ["insertConfigurationModule"]
+    assert methods(client.store) == ["insertConfigurationModule", "getConfiguration"]
     params = client.store.requests[0][1]
     assert params["returnData"] is True
     assert params["configurationId"] == state.target_config.id_ == 10
@@ -501,7 +557,15 @@ async def test_insert_refreshes_and_is_no_longer_new():
         if row["name"] == "QOS" and row["configurationId"] == 10
     ]
     assert state.module("qos").id_ == inserted
+    return state, client, pipeline, inserted
 
+
+async def test_insert_refreshes_and_is_no_longer_new():
+    _ = await saved_insert()
+
+
+async def test_a_module_inserted_is_updated_by_the_next_save():
+    state, client, pipeline, inserted = await saved_insert()
     state.edge.qos.service_rate_limit = ServiceRateLimit(
         enabled=True, input_type="percent", value=50
     )

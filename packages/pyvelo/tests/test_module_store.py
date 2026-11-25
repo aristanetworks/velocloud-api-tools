@@ -32,6 +32,17 @@ from ._type_support import MockVcoClientFactory
 UPDATE = "configuration/updateConfigurationModule"
 INSERT = "configuration/insertConfigurationModule"
 GET_CONFIGURATION = "configuration/getConfiguration"
+GET_MODULES = "configuration/getConfigurationModules"
+GET_SERVICES = "enterprise/getEnterpriseServices"
+
+DNS_A = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+DNS_B = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
+GROUP = "cccccccc-cccc-4ccc-8ccc-cccccccccccc"
+SEG0 = "11111111-1111-4111-8111-111111111111"
+PRIMARY = "deviceSettings:dns:primaryProvider"
+BACKUP = "deviceSettings:dns:backupProvider"
+ADDRESS_GROUP = "objectGroup:addressGroup"
+SEGMENT_REF = "deviceSettings:segment"
 
 RAW: dict[str, Any] = {"segments": [], "firewall_enabled": True}
 EDITED: dict[str, Any] = {"segments": [], "firewall_enabled": False}
@@ -83,6 +94,47 @@ def insert(data: dict[str, Any], *, return_data: bool = False) -> dict[str, Any]
     if return_data:
         params["returnData"] = True
     return params
+
+
+def ref_row(module_id: int, object_id: int, ref: str, **extra: Any) -> dict[str, Any]:
+    """A ref row as a plan sends it, for a module of configuration 10."""
+    return {
+        "configurationId": 10,
+        "moduleId": module_id,
+        "enterpriseObjectId": object_id,
+        "ref": ref,
+        **extra,
+    }
+
+
+def update_refs(store: ModuleStore, module_id: int, refs: object) -> dict[str, Any]:
+    """Send *refs* with the module's data as stored; the row the store answers."""
+    data = copy.deepcopy(store.rows[module_id]["data"])
+    params = update(
+        data, version=None, refs=refs, module_id=module_id, return_data=True
+    )
+    return cast(dict[str, Any], store.handle(UPDATE, params))
+
+
+def refs_store() -> ModuleStore:
+    """Configuration 10 with device settings module 10 of one segment, and the objects 701 (a DNS service) and 501 (the global segment)."""
+    store = ModuleStore()
+    store.add_configuration({"id": 10, "name": "Edge Specific Profile"})
+    store.rows[10] = make_module_json(
+        "deviceSettings",
+        {"segments": [{"name": "Global Segment"}]},
+        module_id=10,
+        configuration_id=10,
+    )
+    store.add_object(701, logical_id=DNS_A, name="dns-a", type_="dnsService")
+    store.add_object(
+        501,
+        logical_id=SEG0,
+        name="Global Segment",
+        type_="REGULAR",
+        object_="NETWORK_SEGMENT",
+    )
+    return store
 
 
 def change_elsewhere(row: dict[str, Any]) -> None:
@@ -141,9 +193,10 @@ def test_refs_are_replaced_only_when_sent():
     store = make_store()
     _ = store.handle(UPDATE, update(RAW, version=None))
     assert store.rows[1]["refs"] == REFS
-    other = {"deviceSettings:segment": [{"id": 6, "name": "y"}]}
+    other = {SEGMENT_REF: [ref_row(1, 6, SEGMENT_REF)]}
     _ = store.handle(UPDATE, update(RAW, version=None, refs=other))
-    assert store.rows[1]["refs"] == other
+    stored = store.rows[1]["refs"][SEGMENT_REF]
+    assert (stored["moduleId"], stored["enterpriseObjectId"]) == (1, 6)
     _ = store.handle(UPDATE, update(RAW, version=None, refs={}))
     assert "refs" not in store.rows[1]
     _ = store.handle(UPDATE, update(RAW, version=None, refs=other))
@@ -563,3 +616,221 @@ def test_a_refused_configuration_stores_nothing_and_says_what_to_do():
     assert "drop its configurationId so it takes 10" in str(exc.value)
     assert not store.rows
     assert not store.configurations
+
+
+def test_a_new_row_is_completed_from_its_object():
+    store = refs_store()
+    row = ref_row(10, 701, PRIMARY, segmentObjectId=501)
+    stored = update_refs(store, 10, {PRIMARY: [row]})
+    got = stored["refs"][PRIMARY]
+    assert got["logicalId"] == DNS_A and got["name"] == "dns-a"
+    assert (got["type"], got["object"]) == ("dnsService", "NETWORK_SERVICE")
+    assert got["data"] == {}
+    assert got["segmentLogicalId"] == SEG0 and isinstance(got["id"], int)
+    assert got["configurationId"] == 10 and got["segmentObjectId"] == 501
+    assert store.rows[10]["refs"] == stored["refs"]
+
+
+def test_a_row_of_an_unknown_object_is_stored_as_sent_with_an_id():
+    store = refs_store()
+    row = ref_row(10, 999, PRIMARY)
+    got = update_refs(store, 10, {PRIMARY: [row]})["refs"][PRIMARY]
+    assert {k: v for k, v in got.items() if k != "id"} == row
+    assert isinstance(got["id"], int)
+
+
+def test_a_row_without_a_required_id_is_dropped():
+    store = refs_store()
+    whole = ref_row(10, 701, PRIMARY)
+    for key in ("configurationId", "moduleId", "enterpriseObjectId"):
+        refs = {
+            PRIMARY: [
+                {**whole, key: None},
+                {k: v for k, v in whole.items() if k != key},
+            ]
+        }
+        assert "refs" not in update_refs(store, 10, refs)
+
+
+def test_rows_group_under_their_ref_one_as_an_object_several_as_a_list():
+    store = refs_store()
+    store.add_object(702, logical_id=DNS_B, name="dns-b", type_="dnsService")
+    refs = {
+        "ignored": [
+            ref_row(10, 701, PRIMARY),
+            ref_row(10, 702, BACKUP),
+            ref_row(10, 701, SEGMENT_REF, segmentObjectId=501),
+            ref_row(10, 702, SEGMENT_REF, segmentObjectId=501),
+            {**ref_row(10, 701, PRIMARY), "ref": None},
+        ]
+    }
+    got = update_refs(store, 10, refs)["refs"]
+    assert set(got) == {PRIMARY, BACKUP, SEGMENT_REF, "null"}
+    assert got[PRIMARY]["name"] == "dns-a"
+    assert [r["name"] for r in got[SEGMENT_REF]] == ["dns-a", "dns-b"]
+    assert got["null"]["enterpriseObjectId"] == 701
+
+
+def test_a_row_with_no_ref_of_an_unknown_object_is_grouped_under_null():
+    store = refs_store()
+    row = ref_row(10, 999, PRIMARY)
+    del row["ref"]  # a row with no ref key, of an object the store does not know
+    got = update_refs(store, 10, {"ignored": [row]})["refs"]
+    assert list(got) == ["null"]
+    assert got["null"]["enterpriseObjectId"] == 999 and "ref" not in got["null"]
+
+
+def test_a_row_that_fails_is_skipped_and_the_others_are_stored():
+    store = refs_store()
+    store.add_object(702, logical_id=DNS_B, name="dns-b", type_="dnsService")
+    store.skipped_objects.add(701)
+    refs = {PRIMARY: [ref_row(10, 701, PRIMARY), ref_row(10, 702, BACKUP)]}
+    got = update_refs(store, 10, refs)["refs"]
+    assert list(got) == [BACKUP]
+    assert got[BACKUP]["enterpriseObjectId"] == 702
+
+
+def test_an_insert_sets_the_module_id_of_the_rows_it_is_given():
+    store = refs_store()
+    row = ref_row(10, 701, PRIMARY)
+    del row["moduleId"]
+    params = {
+        "configurationId": 10,
+        "name": "deviceSettings",
+        "data": {"segments": []},
+        "refs": {PRIMARY: [row]},
+        "returnData": True,
+    }
+    answer = cast(dict[str, Any], store.handle(INSERT, params))
+    assert answer["refs"][PRIMARY]["moduleId"] == answer["id"] == 11
+    assert answer["refs"][PRIMARY]["logicalId"] == DNS_A
+
+
+def append_only_store() -> ModuleStore:
+    """A refs store whose module 10 holds an address group row and a segment row."""
+    store = refs_store()
+    store.add_object(801, logical_id=GROUP, name="group", type_="addressGroup")
+    store.rows[10]["refs"] = {
+        ADDRESS_GROUP: {**ref_row(10, 801, ADDRESS_GROUP), "id": 77},
+        SEGMENT_REF: {**ref_row(10, 501, SEGMENT_REF), "id": 78},
+    }
+    return store
+
+
+def test_append_only_rows_stay_when_refs_are_replaced():
+    store = append_only_store()
+    stored = update_refs(store, 10, {})
+    assert list(stored["refs"]) == [ADDRESS_GROUP]
+    assert stored["refs"][ADDRESS_GROUP]["id"] == 77
+    sent = {PRIMARY: [ref_row(10, 701, PRIMARY)]}
+    got = update_refs(store, 10, sent)["refs"]
+    assert set(got) == {PRIMARY, ADDRESS_GROUP}
+    assert got[ADDRESS_GROUP]["id"] == 77
+
+
+def test_sent_append_only_rows_are_added_to_the_stored_ones():
+    store = append_only_store()
+    sent = {ADDRESS_GROUP: [ref_row(10, 701, ADDRESS_GROUP)]}
+    got = update_refs(store, 10, sent)["refs"][ADDRESS_GROUP]
+    assert [r["enterpriseObjectId"] for r in got] == [801, 701]
+    assert got[0]["id"] == 77
+
+
+def test_processor_rows_replace_the_refs_when_none_are_sent():
+    store = append_only_store()
+    css_site = {"id": 5, "enterpriseObjectId": 9}
+    store.processor_refs[10] = {
+        "deviceSettings:css:site": css_site,
+        "deviceSettings:wssIntegration": [{"id": 6}, {"id": 7}],
+    }
+    data = {"segments": [{"name": "Global Segment"}], "edited": True}
+    _ = store.handle(UPDATE, update(data, version=None, module_id=10))
+    refs = store.rows[10]["refs"]
+    assert set(refs) == {
+        ADDRESS_GROUP,
+        "deviceSettings:css:site",
+        "deviceSettings:wssIntegration",
+    }
+    assert refs["deviceSettings:css:site"] == css_site
+    assert refs["deviceSettings:wssIntegration"] == [{"id": 6}, {"id": 7}]
+    assert refs[ADDRESS_GROUP]["id"] == 77
+    refs["deviceSettings:wssIntegration"].clear()  # the store holds its own copy
+    assert len(store.processor_refs[10]["deviceSettings:wssIntegration"]) == 2
+
+
+def test_processor_rows_do_not_apply_when_refs_are_sent_or_segments_are_empty():
+    store = append_only_store()
+    store.processor_refs[10] = {"deviceSettings:css:site": {"id": 5}}
+    kept = copy.deepcopy(store.rows[10]["refs"])
+    _ = store.handle(UPDATE, update({"segments": []}, version=None, module_id=10))
+    assert store.rows[10]["refs"] == kept
+    sent = {PRIMARY: [ref_row(10, 701, PRIMARY)]}
+    _ = store.handle(
+        UPDATE, update({"segments": [{}]}, version=None, refs=sent, module_id=10)
+    )
+    assert set(store.rows[10]["refs"]) == {PRIMARY, ADDRESS_GROUP}
+    # A module of another name, and one the processor does not know, are not touched.
+    store.rows[10]["name"] = "firewall"
+    store.rows[10]["refs"] = copy.deepcopy(kept)
+    _ = store.handle(UPDATE, update({"segments": [{}]}, version=None, module_id=10))
+    assert store.rows[10]["refs"] == kept
+    store.rows[10]["name"] = "QOS"
+    del store.processor_refs[10]
+    _ = store.handle(UPDATE, update({"segments": [{}]}, version=None, module_id=10))
+    assert store.rows[10]["refs"] == kept
+
+
+def test_processor_rows_apply_to_a_qos_module():
+    store = refs_store()
+    store.rows[10]["name"] = "QOS"
+    store.processor_refs[10] = {"deviceSettings:css:site": {"id": 5}}
+    _ = store.handle(UPDATE, update({"segments": [{}]}, version=None, module_id=10))
+    assert store.rows[10]["refs"] == {"deviceSettings:css:site": {"id": 5}}
+
+
+def test_row_ids_are_new_on_every_replacement():
+    store = refs_store()
+    sent = {PRIMARY: [ref_row(10, 701, PRIMARY)]}
+    first = update_refs(store, 10, sent)["refs"][PRIMARY]["id"]
+    second = update_refs(store, 10, sent)["refs"][PRIMARY]["id"]
+    assert first != second
+
+
+def test_get_configuration_modules_without_data():
+    store = refs_store()
+    store.rows[11] = make_module_json("firewall", {}, module_id=11, configuration_id=10)
+    store.rows[12] = make_module_json("QOS", {}, module_id=12, configuration_id=20)
+    sent = {PRIMARY: [ref_row(10, 701, PRIMARY)]}
+    _ = update_refs(store, 10, sent)
+    asked = {"configurationId": 10, "noData": True, "modules": ["deviceSettings"]}
+    answer = cast(list[dict[str, Any]], store.handle(GET_MODULES, asked))
+    assert [r["name"] for r in answer] == ["deviceSettings"]
+    assert "data" not in answer[0]
+    assert answer[0]["version"] == store.rows[10]["version"]
+    assert answer[0]["refs"] == store.rows[10]["refs"]
+    answer[0]["refs"].clear()  # the answer is a copy
+    assert store.rows[10]["refs"]
+    both = cast(
+        list[dict[str, Any]],
+        store.handle(GET_MODULES, {"configurationId": 10, "modules": []}),
+    )
+    assert [r["name"] for r in both] == ["deviceSettings", "firewall"]
+    assert both[0]["data"] == store.rows[10]["data"]
+    every = store.handle(GET_MODULES, {"configurationId": 10})
+    assert every == both
+
+
+def test_get_enterprise_services_lists_the_network_service_objects():
+    store = refs_store()
+    store.enterprise_id = 7
+    got = store.handle(GET_SERVICES, {"enterpriseId": 7})
+    assert got == [
+        {
+            "id": 701,
+            "logicalId": DNS_A,
+            "name": "dns-a",
+            "type": "dnsService",
+            "data": {},
+            "enterpriseId": 7,
+        }
+    ]

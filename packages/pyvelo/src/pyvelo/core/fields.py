@@ -6,14 +6,15 @@ Provides:
 - Normalizer helpers for compact serialization equivalence
 - Annotated validators (NoneIsFalse, NoneIsTrue, NoneIsZero, NoneIsMissing, CoerceInt)
 - DefaultingModel for fallback-to-default validation
-- Composable Annotated markers (Alias, EdgeOnly, ProfileOnly, Normalizer, ContextDefault)
+- Composable Annotated markers (Alias, EdgeOnly, ProfileOnly, Normalizer, ContextDefault,
+  OwnsRef, RefOnly)
 """
 
 from __future__ import annotations
 
 import inspect
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import KW_ONLY, dataclass
 from enum import StrEnum
 from types import UnionType
 from typing import Any, cast
@@ -22,11 +23,13 @@ from pydantic import (
     MISSING,
     BaseModel,
     BeforeValidator,
+    GetCoreSchemaHandler,
     TypeAdapter,
     ValidationError,
     ValidationInfo,
 )
 from pydantic.fields import FieldInfo
+from pydantic_core import CoreSchema, core_schema
 
 CONTEXT_NOT_SET: object = object()  # sentinel for "use field's own default"
 
@@ -157,6 +160,22 @@ def is_server_owned(field_info: FieldInfo) -> bool:
 def is_secret(field_info: FieldInfo) -> bool:
     """Check if a field is marked with ``Secret``."""
     return any(isinstance(m, Secret) for m in field_info.metadata)
+
+
+def get_owns_ref(field_info: FieldInfo) -> OwnsRef | None:
+    """The ``OwnsRef`` a field is marked with, or None."""
+    for m in field_info.metadata:
+        if isinstance(m, OwnsRef):
+            return m
+    return None
+
+
+def get_ref_only(field_info: FieldInfo) -> RefOnly | None:
+    """The ``RefOnly`` a field is marked with, or None."""
+    for m in field_info.metadata:
+        if isinstance(m, RefOnly):
+            return m
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -488,6 +507,96 @@ class Secret:
 
 
 @dataclass(frozen=True, slots=True)
+class OwnsRef:
+    """Annotated marker: this data field holds an identity that a ref row goes with.
+
+    A row of ref name *name* goes with the identity. *identity* is
+    the identity type, whose resolver gives the ``object_id`` a new row needs;
+    *by* is the attribute of it that the data holds, and *row* the row field
+    that value is compared with (``"logicalId"``, ``"data.segmentId"``).
+    *value* is the path from the annotated field to that value, when the marker
+    sits on an object and not on the scalar. *per_segment* is true for a ref
+    that is kept per segment. *level* limits the declaration to one config
+    level; None is both.
+
+    Validates at class creation time that *by* exists on *identity*, as
+    ``Resolvable`` does.
+
+    Usage: ``logical_id: Annotated[uuid.UUID | Literal[""],
+    OwnsRef("deviceSettings:css:provider", NetworkServiceIdentity,
+    by="logical_id", row="logicalId", per_segment=True)] = ""``
+    """
+
+    name: str
+    identity: type
+    _: KW_ONLY
+    by: str
+    row: str
+    value: str | None = None
+    per_segment: bool = False
+    level: ConfigContext | None = None
+
+    def __post_init__(self) -> None:
+        import dataclasses
+
+        if dataclasses.is_dataclass(self.identity):
+            field_names = {f.name for f in dataclasses.fields(self.identity)}
+            if self.by not in field_names:
+                raise TypeError(
+                    f"{self.identity.__name__} has no field '{self.by}'. "
+                    + f"Available: {', '.join(sorted(field_names))}"
+                )
+
+
+def _ref_only_is_not_read(value: Any, info: ValidationInfo) -> Any:
+    """What a ``RefOnly`` field takes from validated input: the input is not read, except from a patch."""
+    return value if _in_patch(info) else MISSING
+
+
+@dataclass(frozen=True, slots=True)
+class RefOnly:
+    """Annotated marker: this field stands for a ref row and is never part of the wire data.
+
+    A dump leaves it out, and validation does not read a key of its name: the
+    field stays ``MISSING`` and the key is not kept as an extra. That holds
+    for validated input (``model_validate``, a parent's validation of its
+    data). A keyword of the constructor, a patch (``merge_patch``) and an
+    attribute assignment do set it, and a patch ``null`` sets ``None``:
+    ``MISSING`` says the module was read without refs, ``None`` says there is
+    no row. The ref name is the value of the sibling ``ref`` field of the same
+    model; *default* is the name that a value given in one of those ways gives
+    a model whose ``ref`` is ``MISSING``. A model with no ``ref`` field has
+    nothing to fill, and *default* is not used.
+
+    Code that fills the field from a module's refs does it with
+    ``object.__setattr__(model, name, value)``: that sets neither the sibling
+    ``ref`` nor ``model_fields_set``.
+
+    Usage: ``service: Annotated[uuid.UUID | None | MISSING,
+    RefOnly(default="deviceSettings:authentication")] = MISSING``
+    """
+
+    default: str | None = None
+
+    def __get_pydantic_core_schema__(
+        self, source: Any, handler: GetCoreSchemaHandler
+    ) -> CoreSchema:
+        return core_schema.with_info_before_validator_function(
+            _ref_only_is_not_read, handler(source)
+        )
+
+
+def ref_only_defaults(cls: type[BaseModel]) -> dict[str, str | None]:
+    """Each ``RefOnly`` field of *cls* with its marker's *default*."""
+    found: dict[str, str | None] = {}
+    for name, field_info in cls.model_fields.items():
+        marker = get_ref_only(field_info)
+        if marker is not None:
+            found[name] = marker.default
+    return found
+
+
+@dataclass(frozen=True, slots=True)
 class _ProcessedResolvable:
     """Stored in FieldInfo.metadata by _apply_vco_markers."""
 
@@ -507,6 +616,9 @@ def apply_vco_markers(cls: type[BaseModel]) -> None:
         _ProcessedResolvable,
     )
     for fi in cls.model_fields.values():
+        if not fi.exclude and get_ref_only(fi) is not None:
+            fi.exclude = True  # a dump leaves it out
+            needs_rebuild = True
         already = {type(m) for m in fi.metadata if isinstance(m, _processed_types)}
         for m in fi.metadata:
             if isinstance(m, Alias):

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import copy
 import datetime
+import json
 import uuid
 from collections.abc import Mapping
 from typing import Annotated, Any, Literal, Self, TypeIs, cast, get_args, overload
@@ -38,6 +39,7 @@ from pyvelo.client.models.configuration import (
 from pyvelo.client.models.configuration.control_plane.root import (
     ControlPlaneData,
 )
+from pyvelo.client.models.configuration.ref_owners import fill_ref_only
 from pyvelo.core import (
     Alias,
     ConfigContext,
@@ -188,6 +190,7 @@ class ConfigurationModuleBase(VcoModel):
     _raw_refs: object = PrivateAttr(default=MISSING)
     _raw_mode: Literal["python", "json"] = PrivateAttr(default="python")
     _is_new: bool = PrivateAttr(default=False)
+    _refs_loaded: bool = PrivateAttr(default=True)
 
     @model_validator(mode="wrap")
     @classmethod
@@ -214,6 +217,12 @@ class ConfigurationModuleBase(VcoModel):
         module._raw_data = raw_data
         module._raw_refs = raw_refs
         module._raw_mode = info.mode
+        context: object = info.context
+        loaded = context.get("refs_loaded", True) if _is_mapping(context) else True
+        module._refs_loaded = loaded is not False
+        data: object = getattr(module, "data", None)
+        if module._refs_loaded and isinstance(data, VcoModel):
+            fill_ref_only(data, raw_refs)
         return module
 
     @property
@@ -236,6 +245,41 @@ class ConfigurationModuleBase(VcoModel):
         """True only for modules made by :func:`new_edge_module`."""
         return self._is_new
 
+    @property
+    def refs_loaded(self) -> bool:
+        """Whether the read that produced this module promised its refs.
+
+        A module from ``getConfigurationModules`` or an insert's ``returnData``
+        is not loaded, and its ``RefOnly`` fields are ``MISSING``; any other
+        is, and an absent ``refs`` key then means no rows. It is the
+        validation context key ``"refs_loaded"``, ``True`` when absent.
+        """
+        return self._refs_loaded
+
+    def with_data_parsed_from(self, raw_data: object) -> Self:
+        """A copy of this module whose ``data`` is *raw_data* parsed, and whose raw snapshot is this module's.
+
+        The data is parsed at this module's config level, and its ``RefOnly``
+        fields are filled from the refs of the snapshot, as a read does.
+        ``plan_module`` of the copy is then the change from this module's raw
+        data to *raw_data*. ``version``, the raw refs and ``refs_loaded`` are
+        this module's.
+        """
+        copied = self.model_copy()
+        data: object = getattr(self, "data", MISSING)
+        if isinstance(data, VcoModel):
+            level = self.config_context
+            parsed = type(data).model_validate_json(
+                json.dumps(raw_data),
+                context={"config_level": level} if level is not None else None,
+            )
+            if self._refs_loaded:
+                fill_ref_only(parsed, self._raw_refs)
+            object.__setattr__(copied, "data", parsed)
+        elif data is not MISSING:
+            object.__setattr__(copied, "data", copy.deepcopy(raw_data))
+        return copied
+
 
 class ControlPlaneConfigurationModule(ConfigurationModuleBase):
     name: Literal["controlPlane"] = "controlPlane"
@@ -248,7 +292,7 @@ class ControlPlaneConfigurationModule(ConfigurationModuleBase):
 class DeviceSettingsConfigurationModule(ConfigurationModuleBase):
     name: Literal["deviceSettings"] = "deviceSettings"
     data: DeviceSettingsData
-    refs: DeviceSettingsRefs | MISSING = MISSING
+    refs: DeviceSettingsRefs | MISSING = Field(default=MISSING, frozen=True)
 
     def mutable_data(self) -> DeviceSettingsData:
         return copy.deepcopy(self.data)
@@ -265,7 +309,7 @@ class WanConfigurationModule(ConfigurationModuleBase):
 class QosConfigurationModule(ConfigurationModuleBase):
     name: Literal["QOS"] = "QOS"
     data: QosData
-    refs: dict[str, Any] | MISSING = MISSING
+    refs: dict[str, Any] | MISSING = Field(default=MISSING, frozen=True)
 
     def mutable_data(self) -> QosData:
         return copy.deepcopy(self.data)
@@ -472,7 +516,7 @@ class InsertConfigurationModuleBase(VcoModel):
 class InsertQosConfigurationModule(InsertConfigurationModuleBase):
     name: Literal["QOS"] = "QOS"
     data: dict[str, Any]
-    refs: dict[str, Any] | None = None
+    refs: dict[str, Any] | MISSING = MISSING
 
 
 class InsertFirewallConfigurationModule(InsertConfigurationModuleBase):
@@ -491,6 +535,14 @@ class GetConfigurationModules(VcoModel):
     configuration_id: Annotated[int, Resolvable(ProfileIdentity, "id")]
     no_data: bool | MISSING = MISSING
     modules: list[ConfigurationModuleName] | MISSING = MISSING
+
+
+class ConfigurationModuleVersion(VcoModel):
+    """A module row as ``getConfigurationModules`` answers with ``noData``: its identity and ``version``, with no data and no refs."""
+
+    id_: Annotated[int, Alias("id")]
+    name: str
+    version: str | None
 
 
 class GetConfiguration(VcoModel):
@@ -580,6 +632,7 @@ __all__ = [
     "ConfigurationBase",
     "ConfigurationModuleBase",
     "ConfigurationModuleUpdate",
+    "ConfigurationModuleVersion",
     "ControlPlaneConfigurationModule",
     "DeleteConfiguration",
     "DeviceSettingsConfigurationModule",

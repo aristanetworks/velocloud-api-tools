@@ -12,6 +12,7 @@ from pyvelo.client.protocol import VcoClientProtocol
 
 # ResolutionError lives in pyvelo.core.identity; re-exported so this import path keeps working.
 from pyvelo.core.identity import ResolutionError as ResolutionError  # noqa: PLC0414
+from pyvelo.core.identity import ResolverNotLoadedError, entity_label
 
 
 @dataclass
@@ -59,16 +60,25 @@ class BaseResolver[KeyT, IdentityT]:
     - Declare their accepted key union as ``KeyT`` in the generic parameters.
     - Implement ``resolve_key()`` to dispatch on key type.
     - Implement ``load()`` to fetch entities and call ``_register()``.
+
+    A resolver whose answers would be wrong before a load (it holds every
+    identity of an enterprise, not those a name asks for) sets
+    ``requires_load``: until its ``load()`` sets ``loaded``, ``resolve``,
+    ``resolve_key`` and ``reverse_by`` raise ``ResolverNotLoadedError``.
+    ``unloaded()`` and ``_clear()`` set ``loaded`` back to ``False``.
     """
 
     identity_type: ClassVar[type]
+    requires_load: ClassVar[bool] = False
 
     def __init__(self, client: VcoClientProtocol) -> None:
         self._client = client
+        self.loaded: bool = False
         self._by_name: dict[str, IdentityT] = {}
         self._reverse: dict[str, dict[int | str | uuid.UUID, str]] = {}
 
     async def resolve(self, name: str) -> IdentityT:
+        self._require_loaded()
         _, identity = resolve_name(name, self._by_name, self._entity_label)
         return identity
 
@@ -76,6 +86,7 @@ class BaseResolver[KeyT, IdentityT]:
         raise NotImplementedError
 
     async def reverse_by(self, id_attr: str, value: int | str | uuid.UUID) -> str:
+        self._require_loaded()
         reverse_map = self._reverse.get(id_attr)
         if reverse_map is None:
             raise KeyError(f"No reverse index for attribute: {id_attr!r}")
@@ -100,6 +111,7 @@ class BaseResolver[KeyT, IdentityT]:
         twin = copy.copy(self)
         twin._by_name = {}
         twin._reverse = {}
+        twin.loaded = False
         return twin
 
     def _register(
@@ -114,13 +126,16 @@ class BaseResolver[KeyT, IdentityT]:
         """Clear all lookup tables before a reload."""
         self._by_name.clear()
         self._reverse.clear()
+        self.loaded = False
+
+    def _require_loaded(self) -> None:
+        """Raise ``ResolverNotLoadedError`` when this resolver needs a load and has none."""
+        if self.requires_load and not self.loaded:
+            raise ResolverNotLoadedError(self.identity_type)
 
     @property
     def _entity_label(self) -> str:
-        import re
-
-        name = self.identity_type.__name__.removesuffix("Identity")
-        return re.sub(r"(?<=[a-z])(?=[A-Z])", " ", name).lower()
+        return entity_label(self.identity_type)
 
 
 class ResolverRegistry:
@@ -145,6 +160,10 @@ class ResolverRegistry:
             if isinstance(resolver, resolver_type):
                 return resolver
         raise LookupError(f"No resolver of type {resolver_type.__name__} registered")
+
+    def resolver_for(self, identity_type: type) -> Resolver[Any, Any] | None:
+        """The resolver registered for *identity_type*, or None when there is none."""
+        return self._resolvers.get(identity_type)
 
     def unloaded(self) -> "ResolverRegistry":
         """A new registry holding an unloaded copy of each resolver, with no context.
@@ -286,6 +305,32 @@ class ResolverRegistry:
         if identities is None:
             return False
         return any(getattr(i, id_attr) == value for i in identities())
+
+    def identity_sync[T](
+        self, identity_type: type[T], id_attr: str, value: object
+    ) -> T:
+        """The loaded identity of *identity_type* whose ``id_attr`` equals *value*.
+
+        Raises ``ResolverNotLoadedError`` when no resolver is registered for the
+        type, or the resolver requires a load and has none, and
+        ``ResolutionError`` when no loaded identity has the value.
+        """
+        resolver = self._resolvers.get(identity_type)
+        if resolver is None or (
+            getattr(resolver, "requires_load", False)
+            and not getattr(resolver, "loaded", False)
+        ):
+            raise ResolverNotLoadedError(identity_type)
+        identities = cast(
+            Callable[[], Iterable[T]] | None,
+            getattr(resolver, "identities", None),
+        )
+        for identity in () if identities is None else identities():
+            if getattr(identity, id_attr) == value:
+                return identity
+        raise ResolutionError(
+            name=str(value), identity_type=identity_type, candidates=[]
+        )
 
     async def reverse(
         self, identity_type: type, id_attr: str, value: int | str | uuid.UUID

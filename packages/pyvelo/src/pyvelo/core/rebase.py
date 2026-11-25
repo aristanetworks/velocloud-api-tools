@@ -49,6 +49,7 @@ from .base import (
     is_list,
     list_item_type,
     python_name,
+    ref_only_fields,
 )
 from .fields import ConfigContext, KeySpec, get_key_spec, has_override_flag
 
@@ -1168,7 +1169,10 @@ def _lossy_in_model(
     level: ConfigContext | None,
 ) -> None:
     field_level = level if level is not None else current.config_context
+    ref_only = ref_only_fields(type(current))
     for name, field_info in type(current).model_fields.items():
+        if name in ref_only:
+            continue  # an edit of it is planned in the refs, not in the data
         dump_key = _field_alias(field_info, name)
         before_value = _dump_get(before, dump_key)
         after_value = _dump_get(after, dump_key)

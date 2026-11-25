@@ -108,6 +108,15 @@ state you build yourself, from a cache for example, has no resolvers until
 raises `PatchError` at that field, unless the field's ID can be text, when the
 name is taken as the ID. An ID is always accepted.
 
+The network-service resolver is registered on each state but not loaded by
+`load` or `load_profile`, which therefore cost no more requests than before. It
+is loaded when a plan or a patch first needs it (see "What a save writes"), or
+by `await pipeline.load_resolvers(state, NetworkServiceIdentity)`, which loads
+only that resolver. The call takes any identity type: it loads the state's
+resolver for it, or first registers an unloaded copy of the pipeline's (for the
+network services, a new resolver if the pipeline has none), and raises
+`ValueError` when neither has one.
+
 ## The patch format
 
 `apply` takes a module, a patch and, optionally, an address. The address is
@@ -376,8 +385,42 @@ did not change is not sent.
 
 Beside its `data`, a device settings or QoS module has `refs`: the rows that
 tie the module to the enterprise objects it uses (segments, address groups,
-services). A save sends refs only when you changed them (an edited
-`module.refs`, or `refs=` on `update_module`), and then it sends them whole.
+services). The library derives them from the data, so you edit the data and
+never the refs. Setting a provider adds the row it goes with and clearing it
+removes the row; `state.plan().render()` lists each as `+ refs <name>
+(<segment>): <value>` or `- refs <name> (<segment>): <value>`, without the
+segment for a row of the module, and a module that sends its refs with no row
+changed says `refs: sent as read`. A device settings or QoS write with segments
+always carries its refs, because the VCO's processors run on every such write.
+What disagrees in the refs as read is a `warning: <message>` line, and the
+write leaves it as it is. `ConfigPlan.warnings` holds the same warnings as
+data, each with its module's name before its path, and `save` and `dry_run`
+copy them to `SaveResult.warnings`.
+
+A DNS or authentication provider is set by assignment, with the service's
+logical ID (`provider.service = uuid.UUID(...)`), or by `apply`, with the
+logical ID or the service's name (`patch={"dns": {"primaryProvider":
+{"service": "dns-a"}}}`). The row needs the enterprise's network services, and
+`load` does not read them: the first `apply`, `save` or `dry_run` that needs
+them reads the table, once for the state, and goes on. A name no service has
+raises `ResolutionError` and leaves the state as it was, and so does a service
+of the wrong type for the field (`dns` for a DNS provider, `authentication` for
+the authentication provider, `cloudSecurityService` for a CSS provider): the
+message names the service and both types and says to give a service of the
+wanted type. `state.plan()` does not read it and raises `ResolverNotLoadedError`
+for a provider set before the table is loaded;
+`await pipeline.load_resolvers(state, NetworkServiceIdentity)` (from
+`pyvelo.core.identity`) reads it at a time of your choosing.
+`get_field_changes()` lists a provider that is set, replaced or cleared as one
+change at the provider's field
+(`segments["Global Segment"].dns.primary_provider.service`), with the service's
+logical ID before and after, or `None`. When the provider's stub had no `ref`,
+setting a provider also writes the stub's `ref` into the data, and that is its
+own change in the list (`...dns.primary_provider.ref`), before the provider's.
+A provider edit on the layer a state
+does not save (the profile layer of an edge state) raises `LayerNotSavedError`
+like any other edit there, and one made while its module is being written
+raises `DetachedObjectError` after the write.
 
 This is `state.plan().render()` for the firewall patch of "The patch format",
 with `firewall_enabled` set as well, on an edge whose profile has a segment the
@@ -498,21 +541,25 @@ storing your changes. Neither list is an error.
   firewall rule's `ruleLogicalId`, a WAN link's `internalId`), values it keeps
   in its own form (an IPv6 address in canonical form), the default it added
   back where you removed one, and what another writer changed beside your
-  edits. A value stored as it was read is not listed here.
+  edits. A value stored as it was read is not listed here. An entry with
+  `merged` true was found before the write, in a module written after a
+  profile's device settings, and your edits were put on it (below).
 - `left_out` is the planned changes the VCO stores its own way, which are
   neither applied nor lost. They are a change to a field the VCO owns (a
-  firewall rule's `ruleLogicalId`), the removal of a default it adds back, and
-  the removal of a row of an append-only ref (an address group, for example). Each
-  has the value read (`as_read`), the value sent (`intended`) and the value
+  firewall rule's `ruleLogicalId`) and the removal of a default it adds back.
+  Each has the value read (`as_read`), the value sent (`intended`) and the value
   stored. Saving again would not store them either, so they are not to be
   redone. After a refusal such a change is a lost edit instead, when it is
-  still as read: see below.
+  still as read: see below. A ref row is never left out: see
+  `RefsDroppedError`, below.
 
 A write that is not known to be stored as planned raises one of three errors,
 from `pyvelo.client.exceptions` and re-exported by `pyvelo_intent`.
 `ConfigConflictError` says the VCO refused the write because the module changed
 since it was read, or seems to have (`stated`, below, says which);
-`WriteNotAppliedError` says the VCO stored the write otherwise than as sent.
+`WriteNotAppliedError` says the VCO stored the write otherwise than as sent;
+`RefsDroppedError`, a `WriteNotAppliedError`, says that the changes not stored
+are all ref rows (below).
 `WriteOutcomeUnknownError` says the write was sent (or, for an insert sent
 again, that an earlier save may have sent it) and the module as stored could
 not be read. When the read itself fails, its own error is raised, and the
@@ -527,7 +574,7 @@ stored:
 | the VCO refused the version, and the module as stored does not already hold every one of your changes | `ConfigConflictError` |
 | the write is an insert, which carries no version | `WriteNotAppliedError` |
 | the VCO answered with the module, none of your changes is stored in it, and each value there is as read | `ConfigConflictError` |
-| anything else: some of your changes are stored and some are not, a value you edited is stored as neither the one read nor the one sent, or the VCO counted the write and the module read back does not hold it | `WriteNotAppliedError` |
+| anything else: some of your changes are stored and some are not, a value you edited is stored as neither the one read nor the one sent, or the VCO counted the write and the module read back does not hold it | `WriteNotAppliedError`, or `RefsDroppedError` when every change not stored is a ref row |
 
 A refused write passes only when the module as stored already holds every one
 of your changes: at least one is found stored, and none is lost or left out.
@@ -541,6 +588,35 @@ so, with its precondition error or a row count of zero. False: the VCO answered
 with the module, and the save inferred the refusal from it; the message then
 says "seems to have refused".
 
+A write that carries refs (a device settings or QoS update with segments
+always does) reads the module's `version` first, one more request. If the
+version is the one read, the save goes on. If it changed, the save reads the
+module as the VCO holds it now and checks it against your changes. When it
+already holds them (a retry whose first copy was stored), the save passes and
+the state continues from that module. Otherwise the save raises
+`ConfigConflictError` with `error.sent` False and `error.stated` False, and
+nothing was sent: `error.module` is the module as it is now, with your edits in
+`lost_edits` to redo on it. A module its configuration no longer holds raises it
+too, with `error.module` None: read the configuration again.
+
+A save of a profile that writes its device settings rebases the modules it
+writes after them. Writing device settings can change the profile's other
+modules: it rewrites QoS rule flags, and it updates the versions of all of them
+when a segment becomes in use. So each module written after the device settings
+reads its `version` first, refs or none, one more request per module. If the
+version is the one read, the save goes on. If it changed, the save reads the
+module in full and puts your edits on it, so a second save is not needed. The
+write is sent with the new version, and what changed beside your edits is in
+`SaveResult.server_changes` with `merged` true. It raises `ConfigConflictError`
+(`error.sent` False, `error.stated` False, nothing sent) only where the change
+reached a path you edited too, or a list you edit an item of had items added or
+removed; `error.lost_edits` lists your edits, to redo on `error.module`. When
+the module already holds every one of your changes, nothing is sent for it. The
+modules written before the device settings, and every module of an edge save,
+are not rebased: a changed version raises as above. The cost is one version
+read per module written after the device settings, and one full read of the
+module when its version changed.
+
 Which of the two a stale write raises depends on the VCO's conditional check
 of the version. With it on, the VCO refuses the write, and the save raises
 `ConfigConflictError`. With it off, the VCO does not store the data and
@@ -549,25 +625,55 @@ too, when none of your changes is found stored and each value is as read. It
 raises `WriteNotAppliedError` in three cases: another writer also changed a
 value you edited (that edit is marked as a clash); another writer made one of
 your edits too, so that it counts as stored, while another of your edits is
-not; or the write carried refs (an edited `module.refs`, or `refs=` on
-`update_module`) and the VCO replaced them while it left the data as it was,
-so that your refs changes are under `applied` and your data changes under
-`lost_edits`. Reading the version before a write that carries refs would
-prevent the last; it is planned and not built.
+not; or the write carried refs and the VCO replaced them while it left the
+data as it was, so that your refs changes are under `applied` and your data
+changes under `lost_edits`. Reading the version before a write that carries
+refs prevents the last, unless the module changes between that read and the
+write.
 
 A VCO with the check off says nothing when it answers with the module, so the
 save tells a stale write by what is stored. Where no change of a write can be
-found stored (it changes only fields the VCO owns, removes only defaults the
-VCO adds back or rows of an append-only ref, or changes only the inside of ref
-rows), the save does not ask for the module. The VCO then answers with a row
-count, which is zero for a stale version, and the save reads the module back.
-Such a write costs one more request.
+found stored (it changes only fields the VCO owns, or removes only defaults
+the VCO adds back), the save does not ask for the module. The VCO then answers
+with a row count, which is zero for a stale version, and the save reads the
+module back. Such a write costs one more request.
 
 What a save cannot tell, on a VCO with the check off: a stale write whose other
 changes are all stored already, by another writer or by an earlier save of
 yours whose answer was lost, passes. A left-out change beside them is then
 reported in `left_out` although the write that carried it was not stored. Look
 at `left_out` when a save follows one that failed.
+
+A ref row the VCO does not store is not a stored write either. The VCO
+replaces a module's refs row by row, and it skips a row whose object it cannot
+resolve (a service that is not there) and stores the others. The save compares
+the refs it gets back with the ones it sent, row by row by identity and never
+by content. `RefsDroppedError` is raised when every change that is not stored
+is a ref row: a row you added that the VCO did not store, or a row you removed
+that it kept. An update the VCO answered with the module needs one change that
+is stored beside, so a ref change beside a data edit: one whose only changes
+are ref rows, none of them stored, is a `ConfigConflictError`, and its message
+names both causes: the module changed since it was read, or the VCO would not
+take a new row because it cannot resolve its object. The error lists each lost
+row by its ref name and identity. To redo one you added, check that the object
+exists and set the field again on `error.module`, which reads it as unset; for
+one you removed that the VCO kept, clear the field again, as it reads as set.
+The message gives the patch for each, and `error.redo_patch()` gives it with
+the real value. The VCO writes nothing of its own to put a skipped row
+back. When it took none of the rows the write sent, `error.every_row_lost` is
+true and `error.refs_as_read` holds the module's refs as read, less the rows of
+`deviceSettings:vnfs:edge`, `objectGroup:addressGroup` and
+`objectGroup:portGroup`, which the VCO keeps itself and would store twice if
+they were sent back. Put the rows back by sending
+`configuration/updateConfigurationModule` with
+`{"id": <module ID>, "_update": {"data": <the module's data as stored now>,
+"refs": <error.refs_as_read>}}` (`update_configuration_module`). If you speak
+only JSON, read the data as stored now with `configuration/getConfiguration`
+and `{"id": <configuration ID>, "with": ["modules"]}`, and send as `refs` the
+refs from the read the save was planned on, less those three names (the VCO's
+own refs now lack the rows it dropped). A row you did not change that the VCO leaves
+out of the refs it returns is not an error: it is a `server_changes` entry, as
+is any difference in the rows of the refs the VCO's own processors manage.
 
 `ConfigConflictError` and `WriteNotAppliedError` carry:
 
@@ -577,9 +683,11 @@ at `left_out` when a save follows one that failed.
 | `applied` | the planned changes that are stored |
 | `left_out` | the planned changes the VCO stores its own way, as in `SaveResult.left_out` |
 | `server_changes` | what else the VCO stores otherwise than sent, as in `SaveResult.server_changes` |
-| `module` | the module as the VCO holds it now |
+| `module` | the module as the VCO holds it now; None on a `ConfigConflictError` for a module gone from its configuration, where nothing was sent and the state keeps the module as read |
 | `plan` | the module's `ModulePlan` |
+| `refs_as_read` | on `RefsDroppedError`: the module's refs as read, less the three append-only names, to put back when `every_row_lost` is true |
 | `stated` | on `ConfigConflictError`: whether the VCO said it refused the version, or the save inferred it |
+| `sent` | on `ConfigConflictError`: False when nothing was sent, because the version read before a write found the module changed (or gone): a write that carries refs, or one after a profile's device settings, where a path you edited was also changed |
 | `completed` | the writes of the same save before this one, which are stored |
 | `redo_patch(include_clashes=False)` | the patch that redoes the lost edits on `module`, for `apply(state, module=error.module_name, patch=...)` |
 | `not_redone(include_clashes=False)` | the lost edits that patch leaves out |
@@ -598,7 +706,7 @@ refused, and another writer had changed the same port and another key:
 
 ```text
 Configuration module 11 (firewall) changed since it was read (version v1): the VCO refused the version
-lost edits (not stored; `error.redo_patch()` redoes them):
+lost edits (not stored; `error.redo_patch()` redoes those it can, `error.not_redone()` lists the rest):
   segments["Global Segment"].outbound[block-ssh] (first): read (nothing), meant {"action": {"allow_or_deny": "deny"}, "comments": null, "loggingEnabled": false,…, stored (nothing)
   segments["Global Segment"].outbound[allow-web].match.dport_high: read 443, meant 8080, stored 8443  [clash: also changed on the VCO]
 stored otherwise than sent:
@@ -634,11 +742,17 @@ order again, and it names each item as the stored list names it. An item you
 added is added again, never set on an item another writer put in its place. The
 patch leaves out a clash, because redoing one overwrites what another writer
 stored there; `error.redo_patch(include_clashes=True)` redoes those too.
+A lost DNS or authentication provider (a ref row of a field that stands for
+it) is redone by setting the field again, in the segment as the stored list
+names it: `{"segments": {"Global Segment": {"dns": {"primaryProvider":
+{"service": "<logical ID>"}}}}}`, or `null` for a provider you cleared.
 `error.not_redone()` lists the lost edits the patch leaves out: the clashes, a
-lost ref row (a patch changes data, not refs), and an edit that no patch can
-make or whose item is no longer stored or cannot be named. An edit at a key the
-VCO does not know, which a write drops, is neither redone nor listed. Check it
-before you save. In a rule list the first match decides, so check the order with
+lost ref row of any other kind (a patch changes data, not refs), a provider
+whose segment is no longer stored or cannot be told from another by its
+identity (the segment is found by its ID, never by its name), and an edit that
+no patch can make or whose item is no longer stored or cannot be named. An edit
+at a key the VCO does not know, which a write drops, is neither redone nor
+listed. Check it before you save. In a rule list the first match decides, so check the order with
 `state.plan().render()` too. `apply` can still refuse the patch, changing
 nothing, where the stored data no longer takes it (a rename to a name another
 writer gave an item, for example), and where the lost edit was made by assigning
@@ -710,19 +824,12 @@ Known limits:
 - A lookup through a detached layer that adds a placeholder
   (`fw.segment("Guest")` on a `fw` taken before the save) is reported by the
   next `plan()`. Take the layer from the state again.
-- A save that changes a profile's device settings and its QoS (or firewall)
-  together may need a second save, when the device settings change propagates:
-  the later module's write raises with your edits in `lost_edits`, and the
-  state holds that module as stored, so apply `error.redo_patch()` and save
-  again. A save that does this itself, together with refs the library derives
-  from the data, is planned and not built.
-- Device settings and QoS writes send refs only when you changed them. Refs
-  derived from the data are planned and not built.
 - On a VCO with the conditional check off, a stale write that carries refs may
   replace them while the data is not stored, overwriting another writer's
-  refs; the save then reports your data changes, if any, as not stored.
-  Reading the version before a write that carries refs is planned and not
-  built.
+  refs; the save then reports your data changes, if any, as not stored. The
+  save reads the module's version before it sends refs, which narrows this to
+  a change between that read and the write; a module with no `version` is
+  written without the read.
 - A keyed list read with an item that cannot be told apart is compared as a
   whole: an item with no key and no ID (a WAN link without an `internalId`),
   or two items of one name read without IDs. A change in it to a field the VCO

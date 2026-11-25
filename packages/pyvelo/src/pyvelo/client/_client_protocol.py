@@ -90,6 +90,7 @@ class VcoClientBaseProtocol(Protocol):
         *,
         enterprise_id: int | None = None,
         if_absent: bool = False,
+        rebase: bool = False,
     ) -> ModuleWrite[M]: ...
 
     def _on_stale_websocket_closed(self, task: asyncio.Task[None]) -> None: ...

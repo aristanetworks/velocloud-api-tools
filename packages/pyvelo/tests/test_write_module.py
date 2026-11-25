@@ -43,6 +43,15 @@ from pyvelo.testing import (
     make_module_json,
     store_of,
 )
+from refs_helpers import (
+    CONFIG,
+    DNS_A,
+    PRIMARY,
+    changing_after_the_version_read,
+    copy_of_data,
+    primary_provider_module,
+    set_primary_provider,
+)
 
 from ._type_support import MockVcoClientFactory, parse_json_object
 from .write_helpers import fw
@@ -116,15 +125,15 @@ def elsewhere(row: dict[str, Any]) -> None:
 
 
 def reading(
-    store: ModuleStore, modules: list[dict[str, Any]]
+    store: ModuleStore, modules: list[dict[str, Any]], configuration_id: int = 10
 ) -> Callable[[httpx.Request], httpx.Response]:
-    """A handler that sends each request to *store*, but answers a read of configuration 10 with *modules*."""
+    """A handler that sends each request to *store*, but answers a read of a configuration (10 unless given) with *modules*."""
 
     def handler(request: httpx.Request) -> httpx.Response:
         method = parse_json_object(request.content)["method"]
         if method != "configuration/getConfiguration":
             return store(request)
-        config = copy.deepcopy(store.configurations[10])
+        config = copy.deepcopy(store.configurations[configuration_id])
         config["modules"] = copy.deepcopy(modules)
         return httpx.Response(200, json=make_jsonrpc_response(result=config))
 
@@ -351,9 +360,14 @@ async def test_follow_up_read_error_propagates(mock_vco_client: MockVcoClientFac
     assert isinstance(exc.value.__context__, ConfigConflictError)
 
 
-async def test_refs_only_write_refused_raises(mock_vco_client: MockVcoClientFactory):
-    module = qos({"segments": []}, refs={"a": ROW1})
-    plan = plan_module(module, refs={"a": [ROW1, ROW2]})
+async def test_refs_only_write_meeting_a_changed_version_raises_before_sending(
+    mock_vco_client: MockVcoClientFactory,
+):
+    module = primary_provider_module()
+    current = copy_of_data(module)
+    set_primary_provider(current, None)
+    plan = plan_module(module, current)
+    assert (plan.operation, plan.changes) == ("update", ())
     store = store_of(module)
     store.other_writer(module.id_, elsewhere)
     client = await mock_vco_client(store)
@@ -388,7 +402,7 @@ async def test_insert_returns_the_row_and_is_not_new(
     store = store_of(module)
     client = await mock_vco_client(store)
     write = await client.write_module(module, plan_module(module))
-    assert methods(store) == ["insertConfigurationModule"]
+    assert methods(store) == ["insertConfigurationModule", "getConfiguration"]
     assert write.operation == "insert"
     assert write.module.is_new is False
     (stored_id,) = store.rows
@@ -595,27 +609,18 @@ async def test_a_plan_with_nothing_checkable_asks_for_a_count_and_reads_back(
     store.on_store.append(add_the_default_back)
     client = await mock_vco_client(store)
     write = await client.write_module(module, plan)
-    assert methods(store) == ["updateConfigurationModule", "getConfiguration"]
-    assert "returnData" not in store.requests[0][1]
-    assert store.requests[0][1]["version"] == "v1"
+    # The module has a segment, so the update sends refs and reads the version first.
+    assert methods(store) == [
+        "getConfigurationModules",
+        "updateConfigurationModule",
+        "getConfiguration",
+    ]
+    assert "returnData" not in store.requests[1][1]
+    assert store.requests[1][1]["version"] == "v1"
     assert paths(write.left_out) == [ECMP_PATH]
     assert write.applied == ()
     assert write.module.version == store.rows[1]["version"]
     assert write.module.raw_data == store.rows[1]["data"]
-
-
-async def test_a_ref_row_changed_inside_asks_for_a_count_too(
-    mock_vco_client: MockVcoClientFactory,
-):
-    module = qos({"segments": []}, refs={"a": [ROW1]})
-    changed = {"a": [{**ROW1, "logicalId": "b5"}]}
-    store = store_of(module)
-    client = await mock_vco_client(store)
-    write = await client.write_module(module, plan_module(module, refs=changed))
-    assert methods(store) == ["updateConfigurationModule", "getConfiguration"]
-    assert "returnData" not in store.requests[0][1]
-    assert store.rows[1]["refs"] == changed
-    assert write.module.raw_refs == changed
 
 
 @pytest.mark.parametrize("conditional_check", [True, False])
@@ -625,8 +630,10 @@ async def test_a_stale_write_with_nothing_checkable_is_a_conflict(
     module = ds(DS_RAW)
     plan = plan_module(module, DS_WITHOUT_ECMP)
     store = store_of(module, conditional_check=conditional_check)
-    store.other_writer(1, other_key)
-    client = await mock_vco_client(store)
+    # The module changes after the version read, so the update itself is stale.
+    client = await mock_vco_client(
+        changing_after_the_version_read(store, store, 1, other_key)
+    )
     with pytest.raises(ConfigConflictError) as exc:
         _ = await client.write_module(module, plan)
     error = exc.value
@@ -637,23 +644,6 @@ async def test_a_stale_write_with_nothing_checkable_is_a_conflict(
     assert isinstance(error.module, DeviceSettingsConfigurationModule)
     assert error.module.version == store.rows[1]["version"]
     assert store.rows[1]["data"]["segments"][0]["ecmp"] == ECMP
-
-
-@pytest.mark.parametrize("conditional_check", [True, False])
-async def test_a_stale_write_of_a_ref_row_changed_inside_is_a_conflict(
-    mock_vco_client: MockVcoClientFactory, conditional_check: bool
-):
-    module = qos({"segments": []}, refs={"a": [ROW1]})
-    plan = plan_module(module, refs={"a": [{**ROW1, "logicalId": "b5"}]})
-    store = store_of(module, conditional_check=conditional_check)
-    store.other_writer(module.id_, elsewhere)
-    client = await mock_vco_client(store)
-    with pytest.raises(ConfigConflictError) as exc:
-        _ = await client.write_module(module, plan)
-    assert exc.value.stated is True
-    assert exc.value.lost_edits == ()
-    assert exc.value.plan is plan
-    assert store.rows[1]["refs"] == {"a": [ROW1]}
 
 
 @pytest.mark.parametrize("return_data", [True, False])
@@ -780,17 +770,23 @@ async def test_refused_update_that_cannot_be_read_back_is_an_unknown_outcome(
 async def test_an_unknown_outcome_names_the_refs_it_sent(
     mock_vco_client: MockVcoClientFactory,
 ):
-    module = qos({"segments": []}, refs={"a": [ROW1, ROW3]})
-    plan = plan_module(module, refs={"a": [ROW1, ROW2]})
+    module = primary_provider_module()
+    current = copy_of_data(module)
+    set_primary_provider(current, None)
+    plan = plan_module(module, current)
     store = store_of(module, conditional_check=True)
-    store.other_writer(module.id_, elsewhere)
-    client = await mock_vco_client(reading(store, []))
+    # The module changes after the version read, so the update itself is refused.
+    client = await mock_vco_client(
+        changing_after_the_version_read(
+            reading(store, [], CONFIG), store, module.id_, elsewhere
+        )
+    )
     with pytest.raises(WriteOutcomeUnknownError) as exc:
         _ = await client.write_module(module, plan)
     assert exc.value.plan is plan
     assert str(exc.value).splitlines()[2:4] == [
         "planned, not checked:",
-        "  refs: replaced",
+        f"  - refs {PRIMARY} (Global Segment): {DNS_A}",
     ]
 
 
@@ -1107,9 +1103,7 @@ async def test_every_request_of_an_insert_names_the_enterprise(
     client = await mock_vco_client(store)
     write = await client.write_module(module, plan_module(module), enterprise_id=7)
     assert write.module.is_new is False
-    assert [params.get("enterpriseId") for _, params in store.requests] == (
-        [7] if return_data else [7, 7]
-    )
+    assert [params.get("enterpriseId") for _, params in store.requests] == [7, 7]
 
 
 async def test_if_absent_inserts_when_the_configuration_has_no_module_of_the_name(
@@ -1119,7 +1113,11 @@ async def test_if_absent_inserts_when_the_configuration_has_no_module_of_the_nam
     store = store_of(module)
     client = await mock_vco_client(store)
     write = await client.write_module(module, plan_module(module), if_absent=True)
-    assert methods(store) == ["getConfiguration", "insertConfigurationModule"]
+    assert methods(store) == [
+        "getConfiguration",
+        "insertConfigurationModule",
+        "getConfiguration",
+    ]
     assert write.operation == "insert"
     (stored_id,) = store.rows
     assert write.module.id_ == stored_id
@@ -1137,7 +1135,11 @@ async def test_if_absent_takes_a_module_of_the_name_as_the_answer(
 
     write = await client.write_module(module, plan, if_absent=True)
 
-    assert methods(store) == ["insertConfigurationModule", "getConfiguration"]
+    assert methods(store) == [
+        "insertConfigurationModule",
+        "getConfiguration",
+        "getConfiguration",
+    ]
     assert list(store.rows) == [stored_id]
     assert (write.operation, write.module.id_) == ("insert", stored_id)
     assert write.module.is_new is False
@@ -1226,7 +1228,11 @@ async def test_if_absent_reads_only_the_rows_of_the_name(
     )
     client = await mock_vco_client(store)
     write = await client.write_module(module, plan_module(module), if_absent=True)
-    assert methods(store) == ["getConfiguration", "insertConfigurationModule"]
+    assert methods(store) == [
+        "getConfiguration",
+        "insertConfigurationModule",
+        "getConfiguration",
+    ]
     assert write.module.name == "QOS"
 
 

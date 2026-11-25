@@ -21,6 +21,8 @@ from pyvelo.client.models.configuration.device_settings.root import (
 )
 from pyvelo.client.models.configuration.device_settings.segment import (
     DeviceSegment,
+    DnsBackupProvider,
+    DnsPrimaryProvider,
     DnsProvider,
     SegmentDns,
 )
@@ -56,11 +58,11 @@ _TS = datetime(2024, 1, 1, tzinfo=UTC)
 
 
 def _make_device_settings_module(
-    mod_id: int, config_id: int
+    mod_id: int, config_id: int, data: DeviceSettingsData | None = None
 ) -> DeviceSettingsConfigurationModule:
     return DeviceSettingsConfigurationModule(
         name="deviceSettings",
-        data=DeviceSettingsData(lan=LanSettings(), segments=[]),
+        data=data or DeviceSettingsData(lan=LanSettings(), segments=[]),
         created=_TS,
         modified=_TS,
         id_=mod_id,
@@ -283,11 +285,15 @@ def _ds_module(
     lan: LanSettings | None = None,
     segments: list[DeviceSegment] | None = None,
 ) -> DeviceSettingsConfigurationModule:
-    module = _make_device_settings_module(mod_id=2, config_id=20)
-    module.data = DeviceSettingsData(
-        lan=lan or LanSettings(), segments=segments or [], ntp=ntp or Ntp()
+    # The data is part of the module as read: a segment added after the read
+    # would be an edit that adds a segment row, which needs its resolvers.
+    return _make_device_settings_module(
+        mod_id=2,
+        config_id=20,
+        data=DeviceSettingsData(
+            lan=lan or LanSettings(), segments=segments or [], ntp=ntp or Ntp()
+        ),
     )
-    return module
 
 
 _BLOCK_SSH: dict[str, object] = {
@@ -378,8 +384,8 @@ async def test_two_applies_in_a_row():
 @pytest.mark.asyncio
 async def test_apply_dns():
     dns = SegmentDns(
-        primary_provider=DnsProvider(ref="deviceSettings:dns:primaryProvider"),
-        backup_provider=DnsProvider(ref="deviceSettings:dns:backupProvider"),
+        primary_provider=DnsPrimaryProvider(ref="deviceSettings:dns:primaryProvider"),
+        backup_provider=DnsBackupProvider(ref="deviceSettings:dns:backupProvider"),
         private_providers=DnsProvider(ref="deviceSettings:dns:privateProviders"),
     )
     state = _profile_state(

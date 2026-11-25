@@ -22,8 +22,9 @@ exactly these and nothing else):
   (accepted drift, see ``live_support.settle``).
 * refs: the Orchestrator re-derives a deviceSettings module's refs from its data
   when the data changes and drops one whose object is gone; a firewall or WAN
-  module's refs stay as they were. The tests never write refs and restore data
-  only.
+  module's refs stay as they were. A deviceSettings or QoS write that has
+  segments carries its refs as read (the plan derives them); the tests edit no
+  owner of a ref row and restore data only.
 
 How the Orchestrator refuses a stale write is recorded by the run, not assumed.
 Each test that makes one prints a ``refused with`` line naming the form: the
@@ -63,7 +64,7 @@ import copy
 import uuid
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from live_support import (
@@ -103,10 +104,10 @@ from pyvelo.client import (
     VcoError,
     WriteNotAppliedError,
 )
+from pyvelo.client.derived_refs import APPEND_ONLY_REF_NAMES
 from pyvelo.client.enums.configuration import ConfigurationModuleName as Name
 from pyvelo.client.models.configuration import (
     DeviceSettingsData,
-    DeviceSettingsRefs,
     FirewallData,
     QosData,
     WanData,
@@ -160,15 +161,8 @@ def _plan_nothing(
         )
     elif plan.data != raw or plan.data is raw:
         failures.append(f"{label} {module.name}: plan.data is not a copy of raw_data")
-    elif plan.refs is not None:
+    elif plan.refs is not None or plan.ref_changes:
         failures.append(f"{label} {module.name}: planned refs with no edit")
-    refs: object = getattr(module, "refs", MISSING)
-    if isinstance(module.raw_refs, dict) and refs is not MISSING:
-        again = plan_module(
-            module, refs=refs if isinstance(refs, VcoModel | dict) else None
-        ).refs
-        if again is not None:
-            failures.append(f"{label} {module.name}: unchanged refs were planned")
 
 
 async def test_no_edit_plans_nothing_on_every_edge_and_profile(lab: Lab) -> None:
@@ -743,12 +737,13 @@ def _has_refs(module: AnyConfigurationModule) -> bool:
         isinstance(module, DeviceSettingsConfigurationModule)
         and isinstance(module.raw_refs, dict)
         and bool(module.raw_refs)
+        and bool(module.data.segments)
         and bool(module.data.lan.networks)
     )
 
 
 @pytest.mark.live_write
-async def test_a_data_edit_sends_no_refs(
+async def test_a_data_edit_sends_its_refs_as_read(
     lab: Lab, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     layout = await lab.pick_writable_edge(Name.DEVICE_SETTINGS, _has_refs, "with refs")
@@ -769,20 +764,25 @@ async def test_a_data_edit_sends_no_refs(
             "the deviceSettings module",
         )
 
-        # Passing the refs as read is no change to them.
-        refs = expect(module.refs, DeviceSettingsRefs, "the deviceSettings refs")
-        unchanged = plan_module(module, refs=refs)
+        unchanged = plan_module(module)
         check(
             unchanged.operation == "none" and unchanged.refs is None,
-            "refs passed back as read were planned as a change",
+            "a module with no edit planned refs",
         )
 
         monkeypatch.setattr(lab.client, "update_configuration_module", spy)
         _ = await apply_steps(lab, site, DeviceSettingsData, _lan_steps(module.data))
         check(len(sent) == 1, f"expected one write, saw {len(sent)}")
+        raw_refs: object = module.raw_refs
+        check(isinstance(raw_refs, dict), "the module has no refs as read")
+        as_read = {
+            str(name): rows
+            for name, rows in cast("dict[object, Any]", raw_refs).items()
+            if name not in APPEND_ONLY_REF_NAMES
+        }
         check(
-            sent[0].update.refs is MISSING,
-            "a data edit sent refs along with the data",
+            sent[0].update.refs == as_read,
+            "a data edit of a module with segments did not send its refs as read",
         )
 
 
