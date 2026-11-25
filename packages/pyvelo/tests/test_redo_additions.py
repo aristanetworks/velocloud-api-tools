@@ -92,7 +92,7 @@ def test_a_lost_repaired_default_is_neither_redone_nor_listed():
     assert missing.segment == "Global Segment"
     # The VCO stored the added segment and dropped the repaired defaults.
     stored = copy.deepcopy(with_additions(module.raw_data, module.additions))
-    assert "defaults" not in stored["segments"][0]  # pyright: ignore[reportIndexIssue, reportOptionalSubscript]
+    assert "defaults" not in stored["segments"][0]  # pyright: ignore[reportIndexIssue]
 
     error = lost_write(module, plan, stored)
 

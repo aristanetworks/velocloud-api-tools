@@ -785,7 +785,7 @@ class Layered(VcoModel, Generic[L]):  # noqa: UP046 (one shared constrained L, a
         for name, encoding in cls._owned_encodings().items():
             owned: object = self.__dict__.get(name)
             if isinstance(owned, Owned):
-                owned._attach(self, name, encoding)  # pyright: ignore[reportUnknownMemberType, reportArgumentType, reportPrivateUsage]
+                owned._attach(self, name, encoding)  # pyright: ignore[reportArgumentType, reportPrivateUsage]
 
     @classmethod
     @override

@@ -154,7 +154,7 @@ def qos_module(
 
 def test_plan_module_raises_fixed_list_error_for_an_assigned_match_edit():
     module = qos_module(qos_entry(GUEST), layer=Profile)
-    module.data.segments[0].defaults[0].match.proto = 99  # pyright: ignore[reportIndexIssue, reportAttributeAccessIssue, reportOptionalMemberAccess]
+    module.data.segments[0].defaults[0].match.proto = 99  # pyright: ignore[reportIndexIssue]
     with pytest.raises(FixedListError) as caught:
         plan_module(module, level=ConfigContext.PROFILE)
     assert caught.value.module_name == "QOS"
@@ -164,7 +164,7 @@ def test_plan_module_raises_fixed_list_error_for_an_assigned_match_edit():
 
 def test_plan_module_passes_an_action_assignment():
     module = qos_module(qos_entry(GUEST), layer=Profile)
-    module.data.segments[0].defaults[0].action.route_type = "gateway"  # pyright: ignore[reportIndexIssue, reportAttributeAccessIssue, reportOptionalMemberAccess]
+    module.data.segments[0].defaults[0].action.route_type = "gateway"  # pyright: ignore[reportIndexIssue, reportAttributeAccessIssue]
     plan = plan_module(module, level=ConfigContext.PROFILE)
     assert plan.operation == "update"
 
@@ -181,7 +181,7 @@ def test_plan_module_raises_for_a_rule_appended_to_defaults():
 
 def test_the_message_says_what_can_change_and_that_missing_entries_are_repaired():
     module = qos_module(qos_entry(GUEST), layer=Profile)
-    module.data.segments[0].defaults[0].match.proto = 99  # pyright: ignore[reportIndexIssue, reportAttributeAccessIssue, reportOptionalMemberAccess]
+    module.data.segments[0].defaults[0].match.proto = 99  # pyright: ignore[reportIndexIssue]
     with pytest.raises(FixedListError) as caught:
         plan_module(module, level=ConfigContext.PROFILE)
     text = str(caught.value)
@@ -245,10 +245,10 @@ def test_an_edge_segment_holds_no_defaults_and_a_write_keeps_the_raw_ones():
     assert (plan.operation, plan.data) == ("none", data(entry))
 
     # An edit through the model is refused as lossy, never written.
-    segment.defaults = []  # pyright: ignore[reportAttributeAccessIssue]
+    segment.defaults = []
     with pytest.raises(LossyFieldError, match="defaults"):
         plan_module(module, level=ConfigContext.EDGE)
-    segment.defaults = MISSING  # pyright: ignore[reportAttributeAccessIssue]
+    segment.defaults = MISSING
 
     # A write for another edit sends the raw `defaults` as read.
     segment.rules.append(QosRule.model_validate({**entry["defaults"][0], "name": "r1"}))

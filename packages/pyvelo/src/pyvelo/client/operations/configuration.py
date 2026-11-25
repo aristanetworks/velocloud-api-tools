@@ -134,7 +134,7 @@ def _is_firewall_row(value: object) -> str:
 class _UnleveledAnswer(
     RootModel[
         Annotated[
-            Annotated[dict[str, Any], Tag("firewall")]  # pyright: ignore[reportExplicitAny]
+            Annotated[dict[str, Any], Tag("firewall")]
             | Annotated[UpdateConfigurationModuleResult[Edge], Tag("other")],
             Discriminator(_is_firewall_row),
         ]
@@ -145,7 +145,7 @@ class _UnleveledAnswer(
     model_config: ClassVar[ConfigDict] = ConfigDict(hide_input_in_errors=True)
 
 
-def _unleveled_firewall_row(answer: dict[str, Any]) -> LayerUnknownError:  # pyright: ignore[reportExplicitAny]
+def _unleveled_firewall_row(answer: dict[str, Any]) -> LayerUnknownError:
     """The ``LayerUnknownError`` for *answer*, the firewall row an update was answered with when it was given no level.
 
     The request of an update does not name its module, so this cannot be known

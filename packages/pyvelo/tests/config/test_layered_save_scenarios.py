@@ -394,8 +394,8 @@ async def test_a_loaded_edge_localizes_from_the_profiles_firewall_data():
         ]
     )
     services = state.edge.firewall.services.localize()
-    assert services.logging_enabled is True  # pyright: ignore[reportOptionalMemberAccess]
-    assert state.profile.firewall.services.logging_enabled is True  # pyright: ignore[reportOptionalMemberAccess]
+    assert services.logging_enabled is True
+    assert state.profile.firewall.services.logging_enabled is True
     (plan,) = state.plan().changed
     assert [str(c.path) for c in plan.changes] == ["services"]
 
@@ -428,4 +428,4 @@ async def test_a_replaced_module_localizes_from_the_profiles_firewall_data():
     ).firewall
     state.replace_module(state.module("firewall"), stored)
     services = state.edge.firewall.services.localize()
-    assert services.logging_enabled is True  # pyright: ignore[reportOptionalMemberAccess]
+    assert services.logging_enabled is True

@@ -11,7 +11,7 @@ from collections.abc import Sequence
 from typing import Any, Final, cast
 
 from hub_helpers import CLUSTER, HUB_A, HUB_B, MEMBER, NOT_A_HUB, Hub
-from profile_state import (  # pyright: ignore[reportImplicitRelativeImport]
+from profile_state import (
     module_store_pipeline,
     profile_state,
 )

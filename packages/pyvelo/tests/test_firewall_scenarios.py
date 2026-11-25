@@ -208,7 +208,7 @@ def test_a_value_made_local_carries_none_of_the_profiles_server_assigned_ids():
     # The profile keeps its own.
     assert isinstance(profile.raw_data, dict)
     assert profile.raw_data["services"]["console"]["ruleLogicalId"] == "xyz"
-    assert profile.data.services.console.rule_logical_id == "xyz"  # pyright: ignore[reportOptionalMemberAccess, reportAttributeAccessIssue, reportUnknownMemberType]
+    assert profile.data.services.console.rule_logical_id == "xyz"  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType]
 
 
 def test_a_patch_into_an_inherited_section_carries_none_of_the_profiles_ids():

@@ -101,7 +101,7 @@ def test_an_added_entry_nobody_edited_is_written_as_the_template():
     assert json.dumps(plan.data["segments"][1], sort_keys=False) == json.dumps(
         entry, sort_keys=False
     )
-    assert plan.data["segments"][0] == module.raw_data["segments"][0]  # pyright: ignore[reportIndexIssue, reportOptionalSubscript]
+    assert plan.data["segments"][0] == module.raw_data["segments"][0]  # pyright: ignore[reportIndexIssue]
 
 
 def test_an_edit_to_an_added_entry_is_a_change_from_the_template():
@@ -396,7 +396,7 @@ def test_with_additions_appends_an_entry_and_leaves_raw_alone():
     entry = guest_qos_entry()
     added = with_additions(raw, [AddedSegment(2, "Guest", entry)])
     assert raw == before
-    assert added == {"segments": [*before["segments"], entry]}  # pyright: ignore[reportOperatorIssue]
+    assert added == {"segments": [*before["segments"], entry]}
 
 
 def test_with_additions_makes_a_list_of_an_absent_or_null_segments():

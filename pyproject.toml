@@ -52,5 +52,7 @@ reportUnknownVariableType = false
 reportUnknownArgumentType = false
 reportUnusedCallResult = false
 reportUnknownMemberType = false
-reportUnnecessaryTypeIgnoreComment = false
 reportUnknownLambdaType = false
+# Last: while a reportUnknown* rule is off, every ignore that names it counts
+# as unnecessary.
+reportUnnecessaryTypeIgnoreComment = false

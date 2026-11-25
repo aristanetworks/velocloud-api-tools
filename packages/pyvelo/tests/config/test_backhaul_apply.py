@@ -9,7 +9,7 @@ from typing import Any
 
 import pytest
 from hub_helpers import HUB_A, HUB_B, backhaul_entry, backhaul_rule
-from hub_state import EDGE_CONFIG, hub_pipeline, hub_profile_state  # pyright: ignore[reportImplicitRelativeImport]
+from hub_state import EDGE_CONFIG, hub_pipeline, hub_profile_state
 from pyvelo.client.enums.configuration import ConfigurationModuleName
 from pyvelo.client.hub_services import BACKHAUL_REF
 from pyvelo.client.models.configuration.qos.rule import BackhaulEdge

@@ -253,7 +253,7 @@ class ConfigPlan:
         return "\n".join([self.target, *lines] if self.target else lines)
 
 
-type _AnyConfiguration = ConfigurationBase[Any]  # pyright: ignore[reportExplicitAny]
+type _AnyConfiguration = ConfigurationBase[Any]
 """A configuration of either stored layer, for the helpers that read both."""
 
 

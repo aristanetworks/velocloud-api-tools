@@ -18,7 +18,7 @@ from hub_helpers import (
     ds_with_vpn,
     hub_row,
 )
-from hub_state import (  # pyright: ignore[reportImplicitRelativeImport]
+from hub_state import (
     EDGE,
     EDGE_CONFIG,
     EDGE_QOS_ID,

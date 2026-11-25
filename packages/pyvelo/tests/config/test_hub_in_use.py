@@ -13,7 +13,7 @@ from typing import Any, Literal
 
 import pytest
 from hub_helpers import HUB_A, HUB_B, Hub, ds_with_vpn, hub_row
-from hub_state import (  # pyright: ignore[reportImplicitRelativeImport]
+from hub_state import (
     hub_pipeline,
     hub_profile_state,
     profile_hub_rows,

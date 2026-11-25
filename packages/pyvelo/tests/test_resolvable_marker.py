@@ -143,7 +143,7 @@ def test_an_accessor_that_reads_no_field_is_refused(accessor: object) -> None:
 
 def test_an_accessor_that_raises_is_refused_with_what_it_raised() -> None:
     with pytest.raises(TypeError) as caught:
-        _ = Resolvable(SegmentIdentity, lambda i: 1 / 0)  # pyright: ignore[reportUnknownLambdaType]
+        _ = Resolvable(SegmentIdentity, lambda i: 1 / 0)
     text = str(caught.value)
     assert "raised" in text
     assert "ZeroDivisionError" in text

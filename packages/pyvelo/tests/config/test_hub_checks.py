@@ -19,13 +19,13 @@ from hub_helpers import (
     hub_entry,
     hub_row,
 )
-from hub_state import (  # pyright: ignore[reportImplicitRelativeImport]
+from hub_state import (
     ALL_HUBS,
     hub_pipeline,
     hub_profile_state,
     profile_hub_rows,
 )
-from profile_state import profile_state  # pyright: ignore[reportImplicitRelativeImport]
+from profile_state import profile_state
 from pyvelo.client.exceptions import HubListError
 from pyvelo.client.models.configuration.device_settings.segment import VpnHub
 from pyvelo.config.pipeline import ConfigPipeline

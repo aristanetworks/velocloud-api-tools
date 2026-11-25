@@ -5,7 +5,7 @@ import uuid
 from typing import Any, cast, final
 
 import pytest
-from profile_state import profile_state  # pyright: ignore[reportImplicitRelativeImport]
+from profile_state import profile_state
 from pydantic import MISSING
 from pyvelo.client.exceptions import DetachedObjectError
 from pyvelo.client.models.configuration import FirewallData
@@ -122,8 +122,8 @@ async def test_a_patch_into_an_inherited_section_copies_the_profiles():
     after = change_after(firewall_plan(state), "services")
     assert after == {**PROFILE_SERVICES, "ssh": {"enabled": True}}
     # The profile itself is as it was.
-    assert state.profile.firewall.services.logging_enabled is True  # pyright: ignore[reportOptionalMemberAccess]
-    assert state.profile.firewall.services.ssh.enabled is False  # pyright: ignore[reportOptionalMemberAccess, reportAttributeAccessIssue, reportUnknownMemberType]
+    assert state.profile.firewall.services.logging_enabled is True
+    assert state.profile.firewall.services.ssh.enabled is False  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType]
 
 
 async def test_null_inherits_and_plan_shows_the_removal():
@@ -221,7 +221,7 @@ async def test_the_effective_view_follows_the_layers():
     assert view.firewall_enabled.value is False
     assert view.atp_enabled.origin is Origin.FACTORY
     glob = view.get_segment(name="Global Segment")
-    assert [(r.origin, r.value.name) for r in glob.outbound] == [  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType, reportUnknownVariableType]
+    assert [(r.origin, r.value.name) for r in glob.outbound] == [
         (Origin.EDGE, "edge-rule"),
         (Origin.PROFILE, "allow-all"),
     ]
@@ -322,7 +322,7 @@ async def test_a_patch_on_an_inherited_object_of_a_missing_module_copies_it_into
     assert [s["outbound"] for s in plan.data["segments"]] == [[], []]
     assert "ruleLogicalId" not in str(plan.data)
     # The profile is as it was.
-    assert state.profile.firewall.services.ssh.enabled is False  # pyright: ignore[reportOptionalMemberAccess, reportAttributeAccessIssue, reportUnknownMemberType]
+    assert state.profile.firewall.services.ssh.enabled is False  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType]
 
 
 # --- names resolve through the converted firewall ---------------------------

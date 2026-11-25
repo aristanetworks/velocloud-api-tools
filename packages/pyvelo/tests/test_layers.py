@@ -43,7 +43,7 @@ def test_a_layered_model_needs_a_layer() -> None:
 
 
 def test_a_class_with_a_layer_given_reports_it() -> None:
-    class Wrapper(Layered[Edge]):  # pyright: ignore[reportUnusedClass]
+    class Wrapper(Layered[Edge]):
         pass
 
     assert Wrapper.layer() is Edge

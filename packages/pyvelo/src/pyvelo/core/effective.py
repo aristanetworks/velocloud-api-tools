@@ -200,7 +200,7 @@ def _inheritable(
             or present
             and isinstance(encoding, ByFlag)
             and encoding.presence_wins
-        ):  # pyright: ignore[reportUnknownMemberType]
+        ):
             resolved = Resolved(Origin.EDGE, _copy(stored), edge_source)
 
     profile_value: object = MISSING

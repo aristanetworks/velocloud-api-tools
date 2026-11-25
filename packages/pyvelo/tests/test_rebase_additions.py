@@ -100,7 +100,7 @@ def test_a_fresh_module_that_holds_an_added_segment_is_a_conflict():
     (clash,) = error.lost_edits
     assert str(clash.path) == "segments[Guest]"
     assert clash.as_read is MISSING
-    assert clash.stored == fresh.raw_data["segments"][1]  # pyright: ignore[reportIndexIssue, reportOptionalSubscript]
+    assert clash.stored == fresh.raw_data["segments"][1]  # pyright: ignore[reportIndexIssue]
     assert clash.clash
 
 

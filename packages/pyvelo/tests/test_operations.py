@@ -278,7 +278,7 @@ class TestUpdateModule:
             plans.append(plan)
             return ModuleWrite(plan.name, plan.operation, module, plan)
 
-        client.write_module = write_module  # pyright: ignore[reportAttributeAccessIssue]
+        client.write_module = write_module
         _ = await client.update_module(module, data, resolvers=resolvers)
         (plan,) = plans
         (change,) = plan.ref_changes

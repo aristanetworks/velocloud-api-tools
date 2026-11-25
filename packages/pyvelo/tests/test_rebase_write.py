@@ -313,7 +313,7 @@ async def test_a_module_gone_from_its_configuration_is_a_conflict_without_a_modu
             store.rows.pop(QOS_ID)
         return original_get(method, params)
 
-    store.handle = handle  # pyright: ignore[reportAttributeAccessIssue]
+    store.handle = handle
 
     with pytest.raises(ConfigConflictError) as caught:
         _ = await client.write_module(qos, plan, rebase=True)

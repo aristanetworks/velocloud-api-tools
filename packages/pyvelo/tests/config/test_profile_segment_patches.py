@@ -14,7 +14,7 @@ from collections.abc import Mapping
 from typing import Any, cast
 
 import pytest
-from profile_state import (  # pyright: ignore[reportImplicitRelativeImport]
+from profile_state import (
     module_store_pipeline,
     profile_state,
 )
@@ -111,7 +111,7 @@ def rule(name: str) -> dict[str, Any]:
 
 def kept(state: ConfigState, module: str, position: int = 0) -> dict[str, Any]:
     """The entry at *position* of *module* as read, as a list value can give it."""
-    entry = copy.deepcopy(state.module(module).raw_data["segments"][position])  # pyright: ignore[reportIndexIssue, reportUnknownMemberType, reportUnknownVariableType]
+    entry = copy.deepcopy(state.module(module).raw_data["segments"][position])  # pyright: ignore[reportIndexIssue, reportUnknownVariableType]
     return entry
 
 

@@ -24,7 +24,7 @@ from hub_helpers import (
     ds_with_vpn,
     hub_row,
 )
-from hub_state import (  # pyright: ignore[reportImplicitRelativeImport]
+from hub_state import (
     hub_pipeline,
     hub_profile_state,
     profile_hub_rows,
@@ -616,7 +616,7 @@ async def test_a_conflict_of_the_module_write_after_a_step_is_the_cause():
             store.other_writer(DS_ID, elsewhere)
         return await original(request)
 
-    pipeline.client.get_enterprise_services = other_writer_after_the_steps  # pyright: ignore[reportAttributeAccessIssue]
+    pipeline.client.get_enterprise_services = other_writer_after_the_steps
 
     with pytest.raises(SaveStepError) as failed:
         _ = await pipeline.save(state)
@@ -755,7 +755,7 @@ async def test_a_failure_of_the_second_services_read_is_a_save_step_error():
             raise VcoError("the VCO is gone")
         return await original(request)
 
-    pipeline.client.get_enterprise_services = second_read_fails  # pyright: ignore[reportAttributeAccessIssue]
+    pipeline.client.get_enterprise_services = second_read_fails
 
     with pytest.raises(SaveStepError) as failed:
         _ = await pipeline.save(state)
@@ -843,7 +843,7 @@ async def test_a_stored_write_the_version_read_finds_counts_as_done_before_the_s
             raise VcoError("the VCO is gone")
         return await original(request)
 
-    pipeline.client.get_enterprise_services = third_read_fails  # pyright: ignore[reportAttributeAccessIssue]
+    pipeline.client.get_enterprise_services = third_read_fails
 
     with pytest.raises(VcoError) as failed:
         _ = await pipeline.save(state)

@@ -4,7 +4,7 @@ from typing import Any
 
 import hub_helpers
 from hub_helpers import CLUSTER, HUB_A, HUB_B, MEMBER, NOT_A_HUB, Hub
-from profile_state import (  # pyright: ignore[reportImplicitRelativeImport]
+from profile_state import (
     module_store_pipeline,
     profile_state,
 )
@@ -53,8 +53,7 @@ def add_hub_by_id(logical_id: str) -> dict[str, Any]:
 def hubs_of(state: ConfigState) -> list[tuple[str, str, str]]:
     (segment,) = state.profile.device_settings.segments
     return [
-        (h.name, h.type_, str(h.logical_id))
-        for h in segment.vpn.hub_edges.vpn_hubs  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType, reportUnknownVariableType]
+        (h.name, h.type_, str(h.logical_id)) for h in segment.vpn.hub_edges.vpn_hubs
     ]
 
 

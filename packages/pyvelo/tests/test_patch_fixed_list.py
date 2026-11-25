@@ -318,7 +318,7 @@ def test_qos_defaults_take_an_action_edit_by_name():
             }
         }
     )
-    defaults = {r.name: r for r in data.segments[0].defaults}  # pyright: ignore[reportGeneralTypeIssues, reportOptionalMemberAccess]
+    defaults = {r.name: r for r in data.segments[0].defaults}  # pyright: ignore[reportGeneralTypeIssues]
     assert defaults["Default-Any-UDP"].action.route_type == "edge2Cloud"
     assert defaults["Default-Any-Other"].action.route_type == "edge2Any"
 
@@ -346,7 +346,7 @@ def test_qos_rules_of_a_segment_stay_editable():
     rule["name"] = "R"
     rule["ruleLogicalId"] = str(uuid.uuid4())
     _ = data.merge_patch({"segments": {"Guest": {"rules": {"R": add(rule)}}}})
-    assert [r.name for r in data.segments[0].rules] == ["R"]  # pyright: ignore[reportGeneralTypeIssues]
+    assert [r.name for r in data.segments[0].rules] == ["R"]
 
 
 def test_a_qos_round_trip_without_rule_ids_keeps_the_rule_ids():
@@ -358,7 +358,7 @@ def test_a_qos_round_trip_without_rule_ids_keeps_the_rule_ids():
         del rule["ruleLogicalId"]
     sent[2]["action"]["routeType"] = "edge2DataCenter"
     _ = data.merge_patch({"segments": {"Guest": {"defaults": sent}}})
-    defaults = data.segments[0].defaults  # pyright: ignore[reportGeneralTypeIssues]
+    defaults = data.segments[0].defaults
     assert isinstance(defaults, list)
     assert [str(r.rule_logical_id) for r in defaults] == sent_ids
     assert defaults[2].action.route_type == "edge2DataCenter"

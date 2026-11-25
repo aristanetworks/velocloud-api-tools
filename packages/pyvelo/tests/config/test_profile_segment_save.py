@@ -11,7 +11,7 @@ from collections.abc import Callable
 from typing import Any
 
 import pytest
-from profile_state import (  # pyright: ignore[reportImplicitRelativeImport]
+from profile_state import (
     module_store_pipeline,
     profile_state,
 )

@@ -36,7 +36,7 @@ from pyvelo.core.layers import Edge, Profile
 from pyvelo.core.owned import Owned
 from pyvelo.core.rebase import Path
 from pyvelo.testing import MockVcoClient, ModuleStore, make_module_json
-from refs_helpers import (  # pyright: ignore[reportImplicitRelativeImport]
+from refs_helpers import (
     AUTH,
     CONFIG,
     DNS_A,
