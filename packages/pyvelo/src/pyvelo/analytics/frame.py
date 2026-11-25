@@ -37,7 +37,7 @@ class GroupByProxy:
             for c in cols:
                 agg_exprs.append(getattr(pl.col(c), func)().alias(f"{c}_{func}"))
         result = self._df.group_by(self._keys).agg(agg_exprs)
-        return MetricFrame._from_polars(result)
+        return MetricFrame.from_polars(result)
 
 
 class MetricFrame:
@@ -55,7 +55,7 @@ class MetricFrame:
             self._df = pl.DataFrame(schema={c: pl.Utf8 for c in columns})
 
     @classmethod
-    def _from_polars(cls, df: pl.DataFrame) -> MetricFrame:
+    def from_polars(cls, df: pl.DataFrame) -> MetricFrame:
         frame = object.__new__(cls)
         frame._df = df
         return frame
@@ -94,7 +94,7 @@ class MetricFrame:
                 f"Unknown operator {operator!r}. Supported: {', '.join(sorted(ops))}"
             )
         expr = builder(pl.col(field), value)
-        return MetricFrame._from_polars(self._df.filter(expr))
+        return MetricFrame.from_polars(self._df.filter(expr))
 
     def group_by(self, fields: str | list[str]) -> GroupByProxy:
         keys = [fields] if isinstance(fields, str) else list(fields)
@@ -108,22 +108,22 @@ class MetricFrame:
         descending: bool = True,
     ) -> MetricFrame:
         sorted_df = self._df.sort(by, descending=descending)
-        return MetricFrame._from_polars(sorted_df.head(n))
+        return MetricFrame.from_polars(sorted_df.head(n))
 
     def sort(self, field: str, *, descending: bool = False) -> MetricFrame:
-        return MetricFrame._from_polars(self._df.sort(field, descending=descending))
+        return MetricFrame.from_polars(self._df.sort(field, descending=descending))
 
     def select(self, columns: list[str]) -> MetricFrame:
-        return MetricFrame._from_polars(self._df.select(columns))
+        return MetricFrame.from_polars(self._df.select(columns))
 
     def drop(self, columns: list[str]) -> MetricFrame:
-        return MetricFrame._from_polars(self._df.drop(columns))
+        return MetricFrame.from_polars(self._df.drop(columns))
 
     def head(self, n: int = 5) -> MetricFrame:
-        return MetricFrame._from_polars(self._df.head(n))
+        return MetricFrame.from_polars(self._df.head(n))
 
     def tail(self, n: int = 5) -> MetricFrame:
-        return MetricFrame._from_polars(self._df.tail(n))
+        return MetricFrame.from_polars(self._df.tail(n))
 
     # -- export ---------------------------------------------------------------
 

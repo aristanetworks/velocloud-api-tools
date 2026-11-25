@@ -91,7 +91,7 @@ def _compact_alias(model: VcoModel, **extra_ctx: object) -> JsonObject:
 
 
 def _config_context(model: VcoModel) -> ConfigContext | None:
-    return model._config_context
+    return model.config_context
 
 
 # ---------------------------------------------------------------------------

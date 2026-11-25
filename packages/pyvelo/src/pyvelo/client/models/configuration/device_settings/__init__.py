@@ -1,3 +1,4 @@
+from ..common import SegmentMetadata
 from .common import (
     AdvertiseDefaultRoutes,
     AdvertiseDefaultRoutesMethod,
@@ -179,7 +180,6 @@ from .segment import (
     SegmentDns,
     SegmentEdgeDirect,
     SegmentHubInterconnect,
-    SegmentMetadata,
     SegmentMulticast,
     SegmentNat,
     SegmentNetflowIntervals,

@@ -213,7 +213,7 @@ async def test_observer_preparation_failure_preserves_source_error(
         ):
             send_request = cast(
                 Callable[[str, str], Awaitable[httpx.Response]],
-                client._send_request,
+                client._send_request,  # pyright: ignore[reportPrivateUsage]  # observation is made in the transport call
             )
             _ = await send_request("POST", "https://[invalid")
     assert error.value is failure
@@ -240,7 +240,7 @@ async def test_observation_strips_host_query_and_payload():
     async with observed_client(lambda _: httpx.Response(200), records.append) as client:
         send_request = cast(
             Callable[[str, str], Awaitable[httpx.Response]],
-            client._send_request,
+            client._send_request,  # pyright: ignore[reportPrivateUsage]  # observation is made in the transport call
         )
         _ = await send_request(
             "GET", "https://example.test/rest/test?token=private-query"

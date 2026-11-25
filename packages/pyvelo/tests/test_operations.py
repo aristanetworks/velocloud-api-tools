@@ -36,7 +36,7 @@ from pyvelo.client.schemas.configuration import (
     new_edge_module,
 )
 from pyvelo.core import RowsModifiedConfirmation
-from pyvelo.core.base import ConfigContext
+from pyvelo.core.fields import ConfigContext
 from pyvelo.core.identity import NetworkServiceIdentity
 from pyvelo.core.layers import Edge, Profile
 from pyvelo.testing import ModuleStore, make_module_json, store_of

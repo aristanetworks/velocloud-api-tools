@@ -10,7 +10,7 @@ from typing import Any, Final, Literal, NamedTuple
 import segment_helpers
 from pyvelo.client.models.configuration.profile_segments import segment_template
 from pyvelo.testing.module_store import ModuleStore
-from segment_helpers import CONFIG, DS_ID, QOS_ID
+from refs_helpers import CONFIG, DS_ID, QOS_ID
 
 
 class Hub(NamedTuple):

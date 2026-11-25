@@ -14,6 +14,7 @@ from pyvelo.core import (
     walk_fields,
 )
 from pyvelo.core import walk as walk_module
+from pyvelo.core.rebase import item_key
 
 
 class Meta(VcoModel):
@@ -175,7 +176,7 @@ def test_a_list_of_items_that_hold_nothing_costs_no_key_lookups(
         quiet_by_name: dict[str, Quiet] = Field(default_factory=dict)
 
     looked_up: list[object] = []
-    real = walk_module.item_key
+    real = item_key
 
     def spy(item: object, paths: tuple[str, ...]) -> object:
         looked_up.append(item)

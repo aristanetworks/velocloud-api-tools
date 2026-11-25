@@ -10,21 +10,16 @@ from pyvelo.client.enums.configuration import (
     ConfigurationModuleType,
 )
 from pyvelo.client.enums.enterprise import NetworkSegmentType
+from pyvelo.client.models.configuration.common import SegmentMetadata
 from pyvelo.client.models.configuration.device_settings.lan import LanSettings
 from pyvelo.client.models.configuration.device_settings.root import DeviceSettingsData
 from pyvelo.client.models.configuration.device_settings.segment import (
     DeviceSegment,
 )
-from pyvelo.client.models.configuration.device_settings.segment import (
-    SegmentMetadata as DsSegmentMetadata,
-)
 from pyvelo.client.models.configuration.firewall.root import FirewallData
 from pyvelo.client.models.configuration.qos.root import QosData
 from pyvelo.client.models.configuration.qos.segment import (
     QosSegment,
-)
-from pyvelo.client.models.configuration.qos.segment import (
-    SegmentMetadata as QosSegmentMetadata,
 )
 from pyvelo.client.models.configuration.wan.root import WanData
 from pyvelo.client.schemas.configuration import (
@@ -43,7 +38,7 @@ _NOW = datetime.datetime.now(tz=datetime.UTC)
 
 def _make_ds_module() -> DeviceSettingsConfigurationModule:
     seg = DeviceSegment(
-        segment=DsSegmentMetadata(
+        segment=SegmentMetadata(
             segment_id=0, name="Global Segment", type_=NetworkSegmentType.REGULAR
         )
     )
@@ -67,7 +62,7 @@ def _make_ds_module() -> DeviceSettingsConfigurationModule:
 
 def _make_qos_module() -> QosConfigurationModule[Edge]:
     seg = QosSegment[Edge](
-        segment=QosSegmentMetadata(
+        segment=SegmentMetadata(
             segment_id=0,
             name="Global Segment",
             type_=NetworkSegmentType.REGULAR,

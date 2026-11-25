@@ -4,25 +4,19 @@ from uuid import UUID
 
 import pytest
 from pyvelo.client.enums.enterprise import NetworkSegmentType
+from pyvelo.client.models.configuration.common import SegmentMetadata
 from pyvelo.client.models.configuration.device_settings.lan import LanSettings
 from pyvelo.client.models.configuration.device_settings.root import DeviceSettingsData
 from pyvelo.client.models.configuration.device_settings.segment import (
     DeviceSegment,
-    SegmentMetadata,
 )
 from pyvelo.client.models.configuration.firewall.root import FirewallData
 from pyvelo.client.models.configuration.firewall.segment import (
     FirewallSegment,
 )
-from pyvelo.client.models.configuration.firewall.segment import (
-    SegmentMetadata as FwSegmentMetadata,
-)
 from pyvelo.client.models.configuration.qos.root import QosData
 from pyvelo.client.models.configuration.qos.segment import (
     QosSegment,
-)
-from pyvelo.client.models.configuration.qos.segment import (
-    SegmentMetadata as QosSegmentMetadata,
 )
 from pyvelo.core.layers import Edge
 
@@ -51,7 +45,7 @@ def _make_device_data() -> DeviceSettingsData:
 def _make_qos_segments() -> list[QosSegment[Edge]]:
     return [
         QosSegment[Edge](
-            segment=QosSegmentMetadata(
+            segment=SegmentMetadata(
                 segment_id=0,
                 name="Global Segment",
                 type_=NetworkSegmentType.REGULAR,
@@ -59,7 +53,7 @@ def _make_qos_segments() -> list[QosSegment[Edge]]:
             )
         ),
         QosSegment[Edge](
-            segment=QosSegmentMetadata(
+            segment=SegmentMetadata(
                 segment_id=2,
                 name="Sales",
                 type_=NetworkSegmentType.REGULAR,
@@ -72,7 +66,7 @@ def _make_qos_segments() -> list[QosSegment[Edge]]:
 def _make_fw_segments() -> list[FirewallSegment[Edge]]:
     return [
         FirewallSegment[Edge](
-            segment=FwSegmentMetadata(
+            segment=SegmentMetadata(
                 segment_id=0, name="Global Segment", type_=NetworkSegmentType.REGULAR
             )
         ),

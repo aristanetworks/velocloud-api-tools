@@ -90,11 +90,11 @@ from pyvelo.config.state import (
     SaveProgress,
     SaveResult,
     StepOutcome,
-    ValidationWarning,
     ref_only_changes,
 )
 from pyvelo.config.validation import ValidationError as ValidatorError
 from pyvelo.config.validation import ValidationResult, ValidatorRegistry
+from pyvelo.config.validation_warning import ValidationWarning
 from pyvelo.core import PatchError, effective_dump
 from pyvelo.core.base import IdentityLookup, IdentityResolver, VcoModel
 from pyvelo.core.identity import (

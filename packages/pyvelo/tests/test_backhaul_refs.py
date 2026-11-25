@@ -36,7 +36,7 @@ from pyvelo.client.schemas.configuration import (
     DeviceSettingsConfigurationModule,
     QosConfigurationModule,
 )
-from pyvelo.core import ConfigContext, VcoModel
+from pyvelo.core import ConfigContext, VcoModel, walk_fields
 from pyvelo.core.identity import HubService, HubServiceNotFoundError
 from pyvelo.core.layers import Edge, Profile
 from pyvelo.core.rebase import Path
@@ -639,7 +639,7 @@ class _Visits:
 def visits(monkeypatch: pytest.MonkeyPatch) -> _Visits:
     seen = _Visits()
     real_holds = ref_owners_module.can_hold_owner
-    real_walk = ref_owners_module.walk_fields
+    real_walk = walk_fields
 
     def holds(model_cls: type[VcoModel]) -> bool:
         seen.asked.append(model_cls)

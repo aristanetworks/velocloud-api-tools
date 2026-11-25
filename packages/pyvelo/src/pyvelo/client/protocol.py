@@ -308,13 +308,12 @@ class VcoClientProtocol(
     ) -> AsyncGenerator[list[T]]:
         """Yield one page per source request until VCO reports no more pages.
 
-        After each page, *request* records ``_page_has_more`` and
-        ``_page_next_link`` so a caller that stops early can resume from that
+        After each page, *request* records ``page_has_more`` and
+        ``page_next_link`` so a caller that stops early can resume from that
         cursor. The caller's ``next_page_link`` is left unchanged.
         """
         more = True
-        request._page_has_more = False
-        request._page_next_link = None
+        request.record_page_cursor(None)
         page_request = request.model_copy()
 
         ResultType = PaginatedResult[ItemType]
@@ -342,6 +341,7 @@ class VcoClientProtocol(
 
             meta = result.metadata
             more = meta.more
+            next_page_link = None
             if more:
                 next_page_link = meta.next_page_link
                 if not next_page_link:
@@ -350,8 +350,7 @@ class VcoClientProtocol(
                     )
                 page_request.next_page_link = next_page_link
 
-            request._page_has_more = more
-            request._page_next_link = meta.next_page_link if more else None
+            request.record_page_cursor(next_page_link)
 
             yield result.data
 
@@ -459,10 +458,10 @@ class VcoClientProtocol(
         request: PaginatedVcoModel,
         ItemType: type[T],
     ) -> Sequence[T]:
-        """Collect pages until VCO reports no more or ``request._max_pages`` is hit.
+        """Collect pages until VCO reports no more or ``request.max_pages`` is hit.
 
-        ``_max_pages`` of 0 means no cap. When the cap stops collection,
-        ``request._page_has_more`` stays True and ``request._page_next_link``
+        ``max_pages`` of 0 means no cap. When the cap stops collection,
+        ``request.page_has_more`` stays True and ``request.page_next_link``
         holds the cursor for the next page.
         """
         items: list[T] = []
@@ -471,6 +470,6 @@ class VcoClientProtocol(
             async for page in pages:
                 items.extend(page)
                 page_count += 1
-                if request._max_pages and page_count >= request._max_pages:
+                if request.max_pages and page_count >= request.max_pages:
                     break
         return items

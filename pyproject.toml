@@ -55,6 +55,3 @@ reportUnusedCallResult = false
 reportUnknownMemberType = false
 reportUnnecessaryTypeIgnoreComment = false
 reportUnknownLambdaType = false
-reportPrivateUsage = false
-reportPrivateImportUsage = false
-reportPrivateLocalImportUsage = false

@@ -25,7 +25,8 @@ from pyvelo.client.schemas.configuration import (
     WanConfigurationModule,
 )
 from pyvelo.config.resolver import ResolverContext
-from pyvelo.config.state import ConfigState, SaveResult, ValidationWarning
+from pyvelo.config.state import ConfigState, SaveResult
+from pyvelo.config.validation_warning import ValidationWarning
 from pyvelo.core import at
 from pyvelo.core.layers import Edge, Profile
 from pyvelo.core.rebase import ItemMove, ItemPlace, Key

@@ -1208,7 +1208,7 @@ async def test_security_objects_reach_the_firewall_comparison_only(
 ):
     pipeline, state, client = await grouped()
     given: dict[str, SecurityObjects | None] = {}
-    compare = pipeline_module.compare_module
+    compare = compare_module
 
     def spy(name: str, *args: Any, **kwargs: Any):
         given[name] = kwargs.get("security_objects")

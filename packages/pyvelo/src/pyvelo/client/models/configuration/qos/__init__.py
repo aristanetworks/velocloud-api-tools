@@ -1,3 +1,4 @@
+from ..common import SegmentMetadata
 from .common import (
     CosMappingInputType,
     FlowPriority,
@@ -26,7 +27,6 @@ from .segment import (
     CosMappingType,
     CosMappingValue,
     QosSegment,
-    SegmentMetadata,
     WebProxy,
 )
 

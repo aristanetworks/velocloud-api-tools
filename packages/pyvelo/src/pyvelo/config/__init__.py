@@ -69,7 +69,6 @@ from .state import (
     SaveProgress,
     SaveResult,
     StepOutcome,
-    ValidationWarning,
     save_progress,
 )
 from .validation import (
@@ -79,6 +78,7 @@ from .validation import (
     ValidatorRegistry,
     validator,
 )
+from .validation_warning import ValidationWarning
 
 __all__ = [
     "Added",

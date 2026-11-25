@@ -7,6 +7,7 @@ from importlib.resources import files
 from typing import Any
 
 import pytest
+import refs_helpers
 import segment_helpers
 from pydantic import MISSING
 from pyvelo.client.models.configuration.profile_segments import (
@@ -187,15 +188,15 @@ def test_the_rows_of_profile_rows_validate_as_the_modules_of_a_profile():
         ],
     )
     profile = EnterpriseConfigurationProfile.model_validate(
-        {"name": "P", "id": segment_helpers.CONFIG, "modules": rows}
+        {"name": "P", "id": refs_helpers.CONFIG, "modules": rows}
     )
     assert isinstance(profile.device_settings, DeviceSettingsConfigurationModule)
     assert isinstance(profile.qos, QosConfigurationModule)
     assert isinstance(profile.firewall, FirewallConfigurationModule)
-    assert [r["configurationId"] for r in rows] == [segment_helpers.CONFIG] * 3
+    assert [r["configurationId"] for r in rows] == [refs_helpers.CONFIG] * 3
     assert [r["id"] for r in rows] == [
-        segment_helpers.DS_ID,
-        segment_helpers.QOS_ID,
+        refs_helpers.DS_ID,
+        refs_helpers.QOS_ID,
         segment_helpers.FW_ID,
     ]
     assert len(profile.device_settings.data.segments) == 2

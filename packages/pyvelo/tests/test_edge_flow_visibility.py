@@ -179,14 +179,14 @@ class TestOperation:
 
         client = await mock_vco_client(handler)
         request = request_with(limit=1)
-        request._max_pages = 1
+        request.max_pages = 1
 
         rows = await client.get_edge_flow_visibility_metrics(request)
 
         assert len(rows) == 1
         assert sent == [None]
-        assert request._page_has_more is True
-        assert request._page_next_link == "flow-cursor"
+        assert request.page_has_more is True
+        assert request.page_next_link == "flow-cursor"
 
     async def test_no_filter_fallback_returns_no_flows(
         self, mock_vco_client: MockVcoClientFactory

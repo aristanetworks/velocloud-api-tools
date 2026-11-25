@@ -1,3 +1,4 @@
+from ..common import SegmentMetadata
 from .common import (
     FirewallInboundRuleActionType,
     FirewallRuleAction,
@@ -15,7 +16,7 @@ from .security_features import (
     SecurityFeatureSettings,
     TcpBasedAttacks,
 )
-from .segment import FirewallSegment, SegmentMetadata
+from .segment import FirewallSegment
 from .services import (
     ConsoleService,
     FirewallServices,

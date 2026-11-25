@@ -594,12 +594,12 @@ set.
 |---|---|---|
 | `portal_list` | Non-paginated list endpoints | One. A complete paginated envelope is unwrapped; an incomplete one raises. |
 | `portal_paginated` | Callers that control paging | One per yielded page. |
-| `portal_paginated_list` | Paginated endpoints returning a list | Until the last page, or `request._max_pages` pages when it is non-zero. |
+| `portal_paginated_list` | Paginated endpoints returning a list | Until the last page, or `request.max_pages` pages when it is non-zero. |
 
-Both paginated methods record `_page_has_more` and `_page_next_link` on the
+Both paginated methods record `page_has_more` and `page_next_link` on the
 caller's request after every page; the caller's `next_page_link` is not
-modified. After a capped `portal_paginated_list`, `_page_has_more=True` marks
-the result incomplete and `_page_next_link` resumes from the next page. A page
+modified. After a capped `portal_paginated_list`, `page_has_more=True` marks
+the result incomplete and `page_next_link` resumes from the next page. A page
 reporting `more` without a cursor raises instead of repeating the request.
 
 ## Source request observations

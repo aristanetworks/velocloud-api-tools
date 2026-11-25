@@ -1300,6 +1300,30 @@ class PaginatedVcoModel(VcoModel):
     _page_has_more: bool = PrivateAttr(default=False)
     _page_next_link: str | None = PrivateAttr(default=None)
 
+    @property
+    def max_pages(self) -> int:
+        """The most pages ``portal_paginated_list`` collects for this request; 0 means no cap."""
+        return self._max_pages
+
+    @max_pages.setter
+    def max_pages(self, value: int) -> None:
+        self._max_pages = value
+
+    @property
+    def page_has_more(self) -> bool:
+        """Whether VCO had more pages when paging over this request last stopped."""
+        return self._page_has_more
+
+    @property
+    def page_next_link(self) -> str | None:
+        """The cursor of the next page when paging last stopped, or None when there is none."""
+        return self._page_next_link
+
+    def record_page_cursor(self, next_page_link: str | None) -> None:
+        """Record where paging over this request stopped: the next page's cursor, or None when VCO has no more."""
+        self._page_has_more = next_page_link is not None
+        self._page_next_link = next_page_link
+
 
 # ---------------------------------------------------------------------------
 # JSON-RPC types
