@@ -656,7 +656,7 @@ async def test_a_profile_save_raises_a_conflict_where_the_propagation_reached_an
     assert rate_limit(state.profile.qos).value == 7
 
 
-async def test_a_module_before_device_settings_is_not_rebased():
+async def test_a_module_listed_before_device_settings_is_written_after_it_and_rebased():
     state = profile_with_qos(qos_first=True)
     client = served(state)
     propagating(client, QOS_ID)
@@ -666,10 +666,20 @@ async def test_a_module_before_device_settings_is_not_rebased():
     device_settings(state).lan.networks[0].name = "renamed"
     rate_limit(state.profile.qos).value = 5
 
-    _ = await pipeline.save(state)
+    result = await pipeline.save(state)
 
-    assert methods(client.store) == [VERSION_READ, UPDATE, VERSION_READ, UPDATE]
-    assert [r["id"] for _, r in client.store.requests if "id" in r] == [QOS_ID, DS_ID]
+    assert methods(client.store) == [
+        VERSION_READ,
+        UPDATE,
+        VERSION_READ,
+        CONFIGURATION_READ,
+        UPDATE,
+    ]
+    assert [r.configuration_module_id for r in client.update_requests] == [
+        DS_ID,
+        QOS_ID,
+    ]
+    assert [str(n) for n in result.modules_updated] == ["deviceSettings", "QOS"]
 
 
 async def test_an_edge_save_does_not_rebase():

@@ -3,10 +3,12 @@
 from pyvelo.client.exceptions import (
     ConfigConflictError,
     DetachedObjectError,
+    FixedListError,
     LossyFieldError,
     ModuleWriteError,
     RefsDroppedError,
     RefsNotLoadedError,
+    SegmentSetError,
     WriteNotAppliedError,
     WriteOutcomeUnknownError,
 )
@@ -63,6 +65,7 @@ __all__ = [
     "DetachedObjectError",
     "DiffResult",
     "FieldChange",
+    "FixedListError",
     "IntentError",
     "LayerNotSavedError",
     "LossyFieldError",
@@ -82,6 +85,7 @@ __all__ = [
     "SaveProgress",
     "SaveResult",
     "SaveValidationError",
+    "SegmentSetError",
     "ServerChange",
     "Unchanged",
     "UnknownRegistryEntryError",

@@ -9,6 +9,7 @@ from __future__ import annotations
 import copy
 import difflib
 import functools
+import json
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Annotated, Literal, LiteralString, cast, get_args, get_origin
@@ -38,6 +39,7 @@ from .base import (
     _effective_default,  # pyright: ignore[reportPrivateUsage]
     _field_accepts_missing,  # pyright: ignore[reportPrivateUsage]
     _field_accepts_none,  # pyright: ignore[reportPrivateUsage]
+    _field_alias,  # pyright: ignore[reportPrivateUsage]
     _field_model_type,  # pyright: ignore[reportPrivateUsage]
     _field_model_types,  # pyright: ignore[reportPrivateUsage]
     _field_names_by_key,  # pyright: ignore[reportPrivateUsage]
@@ -58,6 +60,8 @@ from .base import (
 )
 from .fields import (
     ConfigContext,
+    FixedList,
+    get_fixed_list,
     get_key_spec,
     get_name_of,
     get_ref_only,
@@ -1101,6 +1105,8 @@ class _ListSpec:
     """Validates the key of a new entry of a map."""
     name_identity: type[object] | None
     """What the one-part key of a keyed list is the ``NameOf``, if it is one."""
+    fixed: FixedList | None
+    """The ``FixedList`` of a keyed list of models whose entries are fixed."""
 
 
 @functools.cache
@@ -1138,6 +1144,7 @@ def _list_spec(field_info: FieldInfo) -> _ListSpec | None:
         map_type,
         map_key,
         _key_name_of(item_type, key_paths[0]) if len(key_paths) == 1 else None,
+        get_fixed_list(field_info) if kind == "keyed" and item_type else None,
     )
 
 
@@ -1537,6 +1544,8 @@ def _merge_list(
         built = _validate_field(model_cls, name, data, path)
         if is_list(data) and is_list(built):
             _check_list_value(spec, data, built, path)
+            if spec.fixed is not None and is_list(value):
+                _check_fixed_value(spec, value, built, _field_value(model, name), path)
         setattr(model, name, built)
         return
     if spec.kind == "untyped":
@@ -1707,6 +1716,197 @@ def _check_list_value(
             seen_alt[alt] = index
 
 
+def _fixed_dump(spec: _ListSpec, item: object) -> JsonObject | None:
+    """The JSON dump of *item*, a model, without the editable fields of a ``FixedList``; None for any other list."""
+    if spec.fixed is None or not isinstance(item, VcoModel):
+        return None
+    return item.model_dump(mode="json", exclude=set(spec.fixed.editable))
+
+
+def _fixed_differences(before: JsonObject, after: JsonObject) -> str:
+    """The names of the fields in which two ``_fixed_dump`` s differ, for a message."""
+    return ", ".join(n for n in {**before, **after} if before.get(n) != after.get(n))
+
+
+def _fixed_field(path: Path) -> str:
+    """The field of the list at *path* in the patch, as written."""
+    last = path.parts[-1] if path.parts else None
+    return last if isinstance(last, str) else "the list"
+
+
+def _fixed_form(spec: _ListSpec, key: object, path: Path) -> str:
+    """The JSON form of an edit a ``FixedList`` takes, for a message: the entry *key*, one editable field.
+
+    *path* is the list's path in the patch; its last part is the field as written.
+    """
+    assert spec.fixed is not None
+    editable = spec.fixed.editable[0] if spec.fixed.editable else "..."
+    return (
+        "{"
+        + f"{json.dumps(_fixed_field(path))}: {{{json.dumps(str(key))}: "
+        + f"{{{json.dumps(editable)}: {{...}}}}"
+        + "}}"
+    )
+
+
+def _fixed_rule(spec: _ListSpec, path: Path) -> str:
+    """The sentence that says what a ``FixedList`` takes, for a message."""
+    assert spec.fixed is not None
+    return (
+        f"{_fixed_field(path)} is a fixed list: its entries, their keys and "
+        + "their order are fixed, and only "
+        + f"{' and '.join(spec.fixed.editable)} of an entry may change"
+    )
+
+
+def _check_fixed_op(
+    spec: _ListSpec,
+    items: Sequence[object],
+    op: ItemOp,
+    where: Path,
+    path: Path,
+    *,
+    new_only: bool,
+) -> None:
+    """Refuse an item operation on a ``FixedList`` that is not a change: an add, delete, move or ``_position``.
+
+    Every operation is refused in a list the patch builds (*new_only*): it
+    has no entries to edit yet. *where* is the entry's path, *path* the
+    list's.
+    """
+    assert spec.fixed is not None
+    if new_only:
+        raise PatchError(
+            f"{_fixed_rule(spec, path)}: this patch builds the item, so the "
+            + "list has no entries to edit yet; give its entries as a list "
+            + "value, or leave them out",
+            where,
+            "fixed_list",
+        )
+    if op.kind == "change" and op.place is None:
+        return
+    what = op.kind if op.kind != "change" else "_position"
+    first = item_key(items[0], spec.key_paths) if items else None
+    form = _fixed_form(spec, "<key>" if first is None else first, path)
+    raise PatchError(
+        f"{_fixed_rule(spec, path)}: a {what} is not an edit of an entry's "
+        + f"{' or '.join(spec.fixed.editable)}. To edit an entry, send {form}",
+        where,
+        "fixed_list",
+    )
+
+
+def _check_fixed_change(
+    spec: _ListSpec,
+    item: object,
+    before: JsonObject | None,
+    where: Path,
+    path: Path,
+) -> None:
+    """Refuse a change of *item* that altered anything but the editable fields of a ``FixedList``.
+
+    *before* is ``_fixed_dump`` of the item before the change; it is compared
+    with the dump after it, so a rename, an alt key change and a change of
+    any other field are all found. *where* is the entry's path, *path* the
+    list's.
+    """
+    if before is None:
+        return
+    after = _fixed_dump(spec, item)
+    assert after is not None
+    if after == before:
+        return
+    key = item_key(item, spec.key_paths)
+    raise PatchError(
+        f"{_fixed_rule(spec, path)}: this patch changes "
+        + f"{_fixed_differences(before, after)} of {_show_item(spec, item, 0)}. "
+        + "To edit the entry, send the editable fields only, "
+        + _fixed_form(spec, "<key>" if key is None else key, path),
+        where,
+        "fixed_list",
+    )
+
+
+def _check_fixed_value(
+    spec: _ListSpec,
+    value: Sequence[object],
+    built: Sequence[object],
+    current: object,
+    path: Path,
+) -> None:
+    """Check *built*, validated from the list value *value* for a ``FixedList``, against the *current* list.
+
+    Accepted when it has the current keys in the current order and each item
+    equals the current one but for the editable fields. An item object that
+    gives no alt key (under any of its names) takes the current item's: that
+    is decided from *value*, the patch, because a built item may hold an ID
+    its model made up. Anything else raises ``PatchError`` at *path* or at
+    the item.
+    """
+    assert spec.fixed is not None and spec.item_type is not None
+    rule = _fixed_rule(spec, path)
+    if not is_list(current):
+        raise PatchError(
+            f"{rule}: a list value cannot build the list where there was "
+            + "none. Leave the field out of the patch: its entries come from "
+            + "the template when the segment is assigned, or are repaired "
+            + "when the module is written",
+            path,
+            "fixed_list",
+        )
+    keys = [item_key(i, spec.key_paths) for i in current]
+    if [_item_key(i, spec.key_paths) for i in built] != [key_form(k) for k in keys]:
+        shown = ", ".join(repr(str(k)) for k in keys)
+        raise PatchError(
+            f"{rule}: a list value must give the current entries ({shown}) "
+            + "in that order, and no other. To edit an entry, send "
+            + _fixed_form(spec, "<key>" if not keys else keys[0], path),
+            path,
+            "fixed_list",
+        )
+    for index, (data, new, old) in enumerate(zip(value, built, current)):
+        where = path.child(_item_part(spec, old, index))
+        if (
+            spec.alt_path is not None
+            and is_dict(data)
+            and _patch_value(spec.item_type.fields, data, spec.alt_path) is None
+        ):
+            _copy_path(old, new, spec.alt_path)
+        before, after = _fixed_dump(spec, old), _fixed_dump(spec, new)
+        assert before is not None and after is not None
+        if before != after:
+            key = item_key(old, spec.key_paths)
+            raise PatchError(
+                f"{rule}: the list value changes "
+                + f"{_fixed_differences(before, after)} of "
+                + f"{_show_item(spec, old, index)}. "
+                + _alt_key_advice(spec, old, new)
+                + "Give each entry as it is, "
+                + "with its editable fields changed, or send "
+                + _fixed_form(spec, "<key>" if key is None else key, path),
+                where,
+                "fixed_list",
+            )
+
+
+def _alt_key_advice(spec: _ListSpec, old: object, new: object) -> str:
+    """The sentence that says how to keep the alt key, when *new* gives another than *old*'s; else empty."""
+    assert spec.item_type is not None
+    if spec.alt_path is None or _alt_key(spec, old) == _alt_key(spec, new):
+        return ""
+    field = spec.item_type.fields.get(spec.alt_path)
+    name = spec.alt_path if field is None else _field_alias(field, spec.alt_path)
+    return f"Leave `{name}` out of the item and it keeps the current one. "
+
+
+def _copy_path(source: object, target: object, dotted: str) -> None:
+    """Set *target*'s attribute at *dotted* (python names) to *source*'s."""
+    *parents, last = dotted.split(".")
+    for name in parents:
+        source, target = getattr(source, name), getattr(target, name)
+    setattr(target, last, getattr(source, last))
+
+
 def _item_part(spec: _ListSpec, item: object, index: int) -> PathPart:
     """The path part of a list item: its key in a keyed list, else its position."""
     key = item_key(item, spec.key_paths)
@@ -1776,7 +1976,9 @@ def _merge_items(
         assert isinstance(item, VcoModel)  # _resolve_items checked it
         before = _item_key(item, paths)
         alt_before = _alt_key(spec, item)
+        fixed_before = _fixed_dump(spec, item)
         _merge_model(item, entry.body, resolvers, entry.path)
+        _check_fixed_change(spec, item, fixed_before, entry.path, path)
         _check_merged(
             item,
             spec.item_type.validate
@@ -1856,6 +2058,8 @@ def _resolve_items(
         where = path.child(_selector_part(selector, selection))
         _refuse_two_readings(selection, spec, items, selector, where)
         op = parse_item_op(value, where)
+        if spec.fixed is not None:
+            _check_fixed_op(spec, items, op, where, path, new_only=new_only)
         slot: _Slot | None = None
         new: object = None
         if op.kind == "add":

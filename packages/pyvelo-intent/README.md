@@ -171,7 +171,7 @@ A patch is strict and all or nothing:
   directives: `_op` and `_position`, on a list item only.
 - A patch that cannot be applied raises `PatchError` (a `ValueError`). Its
   `path` is where in the patch it failed, its `message` the reason, and its
-  `kind` one of the twelve values below, for a caller that reacts to the
+  `kind` one of the thirteen values below, for a caller that reacts to the
   cause. Resolver errors keep their types (`ResolutionError` for an unknown
   name). A patch that applies but that a
   save could not write raises `LossyFieldError` (see "What a save writes"),
@@ -192,6 +192,7 @@ A patch is strict and all or nothing:
 | `several_items` | has a selector or anchor that names more than one item |
 | `exists` | adds, or renames to, a key, alt key or value that is already there |
 | `segment_rule` | breaks a rule of the `segments` lists (below) |
+| `fixed_list` | edits a fixed part of a list whose entries, keys and order are fixed (the QoS `defaults` of a segment): adds, deletes, moves, renames or reorders an entry, or changes a field but `action` |
 
 Every list has a kind, which says how its items are named:
 
@@ -342,14 +343,54 @@ The `segments` lists have rules of their own:
   `apply` refuses a place for one of them, and a place given `before` or
   `after` one of them. Once a save has written an entry for such a segment, it
   is one of the edge's own.
-- On a profile, `apply` refuses a patch that adds or removes a segment, or
-  changes a segment's descriptor (the `segment` object: its name, `segmentId`,
-  type and logical ID), in whatever form: `add` or `delete` under a selector, a
-  list value for `segments` that leaves a segment out or brings a new one, or
-  an object that rewrites the descriptor. A segment belongs to all three of
-  device settings, QoS and firewall, and adding one through a patch is not
-  supported yet. Changing what a segment holds, moving it, and a list value
-  that keeps every descriptor are fine.
+- On a profile, a segment belongs to all three of device settings, QoS and
+  firewall, and a patch assigns it from any of them. An `add` of an enterprise
+  segment under `segments` of any of the three assigns it as `assign_segment`
+  does (see "Assigning a segment to a profile"): each of the three modules that
+  lacks the segment gets the UI's template entry, and the body of the add is
+  merged into the entry of the module the patch is for, as a change (a
+  `_position` moves it). A client sends one `add` per module, in any order,
+  each with the body it wants, and needs no call of its own to assign:
+  `{"segments": {"Guest": {"_op": "add", "rules": [...]}}}` to QoS, then
+  `{"segments": {"Guest": {"_op": "add", "vpn": {...}}}}` to device settings.
+  The segment is named by the selector in any case, or under `"+"` by
+  `segment.name` of the body (an add under `"+"` without a name raises
+  `segment_rule`), as the enterprise has it: an unknown name raises
+  `ResolutionError` with suggestions, a state with no segment resolver raises
+  `PatchError` (`invalid_value`), a body whose `segment` gives another
+  `segmentId`, type or logical ID raises `segment_rule`, and so does an add on
+  a profile that lacks one of the three modules. A list value for `segments`
+  assigns the same way: an item for a segment the module had no entry for is
+  merged into the template entry, and the other items replace the module's as
+  given. An `add` of a segment the module already had as read raises `exists`:
+  change it with a plain object. The segment is judged per module, as read, so
+  the second and third adds of a segment, after the first assigned it, are
+  accepted, and an add to a module that lacks a segment the others have
+  completes the profile. "As read" means as loaded, or as last saved: a second
+  `add` of the same segment to the same module before a save is merged into
+  the entry again, not refused.
+  A patch does not remove a segment: a `delete`, or a list value that leaves a
+  segment out, raises `segment_rule`, because a segment is removed from all
+  three modules or none. The one exception is an orphan, a QoS or firewall
+  segment that the profile's device settings lacked as read, which is removed
+  as the segment-set rule of `plan()` allows. Changing what a segment holds
+  and moving it are fine, and so is a list value that keeps every descriptor;
+  a rewritten descriptor (the `segment` object: its name, `segmentId`, type
+  and logical ID) raises `segment_rule`. The assignments are tried on copies of
+  the three modules first, so an error leaves all three as they were.
+- The `defaults` of a QoS segment are a fixed list: only the `action` of an
+  entry can change, by `{"defaults": {"Default-Any-UDP": {"action": {...}}}}`.
+  A list value for `defaults` is accepted when it keeps the keys, their order
+  and every field outside `action`, and an item that gives no `ruleLogicalId`
+  keeps the current one, so an entry read, changed in its actions and sent
+  back is a valid list value; one that gives another `ruleLogicalId` is
+  refused (`fixed_list`), and the message says to leave it out. The entry an
+  assignment creates is the exception: in the body of an assigning `add` and
+  in a new item of a list value, a `defaults` item takes the `ruleLogicalId`
+  the assignment gave it, whatever the body says, so an entry copied from
+  another profile is accepted without repeating that profile's rule IDs in
+  the enterprise. Its keys, their order and its other fixed fields must still
+  be the template's, or the patch raises `fixed_list`.
 
 Sections and items of an edge that can follow the profile have an `override`
 flag: the BGP of a segment, a VLAN, an interface. While the flag is off, the
@@ -457,6 +498,33 @@ firewall: update
   count. A value is shown as JSON, cut to 80 characters, and the two values of
   a `~` line are cut where they first differ. `SaveResult.plan` is the same
   plan, and `dry_run=True` reports it without writing.
+- The plan lists `deviceSettings` first, then the other modules in the order the
+  configuration lists them, for an edge as for a profile, and a save writes
+  them in that order.
+- A profile's device settings, QoS and firewall modules hold the same
+  segments, so `plan()` compares the three by `segmentId`. An edit that removes
+  a segment from one raises `SegmentSetError` (from `pyvelo_intent`), except
+  for a QoS or firewall entry whose segment device settings did not have when
+  they were read. An edit that adds a segment to one or two of the three
+  raises it too, naming the segments and the modules that lack them, with the
+  patch `{"segments": {"Guest": {"_op": "add"}}}` and the call
+  `pipeline.assign_segment(state, "Guest")` that complete it. Modules that
+  already disagreed when read, with nothing added, are left as they are: each
+  such segment is a warning with the code `segments_disagree`, at
+  `segments["Guest"]`, in `ConfigPlan.segment_warnings` (also in
+  `ConfigPlan.warnings` and `SaveResult.warnings`), and `render()` ends with a
+  `warning: <message>` line for it. A profile that lacks one of the three
+  modules has nothing to compare.
+- A segment added to a profile module has an `added segments: Guest` line, and
+  `get_field_changes()` lists it as one change at `segments["Guest"]`, from
+  `MISSING` to the entry as written. A QoS segment that lacks template
+  `defaults` has them added to the module's write when the module is written
+  (`repaired defaults: Guest: Default-Any-UDP, Default-Any-Other`); the plan
+  warns with the code `defaults_repaired` either way, and `missing defaults`
+  is the same line for entries it leaves out. A repaired default's
+  `allowConditionalBh` is the segment's `vpn.conditionalBackhaul` in the
+  profile's device settings as it is then. `save(state, repair_defaults=False)`
+  and `state.plan(repair_defaults=False)` leave them out.
 - A state loaded with `load` saves the edge's own layer. `state.profile` is
   there to read: an edit made through it is not saved, and the next `plan()`,
   `get_changed_modules()` or `save()` raises `LayerNotSavedError` (from
@@ -529,6 +597,99 @@ firewall: update
 - A cache of loaded modules must keep the JSON rows or `module.raw_data`. A
   `model_validate(module.model_dump())` round trip loses the raw snapshot, and
   with it the "as read" guarantee above.
+
+## Assigning a segment to a profile
+
+A profile holds each of its segments in three modules: device settings, QoS and
+firewall. `pipeline.assign_segment(state, "Guest")` adds the entry the
+Orchestrator UI makes for a new segment to each of them that lacks it, in
+memory, and the next save writes them, device settings first, with its
+`deviceSettings:segment` row:
+
+```python
+state = await pipeline.load_profile("Branch profile", enterprise_id=1)
+state = await pipeline.assign_segment(state, "Guest")
+print(state.plan().render())  # added segments: Guest, in each of the three
+result = await pipeline.save(state)
+```
+
+- A patch assigns the segment too, so a client that sends every change as a
+  patch has no case of its own for it. An `add` under `segments` of any of the
+  three modules assigns the segment to all three, then merges its body into
+  the entry of the module it is for; the next add, to another module, merges
+  into the entry that is there. In any order:
+
+  ```python
+  await pipeline.apply(
+      state, module="qos", patch={"segments": {"Guest": add({"rules": [rule]})}}
+  )
+  await pipeline.apply(
+      state,
+      module="device_settings",
+      segment="Guest",
+      patch=add({"vpn": {"conditionalBackhaul": True}}),
+  )
+  await pipeline.apply(state, module="firewall", patch={"segments": {"Guest": add()}})
+  ```
+
+  Each is the entry of `assign_segment` with that body merged into it. The
+  rules of a patch to the `segments` of a profile are in "The `segments` lists
+  have rules of their own", above.
+- The name is resolved as in a patch: the enterprise's segment in any case, and
+  `ResolutionError` with suggestions for one it does not have. A state with no
+  segment resolver raises `LookupError`; `await pipeline.load_resolvers(state)`
+  gives it one (`load` and `load_profile` load it).
+- The entry of each module is the template of the UI, with the segment's
+  descriptor. Every QoS rule of a new entry, in `rules` and in `defaults`, has a
+  `ruleLogicalId` made when the segment is assigned, so `dry_run`, `save` and
+  a second `plan()` send the same IDs. A firewall rule has none until the VCO
+  issues it. An entry nobody edits is no change from the template: the plan has
+  an `added segments: Guest` line, and an edit made before the save (`apply`
+  of `{"segments": {"Guest": {"rules": {"Box": {...}}}}}`, or assignment to the
+  models) is a change from it.
+- `qos_rules` are the rules of the new QoS entry in place of the template's:
+  each a `QosRule` or its JSON, in order, with a missing `ruleLogicalId` made.
+  `qos_rules=[]` gives an entry with no rules. Two rules of one name or one
+  `ruleLogicalId` raise `ValueError`, and so do `qos_rules` for a profile whose
+  QoS module has the segment already: they would be dropped, so change those
+  rules with a patch.
+- A profile that has the segment in one or two of the modules is completed:
+  only the modules that lack it get an entry. A QoS entry that is there and
+  lacks some of the template's four `defaults` gets them, as a write of the
+  module would repair them, with `allowConditionalBh` set to the segment's
+  `vpn.conditionalBackhaul` in the device settings. A segment that is in all
+  three, with its defaults complete, raises `ValueError`: change it with a
+  patch.
+- An edge target, a profile that lacks one of the three modules, and a module
+  that is not at the profile level (`load_profile` loads them so; call
+  `.for_profile()` on a profile you built) raise `ValueError`.
+- All or nothing: the assignment is first planned on copies of the modules, and
+  an error leaves the state and `plan()` as they were. The call holds
+  `state.lock`, as `apply` does.
+- The save writes the three modules, one request each, device settings first,
+  with the new `deviceSettings:segment` row and every other row as read, then
+  QoS, then firewall. Writing device settings can change the other two, so each
+  is read for its version and rebased when it changed (see "After a save"): your
+  edits go onto the module as it is then, together with the entry of the
+  assignment and the template `defaults` the write repairs, with the IDs they
+  were planned with. A module that holds a segment this save adds by then
+  (another writer assigned it) raises `ConfigConflictError`, with `error.sent`
+  False, which names every such segment, and sends nothing for that module.
+- A write that fails after device settings is stored leaves the profile with
+  the segment in device settings and not in the module that failed, and
+  `plan()` raises `SegmentSetError`, which names the segment and the modules
+  that lack it. For a write that lost the segment, a `ConfigConflictError` (the
+  usual case: the VCO answered with the module and nothing of the write stored)
+  or a `WriteNotAppliedError`, `error.redo_patch()` is the assignment again,
+  with the edits made to the entry inside it
+  (`{"segments": {"Guest": {"_op": "add", ...}}}`), and
+  `apply(state, module=error.module_name, patch=error.redo_patch())` makes it,
+  so that the next `save` writes the modules that are left. Template
+  `defaults` that a write repaired and the VCO did not store are neither
+  redone nor listed in `error.not_redone()`: the next write of the module
+  repairs them again. After a `WriteOutcomeUnknownError`, or an error of the
+  request, the modules keep their entries, and saving again completes the
+  assignment.
 
 ## After a save
 
@@ -859,6 +1020,11 @@ Known limits:
   `apply` refuses a patch to one (`PatchError`), and a state whose control
   plane module was edited by assignment cannot be saved or dry-run
   (`TypeError`, before anything is sent) until it is loaded again.
+- A profile's segment is assigned with `assign_segment` or an `add`, but not
+  removed: an edit that removes a segment the device settings module has
+  raises `SegmentSetError` (a patch: `PatchError`), and only an orphan, a QoS
+  or firewall segment that the device settings lack, can be removed.
+  Inserting a missing module into a profile is not supported either.
 - A failed `apply` changes nothing. Patches and saves run one after another,
   though: a failure leaves earlier patches, and the remote writes of a save
   that stopped part way, applied; there is no transaction or rollback.

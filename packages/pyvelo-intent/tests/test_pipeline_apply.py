@@ -341,15 +341,18 @@ async def test_apply_to_a_segment_the_profile_lacks_changes_nothing():
     state = _profile_state(
         make_firewall_module(mod_id=1, config_id=20, segments=[segment])
     )
-    with pytest.raises(PatchError, match="not supported yet") as exc:
+    # A segment is assigned to the three modules of a profile; this one has the
+    # firewall only, and inserting a module into a profile is not supported.
+    with pytest.raises(PatchError, match="its three modules together") as exc:
         _ = await ConfigPipeline(client=None).apply(
             state,
             module="firewall",
             segment="Guest",
             patch=add({"outbound": {}}),
         )
-    assert exc.value.path == Path.parse("segments[Guest]")
+    assert exc.value.path == Path.parse("segments")
     assert exc.value.kind == "segment_rule"
+    assert "no deviceSettings module" in exc.value.message
     assert [s.segment.name for s in state.profile.firewall.segments] == [
         "Global Segment"
     ]
@@ -874,7 +877,7 @@ def _segment_profile_state(*names: str) -> ConfigState:
         edge_config=None,
         profile_config=EnterpriseConfigurationProfile.model_validate(
             {"name": "P", "id": 20, "modules": rows}
-        ),
+        ).for_profile(),
         target_type="profile",
         resolver_context=ResolverContext(),
     )
@@ -890,31 +893,19 @@ def _profile_segment_names(state: ConfigState) -> list[list[str]]:
 
 
 @pytest.mark.asyncio
-async def test_profile_target_refuses_segment_add_and_delete():
+@pytest.mark.parametrize("module", ["firewall", "qos", "device_settings"])
+async def test_profile_target_refuses_a_segment_delete(module: str):
+    # An add assigns the segment (test_profile_segment_patches.py). A delete of
+    # a segment that all three modules have removes it from all three.
     state = _segment_profile_state("Global Segment")
-    refused: list[tuple[dict[str, object], Path, str]] = [
-        ({"Guest": add({})}, Path.parse("segments[Guest]"), '{"_op": "add", ...}'),
-        (
-            {"+": add({"segment": {"name": "Guest"}})},
-            Path(("segments", Key("+"))),
-            '{"_op": "add", ...}',
-        ),
-        (
-            {"Global Segment": delete()},
-            Path(("segments", Key("Global Segment"))),
-            '{"_op": "delete"}',
-        ),
-    ]
-    for module in ("firewall", "qos", "device_settings"):
-        for segments, where, form in refused:
-            with pytest.raises(PatchError, match="not supported yet") as exc:
-                _ = await ConfigPipeline(client=None).apply(
-                    state, module=module, patch={"segments": segments}
-                )
-            assert exc.value.path == where
-            assert exc.value.kind == "segment_rule"
-            assert form in exc.value.message
-            assert '{"segments": {"<name>": {...}}}' in exc.value.message
+    with pytest.raises(PatchError, match="it removes Global Segment") as exc:
+        _ = await ConfigPipeline(client=None).apply(
+            state, module=module, patch={"segments": {"Global Segment": delete()}}
+        )
+    assert exc.value.path == Path(("segments",))
+    assert exc.value.kind == "segment_rule"
+    assert "removing it from all three is not supported" in exc.value.message
+    assert '{"segments": {"Global Segment": {"_op": "delete"}}}' in exc.value.message
     assert _profile_segment_names(state) == [["Global Segment"]] * 3
 
 
@@ -934,7 +925,7 @@ async def test_profile_target_changes_and_moves_a_segment():
     assert [r.name for r in blocked] == ["block"]
 
 
-_REDESCRIBED = "does not add, remove or re-describe a segment of a profile"
+_REDESCRIBED = "a patch cannot change which segments a profile has"
 
 
 @pytest.mark.asyncio
@@ -943,12 +934,12 @@ _REDESCRIBED = "does not add, remove or re-describe a segment of a profile"
     [
         pytest.param(
             {"patch": {"segments": []}},
-            "removes Global Segment, Guest",
+            "it removes Global Segment, Guest:",
             id="empty-list",
         ),
         pytest.param(
             {"path": "segments", "patch": []},
-            "removes Global Segment, Guest",
+            "it removes Global Segment, Guest:",
             id="empty-list-by-path",
         ),
         pytest.param(
@@ -959,7 +950,7 @@ _REDESCRIBED = "does not add, remove or re-describe a segment of a profile"
                     ]
                 }
             },
-            "removes Global Segment",
+            "it removes Global Segment:",
             id="one-segment-as-a-list",
         ),
         pytest.param(
@@ -970,17 +961,17 @@ _REDESCRIBED = "does not add, remove or re-describe a segment of a profile"
                     }
                 }
             },
-            "removes Guest; it adds Voice",
+            "it adds Voice with no assignment",
             id="descriptor-rewritten",
         ),
         pytest.param(
             {"patch": {"segments": {"Guest": {"segment": {"segment_id": 7}}}}},
-            "changes a segment's descriptor",
+            "it re-describes Guest:",
             id="descriptor-id-changed",
         ),
         pytest.param(
             {"patch": {"segments": {"Guest": {"segment": {"type": "CDE"}}}}},
-            "changes a segment's descriptor",
+            "it re-describes Guest:",
             id="descriptor-type-changed",
         ),
         pytest.param(
@@ -995,7 +986,7 @@ _REDESCRIBED = "does not add, remove or re-describe a segment of a profile"
                     }
                 }
             },
-            "changes a segment's descriptor",
+            "it re-describes Guest:",
             id="descriptor-logical-id-changed",
         ),
     ],

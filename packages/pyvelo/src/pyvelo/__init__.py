@@ -17,10 +17,12 @@ For configuration helpers (pipeline, state), see the ``pyvelo-intent`` package.
 from pyvelo.client import (
     ConfigConflictError,
     DetachedObjectError,
+    FixedListError,
     LossyFieldError,
     ModuleWriteError,
     RefsDroppedError,
     RefsNotLoadedError,
+    SegmentSetError,
     UnboundError,
     VcoApiError,
     VcoAuth,
@@ -67,6 +69,7 @@ __all__ = [
     "ConfigConflictError",
     "DetachedObjectError",
     "EdgeResolver",
+    "FixedListError",
     "LicenseResolver",
     "LinkResolver",
     "LossyFieldError",
@@ -79,6 +82,7 @@ __all__ = [
     "ResolverContext",
     "ResolverRegistry",
     "SegmentResolver",
+    "SegmentSetError",
     "ServiceGroupResolver",
     # Client
     "UnboundError",

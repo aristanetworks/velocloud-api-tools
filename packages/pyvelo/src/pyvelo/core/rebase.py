@@ -488,7 +488,7 @@ def node_child(node: Node, key: object) -> Node:
     return _field_model_type(field_info)
 
 
-def _wire_keys(model: type[VcoModel], name: str) -> list[str]:
+def wire_keys(model: type[VcoModel], name: str) -> list[str]:
     """Every JSON key that field *name* of *model* is read from, its dump key first."""
     field_info = model.model_fields.get(name)
     if field_info is None:
@@ -513,7 +513,7 @@ def read_path(item: object, model: type[VcoModel], path: str) -> KeyScalar | Non
     for part in path.split("."):
         if not is_dict(current):
             return None
-        candidates = [part] if step_model is None else _wire_keys(step_model, part)
+        candidates = [part] if step_model is None else wire_keys(step_model, part)
         found = next((k for k in candidates if k in current), None)
         if found is None:
             return None

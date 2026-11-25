@@ -4,7 +4,7 @@ import copy
 import datetime
 import json
 import uuid
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from typing import Annotated, Any, Literal, Self, TypeIs, cast, get_args, overload
 
 from pydantic import (
@@ -36,9 +36,18 @@ from pyvelo.client.models.configuration import (
     QosData,
     WanData,
 )
+from pyvelo.client.models.configuration.common import segment_id_of
 from pyvelo.client.models.configuration.control_plane.root import (
     ControlPlaneData,
 )
+from pyvelo.client.models.configuration.profile_segments import (
+    AddedDefaults,
+    AddedSegment,
+    SegmentAddition,
+    insert_defaults,
+    with_additions,
+)
+from pyvelo.client.models.configuration.qos.rule import QosRule
 from pyvelo.client.models.configuration.ref_owners import fill_ref_only
 from pyvelo.core import (
     Alias,
@@ -49,6 +58,7 @@ from pyvelo.core import (
     VcoModel,
     VcoTimestamp,
 )
+from pyvelo.core.base import field_models
 from pyvelo.core.fields import Resolvable
 from pyvelo.core.identity import EdgeIdentity, ProfileIdentity
 
@@ -191,6 +201,8 @@ class ConfigurationModuleBase(VcoModel):
     _raw_mode: Literal["python", "json"] = PrivateAttr(default="python")
     _is_new: bool = PrivateAttr(default=False)
     _refs_loaded: bool = PrivateAttr(default=True)
+    _additions: tuple[SegmentAddition, ...] = PrivateAttr(default=())
+    _repair_ids: dict[tuple[str, str], str] = PrivateAttr(default_factory=dict)
 
     @model_validator(mode="wrap")
     @classmethod
@@ -256,16 +268,159 @@ class ConfigurationModuleBase(VcoModel):
         """
         return self._refs_loaded
 
-    def with_data_parsed_from(self, raw_data: object) -> Self:
+    @property
+    def additions(self) -> tuple[SegmentAddition, ...]:
+        """The entries the pipeline added to this profile module, in the order added.
+
+        A plan of the module is made against its raw data plus these
+        (``plan_module``), so an added entry nobody edited plans no change.
+        """
+        return self._additions
+
+    def _segments_to_add_to(self) -> tuple[VcoModel, list[Any]]:
+        """The module's data and its ``segments`` list, for a profile module that has them.
+
+        Raises ``ValueError`` for a module that is not at the profile level or
+        whose data has no ``segments`` list.
+        """
+        if self.config_context is not ConfigContext.PROFILE:
+            raise ValueError(
+                f"Module {self.id_} is not at the profile level: a segment is "
+                "added to the modules of a profile only."
+            )
+        data: object = getattr(self, "data", MISSING)
+        segments: object = getattr(data, "segments", MISSING)
+        if isinstance(data, VcoModel) and isinstance(segments, list):
+            return data, cast(list[Any], segments)
+        raise ValueError(
+            f"The data of module {self.id_} has no `segments`, so it has no "
+            "segment to add to."
+        )
+
+    def _parse_as(self, model_type: type[VcoModel], raw: object) -> Any:
+        """*raw* parsed as *model_type* the way this module was first parsed, at its config level."""
+        context = {"config_level": self.config_context}
+        if self._raw_mode == "json":
+            return model_type.model_validate_json(json.dumps(raw), context=context)
+        return model_type.model_validate(raw, context=context)
+
+    def add_segment_entry(self, entry: Mapping[str, object]) -> VcoModel:
+        """Add the segment *entry* to this profile module, and return its item of ``data.segments``.
+
+        *entry* is the raw entry, as ``new_segment_entry`` makes it. It is
+        recorded as an ``AddedSegment`` (a copy of it), which makes it part of
+        the baseline the module is planned against: written as it is, it is
+        no change. The item is *entry* parsed as the data's ``segments`` item
+        class at this module's config level, and appended to ``data.segments``.
+
+        Raises ``ValueError`` when the module is not at the profile level, has
+        no ``segments``, or its data already holds the entry's ``segmentId``.
+        """
+        data, segments = self._segments_to_add_to()
+        (item_type,) = field_models(type(data).model_fields["segments"])
+        added = copy.deepcopy(dict(entry))
+        item = self._parse_as(item_type, added)
+        segment_id: int = item.segment.segment_id
+        name: str = item.segment.name
+        if segment_id_of(added) != segment_id:
+            raise ValueError(
+                f"The entry for segment {name!r} has no `segmentId`: give its "
+                "`segment` descriptor the segment's ID."
+            )
+        if any(held.segment.segment_id == segment_id for held in segments):
+            raise ValueError(
+                f"Segment {name!r} (segmentId {segment_id}) is already in the "
+                f"data of module {self.id_}."
+            )
+        segments.append(item)
+        self._additions = (*self._additions, AddedSegment(segment_id, name, added))
+        return item
+
+    def add_default_entries(
+        self, segment_id: int, entries: Sequence[Mapping[str, object]]
+    ) -> None:
+        """Insert the raw QoS rules *entries* into the ``defaults`` of segment *segment_id*.
+
+        They are recorded as an ``AddedDefaults``, part of the baseline the
+        module is planned against, and inserted, parsed as ``QosRule``, into
+        the segment's ``defaults`` (an unset one becomes the list) at the
+        place ``with_additions`` gives them in the raw data. QoS modules only.
+
+        Raises ``TypeError`` for another module, and ``ValueError`` when the
+        module is not at the profile level or its data has no such segment.
+        """
+        if getattr(self, "name", None) != "QOS":
+            raise TypeError(
+                "Default entries are a QoS segment's: this is not a QoS module "
+                f"(it is module {self.id_})."
+            )
+        _, segments = self._segments_to_add_to()
+        found = [s for s in segments if s.segment.segment_id == segment_id]
+        if not found:
+            raise ValueError(
+                f"The data of module {self.id_} has no segment with segmentId "
+                f"{segment_id} to add default entries to."
+            )
+        segment = found[0]
+        added = tuple(copy.deepcopy(dict(entry)) for entry in entries)
+        rules = [self._parse_as(QosRule, entry) for entry in added]
+        defaults: object = segment.defaults
+        held: list[Any] = list(defaults) if isinstance(defaults, list) else []
+        # The place is decided on the raw items (a parsed rule has normalized
+        # its match), which stand in the same order as the parsed ones.
+        raw_held = self._raw_defaults_of(segment_id)
+        if len(raw_held) == len(held):
+            placed = insert_defaults(raw_held, added)
+            parsed = {id(raw): item for raw, item in zip(raw_held, held, strict=True)}
+            parsed |= {id(raw): rule for raw, rule in zip(added, rules, strict=True)}
+            segment.defaults = [parsed[id(item)] for item in placed]
+        else:
+            segment.defaults = [*held, *rules]
+        self._additions = (
+            *self._additions,
+            AddedDefaults(segment_id, segment.segment.name, added),
+        )
+
+    def _raw_defaults_of(self, segment_id: int) -> list[object]:
+        """The raw ``defaults`` of segment *segment_id* in the raw data plus the additions so far; empty when it has none."""
+        if self._raw_data is MISSING:
+            return []
+        raw = with_additions(self._raw_data, self._additions)
+        entries: object = raw.get("segments") if isinstance(raw, dict) else None
+        for entry in entries if isinstance(entries, list) else []:
+            if isinstance(entry, dict) and segment_id_of(entry) == segment_id:
+                found: object = entry.get("defaults")
+                return list(found) if isinstance(found, list) else []
+        return []
+
+    def defaults_rule_id(self, segment_id: object, name: str) -> str:
+        """The ``ruleLogicalId`` kept for the repaired default *name* of segment *segment_id*.
+
+        A new ``uuid4`` text the first time, the same every time after, so a
+        plan, a re-plan and a plan of a copy of this module send one ID. A
+        copy made by ``with_data_parsed_from`` starts with none.
+        """
+        key = (str(segment_id), name)
+        if key not in self._repair_ids:
+            self._repair_ids[key] = str(uuid.uuid4())
+        return self._repair_ids[key]
+
+    def with_data_parsed_from(
+        self, raw_data: object, *, additions: Sequence[SegmentAddition] = ()
+    ) -> Self:
         """A copy of this module whose ``data`` is *raw_data* parsed, and whose raw snapshot is this module's.
 
         The data is parsed at this module's config level, and its ``RefOnly``
         fields are filled from the refs of the snapshot, as a read does.
         ``plan_module`` of the copy is then the change from this module's raw
-        data to *raw_data*. ``version``, the raw refs and ``refs_loaded`` are
-        this module's.
+        data, plus *additions*, to *raw_data*. ``version``, the raw refs and
+        ``refs_loaded`` are this module's. The copy's additions are
+        *additions*, never this module's, and it keeps its own repair IDs
+        (``defaults_rule_id``), none to begin with.
         """
         copied = self.model_copy()
+        copied._additions = tuple(additions)
+        copied._repair_ids = {}
         data: object = getattr(self, "data", MISSING)
         if isinstance(data, VcoModel):
             level = self.config_context

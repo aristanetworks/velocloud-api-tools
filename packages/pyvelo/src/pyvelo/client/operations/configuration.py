@@ -785,6 +785,7 @@ class ConfigurationMixin(Protocol):
         enterprise_id: int | None = None,
         profile: ConfigurationModuleBase | None = None,
         resolvers: IdentityLookup | None = None,
+        repair_defaults: bool = True,
     ) -> M:
         """Write *data* to *module*: its raw data as read, plus the caller's changes.
 
@@ -799,6 +800,23 @@ class ConfigurationMixin(Protocol):
         settings or QoS module with segments is always written with its
         refs. ``RefsNotLoadedError`` is raised for a module read without its
         refs when the edit needs them.
+
+        A profile's segments are the same in its device settings, QoS and
+        firewall modules, so one module alone cannot change them: *data* that
+        adds or removes a segment of a profile module raises
+        ``SegmentSetError``, and nothing is sent. A segment is assigned to a
+        profile through the pipeline (``pipeline.assign_segment``).
+
+        Every QoS segment of a profile holds the template's four ``defaults``
+        rules. A profile QoS module with a segment that lacks some gets them
+        from the template when it is written, with a warning in the plan
+        (``plan_module``); a module with nothing else to write is not
+        written to repair. ``repair_defaults=False`` writes the module as it
+        is, and the warning stays. This call has no device settings to read,
+        so a repaired default keeps the template's action, without
+        ``allowConditionalBh``, unlike a repair planned through a
+        ``ConfigState``, which sets it from the segment's
+        ``vpn.conditionalBackhaul``.
 
         The module passed in is not updated: it still holds the data and the
         ``version`` from before the write. It is marked as replaced (an
@@ -844,7 +862,13 @@ class ConfigurationMixin(Protocol):
         try:
             write = await self.write_module(
                 module,
-                plan_module(module, data, profile=profile, resolvers=resolvers),
+                plan_module(
+                    module,
+                    data,
+                    profile=profile,
+                    resolvers=resolvers,
+                    repair_defaults=repair_defaults,
+                ),
                 enterprise_id=enterprise_id,
             )
         except ModuleWriteError as error:

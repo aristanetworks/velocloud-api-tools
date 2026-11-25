@@ -19,10 +19,12 @@ from typing import Any
 
 import pytest
 from pyvelo.client.exceptions import ConfigConflictError
+from pyvelo.client.models.configuration import QosData
+from pyvelo.client.models.configuration.profile_segments import default_rules
 from pyvelo.client.models.configuration.qos.root import ServiceRateLimit
 from pyvelo.client.models.configuration.qos.segment import WebProxy
 from pyvelo.client.module_check import ModuleWrite
-from pyvelo.client.module_write import ModulePlan, plan_module
+from pyvelo.client.module_write import ModulePlan, plan_module, rebase_onto
 from pyvelo.client.schemas.configuration import (
     DeviceSettingsConfigurationModule,
     QosConfigurationModule,
@@ -58,16 +60,26 @@ GUEST_SEGMENT: dict[str, Any] = {
 RATE: dict[str, Any] = {"enabled": False, "inputType": "percent", "value": 1}
 
 
-def qos_module() -> QosConfigurationModule:
-    """A profile QoS module with the Global Segment, a web proxy and a rate limit."""
+def qos_module(
+    *, version: str = "q1", enabled: bool = False, with_defaults: bool = True
+) -> QosConfigurationModule:
+    """A profile QoS module with the Global Segment, a web proxy and a rate limit.
+
+    The segment has the four ``defaults`` unless *with_defaults* is false.
+    """
     data: dict[str, Any] = {
         "segments": [
-            {"segment": GLOBAL_SEGMENT, "rules": [], "webProxy": {"providers": []}}
+            {
+                "segment": GLOBAL_SEGMENT,
+                "rules": [],
+                "webProxy": {"providers": []},
+                **({"defaults": default_rules()} if with_defaults else {}),
+            }
         ],
-        "serviceRateLimit": copy.deepcopy(RATE),
+        "serviceRateLimit": {**RATE, "enabled": enabled},
     }
     row = make_module_json(
-        "QOS", data, module_id=QOS_ID, configuration_id=CONFIG, version="q1"
+        "QOS", data, module_id=QOS_ID, configuration_id=CONFIG, version=version
     )
     return QosConfigurationModule.model_validate(
         row, context={"config_level": ConfigContext.PROFILE}
@@ -333,3 +345,48 @@ async def test_a_list_the_other_writer_added_to_is_a_conflict_and_not_replaced(
     assert [str(c.path) for c in error.lost_edits] == [
         'segments["Global Segment"].webProxy.providers'
     ]
+
+
+# --- the repair of missing defaults across a rebase ---------------------------
+
+
+def repaired_defaults(plan: ModulePlan) -> list[dict[str, Any]]:
+    return plan.data["segments"][0]["defaults"]
+
+
+def test_a_rebase_carries_the_repaired_defaults_as_planned():
+    qos = qos_module(with_defaults=False)
+    plan = rate_set(qos, 5)
+    assert len(repaired_defaults(plan)) == 4
+    fresh = qos_module(version="q2", enabled=True, with_defaults=False)
+
+    _, rebased_plan, _ = rebase_onto(qos, plan, fresh)
+
+    assert repaired_defaults(rebased_plan) == repaired_defaults(plan)  # same IDs
+    assert rebased_plan.changes == plan.changes
+    assert rebased_plan.missing_defaults == plan.missing_defaults
+    assert [str(c.path) for c in rebased_plan.changes] == ["serviceRateLimit.value"]
+
+
+def test_a_rebase_keeps_the_repair_turned_off():
+    qos = qos_module(with_defaults=False)
+    plan = plan_module(qos, _edited(qos), repair_defaults=False)
+    assert plan.repair_defaults is False
+    assert "defaults" not in plan.data["segments"][0]
+    fresh = qos_module(version="q2", enabled=True, with_defaults=False)
+
+    _, rebased_plan, _ = rebase_onto(qos, plan, fresh)
+
+    assert rebased_plan.repair_defaults is False
+    assert "defaults" not in rebased_plan.data["segments"][0]
+    assert rebased_plan.changes == plan.changes
+    assert [w.code for w in rebased_plan.warnings] == ["defaults_repaired"]
+    assert [m.repaired for m in rebased_plan.missing_defaults] == [False]
+
+
+def _edited(module: QosConfigurationModule) -> QosData:
+    data = module.data.model_copy(deep=True)
+    rate = data.service_rate_limit
+    assert isinstance(rate, ServiceRateLimit)
+    rate.value = 5
+    return data

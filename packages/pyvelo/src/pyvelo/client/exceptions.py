@@ -264,6 +264,66 @@ class LossyFieldError(VcoError):
         super().__init__(message)
 
 
+class FixedListError(VcoError):
+    """Raised when a payload changes a fixed part of a ``FixedList``, such as the QoS ``defaults``.
+
+    The ``defaults`` rules of a segment have fixed entries, keys and order, and
+    only their ``action`` can change. A plan compares the payload with the
+    module as read, so the edit is refused however it was made (an attribute
+    assignment, a plain-dict data, a patch). ``module_name`` is the module;
+    ``paths`` are the places that changed, raw, each at the rule or at the
+    list (the reason of each is in the message).
+    """
+
+    module_name: str
+    paths: tuple[Path, ...]
+
+    def __init__(
+        self, module_name: str, violations: Sequence[tuple[Path, str]]
+    ) -> None:
+        self.module_name = module_name
+        self.paths = tuple(path for path, _ in violations)
+        found = "; ".join(f"{path}: {reason}" for path, reason in violations)
+        super().__init__(
+            f"{module_name}: the edit changes a fixed part of a list whose "
+            f"entries are fixed: {found}. Only the actions of the `defaults` "
+            "rules can change: send "
+            '{"segments": {"<segment>": {"defaults": {"<rule>": {"action": {...}}}}}} '
+            "and leave the rules' other fields, their order and their set as "
+            "they are. A missing entry is repaired when the module is written, "
+            "not built by an edit."
+        )
+
+
+class SegmentSetError(VcoError):
+    """Raised when one module's plan would change the set of segments of a profile.
+
+    A profile's segment is in all three modules (device settings, QoS and
+    firewall), so one module cannot add or remove one alone. The pipeline
+    changes the three together. ``module_name`` is the module planned, or
+    None when the error is about several; ``segments`` are the names of the
+    segments added or removed; ``modules`` are the modules the rule found
+    wanting. The message says what happened and how to do it instead.
+    """
+
+    module_name: str | None
+    segments: tuple[str, ...]
+    modules: tuple[str, ...]
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        module_name: str | None = None,
+        segments: Sequence[str] = (),
+        modules: Sequence[str] = (),
+    ) -> None:
+        self.module_name = module_name
+        self.segments = tuple(segments)
+        self.modules = tuple(modules)
+        super().__init__(message)
+
+
 class RefsNotLoadedError(VcoError):
     """Raised when a plan needs the refs of a module that was read without them.
 
@@ -529,7 +589,12 @@ class ModuleWriteError(VcoError):
         ``not_redone`` lists what is left out. A key the VCO does not know,
         which a write drops, is neither redone nor listed. A change made in a
         segment the plan reconciled (the edge had none of its own) is redone in
-        the segment's place, and ``apply`` adds the segment again.
+        the segment's place, and ``apply`` adds the segment again. So is a
+        segment the pipeline added to a profile module: it is redone as an
+        ``add`` under its name, with the plan's edits inside it
+        (``{"segments": {"Guest": {"_op": "add", ...}}}``), which assigns it
+        again. A repaired default of a QoS segment that is lost is neither
+        redone nor listed: the next write of the module repairs it again.
 
         The patch is empty, and nothing is left out, for a
         ``WriteOutcomeUnknownError``: the caller's data still holds the edits.
@@ -539,8 +604,8 @@ class ModuleWriteError(VcoError):
         ``apply`` checks the patch like any other and may refuse it, changing
         nothing, where the stored data no longer takes it (a rename to a name
         another writer gave an item, for example) or where the edit is one
-        ``apply`` refuses as a patch (a segment added to a profile by
-        assignment): make such an edit again the way it was made.
+        ``apply`` refuses as a patch: make such an edit again the way it was
+        made.
         """
         return self._redo(include_clashes)[0]
 
@@ -559,6 +624,7 @@ class ModuleWriteError(VcoError):
         stored_parts = dict(self.stored_parts)
         changes: list[RawChange] = []
         owner: dict[int, PlannedChange] = {}
+        added: list[str] = []  # the selectors of the segments to add again
         left_out: set[int] = set()
         provider_edits: dict[Path, list[PlannedChange]] = {}
         for edit in self.lost_edits:
@@ -569,9 +635,13 @@ class ModuleWriteError(VcoError):
                     provider_edits.setdefault(edit.owner, []).append(edit)
             elif edit.clash and not include_clashes:
                 left_out.add(id(edit))
-            elif edit.path in plan.legacy_keys:
+            elif edit.path in plan.legacy_keys or _is_repaired_default(plan, edit):
                 continue
-            elif _is_reconciled_segment(plan, edit):
+            elif (is_added := _is_added_segment(plan, edit)) or _is_reconciled_segment(
+                plan, edit
+            ):
+                if is_added:
+                    added.append(selector_of(cast(Key, edit.path.parts[1])))
                 for change in _changes_below(plan, edit.path):
                     owner[id(change)] = edit
                     changes.append(change)
@@ -595,6 +665,11 @@ class ModuleWriteError(VcoError):
                 changes.append(change)
         patch, unwritten = patch_of(changes, type(data), stored_parts=stored_parts)
         left_out.update(id(owner[id(change)]) for change in unwritten)
+        for selector in added:
+            # The segment is assigned again, with the plan's edits inside it.
+            segments = cast("dict[str, Any]", patch.setdefault("segments", {}))
+            body = cast("dict[str, Any]", segments.setdefault(selector, {}))
+            body["_op"] = "add"
         for path, edits in provider_edits.items():
             stored_adds = [
                 edit
@@ -624,6 +699,49 @@ def _changes_below(plan: ModulePlan, path: Path) -> list[RawChange]:
         for change in plan.changes
         if len(change.path.parts) > depth and change.path.parts[:depth] == path.parts
     ]
+
+
+def _is_added_segment(plan: ModulePlan, edit: PlannedChange) -> bool:
+    """Whether *edit* is the whole entry of a segment the pipeline added to the profile module.
+
+    The module as read had no entry for it, so the check finds the whole entry
+    lost when the VCO stored none of it. The plan's changes are relative to the
+    module plus its additions, so what the plan changed inside the entry is
+    what to redo beside the add.
+    """
+    parts = edit.path.parts
+    return (
+        edit.as_read is MISSING
+        and len(parts) == 2
+        and parts[0] == "segments"
+        and isinstance(parts[1], Key)
+        and parts[1].value in plan.added_segments
+    )
+
+
+def _is_repaired_default(plan: ModulePlan, edit: PlannedChange) -> bool:
+    """Whether *edit* is a ``defaults`` entry, or the list, that the plan repaired.
+
+    The next write of the module repairs it again, so it is not an edit to redo.
+    """
+    parts = edit.path.parts
+    return (
+        len(parts) in (3, 4)
+        and parts[0] == "segments"
+        and isinstance(parts[1], Key)
+        and parts[2] == "defaults"
+        and any(
+            missing.repaired
+            and missing.segment == parts[1].value
+            and (len(parts) == 3 or _is_default_named(parts[3], missing.names))
+            for missing in plan.missing_defaults
+        )
+    )
+
+
+def _is_default_named(part: object, names: Sequence[str]) -> bool:
+    """Whether the ``defaults`` item *part* names is one of *names*."""
+    return isinstance(part, Key) and part.value in names
 
 
 def _is_reconciled_segment(plan: ModulePlan, edit: PlannedChange) -> bool:

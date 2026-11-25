@@ -1,8 +1,7 @@
 """ConfigPipeline: orchestration layer for load → apply → save configuration workflow."""
 
-import json
 from collections.abc import Mapping, Sequence
-from typing import Any, Protocol, TypeIs, runtime_checkable
+from typing import Any, Protocol, TypeIs, cast, runtime_checkable
 
 from pydantic import MISSING
 from pyvelo.client.enums.configuration import ConfigurationModuleName
@@ -12,6 +11,7 @@ from pyvelo.client.exceptions import (
     ModuleWriteError,
     UnboundError,
 )
+from pyvelo.client.models.configuration.qos.rule import QosRule
 from pyvelo.client.models.configuration.ref_owners import ref_only_values
 from pyvelo.client.module_check import ModuleWrite
 from pyvelo.client.protocol import VcoClientProtocol
@@ -42,13 +42,29 @@ from pyvelo.core.identity import (
     ProfileName,
     ResolutionError,
     ResolverNotLoadedError,
+    SegmentIdentity,
+    SegmentName,
 )
 from pyvelo.core.merge import nest_patch, select_items
-from pyvelo.core.patch import ItemOp, is_new, parse_item_op, position_of
-from pyvelo.core.rebase import Key, Path, raw_changes
+from pyvelo.core.patch import ItemOp, is_new, parse_item_op
+from pyvelo.core.rebase import Path, raw_changes
 
 from pyvelo_intent.config.module_names import (
     resolve_module_name as _resolve_module_name,
+)
+from pyvelo_intent.config.profile_segments import (
+    PROFILE_SEGMENT_MODULES,
+    SEGMENTS,
+    ProfileSegmentPatch,
+    added_segment_name,
+    apply_assignment,
+    assign_on_trial,
+    check_profile_segments,
+    entry_path,
+    holds_segment_ops,
+    plan_assignment,
+    prepare_profile_segments,
+    segment_modules,
 )
 from pyvelo_intent.config.state import (
     ConfigPlan,
@@ -301,16 +317,42 @@ class ConfigPipeline:
            copied from the profile) and is inserted on save. A module a save
            does not write (control plane) raises ``PatchError``, with an empty
            path, before the patch is read.
-        2. On a profile target, refuse ``add`` and ``delete`` of a
-           ``segments`` item, whatever the selector, ``"+"`` included
-           (``_profile_segment_ops``): a segment belongs to all three of
-           device settings, QoS and firewall, and adding one to a profile is
-           not supported yet. A change or a ``move`` of a segment is fine.
-           The same holds for any other form of patch: a list value for
-           ``segments`` that leaves a segment out or brings a new one, and a
-           change to a segment's descriptor, raise ``PatchError`` at
-           ``segments``. A list value that keeps every descriptor is taken.
-           ``merge_patch`` called directly is not restricted.
+        2. On a profile target, the ``segments`` of device settings, QoS and
+           firewall have rules of their own, because a segment belongs to all
+           three (``prepare_profile_segments``). They apply to a patch whose
+           ``segments`` holds an ``add`` or a ``delete``, or is a list value,
+           and need the three modules (``PatchError``, ``segment_rule``, for a
+           profile that lacks one):
+
+           - an ``add`` of a segment the module had no entry for as read
+             assigns it, from any of the three modules and in any order, as
+             ``assign_segment`` does: each module that lacks the segment now
+             gets the template entry, then the body of the add is merged into
+             this module's entry as a change (a ``_position`` moves it). The
+             segment is named by the selector, or under ``"+"`` by
+             ``segment.name`` of the body (an add under ``"+"`` without one
+             raises ``segment_rule``), strictly by the segment resolver
+             (``ResolutionError`` for a name the enterprise lacks, and
+             ``PatchError``, ``invalid_value``, for a state with no segment
+             resolver). A body whose ``segment`` is not the enterprise
+             segment's raises ``segment_rule``;
+           - an ``add`` of a segment the module had as read raises ``exists``;
+             write a plain object to change it;
+           - an item of a list value for a segment the module had no entry for
+             as read assigns it the same way, and is merged into the template
+             entry; the other items replace the module's as given;
+           - a ``delete``, or a list value that leaves a segment out, is
+             accepted for an orphan (a QoS or firewall segment the device
+             settings lacked as read); any other removal, and a rewritten
+             descriptor, raise ``segment_rule``
+             (``check_profile_segments``). A change or a ``move`` of a segment
+             is fine.
+
+           The assignments are tried on copies of the three modules first
+           (``assign_on_trial``) and made only when the patch passes, so an
+           error leaves all three as they were. A patch of changes and moves
+           alone goes through one module. ``merge_patch`` called directly is
+           not restricted.
         3. Merge the patch into a copy of the module's typed data, then into
            the data itself. On an edge target each merge is preceded by the
            segment rules (``_prepare_segments``). The edge layer has an entry
@@ -376,6 +418,10 @@ class ConfigPipeline:
         async with state.lock:
             internal_name = _resolve_module_name(module)
             existing = state.find_module(internal_name)
+            if existing is None:
+                _refuse_segment_ops_to_a_missing_module(
+                    state, str(internal_name), patch, segment, path
+                )
             mod = (
                 existing
                 if existing is not None
@@ -394,30 +440,45 @@ class ConfigPipeline:
                 data = mod.data
                 nested = nest_patch(type(data), patch, segment=segment, path=path)
                 segments = nested.get("segments")
-                if (
+                profile_rules = (
                     not edge
-                    and _is_object(segments)
                     and isinstance(data, _SegmentLayer)
-                ):
-                    _profile_segment_ops(segments, _SEGMENTS)
+                    and str(mod.name) in PROFILE_SEGMENT_MODULES
+                )
+                prepared: ProfileSegmentPatch | None = None
+                loaded: set[type] = set()
+                if profile_rules and holds_segment_ops(nested):
+                    prepared = await self._prepare_profile_segments(
+                        state, mod, nested, loaded
+                    )
                 inherited = (
                     state.inherited_segment_ids(mod)
                     if edge and _is_object(segments)
                     else frozenset()
                 )
-                loaded: set[type] = set()
                 while True:
-                    trial = data.model_copy(deep=True)
                     try:
-                        _ = trial.merge_patch(
-                            _prepare_segments(trial, nested, state.resolvers, inherited)
-                            if edge
-                            else nested,
-                            resolvers=state.resolvers,
-                        )
-                        if not edge and isinstance(trial, _SegmentLayer):
-                            _profile_segments_unchanged(data, trial)
-                        _ = state.plan_module(mod, trial)
+                        if prepared is not None:
+                            _try_assigning(state, mod, prepared)
+                        else:
+                            trial = data.model_copy(deep=True)
+                            _ = trial.merge_patch(
+                                _prepare_segments(
+                                    trial, nested, state.resolvers, inherited
+                                )
+                                if edge
+                                else nested,
+                                resolvers=state.resolvers,
+                            )
+                            if profile_rules:
+                                check_profile_segments(
+                                    data,
+                                    trial,
+                                    mod,
+                                    _device_settings_as_read(state),
+                                    (),
+                                )
+                            _ = state.plan_module(mod, trial)
                         break
                     except ResolverNotLoadedError as error:
                         # The trial worked on a copy: loading and trying again
@@ -427,13 +488,122 @@ class ConfigPipeline:
                 if existing is None:
                     state.drop_module(mod)
                 raise
+            if prepared is not None:
+                modules = segment_modules(state)
+                for assignment in prepared.assignments:
+                    apply_assignment(modules, assignment)
             _ = data.merge_patch(
-                _prepare_segments(data, nested, state.resolvers, inherited)
+                prepared.patch
+                if prepared is not None
+                else _prepare_segments(data, nested, state.resolvers, inherited)
                 if edge
                 else nested,
                 resolvers=state.resolvers,
             )
             return state
+
+    async def _prepare_profile_segments(
+        self,
+        state: ConfigState,
+        mod: AnyConfigurationModule,
+        nested: Mapping[str, object],
+        loaded: set[type],
+    ) -> ProfileSegmentPatch:
+        """The segment rules of a patch to a profile module (``prepare_profile_segments``), loading a resolver it asks for."""
+        while True:
+            try:
+                return await prepare_profile_segments(
+                    state,
+                    mod,
+                    nested,
+                    resolve=lambda name: self._resolve_segment(state, name, loaded),
+                )
+            except ResolverNotLoadedError as error:
+                await self.load_resolvers(state, _to_load(error, loaded))
+
+    async def assign_segment(
+        self,
+        state: ConfigState,
+        name: str,
+        *,
+        qos_rules: Sequence[QosRule | Mapping[str, object]] | None = None,
+    ) -> ConfigState:
+        """Assign the enterprise segment *name* to the profile of *state*, in memory.
+
+        Each of the profile's device settings, QoS and firewall modules that
+        lacks the segment gets the entry the Orchestrator UI makes for a new
+        segment (``new_segment_entry``), and a QoS entry the profile already
+        has that lacks some of the template's four ``defaults`` gets those. A
+        segment that one or two of the modules have already is completed. The
+        next ``save`` writes the modules, device settings first, with the
+        ``deviceSettings:segment`` row the segment needs; ``plan()`` and
+        ``dry_run`` show it. An entry nobody edits afterwards is no change from
+        the template, and one that is edited (``apply``, or assignment to the
+        models) is.
+
+        *name* is resolved strictly by the state's segment resolver: any case
+        of the enterprise's name, and ``ResolutionError``, with suggestions,
+        for one it does not know. *qos_rules* are the rules of the new QoS
+        entry, in place of the template's, in order: each a ``QosRule`` or its
+        JSON (a missing ``ruleLogicalId`` is made). Two of one name or one
+        ``ruleLogicalId`` raise ``ValueError``, and so do *qos_rules* for a
+        profile whose QoS module already has the segment, which would drop
+        them: change those rules with a patch.
+
+        Raises ``ValueError`` for an edge target (an edge has the segments of
+        its profile), for a profile that lacks one of the three modules, for a
+        module that is not at the profile level (``load_profile`` loads them
+        so; call ``.for_profile()`` on one you built), and when the segment is
+        in all three already, with its defaults complete: change it with a
+        patch. Raises ``LookupError`` for a state with no segment resolver
+        (``await pipeline.load_resolvers(state)`` gives it one), and what
+        ``plan_module`` raises for an entry that could not be written.
+
+        All or nothing: the assignment is planned on copies of the modules
+        first, and an error leaves *state*, and ``plan()``, as they were.
+        Returns *state*, changed in place. Holds ``state.lock`` for the whole
+        call, as :meth:`apply` does, and raises ``RuntimeError`` when the
+        calling task holds it already.
+        """
+        async with state.lock:
+            rules = _qos_rules_json(qos_rules)
+            modules = segment_modules(state)
+            loaded: set[type] = set()
+            identity = await self._resolve_segment(state, name, loaded)
+            assignment = plan_assignment(state, identity, qos_rules=rules)
+            if not assignment.entries and not assignment.defaults:
+                raise ValueError(
+                    f"{identity.name} is in all three modules already; change it "
+                    "with a patch, such as "
+                    f'{{"segments": {{"{identity.name}": {{...}}}}}}.'
+                )
+            while True:
+                try:
+                    assign_on_trial(state, modules, [assignment])
+                    break
+                except ResolverNotLoadedError as error:
+                    # The trial worked on copies: loading and trying again
+                    # leaves the state as it was.
+                    await self.load_resolvers(state, _to_load(error, loaded))
+            apply_assignment(modules, assignment)
+            return state
+
+    async def _resolve_segment(
+        self, state: ConfigState, name: str, loaded: set[type]
+    ) -> SegmentIdentity:
+        """The identity of segment *name* by the state's segment resolver, loading it if it is registered and not loaded."""
+        if state.resolvers.resolver_for(SegmentIdentity) is None:
+            raise LookupError(
+                "This state has no segment resolver, so the name "
+                f"{name!r} cannot be resolved. Give the state its resolvers "
+                "with `await pipeline.load_resolvers(state)` (`load` and "
+                "`load_profile` do), then assign the segment."
+            )
+        while True:
+            try:
+                return await state.resolvers.resolve(SegmentName(name))
+            except ResolverNotLoadedError as error:
+                await self.load_resolvers(state, _to_load(error, loaded))
 
     async def save(
         self,
@@ -441,12 +611,22 @@ class ConfigPipeline:
         *,
         dry_run: bool = False,
         validate: bool = True,
+        repair_defaults: bool = True,
     ) -> SaveResult:
         """Persist changes to VCO.
 
         1. Plan the write of every module (:meth:`ConfigState.plan`), and
            raise ``TypeError`` if a changed module is not one a save writes
-           (device settings, QoS, WAN, firewall), also for ``dry_run``.
+           (device settings, QoS, WAN, firewall), also for ``dry_run``. A
+           profile's device settings module is planned, and written, first.
+           A profile's three modules (device settings, QoS and firewall) hold
+           the same segments, so the plan raises ``SegmentSetError`` for an
+           edit that removes a segment from one, or adds it to some and not
+           all, and carries a ``segments_disagree`` warning for a profile
+           whose modules disagree as read.
+           *repair_defaults* is false to leave the template ``defaults`` a
+           profile QoS segment lacks out of the write; the plan warns of them
+           either way (``defaults_repaired``).
         2. Run write-time validators on the changed modules. An error blocks
            the save: it raises ``SaveValidationError`` and sends nothing. A
            validator reports on the whole state, so an error in a module the
@@ -545,7 +725,7 @@ class ConfigPipeline:
         which would wait for the lock without end.
         """
         async with state.lock:
-            plan = await self._plan_loading(state)
+            plan = await self._plan_loading(state, repair_defaults=repair_defaults)
             result = SaveResult(
                 plan=plan, dry_run=dry_run, warnings=list(plan.warnings)
             )
@@ -782,7 +962,9 @@ class ConfigPipeline:
         state.resolvers.register(resolver)
         return resolver
 
-    async def _plan_loading(self, state: ConfigState) -> ConfigPlan:
+    async def _plan_loading(
+        self, state: ConfigState, *, repair_defaults: bool = True
+    ) -> ConfigPlan:
         """Plan *state*, loading a resolver the plan finds not loaded, once per identity type.
 
         A second ``ResolverNotLoadedError`` for a type that was loaded
@@ -791,7 +973,7 @@ class ConfigPipeline:
         loaded: set[type] = set()
         while True:
             try:
-                return state.plan()
+                return state.plan(repair_defaults=repair_defaults)
             except ResolverNotLoadedError as error:
                 await self.load_resolvers(state, _to_load(error, loaded))
 
@@ -868,101 +1050,8 @@ class _SegmentLayer(Protocol):
     def profile_segment_id(self, selector: object) -> object | None: ...
 
 
-_SEGMENTS = Path(("segments",))
-
-
 def _is_object(value: object) -> TypeIs[dict[object, object]]:
     return isinstance(value, dict)
-
-
-def _entry_path(path: Path, selector: object) -> Path:
-    """Where the entry under *selector* of a ``segments`` object is in the patch.
-
-    The place ``merge_patch`` reports it at: a position for ``"#n"``, else the
-    selector in string form.
-    """
-    n = position_of(selector)
-    return path.child(n if n is not None else Key(str(selector)))
-
-
-def _profile_segment_ops(segments: Mapping[object, object], path: Path) -> None:
-    """Refuse an ``add`` or a ``delete`` of a segment of a profile through a patch.
-
-    *segments* is the ``segments`` object of a patch for one profile module
-    and *path* where it is. A segment is a profile's in all three of device
-    settings, QoS and firewall, and a patch reaches one, so neither is
-    supported yet; whatever the selector, ``"+"`` included. A change and a
-    ``move`` are left as they are. Raises ``PatchError``; changes nothing.
-    """
-    for selector, value in segments.items():
-        if not _is_object(value):
-            continue
-        where = _entry_path(path, selector)
-        op = parse_item_op(value, where)
-        if op.kind == "add":
-            raise PatchError(
-                "adding a segment to a profile through a patch is not supported yet: "
-                + "a segment belongs to device settings, QoS and firewall together, "
-                + 'so {"_op": "add", ...} (`add(...)`) is refused. To change what '
-                + 'a segment holds, name it: {"segments": {"<name>": {...}}}',
-                where,
-                "segment_rule",
-            )
-        if op.kind == "delete":
-            raise PatchError(
-                "removing a segment from a profile through a patch is not supported "
-                + "yet: a segment belongs to device settings, QoS and firewall "
-                + 'together, so {"_op": "delete"} (`delete()`) is refused. To '
-                + 'change what a segment holds, name it: {"segments": {"<name>": {...}}}',
-                where,
-                "segment_rule",
-            )
-
-
-def _segment_descriptors(layer: object) -> list[dict[str, object]]:
-    """The wire form of the ``segment`` object of each entry of *layer*, in order."""
-    assert isinstance(layer, VcoModel)  # a profile module's data
-    dumped = layer.model_dump(mode="json", by_alias=True)
-    return [entry["segment"] for entry in dumped["segments"]]
-
-
-def _canonical(descriptor: Mapping[str, object]) -> str:
-    return json.dumps(descriptor, sort_keys=True)
-
-
-def _profile_segments_unchanged(data: object, trial: object) -> None:
-    """Refuse a patch after which a profile module has other segments than before.
-
-    *trial* is a copy of *data* with the patch merged in. Whatever the form of
-    the patch (an item operation, a list value, an object that rewrites a
-    descriptor), the descriptors of *trial* must be those of *data*, in any
-    order: a ``move`` is fine. Raises ``PatchError`` at ``segments``; changes
-    nothing.
-    """
-    before = _segment_descriptors(data)
-    after = _segment_descriptors(trial)
-    if sorted(map(_canonical, before)) == sorted(map(_canonical, after)):
-        return
-    names_before = {str(d.get("name")) for d in before}
-    names_after = {str(d.get("name")) for d in after}
-    parts: list[str] = []
-    if removed := sorted(names_before - names_after):
-        parts.append("it removes " + ", ".join(removed))
-    if added := sorted(names_after - names_before):
-        parts.append("it adds " + ", ".join(added))
-    detail = "; ".join(parts) or "it changes a segment's descriptor"
-    raise PatchError(
-        "a patch does not add, remove or re-describe a segment of a profile ("
-        + detail
-        + "): a segment belongs to device settings, QoS and firewall together, "
-        + 'so neither a list value for "segments", nor {"_op": "add", ...} '
-        + '(`add(...)`) or {"_op": "delete"} (`delete()`) under a selector, '
-        + "nor a rewritten descriptor can change which segments a profile has. "
-        + "Adding or removing a segment of a profile through a patch is not supported yet. "
-        + 'To change what a segment holds, name it: {"segments": {"<name>": {...}}}',
-        _SEGMENTS,
-        "segment_rule",
-    )
 
 
 # Stands for the selector of a segment entry that is left out of the patch.
@@ -1018,7 +1107,7 @@ def _prepare_segments(
     for selector, value in segments.items():
         key: object = selector
         if _is_object(value):
-            where = _entry_path(_SEGMENTS, selector)
+            where = entry_path(SEGMENTS, selector)
             op = parse_item_op(value, where)
             key, name = _prepare_segment(
                 data, selector, op, where, resolvers, inherited
@@ -1060,7 +1149,7 @@ def _prepare_segment(
     new = is_new(selector)
     lookup: object = selector
     if new:
-        given = _added_segment_name(op) if op.kind == "add" else None
+        given = added_segment_name(op) if op.kind == "add" else None
         if given is None:
             return selector, None
         lookup = given
@@ -1203,16 +1292,68 @@ def _layer_segment(
     return data.segments[positions[0]]
 
 
-def _added_segment_name(op: ItemOp) -> str | None:
-    """The segment name the body of an ``add`` gives at ``segment.name``, or None.
+def _refuse_segment_ops_to_a_missing_module(
+    state: ConfigState,
+    module_name: str,
+    patch: object,
+    segment: str | None,
+    path: str | None,
+) -> None:
+    """Raise ``PatchError`` for a patch with segment operations to a module of three that the profile lacks.
 
-    That is the key path of every ``segments`` list, and neither ``segment``
-    nor ``name`` has an alias or a camelCase form of its own, so these are
-    the only keys ``merge_patch`` reads the name under.
+    A profile target only, for device settings, QoS and firewall: an ``add``,
+    a ``delete`` or a list value for ``segments`` works on all three modules,
+    and inserting a module into a profile is not supported. A patch without
+    them is left to ``state.module``, which raises ``ValueError`` as ever.
     """
-    descriptor = op.body.get("segment")
-    name = descriptor.get("name") if _is_object(descriptor) else None
-    return None if name is None else str(name)
+    if state.target_type != "profile" or module_name not in PROFILE_SEGMENT_MODULES:
+        return
+    nested: object
+    if segment is not None and path is None:
+        nested = {"segments": {segment: patch}}
+    elif segment is None and path is None:
+        nested = patch
+    else:
+        return
+    if isinstance(nested, dict) and holds_segment_ops(
+        cast("dict[str, object]", nested)
+    ):
+        raise PatchError(
+            f"the profile has no {module_name} module, and a patch that adds, "
+            "removes or replaces a segment works on all three of device "
+            "settings, QoS and firewall together. Inserting a module into a "
+            "profile is not supported: add it in the VCO",
+            SEGMENTS,
+            "segment_rule",
+        )
+
+
+def _device_settings_as_read(state: ConfigState) -> object:
+    """The raw data of the target's device settings module as read; ``MISSING`` when it has none."""
+    module = state.find_module("deviceSettings")
+    return MISSING if module is None else module.raw_data
+
+
+def _try_assigning(
+    state: ConfigState, mod: AnyConfigurationModule, prepared: ProfileSegmentPatch
+) -> None:
+    """Try *prepared*, the patch to profile module *mod* and the assignments it needs, on copies of the three modules.
+
+    The patch is merged into the copy of *mod* after the assignments, and
+    must pass ``check_profile_segments``; each copy is then planned.
+    Nothing of *state* changes, and whatever fails raises.
+    """
+    modules = segment_modules(state)
+    name = str(mod.name)
+    ds_as_read = _device_settings_as_read(state)
+    before = _require_writable(mod).data
+
+    def edit(copies: Mapping[str, AnyConfigurationModule]) -> None:
+        after = _require_writable(copies[name]).data
+        _ = after.merge_patch(prepared.patch, resolvers=state.resolvers)
+        check_profile_segments(before, after, mod, ds_as_read, prepared.assignments)
+
+    assign_on_trial(state, modules, prepared.assignments, edit)
 
 
 type _WritableModule = (
@@ -1228,6 +1369,35 @@ _WRITABLE_MODULES = (
     WanConfigurationModule,
     FirewallConfigurationModule,
 )
+
+
+def _qos_rules_json(
+    rules: Sequence[QosRule | Mapping[str, object]] | None,
+) -> list[dict[str, object]] | None:
+    """The JSON of *rules*, each validated as a ``QosRule``, in order; None for None.
+
+    Raises ``ValueError`` for two rules of one name or one ``ruleLogicalId``,
+    and pydantic's ``ValidationError`` (a ``ValueError``) for a rule that is not one.
+    """
+    if rules is None:
+        return None
+    dumped = [
+        (
+            rule if isinstance(rule, QosRule) else QosRule.model_validate(rule)
+        ).model_dump(mode="json", by_alias=True)
+        for rule in rules
+    ]
+    for key in ("name", "ruleLogicalId"):
+        seen: set[object] = set()
+        for rule in dumped:
+            if rule[key] in seen:
+                raise ValueError(
+                    f"qos_rules holds more than one rule with the {key} "
+                    f"{rule[key]!r}: each rule of a QoS entry has a name and a "
+                    "ruleLogicalId of its own."
+                )
+            seen.add(rule[key])
+    return dumped
 
 
 def _written_note(done: Sequence[ModuleWrite[Any]]) -> str:

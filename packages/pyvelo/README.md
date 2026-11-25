@@ -27,7 +27,7 @@ pyvelo = { git = "https://github.com/aristanetworks/velocloud-api-tools.git", su
 | Module | What it provides |
 |---|---|
 | `pyvelo.client` | `VcoClient` (async JSON-RPC), `VcoClientProtocol`, `VcoAuth`, `get_vco_credentials` (reads `VCO_HOST` / `VCO_TOKEN`, optionally from a `.env` file with the `dotenv` extra), `VcoWebSocket` / `PendingDiagnostic`, `ExchangeHook`, request/response schemas, enums, operations, VCO data models |
-| `pyvelo.core` | `VcoModel` base class (with `.merge_patch()`), field markers (`KeyField`, `Resolvable`, `NameOf`, `OverrideFlag`, `Alias`, `Normalizer`, `ConfigContext`, `ContextDefault`), defaulting helpers (`DefaultingModel`, `DefaultingScalar`), `Secret` (marks a field that holds a secret), `OwnsRef` and `RefOnly` (mark the data field a ref row goes with, and a field that stands for a ref row and is never dumped or read from data), `get_owns_ref` and `get_ref_only`, `is_secret` and `hide_secrets(model, path, value)` (the value with its secrets shown as `***`), identity types (`EdgeId`, `SegmentId`, `ProfileId`, …); the patch helpers (`add`, `delete`, `move`, `at`), `PatchError` and `PatchErrorKind` (the type of its `kind`); for a tool that works over patches, `Path` and `Key` (the parts of a change's location), `key_text` and `item_key_text`, `list_kind` and `ListKind`, `select_items` and `item_selector`, `key_selector` and `selector_of`, `nest_patch`, `position_of`, `is_positional` and `get_name_of`; facts about a field for a schema view: `wire_name` (the JSON key it is written under), `python_name` (the field a key names; `python_path` in `pyvelo.core.rebase` does the same for the path of a change), `field_models` (the model classes its value, its list items or its map values can be), and `Model.context(level)`, whose entries say whether a field exists at edge or at profile level (`is_present`) |
+| `pyvelo.core` | `VcoModel` base class (with `.merge_patch()`), field markers (`KeyField`, `FixedList`, `Resolvable`, `NameOf`, `OverrideFlag`, `Alias`, `Normalizer`, `ConfigContext`, `ContextDefault`), defaulting helpers (`DefaultingModel`, `DefaultingScalar`), `Secret` (marks a field that holds a secret), `OwnsRef` and `RefOnly` (mark the data field a ref row goes with, and a field that stands for a ref row and is never dumped or read from data), `get_owns_ref`, `get_ref_only` and `get_fixed_list`, `is_secret` and `hide_secrets(model, path, value)` (the value with its secrets shown as `***`), identity types (`EdgeId`, `SegmentId`, `ProfileId`, …); the patch helpers (`add`, `delete`, `move`, `at`), `PatchError` and `PatchErrorKind` (the type of its `kind`); for a tool that works over patches, `Path` and `Key` (the parts of a change's location), `key_text` and `item_key_text`, `list_kind` and `ListKind`, `select_items` and `item_selector`, `key_selector` and `selector_of`, `nest_patch`, `position_of`, `is_positional` and `get_name_of`; facts about a field for a schema view: `wire_name` (the JSON key it is written under), `python_name` (the field a key names; `python_path` in `pyvelo.core.rebase` does the same for the path of a change), `field_models` (the model classes its value, its list items or its map values can be), and `Model.context(level)`, whose entries say whether a field exists at edge or at profile level (`is_present`) |
 | `pyvelo.client.module_write`, `pyvelo.client.module_check` | `plan_module` and `ModulePlan` (what a write of a module changes), `check_module_write` and `ModuleWrite` (a write that was stored: the module as stored, the changes `applied`, `left_out` and `server_changes`) |
 | `pyvelo.config.resolver` | `Resolver` Protocol, `BaseResolver`, `ResolverRegistry`, `ResolverContext`, `ResolutionError` |
 | `pyvelo.config.resolvers.*` | Concrete resolvers: edge, segment, profile, address_group, application, service_group, license |
@@ -46,6 +46,55 @@ with only the caller's changes applied, and returns the module as stored, of
 the class of `module`. When nothing changed it sends nothing and returns
 `module` itself. It is `plan_module` (`pyvelo.client.module_write`) followed by
 `write_module`.
+
+The `defaults` rules of a QoS segment are fixed: their entries, keys and order
+stay as read, and only the `action` of a rule can change. `plan_module` compares
+its payload with the module as read, and raises `FixedListError` for a payload
+that changes anything else in them (a rule's `match`, a rule added, removed,
+renamed or moved, the list built or dropped), whatever made the change: an
+attribute assignment, a plain-dict `data` or a patch. It does so at every level,
+an edge's raw `defaults` included, and `validate=False` does not skip it. The
+error lists each path with its reason. A missing entry is repaired when the
+module is written, never built by an edit.
+
+Every QoS segment of a profile holds the template's four `defaults` rules
+(`Default-Internet-UDP`, `Default-Internet-Other`, `Default-Any-UDP`,
+`Default-Any-Other`), which the VCO does not enforce. `plan_module` pairs the
+rules of each segment with them, one to one. For a segment that lacks some, the
+plan warns (`defaults_repaired`) and lists them in `ModulePlan.missing_defaults`
+(`repaired defaults:` or `missing defaults:` in `render()`). When the module is
+written for another reason the plan adds the missing rules from the template, in
+template order, each with a new `ruleLogicalId` that the module keeps, so a
+re-plan sends the same one; a module with nothing else to write is not written
+just to repair, and the next write does. `update_module(...,
+repair_defaults=False)` and `plan_module(..., repair_defaults=False)` keep the
+warning and leave the rules out. A list the template does not describe (an item
+it has no entry for, or a missing name that the list already holds under another
+`match`) is left as it is, with a `defaults_not_template` warning. The repaired
+rules are no change of the caller's, so `changes` leave them out. The edge level
+repairs nothing. `plan_module(..., conditional_backhaul={segmentId: bool})` sets
+`action.allowConditionalBh` of a repaired rule to the segment's
+`vpn.conditionalBackhaul`; without it, as in `update_module`, a repaired rule
+has the template's action.
+
+The segments of a profile are the same in its device settings, QoS and firewall
+modules, so one module alone cannot change them. `plan_module` and
+`update_module` raise `SegmentSetError` for a profile module whose payload adds
+or removes a segment, and nothing is sent. That holds whatever the payload is
+built from: a model read from the VCO, a model built by hand, or (for
+`plan_module`) a mapping. The error names the segments and says how to do it
+instead: a segment is assigned through the pipeline, as
+`{"segments": {"Guest": {"_op": "add"}}}` (`pipeline.assign_segment(state,
+"Guest")`), which makes its entry in all three modules; removing one from all
+three together is not supported. The pipeline records what it adds to a profile
+module (`module.additions`, made with `add_segment_entry` and
+`add_default_entries`), and `plan_module` plans the module against its raw data
+plus those entries. An added entry nobody edited is written exactly as it was
+made and plans no change (`ModulePlan.added_segments` names them), while an edit
+to it is a change from that entry. The refs still compare with the module as
+read, so an added device settings entry adds its `deviceSettings:segment` row.
+`plan_module(..., via_pipeline=True)` skips the refusal, for the pipeline, which
+plans the three modules together.
 
 The module you pass in is not updated: it keeps the data and the `version` from
 before the write. Continue from the module `update_module` returns (`module =
