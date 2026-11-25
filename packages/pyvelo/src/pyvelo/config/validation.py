@@ -11,9 +11,8 @@ from pyvelo.client.enums.configuration import ConfigurationModuleName
 class ConfigStateLike(Protocol):
     """Minimal protocol for the state object validators read.
 
-    Concrete validator implementations live in consumer packages
-    (e.g. ``pyvelo_intent.config.state.ConfigState``); this protocol keeps
-    the framework decoupled from any specific implementation.
+    The pipeline's state is ``pyvelo.config.state.ConfigState``; this protocol
+    keeps the framework decoupled from any specific implementation.
 
     ``target_type`` is exposed as a read-only ``@property`` so that concrete
     states may narrow it to a ``Literal[...]`` (e.g. ``"edge" | "profile"``).

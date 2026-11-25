@@ -11,7 +11,8 @@ The canonical entry points are re-exported here for convenience:
   :class:`ResolutionError`) and concrete resolvers under
   :mod:`pyvelo.config.resolvers` for translating object names to IDs.
 
-For configuration helpers (pipeline, state), see the ``pyvelo-intent`` package.
+The configuration pipeline and its state (:class:`ConfigPipeline`,
+:class:`ConfigState`) are in :mod:`pyvelo.config`.
 """
 
 from pyvelo.client import (

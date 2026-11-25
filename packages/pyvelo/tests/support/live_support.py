@@ -4,9 +4,8 @@ The tests that use this write to a real Orchestrator, so everything here is
 about leaving it as it was found. Nothing names a lab entity: targets are found
 at run time, and every message refers to them by position and module type only.
 
-Both live suites import this module by name, pyvelo's and pyvelo-intent's:
-its directory is on ``pythonpath`` in the root ``pyproject.toml``. It is test
-support and no part of the library.
+The live tests import this module by name: its directory is on ``pythonpath``
+in the root ``pyproject.toml``. It is test support and no part of the library.
 
 A failed test reports what ``failure_text`` makes of its exception and where
 it was raised, never the exception's own text: that quotes names and values

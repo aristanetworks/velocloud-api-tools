@@ -537,7 +537,7 @@ class ValidatorError:
 
 
 class SaveBlocked(Exception):
-    """Shaped as pyvelo-intent's ``SaveValidationError``: ``errors`` with a code each."""
+    """Shaped as ``SaveValidationError`` of ``pyvelo.config``: ``errors`` with a code each."""
 
     def __init__(self) -> None:
         self.errors: list[ValidatorError] = [ValidatorError("B2"), ValidatorError("A1")]
