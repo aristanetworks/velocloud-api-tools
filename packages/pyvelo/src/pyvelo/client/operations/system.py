@@ -1,3 +1,9 @@
+"""The client's methods for the VCO itself: its version, properties and inventory.
+
+The ``system/``, ``systemProperty/``, ``vcoDiagnostics/`` (the database
+diagnostics) and ``vcoInventory/`` (the pending inventory) methods.
+"""
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Protocol

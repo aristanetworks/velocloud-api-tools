@@ -141,6 +141,8 @@ class RefChange:
 
 @dataclass(frozen=True)
 class DerivedRefs:
+    """What ``derive_refs`` finds: the refs to send, the changes and the warnings."""
+
     refs: dict[str, Any] | None
     """The complete refs to send, or ``None`` when none go."""
     changes: tuple[RefChange, ...]

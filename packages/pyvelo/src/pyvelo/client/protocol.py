@@ -1,3 +1,12 @@
+"""The VCO client contract: the portal request methods and every operation mixin.
+
+``VcoClientProtocol`` sends JSON-RPC requests to ``/portal/`` and checks their
+HTTP status, JSON-RPC error and result. ``VcoClient`` subclasses it to add
+retries, rate limiting and concurrency control. An ``ExchangeHook`` sees each
+request and response, as ``Exchange``; ``make_file_dump_hook`` writes them to
+files.
+"""
+
 import asyncio
 import json
 import re
@@ -154,6 +163,12 @@ class VcoClientProtocol(
     RemoteDiagnosticsMixin,
     Protocol,
 ):
+    """The VCO client: the portal request methods and every operation mixin's methods.
+
+    It is used inside ``async with``, which opens the HTTP client and, on leaving,
+    closes it and any remote diagnostics WebSocket.
+    """
+
     _http: httpx.AsyncClient | None = None
     _transport: httpx.AsyncBaseTransport | None = None
     _vco_fqdn: str
@@ -166,6 +181,7 @@ class VcoClientProtocol(
     _ws_cleanup_tasks: set[asyncio.Task[None]]
 
     async def __aenter__(self) -> Self:
+        """The client, with its HTTP client opened."""
         await self._connect()
         return self
 
@@ -175,6 +191,7 @@ class VcoClientProtocol(
         _exc_val: BaseException | None,
         _exc_tb: TracebackType | None,
     ) -> None:
+        """Close the remote diagnostics WebSocket, then the HTTP client."""
         await self.close_websocket()
         if self._http is not None:
             await self._http.__aexit__(_exc_type, _exc_val, _exc_tb)
@@ -362,6 +379,12 @@ class VcoClientProtocol(
         *,
         validation_context: dict[str, Any] | None = None,
     ) -> T:
+        """The result of one portal request for *method*, validated as *ResultType*.
+
+        *validation_context* is passed to the validation. A status that is not
+        2xx raises ``VcoHttpError``, a JSON-RPC error ``VcoOperationError`` and
+        an empty result ``VcoEmptyResultError``.
+        """
         rpc_request = JsonRpcRequest(method=method, params=request)
         content = rpc_request.model_dump_json(by_alias=True)
         response = await self._send_request(

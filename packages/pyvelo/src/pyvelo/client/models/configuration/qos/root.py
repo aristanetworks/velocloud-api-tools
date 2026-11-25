@@ -1,3 +1,5 @@
+"""The ``QOS`` module's data: segments, service rate limit, QoE and client connector."""
+
 from typing import Annotated, Any
 
 from pydantic import Field, PrivateAttr

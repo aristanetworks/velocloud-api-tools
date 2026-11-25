@@ -96,29 +96,35 @@ class BaseResolver[IdentityT]:
     requires_load: ClassVar[bool] = False
 
     def __init__(self, client: VcoClientProtocol) -> None:
+        """An empty resolver that loads its tables through *client*."""
         self._client: VcoClientProtocol = client
         self.loaded: bool = False
         self._by_name: dict[str, IdentityT] = {}
         self._reverse: dict[str, dict[int | str | uuid.UUID, str]] = {}
 
     def lookup(self, name: str) -> IdentityT:
+        """The identity loaded under *name*, matched exactly or ignoring case."""
         self._require_loaded()
         _, identity = resolve_name(name, self._by_name, self._entity_label)
         return identity
 
     def lookup_key(self, key: IdentityKey[IdentityT]) -> IdentityT:
+        """The identity *key* names; a subclass dispatches on the key's type."""
         del key
         raise NotImplementedError
 
     @final
     async def resolve(self, name: str) -> IdentityT:
+        """The awaitable form of ``lookup``."""
         return self.lookup(name)
 
     @final
     async def resolve_key(self, key: IdentityKey[IdentityT]) -> IdentityT:
+        """The awaitable form of ``lookup_key``."""
         return self.lookup_key(key)
 
     async def load(self, context: ResolverContext) -> None:
+        """Fetch the entities of *context* and register them; a subclass does this."""
         del context
         raise NotImplementedError
 
@@ -189,6 +195,7 @@ class ResolverRegistry:
     """
 
     def __init__(self) -> None:
+        """A registry with no resolvers and no context."""
         self._resolvers: dict[type, Resolver[Any]] = {}
         self._context: ResolverContext | None = None
 

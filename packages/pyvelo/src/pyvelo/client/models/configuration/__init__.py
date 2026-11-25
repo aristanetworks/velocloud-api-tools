@@ -1,3 +1,5 @@
+"""The typed ``data`` of each configuration module, re-exported from its own package."""
+
 from .common import SegmentMetadata
 from .control_plane import ControlPlaneData
 from .device_settings import (

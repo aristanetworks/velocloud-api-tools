@@ -1,3 +1,9 @@
+"""Peer, tunnel and Gateway states, and the options of the monitoring methods.
+
+BGP and BFD peer states, tunnel types and states, NVS providers, degradation
+dimensions, and the ``with`` options of the aggregate status reads.
+"""
+
 from enum import StrEnum
 
 

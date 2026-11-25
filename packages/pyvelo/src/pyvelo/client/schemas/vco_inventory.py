@@ -1,3 +1,5 @@
+"""The request and result of ``vcoInventory/getPendingInventory``."""
+
 from typing import Annotated, Any
 
 from pydantic import MISSING

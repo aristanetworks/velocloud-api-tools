@@ -1,3 +1,5 @@
+"""The client's ``role/`` methods: the roles of a user type and their customizations."""
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Protocol
@@ -20,6 +22,8 @@ if TYPE_CHECKING:
 
 
 class RoleMixin(Protocol):
+    """Operations for role/ API endpoints."""
+
     async def get_user_type_roles(
         self: VcoClientBaseProtocol, request: GetUserTypeRoles
     ) -> Sequence[RoleResult]:

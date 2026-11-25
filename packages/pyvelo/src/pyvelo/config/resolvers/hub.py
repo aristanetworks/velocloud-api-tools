@@ -58,6 +58,7 @@ class HubResolver(BaseResolver[HubIdentity]):
     requires_load: ClassVar[bool] = True
 
     def __init__(self, client: VcoClientProtocol) -> None:
+        """An unloaded resolver that reads the Edges and clusters through *client*."""
         super().__init__(client)
         self._hubs: list[HubIdentity] = []
         self._members: dict[uuid.UUID, str] = {}

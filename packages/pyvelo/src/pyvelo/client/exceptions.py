@@ -1,6 +1,14 @@
 # ModuleWriteError names ModulePlan, ConfigurationModuleBase and ModuleWrite in
 # annotations only; their modules import this one.
 # pyright: reportImportCycles=false
+"""The errors pyvelo raises, each a ``VcoError``.
+
+First the client's: an HTTP status, a JSON-RPC error, an empty result, the rate
+limit, the WebSocket and the credentials. Then the refusals of a plan before it
+writes (``LossyFieldError``, ``HubListError``, ``DanglingReferenceError`` and
+others), the module write errors (``ModuleWriteError`` and its subclasses) and
+the layer errors.
+"""
 
 from __future__ import annotations
 
@@ -66,6 +74,7 @@ class VcoClientNotInitializedError(VcoError):
     """Raised when the client is used without a connection."""
 
     def __init__(self) -> None:
+        """The error, with a message that says to use the client in ``async with``."""
         super().__init__(
             "VcoClient is not connected. Use it inside "
             "`async with VcoClient(host, token) as client:`; the connection closes "
@@ -83,6 +92,11 @@ class VcoApiError(VcoError):
         message: str,
         data: Any = None,
     ) -> None:
+        """The JSON-RPC error's *code*, *message* and *data*.
+
+        The message lists the VCO's validation errors and warnings in *data* a line
+        each, and shows any other *data* as it is.
+        """
         self.code: int = code
         self.message: str = message
         self.data: Any = data
@@ -99,6 +113,7 @@ class VcoEmptyResultError(VcoError):
     """Raised when the VCO API returns a null result."""
 
     def __init__(self, method: str | None = None) -> None:
+        """The error for an empty result of *method*, which the message names."""
         self.method: str | None = method
         msg = "VCO API returned an empty result"
         if method:
@@ -117,6 +132,11 @@ class VcoOperationError(VcoError):
         code: int | None = None,
         data: Any = None,
     ) -> None:
+        """The failure of *operation* with the VCO's *error* text.
+
+        *code* and *data* are the JSON-RPC error's, when the failure came as one; the
+        message shows *data* as ``VcoApiError`` does.
+        """
         self.operation: str = operation
         self.error: str = error
         self.code: int | None = code
@@ -160,6 +180,7 @@ class VcoHttpError(VcoError):
     """
 
     def __init__(self, status_code: int, body: str) -> None:
+        """The error for HTTP *status_code*, with *body* the response's text."""
         self.status_code: int = status_code
         self.text: str = body
         self.body: str = body[:500]
@@ -170,6 +191,7 @@ class VcoRateLimitError(VcoError):
     """Raised when 429 retries are exhausted."""
 
     def __init__(self, attempts: int) -> None:
+        """The error after *attempts* requests that were each answered 429."""
         self.attempts: int = attempts
         super().__init__(f"Rate limited: retries exhausted after {attempts} attempts")
 
@@ -178,6 +200,7 @@ class VcoWebSocketError(VcoError):
     """Raised when a WebSocket operation fails (connection, send, or receive)."""
 
     def __init__(self, message: str) -> None:
+        """The error, with *message* kept as ``message`` too."""
         self.message: str = message
         super().__init__(message)
 
@@ -193,6 +216,7 @@ class VcoWebSocketTimeoutError(VcoWebSocketError):
     """Raised when a WebSocket request or diagnostic times out."""
 
     def __init__(self, message: str, *, timeout: float) -> None:
+        """The error, with the *timeout* that ran out, in seconds."""
         self.timeout: float = timeout
         super().__init__(message)
 
@@ -212,6 +236,7 @@ class VcoUserTypeUnknownError(VcoError):
     """Raised when none of the user-type probe endpoints succeed."""
 
     def __init__(self) -> None:
+        """The error, with a fixed message: every probe failed."""
         super().__init__("Unable to determine user type: all probes failed")
 
 
@@ -241,6 +266,10 @@ class LossyFieldError(VcoError):
         paths: Sequence[Path],
         override_flags: Sequence[Path] = (),
     ) -> None:
+        """The error for the edits to *module* at *paths*, *override_flags* among them.
+
+        The message says why a save writes none of them and what to do instead.
+        """
         self.module: str = module
         self.paths: list[Path] = list(paths)
         self.fields: list[str] = [str(path) for path in self.paths]
@@ -282,6 +311,7 @@ class FixedListError(VcoError):
     def __init__(
         self, module_name: str, violations: Sequence[tuple[Path, str]]
     ) -> None:
+        """The error for *module_name*: *violations* are each changed place and why."""
         self.module_name = module_name
         self.paths = tuple(path for path, _ in violations)
         found = "; ".join(f"{path}: {reason}" for path, reason in violations)
@@ -319,6 +349,7 @@ class SegmentSetError(VcoError):
         segments: Sequence[str] = (),
         modules: Sequence[str] = (),
     ) -> None:
+        """The error with *message* and the module, segments and modules it is about."""
         self.module_name = module_name
         self.segments = tuple(segments)
         self.modules = tuple(modules)
@@ -354,6 +385,7 @@ class HubListError(VcoError):
         hubs: Sequence[str] = (),
         edges: Sequence[tuple[int, str]] = (),
     ) -> None:
+        """The error with *message* and the segment, lists, hubs and Edges it names."""
         self.segment = segment
         self.lists = tuple(lists)
         self.hubs = tuple(hubs)
@@ -427,6 +459,11 @@ class DanglingReferenceError(VcoError):
     def __init__(
         self, references: Sequence[Reference], *, on_edge: bool = False
     ) -> None:
+        """The error for *references*, with a message that lists each and what to do.
+
+        The message says where a segment or a backhaul hub comes from and, for a hub,
+        gives the patch that makes it a hub of its segment.
+        """
         self.references = tuple(references)
         self.on_edge = on_edge
         lines = "\n".join(f"  {reference_text(r)}" for r in self.references)
@@ -476,6 +513,10 @@ class RefsNotLoadedError(VcoError):
     paths: tuple[Path, ...]
 
     def __init__(self, module_name: str, paths: Sequence[Path] = ()) -> None:
+        """The error for *module_name*, with the owners at *paths* the edit changed.
+
+        The message says how to read the module with its refs.
+        """
         self.module_name = module_name
         self.paths = tuple(paths)
         read = (
@@ -601,6 +642,10 @@ class ModuleWriteError(VcoError):
         server_changes: Sequence[ServerChange] = (),
         stored_parts: Mapping[Path, ItemPart] | None = None,
     ) -> None:
+        """The write of module *module_id* at *version*, with what its check found.
+
+        ``completed`` starts empty; the save sets it.
+        """
         self.module_id = module_id
         self.module_name = module_name
         self.version = version
@@ -1128,6 +1173,10 @@ class ConfigConflictError(ModuleWriteError):
         server_changes: Sequence[ServerChange] = (),
         stored_parts: Mapping[Path, ItemPart] | None = None,
     ) -> None:
+        """The conflict, with *detail* and how the refusal is known (*stated*, *sent*).
+
+        The other arguments are those of ``ModuleWriteError``.
+        """
         self.detail = detail
         self.stated = stated
         self.sent = sent
@@ -1198,6 +1247,10 @@ class WriteNotAppliedError(ModuleWriteError):
         server_changes: Sequence[ServerChange] = (),
         stored_parts: Mapping[Path, ItemPart] | None = None,
     ) -> None:
+        """The write, with the *module* as stored and the *lost_edits* it does not hold.
+
+        The other arguments are those of ``ModuleWriteError``.
+        """
         super().__init__(
             module_id,
             version,
@@ -1267,6 +1320,7 @@ class RefsDroppedError(WriteNotAppliedError):
         server_changes: Sequence[ServerChange] = (),
         stored_parts: Mapping[Path, ItemPart] | None = None,
     ) -> None:
+        """As ``WriteNotAppliedError``, with *refs_as_read*: the refs to put back."""
         self.refs_as_read = refs_as_read
         super().__init__(
             module_id,
@@ -1398,6 +1452,7 @@ class WriteOutcomeUnknownError(ModuleWriteError):
         module_name: str,
         plan: ModulePlan,
     ) -> None:
+        """The write of *plan*, with *detail* and the VCO's *answer* to the write."""
         self.detail = detail
         self.answer = answer
         super().__init__(module_id, version, module_name=module_name, plan=plan)
@@ -1469,6 +1524,7 @@ class LayerUnknownError(VcoError):
     def __init__(
         self, message: str, *, module_id: int | None, answer: dict[str, object]
     ) -> None:
+        """The error with *message*, the row's *module_id* and the row as *answer*."""
         self.module_id = module_id
         self.answer = answer
         super().__init__(message)
@@ -1489,6 +1545,7 @@ class GroupOwnershipError(VcoError):
     field: str
 
     def __init__(self, message: str, *, group: str, field: str) -> None:
+        """The error with *message*, the *group*'s name and the *field* edited."""
         self.group = group
         self.field = field
         super().__init__(message)
@@ -1509,6 +1566,7 @@ class ComposedModuleError(VcoError):
     module: str
 
     def __init__(self, message: str, *, module: str) -> None:
+        """The error with *message* and the wire name of the *module*."""
         self.module = module
         super().__init__(message)
 
@@ -1533,6 +1591,7 @@ class DetachedObjectError(VcoError):
     paths: list[Path]
 
     def __init__(self, message: str, paths: Sequence[Path] = ()) -> None:
+        """The error with *message* and the *paths* of the edits found by comparison."""
         self.paths = list(paths)
         super().__init__(message)
 

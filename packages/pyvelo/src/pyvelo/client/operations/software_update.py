@@ -1,3 +1,5 @@
+"""The client's ``softwareUpdate/`` methods: the software and firmware updates."""
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Protocol

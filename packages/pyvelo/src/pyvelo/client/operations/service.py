@@ -1,3 +1,5 @@
+"""The client's ``service/`` method: an enterprise's service license."""
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Protocol

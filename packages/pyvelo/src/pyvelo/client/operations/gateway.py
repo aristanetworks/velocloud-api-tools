@@ -1,3 +1,8 @@
+"""The client's ``gateway/`` and ``gatewayProperty/`` methods.
+
+The Edge assignments and the properties of gateways.
+"""
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Protocol

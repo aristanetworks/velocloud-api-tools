@@ -1,3 +1,9 @@
+"""The states, types, scopes and module names of a VCO configuration.
+
+``ConfigurationModuleName`` names the modules of a profile or an Edge's configuration,
+such as ``deviceSettings``, ``QOS`` and ``firewall``.
+"""
+
 from enum import StrEnum
 
 

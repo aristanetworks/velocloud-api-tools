@@ -1,3 +1,9 @@
+"""The requests and results of the ``diagnosticBundle/`` methods.
+
+A diagnostic bundle or packet capture requested from an Edge: its options, the
+bundle record, and its insert, read, update and delete.
+"""
+
 from __future__ import annotations
 
 from datetime import datetime

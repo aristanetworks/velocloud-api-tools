@@ -1,3 +1,10 @@
+"""The client's ``enterprise/`` and ``enterpriseUser/`` methods.
+
+An enterprise's Edges, configurations, services, object groups, segments,
+properties, alerts, routes and users, the hub roles of a cluster, and
+``determine_user_type``.
+"""
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Protocol

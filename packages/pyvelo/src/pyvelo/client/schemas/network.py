@@ -1,3 +1,9 @@
+"""The requests and results of the ``network/`` (operator) methods.
+
+The network's enterprises, configurations, Gateways and Gateway pools, operator users
+and API tokens.
+"""
+
 import uuid
 from typing import Annotated, Any
 

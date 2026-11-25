@@ -1,3 +1,8 @@
+"""Enterprise service, object group, security object and BGP filter types.
+
+Also the ``with`` options of the enterprise read methods.
+"""
+
 from enum import StrEnum
 
 from pyvelo.core.enums import NetworkSegmentType

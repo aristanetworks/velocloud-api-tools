@@ -1,3 +1,9 @@
+"""The client's ``monitoring/`` and ``linkQualityEvent/`` methods.
+
+What the VCO reports of Edges, links, peers, gateways and enterprises as they
+run: their status, aggregates, degradation and link quality.
+"""
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, Protocol
@@ -632,20 +638,15 @@ class MonitoringMixin(Protocol):
         effectiveness of SD-WAN traffic optimization on each link.
 
         Args:
-            vco_host: VCO hostname (e.g., "vco123.velocloud.net")
-            api_token: User's VCO API token
-            enterprise_id: Enterprise ID
-            start_time_ms: Start time in milliseconds since epoch
-            end_time_ms: End time in milliseconds since epoch
-            edge_id: Optional edge ID to filter by a specific Edge
-            max_samples: Optional maximum number of link quality events sampled to produce
-                the time series (default 50). Cannot be used with minutes_per_sample.
-            minutes_per_sample: Optional duration in minutes of the interval partitions
-                from which events are sampled. Cannot be used with max_samples.
-            individual_scores: Optional flag; when true, each sample in the time series
-                is populated with its own aggregate score values and quality state
-                distribution (default false)
-            links: Optional list of link IDs to filter results to specific WAN links
+            request: The Edge (``edge_id``, and ``enterprise_id`` when the
+                caller is an operator) and the ``interval`` to score.
+                ``max_samples`` is the most link quality events sampled to
+                produce the time series (default 50), and ``minutes_per_sample``
+                the length in minutes of the partitions events are sampled
+                from; give one of them at most. ``individual_scores`` fills
+                each sample with its own aggregate scores and quality state
+                distribution (default false). ``links`` limits the result to
+                those WAN link IDs.
 
         Returns:
             Array of link quality objects, one per link, each containing totalScore,

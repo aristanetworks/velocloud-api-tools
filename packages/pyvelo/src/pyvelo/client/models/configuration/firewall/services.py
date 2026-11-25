@@ -1,3 +1,5 @@
+"""The Edge services the firewall allows: SSH, SNMP, the local UI, ICMP, the console."""
+
 from typing import Annotated
 
 from pydantic import MISSING

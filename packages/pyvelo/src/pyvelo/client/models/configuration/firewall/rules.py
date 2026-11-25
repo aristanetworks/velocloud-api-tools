@@ -1,3 +1,5 @@
+"""The outbound, inbound and inbound IPv6 firewall rules: a match and an action."""
+
 import uuid
 from typing import Annotated, Any
 

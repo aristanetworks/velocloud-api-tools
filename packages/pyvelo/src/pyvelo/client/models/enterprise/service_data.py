@@ -1,3 +1,10 @@
+"""The ``data`` of each enterprise service type.
+
+Authentication (RADIUS, TACACS), DNS, data center, IaaS subscriptions, NetFlow
+collectors and filters, local UI credentials, hubs and hub clusters, NVS and
+WSS integrations, and prefix tags.
+"""
+
 import uuid
 from collections.abc import Generator
 from typing import Annotated, Any, ClassVar, Literal

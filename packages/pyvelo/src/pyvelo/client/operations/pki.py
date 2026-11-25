@@ -1,3 +1,9 @@
+"""The client's ``pki/`` methods.
+
+The certificate requests of Edges and gateways, an Edge's certificate renewal and
+the revoked certificates.
+"""
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Protocol

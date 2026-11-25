@@ -1,3 +1,11 @@
+"""``Analytics``: the VCO's monitoring and metrics methods, each as a ``MetricFrame``.
+
+Where the VCO has one method per grouping or statistic, one call here takes
+the choice as a parameter (``FlowGroupBy``, ``FirewallType``,
+``EnterpriseFirewallType``). A ``_metrics`` call totals the interval; a
+``_series`` call gives a row per sample, with a ``timestamp``.
+"""
+
 from __future__ import annotations
 
 import typing
@@ -117,11 +125,22 @@ if typing.TYPE_CHECKING:
 
 
 class Analytics:
+    """Analytics for one enterprise, read through *client*.
+
+    The ``collect_`` methods read every page of a list (events, edges,
+    configuration profiles) into one frame.
+    """
+
     __slots__: ClassVar[tuple[str, ...]] = ("_client", "_enterprise_id")
 
     def __init__(
         self, client: VcoClientProtocol, *, enterprise_id: int | None = None
     ) -> None:
+        """Analytics read through *client*, for the enterprise *enterprise_id*.
+
+        *enterprise_id* is sent as ``enterpriseId`` on each request that takes one,
+        and left out when it is None.
+        """
         self._client: VcoClientProtocol = client
         self._enterprise_id: int | None = enterprise_id
 
@@ -141,6 +160,12 @@ class Analytics:
         filter_values: list[str | int] | None = None,
         filters: list[EnterpriseFlowMetricsFilter] | None = None,
     ) -> MetricFrame:
+        """An edge's flow totals over *interval*, one row per group of *group_by*.
+
+        *filter_values* narrows the groups to those named: applications, devices,
+        categories, destinations or segments, by the grouping. Rows the VCO puts in
+        its "other" bucket are dropped; an empty VCO result gives an empty frame.
+        """
         return await _flow_metrics(
             self._client,
             edge_id,
@@ -167,6 +192,10 @@ class Analytics:
         filter_values: list[str | int] | None = None,
         filters: list[EnterpriseFlowMetricsFilter] | None = None,
     ) -> MetricFrame:
+        """An edge's flow series, one row per group of *group_by* and sample.
+
+        *filter_values* narrows the groups as in ``get_edge_flow_metrics``.
+        """
         return await _flow_series(
             self._client,
             edge_id,
@@ -195,6 +224,10 @@ class Analytics:
         sort: DestMetric | None = None,
         metrics: list[DestMetric] | None = None,
     ) -> MetricFrame:
+        """The enterprise's flow totals over *interval*, one row per group of *view_by*.
+
+        An empty VCO result gives an empty frame.
+        """
         request = GetEnterpriseFlowMetrics(
             interval=interval,
             view_by=view_by,
@@ -236,6 +269,7 @@ class Analytics:
         sort: LinkMetric | None = None,
         links: list[int] | None = None,
     ) -> MetricFrame:
+        """An edge's traffic totals over *interval*, one row per WAN link."""
         request = GetEdgeLinkMetrics(
             edge_id=edge_id,
             interval=interval,
@@ -272,6 +306,10 @@ class Analytics:
         sort: LinkMetric | None = None,
         links: list[int] | None = None,
     ) -> MetricFrame:
+        """An edge's traffic series over *interval*, one row per WAN link and sample.
+
+        ``link_name`` is the link's display name, else its ISP, else its link ID.
+        """
         request = GetEdgeLinkSeries(
             edge_id=edge_id,
             interval=interval,
@@ -316,6 +354,13 @@ class Analytics:
         *,
         metrics: list[AggregateEdgeLinkMetric] | None = None,
     ) -> MetricFrame:
+        """The enterprise's link metrics over *interval*, one row per link.
+
+        Each row has the link's identity fields beside its metrics, the nested link
+        as ``link``, and the whole VCO item as JSON in ``details``. A link that
+        belongs to another enterprise, or whose two link IDs differ, raises
+        ``VcoOperationError``.
+        """
         return await _aggregate_link_metrics(
             self._client,
             interval,
@@ -334,6 +379,7 @@ class Analytics:
         *,
         metrics: list[NetworkInterfaceMetric] | None = None,
     ) -> MetricFrame:
+        """An edge's interface counters over *interval*, one row per interface."""
         request = GetEdgeNetworkInterfaceMetrics(
             edge_id=edge_id,
             interval=interval,
@@ -367,6 +413,7 @@ class Analytics:
         metrics: list[NetworkInterfaceMetric] | None = None,
         max_samples: int | None = None,
     ) -> MetricFrame:
+        """An edge's interface counter series, one row per interface and sample."""
         request = GetEdgeNetworkInterfaceSeries(
             edge_id=edge_id,
             interval=interval,
@@ -391,6 +438,11 @@ class Analytics:
         *,
         metrics: list[SdwanPeerPathMetric] | None = None,
     ) -> MetricFrame:
+        """The SD-WAN paths from an edge to the peer *peer_logical_id*, a row each.
+
+        Each row has the path's status, its source and destination links, and a column
+        per metric of *metrics* (every ``SdwanPeerPathMetric`` when it is None).
+        """
         request = GetEdgeSdwanPeerPathMetrics(
             edge_id=edge_id,
             interval=interval,
@@ -439,6 +491,10 @@ class Analytics:
         metrics: list[SdwanPeerPathMetric] | None = None,
         max_samples: int | None = None,
     ) -> MetricFrame:
+        """The series of *paths* from an edge to the peer *peer_logical_id*.
+
+        The rows are grouped by *view_by*, by path when it is None.
+        """
         request = GetEdgeSdwanPeerPathSeries(
             edge_id=edge_id,
             interval=interval,
@@ -468,6 +524,11 @@ class Analytics:
         edge_id: int | None = None,
         metrics: list[NsdTunnelStatsMetric] | None = None,
     ) -> MetricFrame:
+        """The tunnel series of the non-SD-WAN destination *nsd_logical_id*.
+
+        With *edge_id*, only that edge's tunnels. The ``tunnel`` column is the
+        tunnel's public IP; a tunnel with no series gives no rows.
+        """
         metric_list = metrics or MISSING
 
         if edge_id is not None:
@@ -519,6 +580,10 @@ class Analytics:
         limit: int | None = None,
         sort: str | None = None,
     ) -> MetricFrame:
+        """An edge's firewall statistics of *type*, grouped by *view_by*.
+
+        *view_by* and *sort* are the values of the VCO method that *type* picks.
+        """
         return await _edge_fw_metrics(
             self._client,
             edge_id,
@@ -536,6 +601,7 @@ class Analytics:
         interval: ApiInterval,
         max_samples: int,
     ) -> MetricFrame:
+        """An edge's IDPS series over *interval*, by threat impact."""
         return await _edge_fw_series(
             self._client,
             edge_id,
@@ -557,6 +623,10 @@ class Analytics:
         limit: int | None = None,
         sort: str | None = None,
     ) -> MetricFrame:
+        """The enterprise's firewall statistics of *type* over *interval*.
+
+        *view_by* groups the rows, with the VCO method's own default when it is None.
+        """
         return await _ent_fw_metrics(
             self._client,
             interval,
@@ -578,6 +648,7 @@ class Analytics:
         *,
         metrics: list[StatusMetric] | None = None,
     ) -> MetricFrame:
+        """An edge's status metrics over *interval*: CPU, memory, flows, tunnels."""
         return await _health_metrics(
             self._client,
             edge_id,
@@ -593,6 +664,7 @@ class Analytics:
         *,
         metrics: list[StatusMetric] | None = None,
     ) -> MetricFrame:
+        """An edge's status series over *interval*, one row per sample."""
         return await _health_series(
             self._client,
             edge_id,
@@ -612,6 +684,10 @@ class Analytics:
         *,
         metrics: list[GatewayStatusMetric] | None = None,
     ) -> MetricFrame:
+        """A gateway's status metrics over *interval*, as one row.
+
+        A metric the VCO does not give is null.
+        """
         request = GetGatewayStatusMetrics(
             gateway_id=gateway_id,
             interval=interval,
@@ -643,6 +719,7 @@ class Analytics:
         *,
         metrics: list[GatewayStatusMetric] | None = None,
     ) -> MetricFrame:
+        """A gateway's status series over *interval*, one row per sample."""
         request = GetGatewayStatusSeries(
             gateway_id=gateway_id,
             interval=interval,
@@ -673,6 +750,12 @@ class Analytics:
         max_samples: int | None = None,
         links: list[int] | None = None,
     ) -> MetricFrame:
+        """An edge's link quality (QoE) over *interval*, one row per link and sample.
+
+        Each row has the quality before and after per traffic type
+        (``quality_before_<type>``, ``quality_after_<type>``) and the link's score per
+        traffic type (``score_<type>``).
+        """
         request = GetLinkQualityEvents(
             edge_id=edge_id,
             interval=interval,
@@ -729,6 +812,7 @@ class Analytics:
         *,
         metrics: list[NniMetric] | None = None,
     ) -> MetricFrame:
+        """The enterprise's NNI counters over *interval*, one row per gateway NNI."""
         request = GetEnterpriseNniMetrics(
             enterprise_id=(
                 self._enterprise_id if self._enterprise_id is not None else MISSING
@@ -757,6 +841,7 @@ class Analytics:
         metrics: list[NniMetric] | None = None,
         limit: int | None = None,
     ) -> MetricFrame:
+        """The enterprise's NNI series, one row per gateway NNI and sample."""
         request = GetEnterpriseNniSeries(
             enterprise_id=(
                 self._enterprise_id if self._enterprise_id is not None else MISSING
@@ -819,6 +904,12 @@ class Analytics:
         max_items: int = 10_000,
         sort_by: list[EventSorting] | None = None,
     ) -> MetricFrame:
+        """The enterprise's events over *interval*, read page by page up to *max_items*.
+
+        *event_types* and *severity* keep the events of those types and severities,
+        and *string_filters* add filters of their own; an event must match them all.
+        *edge_ids* keeps the events of those edges.
+        """
         filters: list[
             EnterpriseEventTypeFilter
             | EnterpriseEventSeverityFilter
@@ -1001,6 +1092,11 @@ class Analytics:
         with_edge_count: bool = True,
         max_items: int | None = None,
     ) -> MetricFrame:
+        """The enterprise's configuration profiles, one row each.
+
+        With *with_edge_count*, the VCO counts each profile's edges into
+        ``edge_count``. *max_items* cuts the rows after they are read.
+        """
         with_: list[GetEnterpriseConfigurationsWith] = []
         if with_edge_count:
             with_.append(GetEnterpriseConfigurationsWith.EDGE_COUNT)

@@ -1,3 +1,5 @@
+"""The client's ``firewall/`` methods: the firewall logs, rules and categories."""
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Protocol

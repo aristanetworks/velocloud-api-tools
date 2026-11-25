@@ -45,16 +45,6 @@ ignore = [
     "ASYNC240",
     "B905",
     "C901",
-    "D100",
-    "D101",
-    "D102",
-    "D103",
-    "D104",
-    "D105",
-    "D106",
-    "D107",
-    "D205",
-    "D417",
     "DTZ001",
     "DTZ005",
     "E501",
@@ -101,6 +91,21 @@ ignore = [
     "D1",      # a test's name says what it checks
     "PLR2004", # expected values are written inline
     "INP001",  # tests are not a package; pytest puts tests/support on the path
+]
+"packages/pyvelo/src/pyvelo/client/schemas/**" = [
+    # Wire classes: the class name and the VCO field names describe them. D100
+    # and D104 stay on, so each module and package still has a docstring.
+    "D101", "D102", "D103", "D105", "D106", "D107",
+]
+"packages/pyvelo/src/pyvelo/client/models/**" = [
+    # Wire classes: the class name and the VCO field names describe them. D100
+    # and D104 stay on, so each module and package still has a docstring.
+    "D101", "D102", "D103", "D105", "D106", "D107",
+]
+"packages/pyvelo/src/pyvelo/client/enums/**" = [
+    # Wire classes: the class name and the VCO field names describe them. D100
+    # and D104 stay on, so each module and package still has a docstring.
+    "D101", "D102", "D103", "D105", "D106", "D107",
 ]
 "packages/pyvelo-examples/**" = [
     "T201",    # the examples are scripts that print their results

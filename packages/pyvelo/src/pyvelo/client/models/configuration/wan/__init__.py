@@ -1,3 +1,5 @@
+"""The ``WAN`` module's data, re-exported from its submodules."""
+
 from .common import (
     BandwidthMeasurement,
     DiscoveryMode,

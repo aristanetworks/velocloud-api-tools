@@ -1,3 +1,5 @@
+"""The requests and results of ``branding/getBrandingAsset`` and its blob read."""
+
 from typing import Annotated, Any
 
 from pydantic import MISSING, model_validator

@@ -1,3 +1,5 @@
+"""The ``WAN`` module's data: the Edge's networks and links."""
+
 from typing import Annotated
 
 from pydantic import MISSING

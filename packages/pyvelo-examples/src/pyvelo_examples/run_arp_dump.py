@@ -40,6 +40,8 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class ArpEntry:
+    """One row of an edge's ARP table."""
+
     interface: str
     address: str
     mac: str
@@ -49,6 +51,8 @@ class ArpEntry:
 
 @dataclass
 class EdgeArpResult:
+    """An edge's ARP entries, or why the diagnostic gave none."""
+
     edge_name: str
     entries: list[ArpEntry] = field(default_factory=list)
     error: str | None = None
@@ -142,6 +146,7 @@ class ArpDumpArgs:
 
 
 def parse_args(argv: Sequence[str] | None = None) -> ArpDumpArgs:
+    """Read the command line options."""
     parser = argparse.ArgumentParser(
         description="Run ARP_DUMP on connected edges and display results."
     )
@@ -178,6 +183,7 @@ def parse_args(argv: Sequence[str] | None = None) -> ArpDumpArgs:
 
 
 def render_results(results: list[EdgeArpResult], vco_host: str) -> None:
+    """Print a summary table of the edges and a table of every ARP entry."""
     console = Console()
 
     # Summary table.
@@ -234,6 +240,11 @@ def render_results(results: list[EdgeArpResult], vco_host: str) -> None:
 
 
 async def main() -> None:
+    """Run ARP_DUMP over the WebSocket on each connected edge and print the results.
+
+    At most ``--concurrency`` diagnostics run at once. The enterprise is read from
+    the token when ``--enterprise-id`` is not given.
+    """
     args = parse_args()
     logging.basicConfig(
         level=logging.DEBUG if args.verbose else logging.INFO,

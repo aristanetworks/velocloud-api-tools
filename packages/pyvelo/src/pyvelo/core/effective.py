@@ -69,6 +69,10 @@ class Resolved[T]:
     source: str
 
     def __bool__(self) -> bool:
+        """Raise ``TypeError``: a ``Resolved`` is not a condition.
+
+        The message says to test ``.value`` or read ``.origin`` instead.
+        """
         raise TypeError(
             f"a Resolved ({self.source}) is not a condition: it holds the value "
             "with its origin and source, and a test of it would be true "

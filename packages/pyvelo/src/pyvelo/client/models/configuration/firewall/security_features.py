@@ -1,3 +1,5 @@
+"""The firewall's network protection settings: TCP, ICMP and IP based attack checks."""
+
 from pydantic import Field
 
 from pyvelo.core import VcoModel

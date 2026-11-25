@@ -57,6 +57,7 @@ class SaveValidationError(IntentError):
     """
 
     def __init__(self, errors: list[ValidationError]) -> None:
+        """Keep *errors* and name each one's path and message in the message."""
         self.errors: list[ValidationError] = list(errors)
         summary = ", ".join(f"{e.path}: {e.message}" for e in self.errors)
         super().__init__(
@@ -80,6 +81,11 @@ class LayerNotSavedError(IntentError):
         fields: Mapping[str, Sequence[str]],
         profile_id: int | None = None,
     ) -> None:
+        """Name the edits to *layer*, which a state saving its *saved* layer drops.
+
+        *profile_id*, when given, goes in the ``load_profile`` call the message
+        suggests for a profile edit.
+        """
         self.layer: str = layer
         self.fields: dict[str, list[str]] = {
             module: list(paths) for module, paths in fields.items()
@@ -128,6 +134,7 @@ class SaveStepError(IntentError):
         steps_in_place: Sequence[HubStep] = (),
         written: Sequence[str] = (),
     ) -> None:
+        """Say where the save stopped, and why (*reason*), and what it sent before."""
         self.step: HubStep | None = step
         self.module_name: str | None = module_name
         self.steps_done: tuple[HubStep, ...] = tuple(steps_done)

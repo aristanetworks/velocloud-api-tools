@@ -37,6 +37,7 @@ class NetworkServiceResolver(BaseResolver[NetworkServiceIdentity]):
     requires_load: ClassVar[bool] = True
 
     def __init__(self, client: VcoClientProtocol) -> None:
+        """An unloaded resolver that reads the services through *client*."""
         super().__init__(client)
         self._services: list[NetworkServiceIdentity] = []
 

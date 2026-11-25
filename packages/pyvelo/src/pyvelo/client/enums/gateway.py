@@ -1,3 +1,5 @@
+"""Gateway service states and the ``with`` options of the migration Gateway read."""
+
 from enum import StrEnum
 
 

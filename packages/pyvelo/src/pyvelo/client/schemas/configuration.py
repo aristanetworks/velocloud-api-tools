@@ -1,3 +1,12 @@
+"""A configuration and its module rows, and the ``configuration/`` method models.
+
+A profile's or an Edge's configuration holds module rows (``deviceSettings``, ``WAN``,
+``QOS``, ``firewall``, ``controlPlane`` and more), each typed by its layer ``L``. A row
+keeps the JSON it was read from (``capture_key``), so a module write starts from the
+raw data. Also the requests and results of the module reads, inserts and updates, the
+application lists, and configuration delete.
+"""
+
 from __future__ import annotations
 
 import copy

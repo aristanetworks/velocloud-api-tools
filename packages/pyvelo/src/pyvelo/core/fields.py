@@ -57,6 +57,8 @@ CONTEXT_NOT_SET: object = object()  # sentinel for "use field's own default"
 
 
 class ConfigContext(StrEnum):
+    """The level a configuration is read or written at: an Edge's or a profile's."""
+
     EDGE = "edge"
     PROFILE = "profile"
 
@@ -77,6 +79,7 @@ class ContextDefaults:
     profile: object = CONTEXT_NOT_SET
 
     def for_level(self, level: ConfigContext) -> object:
+        """The entry for *level*: ``edge`` for ``EDGE``, else ``profile``."""
         return self.edge if level is ConfigContext.EDGE else self.profile
 
 
@@ -334,6 +337,15 @@ def DefaultingModel[T](
     *,
     default_factory: Callable[..., Any] | None = None,
 ) -> BeforeValidator:
+    """Annotated marker: validate as *model_type*, and fall back to a default.
+
+    The default is what *default_factory* returns, else ``model_type()``. The bad
+    value is appended to the validation context's ``audit`` list, when it has one.
+    Not in a patch (see ``_in_patch``): there a failure raises.
+
+    Usage: ``networks: Annotated[list[BgpNetwork], DefaultingModel(list[BgpNetwork],
+    default_factory=list)]``
+    """
     adapter: TypeAdapter[Any] = TypeAdapter(cast("Any", model_type))
 
     if default_factory is None:
@@ -390,6 +402,7 @@ class Alias:
     __slots__: ClassVar[tuple[str, ...]] = ("key",)
 
     def __init__(self, key: str) -> None:
+        """*key* is the VCO's JSON key for the field."""
         self.key: str = key
 
 
@@ -415,8 +428,11 @@ if TYPE_CHECKING:
         ) -> Resolved[T]: ...
         @overload
         def __get__(self, obj: Layered[Composed], owner: type | None = None) -> T: ...
-        def __get__(self, obj: object, owner: type | None = None) -> object: ...
-        def __set__(self, obj: object, value: T) -> None: ...
+        def __get__(self, obj: object, owner: type | None = None) -> object:
+            """The field's value, typed per layer by the overloads above."""
+
+        def __set__(self, obj: object, value: T) -> None:
+            """Assign the field a ``T``."""
 
     class ProfileOnly[T]:
         """Annotated marker: field absent at edge level.
@@ -436,8 +452,11 @@ if TYPE_CHECKING:
         ) -> Resolved[T]: ...
         @overload
         def __get__(self, obj: Layered[Composed], owner: type | None = None) -> T: ...
-        def __get__(self, obj: object, owner: type | None = None) -> object: ...
-        def __set__(self, obj: object, value: T) -> None: ...
+        def __get__(self, obj: object, owner: type | None = None) -> object:
+            """The field's value, typed per layer by the overloads above."""
+
+        def __set__(self, obj: object, value: T) -> None:
+            """Assign the field a ``T``."""
 
 else:
 
@@ -450,6 +469,7 @@ else:
         """
 
         def __class_getitem__(cls, item: object) -> object:
+            """``EdgeOnly[item]``: the ``Kind.EDGE_ONLY`` carrier of *item*."""
             from .layers import Kind, carrier  # noqa: PLC0415 (layers imports this module)
 
             return carrier(Kind.EDGE_ONLY, item)
@@ -463,6 +483,7 @@ else:
         """
 
         def __class_getitem__(cls, item: object) -> object:
+            """``ProfileOnly[item]``: the ``Kind.PROFILE_ONLY`` carrier of *item*."""
             from .layers import Kind, carrier  # noqa: PLC0415 (layers imports this module)
 
             return carrier(Kind.PROFILE_ONLY, item)
@@ -474,6 +495,7 @@ class Normalizer:
     __slots__: ClassVar[tuple[str, ...]] = ("fn",)
 
     def __init__(self, fn: Callable[..., Any]) -> None:
+        """*fn* takes the value, or the value and the active ``ConfigContext``."""
         self.fn: Callable[..., Any] = fn
 
 
@@ -485,6 +507,7 @@ class ContextDefault:
     def __init__(
         self, *, edge: Any = CONTEXT_NOT_SET, profile: Any = CONTEXT_NOT_SET
     ) -> None:
+        """Each level not given uses the field's own default (``CONTEXT_NOT_SET``)."""
         self.edge: Any = edge
         self.profile: Any = profile
 
@@ -508,6 +531,7 @@ class KeyField:
     def __init__(
         self, *key_paths: str, alt: str | None = None, label: str | None = None
     ) -> None:
+        """Raises ``TypeError`` when no key path is given."""
         if not key_paths:
             raise TypeError("KeyField needs at least one key path")
         self.key_paths: tuple[str, ...] = key_paths
@@ -597,6 +621,7 @@ class Resolvable[IdentityT]:
     def __init__(
         self, identity_type: type[IdentityT], accessor: Callable[[IdentityT], object]
     ) -> None:
+        """Probe *accessor* for the one field it reads, kept as ``attribute``."""
         self.identity_type: type[IdentityT] = identity_type
         self.accessor: Callable[[IdentityT], object] = accessor
         self.attribute: str = _probe_accessor(identity_type, accessor)
@@ -756,6 +781,7 @@ class OwnsRef:
     level: ConfigContext | None = None
 
     def __post_init__(self) -> None:
+        """Raise ``TypeError`` when *by* is not a field of the *identity* dataclass."""
         if dataclasses.is_dataclass(self.identity):
             field_names = {f.name for f in dataclasses.fields(self.identity)}
             if self.by not in field_names:
@@ -852,6 +878,10 @@ class RefOnly:
     def __get_pydantic_core_schema__(
         self, source: Any, handler: GetCoreSchemaHandler
     ) -> CoreSchema:
+        """The field's schema, after a validator that leaves validated input unread.
+
+        The input is kept only from a patch; otherwise the field is ``MISSING``.
+        """
         return core_schema.with_info_before_validator_function(
             _ref_only_is_not_read, handler(source)
         )

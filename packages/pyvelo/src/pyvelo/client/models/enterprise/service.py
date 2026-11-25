@@ -1,3 +1,5 @@
+"""An enterprise service's usage: the configurations, profiles and Edges that use it."""
+
 import uuid
 from typing import Annotated, Any
 

@@ -182,6 +182,11 @@ class MockVcoClient(VcoClient):
         *,
         conditional_check: bool = False,
     ) -> None:
+        """A client over a new store, seeded with *stack* when one is given.
+
+        *edges* is what ``get_enterprise_edges`` answers, and
+        *conditional_check* turns on the store's check of the ``version`` sent.
+        """
         self.store = ModuleStore(conditional_check=conditional_check)
         super().__init__(_HOST, "test-token", transport=make_transport(self.store))
         self.store.add_object(

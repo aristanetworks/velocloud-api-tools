@@ -105,12 +105,15 @@ class Binding:
     parent: Layered[Profile] | None
 
     def __init__(self, parent: Layered[Profile] | None) -> None:
+        """*parent* is the profile-layer model, or ``None`` when there is none."""
         self.parent = parent
 
     def __deepcopy__(self, memo: dict[int, Any]) -> Self:
+        """The binding itself: a deep copy inherits from the same profile."""
         return self
 
     def __copy__(self) -> Self:
+        """The binding itself, as a deep copy keeps it."""
         return self
 
 
@@ -141,6 +144,7 @@ class Owned[T]:
     _encoding: Encoding | None
 
     def __init__(self, stored: T | None | MISSING = MISSING) -> None:
+        """An ``Owned`` no model holds yet; *stored* is ``MISSING`` unless given."""
         self.stored = stored
         self._owner = None
         self._field = ""
@@ -160,6 +164,11 @@ class Owned[T]:
 
     @property
     def is_local(self) -> bool:
+        """Whether *stored* counts as the edge overriding the profile.
+
+        ``MISSING`` and ``None`` never do; on a ``ByFlag`` field the stored object's
+        flag decides, and any other stored value does.
+        """
         stored = self.stored
         if stored is MISSING or stored is None:
             return False
@@ -170,6 +179,7 @@ class Owned[T]:
 
     @property
     def local(self) -> T | MISSING:
+        """*stored* when it is local (``is_local``), else ``MISSING``."""
         return self.stored if self.is_local else MISSING  # pyright: ignore[reportReturnType]
 
     # -- the intents ----------------------------------------------------------
@@ -315,10 +325,16 @@ class Owned[T]:
             self.stored = self._flagged(value)  # pyright: ignore[reportAttributeAccessIssue]
 
     def __deepcopy__(self, memo: dict[int, Any]) -> Owned[T]:
+        """A copy of *stored* in an ``Owned`` that belongs to no model."""
         # The copy belongs to no model until the model that holds it attaches it.
         return Owned(copy.deepcopy(self.stored, memo))
 
     def __bool__(self) -> bool:
+        """Raise ``TypeError``: an ``Owned`` is not a condition.
+
+        The message names what to read instead: ``local``, ``stored``, ``is_local``
+        or the effective view's value.
+        """
         key = f" ({self._field})" if self._field else ""
         raise TypeError(
             f"an Owned{key} is not a condition: it holds what the edge stores "
@@ -540,12 +556,14 @@ class OwnedGroup:
     """
 
     def __init__(self, name: str, *, anchor: str, bundle: type[VcoModel]) -> None:
+        """The group *name*, its *anchor* member and its *bundle* model."""
         self.name: str = name
         self.anchor: str = anchor
         self.bundle: type[VcoModel] = bundle
         self.attribute: str = name
 
     def __set_name__(self, owner: type, name: str) -> None:
+        """Keep the class attribute's name, which the handle's messages use."""
         self.attribute = name
 
     @overload
@@ -555,6 +573,10 @@ class OwnedGroup:
     def __get__(
         self, obj: Layered[Any] | None, owner: type | None = None
     ) -> Self | GroupHandle:
+        """The group's handle on an edge-layer model, the declaration on the class.
+
+        On a model of any other layer it raises ``AttributeError``.
+        """
         if obj is None:
             return self
         from .layers import Edge  # noqa: PLC0415 (layers imports this module)
@@ -569,6 +591,7 @@ class OwnedGroup:
         return self.handle(obj)
 
     def handle(self, owner: Layered[Edge]) -> GroupHandle:
+        """The handle of this group on the edge-layer model *owner*."""
         return GroupHandle(self, owner)
 
     def members(self, cls: type[Layered[Any]]) -> tuple[str, ...]:
@@ -644,6 +667,7 @@ class GroupHandle:
     """The coupled group *group* of one edge-layer model: ``is_local``, ``inherit``, ``set_local`` and ``localize`` for every member at once."""
 
     def __init__(self, group: OwnedGroup, owner: Layered[Edge]) -> None:
+        """The handle of *group* on the edge-layer model *owner*."""
         self._group: OwnedGroup = group
         self._owner: Layered[Edge] = owner
 
@@ -820,6 +844,7 @@ def item_identity(
 
 
 def item_value_at(item: object, path: str) -> object:
+    """The value at the dotted python *path* in *item*; ``None`` past an absent step."""
     value = item
     for part in path.split("."):
         value = getattr(value, part, None)

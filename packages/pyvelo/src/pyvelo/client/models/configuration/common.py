@@ -1,3 +1,11 @@
+"""What the configuration modules share: segment metadata, group refs, segment lookup.
+
+``SegmentMetadata`` is the ``segment`` descriptor of a segment entry. The functions
+find a segment entry of a module by name or ID, add an empty one a layer lacks
+(``get_or_create_segment``), and bind a layer's data to the profile module it
+inherits from (``bind_profile_layers``).
+"""
+
 import copy
 import uuid
 from collections.abc import Mapping, Sequence

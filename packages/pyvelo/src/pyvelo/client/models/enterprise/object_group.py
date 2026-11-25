@@ -1,3 +1,5 @@
+"""The entries of an address group and a port group, one class per entry kind."""
+
 from typing import Annotated, Any, Literal
 
 from pydantic import Discriminator, Field, Tag

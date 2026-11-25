@@ -289,6 +289,7 @@ class Path(str):
     parts: tuple[PathPart, ...]
 
     def __new__(cls, parts: Iterable[PathPart]) -> Self:
+        """The path of *parts*; ``TypeError`` for text, which ``Path.parse`` reads."""
         if isinstance(parts, str):
             raise TypeError("Path takes parts; use Path.parse() for text")
         parts = tuple(parts)
@@ -318,6 +319,7 @@ class Path(str):
         return cls(parts)
 
     def child(self, part: PathPart) -> Self:
+        """This path with *part* appended."""
         return type(self)((*self.parts, part))
 
 
@@ -389,6 +391,7 @@ class RawChange:
         place: ItemPlace | None = None,
         moves: tuple[ItemMove, ...] | None = None,
     ) -> None:
+        """*path* may be a ``Path`` or its text, which is parsed."""
         object.__setattr__(
             self, "path", path if isinstance(path, Path) else Path.parse(path)
         )
@@ -848,6 +851,10 @@ def raw_changes(
 def collect_changes(
     out: list[RawChange], path: Path, old: object, new: object, node: Node
 ) -> None:
+    """Append to *out* the changes from *old* to *new* under *path*.
+
+    *node* is the model's shape at *path*; ``raw_changes`` describes the walk.
+    """
     if old == new:
         return
     if is_dict(old) and is_dict(new):

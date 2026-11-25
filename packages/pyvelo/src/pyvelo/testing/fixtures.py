@@ -79,7 +79,10 @@ def make_module_json(
 
 
 class FakeSegmentData:
+    """The ``data`` of a ``FakeSegment``: only its ``segment_id``."""
+
     def __init__(self, segment_id: int) -> None:
+        """Data holding *segment_id*."""
         self.segment_id: int = segment_id
 
 
@@ -94,6 +97,7 @@ class FakeSegment:
         segment_id: int,
         type_: NetworkSegmentType = NetworkSegmentType.REGULAR,
     ) -> None:
+        """A segment with these fields, its *segment_id* under ``data``."""
         self.id_: int = id_
         self.name: str = name
         self.logical_id: uuid.UUID = logical_id
@@ -105,6 +109,7 @@ class FakeEdge:
     """Minimal edge object for EdgeResolver tests."""
 
     def __init__(self, name: str, id_: int, logical_id: uuid.UUID) -> None:
+        """An edge with these three fields and nothing else."""
         self.name: str = name
         self.id_: int = id_
         self.logical_id: uuid.UUID = logical_id

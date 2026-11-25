@@ -62,22 +62,27 @@ class DiffResult:
 
     @cached_property
     def added(self) -> list[Added]:
+        """The items in desired and not in current, in the order of ``changes``."""
         return [c for c in self.changes if isinstance(c, Added)]
 
     @cached_property
     def removed(self) -> list[Removed]:
+        """The items in current and not in desired, in the order of ``changes``."""
         return [c for c in self.changes if isinstance(c, Removed)]
 
     @cached_property
     def modified(self) -> list[Modified]:
+        """The items in both whose fields differ, in the order of ``changes``."""
         return [c for c in self.changes if isinstance(c, Modified)]
 
     @cached_property
     def unchanged(self) -> list[Unchanged]:
+        """The items identical in both, in the order of ``changes``."""
         return [c for c in self.changes if isinstance(c, Unchanged)]
 
     @property
     def has_changes(self) -> bool:
+        """Whether any item was added, removed or modified."""
         return any(not isinstance(c, Unchanged) for c in self.changes)
 
 

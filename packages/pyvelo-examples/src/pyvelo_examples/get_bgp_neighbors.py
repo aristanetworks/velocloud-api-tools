@@ -30,6 +30,8 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class BgpNeighborRow:
+    """One BGP neighbor of an edge segment, as the outputs print it."""
+
     edge_name: str
     edge_id: int
     segment_name: str
@@ -43,6 +45,8 @@ class BgpNeighborRow:
 
 @dataclass
 class BgpNeighborArgs(argparse.Namespace):
+    """The command line options, with their defaults."""
+
     enterprise_id: int = field(init=False)
     env: str | None = None
     segment: str | None = None
@@ -52,6 +56,7 @@ class BgpNeighborArgs(argparse.Namespace):
 
 
 def parse_args(argv: Sequence[str] | None = None) -> BgpNeighborArgs:
+    """Read the command line options."""
     parser = argparse.ArgumentParser(
         description="Get all BGP neighbors configured across edges in an enterprise."
     )
@@ -245,6 +250,10 @@ def output_json(rows: list[BgpNeighborRow]) -> None:
 
 
 async def main() -> None:
+    """Print the BGP neighbors of every edge in the enterprise, in the chosen format.
+
+    The edges are read at most ``--concurrency`` at a time.
+    """
     args = parse_args()
     logging.basicConfig(
         level=logging.DEBUG if args.verbose else logging.INFO,

@@ -1,3 +1,5 @@
+"""A WAN network of the ``WAN`` module."""
+
 import uuid
 from typing import Annotated
 

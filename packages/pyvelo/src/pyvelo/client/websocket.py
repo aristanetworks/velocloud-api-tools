@@ -77,6 +77,12 @@ class PendingDiagnostic[T]:
             Callable[[], Coroutine[Any, Any, asyncio.Future[dict[str, Any]]]] | None
         ),
     ) -> None:
+        """A wait of *timeout* seconds for *future*: *test*'s result on *logical_id*.
+
+        ``submit_diagnostic`` passes *_on_timeout*, which forgets the request after
+        a timeout, and *_resubmit*, which sends it again for each of the
+        *max_retries*.
+        """
         self._future: asyncio.Future[dict[str, Any]] = future
         self.test: str = test
         self.logical_id: uuid.UUID = logical_id
@@ -90,6 +96,7 @@ class PendingDiagnostic[T]:
 
     @property
     def done(self) -> bool:
+        """True when the request has its result or its error."""
         return self._future.done()
 
     async def _wait(self) -> dict[str, Any]:
@@ -130,6 +137,7 @@ class PendingDiagnostic[T]:
         raise AssertionError("unreachable")  # pragma: no cover
 
     def __await__(self):
+        """The diagnostic's result, after the retries ``max_retries`` allows."""
         return self._wait().__await__()
 
 
@@ -147,6 +155,7 @@ class VcoWebSocket:
         vco_fqdn: str,
         http_client: httpx.AsyncClient,
     ) -> None:
+        """A connection to the VCO at *vco_fqdn*, made with *http_client* on entry."""
         self._vco_fqdn: str = vco_fqdn
         self._http: httpx.AsyncClient = http_client
 
@@ -173,6 +182,7 @@ class VcoWebSocket:
     # -- Context manager -----------------------------------------------------
 
     async def __aenter__(self) -> Self:
+        """The WebSocket, connected, with its session token and its reader running."""
         await self._open()
         return self
 
@@ -182,6 +192,7 @@ class VcoWebSocket:
         _exc_val: BaseException | None,
         _exc_tb: TracebackType | None,
     ) -> None:
+        """Stop the reader loop, fail every pending request and close the connection."""
         await self._close()
 
     # -- Connection lifecycle ------------------------------------------------

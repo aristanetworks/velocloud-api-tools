@@ -103,13 +103,19 @@ class IdentityResolver(Protocol):
     Satisfied by ``pyvelo.config.resolver.ResolverRegistry``.
     """
 
-    def lookup[T](self, key: type[T], name: str, /) -> T: ...
+    def lookup[T](self, key: type[T], name: str, /) -> T:
+        """The loaded identity of type *key* named *name*."""
+        ...
 
     def lookup_by[T](
         self, identity_type: type[T], accessor: Callable[[T], object], value: object, /
-    ) -> T: ...
+    ) -> T:
+        """The first loaded *identity_type* whose *accessor* gives *value*."""
+        ...
 
-    def resolver_for(self, identity_type: type[object], /) -> object | None: ...
+    def resolver_for(self, identity_type: type[object], /) -> object | None:
+        """The resolver registered for *identity_type*, or None when there is none."""
+        ...
 
 
 class IdentityLookup(Protocol):
@@ -120,7 +126,9 @@ class IdentityLookup(Protocol):
 
     def lookup_by[T](
         self, identity_type: type[T], accessor: Callable[[T], object], value: object, /
-    ) -> T: ...
+    ) -> T:
+        """The first loaded *identity_type* whose *accessor* gives *value*."""
+        ...
 
 
 # ---------------------------------------------------------------------------
@@ -133,10 +141,12 @@ class IdentityLookup(Protocol):
 
 
 def is_list(value: object) -> TypeIs[list[object]]:
+    """Whether *value* is a list, narrowed to a list of ``object``."""
     return isinstance(value, list)
 
 
 def is_dict(value: object) -> TypeIs[dict[object, object]]:
+    """Whether *value* is a dict, narrowed to a dict of ``object`` keys and values."""
     return isinstance(value, dict)
 
 
@@ -552,6 +562,16 @@ def _register_parametrization(cls: type[BaseModel]) -> None:
 
 
 class VcoModel(BaseModel):
+    """The base of every VCO model: python field names, camelCase on the wire.
+
+    A model validates by either name and dumps by alias. A dump leaves out the
+    fields absent at the config level (the pydantic context's ``config_level``, or
+    the model's own from ``for_context``), and a compact dump
+    (``context={"compact": True}``) leaves out MISSING and default values too.
+    ``merge_patch`` merges a patch into the model in place, and a model a write
+    replaced (``mark_detached``) refuses edits.
+    """
+
     model_config: ClassVar[ConfigDict] = ConfigDict(
         alias_generator=to_camel,
         use_enum_values=True,
@@ -1092,6 +1112,7 @@ class ListItemType:
         )
 
     def validate(self, value: object, *, context: JsonObject | None = None) -> VcoModel:
+        """*value* as the element type; for a union, the discriminator picks one."""
         if len(self.variants) == 1:
             return self.variants[0].model_validate(value, context=context)
         return self._union_adapter.validate_python(value, context=context)
@@ -1103,6 +1124,7 @@ class ListItemType:
 
     @functools.cached_property
     def fields(self) -> dict[str, FieldInfo]:
+        """The fields of every variant; for a name two variants have, the first's."""
         return _merged_fields(self.variants)
 
 
@@ -1262,6 +1284,7 @@ class ContextView:
     def __init__(
         self, model_cls: type[VcoModel], config_context: ConfigContext
     ) -> None:
+        """A view of the fields of *model_cls* at *config_context*, read as asked."""
         self._model_cls: type[VcoModel] = model_cls
         self._context: ConfigContext = config_context
         self._cache: dict[str, ContextFieldInfo] = {}
@@ -1284,11 +1307,13 @@ class ContextView:
         return info
 
     def __getattr__(self, name: str) -> ContextFieldInfo:
+        """The field *name* at this view's level; a name starting ``_`` raises."""
         if name.startswith("_"):
             raise AttributeError(name)
         return self._resolve(name)
 
     def __iter__(self) -> Iterator[tuple[str, ContextFieldInfo]]:
+        """Each field's name and its metadata at this level, in field order."""
         for name in self._model_cls.model_fields:
             yield name, self._resolve(name)
 
@@ -1299,6 +1324,12 @@ class ContextView:
 
 
 class PaginatedVcoModel(VcoModel):
+    """A request of a paginated VCO method.
+
+    ``next_page_link`` is the cursor of the page to ask for. The client records
+    where paging over the request stopped (``record_page_cursor``).
+    """
+
     next_page_link: str | MISSING = Field(default=MISSING)  # ty: ignore[invalid-type-form]
 
     _max_pages: int = PrivateAttr(default=0)
@@ -1336,6 +1367,8 @@ class PaginatedVcoModel(VcoModel):
 
 
 class JsonRpcRequest[ParamsT](VcoModel):
+    """A JSON-RPC 2.0 request of *method* with *params*; its ``id`` is a time in ms."""
+
     jsonrpc: Literal["2.0"] = Field(default="2.0")
     id_: Annotated[int | str | None, Alias("id")] = Field(
         default_factory=lambda: int(1000 * dt.datetime.now().timestamp())
@@ -1345,12 +1378,16 @@ class JsonRpcRequest[ParamsT](VcoModel):
 
 
 class JsonRpcError(VcoModel):
+    """The error of a JSON-RPC response: its code, its message and the VCO's data."""
+
     code: int
     message: str
     data: dict[str, object] | str | list[object] | None = Field(default=None)
 
 
 class JsonRpcResponse[ResultT](VcoModel):
+    """A JSON-RPC 2.0 response, with its ``result`` or its ``error``."""
+
     jsonrpc: Literal["2.0"] = Field(default="2.0")
     id_: Annotated[int | str | None, Alias("id")] = None
     result: ResultT | None = Field(default=None)
@@ -1363,6 +1400,8 @@ class JsonRpcResponse[ResultT](VcoModel):
 
 
 class PaginationMetadata(VcoModel):
+    """The ``metaData`` of a page: whether ``more`` pages follow, and their cursors."""
+
     limit: int | None = None
     more: bool
     next_page_link: str | None = Field(default=None)
@@ -1370,16 +1409,22 @@ class PaginationMetadata(VcoModel):
 
 
 class PaginatedResult[ItemT: BaseModel](VcoModel):
+    """One page of a paginated VCO method: its ``data`` and its ``metaData``."""
+
     metadata: Annotated[PaginationMetadata, Alias("metaData")]
     data: list[ItemT]
 
 
 class RowsModifiedConfirmation(VcoModel):
+    """The answer of a VCO write: the count of rows it changed, or an error."""
+
     error: str | None = None
     rows: int | None = None
 
 
 class InsertionConfirmation(VcoModel):
+    """The answer of a VCO insert: the new row's ``id``."""
+
     id_: Annotated[int, Alias("id")]
 
 
@@ -1389,6 +1434,11 @@ class InsertionConfirmation(VcoModel):
 
 
 class ApiFilter(VcoModel):
+    """One condition of a VCO filter: a ``field``, an ``operator`` and a ``value``.
+
+    ``fieldName`` and ``op`` are read as ``field`` and ``operator``.
+    """
+
     field: str = Field(validation_alias=AliasChoices("field", "fieldName"))
     operator: str = Field(validation_alias=AliasChoices("operator", "op"))
     value: str | float | list[str | float]
@@ -1398,10 +1448,14 @@ type ApiFiltersList = Annotated[list[ApiFilter], annotated_types.Len(min_length=
 
 
 class ApiFiltersOr(VcoModel):
+    """A filter group that holds when any one of its conditions does."""
+
     or_: Annotated[ApiFiltersList, Alias("or")]
 
 
 class ApiFiltersAnd(VcoModel):
+    """A filter group that holds when all of its conditions do."""
+
     and_: Annotated[ApiFiltersList, Alias("and")]
 
 
@@ -1477,6 +1531,8 @@ type ApiGroupFilters = Annotated[
 
 
 class Tinyint(IntEnum):
+    """A VCO flag sent as 0 or 1."""
+
     ZERO = 0
     ONE = 1
 
@@ -1508,6 +1564,8 @@ type VcoTimestamp = Annotated[AwareDatetime, BeforeValidator(check_time_is_never
 
 
 class ApiInterval(VcoModel):
+    """The time interval of a VCO request: its ``start``, and its ``end`` when given."""
+
     start: VcoTimestamp
     end: VcoTimestamp | MISSING = MISSING  # ty: ignore[invalid-type-form]
 

@@ -30,6 +30,8 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class AnalyticsOverviewArgs:
+    """The command line options, with their defaults."""
+
     env: str | None = None
     enterprise_id: int | None = None
     hours: int = 1
@@ -38,6 +40,7 @@ class AnalyticsOverviewArgs:
 
 
 def parse_args(argv: Sequence[str] | None = None) -> AnalyticsOverviewArgs:
+    """Read the command line options."""
     parser = argparse.ArgumentParser(
         description="Fetch analytics overview for all edges in an enterprise.",
     )
@@ -64,11 +67,13 @@ def parse_args(argv: Sequence[str] | None = None) -> AnalyticsOverviewArgs:
 
 
 def make_interval(hours: int) -> ApiInterval:
+    """Make an interval from *hours* ago to now."""
     now = datetime.now(tz=UTC)
     return ApiInterval(start=now - timedelta(hours=hours))
 
 
 def print_frame(title: str, df: pl.DataFrame) -> None:
+    """Print *df* under a banner with *title*, or a note when it has no rows."""
     print(f"\n{'=' * 80}")
     print(f"  {title}")
     print(f"{'=' * 80}")
@@ -85,6 +90,10 @@ async def fetch_edge_metrics(
     edge_name: str,
     interval: ApiInterval,
 ) -> dict[str, pl.DataFrame]:
+    """Fetch an edge's top applications, health, link and firewall IDPS metrics.
+
+    Each table is keyed by its title. A call that fails is logged and left out.
+    """
     frames: dict[str, pl.DataFrame] = {}
 
     # Flow metrics by application
@@ -134,6 +143,10 @@ async def fetch_edge_metrics(
 
 
 async def main() -> None:
+    """Print the enterprise's flow by application, then each connected edge's tables.
+
+    The enterprise is read from the token when ``--enterprise-id`` is not given.
+    """
     args = parse_args()
     logging.basicConfig(
         level=logging.DEBUG if args.verbose else logging.INFO,

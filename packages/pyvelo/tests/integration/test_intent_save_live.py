@@ -739,8 +739,9 @@ def _is_empty_entry(entry: object) -> bool:
 def _empty_shared_segments(
     edge: dict[str, Any], profile: dict[str, Any]
 ) -> list[object]:
-    """The IDs of the segments, other than the Global one, that both layers have and
-    whose entry on the edge is empty (``_is_empty_entry``).
+    """The IDs of the non-Global segments both layers have, empty on the edge.
+
+    An entry is empty as ``_is_empty_entry`` says.
     """
     in_profile = [_segment_id(s) for s in profile.get("segments") or []]
     return [

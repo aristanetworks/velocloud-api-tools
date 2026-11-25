@@ -52,6 +52,15 @@ class VcoClient(VcoClientProtocol):
         request_observer: RequestObserver | None = None,
         transport: httpx.AsyncBaseTransport | None = None,
     ) -> None:
+        """A client of the VCO at *vco_fqdn*, signed in with the API *token*.
+
+        *max_concurrent_requests* caps the requests in flight, and
+        *max_requests_per_window* the requests sent in each 5-second window;
+        ``None`` sets no cap. A request answered 429 is sent again up to
+        *max_retries* times, after its ``Retry-After`` or a growing delay.
+        *exchange_hook* sees each request and response, and *request_observer*
+        is given a ``RequestObservation`` of each request.
+        """
         self._vco_fqdn: str = vco_fqdn
         self._token: SecretStr = SecretStr(clean_token(token))
         self._verify_ssl: bool = verify_ssl

@@ -1,3 +1,11 @@
+"""The requests and results of the ``metrics/`` methods.
+
+Edge link, path, application, device, destination, category, segment, OS and
+interface metrics and their series; aggregate Edge link metrics; flow visibility;
+firewall IDPS, malicious IP and URL metrics; Edge and Gateway status; and NSD tunnel
+stats.
+"""
+
 import uuid
 from typing import Annotated, Any, ClassVar
 

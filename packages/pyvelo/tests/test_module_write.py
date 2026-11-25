@@ -964,9 +964,11 @@ def test_an_edge_only_field_below_the_models_map_is_refused_on_a_profile() -> No
 
 
 def test_a_list_inside_a_lag_interface_is_written_whole() -> None:
-    """Known limit: a list inside an interface that is not a plain port is typed as
-    that of a plain port, so one edit in it is written as the whole list and the
-    keys of its other items that the models do not know are dropped.
+    """Known limit: a list in an interface that is not a plain port is written whole.
+
+    The list is typed as that of a plain port, so one edit in it is written as
+    the whole list and the keys of its other items that the models do not know
+    are dropped.
     """
     raw = {
         **DS_RAW,

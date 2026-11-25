@@ -1,9 +1,8 @@
-"""Thorough merge_patch tests covering deep nesting, annotation combinations,
-edge cases, and multi-operation scenarios.
+"""Thorough merge_patch tests of deep nesting, annotation combinations and edge cases.
 
-These tests exercise merge_patch with complex, realistic model hierarchies that
-combine KeyField, OverrideFlag, EdgeLocal, Resolvable, Alias, and MISSING
-annotations at varying depths.
+They cover multi-operation scenarios too. These tests exercise merge_patch with
+complex, realistic model hierarchies that combine KeyField, OverrideFlag,
+EdgeLocal, Resolvable, Alias, and MISSING annotations at varying depths.
 """
 
 import uuid
@@ -217,8 +216,9 @@ class TestNoOpMerge:
         assert m.override is False
 
     def test_same_value_patch_does_not_trigger_override(self) -> None:
-        """Patching a field to its current value should still trigger override
-        because merge_patch does not compare values before assignment.
+        """Patching a field to its current value should still trigger override.
+
+        merge_patch does not compare values before assignment.
         """
         seg = Segment(
             segment=SegmentMeta(name="test"),

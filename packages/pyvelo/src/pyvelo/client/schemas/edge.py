@@ -1,3 +1,12 @@
+"""An Edge as the VCO answers for it, and the requests and results of ``edge/``.
+
+The Edge object with its site, links, licence and HA state; Edge creation and
+deletion; the configuration stack and the composed modules
+(``getEdgeConfigurationModules``); SD-WAN peers, Gateway assignments, certificates and
+HA interfaces; and the calls that make an Edge a hub, bridge or backhaul hub of a
+profile.
+"""
+
 import uuid
 from collections.abc import Mapping
 from typing import Annotated, Any, ClassVar, Literal, Self, cast

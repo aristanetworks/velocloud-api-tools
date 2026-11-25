@@ -207,6 +207,11 @@ class ConfigPipeline:
         resolvers: ResolverRegistry | None = None,
         validator_registry: ValidatorRegistry | None = None,
     ) -> None:
+        """A pipeline over *client*, with empty registries unless given ones.
+
+        *client* may be None for work that sends no request; ``client`` then
+        raises.
+        """
         self._client: VcoClientProtocol | None = client
         self._resolvers: ResolverRegistry = resolvers or ResolverRegistry()
         self._validators: ValidatorRegistry = (
@@ -1522,12 +1527,12 @@ class ConfigPipeline:
     async def _load_state_resolvers(
         self, resolvers: ResolverRegistry, context: ResolverContext
     ) -> None:
-        """Set *context* on *resolvers*, then load the segment resolver, adding
-        one if there is none, and the application resolver if there is one.
+        """Set *context* on *resolvers* and load the segment and application resolvers.
 
-        A network-service resolver and a hub resolver are added, and left
-        unloaded, if there are none: a plan or a patch that needs the services
-        or the hubs loads them.
+        The segment resolver is added if there is none; the application
+        resolver is loaded only if there is one. A network-service resolver and
+        a hub resolver are added, and left unloaded, if there are none: a plan
+        or a patch that needs the services or the hubs loads them.
         """
         resolvers.set_context(context)
         try:

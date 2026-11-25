@@ -1,3 +1,5 @@
+"""The request and result models of the VCO API methods, re-exported by API area."""
+
 from pyvelo.client.schemas.configuration import (
     EMPTY_EDGE_MODULE_DATA,
     AnyConfigurationModule,

@@ -1,3 +1,5 @@
+"""The ``with`` options of the enterprise proxy (partner) read methods."""
+
 from enum import StrEnum
 
 

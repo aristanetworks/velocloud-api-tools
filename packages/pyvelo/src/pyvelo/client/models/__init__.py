@@ -1,3 +1,5 @@
+"""The typed data of configuration modules and enterprise objects."""
+
 from .configuration import (
     DeviceSegment,
     DeviceSettingsData,

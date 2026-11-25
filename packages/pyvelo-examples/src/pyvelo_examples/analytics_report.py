@@ -43,6 +43,8 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class AnalyticsReportArgs:
+    """The command line options, with their defaults."""
+
     env: str | None = None
     enterprise_id: int | None = None
     hours: int = 1
@@ -52,6 +54,7 @@ class AnalyticsReportArgs:
 
 
 def parse_args(argv: Sequence[str] | None = None) -> AnalyticsReportArgs:
+    """Read the command line options."""
     parser = argparse.ArgumentParser(
         description="Generate an HTML report with analytics time-series charts.",
     )
@@ -83,11 +86,13 @@ def parse_args(argv: Sequence[str] | None = None) -> AnalyticsReportArgs:
 
 
 def make_interval(hours: int) -> ApiInterval:
+    """Make an interval from *hours* ago to now."""
     now = datetime.now(tz=UTC)
     return ApiInterval(start=now - timedelta(hours=hours))
 
 
 def svg_from_figure(fig: Figure) -> str:
+    """Render *fig* as SVG markup, without the XML prologue, and close it."""
     buf = io.BytesIO()
     fig.savefig(buf, format="svg", bbox_inches="tight")  # pyright: ignore[reportUnknownMemberType]  # Matplotlib leaves file-like kwargs open-ended.
     plt.close(fig)
@@ -99,6 +104,10 @@ def svg_from_figure(fig: Figure) -> str:
 
 
 def build_html(sections: list[tuple[str, str]], title: str) -> str:
+    """Make a self-contained HTML page of *sections*, each a heading and its chart SVG.
+
+    The page's content security policy allows no scripts.
+    """
     parts = [
         "<!DOCTYPE html>",
         "<html><head>",
@@ -148,6 +157,7 @@ def _setup_axes(ax: Axes) -> None:
 
 
 def plot_link_series(df: pl.DataFrame) -> Figure:
+    """Plot each link's received and sent bytes over time."""
     fig, ax = plt.subplots(figsize=(10, 4))
     links = cast("list[object]", df["link_name"].unique().to_list())
     for link in links:
@@ -167,6 +177,7 @@ def plot_link_series(df: pl.DataFrame) -> Figure:
 
 
 def plot_health_series(df: pl.DataFrame) -> Figure:
+    """Plot CPU and memory percent, and the flow count on a second axis."""
     fig, ax1 = plt.subplots(figsize=(10, 4))
     df = df.sort("timestamp")
 
@@ -203,6 +214,7 @@ def plot_health_series(df: pl.DataFrame) -> Figure:
 
 
 def plot_flow_series(df: pl.DataFrame) -> Figure:
+    """Plot the bytes of each application, or of each metric column, over time."""
     fig, ax = plt.subplots(figsize=(10, 4))
     group_col = (
         "app"
@@ -250,6 +262,11 @@ async def fetch_edge_series(
     edge_name: str,
     interval: ApiInterval,
 ) -> list[tuple[str, str]]:
+    """Fetch an edge's link, health and application flow series as charts.
+
+    Each chart is a heading and its SVG. A call with no data or that fails gives a
+    note in place of its chart.
+    """
     sections: list[tuple[str, str]] = []
 
     # Link throughput
@@ -324,6 +341,10 @@ async def fetch_edge_series(
 
 
 async def main() -> None:
+    """Write the HTML report of every connected edge's charts and open it in a browser.
+
+    The enterprise is read from the token when ``--enterprise-id`` is not given.
+    """
     args = parse_args()
     logging.basicConfig(
         level=logging.DEBUG if args.verbose else logging.INFO,

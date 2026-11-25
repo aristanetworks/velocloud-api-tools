@@ -1,3 +1,10 @@
+"""The requests and results of the ``monitoring/`` methods.
+
+Edge, link, cluster, BGP and BFD peer and NVS tunnel status; aggregates and aggregate
+events; link degradation and flap summaries; NNI metrics; Gateway route tables and
+VPN status.
+"""
+
 import uuid
 from typing import Annotated, Any, ClassVar, Self
 

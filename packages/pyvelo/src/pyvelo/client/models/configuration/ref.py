@@ -1,3 +1,5 @@
+"""A ref row: the module, enterprise object and segment a module's ref names."""
+
 import uuid
 from typing import Annotated, ClassVar
 

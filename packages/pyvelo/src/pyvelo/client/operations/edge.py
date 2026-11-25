@@ -1,3 +1,9 @@
+"""The client's ``edge/`` methods.
+
+An Edge, its configuration stack and modules, its HA, its certificates and its
+hub roles.
+"""
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Protocol

@@ -1,3 +1,11 @@
+"""The client's ``configuration/`` methods, with the module writes built on them.
+
+Beside the plain calls (profiles, configurations, modules, applications),
+``write_module`` sends a ``ModulePlan`` and checks what the VCO stored, raising
+a ``ModuleWriteError`` when it is not known to be stored as planned, and
+``update_module`` plans and writes a module's edited data.
+"""
+
 from __future__ import annotations
 
 import json

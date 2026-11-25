@@ -1,3 +1,9 @@
+"""The routed interfaces of ``deviceSettings``, one class per interface kind.
+
+GE, SFP, DSL and GPON interfaces and their subinterfaces, with their IPv4 and IPv6
+addressing, OSPF, DHCP, cellular and LAG settings.
+"""
+
 import uuid
 from typing import Annotated, Any, Literal
 

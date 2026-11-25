@@ -86,6 +86,7 @@ class PatchError(ValueError):
     kind: PatchErrorKind
 
     def __init__(self, message: str, path: Path, kind: PatchErrorKind) -> None:
+        """*message* says what is wrong, at *path* in the patch, of the kind *kind*."""
         super().__init__(message, path, kind)
         self.message: str = message
         self.path = path

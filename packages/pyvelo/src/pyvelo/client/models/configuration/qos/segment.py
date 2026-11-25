@@ -1,3 +1,5 @@
+"""A segment of the ``QOS`` module: its rules, defaults, CoS mapping and web proxy."""
+
 from typing import Annotated, Any
 
 from pydantic import MISSING, Field

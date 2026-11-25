@@ -1,3 +1,5 @@
+"""A segment of the ``firewall`` module: its logging flag and outbound rules."""
+
 from typing import Annotated
 
 from pyvelo.client.models.configuration.common import SegmentMetadata

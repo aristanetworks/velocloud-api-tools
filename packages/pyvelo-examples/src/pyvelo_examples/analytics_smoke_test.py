@@ -47,6 +47,8 @@ MIN_INTERFACE_STATS_VERSION = (6, 4, 0, 0)
 
 
 class Status(StrEnum):
+    """The outcome of one test: rows, no rows, an error, or not run."""
+
     PASS = "PASS"
     EMPTY = "EMPTY"
     FAIL = "FAIL"
@@ -55,6 +57,8 @@ class Status(StrEnum):
 
 @dataclass
 class TestResult:
+    """The outcome of one ``Analytics`` call, with its row count or why it failed."""
+
     name: str
     status: Status
     rows: int = 0
@@ -63,6 +67,8 @@ class TestResult:
 
 @dataclass
 class DiscoveredContext:
+    """What the tests need: an edge, its version, links, peer, gateway and NSD."""
+
     edge_id: int = 0
     edge_name: str = ""
     edge_version: str = ""
@@ -74,6 +80,8 @@ class DiscoveredContext:
 
 @dataclass
 class AnalyticsSmokeTestArgs:
+    """The command line options, with their defaults."""
+
     env: str | None = None
     enterprise_id: int | None = None
     hours: int = 72
@@ -83,6 +91,7 @@ class AnalyticsSmokeTestArgs:
 
 
 def parse_args(argv: Sequence[str] | None = None) -> AnalyticsSmokeTestArgs:
+    """Read the command line options."""
     parser = argparse.ArgumentParser(description="Analytics smoke test")
     _ = parser.add_argument("--env", type=str, help="Path to .env file")
     _ = parser.add_argument("--enterprise-id", type=int)
@@ -104,6 +113,7 @@ def parse_args(argv: Sequence[str] | None = None) -> AnalyticsSmokeTestArgs:
 
 
 def make_interval(hours: int) -> ApiInterval:
+    """Make an interval from *hours* ago to now."""
     now = datetime.now(tz=UTC)
     return ApiInterval(start=now - timedelta(hours=hours))
 
@@ -116,6 +126,7 @@ def _parse_version(version_str: str) -> tuple[int, ...]:
 
 
 def classify_error(exc: Exception) -> str:
+    """A short reason for a failed call, without the VCO's message."""
     if isinstance(exc, VcoOperationError):
         return "API request failed"
     if isinstance(exc, VcoError):
@@ -134,6 +145,7 @@ def _log_validation_detail(name: str, exc: ValidationError) -> None:
 
 
 async def run_test(name: str, fn: Callable[[], Awaitable[MetricFrame]]) -> TestResult:
+    """Run *fn* as the test *name*: a pass with rows, empty without, a fail on error."""
     try:
         frame: MetricFrame = await fn()
         if len(frame) > 0:
@@ -152,6 +164,12 @@ async def discover_context(
     edge_name_filter: str | None,
     interval: ApiInterval,
 ) -> DiscoveredContext:
+    """Choose a connected edge and find its peer, gateway, links and NSD service.
+
+    An edge at version 6.4.0.0 or later is preferred, for the interface
+    statistics. A lookup that fails is logged and its field is left unset; with
+    no connected edge, ``edge_id`` stays 0.
+    """
     ctx = DiscoveredContext()
 
     edges = await client.get_enterprise_edges(
@@ -275,6 +293,7 @@ async def run_all_tests(
     interval: ApiInterval,
     ctx: DiscoveredContext,
 ) -> list[TestResult]:
+    """Call every ``Analytics`` method, skipping those the context has nothing for."""
     results: list[TestResult] = []
 
     edge_id = ctx.edge_id
@@ -550,6 +569,7 @@ async def run_all_tests(
 def print_results(
     results: list[TestResult], enterprise_id: int, hours: int, ctx: DiscoveredContext
 ) -> None:
+    """Print a numbered table of *results* and a count of each status."""
     header = f"Analytics Smoke Test — enterprise {enterprise_id}, {hours}h, edge {ctx.edge_name} ({ctx.edge_id}, {ctx.edge_version})"
     sep = "=" * max(len(header), 78)
 
@@ -568,6 +588,10 @@ def print_results(
 
 
 async def main() -> None:
+    """Run the smoke test and exit 1 when any test failed.
+
+    The enterprise is read from the token when ``--enterprise-id`` is not given.
+    """
     args = parse_args()
     logging.basicConfig(
         level=logging.DEBUG if args.verbose else logging.INFO,

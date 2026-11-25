@@ -1,3 +1,9 @@
+"""The client's ``network/`` and ``operatorUser/`` methods.
+
+The operator's enterprises, gateways, gateway pools, configurations, users and
+API tokens.
+"""
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Protocol

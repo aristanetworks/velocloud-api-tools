@@ -244,6 +244,7 @@ class ConfigPlan:
         )
 
     def render(self) -> str:
+        """The plan as text to show before a save, in the format above."""
         lines = [m.render() for m in self.modules]
         if self.steps:
             lines = ["steps:", *(f"  {step.render()}" for step in self.steps), *lines]
@@ -274,6 +275,7 @@ class LayerView[X: (Edge, Profile)]:
         config: ConfigurationBase[X],
         profile: ConfigurationBase[Profile] | None = None,
     ) -> None:
+        """A view of *config*'s modules, binding a module it creates to *profile*."""
         self._config: ConfigurationBase[X] = config
         self._profile: ConfigurationBase[Profile] | None = profile
 
@@ -303,6 +305,7 @@ class LayerView[X: (Edge, Profile)]:
 
     @property
     def device_settings(self) -> DeviceSettingsData:
+        """The device settings data; a layer that has none raises ``ValueError``."""
         module = _module_of(
             self._config, ConfigurationModuleName.DEVICE_SETTINGS, create=False
         )
@@ -311,6 +314,7 @@ class LayerView[X: (Edge, Profile)]:
 
     @property
     def wan(self) -> WanData:
+        """The WAN data; a layer that has none raises ``ValueError``."""
         module = _module_of(self._config, ConfigurationModuleName.WAN, create=False)
         assert isinstance(module, WanConfigurationModule)
         return module.data
@@ -329,6 +333,7 @@ class EffectiveView:
     def __init__(
         self, edge: ConfigurationBase[Edge], profile: ConfigurationBase[Profile]
     ) -> None:
+        """A view of the *edge* layer over the *profile* layer it inherits from."""
         self._edge: ConfigurationBase[Edge] = edge
         self._profile: ConfigurationBase[Profile] = profile
 
@@ -602,6 +607,7 @@ class ConfigState:
     """Each module ``replace_module`` took out whose objects may still be held."""
 
     def __post_init__(self) -> None:
+        """Bind each edge module's data to the profile module of the same name."""
         if self.edge_config is None or self.edge_config.modules is MISSING:
             return
         for mod in self.edge_config.modules:
@@ -1602,6 +1608,7 @@ class SaveResult:
 
     @property
     def is_valid(self) -> bool:
+        """Whether no write-time validator reported an error."""
         return len(self.validation_errors) == 0
 
     def raise_for_errors(self) -> None:

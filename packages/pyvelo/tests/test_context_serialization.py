@@ -704,8 +704,9 @@ def _vco_dump(model: VcoModel) -> JsonObject:
 
 
 class TestVcoFormatSerialization:
-    """VCO-format output: camelCase aliases, all defaults included, only
-    context-absent (MISSING) fields excluded.
+    """VCO-format output: camelCase aliases and all defaults.
+
+    Only context-absent (MISSING) fields are excluded.
     """
 
     # -- Edge serialization --------------------------------------------------

@@ -134,9 +134,10 @@ class _CtxContainer(VcoModel):
 
 
 class TestKeyFieldMissingPreservation:
-    """Regression: newly-added keyed-list items must not auto-fill MISSING
-    fields unless the field's ContextDefaults specifies a default for the
-    active config level (was the DeviceSegment edge-merge bug).
+    """Regression: a newly-added keyed-list item must not auto-fill MISSING fields.
+
+    The exception is a field whose ContextDefaults specifies a default for the
+    active config level (this was the DeviceSegment edge-merge bug).
     """
 
     def test_no_context_preserves_missing(self) -> None:

@@ -1,3 +1,5 @@
+"""A Gateway as an enterprise service lists it, in its ``gateways``."""
+
 import uuid
 from typing import Annotated
 

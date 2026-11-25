@@ -1,3 +1,10 @@
+"""A segment of ``deviceSettings``: its routing, VPN and service settings.
+
+``DeviceSegment`` holds a segment's BGP, OSPF, BFD, multicast, VPN hubs and
+Edge-to-Edge, handoff Gateways, Edge Direct, ECMP, NetFlow, syslog, DNS and cloud
+security settings.
+"""
+
 import uuid
 from typing import Annotated, Any, ClassVar, Literal, Self
 

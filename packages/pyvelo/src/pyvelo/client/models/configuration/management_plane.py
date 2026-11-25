@@ -1,3 +1,9 @@
+"""The ``managementPlane`` module's data.
+
+The primary and secondary management plane proxies, and the heartbeat, stats upload
+and time slice intervals.
+"""
+
 from __future__ import annotations
 
 from pydantic import MISSING

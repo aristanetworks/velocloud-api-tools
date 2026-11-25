@@ -1,3 +1,9 @@
+"""The requests and results of the ``enterpriseProxy/`` (partner) methods.
+
+A partner's enterprises, Edges, Gateways and Gateway pools, operator profiles, users,
+properties, configurations, services, capabilities and rate limits.
+"""
+
 import uuid
 from typing import Annotated, Any
 

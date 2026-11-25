@@ -1,3 +1,5 @@
+"""The requests and results of the ``role/`` reads: user type roles, customizations."""
+
 from typing import Annotated, Any
 
 from pydantic import MISSING, model_validator

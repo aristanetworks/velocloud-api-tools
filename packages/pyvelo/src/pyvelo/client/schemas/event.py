@@ -1,3 +1,10 @@
+"""The requests and results of the ``event/`` methods and of enterprise alerts.
+
+An enterprise event read takes a filter tree of ``and``/``or`` groups over typed
+rules; each rule checks that its operator gets a scalar or a list value, as the VCO
+requires.
+"""
+
 import uuid
 from collections.abc import Sequence
 from typing import Annotated, Any, ClassVar, Literal, Self

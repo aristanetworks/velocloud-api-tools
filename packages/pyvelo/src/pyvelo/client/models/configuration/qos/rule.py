@@ -1,3 +1,9 @@
+"""A QoS (business policy) rule: its match and its action.
+
+The action sets the rule's priority and service class, its link steering, its
+route (direct, Gateway or backhaul to a hub) and its NAT.
+"""
+
 import uuid
 from typing import Annotated, Any, Literal, override
 

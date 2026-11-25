@@ -1,3 +1,8 @@
+"""The requests and results of the ``alert/`` methods.
+
+An enterprise's alert definitions and the events it can alert on.
+"""
+
 from typing import Annotated, Any
 
 from pydantic import MISSING

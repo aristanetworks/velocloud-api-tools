@@ -1,3 +1,10 @@
+"""The ``deviceSettings`` module's data and its module-level settings.
+
+``DeviceSettingsData`` holds the LAN, the segments, the routed interfaces of each
+model, and the module-level settings: HA, BFD, loopbacks, NTP, radio, SNMP,
+Zscaler, VNFs and more.
+"""
+
 import uuid
 from typing import Annotated, Any, Literal, get_args
 

@@ -1,3 +1,9 @@
+"""The requests and results of the ``firewall/`` methods.
+
+Firewall logs and their filters, firewall rules, and the malicious IP and URL
+filtering categories.
+"""
+
 import uuid
 from typing import Annotated, Any, ClassVar, Self
 

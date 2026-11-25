@@ -167,6 +167,7 @@ class Default:
     def __init__(
         self, value: object = _UNSET, *, factory: Callable[[], object] | None = None
     ) -> None:
+        """Raises ``TypeError`` unless exactly one of *value* and *factory* is given."""
         if (value is _UNSET) == (factory is None):
             raise TypeError(
                 "Default takes a value or a factory, not both and not neither: "
@@ -184,6 +185,11 @@ class Default:
     def __get_pydantic_core_schema__(
         self, source: object, handler: GetCoreSchemaHandler
     ) -> CoreSchema:
+        """The field's schema, with this default on the profile and composed layers.
+
+        On the edge layer the schema is left as it is: an absent key there is an
+        ``Owned`` with nothing stored.
+        """
         schema = handler(source)
         layer = _carrier_layer(source)
         if layer is Profile or layer is Composed:
@@ -427,8 +433,11 @@ if TYPE_CHECKING:
         ) -> "Resolved[T]": ...
         @overload
         def __get__(self, obj: "Layered[Composed]", owner: type | None = None) -> T: ...
-        def __get__(self, obj: object, owner: type | None = None) -> object: ...
-        def __set__(self, obj: object, value: T | Owned[T]) -> None: ...
+        def __get__(self, obj: object, owner: type | None = None) -> object:
+            """The field's value, typed per layer by the overloads above."""
+
+        def __set__(self, obj: object, value: T | Owned[T]) -> None:
+            """Assign the field a ``T``, or on the edge layer an ``Owned[T]``."""
 
     class Additive[T]:
         """Field kind: a list whose edge entries come ahead of the profile's; give it as ``Additive[list[X]]``.
@@ -451,8 +460,11 @@ if TYPE_CHECKING:
         ) -> "list[Resolved[E]]": ...
         @overload
         def __get__(self, obj: "Layered[Composed]", owner: type | None = None) -> T: ...
-        def __get__(self, obj: object, owner: type | None = None) -> object: ...
-        def __set__(self, obj: object, value: T) -> None: ...
+        def __get__(self, obj: object, owner: type | None = None) -> object:
+            """The field's value, typed per layer by the overloads above."""
+
+        def __set__(self, obj: object, value: T) -> None:
+            """Assign the field a ``T``."""
 
     class Unconverted[T]:
         """Field kind: inheritance not declared yet.
@@ -469,8 +481,11 @@ if TYPE_CHECKING:
         def __get__(self, obj: "Layered[Profile]", owner: type | None = None) -> T: ...
         @overload
         def __get__(self, obj: "Layered[Composed]", owner: type | None = None) -> T: ...
-        def __get__(self, obj: object, owner: type | None = None) -> object: ...
-        def __set__(self, obj: object, value: T) -> None: ...
+        def __get__(self, obj: object, owner: type | None = None) -> object:
+            """The field's value, typed per layer by the overloads above."""
+
+        def __set__(self, obj: object, value: T) -> None:
+            """Assign the field a ``T``."""
 
 else:
 
@@ -483,6 +498,7 @@ else:
         """
 
         def __class_getitem__(cls, item: object) -> object:
+            """``Inheritable[item]``: the ``Kind.INHERITABLE`` carrier of *item*."""
             return carrier(Kind.INHERITABLE, item)
 
     class Additive:
@@ -493,6 +509,7 @@ else:
         """
 
         def __class_getitem__(cls, item: object) -> object:
+            """``Additive[item]``: the ``Kind.ADDITIVE`` carrier of *item*."""
             return carrier(Kind.ADDITIVE, item)
 
     class Unconverted:
@@ -503,6 +520,7 @@ else:
         """
 
         def __class_getitem__(cls, item: object) -> object:
+            """``Unconverted[item]``: the ``Kind.UNCONVERTED`` carrier of *item*."""
             return carrier(Kind.UNCONVERTED, item)
 
 

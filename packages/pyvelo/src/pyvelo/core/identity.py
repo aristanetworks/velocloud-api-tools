@@ -39,6 +39,7 @@ class ResolutionError(KeyError):
         candidates: list[str],
         message: str | None = None,
     ) -> None:
+        """*message* replaces the default, which names *name* and lists *candidates*."""
         self.name: str = name
         self.identity_type: type | str = identity_type
         self.candidates: list[str] = candidates
@@ -83,6 +84,7 @@ class ResolverNotLoadedError(ResolutionError):
     """
 
     def __init__(self, identity_type: type) -> None:
+        """The error for *identity_type*; its message says how to load the lookups."""
         label = entity_label(identity_type)
         type_name = identity_type.__name__
         super().__init__(
@@ -122,6 +124,11 @@ class IdentityKey[IdentityT]:
     identity_type: ClassVar[type[Any]]
 
     def __init_subclass__(cls, **kwargs: Any) -> None:
+        """Set ``identity_type`` from the class's ``IdentityKey[...]`` base.
+
+        A subclass whose bases name none keeps the one it inherits, and raises
+        ``TypeError`` when it has none to inherit.
+        """
         super().__init_subclass__(**kwargs)
         for base in types.get_original_bases(cls):
             if typing.get_origin(base) is IdentityKey:
@@ -142,6 +149,13 @@ class IdentityKey[IdentityT]:
 
 @dataclass(frozen=True)
 class SegmentIdentity:
+    """An enterprise network segment, as the segment resolver loads it.
+
+    *segment_id* is the number in the segment's data (``data.segmentId``), the one
+    the configuration modules name it by; *object_id* is the ``id`` of its network
+    segment object. *type_* is ``REGULAR``, ``CDE`` or ``PRIVATE``.
+    """
+
     name: str
     segment_id: int
     object_id: int
@@ -151,21 +165,29 @@ class SegmentIdentity:
 
 @dataclass(frozen=True)
 class SegmentId(IdentityKey[SegmentIdentity]):
+    """The key of a segment by its ``segmentId``, the number in the segment's data."""
+
     value: int
 
 
 @dataclass(frozen=True)
 class SegmentObjectId(IdentityKey[SegmentIdentity]):
+    """The key of a segment by the ``id`` of its network segment object."""
+
     value: int
 
 
 @dataclass(frozen=True)
 class SegmentLogicalId(IdentityKey[SegmentIdentity]):
+    """The key of a segment by its logical ID."""
+
     value: uuid.UUID
 
 
 @dataclass(frozen=True)
 class SegmentName(IdentityKey[SegmentIdentity]):
+    """The key of a segment by its name."""
+
     value: str
 
 
@@ -180,6 +202,12 @@ DeviceFamily = NewType("DeviceFamily", str)
 
 @dataclass(frozen=True)
 class EdgeIdentity:
+    """An Edge, as the edge resolver loads it.
+
+    *model_number* is the Edge's model, and *device_family* the profile model class
+    that model belongs to; both are None when the VCO gives no model.
+    """
+
     name: str
     id: int
     logical_id: uuid.UUID
@@ -189,16 +217,22 @@ class EdgeIdentity:
 
 @dataclass(frozen=True)
 class EdgeId(IdentityKey[EdgeIdentity]):
+    """The key of an Edge by its ``id``."""
+
     value: int
 
 
 @dataclass(frozen=True)
 class EdgeLogicalId(IdentityKey[EdgeIdentity]):
+    """The key of an Edge by its logical ID."""
+
     value: uuid.UUID
 
 
 @dataclass(frozen=True)
 class EdgeName(IdentityKey[EdgeIdentity]):
+    """The key of an Edge by its name."""
+
     value: str
 
 
@@ -209,6 +243,13 @@ class EdgeName(IdentityKey[EdgeIdentity]):
 
 @dataclass(frozen=True)
 class LinkIdentity:
+    """A WAN link of one Edge, as the link resolver loads it from the recent links.
+
+    *name* is the link's display name, else its name. *logical_id* is the link's
+    ``logicalId`` text and *internal_id* its ``internalId``; *edge_id* is the Edge
+    the links were loaded for.
+    """
+
     name: str
     id: int
     logical_id: str
@@ -218,21 +259,29 @@ class LinkIdentity:
 
 @dataclass(frozen=True)
 class LinkId(IdentityKey[LinkIdentity]):
+    """The key of a link by its ``id``."""
+
     value: int
 
 
 @dataclass(frozen=True)
 class LinkLogicalId(IdentityKey[LinkIdentity]):
+    """The key of a link by its ``logicalId`` text."""
+
     value: str
 
 
 @dataclass(frozen=True)
 class LinkInternalId(IdentityKey[LinkIdentity]):
+    """The key of a link by its ``internalId``."""
+
     value: uuid.UUID
 
 
 @dataclass(frozen=True)
 class LinkName(IdentityKey[LinkIdentity]):
+    """The key of a link by its display name, else its name."""
+
     value: str
 
 
@@ -243,6 +292,8 @@ class LinkName(IdentityKey[LinkIdentity]):
 
 @dataclass(frozen=True)
 class GatewayIdentity:
+    """A Gateway's name, ``id`` and logical ID."""
+
     name: str
     id: int
     logical_id: uuid.UUID
@@ -250,11 +301,15 @@ class GatewayIdentity:
 
 @dataclass(frozen=True)
 class GatewayId(IdentityKey[GatewayIdentity]):
+    """The key of a Gateway by its ``id``."""
+
     value: int
 
 
 @dataclass(frozen=True)
 class GatewayName(IdentityKey[GatewayIdentity]):
+    """The key of a Gateway by its name."""
+
     value: str
 
 
@@ -283,17 +338,23 @@ type GatewayLogicalId = Annotated[
 
 @dataclass(frozen=True)
 class ProfileIdentity:
+    """A profile (an enterprise configuration) by its name and ``id``."""
+
     name: str
     id: int
 
 
 @dataclass(frozen=True)
 class ProfileId(IdentityKey[ProfileIdentity]):
+    """The key of a profile by its ``id``."""
+
     value: int
 
 
 @dataclass(frozen=True)
 class ProfileName(IdentityKey[ProfileIdentity]):
+    """The key of a profile by its name."""
+
     value: str
 
 
@@ -304,17 +365,23 @@ class ProfileName(IdentityKey[ProfileIdentity]):
 
 @dataclass(frozen=True)
 class ApplicationIdentity:
+    """A routable application, by its display name (else its name) and ``id``."""
+
     name: str
     id: int
 
 
 @dataclass(frozen=True)
 class ApplicationId(IdentityKey[ApplicationIdentity]):
+    """The key of an application by its ``id``."""
+
     value: int
 
 
 @dataclass(frozen=True)
 class ApplicationName(IdentityKey[ApplicationIdentity]):
+    """The key of an application by its display name, else its name."""
+
     value: str
 
 
@@ -325,6 +392,8 @@ class ApplicationName(IdentityKey[ApplicationIdentity]):
 
 @dataclass(frozen=True)
 class AddressGroupIdentity:
+    """An ``address_group`` object group, by its name, ``id`` and logical ID."""
+
     name: str
     id: int
     logical_id: uuid.UUID
@@ -332,16 +401,22 @@ class AddressGroupIdentity:
 
 @dataclass(frozen=True)
 class AddressGroupId(IdentityKey[AddressGroupIdentity]):
+    """The key of an address group by its ``id``."""
+
     value: int
 
 
 @dataclass(frozen=True)
 class AddressGroupLogicalId(IdentityKey[AddressGroupIdentity]):
+    """The key of an address group by its logical ID."""
+
     value: uuid.UUID
 
 
 @dataclass(frozen=True)
 class AddressGroupName(IdentityKey[AddressGroupIdentity]):
+    """The key of an address group by its name."""
+
     value: str
 
 
@@ -352,6 +427,8 @@ class AddressGroupName(IdentityKey[AddressGroupIdentity]):
 
 @dataclass(frozen=True)
 class ServiceGroupIdentity:
+    """A service group (a ``port_group`` object group): name, ``id`` and logical ID."""
+
     name: str
     id: int
     logical_id: uuid.UUID
@@ -359,16 +436,22 @@ class ServiceGroupIdentity:
 
 @dataclass(frozen=True)
 class ServiceGroupId(IdentityKey[ServiceGroupIdentity]):
+    """The key of a service group by its ``id``."""
+
     value: int
 
 
 @dataclass(frozen=True)
 class ServiceGroupLogicalId(IdentityKey[ServiceGroupIdentity]):
+    """The key of a service group by its logical ID."""
+
     value: uuid.UUID
 
 
 @dataclass(frozen=True)
 class ServiceGroupName(IdentityKey[ServiceGroupIdentity]):
+    """The key of a service group by its name."""
+
     value: str
 
 
@@ -379,6 +462,12 @@ class ServiceGroupName(IdentityKey[ServiceGroupIdentity]):
 
 @dataclass(frozen=True)
 class LicenseIdentity:
+    """An Edge license of the enterprise, as the license resolver loads it.
+
+    *id* and *license_id* are the license row's ``id`` and ``licenseId``, and *sku*
+    its SKU.
+    """
+
     name: str
     id: int
     license_id: int
@@ -387,16 +476,22 @@ class LicenseIdentity:
 
 @dataclass(frozen=True)
 class LicenseId(IdentityKey[LicenseIdentity]):
+    """The key of a license by its ``id``."""
+
     value: int
 
 
 @dataclass(frozen=True)
 class LicenseSku(IdentityKey[LicenseIdentity]):
+    """The key of a license by its SKU."""
+
     value: str
 
 
 @dataclass(frozen=True)
 class LicenseName(IdentityKey[LicenseIdentity]):
+    """The key of a license by its name."""
+
     value: str
 
 
@@ -417,16 +512,22 @@ class NetworkServiceIdentity:
 
 @dataclass(frozen=True)
 class NetworkServiceName(IdentityKey[NetworkServiceIdentity]):
+    """The key of a network service by its name."""
+
     value: str
 
 
 @dataclass(frozen=True)
 class NetworkServiceLogicalId(IdentityKey[NetworkServiceIdentity]):
+    """The key of a network service by its logical ID."""
+
     value: uuid.UUID
 
 
 @dataclass(frozen=True)
 class NetworkServiceObjectId(IdentityKey[NetworkServiceIdentity]):
+    """The key of a network service by the ``id`` of its object."""
+
     value: int
 
 
@@ -457,11 +558,15 @@ class HubIdentity:
 
 @dataclass(frozen=True)
 class HubName(IdentityKey[HubIdentity]):
+    """The key of a hub by its name."""
+
     value: str
 
 
 @dataclass(frozen=True)
 class HubLogicalId(IdentityKey[HubIdentity]):
+    """The key of a hub by the Edge's or the cluster's logical ID."""
+
     value: uuid.UUID
 
 
@@ -496,6 +601,11 @@ class HubServiceNotFoundError(ResolutionError):
     def __init__(
         self, *, hub: str, segment: str, path: str, message: str | None = None
     ) -> None:
+        """*message* replaces the default.
+
+        The default says to save the hub first and gives the patch that adds it to the
+        segment's Branch-to-Hub list.
+        """
         self.hub: str = hub
         self.segment: str = segment
         self.path: str = path

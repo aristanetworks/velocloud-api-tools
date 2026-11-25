@@ -1,3 +1,5 @@
+"""What an outbound, inbound or inbound IPv6 firewall rule matches."""
+
 from typing import Annotated, Any, override
 
 from pydantic import MISSING

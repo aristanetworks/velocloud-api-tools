@@ -1,3 +1,8 @@
+"""The requests and results of the ``enterpriseUser/`` methods.
+
+A user, its API tokens, and the status of the enterprise's users.
+"""
+
 from typing import Annotated, Any
 
 from pydantic import MISSING

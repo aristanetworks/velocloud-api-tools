@@ -1,3 +1,5 @@
+"""A WAN link of the ``WAN`` module, with its static SLA and CoS settings."""
+
 import uuid
 from typing import Annotated, Any, Literal
 

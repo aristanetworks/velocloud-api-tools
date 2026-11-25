@@ -1,3 +1,5 @@
+"""The VCO's enumerated wire values, re-exported from one module per API area."""
+
 from .common import PendingActionStatus
 from .configuration import (
     ConfigurationBastionState,

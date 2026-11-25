@@ -1,3 +1,5 @@
+"""The request and result of ``vcoDiagnostics/getVcoDbDiagnostics``."""
+
 from typing import Any, ClassVar
 
 from pydantic import MISSING, ConfigDict

@@ -1,3 +1,8 @@
+"""The ``firewall`` module's data, and the local form of its inheritable groups.
+
+``profile_false_wins`` is how the VCO combines ``firewall_enabled`` across layers.
+"""
+
 from typing import Annotated, Any, ClassVar
 
 from pydantic import Field, PrivateAttr

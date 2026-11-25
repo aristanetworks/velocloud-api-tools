@@ -1,3 +1,10 @@
+"""The client's ``enterpriseProxy/`` methods, and an enterprise's export and import.
+
+A partner's enterprises, Edges, gateways, services and users.
+``enterpriseExport/`` gives an export's metadata and ``enterpriseImport/`` an
+import's result.
+"""
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Protocol

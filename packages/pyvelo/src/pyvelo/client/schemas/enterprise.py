@@ -1,3 +1,11 @@
+"""An enterprise's objects, and the requests and results of the ``enterprise/`` methods.
+
+Its Edges, services (one class per service type, such as a hub, hub cluster or data
+center), network segments, object groups, security objects, custom applications,
+private networks and NSD configuration; also its users, properties, capabilities,
+route table and operator configuration, and the cluster hub role calls.
+"""
+
 import uuid
 from typing import Annotated, Any, ClassVar, Literal
 

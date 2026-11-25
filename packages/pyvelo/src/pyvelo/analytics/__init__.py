@@ -1,3 +1,10 @@
+"""VCO analytics as ``MetricFrame`` tables over Polars.
+
+Needs the ``analytics`` extra (polars); importing the package without it raises
+``ModuleNotFoundError``. ``Analytics`` holds the calls, and the enums and filter
+schemas its parameters take are re-exported here.
+"""
+
 import importlib.util
 
 if importlib.util.find_spec("polars") is None:

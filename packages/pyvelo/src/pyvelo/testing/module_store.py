@@ -98,6 +98,7 @@ class RpcError(Exception):
     """A JSON-RPC error the store answers with."""
 
     def __init__(self, code: int, message: str, data: object = None) -> None:
+        """The error *code*, *message* and *data* of the JSON-RPC answer."""
         self.code: int = code
         self.message: str = message
         self.data: object = data
@@ -222,6 +223,7 @@ class ModuleStore:
         issue_rule_ids: bool = False,
         vpn_check: bool = False,
     ) -> None:
+        """An empty store; the flags are those the class docstring describes."""
         self.rows = {}
         self.configurations = {}
         self.requests = []
@@ -410,6 +412,11 @@ class ModuleStore:
         return serve(params)
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
+        """Record and answer one JSON-RPC *request*, as an ``httpx`` handler.
+
+        A write whose number is in ``lose_answers`` is stored and its answer
+        lost, as a ``ReadTimeout``.
+        """
         body: dict[str, Any] = json.loads(request.content)
         method: str = body["method"]
         params: dict[str, Any] = body.get("params") or {}

@@ -1,3 +1,5 @@
+"""The API token check and the ``Authorization`` header every VCO request carries."""
+
 from collections.abc import Generator
 from typing import override
 
@@ -34,7 +36,14 @@ def clean_token(token: str) -> str:
 
 
 class VcoAuth(httpx.Auth):
+    """The ``httpx`` auth that sets the ``Authorization`` header from an API token."""
+
     def __init__(self, token: str) -> None:
+        """Check *token* with ``clean_token`` and make its header value.
+
+        A bare token is sent as ``Token <token>``. A token with a space in it
+        already names its scheme (``Bearer ...``, say) and is sent as given.
+        """
         token = clean_token(token)
         if len(token.split()) > 1:
             self._auth_header: str = token

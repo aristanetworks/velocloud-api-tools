@@ -150,6 +150,7 @@ class HubServiceTable:
     _services: tuple[HubService, ...]
 
     def __init__(self, services: tuple[HubService, ...]) -> None:
+        """A table of *services*; ``from_refs`` builds one from a module's refs."""
         self._services = services
 
     @classmethod

@@ -1,3 +1,9 @@
+"""The client's ``event/`` methods.
+
+The events of an enterprise, a partner or the operator, and an enterprise's
+alerts.
+"""
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Protocol

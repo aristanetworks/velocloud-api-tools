@@ -1,3 +1,5 @@
+"""The client's ``license/`` method: the Edge licenses of an enterprise."""
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Protocol

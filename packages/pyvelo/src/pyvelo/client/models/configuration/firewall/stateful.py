@@ -1,3 +1,5 @@
+"""The flow timeouts of the stateful firewall, in seconds."""
+
 from pyvelo.core import VcoModel
 
 

@@ -1,3 +1,9 @@
+"""The ref rows of ``deviceSettings``: one ``ConfigurationRef`` class per ref name.
+
+Each names the enterprise object a part of the module points at, such as a
+segment, a hub, a data center or a DNS provider.
+"""
+
 from typing import Annotated, Any, ClassVar, Literal
 
 from pydantic import MISSING, ConfigDict

@@ -1,3 +1,9 @@
+"""The client's ``metrics/`` methods.
+
+The metrics and time series of Edges and gateways, of the firewall and of NSD
+tunnels.
+"""
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Protocol
