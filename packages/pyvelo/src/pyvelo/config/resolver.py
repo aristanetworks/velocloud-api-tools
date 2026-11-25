@@ -92,7 +92,7 @@ class BaseResolver[IdentityT]:
     ``unloaded()`` and ``_clear()`` set ``loaded`` back to ``False``.
     """
 
-    identity_type: ClassVar[type[Any]]
+    identity_type: type[IdentityT]  # pyright: ignore[reportUninitializedInstanceVariable]
     requires_load: ClassVar[bool] = False
 
     def __init__(self, client: VcoClientProtocol) -> None:

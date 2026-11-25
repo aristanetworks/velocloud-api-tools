@@ -164,6 +164,16 @@ class NoCopyResolver:
         return []
 
 
+class WrongIdentityResolver(BaseResolver[FooIdentity]):
+    """The type checker refuses an ``identity_type`` that is not the resolver's identity."""
+
+    identity_type = BarIdentity  # pyright: ignore[reportAssignmentType]
+
+    @override
+    async def load(self, context: ResolverContext) -> None:
+        _ = context
+
+
 class OnlyLookupsResolver(BaseResolver[FooIdentity]):
     """A resolver that defines the two lookups and nothing awaitable."""
 
