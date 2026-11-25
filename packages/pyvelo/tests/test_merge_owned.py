@@ -206,14 +206,16 @@ def test_the_flag_of_a_by_flag_field_is_not_patchable(flag: bool, local: bool) -
     with pytest.raises(PatchError, match="null") as exc:
         _ = e.merge_patch({"segments": {"S": {"mapping": {"override": flag}}}})
     assert exc.value.path.parts[-2:] == ("mapping", "override")
-    assert "set_local" in str(exc.value) or "inherit" in str(exc.value)
+    assert "set_local()" in str(exc.value)
+    assert 'send {"segments": {"S": {"mapping": null}}}' in str(exc.value)
     assert _dump(e) == before
 
 
 def test_the_flag_is_refused_beside_a_value_too() -> None:
     e, _ = _bound(affinity={"override": True})
-    with pytest.raises(PatchError, match="null"):
+    with pytest.raises(PatchError, match="null") as exc:
         _ = e.merge_patch({"affinity": {"override": False, "affinity": ["a"]}})
+    assert 'send {"affinity": null}' in str(exc.value)
     assert _dump(e)["affinity"] == {"override": True, "affinity": []}
 
 

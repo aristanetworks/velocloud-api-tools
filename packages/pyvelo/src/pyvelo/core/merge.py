@@ -73,6 +73,7 @@ from .patch import (
     ItemOp,
     PatchError,
     Place,
+    at,
     checked_patch,
     is_new,
     key_selector,
@@ -456,7 +457,7 @@ def _merge_owned(
         _merge_list(model, name, field_info, value, resolvers, path)
         return
     if is_dict(value) and (spec is not None or model_types):
-        _refuse_flag_key(field_info, value, path)
+        _refuse_flag_key(model, name, field_info, value, path)
         local = owned.localize()
         if spec is not None and not (model_types and not isinstance(local, list)):
             _merge_list(model, name, field_info, value, resolvers, path)
@@ -485,14 +486,19 @@ def _merge_owned(
 
 
 def _refuse_flag_key(
-    field_info: FieldInfo, patch: Mapping[object, object], path: Path
+    model: VcoModel,
+    name: str,
+    field_info: FieldInfo,
+    patch: Mapping[object, object],
+    path: Path,
 ) -> None:
     """``PatchError`` if *patch*, an object for a ``ByFlag`` field, names the flag that the encoding is made of.
 
     The flag says whether the edge overrides the profile. A patch that set it
     to false would leave a local value stored but not local, and one that set
     it to true would make the profile's value the edge's own without a copy:
-    ownership changes by ``null`` and by a value only.
+    ownership changes by ``null`` and by a value only. *path* is the field's
+    place in the patch, and the message gives the patch that inherits it.
     """
     encoding = field_kind(field_info).encoding
     if not isinstance(encoding, ByFlag):
@@ -501,14 +507,35 @@ def _refuse_flag_key(
         names = model_type._alias_map()  # pyright: ignore[reportPrivateUsage]
         for key in patch:
             if isinstance(key, str) and names.get(key) == encoding.flag:
+                inherit = json.dumps(_inherit_patch(wire_name(type(model), name), path))
                 raise PatchError(
                     f"{key!r} is the flag that says whether the edge overrides the "
-                    + "profile here, and it follows the value: an object given "
-                    + "overrides it (the flag is set for you) and null inherits "
-                    + f"it. Leave {key!r} out, and send null for the field to inherit",
+                    + "profile here, and it follows the value, so a patch cannot "
+                    + "set it (it would leave a local value that is not local, "
+                    + "or make the profile's value the edge's without a copy). "
+                    + f"Leave {key!r} out: an object given overrides it "
+                    + "(set_local() does the same) and null inherits it "
+                    + f"(inherit()); to inherit, send {inherit}",
                     path.child(encoding.flag),
                     "invalid_value",
                 )
+
+
+def _inherit_patch(field_key: str, path: Path) -> dict[str, object]:
+    """The patch that sends ``null`` to the field at *path* (its own key *field_key*), as the parts of *path* nest.
+
+    A keyed item is named by its selector and a list position by ``at``.
+    """
+    patch: dict[str, object] = {field_key: None}
+    for part in reversed(path.parts[:-1]):
+        if isinstance(part, Key):
+            name = key_selector(part.value)
+        elif isinstance(part, int):
+            name = at(part)
+        else:
+            name = part
+        patch = {name: patch}
+    return patch
 
 
 def _null_value(field_info: FieldInfo, name: str, path: Path, *, built: bool) -> object:

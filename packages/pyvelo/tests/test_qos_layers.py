@@ -1,7 +1,7 @@
 """The QoS module's kinds as declared, the display defaults it reads, and what each layer holds."""
 
 import copy
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from pydantic import MISSING
@@ -24,7 +24,7 @@ from pyvelo.core import (
     wire_name,
 )
 from pyvelo.core.base import VcoModel
-from pyvelo.core.effective import Origin, effective_view
+from pyvelo.core.effective import Origin, effective_dump, effective_view
 from pyvelo.core.layers import Effective
 from segment_helpers import GLOBAL, GUEST, descriptor, qos_entry
 
@@ -229,6 +229,12 @@ def test_a_profile_segment_without_defaults_stays_without_them():
     view = effective_view(edge.data, module.data, QosData[Effective])
     defaults = view.segments[0].defaults
     assert (defaults.origin, defaults.value) == (Origin.FACTORY, MISSING)
+    # A dump of the view leaves it out, and gives the rest of the segment.
+    dumped, found = effective_dump(view)
+    (dumped_segment,) = cast("list[dict[str, object]]", dumped["segments"])
+    assert "defaults" not in dumped_segment
+    assert not [path for path in found if path.endswith(".defaults")]
+    assert "cosMapping" in dumped_segment
     # A write that touches the module still repairs the four defaults, with the warning.
     segment.rules.append(_rule())
     plan = plan_module(module, level=PROFILE)

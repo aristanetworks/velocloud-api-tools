@@ -213,7 +213,10 @@ async def test_a_patch_naming_the_cos_mapping_flag_is_refused():
             state,
             {"segments": {"Global Segment": {"cosMapping": {"override": True}}}},
         )
-    assert "send null for the field to inherit" in str(caught.value)
+    message = str(caught.value)
+    assert "set_local()" in message
+    assert "inherit()" in message
+    assert 'send {"segments": {"Global Segment": {"cosMapping": null}}}' in message
     assert state.plan().changed == ()
     assert state.plan().render() == before
 

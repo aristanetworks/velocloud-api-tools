@@ -384,7 +384,8 @@ def effective_dump(
 
     The JSON has the wire keys (aliases) and the values as JSON mode writes
     them; a key is absent where the view has ``MISSING`` (an ``Unconverted``
-    field). A stored value (``EDGE`` or ``PROFILE``) is written as stored: the
+    field), or a ``Resolved`` of it (an ``EdgeOnly`` or ``ProfileOnly`` field
+    whose layer holds none, and has no default). A stored value (``EDGE`` or ``PROFILE``) is written as stored: the
     fields of a model it was not given are left out, which is what the server
     composes from the same data. A display default (``FACTORY``) is written
     whole. Each ``Resolved`` is written as its value. The map has an entry for
@@ -411,6 +412,10 @@ def _dump_model(
         path = _join(prefix, key)
         if isinstance(value, Resolved):
             resolved = cast("Resolved[object]", value)
+            if (
+                resolved.value is MISSING
+            ):  # an EdgeOnly or ProfileOnly field its layer lacks
+                continue
             found[path] = resolved
             data[key] = _json(resolved.value, full=resolved.origin is Origin.FACTORY)
         elif isinstance(value, Layered):
