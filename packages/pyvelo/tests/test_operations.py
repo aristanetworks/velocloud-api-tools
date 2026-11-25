@@ -323,7 +323,7 @@ class TestUpdateModule:
             _ = await client.update_module(
                 module,
                 cast(
-                    DeviceSettingsData | QosData | WanData | FirewallData[Edge],
+                    DeviceSettingsData | QosData[Edge] | WanData | FirewallData[Edge],
                     object(),
                 ),
             )

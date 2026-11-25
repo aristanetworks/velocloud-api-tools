@@ -258,7 +258,7 @@ async def test_an_insert_has_no_version_read(mock_vco_client: MockVcoClientFacto
     module = new_edge_module(ConfigurationModuleName.QOS, 10)
     assert isinstance(module, QosConfigurationModule)
     module.data.segments.append(
-        QosSegment.model_validate(
+        QosSegment[Edge].model_validate(
             {
                 "segment": {
                     "segmentId": 0,

@@ -2,8 +2,19 @@ from typing import Annotated, Any
 
 from pydantic import MISSING, Field
 
-from pyvelo.core import ProfileOnly, VcoModel
-from pyvelo.core.fields import FixedList, KeyField, OverrideFlag
+from pyvelo.core import (
+    Additive,
+    ByFlag,
+    Default,
+    Inheritable,
+    Layered,
+    ProfileOnly,
+    Unconverted,
+    VcoModel,
+    kind_default,
+)
+from pyvelo.core.fields import FixedList, KeyField
+from pyvelo.core.layers import L
 
 from ..common import SegmentMetadata
 from .common import CosMappingInputType
@@ -46,23 +57,34 @@ class CosMapping(VcoModel):
         )
     )
     ls_input_type: CosMappingInputType = "weight"
-    override: Annotated[bool, OverrideFlag] = False
+    override: bool = False
 
 
 class WebProxy(VcoModel):
     providers: list[Any] = Field(default_factory=list)
 
 
-class QosSegment(VcoModel):
+class QosSegment(Layered[L]):
+    """A segment of the QoS module.
+
+    ``rules`` are the edge's own, with the profile's after them in the effective
+    view. ``defaults`` belong to the profile layer. ``cos_mapping`` is local when
+    the edge stores it with ``override`` true; the composer takes a stored object
+    whatever its flag. ``web_proxy`` is not converted yet.
+    """
+
     segment: SegmentMetadata
-    rules: Annotated[list[QosRule], KeyField("name", alt="rule_logical_id")] = Field(
-        default_factory=list
-    )
+    rules: Annotated[
+        Additive[list[QosRule]], KeyField("name", alt="rule_logical_id")
+    ] = kind_default(factory=list)
     defaults: Annotated[
-        list[QosRule] | MISSING,
-        ProfileOnly,
+        ProfileOnly[list[QosRule] | MISSING],
         KeyField("name", alt="rule_logical_id"),
         FixedList(editable=("action",)),
-    ] = MISSING
-    cos_mapping: CosMapping | MISSING = MISSING
-    web_proxy: WebProxy | MISSING = MISSING
+    ] = kind_default(MISSING)
+    cos_mapping: Annotated[
+        Inheritable[CosMapping],
+        ByFlag("override", presence_wins=True),
+        Default(factory=CosMapping),
+    ] = Field(default=...)
+    web_proxy: Unconverted[WebProxy | MISSING] = kind_default(MISSING)

@@ -1,6 +1,7 @@
 """Tests for ConfigPipeline.apply()."""
 
 from datetime import UTC, datetime
+from typing import Any, overload
 
 import pytest
 from pydantic import MISSING
@@ -77,21 +78,33 @@ def _make_device_settings_module(
     )
 
 
-def _make_qos_module(mod_id: int, config_id: int) -> QosConfigurationModule:
-    return QosConfigurationModule(
-        name="QOS",
-        data=QosData(),
-        created=_TS,
-        modified=_TS,
-        id_=mod_id,
-        type_=ConfigurationModuleType.ENTERPRISE,
-        description=None,
-        configuration_id=config_id,
-        enterprise_logical_id=None,
-        schema_version=None,
-        version=None,
-        metadata=None,
-    )
+@overload
+def _make_qos_module(
+    mod_id: int, config_id: int, layer: type[Edge] = ...
+) -> QosConfigurationModule[Edge]: ...
+@overload
+def _make_qos_module(
+    mod_id: int, config_id: int, layer: type[Profile]
+) -> QosConfigurationModule[Profile]: ...
+def _make_qos_module(
+    mod_id: int, config_id: int, layer: type[Edge] | type[Profile] = Edge
+) -> QosConfigurationModule[Edge] | QosConfigurationModule[Profile]:
+    fields: dict[str, Any] = {
+        "name": "QOS",
+        "created": _TS,
+        "modified": _TS,
+        "id_": mod_id,
+        "type_": ConfigurationModuleType.ENTERPRISE,
+        "description": None,
+        "configuration_id": config_id,
+        "enterprise_logical_id": None,
+        "schema_version": None,
+        "version": None,
+        "metadata": None,
+    }
+    if layer is Profile:
+        return QosConfigurationModule[Profile](data=QosData[Profile](), **fields)
+    return QosConfigurationModule[Edge](data=QosData[Edge](), **fields)
 
 
 def _make_state(
@@ -114,7 +127,7 @@ def _make_state(
         profile_modules.append(_make_device_settings_module(mod_id=4, config_id=20))
     if include_qos:
         edge_modules.append(_make_qos_module(mod_id=5, config_id=10))
-        profile_modules.append(_make_qos_module(mod_id=6, config_id=20))
+        profile_modules.append(_make_qos_module(mod_id=6, config_id=20, layer=Profile))
     edge_config = EdgeConfiguration(
         name="Edge Specific Profile",
         id_=10,

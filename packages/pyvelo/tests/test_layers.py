@@ -373,3 +373,13 @@ def test_kind_default_gives_a_value_or_a_factory() -> None:
         _ = kind_default()
     with pytest.raises(TypeError, match="kind_default"):
         _ = kind_default(1, factory=int)
+
+
+def test_kind_default_takes_missing_as_a_value() -> None:
+    class Holder(Layered[Edge]):
+        absent: Unconverted[int | MISSING] = kind_default(MISSING)
+
+    assert Holder.model_validate({}).absent is MISSING
+    assert Holder.model_fields["absent"].default is MISSING
+    with pytest.raises(TypeError, match="kind_default"):
+        _ = kind_default(MISSING, factory=int)

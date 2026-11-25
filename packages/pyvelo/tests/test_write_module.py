@@ -104,19 +104,21 @@ def inbound_rule(name: str) -> dict[str, Any]:
     return {"name": name, "match": {}, "action": {"type": "port_forwarding"}}
 
 
-def qos(raw: dict[str, Any], *, refs: object = MISSING) -> QosConfigurationModule:
-    return QosConfigurationModule.model_validate(
+def qos(raw: dict[str, Any], *, refs: object = MISSING) -> QosConfigurationModule[Edge]:
+    return QosConfigurationModule[Edge].model_validate(
         make_module_json(
             "QOS", copy.deepcopy(raw), configuration_id=10, refs=copy.deepcopy(refs)
         )
     )
 
 
-def new_qos_with_a_segment() -> QosConfigurationModule:
+def new_qos_with_a_segment() -> QosConfigurationModule[Edge]:
     """An edge QoS module not inserted yet, with the global segment added."""
     module = new_edge_module(ConfigurationModuleName.QOS, 10)
     assert isinstance(module, QosConfigurationModule)
-    module.data.segments.append(QosSegment.model_validate({"segment": GLOBAL_SEGMENT}))
+    module.data.segments.append(
+        QosSegment[Edge].model_validate({"segment": GLOBAL_SEGMENT})
+    )
     return module
 
 
@@ -969,7 +971,7 @@ async def test_a_module_held_as_another_class_is_an_unknown_outcome(
         _ = await client.write_module(module, plan_module(module))
     assert exc.value.answer == "row"
     assert exc.value.detail == (
-        "the VCO holds module 1 as a QosConfigurationModule, "
+        "the VCO holds module 1 as a QosConfigurationModule[Edge], "
         "not a FirewallConfigurationModule[Edge]"
     )
 

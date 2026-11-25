@@ -11,7 +11,7 @@ from pyvelo.client.exceptions import DanglingReferenceError
 from pyvelo.client.models.configuration.device_settings.root import DeviceSettingsData
 from pyvelo.client.models.configuration.firewall.root import FirewallData
 from pyvelo.client.models.configuration.qos.root import QosData
-from pyvelo.core import Key, Path, VcoModel
+from pyvelo.core import Key, Path, Profile, VcoModel
 from pyvelo.core.references import (
     Reference,
     Sets,
@@ -44,14 +44,14 @@ def ds_data(
 
 def qos_data(
     *segments: tuple[segment_helpers.Segment, list[dict[str, Any]]],
-) -> QosData:
+) -> QosData[Profile]:
     """QoS data with one entry per ``(segment, rules)`` of *segments*."""
-    return QosData.model_validate(
+    return QosData[Profile].model_validate(
         {"segments": [segment_helpers.qos_entry(s, rules=r) for s, r in segments]}
     )
 
 
-def hub_rule_data(segment: segment_helpers.Segment, hub_id: str) -> QosData:
+def hub_rule_data(segment: segment_helpers.Segment, hub_id: str) -> QosData[Profile]:
     entry = backhaul_entry(HUB_A, SERVICE)
     entry["edgeLogicalId"] = hub_id
     return qos_data((segment, [backhaul_rule("Web", entry)]))
@@ -232,7 +232,9 @@ NOW_HUBS = sets(backhaul_hub_2={uuid.UUID(HUB_A.logical_id)})
 HUB_B_ID = uuid.UUID(HUB_B.logical_id)
 
 
-def _hub_data(hub_id: str, segment: segment_helpers.Segment = GUEST) -> QosData:
+def _hub_data(
+    hub_id: str, segment: segment_helpers.Segment = GUEST
+) -> QosData[Profile]:
     return hub_rule_data(segment, hub_id)
 
 

@@ -13,13 +13,16 @@ from layered_models import Flagged, Mod, Reset, Rule, Seg, Settings
 from pyvelo.client.enums.configuration import ConfigurationModuleName
 from pyvelo.client.models.configuration import FirewallData
 from pyvelo.client.models.configuration.firewall.segment import FirewallSegment
+from pyvelo.client.models.configuration.qos.root import QosData
+from pyvelo.client.models.configuration.qos.segment import QosSegment
 from pyvelo.client.schemas.configuration import (
     AnyConfigurationModule,
     EdgeConfiguration,
     EnterpriseConfigurationProfile,
     FirewallConfigurationModule,
+    QosConfigurationModule,
 )
-from pyvelo.client.schemas.edge import CompositeFirewallModule
+from pyvelo.client.schemas.edge import CompositeFirewallModule, CompositeQosModule
 from pyvelo.core import (
     Composed,
     Edge,
@@ -127,6 +130,30 @@ def _container_cases(
     _ = edge_module
 
 
+def _qos_cases(
+    edge_cfg: EdgeConfiguration,
+    profile_cfg: EnterpriseConfigurationProfile,
+    composite: CompositeQosModule,
+) -> None:
+    edge_data: QosData[Edge] = edge_cfg.qos.data
+    profile_segment: QosSegment[Profile] = profile_cfg.qos.data.segments[0]
+    assert_type(edge_cfg.qos, QosConfigurationModule[Edge])
+    assert_type(edge_data, QosData[Edge])
+    assert_type(profile_cfg.qos, QosConfigurationModule[Profile])
+    assert_type(profile_segment, QosSegment[Profile])
+    assert_type(composite.data, QosData[Composed])
+    assert_type(
+        edge_cfg.get_module(ConfigurationModuleName.QOS), QosConfigurationModule[Edge]
+    )
+    assert_type(edge_cfg.qos.mutable_data(), QosData[Edge])
+    assert_type(edge_cfg.qos.data.segment("Guest"), QosSegment[Edge])
+    assert_type(profile_cfg.qos.data.get_segment(name="Guest"), QosSegment[Profile])
+    _ = edge_cfg.qos.data.segments[0].rules  # an Unconverted field reads on each layer
+    _ = profile_cfg.qos.data.segments[0].rules
+    _ = QosData[Composed]  # a layer of its own
+
+
 def test_the_typing_cases_module_imports() -> None:
     assert callable(_cases)
     assert callable(_container_cases)
+    assert callable(_qos_cases)

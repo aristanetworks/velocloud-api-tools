@@ -12,7 +12,7 @@ import pytest
 from pyvelo.client.models.configuration.qos.rule import QosRuleMatch
 from pyvelo.client.module_write import plan_module
 from pyvelo.client.schemas.configuration import QosConfigurationModule
-from pyvelo.core import ConfigContext
+from pyvelo.core import ConfigContext, Edge
 from pyvelo.testing import make_module_json
 
 EDGE = ConfigContext.EDGE
@@ -86,7 +86,7 @@ def rule(name: str, match: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def qos(*rules: dict[str, Any]) -> QosConfigurationModule:
+def qos(*rules: dict[str, Any]) -> QosConfigurationModule[Edge]:
     segment = {
         "segmentId": 0,
         "name": "Global Segment",
@@ -94,7 +94,7 @@ def qos(*rules: dict[str, Any]) -> QosConfigurationModule:
         "segmentLogicalId": "00000000-0000-0000-0000-000000000000",
     }
     raw = {"segments": [{"segment": segment, "rules": list(rules)}]}
-    return QosConfigurationModule.model_validate(
+    return QosConfigurationModule[Edge].model_validate(
         make_module_json("QOS", copy.deepcopy(raw))
     )
 

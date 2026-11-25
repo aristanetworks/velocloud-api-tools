@@ -48,9 +48,9 @@ def _make_device_data() -> DeviceSettingsData:
     )
 
 
-def _make_qos_segments() -> list[QosSegment]:
+def _make_qos_segments() -> list[QosSegment[Edge]]:
     return [
-        QosSegment(
+        QosSegment[Edge](
             segment=QosSegmentMetadata(
                 segment_id=0,
                 name="Global Segment",
@@ -58,7 +58,7 @@ def _make_qos_segments() -> list[QosSegment]:
                 segment_logical_id=UUID("00000000-0000-0000-0000-000000000000"),
             )
         ),
-        QosSegment(
+        QosSegment[Edge](
             segment=QosSegmentMetadata(
                 segment_id=2,
                 name="Sales",
@@ -102,22 +102,22 @@ class TestDeviceSettingsDataGetSegment:
 
 class TestQosDataGetSegment:
     def test_lookup_by_name(self):
-        data = QosData(segments=_make_qos_segments())
+        data = QosData[Edge](segments=_make_qos_segments())
         seg = data.get_segment(name="Sales")
         assert seg.segment.segment_id == 2
 
     def test_lookup_by_id(self):
-        data = QosData(segments=_make_qos_segments())
+        data = QosData[Edge](segments=_make_qos_segments())
         seg = data.get_segment(segment_id=0)
         assert seg.segment.name == "Global Segment"
 
     def test_not_found(self):
-        data = QosData(segments=_make_qos_segments())
+        data = QosData[Edge](segments=_make_qos_segments())
         with pytest.raises(ValueError, match="Segment not found"):
             _ = data.get_segment(name="Missing")
 
     def test_requires_name_or_segment_id(self):
-        data = QosData(segments=_make_qos_segments())
+        data = QosData[Edge](segments=_make_qos_segments())
         with pytest.raises(ValueError, match="Provide name or segment_id"):
             _ = data.get_segment()
 

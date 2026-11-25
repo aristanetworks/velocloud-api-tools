@@ -11,6 +11,7 @@ from pyvelo.core import (
     FixedList,
     KeyField,
     PatchError,
+    Profile,
     VcoModel,
     add,
     at,
@@ -297,8 +298,8 @@ def test_a_list_value_in_an_item_the_patch_adds_is_left_to_plan():
     assert [r.name for r in holder.segments[0].defaults] == ["A"]  # pyright: ignore[reportGeneralTypeIssues]
 
 
-def qos() -> QosData:
-    return QosData.model_validate({"segments": [qos_entry(GUEST)]})
+def qos() -> QosData[Profile]:
+    return QosData[Profile].model_validate({"segments": [qos_entry(GUEST)]})
 
 
 def test_qos_defaults_take_an_action_edit_by_name():
@@ -348,7 +349,7 @@ def test_qos_rules_of_a_segment_stay_editable():
 def test_a_qos_round_trip_without_rule_ids_keeps_the_rule_ids():
     entry = qos_entry(GUEST)
     sent_ids = [r["ruleLogicalId"] for r in entry["defaults"]]
-    data = QosData.model_validate({"segments": [entry]})
+    data = QosData[Profile].model_validate({"segments": [entry]})
     sent = copy.deepcopy(entry["defaults"])
     for rule in sent:
         del rule["ruleLogicalId"]

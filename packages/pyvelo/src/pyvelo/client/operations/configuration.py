@@ -995,7 +995,8 @@ class ConfigurationMixin(Protocol):
         module: M,
         data: DeviceSettingsData
         | WanData
-        | QosData
+        | QosData[Edge]
+        | QosData[Profile]
         | FirewallData[Edge]
         | FirewallData[Profile],
         *,

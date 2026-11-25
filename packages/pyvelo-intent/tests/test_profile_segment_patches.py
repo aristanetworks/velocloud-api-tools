@@ -11,7 +11,7 @@ import copy
 import itertools
 import uuid
 from collections.abc import Mapping
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from profile_state import (  # pyright: ignore[reportImplicitRelativeImport]
@@ -26,7 +26,7 @@ from pyvelo.client.models.configuration.profile_segments import (
 from pyvelo.client.module_write import ModulePlan
 from pyvelo.client.schemas.configuration import QosConfigurationModule
 from pyvelo.config.resolver import ResolverRegistry
-from pyvelo.core import PatchError, add, delete
+from pyvelo.core import PatchError, Profile, add, delete
 from pyvelo.core.identity import ResolutionError
 from pyvelo.core.rebase import Key, Path
 from pyvelo_intent.config.pipeline import ConfigPipeline
@@ -45,10 +45,10 @@ DS = "deviceSettings"
 QOS = "QOS"
 
 
-def qos_of(state: ConfigState) -> QosConfigurationModule:
+def qos_of(state: ConfigState) -> QosConfigurationModule[Profile]:
     module = state.module(QOS)
     assert isinstance(module, QosConfigurationModule)
-    return module
+    return cast(QosConfigurationModule[Profile], module)  # the state's profile layer
 
 
 FIREWALL = "firewall"

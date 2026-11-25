@@ -54,7 +54,7 @@ from pyvelo.client.schemas.configuration import (
 from pyvelo.config.resolver import ResolverContext, ResolverRegistry
 from pyvelo.config.resolvers.hub import HubResolver
 from pyvelo.config.validation import ValidationError
-from pyvelo.core import ConfigContext, VcoModel
+from pyvelo.core import ConfigContext, Layered, VcoModel
 from pyvelo.core.base import is_dict, is_list
 from pyvelo.core.effective import effective_view
 from pyvelo.core.identity import (
@@ -289,7 +289,7 @@ class LayerView[X: (Edge, Profile)]:
         return cast(FirewallData[X], module.data)  # the module is of this layer
 
     @property
-    def qos(self) -> QosData:
+    def qos(self) -> QosData[X]:
         """The QoS data; an edge layer that has none starts it empty."""
         module = _module_of(
             self._config,
@@ -298,7 +298,7 @@ class LayerView[X: (Edge, Profile)]:
             profile=self._profile,
         )
         assert isinstance(module, QosConfigurationModule)
-        return module.data
+        return cast(QosData[X], module.data)  # the module is of this layer
 
     @property
     def device_settings(self) -> DeviceSettingsData:
@@ -334,23 +334,39 @@ class EffectiveView:
     @property
     def firewall(self) -> FirewallData[Effective]:
         """The firewall's effective data: the edge's local values over the profile's, then the display defaults."""
-        name = ConfigurationModuleName.FIREWALL
+        return self._view(
+            ConfigurationModuleName.FIREWALL,
+            FirewallData[Profile],
+            FirewallData[Effective],
+        )
+
+    @property
+    def qos(self) -> QosData[Effective]:
+        """The QoS effective data: the edge's local values over the profile's, then the display defaults."""
+        return self._view(
+            ConfigurationModuleName.QOS, QosData[Profile], QosData[Effective]
+        )
+
+    def _view[M: Layered[Effective]](
+        self,
+        name: ConfigurationModuleName,
+        profile_class: type[Layered[Profile]],
+        effective_class: type[M],
+    ) -> M:
+        """The module *name* at the effective layer; neither layer's module is created.
+
+        A profile that has no such module is *profile_class* with no segments.
+        """
         edge_module = _find_module(self._edge, name)
         profile_module = _find_module(self._profile, name)
         edge_data = None
         if edge_module is not None:
-            assert isinstance(edge_module, FirewallConfigurationModule)
-            edge_data = edge_module.data
+            edge_data = cast(Layered[Edge], cast(object, edge_module.data))
         if profile_module is None:
-            profile_data = FirewallData[Profile].model_validate({"segments": []})
+            profile_data = profile_class.model_validate({"segments": []})
         else:
-            assert isinstance(profile_module, FirewallConfigurationModule)
-            profile_data = profile_module.data
-        return effective_view(
-            cast("FirewallData[Edge] | None", edge_data),
-            cast("FirewallData[Profile]", profile_data),
-            FirewallData[Effective],
-        )
+            profile_data = cast(Layered[Profile], cast(object, profile_module.data))
+        return effective_view(edge_data, profile_data, effective_class)
 
 
 type _Place = tuple[str | int, ...]

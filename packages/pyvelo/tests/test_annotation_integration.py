@@ -303,7 +303,7 @@ class TestFirewallMerge:
 class TestQosMerge:
     """Test merge_patch on QoS models."""
 
-    def _make_qos(self) -> QosData:
+    def _make_qos(self) -> QosData[Edge]:
         # Build a minimal QoS rule via model_validate to satisfy required fields
         rule = QosRule.model_validate(
             {
@@ -317,9 +317,9 @@ class TestQosMerge:
                 },
             }
         )
-        return QosData(
+        return QosData[Edge](
             segments=[
-                QosSegment(
+                QosSegment[Edge](
                     segment=_make_segment_metadata("Global Segment", 0),
                     rules=[rule],
                 ),

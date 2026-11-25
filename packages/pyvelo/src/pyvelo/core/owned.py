@@ -29,7 +29,8 @@ from __future__ import annotations
 
 import copy
 import functools
-from collections.abc import Callable
+import json
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Self, cast, get_args, overload
 
@@ -193,7 +194,10 @@ class Owned[T]:
         the profile is unchanged. What is returned is the stored object, so
         an edit through it is an edit of the edge. A value that is local
         already is returned as it is. A ``null`` cannot be local (``None`` is
-        returned, and the field stays inherited). It needs the profile, so it
+        returned, and the field stays inherited). On a ``presence_wins`` field
+        the edge may store an object with its flag off or absent; the backend
+        runs with it, so ``localize`` keeps that object, with its values
+        unchanged, and turns its flag on, and copies nothing from the profile. It needs the profile, so it
         raises ``UnboundError`` on an object that did not come from a loaded
         state, and ``GroupOwnershipError`` on a member of a coupled group
         that is not local (``localize`` the group). After a save or
@@ -262,10 +266,28 @@ class Owned[T]:
             return clear_server_owned(as_stored(copy.deepcopy(value)))
         return clear_server_owned(copy.deepcopy(getattr(parent, self._field)))
 
+    def _kept_object(self) -> object | None:
+        """The stored object of a ``presence_wins`` field when the backend runs with it although its flag is off, else ``None``."""
+        encoding = self._encoding
+        stored = self.stored
+        if (
+            isinstance(encoding, ByFlag)
+            and encoding.presence_wins
+            and stored is not MISSING
+            and stored is not None
+        ):
+            return stored
+        return None
+
+    def _localize_source(self) -> object:
+        """What ``localize`` makes local: the object the backend already uses (``_kept_object``), else the profile's value."""
+        kept = self._kept_object()
+        return self._parent_value() if kept is None else kept
+
     def _localize(self) -> object:
         if self.is_local:
             return self.stored
-        value = self._parent_value()
+        value = self._localize_source()
         self._store_copy(value)
         return value
 
@@ -321,25 +343,28 @@ def clear_server_owned(value: object) -> object:
     A field the VCO assigns (a rule's ``ruleLogicalId``) holds an ID that
     belongs to the profile's object, not to the copy the edge makes of it, so
     the copy carries none: the field becomes ``MISSING`` where its type
-    accepts that, else its default. Models, list items and dict values are
-    walked; *value* is changed in place and returned.
+    accepts that, else its default. The type is the one the field's kind holds
+    (``layers.field_kind``), not the carrier. Models, list items, dict values
+    and what an ``Owned`` stores are walked; *value* is changed in place and
+    returned.
     """
     from pydantic import BaseModel
 
     from .fields import is_server_owned
+    from .layers import field_kind
 
     if isinstance(value, BaseModel):
         cls = type(value)
         for name, info in cls.model_fields.items():
             if is_server_owned(info):
-                if MISSING in get_args(info.annotation):
+                if MISSING in get_args(field_kind(info).inner_type):
                     cleared: object = MISSING
                 else:
                     cleared = info.get_default(call_default_factory=True)
                 object.__setattr__(value, name, cleared)
                 value.__pydantic_fields_set__.discard(name)
             else:
-                _ = clear_server_owned(getattr(value, name, None))
+                _ = clear_server_owned(unwrap(getattr(value, name, None)))
     elif isinstance(value, list):
         for item in cast("list[object]", value):
             _ = clear_server_owned(item)
@@ -653,7 +678,7 @@ class GroupHandle:
             getattr(self._owner, name).stored = value
 
     def localize(self) -> None:
-        """Make every member local, copied from the profile; one that is local already is kept.
+        """Make every member local, copied from the profile; one that is local already is kept, and so is a ``presence_wins`` object the edge stores with its flag off (``Owned.localize``).
 
         The members are edited through their own ``Owned``
         (``fw.stateful_firewall_settings.local.udp_flow_timeout = 600``). It
@@ -661,7 +686,7 @@ class GroupHandle:
         """
         self._check("localize")
         owned = self._members()
-        values = [None if o.is_local else o._parent_value() for o in owned]
+        values = [None if o.is_local else o._localize_source() for o in owned]
         for member, value in zip(owned, values, strict=True):
             if value is not None:
                 member._store_copy(value)
@@ -682,8 +707,10 @@ def bind_layers(edge: Layered[Edge], profile: Layered[Profile] | None) -> None:
     same alt key (the stable ID of a segment, ``segment.segment_id``), or the
     same key where the list has no alt key. A model with no counterpart is
     bound to no profile, and ``localize`` gives it the display default. A list
-    without a ``KeyField`` is not bound. An item added after binding is not
-    bound until this runs again.
+    without a ``KeyField`` is not bound. An item added to a keyed list after
+    binding is bound by ``bind_new_item`` (``get_or_create_segment(owner=)``,
+    which a module's ``segment()`` calls, does so for the placeholder it adds);
+    one added any other way is not bound until this runs again.
 
     *profile* is ``None`` for an edge with no profile: every model is bound to
     nothing.
@@ -727,6 +754,36 @@ def bind_layers(edge: Layered[Edge], profile: Layered[Profile] | None) -> None:
                 )
 
 
+def bind_new_item(owner: Layered[Edge], field: str, item: Layered[Edge]) -> None:
+    """Bind *item*, an entry just added to *owner*'s keyed list *field*, to the profile's entry with the same identity.
+
+    ``bind_layers`` binds the entries a list holds when it runs; an entry added
+    after that is bound here, so ``localize`` in it copies from the profile's
+    entry (matched as ``bind_layers`` matches: the alt key, else the key), or
+    gives the display default when the profile has none. When *owner* is not
+    bound, nothing is done: *item* is as unbound as *owner*, and ``localize``
+    in it raises ``UnboundError``.
+    """
+    from .fields import get_key_spec
+
+    binding = owner._binding
+    if binding is None:
+        return
+    spec = get_key_spec(type(owner).model_fields[field])
+    counterpart: Layered[Profile] | None = None
+    if spec is not None and binding.parent is not None:
+        identity = item_identity(item, spec.paths, spec.alt)
+        counterpart = next(
+            (
+                model
+                for model in _profile_models(getattr(binding.parent, field, None))
+                if item_identity(model, spec.paths, spec.alt) == identity
+            ),
+            None,
+        )
+    bind_layers(item, counterpart)
+
+
 def _profile_models(value: object) -> list[Layered[Profile]]:
     """The ``Layered`` models in *value*: the model itself, or those among the items of a list."""
     from .layers import Layered
@@ -753,3 +810,137 @@ def item_value_at(item: object, path: str) -> object:
     for part in path.split("."):
         value = getattr(value, part, None)
     return value
+
+
+# ---------------------------------------------------------------------------
+# An object the backend uses although its flag says it inherits
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class UnflaggedInUse:
+    """An object stored at a ``presence_wins`` field with its flag off (``unflagged_in_use_at``)."""
+
+    steps: tuple[tuple[str, str | None], ...]
+    """The route to the field in wire keys: each step is a key and, when it
+    names a keyed list, the key of the item the route goes into."""
+    flag: str
+    """The wire key of the flag inside the object."""
+
+    @property
+    def path(self) -> str:
+        """The route as ``segments["Voice"].cosMapping``: keys joined by ``.``, an item as ``[<json of its key>]``."""
+        return ".".join(
+            key if item is None else f"{key}[{json.dumps(item)}]"
+            for key, item in self.steps
+        )
+
+    @property
+    def field(self) -> str:
+        """The wire key of the field."""
+        return self.steps[-1][0]
+
+    def inherit_patch(self) -> dict[str, object]:
+        """The patch that makes the field inherit: ``{"segments": {"Voice": {"cosMapping": null}}}``."""
+        patch: object = None
+        for key, item in reversed(self.steps):
+            patch = {key: patch if item is None else {item: patch}}
+        return cast("dict[str, object]", patch)
+
+    def keep_patch(self) -> dict[str, object]:
+        """The patch that keeps the stored object and turns its flag on: ``{"segments": {"Voice": {"cosMapping": {}}}}``."""
+        patch: object = {}
+        for key, item in reversed(self.steps):
+            patch = {key: patch if item is None else {item: patch}}
+        return cast("dict[str, object]", patch)
+
+
+def _wire_value(model: type[VcoModel], item: object, path: str) -> object:
+    """The value at the python-name *path* below *item*, a raw dict of *model*, read under wire keys; None when a step is absent."""
+    from .base import field_models, is_dict, wire_name
+
+    value: object = item
+    current: type[VcoModel] | None = model
+    for name in path.split("."):
+        if current is None or not is_dict(value) or name not in current.model_fields:
+            return None
+        value = value.get(wire_name(current, name))
+        found = field_models(current.model_fields[name])
+        current = found[0] if found else None
+    return value
+
+
+def unflagged_in_use_at(
+    model: type[Layered[Any]], data: Mapping[str, object]
+) -> list[UnflaggedInUse]:
+    """Every object in raw *data* that the backend uses although its flag is off (``unflagged_in_use``)."""
+    from .base import field_models, is_dict, is_list, wire_name
+    from .fields import get_key_spec
+    from .layers import Kind, Layered, field_kind
+
+    found: list[UnflaggedInUse] = []
+
+    def walk(
+        cls: type[Layered[Any]],
+        raw: Mapping[object, object],
+        above: tuple[tuple[str, str | None], ...],
+    ) -> None:
+        for name, info in cls.model_fields.items():
+            kind = field_kind(info)
+            key = wire_name(cls, name)
+            value = raw.get(key)
+            if value is None:
+                continue
+            if kind.kind is Kind.INHERITABLE:
+                encoding = kind.encoding
+                if not (isinstance(encoding, ByFlag) and encoding.presence_wins):
+                    continue
+                if not is_dict(value):
+                    continue
+                inner = kind.inner_type
+                flag = (
+                    wire_name(inner, encoding.flag)
+                    if isinstance(inner, type) and hasattr(inner, "model_fields")
+                    else encoding.flag
+                )
+                if not value.get(flag):
+                    found.append(UnflaggedInUse((*above, (key, None)), flag))
+            elif kind.kind is Kind.STRUCTURAL:
+                nested = [m for m in field_models(info) if issubclass(m, Layered)]
+                if not nested:
+                    continue
+                if is_dict(value):
+                    walk(nested[0], value, (*above, (key, None)))
+                elif is_list(value):
+                    spec = get_key_spec(info)
+                    if spec is None:
+                        continue
+                    for entry in value:
+                        if not is_dict(entry):
+                            continue
+                        identity = _wire_value(nested[0], entry, spec.paths[0])
+                        if identity is None and spec.alt is not None:
+                            identity = _wire_value(nested[0], entry, spec.alt)
+                        if identity is None:
+                            continue
+                        walk(nested[0], entry, (*above, (key, str(identity))))
+
+    walk(model, cast("Mapping[object, object]", data), ())
+    return found
+
+
+def unflagged_in_use(
+    model: type[Layered[Any]], data: Mapping[str, object]
+) -> list[str]:
+    """The path of every object in raw *data* that the backend uses although its flag is off.
+
+    *data* is read as *model*'s wire keys. A field declared
+    ``ByFlag(..., presence_wins=True)`` is read by the backend composer
+    whenever the edge stores the object, so an object that is present, not
+    ``null``, and has its flag absent or false, is the one the edge runs with
+    although ``is_local`` reads False. It walks structural ``Layered`` fields
+    and keyed lists of ``Layered`` items; a path is wire keys joined by ``.``,
+    a keyed list item written ``[<json of its key>]`` as in
+    ``segments["Voice"].cosMapping``. An item with no key is not walked.
+    """
+    return [found.path for found in unflagged_in_use_at(model, data)]

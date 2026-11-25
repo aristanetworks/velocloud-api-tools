@@ -29,7 +29,7 @@ from pyvelo.client.schemas.configuration import (
     DeviceSettingsConfigurationModule,
     QosConfigurationModule,
 )
-from pyvelo.core import ConfigContext
+from pyvelo.core import Profile
 from pyvelo.testing import ModuleStore, make_module_json, store_of
 from refs_helpers import (
     CONFIG,
@@ -62,7 +62,7 @@ RATE: dict[str, Any] = {"enabled": False, "inputType": "percent", "value": 1}
 
 def qos_module(
     *, version: str = "q1", enabled: bool = False, with_defaults: bool = True
-) -> QosConfigurationModule:
+) -> QosConfigurationModule[Profile]:
     """A profile QoS module with the Global Segment, a web proxy and a rate limit.
 
     The segment has the four ``defaults`` unless *with_defaults* is false.
@@ -81,12 +81,10 @@ def qos_module(
     row = make_module_json(
         "QOS", data, module_id=QOS_ID, configuration_id=CONFIG, version=version
     )
-    return QosConfigurationModule.model_validate(
-        row, context={"config_level": ConfigContext.PROFILE}
-    )
+    return QosConfigurationModule[Profile].model_validate(row)
 
 
-def rate_set(module: QosConfigurationModule, value: int) -> ModulePlan:
+def rate_set(module: QosConfigurationModule[Profile], value: int) -> ModulePlan:
     """The plan of *module* with its rate limit's value set to *value*."""
     data = module.data.model_copy(deep=True)
     rate = data.service_rate_limit
@@ -95,7 +93,7 @@ def rate_set(module: QosConfigurationModule, value: int) -> ModulePlan:
     return plan_module(module, data)
 
 
-def providers_set(module: QosConfigurationModule) -> ModulePlan:
+def providers_set(module: QosConfigurationModule[Profile]) -> ModulePlan:
     """The plan of *module* with a provider in the Global Segment's web proxy."""
     data = module.data.model_copy(deep=True)
     proxy = data.segments[0].web_proxy
@@ -114,7 +112,7 @@ def device_settings() -> tuple[DeviceSettingsConfigurationModule, ModulePlan]:
 
 def a_store(
     ds: DeviceSettingsConfigurationModule,
-    qos: QosConfigurationModule,
+    qos: QosConfigurationModule[Profile],
     propagation: Callable[[dict[str, Any]], None] | None,
 ) -> ModuleStore:
     """A store holding both modules; a write of device settings has *propagation* change the QoS row."""
@@ -285,7 +283,7 @@ async def test_a_change_the_other_writer_made_too_is_written_as_nothing(
     client = await device_settings_written(mock_vco_client, store, ds, ds_plan)
     held = copy.deepcopy(store.rows[QOS_ID])
 
-    write: ModuleWrite[QosConfigurationModule] = await client.write_module(
+    write: ModuleWrite[QosConfigurationModule[Profile]] = await client.write_module(
         qos, rate_set(qos, 5), rebase=True
     )
 
@@ -384,7 +382,7 @@ def test_a_rebase_keeps_the_repair_turned_off():
     assert [m.repaired for m in rebased_plan.missing_defaults] == [False]
 
 
-def _edited(module: QosConfigurationModule) -> QosData:
+def _edited(module: QosConfigurationModule[Profile]) -> QosData[Profile]:
     data = module.data.model_copy(deep=True)
     rate = data.service_rate_limit
     assert isinstance(rate, ServiceRateLimit)

@@ -91,13 +91,13 @@ def test_unserializable_input_still_reports_the_field_error():
 
 def test_explicit_missing_refs_is_captured_as_missing():
     row = {**make_module_json("QOS", {"segments": []}), "refs": MISSING}
-    mod = QosConfigurationModule.model_validate(row)
+    mod = QosConfigurationModule[Edge].model_validate(row)
     assert mod.raw_refs is MISSING
     assert mod.raw_data == {"segments": []}
 
 
 def test_round_trip_through_dict_of_a_module_keeps_raw_data():
-    mod = QosConfigurationModule.model_validate(
+    mod = QosConfigurationModule[Edge].model_validate(
         make_module_json("QOS", {"segments": []})
     )
     again = type(mod).model_validate(dict(mod))
@@ -123,7 +123,7 @@ def test_capture_tolerates_missing_and_untyped():
     del row["data"]
     bare = ConfigurationModuleBase.model_validate(row)
     assert bare.raw_data is MISSING and bare.raw_refs is MISSING
-    qos = QosConfigurationModule.model_validate(
+    qos = QosConfigurationModule[Edge].model_validate(
         make_module_json("QOS", {"segments": []}, refs={})
     )
     assert qos.raw_refs == {}

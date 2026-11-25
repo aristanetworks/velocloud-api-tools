@@ -41,6 +41,7 @@ from pyvelo_intent import (
     EffectiveComparison,
     EffectiveDifference,
 )
+from pyvelo_intent.config import pipeline as pipeline_module
 from pyvelo_intent.config.composed_security import SecurityObjects
 from pyvelo_intent.config.effective import (
     CONVERTED_MODULES,
@@ -49,6 +50,7 @@ from pyvelo_intent.config.effective import (
     UNMODELED_KEYS,
     EffectiveIgnore,
     compare_module,
+    module_attribute,
 )
 from pyvelo_intent.config.pipeline import ConfigPipeline
 from pyvelo_intent.config.state import ConfigState
@@ -149,6 +151,72 @@ EDGE: Json = {
 }
 
 
+def qos_rule(name: str) -> Json:
+    route: Json = {}
+    return {
+        "name": name,
+        "match": {},
+        "action": {
+            "edge2EdgeRouteAction": route,
+            "edge2DataCenterRouteAction": route,
+            "edge2CloudRouteAction": route,
+            "QoS": {},
+        },
+        "ruleLogicalId": str(uuid.uuid5(uuid.NAMESPACE_DNS, name)),
+    }
+
+
+def cos_mapping(*, override: bool = True, realtime_high: int = 35) -> Json:
+    def level(high: int, normal: int, low: int) -> Json:
+        return {
+            "high": {"value": high, "ratelimit": False},
+            "normal": {"value": normal, "ratelimit": False},
+            "low": {"value": low, "ratelimit": False},
+        }
+
+    return {
+        "transactional": level(20, 7, 1),
+        "realtime": level(realtime_high, 15, 1),
+        "bulk": level(15, 5, 1),
+        "lsInputType": "weight",
+        "override": override,
+    }
+
+
+def qos_segment(sid: int, name: str, *rules: Json, **rest: object) -> Json:
+    return {"segment": desc(sid, name), "rules": list(rules), **rest}
+
+
+QOS_PROFILE: Json = {
+    "segments": [
+        qos_segment(0, "Global Segment", qos_rule("p1"), defaults=[]),
+        qos_segment(3, "Voice"),  # no `defaults` at all
+    ]
+}
+QOS_EDGE: Json = {"segments": [qos_segment(0, "Global Segment", qos_rule("e1"))]}
+
+
+def compose_qos(edge: Json | None, profile: Json) -> Json:
+    """What the composer gives for the QoS of the two layers: the edge's key where it has one, rules concatenated (the edge's first), the edge's segments first."""
+    edge = edge or {"segments": []}
+    data: Json = {}
+    for key in (*profile, *edge):
+        if key != "segments":
+            data[key] = copy.deepcopy(edge[key] if key in edge else profile[key])
+    by_id = {s["segment"]["segmentId"]: s for s in profile["segments"]}
+    segments: list[Json] = []
+    for entry in edge["segments"]:
+        theirs = by_id.pop(entry["segment"]["segmentId"], {"rules": []})
+        segments.append(
+            copy.deepcopy(
+                {**theirs, **entry, "rules": [*entry["rules"], *theirs["rules"]]}
+            )
+        )
+    segments.extend(copy.deepcopy(list(by_id.values())))
+    data["segments"] = segments
+    return data
+
+
 def compose(edge: Json | None, profile: Json) -> Json:
     """What the composer gives for the two layers: the edge's key where it has one, arrays concatenated, the edge's segments first."""
     edge = edge or {"segments": []}
@@ -180,22 +248,25 @@ def compose(edge: Json | None, profile: Json) -> Json:
 
 
 async def loaded(
-    edge: Json | None = EDGE, profile: Json = PROFILE, *, composed: Json | None = None
+    edge: Json | None = EDGE,
+    profile: Json = PROFILE,
+    *,
+    composed: Json | None = None,
+    qos_edge: Json | None = QOS_EDGE,
+    qos_profile: Json = QOS_PROFILE,
 ) -> tuple[ConfigPipeline, ConfigState, MockVcoClient]:
-    """A state loaded through a pipeline over a store that composes *edge* and *profile* (or answers *composed*) for the edge."""
-    edge_rows = (
-        []
-        if edge is None
-        else [
-            make_module_json(
-                "firewall",
-                copy.deepcopy(edge),
-                module_id=1,
-                configuration_id=10,
-                version="e1",
-            )
-        ]
-    )
+    """A state loaded through a pipeline over a store that composes the firewall of *edge* and *profile* (or answers *composed*), and the QoS of *qos_edge* and *qos_profile*, for the edge."""
+    edge_rows = [
+        make_module_json(
+            name,
+            copy.deepcopy(data),
+            module_id=module_id,
+            configuration_id=10,
+            version="e1",
+        )
+        for name, module_id, data in (("firewall", 1, edge), ("QOS", 4, qos_edge))
+        if data is not None
+    ]
     edge_config = EdgeConfiguration.model_validate(
         {"name": "Edge Specific Profile", "id": 10, "modules": edge_rows}
     )
@@ -209,13 +280,20 @@ async def loaded(
                     copy.deepcopy(profile),
                     module_id=PROFILE_MODULE_ID,
                     configuration_id=20,
-                )
+                ),
+                make_module_json(
+                    "QOS",
+                    copy.deepcopy(qos_profile),
+                    module_id=PROFILE_MODULE_ID + 1,
+                    configuration_id=20,
+                ),
             ],
         }
     )
     client = MockVcoClient(stack=(edge_config, profile_config))
     client.store.composed[EDGE_ID] = {
-        "firewall": compose(edge, profile) if composed is None else composed
+        "firewall": compose(edge, profile) if composed is None else composed,
+        "QOS": compose_qos(qos_edge, qos_profile),
     }
     pipeline = ConfigPipeline(client)
     state = await pipeline.load(EDGE_ID, enterprise_id=ENTERPRISE_ID)
@@ -226,6 +304,12 @@ def composed_modules(client: MockVcoClient) -> Json:
     firewall = client.store.composed[EDGE_ID]["firewall"]
     assert isinstance(firewall, dict)
     return firewall  # pyright: ignore[reportUnknownVariableType]
+
+
+def composed_qos(client: MockVcoClient) -> Json:
+    qos = client.store.composed[EDGE_ID]["QOS"]
+    assert isinstance(qos, dict)
+    return qos  # pyright: ignore[reportUnknownVariableType]
 
 
 def defaults(state: ConfigState) -> Json:
@@ -306,8 +390,12 @@ async def test_an_edge_with_no_firewall_row_compares_the_profiles_values():
 
 
 async def test_the_constants_say_what_is_converted_and_what_is_a_finding():
-    assert CONVERTED_MODULES == ("firewall",)
-    assert UNMODELED_KEYS == {"firewall": frozenset({"etm"})}
+    assert CONVERTED_MODULES == ("firewall", "QOS")
+    assert UNMODELED_KEYS == {"firewall": frozenset({"etm"}), "QOS": frozenset()}
+    assert [module_attribute(name) for name in ("firewall", "QOS")] == [
+        "firewall",
+        "qos",
+    ]
     assert EFFECTIVE_IGNORES == ()
     assert FINDINGS == {
         EffectiveCategory.DIFFERS,
@@ -993,6 +1081,166 @@ async def test_an_absent_list_is_an_empty_one():
     assert [e.path for e in comparison.findings] == ["segments[0].outbound"]
 
 
+# --- QoS ---------------------------------------------------------------------
+
+
+def composed_calls(client: MockVcoClient) -> list[Json]:
+    return [
+        p for m, p in client.store.requests if m == "edge/getEdgeConfigurationModules"
+    ]
+
+
+async def test_qos_is_compared_by_default():
+    pipeline, state, client = await loaded()
+    comparison = await pipeline.compare_effective(state)
+
+    assert comparison.findings == ()
+    assert {e.module for e in comparison.entries} == {"firewall", "QOS"}
+    (params,) = composed_calls(client)
+    assert params["modules"] == ["firewall", "QOS"]
+
+
+async def test_a_qos_display_default_the_server_lacks_is_factory():
+    pipeline, state, client = await loaded()
+    assert "serviceRateLimit" not in composed_qos(client)
+    comparison = await pipeline.compare_effective(state, modules=["QOS"])
+
+    assert comparison.findings == ()
+    found = by_path(comparison)["serviceRateLimit"]
+    assert found.category is EffectiveCategory.FACTORY
+    assert found.server is MISSING
+    assert str(found.origin) == "factory"
+
+    # A value the server has that is not the display default is a finding.
+    composed_qos(client)["serviceRateLimit"] = {
+        "enabled": True,
+        "inputType": "percent",
+        "value": 40,
+    }
+    comparison = await pipeline.compare_effective(state, modules=["QOS"])
+    assert {e.path for e in comparison.findings} == {
+        "serviceRateLimit.enabled",
+        "serviceRateLimit.value",
+    }
+    assert {e.category for e in comparison.findings} == {EffectiveCategory.DIFFERS}
+    assert "serviceRateLimit" not in categories(comparison)
+
+
+@pytest.mark.parametrize("profile_value", [None, cos_mapping(realtime_high=35)])
+async def test_a_cos_mapping_with_its_flag_off_matches_a_server_that_uses_it(
+    profile_value: Json | None,
+):
+    profile_voice = qos_segment(3, "Voice")
+    if profile_value is not None:
+        profile_voice["cosMapping"] = profile_value
+    qos_profile = {"segments": [QOS_PROFILE["segments"][0], profile_voice]}
+    local = cos_mapping(override=False, realtime_high=40)
+    qos_edge = {
+        "segments": [
+            *QOS_EDGE["segments"],
+            qos_segment(3, "Voice", cosMapping=local),
+        ]
+    }
+    pipeline, state, client = await loaded(qos_edge=qos_edge, qos_profile=qos_profile)
+    voice = next(
+        s for s in composed_qos(client)["segments"] if s["segment"]["segmentId"] == 3
+    )
+    assert voice["cosMapping"] == local  # the composer takes the edge's stored object
+
+    comparison = await pipeline.compare_effective(state, modules=["QOS"])
+
+    assert comparison.findings == ()
+    # The server has a value that equals the view's, so there is no entry at all.
+    assert not [e for e in comparison.entries if e.path == "segments[3].cosMapping"]
+
+
+async def test_qos_rules_are_compared_edge_first():
+    pipeline, state, client = await loaded()
+    comparison = await pipeline.compare_effective(state, modules=["QOS"])
+    assert comparison.findings == ()
+    assert [r["name"] for r in composed_qos(client)["segments"][0]["rules"]] == [
+        "e1",
+        "p1",
+    ]
+
+    composed_qos(client)["segments"][0]["rules"].reverse()
+    comparison = await pipeline.compare_effective(state, modules=["QOS"])
+    found = {e.path: e for e in comparison.findings}
+    first = found["segments[0].rules[0].name"]
+    second = found["segments[0].rules[1].name"]
+    assert (first.client, first.server) == ("e1", "p1")
+    assert (second.client, second.server) == ("p1", "e1")
+    assert (str(first.origin), str(second.origin)) == ("edge", "profile")
+
+
+async def test_qos_web_proxy_is_unconverted():
+    pipeline, state, client = await loaded()
+    proxy = {"providers": [{"name": "provider"}]}
+    composed_qos(client)["segments"][0]["webProxy"] = proxy
+    comparison = await pipeline.compare_effective(state, modules=["QOS"])
+
+    assert comparison.findings == ()
+    entry = by_path(comparison)["segments[0].webProxy"]
+    assert entry.category is EffectiveCategory.UNCONVERTED
+    assert entry.client is MISSING
+    assert entry.server == proxy
+    assert entry.reason
+
+
+@pytest.mark.parametrize("modules", [["QOS"], None])
+async def test_qos_is_not_searched_for_security_groups(modules: list[str] | None):
+    edge_rule = {**qos_rule("e1"), "securityServiceGroup": GROUP}
+    profile_rule = {**qos_rule("p1"), "securityServiceGroup": GROUP}
+    pipeline, state, client = await loaded(
+        qos_edge={"segments": [qos_segment(0, "Global Segment", edge_rule)]},
+        qos_profile={"segments": [qos_segment(0, "Global Segment", profile_rule)]},
+    )
+    client.store.security_objects = copy.deepcopy(SECURITY_OBJECTS)
+    rules = composed_qos(client)["segments"][0]["rules"]
+    assert [r["securityServiceGroup"] for r in rules] == [GROUP, GROUP]
+
+    _ = await pipeline.compare_effective(state, modules=modules)
+
+    assert security_reads(client) == []
+
+
+async def test_security_objects_reach_the_firewall_comparison_only(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    pipeline, state, client = await grouped()
+    given: dict[str, SecurityObjects | None] = {}
+    compare = pipeline_module.compare_module
+
+    def spy(name: str, *args: Any, **kwargs: Any):
+        given[name] = kwargs.get("security_objects")
+        return compare(name, *args, **kwargs)
+
+    monkeypatch.setattr(pipeline_module, "compare_module", spy)
+
+    comparison = await pipeline.compare_effective(state)
+
+    assert comparison.findings == ()
+    assert sorted(security_reads(client)) == sorted(SECURITY_OBJECTS)
+    assert isinstance(given["firewall"], SecurityObjects)
+    assert given["QOS"] is None
+
+
+async def test_qos_alone_can_be_compared():
+    pipeline, state, client = await loaded()
+    # A firewall difference is not reported when only QoS is compared.
+    composed_modules(client)["stateful_firewall_enabled"] = True
+    comparison = await pipeline.compare_effective(state, modules=["QOS"])
+    assert comparison.findings == ()
+    assert {e.module for e in comparison.entries} == {"QOS"}
+    (params,) = composed_calls(client)
+    assert params["modules"] == ["QOS"]
+
+    # The user-facing name is accepted, and asks for the wire name.
+    comparison = await pipeline.compare_effective(state, modules=["qos"])
+    assert {e.module for e in comparison.entries} == {"QOS"}
+    assert composed_calls(client)[-1]["modules"] == ["QOS"]
+
+
 # --- the preconditions ----------------------------------------------------------
 
 
@@ -1043,8 +1291,8 @@ async def test_a_state_that_does_not_know_its_edge_raises_value_error():
 
 async def test_a_module_that_is_not_converted_raises_value_error():
     pipeline, state, _ = await loaded()
-    with pytest.raises(ValueError, match=r"qos.*firewall"):
-        _ = await pipeline.compare_effective(state, modules=["qos"])
+    with pytest.raises(ValueError, match=r"deviceSettings.*firewall, QOS"):
+        _ = await pipeline.compare_effective(state, modules=["deviceSettings"])
 
 
 async def test_modules_can_be_named():
@@ -1094,7 +1342,7 @@ async def test_the_request_does_not_ask_for_encrypted_keys():
     assert "encryptKeys" not in params
     assert params["edgeId"] == EDGE_ID
     assert params["enterpriseId"] == ENTERPRISE_ID
-    assert params["modules"] == ["firewall"]
+    assert params["modules"] == ["firewall", "QOS"]
 
 
 async def test_the_profile_half_is_read_again():
@@ -1108,7 +1356,8 @@ async def test_the_profile_half_is_read_again():
         "firewall": compose(
             {"segments": EDGE["segments"]},
             {**PROFILE, "firewall_logging_enabled": True},
-        )
+        ),
+        "QOS": compose_qos(QOS_EDGE, QOS_PROFILE),
     }
     before = len(client.store.requests)
 
@@ -1130,7 +1379,8 @@ async def test_the_state_is_not_changed_by_a_comparison():
         "firewall": compose(
             {"segments": EDGE["segments"]},
             {**PROFILE, "firewall_logging_enabled": True},
-        )
+        ),
+        "QOS": compose_qos(QOS_EDGE, QOS_PROFILE),
     }
     _ = await pipeline.compare_effective(state)
 

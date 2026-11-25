@@ -1,11 +1,11 @@
-"""Tests for QoS module markers: KeyField, OverrideFlag, Resolvable."""
+"""Tests for QoS module markers: KeyField, the cosMapping flag, Resolvable."""
 
 from pyvelo.client.enums.enterprise import NetworkSegmentType
 from pyvelo.client.models.configuration.common import SegmentMetadata
 from pyvelo.client.models.configuration.qos.root import QosData
 from pyvelo.client.models.configuration.qos.rule import QosRuleMatch
 from pyvelo.client.models.configuration.qos.segment import CosMapping, QosSegment
-from pyvelo.core import KeySpec, add
+from pyvelo.core import ByFlag, Edge, KeySpec, add, field_kind
 from pyvelo.core.fields import get_key_spec, get_resolvable, has_override_flag
 
 
@@ -29,10 +29,12 @@ class TestQosKeyFields:
         )
 
 
-class TestQosOverrideFlag:
-    def test_cos_mapping_override(self):
-        """CosMapping.override should be marked with OverrideFlag."""
-        assert has_override_flag(CosMapping.model_fields["override"])
+class TestQosCosMappingFlag:
+    def test_cos_mapping_override_is_the_flag_of_its_encoding(self):
+        """CosMapping.override is a plain field; the segment's cos_mapping is ByFlag on it."""
+        assert not has_override_flag(CosMapping.model_fields["override"])
+        found = field_kind(QosSegment[Edge].model_fields["cos_mapping"])
+        assert found.encoding == ByFlag("override", presence_wins=True)
 
 
 class TestQosResolvable:
@@ -46,11 +48,11 @@ class TestQosResolvable:
 class TestQosMerge:
     def test_merge_rule_into_segment(self):
         """Merge a rule into a QoS segment by name."""
-        seg = QosSegment(
+        seg = QosSegment[Edge](
             segment=_seg_meta(),
             rules=[],
         )
-        data = QosData(segments=[seg])
+        data = QosData[Edge](segments=[seg])
 
         _ = data.merge_patch(
             {

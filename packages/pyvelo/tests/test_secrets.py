@@ -50,7 +50,13 @@ from pyvelo.testing import ModuleStore, as_stored, make_module_json, store_of
 from ._type_support import MockVcoClientFactory, require_present
 
 OLD, NEW, OTHER = "OLD-md5-made-up", "NEW-md5-made-up", "THIRD-md5-made-up"
-ROOTS = (FirewallData[Edge], QosData, DeviceSettingsData, WanData, ControlPlaneData)
+ROOTS = (
+    FirewallData[Edge],
+    QosData[Edge],
+    DeviceSettingsData,
+    WanData,
+    ControlPlaneData,
+)
 
 
 def _models_in(annotation: object) -> Iterator[type[VcoModel]]:

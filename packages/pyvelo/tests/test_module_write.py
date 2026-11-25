@@ -376,20 +376,20 @@ def test_untyped_module_plans_none():
 
 def test_refs_are_sent_only_with_a_ref_change_or_segments_and_then_whole():
     raw_refs: dict[str, Any] = {"x": [1], "y": 2}
-    bare = QosConfigurationModule.model_validate(
+    bare = QosConfigurationModule[Edge].model_validate(
         make_module_json("QOS", {"segments": []}, refs=raw_refs)
     )
     assert plan_module(bare, level=EDGE).refs is None
-    bare.data.service_rate_limit = ServiceRateLimit(input_type="percent")
+    bare.data.service_rate_limit.set_local(ServiceRateLimit(input_type="percent"))
     assert plan_module(bare, level=EDGE).refs is None  # no segments: none sent
 
-    segmented = QosConfigurationModule.model_validate(
+    segmented = QosConfigurationModule[Edge].model_validate(
         make_module_json(
             "QOS", {"segments": [{"segment": desc(0, "Global Segment")}]}, refs=raw_refs
         )
     )
     assert plan_module(segmented, level=EDGE).refs is None  # nothing to write
-    segmented.data.service_rate_limit = ServiceRateLimit(input_type="percent")
+    segmented.data.service_rate_limit.set_local(ServiceRateLimit(input_type="percent"))
     plan = plan_module(segmented, level=EDGE)
     assert (plan.operation, plan.refs) == ("update", raw_refs)
     assert plan.refs is not raw_refs
@@ -1013,9 +1013,9 @@ QOS_RULE: dict[str, Any] = {
 }
 
 
-def qos(*rules: dict[str, Any]) -> QosConfigurationModule:
+def qos(*rules: dict[str, Any]) -> QosConfigurationModule[Edge]:
     raw = {"segments": [{"segment": desc(0, "Global Segment"), "rules": list(rules)}]}
-    return QosConfigurationModule.model_validate(
+    return QosConfigurationModule[Edge].model_validate(
         make_module_json("QOS", copy.deepcopy(raw))
     )
 
@@ -1515,7 +1515,7 @@ def test_a_section_read_without_its_flag_still_refuses_the_patch():
 
 
 def test_data_given_as_a_dict_is_planned_as_plain_json():
-    qos = QosConfigurationModule.model_validate(
+    qos = QosConfigurationModule[Edge].model_validate(
         make_module_json("QOS", {"segments": []})
     )
     data = {"segments": [], "stamp": uuid.UUID(int=7)}
@@ -1533,7 +1533,7 @@ def test_data_given_as_a_dict_is_planned_as_plain_json():
 
 def test_a_value_given_in_its_text_form_or_as_an_object_plans_the_same():
     raw = {"segments": [], "stamp": "00000000-0000-0000-0000-000000000007"}
-    qos = QosConfigurationModule.model_validate(make_module_json("QOS", raw))
+    qos = QosConfigurationModule[Edge].model_validate(make_module_json("QOS", raw))
     plan = plan_module(qos, {"segments": [], "stamp": uuid.UUID(int=7)})
     assert plan.operation == "none"
 
@@ -1620,12 +1620,12 @@ def test_a_data_edit_of_device_settings_with_segments_sends_its_refs_as_read():
 
 def test_a_data_edit_of_qos_with_segments_sends_its_refs_as_read():
     refs: dict[str, Any] = {"x": [1], "y": 2}
-    qos = QosConfigurationModule.model_validate(
+    qos = QosConfigurationModule[Edge].model_validate(
         make_module_json(
             "QOS", {"segments": [{"segment": desc(0, "Global Segment")}]}, refs=refs
         )
     )
-    qos.data.service_rate_limit = ServiceRateLimit(input_type="percent")
+    qos.data.service_rate_limit.set_local(ServiceRateLimit(input_type="percent"))
     plan = plan_module(qos, level=EDGE)
     assert (plan.operation, plan.refs, plan.ref_changes) == ("update", refs, ())
     assert "  refs: sent as read" in plan.render().splitlines()

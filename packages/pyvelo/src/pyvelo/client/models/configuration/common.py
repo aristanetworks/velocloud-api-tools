@@ -18,6 +18,8 @@ from pyvelo.core.identity import (
     SegmentIdentity,
     ServiceGroupIdentity,
 )
+from pyvelo.core.layers import Edge, Layered, Profile
+from pyvelo.core.owned import bind_layers, bind_new_item
 
 # Firewall rule VLAN scope. "local" restricts the rule to traffic whose
 # source/destination VLAN is local to this edge; "end-to-end" matches
@@ -240,13 +242,18 @@ def get_or_create_segment[S: _HasSegment](
     module_name: str,
     validate: _Validate[S],
     level: ConfigContext | None,
+    *,
+    owner: Layered[Any] | None = None,
 ) -> S:
     """The entry of *segments* called *name*, adding an empty one if the layer lacks it.
 
     An entry under another name but with the profile segment's ``segmentId`` is
     that segment, renamed, and is returned as it is. Otherwise a placeholder
     (see :func:`profile_placeholder`) is validated by *validate* at config level
-    *level* and appended.
+    *level* and appended. When *owner*, the module data that holds *segments*,
+    is an edge layer, the placeholder is bound to the segment of the profile
+    *owner* is bound to (see :func:`pyvelo.core.owned.bind_new_item`), so its
+    keys can be localized; an unbound *owner* leaves it unbound.
     """
     for seg in segments:
         if seg.segment.name == name:
@@ -261,4 +268,32 @@ def get_or_create_segment[S: _HasSegment](
         placeholder, context={"config_level": level} if level is not None else None
     )
     segments.append(created)
+    if owner is not None and owner.layer() is Edge:
+        bind_new_item(cast("Layered[Edge]", owner), "segments", cast("Any", created))
     return created
+
+
+def bind_profile_layers(
+    data: Layered[Any],
+    profile_data: object,
+    profile_class: type[Layered[Profile]],
+) -> list[dict[str, Any]]:
+    """Link *data* to the profile module it inherits from, and return the profile's segments for ``_profile_segments``.
+
+    *profile_data* is the profile module's raw ``data`` (anything else, as for
+    an edge whose profile has no such module, is a profile with no segments).
+    The segments returned are copies, which ``get_or_create_segment`` copies a
+    missing segment's descriptor from. On an edge layer, *data* and what is in
+    it are also bound to the profile layer read from the data
+    (*profile_class*), which is where ``localize`` copies from: see
+    ``pyvelo.core.owned.bind_layers``. Raises ``ValidationError`` for a
+    profile module that does not parse.
+    """
+    segments = copy_profile_segments(profile_data)
+    if data.layer() is not Edge:
+        return segments
+    raw: dict[str, Any] = {"segments": []}
+    if is_dict(profile_data):
+        raw = {**cast(dict[str, Any], profile_data), "segments": segments}
+    bind_layers(cast("Layered[Edge]", data), profile_class.model_validate(raw))
+    return segments

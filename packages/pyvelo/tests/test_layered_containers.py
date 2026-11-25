@@ -15,6 +15,8 @@ from pyvelo.client.enums.profiles import GetConfigurationWith
 from pyvelo.client.exceptions import LayerUnknownError
 from pyvelo.client.models.configuration import FirewallData
 from pyvelo.client.models.configuration.firewall.segment import FirewallSegment
+from pyvelo.client.models.configuration.qos.root import QosData
+from pyvelo.client.models.configuration.qos.segment import QosSegment
 from pyvelo.client.module_write import plan_module
 from pyvelo.client.schemas.configuration import (
     ConfigurationModuleList,
@@ -25,11 +27,13 @@ from pyvelo.client.schemas.configuration import (
     GetConfiguration,
     GetConfigurationModules,
     InsertFirewallConfigurationModule,
+    QosConfigurationModule,
     UpdateConfigurationModule,
     new_edge_module,
 )
 from pyvelo.client.schemas.edge import (
     CompositeFirewallModule,
+    CompositeQosModule,
     EdgeConfigurationModulesResult,
     GetEdgeConfigurationModules,
 )
@@ -407,3 +411,97 @@ async def test_a_firewall_save_is_unchanged(
     assert type(stored) is FirewallConfigurationModule[layer]
     assert stored.config_context is level
     assert stored.raw_data == plan.data
+
+
+# --- the QoS models are layered -----------------------------------------------
+
+QOS_RAW: dict[str, Any] = {
+    "segments": [
+        {
+            "segment": desc(0, "Global Segment"),
+            "rules": [],
+            "futureKey": 1,
+        }
+    ],
+    "futureTopLevel": 1,
+}
+
+
+def qos_row(*, module_id: int = 3, configuration_id: int = 10) -> dict[str, Any]:
+    return make_module_json(
+        "QOS",
+        copy.deepcopy(QOS_RAW),
+        module_id=module_id,
+        configuration_id=configuration_id,
+    )
+
+
+def test_a_qos_row_is_typed_by_its_layer():
+    edge = EdgeConfiguration.model_validate(
+        {"name": "Edge Specific Profile", "modules": [qos_row()]}
+    )
+    assert type(edge.qos) is QosConfigurationModule[Edge]
+    assert type(edge.qos.data) is QosData[Edge]
+    assert all(type(s) is QosSegment[Edge] for s in edge.qos.data.segments)
+    assert edge.qos.config_context is EDGE
+    assert edge.qos.data.segments[0].config_context is EDGE
+
+    profile = EnterpriseConfigurationProfile.model_validate(
+        {"name": "Default Profile", "modules": [qos_row(module_id=4)]}
+    )
+    assert type(profile.qos) is QosConfigurationModule[Profile]
+    assert type(profile.qos.data) is QosData[Profile]
+    assert all(type(s) is QosSegment[Profile] for s in profile.qos.data.segments)
+    assert profile.qos.config_context is PROFILE
+    assert profile.qos.data.segments[0].config_context is PROFILE
+
+    result = EdgeConfigurationModulesResult.model_validate(
+        {
+            "QOS": {
+                "version": "1718888888000",
+                "schemaVersion": "3.0.0",
+                "type": "ENTERPRISE",
+                "data": copy.deepcopy(QOS_RAW),
+            }
+        }
+    )
+    composed = require_present(result.qos)
+    assert isinstance(composed, CompositeQosModule)
+    assert type(composed.data) is QosData[Composed]
+    assert type(composed.data.segments[0]) is QosSegment[Composed]
+    assert composed.raw_data == QOS_RAW
+
+    with pytest.raises(TypeError, match=r"QosData\[Edge\] or QosData\[Prof"):
+        _ = QosData.model_validate({})
+    with pytest.raises(TypeError, match=r"QosData\[Edge\]"):
+        _ = QosConfigurationModule.model_validate(qos_row())
+
+
+def test_new_edge_module_is_an_edge_qos_module():
+    module = new_edge_module(ConfigurationModuleName.QOS, 10)
+    assert type(module) is QosConfigurationModule[Edge]
+    assert type(module.data) is QosData[Edge]
+    assert module.is_new
+    assert module.config_context is EDGE
+
+
+def test_a_qos_segment_made_by_the_data_is_of_its_layer():
+    guest = {"segments": [{"segment": desc(2, "Guest")}]}
+    edge = QosData[Edge].model_validate({"segments": []})
+    edge.bind_profile(guest)
+    made_for_the_edge = edge.segment("Guest")
+    assert type(made_for_the_edge) is QosSegment[Edge]
+    assert edge.get_segment(name="Guest") is made_for_the_edge
+
+    profile = QosData[Profile].model_validate({"segments": []})
+    profile.bind_profile(guest)
+    made_for_the_profile = profile.segment("Guest")
+    assert type(made_for_the_profile) is QosSegment[Profile]
+    assert profile.get_segment(name="Guest") is made_for_the_profile
+
+
+def test_a_qos_module_planned_at_each_layer_writes_the_raw_data():
+    edge = QosConfigurationModule[Edge].model_validate(qos_row())
+    assert plan_module(edge, level=EDGE).operation == "none"
+    profile = QosConfigurationModule[Profile].model_validate(qos_row())
+    assert plan_module(profile, level=PROFILE).operation == "none"

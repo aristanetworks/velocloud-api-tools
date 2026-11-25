@@ -25,10 +25,13 @@ from pyvelo.core import (
     PatchError,
     Profile,
     ServerOwned,
+    Unconverted,
     VcoModel,
     bind_layers,
+    kind_default,
 )
 from pyvelo.core.layers import L, inner_adapter
+from pyvelo.core.owned import unflagged_in_use
 
 # Fields that hold their plain default in every dump and say nothing about ownership.
 _PLAIN = {"legacy", "edge_note", "profile_note"}
@@ -283,6 +286,61 @@ def test_by_flag_localize_forces_the_flag() -> None:
     got = e.affinity.localize()
     assert got == Reset(override=True, affinity=["a"])
     assert _dump(e)["affinity"] == {"override": True, "affinity": ["a"]}
+
+
+def test_localize_keeps_a_present_object_of_a_presence_wins_field_with_its_flag_off() -> (
+    None
+):
+    # The backend runs with the object the edge stores, so localizing it keeps
+    # its values and turns the flag on, and copies nothing from the profile.
+    e, p = _bound(
+        {"segments": [_segment(1, "Corp", mapping={"override": False, "value": 3})]},
+        {"segments": [_segment(1, "Corp", mapping={"override": True, "value": 9})]},
+    )
+    mapping = e.segments[0].mapping
+    kept = mapping.stored
+    got = mapping.localize()
+    assert got is kept
+    assert got == Flagged(override=True, value=3)
+    assert mapping.is_local
+    assert _dump(e)["segments"][0]["mapping"] == {"override": True, "value": 3}
+    assert p.segments[0].mapping.value == 9
+
+
+def test_localize_of_a_presence_wins_object_with_its_flag_absent_sets_only_the_flag() -> (
+    None
+):
+    e, _ = _bound(
+        {"segments": [_segment(1, "Corp", mapping={"value": 3})]},
+        {"segments": [_segment(1, "Corp", mapping={"override": True, "value": 9})]},
+    )
+    e.segments[0].mapping.localize()
+    assert _dump(e)["segments"][0]["mapping"] == {"override": True, "value": 3}
+
+
+def test_localize_of_a_presence_wins_field_with_nothing_stored_copies_the_profile() -> (
+    None
+):
+    e, _ = _bound(
+        {"segments": [_segment(1, "Corp")]},
+        {"segments": [_segment(1, "Corp", mapping={"override": True, "value": 9})]},
+    )
+    assert e.segments[0].mapping.localize() == Flagged(override=True, value=9)
+    e, _ = _bound(
+        {"segments": [_segment(1, "Corp", mapping=None)]},
+        {"segments": [_segment(1, "Corp", mapping={"override": True, "value": 9})]},
+    )
+    assert e.segments[0].mapping.localize() == Flagged(override=True, value=9)
+
+
+def test_localize_of_a_by_flag_field_without_presence_wins_still_copies_the_profile() -> (
+    None
+):
+    e, _ = _bound(
+        {"affinity": {"override": False, "affinity": ["mine"]}},
+        {"affinity": {"affinity": ["a"]}},
+    )
+    assert e.affinity.localize() == Reset(override=True, affinity=["a"])
 
 
 # ---------------------------------------------------------------------------
@@ -627,6 +685,38 @@ def test_clear_server_owned_changes_the_model_in_place():
     assert item.rule_id is MISSING
 
 
+class _Note(VcoModel):
+    name: str
+    rule_logical_id: Annotated[str | MISSING, ServerOwned()] = MISSING
+
+
+class _Kinded(Layered[L]):
+    # The default is not MISSING, so a field cleared to its default is told from one cleared to MISSING.
+    rid: Annotated[Unconverted[str | MISSING | None], ServerOwned()] = kind_default(
+        None
+    )
+    note: Annotated[
+        Inheritable[_Note],
+        ByPresence(),
+        Default(factory=lambda: _Note(name="x")),
+    ] = Field(default=...)
+
+
+def test_clear_server_owned_reads_the_kind_and_walks_into_owned() -> None:
+    from pyvelo.core.owned import clear_server_owned
+
+    instance = _Kinded[Edge].model_validate(
+        {"rid": "a", "note": {"name": "r", "ruleLogicalId": "b"}}
+    )
+    assert instance.rid == "a"
+    assert isinstance(instance.note.stored, _Note)
+    assert instance.note.stored.rule_logical_id == "b"
+    _ = clear_server_owned(instance)
+    assert instance.rid is MISSING
+    assert isinstance(instance.note.stored, _Note)
+    assert instance.note.stored.rule_logical_id is MISSING
+
+
 def test_an_owned_is_not_a_condition():
     owned = Owned(True)
     with pytest.raises(TypeError, match=r"\.local.*\.stored.*\.is_local") as caught:
@@ -668,3 +758,30 @@ def test_the_group_bundle_refusal_gives_the_patch() -> None:
         e.pair.set_local({"pair_a": {}})  # pyright: ignore[reportArgumentType]
     said = str(exc.value)
     assert '{"pairA": ..., "pairB": ..., "pairOn": ...}' in said
+
+
+def test_unflagged_in_use_finds_each_present_object_with_its_flag_off() -> None:
+    data = mod_json(
+        segments=[
+            _segment(0, "S", mapping={"override": False}),
+            _segment(1, "T", mapping={"override": True}),
+            _segment(2, "U"),
+            _segment(3, "V", mapping={}),
+            _segment(4, "W", mapping=None),
+        ]
+    )
+    assert unflagged_in_use(Mod, data) == [
+        'segments["S"].mapping',
+        'segments["V"].mapping',
+    ]
+
+
+def test_unflagged_in_use_names_a_segment_with_no_name_by_its_id() -> None:
+    data = mod_json(segments=[{"segment": {"segmentId": 7}, "mapping": {}}])
+    assert unflagged_in_use(Mod, data) == ['segments["7"].mapping']
+
+
+def test_unflagged_in_use_leaves_other_encodings_and_a_missing_list_alone() -> None:
+    assert unflagged_in_use(Mod, {}) == []
+    data = mod_json(affinity={"override": False}, settings={"a": 2})
+    assert unflagged_in_use(Mod, data) == []

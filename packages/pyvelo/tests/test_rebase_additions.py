@@ -13,7 +13,7 @@ from pyvelo.client.exceptions import ConfigConflictError
 from pyvelo.client.models.configuration.profile_segments import new_segment_entry
 from pyvelo.client.module_write import ModulePlan, plan_module, rebase_onto
 from pyvelo.client.schemas.configuration import QosConfigurationModule
-from pyvelo.core import ConfigContext
+from pyvelo.core import Profile
 from pyvelo.testing import make_module_json
 from refs_helpers import CONFIG, QOS_ID
 from segment_helpers import GLOBAL, GUEST, VOICE, identity, qos_entry
@@ -23,7 +23,7 @@ RATE: dict[str, Any] = {"enabled": False, "inputType": "percent", "value": 1}
 
 def qos_at(
     version: str, *entries: dict[str, Any], enabled: bool = False
-) -> QosConfigurationModule:
+) -> QosConfigurationModule[Profile]:
     """A profile QoS module at *version* with *entries* and a rate limit that is *enabled* or not."""
     data = {
         "segments": list(entries),
@@ -32,12 +32,12 @@ def qos_at(
     row = make_module_json(
         "QOS", data, module_id=QOS_ID, configuration_id=CONFIG, version=version
     )
-    return QosConfigurationModule.model_validate(
-        row, context={"config_level": ConfigContext.PROFILE}
-    )
+    return QosConfigurationModule[Profile].model_validate(row)
 
 
-def guest_added(module: QosConfigurationModule, *, edited: bool = True) -> ModulePlan:
+def guest_added(
+    module: QosConfigurationModule[Profile], *, edited: bool = True
+) -> ModulePlan:
     """The plan of *module* with Guest added, and its first rule renamed to ``Box2`` when *edited*."""
     item: Any = module.add_segment_entry(new_segment_entry("QOS", identity(GUEST)))
     if edited:

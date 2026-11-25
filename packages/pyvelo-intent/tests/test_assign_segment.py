@@ -7,7 +7,7 @@ loaded with Global, Guest and Voice); the writes go to a ``ModuleStore``.
 import copy
 import uuid
 from collections.abc import Mapping
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from profile_state import (  # pyright: ignore[reportImplicitRelativeImport]
@@ -27,6 +27,7 @@ from pyvelo.client.schemas.configuration import (
 )
 from pyvelo.config.resolver import ResolverRegistry
 from pyvelo.core.identity import ResolutionError
+from pyvelo.core.layers import Profile
 from pyvelo_intent.config.pipeline import ConfigPipeline
 from pyvelo_intent.config.profile_segments import (
     apply_assignment,
@@ -247,7 +248,7 @@ async def test_a_profile_without_qos_raises():
     assert isinstance(qos, QosConfigurationModule)
     modules = state.profile_config.modules
     assert isinstance(modules, list)
-    modules.remove(qos)
+    modules.remove(cast(QosConfigurationModule[Profile], qos))  # the profile layer
     pipeline, _ = module_store_pipeline(state)
 
     with pytest.raises(ValueError, match="QOS"):
@@ -405,8 +406,8 @@ async def test_assign_holds_the_lock():
 
 async def test_a_module_not_at_the_profile_level_raises_naming_the_fix():
     state = await global_only()
-    qos = state.module(QOS)
-    qos._config_context = None  # pyright: ignore[reportPrivateUsage]
+    ds = state.module(DS)
+    ds._config_context = None  # pyright: ignore[reportPrivateUsage]
 
     with pytest.raises(ValueError, match=r"load_profile.*for_profile"):
         _ = segment_modules(state)

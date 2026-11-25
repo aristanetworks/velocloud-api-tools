@@ -133,7 +133,8 @@ from pyvelo.core.rebase import Key, Path, RawChange, raw_changes
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio(loop_scope="session")]
 
 type AnyFirewallData = FirewallData[Edge] | FirewallData[Profile]
-type EditableData = DeviceSettingsData | WanData | QosData | AnyFirewallData
+type AnyQosData = QosData[Edge] | QosData[Profile]
+type EditableData = DeviceSettingsData | WanData | AnyQosData | AnyFirewallData
 
 
 def data_of(module: ConfigurationModuleBase) -> EditableData:
@@ -347,8 +348,8 @@ def _qoe_usable(module: AnyStoredModule) -> bool:
     )
 
 
-def _qoe_steps(_: QosData) -> list[Step]:
-    def apply(d: QosData) -> list[Path]:
+def _qoe_steps(_: AnyQosData) -> list[Step]:
+    def apply(d: AnyQosData) -> list[Path]:
         qoe = expect(d.qoe, QoeSettings, "the QoE settings")
         qoe.voice.latency.yellow += 1  # a reporting threshold; it steers nothing
         return [Path(("qoe", "voice", "latency", "yellow"))]
@@ -363,7 +364,7 @@ def _qos_rule_usable(module: AnyStoredModule) -> bool:
     )
 
 
-def _qos_source(data: QosData, version: str = "IPv4v6") -> tuple[str, str] | None:
+def _qos_source(data: AnyQosData, version: str = "IPv4v6") -> tuple[str, str] | None:
     """The segment and rule names of the first QoS rule that matches *version* addresses."""
     for segment in data.segments:
         for rule in segment.rules:
@@ -372,17 +373,17 @@ def _qos_source(data: QosData, version: str = "IPv4v6") -> tuple[str, str] | Non
     return None
 
 
-def _qos_rule_steps(data: QosData, version: str = "IPv4v6") -> list[Step]:
+def _qos_rule_steps(data: AnyQosData, version: str = "IPv4v6") -> list[Step]:
     source = _qos_source(data, version)
     assert source is not None
     segment_name, source_name = source
     name = synthetic_name()
     rules = Path(("segments", Key(segment_name), "rules"))
 
-    def items(d: QosData) -> list[QosRule]:
+    def items(d: AnyQosData) -> list[QosRule]:
         return next(s for s in d.segments if s.segment.name == segment_name).rules
 
-    def add(d: QosData) -> list[Path]:
+    def add(d: AnyQosData) -> list[Path]:
         # After the rule it copies, which matches first.
         rule_list = items(d)
         added = next(r for r in rule_list if r.name == source_name).model_copy(
@@ -393,7 +394,7 @@ def _qos_rule_steps(data: QosData, version: str = "IPv4v6") -> list[Step]:
         rule_list.append(added)
         return [rules.child(Key(name))]
 
-    def delete(d: QosData) -> list[Path]:
+    def delete(d: AnyQosData) -> list[Path]:
         rule_list = items(d)
         del rule_list[next(k for k, r in enumerate(rule_list) if r.name == name)]
         return [rules.child(Key(name))]
@@ -626,7 +627,7 @@ def _qoe_thresholds_usable(module: AnyStoredModule) -> bool:
     )
 
 
-def _raised(module: AnyStoredModule, path: Path) -> QosData:
+def _raised(module: AnyStoredModule, path: Path) -> AnyQosData:
     """A copy of the module's QoS data with the QoE threshold at *path* one higher.
 
     A reporting threshold, which steers nothing; a red one raised stays above

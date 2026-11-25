@@ -381,9 +381,13 @@ A configuration module is read at two stored layers, and a model that is
 stores, `FirewallData[Profile]` what a profile stores, `FirewallData[Effective]`
 (computed by `effective_view`, read-only) what the edge shows once its profile
 is applied, and `FirewallData[Composed]` what the VCO composes for an edge
-(`edge/getEdgeConfigurationModules`, read-only). A model needs its layer: a
-class without one raises `TypeError` when it is validated or built. Each field
-of such a model has a kind, which says what it is at each layer:
+(`edge/getEdgeConfigurationModules`, read-only). The firewall and QoS modules
+are layered so far: `QosData[Edge]`, `QosData[Profile]` and
+`QosData[Composed]`, with `QosSegment` and `QosConfigurationModule` typed the
+same way; a segment's `web_proxy` is the one QoS field still `Unconverted`
+(see "QoS"). A model needs its layer: a class
+without one raises `TypeError` when it is validated or built. Each field of
+such a model has a kind, which says what it is at each layer:
 
 | Kind | Edge | Profile | Meaning |
 |---|---|---|---|
@@ -420,7 +424,7 @@ module="firewall", patch=...)`, or `data.merge_patch(...)`):
 copy. `localize` needs the profile, so it works on objects taken from a loaded
 `ConfigState` (`state.edge.firewall`), which binds the edge layer to the profile
 layer; for a module read by hand, `module.data.bind_profile(profile.raw_data)`
-does the same. After a save or `update_module` replaced the module an `Owned`
+does the same. A segment `data.segment(name)` adds to a bound edge layer is bound to the profile's segment of that ID, so its keys localize from it too, and a copy made local carries no server-assigned ID of the profile's object. After a save or `update_module` replaced the module an `Owned`
 belongs to, its intents raise `DetachedObjectError`; reading `stored` does not.
 
 ### The firewall
@@ -482,6 +486,64 @@ displays `stateful_firewall_enabled` and `firewall_logging_enabled` as `false`
 and `networkProtectionSettings.icmpBasedAttacks.enablePingOfDeath` as `true`.
 A `FACTORY` value is never written: nothing is sent for a key the caller did
 not set, whatever it displays.
+
+### QoS
+
+The module-level values of QoS are `Inheritable` and stored by presence, as the
+firewall's are, with the template's display defaults
+(`module_template_value("QOS", key)`); none of them is in a group. Their wire
+keys are `serviceRateLimit`, `qoe` and `qosClientConnector`.
+
+| Field | Display default |
+|---|---|
+| `service_rate_limit` | the template's: disabled, `percent`, `1`. A disabled limit the edge stores is local |
+| `qoe` | the template's latency thresholds |
+| `qos_client_connector` | `None` (nothing stored); a stored `null` is kept and is not local |
+
+An edge that stores `"qosClientConnector": null` over a profile that stores a
+block shows the profile's block (`Origin.PROFILE`): the library reads a `null`
+as not local. That is the library's reading; the backend composer's answer for
+it has not been seen live.
+
+A segment's fields are these kinds:
+
+| Field | Kind | Meaning |
+|---|---|---|
+| `rules` | `Additive` | the edge's own rules, in the order the caller gives them; the profile's are not copied in, and the effective view lists the edge's first, then the profile's |
+| `defaults` | `ProfileOnly` | the profile's four fixed rules (see "Writing a configuration module"); an edge segment holds none, and a write keeps the `defaults` the edge's data had as read. A `merge_patch` naming a `ProfileOnly` field on an edge layer raises `PatchError` (the VCO would add an edge's to the profile's): patch the profile layer |
+| `cos_mapping` | `Inheritable`, by flag | see below |
+| `web_proxy` | `Unconverted` | as it has always been |
+
+`cos_mapping` is stored by its flag, `override`. The object is local when it is
+present and `override` is true, so `set_local(CosMapping(...))` writes it with
+`override: true` (the flag follows the value; a patch that names `override` is
+refused), and `inherit()` removes the object. An edge object stored with
+`override: false` is kept as read and is not local, yet the VCO's composer takes
+a present edge object without reading its flag, so the effective view shows it
+as the edge's (`Origin.EDGE`). `plan_module` on an edge module warns of each
+one (code `flag_off_in_use`, at `segments["Global Segment"].cosMapping`),
+whether or not the write changes anything, so nobody reads `is_local == False`
+and believes the edge inherits. Remove it with `inherit()` for the profile's
+mapping to apply. To keep it, `localize()` turns its flag on and changes no
+value: it returns the stored object, not the profile's, and a patch into it
+changes only what the patch names. `{"segments": {"Global Segment":
+{"cosMapping": {}}}}` does the same from text. When the edge stores nothing at
+the key, `localize()` copies the profile segment's mapping (or the display
+default, `CosMapping()`) in with `override: true`; on a segment
+`data.segment(name)` added it copies from the profile's segment of that name.
+
+| Python | Patch |
+|---|---|
+| `segment.cos_mapping.set_local(CosMapping(...))` | `{"segments": {"Global Segment": {"cosMapping": {...}}}}`, when `{...}` is the whole object: a partial patch merges into the object `localize()` gives (the profile's mapping, or the object the edge stores with its flag off), so it keeps every key it does not name |
+| `segment.cos_mapping.inherit()` | `{"segments": {"Global Segment": {"cosMapping": null}}}` |
+| `data.qos_client_connector.inherit()` | `{"qosClientConnector": null}`: the key is removed, whatever it held |
+| `data.service_rate_limit.localize()` | `{"serviceRateLimit": {"value": 50}}`: the profile's limit, or the display default when the profile stores none, is copied in whole and then edited |
+
+A value made local from a display default is written whole: the edge stores
+every key the template has (`enabled`, `inputType` and `value`), not only the
+one the caller changed. A profile that stores no `serviceRateLimit` reads the
+display default, and a profile layer writes only the keys it read or the caller
+set.
 
 ## Portal list and pagination methods
 

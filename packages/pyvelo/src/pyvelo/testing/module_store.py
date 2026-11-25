@@ -273,8 +273,9 @@ class ModuleStore:
 
         A module without a ``configurationId`` gets the configuration's;
         ``ValueError`` for a row without an ``id``, for a module row without
-        an ``id`` and for a module whose ``configurationId`` is another's.
-        Nothing is stored then.
+        an ``id``, for a module whose ``configurationId`` is another's, and
+        for a module whose ``id`` a module of another configuration holds
+        (it would replace that row). Nothing is stored then.
         """
         stored = copy.deepcopy(dict(row))
         if "id" not in stored:
@@ -296,6 +297,15 @@ class ModuleStore:
                     f"{config_id}, but its configurationId is {held}; give the "
                     f"module under configuration {held}, or drop its "
                     f"configurationId so it takes {config_id}"
+                )
+            other = self.rows.get(module["id"])
+            if other is not None and other.get("configurationId") != config_id:
+                raise ValueError(
+                    f"module {module['id']} is given under configuration "
+                    f"{config_id}, but configuration "
+                    f"{other.get('configurationId')} already holds a module "
+                    f"with that id, and adding this one would replace it; "
+                    f"give the module another id"
                 )
         self.configurations[config_id] = stored
         for module in modules:

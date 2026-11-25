@@ -442,6 +442,22 @@ its three keys, with the settings as the profile has them. A patch that raises
 leaves the group as it was. `state.effective` shows each value an edge uses and
 where it comes from; see "The effective view".
 
+The QoS module works the same way. Its three module-level values
+(`serviceRateLimit`, `qoe`, `qosClientConnector`) are stored by the edge or
+inherited, and a segment's `cosMapping` is the edge's own when it is stored
+with `override` true. A patch on one the edge inherits starts from the
+profile's value (or the display default) and stores it whole:
+`{"serviceRateLimit": {"enabled": false}}` stores the profile's rate limit with
+`enabled` false, and `{"serviceRateLimit": null}` makes the edge inherit again.
+`{"segments": {"Voice": {"cosMapping": {"realtime": {"high": {"value": 40}}}}}}`
+on an edge that has no `Voice` entry makes the entry from the profile's
+segment, with the profile's `cosMapping`, `override` true and that one value
+changed; the plan lists the `cosMapping` as your change. The flag is never
+patched: a patch naming `override` is refused, and `{"cosMapping": null}`
+inherits. A segment's `defaults` belong to the profile: a patch of `defaults`
+on an edge is refused (the VCO would add an edge's to the profile's); patch
+the profile's state.
+
 ## What a save writes
 
 A save sends each changed module's `data` as it was read, with only your
@@ -465,6 +481,16 @@ What disagrees in the refs as read is a `warning: <message>` line, and the
 write leaves it as it is. `ConfigPlan.warnings` holds the same warnings as
 data, each with its module's name before its path, and `save` and `dry_run`
 copy them to `SaveResult.warnings`.
+An edge module that stores an object the VCO uses although its flag says it
+inherits (a segment's `cosMapping` with `override` false: the composer takes a
+present edge object whatever its flag) has a `flag_off_in_use` warning, at the
+object's path, in the same list and in `render()`, also when nothing else in
+the module changes; its message gives the patch that inherits
+(`{"segments": {"Voice": {"cosMapping": null}}}`) and the one that keeps the
+object as stored with its flag turned on (`{"segments": {"Voice":
+{"cosMapping": {}}}}`; `localize()` in Python). A patch that names values
+inside such an object changes only those values and turns the flag on, so
+the edge keeps running with the object `state.effective` showed as the edge's.
 
 A DNS or authentication provider is set by assignment, with the service's
 logical ID (`provider.service = uuid.UUID(...)`), or by `apply`, with the
@@ -594,10 +620,10 @@ firewall: update
 - A missing edge firewall or QoS module starts empty. It is inserted once it
   differs from that empty layer: patches that cancel out leave nothing to
   insert. The insert holds the segment entries the save reconciles and what the
-  patches made local: a patch on a firewall value the edge would inherit copies
-  that value from the profile (or the display default) into the insert, as it
-  does for a module the edge has (see "The patch format"); no other profile
-  value is copied.
+  patches made local: a patch on a firewall or QoS value the edge would inherit
+  copies that value from the profile (or the display default) into the insert,
+  as it does for a module the edge has (see "The patch format"); no other
+  profile value is copied.
 - A firewall segment has no `outboundOverride` key in the VCO or on the edge. If
   an older version of this library wrote one into a module, writing that module
   drops it from every segment entry and the plan lists each removal (`-
@@ -655,8 +681,9 @@ firewall: update
 
 ## The effective view
 
-`state.effective.firewall` is what an edge uses, computed on the client from the
-edge layer and the profile layer it inherits from. Each value is a `Resolved`
+`state.effective.firewall` and `state.effective.qos` are what an edge uses,
+computed on the client from the edge layer and the profile layer it inherits
+from. Each value is a `Resolved`
 with the value itself, its `origin` and its `source`:
 
 | Origin | The value is |
@@ -676,12 +703,15 @@ stores.
 fw = state.effective.firewall
 fw.syslog_forwarding.origin  # Origin.EDGE, Origin.PROFILE or Origin.FACTORY
 fw.syslog_forwarding.value  # the value the edge uses
+
+state.effective.qos.service_rate_limit.origin  # the same, for QoS
 ```
 
 The view is the client's reading of rules the VCO applies on its own, so
 `pipeline.compare_effective(state)` checks it against the VCO's answer. It reads
 the modules the library has converted (`modules=None`, which is the firewall
-now; another module raises `ValueError`) with
+and QoS; name one with `modules=["QOS"]`, and another module raises
+`ValueError`) with
 `edge/getEdgeConfigurationModules` for the edge the state was loaded for, and
 compares each with `state.effective`, by wire path and by value only, since the
 VCO's answer has no origins. Before it compares, it reads the state's profile
@@ -707,7 +737,7 @@ There are six categories, and three of them are findings:
 | `server_only` | the server's answer has a value the view lacks | yes |
 | `factory` | the view gives a display default where the server has no value, or the same one | no, information |
 | `ignored` | the path is on the ignore list, is a secret, or is a segment the composer left out; reported with its reason | no |
-| `unconverted` | the path is not converted yet (`inbound`, `inboundV6`, a segment's `firewall_logging_enabled` and `etm`), so the view has no value to compare | no, information |
+| `unconverted` | the path is not converted yet (the firewall's `inbound`, `inboundV6`, a segment's `firewall_logging_enabled` and `etm`, and a QoS segment's `webProxy`), so the view has no value to compare | no, information |
 
 `comparison.findings` is the entries that are findings, and `entries` all of
 them. A key is reported once, at the highest path that is absent from a side.
@@ -717,7 +747,12 @@ and a value it has that differs is `differs`. A list the view builds itself
 empty list the server lacks is `client_only`. Segments are matched by
 `segmentId` in any order (the view puts the profile's first and the composer
 the edge's), and the rules of a segment, edge entries then profile entries, by
-position.
+position. For QoS the segments' `rules` are compared the same way, and a
+segment's `cosMapping` is the edge's stored object even when its `override` flag
+is off, because that is the object the composer takes; the module's
+`serviceRateLimit`, `qoe` and `qosClientConnector` and a segment's `cosMapping`
+are display defaults (`factory`) where neither layer stores one and the server
+has none.
 
 The VCO's composer keeps only the segments in use on the edge (an enabled
 network with an interface, an enabled routed interface or subinterface, a
@@ -738,8 +773,8 @@ stores: `urlCategoryFiltering`, `urlReputationFiltering` and `atp_action`. They
 are confirmed, not ignored. `compare_effective` reads the enterprise's security
 objects (`enterprise/getSecurityObjects` for `securityServiceGroup`,
 `urlCategoryFiltering`, `urlReputationFiltering` and `idps`: four reads, with
-the state's enterprise ID) only when a rule of a compared module names a group,
-and expects:
+the state's enterprise ID) only when a rule of the firewall names a group (QoS
+rules are not searched), and expects:
 
 - `urlCategoryFiltering` and `urlReputationFiltering`: the `data` of the object
   of that type the group names (its `data` holds `{"id": ...}` for each);
@@ -1437,7 +1472,8 @@ uv run ruff check packages/pyvelo-intent
 `packages/pyvelo-intent/tests/test_layer_typing.py` is checked by basedpyright
 with `reportUnnecessaryTypeIgnoreComment` on (see pyvelo's "Tests"): it fixes
 the layer each `ConfigState` view gives (`state.edge.firewall` is
-`FirewallData[Edge]`, `state.profile.firewall` is `FirewallData[Profile]`).
+`FirewallData[Edge]`, `state.profile.firewall` is `FirewallData[Profile]`, and
+`state.edge.qos` is `QosData[Edge]`).
 
 The live comparison of "The effective view" is
 `packages/pyvelo-intent/tests/integration/test_effective_live.py`. It only

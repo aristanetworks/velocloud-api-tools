@@ -167,7 +167,7 @@ async def test_edits_made_after_the_lost_answer_are_lost_edits_of_the_next_save(
     pipeline = await with_a_new_qos_rule(client, state)
     with pytest.raises(httpx.ReadTimeout):
         _ = await pipeline.save(state)
-    state.edge.qos.service_rate_limit = rate_limit()
+    state.edge.qos.service_rate_limit.set_local(rate_limit())
 
     with pytest.raises(WriteNotAppliedError) as exc:
         _ = await pipeline.save(state)
@@ -180,7 +180,7 @@ async def test_edits_made_after_the_lost_answer_are_lost_edits_of_the_next_save(
     assert state.unconfirmed_inserts == set()
     assert state.plan().changed == ()
 
-    state.edge.qos.service_rate_limit = rate_limit()
+    state.edge.qos.service_rate_limit.set_local(rate_limit())
     again = await pipeline.save(state)
     assert again.modules_updated == [QOS]
     assert edge_qos_rows(client) == [stored_id]

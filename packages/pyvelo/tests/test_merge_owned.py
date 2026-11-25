@@ -206,14 +206,16 @@ def test_the_flag_of_a_by_flag_field_is_not_patchable(flag: bool, local: bool) -
     with pytest.raises(PatchError, match="null") as exc:
         _ = e.merge_patch({"segments": {"S": {"mapping": {"override": flag}}}})
     assert exc.value.path.parts[-2:] == ("mapping", "override")
-    assert "set_local" in str(exc.value) or "inherit" in str(exc.value)
+    assert "set_local()" in str(exc.value)
+    assert 'send {"segments": {"S": {"mapping": null}}}' in str(exc.value)
     assert _dump(e) == before
 
 
 def test_the_flag_is_refused_beside_a_value_too() -> None:
     e, _ = _bound(affinity={"override": True})
-    with pytest.raises(PatchError, match="null"):
+    with pytest.raises(PatchError, match="null") as exc:
         _ = e.merge_patch({"affinity": {"override": False, "affinity": ["a"]}})
+    assert 'send {"affinity": null}' in str(exc.value)
     assert _dump(e)["affinity"] == {"override": True, "affinity": []}
 
 
@@ -449,3 +451,19 @@ def test_an_inheritable_change_beside_a_plain_one_leaves_the_flag_to_the_plain_o
     assert model.flag is False
     _ = model.merge_patch({"x": 4, "plain": 1})
     assert model.flag is True
+
+
+def test_an_edge_patch_of_a_profile_only_field_is_refused() -> None:
+    for patch in ({"profile_note": "x"}, {"profileNote": "x"}, {"profile_note": None}):
+        edge = Mod[Edge].model_validate(mod_json())
+        with pytest.raises(
+            PatchError, match="'profileNote' belongs to the profile"
+        ) as raised:
+            _ = edge.merge_patch(patch)
+        assert str(raised.value.path) == "profile_note"
+        assert raised.value.kind == "invalid_value"
+        assert edge.profile_note is MISSING  # pyright: ignore[reportAttributeAccessIssue]
+    # The profile layer takes it as any plain field.
+    profile = Mod[Profile].model_validate(mod_json())
+    _ = profile.merge_patch({"profile_note": "x"})
+    assert profile.profile_note == "x"

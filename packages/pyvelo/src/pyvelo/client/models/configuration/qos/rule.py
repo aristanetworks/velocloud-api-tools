@@ -177,7 +177,7 @@ class RouteAction(VcoModel):
 class SlaSettings(VcoModel):
     latency_ms: str = "0"
     jitter_ms: str = "0"
-    loss_percent: Annotated[str, Alias("loss_pct")] = "0.0"
+    loss_percent: Annotated[str, Alias("lossPct")] = "0.0"
 
 
 class QosNatSettings(VcoModel):

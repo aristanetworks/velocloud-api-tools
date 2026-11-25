@@ -65,8 +65,8 @@ def _make_ds_module() -> DeviceSettingsConfigurationModule:
     )
 
 
-def _make_qos_module() -> QosConfigurationModule:
-    seg = QosSegment(
+def _make_qos_module() -> QosConfigurationModule[Edge]:
+    seg = QosSegment[Edge](
         segment=QosSegmentMetadata(
             segment_id=0,
             name="Global Segment",
@@ -74,7 +74,7 @@ def _make_qos_module() -> QosConfigurationModule:
             segment_logical_id=UUID("00000000-0000-0000-0000-000000000000"),
         )
     )
-    return QosConfigurationModule(
+    return QosConfigurationModule[Edge](
         created=_NOW,
         modified=_NOW,
         id_=101,
@@ -85,7 +85,7 @@ def _make_qos_module() -> QosConfigurationModule:
         schema_version="1.0",
         version="1.0",
         metadata=None,
-        data=QosData(segments=[seg]),
+        data=QosData[Edge](segments=[seg]),
     )
 
 
