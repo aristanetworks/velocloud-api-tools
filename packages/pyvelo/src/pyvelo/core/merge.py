@@ -431,9 +431,11 @@ def _merge_owned(
 
     ``null`` inherits (``Owned.inherit``). A value that is not an object sets
     the value local (``Owned.set_local``). An object is merged into the local
-    value; when the field is not local the profile's value is copied in first
-    (``Owned.localize``) and the object merged into the copy, so ``{"a": 7}``
-    on an inherited ``{"a": 4, "b": true}`` gives a local ``{"a": 7, "b": true}``.
+    value; when the field is not local, ``Owned.localize`` makes it so first
+    and the object is merged into what that returns: a copy of the profile's
+    value, or, on a ``presence_wins`` field where the edge stores an object with
+    its flag off, that object, kept. So ``{"a": 7}`` on an inherited
+    ``{"a": 4, "b": true}`` gives a local ``{"a": 7, "b": true}``.
     A member of a coupled group is never changed alone: ``null`` inherits the
     whole group, and any other value localizes the group first, when it is
     not local, and then applies as above.
@@ -514,7 +516,9 @@ def _refuse_flag_key(
                     + "set it (it would leave a local value that is not local, "
                     + "or make the profile's value the edge's without a copy). "
                     + f"Leave {key!r} out: an object given overrides it "
-                    + "(set_local() does the same) and null inherits it "
+                    + "(merged into the edge's value, or into a copy of the "
+                    + "profile's when the edge stores none; set_local() stores "
+                    + "the whole object it is given instead) and null inherits it "
                     + f"(inherit()); to inherit, send {inherit}",
                     path.child(encoding.flag),
                     "invalid_value",
