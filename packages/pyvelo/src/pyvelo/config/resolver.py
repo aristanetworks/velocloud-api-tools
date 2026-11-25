@@ -397,6 +397,10 @@ def resolve_name[T](
     raise resolution_error(entity_label, name, by_name.keys(), n=n, cutoff=cutoff)
 
 
+_MAX_AVAILABLE_SHOWN = 20
+"""How many of the available names an unknown-name error lists, at most."""
+
+
 def resolution_error(
     entity_label: str,
     name: str,
@@ -424,10 +428,11 @@ def resolution_error(
     if original_suggestions:
         formatted = "\n".join(f"  - {s}" for s in original_suggestions)
         parts.append(f"Did you mean:\n{formatted}")
-    elif len(available_list) > 20:
-        shown = ", ".join(available_list[:20])
+    elif len(available_list) > _MAX_AVAILABLE_SHOWN:
+        shown = ", ".join(available_list[:_MAX_AVAILABLE_SHOWN])
         parts.append(
-            f"Available ({len(available_list)} total, showing first 20): {shown}"
+            f"Available ({len(available_list)} total, "
+            f"showing first {_MAX_AVAILABLE_SHOWN}): {shown}"
         )
     else:
         parts.append(f"Available: {', '.join(available_list)}")

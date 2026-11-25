@@ -190,7 +190,7 @@ def test_a_cos_mapping_stored_with_its_flag_off_is_kept_and_not_local() -> None:
     assert written["cosMapping"] == stored
 
 
-def _rule():
+def _rule() -> QosRule:
     return QosRule.model_validate(RULE)
 
 

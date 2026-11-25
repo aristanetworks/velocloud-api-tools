@@ -39,6 +39,7 @@ from pyvelo.config.hub_steps import (
 from pyvelo.config.pipeline import ConfigPipeline
 from pyvelo.config.resolvers.hub import HubResolver
 from pyvelo.config.state import ConfigState
+from pyvelo.config.validation_warning import ValidationWarning
 from pyvelo.core import ConfigContext, delete
 from pyvelo.core.identity import HubIdentity, ResolverNotLoadedError
 from refs_helpers import CONFIG, segment_row
@@ -433,7 +434,7 @@ async def test_derive_steps_reordering_is_no_step() -> None:
 # --- roles that disagree with the lists ----------------------------------------
 
 
-def disagreements(state: ConfigState):
+def disagreements(state: ConfigState) -> list[ValidationWarning]:
     return [w for w in state.plan().check_warnings if w.code == "hub_roles_disagree"]
 
 

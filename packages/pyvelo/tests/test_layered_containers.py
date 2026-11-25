@@ -79,7 +79,9 @@ PROFILE_RAW: dict[str, Any] = {
 }
 
 
-def row(raw: dict[str, Any], *, module_id: int = 1, configuration_id: int = 10):
+def row(
+    raw: dict[str, Any], *, module_id: int = 1, configuration_id: int = 10
+) -> dict[str, Any]:
     return make_module_json(
         "firewall",
         copy.deepcopy(raw),

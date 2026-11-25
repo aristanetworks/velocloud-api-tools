@@ -313,7 +313,7 @@ async def test_missing_edge_module_is_inserted_from_an_empty_layer() -> None:
 def test_views_and_module_errors() -> None:
     state = make_state()
     assert state.profile.firewall.segments[1].segment.name == "Guest"
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="Module 'deviceSettings' not found"):
         _ = state.edge.device_settings  # not insertable, not present
     profile_only = ConfigState(
         edge_config=None,
@@ -385,7 +385,7 @@ def test_new_empty_module_is_bound() -> None:
 
 async def test_apply_creates_the_edge_segment_entry_on_write_only() -> None:
     pipeline = ConfigPipeline(MockVcoClient())
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="Segment not found"):
         make_state().edge.firewall.get_segment(name="Guest")
     state = make_state()
     await pipeline.apply(

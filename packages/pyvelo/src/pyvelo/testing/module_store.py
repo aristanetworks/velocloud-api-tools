@@ -1170,12 +1170,12 @@ def _flatten(refs: object) -> list[dict[str, Any]]:
     """
     if not isinstance(refs, dict):
         return []
-    found: list[dict[str, Any]] = []
-    for value in cast("dict[str, Any]", refs).values():
-        for entry in cast("list[Any]", value) if isinstance(value, list) else [value]:
-            if isinstance(entry, dict):
-                found.append(copy.deepcopy(cast("dict[str, Any]", entry)))
-    return found
+    return [
+        copy.deepcopy(cast("dict[str, Any]", entry))
+        for value in cast("dict[str, Any]", refs).values()
+        for entry in (cast("list[Any]", value) if isinstance(value, list) else [value])
+        if isinstance(entry, dict)
+    ]
 
 
 def _append_only_rows(refs: object) -> list[tuple[str, dict[str, Any]]]:

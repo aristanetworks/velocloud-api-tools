@@ -371,7 +371,9 @@ def service_with(
     )
 
 
-def in_use(steps: list[HubStep], *services: EdgeHubService):
+def in_use(
+    steps: list[HubStep], *services: EdgeHubService
+) -> dict[HubStep, tuple[tuple[int, str], ...]]:
     return hubs_in_use(
         steps,
         HubServices(edge_hubs=services),
@@ -449,7 +451,7 @@ async def test_an_on_hub_in_use_that_is_neither_warn_nor_refuse_is_a_value_error
 ):
     pipeline, store, state = await used_hub_save()
 
-    with pytest.raises(ValueError, match="'warn'.*'refuse'"):
+    with pytest.raises(ValueError, match=r"'warn'.*'refuse'"):
         _ = await pipeline.save(state, on_hub_in_use="refues")  # pyright: ignore[reportArgumentType]
 
     assert role_calls(store) == []

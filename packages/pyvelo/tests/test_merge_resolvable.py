@@ -104,7 +104,7 @@ class TestMergeResolvable:
 
     def test_unknown_name_raises(self, registry: ResolverRegistry) -> None:
         m = Config()
-        with pytest.raises(KeyError, match="Unknown segment.*nonexistent"):
+        with pytest.raises(KeyError, match=r"Unknown segment.*nonexistent"):
             _ = m.merge_patch(
                 {"segment": {"segment_id": "nonexistent"}},
                 resolvers=registry,

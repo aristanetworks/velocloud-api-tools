@@ -14,6 +14,7 @@ from pyvelo.client.models.configuration.qos.root import QosData
 from pyvelo.core import Key, Path, Profile, VcoModel
 from pyvelo.core.references import (
     Reference,
+    ReferenceFindings,
     Sets,
     can_provide,
     can_refer,
@@ -187,7 +188,7 @@ def _check(
     now: Sets,
     as_read: Sets,
     module: str = "deviceSettings",
-):
+) -> ReferenceFindings:
     return check_references([(module, edited, read)], now, as_read)
 
 
@@ -413,7 +414,9 @@ def _advice(message: str) -> dict[str, Any]:
     return patch
 
 
-def _dangling_hub(*, named: bool, segment: segment_helpers.Segment = GUEST):
+def _dangling_hub(
+    *, named: bool, segment: segment_helpers.Segment = GUEST
+) -> tuple[Reference, ...]:
     entry = backhaul_entry(HUB_B, SERVICE)
     if not named:
         del entry["name"]

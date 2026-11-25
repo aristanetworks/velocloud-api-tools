@@ -415,7 +415,7 @@ class GetEnterpriseNsdConfigurationResult(VcoModel):
         "NSD_CONFIGURATION"
     )
     name: str
-    type_: Annotated[Literal["DEFAULT"] | str, Alias("type")]
+    type_: Annotated[str, Alias("type")]  # "DEFAULT", among others
     logical_id: uuid.UUID
     alerts_enabled: Tinyint
     operator_alerts_enabled: Tinyint

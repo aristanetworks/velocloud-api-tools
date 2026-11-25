@@ -160,7 +160,7 @@ async def test_zero_rows_with_version_is_a_conflict(
     mock_vco_client: MockVcoClientFactory, json_rpc_response: JsonRpcResponseFactory
 ) -> None:
     client = await mock_vco_client(
-        lambda r: httpx.Response(200, json=json_rpc_response({"rows": 0}))
+        lambda _: httpx.Response(200, json=json_rpc_response({"rows": 0}))
     )
     with pytest.raises(ConfigConflictError) as exc:
         _ = await client.update_configuration_module(req("1700"))
@@ -176,7 +176,7 @@ async def test_zero_rows_without_version_is_not(
     mock_vco_client: MockVcoClientFactory, json_rpc_response: JsonRpcResponseFactory
 ) -> None:
     client = await mock_vco_client(
-        lambda r: httpx.Response(200, json=json_rpc_response({"rows": 0}))
+        lambda _: httpx.Response(200, json=json_rpc_response({"rows": 0}))
     )
     assert await client.update_configuration_module(req(None)) is None
 
@@ -188,7 +188,7 @@ async def test_one_row_is_a_write(
     version: str | None,
 ) -> None:
     client = await mock_vco_client(
-        lambda r: httpx.Response(200, json=json_rpc_response({"rows": 1}))
+        lambda _: httpx.Response(200, json=json_rpc_response({"rows": 1}))
     )
     assert await client.update_configuration_module(req(version)) is None
 
@@ -197,7 +197,7 @@ async def test_result_error_stays_an_operation_error(
     mock_vco_client: MockVcoClientFactory, json_rpc_response: JsonRpcResponseFactory
 ) -> None:
     client = await mock_vco_client(
-        lambda r: httpx.Response(
+        lambda _: httpx.Response(
             200, json=json_rpc_response({"error": "validation failed"})
         )
     )
@@ -209,7 +209,7 @@ async def test_result_error_with_zero_rows_is_not_a_conflict(
     mock_vco_client: MockVcoClientFactory, json_rpc_response: JsonRpcResponseFactory
 ) -> None:
     client = await mock_vco_client(
-        lambda r: httpx.Response(
+        lambda _: httpx.Response(
             200, json=json_rpc_response({"rows": 0, "error": "validation failed"})
         )
     )
@@ -224,7 +224,7 @@ async def test_unknown_module_is_still_an_operation_error(
     version: str | None,
 ) -> None:
     client = await mock_vco_client(
-        lambda r: httpx.Response(
+        lambda _: httpx.Response(
             200, json=json_rpc_response(error=UNKNOWN_MODULE_ERROR)
         )
     )
@@ -238,7 +238,7 @@ async def test_error_response_mentioning_version_is_not_a_conflict(
 ) -> None:
     """Only the precondition error is a stale version, whatever another error's text says."""
     client = await mock_vco_client(
-        lambda r: httpx.Response(
+        lambda _: httpx.Response(
             200,
             json=json_rpc_response(
                 error={"code": -32000, "message": "unsupported schema version"}
@@ -279,7 +279,7 @@ async def test_a_result_that_is_neither_raises(
     answer: JsonObject,
 ) -> None:
     client = await mock_vco_client(
-        lambda r: httpx.Response(200, json=json_rpc_response(answer))
+        lambda _: httpx.Response(200, json=json_rpc_response(answer))
     )
     with pytest.raises(VcoOperationError, match="neither"):
         _ = await client.update_configuration_module(
@@ -313,7 +313,7 @@ async def test_a_known_module_row_that_fails_validation_raises_its_error(
         "firewall", {"segments": "not a list"}, module_id=7, configuration_id=10
     )
     client = await mock_vco_client(
-        lambda r: httpx.Response(200, json=json_rpc_response(row))
+        lambda _: httpx.Response(200, json=json_rpc_response(row))
     )
     with pytest.raises(ValidationError) as exc:
         _ = await send(client)
@@ -369,7 +369,7 @@ async def test_precondition_failure_in_an_http_error_is_a_conflict(
     status: int,
 ) -> None:
     client = await mock_vco_client(
-        lambda r: httpx.Response(
+        lambda _: httpx.Response(
             status, json=json_rpc_response(error=PRECONDITION_ERROR)
         )
     )
@@ -393,7 +393,7 @@ async def test_any_other_http_error_of_an_update_is_an_http_error(
         httpx.Response(400, json=[1, 2]),
     ]
     for answer in answers:
-        client = await mock_vco_client(lambda r, answer=answer: answer)
+        client = await mock_vco_client(lambda _, answer=answer: answer)
         with pytest.raises(VcoHttpError):
             _ = await client.update_configuration_module(req("1700"))
 
@@ -402,7 +402,7 @@ async def test_the_same_body_from_another_operation_is_an_http_error(
     mock_vco_client: MockVcoClientFactory, json_rpc_response: JsonRpcResponseFactory
 ) -> None:
     client = await mock_vco_client(
-        lambda r: httpx.Response(412, json=json_rpc_response(error=PRECONDITION_ERROR))
+        lambda _: httpx.Response(412, json=json_rpc_response(error=PRECONDITION_ERROR))
     )
     with pytest.raises(VcoHttpError):
         _ = await client.insert_configuration_module(qos_insert())

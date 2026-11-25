@@ -70,7 +70,7 @@ class TestEdgeResolver:
         assert identity.id == 2
 
     async def test_resolve_unknown(self, resolver: EdgeResolver) -> None:
-        with pytest.raises(KeyError, match="Unknown edge.*nonexistent"):
+        with pytest.raises(KeyError, match=r"Unknown edge.*nonexistent"):
             _ = await resolver.resolve("nonexistent")
 
     async def test_lookup_key_by_id(self, resolver: EdgeResolver) -> None:

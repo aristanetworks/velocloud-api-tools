@@ -3,7 +3,7 @@
 import asyncio
 from collections.abc import Awaitable, Callable
 from types import CoroutineType
-from typing import ClassVar, cast, override
+from typing import ClassVar, Self, cast, override
 from unittest.mock import patch
 
 import httpx
@@ -14,6 +14,7 @@ from pyvelo.client.exceptions import (
     VcoClientNotInitializedError,
     VcoCredentialsError,
     VcoEmptyResultError,
+    VcoHttpError,
     VcoOperationError,
     VcoRateLimitError,
 )
@@ -211,13 +212,14 @@ class TestPortalPaginated:
             )
 
         client = await mock_vco_client(handler)
-        pages: list[list[SampleResult]] = []
-        async for page in client.portal_paginated(
-            "test/listStuff",
-            SamplePaginatedRequest(enterprise_id=1),
-            SampleResult,
-        ):
-            pages.append(page)
+        pages: list[list[SampleResult]] = [
+            page
+            async for page in client.portal_paginated(
+                "test/listStuff",
+                SamplePaginatedRequest(enterprise_id=1),
+                SampleResult,
+            )
+        ]
 
         assert len(pages) == 1
         assert len(pages[0]) == 2
@@ -261,13 +263,14 @@ class TestPortalPaginated:
             )
 
         client = await mock_vco_client(handler)
-        pages: list[list[SampleResult]] = []
-        async for page in client.portal_paginated(
-            "test/listStuff",
-            SamplePaginatedRequest(enterprise_id=1),
-            SampleResult,
-        ):
-            pages.append(page)
+        pages: list[list[SampleResult]] = [
+            page
+            async for page in client.portal_paginated(
+                "test/listStuff",
+                SamplePaginatedRequest(enterprise_id=1),
+                SampleResult,
+            )
+        ]
 
         assert len(pages) == 2
         assert call_count == 2
@@ -669,8 +672,7 @@ class TestRetry429:
             return httpx.Response(500, text="Internal Server Error")
 
         client = await mock_vco_client(handler, max_retries=3)
-        # 500 goes through to JSON parsing, which fails with ValidationError
-        with pytest.raises(Exception):  # noqa: B017
+        with pytest.raises(VcoHttpError, match="HTTP 500"):
             _ = await client.portal(
                 "test/getStuff", SampleRequest(enterprise_id=1), SampleResult
             )
@@ -835,7 +837,7 @@ class TestTransport:
                 self.sent: int = 0
 
             @override
-            async def __aenter__(self):
+            async def __aenter__(self) -> Self:
                 self.closed = False
                 return self
 

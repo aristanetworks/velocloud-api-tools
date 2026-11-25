@@ -299,8 +299,8 @@ async def run_all_tests(
     edge_id = ctx.edge_id
 
     # --- Edge flow metrics (all group-by variants) ---
-    for gb in FlowGroupBy:
-        results.append(
+    results.extend(
+        [
             await run_test(
                 f"edge_flow_metrics({gb.name})",
                 lambda gb=gb: analytics.get_edge_flow_metrics(
@@ -311,11 +311,13 @@ async def run_all_tests(
                     sort=FlowMetric.TOTAL_BYTES,
                 ),
             )
-        )
+            for gb in FlowGroupBy
+        ]
+    )
 
     # --- Edge flow series (all group-by variants) ---
-    for gb in FlowGroupBy:
-        results.append(
+    results.extend(
+        [
             await run_test(
                 f"edge_flow_series({gb.name})",
                 lambda gb=gb: analytics.get_edge_flow_series(
@@ -326,16 +328,20 @@ async def run_all_tests(
                     sort=FlowMetric.TOTAL_BYTES,
                 ),
             )
-        )
+            for gb in FlowGroupBy
+        ]
+    )
 
     # --- Enterprise flow metrics (all view-by variants) ---
-    for vb in BasicMetricViewBy:
-        results.append(
+    results.extend(
+        [
             await run_test(
                 f"enterprise_flow_metrics({vb.name})",
                 lambda vb=vb: analytics.get_enterprise_flow_metrics(interval, vb),
             )
-        )
+            for vb in BasicMetricViewBy
+        ]
+    )
 
     # --- Edge link metrics + series ---
     results.append(

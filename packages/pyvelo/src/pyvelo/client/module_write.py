@@ -351,11 +351,11 @@ class ModulePlan:
             lines.append(
                 f"  {label} defaults: {missing.segment}: {', '.join(missing.names)}"
             )
-        for path in self.overrides_turned_on:
-            lines.append(
-                f"  override turned on: {path} (the edge's own values apply there "
-                "from now on, and the profile's no longer do)"
-            )
+        lines.extend(
+            f"  override turned on: {path} (the edge's own values apply there "
+            "from now on, and the profile's no longer do)"
+            for path in self.overrides_turned_on
+        )
         if self.legacy_keys and self.operation == "none":
             lines.append(
                 "  legacy keys (dropped when the module is written): "

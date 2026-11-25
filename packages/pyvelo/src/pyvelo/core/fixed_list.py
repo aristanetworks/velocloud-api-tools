@@ -171,7 +171,9 @@ def _check_fixed(
         yield path, LIST_CHANGED
         return
     editable = {key for name in fixed.editable for key in wire_keys(node.item, name)}
-    for part, old, new in zip(item_parts(baseline, node), baseline, payload):
+    for part, old, new in zip(
+        item_parts(baseline, node), baseline, payload, strict=True
+    ):
         if not is_dict(old) or not is_dict(new):
             if old != new:
                 yield path.child(part), "differs"

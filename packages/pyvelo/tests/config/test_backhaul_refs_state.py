@@ -63,7 +63,7 @@ def profile_refs(*hubs: tuple[Hub, int, str]) -> dict[str, Any]:
 
 def profile_ds(
     *, backhaul: tuple[Hub, ...] = (HUB_A,), hubs: tuple[Hub, ...] = (HUB_A,)
-):
+) -> list[dict[str, Any]]:
     return [ds_with_vpn(GLOBAL, hubs=hubs, backhaul=backhaul)]
 
 

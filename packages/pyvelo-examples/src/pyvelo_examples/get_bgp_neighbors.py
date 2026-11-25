@@ -127,22 +127,20 @@ async def collect_bgp_neighbors(
             if neighbors is MISSING:
                 continue
 
-            for n in neighbors:
-                rows.append(
-                    BgpNeighborRow(
-                        edge_name=edge_name,
-                        edge_id=edge_id,
-                        segment_name=_string_or_default(
-                            cast("object", seg.segment.name)
-                        ),
-                        neighbor_ip=_string_or_default(cast("object", n.neighbor_ip)),
-                        neighbor_as=_integer_or_default(cast("object", n.neighbor_as)),
-                        local_ip=_string_or_default(cast("object", n.local_ip)),
-                        bfd=_boolean_or_default(cast("object", n.enable_bfd)),
-                        uplink=_boolean_or_default(cast("object", n.uplink)),
-                        max_hop=_integer_or_default(cast("object", n.max_hop), 1),
-                    )
+            rows.extend(
+                BgpNeighborRow(
+                    edge_name=edge_name,
+                    edge_id=edge_id,
+                    segment_name=_string_or_default(cast("object", seg.segment.name)),
+                    neighbor_ip=_string_or_default(cast("object", n.neighbor_ip)),
+                    neighbor_as=_integer_or_default(cast("object", n.neighbor_as)),
+                    local_ip=_string_or_default(cast("object", n.local_ip)),
+                    bfd=_boolean_or_default(cast("object", n.enable_bfd)),
+                    uplink=_boolean_or_default(cast("object", n.uplink)),
+                    max_hop=_integer_or_default(cast("object", n.max_hop), 1),
                 )
+                for n in neighbors
+            )
     except Exception as e:  # noqa: BLE001 - continue collecting neighbors from other edges
         logger.warning(
             "Failed to get BGP config for edge %s (%s)", edge_name, type(e).__name__

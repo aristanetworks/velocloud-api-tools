@@ -305,7 +305,7 @@ async def test_load_resolvers_refuses_a_type_neither_the_state_nor_the_pipeline_
     state = profile_state()
     pipeline = ConfigPipeline(MockVcoClient())
 
-    with pytest.raises(ValueError) as error:
+    with pytest.raises(ValueError, match="has a resolver for SegmentIdentity") as error:
         await pipeline.load_resolvers(state, SegmentIdentity)
 
     message = str(error.value)

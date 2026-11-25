@@ -93,7 +93,7 @@ def test_assignment_on_a_detached_object_raises() -> None:
         DetachedObjectError, match=r"FirewallSegment\[Edge\]\.firewall_logging"
     ):
         segment.firewall_logging_enabled = True
-    with pytest.raises(DetachedObjectError, match="FirewallOutboundRule.name") as exc:
+    with pytest.raises(DetachedObjectError, match=r"FirewallOutboundRule\.name") as exc:
         rule.name = "other"
     assert "take it again from the module as stored" in str(exc.value)
     # The other intents are refused too; reading what the edge stores is not.
@@ -107,7 +107,7 @@ def test_assignment_on_a_detached_object_raises() -> None:
     # The guard comes before validate_assignment: no ValidationError for a bad value.
     checked = Checked()
     _ = checked.mark_detached()
-    with pytest.raises(DetachedObjectError, match="Checked.count"):
+    with pytest.raises(DetachedObjectError, match=r"Checked\.count"):
         checked.count = "not a number"  # pyright: ignore[reportAttributeAccessIssue]
     assert checked.count == 0
 
@@ -294,7 +294,7 @@ def test_models_in_a_dict_field_are_detached_and_listed() -> None:
     shelf = Shelf(by_name={"a": held})
     places = dict(shelf.mark_detached())
     assert places[("byName", "a")] is held
-    with pytest.raises(DetachedObjectError, match="Checked.count"):
+    with pytest.raises(DetachedObjectError, match=r"Checked\.count"):
         held.count = 2
     assert held.count == 1
 
@@ -340,7 +340,7 @@ def test_a_shallow_copy_of_a_detached_object_is_detached() -> None:
     _ = data.mark_detached()
     for copied in (copy.copy(rule), rule.model_copy(), data.model_copy()):
         assert copied.is_detached
-    with pytest.raises(DetachedObjectError, match="FirewallOutboundRule.name"):
+    with pytest.raises(DetachedObjectError, match=r"FirewallOutboundRule\.name"):
         copy.copy(rule).name = "other"
 
 

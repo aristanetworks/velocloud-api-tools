@@ -45,7 +45,7 @@ async def test_the_effective_view_matches_the_composed_modules(
         state = await pipeline.load(layout.edge_id, enterprise_id=lab.enterprise_id)
         comparison = await pipeline.compare_effective(state)
         compared += 1
-        print(f"\n{label}\n{comparison.render()}")
+        print(f"\n{label}\n{comparison.render()}")  # noqa: T201  # the live run shows each comparison for the person running it
         if comparison.findings:
             problems.append(
                 f"{label}: {len(comparison.findings)} finding(s)\n{comparison.render()}"

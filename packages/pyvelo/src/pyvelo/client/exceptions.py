@@ -895,7 +895,7 @@ def _is_added_segment(plan: ModulePlan, edit: PlannedChange) -> bool:
     parts = edit.path.parts
     return (
         edit.as_read is MISSING
-        and len(parts) == 2
+        and len(parts) == 2  # noqa: PLR2004  # segments[<segment>] has two parts
         and parts[0] == "segments"
         and isinstance(parts[1], Key)
         and parts[1].value in plan.added_segments
@@ -916,7 +916,7 @@ def _is_repaired_default(plan: ModulePlan, edit: PlannedChange) -> bool:
         and any(
             missing.repaired
             and missing.segment == parts[1].value
-            and (len(parts) == 3 or _is_default_named(parts[3], missing.names))
+            and (len(parts) == 3 or _is_default_named(parts[3], missing.names))  # noqa: PLR2004  # segments[<segment>].defaults has three parts; an entry of it a fourth
             for missing in plan.missing_defaults
         )
     )
@@ -938,7 +938,7 @@ def _is_reconciled_segment(plan: ModulePlan, edit: PlannedChange) -> bool:
     return (
         bool(plan.reconciled_segments)
         and edit.as_read is MISSING
-        and len(parts) == 2
+        and len(parts) == 2  # noqa: PLR2004  # segments[<segment>] has two parts
         and parts[0] == "segments"
         and not isinstance(parts[1], str)
         and all(change.path != edit.path for change in plan.changes)
@@ -1036,7 +1036,7 @@ def _stored_segment(
     if by_id:
         matches = [
             part
-            for part, entry in zip(item_parts(stored, node), stored)
+            for part, entry in zip(item_parts(stored, node), stored, strict=True)
             if _json_field(entry, "segment", "segmentId") in by_id
         ]
     else:
@@ -1049,7 +1049,7 @@ def _stored_segment(
             ]
         matches = [
             part
-            for part, entry in zip(item_parts(stored, node), stored)
+            for part, entry in zip(item_parts(stored, node), stored, strict=True)
             if any(
                 _same_logical_id(
                     _json_field(entry, "segment", "segmentLogicalId"), known
@@ -1099,7 +1099,7 @@ def _set_provider(
         for key in [edit.path.parts[-1]]
         if isinstance(key, Key)
         and isinstance(key.value, tuple)
-        and len(key.value) == 2
+        and len(key.value) == 2  # noqa: PLR2004  # a two-part key, its second part the object ID
         and isinstance(key.value[1], int)
     ]
     segment, *names = owner.parts[1:]

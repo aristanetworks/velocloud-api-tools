@@ -386,7 +386,7 @@ async def test_a_failure_leaves_the_state_as_it_was() -> None:
     pipeline, _ = module_store_pipeline(state)
     before = state.plan().render()
 
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="validation errors for QosRule"):
         _ = await pipeline.assign_segment(
             state, "Guest", qos_rules=[{"name": "Box", "match": "not a match"}]
         )

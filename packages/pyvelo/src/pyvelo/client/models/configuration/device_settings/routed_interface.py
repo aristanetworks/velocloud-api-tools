@@ -5,7 +5,7 @@ addressing, OSPF, DHCP, cellular and LAG settings.
 """
 
 import uuid
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, Self
 
 from pydantic import (
     MISSING,
@@ -61,7 +61,7 @@ class RoutedInterfaceAddressing(VcoModel):
     gateway: Annotated[str | None, EdgeLocal] = None
 
     @model_validator(mode="after")
-    def _strip_non_pppoe_credentials(self):
+    def _strip_non_pppoe_credentials(self) -> Self:
         if self.type_ != "PPPOE":
             self.username = MISSING
             self.password = MISSING

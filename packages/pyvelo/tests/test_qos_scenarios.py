@@ -10,6 +10,7 @@ from pyvelo.client.exceptions import UnboundError
 from pyvelo.client.models.configuration.profile_segments import module_template_value
 from pyvelo.client.models.configuration.qos import CosMapping, QosRule, SlaSettings
 from pyvelo.client.module_write import plan_module
+from pyvelo.client.schemas.configuration import QosConfigurationModule
 from pyvelo.core import ConfigContext, Edge, PatchError, Profile
 from segment_helpers import GLOBAL, GUEST, descriptor, qos_entry
 
@@ -53,7 +54,9 @@ def segment_of(name: str = "Global Segment", **extra: Any) -> dict[str, Any]:
     return {**entry, "rules": [], **extra}
 
 
-def bound(edge_raw: dict[str, Any], profile_raw: dict[str, Any] | None = None):
+def bound(
+    edge_raw: dict[str, Any], profile_raw: dict[str, Any] | None = None
+) -> tuple[QosConfigurationModule[Edge], QosConfigurationModule[Profile]]:
     """An edge module of *edge_raw* bound to a profile module of *profile_raw*, and that one."""
     edge = qos_mod({"segments": [], **edge_raw}, layer=Edge)
     profile = qos_mod(

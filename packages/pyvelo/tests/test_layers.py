@@ -183,9 +183,9 @@ def test_edge_assignment_of_other_fields_is_ordinary() -> None:
 
 def test_effective_and_composed_are_read_only() -> None:
     composed = Mod[Composed].model_validate({"segments": []})
-    with pytest.raises(TypeError, match="state.edge"):
+    with pytest.raises(TypeError, match=r"state\.edge"):
         composed.enabled = False
-    with pytest.raises(TypeError, match="state.edge"):
+    with pytest.raises(TypeError, match=r"state\.edge"):
         composed.edge_note = "x"
     with pytest.raises(TypeError, match="Effective"):
         Mod[Effective].model_validate({})
@@ -207,7 +207,7 @@ def test_a_model_copy_update_cannot_replace_who_owns_an_edge_value() -> None:
 def test_a_model_copy_update_of_a_read_only_layer_raises() -> None:
     composed = Mod[Composed].model_validate({"segments": []})
     for key in ("enabled", "edge_note"):
-        with pytest.raises(TypeError, match="state.edge"):
+        with pytest.raises(TypeError, match=r"state\.edge"):
             composed.model_copy(update={key: False})
     assert composed.model_copy().enabled == composed.enabled
 

@@ -6,6 +6,7 @@ import json
 import logging
 import random
 import time
+from http import HTTPStatus
 from typing import Any, override
 from urllib.parse import urlsplit
 
@@ -181,7 +182,7 @@ class VcoClient(VcoClientProtocol):
                         http_seconds += time.monotonic() - sending
                     status = response.status_code
 
-                    if response.status_code != 429:
+                    if response.status_code != HTTPStatus.TOO_MANY_REQUESTS:
                         if attempt > 0:
                             logger.debug("Request succeeded after %d retries", attempt)
                         outcome = "http_response"

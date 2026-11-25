@@ -33,6 +33,9 @@ from rich.text import Text
 
 logger = logging.getLogger(__name__)
 
+_SECONDS_PER_MINUTE = 60
+_SECONDS_PER_HOUR = 3600
+
 # ---------------------------------------------------------------------------
 # Data types
 # ---------------------------------------------------------------------------
@@ -65,11 +68,14 @@ class EdgeArpResult:
 
 def _format_age(seconds: int) -> str:
     """Format age in seconds to a human-readable string."""
-    if seconds < 60:
+    if seconds < _SECONDS_PER_MINUTE:
         return f"{seconds}s"
-    if seconds < 3600:
-        return f"{seconds // 60}m{seconds % 60}s"
-    return f"{seconds // 3600}h{seconds % 3600 // 60}m"
+    if seconds < _SECONDS_PER_HOUR:
+        return f"{seconds // _SECONDS_PER_MINUTE}m{seconds % _SECONDS_PER_MINUTE}s"
+    return (
+        f"{seconds // _SECONDS_PER_HOUR}h"
+        f"{seconds % _SECONDS_PER_HOUR // _SECONDS_PER_MINUTE}m"
+    )
 
 
 def _as_mapping(value: object) -> Mapping[str, object]:

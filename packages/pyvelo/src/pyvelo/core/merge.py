@@ -1913,7 +1913,7 @@ def _check_list_value(
     alt key raises ``PatchError`` at *path*.
     """
     if len(data) == len(built):
-        for index, (item_data, item) in enumerate(zip(data, built)):
+        for index, (item_data, item) in enumerate(zip(data, built, strict=True)):
             _refuse_bool_as_number(item_data, item, path.child(index))
             if is_dict(item_data) and isinstance(item, VcoModel):
                 _refuse_unread_keys(
@@ -2107,7 +2107,7 @@ def _check_fixed_value(
             path,
             "fixed_list",
         )
-    for index, (data, new, old) in enumerate(zip(value, built, current)):
+    for index, (data, new, old) in enumerate(zip(value, built, current, strict=True)):
         where = path.child(_item_part(spec, old, index))
         if (
             spec.alt_path is not None

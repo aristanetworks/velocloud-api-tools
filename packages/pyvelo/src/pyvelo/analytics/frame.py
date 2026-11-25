@@ -47,8 +47,9 @@ class GroupByProxy:
             if label is None:
                 continue
             cols = [label] if isinstance(label, str) else label
-            for c in cols:
-                agg_exprs.append(getattr(pl.col(c), func)().alias(f"{c}_{func}"))
+            agg_exprs.extend(
+                getattr(pl.col(c), func)().alias(f"{c}_{func}") for c in cols
+            )
         result = self._df.group_by(self._keys).agg(agg_exprs)
         return MetricFrame.from_polars(result)
 
@@ -201,7 +202,7 @@ class MetricFrame:
         if include_schema:
             result["schema"] = {
                 name: str(dtype)
-                for name, dtype in zip(self._df.columns, self._df.dtypes)
+                for name, dtype in zip(self._df.columns, self._df.dtypes, strict=True)
             }
         return result
 

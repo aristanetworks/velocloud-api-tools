@@ -71,7 +71,7 @@ class TestSegmentResolver:
         assert identity.object_id == 101
 
     async def test_resolve_unknown_name(self, resolver: SegmentResolver) -> None:
-        with pytest.raises(KeyError, match="Unknown segment.*nonexistent"):
+        with pytest.raises(KeyError, match=r"Unknown segment.*nonexistent"):
             _ = await resolver.resolve("nonexistent")
 
     async def test_lookup_key_by_segment_id(self, resolver: SegmentResolver) -> None:

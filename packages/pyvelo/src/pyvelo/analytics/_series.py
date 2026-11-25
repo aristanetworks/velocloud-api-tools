@@ -11,6 +11,10 @@ if TYPE_CHECKING:
 
     from pyvelo.core.base import VcoModel
 
+# An epoch timestamp above this is in milliseconds: 1e12 ms is in 2001, while
+# 1e12 s is tens of thousands of years away.
+_EPOCH_MILLIS_ABOVE = 1e12
+
 
 def denormalize_timeseries(
     items: Sequence[VcoModel | dict[str, Any]],
@@ -117,7 +121,7 @@ def denormalize_flat_series(
 
 def _to_millis(value: Any) -> float:
     if isinstance(value, (int, float)):
-        if value > 1e12:
+        if value > _EPOCH_MILLIS_ABOVE:
             return float(value)
         return float(value) * 1000
     if isinstance(value, datetime):
@@ -131,7 +135,7 @@ def _to_datetime(value: Any) -> datetime | None:
     if isinstance(value, datetime):
         return value
     if isinstance(value, (int, float)):
-        if value > 1e12:
+        if value > _EPOCH_MILLIS_ABOVE:
             return datetime.fromtimestamp(value / 1000, tz=UTC)
         return datetime.fromtimestamp(value, tz=UTC)
     if hasattr(value, "timestamp"):

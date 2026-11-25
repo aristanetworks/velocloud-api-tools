@@ -1,5 +1,6 @@
 """Configuration secrets stay out of the text of errors, plans and messages."""
 
+import contextlib
 import copy
 import re
 import traceback
@@ -304,10 +305,9 @@ def test_every_list_field_still_builds_its_adapters() -> None:
             spec = _list_spec(fi)
             assert spec is not None
             if spec.item_type is not None:
-                try:  # the first call builds the adapter of a union of models
+                # The first call builds the adapter of a union of models.
+                with contextlib.suppress(ValidationError):
                     _ = spec.item_type.validate({})
-                except ValidationError:
-                    pass
             built += 1
     assert built > 100
 

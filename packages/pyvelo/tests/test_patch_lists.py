@@ -466,11 +466,13 @@ def test_item_selector_is_what_a_patch_takes() -> None:
 
 
 def test_item_selector_raises_for_no_such_item_and_for_no_list() -> None:
-    with pytest.raises(IndexError, match="Root.rules has no item at position 0"):
+    with pytest.raises(IndexError, match=r"Root\.rules has no item at position 0"):
         _ = item_selector(Root(), "rules", 0)
-    with pytest.raises(IndexError, match="Root.rules has no item at position -1"):
+    with pytest.raises(IndexError, match=r"Root\.rules has no item at position -1"):
         _ = item_selector(Root(rules=[Rule(name="a")]), "rules", -1)
-    with pytest.raises(TypeError, match="Root.labels is not a list or a map of models"):
+    with pytest.raises(
+        TypeError, match=r"Root\.labels is not a list or a map of models"
+    ):
         _ = item_selector(Root(), "labels", 0)
 
 
@@ -904,7 +906,7 @@ def test_add_by_name_without_a_resolver_does_not_take_another_segments_ids(
     # FirewallData's SegmentMetadata defaults segmentId to 0: Global Segment's.
     fw = fresh()
     dump = copy.deepcopy(fw.model_dump())
-    with pytest.raises(LookupError, match="'Guest'.*segment_id") as exc:
+    with pytest.raises(LookupError, match=r"'Guest'.*segment_id") as exc:
         _ = fw.merge_patch({"segments": op})
     assert not isinstance(exc.value, ResolutionError)
     assert fw.model_dump() == dump
@@ -945,7 +947,7 @@ def test_list_value_cannot_give_a_new_segment_another_segments_ids() -> None:
     # Without a resolver, Guest would get segmentId 0: Global Segment's.
     fw = fresh()
     dump = copy.deepcopy(fw.model_dump())
-    with pytest.raises(LookupError, match="'Guest'.*segment_id") as exc:
+    with pytest.raises(LookupError, match=r"'Guest'.*segment_id") as exc:
         _ = fw.merge_patch(global_and(fw, {"segment": {"name": "Guest"}}))
     assert not isinstance(exc.value, ResolutionError)
     assert fw.model_dump() == dump

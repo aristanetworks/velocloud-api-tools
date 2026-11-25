@@ -132,7 +132,7 @@ def test_calls_return_copies() -> None:
 
 
 def test_an_unknown_module_raises() -> None:
-    with pytest.raises(ValueError) as error:
+    with pytest.raises(ValueError, match="A new segment has a template for") as error:
         segment_template("WAN")
     for name in MODULES:
         assert name in str(error.value)

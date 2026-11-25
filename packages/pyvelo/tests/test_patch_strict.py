@@ -463,7 +463,7 @@ def test_the_model_shares_no_object_with_the_patch() -> None:
 
 def test_a_patch_that_is_not_a_dict_is_a_type_error() -> None:
     root = Root()
-    with pytest.raises(TypeError, match="write .*<field>.*: value"):
+    with pytest.raises(TypeError, match=r"write .*<field>.*: value"):
         _ = root.merge_patch(MappingProxyType({"count": 1}))
     with pytest.raises(TypeError, match="dict"):
         _ = root.merge_patch(json.loads('[["count", 1]]'))

@@ -83,7 +83,7 @@ def test_placeholder_is_created_once_and_inherits_everything() -> None:
     assert guest.config_context is ConfigContext.EDGE
     with pytest.raises(ValueError, match="Nope"):
         fw.segment("Nope")
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="Segment not found"):
         fw.get_segment(name="Nope")  # get-or-raise is unchanged
 
 
@@ -210,7 +210,7 @@ def test_a_placeholder_is_empty_in_each_module_and_has_what_the_orchestrator_nee
 def test_bind_tolerates_odd_profile_data() -> None:
     fw = edge_fw()
     fw.bind_profile({"segments": None})
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="Segment 'Guest' not found"):
         fw.segment("Guest")
     assert hasattr(DeviceSettingsData, "segment")
     assert hasattr(DeviceSettingsData, "bind_profile")

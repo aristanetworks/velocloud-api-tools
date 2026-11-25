@@ -103,9 +103,9 @@ def _wrap_normalizer(fn: Callable[..., Any]) -> NormalizerFn:
         nparams = len(sig.parameters)
     except (ValueError, TypeError):
         nparams = 1
-    if nparams >= 2:
+    if nparams > 1:
         return fn
-    return lambda v, ctx: fn(v)
+    return lambda v, _: fn(v)
 
 
 @dataclass(frozen=True, slots=True)

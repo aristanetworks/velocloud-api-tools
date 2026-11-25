@@ -212,7 +212,7 @@ class TestResolverMergeIntegration:
     def test_unknown_segment_name_clear_error(self, registry: ResolverRegistry) -> None:
         """Resolution failure produces a clear error message."""
         config = _make_config()
-        with pytest.raises(KeyError, match="Unknown segment.*Nonexistent"):
+        with pytest.raises(KeyError, match=r"Unknown segment.*Nonexistent"):
             _ = config.merge_patch(
                 {
                     "segments": {

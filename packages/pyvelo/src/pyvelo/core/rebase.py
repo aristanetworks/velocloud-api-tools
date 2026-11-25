@@ -31,7 +31,7 @@ from bisect import bisect_left
 from collections import Counter
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Self, get_args, get_origin, override
+from typing import ClassVar, Self, get_args, get_origin, override
 
 from pydantic import MISSING
 from pydantic.fields import FieldInfo
@@ -286,6 +286,7 @@ class Path(str):
     ``segments["Corp.Guest v2"].rules[r1].port``.
     """
 
+    __slots__: ClassVar[tuple[str, ...]] = ("parts",)
     parts: tuple[PathPart, ...]
 
     def __new__(cls, parts: Iterable[PathPart]) -> Self:
@@ -458,7 +459,7 @@ def _map_value_type(field_info: FieldInfo) -> type[VcoModel] | None:
     """
     for member in _members_without_missing_and_none(_held_type(field_info)):
         args = get_args(member)
-        if get_origin(member) is not dict or len(args) != 2:
+        if get_origin(member) is not dict or len(args) != 2:  # noqa: PLR2004  # dict[K, V] has two type arguments
             continue
         models = [
             m
@@ -758,9 +759,13 @@ def _rebase_object(
             out[key] = _rebase(
                 value, before[dump_key], after[dump_key], node_child(node, dump_key)
             )
-    for key, value in after.items():
-        if key not in handled and (key not in before or before[key] != value):
-            out[key] = value
+    out.update(
+        {
+            key: value
+            for key, value in after.items()
+            if key not in handled and (key not in before or before[key] != value)
+        }
+    )
     return out
 
 

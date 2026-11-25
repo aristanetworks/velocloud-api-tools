@@ -110,9 +110,8 @@ class TestSignatureConformance:
         method = cast("Callable[..., object]", getattr(mixin, method_name))
         sig = _operation_signature(method)
         params = list(sig.parameters.keys())
-        assert len(params) >= 1 and params[0] == "self", (
-            f"{qualified} missing 'self' parameter"
-        )
+        assert len(params) >= 1, f"{qualified} missing 'self' parameter"
+        assert params[0] == "self", f"{qualified} missing 'self' parameter"
 
 
 # ---------------------------------------------------------------------------
@@ -214,7 +213,10 @@ class TestPortalMethodNames:
             f"{file}:{lineno}: portal method '{method_str}' should be 'domain/methodName'"
         )
         domain, method_name = parts
-        assert domain.isalpha() and domain[0].islower(), (
+        assert domain.isalpha(), (
+            f"{file}:{lineno}: domain '{domain}' should be lowercase alpha"
+        )
+        assert domain[0].islower(), (
             f"{file}:{lineno}: domain '{domain}' should be lowercase alpha"
         )
         assert method_name[0].islower(), (

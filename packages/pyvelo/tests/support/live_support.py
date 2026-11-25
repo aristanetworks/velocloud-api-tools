@@ -145,7 +145,7 @@ import tempfile
 import threading
 import uuid
 import weakref
-from contextlib import aclosing, asynccontextmanager, contextmanager
+from contextlib import aclosing, asynccontextmanager, contextmanager, suppress
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Annotated, Any, Literal, NoReturn, cast
@@ -1626,10 +1626,10 @@ def _backups() -> pathlib.Path:
             _backup_dir = pathlib.Path(tempfile.mkdtemp(prefix="pyvelo-it-backups-"))
 
             def remove_if_empty(path: pathlib.Path = _backup_dir) -> None:
-                try:
+                with suppress(
+                    OSError
+                ):  # a backup is still there: that is the point of it
                     path.rmdir()
-                except OSError:
-                    pass  # a backup is still there: that is the point of it
 
             _ = atexit.register(remove_if_empty)
     return _backup_dir
@@ -1684,7 +1684,7 @@ def report_leftover_backups(write: Callable[[str], object]) -> None:
 
 
 def _print_to_stderr(line: str) -> None:
-    print(line, file=sys.stderr)
+    print(line, file=sys.stderr)  # noqa: T201  # runs at exit, after logging may have been shut down
 
 
 _ = atexit.register(report_leftover_backups, _print_to_stderr)
@@ -1825,7 +1825,7 @@ def interrupts_held() -> Generator[None]:
     def note(_signal: int, _frame: object) -> None:
         nonlocal noted
         if not noted:
-            print(
+            print(  # noqa: T201  # a signal handler tells the person who pressed Ctrl-C
                 "live suite: holding Ctrl-C until the module is put back",
                 file=sys.stderr,
             )
@@ -2032,7 +2032,7 @@ def refusal_form(error: ModuleWriteError) -> str:
 def record(capsys: pytest.CaptureFixture[str], line: str) -> None:
     """Print *line* on a line of its own, past the capture, so a passing test shows it."""
     with capsys.disabled():
-        print(f"\n{line}")
+        print(f"\n{line}")  # noqa: T201  # record prints past the capture, so a passing test shows the line
 
 
 def record_refusal(

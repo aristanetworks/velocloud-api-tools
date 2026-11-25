@@ -1178,10 +1178,10 @@ async def test_an_opt_in_that_does_not_match_fails_the_test(
     monkeypatch.setenv(live.WRITE_ENTERPRISE_ENV, str(ENTERPRISE))
     fake = lab_fake()
     lab = await live.discover_lab(client_over(fake), None)
-    with pytest.raises(pytest.fail.Exception, match="^writes refused: "):
+    with pytest.raises(pytest.fail.Exception, match=r"^writes refused: "):
         async with live.restoring(lab.edge_site(lab.layouts[0], Name.QOS)):
             pass
-    with pytest.raises(pytest.fail.Exception, match="^writes refused: "):
+    with pytest.raises(pytest.fail.Exception, match=r"^writes refused: "):
         _ = await lab.pick_writable_edge(Name.QOS)
     assert "updateConfigurationModule" not in fake.methods()
 
@@ -1400,7 +1400,7 @@ async def test_a_restore_that_fails_names_the_backup_and_never_the_data(
     original = copy.deepcopy(fake.data(2))
     lab = await opened(fake, monkeypatch)
     site = lab.profile_site(20, Name.QOS)
-    with pytest.raises(pytest.fail.Exception) as caught:
+    with pytest.raises(pytest.fail.Exception) as caught:  # noqa: PT012  # restoring raises as it exits, so the block holds the run it restores
         async with live.restoring(site):
             await raise_limit(site, 2)
             fake.refused.add(2)  # the write back is refused
@@ -1648,7 +1648,7 @@ def test_a_method_that_starts_with_a_read_verb_passes(method: str) -> None:
 def test_any_other_method_is_refused_outside_the_code_that_checked_it(
     method: str,
 ) -> None:
-    with pytest.raises(live.WritesRefused, match="^a call to "):
+    with pytest.raises(live.WritesRefused, match=r"^a call to "):
         live.check_call(method)
 
 
@@ -1837,7 +1837,7 @@ async def test_edge_targets_with_the_opt_in_wrong_fail_before_the_marks_are_look
     fake.add_profile(20, description="the default profile")
     fake.add_edge(5, 10, 20)
     lab = await live.discover_lab(client_over(fake), None)
-    with pytest.raises(pytest.fail.Exception, match="^writes refused: "):
+    with pytest.raises(pytest.fail.Exception, match=r"^writes refused: "):
         _ = lab.require_edge_targets(replace_modules=True)
 
 
@@ -1957,7 +1957,7 @@ async def test_marked_targets_that_all_refuse_fail_the_test(
         "as they stand, or the update path is broken"
     )
     assert "secret-lab-name" not in str(failed.value)
-    with pytest.raises(pytest.fail.Exception, match="^none of the 1 marked profile"):
+    with pytest.raises(pytest.fail.Exception, match=r"^none of the 1 marked profile"):
         _ = await lab.pick_writable_profile(Name.QOS)
 
 
@@ -2017,7 +2017,7 @@ async def test_backups_left_are_listed_once(
     assert lines == []  # a module that was put back leaves nothing to list
 
     site = lab.profile_site(20, Name.QOS)
-    with pytest.raises(pytest.fail.Exception):
+    with pytest.raises(pytest.fail.Exception):  # noqa: PT012  # restoring raises as it exits, so the block holds the run it restores
         async with live.restoring(site):
             await raise_limit(site, 2)
             fake.refused.add(2)  # the write back is refused
@@ -2040,7 +2040,7 @@ async def test_a_change_by_another_writer_is_not_written_over(
     fake = lab_fake()
     lab = await opened(fake, monkeypatch)
     site = lab.profile_site(20, Name.QOS)
-    with pytest.raises(pytest.fail.Exception) as caught:
+    with pytest.raises(pytest.fail.Exception) as caught:  # noqa: PT012  # restoring raises as it exits, so the block holds the run it restores
         async with live.restoring(site):
             await raise_limit(site, 2)
             # Someone else, in the UI, while the test runs:
@@ -2119,7 +2119,7 @@ async def test_a_module_the_run_did_not_insert_is_not_deleted(
     fake.add_edge(7, 12, 20, description=REPLACEABLE)
     lab = await opened(fake, monkeypatch)
     site = lab.edge_site(lab.layouts[2], Name.QOS)
-    with pytest.raises(pytest.fail.Exception) as caught:
+    with pytest.raises(pytest.fail.Exception) as caught:  # noqa: PT012  # restoring raises as it exits, so the block holds the run it restores
         async with live.restoring(site) as original:
             assert original is None
             # The test inserts nothing; an administrator creates the module meanwhile.
@@ -2220,7 +2220,7 @@ async def test_another_module_in_place_of_the_one_found_is_left_alone(
     fake = lab_fake()
     lab = await opened(fake, monkeypatch)
     site = lab.profile_site(20, Name.QOS)
-    with pytest.raises(pytest.fail.Exception) as caught:
+    with pytest.raises(pytest.fail.Exception) as caught:  # noqa: PT012  # restoring raises as it exits, so the block holds the run it restores
         async with live.restoring(site):
             # Someone replaces the module, in the UI, while the test runs:
             del fake.store.rows[2]
@@ -2242,7 +2242,7 @@ async def test_a_write_refused_for_its_data_leaves_what_the_run_last_saw(
     fake = lab_fake()
     lab = await opened(fake, monkeypatch)
     site = lab.profile_site(20, Name.QOS)
-    with pytest.raises(pytest.fail.Exception, match="changed outside this run"):
+    with pytest.raises(pytest.fail.Exception, match="changed outside this run"):  # noqa: PT012  # restoring raises as it exits, so the block holds the run it restores
         async with live.restoring(site):
             await raise_limit(site, 2)
             fake.store.other_writer(2, lambda row: row["data"].update(added=1))
@@ -2261,7 +2261,7 @@ async def test_a_write_that_failed_before_it_was_sent_leaves_what_the_run_last_s
     fake = lab_fake()
     lab = await opened(fake, monkeypatch)
     site = lab.profile_site(20, Name.QOS)
-    with pytest.raises(pytest.fail.Exception, match="changed outside this run"):
+    with pytest.raises(pytest.fail.Exception, match="changed outside this run"):  # noqa: PT012  # restoring raises as it exits, so the block holds the run it restores
         async with live.restoring(site):
             await raise_limit(site, 2)
             fake.store.other_writer(2, lambda row: row["data"].update(added=1))
@@ -2311,7 +2311,7 @@ async def test_a_delete_of_a_module_no_block_covers_names_its_type(
     lab = await opened(fake, monkeypatch)
     site = lab.edge_site(lab.layouts[0], Name.QOS)
     async with live.restoring(site):
-        with pytest.raises(live.WritesRefused, match="^a delete of a QOS module "):
+        with pytest.raises(live.WritesRefused, match=r"^a delete of a QOS module "):
             await live.delete_module(site, 3)
     assert 3 in fake.store.rows
 
@@ -2557,7 +2557,7 @@ def test_the_role_calls_are_the_twelve_methods_of_the_client() -> None:
         assert callable(getattr(VcoClient, method))
         assert wire.startswith("edge/" if kind == "edge" else "enterprise/")
         assert not live._READ.match(wire.rsplit("/", 1)[-1])  # pyright: ignore[reportPrivateUsage]
-        with pytest.raises(live.WritesRefused, match="^a call to "):
+        with pytest.raises(live.WritesRefused, match=r"^a call to "):
             live.check_call(wire)
 
 
@@ -2778,7 +2778,7 @@ async def test_the_role_calls_are_still_refused_when_sent_by_hand(
     lab = await hub_opened(fake, monkeypatch)
     _ = await live.admit_hub(lab.client, None)
     async with live.restoring(lab.profile_site(20, DS)):
-        with pytest.raises(live.WritesRefused, match="^a call to edge/enableEdge"):
+        with pytest.raises(live.WritesRefused, match=r"^a call to edge/enableEdge"):
             _ = await lab.client.portal(
                 "edge/enableEdgeForEdgeHub",
                 role_request("enable_edge_hub", EDGE_HUB_ID),
@@ -2845,5 +2845,5 @@ class TestAdmitHub:
         monkeypatch.setenv(live.WRITE_ENTERPRISE_ENV, str(ENTERPRISE))
         monkeypatch.setenv(live.HUB_ENV, "not a logical id")
         lab = await live.discover_lab(client_over(hub_lab()), None)
-        with pytest.raises(pytest.fail.Exception, match="^writes refused: "):
+        with pytest.raises(pytest.fail.Exception, match=r"^writes refused: "):
             _ = await live.admit_hub(lab.client, None)

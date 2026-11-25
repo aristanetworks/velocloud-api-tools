@@ -127,7 +127,7 @@ BAD_ACCESSORS: list[Callable[[SegmentIdentity], object] | str] = [
 ]
 
 # Accessors that read no field, so no field can be suggested from what they read.
-NO_FIELD_ACCESSORS: list[object] = [lambda i: 0, lambda i: 1 / 0, 5]  # pyright: ignore[reportUnknownLambdaType]
+NO_FIELD_ACCESSORS: list[object] = [lambda _: 0, lambda _: 1 / 0, 5]  # pyright: ignore[reportUnknownLambdaType]
 
 
 @pytest.mark.parametrize("accessor", BAD_ACCESSORS)
@@ -144,7 +144,7 @@ def test_an_accessor_that_reads_no_field_is_refused(accessor: object) -> None:
 
 def test_an_accessor_that_raises_is_refused_with_what_it_raised() -> None:
     with pytest.raises(TypeError) as caught:
-        _ = Resolvable(SegmentIdentity, lambda i: 1 / 0)
+        _ = Resolvable(SegmentIdentity, lambda _: 1 / 0)
     text = str(caught.value)
     assert "raised" in text
     assert "ZeroDivisionError" in text
@@ -218,7 +218,7 @@ def test_a_resolvable_inside_a_kind_is_checked_against_the_inner_type() -> None:
         ] = Field(default=...)
 
     assert get_resolvable(Fits.model_fields["group"]) is not None
-    with pytest.raises(TypeError, match="lambda i: i.logical_id"):
+    with pytest.raises(TypeError, match=r"lambda i: i\.logical_id"):
 
         class Refused(Layered[Edge]):  # pyright: ignore[reportUnusedClass]
             group: Annotated[

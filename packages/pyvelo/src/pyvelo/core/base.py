@@ -1147,7 +1147,7 @@ def list_item_type(fi: FieldInfo) -> ListItemType | None:
             for v in map(_unwrap_annotated, _union_members(inner))
             if _is_vco_model_type(v)
         )
-        if len(variants) >= 2:
+        if len(variants) > 1:
             return ListItemType(element, variants)
         if len(variants) == 1:
             return ListItemType(variants[0], variants)
@@ -1238,7 +1238,7 @@ def list_kind(field_info: FieldInfo) -> ListKind | None:
     for member in _members_without_missing_and_none(_held_type(field_info)):
         origin = get_origin(member)
         args = get_args(member)
-        if origin is dict and len(args) == 2:
+        if origin is dict and len(args) == 2:  # noqa: PLR2004  # dict[K, V] has two type arguments
             value_members = _members_without_missing_and_none(args[1])
             is_dict_of_models = is_dict_of_models or _is_model_members(value_members)
         elif member is list or origin is list:

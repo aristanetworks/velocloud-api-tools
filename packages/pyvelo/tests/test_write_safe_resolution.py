@@ -290,7 +290,7 @@ def test_missing_resolver_is_not_a_resolution_error() -> None:
 def test_a_new_segment_no_resolver_can_give_ids_to_is_refused_by_name() -> None:
     for resolvers in (NoTables(), None):
         fw = fresh()
-        with pytest.raises(LookupError, match="'NewSeg'.*segment_id") as exc:
+        with pytest.raises(LookupError, match=r"'NewSeg'.*segment_id") as exc:
             _ = fw.merge_patch({"segments": {"NewSeg": add()}}, resolvers=resolvers)
         assert "segment_logical_id" in str(exc.value)
         assert [s.segment.name for s in fw.segments] == ["Global Segment"]

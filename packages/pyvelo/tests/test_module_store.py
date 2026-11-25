@@ -496,7 +496,7 @@ def test_a_module_id_held_by_another_configuration_is_refused_and_nothing_change
     first = make_module_json("firewall", {}, module_id=1, configuration_id=10)
     store.add_configuration({"id": 10, "name": "P", "modules": [first]})
     clash = make_module_json("qos", {}, module_id=1, configuration_id=20)
-    with pytest.raises(ValueError) as exc:
+    with pytest.raises(ValueError, match="already holds a module with that id") as exc:
         store.add_configuration({"id": 20, "name": "Q", "modules": [clash]})
     message = str(exc.value)
     assert "module 1" in message
@@ -641,7 +641,7 @@ def test_a_refused_configuration_stores_nothing_and_says_what_to_do() -> None:
     store = ModuleStore()
     good = make_module_json("firewall", {}, module_id=1, configuration_id=10)
     bad = make_module_json("qos", {}, module_id=2, configuration_id=99)
-    with pytest.raises(ValueError) as exc:
+    with pytest.raises(ValueError, match="its configurationId is 99") as exc:
         store.add_configuration({"id": 10, "name": "P", "modules": [good, bad]})
     assert "give the module under configuration 99" in str(exc.value)
     assert "drop its configurationId so it takes 10" in str(exc.value)

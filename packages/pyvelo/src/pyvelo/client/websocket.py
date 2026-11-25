@@ -33,7 +33,7 @@ from pyvelo.client.exceptions import (
 from pyvelo.client.schemas.gateway import GwRouteTableEntry
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Coroutine
+    from collections.abc import Callable, Coroutine, Generator
     from types import TracebackType
 
     import httpx
@@ -136,7 +136,7 @@ class PendingDiagnostic[T]:
                 raise
         raise AssertionError("unreachable")  # pragma: no cover
 
-    def __await__(self):
+    def __await__(self) -> Generator[Any, None, dict[str, Any]]:
         """The diagnostic's result, after the retries ``max_retries`` allows."""
         return self._wait().__await__()
 

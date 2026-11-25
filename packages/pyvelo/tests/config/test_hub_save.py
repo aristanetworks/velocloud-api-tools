@@ -1081,7 +1081,11 @@ def edge_service(
             "data": {
                 "logicalId": hub.logical_id,
                 "roles": dict(
-                    zip(("edgeHub", "edgeToEdgeBridge", "backHaulEdge"), roles)
+                    zip(
+                        ("edgeHub", "edgeToEdgeBridge", "backHaulEdge"),
+                        roles,
+                        strict=True,
+                    )
                 ),
             },
             "configuration": [

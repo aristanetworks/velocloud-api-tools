@@ -204,7 +204,7 @@ class TestSharedKeys:
             Item(name="ssh", value=22),
             Item(name="ssh", value=2222),
         ]
-        with pytest.raises(ValueError) as exc:
+        with pytest.raises(ValueError, match="the desired items share a name") as exc:
             _ = diff_intents(current, desired, "name")
         assert str(exc.value) == (
             "the desired items share a name: 'web', 'ssh'. diff_intents pairs "

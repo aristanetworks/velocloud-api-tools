@@ -31,6 +31,7 @@ from pyvelo.client.models.configuration.device_settings.segment import VpnHub
 from pyvelo.config.pipeline import ConfigPipeline
 from pyvelo.config.resolvers.hub import HubResolver
 from pyvelo.config.state import ConfigState
+from pyvelo.config.validation_warning import ValidationWarning
 from pyvelo.core import delete
 from pyvelo.core.identity import ResolverNotLoadedError
 from refs_helpers import segment_row
@@ -112,7 +113,7 @@ def assert_names(error: HubListError, *texts: str, lists: tuple[str, ...] = ()) 
     assert set(lists) <= set(error.lists)
 
 
-def as_read_warnings(state: ConfigState):
+def as_read_warnings(state: ConfigState) -> list[ValidationWarning]:
     return [w for w in state.plan().check_warnings if w.code == "hub_list_as_read"]
 
 

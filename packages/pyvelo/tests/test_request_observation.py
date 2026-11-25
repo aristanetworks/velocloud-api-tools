@@ -212,15 +212,13 @@ async def test_observer_preparation_failure_preserves_source_error(
     records: list[RequestObservation] = []
     failure = httpx.InvalidURL("original transport error")
     async with observed_client(lambda _: httpx.Response(200), records.append) as client:
-        with (
-            patch.object(VcoClientProtocol, "_send_request", side_effect=failure),
-            pytest.raises(httpx.InvalidURL) as error,
-        ):
+        with patch.object(VcoClientProtocol, "_send_request", side_effect=failure):
             send_request = cast(
                 "Callable[[str, str], Awaitable[httpx.Response]]",
                 client._send_request,  # pyright: ignore[reportPrivateUsage]  # observation is made in the transport call
             )
-            _ = await send_request("POST", "https://[invalid")
+            with pytest.raises(httpx.InvalidURL) as error:
+                _ = await send_request("POST", "https://[invalid")
     assert error.value is failure
     assert records == []
     assert "observer failed" in caplog.text

@@ -273,14 +273,14 @@ async def discover(client: VcoClient, enterprise_id: int) -> VcoTestContext:
         raw_segments = await client.get_enterprise_network_segments(
             GetEnterpriseNetworkSegments(enterprise_id=enterprise_id)
         )
-        for s in raw_segments:
-            segments.append(
-                SegmentInfo(
-                    segment_id=s.data.segment_id,
-                    logical_id=str(s.logical_id),
-                    name=s.name,
-                )
+        segments.extend(
+            SegmentInfo(
+                segment_id=s.data.segment_id,
+                logical_id=str(s.logical_id),
+                name=s.name,
             )
+            for s in raw_segments
+        )
     except Exception:
         log.debug("Segment discovery failed", exc_info=True)
 

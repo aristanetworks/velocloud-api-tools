@@ -26,7 +26,7 @@ PATH = Path.parse("rules[a]")
 
 def test_at() -> None:
     assert at(0) == "#0"
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="a position counts from 0, not -1"):
         at(-1)
 
 

@@ -336,7 +336,7 @@ def test_a_held_model_the_dump_leaves_out_does_not_break_plan() -> None:
 
     assert isinstance(state.plan(), ConfigPlan)
     assert isinstance(state.plan(), ConfigPlan)
-    with pytest.raises(DetachedObjectError, match="SegmentVpn.enabled"):
+    with pytest.raises(DetachedObjectError, match=r"SegmentVpn\.enabled"):
         vpn.enabled = True
 
 

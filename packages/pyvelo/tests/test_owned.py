@@ -458,7 +458,7 @@ def test_a_group_checks_its_declaration() -> None:
 
     assert declare()
 
-    with pytest.raises(TypeError, match="anchor.*nope"):
+    with pytest.raises(TypeError, match=r"anchor.*nope"):
         declare(anchor="nope")
 
     class Short(VcoModel):
@@ -722,7 +722,7 @@ def test_an_owned_is_not_a_condition() -> None:
         bool(owned)
     assert "state.effective" in str(caught.value)
     assert ".value" in str(caught.value)
-    with pytest.raises(TypeError):
+    with pytest.raises(TypeError):  # noqa: PT012  # the test is that an if statement on an Owned is refused
         if owned:
             pass
 

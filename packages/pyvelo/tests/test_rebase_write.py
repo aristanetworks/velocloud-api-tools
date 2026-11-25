@@ -18,6 +18,7 @@ from dataclasses import replace
 from typing import TYPE_CHECKING, Any
 
 import pytest
+from pyvelo.client import VcoClient
 from pyvelo.client.exceptions import ConfigConflictError
 from pyvelo.client.models.configuration import QosData
 from pyvelo.client.models.configuration.profile_segments import default_rules
@@ -155,7 +156,7 @@ async def device_settings_written(
     store: ModuleStore,
     ds: DeviceSettingsConfigurationModule,
     plan: ModulePlan,
-):
+) -> VcoClient:
     """A client over *store*, after the write of *ds*; the requests are cleared."""
     client = await mock_vco_client(store)
     _ = await client.write_module(ds, plan)

@@ -552,7 +552,7 @@ def test_merge_validates_the_inner_type_of_an_inheritable() -> None:
     assert profile.level == 3
     assert {"settings", "level"} <= profile.model_fields_set
     assert wire_dump(profile, PROFILE_LEVEL)["settings"] == {"a": 5, "b": False}
-    with pytest.raises(PatchError, match="settings.a"):
+    with pytest.raises(PatchError, match=r"settings\.a"):
         _ = profile.merge_patch({"settings": {"a": "x"}})
     with pytest.raises(PatchError, match="invalid value"):
         _ = profile.merge_patch({"level": "x"})

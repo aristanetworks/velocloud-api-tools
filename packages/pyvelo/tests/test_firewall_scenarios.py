@@ -15,6 +15,7 @@ from pyvelo.client.models.configuration.firewall import (
     StatefulLocal,
 )
 from pyvelo.client.module_write import plan_module
+from pyvelo.client.schemas.configuration import FirewallConfigurationModule
 from pyvelo.core import ConfigContext, Edge, Profile
 from pyvelo.core.effective import Origin, effective_view
 from pyvelo.core.layers import Effective
@@ -46,7 +47,9 @@ def desc(sid: int, name: str) -> dict[str, object]:
     }
 
 
-def bound(edge_raw: dict[str, Any], profile_raw: dict[str, Any] | None = None):
+def bound(
+    edge_raw: dict[str, Any], profile_raw: dict[str, Any] | None = None
+) -> tuple[FirewallConfigurationModule[Edge], FirewallConfigurationModule[Profile]]:
     """An edge module of *edge_raw* bound to a profile module of *profile_raw*, and that one."""
     edge = fw({"segments": [], **edge_raw}, layer=Edge)
     profile = fw({"segments": [], **(profile_raw or {})}, layer=Profile, module_id=2)

@@ -155,7 +155,9 @@ async def test_load_profile_refuses_an_edge_specific_configuration() -> None:
     client = MockVcoClient(stack=_make_stack())  # its store holds 10 and 20
     pipeline = ConfigPipeline(client)
 
-    with pytest.raises(ValueError) as exc:
+    with pytest.raises(
+        ValueError, match="is the edge-specific configuration of an edge"
+    ) as exc:
         _ = await pipeline.load_profile(10)
 
     assert str(exc.value) == (

@@ -66,7 +66,7 @@ def load_config[T: BaseModel](path: str | Path, model: type[T]) -> T:
     the file and each field at fault, not the values, which may be secrets.
     An ``OSError`` from opening the file is left as it is.
     """
-    with open(path) as f:
+    with Path(path).open() as f:
         try:
             data = cast("object", yaml.load(f, Loader=_UniqueKeyLoader))
         except yaml.YAMLError as error:
@@ -96,7 +96,7 @@ def confirm_save(
     if not isinstance(auto_yes, bool):  # pyright: ignore[reportUnnecessaryIsInstance]
         raise TypeError(f"auto_yes must be True or False, not {auto_yes!r}")  # pyright: ignore[reportUnreachable]
     if plan is not None:
-        print(plan.render())
+        print(plan.render())  # noqa: T201  # an interactive prompt: the person asked is shown the plan
     if auto_yes:
         return True
     try:

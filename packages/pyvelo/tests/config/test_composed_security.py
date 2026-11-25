@@ -41,7 +41,9 @@ def group_row(data: Mapping[str, Any], logical_id: str = GROUP) -> dict[str, Any
     return row("securityServiceGroup", 100, logical_id, data)
 
 
-def objects(*extra: dict[str, Any], group: Mapping[str, Any] | None = None):
+def objects(
+    *extra: dict[str, Any], group: Mapping[str, Any] | None = None
+) -> SecurityObjects:
     named = {
         "urlCategoryFiltering": {"id": 7},
         "urlReputationFiltering": {"id": 8},

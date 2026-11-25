@@ -1337,7 +1337,7 @@ def _segment_name(entry: object, segment_id: object) -> str:
 def _names_text(names: Sequence[str]) -> str:
     return (
         " and ".join(names)
-        if len(names) < 3
+        if len(names) < 3  # noqa: PLR2004  # two names are joined by "and" alone
         else f"{', '.join(names[:-1])} and {names[-1]}"
     )
 

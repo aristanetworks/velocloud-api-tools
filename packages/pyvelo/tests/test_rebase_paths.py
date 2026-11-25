@@ -212,7 +212,7 @@ def test_distinct_parts_render_distinctly() -> None:
     ],
 )
 def test_parse_rejects_malformed_text(text: str) -> None:
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=r"^malformed path "):
         _ = Path.parse(text)
 
 
@@ -238,7 +238,7 @@ def test_key_text_of_a_composite_key() -> None:
 
 @pytest.mark.parametrize("text", ["", "a,", ",a", "a b", '"a', "#1", "a]"])
 def test_parse_key_text_rejects_what_key_text_does_not_write(text: str) -> None:
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=r"^malformed key "):
         _ = parse_key_text(text)
 
 

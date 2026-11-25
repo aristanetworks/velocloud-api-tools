@@ -655,23 +655,23 @@ def _broken_rules(
 
     # Rule 4: a backhaul or bridge hub is a hub of the segment.
     hub_keys = {_key(h) for h in hub_list}
-    for role in ("bridge", "backhaul"):
-        for hub in lists.get(role, []):
-            if _key(hub) not in hub_keys:
-                problems.append(
-                    _problem(
-                        (4, role, _key(hub)),
-                        f"{prefix}{_list_text(role)} holds {hub.name!r}, which "
-                        f"{_list_text('hub')} does not. A hub works for backhaul "
-                        "or bridging only as a hub of the segment, and the UI "
-                        "offers only those, so no Edge could use it. Add it to "
-                        f"the {_LIST_LABELS['hub']} with "
-                        f"{_addition(name, 'hub', hub.name)} or remove it from the "
-                        f"{_LIST_LABELS[role]} too with {_removal(name, role, [hub])}.",
-                        ["hub", role],
-                        [hub],
-                    )
-                )
+    problems.extend(
+        _problem(
+            (4, role, _key(hub)),
+            f"{prefix}{_list_text(role)} holds {hub.name!r}, which "
+            f"{_list_text('hub')} does not. A hub works for backhaul "
+            "or bridging only as a hub of the segment, and the UI "
+            "offers only those, so no Edge could use it. Add it to "
+            f"the {_LIST_LABELS['hub']} with "
+            f"{_addition(name, 'hub', hub.name)} or remove it from the "
+            f"{_LIST_LABELS[role]} too with {_removal(name, role, [hub])}.",
+            ["hub", role],
+            [hub],
+        )
+        for role in ("bridge", "backhaul")
+        for hub in lists.get(role, [])
+        if _key(hub) not in hub_keys
+    )
 
     # Rule 5: a segment that uses hubs has its VPN on.
     filled: list[Role] = [role for role in _ROLES if lists.get(role)]

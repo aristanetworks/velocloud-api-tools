@@ -33,7 +33,7 @@ from pyvelo.config.effective import (
 )
 from pyvelo.config.pipeline import ConfigPipeline
 from pyvelo.config.resolver import ResolverContext
-from pyvelo.config.state import ConfigState
+from pyvelo.config.state import ConfigPlan, ConfigState
 from pyvelo.core import (
     Additive,
     Alias,
@@ -345,7 +345,7 @@ async def test_the_comparison_loads_a_resolver_the_plan_needs_as_a_save_does(
     plan = state.plan
     asked: list[type] = []
 
-    def needs_the_services(*args: Any, **kwargs: Any):
+    def needs_the_services(*args: Any, **kwargs: Any) -> ConfigPlan:
         if NetworkServiceIdentity not in asked:
             raise ResolverNotLoadedError(NetworkServiceIdentity)
         return plan(*args, **kwargs)
@@ -1217,7 +1217,7 @@ async def test_security_objects_reach_the_firewall_comparison_only(
     given: dict[str, SecurityObjects | None] = {}
     compare = compare_module
 
-    def spy(name: str, *args: Any, **kwargs: Any):
+    def spy(name: str, *args: Any, **kwargs: Any) -> list[EffectiveDifference]:
         given[name] = kwargs.get("security_objects")
         return compare(name, *args, **kwargs)
 

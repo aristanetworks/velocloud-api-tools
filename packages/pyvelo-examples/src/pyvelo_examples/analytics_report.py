@@ -40,6 +40,8 @@ from pyvelo.core import ApiInterval
 
 logger = logging.getLogger(__name__)
 
+_BYTES_PER_UNIT = 1024
+
 
 @dataclass
 class AnalyticsReportArgs:
@@ -140,9 +142,9 @@ def build_html(sections: list[tuple[str, str]], title: str) -> str:
 
 def _format_bytes(value: float) -> str:
     for unit in ("B", "KB", "MB", "GB", "TB"):
-        if abs(value) < 1024:
+        if abs(value) < _BYTES_PER_UNIT:
             return f"{value:.1f} {unit}"
-        value /= 1024
+        value /= _BYTES_PER_UNIT
     return f"{value:.1f} PB"
 
 
