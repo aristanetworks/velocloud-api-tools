@@ -166,8 +166,11 @@ def same_json(a: object, b: object) -> bool:
     other. Two numbers are the same when their values are (``1`` and ``1.0``):
     the VCO stores one number for both. Two lists are the same item by item,
     two objects key by key (any ``dict`` is an object, whatever its class);
-    anything else is compared by ``==``.
+    anything else is compared by ``==``. An object is the same as itself, as
+    in Python's own equality of containers.
     """
+    if a is b:
+        return True
     if isinstance(a, bool) or isinstance(b, bool):
         return isinstance(a, bool) and isinstance(b, bool) and a == b
     if is_list(a) and is_list(b):

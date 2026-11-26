@@ -51,6 +51,17 @@ def test_same_json(a: object, b: object, same: bool) -> None:  # noqa: FBT001 (a
     assert same_json(b, a) is same
 
 
+def test_an_object_is_the_same_as_itself() -> None:
+    nan = float("nan")
+    box = [nan]
+    assert same_json(nan, nan)
+    assert same_json(box, box)
+    assert same_json({"x": box}, {"x": box})
+    held = {"x": nan}
+    assert same_json(held, held)
+    assert not same_json([float("nan")], [float("nan")])
+
+
 def test_a_boolean_in_place_of_a_number_is_a_change() -> None:
     (change,) = raw_changes({"x": [1, {"y": 0}]}, {"x": [1, {"y": False}]})
     assert str(change.path) == "x"
@@ -77,6 +88,25 @@ def test_the_plan_writes_a_number_that_replaces_a_boolean() -> None:
     assert type(plan.data["syslog_forwarding"]) is int
     same = plan_module(module(), {**RAW, "n": 1.0}, level=ConfigContext.EDGE)
     assert (same.operation, same.changes) == ("none", ())
+
+
+def test_a_payload_that_gives_a_boolean_over_a_stored_number_writes_it() -> None:
+    stored = {**RAW, "syslog_forwarding": 1}
+    row = make_module_json("firewall", copy.deepcopy(stored))
+    read = FirewallConfigurationModule[Edge].model_validate(row)
+    plan = plan_module(
+        read, {**RAW, "syslog_forwarding": True}, level=ConfigContext.EDGE
+    )
+    assert plan.operation == "update"
+    assert [(str(c.path), c.before, c.after) for c in plan.changes] == [
+        ("syslog_forwarding", 1, True)
+    ]
+    assert plan.data["syslog_forwarding"] is True
+    by_model = FirewallConfigurationModule[Edge].model_validate(copy.deepcopy(row))
+    by_model.data.syslog_forwarding.set_local(True)
+    same = plan_module(by_model, level=ConfigContext.EDGE)
+    assert (same.operation, same.changes) == ("none", ())
+    assert type(same.data["syslog_forwarding"]) is int
 
 
 def test_the_response_check_holds_the_vco_to_the_type() -> None:
