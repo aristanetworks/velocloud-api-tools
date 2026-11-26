@@ -696,3 +696,81 @@ async def test_the_repr_of_a_save_result_holds_no_module_data() -> None:
     assert "server_changes={'deviceSettings': 0, 'firewall': 0}" in repr(result)
     assert "left_out={'deviceSettings': 0, 'firewall': 0}" in repr(result)
     assert "ModuleWrite(name='deviceSettings', operation='update'" in repr(result)
+
+
+AT_A = 'segments["Global Segment"].outbound[a]'
+STORED_A: dict[str, Any] = {
+    "name": "a",
+    "match": {},
+    "action": {"allow_or_deny": "allow"},
+    "ruleLogicalId": "la",
+    "futureKey": 1,
+}
+STORED_B: dict[str, Any] = {
+    "name": "b",
+    "match": {},
+    "action": {"allow_or_deny": "allow"},
+    "ruleLogicalId": "lb",
+}
+
+
+async def test_a_rule_deleted_and_added_again_is_saved_as_a_new_rule() -> None:
+    raw = copy.deepcopy(EDGE_FW)
+    raw["segments"][0]["outbound"] = [copy.deepcopy(STORED_A), copy.deepcopy(STORED_B)]
+    state = make_state(
+        edge_modules=[
+            make_module_json(
+                "firewall", raw, module_id=1, configuration_id=10, version="e1"
+            )
+        ]
+    )
+    client = MockVcoClient.for_state(state)
+    client.store.issue_rule_ids = True  # the store gives rule a an ID, as a VCO does
+    pipeline = ConfigPipeline(client)
+    outbound: dict[str, Any] = {
+        "module": "firewall",
+        "segment": "Global Segment",
+        "path": "outbound",
+    }
+    _ = await pipeline.apply(state, **outbound, patch={"a": {"_op": "delete"}})
+    _ = await pipeline.apply(
+        state,
+        **outbound,
+        patch={
+            "a": {
+                "_op": "add",
+                "action": {"allow_or_deny": "deny"},
+                "match": {},
+                "_position": "first",
+            }
+        },
+    )
+
+    lines = state.plan().render().splitlines()
+    assert f"  - {AT_A}" in lines
+    assert any(line.startswith(f"  + {AT_A} (first): ") for line in lines)
+    assert not any(f"{AT_A}." in line for line in lines)
+
+    result = await pipeline.save(state)
+
+    (request,) = client.update_requests
+    sent_a, sent_b = request.update.data["segments"][0]["outbound"]
+    assert (sent_a["name"], sent_a["action"]["allow_or_deny"]) == ("a", "deny")
+    assert "futureKey" not in sent_a
+    assert "ruleLogicalId" not in sent_a
+    assert sent_b == STORED_B
+    # The answer confirms the new rule: nothing is left out, and the state goes
+    # on from the stored module, with the ID the store gave and no mark.
+    assert result.left_out.get(FIREWALL, ()) == ()
+    stored = data_of(client.store, 1)
+    assert "ruleLogicalId" in stored["segments"][0]["outbound"][0]
+    assert state.module("firewall").raw_data == stored
+    assert state.plan().changed == ()
+    assert not any(m.is_added for m in models_in(state.edge.firewall))
+
+    _ = await pipeline.apply(
+        state, **outbound, patch={"a": {"action": {"allow_or_deny": "allow"}}}
+    )
+    assert [str(c.path) for m in state.plan().changed for c in m.changes] == [
+        f"{AT_A}.action.allow_or_deny"
+    ]
