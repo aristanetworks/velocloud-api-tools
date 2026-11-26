@@ -860,8 +860,8 @@ CssConfig = CssConfigGre | CssConfigZscalerIpsec | CssConfigGenericIpsec
 
 
 class CssIpsecSiteData(VcoModel):
-    ike_id: str
-    psk: Annotated[str, Secret()]
+    ike_id: str | MISSING = MISSING
+    psk: Annotated[str | MISSING, Secret()] = MISSING
     ike_id_type: Literal["FQDN"] = "FQDN"
     psk_type: Literal["alpha"] = "alpha"
 
