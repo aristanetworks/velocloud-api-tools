@@ -346,9 +346,14 @@ The `segments` lists have rules of their own:
   `add` of a segment the profile does not have raises too: an edge uses only
   its profile's segments, so the entry would be saved and never used. Assign
   the segment on the profile first, then change it on the edge. These rules
-  hold for an `add` under `"+"` that names its segment only by `segmentId`
-  (or `segmentLogicalId`, with a segment resolver loaded) as for one that
-  gives `segment.name`. A
+  hold for an `add` under `"+"` that gives only an ID, where the ID names a
+  segment, as for one that gives `segment.name`. The ID is read as
+  `merge_patch` reads it (`"7"` and `7.0` are the `segmentId` 7). With a
+  segment resolver, it names the segment the resolver has under it (`apply`
+  loads a resolver that is not loaded), and an ID no segment has raises
+  `ResolutionError`. With none, only a `segmentId` names a segment, one the
+  edge layer or the profile has; any other add with no `segment.name`
+  raises `PatchError` (`invalid_value`) for the missing name. A
   place (`move(...)`, or `"_position"` on a change) is for the edge's own
   segments, the ones its module had when it was read. A save writes the
   segments the edge only inherits after those, in the profile's order, so
