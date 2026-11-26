@@ -561,14 +561,21 @@ class KeyField:
     the one path, or the tuple of the values at several (a composite key).
     *alt* names a second field that identifies an item on its own (a stable
     ID): a selector that is no item's key is tried as it. *label* names a
-    field people use for the item that is not kept unique. Stored as a
-    ``KeySpec`` (``get_key_spec``).
+    field people use for the item that is not kept unique. *fold_case* is for
+    keys the VCO compares ignoring letter case (a MAC address): two keys that
+    differ only by case are one key wherever keys of the list are compared,
+    and the stored text of a key is never changed. Stored as a ``KeySpec``
+    (``get_key_spec``).
     """
 
-    __slots__: ClassVar[tuple[str, ...]] = ("alt", "key_paths", "label")
+    __slots__: ClassVar[tuple[str, ...]] = ("alt", "fold_case", "key_paths", "label")
 
     def __init__(
-        self, *key_paths: str, alt: str | None = None, label: str | None = None
+        self,
+        *key_paths: str,
+        alt: str | None = None,
+        label: str | None = None,
+        fold_case: bool = False,
     ) -> None:
         """Raises ``TypeError`` when no key path is given."""
         if not key_paths:
@@ -576,6 +583,7 @@ class KeyField:
         self.key_paths: tuple[str, ...] = key_paths
         self.alt: str | None = alt
         self.label: str | None = label
+        self.fold_case: bool = fold_case
 
 
 @dataclass(frozen=True, slots=True)
@@ -584,12 +592,14 @@ class KeySpec:
 
     Stored in FieldInfo.metadata by _apply_vco_markers. *paths* are the key's
     paths, one per part; *alt* is the alt key's path and *label* the label's,
-    if the list has them. See ``KeyField``.
+    if the list has them; *fold_case*, whether keys are compared ignoring
+    letter case. See ``KeyField``.
     """
 
     paths: tuple[str, ...]
     alt: str | None = None
     label: str | None = None
+    fold_case: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -1276,7 +1286,9 @@ def _process_flag_marker(fi: FieldInfo, m: object, already: set[type]) -> bool:
     processed before it (the first marker of a kind wins).
     """
     if isinstance(m, KeyField) and KeySpec not in already:
-        fi.metadata.append(KeySpec(m.key_paths, alt=m.alt, label=m.label))
+        fi.metadata.append(
+            KeySpec(m.key_paths, alt=m.alt, label=m.label, fold_case=m.fold_case)
+        )
         already.add(KeySpec)
         return True
     if (

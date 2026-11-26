@@ -623,8 +623,29 @@ def _keys(items: list[object], node: KeyedList) -> list[KeyValue | None]:
 
 
 def key_forms(items: list[object], node: KeyedList) -> list[KeyForm | None]:
-    """The key of each item in string form, None for an item without one."""
-    return [key_form(key) for key in _keys(items, node)]
+    """The key of each item in string form, None for an item without one.
+
+    Each part is case-folded when the list's ``KeyField`` has *fold_case*
+    (``_folded``): two keys that differ only by letter case are one.
+    """
+    forms = [key_form(key) for key in _keys(items, node)]
+    if not node.spec.fold_case:
+        return forms
+    return [_folded(form) for form in forms]
+
+
+def _folded(form: KeyForm | None) -> KeyForm | None:
+    """*form* with each part case-folded (``str.casefold``); None for no key.
+
+    How the keys of a ``KeyField`` list with *fold_case* are compared. It is
+    only compared: the key an item is named by, and the text stored, keep
+    their case.
+    """
+    if form is None:
+        return None
+    if isinstance(form, tuple):
+        return tuple(part.casefold() for part in form)
+    return form.casefold()
 
 
 def _unique(keys: list[KeyForm | None]) -> set[KeyForm]:
@@ -1114,11 +1135,16 @@ def collect_changes(
 
 
 def item_parts(items: list[object], node: KeyedList) -> list[ItemPart]:
-    """The name of each item: its key, or its position where that is not unique."""
+    """The name of each item: its key, or its position where that is not unique.
+
+    Keys are compared as ``key_forms`` compares them; an item is named by its
+    key as it is stored.
+    """
     keys = _keys(items, node)
-    unique = _unique([key_form(key) for key in keys])
+    forms = key_forms(items, node)
+    unique = _unique(forms)
     return [
-        Key(key) if key is not None and key_form(key) in unique else i
+        Key(key) if key is not None and forms[i] in unique else i
         for i, key in enumerate(keys)
     ]
 

@@ -272,9 +272,14 @@ second field that identifies an item on its own, usually an ID the VCO issues
 (a rule's `ruleLogicalId`, a segment's `segmentId`), and some a *label*, a name
 people use for the item that is not kept unique (a WAN link's `name`; its key
 is its `internalId` with its address family). A DHCP reservation (a LAN
-network's `fixed_ips`, a DHCPv6 server's `fixed_ip`) is keyed by its MAC alone;
-its IP is a value, so two reservations can exchange IPs, and changing a MAC
-plans a removal and an addition.
+network's `fixed_ips`, a DHCPv6 server's `fixed_ip`) is keyed by its MAC alone:
+a selector names it by its MAC, and its IP does not select it. Its IP is a
+value, so two reservations can exchange IPs, and changing a MAC plans a removal
+and an addition. pyvelo does not refuse two reservations with one IP: the VCO
+does. A reservation's MAC is matched whatever its letter case, as the VCO
+matches it: `AA:BB:CC:DD:EE:01` selects `aa:bb:cc:dd:ee:01`, an add under it is
+refused as already in the list, and a MAC rewritten in another case is one edit
+of `macAddress`. The text you wrote is what is stored.
 
 An object on a list is item operations, keyed by selector. A selector is a
 key, alt key, label or value in string form (`"10"` names VLAN 10), `at(n)`

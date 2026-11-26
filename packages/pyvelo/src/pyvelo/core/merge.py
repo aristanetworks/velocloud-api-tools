@@ -88,6 +88,7 @@ from .rebase import (
     KeyValue,
     Path,
     PathPart,
+    _folded,  # pyright: ignore[reportPrivateUsage]  # one fold for every key compare
     item_key,
     key_form,
     key_part,
@@ -1551,6 +1552,8 @@ class _ListSpec:
     """What the one-part key of a keyed list is the ``NameOf``, if it is one."""
     fixed: FixedList | None
     """The ``FixedList`` of a keyed list of models whose entries are fixed."""
+    fold_case: bool
+    """Whether the keys of a keyed list are compared ignoring letter case."""
 
 
 @functools.cache
@@ -1589,6 +1592,7 @@ def _list_spec(field_info: FieldInfo) -> _ListSpec | None:
         map_key,
         _key_name_of(item_type, key_paths[0]) if len(key_paths) == 1 else None,
         get_fixed_list(field_info) if kind == "keyed" and item_type else None,
+        key_spec is not None and key_spec.fold_case,
     )
 
 
@@ -1865,10 +1869,19 @@ def _select(  # noqa: PLR0911 (existing: split it when it next changes)
 
 
 def _with_key(items: Sequence[object], spec: _ListSpec, key: KeyValue) -> list[int]:
-    """The positions of the items of a keyed list whose key is *key*, in string form."""
-    form = key_form(key)
+    """The positions of the items of a keyed list whose key is *key*, in string form.
+
+    Ignoring letter case when the list's ``KeyField`` has *fold_case*.
+    """
+
+    def compared(form: KeyForm | None) -> KeyForm | None:
+        return _folded(form) if spec.fold_case else form
+
+    form = compared(key_form(key))
     return [
-        i for i, item in enumerate(items) if _item_key(item, spec.key_paths) == form
+        i
+        for i, item in enumerate(items)
+        if compared(_item_key(item, spec.key_paths)) == form
     ]
 
 

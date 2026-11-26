@@ -3,6 +3,7 @@
 import copy
 from typing import Any
 
+import pytest
 from pyvelo.client.models.configuration.device_settings.lan import (
     EdgeClientVisibility,
     EdgeLanDhcp,
@@ -13,7 +14,7 @@ from pyvelo.client.models.configuration.device_settings.lan import (
     LanOspf,
     LanSettings,
 )
-from pyvelo.core import ConfigContext
+from pyvelo.core import ConfigContext, PatchError
 from pyvelo.core.fields import (
     get_key_spec,
     get_resolvable,
@@ -138,10 +139,38 @@ def test_a_reservation_whose_mac_changes_is_removed_and_added() -> None:
     now = network()
     now.fixed_ips[0].mac_address = "aa:bb:cc:dd:ee:09"
     written, changed = saved(now)
-    assert written[0] == {
-        "macAddress": "aa:bb:cc:dd:ee:09",
-        "lanIp": "10.0.0.10",
-        "description": "A",
-    }
-    assert written[1] == NETWORK["fixedIp"][1]
+    assert written == [
+        {"macAddress": "aa:bb:cc:dd:ee:09", "lanIp": "10.0.0.10", "description": "A"},
+        NETWORK["fixedIp"][1],
+    ]
     assert changed == [f'fixedIp["{MAC_1}"]', 'fixedIp["aa:bb:cc:dd:ee:09"]']
+
+
+UPPER_1, UPPER_2 = MAC_1.upper(), MAC_2.upper()
+
+
+def test_a_reservation_is_selected_by_its_mac_in_any_case() -> None:
+    now = network()
+    _ = now.merge_patch({"fixed_ips": {UPPER_2: {"description": "sel"}}})
+    assert [(f.mac_address, f.description) for f in now.fixed_ips] == [
+        (MAC_1, "A"),
+        (MAC_2, "sel"),
+    ]
+
+
+def test_an_add_under_a_mac_held_in_another_case_is_refused() -> None:
+    now = network()
+    with pytest.raises(PatchError) as exc:
+        _ = now.merge_patch(
+            {"fixed_ips": {UPPER_1: {"_op": "add", "lan_ip": "10.0.0.30"}}}
+        )
+    assert exc.value.kind == "exists"
+    assert [f.mac_address for f in now.fixed_ips] == [MAC_1, MAC_2]
+
+
+def test_a_mac_rewritten_in_another_case_is_the_same_reservation() -> None:
+    now = network()
+    now.fixed_ips[0].mac_address = UPPER_1
+    written, changed = saved(now)
+    assert written[0] == {**NETWORK["fixedIp"][0], "macAddress": UPPER_1}
+    assert changed == [f'fixedIp["{MAC_1}"].macAddress']

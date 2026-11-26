@@ -38,6 +38,12 @@ class HasDottedKeyField(VcoModel):
     )
 
 
+class HasFoldedKeyField(VcoModel):
+    segments: Annotated[list[SegmentMeta], KeyField("name", fold_case=True)] = Field(
+        default_factory=list
+    )
+
+
 class TestKeyFieldMarker:
     def test_processed_marker_in_metadata(self) -> None:
         fi = HasKeyField.model_fields["segments"]
@@ -50,6 +56,14 @@ class TestKeyFieldMarker:
         spec = get_key_spec(fi)
         assert spec is not None
         assert spec.paths == ("meta.name",)
+
+    def test_fold_case_is_kept_in_the_spec(self) -> None:
+        folded = get_key_spec(HasFoldedKeyField.model_fields["segments"])
+        exact = get_key_spec(HasKeyField.model_fields["segments"])
+        assert folded is not None
+        assert exact is not None
+        assert folded.fold_case is True
+        assert exact.fold_case is False
 
     def test_model_still_validates_list(self) -> None:
         m = HasKeyField(segments=[SegmentMeta(name="Global", segment_id=0)])
