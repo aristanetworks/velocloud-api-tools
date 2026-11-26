@@ -133,7 +133,7 @@ def apply_patch(
     return model
 
 
-def nest_patch(  # noqa: C901 (existing: split it when it next changes)
+def nest_patch(
     model: type[VcoModel],
     patch: object,
     *,
@@ -173,17 +173,47 @@ def nest_patch(  # noqa: C901 (existing: split it when it next changes)
     walked = Path(())
     if segment is not None:
         walked = walked.child("segments")
-        field = cls.model_fields.get("segments")
-        if field is None:
-            raise PatchError(f"{cls.__name__} has no segments field", walked, "address")
-        item_type = list_item_type(field)
-        if item_type is None:
-            raise PatchError(
-                f"{cls.__name__}.segments is not a list of models", walked, "address"
-            )
-        cls, walked = item_type.variants[0], walked.child(Key(segment))
+        cls = _segment_item_class(model, walked)
+        walked = walked.child(Key(segment))
+    names = _address_names(cls, path, walked) if path is not None else []
+    # Where the patch sits once nested, in python names, for its errors and its depth.
+    where_nested = Path(
+        (*(("segments", Key(segment)) if segment is not None else ()), *names)
+    )
+    nested = checked_patch(patch, where_nested)
+    for name in reversed(names):
+        nested = {name: nested}
+    if segment is None:
+        return cast("dict[str, object]", nested)
+    return {"segments": {segment: nested}}
+
+
+def _segment_item_class(model: type[VcoModel], walked: Path) -> type[VcoModel]:
+    """The item class of *model*'s ``segments`` field: its first variant.
+
+    A class with no ``segments`` field, or one whose ``segments`` is not a list
+    of models, raises ``PatchError`` at *walked*.
+    """
+    field = model.model_fields.get("segments")
+    if field is None:
+        raise PatchError(f"{model.__name__} has no segments field", walked, "address")
+    item_type = list_item_type(field)
+    if item_type is None:
+        raise PatchError(
+            f"{model.__name__}.segments is not a list of models", walked, "address"
+        )
+    return item_type.variants[0]
+
+
+def _address_names(cls: type[VcoModel], path: str, walked: Path) -> list[str]:
+    """The python name of each part of *path*, walked from *cls* at *walked*.
+
+    An empty part, a part that names no field of its class, and a part before
+    the last that does not hold a single sub-model each raise ``PatchError``
+    at the path of that part.
+    """
     names: list[str] = []
-    parts = path.split(".") if path is not None else []
+    parts = path.split(".")
     for index, part in enumerate(parts):
         where = walked.child(part)
         if not part:
@@ -207,16 +237,7 @@ def nest_patch(  # noqa: C901 (existing: split it when it next changes)
                 )
             cls = sub
         walked = where
-    # Where the patch sits once nested, in python names, for its errors and its depth.
-    where_nested = Path(
-        (*(("segments", Key(segment)) if segment is not None else ()), *names)
-    )
-    nested = checked_patch(patch, where_nested)
-    for name in reversed(names):
-        nested = {name: nested}
-    if segment is None:
-        return cast("dict[str, object]", nested)
-    return {"segments": {segment: nested}}
+    return names
 
 
 # ---------------------------------------------------------------------------
