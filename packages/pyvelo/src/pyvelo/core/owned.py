@@ -40,6 +40,7 @@ from typing import (
     TYPE_CHECKING,
     Any,
     ClassVar,
+    Never,
     Self,
     cast,
     get_args,
@@ -571,6 +572,22 @@ def _refuse_member(
     raise GroupOwnershipError(message, group=group.name, field=field)
 
 
+def _refuse_null_member(owner: Layered[Edge], field: str, group: OwnedGroup) -> Never:
+    from pyvelo.client.exceptions import GroupOwnershipError  # noqa: PLC0415 (it imports pyvelo.core)
+
+    where = f"{type(owner).__name__}.{field}"
+    message = (
+        f'{where} is a member of the group "{group.name}", and neither the profile '
+        "nor the field's default gives it a value. A null cannot be the edge's own "
+        "value, so making the group local would leave this member inherited while "
+        "the others are local, a state the VCO UI does not recognize. Nothing was "
+        "changed. Give the profile a value first, with a patch to the profile's "
+        f'module, {{"{_key(owner, field)}": <value>}}, and make the group local '
+        f"then; or set every member at once with .{group.attribute}.set_local(bundle)"
+    )
+    raise GroupOwnershipError(message, group=group.name, field=field)
+
+
 class OwnedGroup:
     """Declares a coupled group on a ``Layered`` class.
 
@@ -764,20 +781,42 @@ class GroupHandle:
         """Make every member local, copied from the profile.
 
         One that is local already is kept, and so is a ``presence_wins`` object the edge
-        stores with its flag off (``Owned.localize``).
+        stores with its flag off (``Owned.localize``). A member the profile holds
+        ``null`` for starts from the field's display default, as one the profile does
+        not store does.
 
         The members are edited through their own ``Owned``
         (``fw.stateful_firewall_settings.local.udp_flow_timeout = 600``). It
         raises ``UnboundError`` when a member has to be copied from the profile
-        and the object did not come from a loaded state; no member is changed
+        and the object did not come from a loaded state, and
+        ``GroupOwnershipError`` when a member gets ``null`` from the profile and
+        from its default, as a ``null`` cannot be local; no member is changed
         then.
         """
         self._check("localize")
         owned = self._members()
-        values = [None if o.is_local else o._localize_source() for o in owned]
+        values = [None if o.is_local else self._localize_value(o) for o in owned]
         for member, value in zip(owned, values, strict=True):
             if value is not None:
                 member._store_copy(value)
+
+    def _localize_value(self, owned: Owned[Any]) -> object:
+        """What ``localize`` stores for the member *owned*, which is not local.
+
+        That is its ``_localize_source``, else the field's display default; when both
+        are ``null`` it raises ``GroupOwnershipError``.
+        """
+        from .layers import display_default  # noqa: PLC0415 (layers imports this module)
+
+        value = owned._localize_source()
+        if value is not None:
+            return value
+        field = owned._field
+        info = type(self._owner).model_fields[field]
+        value = clear_server_owned(as_stored(copy.deepcopy(display_default(info))))
+        if value is None:
+            _refuse_null_member(self._owner, field, self._group)
+        return value
 
 
 # ---------------------------------------------------------------------------

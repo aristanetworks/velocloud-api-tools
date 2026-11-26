@@ -435,6 +435,89 @@ def test_group_localize_needs_the_profile() -> None:
     assert {"pairA", "pairB", "pairOn"}.isdisjoint(_dump(e))
 
 
+class _HalfPair(VcoModel):
+    pair_a: Settings
+    pair_b: Settings | None
+
+
+class _NullableMember(Layered[L]):
+    pair_a: Annotated[
+        Inheritable[Settings], ByPresence(), MemberOf("pair"), Default(factory=Settings)
+    ] = Field(default=...)
+    pair_b: Annotated[
+        Inheritable[Settings | None],
+        ByPresence(),
+        MemberOf("pair"),
+        Default(factory=Settings),
+    ] = Field(default=...)
+    pair: ClassVar[OwnedGroup] = OwnedGroup("pair", anchor="pair_a", bundle=_HalfPair)
+
+
+class _NoDefaultMember(Layered[L]):
+    pair_a: Annotated[
+        Inheritable[Settings], ByPresence(), MemberOf("pair"), Default(factory=Settings)
+    ] = Field(default=...)
+    pair_b: Annotated[
+        Inheritable[Settings | None], ByPresence(), MemberOf("pair"), Default(None)
+    ] = Field(default=...)
+    pair: ClassVar[OwnedGroup] = OwnedGroup("pair", anchor="pair_a", bundle=_HalfPair)
+
+
+class _NoDefaultAnchor(Layered[L]):
+    pair_a: Annotated[
+        Inheritable[Settings], ByPresence(), MemberOf("pair"), Default(factory=Settings)
+    ] = Field(default=...)
+    pair_b: Annotated[
+        Inheritable[Settings | None], ByPresence(), MemberOf("pair"), Default(None)
+    ] = Field(default=...)
+    pair: ClassVar[OwnedGroup] = OwnedGroup("pair", anchor="pair_b", bundle=_HalfPair)
+
+
+def _edge_of(model: Any, profile: dict[str, object]) -> Any:
+    edge = model[Edge].model_validate({})
+    bind_layers(edge, model[Profile].model_validate(profile))
+    return edge
+
+
+def _wire(model: Any) -> dict[str, Any]:
+    return model.model_dump(mode="json", by_alias=True)
+
+
+def test_group_localize_gives_a_null_member_its_display_default() -> None:
+    edge = _edge_of(_NullableMember, {"pairA": {"a": 2}, "pairB": None})
+    edge.pair.localize()
+    assert (edge.pair_a.is_local, edge.pair_b.is_local) == (True, True)
+    assert _wire(edge) == {"pairA": {"a": 2, "b": False}, "pairB": {"a": 1, "b": False}}
+
+    # The patch route makes the group local the same way, then sets the member.
+    edge = _edge_of(_NullableMember, {"pairA": {"a": 2}, "pairB": None})
+    _ = edge.merge_patch({"pair_a": {"a": 9}})
+    assert _wire(edge) == {"pairA": {"a": 9, "b": False}, "pairB": {"a": 1, "b": False}}
+
+
+@pytest.mark.parametrize("model", [_NoDefaultMember, _NoDefaultAnchor])
+@pytest.mark.parametrize(
+    "profile", [{"pairA": {"a": 2}, "pairB": None}, {"pairA": {"a": 2}}]
+)
+def test_group_localize_changes_nothing_when_a_member_cannot_be_local(
+    model: Any, profile: dict[str, object]
+) -> None:
+    edge = _edge_of(model, profile)
+    with pytest.raises(GroupOwnershipError, match='"pairB"') as exc:
+        edge.pair.localize()
+    assert (exc.value.group, exc.value.field) == ("pair", "pair_b")
+    assert "Nothing was changed" in str(exc.value)
+    assert (_wire(edge), edge.pair.is_local) == ({}, False)
+
+    with pytest.raises(GroupOwnershipError):
+        _ = edge.merge_patch({"pair_a": {"a": 9}})
+    assert (_wire(edge), edge.pair_a.is_local, edge.pair_b.is_local) == (
+        {},
+        False,
+        False,
+    )
+
+
 def test_the_group_handle_is_edge_only() -> None:
     p = Mod[Profile].model_validate(mod_json())
     with pytest.raises(AttributeError, match=r"Profile"):

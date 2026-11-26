@@ -536,7 +536,10 @@ handles with `is_local` (the group's anchor member is local), `inherit()`,
   patch that sets one member of a group the edge inherits does the same first,
   and then sets that member (`{"stateful_firewall_enabled": false}` stores the
   profile's settings with `stateful_firewall_enabled` false). Other members are
-  then edited through their own `Owned`.
+  then edited through their own `Owned`. Making a group local copies every
+  member from the profile: a member the profile holds `null` for starts from
+  its default, and a member that has neither is refused with
+  `GroupOwnershipError`, with nothing changed.
 - A member alone refuses `inherit()`, and refuses `set_local()` while the group
   is inherited, with `GroupOwnershipError`, which says to use the group. Once
   the group is local, `data.stateful_firewall_enabled.set_local(False)` keeps
