@@ -43,7 +43,7 @@ class _ModuleKwargs(TypedDict):
     configuration_id: int
     enterprise_logical_id: None
     schema_version: None
-    version: None
+    version: str
     metadata: None
 
 
@@ -56,7 +56,7 @@ def _mod_kwargs() -> _ModuleKwargs:
         configuration_id=100,
         enterprise_logical_id=None,
         schema_version=None,
-        version=None,
+        version="0",
         metadata=None,
     )
 
