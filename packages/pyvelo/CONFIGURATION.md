@@ -130,8 +130,20 @@ must be a `dict`.
 
 `apply` changes `state` in place and returns that same object: `candidate =
 await pipeline.apply(state, ...)` gives no second state to fall back on
-(`candidate is state`). To try a patch and drop it, load the state again.
-`apply` is a coroutine: without `await` it applies nothing.
+(`candidate is state`). `apply` is a coroutine: without `await` it applies
+nothing.
+
+To take a module's edits back, `await pipeline.revert(state,
+module="firewall")` puts the module back as the VCO last gave it (as loaded,
+or as the last save or write error left it): every edit to it since is gone,
+not the last patch alone, however it was made, and a module the state created
+is removed. No other module is touched and nothing is cascaded: the next
+`plan()` judges what is left, so an edit elsewhere that relied on this module
+is refused there (`SegmentSetError`, `DanglingReferenceError`). Objects taken
+from the state before are detached, as after a save, and nothing is sent.
+`revert` raises `ValueError` for a new module whose insert may have reached the
+VCO after a failed save (save again instead) and for a state built without
+`take_snapshot()`.
 
 A patch is strict and all or nothing:
 
@@ -1337,9 +1349,9 @@ The fix is an entry in the table of rewrites, `MODULE_REWRITES` in
 `pyvelo.client.module_check`, or a `ServerOwned` marker on the model's field.
 Until then every save of that value raises.
 
-Objects taken from the state before a save
+Objects taken from the state before a save or a `revert`
 (`seg = state.edge.firewall.segment("Global Segment")`) belong to the modules
-the save replaced, and are detached. Reading one is fine. An assignment to one
+the save or the `revert` replaced, and are detached. Reading one is fine. An assignment to one
 raises `DetachedObjectError`, and an in-place edit to a list or dict it holds
 (`seg.outbound.insert(0, rule)`) is reported, once, by the next `plan()` or
 save. A device settings segment's `vrrp` is not one of the library's models
@@ -1470,7 +1482,7 @@ Known limits:
 | Module | What it provides |
 |---|---|
 | `pyvelo.config` | Re-exports the public surface: `ConfigPipeline`, `ConfigState`, `SaveResult`, `ConfigPlan`, the types a save hands back (`ModulePlan` in `ConfigPlan.modules`, `ModuleWrite` in `SaveResult.written`, `ConfigFieldChange` from `get_field_changes()`), the entries a save reports (`PlannedChange`, `ServerChange`), `SaveProgress` and `save_progress`, `StepOutcome` (in `SaveResult.steps`) and `HubStep` (in `ConfigPlan.steps`), the patch helpers (`add`, `delete`, `move`, `at`), `PatchError` and `PatchErrorKind` (the type of its `kind`), `MendingPatch` (a patch that mends an error, as data: `kind`, `does`, `target_type`, and the `module`, `patch`, `segment` and `path` of the `apply` call that sends it), diff types (`DiffResult`, `Added`, `Removed`, `Modified`, `Unchanged`, `FieldChange`), the intent error types, the write errors `ModuleWriteError` (the base of the next three), `ConfigConflictError`, `WriteNotAppliedError`, `WriteOutcomeUnknownError` and `DetachedObjectError` (from `pyvelo.client.exceptions`), `GroupOwnershipError` (an edit through one member of a coupled group), `ComposedModuleError` (`compare_effective` found a module the VCO composed as `null`), the comparison types `EffectiveComparison`, `EffectiveDifference` and `EffectiveCategory`, `LossyFieldError` and `ResolutionError`, helpers (`build_default_pipeline`, `confirm_save`, `load_config`) |
-| `pyvelo.config.pipeline` | `ConfigPipeline` (load/load_profile → apply → save), `build_default_pipeline` |
+| `pyvelo.config.pipeline` | `ConfigPipeline` (load/load_profile → apply → save, and revert), `build_default_pipeline` |
 | `pyvelo.config.state` | `ConfigState`, `StateLock`, `SaveResult`, `StepOutcome`, `ConfigPlan`, `SaveProgress`, `save_progress`, `ConfigFieldChange`, `ValidationWarning` |
 | `pyvelo.config.helpers` | `load_config` (a YAML file validated against a model; `ConfigInputError` for a file it cannot use, a key given twice included), `confirm_save` (a yes or no prompt, which prints the plan it is given: `confirm_save(plan=preview.plan)`) |
 | `pyvelo.config.validators.*` | Structural built-ins (`key_uniqueness`, `override_consistency`, `required_fields`) + domain validators (firewall, device settings) |

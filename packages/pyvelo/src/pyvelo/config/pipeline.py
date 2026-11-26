@@ -1,6 +1,6 @@
 """ConfigPipeline: the orchestration layer of a configuration workflow.
 
-The workflow is load → apply → save.
+The workflow is load → apply → save, and revert.
 """
 
 import json
@@ -758,6 +758,35 @@ class ConfigPipeline:
                     # leaves the state as it was.
                     await self.load_resolvers(state, _to_load(error, loaded))
             apply_assignment(modules, assignment)
+            return state
+
+    async def revert(self, state: ConfigState, *, module: str) -> ConfigState:
+        """Take back every edit to *module* of *state*, in memory.
+
+        The module is put back as the VCO last gave it: as loaded, or, after a
+        save or a write error that left the module as stored, that one. Every
+        edit to it since is gone, however it was made: a patch, an assignment
+        to the models, an intent, a segment assignment's entry in this module,
+        a placeholder. A module this state created is removed, and a module
+        the target lacks changes nothing.
+
+        No other module is touched and nothing is cascaded, so an edit
+        elsewhere that relied on this module is judged by the next ``plan()``:
+        ``SegmentSetError`` for a segment now in two modules of three,
+        ``DanglingReferenceError`` for a rule whose hub is gone again. Objects
+        taken from the state before belong to the module taken out and are
+        detached, as after a save. Nothing is sent. The layer a state does not
+        save is not reverted.
+
+        Returns *state*, changed in place. Holds ``state.lock`` for the whole
+        call, as :meth:`apply` does, and raises ``RuntimeError`` when the
+        calling task holds it already. Raises ``ValueError`` for an unknown
+        *module*, for a new module whose insert may have reached the VCO
+        (``state.unconfirmed_inserts``), and for a state with no snapshot
+        (``take_snapshot`` was not called).
+        """
+        async with state.lock:
+            state.revert_module(_resolve_module_name(module))
             return state
 
     async def _resolve_segment(
@@ -2391,7 +2420,8 @@ def _require_writable(mod: AnyStoredModule) -> _WritableModule:
         raise TypeError(
             f"{mod.name}: this state has an edit to a {type(mod).__name__}, which a "
             "save does not write (it writes device settings, QoS, WAN and firewall "
-            "modules). Load the state again to drop that edit; nothing was sent"
+            f"modules). Take the edit back with revert (module {mod.name}), or "
+            "load the state again; nothing was sent"
         )
     return mod
 

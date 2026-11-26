@@ -578,9 +578,11 @@ class ConfigState:
     ``WriteNotAppliedError`` with the module as stored (``error.module``):
     the edits to that module are gone, and ``error.lost_edits`` lists them;
     ``error.redo_patch()`` is the patch that redoes them (``error.not_redone()``
-    lists those it leaves out). Objects taken from the state before a save
-    belong to the modules it replaced, and are detached: an edit through one
-    raises ``DetachedObjectError``, at once or at the next :meth:`plan`.
+    lists those it leaves out). :meth:`revert_module` puts a module back as
+    read the same way, from the snapshot, which takes back every edit to it.
+    Objects taken from the state before a save or a revert belong to the
+    modules it replaced, and are detached: an edit through one raises
+    ``DetachedObjectError``, at once or at the next :meth:`plan`.
 
     After a save that raised ``WriteOutcomeUnknownError``, or failed with any
     other error once an insert was sent, the state keeps the new module as it
@@ -754,7 +756,9 @@ class ConfigState:
     def replace_module(self, old: AnyStoredModule, new: AnyStoredModule) -> None:
         """Put *new* where *old* is in the target config.
 
-        *new* is the module as the VCO stored it.
+        *new* is the module as the VCO stored it; :meth:`revert_module` puts
+        the module as read back the same way, with *new* a copy of the
+        snapshot's.
 
         An edge module is bound to the profile layer. The snapshot takes a
         copy of *new*, and a later :meth:`plan` starts from *new*, so it does
@@ -822,6 +826,46 @@ class ConfigState:
             )
         )
 
+    def revert_module(self, name: ConfigurationModuleName | str) -> None:
+        """Put the target config's module *name* back as the VCO last gave it.
+
+        That is the module as loaded, or as the last save or write error left
+        it, from the snapshot (``snapshot_for_target``); every edit to it since
+        is gone. A module this state created is removed (:meth:`drop_module`),
+        and a name the target config has no module of changes nothing. No
+        other module is touched. The module taken out is replaced as
+        :meth:`replace_module` replaces it, so objects taken from it before are
+        detached. An intent-level name works.
+
+        Raises ``ValueError`` for an unknown *name*, for a new module whose
+        insert may have reached the VCO (its name is in
+        ``unconfirmed_inserts``), and for a state with no snapshot of the
+        module (``take_snapshot`` was not called).
+        """
+        module = self.find_module(name)
+        if module is None:
+            return
+        if module.is_new:
+            if module.name in self.unconfirmed_inserts:
+                raise ValueError(
+                    f"{module.name}: an insert of this module may have reached the "
+                    "VCO (a save failed after it was sent), so its edits are not "
+                    "taken back: the state would forget the module, and a later "
+                    "save could insert it a second time. Save again, which reads "
+                    "the configuration before it inserts, or load the state again"
+                )
+            self.drop_module(module)
+            return
+        snapshot = cast("_AnyConfiguration | None", self.snapshot_for_target())
+        found = None if snapshot is None else _find_module(snapshot, module.name)
+        if found is None:
+            raise ValueError(
+                f"{module.name}: this state holds no copy of the module as read "
+                "(take_snapshot() was not called when the state was built), so "
+                "its edits cannot be taken back. Load the state again"
+            )
+        self.replace_module(module, copy.deepcopy(found))
+
     def _check_detached(self) -> None:
         """Raise ``DetachedObjectError`` for in-place changes to a replaced module.
 
@@ -841,7 +885,8 @@ class ConfigState:
             return
         raise DetachedObjectError(
             "\n".join(
-                f"{name}: objects taken from the state before a save were changed "
+                f"{name}: objects taken from the state before a save or a revert "
+                "were changed "
                 f"in place at: {', '.join(paths)}. The state holds the module as "
                 "stored; take the objects from the state again and redo the change"
                 for name, paths in found

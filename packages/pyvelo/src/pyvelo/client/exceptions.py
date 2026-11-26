@@ -1634,16 +1634,21 @@ class DetachedObjectError(VcoError):
 
     ``update_module`` raises it too, for a module an earlier write replaced.
 
-    After a save the state holds the module as the VCO stored it; after
+    After a save the state holds the module as the VCO stored it, and after
+    ``ConfigPipeline.revert`` the module as the VCO last gave it; after
     ``update_module`` the module it returned (or ``error.module``, after a
     write error) is that module. The object raising belongs to the module
-    that was there before. Take the object again from the module as stored.
-    ``paths`` are where in the module such edits were found, when they were
-    found by comparison; they may come from several modules, which the message
-    names, a line each. An assignment or ``merge_patch`` that raises names the
-    object and leaves them empty, and so does the refusal of ``update_module``
-    to write a module an earlier ``update_module`` replaced. Only
-    ``update_module`` marks the module it is given; ``write_module`` does not.
+    that was there before, which a write or a revert replaced. Take the object
+    again from the module the state holds now. ``paths`` are where in the
+    module such edits were found, when they were found by comparison; they may
+    come from several modules, which the message names, a line each. An
+    assignment or ``merge_patch`` through a replaced object names the object
+    and leaves them empty, and so does the refusal of ``update_module`` to
+    write a module an earlier ``update_module`` replaced. A ``merge_patch``,
+    ``apply`` or ``assign_segment`` refused because the model holds a replaced
+    object inside, put back as it is, names that object and sets ``paths`` to
+    where it sits. Only ``update_module`` marks the module it is given;
+    ``write_module`` does not.
     """
 
     paths: list[Path]

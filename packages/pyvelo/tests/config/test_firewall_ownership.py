@@ -199,7 +199,8 @@ async def test_owned_intents_on_a_detached_layer_raise() -> None:
     assert state.edge.firewall.syslog_forwarding is not owned
     for intent in (lambda: owned.set_local(True), owned.inherit, owned.localize):
         with pytest.raises(
-            DetachedObjectError, match="take it again from the module as stored"
+            DetachedObjectError,
+            match="take it again from the module the state holds now",
         ):
             intent()
     assert owned.stored is True  # reading a detached object is fine

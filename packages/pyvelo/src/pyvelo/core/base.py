@@ -439,9 +439,9 @@ def _raise_detached(model: VcoModel, name: str) -> Never:
     from pyvelo.client.exceptions import DetachedObjectError  # noqa: PLC0415 (it imports pyvelo.core)
 
     raise DetachedObjectError(
-        f"{type(model).__name__}.{name}: this object was replaced by a write; "
-        "take it again from the module as stored "
-        "(after a save: state.edge.<module> or state.profile.<module>; "
+        f"{type(model).__name__}.{name}: this object was replaced by a write "
+        "or a revert; take it again from the module the state holds now "
+        "(after a save or a revert: state.edge.<module> or state.profile.<module>; "
         "after update_module: the module it returned, "
         "or error.module after a write error), "
         "or put a deep copy of it there (copy.deepcopy)"

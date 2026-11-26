@@ -68,7 +68,11 @@ async def test_an_assignment_with_a_detached_model_changes_no_module(call: str) 
         add = {"segments": {"Guest": {"_op": "add"}}}
         attempt = pipeline.apply(state, module="firewall", patch=add)
 
-    with pytest.raises(DetachedObjectError):
+    with pytest.raises(
+        DetachedObjectError,
+        match=r"assign_segment: the QosSegment\[Profile\] at segments\[#1\] is a "
+        "detached object",
+    ):
         _ = await attempt
 
     assert dumps(state) == before

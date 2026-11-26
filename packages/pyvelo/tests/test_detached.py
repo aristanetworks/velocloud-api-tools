@@ -43,8 +43,9 @@ PATCH: dict[str, object] = {
     "segments": {"Global Segment": {"outbound": {"+": NEW_RULE}}},
 }
 REPLACED = (
-    "this object was replaced by a write; take it again from the module as stored "
-    "(after a save: state.edge.<module> or state.profile.<module>; "
+    "this object was replaced by a write or a revert; take it again from the "
+    "module the state holds now "
+    "(after a save or a revert: state.edge.<module> or state.profile.<module>; "
     "after update_module: the module it returned, or error.module after a write "
     "error), or put a deep copy of it there (copy.deepcopy)"
 )
@@ -95,7 +96,7 @@ def test_assignment_on_a_detached_object_raises() -> None:
         segment.firewall_logging_enabled = True
     with pytest.raises(DetachedObjectError, match=r"FirewallOutboundRule\.name") as exc:
         rule.name = "other"
-    assert "take it again from the module as stored" in str(exc.value)
+    assert "take it again from the module the state holds now" in str(exc.value)
     # The other intents are refused too; reading what the edge stores is not.
     for intent in (data.firewall_enabled.inherit, data.firewall_enabled.localize):
         with pytest.raises(DetachedObjectError, match=r"firewall_enabled\.\w+\(\)"):
