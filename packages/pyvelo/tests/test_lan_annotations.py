@@ -1,5 +1,8 @@
 """Tests for LAN data model annotations."""
 
+import copy
+from typing import Any
+
 from pyvelo.client.models.configuration.device_settings.lan import (
     EdgeClientVisibility,
     EdgeLanDhcp,
@@ -10,12 +13,14 @@ from pyvelo.client.models.configuration.device_settings.lan import (
     LanOspf,
     LanSettings,
 )
+from pyvelo.core import ConfigContext
 from pyvelo.core.fields import (
     get_key_spec,
     get_resolvable,
     has_override_flag,
     is_edge_local,
 )
+from pyvelo.core.rebase import raw_changes, rebase
 
 
 class TestLanKeyFields:
@@ -88,3 +93,55 @@ class TestLanResolvable:
         r = get_resolvable(LanNetwork.model_fields["segment_id"])
         assert r is not None
         assert r.attribute == "segment_id"
+
+
+MAC_1, MAC_2 = "aa:bb:cc:dd:ee:01", "aa:bb:cc:dd:ee:02"
+NETWORK: dict[str, Any] = {
+    "cidrIp": "10.0.0.1",
+    "cidrPrefix": 24,
+    "vlanId": 1,
+    "name": "v",
+    "fixedIp": [
+        {"macAddress": MAC_1, "lanIp": "10.0.0.10", "description": "A", "u": "A-raw"},
+        {"macAddress": MAC_2, "lanIp": "10.0.0.20", "description": "B", "u": "B-raw"},
+    ],
+}
+
+
+def network() -> LanNetwork:
+    return LanNetwork.model_validate(
+        copy.deepcopy(NETWORK), context={"config_level": ConfigContext.EDGE}
+    )
+
+
+def saved(now: LanNetwork) -> tuple[list[Any], list[str]]:
+    """The reservations a save of *now* writes, and the paths of its changes."""
+    before = network().model_dump(mode="json", by_alias=True)
+    after = now.model_dump(mode="json", by_alias=True)
+    out = rebase(copy.deepcopy(NETWORK), before, after, LanNetwork)
+    assert isinstance(out, dict)
+    return out["fixedIp"], [str(c.path) for c in raw_changes(before, after, LanNetwork)]
+
+
+def test_two_reservations_that_swap_ips_keep_their_own_unknown_keys() -> None:
+    now = network()
+    now.fixed_ips[0].lan_ip, now.fixed_ips[1].lan_ip = "10.0.0.20", "10.0.0.10"
+    written, changed = saved(now)
+    assert written == [
+        {"macAddress": MAC_1, "lanIp": "10.0.0.20", "description": "A", "u": "A-raw"},
+        {"macAddress": MAC_2, "lanIp": "10.0.0.10", "description": "B", "u": "B-raw"},
+    ]
+    assert changed == [f'fixedIp["{MAC_1}"].lanIp', f'fixedIp["{MAC_2}"].lanIp']
+
+
+def test_a_reservation_whose_mac_changes_is_removed_and_added() -> None:
+    now = network()
+    now.fixed_ips[0].mac_address = "aa:bb:cc:dd:ee:09"
+    written, changed = saved(now)
+    assert written[0] == {
+        "macAddress": "aa:bb:cc:dd:ee:09",
+        "lanIp": "10.0.0.10",
+        "description": "A",
+    }
+    assert written[1] == NETWORK["fixedIp"][1]
+    assert changed == [f'fixedIp["{MAC_1}"]', 'fixedIp["aa:bb:cc:dd:ee:09"]']

@@ -263,7 +263,10 @@ prefix, gateway and interface). Some keyed lists also declare an *alt key*, a
 second field that identifies an item on its own, usually an ID the VCO issues
 (a rule's `ruleLogicalId`, a segment's `segmentId`), and some a *label*, a name
 people use for the item that is not kept unique (a WAN link's `name`; its key
-is its `internalId` with its address family).
+is its `internalId` with its address family). A DHCP reservation (a LAN
+network's `fixed_ips`, a DHCPv6 server's `fixed_ip`) is keyed by its MAC alone;
+its IP is a value, so two reservations can exchange IPs, and changing a MAC
+plans a removal and an addition.
 
 An object on a list is item operations, keyed by selector. A selector is a
 key, alt key, label or value in string form (`"10"` names VLAN 10), `at(n)`
