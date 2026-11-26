@@ -53,7 +53,7 @@ from pydantic import MISSING, BaseModel, TypeAdapter
 from .fields import get_key_spec, is_server_owned
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Mapping
+    from collections.abc import Callable, Collection, Mapping
 
     from .base import VcoModel
     from .layers import Edge, Layered, Profile
@@ -308,7 +308,7 @@ class Owned[T]:
                 if parent is None
                 else getattr(parent, self._field)
             )
-            return clear_server_owned(as_stored(copy.deepcopy(value)))
+            return _stored_default(value)
         return clear_server_owned(copy.deepcopy(getattr(parent, self._field)))
 
     def _kept_object(self) -> object | None:
@@ -398,6 +398,11 @@ def as_stored(value: object) -> object:
         dumped = TypeAdapter(object).dump_python(value, mode="json", by_alias=True)
         return type(value).model_validate(dumped)
     return value
+
+
+def _stored_default(value: object) -> object:
+    """A copy of *value*, a display default, as the edge stores it once it is local."""
+    return clear_server_owned(as_stored(copy.deepcopy(value)))
 
 
 def clear_server_owned(value: object) -> object:
@@ -579,12 +584,27 @@ def _refuse_null_member(owner: Layered[Edge], field: str, group: OwnedGroup) -> 
     message = (
         f'{where} is a member of the group "{group.name}", and neither the profile '
         "nor the field's default gives it a value. A null cannot be the edge's own "
-        "value, so making the group local would leave this member inherited while "
-        "the others are local, a state the VCO UI does not recognize. Nothing was "
-        "changed. Give the profile a value first, with a patch to the profile's "
-        f'module, {{"{_key(owner, field)}": <value>}}, and make the group local '
-        f"then; or set every member at once with .{group.attribute}.set_local(bundle)"
+        "value, so this member cannot be copied in as local, and a group with some "
+        "members inherited and others local is a state the VCO UI does not "
+        "recognize. Nothing was changed. Give the profile a value first, with a "
+        f'patch to the profile\'s module, {{"{_key(owner, field)}": <value>}}, and '
+        "make the group local then"
     )
+    if field == group.anchor:
+        # The group is local when its anchor is, so no edge patch can give the
+        # anchor a value while the group is inherited.
+        message += (
+            "; this member is the group's anchor, so a patch to the edge cannot "
+            "give it a value while the group is inherited"
+        )
+    else:
+        members = ", ".join(
+            f'"{_key(owner, name)}": ...' for name in group.members(type(owner))
+        )
+        message += (
+            "; or send one patch that gives every member of the group a value: "
+            f"{{{members}}}"
+        )
     raise GroupOwnershipError(message, group=group.name, field=field)
 
 
@@ -777,7 +797,7 @@ class GroupHandle:
         for name, value in values.items():
             getattr(self._owner, name).stored = value
 
-    def localize(self) -> None:
+    def localize(self, *, given: Collection[str] = ()) -> None:
         """Make every member local, copied from the profile.
 
         One that is local already is kept, and so is a ``presence_wins`` object the edge
@@ -792,19 +812,28 @@ class GroupHandle:
         ``GroupOwnershipError`` when a member gets ``null`` from the profile and
         from its default, as a ``null`` cannot be local; no member is changed
         then.
+
+        *given* names the members (python names) the caller sets next: one of them
+        that has no value is left inherited for the caller to set, not refused. A
+        patch that gives every member a value passes them, so it makes such a group
+        local on the edge alone. The anchor is refused all the same: left inherited,
+        it would keep the group inherited, and then the patch could not set it.
         """
         self._check("localize")
         owned = self._members()
-        values = [None if o.is_local else self._localize_value(o) for o in owned]
+        values = [
+            None if o.is_local else self._localize_value(o, given=given) for o in owned
+        ]
         for member, value in zip(owned, values, strict=True):
             if value is not None:
                 member._store_copy(value)
 
-    def _localize_value(self, owned: Owned[Any]) -> object:
+    def _localize_value(self, owned: Owned[Any], *, given: Collection[str]) -> object:
         """What ``localize`` stores for the member *owned*, which is not local.
 
-        That is its ``_localize_source``, else the field's display default; when both
-        are ``null`` it raises ``GroupOwnershipError``.
+        That is its ``_localize_source``, else the field's display default. When both
+        are ``null`` it is ``None`` for a member in *given* that is not the anchor, and
+        raises ``GroupOwnershipError`` for any other.
         """
         from .layers import display_default  # noqa: PLC0415 (layers imports this module)
 
@@ -812,9 +841,8 @@ class GroupHandle:
         if value is not None:
             return value
         field = owned._field
-        info = type(self._owner).model_fields[field]
-        value = clear_server_owned(as_stored(copy.deepcopy(display_default(info))))
-        if value is None:
+        value = _stored_default(display_default(type(self._owner).model_fields[field]))
+        if value is None and (field not in given or field == self._group.anchor):
             _refuse_null_member(self._owner, field, self._group)
         return value
 

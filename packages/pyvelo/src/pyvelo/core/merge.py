@@ -68,7 +68,7 @@ from .fields import (
 )
 from .identity import ResolutionError, ResolverNotLoadedError, resolution_error
 from .layers import Edge, Kind, Layered, field_kind, inner_adapter
-from .owned import ByFlag, Owned, group_of, unwrap
+from .owned import ByFlag, Owned, group_of, groups_of, unwrap
 from .patch import (
     ItemOp,
     PatchError,
@@ -252,6 +252,7 @@ def _merge_model(
     before: JsonObject = {
         name: copy.deepcopy(_field_value(model, name)) for name, _ in updates
     }
+    _localize_groups(model, updates)
 
     for name, value in updates:
         _merge_field(
@@ -259,6 +260,31 @@ def _merge_model(
         )
 
     _auto_set_override_flags(model, before)
+
+
+def _localize_groups(model: VcoModel, updates: Sequence[tuple[str, object]]) -> None:
+    """Make local each coupled group the patch gives values, before any is merged.
+
+    A group of *model*, an edge layer, that is not local, and of which *updates* (python
+    name, value) gives some member a value and no member ``null``, is localized with
+    those members as ``given``: a member with no value of its own from the profile or
+    its default is the patch's to set (``GroupHandle.localize``), so a patch that gives
+    every member a value makes such a group local. A ``null`` for a member inherits the
+    whole group (``_merge_owned``), so a group given one is left to that.
+    """
+    if not isinstance(model, Layered):
+        return
+    for group in groups_of(type(model)).values():
+        members = group.members(type(model))
+        given = {name: value for name, value in updates if name in members}
+        if not given or any(value is None for value in given.values()):
+            continue
+        if not isinstance(_field_value(model, group.anchor), Owned):
+            continue
+        # The anchor holds an ``Owned`` on the edge layer only.
+        handle = group.handle(cast("Layered[Edge]", model))
+        if not handle.is_local:
+            handle.localize(given=given)
 
 
 _DIRECTIVES = ("_op", "_position")

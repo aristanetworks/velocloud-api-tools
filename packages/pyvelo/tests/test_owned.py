@@ -518,6 +518,81 @@ def test_group_localize_changes_nothing_when_a_member_cannot_be_local(
     )
 
 
+_WHOLE_GROUP = '{"pairA": ..., "pairB": ...}'
+
+
+@pytest.mark.parametrize(
+    "patch",
+    [
+        {"pairA": {"a": 9}, "pairB": {"a": 3}},
+        {"pairB": {"a": 3}, "pairA": {"a": 9}},
+    ],
+)
+@pytest.mark.parametrize(
+    "profile", [{"pairA": {"a": 2}, "pairB": None}, {"pairA": {"a": 2}}]
+)
+def test_a_patch_that_gives_every_member_a_value_makes_the_group_local(
+    patch: dict[str, object], profile: dict[str, object]
+) -> None:
+    edge = _edge_of(_NoDefaultMember, profile)
+    _ = edge.merge_patch(patch)
+    assert (edge.pair_a.is_local, edge.pair_b.is_local) == (True, True)
+    assert _wire(edge) == {"pairA": {"a": 9, "b": False}, "pairB": {"a": 3, "b": False}}
+
+
+def test_a_patch_that_leaves_out_a_member_with_no_value_is_refused() -> None:
+    edge = _edge_of(_NoDefaultMember, {"pairA": {"a": 2}, "pairB": None})
+    with pytest.raises(GroupOwnershipError, match='"pairB"') as exc:
+        _ = edge.merge_patch({"pair_a": {"a": 9}})
+    assert (exc.value.group, exc.value.field) == ("pair", "pair_b")
+    message = str(exc.value)
+    assert "Nothing was changed" in message
+    assert (
+        f"send one patch that gives every member of the group a value: {_WHOLE_GROUP}"
+        in message
+    )
+    assert "set_local" not in message
+    assert (_wire(edge), edge.pair_a.is_local, edge.pair_b.is_local) == (
+        {},
+        False,
+        False,
+    )
+
+    # A direct localize is refused the same way.
+    with pytest.raises(GroupOwnershipError, match='"pairB"') as exc:
+        edge.pair.localize()
+    assert str(exc.value) == message
+    assert (_wire(edge), edge.pair.is_local) == ({}, False)
+
+
+@pytest.mark.parametrize(
+    "patch",
+    [
+        {"pairA": {"a": 9}},
+        {"pairA": {"a": 9}, "pairB": {"a": 3}},
+        {"pairB": {"a": 3}, "pairA": {"a": 9}},
+    ],
+)
+def test_an_anchor_with_no_value_is_refused_by_any_edge_patch(
+    patch: dict[str, object],
+) -> None:
+    # The group is local when its anchor is, so while the anchor has no value an edge
+    # patch cannot make the group local: only a value in the profile can.
+    edge = _edge_of(_NoDefaultAnchor, {"pairA": {"a": 2}, "pairB": None})
+    with pytest.raises(GroupOwnershipError, match='"pairB"') as exc:
+        _ = edge.merge_patch(patch)
+    assert (exc.value.group, exc.value.field) == ("pair", "pair_b")
+    message = str(exc.value)
+    assert "Nothing was changed" in message
+    assert "is the group's anchor" in message
+    assert _WHOLE_GROUP not in message
+    assert (_wire(edge), edge.pair_a.is_local, edge.pair_b.is_local) == (
+        {},
+        False,
+        False,
+    )
+
+
 def test_the_group_handle_is_edge_only() -> None:
     p = Mod[Profile].model_validate(mod_json())
     with pytest.raises(AttributeError, match=r"Profile"):

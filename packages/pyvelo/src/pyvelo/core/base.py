@@ -898,7 +898,10 @@ class VcoModel(BaseModel):
         - a member of a coupled group: ``null`` inherits the whole group,
           and any other value first makes the group local (``localize``:
           each member that is not local, copied from the profile), then
-          applies as above to that member;
+          applies as above to that member. A member that gets ``null`` from
+          the profile and from its default raises ``GroupOwnershipError``
+          unless the same patch gives it a value, and the anchor raises all
+          the same;
         - the flag of a ``ByFlag`` field (``override``) is not patchable: it
           follows the value, set when an object is given, and ``null``
           inherits.
