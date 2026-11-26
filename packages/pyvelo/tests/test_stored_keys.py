@@ -268,6 +268,41 @@ def test_an_edit_beside_the_handoff_lists_leaves_them_as_read() -> None:
     ]
 
 
+def test_a_row_the_vco_made_keeps_its_stored_form_when_the_list_is_written() -> None:
+    raw = copy.deepcopy(PROFILE_DS)
+    stored_row = {"logicalId": str(WRAPPER), "name": "gw-1"}
+    raw["segments"][0]["handOffGateways"]["gateways"] = [stored_row]
+    module = device_settings(raw)
+    handoff = module.data.segments[0].handoff_gateways
+    assert isinstance(handoff, SegmentHandoffGateways)
+    row_class = type(handoff.gateways[0])
+    handoff.gateways.append(row_class.model_validate({"logicalId": u(0x99)}))
+    sent = plan_module(module, level=PROFILE).data["segments"][0]["handOffGateways"]
+    # The list has no way to pair an item whose ID dumps in another form, so
+    # the stored row must dump as it was read, with the key no model declares.
+    assert sent["gateways"][0] == stored_row
+    assert sent["gateways"][1] == {"logicalId": u(0x99)}
+    assert sent["gatewayList"] == HANDOFF["gatewayList"]
+
+
+def test_the_gateway_list_is_unchanged_by_no_edit_and_by_an_append() -> None:
+    module = device_settings(PROFILE_DS)
+    assert_untouched(module, PROFILE_DS, PROFILE)
+    handoff = module.data.segments[0].handoff_gateways
+    assert isinstance(handoff, SegmentHandoffGateways)
+    handoff.gateway_list.append(
+        type(handoff.gateway_list[0]).model_validate(
+            {"logicalId": f"gateway{u(0x98)}", "ipsecDetail": {}}
+        )
+    )
+    sent = plan_module(module, level=PROFILE).data["segments"][0]["handOffGateways"]
+    assert sent["gatewayList"] == [
+        *HANDOFF["gatewayList"],
+        {"logicalId": f"gateway{u(0x98)}", "ipsecDetail": {}},
+    ]
+    assert sent["gateways"] == HANDOFF["gateways"]
+
+
 def cellular_of(module: DeviceSettingsConfigurationModule) -> RoutedInterfaceCellular:
     interfaces = module.data.routed_interfaces
     assert interfaces is not None

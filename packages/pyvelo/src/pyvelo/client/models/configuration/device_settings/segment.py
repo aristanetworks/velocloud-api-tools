@@ -111,13 +111,23 @@ class GatewayListItem(VcoModel):
     ipsec_detail: Any | MISSING = MISSING
 
 
+class HandoffGatewayRow(VcoModel):
+    """An item of a handoff section's ``gateways`` list: a row the VCO writes itself.
+
+    Its ID is stored as a plain UUID, where ``gatewayList`` stores the ``gateway``
+    prefix.
+    """
+
+    logical_id: uuid.UUID
+
+
 class SegmentHandoffGateways(VcoModel):
     auto_select: bool = False
     gateway_list: Annotated[list[GatewayListItem], KeyField("logical_id")] = Field(
         default_factory=list
     )
     override: Annotated[bool, OverrideFlag] = True
-    gateways: Annotated[list[GatewayListItem], KeyField("logical_id")] = Field(
+    gateways: Annotated[list[HandoffGatewayRow], KeyField("logical_id")] = Field(
         default_factory=list
     )
 
