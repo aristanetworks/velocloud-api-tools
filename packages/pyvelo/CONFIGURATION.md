@@ -277,9 +277,11 @@ a selector names it by its MAC, and its IP does not select it. Its IP is a
 value, so two reservations can exchange IPs, and changing a MAC plans a removal
 and an addition. pyvelo does not refuse two reservations with one IP: the VCO
 does. A reservation's MAC is matched whatever its letter case, as the VCO
-matches it: `AA:BB:CC:DD:EE:01` selects `aa:bb:cc:dd:ee:01`, an add under it is
-refused as already in the list, and a MAC rewritten in another case is one edit
-of `macAddress`. The text you wrote is what is stored.
+matches it: `AA:BB:CC:DD:EE:01` selects `aa:bb:cc:dd:ee:01`; an add under it is
+refused as already in the list, and so is a second add of it in the same patch;
+a list value that holds it twice in two cases is refused as repeating a key;
+and a MAC rewritten in another case is one edit of `macAddress`. The text you
+wrote is what is stored.
 
 An object on a list is item operations, keyed by selector. A selector is a
 key, alt key, label or value in string form (`"10"` names VLAN 10), `at(n)`
@@ -1666,6 +1668,13 @@ Known limits:
   your item lost and another item, only the VCO's, in `server_changes`. IPv6
   addresses in the keys of device settings (a static route's destination and
   gateway) are covered.
+- Three checks of a DHCP reservation's MAC still match its letter case
+  exactly. A patch that changes a reservation's MAC to another reservation's
+  MAC spelled in another case is not refused by pyvelo; the VCO refuses the
+  write. An add whose body spells the MAC in another case than its selector is
+  refused: spell it the same in both, or leave it out of the body. The
+  key-uniqueness validator does not report two reservations whose MACs differ
+  only by case.
 
 ## Scope and data handling
 
