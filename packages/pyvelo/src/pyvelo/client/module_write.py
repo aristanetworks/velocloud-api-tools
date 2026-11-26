@@ -80,6 +80,7 @@ from pydantic import MISSING
 from pydantic_core import to_jsonable_python
 
 from pyvelo.client.derived_refs import (
+    DerivedRefs,
     PlanWarning,
     RefChange,
     changed_owners,
@@ -1010,7 +1011,312 @@ def _defaults_findings(
     return warnings, repairs, targets
 
 
-def plan_module(  # noqa: C901, PLR0912, PLR0913, PLR0915 (existing: split it when it next changes)
+def _plan_of_unread(
+    module: ConfigurationModuleBase,
+    current: object,
+    level: ConfigContext | None,
+    name: str,
+) -> ModulePlan:
+    """The plan of a module object that never carried data.
+
+    Its data, whole, as an update.
+    """
+    payload = (
+        wire_dump(current, level)
+        if isinstance(current, VcoModel)
+        else cast("dict[str, Any]", current)
+    )
+    model_type = type(current) if isinstance(current, VcoModel) else None
+    drop_legacy_keys(payload, name)
+    return ModulePlan(
+        name=name,
+        operation="update",
+        data=payload,
+        refs=None,
+        changes=tuple(raw_changes({}, payload, model_type)),
+        reconciled_segments=(),
+        model=_document_model(model_type, module),
+    )
+
+
+@dataclass(frozen=True)
+class _Planned:
+    """What the data of a plan is made from, and the payload so far."""
+
+    payload: dict[str, Any]
+    model_type: type[VcoModel] | None
+    baseline: VcoModel | None
+    ref_baseline: VcoModel | None
+
+
+def _planned_payload(
+    module: ConfigurationModuleBase,
+    current: object,
+    level: ConfigContext | None,
+    read: ReadData,
+    name: str,
+) -> _Planned:
+    """The payload of *current* over the module as read.
+
+    The rebase, or the mapping topped up. Raises ``LossyFieldError``.
+    """
+    extra, reconciled, planned_from = read.extra, read.reconciled, read.planned_from
+    additions = module.additions if level is ConfigContext.PROFILE else ()
+
+    baseline: VcoModel | None
+    ref_baseline: VcoModel | None
+    if isinstance(current, VcoModel):
+        model_type = type(current)
+        baseline = read.model(model_type)
+        ref_baseline = baseline
+        if additions:
+            ref_baseline = _reparse(model_type, reconciled, module.raw_mode)
+            if module.refs_loaded:
+                fill_ref_only(ref_baseline, module.raw_refs)
+        before = wire_dump(baseline, level)
+        after = wire_dump(current, level)
+        carry_unset_defaults(baseline, current, before, after)
+        payload = cast(
+            "dict[str, Any]",
+            copy.deepcopy(
+                rebase(
+                    planned_from,
+                    before,
+                    _with_reconciled_segments(after, before, extra),
+                    model_type,
+                )
+            ),
+        )
+        lossy = find_lossy_assignments(baseline, current, before, after, level)
+        if lossy:
+            flags = [path for path in lossy if is_override_flag(model_type, path)]
+            raise LossyFieldError(name, lossy, flags)
+    else:
+        baseline = ref_baseline = None
+        model_type = None
+        topped_up = dict(cast("Mapping[str, Any]", current))
+        if extra:  # only for an object, so *reconciled* is one
+            topped_up = _with_reconciled_segments(
+                topped_up, cast("dict[str, Any]", reconciled), extra
+            )
+        payload = copy.deepcopy(topped_up)
+    return _Planned(payload, model_type, baseline, ref_baseline)
+
+
+def _is_changed(
+    payload: dict[str, Any], reconciled: object, ref_changes: tuple[RefChange, ...]
+) -> bool:
+    """Whether the plan writes anything.
+
+    It does when the payload differs from the data as read with its reconciled
+    segments, or a ref row does.
+    """
+    return payload != reconciled or bool(ref_changes)
+
+
+def _check_fixed_lists(
+    name: str,
+    fixed_model: type[VcoModel] | None,
+    planned_from: object,
+    payload: dict[str, Any],
+) -> None:
+    """Raise ``FixedListError`` if *payload* changes a fixed part of a ``FixedList``."""
+    if fixed_model is not None and payload != planned_from:
+        broken = fixed_list_violations(fixed_model, planned_from, payload)
+        if broken:
+            raise FixedListError(name, broken)
+
+
+def _plan_level(
+    module: ConfigurationModuleBase, current: object, level: ConfigContext | None
+) -> ConfigContext | None:
+    """*level*, else that of *current*, else that of *module*."""
+    if level is None and isinstance(current, VcoModel):
+        level = current.config_context
+    if level is None:  # a mapping, or a model built by hand, has no level of its own
+        level = _module_level(module)
+    return level
+
+
+def _check_profile_segments(
+    name: str,
+    level: ConfigContext | None,
+    raw: object,
+    payload: dict[str, Any],
+    *,
+    via_pipeline: bool,
+) -> None:
+    """The segment-set and hub-list checks of a profile module planned alone."""
+    if level is ConfigContext.PROFILE and not via_pipeline:
+        _check_segment_set(name, raw, payload)
+        if name == "deviceSettings":
+            _check_hub_lists(name, raw, payload)
+
+
+@dataclass(frozen=True)
+class _RefContext:
+    """What the refs of an edit are derived with.
+
+    The level its owners are read at, the resolvers of the identities it adds,
+    and the hub services and segment object IDs of the profile's device
+    settings.
+    """
+
+    level: ConfigContext | None
+    resolvers: IdentityLookup | None
+    hub_services: HubServiceTable | None
+    segment_ids: dict[int, int] | None
+
+
+def _ref_context(
+    level: ConfigContext | None,
+    resolvers: IdentityLookup | None,
+    profile_device_settings: ConfigurationModuleBase | None,
+) -> _RefContext:
+    """*level* and *resolvers*, with the hub table of *profile_device_settings*."""
+    hub_services: HubServiceTable | None = None
+    segment_ids: dict[int, int] | None = None
+    if profile_device_settings is not None:
+        hub_refs: object = profile_device_settings.raw_refs
+        hub_services = HubServiceTable.from_refs(hub_refs)
+        segment_ids = segment_object_ids(hub_refs)
+    return _RefContext(level, resolvers, hub_services, segment_ids)
+
+
+def _planned_refs(
+    module: ConfigurationModuleBase,
+    current: object,
+    ref_baseline: VcoModel | None,
+    payload: dict[str, Any],
+    context: _RefContext,
+) -> DerivedRefs:
+    """The refs that a write of *payload* sends, its ref changes and their warnings.
+
+    Raises ``HubServiceNotFoundError`` for a QoS entry that names a hub and no
+    service, and ``RefsNotLoadedError`` for an edit that moves an owner of a
+    module read without its refs.
+    """
+    name = str(_attribute(module, "name"))
+    if name == "QOS" and isinstance(current, VcoModel):
+        unserved = missing_service_error(current, as_read=ref_baseline)
+        if unserved is not None:
+            raise unserved
+    if module.refs_loaded:
+        return derive_refs(
+            module,
+            ref_baseline,
+            current if isinstance(current, VcoModel) else None,
+            payload,
+            level=context.level,
+            resolvers=context.resolvers,
+            hub_services=context.hub_services,
+            segment_object_ids=context.segment_ids,
+        )
+    if ref_baseline is not None and isinstance(current, VcoModel):
+        moved = changed_owners(ref_baseline, current, context.level)
+        if moved:
+            raise RefsNotLoadedError(name, tuple(dict.fromkeys(o.path for o in moved)))
+    return DerivedRefs(None, (), ())
+
+
+@dataclass(frozen=True)
+class _DefaultsRepair:
+    """``plan_module``'s options for the template defaults a QoS segment lacks."""
+
+    repair_defaults: bool
+    conditional_backhaul: Mapping[int, bool] | None
+    carried_repairs: Mapping[tuple[str, str], Mapping[str, Any]] | None
+
+
+def _repaired_defaults(
+    module: ConfigurationModuleBase,
+    repair_targets: list[Any],
+    repairs: list[tuple[str, object, tuple[str, ...]]],
+    options: _DefaultsRepair,
+    *,
+    changed: bool,
+) -> tuple[list[MissingDefaults], list[PlanWarning]]:
+    """Add its missing template defaults to each of *repair_targets*, if written.
+
+    Returns the ``missing_defaults`` of the plan and the ``defaults_repaired``
+    warnings, in step.
+    """
+    repair_defaults = options.repair_defaults
+    conditional_backhaul = options.conditional_backhaul
+    carried_repairs = options.carried_repairs
+    repaired = changed and repair_defaults
+    missing_defaults: list[MissingDefaults] = []
+    repair_warnings: list[PlanWarning] = []
+    for entry, (segment_name, segment_id, names) in zip(
+        repair_targets, repairs, strict=True
+    ):
+        if repaired:
+            held = entry.get("defaults")
+            entry["defaults"] = insert_defaults(
+                held if is_list(held) else None,
+                [
+                    copy.deepcopy(dict(carried_repairs[(str(segment_id), n)]))
+                    if carried_repairs is not None
+                    and (str(segment_id), n) in carried_repairs
+                    else repaired_entry(
+                        n,
+                        module.defaults_rule_id(segment_id, n),
+                        conditional_backhaul=conditional_backhaul.get(
+                            cast("int", segment_id)
+                        )
+                        if conditional_backhaul is not None
+                        else None,
+                    )
+                    for n in names
+                ],
+            )
+        missing_defaults.append(
+            MissingDefaults(segment_name, segment_id, names, repaired=repaired)
+        )
+        repair_warnings.append(
+            PlanWarning(
+                "defaults_repaired",
+                _defaults_path(segment_name),
+                f"The defaults of segment {segment_name!r} lack {', '.join(names)}, "
+                "which every QoS segment of a profile holds. "
+                + (
+                    "This write adds them from the template."
+                    if repaired
+                    else "The repair is off (repair_defaults is false), so this "
+                    "write leaves them out."
+                    if not repair_defaults
+                    else "This module has nothing else to write, so it is not "
+                    "written; a later write of it adds them."
+                ),
+            )
+        )
+    return missing_defaults, repair_warnings
+
+
+def _flag_off_warnings(
+    module: ConfigurationModuleBase,
+    model_type: type[VcoModel] | None,
+    level: ConfigContext | None,
+    payload: dict[str, Any],
+    *,
+    changed: bool,
+) -> list[PlanWarning]:
+    """The ``flag_off_in_use`` warnings of an edge module: of *payload*, or as read."""
+    flag_off: list[PlanWarning] = []
+    layered = _document_model(model_type, module)
+    if (
+        level is ConfigContext.EDGE
+        and layered is not None
+        and issubclass(layered, Layered)
+    ):
+        held = payload if changed else cast("Mapping[str, object]", module.raw_data)
+        flag_off = [
+            _flag_off_warning(found) for found in unflagged_in_use_at(layered, held)
+        ]
+    return flag_off
+
+
+def plan_module(  # noqa: PLR0913 (a public call: each option is a keyword its callers name)
     module: ConfigurationModuleBase,
     data: VcoModel | Mapping[str, object] | None = None,
     *,
@@ -1076,83 +1382,23 @@ def plan_module(  # noqa: C901, PLR0912, PLR0913, PLR0915 (existing: split it wh
     current = data if data is not None else _attribute(module, "data")
     if isinstance(current, Mapping):
         current = _plain_json(cast("Mapping[str, object]", current))
-    if level is None and isinstance(current, VcoModel):
-        level = current.config_context
-    if level is None:  # a mapping, or a model built by hand, has no level of its own
-        level = _module_level(module)
+    level = _plan_level(module, current, level)
 
     raw = module.raw_data
     if raw is MISSING:  # a module object that never carried data
-        payload = (
-            wire_dump(current, level)
-            if isinstance(current, VcoModel)
-            else cast("dict[str, Any]", current)
-        )
-        model_type = type(current) if isinstance(current, VcoModel) else None
-        drop_legacy_keys(payload, name)
-        return ModulePlan(
-            name=name,
-            operation="update",
-            data=payload,
-            refs=None,
-            changes=tuple(raw_changes({}, payload, model_type)),
-            reconciled_segments=(),
-            model=_document_model(model_type, module),
-        )
+        return _plan_of_unread(module, current, level, name)
 
     inherited = profile if level is not ConfigContext.PROFILE else None
     read = read_data(module, level=level, profile=profile)
     extra, reconciled, planned_from = read.extra, read.reconciled, read.planned_from
     additions = module.additions if level is ConfigContext.PROFILE else ()
 
-    baseline: VcoModel | None
-    ref_baseline: VcoModel | None
-    if isinstance(current, VcoModel):
-        model_type = type(current)
-        baseline = read.model(model_type)
-        ref_baseline = baseline
-        if additions:
-            ref_baseline = _reparse(model_type, reconciled, module.raw_mode)
-            if module.refs_loaded:
-                fill_ref_only(ref_baseline, module.raw_refs)
-        before = wire_dump(baseline, level)
-        after = wire_dump(current, level)
-        carry_unset_defaults(baseline, current, before, after)
-        payload = cast(
-            "dict[str, Any]",
-            copy.deepcopy(
-                rebase(
-                    planned_from,
-                    before,
-                    _with_reconciled_segments(after, before, extra),
-                    model_type,
-                )
-            ),
-        )
-        lossy = find_lossy_assignments(baseline, current, before, after, level)
-        if lossy:
-            flags = [path for path in lossy if is_override_flag(model_type, path)]
-            raise LossyFieldError(name, lossy, flags)
-    else:
-        baseline = ref_baseline = None
-        model_type = None
-        topped_up = dict(cast("Mapping[str, Any]", current))
-        if extra:  # only for an object, so *reconciled* is one
-            topped_up = _with_reconciled_segments(
-                topped_up, cast("dict[str, Any]", reconciled), extra
-            )
-        payload = copy.deepcopy(topped_up)
+    planned = _planned_payload(module, current, level, read, name)
+    payload, model_type = planned.payload, planned.model_type
 
-    if level is ConfigContext.PROFILE and not via_pipeline:
-        _check_segment_set(name, raw, payload)
-        if name == "deviceSettings":
-            _check_hub_lists(name, raw, payload)
+    _check_profile_segments(name, level, raw, payload, via_pipeline=via_pipeline)
 
-    fixed_model = _document_model(model_type, module)
-    if fixed_model is not None and payload != planned_from:
-        broken = fixed_list_violations(fixed_model, planned_from, payload)
-        if broken:
-            raise FixedListError(name, broken)
+    _check_fixed_lists(name, _document_model(model_type, module), planned_from, payload)
 
     restored: list[dict[str, Any]] = []
     if inherited is not None:
@@ -1166,41 +1412,15 @@ def plan_module(  # noqa: C901, PLR0912, PLR0913, PLR0915 (existing: split it wh
     if level is ConfigContext.PROFILE and name == "QOS":
         not_template, repairs, repair_targets = _defaults_findings(payload)
 
-    derived_refs: dict[str, Any] | None = None
-    ref_changes: tuple[RefChange, ...] = ()
-    warnings: tuple[PlanWarning, ...] = ()
-    hub_services: HubServiceTable | None = None
-    segment_ids: dict[int, int] | None = None
-    if profile_device_settings is not None:
-        hub_refs: object = profile_device_settings.raw_refs
-        hub_services = HubServiceTable.from_refs(hub_refs)
-        segment_ids = segment_object_ids(hub_refs)
-    if name == "QOS" and isinstance(current, VcoModel):
-        unserved = missing_service_error(current, as_read=ref_baseline)
-        if unserved is not None:
-            raise unserved
-    if module.refs_loaded:
-        derived = derive_refs(
-            module,
-            ref_baseline,
-            current if isinstance(current, VcoModel) else None,
-            payload,
-            level=level,
-            resolvers=resolvers,
-            hub_services=hub_services,
-            segment_object_ids=segment_ids,
-        )
-        derived_refs, ref_changes, warnings = (
-            derived.refs,
-            derived.changes,
-            derived.warnings,
-        )
-    elif ref_baseline is not None and isinstance(current, VcoModel):
-        moved = changed_owners(ref_baseline, current, level)
-        if moved:
-            raise RefsNotLoadedError(name, tuple(dict.fromkeys(o.path for o in moved)))
+    context = _ref_context(level, resolvers, profile_device_settings)
+    derived = _planned_refs(module, current, planned.ref_baseline, payload, context)
+    derived_refs, ref_changes, warnings = (
+        derived.refs,
+        derived.changes,
+        derived.warnings,
+    )
 
-    changed = payload != reconciled or bool(ref_changes)
+    changed = _is_changed(payload, reconciled, ref_changes)
     if changed and not module.refs_loaded and sends_refs_always(module, payload):
         raise RefsNotLoadedError(name)
     operation: _Operation = (
@@ -1210,63 +1430,14 @@ def plan_module(  # noqa: C901, PLR0912, PLR0913, PLR0915 (existing: split it wh
     if changed:  # never a write just to strip them
         drop_legacy_keys(payload, name)
     changes = tuple(raw_changes(planned_from, payload, model_type))
-    repaired = changed and repair_defaults
-    missing_defaults: list[MissingDefaults] = []
-    repair_warnings: list[PlanWarning] = []
-    for entry, (segment_name, segment_id, names) in zip(
-        repair_targets, repairs, strict=True
-    ):
-        if repaired:
-            held = entry.get("defaults")
-            entry["defaults"] = insert_defaults(
-                held if is_list(held) else None,
-                [
-                    copy.deepcopy(dict(carried_repairs[(str(segment_id), n)]))
-                    if carried_repairs is not None
-                    and (str(segment_id), n) in carried_repairs
-                    else repaired_entry(
-                        n,
-                        module.defaults_rule_id(segment_id, n),
-                        conditional_backhaul=conditional_backhaul.get(
-                            cast("int", segment_id)
-                        )
-                        if conditional_backhaul is not None
-                        else None,
-                    )
-                    for n in names
-                ],
-            )
-        missing_defaults.append(
-            MissingDefaults(segment_name, segment_id, names, repaired=repaired)
-        )
-        repair_warnings.append(
-            PlanWarning(
-                "defaults_repaired",
-                _defaults_path(segment_name),
-                f"The defaults of segment {segment_name!r} lack {', '.join(names)}, "
-                "which every QoS segment of a profile holds. "
-                + (
-                    "This write adds them from the template."
-                    if repaired
-                    else "The repair is off (repair_defaults is false), so this "
-                    "write leaves them out."
-                    if not repair_defaults
-                    else "This module has nothing else to write, so it is not "
-                    "written; a later write of it adds them."
-                ),
-            )
-        )
-    flag_off: list[PlanWarning] = []
-    layered = _document_model(model_type, module)
-    if (
-        level is ConfigContext.EDGE
-        and layered is not None
-        and issubclass(layered, Layered)
-    ):
-        held = payload if changed else cast("Mapping[str, object]", raw)
-        flag_off = [
-            _flag_off_warning(found) for found in unflagged_in_use_at(layered, held)
-        ]
+    missing_defaults, repair_warnings = _repaired_defaults(
+        module,
+        repair_targets,
+        repairs,
+        _DefaultsRepair(repair_defaults, conditional_backhaul, carried_repairs),
+        changed=changed,
+    )
+    flag_off = _flag_off_warnings(module, model_type, level, payload, changed=changed)
     in_payload = _segment_names(payload).keys()
     return ModulePlan(
         name=name,
@@ -1289,7 +1460,7 @@ def plan_module(  # noqa: C901, PLR0912, PLR0913, PLR0915 (existing: split it wh
         ),
         repair_defaults=repair_defaults,
         missing_defaults=tuple(missing_defaults),
-        as_read=baseline,
+        as_read=planned.baseline,
     )
 
 
