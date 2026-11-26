@@ -160,6 +160,16 @@ def test_a_single_row_stays_a_row() -> None:
     assert not isinstance(module.refs.segment, tuple)
 
 
+@pytest.mark.parametrize("segment_type", ["REGULAR", "CDE", "PRIVATE"])
+def test_a_segment_row_of_each_type_loads_and_dumps_as_read(segment_type: str) -> None:
+    row = {**ROW_A, "type": segment_type}
+    module = _module({SEGMENT_REF_NAME: row})
+    assert isinstance(module.refs, DeviceSettingsRefs)
+    assert (
+        module.refs.model_dump(by_alias=True)[SEGMENT_REF_NAME]["type"] == segment_type
+    )
+
+
 def test_assigning_module_refs_raises_for_device_settings() -> None:
     module = _module({SEGMENT_REF_NAME: ROW_A})
     with pytest.raises(ValidationError, match="frozen"):
