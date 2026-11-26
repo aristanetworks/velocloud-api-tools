@@ -4,10 +4,11 @@ Each runs on edge modules bound to a profile.
 """
 
 import copy
+import uuid
 from typing import Any
 
 import pytest
-from pydantic import MISSING
+from pydantic import MISSING, ValidationError
 from pyvelo.client.exceptions import GroupOwnershipError
 from pyvelo.client.models.configuration import FirewallData
 from pyvelo.client.models.configuration.firewall import (
@@ -17,8 +18,10 @@ from pyvelo.client.models.configuration.firewall import (
     StatefulFirewallSettings,
     StatefulLocal,
 )
+from pyvelo.client.models.configuration.qos import QosRuleMatch
 from pyvelo.client.module_write import plan_module
 from pyvelo.client.schemas.configuration import FirewallConfigurationModule
+from pyvelo.config import add
 from pyvelo.core import ConfigContext, Edge, Profile
 from pyvelo.core.effective import Origin, effective_view
 from pyvelo.core.layers import Effective
@@ -271,3 +274,67 @@ def test_a_rule_keeps_its_logging_flags_key_for_key() -> None:
     assert loaded.hosted_logging_enabled is True
     assert loaded.syslog_forwarding_enabled is False
     assert FirewallOutboundRule.model_validate(base).hosted_logging_enabled is MISSING
+
+
+# --- an outbound rule's object groups ------------------------------------------
+
+GROUP = "00000000-0000-0000-0000-0000000000a9"
+GROUP_RULE: dict[str, Any] = {
+    "name": "by-group",
+    "ruleLogicalId": "00000000-0000-0000-0000-000000000051",
+    # As the UI stores a rule that names one group: the other three are null.
+    "match": {
+        "sAddressGroup": GROUP,
+        "sPortGroup": None,
+        "dAddressGroup": None,
+        "dPortGroup": None,
+    },
+    "action": {"allow_or_deny": "allow"},
+}
+
+
+def group_rules() -> dict[str, Any]:
+    segment = {"segment": desc(0, "Global Segment"), "outbound": [GROUP_RULE]}
+    return copy.deepcopy({"segments": [segment]})
+
+
+def test_an_edge_rule_whose_groups_are_stored_null_loads_and_is_sent_as_read() -> None:
+    raw = group_rules()
+    module = fw(raw, layer=Edge)
+    match = module.data.segments[0].outbound[0].match
+    assert match.source_address_group == uuid.UUID(GROUP)
+    assert match.source_port_group is None
+    assert match.destination_address_group is None
+    assert match.destination_port_group is None
+    plan = plan_module(module, level=EDGE)
+    assert (plan.operation, plan.data) == ("none", raw)
+
+
+def test_a_profile_rule_keeps_its_null_groups_when_the_rule_is_edited() -> None:
+    raw = group_rules()
+    module = fw(raw, layer=Profile)
+    assert plan_module(module, level=ConfigContext.PROFILE).operation == "none"
+    module.data.segments[0].outbound[0].match.destination_port_low = 443
+    expected = copy.deepcopy(raw)
+    expected["segments"][0]["outbound"][0]["match"]["dport_low"] = 443
+    assert plan_module(module, level=ConfigContext.PROFILE).data == expected
+
+
+def test_a_null_group_in_a_patch_unsets_it_and_a_new_rule_stores_it() -> None:
+    module = fw(group_rules(), layer=Profile)
+    new_rule = {"match": {"dAddressGroup": None}, "action": {"allow_or_deny": "deny"}}
+    patch = {"by-group": {"match": {"sAddressGroup": None}}, "new": add(new_rule)}
+    _ = module.data.merge_patch({"segments": {"Global Segment": {"outbound": patch}}})
+    old, new = module.data.segments[0].outbound
+    assert old.match.source_address_group is MISSING
+    assert new.match.destination_address_group is None
+    sent = plan_module(module, level=ConfigContext.PROFILE).data
+    old_match, new_match = (rule["match"] for rule in sent["segments"][0]["outbound"])
+    assert "sAddressGroup" not in old_match
+    assert new_match["dAddressGroup"] is None
+
+
+def test_a_qos_rule_still_refuses_a_null_group() -> None:
+    # No VCO was seen to store one there.
+    with pytest.raises(ValidationError, match="sAddressGroup"):
+        _ = QosRuleMatch.model_validate({"sAddressGroup": None})
