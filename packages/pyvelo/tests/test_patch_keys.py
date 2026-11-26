@@ -5,6 +5,8 @@ from typing import Annotated
 
 import pytest
 from pydantic import MISSING, Field
+from pyvelo.client.models.configuration import DeviceSettingsData
+from pyvelo.client.models.configuration.device_settings.root import ModelInterfaces
 from pyvelo.client.models.configuration.device_settings.segment import SegmentRoutes
 from pyvelo.client.models.configuration.wan.link import WanLink
 from pyvelo.client.models.configuration.wan.root import WanData
@@ -18,9 +20,10 @@ from pyvelo.core import (
     delete,
     move,
 )
+from pyvelo.core.base import list_item_type
 from pyvelo.core.fields import get_key_spec
 from pyvelo.core.merge import select_items
-from pyvelo.core.rebase import Key, Path, item_key, key_text
+from pyvelo.core.rebase import Key, Path, item_key, key_text, python_path
 
 from .patch_models import Link, Root, Route, Rule
 
@@ -682,3 +685,29 @@ def test_the_example_of_a_composite_key_selects_its_item() -> None:
     assert select_items(root, "routes", example) == [0]
     _ = root.merge_patch({"routes": {example: {"cost": 5}}})
     assert costs(root) == [5, 0]
+
+
+def test_a_union_list_names_the_variant_of_each_item() -> None:
+    routed = list_item_type(ModelInterfaces.model_fields["routed_interfaces"])
+    assert routed is not None
+    names = {
+        "GE3": "RoutedInterfaceGe",
+        "LAG1": "RoutedInterfaceLag",
+        "CELL1": "RoutedInterfaceCell",
+        "USB1": "RoutedInterfaceUsb",
+    }
+    for name, variant in names.items():
+        assert routed.variant_of({"name": name}).__name__ == variant
+    assert routed.variant_of({"name": "SFP1", "sfpType": "dsl"}).__name__ == (
+        "RoutedInterfaceSfpDsl"
+    )
+    assert routed.variant_of("junk") is routed.variants[0]
+
+
+def test_python_path_goes_through_a_union_item_to_a_field_of_its_variant() -> None:
+    path = Path.parse(
+        "models.edge510.routedInterfaces[LAG1].slaveInterfaces[GE5].portPriority"
+    )
+    assert str(python_path(path, DeviceSettingsData)) == (
+        "models.edge510.routed_interfaces[LAG1].slave_interfaces[GE5].port_priority"
+    )

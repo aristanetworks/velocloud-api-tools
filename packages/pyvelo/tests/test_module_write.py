@@ -1027,13 +1027,8 @@ def test_an_edge_only_field_below_the_models_map_is_refused_on_a_profile() -> No
     assert exc.value.fields == ["models.edge510.routed_interfaces[GE3].description"]
 
 
-def test_a_list_inside_a_lag_interface_is_written_whole() -> None:
-    """Known limit: a list in an interface that is not a plain port is written whole.
-
-    The list is typed as that of a plain port, so one edit in it is written as
-    the whole list and the keys of its other items that the models do not know
-    are dropped.
-    """
+def test_a_list_inside_a_lag_interface_is_written_item_by_item() -> None:
+    """A list in an interface other than a plain port is read as the interface's own."""
     raw = {
         **DS_RAW,
         "models": {
@@ -1067,11 +1062,13 @@ def test_a_list_inside_a_lag_interface_is_written_whole() -> None:
     )
     plan = plan_module(mod, level=PROFILE)
     assert [str(c.path) for c in plan.changes] == [
-        "models.edge510.routedInterfaces[LAG1].slaveInterfaces"
+        "models.edge510.routedInterfaces[LAG1].slaveInterfaces[GE5].portPriority"
     ]
     slaves = plan.data["models"]["edge510"]["routedInterfaces"][0]["slaveInterfaces"]
-    assert slaves[0]["portPriority"] == 5
-    assert slaves[1] == {"name": "GE6", "portPriority": 2}
+    assert slaves == [
+        {"name": "GE5", "portPriority": 5},
+        {"name": "GE6", "portPriority": 2, "futureSlave": True},
+    ]
 
 
 # --- defaults generated per parse are not the caller's change --------------

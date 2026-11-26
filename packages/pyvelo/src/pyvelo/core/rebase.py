@@ -37,6 +37,7 @@ from pydantic import MISSING
 from pydantic.fields import FieldInfo
 
 from .base import (
+    ListItemType,
     VcoModel,
     _context_default_entry,  # pyright: ignore[reportPrivateUsage]
     _field_alias,  # pyright: ignore[reportPrivateUsage]
@@ -428,7 +429,30 @@ class KeyedList:
 
     spec: KeySpec
     """The list's ``KeyField``: the key's paths, one per part, and its alt key."""
-    item: type[VcoModel]
+    items: ListItemType
+    """The element type: one model class or a discriminated union of them."""
+
+    @property
+    def item(self) -> type[VcoModel]:
+        """The first variant; the keys and alt keys of every item are read through it.
+
+        The variants of a union share their key fields.
+        """
+        return self.items.variants[0]
+
+    def item_of(self, item: object) -> type[VcoModel]:
+        """The variant that *item*, a JSON item of the list, is."""
+        return self.items.variant_of(item)
+
+    def item_with(self, key: object) -> type[VcoModel]:
+        """The first variant that reads a field from JSON key *key*, else ``item``.
+
+        For a path, which names the field below an item and not the item itself.
+        """
+        for variant in self.items.variants:
+            if node_field(variant, key) is not None:
+                return variant
+        return self.item
 
 
 @dataclass(frozen=True, slots=True)
@@ -493,9 +517,8 @@ def node_child(node: Node, key: object) -> Node:
     """What the value under *key* is known to be.
 
     Whatever the key, the model of a map of models' values. Otherwise a keyed
-    list for a ``KeyField`` list of models (of the first variant, for a
-    discriminated union), a map of models for a ``dict[K, Model]`` field, a
-    model class for a model field, else None.
+    list for a ``KeyField`` list of models, a map of models for a
+    ``dict[K, Model]`` field, a model class for a model field, else None.
     """
     if isinstance(node, ModelMap):
         return node.value
@@ -506,7 +529,7 @@ def node_child(node: Node, key: object) -> Node:
     spec = get_key_spec(field_info)
     item_type = list_item_type(field_info)
     if spec is not None and item_type is not None:
-        return KeyedList(spec, item_type.variants[0])
+        return KeyedList(spec, item_type)
     map_value = _map_value_type(field_info)
     if map_value is not None:
         return ModelMap(map_value)
@@ -729,10 +752,11 @@ def rebase(
       container is taken from *after*.
     - The items of a keyed list in *before* and *after* are paired by alt key,
       then by key (``pair_items``), so a renamed item stays one item; item
-      order comes from *after*, paired items recurse and the others are taken
-      from *after*. A list without a key is replaced whole. So is a keyed list
-      that ``pair_items`` cannot pair, or whose length in *raw* differs from
-      *before* (raw items cannot be paired up with *before*'s).
+      order comes from *after*, paired items recurse, each as the kind of item
+      it now is, and the others are taken from *after*. A list without a key
+      is replaced whole. So is a keyed list that ``pair_items`` cannot pair,
+      or whose length in *raw* differs from *before* (raw items cannot be
+      paired up with *before*'s).
     - The values of a map of models (a ``dict[K, Model]`` field) are rebased
       entry by entry, each as its model, so a change lands on the key as read
       and a keyed list below the map is paired.
@@ -841,7 +865,7 @@ def _rebase_keyed_list(
         return None
     old_of = {new: old for old, new in pairing.pairs}
     return [
-        _rebase(raw[old_of[j]], before[old_of[j]], item, node.item)
+        _rebase(raw[old_of[j]], before[old_of[j]], item, node.item_of(item))
         if j in old_of
         else item
         for j, item in enumerate(after)
@@ -993,7 +1017,8 @@ def _collect_keyed_changes(
     for i, old_item in enumerate(old):
         item_path = path.child(old_parts[i])
         if i in new_of:
-            collect_changes(out, item_path, old_item, new[new_of[i]], node.item)
+            new_item = new[new_of[i]]
+            collect_changes(out, item_path, old_item, new_item, node.item_of(new_item))
         else:
             out.append(RawChange(item_path, old_item, MISSING))
     out.extend(
@@ -1083,14 +1108,14 @@ def python_path(path: Path, model: type[VcoModel] | None) -> Path:
     """
     node: Node = model
     parts: list[PathPart] = []
-    for part in path.parts:
+    for part, next_part in zip(path.parts, (*path.parts[1:], None), strict=True):
         if isinstance(part, str):
             found = node_field(node, part)
             parts.append(part if found is None else found[0])
             node = node_child(node, part)
         else:
             parts.append(part)
-            node = node.item if isinstance(node, KeyedList) else None
+            node = node.item_with(next_part) if isinstance(node, KeyedList) else None
     return Path(parts)
 
 
@@ -1107,11 +1132,11 @@ def is_override_flag(model: type[VcoModel], path: Path) -> bool:
     """
     *parents, last = path.parts
     node: Node = model
-    for part in parents:
+    for part, next_part in zip(parents, path.parts[1:], strict=True):
         if isinstance(part, str):
             node = node_child(node, part)
         elif isinstance(node, KeyedList):
-            node = node.item
+            node = node.item_with(next_part)
         else:
             return False
     found = node_field(node, last)

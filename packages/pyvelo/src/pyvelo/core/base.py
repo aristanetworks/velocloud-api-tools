@@ -36,7 +36,7 @@ import datetime as dt
 import functools
 import sys
 import types
-from collections.abc import Callable, Collection, Iterable, Iterator, Mapping
+from collections.abc import Callable, Collection, Hashable, Iterable, Iterator, Mapping
 from dataclasses import dataclass
 from enum import Enum, IntEnum, auto
 from typing import (
@@ -1206,6 +1206,45 @@ class ListItemType:
             self.annotation,  # pyright: ignore[reportArgumentType]
             config=ConfigDict(hide_input_in_errors=True),
         )
+
+    @functools.cached_property
+    def _tagged_variants(
+        self,
+    ) -> tuple[Callable[[Any], Hashable], dict[Hashable, type[VcoModel]]] | None:
+        """The union's callable discriminator and the variant of each tag, or None.
+
+        None when the element annotation carries no ``Discriminator`` whose
+        ``discriminator`` is a callable.
+        """
+        discriminators = [
+            meta.discriminator
+            for meta in get_args(self.annotation)[1:]
+            if isinstance(meta, Discriminator) and callable(meta.discriminator)
+        ]
+        if not discriminators:
+            return None
+        by_tag: dict[Hashable, type[VcoModel]] = {}
+        for member in _union_members(_unwrap_annotated(self.annotation)):
+            variant = _unwrap_annotated(member)
+            if get_origin(member) is not Annotated or not _is_vco_model_type(variant):
+                continue
+            for meta in get_args(member)[1:]:
+                if isinstance(meta, Tag):
+                    _ = by_tag.setdefault(meta.tag, variant)
+        return discriminators[0], by_tag
+
+    def variant_of(self, value: object) -> type[VcoModel]:
+        """The variant *value*, a JSON item or a model, is.
+
+        For a union, the variant whose ``Tag`` the union's callable
+        discriminator gives for *value*. The first variant with one variant,
+        with no callable discriminator, or for a tag that no variant carries.
+        """
+        tagged = self._tagged_variants
+        if len(self.variants) == 1 or tagged is None:
+            return self.variants[0]
+        discriminator, by_tag = tagged
+        return by_tag.get(discriminator(value), self.variants[0])
 
     def validate(self, value: object, *, context: JsonObject | None = None) -> VcoModel:
         """*value* as the element type; for a union, the discriminator picks one."""
