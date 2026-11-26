@@ -1,12 +1,16 @@
 import copy
 import dataclasses
+import importlib
 import inspect
 import json
+import pkgutil
 import uuid
 from collections.abc import Mapping
-from typing import Any, cast, overload
+from typing import Any, cast, get_args, overload
 
 import pytest
+import pyvelo.client.models.configuration as configuration_models
+import yaml
 from pydantic import MISSING
 from pyvelo.client.enums.configuration import ConfigurationModuleName
 from pyvelo.client.exceptions import (
@@ -35,7 +39,9 @@ from pyvelo.client.schemas.configuration import (
     QosConfigurationModule,
     new_edge_module,
 )
-from pyvelo.core import ConfigContext, Owned, add, at, delete
+from pyvelo.core import ConfigContext, Owned, VcoModel, add, at, delete
+from pyvelo.core.base import list_item_type
+from pyvelo.core.fields import get_key_spec
 from pyvelo.core.identity import (
     NetworkServiceIdentity,
     ResolverNotLoadedError,
@@ -2088,3 +2094,72 @@ def test_a_rule_deleted_and_added_again_is_not_rebased_onto_a_changed_module() -
         (str(c.path), c.before is MISSING, c.after is MISSING) for c in again.changes
     ] == [(AT_A, False, True), (AT_A, True, False)]
     assert again.data["segments"][0]["outbound"][1] == changed_b
+
+
+def test_a_plan_that_holds_an_added_rule_dumps_to_yaml_as_its_plain_data() -> None:
+    mod = fw(TWO_RULES, layer=Edge)
+    _ = mod.data.merge_patch(_outbound({"c": add(DENY)}))
+    plan = plan_module(mod, level=EDGE)
+    assert type(plan.data["segments"][0]["outbound"][2]) is AddedItem
+    plain = json.loads(json.dumps(plan.data))
+    assert yaml.safe_dump(plan.data) == yaml.safe_dump(plain)
+    assert yaml.dump(plan.data) == yaml.dump(plain)
+
+
+def _library_models() -> set[type[VcoModel]]:
+    found: set[type[VcoModel]] = set()
+    prefix = configuration_models.__name__ + "."
+    for info in pkgutil.walk_packages(configuration_models.__path__, prefix):
+        for value in vars(importlib.import_module(info.name)).values():
+            if isinstance(value, type) and issubclass(value, VcoModel):
+                found.add(value)
+    return found
+
+
+def _serializes_as_any(annotation: object) -> bool:
+    """Whether *annotation* holds a ``SerializeAsAny()`` at any depth."""
+    # Typed as an alias of Annotated, SerializeAsAny is no class to isinstance.
+    metadata: tuple[object, ...] = getattr(annotation, "__metadata__", ())
+    return any(type(m).__name__ == "SerializeAsAny" for m in metadata) or any(
+        _serializes_as_any(arg) for arg in get_args(annotation)
+    )
+
+
+def test_a_keyed_list_of_several_kinds_of_item_dumps_each_item_as_its_own_kind() -> (
+    None
+):
+    unions = {
+        f"{model.__name__}.{name}": field_info.annotation
+        for model in _library_models()
+        for name, field_info in model.model_fields.items()
+        if get_key_spec(field_info) is not None
+        and (items := list_item_type(field_info)) is not None
+        and len(items.variants) > 1
+    }
+    assert "DeviceSettingsData.routed_interfaces" in unions
+    assert "LanSettings.interfaces" in unions
+    assert [name for name, ann in unions.items() if not _serializes_as_any(ann)] == []
+
+    # A marked item of a kind that is not the first dumps as an item not marked.
+    mod = ds(
+        {
+            **DS_RAW,
+            "models": {
+                "edge510": {
+                    "routedInterfaces": [
+                        {"name": "LAG1", "slaveInterfaces": [{"name": "GE5"}]}
+                    ],
+                    "lan": {"interfaces": []},
+                }
+            },
+        }
+    )
+    models = mod.data.models
+    assert isinstance(models, dict)
+    interfaces = models["edge510"].routed_interfaces
+    assert isinstance(interfaces, list)
+    (lag,) = interfaces
+    assert type(lag).__name__ == "RoutedInterfaceLag"
+    unmarked = mod.data.model_dump(mode="json", by_alias=True)
+    lag.mark_added()
+    assert mod.data.model_dump(mode="json", by_alias=True) == unmarked

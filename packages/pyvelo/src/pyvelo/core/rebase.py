@@ -33,6 +33,7 @@ from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import ClassVar, Self, get_args, get_origin, override
 
+import yaml
 from pydantic import MISSING
 from pydantic.fields import FieldInfo
 
@@ -635,8 +636,14 @@ class AddedItem(dict[str, object]):
     """The dump of an item an ``add`` built.
 
     ``pair_items`` pairs it with no item as read. It is equal to its ``dict``
-    and is JSON as it is.
+    and is JSON as it is, and YAML too: ``yaml.safe_dump`` and ``yaml.dump``
+    write it as the mapping it is.
     """
+
+
+# A dumper refuses (safe) or tags (full) a dict subclass it does not know.
+yaml.SafeDumper.add_representer(AddedItem, yaml.SafeDumper.represent_dict)
+yaml.Dumper.add_representer(AddedItem, yaml.Dumper.represent_dict)
 
 
 def _holds_added(value: object) -> bool:

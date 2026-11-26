@@ -735,7 +735,9 @@ class VcoModel(BaseModel):
         instance ``__dict__`` under a name no field has, not as a private
         attribute, because it records how the item came to be, not what it
         holds, so it is kept out of what equality, ``model_dump`` and ``repr``
-        read.
+        read. A keyed list that holds several kinds of item must dump each item
+        as its own class (``SerializeAsAny`` on its items), so that the entry
+        cannot change which member of the union pydantic dumps a marked item as.
         """
         object.__setattr__(self, _ADDED, True)
 
