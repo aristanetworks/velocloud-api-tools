@@ -259,6 +259,24 @@ async def test_a_provider_of_the_wrong_service_type_leaves_the_state_unchanged()
     assert state.plan().changed == ()
 
 
+async def test_a_service_of_the_wrong_type_is_refused_with_what_fits() -> None:
+    pipeline, client, state = await loaded_profile()
+    client.add_service(703, logical_id=AUTH, name="radius-1", type_="authentication")
+
+    with pytest.raises(ResolutionError) as wrong:
+        _ = await pipeline.apply(
+            state,
+            module="deviceSettings",
+            segment="Global Segment",
+            patch=provider_patch("radius-1"),
+        )
+
+    error = wrong.value
+    assert (error.wanted, error.candidates) == ("dns", ["dns-a", "dns-b"])
+    assert error.path == OWNER
+    assert str(error).endswith("Of that type the enterprise has: dns-a, dns-b.")
+
+
 async def test_a_save_after_setting_a_provider_by_uuid_loads_the_services_once() -> (
     None
 ):
@@ -558,6 +576,48 @@ async def test_the_redo_of_a_lost_css_provider_edit_applies() -> None:
     assert css_provider(state).logical_id == uuid.UUID(CSS_WEST)
     _ = await pipeline.save(state)
     assert one_row(stored_refs(client.store), CSS_PROVIDER)["enterpriseObjectId"] == 710
+
+
+async def test_an_unknown_css_name_lists_the_services_the_field_takes() -> None:
+    pipeline, client, state = await loaded_with_css()
+    client.add_service(
+        711,
+        logical_id=str(uuid.UUID(int=711)),
+        name="css-east",
+        type_="cloudSecurityService",
+    )
+
+    with pytest.raises(ResolutionError) as near:
+        _ = await set_css(pipeline, state, "css-wst")
+    with pytest.raises(ResolutionError) as far:
+        _ = await set_css(pipeline, state, "zzz")
+
+    assert near.value.wanted == "cloudSecurityService"
+    assert near.value.candidates[0] == "css-west"  # the closest first
+    assert set(near.value.candidates) <= {"css-west", "css-east"}
+    place = 'segments["Global Segment"].css.provider.logical_id'
+    assert str(near.value.path) == place
+    assert str(near.value).startswith(
+        f"{place}: Unknown network service of type 'cloudSecurityService': 'css-wst'."
+    )
+    assert far.value.candidates == ["css-east", "css-west"]
+    assert "Of that type: css-east, css-west" in str(far.value)
+    assert "dns-a" not in str(far.value)
+    assert state.plan().changed == ()
+
+
+async def test_an_unknown_css_name_with_no_css_service_says_there_is_none() -> None:
+    pipeline, _, state = await loaded_profile()
+
+    with pytest.raises(ResolutionError) as unknown:
+        _ = await set_css(pipeline, state, "css-west")
+
+    assert unknown.value.wanted == "cloudSecurityService"
+    assert unknown.value.candidates == []
+    assert (
+        "The enterprise has no network service of type 'cloudSecurityService'."
+        in str(unknown.value)
+    )
 
 
 def edge_state() -> ConfigState:

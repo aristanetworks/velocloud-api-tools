@@ -18,7 +18,6 @@ from pyvelo.client.derived_refs import (
     ALWAYS_SEND_REFS,
     APPEND_ONLY_REF_NAMES,
     PROCESSOR_REF_NAMES,
-    SERVICE_TYPES,
     DerivedRefs,
     PlanWarning,
     RefChange,
@@ -45,6 +44,7 @@ from pyvelo.config.resolver import ResolverRegistry
 from pyvelo.core import ConfigContext
 from pyvelo.core.base import IdentityLookup
 from pyvelo.core.identity import (
+    SERVICE_TYPES,
     NetworkServiceIdentity,
     ResolutionError,
     ResolverNotLoadedError,

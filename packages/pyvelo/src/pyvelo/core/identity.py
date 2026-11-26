@@ -14,13 +14,14 @@ import re
 import types
 import typing
 import uuid
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from typing import (
     TYPE_CHECKING,
     Annotated,
     Any,
     ClassVar,
+    Final,
     Literal,
     NewType,
     Self,
@@ -628,6 +629,20 @@ class NetworkServiceIdentity:
     logical_id: uuid.UUID
     object_id: int
     type_: str
+
+
+SERVICE_TYPES: Final[Mapping[str, str]] = {
+    "deviceSettings:dns:primaryProvider": "dns",
+    "deviceSettings:dns:backupProvider": "dns",
+    "deviceSettings:authentication": "authentication",
+    "deviceSettings:css:provider": "cloudSecurityService",
+}
+"""The type of network service each provider ref names, a tag of
+``EnterpriseServiceType``.
+
+A new row of one of these names whose service is of another type is refused:
+the VCO would store a row that names a service the field cannot use.
+"""
 
 
 @dataclass(frozen=True)

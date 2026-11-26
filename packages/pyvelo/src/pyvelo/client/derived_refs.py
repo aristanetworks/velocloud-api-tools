@@ -25,7 +25,6 @@ import uuid
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Final, cast
 
-from pyvelo.client.enums.enterprise import EnterpriseServiceType
 from pyvelo.client.hub_services import HubServiceTable, hub_name
 from pyvelo.client.models.configuration.ref_owners import (
     RefOwner,
@@ -40,6 +39,7 @@ from pyvelo.client.models.configuration.ref_owners import (
 from pyvelo.core import ConfigContext, OwnsRef, RefOnly, VcoModel
 from pyvelo.core.base import IdentityLookup, is_dict, is_list
 from pyvelo.core.identity import (
+    SERVICE_TYPES,
     HubService,
     HubServiceNotFoundError,
     NetworkServiceIdentity,
@@ -63,19 +63,6 @@ APPEND_ONLY_REF_NAMES: Final = frozenset(
 
 A row of one of these names is never planned as removed and never ``left_out``;
 it is left out of the refs sent, and the VCO stores the ones it holds again.
-"""
-
-SERVICE_TYPES: Final[Mapping[str, str]] = {
-    "deviceSettings:dns:primaryProvider": EnterpriseServiceType.DNS.value,
-    "deviceSettings:dns:backupProvider": EnterpriseServiceType.DNS.value,
-    "deviceSettings:authentication": EnterpriseServiceType.AUTHENTICATION.value,
-    "deviceSettings:css:provider": EnterpriseServiceType.CLOUD_SECURITY_SERVICE.value,
-}
-"""The type of network service each provider ref names, a tag of
-``EnterpriseServiceType``.
-
-A new row of one of these names whose service is of another type is refused:
-the VCO would store a row that names a service the field cannot use.
 """
 
 PROCESSOR_REF_NAMES: Final = frozenset(
@@ -256,8 +243,36 @@ def _warning_path(name: str, segment_name: str | None) -> str:
     return f"refs {name}" if segment_name is None else f"refs {name} ({segment_name})"
 
 
-def _unknown_identity(owner: RefOwner, caught: ResolutionError) -> ResolutionError:
-    """The error for an owner whose identity the resolver does not know."""
+_MAX_SERVICES_SHOWN = 20
+"""How many services of the wanted type a refusal lists, at most."""
+
+
+def _services_of(wanted: str, resolvers: IdentityLookup | None) -> list[str]:
+    """The sorted names of the loaded network services of type *wanted*.
+
+    At most 20 of them; none with no *resolvers*.
+    """
+    if resolvers is None:
+        return []
+    names = sorted(
+        {
+            service.name
+            for service in resolvers.identities(NetworkServiceIdentity)
+            if service.type_ == wanted
+        }
+    )
+    return names[:_MAX_SERVICES_SHOWN]
+
+
+def _unknown_identity(
+    owner: RefOwner, caught: ResolutionError, resolvers: IdentityLookup | None
+) -> ResolutionError:
+    """The error for an owner whose identity the resolver does not know.
+
+    For a provider ref (``SERVICE_TYPES``), ``wanted`` is the type of service it
+    takes and ``candidates`` the loaded services of that type.
+    """
+    wanted = SERVICE_TYPES.get(owner.name)
     label = entity_label(owner.identity_type)
     marker = owner.marker
     if isinstance(marker, OwnsRef) and marker.value is not None:
@@ -273,12 +288,13 @@ def _unknown_identity(owner: RefOwner, caught: ResolutionError) -> ResolutionErr
     return ResolutionError(
         name=caught.name,
         identity_type=owner.identity_type,
-        candidates=[],
+        candidates=[] if wanted is None else _services_of(wanted, resolvers),
         message=(
             f"{owner.path} names the {label} {owner.value}, which the VCO does "
             f"not have, so the row it goes with cannot be added. {advice}"
         ),
         path=owner.path,
+        wanted=wanted,
     )
 
 
@@ -302,22 +318,34 @@ def _object_id(identity: object) -> int:
 
 
 def _wrong_service_type(
-    owner: RefOwner, service: NetworkServiceIdentity
+    owner: RefOwner,
+    service: NetworkServiceIdentity,
+    resolvers: IdentityLookup | None,
 ) -> ResolutionError:
-    """The error for an owner of a provider ref whose service is of another type."""
+    """The error for an owner of a provider ref whose service is of another type.
+
+    ``wanted`` is the type the ref takes and ``candidates`` the loaded services of
+    that type, which the message lists.
+    """
     wanted = SERVICE_TYPES[owner.name]
+    fitting = _services_of(wanted, resolvers)
+    if fitting:
+        what_fits = f"Of that type the enterprise has: {', '.join(fitting)}."
+    else:
+        what_fits = "The enterprise has no service of that type."
     return ResolutionError(
         name=service.name,
         identity_type=NetworkServiceIdentity,
-        candidates=[],
+        candidates=fitting,
         message=(
             f"{owner.path} names the service {service.name!r}, which is of type "
             f"{service.type_!r}, and the field wants a service of type "
             f"{wanted!r}, so the row it goes with would name a service it "
             "cannot use. Give the name or the logical ID of a service of type "
-            f"{wanted!r}: {patch_text(owner.path)} sets it."
+            f"{wanted!r}: {patch_text(owner.path)} sets it. {what_fits}"
         ),
         path=owner.path,
+        wanted=wanted,
     )
 
 
@@ -410,14 +438,14 @@ def _new_row(
         except ResolverNotLoadedError:
             raise
         except ResolutionError as caught:
-            raise _unknown_identity(owner, caught) from caught
+            raise _unknown_identity(owner, caught, resolvers) from caught
         wanted = SERVICE_TYPES.get(owner.name)
         if (
             wanted is not None
             and isinstance(identity, NetworkServiceIdentity)
             and identity.type_ != wanted
         ):
-            raise _wrong_service_type(owner, identity)
+            raise _wrong_service_type(owner, identity, resolvers)
         object_id = _object_id(identity)
         if _is_per_segment(owner):
             segment_object_id = _segment_object_id(owner, context, resolvers)

@@ -11,7 +11,14 @@ from uuid import UUID
 
 import pytest
 from pydantic import MISSING, ConfigDict, Field
+from pyvelo.client.enums.enterprise import EnterpriseServiceType
 from pyvelo.client.exceptions import DetachedObjectError
+from pyvelo.client.models.configuration.device_settings.segment import (
+    CssProviderRef,
+    DeviceSegment,
+    DnsPrimaryProvider,
+    SegmentAuthentication,
+)
 from pyvelo.core import (
     ConfigContext,
     NetworkServiceIdentity,
@@ -26,6 +33,8 @@ from pyvelo.core.base import (
     _REF_FILLING_HOOKS,  # pyright: ignore[reportPrivateUsage]
     ref_only_fields,
 )
+from pyvelo.core.fields import service_type_of
+from pyvelo.core.identity import SERVICE_TYPES
 from pyvelo.core.rebase import carry_unset_defaults, find_lossy_assignments
 
 DNS_A = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
@@ -448,3 +457,13 @@ def test_validated_json_does_not_read_a_ref_only_key() -> None:
 def test_the_constructor_hook_does_not_make_pydantic_validate_through_init() -> None:
     assert not Stub.__pydantic_custom_init__
     assert not SubStub.__pydantic_custom_init__
+
+
+def test_service_type_of_says_what_a_provider_field_takes() -> None:
+    assert service_type_of(CssProviderRef, "logical_id") == "cloudSecurityService"
+    assert service_type_of(DnsPrimaryProvider, "service") == "dns"
+    assert service_type_of(SegmentAuthentication, "service") == "authentication"
+    assert service_type_of(CssProviderRef(), "logical_id") == "cloudSecurityService"
+    assert service_type_of(CssProviderRef, "ref") is None
+    assert service_type_of(DeviceSegment, "segment") is None
+    assert set(SERVICE_TYPES.values()) <= {t.value for t in EnterpriseServiceType}

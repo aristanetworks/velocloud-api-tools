@@ -565,8 +565,10 @@ them reads the table, once for the state, and goes on. A name no service has
 raises `ResolutionError` and leaves the state as it was (`error.path` is the
 provider's field), and so does a service of the wrong type for the field (`dns`
 for a DNS provider, `authentication` for the authentication provider,
-`cloudSecurityService` for a CSS provider): the message names the service and
-both types and says to give a service of the wanted type. `state.plan()` does not read it and raises `ResolverNotLoadedError`
+`cloudSecurityService` for a CSS provider): the message names the field, the
+type it takes and the services of that type, and the error has them as `path`,
+`wanted` and `candidates`; a name no service of that type has is refused the
+same way. `state.plan()` does not read it and raises `ResolverNotLoadedError`
 for a provider set before the table is loaded;
 `await pipeline.load_resolvers(state, NetworkServiceIdentity)` (from
 `pyvelo.core.identity`) reads it at a time of your choosing.

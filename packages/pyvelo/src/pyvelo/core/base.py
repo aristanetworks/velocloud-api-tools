@@ -36,7 +36,7 @@ import datetime as dt
 import functools
 import sys
 import types
-from collections.abc import Callable, Iterable, Iterator, Mapping
+from collections.abc import Callable, Collection, Iterable, Iterator, Mapping
 from dataclasses import dataclass
 from enum import Enum, IntEnum, auto
 from typing import (
@@ -117,6 +117,10 @@ class IdentityResolver(Protocol):
         """The resolver registered for *identity_type*, or None when there is none."""
         ...
 
+    def identities[T](self, identity_type: type[T], /) -> Collection[T]:
+        """The loaded identities of *identity_type*; empty when none are loaded."""
+        ...
+
 
 class IdentityLookup(Protocol):
     """What a derived ref needs to find a loaded identity by one of its IDs.
@@ -128,6 +132,10 @@ class IdentityLookup(Protocol):
         self, identity_type: type[T], accessor: Callable[[T], object], value: object, /
     ) -> T:
         """The first loaded *identity_type* whose *accessor* gives *value*."""
+        ...
+
+    def identities[T](self, identity_type: type[T], /) -> Collection[T]:
+        """The loaded identities of *identity_type*; empty when none are loaded."""
         ...
 
 

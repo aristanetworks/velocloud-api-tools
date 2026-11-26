@@ -1,7 +1,7 @@
 """Three name-resolution behaviours on write, under the strict rules."""
 
 import uuid
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Collection, Mapping
 from typing import Annotated, ClassVar, cast
 
 import pytest
@@ -73,6 +73,9 @@ class Fake:
         raise ResolutionError(
             name=str(value), identity_type=identity_type, candidates=[]
         )
+
+    def identities[T](self, identity_type: type[T], /) -> Collection[T]:
+        return cast("Collection[T]", tuple(self.tables.get(identity_type, {}).values()))
 
 
 def fresh() -> FirewallData[Edge]:

@@ -576,7 +576,9 @@ async def test_an_unknown_service_in_a_new_segment_entry_names_the_whole_path(
     error = raised.value
     full = Path((*entry_at.parts, "dns", "primary_provider", "service"))
     assert error.path == full
-    assert str(error).startswith(f"{full}: Unknown network service: 'dns-x'.")
+    assert str(error).startswith(
+        f"{full}: Unknown network service of type 'dns': 'dns-x'."
+    )
     assert str(error).count("primary_provider") == 1
     assert (error.name, error.identity_type, error.candidates) == (
         "dns-x",

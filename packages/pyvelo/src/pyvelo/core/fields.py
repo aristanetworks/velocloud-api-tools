@@ -50,6 +50,8 @@ from pydantic import (
 )
 from pydantic_core import CoreSchema, core_schema
 
+from .identity import SERVICE_TYPES
+
 if TYPE_CHECKING:
     from pydantic.fields import FieldInfo
 
@@ -216,6 +218,40 @@ def get_ref_only(field_info: FieldInfo) -> RefOnly | None:
         if isinstance(m, RefOnly):
             return m
     return None
+
+
+def service_type_of(model: BaseModel | type[BaseModel], field_name: str) -> str | None:
+    """The type of network service the field *field_name* of *model* takes.
+
+    ``None`` for a field that is no provider field: one with neither a ``RefOnly``
+    nor an ``OwnsRef`` marker, or whose ref name is not in ``SERVICE_TYPES``. The
+    ref name is the ``ref`` of *model* when it is an instance that has one as
+    text, else the field's ``RefOnly`` default, else its ``OwnsRef`` name. A
+    *field_name* that is no field of *model* raises ``KeyError``.
+    """
+    if isinstance(model, type):
+        return _service_type(model.model_fields[field_name])
+    field_info = type(model).model_fields[field_name]
+    return _service_type(field_info, getattr(model, "ref", None))
+
+
+def _service_type(field_info: FieldInfo, stub_ref: object = None) -> str | None:
+    """``service_type_of`` from a field's *field_info*.
+
+    *stub_ref* is the ``ref`` its model holds, or ``None``.
+    """
+    ref_only = get_ref_only(field_info)
+    owns_ref = get_owns_ref(field_info)
+    if ref_only is None and owns_ref is None:
+        return None
+    name: str | None
+    if isinstance(stub_ref, str) and stub_ref:
+        name = stub_ref
+    elif ref_only is not None:
+        name = ref_only.default
+    else:
+        name = None if owns_ref is None else owns_ref.name
+    return None if name is None else SERVICE_TYPES.get(name)
 
 
 def get_provides(field_info: FieldInfo) -> Provides | None:

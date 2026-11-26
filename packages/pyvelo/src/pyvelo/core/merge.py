@@ -57,6 +57,7 @@ from .base import (
 from .fields import (
     ConfigContext,
     FixedList,
+    _service_type,  # pyright: ignore[reportPrivateUsage]  # the core engines share it
     get_fixed_list,
     get_key_spec,
     get_name_of,
@@ -65,7 +66,7 @@ from .fields import (
     has_override_flag,
     is_edge_local,
 )
-from .identity import ResolutionError, ResolverNotLoadedError
+from .identity import ResolutionError, ResolverNotLoadedError, resolution_error
 from .layers import Edge, Kind, Layered, field_kind, inner_adapter
 from .owned import ByFlag, Owned, group_of, unwrap
 from .patch import (
@@ -923,7 +924,9 @@ def _resolve_name(
        reads off the identity.
     4. If the ID type is ``str`` and *name* equals a known ID, *name* is the ID.
     5. Otherwise the ``ResolutionError`` propagates, its message after *path*;
-       a ``ResolverNotLoadedError`` propagates as it was raised.
+       for a provider field it names the type of service the field takes and
+       the services of it (``_of_wanted_type``). A ``ResolverNotLoadedError``
+       propagates as it was raised.
 
     With no resolver registered for the identity type, *name* is returned when
     the ID type is ``str`` or cannot be told (any text may be the ID, and
@@ -951,7 +954,12 @@ def _resolve_name(
             name,
         ):
             return name
-        error.locate(path)
+        refused = _of_wanted_type(
+            error, field_info, resolvers, resolvable.identity_type
+        )
+        refused.locate(path)
+        if refused is not error:
+            raise refused from None
         raise
     except LookupError as err:
         if id_type is None or id_type is str:
@@ -964,6 +972,35 @@ def _resolve_name(
             "invalid_value",
         ) from err
     return resolvable.accessor(identity)
+
+
+def _of_wanted_type(
+    error: ResolutionError,
+    field_info: FieldInfo,
+    resolvers: IdentityResolver,
+    identity_type: type[object],
+) -> ResolutionError:
+    """*error*, or the error that names the type of service the field takes.
+
+    A field that takes one type of service (``service_type_of``) is refused with that
+    type and the loaded services of it. An error for a name that a service of that type
+    has (several share it) is kept, with ``wanted`` set.
+    """
+    wanted = _service_type(field_info)
+    if wanted is None:
+        return error
+    fitting = sorted(
+        {
+            name
+            for identity in resolvers.identities(identity_type)
+            if getattr(identity, "type_", None) == wanted
+            and isinstance(name := getattr(identity, "name", None), str)
+        }
+    )
+    if error.name.lower() in {name.lower() for name in fitting}:
+        error.wanted = wanted
+        return error
+    return resolution_error(identity_type, error.name, fitting, wanted=wanted)
 
 
 def _is_known_id[T](
