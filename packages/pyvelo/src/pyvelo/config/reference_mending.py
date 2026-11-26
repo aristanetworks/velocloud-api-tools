@@ -95,6 +95,7 @@ def hub_reference_mending(
     hub_lists: Mapping[int, Collection[object]],
     *,
     target_type: Literal["edge", "profile"],
+    only_hubs: Sequence[Reference] | None = None,
 ) -> tuple[MendingPatch, ...]:
     """The patches that mend the references to a backhaul hub among *dangling*.
 
@@ -109,7 +110,8 @@ def hub_reference_mending(
     is left out whole. No ``remove_reference`` patch is offered when those
     patches together would leave a rule that backhauls through hubs with no
     hub (each entry of its ``backhaul_edges`` is one of the references:
-    ``left_without_hub``), since the rule would backhaul nowhere; the
+    ``left_without_hub``, or *only_hubs* when the caller found them), since the
+    rule would backhaul nowhere; the
     ``add_member`` patches are offered then too. A rule that does not backhaul
     through hubs keeps its ``remove_reference`` patch. A hub of a segment has
     one ``add_member`` patch, which names it as the first of its references
@@ -121,7 +123,7 @@ def hub_reference_mending(
     # A hub backhaul left with no hub would backhaul nowhere: no removal then.
     removals = (
         []
-        if left_without_hub(hubs, edited)
+        if (only_hubs if only_hubs is not None else left_without_hub(hubs, edited))
         else [_removal(r, edited, target_type) for r in hubs]
     )
     # One hub of one segment needs one patch, however each entry names it.

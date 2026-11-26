@@ -536,7 +536,7 @@ async def test_no_patch_takes_the_only_hub_out_of_a_rule() -> None:
     assert error.only_hubs == error.references
     text = str(error)
     assert ONLY_HUB in text
-    assert "give the rule another hub, change its `routePolicy` or delete the" in text
+    assert "give the rule another hub or change its `routePolicy`, and the next" in text
     (member,) = error.mending
     await send(state, member)
     _ = state.plan()  # the hub is a backhaul hub again

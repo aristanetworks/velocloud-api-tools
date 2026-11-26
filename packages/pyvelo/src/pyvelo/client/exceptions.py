@@ -450,8 +450,9 @@ def _only_hubs_text(
         f"{len(only_hubs)} of these references (`only_hubs` holds them) the hub "
         "is the only hub of a rule that backhauls through hubs, or one of all "
         "the hubs it names, and the rule would backhaul nowhere. Make the hub a "
-        f"backhaul hub again {again}, or first "
-        "give the rule another hub, change its `routePolicy` or delete the rule."
+        f"backhaul hub again {again}; or first give the rule another hub or "
+        "change its `routePolicy`, and the next `plan()` offers the patch that "
+        "takes the hub out of the rule; or delete the rule."
     )
 
 
@@ -612,8 +613,47 @@ def _backhaul_ways(places: Sequence[HublessBackhaul]) -> str:
                 "be deleted."
             )
     if len(places) > 1:
-        text += " The other rules are mended the same way."
+        text += _others_text(places, first)
     return text + " Or take back every edit to a module with `revert`."
+
+
+def _others_text(
+    places: Sequence[HublessBackhaul], first: HublessBackhaul | None
+) -> str:
+    """The sentence that says how the places after *first* are mended.
+
+    A default rule cannot be deleted, so the delete patch shown for *first*
+    is not offered for one; and when *first* is a default rule, a rule that
+    is not can be deleted as well.
+    """
+    others = [p for p in places if p is not first]
+    if first is None:
+        return " Each rule is mended in one of these ways."
+    if first.deletable:
+        fixed = [p for p in others if not p.deletable]
+        if not fixed:
+            return " The other rules are mended the same way."
+        names = ", ".join(_rule_text(p) for p in fixed)
+        return (
+            " The other rules are mended the same way, but these are default "
+            f"rules of their segment, which cannot be deleted: {names}; give "
+            "each a hub or route it another way."
+        )
+    text = " The other rules are mended the same way"
+    if any(p.deletable for p in others):
+        text += (
+            ", and one that is not a default rule can be deleted too, with "
+            '`{"_op": "delete"}` at the rule'
+        )
+    return text + "."
+
+
+def _rule_text(place: HublessBackhaul) -> str:
+    """``rule 'Web' of segment 'Guest'``, or without the segment when it has no name."""
+    text = f"rule {place.rule_name!r}"
+    if place.segment_name is not None:
+        text += f" of segment {place.segment_name!r}"
+    return text
 
 
 class BackhaulWithoutHubError(VcoError):
@@ -638,9 +678,7 @@ class BackhaulWithoutHubError(VcoError):
         """
         self.places = tuple(places)
         lines = "\n".join(
-            f"  {p.module} {p.path}: rule {p.rule_name!r}"
-            + (f" of segment {p.segment_name!r}" if p.segment_name is not None else "")
-            for p in self.places
+            f"  {p.module} {p.path}: {_rule_text(p)}" for p in self.places
         )
         message = (
             f"{len(self.places)} backhaul rule(s) name no hub:\n{lines}\n"

@@ -19,8 +19,13 @@ from hub_state import (
     hub_pipeline,
     profile_hub_rows,
 )
-from pyvelo.config import BackhaulWithoutHubError, ConfigPipeline, ConfigState
-from pyvelo.core import add, delete
+from pyvelo.config import (
+    BackhaulWithoutHubError,
+    ConfigPipeline,
+    ConfigState,
+    DanglingReferenceError,
+)
+from pyvelo.core import add, delete, move
 from refs_helpers import segment_row
 from segment_helpers import GLOBAL, ds_entry, qos_entry
 
@@ -334,9 +339,140 @@ async def test_the_ways_shown_are_those_of_the_first_place() -> None:
 
     assert [p.rule_name for p in error.places] == [DEFAULT, "Web"]
     text = str(error)
-    assert '"_op": "delete"' not in text
-    assert "mended the same way" in text
+    assert '"Default-Any-UDP": {"_op": "delete"}' not in text
+    assert "mended the same way, and one that is not a default rule can be" in text
     policy = shapes(error, WAYS[1:2])["route it another way"]
     await edit(state, QOS, fill(policy, "gateway"))
     (place,) = refused(state).places  # the default rule is mended
     assert place.rule_name == "Web"
+
+
+@pytest.mark.parametrize(
+    "mend",
+    [
+        {"routeCfg": {"backhaulEdges": {"+": add({"name": HUB_B.name})}}},
+        {"routePolicy": "gateway"},
+    ],
+    ids=["a hub", "another way"],
+)
+async def test_a_default_rule_listed_after_a_rule_is_named_as_not_deletable(
+    mend: dict[str, Any],
+) -> None:
+    state = await guest_backhaul_state()
+    await edit(state, QOS, to_default(NO_HUB))
+    await edit(
+        state,
+        QOS,
+        {"segments": {"Guest": {"rules": {"+": add(hub_backhaul_rule("Web"))}}}},
+    )
+
+    error = refused(state)
+
+    assert [p.rule_name for p in error.places] == ["Web", DEFAULT]
+    assert (
+        "The other rules are mended the same way, but these are default rules of "
+        "their segment, which cannot be deleted: rule 'Default-Any-UDP' of segment "
+        "'Guest'; give each a hub or route it another way."
+    ) in str(error)
+    await edit(state, QOS, to_default(mend))
+    (place,) = refused(state).places  # the default rule is mended
+    assert place.rule_name == "Web"
+
+
+# -- guards: what the check already does ---------------------------------------------
+
+
+async def test_a_rule_with_no_hub_as_read_moved_in_its_list_is_kept() -> None:
+    state = await guest_backhaul_state(
+        hub_backhaul_rule("Web"), hub_backhaul_rule("Mail", HUB_A)
+    )
+    await edit(state, QOS, {"segments": {"Guest": {"rules": {"Web": move(last=True)}}}})
+
+    plan = state.plan()
+
+    assert [m.name for m in plan.changed] == [QOS]
+    assert [w.code for w in plan.warnings] == ["backhaul_without_hub_kept"]
+
+
+async def test_emptying_the_hubs_by_assignment_is_refused() -> None:
+    state = await guest_backhaul_state(hub_backhaul_rule("Web", HUB_A))
+    rule = state.profile.qos.segments[1].rules[0]
+    rule.action.edge_to_cloud_route_action.route_cfg.backhaul_edges = []
+
+    (place,) = refused(state).places
+
+    assert str(place.path) == WEB_PATH
+
+
+async def test_setting_backhaul_by_assignment_on_a_rule_with_no_hub_is_refused() -> (
+    None
+):
+    rule = hub_backhaul_rule("Web")
+    rule["action"][CLOUD]["routePolicy"] = "gateway"
+    state = await guest_backhaul_state(rule)
+    held = state.profile.qos.segments[1].rules[0]
+    held.action.edge_to_cloud_route_action.route_policy = "backhaul"
+
+    (place,) = refused(state).places
+
+    assert str(place.path) == WEB_PATH
+
+
+async def test_backhaul_edges_unset_as_read_warns() -> None:
+    rule = hub_backhaul_rule("Web")
+    del rule["action"][CLOUD]["routeCfg"]["backhaulEdges"]
+    state = await guest_backhaul_state(rule)
+
+    (warning,) = state.plan().warnings
+
+    assert (warning.code, warning.path) == (
+        "backhaul_without_hub_kept",
+        f"{QOS}: {WEB_PATH}",
+    )
+
+
+async def test_a_rule_with_no_hub_in_an_assigned_segment_is_refused() -> None:
+    state = await guest_backhaul_state()
+    pipeline, _ = hub_pipeline(state)
+    _ = await pipeline.assign_segment(state, "Voice")
+    rule = hub_backhaul_rule("Calls")  # the segment's template rules have a Web
+    await edit(state, QOS, {"segments": {"Voice": {"rules": {"+": add(rule)}}}})
+
+    (place,) = refused(state).places
+
+    assert (place.segment_name, place.rule_name) == ("Voice", "Calls")
+
+
+async def test_on_an_edge_no_patch_takes_the_only_hub_out_of_a_rule() -> None:
+    inheriting = qos_entry(GLOBAL)
+    del inheriting["cosMapping"]  # the template's is stored with its flag off
+    state = await hub_edge_state(
+        [ds_entry(GLOBAL)],
+        [inheriting],
+        profile_ds=[ds_with_vpn(GLOBAL, hubs=(HUB_A, HUB_B), backhaul=(HUB_A,))],
+        profile_qos=[qos_entry(GLOBAL)],
+        profile_refs=profile_hub_rows(
+            segment_row(GLOBAL[0], GLOBAL[3], GLOBAL[2]),
+            *(
+                hub_row(
+                    hub,
+                    service_id=service_id,
+                    service_logical_id=service,
+                    segment=GLOBAL,
+                    roles=("hub", "backhaul") if hub == HUB_A else ("hub",),
+                )
+                for hub, (service_id, service) in GUEST_SERVICES.items()
+            ),
+        ),
+    )
+    rule = hub_backhaul_rule("Web", HUB_B)  # Hub-B is no backhaul hub
+    await edit(
+        state, QOS, {"segments": {"Global Segment": {"rules": {"+": add(rule)}}}}
+    )
+
+    with pytest.raises(DanglingReferenceError) as error:
+        _ = state.plan()
+
+    assert [m.kind for m in error.value.mending] == ["add_member"]
+    assert error.value.only_hubs == error.value.references
+    assert error.value.on_edge

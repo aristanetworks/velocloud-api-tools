@@ -14,7 +14,7 @@ for a hub.
 import dataclasses
 import functools
 from collections.abc import Mapping, Sequence
-from typing import Final, TypeIs
+from typing import Final, TypeGuard
 
 from pydantic import MISSING
 
@@ -31,7 +31,7 @@ from pyvelo.core import VcoModel, unwrap
 from pyvelo.core.base import field_models, is_list
 from pyvelo.core.fields import get_fixed_list
 from pyvelo.core.rebase import Path
-from pyvelo.core.references import Reference, patch_keys
+from pyvelo.core.references import Reference, patch_keys, segment_name
 from pyvelo.core.walk import walk_fields
 
 ROUTE_ACTIONS: Final = (
@@ -42,7 +42,7 @@ ROUTE_ACTIONS: Final = (
 """The route actions of a rule's ``action``, by their python names."""
 
 
-def is_hub_backhaul(route_action: object) -> TypeIs[RouteAction]:
+def is_hub_backhaul(route_action: object) -> TypeGuard[RouteAction]:
     """Whether *route_action* backhauls to hubs.
 
     That is a ``RouteAction`` whose ``route_policy`` is ``"backhaul"`` and whose
@@ -79,13 +79,6 @@ def _can_hold(model_cls: type[VcoModel], target: type[VcoModel]) -> bool:
         for field_info in current.model_fields.values():
             pending.extend(field_models(field_info))
     return False
-
-
-def _segment_name(segment: VcoModel | None) -> str | None:
-    """The ``name`` of a segment entry, or ``None`` when it has none."""
-    metadata: object = getattr(segment, "segment", None)
-    name: object = getattr(metadata, "name", None)
-    return name if isinstance(name, str) else None
 
 
 def _deletable(segment: VcoModel | None, action_path: Path) -> bool:
@@ -126,7 +119,7 @@ def hubless_backhauls(module: str, data: VcoModel) -> tuple[HublessBackhaul, ...
                     HublessBackhaul(
                         module,
                         site.path.child(name),
-                        _segment_name(site.segment),
+                        segment_name(site.segment),
                         rule.name,
                         deletable=_deletable(site.segment, site.path),
                     )
@@ -182,6 +175,10 @@ def check_backhaul_hubs(
     rule of the same segment, as ``check_references`` matches a reference) is
     left as it is with a ``backhaul_without_hub_kept`` warning; any other
     raises ``BackhaulWithoutHubError``, which names them all.
+
+    The path names the segment and the rule by their keys (a rule by its
+    name, else its logical ID), so a rule that is renamed is a new rule, and
+    one that takes the name of a rule removed is that rule.
     """
     refused: list[HublessBackhaul] = []
     kept: list[HublessBackhaul] = []

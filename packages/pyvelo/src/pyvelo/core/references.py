@@ -393,3 +393,11 @@ def patch_keys(data: VcoModel, path: Path) -> tuple[str, ...] | None:
     """
     found = _patch_keys(data, path.parts)
     return None if found is None else tuple(found[0])
+
+
+def segment_name(segment: VcoModel | None) -> str | None:
+    """The ``name`` of a segment entry, or ``None`` when it has none.
+
+    ``references`` gives a ``per_segment`` reference this name.
+    """
+    return _segment_name(segment)

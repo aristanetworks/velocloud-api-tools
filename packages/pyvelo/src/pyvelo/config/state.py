@@ -1230,6 +1230,7 @@ class ConfigState:
                 if level is ConfigContext.EDGE
                 else edited_by_name.get(ConfigurationModuleName.DEVICE_SETTINGS)
             )
+            only_hubs = left_without_hub(findings.dangling, edited_by_name)
             raise DanglingReferenceError(
                 findings.dangling,
                 on_edge=level is ConfigContext.EDGE,
@@ -1238,8 +1239,9 @@ class ConfigState:
                     edited_by_name,
                     hub_list_members(hub_lists),
                     target_type=self.target_type,
+                    only_hubs=only_hubs,
                 ),
-                only_hubs=left_without_hub(findings.dangling, edited_by_name),
+                only_hubs=only_hubs,
             )
         return tuple(
             ValidationWarning(
