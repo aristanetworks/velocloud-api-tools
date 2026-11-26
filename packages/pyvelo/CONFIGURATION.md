@@ -554,7 +554,11 @@ the edge keeps running with the object `state.effective` showed as the edge's.
 A DNS or authentication provider is set by assignment, with the service's
 logical ID (`provider.service = uuid.UUID(...)`), or by `apply`, with the
 logical ID or the service's name (`patch={"dns": {"primaryProvider":
-{"service": "dns-a"}}}`). The row needs the enterprise's network services, and
+{"service": "dns-a"}}}`). A CSS provider is held in the data
+(`css.provider.logical_id`): a patch gives the service's logical ID or its
+name, and `""` clears it (`{"css": {"provider": {"logical_id": ""}}}`), which
+is what the VCO writes for a provider that is not configured. `null` is refused
+there, with that advice. The row needs the enterprise's network services, and
 `load` does not read them: the first `apply`, `save` or `dry_run` that needs
 them reads the table, once for the state, and goes on. A name no service has
 raises `ResolutionError` and leaves the state as it was, and so does a service
@@ -1475,6 +1479,8 @@ A lost DNS or authentication provider (a ref row of a field that stands for
 it) is redone by setting the field again, in the segment as the stored list
 names it: `{"segments": {"Global Segment": {"dns": {"primaryProvider":
 {"service": "<logical ID>"}}}}}`, or `null` for a provider you cleared.
+A lost CSS provider is redone the same way, by its logical ID, or by `""` for
+one you cleared.
 `error.not_redone()` lists the lost edits the patch leaves out: the clashes, a
 lost ref row of any other kind (a patch changes data, not refs), a provider
 whose segment is no longer stored or cannot be told from another by its

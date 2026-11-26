@@ -38,6 +38,7 @@ from .base import (
     _field_names_by_key,  # pyright: ignore[reportPrivateUsage]
     _field_value,  # pyright: ignore[reportPrivateUsage]
     _held_type,  # pyright: ignore[reportPrivateUsage]
+    _holds_empty_text,  # pyright: ignore[reportPrivateUsage]
     _id_adapter,  # pyright: ignore[reportPrivateUsage]
     _id_type,  # pyright: ignore[reportPrivateUsage]
     _is_vco_model_type,  # pyright: ignore[reportPrivateUsage]
@@ -562,13 +563,15 @@ def _null_value(field_info: FieldInfo, name: str, path: Path, *, built: bool) ->
     It is ``MISSING``, ``None``, or ``PatchError`` at *path*.
 
     A field whose type takes ``MISSING`` is unset by ``null``, one that takes
-    only ``None`` is set to it, and one that takes neither refuses it. A field
-    that takes both is unset in a change, where leaving the key out would
-    change nothing; a ``RefOnly`` field is the exception, as ``MISSING`` there
-    says the module was read without refs and ``None`` says there is no row,
-    so a clear is ``None``. In an item or sub-model the patch *built* it is ``None``:
-    leaving the key out already leaves the field unset, and the JSON dump of
-    an item writes ``null`` for ``None``, so a dump builds the same item.
+    only ``None`` is set to it, and one that takes neither refuses it; when
+    such a field holds ``Literal[""]``, its value for none, the refusal says to
+    give ``""``. A field that takes both is unset in a change, where leaving
+    the key out would change nothing; a ``RefOnly`` field is the exception, as
+    ``MISSING`` there says the module was read without refs and ``None`` says
+    there is no row, so a clear is ``None``. In an item or sub-model the patch
+    *built* it is ``None``: leaving the key out already leaves the field unset,
+    and the JSON dump of an item writes ``null`` for ``None``, so a dump builds
+    the same item.
     """
     takes_missing = _field_accepts_missing(field_info)
     takes_none = _field_accepts_none(field_info)
@@ -578,6 +581,13 @@ def _null_value(field_info: FieldInfo, name: str, path: Path, *, built: bool) ->
         return None
     if takes_missing:
         return MISSING
+    if _holds_empty_text(field_info):
+        raise PatchError(
+            f'null is not a value of {name}: it holds "" when there is none, which '
+            'is what the VCO writes. To clear it, give "" in place of null',
+            path,
+            "null",
+        )
     reason, remedy = (
         ("the field cannot be unset", "leave the key out")
         if built
@@ -905,12 +915,14 @@ def _resolve_name(
 
     Returns *name* unchanged if the field is not Resolvable. Otherwise, in order:
 
-    1. If the field's ID type is not ``str`` and *name* parses as it (a UUID
+    1. If *name* is ``""`` and the field holds ``Literal[""]``, ``""`` is the
+       field's value for no identity, and is returned with no lookup.
+    2. If the field's ID type is not ``str`` and *name* parses as it (a UUID
        string on a UUID field), that value is the ID.
-    2. An exact or case-insensitive name match gives what the field's accessor
+    3. An exact or case-insensitive name match gives what the field's accessor
        reads off the identity.
-    3. If the ID type is ``str`` and *name* equals a known ID, *name* is the ID.
-    4. Otherwise the ``ResolutionError`` propagates.
+    4. If the ID type is ``str`` and *name* equals a known ID, *name* is the ID.
+    5. Otherwise the ``ResolutionError`` propagates.
 
     With no resolver registered for the identity type, *name* is returned when
     the ID type is ``str`` or cannot be told (any text may be the ID, and
@@ -918,7 +930,7 @@ def _resolve_name(
     up, so ``PatchError`` at *path* says to register the resolver or give the ID.
     """
     resolvable = get_resolvable(field_info)
-    if resolvable is None:
+    if resolvable is None or (name == "" and _holds_empty_text(field_info)):
         return name
     id_type = _id_type(field_info)
     if id_type is not None and id_type is not str:

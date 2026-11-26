@@ -1098,17 +1098,35 @@ def _field_accepts_none(fi: FieldInfo) -> bool:  # pyright: ignore[reportUnusedF
     return type(None) in _union_members(_held_type(fi))
 
 
+def _held_members(fi: FieldInfo) -> list[object]:
+    """The union members of the type field *fi* holds, without ``Annotated``."""
+    return [
+        _unwrap_annotated(m) for m in _union_members(_unwrap_annotated(_held_type(fi)))
+    ]
+
+
+def _is_empty_text_literal(tp: object) -> bool:
+    return get_origin(tp) is Literal and get_args(tp) == ("",)
+
+
+def _holds_empty_text(fi: FieldInfo) -> bool:  # pyright: ignore[reportUnusedFunction]  # imported by core.merge
+    """True if a member of the type field *fi* holds is exactly ``Literal[""]``."""
+    return any(_is_empty_text_literal(m) for m in _held_members(fi))
+
+
 def _id_type(fi: FieldInfo) -> object | None:  # pyright: ignore[reportUnusedFunction]  # imported by core.merge
     """The ID type of a Resolvable field.
 
-    It is the field's annotation without ``MISSING``, ``None`` and ``Annotated``.
+    It is the field's annotation without ``MISSING``, ``None``, ``Annotated``
+    and the empty-text literal, which is the field's value for no identity.
 
     None unless exactly one type is left.
     """
-    members = (
-        _unwrap_annotated(m) for m in _union_members(_unwrap_annotated(_held_type(fi)))
-    )
-    kept = [m for m in members if m is not MISSING and m is not type(None)]
+    kept = [
+        m
+        for m in _held_members(fi)
+        if m is not MISSING and m is not type(None) and not _is_empty_text_literal(m)
+    ]
     return kept[0] if len(kept) == 1 else None
 
 

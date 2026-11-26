@@ -16,7 +16,9 @@ from pyvelo.client.enums.configuration import ConfigurationModuleName
 from pyvelo.client.exceptions import ConfigConflictError, DetachedObjectError
 from pyvelo.client.models.configuration import DeviceSettingsData
 from pyvelo.client.models.configuration.device_settings.segment import (
+    CssProviderRef,
     DnsPrimaryProvider,
+    SegmentCss,
     SegmentDns,
 )
 from pyvelo.client.models.configuration.qos.root import QosData, ServiceRateLimit
@@ -24,7 +26,7 @@ from pyvelo.client.schemas.configuration import (
     EdgeConfiguration,
     EnterpriseConfigurationProfile,
 )
-from pyvelo.config import LayerNotSavedError
+from pyvelo.config import LayerNotSavedError, PatchError
 from pyvelo.config.pipeline import ConfigPipeline
 from pyvelo.config.resolver import ResolverContext
 from pyvelo.config.resolvers.network_service import NetworkServiceResolver
@@ -426,6 +428,95 @@ async def test_a_provider_on_a_stub_that_has_a_ref_is_one_change() -> None:
     changes = state.get_field_changes("device_settings")
 
     assert [(c.path, c.before, c.after) for c in changes] == [(OWNER, DNS_A, DNS_B)]
+
+
+CSS_WEST = "c5c5c5c5-c5c5-4c5c-8c5c-c5c5c5c5c5c5"
+
+
+def other_writer_edit(row: dict[str, Any]) -> None:
+    """Another writer's change to a key the caller does not edit."""
+    row["data"]["futureKey"] = 1
+
+
+async def loaded_with_css() -> tuple[ConfigPipeline, MockVcoClient, ConfigState]:
+    """``loaded_profile()``, whose enterprise also has the CSS service css-west."""
+    pipeline, client, state = await loaded_profile()
+    client.add_service(
+        710, logical_id=CSS_WEST, name="css-west", type_="cloudSecurityService"
+    )
+    return pipeline, client, state
+
+
+async def set_css(
+    pipeline: ConfigPipeline, state: ConfigState, value: str | None
+) -> ConfigState:
+    return await pipeline.apply(
+        state,
+        module="deviceSettings",
+        segment="Global Segment",
+        patch={"css": {"provider": {"logical_id": value}}},
+    )
+
+
+def css_provider(state: ConfigState) -> CssProviderRef:
+    section = device_settings(state).segments[0].css
+    assert isinstance(section, SegmentCss)
+    provider = section.provider
+    assert isinstance(provider, CssProviderRef)
+    return provider
+
+
+@pytest.mark.parametrize("given", [CSS_WEST, CSS_WEST.upper(), "css-west"])
+async def test_a_css_provider_is_set_by_its_logical_id_or_its_name(given: str) -> None:
+    pipeline, _, state = await loaded_with_css()
+
+    state = await set_css(pipeline, state, given)
+
+    assert css_provider(state).logical_id == uuid.UUID(CSS_WEST)
+    (change,) = state.plan().changed[0].ref_changes
+    assert (change.added, change.name, change.value) == (True, CSS_PROVIDER, CSS_WEST)
+
+
+async def test_empty_text_clears_a_css_provider_and_null_is_refused() -> None:
+    pipeline, client, state = await loaded_with_css()
+    state = await set_css(pipeline, state, "css-west")
+    _ = await pipeline.save(state)
+    assert one_row(stored_refs(client.store), CSS_PROVIDER)["enterpriseObjectId"] == 710
+
+    with pytest.raises(PatchError) as refused:
+        _ = await set_css(pipeline, state, None)
+    assert refused.value.kind == "null"
+    assert 'give ""' in refused.value.message
+    assert css_provider(state).logical_id == uuid.UUID(CSS_WEST)
+
+    state = await set_css(pipeline, state, "")
+    assert css_provider(state).logical_id == ""
+    (change,) = state.plan().changed[0].ref_changes
+    assert (change.added, change.name, change.value) == (False, CSS_PROVIDER, CSS_WEST)
+    _ = await pipeline.save(state)
+    assert not stored_refs(client.store).get(CSS_PROVIDER)
+
+
+async def test_the_redo_of_a_lost_css_provider_edit_applies() -> None:
+    pipeline, client, state = await loaded_with_css()
+    state = await set_css(pipeline, state, "css-west")
+    client.store.other_writer(DS_ID, other_writer_edit)
+
+    with pytest.raises(ConfigConflictError) as lost:
+        _ = await pipeline.save(state)
+
+    patch = lost.value.redo_patch()
+    assert patch == {
+        "segments": {
+            "Global Segment": {
+                "css": {"provider": {"logicalId": CSS_WEST, "ref": CSS_PROVIDER}}
+            }
+        }
+    }
+    state = await pipeline.apply(state, module=lost.value.module_name, patch=patch)
+    assert css_provider(state).logical_id == uuid.UUID(CSS_WEST)
+    _ = await pipeline.save(state)
+    assert one_row(stored_refs(client.store), CSS_PROVIDER)["enterpriseObjectId"] == 710
 
 
 def edge_state() -> ConfigState:
