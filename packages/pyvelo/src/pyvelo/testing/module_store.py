@@ -70,6 +70,7 @@ _FIRST_VERSION = 1_700_000_000_000
 _FIXED_TIME = "2024-01-01T00:00:00.000Z"
 _UPDATE_PATH = "configuration.updateConfigurationModule"
 _INSERT_PATH = "configuration.insertConfigurationModule"
+_DELETE_PATH = "configuration.deleteConfigurationModule"
 _STACK_PATH = "edge.getEdgeConfigurationStack"
 _MODULES_PATH = "configuration.getConfigurationModules"
 _COMPOSED_PATH = "edge.getEdgeConfigurationModules"
@@ -134,7 +135,9 @@ def _validation_error(path: str, message: str, *, code: str | None = None) -> Rp
 class ModuleStore:
     """A fake VCO for module reads and writes, over rows held as JSON.
 
-    A write is an update or an insert; writes are numbered together from 1,
+    A write is an update, an insert or a delete of a module (by its ``id``: it
+    removes the row and answers ``{"rows": 1}``, or ``{"rows": 0}`` for an ID
+    the store does not hold); writes are numbered together from 1,
     and a write whose number is in ``fail_writes`` is answered with an error
     and stores nothing; a write whose number is in ``lose_answers`` is stored
     and then not answered. A request with a required key missing is answered
@@ -272,6 +275,7 @@ class ModuleStore:
         self._methods: dict[str, Callable[[dict[str, Any]], object]] = {
             "configuration/updateConfigurationModule": self._update,
             "configuration/insertConfigurationModule": self._insert,
+            "configuration/deleteConfigurationModule": self._delete,
             "configuration/getConfiguration": self._get_configuration,
             "edge/getEdgeConfigurationStack": self._get_edge_configuration_stack,
             "configuration/getConfigurationModules": self._get_configuration_modules,
@@ -530,6 +534,14 @@ class ModuleStore:
         if self._returns_data(params):
             return copy.deepcopy(row)
         return {"id": module_id, "rows": 1}
+
+    def _delete(self, params: dict[str, Any]) -> object:
+        module_id: int = _required(params, "id", _DELETE_PATH)
+        if self._count_write():
+            raise RpcError(-32603, "simulated failure")
+        if self.rows.pop(module_id, None) is None:
+            return {"rows": 0}
+        return {"rows": 1}
 
     def _get_configuration(self, params: dict[str, Any]) -> object:
         path = "configuration.getConfiguration"

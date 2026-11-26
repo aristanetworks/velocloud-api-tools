@@ -22,6 +22,7 @@ if TYPE_CHECKING:
     from pyvelo.client.schemas.configuration import (
         AnyStoredModule,
         ConfigurationModuleBase,
+        DeleteConfigurationModule,
         EdgeConfiguration,
         EnterpriseConfigurationProfile,
         GetConfiguration,
@@ -29,7 +30,12 @@ if TYPE_CHECKING:
         InsertConfigurationModuleResult,
         UpdateConfigurationModule,
     )
-    from pyvelo.core import ConfigContext, PaginatedVcoModel, VcoModel
+    from pyvelo.core import (
+        ConfigContext,
+        PaginatedVcoModel,
+        RowsModifiedConfirmation,
+        VcoModel,
+    )
     from pyvelo.core.base import IdentityLookup
 
 
@@ -81,6 +87,10 @@ class VcoClientBaseProtocol(Protocol):
         *,
         level: ConfigContext | None = None,
     ) -> InsertConfigurationModuleResult | AnyStoredModule: ...
+
+    async def delete_configuration_module(
+        self, request: DeleteConfigurationModule
+    ) -> RowsModifiedConfirmation: ...
 
     async def get_configuration(
         self, request: GetConfiguration

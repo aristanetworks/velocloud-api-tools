@@ -18,6 +18,7 @@ from pyvelo.client.models.configuration.firewall.root import FirewallData
 from pyvelo.client.models.configuration.firewall.segment import FirewallSegment
 from pyvelo.client.schemas.configuration import (
     AnyStoredModule,
+    DeleteConfigurationModule,
     EdgeConfiguration,
     EnterpriseConfigurationProfile,
     FirewallConfigurationModule,
@@ -45,7 +46,7 @@ if TYPE_CHECKING:
     from pyvelo.client.schemas.edge import GetEdgeConfigurationStack
     from pyvelo.client.schemas.profiles import GetEnterpriseConfigurations
     from pyvelo.config.state import ConfigState
-    from pyvelo.core import ConfigContext
+    from pyvelo.core import ConfigContext, RowsModifiedConfirmation
 
 _HOST = "vco.example.invalid"
 _GLOBAL_SEGMENT_OBJECT_ID = 1
@@ -168,7 +169,7 @@ class MockVcoClient(VcoClient):
 
     It serves configurations from a store.
 
-    An edge's configuration stack, module updates, inserts and the
+    An edge's configuration stack, module updates, inserts, deletes and the
     configurations the store holds go through the real client code to
     ``store``, a :class:`~pyvelo.testing.ModuleStore`; seed it with
     :meth:`seed`, or build the client with :meth:`for_state`. A ``stack`` seeds
@@ -211,6 +212,7 @@ class MockVcoClient(VcoClient):
         self.calls: list[tuple[str, object]] = []
         self.update_requests: list[UpdateConfigurationModule] = []
         self.insert_requests: list[InsertConfigurationModule] = []
+        self.delete_requests: list[DeleteConfigurationModule] = []
         if stack is not None:
             _ = self.seed(*stack)
             _register_stack(self.store, *stack)
@@ -331,3 +333,11 @@ class MockVcoClient(VcoClient):
         self.calls.append(("insert_configuration_module", request))
         self.insert_requests.append(request)
         return await super().insert_configuration_module(request, level=level)
+
+    @override
+    async def delete_configuration_module(
+        self, request: DeleteConfigurationModule
+    ) -> RowsModifiedConfirmation:
+        self.calls.append(("delete_configuration_module", request))
+        self.delete_requests.append(request)
+        return await super().delete_configuration_module(request)

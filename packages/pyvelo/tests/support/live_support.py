@@ -177,6 +177,7 @@ from pyvelo.client.schemas.configuration import (
     AnyStoredModule,
     ConfigurationModuleBase,
     ConfigurationModuleUpdate,
+    DeleteConfigurationModule,
     EdgeConfiguration,
     EnterpriseConfigurationProfile,
     GetConfiguration,
@@ -197,7 +198,6 @@ from pyvelo.config.resolvers.hub import HubResolver
 from pyvelo.core import (
     Alias,
     ConfigContext,
-    NoneIsMissing,
     PaginatedVcoModel,
     PatchError,
     RowsModifiedConfirmation,
@@ -1546,16 +1546,6 @@ async def effective_data(
 # ---------------------------------------------------------------------------
 # Writing back what a test changed
 # ---------------------------------------------------------------------------
-
-
-class DeleteConfigurationModule(VcoModel):
-    """``configuration/deleteConfigurationModule``.
-
-    The library has no wrapper for it.
-    """
-
-    id_: Annotated[int, Alias("id")]
-    enterprise_id: Annotated[int | MISSING, NoneIsMissing] = MISSING
 
 
 async def delete_module(site: Site, module_id: int) -> None:

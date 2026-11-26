@@ -41,6 +41,7 @@ from pyvelo.client.schemas import edge as edge_schemas
 from pyvelo.client.schemas import enterprise as enterprise_schemas
 from pyvelo.client.schemas.configuration import (
     ConfigurationModuleUpdate,
+    DeleteConfigurationModule,
     EnterpriseConfigurationProfile,
     FirewallConfigurationModule,
     InsertQosConfigurationModule,
@@ -1595,7 +1596,7 @@ WRITE_CALLS = [
         "a module delete sent by hand",
         lambda client: client.portal(
             "configuration/deleteConfigurationModule",
-            live.DeleteConfigurationModule(id_=1),
+            DeleteConfigurationModule(id_=1),
             RowsModifiedConfirmation,
         ),
     ),

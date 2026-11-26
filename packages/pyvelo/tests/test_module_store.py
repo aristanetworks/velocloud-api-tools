@@ -14,14 +14,15 @@ from pyvelo.client.enums.configuration import ConfigurationModuleName
 from pyvelo.client.exceptions import PRECONDITION_FAILED, ConfigConflictError
 from pyvelo.client.schemas.configuration import (
     ConfigurationModuleUpdate,
+    DeleteConfigurationModule,
     FirewallConfigurationModule,
     QosConfigurationModule,
     UpdateConfigurationModule,
 )
 from pyvelo.client.schemas.edge import GetEdgeConfigurationModules
-from pyvelo.core import ConfigContext
+from pyvelo.core import ConfigContext, RowsModifiedConfirmation
 from pyvelo.core.layers import Edge
-from pyvelo.testing import make_module_json
+from pyvelo.testing import MockVcoClient, make_module_json
 from pyvelo.testing.module_store import (
     ModuleStore,
     RpcError,
@@ -34,6 +35,7 @@ from ._type_support import MockVcoClientFactory
 
 UPDATE = "configuration/updateConfigurationModule"
 INSERT = "configuration/insertConfigurationModule"
+DELETE = "configuration/deleteConfigurationModule"
 GET_CONFIGURATION = "configuration/getConfiguration"
 GET_MODULES = "configuration/getConfigurationModules"
 GET_SERVICES = "enterprise/getEnterpriseServices"
@@ -256,6 +258,39 @@ def test_insert_issues_an_id_and_a_version() -> None:
     assert store.rows[3]["version"] != row["version"]
 
 
+def test_delete_removes_the_row_and_answers_one_row() -> None:
+    store = make_store()
+
+    assert store.handle(DELETE, {"id": 1}) == {"rows": 1}
+
+    assert store.rows == {}
+    answer = store.handle(GET_CONFIGURATION, {"id": 10, "with": ["modules"]})
+    assert answer == {"id": 10, "name": "Edge Specific Profile", "modules": []}
+
+
+def test_delete_of_an_id_the_store_lacks_answers_no_row_and_removes_nothing() -> None:
+    store = make_store()
+    held = copy.deepcopy(store.rows)
+
+    assert store.handle(DELETE, {"id": 7}) == {"rows": 0}
+
+    assert store.rows == held
+
+
+def test_a_delete_is_a_write_and_fail_writes_counts_it() -> None:
+    store = make_store()
+    store.fail_writes = {1}
+
+    with pytest.raises(RpcError, match="simulated failure"):
+        _ = store.handle(DELETE, {"id": 1})
+
+    assert list(store.rows) == [1]
+    with pytest.raises(RpcError) as missing:
+        _ = store.handle(DELETE, {})
+    assert missing.value.code == -32003
+    assert store.handle(DELETE, {"id": 1}) == {"rows": 1}
+
+
 def test_get_configuration_serves_its_modules() -> None:
     store = make_store()
     store.add_configuration({"id": 20, "name": "P"})
@@ -300,6 +335,57 @@ async def test_as_an_httpx_handler(mock_vco_client: MockVcoClientFactory) -> Non
     assert store.rows[1]["data"] == EDITED
     assert store.requests[0][0] == "configuration/updateConfigurationModule"
     assert store.requests[0][1]["version"] == "v1"
+
+
+async def test_the_client_deletes_a_module_and_the_store_records_the_request(
+    mock_vco_client: MockVcoClientFactory,
+) -> None:
+    store = make_store()
+    client = await mock_vco_client(store)
+
+    result = await client.delete_configuration_module(DeleteConfigurationModule(id_=1))
+
+    assert result == RowsModifiedConfirmation(rows=1)
+    assert store.requests == [(DELETE, {"id": 1})]
+    assert 1 not in store.rows
+
+
+async def test_the_client_names_the_enterprise_of_a_delete_when_given_one(
+    mock_vco_client: MockVcoClientFactory,
+) -> None:
+    store = make_store()
+    store.enterprise_id = 7
+    client = await mock_vco_client(store)
+
+    result = await client.delete_configuration_module(
+        DeleteConfigurationModule(id_=1, enterprise_id=7)
+    )
+
+    assert result == RowsModifiedConfirmation(rows=1)
+    assert store.requests == [(DELETE, {"id": 1, "enterpriseId": 7})]
+
+
+async def test_a_delete_of_an_id_the_store_lacks_is_answered_with_no_row(
+    mock_vco_client: MockVcoClientFactory,
+) -> None:
+    store = make_store()
+    client = await mock_vco_client(store)
+
+    result = await client.delete_configuration_module(DeleteConfigurationModule(id_=7))
+
+    assert result == RowsModifiedConfirmation(rows=0)
+    assert list(store.rows) == [1]
+
+
+async def test_the_mock_client_records_a_delete() -> None:
+    client = MockVcoClient()
+    request = DeleteConfigurationModule(id_=1)
+
+    result = await client.delete_configuration_module(request)
+
+    assert result == RowsModifiedConfirmation(rows=0)
+    assert client.calls == [("delete_configuration_module", request)]
+    assert client.delete_requests == [request]
 
 
 def test_store_of_holds_the_rows_and_their_configurations() -> None:

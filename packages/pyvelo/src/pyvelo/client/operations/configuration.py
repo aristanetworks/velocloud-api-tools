@@ -61,6 +61,7 @@ from pyvelo.client.schemas.configuration import (
     ConfigurationModuleList,
     ConfigurationModuleVersion,
     DeleteConfiguration,
+    DeleteConfigurationModule,
     EdgeConfiguration,
     EnterpriseConfigurationProfile,
     GetAllApplicationsResult,
@@ -555,6 +556,21 @@ class ConfigurationMixin(Protocol):
         """Delete a configuration/profile from the enterprise."""
         return await self.portal(
             "configuration/deleteConfiguration",
+            request,
+            RowsModifiedConfirmation,
+        )
+
+    @domain_tag(CONFIG)
+    async def delete_configuration_module(
+        self: VcoClientBaseProtocol, request: DeleteConfigurationModule
+    ) -> RowsModifiedConfirmation:
+        """Delete one module of a configuration, by the module's ID.
+
+        The answer is the VCO's, as it gives it: ``rows`` is 1 for a module
+        deleted and 0 for an ID it holds no module of.
+        """
+        return await self.portal(
+            "configuration/deleteConfigurationModule",
             request,
             RowsModifiedConfirmation,
         )
