@@ -304,8 +304,10 @@ holds a comma or a double quote is written as a JSON string instead
 (`"a,b",24,"192.168.1.1",GE3`), and in Python a tuple of the parts works too.
 An `add` under the comma form stores each part as its field reads it: on a
 field declared `str | int` (a static route's `cidr_prefix`),
-`10.2.0.0,24,192.168.1.1,GE3` stores the number `24`. The quoted form and a
-tuple store what they say (`"24"` is text there), and so does a value the body
+`10.2.0.0,24,192.168.1.1,GE3` stores the number `24`. A part is a number only
+as a number is written (no leading zero, no `+`, not `-0`, at most 18 digits):
+`024` stays the text `024`, and names no route with prefix 24. The quoted form
+and a tuple store what they say (`"24"` is text there), and so does a value the body
 gives for the field. A text that reads as
 two keys of the list, one as the quoted form (where `true` is a boolean, so
 `a,24,true,GE3` names the item `a,24,True,GE3`) and one as plain parts split at

@@ -390,6 +390,40 @@ def test_an_add_under_the_comma_form_types_each_part_by_its_field() -> None:
     assert "already in the list" in message_of(routes(), {"routes": {R1_TEXT: add()}})
 
 
+@pytest.mark.parametrize(
+    ("part", "typed"),
+    [
+        ("24", 24),
+        ("-1", -1),
+        ("0", 0),
+        ("016", "016"),
+        ("00", "00"),
+        ("-0", "-0"),
+        ("+5", "+5"),
+        ("1" + "0" * 4999, "1" + "0" * 4999),
+    ],
+    ids=["24", "-1", "0", "016", "00", "-0", "+5", "5000-digits"],
+)
+def test_a_comma_key_part_is_a_number_only_as_a_number_is_written(
+    part: str, typed: int | str
+) -> None:
+    root = routes()
+    _ = root.merge_patch({"routes": {f"10.2.0.0,{part},192.168.1.1,GE4": add()}})
+    assert root.routes[2].prefix == typed
+    assert type(root.routes[2].prefix) is type(typed)
+
+
+def test_a_comma_key_part_not_written_as_a_number_selects_as_text() -> None:
+    assert select_items(routes(), "routes", "10.1.0.0,016,192.168.1.1,") == []
+    assert select_items(routes(), "routes", "10.1.0.0,16,192.168.1.1,") == [1]
+    huge = "1" + "0" * 4999
+    assert select_items(routes(), "routes", f"10.1.0.0,{huge},192.168.1.1,") == []
+    # Beside the stored 24, an add under 024 is another route, as the text says.
+    root = routes()
+    _ = root.merge_patch({"routes": {"10.0.0.0,024,192.168.1.1,GE3": add()}})
+    assert [route.prefix for route in root.routes] == [24, 16, "024"]
+
+
 def test_a_static_route_added_under_the_comma_form_sends_its_prefix_as_a_number() -> (
     None
 ):

@@ -1741,20 +1741,28 @@ class _Selection:
     """
 
 
-_WHOLE_NUMBER = re.compile(r"-?[0-9]+")
+_CANONICAL_WHOLE_NUMBER = re.compile(r"0|-?[1-9][0-9]{0,17}")
+"""A whole number as ``str(int)`` writes it, of at most 18 digits.
+
+No leading zero, no ``+``, no ``-0``: ``str(int(text)) == text`` for each, so
+the number stands for the same key as the text. The bound keeps ``int`` far
+from Python's limit on the digits it converts.
+"""
 
 
 def _typed_part(spec: _ListSpec, key_path: str, text: str) -> KeyScalar:
     """*text*, one part of a composite key split at the commas, as its field reads it.
 
     The ``int`` when *key_path* is one field of the items whose type holds both
-    ``str`` and ``int`` and *text* is a whole number in digits; else *text*. A
-    text caller cannot write the type, so the field's type decides, as it does
-    for a field that holds only ``int``.
+    ``str`` and ``int`` and *text* is a whole number written as ``str(int)``
+    writes it, of at most 18 digits; else *text*. A text caller cannot write
+    the type, so the field's type decides, as it does for a field that holds
+    only ``int``. Any other text (``024``, ``-0``, ``+5``) is kept, so it
+    selects and adds as the text it is.
     """
     fields = {} if spec.item_type is None else spec.item_type.fields
     field_info = fields.get(key_path)
-    if field_info is None or _WHOLE_NUMBER.fullmatch(text) is None:
+    if field_info is None or _CANONICAL_WHOLE_NUMBER.fullmatch(text) is None:
         return text
     members = _members_of(_held_type(field_info))
     return int(text) if str in members and int in members else text
