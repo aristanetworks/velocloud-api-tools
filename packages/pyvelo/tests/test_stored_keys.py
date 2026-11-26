@@ -11,7 +11,7 @@ import uuid
 from typing import Any
 
 import pytest
-from pydantic import ValidationError
+from pydantic import MISSING, ValidationError
 from pyvelo.client.models.configuration.device_settings.root import EdgeSnmpV2c
 from pyvelo.client.models.configuration.device_settings.routed_interface import (
     RoutedInterfaceCell,
@@ -162,6 +162,51 @@ def test_an_edit_to_one_class_keeps_what_every_class_stores() -> None:
     assert not any(
         "bandwidth_pct" in e or "staticSla" in e for e in sent["classesOfService"]
     )
+
+
+def named_classes_wan() -> dict[str, Any]:
+    """A copy of ``WAN`` whose classes are named, one with the empty text."""
+    raw = copy.deepcopy(WAN)
+    first, second = raw["links"][0]["classesOfService"]["classesOfService"]
+    first["name"], second["name"] = "Gold", ""
+    return raw
+
+
+def test_a_class_of_service_holds_the_name_a_vco_stores_on_it() -> None:
+    raw = named_classes_wan()
+    for module in both_ways(WanConfigurationModule, "WAN", raw):
+        gold, unnamed = require_present(module.data.links)[
+            0
+        ].classes_of_service.classes_of_service
+        assert (gold.name, unnamed.name) == ("Gold", "")
+        assert_untouched(module, raw, EDGE)
+    nameless = copy.deepcopy(WAN)
+    del nameless["links"][0]["classesOfService"]["classesOfService"][0]["name"]
+    for module in both_ways(WanConfigurationModule, "WAN", nameless):
+        entry = require_present(module.data.links)[
+            0
+        ].classes_of_service.classes_of_service[0]
+        assert entry.name is MISSING
+        assert "name" not in entry.model_dump(by_alias=True)
+        assert_untouched(module, nameless, EDGE)
+
+
+def test_an_edit_to_one_class_sends_every_class_s_name_as_stored() -> None:
+    raw = named_classes_wan()
+    module = wan(raw)
+    link = require_present(module.data.links)[0]
+    link.classes_of_service.classes_of_service[1].policing = True
+    sent = plan_module(module, level=EDGE).data["links"][0]["classesOfService"]
+    assert [e["name"] for e in sent["classesOfService"]] == ["Gold", ""]
+
+
+def test_an_edit_of_a_class_s_name_sends_the_new_name() -> None:
+    raw = named_classes_wan()
+    module = wan(raw)
+    link = require_present(module.data.links)[0]
+    link.classes_of_service.classes_of_service[0].name = "Silver"
+    sent = plan_module(module, level=EDGE).data["links"][0]["classesOfService"]
+    assert [e["name"] for e in sent["classesOfService"]] == ["Silver", ""]
 
 
 def test_a_link_that_also_stores_the_key_this_library_wrote_keeps_it_as_read() -> None:

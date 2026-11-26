@@ -28,6 +28,7 @@ class WanLinkCosEntry(VcoModel):
     default_class_of_service: bool = False
     dscp_tags: list[str]
     id: uuid.UUID = Field(default_factory=uuid.uuid4)
+    name: str | MISSING = MISSING
     policing: bool = False
     static_sla: Annotated[WanLinkStaticSla, Alias("staticSLA")] = Field(
         default_factory=WanLinkStaticSla
