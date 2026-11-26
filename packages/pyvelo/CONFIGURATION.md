@@ -1407,9 +1407,17 @@ modules written before the device settings (QoS and firewall, in a save that
 removes a hub: see "Hubs"), and every module of an edge save, are not rebased:
 a changed version raises as above. A device settings write that changes such a
 module on the VCO after it was stored leaves the state with the module as it
-was stored, so the next write of it meets the changed version. The cost is one
-version read per module written after the device settings, and one full read of
-the module when its version changed.
+was stored: in a profile, the next write of it is rebased (below); in an edge,
+it meets the changed version. The cost is one version read per module written
+after the device settings, in that save or, for a profile's QoS and firewall, at
+their next write in a later save, and one full read of the module when its
+version changed.
+
+The same holds for a later save: a profile's QoS and firewall that a device
+settings write may have changed are written with a rebase the next time they
+are saved, however many saves later (`state.rebase_on_write` names them). Until
+then the state shows them as they were read: load the profile again to see what
+the device settings write changed.
 
 Which of the two a stale write raises depends on the VCO's conditional check
 of the version. With it on, the VCO refuses the write, and the save raises

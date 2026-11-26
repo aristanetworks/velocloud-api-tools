@@ -640,6 +640,12 @@ class ConfigState:
     of them. ``ConfigPipeline.revert`` of one reads the configuration too, and
     deletes the module it finds there when it holds exactly what this state's
     module holds (``revert_module`` refuses it: it sends nothing)."""
+    rebase_on_write: set[str] = field(
+        default_factory=set, init=False, repr=False, compare=False
+    )
+    """The names of the profile modules a device settings write of this profile
+    may have changed since the state read them. A save writes each with a rebase:
+    it reads the version first and applies the edits to the module as it is now."""
     _modules_were_unset: bool | None = field(default=None, repr=False)
     """Whether ``modules`` was in the target config's ``model_fields_set`` when
     ``module(create=True)`` made the list where it was unset; ``None`` when the

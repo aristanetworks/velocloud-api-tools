@@ -283,6 +283,12 @@ _WRITABLE_MODULES = (
     FirewallConfigurationModule,
 )
 
+_CHANGED_BY_DEVICE_SETTINGS = (
+    ConfigurationModuleName.QOS,
+    ConfigurationModuleName.FIREWALL,
+)
+"""The modules of a profile that a write of its device settings can change."""
+
 
 @dataclass
 class _Sending:
@@ -361,6 +367,11 @@ class _Sending:
         self.failed = None
         if self.is_device_settings(mod):
             self.device_settings_stored = True
+            # The write can change these on the VCO: the next write of each,
+            # in this save or a later one, is rebased.
+            for name in _CHANGED_BY_DEVICE_SETTINGS:
+                if (other := self.state.find_module(name)) is not None:
+                    self.state.rebase_on_write.add(other.name)
         paths = list(
             dict.fromkeys(
                 change.path
@@ -380,6 +391,7 @@ class _Sending:
             if insert:
                 self.state.unconfirmed_inserts.add(mod.name)
             raise
+        self.state.rebase_on_write.discard(mod.name)
         name = ConfigurationModuleName(write.name)
         self.result.server_changes[name] = write.server_changes
         self.result.left_out[name] = write.left_out
@@ -419,6 +431,7 @@ class _Sending:
         stored = error.module
         if isinstance(stored, type(mod)) and self.state.find_module(mod.name) is mod:
             self.state.replace_module(mod, cast("AnyStoredModule", stored))
+            self.state.rebase_on_write.discard(mod.name)
             return True
         return False
 
@@ -1146,7 +1159,9 @@ class ConfigPipeline:
            (``write_module(..., rebase=True)``): the device settings write can change it
            too, so its version is read first, and a changed one makes the save read the
            module and apply your edits to it; one written before them (QoS and
-           firewall, in a save that removes a hub) is not. Only a path you
+           firewall, in a save that removes a hub) is not. A profile's QoS or
+           firewall that a device settings write of an earlier save may have
+           changed (``state.rebase_on_write``) is rebased too. Only a path you
            edited that the other change also reached raises
            ``ConfigConflictError``; what changed beside your edits is in
            ``SaveResult.server_changes``, each with ``merged`` true. Per
@@ -1632,6 +1647,10 @@ class ConfigPipeline:
                 module_plan = sending.changed[position]
                 sending.failed = mod.name
                 insert = module_plan.operation == "insert"
+                # After a device settings write of this save or an earlier one.
+                rebase = sending.device_settings_stored or (
+                    state.target_type == "profile" and mod.name in state.rebase_on_write
+                )
                 try:
                     write = await _write_module(
                         self.client,
@@ -1639,7 +1658,7 @@ class ConfigPipeline:
                         module_plan,
                         enterprise_id=state.resolver_context.enterprise_id,
                         if_absent=insert and mod.name in state.unconfirmed_inserts,
-                        rebase=sending.device_settings_stored,
+                        rebase=rebase,
                         # The steps' read of the version holds for this write.
                         version_checked=(
                             run is not None and sending.is_device_settings(mod)
@@ -1648,9 +1667,7 @@ class ConfigPipeline:
                         # The module the state holds now: after the device
                         # settings write, the one stored.
                         profile_device_settings=(
-                            _profile_device_settings(state)
-                            if sending.device_settings_stored
-                            else None
+                            _profile_device_settings(state) if rebase else None
                         ),
                     )
                 except ModuleWriteError as error:

@@ -875,6 +875,34 @@ async def test_a_profile_save_rebases_qos_after_device_settings() -> None:
     )
 
 
+async def test_a_later_qos_save_is_rebased_onto_what_the_device_settings_write_left() -> (  # noqa: E501 (a test's name)
+    None
+):
+    state = profile_with_qos()
+    client = served(state)
+    propagating(client, QOS_ID)
+    pipeline = ConfigPipeline(client)
+    state = await pipeline.load_profile(CONFIG)
+    device_settings(state).lan.networks[0].name = "renamed"
+    first = await pipeline.save(state)
+    assert [str(n) for n in first.modules_updated] == ["deviceSettings"]
+    assert "QOS" in state.rebase_on_write
+    assert "deviceSettings" not in state.rebase_on_write
+    client.store.requests.clear()
+    rate_limit(state.profile.qos).value = 5
+
+    second = await pipeline.save(state)
+
+    assert methods(client.store) == [VERSION_READ, CONFIGURATION_READ, UPDATE]
+    assert [str(n) for n in second.modules_updated] == ["QOS"]
+    held = client.store.rows[QOS_ID]["data"]["serviceRateLimit"]
+    assert held == {**RATE, "enabled": True, "value": 5}
+    rate = rate_limit(state.profile.qos)
+    assert (rate.enabled, rate.value) == (True, 5)
+    assert state.rebase_on_write == set()
+    assert state.plan().changed == ()
+
+
 async def test_a_profile_save_raises_a_conflict_where_the_propagation_reached_an_edit() -> (  # noqa: E501 (a test's name)
     None
 ):
@@ -907,6 +935,7 @@ async def test_a_profile_save_raises_a_conflict_where_the_propagation_reached_an
     assert len(client.update_requests) == 1  # device settings; QoS was not sent
     # The state holds the module as it is now, with the clash to redo on it.
     assert rate_limit(state.profile.qos).value == 7
+    assert "QOS" not in state.rebase_on_write
 
 
 async def test_a_module_listed_before_device_settings_is_written_after_it_and_rebased() -> (  # noqa: E501 (a test's name)
