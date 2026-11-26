@@ -17,6 +17,7 @@ from pyvelo.client.schemas.enterprise import (
     EnterpriseServiceSummary,
     GetEnterpriseEdgeListItem,
     GetEnterpriseServices,
+    NetworkSegment,
 )
 from pyvelo.config.resolver import ResolverContext
 from pyvelo.config.resolvers.hub import HubResolver
@@ -105,6 +106,40 @@ class FakeSegment:
         self.data: FakeSegmentData = FakeSegmentData(segment_id)
 
 
+def network_segment_wire(
+    name: str,
+    segment_id: int,
+    *,
+    object_id: int | None = None,
+    logical_id: uuid.UUID | None = None,
+    type_: str = "REGULAR",
+) -> dict[str, object]:
+    """One item of a ``getEnterpriseNetworkSegments`` answer, in wire keys.
+
+    The object ID defaults to *segment_id* and the logical ID to
+    ``uuid.UUID(int=segment_id)``. Parse it with ``NetworkSegment.model_validate``
+    to get a segment as the VCO's answer gives it.
+    """
+    logical = uuid.UUID(int=segment_id) if logical_id is None else logical_id
+    return {
+        "id": segment_id if object_id is None else object_id,
+        "created": "2024-01-01T00:00:00.000Z",
+        "modified": "2024-01-01T00:00:00.000Z",
+        "name": name,
+        "logicalId": str(logical),
+        "alertsEnabled": 0,
+        "operatorAlertsEnabled": 0,
+        "object": "NETWORK_SEGMENT",
+        "type": type_,
+        "version": "0",
+        "data": {
+            "segmentId": segment_id,
+            "delegateToEnterprise": False,
+            "delegateToEnterpriseProxy": False,
+        },
+    }
+
+
 class FakeEdge:
     """Minimal edge object for EdgeResolver tests."""
 
@@ -121,21 +156,23 @@ async def make_segment_resolver(segments: list[dict[str, Any]]) -> SegmentResolv
     Expected dict keys: ``name``, ``segment_id``, optionally ``object_id``
     and ``segment_logical_id``.
     """
-    fake_segments = [
-        FakeSegment(
-            id_=seg.get("object_id", seg["segment_id"]),
-            name=seg["name"],
-            logical_id=(
-                uuid.UUID(str(seg["segment_logical_id"]))
-                if "segment_logical_id" in seg
-                else uuid.UUID(int=0)
-            ),
-            segment_id=seg["segment_id"],
+    parsed = [
+        NetworkSegment.model_validate(
+            network_segment_wire(
+                seg["name"],
+                seg["segment_id"],
+                object_id=seg.get("object_id"),
+                logical_id=(
+                    uuid.UUID(str(seg["segment_logical_id"]))
+                    if "segment_logical_id" in seg
+                    else uuid.UUID(int=0)
+                ),
+            )
         )
         for seg in segments
     ]
     client = AsyncMock()
-    client.get_enterprise_network_segments.return_value = fake_segments
+    client.get_enterprise_network_segments.return_value = parsed
     resolver = SegmentResolver(client)
     await resolver.load(ResolverContext())
     return resolver

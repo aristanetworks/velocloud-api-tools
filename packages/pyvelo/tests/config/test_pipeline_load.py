@@ -327,6 +327,6 @@ async def test_the_mock_client_holds_the_segment_it_answers_as_an_object() -> No
     held = client.store.objects[segment.id_]
     assert held["object"] == "NETWORK_SEGMENT"
     assert held["logicalId"] == str(segment.logical_id)
-    assert (held["name"], held["type"]) == (segment.name, segment.type_.value)
+    assert (held["name"], held["type"]) == (segment.name, "REGULAR")
     # A segment is not a service: the services listing leaves it out.
     assert await listed_services(client) == []

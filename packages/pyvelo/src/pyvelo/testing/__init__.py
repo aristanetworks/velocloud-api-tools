@@ -19,6 +19,7 @@ from pyvelo.testing.fixtures import (
     make_segment_resolver,
     make_transport,
     mock_vco_client_factory,
+    network_segment_wire,
 )
 from pyvelo.testing.mock_client import (
     MockVcoClient,
@@ -54,5 +55,6 @@ __all__ = [
     "make_transport",
     "mock_vco_client_factory",
     "module_row",
+    "network_segment_wire",
     "store_of",
 ]

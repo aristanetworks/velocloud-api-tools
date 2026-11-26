@@ -11,6 +11,7 @@ import copy
 import uuid
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, cast
+from unittest.mock import AsyncMock
 
 import pytest
 from profile_state import (
@@ -28,6 +29,7 @@ from pyvelo.client.schemas.configuration import (
     AnyStoredModule,
     QosConfigurationModule,
 )
+from pyvelo.client.schemas.enterprise import NetworkSegment
 from pyvelo.config.pipeline import ConfigPipeline
 from pyvelo.config.profile_segments import (
     apply_assignment,
@@ -35,9 +37,11 @@ from pyvelo.config.profile_segments import (
     plan_assignment,
     segment_modules,
 )
-from pyvelo.config.resolver import ResolverRegistry
+from pyvelo.config.resolver import ResolverContext, ResolverRegistry
+from pyvelo.config.resolvers.segment import SegmentResolver
 from pyvelo.config.state import ConfigState
 from pyvelo.core.identity import ResolutionError
+from pyvelo.testing import network_segment_wire
 from refs_helpers import QOS_ID, SEG1_OBJECT
 from segment_helpers import (
     GLOBAL,
@@ -138,6 +142,37 @@ async def test_the_qos_entry_has_the_template_defaults_match_key_for_key() -> No
     assert [d["match"] for d in written] == [t["match"] for t in template]
     assert [d["action"] for d in written] == [t["action"] for t in template]
     assert state.plan().warnings == ()
+
+
+async def test_a_segment_read_from_the_vco_is_assigned() -> None:
+    state = await global_only()
+    client = AsyncMock()
+    client.get_enterprise_network_segments.return_value = [
+        NetworkSegment.model_validate(
+            network_segment_wire(
+                "Global Segment", 0, object_id=1, logical_id=uuid.UUID(int=0)
+            )
+        ),
+        NetworkSegment.model_validate(
+            network_segment_wire(
+                "Guest",
+                2,
+                object_id=SEG1_OBJECT,
+                logical_id=uuid.UUID(GUEST[2]),
+                type_="CDE",
+            )
+        ),
+    ]
+    resolver = SegmentResolver(client)
+    await resolver.load(ResolverContext())
+    state.resolvers.register(resolver)
+    pipeline, _ = module_store_pipeline(state)
+
+    await pipeline.assign_segment(state, "Guest")
+
+    assert entry_of(plan_of(state, DS), "Guest")["segment"]["type"] == "CDE"
+    for module in (DS, QOS, FIREWALL):
+        entry_of(plan_of(state, module), "Guest")
 
 
 async def test_assign_then_save_writes_the_three_modules() -> None:

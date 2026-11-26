@@ -11,9 +11,11 @@ from typing import cast, final
 from unittest.mock import AsyncMock
 
 import pytest
+from pyvelo.client.enums.enterprise import NetworkSegmentType
+from pyvelo.client.models.configuration.profile_segments import descriptor_of
 from pyvelo.client.protocol import VcoClientProtocol
 from pyvelo.client.schemas.configuration import GetRoutableApplications
-from pyvelo.client.schemas.enterprise import GetObjectGroups
+from pyvelo.client.schemas.enterprise import GetObjectGroups, NetworkSegment
 from pyvelo.client.schemas.license import GetEnterpriseEdgeLicenses
 from pyvelo.client.schemas.profiles import GetEnterpriseConfigurations
 from pyvelo.config.resolver import BaseResolver, ResolverContext, ResolverRegistry
@@ -55,7 +57,7 @@ from pyvelo.core.identity import (
     ServiceGroupIdentity,
     ServiceGroupLogicalId,
 )
-from pyvelo.testing import FakeEdge, FakeSegment
+from pyvelo.testing import FakeEdge, FakeSegment, network_segment_wire
 from pyvelo.testing.fixtures import make_hub_resolver, make_network_service_resolver
 
 AG_UUID1 = uuid.UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
@@ -452,6 +454,19 @@ async def _segments() -> BaseResolver[object]:
             )
         )
     )
+
+
+@pytest.mark.asyncio
+async def test_a_segment_parsed_from_the_wire_has_its_type_as_the_enum() -> None:
+    client = AsyncMock()
+    client.get_enterprise_network_segments.return_value = [
+        NetworkSegment.model_validate(network_segment_wire("Guest", 2, type_="PRIVATE"))
+    ]
+    resolver = SegmentResolver(client)
+    await resolver.load(ResolverContext())
+    identity = resolver.lookup("Guest")
+    assert identity.type_ is NetworkSegmentType.PRIVATE
+    assert descriptor_of(identity)["type"] == "PRIVATE"
 
 
 async def _edges() -> BaseResolver[object]:
