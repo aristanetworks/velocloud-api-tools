@@ -9,8 +9,8 @@ made on its own.
 At each place the first of these rules that fits is used. ``MISSING`` stands
 for a side that has no value there.
 
-1. ``R`` equals ``P``: nothing is planned here. Every difference between ``P``
-   and ``D`` (``raw_changes``) is a server change.
+1. ``R`` equals ``P`` (``same_json``): nothing is planned here. Every
+   difference between ``P`` and ``D`` (``raw_changes``) is a server change.
 2. All three are objects: each key is walked, those of ``R`` first, then those
    only ``P`` has, then those only ``D`` has.
 3. A keyed list whose items ``pair_items`` pairs between ``R`` and ``P``, and
@@ -32,6 +32,9 @@ for a side that has no value there.
    list ``pair_items`` cannot pair), a key or an item that was removed. It is
    applied when ``D`` holds the payload's value (``_beyond``): ``D`` may hold
    more keys than the payload, but not a key ``R`` had and the payload lacks.
+   Two values are equal, here and in rule 1, when ``same_json`` says so: a
+   boolean is never a number, so a sent ``true`` stored as ``1`` is not
+   applied, and ``1`` is ``1.0``.
 
 A path names an item of a keyed list as ``raw_changes`` does: by its key, or by its
 position ``#n`` where the key repeats or there is none. An item that was read is named
@@ -70,6 +73,7 @@ from .base import (
     is_dict,
     is_list,
     list_item_type,
+    same_json,
 )
 from .fields import is_server_owned
 from .rebase import (
@@ -192,7 +196,7 @@ class PlannedChange:
         if self.part == "refs":
             return False
         if not self.is_order:
-            return self.stored != self.as_read
+            return not same_json(self.stored, self.as_read)
         if not isinstance(self.as_read, list) or not isinstance(self.stored, list):
             return True
         read, stored = set(self.as_read), set(self.stored)
@@ -299,7 +303,9 @@ def check_response(
         # A server change is a difference: one that stores the value as read
         # shows none (the planned change at its path says what was sent).
         server_changes=tuple(
-            change for change in found.server_changes if change.as_read != change.stored
+            change
+            for change in found.server_changes
+            if not same_json(change.as_read, change.stored)
         ),
         stored_parts=found.stored_parts,
     )
@@ -437,7 +443,7 @@ class _Here:
 
 
 def _walk(found: _Found, here: _Here) -> None:
-    if here.r == here.p:
+    if same_json(here.r, here.p):
         # Rule 1: nothing planned here.
         found.server_changes.extend(
             ServerChange(change.path, change.before, change.after)
@@ -491,9 +497,9 @@ def _owned(found: _Found, path: Path, r: object, p: object, d: object) -> None:
     A change the plan made there is left out, and a value stored there
     otherwise than sent is a server change.
     """
-    if r != p:
+    if not same_json(r, p):
         found.left_out.append(PlannedChange(path, r, p, d))
-    if p != d:
+    if not same_json(p, d):
         found.server_changes.append(ServerChange(path, r, d))
 
 
@@ -815,7 +821,7 @@ def _beyond(
         return _beyond_object(rewrites, here)
     if is_list(here.p):
         return _beyond_list(rewrites, here)
-    if here.d == here.p:
+    if same_json(here.d, here.p):
         return []
     if rewrites.ipv6 and _same_ipv6(here.p, here.d):
         return [ServerChange(here.path, here.r if top else MISSING, here.d)]
@@ -834,7 +840,7 @@ def _beyond_object(rewrites: Rewrites, here: _Here) -> list[ServerChange] | None
         key_path = here.path.child(str(key))
         stored = d.get(key, MISSING)
         if _is_owned(rewrites, here.node, key, key_path):
-            if value != stored:
+            if not same_json(value, stored):
                 out.append(ServerChange(key_path, MISSING, stored))
             continue
         below = _beyond(

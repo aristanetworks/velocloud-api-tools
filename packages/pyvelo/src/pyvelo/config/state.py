@@ -69,7 +69,7 @@ from pyvelo.config.resolvers.hub import HubResolver
 from pyvelo.config.validation import ValidationError
 from pyvelo.config.validation_warning import ValidationWarning
 from pyvelo.core import ConfigContext, Layered, VcoModel
-from pyvelo.core.base import is_dict, is_list
+from pyvelo.core.base import is_dict, is_list, same_json
 from pyvelo.core.effective import effective_view
 from pyvelo.core.identity import (
     HubIdentity,
@@ -482,7 +482,7 @@ class _Replaced:
         self.nodes = [
             (place, ref)
             for place, ref, node in alive
-            if place in outermost or _at(now, place) == _dump(node)
+            if place in outermost or same_json(_at(now, place), _dump(node))
         ]
         return list(dict.fromkeys(change.path for change in changes))
 

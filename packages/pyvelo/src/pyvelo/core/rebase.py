@@ -53,6 +53,7 @@ from .base import (
     list_item_type,
     python_name,
     ref_only_fields,
+    same_json,
 )
 from .fields import ConfigContext, KeySpec, get_key_spec, has_override_flag
 from .layers import Kind, field_kind
@@ -812,8 +813,8 @@ def rebase(
 ) -> object:
     """Apply the change ``before -> after`` to *raw*.
 
-    - Where *before* and *after* agree, *raw* is kept, even where *raw* and
-      *before* differ because parsing was lossy.
+    - Where *before* and *after* agree (``same_json``), *raw* is kept, even
+      where *raw* and *before* differ because parsing was lossy.
     - Where they differ at a leaf, or a key exists in only one, the *after* side
       is written to (or removed from) *raw*.
     - When a change needs a container that *raw* does not have, the whole
@@ -842,7 +843,7 @@ def rebase(
 def _rebase(raw: object, before: object, after: object, node: Node) -> object:
     # An AddedItem is equal to its dict: an item an add built with the fields of
     # the one it replaced is still written, and the item as read is not kept.
-    if before == after and not _holds_added(after):
+    if same_json(before, after) and not _holds_added(after):
         return raw
     if is_dict(raw) and is_dict(before) and is_dict(after):
         return _rebase_object(raw, before, after, node)
@@ -885,7 +886,8 @@ def _rebase_object(
         {
             key: value
             for key, value in after.items()
-            if key not in handled and (key not in before or before[key] != value)
+            if key not in handled
+            and (key not in before or not same_json(before[key], value))
         }
     )
     return out
@@ -985,7 +987,7 @@ def collect_changes(
 
     *node* is the model's shape at *path*; ``raw_changes`` describes the walk.
     """
-    if old == new:
+    if same_json(old, new):
         return
     if is_dict(old) and is_dict(new):
         for key, old_value in old.items():
@@ -1317,7 +1319,7 @@ def _same_value(a: object, b: object) -> bool:
         )
     if is_dict(a) and is_dict(b):
         return a.keys() == b.keys() and all(_same_value(a[k], b[k]) for k in a)
-    return a == b
+    return same_json(a, b)
 
 
 def _lossy_in_model(walk: _LossyWalk, path: Path, held: _Held) -> None:
@@ -1351,7 +1353,7 @@ def _lossy_in_model(walk: _LossyWalk, path: Path, held: _Held) -> None:
             )
             continue
         if name not in baseline.model_fields_set:
-            if before_value != after_value:
+            if not same_json(before_value, after_value):
                 continue  # rebase writes the field whole
             if (
                 name in current.model_fields_set
@@ -1416,7 +1418,7 @@ def _lossy_in_list(walk: _LossyWalk, path: Path, held: _Held, node: Node) -> Non
         pairs = [(path.child(part), base, cur) for part, base, cur in keyed]
     else:
         # Items cannot be paired by key. A changed list is written whole.
-        if before != after or len(baseline) != len(current):
+        if not same_json(before, after) or len(baseline) != len(current):
             return
         pairs = [(path.child(i), i, i) for i in range(len(baseline))]
     for item_path, base_index, cur_index in pairs:

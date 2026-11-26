@@ -134,6 +134,7 @@ from pyvelo.core.base import (
     IdentityLookup,
     is_dict,
     is_list,
+    same_json,
 )
 from pyvelo.core.fixed_list import fixed_list_violations
 from pyvelo.core.layers import Edge, Layered, Profile
@@ -1111,7 +1112,7 @@ def _is_changed(
     It does when the payload differs from the data as read with its reconciled
     segments, or a ref row does.
     """
-    return payload != reconciled or bool(ref_changes)
+    return not same_json(payload, reconciled) or bool(ref_changes)
 
 
 def _check_fixed_lists(
@@ -1121,7 +1122,7 @@ def _check_fixed_lists(
     payload: dict[str, Any],
 ) -> None:
     """Raise ``FixedListError`` if *payload* changes a fixed part of a ``FixedList``."""
-    if fixed_model is not None and payload != planned_from:
+    if fixed_model is not None and not same_json(payload, planned_from):
         broken = fixed_list_violations(fixed_model, planned_from, payload)
         if broken:
             raise FixedListError(name, broken)

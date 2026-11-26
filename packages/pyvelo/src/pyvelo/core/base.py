@@ -158,6 +158,27 @@ def is_dict(value: object) -> TypeIs[dict[object, object]]:
     return isinstance(value, dict)
 
 
+def same_json(a: object, b: object) -> bool:
+    """Whether *a* and *b* are the same JSON value: how a save compares two values.
+
+    A boolean is the same only as an equal boolean: ``false`` is not ``0`` and
+    ``true`` is not ``1``, as for the VCO, which converts neither into the
+    other. Two numbers are the same when their values are (``1`` and ``1.0``):
+    the VCO stores one number for both. Two lists are the same item by item,
+    two objects key by key (any ``dict`` is an object, whatever its class);
+    anything else is compared by ``==``.
+    """
+    if isinstance(a, bool) or isinstance(b, bool):
+        return isinstance(a, bool) and isinstance(b, bool) and a == b
+    if is_list(a) and is_list(b):
+        return len(a) == len(b) and all(
+            same_json(x, y) for x, y in zip(a, b, strict=True)
+        )
+    if is_dict(a) and is_dict(b):
+        return a.keys() == b.keys() and all(same_json(a[k], b[k]) for k in a)
+    return a == b
+
+
 def _is_mapping(value: object) -> TypeIs[Mapping[object, object]]:
     return isinstance(value, Mapping)
 

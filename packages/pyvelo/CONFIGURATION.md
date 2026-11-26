@@ -823,6 +823,10 @@ firewall: update
   link read with its `internalId` is a plain change. An item read without its ID (for example a QoS rule
   the VCO returned with no `ruleLogicalId`) that is then renamed is also saved
   as a removal plus an addition.
+- Two values are the same when their JSON is: `false` is not `0` and `true`
+  is not `1`, so a change between them is written, and a write is checked for
+  the type it sent. A whole number is the same with or without a fraction part
+  (`1` and `1.0`), because the VCO stores one number for both.
 - A list is written item by item when its items can be told apart, so only the
   items you changed differ from the data read. That is a keyed list (see "The
   patch format") in which every item has a key no other item has, or an ID
