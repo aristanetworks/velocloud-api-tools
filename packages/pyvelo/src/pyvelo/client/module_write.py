@@ -511,6 +511,15 @@ def with_hub_rows(
     return replace(plan, refs=refs, ref_changes=(*plan.ref_changes, *changes))
 
 
+def has_version(module: ConfigurationModuleBase) -> bool:
+    """Whether *module* has a version: a non-empty string.
+
+    ``None``, ``MISSING`` and ``""`` are no version; ``"0"`` is one.
+    """
+    version: object = module.version
+    return isinstance(version, str) and version != ""
+
+
 def update_request(
     module: ConfigurationModuleBase,
     plan: ModulePlan,
@@ -520,11 +529,12 @@ def update_request(
 ) -> UpdateConfigurationModule:
     """The request that writes *plan* to *module*, at the version it was read.
 
-    A module with no version is refused (``VersionRequiredError``) unless the
-    plan is ``unconditional``, and is then sent with no ``version``. With
-    *return_data* it asks for the module row as stored.
+    A module with no version (``has_version``) is refused
+    (``VersionRequiredError``) unless the plan is ``unconditional``, and is then
+    sent with no ``version``. With *return_data* it asks for the module row as
+    stored.
     """
-    if not module.version and not plan.unconditional:
+    if not has_version(module) and not plan.unconditional:
         raise VersionRequiredError(plan.name)
     return UpdateConfigurationModule(
         configuration_module_id=module.id_,

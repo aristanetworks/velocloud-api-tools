@@ -294,6 +294,18 @@ async def test_an_insert_has_no_version_read(
     assert VERSION not in methods(store)
 
 
+async def test_a_module_with_no_version_stays_unconditional(
+    mock_vco_client: MockVcoClientFactory,
+) -> None:
+    module, plan = await provider_set()
+    module = module.model_copy(update={"version": None})
+    assert plan.refs is not None
+    store = a_store_holding(module)
+    client = await mock_vco_client(store)
+    _ = await client.write_module(module, dataclasses.replace(plan, unconditional=True))
+    assert VERSION not in methods(store)
+
+
 FW_RAW = {"segments": [], "syslog_forwarding": False}
 
 
@@ -314,6 +326,21 @@ def test_an_update_of_a_module_with_no_version_is_refused_unless_asked_for() -> 
 
     assert exc.value.module_name == "firewall"
     assert '"unconditional": true' in str(exc.value)
+    asked = dataclasses.replace(plan, unconditional=True)
+    assert update_request(module, asked, None).version is MISSING
+
+
+def test_a_module_whose_version_is_missing_has_no_version() -> None:
+    module = firewall("v1").model_copy(update={"version": MISSING})
+    plan = plan_module(
+        module, {**FW_RAW, "syslog_forwarding": True}, level=ConfigContext.EDGE
+    )
+    assert plan.operation == "update"
+
+    with pytest.raises(VersionRequiredError) as exc:
+        _ = update_request(module, plan, None)
+
+    assert exc.value.module_name == "firewall"
     asked = dataclasses.replace(plan, unconditional=True)
     assert update_request(module, asked, None).version is MISSING
 

@@ -1166,9 +1166,13 @@ class ConfigurationMixin(Protocol):
         edits to redo on it, except a ``ConfigConflictError`` for a module gone
         from its configuration, which has no module (``error.module`` is None,
         and nothing was sent). ``WriteOutcomeUnknownError`` says the write was
-        sent and the module as stored could not be read. The rules that need
-        more than this one module are not run here: they need a state
-        (``ConfigState``, in ``pyvelo.config``).
+        sent and the module as stored could not be read. Raises
+        ``VersionRequiredError``, with nothing sent, for an edit of a module
+        that has no version: this call has no option to write it unchecked, so
+        plan it with ``plan_module`` and send the plan marked ``unconditional``
+        with ``write_module``. The rules that need more than this one module
+        are not run here: they need a state (``ConfigState``, in
+        ``pyvelo.config``).
         """
         if not isinstance(data, DeviceSettingsData | WanData | QosData | FirewallData):  # pyright: ignore[reportUnnecessaryIsInstance]  # callers may pass anything
             raise TypeError(f"Unsupported data type: {type(data).__name__}")  # pyright: ignore[reportUnreachable]  # see the guard above

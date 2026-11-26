@@ -31,7 +31,7 @@ from pyvelo.client.models.configuration.common import SegmentMetadata
 from pyvelo.client.models.configuration.qos.rule import QosRule
 from pyvelo.client.models.configuration.ref_owners import ref_only_values
 from pyvelo.client.module_check import ModuleWrite, is_vco_assigned
-from pyvelo.client.module_write import ModulePlan, with_hub_rows
+from pyvelo.client.module_write import ModulePlan, has_version, with_hub_rows
 from pyvelo.client.operations.configuration import (
     check_found_insert,
     find_named_module,
@@ -2752,14 +2752,17 @@ def _versioned(
 ) -> tuple[ModulePlan, ...]:
     """Each plan of *modules*, in order, marked when it may update with no version.
 
-    An update of a module that has no version is marked ``unconditional`` when
-    *unconditional* is true, and raises ``VersionRequiredError`` otherwise,
-    before anything is sent. Any other plan (an insert, a ``none`` plan, an
-    update of a module with a version) is returned as it is.
+    An update of a module that has no version (``has_version``) is marked
+    ``unconditional`` when *unconditional* is true, and raises
+    ``VersionRequiredError`` otherwise, before anything is sent. Any other
+    plan (an insert, a ``none`` plan, an update of a module with a version) is
+    returned as it is.
     """
     versioned: list[ModulePlan] = []
     for module_plan in modules:
-        if module_plan.operation != "update" or state.module(module_plan.name).version:
+        if module_plan.operation != "update" or has_version(
+            state.module(module_plan.name)
+        ):
             versioned.append(module_plan)
         elif unconditional:
             versioned.append(replace(module_plan, unconditional=True))
