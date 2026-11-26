@@ -223,6 +223,59 @@ def _configuration_id(module: DeviceSettingsConfigurationModule) -> int:
     return module.configuration_id
 
 
+type _WritableModule = (
+    DeviceSettingsConfigurationModule
+    | QosConfigurationModule[Edge]
+    | QosConfigurationModule[Profile]
+    | WanConfigurationModule
+    | FirewallConfigurationModule[Edge]
+    | FirewallConfigurationModule[Profile]
+)
+
+_WRITABLE_MODULES = (
+    DeviceSettingsConfigurationModule,
+    QosConfigurationModule,
+    WanConfigurationModule,
+    FirewallConfigurationModule,
+)
+
+
+@dataclass(frozen=True)
+class _Edit:
+    """One ``apply`` call's patch to a module, and what its trial and merge need."""
+
+    state: ConfigState
+    mod: _WritableModule
+    data: VcoModel
+    """The module's typed data, which the merge changes."""
+    nested: dict[str, object]
+    """The patch, nested under its address (``nest_patch``)."""
+    edge: bool
+    """Whether the target is an edge."""
+    profile_rules: bool
+    """Whether the profile's segment rules apply to the module."""
+    inherited: frozenset[str]
+    """On an edge, the segments the module only inherits; else empty."""
+    unserved: frozenset[Path]
+    """The QoS entries that lacked their hub service as read; else empty."""
+
+    def patch_for(
+        self, data: VcoModel, prepared: ProfileSegmentPatch | None
+    ) -> Mapping[str, object]:
+        """The patch to merge into *data*, the module's data or a copy of it.
+
+        The prepared profile patch, else on an edge the patch with the edge's
+        segment rules applied (``_prepare_segments``), else the nested patch.
+        """
+        if prepared is not None:
+            return prepared.patch
+        if self.edge:
+            return _prepare_segments(
+                data, self.nested, self.state.resolvers, self.inherited
+            )
+        return self.nested
+
+
 class ConfigPipeline:
     """Manages configuration load, merge, resolve, validate, save."""
 
@@ -415,7 +468,7 @@ class ConfigPipeline:
 
         return state
 
-    async def apply(  # noqa: C901, PLR0912 (existing: split it when it next changes)
+    async def apply(
         self,
         state: ConfigState,
         *,
@@ -578,104 +631,41 @@ class ConfigPipeline:
         Raises ``ValueError`` for an unknown *module*.
         """
         async with state.lock:
-            internal_name = _resolve_module_name(module)
-            existing = state.find_module(internal_name)
-            if existing is None:
-                _refuse_segment_ops_to_a_missing_module(
-                    state, str(internal_name), patch, segment, path
-                )
-            mod = (
-                existing
-                if existing is not None
-                else state.module(internal_name, create=True)
-            )
-            edge = state.target_type == "edge"
-            if not isinstance(mod, _WRITABLE_MODULES):
-                if existing is None:
-                    state.drop_module(mod)
-                raise PatchError(
-                    f"{mod.name}: a save does not write this module (it writes "
-                    "device settings, QoS, WAN and firewall modules), so a "
-                    "patch to it is not applied. Make the change in the VCO",
-                    Path(()),
-                    "address",
-                )
+            mod, created = _patched_module(state, module, patch, segment, path)
             try:
-                data = mod.data
-                nested = nest_patch(type(data), patch, segment=segment, path=path)
-                segments = nested.get("segments")
-                profile_rules = (
-                    not edge
-                    and isinstance(data, _SegmentLayer)
-                    and str(mod.name) in PROFILE_SEGMENT_MODULES
-                )
-                prepared: ProfileSegmentPatch | None = None
-                loaded: set[type] = set()
-                unserved = (
-                    frozenset(missing_services(data))
-                    if isinstance(mod, QosConfigurationModule)
-                    else frozenset[Path]()
-                )
-                if profile_rules and holds_segment_ops(nested):
-                    prepared = await self._prepare_profile_segments(
-                        state, mod, nested, loaded
-                    )
-                inherited = (
-                    state.inherited_segment_ids(mod)
-                    if edge and _is_object(segments)
-                    else frozenset()
-                )
-                while True:
-                    try:
-                        if prepared is not None:
-                            _try_assigning(state, mod, prepared, unserved)
-                        else:
-                            trial = data.model_copy(deep=True)
-                            _ = trial.merge_patch(
-                                _prepare_segments(
-                                    trial, nested, state.resolvers, inherited
-                                )
-                                if edge
-                                else nested,
-                                resolvers=state.resolvers,
-                            )
-                            if profile_rules:
-                                check_profile_segments(
-                                    data,
-                                    trial,
-                                    mod,
-                                    _device_settings_as_read(state),
-                                    (),
-                                )
-                            if isinstance(mod, QosConfigurationModule):
-                                state.fill_hub_services(trial, skip=unserved)
-                            _ = state.plan_module(mod, trial)
-                        break
-                    except ResolverNotLoadedError as error:
-                        # The trial worked on a copy: loading and trying again
-                        # leaves the state as it was.
-                        await self.load_resolvers(state, _to_load(error, loaded))
+                edit = _edit_of(state, mod, patch, segment, path)
+                prepared = await self._trial(edit)
             except BaseException:
-                if existing is None:
+                if created:
                     state.drop_module(mod)
                 raise
-            if prepared is not None:
-                modules = segment_modules(state)
-                for assignment in prepared.assignments:
-                    apply_assignment(modules, assignment)
-            _ = data.merge_patch(
-                prepared.patch
-                if prepared is not None
-                else _prepare_segments(data, nested, state.resolvers, inherited)
-                if edge
-                else nested,
-                resolvers=state.resolvers,
-            )
-            if isinstance(mod, QosConfigurationModule):
-                # Cannot fail after the trial passed: the hub table and the
-                # segments are the trial's, and the patch is the same.
-                state.fill_hub_services(data, skip=unserved)
+            _merge(edit, prepared)
             return state
+
+    async def _trial(self, edit: _Edit) -> ProfileSegmentPatch | None:
+        """Try the patch of *edit* on copies until it passes; the prepared patch.
+
+        On a profile target, a patch with segment operations is prepared first
+        (``prepare_profile_segments``); None when it needs no preparing. Each
+        attempt is ``_try_once``; a resolver an attempt asks for is loaded, once
+        per type in this call, and the attempt is made again. Nothing of the
+        state but the resolvers changes, and whatever else fails raises.
+        """
+        loaded: set[type] = set()
+        prepared: ProfileSegmentPatch | None = None
+        if edit.profile_rules and holds_segment_ops(edit.nested):
+            prepared = await self._prepare_profile_segments(
+                edit.state, edit.mod, edit.nested, loaded
+            )
+        while True:
+            try:
+                _try_once(edit, prepared)
+            except ResolverNotLoadedError as error:
+                # The trial worked on a copy: loading and trying again
+                # leaves the state as it was.
+                await self.load_resolvers(edit.state, _to_load(error, loaded))
+            else:
+                return prepared
 
     async def _prepare_profile_segments(
         self,
@@ -2218,21 +2208,123 @@ def _try_assigning(
     assign_on_trial(state, modules, prepared.assignments, edit)
 
 
-type _WritableModule = (
-    DeviceSettingsConfigurationModule
-    | QosConfigurationModule[Edge]
-    | QosConfigurationModule[Profile]
-    | WanConfigurationModule
-    | FirewallConfigurationModule[Edge]
-    | FirewallConfigurationModule[Profile]
-)
+def _patched_module(
+    state: ConfigState,
+    module: str,
+    patch: object,
+    segment: str | None,
+    path: str | None,
+) -> tuple[_WritableModule, bool]:
+    """The module of *state* that ``apply``'s patch goes to, and whether this made it.
 
-_WRITABLE_MODULES = (
-    DeviceSettingsConfigurationModule,
-    QosConfigurationModule,
-    WanConfigurationModule,
-    FirewallConfigurationModule,
-)
+    A ``firewall`` or ``QOS`` module that an edge lacks is created empty.
+    Segment operations to a module a profile lacks raise ``PatchError``
+    (``_refuse_segment_ops_to_a_missing_module``), and so does a module a
+    save does not write, after a module made here is dropped again.
+    """
+    internal_name = _resolve_module_name(module)
+    existing = state.find_module(internal_name)
+    if existing is None:
+        _refuse_segment_ops_to_a_missing_module(
+            state, str(internal_name), patch, segment, path
+        )
+    mod = existing if existing is not None else state.module(internal_name, create=True)
+    if not isinstance(mod, _WRITABLE_MODULES):
+        if existing is None:
+            state.drop_module(mod)
+        raise PatchError(
+            f"{mod.name}: a save does not write this module (it writes "
+            "device settings, QoS, WAN and firewall modules), so a "
+            "patch to it is not applied. Make the change in the VCO",
+            Path(()),
+            "address",
+        )
+    return mod, existing is None
+
+
+def _edit_of(
+    state: ConfigState,
+    mod: _WritableModule,
+    patch: object,
+    segment: str | None,
+    path: str | None,
+) -> _Edit:
+    """The ``_Edit`` of *patch* at its address to *mod* of *state*.
+
+    Raises ``PatchError`` for an address the class of the module's data does
+    not have (``nest_patch``).
+    """
+    data = mod.data
+    nested = nest_patch(type(data), patch, segment=segment, path=path)
+    edge = state.target_type == "edge"
+    profile_rules = (
+        not edge
+        and isinstance(data, _SegmentLayer)
+        and str(mod.name) in PROFILE_SEGMENT_MODULES
+    )
+    unserved = (
+        frozenset(missing_services(data))
+        if isinstance(mod, QosConfigurationModule)
+        else frozenset[Path]()
+    )
+    inherited = (
+        state.inherited_segment_ids(mod)
+        if edge and _is_object(nested.get("segments"))
+        else frozenset[str]()
+    )
+    return _Edit(
+        state=state,
+        mod=mod,
+        data=data,
+        nested=nested,
+        edge=edge,
+        profile_rules=profile_rules,
+        inherited=inherited,
+        unserved=unserved,
+    )
+
+
+def _try_once(edit: _Edit, prepared: ProfileSegmentPatch | None) -> None:
+    """Try the patch of *edit* once, on copies.
+
+    With *prepared*, on copies of the three profile modules
+    (``_try_assigning``). Else the patch is merged into a copy of the
+    module's data, checked against the profile's segment rules where they
+    apply, given its hub services on QoS, and planned as a save would.
+    Nothing of the state changes, and whatever fails raises.
+    """
+    if prepared is not None:
+        _try_assigning(edit.state, edit.mod, prepared, edit.unserved)
+        return
+    state = edit.state
+    trial = edit.data.model_copy(deep=True)
+    _ = trial.merge_patch(edit.patch_for(trial, None), resolvers=state.resolvers)
+    if edit.profile_rules:
+        check_profile_segments(
+            edit.data, trial, edit.mod, _device_settings_as_read(state), ()
+        )
+    if isinstance(edit.mod, QosConfigurationModule):
+        state.fill_hub_services(trial, skip=edit.unserved)
+    _ = state.plan_module(edit.mod, trial)
+
+
+def _merge(edit: _Edit, prepared: ProfileSegmentPatch | None) -> None:
+    """Make the edit that passed its trial.
+
+    The assignments, the merge into the module's data, and the hub services.
+    """
+    state = edit.state
+    if prepared is not None:
+        modules = segment_modules(state)
+        for assignment in prepared.assignments:
+            apply_assignment(modules, assignment)
+    _ = edit.data.merge_patch(
+        edit.patch_for(edit.data, prepared), resolvers=state.resolvers
+    )
+    if isinstance(edit.mod, QosConfigurationModule):
+        # Cannot fail after the trial passed: the hub table and the
+        # segments are the trial's, and the patch is the same.
+        state.fill_hub_services(edit.data, skip=edit.unserved)
 
 
 def _qos_rules_json(
