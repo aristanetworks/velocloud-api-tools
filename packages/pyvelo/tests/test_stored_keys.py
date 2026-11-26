@@ -19,13 +19,17 @@ from pyvelo.client.models.configuration.device_settings.routed_interface import 
 from pyvelo.client.models.configuration.device_settings.segment import (
     SegmentHandoffGateways,
 )
+from pyvelo.client.models.enterprise.service_data import LoadSharingMethod
 from pyvelo.client.module_write import plan_module
 from pyvelo.client.schemas.configuration import (
     ConfigurationModuleBase,
     DeviceSettingsConfigurationModule,
+    FirewallConfigurationModule,
     WanConfigurationModule,
 )
+from pyvelo.client.schemas.edge import EdgeLink
 from pyvelo.core import ConfigContext
+from pyvelo.core.layers import Edge
 from pyvelo.testing import make_module_json
 
 from ._type_support import require_present
@@ -313,3 +317,63 @@ def test_a_profile_that_stores_the_key_this_library_wrote_keeps_it_as_read() -> 
     expected = copy.deepcopy(raw)
     expected["snmp"]["port"] = 162
     assert plan_module(module, level=PROFILE).data == expected
+
+
+# --- firewall ----------------------------------------------------------------
+
+INBOUND_V6: dict[str, Any] = {
+    "name": "in6",
+    "match": {
+        "dipV6": "2001:db8::1",
+        "dport_low": 443,
+        "dport_high": 443,
+        "proto": 6,
+        "appid": -1,
+        "classid": -1,
+        "dscp": -1,
+        "dvlan": -1,
+        "hostname": "",
+    },
+    "action": {
+        "type": "port_forwarding",
+        "nat": {"lan_ip": "fd00::10", "lan_port": 443},
+        "interface": "GE3",
+    },
+}
+FIREWALL: dict[str, Any] = {"segments": [], "inboundV6": [INBOUND_V6]}
+
+
+def test_an_ipv6_inbound_rule_s_destination_is_read_at_dip_v6() -> None:
+    for module in both_ways(FirewallConfigurationModule[Edge], "firewall", FIREWALL):
+        (rule,) = module.data.inbound_v6
+        assert rule.match.destination_ip_v6 == "2001:db8::1"
+        assert_untouched(module, FIREWALL, EDGE)
+
+
+# --- enterprise rows ----------------------------------------------------------
+
+
+def test_an_edge_link_s_backup_state_is_read() -> None:
+    link = EdgeLink.model_validate({"id": 7, "backupState": "UNCONFIGURED"})
+    assert link.back_up_state == "UNCONFIGURED"
+    assert link.model_dump(mode="json", by_alias=True, exclude_unset=True) == {
+        "id": 7,
+        "backupState": "UNCONFIGURED",
+    }
+
+
+def test_a_data_center_s_load_sharing_hash_is_read_whole() -> None:
+    stored = {
+        "algo": "HASH_BASED",
+        "hashParams": {
+            "srcIp": True,
+            "destIp": True,
+            "srcPort": False,
+            "destPort": False,
+            "protocol": False,
+        },
+    }
+    method = LoadSharingMethod.model_validate(stored)
+    params = require_present(method.hash_params)
+    assert (params.source_ip, params.source_port) == (True, False)
+    assert method.model_dump(mode="json", by_alias=True) == stored

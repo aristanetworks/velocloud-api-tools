@@ -80,8 +80,8 @@ class LoadSharingHashParams(VcoModel):
     dest_ip: bool | MISSING = MISSING
     dest_port: bool | MISSING = MISSING
     protocol: bool | MISSING = MISSING
-    source_ip: bool | MISSING = MISSING
-    source_port: bool | MISSING = MISSING
+    source_ip: Annotated[bool | MISSING, Alias("srcIp")] = MISSING
+    source_port: Annotated[bool | MISSING, Alias("srcPort")] = MISSING
 
 
 class LoadSharingMethod(VcoModel):

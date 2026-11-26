@@ -135,7 +135,7 @@ class InboundRuleMatch(VcoModel):
 class InboundRuleMatchV6(VcoModel):
     # IP addressing
     ip_version: AddressType = "IPv6"
-    destination_ip_v6: Annotated[str, Alias("dip_v6")] = "any"
+    destination_ip_v6: Annotated[str, Alias("dipV6")] = "any"
 
     # Port range
     destination_port_low: Annotated[int, Alias("dport_low")] = -1

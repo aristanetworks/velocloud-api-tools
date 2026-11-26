@@ -401,7 +401,7 @@ class EdgeLink(VcoModel):
     alerts_enabled: Tinyint | None | MISSING = MISSING
     operator_alerts_enabled: Tinyint | None | MISSING = MISSING
     state: LinkState | None | MISSING = MISSING
-    back_up_state: str | None | MISSING = MISSING
+    back_up_state: Annotated[str | None | MISSING, Alias("backupState")] = MISSING
     vpn_state: str | None | MISSING = MISSING
     last_active: AwareDatetime | None | MISSING = MISSING
     service_state: str | None | MISSING = MISSING
