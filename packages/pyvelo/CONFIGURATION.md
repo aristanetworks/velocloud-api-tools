@@ -286,7 +286,12 @@ and then adding one under the same name plans a removal and an addition:
 nothing of the old rule is kept, neither its logical ID (the VCO issues a new
 one for a firewall rule) nor keys of it that pyvelo does not model. To change a
 rule and keep it the same rule, change it: `{"a": {...}}`. One patch cannot
-delete an item and add one under its key; send the delete, then the add.
+delete an item and add one under its key; send the delete, then the add. Such
+an item cannot be rebased onto a version the VCO changed during the same save
+(a profile's QoS or firewall, when the device settings write of that save
+changed it): that module's save raises `ConfigConflictError` with nothing of it
+sent, and the delete and the add are applied again on the module as stored (see
+"A save of a profile that writes its device settings rebases").
 
 `list_kind` (`pyvelo.core`) reports a sixth value, `"undeclared"`, for a list
 of models that declares neither `KeyField` nor `Positional()`. A patch treats
@@ -1351,8 +1356,14 @@ write is sent with the new version, and what changed beside your edits is in
 `SaveResult.server_changes` with `merged` true. It raises `ConfigConflictError`
 (`error.sent` False, `error.stated` False, nothing sent) only where the change
 reached a path you edited too, or a list you edit an item of had items added or
-removed; `error.lost_edits` lists your edits, to redo on `error.module`. When
-the module already holds every one of your changes, nothing is sent for it. A
+removed; `error.lost_edits` lists your edits, to redo on `error.module`. A
+module that holds an item deleted and added again under its key cannot be
+rebased: when the version changed, its save raises `ConfigConflictError` with
+nothing of it sent, `error.not_redone()` lists the added item and
+`error.redo_patch()` leaves it out. The way on is to apply the delete and the
+add again, as two patches, on the state, which now holds the module as stored,
+and save. When the module already holds every one of your changes, nothing is
+sent for it. A
 ref row your edit adds or removes (a QoS rule's backhaul hub) is derived again
 against the refs read, so a row already there is not added twice, and the hub's
 service is found in the device settings as that save stored them. The

@@ -639,6 +639,17 @@ class AddedItem(dict[str, object]):
     """
 
 
+def _holds_added(value: object) -> bool:
+    """Whether *value* is or holds an ``AddedItem``, at any depth."""
+    if isinstance(value, AddedItem):
+        return True
+    if is_dict(value):
+        return any(_holds_added(item) for item in value.values())
+    if is_list(value):
+        return any(_holds_added(item) for item in value)
+    return False
+
+
 def mark_added_items(model: VcoModel, dump: object) -> None:
     """Make the dump of each item an ``add`` built an ``AddedItem``, in place.
 
@@ -811,13 +822,20 @@ def rebase(
       entry by entry, each as its model, so a change lands on the key as read
       and a keyed list below the map is paired.
 
-    ``rebase(raw, x, x, model) == raw`` for every *raw*.
+    - An item of *after* that an ``add`` built (an ``AddedItem``) is written
+      as it is, also where *before* equals *after*: it is a new item, and the
+      item as read is not kept.
+
+    ``rebase(raw, x, x, model) == raw`` for every *raw* and every *x* that
+    holds no ``AddedItem``.
     """
     return _rebase(raw, before, after, model)
 
 
 def _rebase(raw: object, before: object, after: object, node: Node) -> object:
-    if before == after:
+    # An AddedItem is equal to its dict: an item an add built with the fields of
+    # the one it replaced is still written, and the item as read is not kept.
+    if before == after and not _holds_added(after):
         return raw
     if is_dict(raw) and is_dict(before) and is_dict(after):
         return _rebase_object(raw, before, after, node)
@@ -938,12 +956,15 @@ def raw_changes(
     *old* (in *new* for an item only *new* has), or as ``path[#n]``, by its
     position there, when that key is absent or not unique. An item present on
     one side only is one change; an item added to a keyed list has its
-    ``place``. A keyed list whose items changed order has one more change, at
-    its own path: the order entry, whose values are lists of item names and
-    whose ``moves`` are the items that changed place. Anything else that
-    differs, including a list without a usable key and a keyed list in which an
-    added item would have the name of an item of *old*, is one change at its
-    own path.
+    ``place``. A removal and an addition can share one path: an item deleted
+    and added again under its key (an ``AddedItem`` of *new*, which
+    ``pair_items`` pairs with no item). Equal documents have no changes, also
+    when *new* holds such an item: the same JSON is sent either way. A keyed
+    list whose items changed order has one more change, at its own path: the
+    order entry, whose values are lists of item names and whose ``moves`` are
+    the items that changed place. Anything else that differs, including a list
+    without a usable key and a keyed list in which an added item would have the
+    name of a paired item of *old*, is one change at its own path.
     """
     changes: list[RawChange] = []
     collect_changes(changes, Path(()), old, new, model)

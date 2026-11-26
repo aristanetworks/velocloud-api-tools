@@ -3,12 +3,17 @@ import dataclasses
 import inspect
 import json
 import uuid
+from collections.abc import Mapping
 from typing import Any, cast, overload
 
 import pytest
 from pydantic import MISSING
 from pyvelo.client.enums.configuration import ConfigurationModuleName
-from pyvelo.client.exceptions import LossyFieldError, RefsNotLoadedError
+from pyvelo.client.exceptions import (
+    ConfigConflictError,
+    LossyFieldError,
+    RefsNotLoadedError,
+)
 from pyvelo.client.models.configuration import DeviceSettingsData, FirewallData
 from pyvelo.client.models.configuration.firewall.rules import FirewallOutboundRule
 from pyvelo.client.models.configuration.firewall.segment import FirewallSegment
@@ -17,6 +22,7 @@ from pyvelo.client.module_write import (
     ModulePlan,
     missing_segments,
     plan_module,
+    rebase_onto,
     wire_dump,
     with_hub_rows,
 )
@@ -1998,3 +2004,87 @@ def test_wire_dump_marks_only_the_items_an_add_built() -> None:
     assert [type(item) is AddedItem for item in dumped] == [False, False, True]
     assert json.dumps(dumped[2]) == json.dumps(dict(dumped[2]))  # JSON as its dict
     assert type(wire_dump(mod.data, EDGE)["segments"][0]) is dict
+
+
+ALLOW_LA = {"match": {}, "action": {"allow_or_deny": "allow"}, "ruleLogicalId": "la"}
+
+
+def _delete_and_add_again(
+    mod: FirewallConfigurationModule[Edge], body: Mapping[str, object]
+) -> None:
+    _ = mod.data.merge_patch(_outbound({"a": delete()}))
+    _ = mod.data.merge_patch(_outbound({"a": add(body, first=True)}))
+
+
+def test_a_rule_added_again_as_it_was_is_still_a_new_rule() -> None:
+    mod = fw(TWO_RULES, layer=Edge)
+    _delete_and_add_again(mod, ALLOW_LA)
+    new_dump = dict(wire_dump(mod.data, EDGE)["segments"][0]["outbound"][0])
+
+    plan = plan_module(mod, level=EDGE)
+
+    assert [
+        (str(c.path), c.before is MISSING, c.after is MISSING) for c in plan.changes
+    ] == [(AT_A, False, True), (AT_A, True, False)]
+    assert plan.data["segments"][0]["outbound"] == [new_dump, RULE_B]
+    assert "futureKey" not in plan.data["segments"][0]["outbound"][0]
+
+
+def test_a_rule_added_again_as_stored_sends_what_is_stored() -> None:
+    exact = dict(
+        wire_dump(fw(TWO_RULES, layer=Edge).data, EDGE)["segments"][0]["outbound"][0]
+    )
+    assert "futureKey" not in exact
+    stored = {"segments": [{**TWO_RULES["segments"][0], "outbound": [exact, RULE_B]}]}
+    mod = fw(stored, layer=Edge)
+    _delete_and_add_again(mod, {k: v for k, v in exact.items() if k != "name"})
+
+    plan = plan_module(mod, level=EDGE)
+
+    assert plan.data["segments"][0]["outbound"] == [exact, RULE_B]
+    assert (plan.operation, plan.changes) == ("none", ())
+
+
+def test_a_list_beside_an_added_rule_is_sent_as_read() -> None:
+    rule_c = _stored_rule("c", ruleLogicalId="lc", futureKey=3)
+    guest = {"segment": desc(1, "Guest"), "outbound": [rule_c], "futureKey": 4}
+    mod = fw({"segments": [*TWO_RULES["segments"], guest]}, layer=Edge)
+    _delete_and_add_again(mod, ALLOW_LA)
+
+    plan = plan_module(mod, level=EDGE)
+
+    assert [str(c.path) for c in plan.changes] == [AT_A, AT_A]
+    assert plan.data["segments"][1] == guest
+    assert plan.data["segments"][0]["outbound"][1] == RULE_B
+
+
+def test_a_rule_deleted_and_added_again_is_not_rebased_onto_a_changed_module() -> None:
+    mod = fw(TWO_RULES, layer=Edge)
+    _delete_and_add_again(mod, DENY)
+    plan = plan_module(mod, level=EDGE)
+    changed_b = {**RULE_B, "action": {"allow_or_deny": "deny"}}
+    fresh_raw = {
+        "segments": [{**TWO_RULES["segments"][0], "outbound": [RULE_A, changed_b]}]
+    }
+    fresh = FirewallConfigurationModule[Edge].model_validate(
+        make_module_json("firewall", copy.deepcopy(fresh_raw), version="v2")
+    )
+
+    with pytest.raises(ConfigConflictError) as caught:
+        _ = rebase_onto(mod, plan, fresh)
+
+    error = caught.value
+    assert (error.sent, error.stated) == (False, False)
+    assert error.module is fresh
+    assert [(str(c.path), c.as_read is MISSING) for c in error.lost_edits] == [
+        (AT_A, True)
+    ]
+    assert error.redo_patch() == {}
+    assert error.not_redone() == error.lost_edits
+    # The way on: the delete and the add again, on the module as stored.
+    _delete_and_add_again(fresh, DENY)
+    again = plan_module(fresh, level=EDGE)
+    assert [
+        (str(c.path), c.before is MISSING, c.after is MISSING) for c in again.changes
+    ] == [(AT_A, False, True), (AT_A, True, False)]
+    assert again.data["segments"][0]["outbound"][1] == changed_b

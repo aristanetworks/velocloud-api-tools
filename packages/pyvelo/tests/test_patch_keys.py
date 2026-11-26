@@ -790,3 +790,9 @@ def test_validate_keeps_the_added_item_and_construct_builds_one_not_added() -> N
     item = _added_rule()
     assert Rule.model_validate(item) is item
     assert not Rule.model_construct(**item.model_dump()).is_added
+
+
+def test_an_item_rebuilt_from_its_dump_is_not_added() -> None:
+    item = _added_rule()
+    assert not Rule.model_validate(item.model_dump()).is_added
+    assert not Rule.model_validate_json(item.model_dump_json()).is_added
