@@ -250,18 +250,33 @@ _MAX_SERVICES_SHOWN = 20
 def _services_of(wanted: str, resolvers: IdentityLookup | None) -> list[str]:
     """The sorted names of the loaded network services of type *wanted*.
 
-    At most 20 of them; none with no *resolvers*.
+    None with no *resolvers*.
     """
     if resolvers is None:
         return []
-    names = sorted(
+    return sorted(
         {
             service.name
             for service in resolvers.identities(NetworkServiceIdentity)
             if service.type_ == wanted
         }
     )
-    return names[:_MAX_SERVICES_SHOWN]
+
+
+def _what_fits(wanted: str, resolvers: IdentityLookup | None) -> tuple[list[str], str]:
+    """The services of type *wanted* a refusal lists, and the sentence that lists them.
+
+    At most 20 are listed, and the sentence says how many there are when it
+    lists only the first 20.
+    """
+    fitting = _services_of(wanted, resolvers)
+    shown = fitting[:_MAX_SERVICES_SHOWN]
+    if not shown:
+        return shown, "The enterprise has no service of that type."
+    heading = "Of that type the enterprise has"
+    if len(fitting) > len(shown):
+        heading += f" ({len(fitting)} total, showing first {len(shown)})"
+    return shown, f"{heading}: {', '.join(shown)}."
 
 
 def _unknown_identity(
@@ -270,7 +285,8 @@ def _unknown_identity(
     """The error for an owner whose identity the resolver does not know.
 
     For a provider ref (``SERVICE_TYPES``), ``wanted`` is the type of service it
-    takes and ``candidates`` the loaded services of that type.
+    takes and ``candidates`` the loaded services of that type, which the message
+    lists.
     """
     wanted = SERVICE_TYPES.get(owner.name)
     label = entity_label(owner.identity_type)
@@ -285,10 +301,14 @@ def _unknown_identity(
             f"Give the name or the logical ID of a {label} that exists: "
             f"{patch_text(owner.path)} sets it."
         )
+    fitting: list[str] = []
+    if wanted is not None:
+        fitting, what_fits = _what_fits(wanted, resolvers)
+        advice = f"{advice} {what_fits}"
     return ResolutionError(
         name=caught.name,
         identity_type=owner.identity_type,
-        candidates=[] if wanted is None else _services_of(wanted, resolvers),
+        candidates=fitting,
         message=(
             f"{owner.path} names the {label} {owner.value}, which the VCO does "
             f"not have, so the row it goes with cannot be added. {advice}"
@@ -328,11 +348,7 @@ def _wrong_service_type(
     that type, which the message lists.
     """
     wanted = SERVICE_TYPES[owner.name]
-    fitting = _services_of(wanted, resolvers)
-    if fitting:
-        what_fits = f"Of that type the enterprise has: {', '.join(fitting)}."
-    else:
-        what_fits = "The enterprise has no service of that type."
+    fitting, what_fits = _what_fits(wanted, resolvers)
     return ResolutionError(
         name=service.name,
         identity_type=NetworkServiceIdentity,
