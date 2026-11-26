@@ -546,8 +546,11 @@ keys are `serviceRateLimit` and `qoe`.
 field reads it and a patch that names it is refused as an unknown field. A
 stored one is kept as read by every write, like any key the models do not know,
 and `compare_effective` reports one the VCO composed as `unconverted`. To
-change or remove it, write the module's data as a mapping with
-`VcoClient.update_module(module, data)`.
+change or remove it, plan the module from the data as a mapping, with the key
+changed or left out, and write the plan: `plan = plan_module(module, data,
+level=ConfigContext.EDGE)`, then `await client.write_module(module, plan)`
+(`ConfigContext.PROFILE` for a profile's module). (`update_module`
+takes a model, not a mapping.)
 
 A segment's fields are these kinds:
 

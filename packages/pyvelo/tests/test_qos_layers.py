@@ -4,6 +4,7 @@ And what each layer holds.
 """
 
 import copy
+import json
 from typing import Any, cast
 
 import pytest
@@ -31,8 +32,10 @@ from pyvelo.core import (
 from pyvelo.core.base import VcoModel
 from pyvelo.core.effective import Origin, effective_dump, effective_view
 from pyvelo.core.layers import Effective
+from pyvelo.testing import store_of
 from segment_helpers import GLOBAL, GUEST, descriptor, qos_entry
 
+from ._type_support import MockVcoClientFactory
 from .write_helpers import qos_mod
 
 EDGE = ConfigContext.EDGE
@@ -230,6 +233,54 @@ def test_a_patch_cannot_name_the_client_connector() -> None:
         _ = edge.data.merge_patch({"qosClientConnector": None})
     assert exc.value.kind == "unknown_field"
     assert plan_module(edge, level=EDGE).operation == "none"
+
+
+def test_a_stored_client_connector_is_removed_by_planning_the_data_without_it() -> None:
+    connector = {"enabled": True, "x": 1}
+    raw: dict[str, Any] = {"segments": [], "qosClientConnector": connector}
+    edge = qos_mod(raw, layer=Edge)
+    data = json.loads(json.dumps(raw))
+    del data["qosClientConnector"]
+    plan = plan_module(edge, data, level=EDGE)
+    assert plan.operation == "update"
+    assert plan.data == {"segments": []}
+    assert [(str(c.path), c.before, c.after) for c in plan.changes] == [
+        ("qosClientConnector", connector, MISSING)
+    ]
+
+
+def test_a_stored_client_connector_is_changed_by_planning_the_data_with_its_value() -> (
+    None
+):
+    raw: dict[str, Any] = {
+        "segments": [],
+        "serviceRateLimit": {"enabled": True, "inputType": "rate", "value": 3},
+        "qosClientConnector": {"enabled": True, "x": 1},
+    }
+    edge = qos_mod(raw, layer=Edge)
+    data = json.loads(json.dumps(raw))
+    data["qosClientConnector"] = {"enabled": False}
+    plan = plan_module(edge, data, level=EDGE)
+    assert plan.operation == "update"
+    assert plan.data == data
+    # The change is reported leaf by leaf, all of them inside the key.
+    assert {str(c.path) for c in plan.changes} == {
+        "qosClientConnector.enabled",
+        "qosClientConnector.x",
+    }
+
+
+async def test_a_planned_removal_of_a_stored_client_connector_is_stored(
+    mock_vco_client: MockVcoClientFactory,
+) -> None:
+    raw: dict[str, Any] = {"segments": [], "qosClientConnector": {"enabled": True}}
+    edge = qos_mod(raw, layer=Edge)
+    store = store_of(edge)
+    client = await mock_vco_client(store)
+    plan = plan_module(edge, {"segments": []}, level=EDGE)
+    write = await client.write_module(edge, plan)
+    assert write.module.raw_data == {"segments": []}
+    assert store.rows[edge.id_]["data"] == {"segments": []}
 
 
 def test_a_profile_segment_without_defaults_stays_without_them() -> None:
