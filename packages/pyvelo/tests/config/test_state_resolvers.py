@@ -328,6 +328,22 @@ async def test_load_resolvers_loads_a_type_once_unless_asked_again() -> None:
     assert sorted(i.name for i in services.identities()) == ["dns-a", "dns-b", "dns-c"]
 
 
+async def test_a_resolver_cleared_by_a_context_is_loaded_again_by_load_resolvers() -> (
+    None
+):
+    pipeline, client, state = await loaded_profile()
+    await pipeline.load_resolvers(state, NetworkServiceIdentity)
+    services = state.resolvers.get_resolver(NetworkServiceResolver)
+    with state.resolvers.context(ResolverContext(enterprise_id=2)):
+        assert not services.loaded
+
+    await pipeline.load_resolvers(state, NetworkServiceIdentity)
+
+    assert services.loaded
+    assert [m for m, _ in client.store.requests] == [SERVICES, SERVICES]
+    assert sorted(i.name for i in services.identities()) == ["dns-a", "dns-b"]
+
+
 async def test_load_resolvers_copies_the_pipelines_resolver_for_a_type_the_state_lacks() -> (  # noqa: E501 (a test's name)
     None
 ):

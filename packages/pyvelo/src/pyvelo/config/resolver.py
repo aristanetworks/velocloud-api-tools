@@ -263,7 +263,29 @@ class ResolverRegistry:
         self._context: ResolverContext | None = None
 
     def register[T](self, resolver: Resolver[T]) -> None:
-        """Register a resolver, keyed by its identity_type."""
+        """Register a resolver, keyed by its identity_type.
+
+        A resolver without ``requires_load`` or ``loaded`` raises ``TypeError``:
+        every lookup of the registry reads both, and would fail at the first
+        lookup instead.
+        """
+        missing = [
+            member
+            for member, held in (
+                ("requires_load", hasattr(type(resolver), "requires_load")),
+                ("loaded", hasattr(resolver, "loaded")),
+            )
+            if not held
+        ]
+        if missing:
+            raise TypeError(
+                f"{type(resolver).__name__} lacks {', '.join(missing)}: a resolver "
+                "has `requires_load: ClassVar[bool]`, a class attribute that is "
+                "True when its answers are wrong before a load, and a read-only "
+                "`loaded`, a property that says whether load() has filled its "
+                "tables. The registry reads both on every lookup: subclass "
+                "BaseResolver, which has them, or add them, then register it."
+            )
         self._resolvers[resolver.identity_type] = resolver
 
     def get_resolver[R: Resolver[Any]](self, resolver_type: type[R]) -> R:
@@ -415,7 +437,9 @@ class ResolverRegistry:
             name=str(value),
             identity_type=identity_type,
             candidates=[],
-            message=f"No {entity_label(identity_type)} has the value {value!r}.",
+            message=(
+                f"No {entity_label(identity_type)} has the value {_value_text(value)}."
+            ),
         )
 
     @overload
@@ -431,10 +455,14 @@ class ResolverRegistry:
           find(SegmentIdentity, "Global Segment")  # identity type + name
 
         ``None`` says that no loaded identity has the name or the ID, never
-        that the table is not loaded or that several identities share the
-        name: ``LookupError`` (no resolver), ``ResolverNotLoadedError`` and
-        the ``ResolutionError`` for a name some loaded identity has are raised
-        as ``lookup`` raises them. The name for an ID is the ``name`` of
+        that several identities share the name: ``LookupError`` (no
+        resolver), ``ResolverNotLoadedError`` and the ``ResolutionError`` for
+        a name some loaded identity has are raised as ``lookup`` raises them.
+        ``ResolverNotLoadedError`` comes only from a resolver that must be
+        loaded before it answers (``requires_load``). Any other resolver whose
+        table was not loaded holds nothing, so ``None`` there can also mean
+        "not loaded": check the resolver's ``loaded``, or load it with
+        ``load_resolvers``. The name for an ID is the ``name`` of
         ``registry.find(NetworkServiceLogicalId(u))``, when it is not ``None``.
         """
         try:
@@ -471,6 +499,11 @@ class ResolverRegistry:
             and found.lower() == lowered
             for identity in self.identities(identity_type)
         )
+
+
+def _value_text(value: object) -> str:
+    """*value* as a refusal prints it: a UUID as its text, anything else as its repr."""
+    return str(value) if isinstance(value, uuid.UUID) else repr(value)
 
 
 def resolve_name[T](
