@@ -194,6 +194,64 @@ def test_items_without_a_key_fall_back_to_whole_list() -> None:
     assert first_rules(rebase(raw, before, after, Root)) == [{"port": 2}]
 
 
+def rules_doc(*rules: dict[str, object]) -> dict[str, object]:
+    return {"segments": [seg("A", 0, list(rules))]}
+
+
+def test_an_untouched_item_without_a_key_is_kept_as_read_beside_an_edit() -> None:
+    raw = rules_doc({"name": "a", "port": 1, "u": 1}, {"port": 9, "u": 2})
+    before = rules_doc({"name": "a", "port": 1}, {"port": 9})
+    after = rules_doc({"name": "a", "port": 2}, {"port": 9})
+    assert first_rules(rebase(raw, before, after, Root)) == [
+        {"name": "a", "port": 2, "u": 1},
+        {"port": 9, "u": 2},
+    ]
+    assert [str(c.path) for c in raw_changes(before, after, Root)] == [
+        "segments[A].rules[a].port"
+    ]
+
+
+def test_an_untouched_item_of_a_repeated_key_is_kept_as_read_beside_an_edit() -> None:
+    twin: dict[str, object] = {"name": "x", "port": 5}
+    raw = rules_doc(
+        {"name": "a", "port": 1, "u": 1},
+        {**twin, "u": 2},
+        {"name": "x", "port": 6, "u": 3},
+    )
+    before = rules_doc({"name": "a", "port": 1}, twin, {"name": "x", "port": 6})
+    after = rules_doc({"name": "a", "port": 2}, twin, {"name": "x", "port": 6})
+    assert first_rules(rebase(raw, before, after, Root)) == [
+        {"name": "a", "port": 2, "u": 1},
+        {"name": "x", "port": 5, "u": 2},
+        {"name": "x", "port": 6, "u": 3},
+    ]
+
+
+def test_two_equal_items_without_a_key_are_not_paired() -> None:
+    """A guard: equal dumps pair only when each is the only one of its kind."""
+    raw = rules_doc(
+        {"name": "a", "port": 1, "u": 1}, {"port": 9, "u": 2}, {"port": 9, "u": 3}
+    )
+    before = rules_doc({"name": "a", "port": 1}, {"port": 9}, {"port": 9})
+    after = rules_doc({"name": "a", "port": 2}, {"port": 9}, {"port": 9})
+    assert first_rules(rebase(raw, before, after, Root)) == [
+        {"name": "a", "port": 2},
+        {"port": 9},
+        {"port": 9},
+    ]
+
+
+def test_an_edited_item_of_a_repeated_key_still_writes_the_list_whole() -> None:
+    """A guard: the pass pairs what did not change; it identifies nothing else."""
+    raw = rules_doc({"name": "x", "port": 5, "u": 2}, {"name": "x", "port": 6, "u": 3})
+    before = rules_doc({"name": "x", "port": 5}, {"name": "x", "port": 6})
+    after = rules_doc({"name": "x", "port": 5}, {"name": "x", "port": 7})
+    assert first_rules(rebase(raw, before, after, Root)) == [
+        {"name": "x", "port": 5},
+        {"name": "x", "port": 7},
+    ]
+
+
 def test_raw_changes_reads_keys_under_any_name_the_model_reads() -> None:
     old = {"pols": [{"rule_name": "a", "hits": 1}]}  # model dumps "ruleName"
     new = {"pols": [{"rule_name": "a", "hits": 2}]}

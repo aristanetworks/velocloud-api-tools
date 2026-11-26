@@ -604,10 +604,11 @@ def test_wan_link_internal_id_issued_passes() -> None:
 
 
 def test_wan_internal_id_changed_and_stored_otherwise_passes() -> None:
-    # A link read without an internalId has no key, so the links are compared
-    # as a list replaced whole, and the first link's ID, a ServerOwned field,
-    # may be stored as another value than the one sent. (A keyed link whose
-    # internalId changes is another item: the ID is part of its key.)
+    # A link read without an internalId has no key, so a list in which that
+    # link changed is compared as a list replaced whole, and the first link's
+    # ID, a ServerOwned field, may be stored as another value than the one
+    # sent. (A keyed link whose internalId changes is another item: the ID is
+    # part of its key.)
     first = {
         "internalId": U1,
         "name": "l1",
@@ -615,9 +616,10 @@ def test_wan_internal_id_changed_and_stored_otherwise_passes() -> None:
         "addressingVersion": "IPv4",
     }
     keyless = {"name": "l2", "type": "WIRED", "addressingVersion": "IPv4"}
+    edited = {**keyless, "name": "l2b"}
     module = wan({"links": [first, keyless]})
-    plan = plan_module(module, {"links": [{**first, "internalId": U2}, keyless]})
-    stored = {"links": [{**first, "internalId": U3}, keyless]}
+    plan = plan_module(module, {"links": [{**first, "internalId": U2}, edited]})
+    stored = {"links": [{**first, "internalId": U3}, edited]}
     write = check_module_write(module, plan, as_stored(module, stored))
     assert paths(write.applied) == ["links"]
     (change,) = write.server_changes

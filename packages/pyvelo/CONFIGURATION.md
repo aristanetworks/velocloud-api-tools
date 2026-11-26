@@ -836,11 +836,13 @@ firewall: update
   other list is written whole from the models when something in it changes: a
   positional or untyped list, and a keyed list that holds an item with no key
   and no ID (a WAN link read without an `internalId`) or two items of one name
-  read without IDs. Keys the models do not know are then dropped from every
-  item of that list, and the models' defaults are written into them. A keyed
-  list inside an interface that is not a plain port (a LAG's `slaveInterfaces`)
-  is written item by item as well: each item of a list that holds several kinds
-  of interface is read as the kind it is.
+  read without IDs, when one of those items was changed or removed. While they
+  are as read and each differs from every other such item, an edit to another
+  item of the list writes that item alone. Keys the models do not know are
+  dropped from every item of a list written whole, and the models' defaults
+  are written into them. A keyed list inside an interface that is not a plain
+  port (a LAG's `slaveInterfaces`) is written item by item as well: each item
+  of a list that holds several kinds of interface is read as the kind it is.
 - A patch that moves items (a `move`) plans each item's change at the item, and
   one more change at the list: its order entry, which names the items that
   move, each with its new place. An item added to a keyed list has its place in
@@ -1624,11 +1626,12 @@ Known limits:
   a change between that read and the write; a module with no `version` is
   written without the read.
 - A keyed list read with an item that cannot be told apart is compared as a
-  whole: an item with no key and no ID (a WAN link without an `internalId`),
-  or two items of one name read without IDs. A change in it to a field the VCO
-  owns is then part of the list's change, not in `left_out`, and a value stored
-  there otherwise than sent is a server change with no value read (`as_read`
-  is `MISSING`), even when it is the value read. A key you removed from an
+  whole when one of those items was changed or removed: an item with no key
+  and no ID (a WAN link without an `internalId`), or two items of one name
+  read without IDs. A change in it to a field the VCO owns is then part of
+  the list's change, not in `left_out`, and a value stored there otherwise
+  than sent is a server change with no value read (`as_read` is `MISSING`),
+  even when it is the value read. A key you removed from an
   item of such a list counts as stored only when the stored item at that
   position no longer has it. If the VCO puts the key back on its own, every
   save that changes that list raises `WriteNotAppliedError` until the key is in

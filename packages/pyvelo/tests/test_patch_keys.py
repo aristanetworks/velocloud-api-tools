@@ -884,6 +884,14 @@ def test_pair_items_never_pairs_an_added_item() -> None:
     assert pair_items(twins, new, node) is None
 
 
+def test_the_third_pass_never_pairs_an_added_item() -> None:
+    node = node_child(Root, "rules")
+    assert isinstance(node, KeyedList)
+    old: list[object] = [{"name": "a", "port": 1}, {"port": 9}]
+    new: list[object] = [{"name": "a", "port": 2}, AddedItem({"port": 9})]
+    assert pair_items(old, new, node) is None
+
+
 def _added_rule() -> Rule:
     root = Root(rules=[])
     _ = root.merge_patch({"rules": {"z": add({"priority": 3})}})

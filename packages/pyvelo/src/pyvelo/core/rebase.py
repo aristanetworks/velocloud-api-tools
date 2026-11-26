@@ -732,6 +732,27 @@ def pair_unique(
             pairs[j] = old_at[value]
 
 
+def pair_same(
+    old: list[object],
+    new: list[object],
+    old_left: list[int],
+    new_left: list[int],
+    pairs: dict[int, int],
+) -> None:
+    """Pair the items left that are the same JSON value (``same_json``).
+
+    Each item of *new_left* is paired with the one item of *old_left* that is
+    the same as it, when no other item of *new_left* is the same as that item
+    of *old*. The pairs go into *pairs*, as index in new to index in old.
+    """
+    for j in new_left:
+        same = [i for i in old_left if same_json(old[i], new[j])]
+        if len(same) == 1 and (
+            sum(same_json(old[same[0]], new[k]) for k in new_left) == 1
+        ):
+            pairs[j] = same[0]
+
+
 def pair_items(
     old: list[object],
     new: list[object],
@@ -745,12 +766,15 @@ def pair_items(
 
     First by alt key, for each alt-key value that occurs once on each side;
     then the items left by key, for each key that occurs once on each side
-    among them. Keys and alt keys are compared in string form, part by part
-    for a composite key, so ``24`` as dumped and ``"24"`` as read are one.
+    among them; then each item left whose JSON is the same as exactly one item
+    left on the other side, when no other item left is the same as either
+    (``same_json``): an item that did not change is itself, whatever its key.
+    Keys and alt keys are compared in string form, part by part for a
+    composite key, so ``24`` as dumped and ``"24"`` as read are one.
     Items of *new* left over are added, and items of *old* left over removed.
     An item of *new* that an ``add`` built (an ``AddedItem``) is new whatever
-    its key: it is in neither pass and is added, so the item of *old* with
-    that key, if any, is removed.
+    its key and its JSON: it is in no pass and is added, so the item of *old*
+    with that key, if any, is removed.
     An item of *old* left over is removed when it can be identified: by a key
     no other item of *old* has, or by an alt key that was read and that no
     other item of *old* has. When one cannot, what became of it cannot be
@@ -786,6 +810,10 @@ def pair_items(
         new_left = [j for j in new_left if j not in pairs]
     pair_unique(old_keys, new_keys, old_left, new_left, pairs)
     paired = set(pairs.values())
+    old_left = [i for i in old_left if i not in paired]
+    new_left = [j for j in new_left if j not in pairs]
+    pair_same(old, new, old_left, new_left, pairs)
+    paired = set(pairs.values())
     removed = tuple(i for i in old_left if i not in paired)
     unique_keys, unique_alts = _unique(old_keys), _unique(old_alts)
     if any(
@@ -820,12 +848,14 @@ def rebase(
     - When a change needs a container that *raw* does not have, the whole
       container is taken from *after*.
     - The items of a keyed list in *before* and *after* are paired by alt key,
-      then by key (``pair_items``), so a renamed item stays one item; item
-      order comes from *after*, paired items recurse, each as the kind of item
-      it now is, and the others are taken from *after*. A list without a key
-      is replaced whole. So is a keyed list that ``pair_items`` cannot pair,
-      or whose length in *raw* differs from *before* (raw items cannot be
-      paired up with *before*'s).
+      then by key, then the items left by their JSON when each is the only
+      one of its kind (``pair_items``), so a renamed item stays one item, and
+      an item with no key, or of a repeated key, that did not change stays the
+      item as read; item order comes from *after*, paired items recurse, each
+      as the kind of item it now is, and the others are taken from *after*.
+      A list without a key is replaced whole. So is a keyed list that
+      ``pair_items`` cannot pair, or whose length in *raw* differs from
+      *before* (raw items cannot be paired up with *before*'s).
     - The values of a map of models (a ``dict[K, Model]`` field) are rebased
       entry by entry, each as its model, so a change lands on the key as read
       and a keyed list below the map is paired.
