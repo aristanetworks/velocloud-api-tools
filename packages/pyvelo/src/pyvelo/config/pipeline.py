@@ -1166,7 +1166,8 @@ class ConfigPipeline:
            (``write_module(..., rebase=True)``): the device settings write can change it
            too, so its version is read first, and a changed one makes the save read the
            module and apply your edits to it; one written before them (QoS and
-           firewall, in a save that removes a hub) is not. A profile's QoS or
+           firewall, in a save that removes a hub) is not, unless a device
+           settings write of an earlier save marked it. A profile's QoS or
            firewall that a device settings write of an earlier save may have
            changed (``state.rebase_on_write``) is rebased too. Only a path you
            edited that the other change also reached raises

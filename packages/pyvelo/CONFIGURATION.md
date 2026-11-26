@@ -852,13 +852,16 @@ firewall: update
   positional or untyped list, and a keyed list that holds an item with no key
   and no ID (a WAN link read without an `internalId`) or two items of one name
   read without IDs, when one of those items was changed or removed, or when
-  another item of the list, as read or as written, is equal to one of them (an
-  item an `add` built is new and does not count). While they are as read and
-  no other item is equal to one of them, an edit to another item of the list
-  writes that item alone. Keys the models do not know are dropped from every
-  item of a list written whole, and the models' defaults are written into
-  them, except an ID the library made up for an item read without one (a WAN
-  class of service's `id`, a QoS rule's `ruleLogicalId`): that is not sent.
+  another item of the list, as read or as written, is equal to one of them in
+  every field the models know (an item an `add` built is new and does not
+  count). Two items that differ only in keys the models do not know count as
+  equal: an edit to another item then writes the list whole, and those keys
+  are lost from every item. While they are as read and no other item is equal
+  to one of them, an edit to another item of the list writes that item alone.
+  Keys the models do not know are dropped from every item of a list written
+  whole, and the models' defaults are written into them, except an ID the
+  library made up for an item read without one (a WAN class of service's `id`,
+  a QoS rule's `ruleLogicalId`): that is not sent.
   In a list whose items cannot all be told apart (a positional list, or a
   keyed list as above), an item is the one read at its position, counting only
   the items not added with `add`. So in such a list written whole, an item
@@ -1416,8 +1419,9 @@ ref row your edit adds or removes (a QoS rule's backhaul hub) is derived again
 against the refs read, so a row already there is not added twice, and the hub's
 service is found in the device settings as that save stored them. The
 modules written before the device settings (QoS and firewall, in a save that
-removes a hub: see "Hubs"), and every module of an edge save, are not rebased:
-a changed version raises as above. A device settings write that changes such a
+removes a hub: see "Hubs"), unless a device settings write of an earlier save
+marked them (below), and every module of an edge save, are not rebased: a
+changed version raises as above. A device settings write that changes such a
 module on the VCO after it was stored leaves the state with the module as it
 was stored: in a profile, the next write of it is rebased (below); in an edge,
 it meets the changed version. The cost is one version read per module written
@@ -1435,7 +1439,11 @@ change another writer made to one of them in the meantime is put together with
 your edits and listed in `SaveResult.server_changes`, instead of raising
 `ConfigConflictError`; only a change at a path you edited is still a conflict.
 Until then the state shows them as they were read or last stored: load the
-profile again to see what the device settings write changed.
+profile again to see what the device settings write changed. A module with no
+version is not rebased: without `unconditional` the save raises
+`VersionRequiredError` before anything is sent, and with it the module is
+written as the state holds it, over whatever the device settings write changed
+there.
 
 Which of the two a stale write raises depends on the VCO's conditional check
 of the version. With it on, the VCO refuses the write, and the save raises
@@ -1625,20 +1633,22 @@ the save or the `revert` replaced (or, for a module the state created, the
 `revert` removed), and are detached. Reading one is fine. An assignment to one
 raises `DetachedObjectError`, and an in-place edit to a list or dict it holds
 (`seg.outbound.insert(0, rule)`) is reported, once, by the next `plan()` or
-save. That holds while you still hold the object the list belongs to. A list or
-dict you kept on its own (`rules = seg.outbound`, with `seg` dropped) is not
-checked: an edit to it is neither reported nor saved (see the known limits). A
-text caller never holds one. A device settings segment's `vrrp` is not one of
-the library's models and has no such guard: an assignment to `vrrp.root` does
-not raise, and is reported by the next `plan()` or save like an in-place edit.
-Take the object from the state again and redo the edit. To reuse a detached object as a new
-item, put a deep copy of it in the state (`copy.deepcopy(rule)`): the copy is
-not detached. A detached object put back as it is makes its module refuse
-every patch (`merge_patch`, `apply`, `assign_segment`) with
-`DetachedObjectError`, which names where it sits (`paths`) and changes
-nothing, also for a patch that would not reach it: put a deep copy there, take
-the object from the state again, or take the module's edits back with
-`pipeline.revert(state, module=...)`.
+save. That holds while you still hold the object the list belongs to, or one
+that contains it. A list or dict you kept on its own (`rules = seg.outbound`,
+with `seg` and the firewall data it came from dropped) is not checked: an edit
+to it is neither reported nor saved (see the known limits). Keep the object
+the list belongs to, or take the list from the state each time. A text caller
+never holds one. A device settings segment's `vrrp` is not one of the
+library's models and has no such guard: an assignment to `vrrp.root` does not
+raise, and is reported by the next `plan()` or save like an in-place edit.
+Take the object from the state again and redo the edit. To reuse a detached
+object as a new item, put a deep copy of it in the state
+(`copy.deepcopy(rule)`): the copy is not detached. A detached object put back
+as it is makes its module refuse every patch (`merge_patch`, `apply`,
+`assign_segment`) with `DetachedObjectError`, which names where it sits
+(`paths`) and changes nothing, also for a patch that would not reach it: put a
+deep copy there, take the object from the state again, or take the module's
+edits back with `pipeline.revert(state, module=...)`.
 
 A write whose answer never arrived (a transport error after the request was
 sent, a cancelled save) may or may not be stored, and so may one that raised
@@ -1677,17 +1687,18 @@ Known limits:
   written only when the save is `unconditional`, and then without the read.
 - A keyed list read with an item that cannot be told apart is compared as a
   whole when one of those items was changed or removed, or when another item
-  of the list, as sent or as stored, is equal to one of them (an item an `add`
-  built counts here): an item with no key and no ID (a WAN link without an
-  `internalId`), or two items of one name read without IDs. A change in it to a field the VCO owns is then part of
-  the list's change, not in `left_out`, and a value stored there otherwise
-  than sent is a server change with no value read (`as_read` is `MISSING`),
-  even when it is the value read. A key you removed from an
-  item of such a list counts as stored only when the stored item at that
-  position no longer has it. If the VCO puts the key back on its own, every
-  save that changes that list raises `WriteNotAppliedError` until the key is in
-  the table of rewrites. An edit that shifts the items of such a list
-  (removing or adding an item before others) can raise it too.
+  of the list, as sent, is equal to one of them in every field the models know
+  (an item an `add` built does not count): an item with no key and no ID (a
+  WAN link without an `internalId`), or two items of one name read without
+  IDs. A change in it to a field the VCO owns is then part of the list's
+  change, not in `left_out`, and a value stored there otherwise than sent is a
+  server change with no value read (`as_read` is `MISSING`), even when it is
+  the value read. A key you removed from an item of such a list counts as
+  stored only when the stored item at that position no longer has it. If the
+  VCO puts the key back on its own, every save that changes that list raises
+  `WriteNotAppliedError` until the key is in the table of rewrites. An edit
+  that shifts the items of such a list (removing or adding an item before
+  others) can raise it too.
 - An update with no change the check can find stored is sent without
   `returnData` and a row count of zero is taken as a refusal, so if a VCO
   counted zero rows for a write it stored that changed nothing in effect (not
