@@ -1038,6 +1038,34 @@ async def test_failed_apply_restores_an_unset_modules_list() -> None:
     assert edge_config.model_dump() == dump
 
 
+@pytest.mark.parametrize("order", [(0, 1), (1, 0)])
+def test_dropping_every_created_module_unsets_the_modules_list(
+    order: tuple[int, int],
+) -> None:
+    state = ConfigState(
+        edge_config=EdgeConfiguration(name="Edge Specific Profile", id_=10),
+        profile_config=make_raw_state().profile_config,
+        target_type="edge",
+        resolver_context=ResolverContext(),
+    )
+    edge_config = state.edge_config
+    assert edge_config is not None
+    fields_set, dump = set(edge_config.model_fields_set), edge_config.model_dump()
+    created = [state.module("firewall", create=True), state.module("QOS", create=True)]
+
+    state.drop_module(created[order[0]])
+    assert edge_config.modules is not MISSING
+    assert [m is created[order[1]] for m in edge_config.modules] == [True]
+    state.drop_module(created[order[1]])
+
+    assert edge_config.modules is MISSING
+    assert edge_config.model_fields_set == fields_set
+    assert edge_config.model_dump() == dump
+    # The record is made again by the next creation.
+    state.drop_module(state.module("firewall", create=True))
+    assert edge_config.modules is MISSING
+
+
 def test_drop_module_refuses_a_module_that_is_not_new() -> None:
     state = make_raw_state()
     firewall = state.find_module("firewall")
