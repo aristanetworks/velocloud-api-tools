@@ -6,7 +6,7 @@ The workflow is load → apply → save, and revert.
 import contextlib
 import json
 from collections.abc import Collection, Generator, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Final, Literal, Protocol, TypeIs, cast, runtime_checkable
 
 from pydantic import MISSING
@@ -23,6 +23,7 @@ from pyvelo.client.exceptions import (
     RefsNotLoadedError,
     UnboundError,
     VcoOperationError,
+    VersionRequiredError,
     WriteOutcomeUnknownError,
 )
 from pyvelo.client.hub_services import missing_services
@@ -1101,7 +1102,7 @@ class ConfigPipeline:
             except ResolverNotLoadedError as error:
                 await self.load_resolvers(state, _to_load(error, loaded))
 
-    async def save(
+    async def save(  # noqa: PLR0913 (each option of a save is a keyword its caller names)
         self,
         state: ConfigState,
         *,
@@ -1109,6 +1110,7 @@ class ConfigPipeline:
         validate: bool = True,
         repair_defaults: bool = True,
         on_hub_in_use: Literal["warn", "refuse"] = "warn",
+        unconditional: bool = False,
     ) -> SaveResult:
         """Persist changes to VCO.
 
@@ -1126,7 +1128,11 @@ class ConfigPipeline:
            warning for a profile whose modules disagree as read.
            *repair_defaults* is false to leave the template ``defaults`` a
            profile QoS segment lacks out of the write; the plan warns of them
-           either way (``defaults_repaired``).
+           either way (``defaults_repaired``). The save raises
+           ``VersionRequiredError`` if the plan updates a module that has no
+           version, also for ``dry_run``, unless *unconditional* is true: then
+           that update is sent with no ``version``, and the VCO writes it
+           whatever it holds.
         2. Run write-time validators on the changed modules. An error blocks
            the save: it raises ``SaveValidationError`` and sends nothing. A
            validator reports on the whole state, so an error in a module the
@@ -1274,6 +1280,11 @@ class ConfigPipeline:
                 return result
 
             _list_writes(state, plan, result)
+            plan = replace(
+                plan,
+                modules=_versioned(state, plan.modules, unconditional=unconditional),
+            )
+            result.plan = plan
             if validate and not self._validate_writes(
                 state, plan, result, dry_run=dry_run
             ):
@@ -2734,6 +2745,27 @@ def _list_writes(state: ConfigState, plan: ConfigPlan, result: SaveResult) -> No
             result.modules_inserted.append(name)
         else:
             result.modules_updated.append(name)
+
+
+def _versioned(
+    state: ConfigState, modules: Sequence[ModulePlan], *, unconditional: bool
+) -> tuple[ModulePlan, ...]:
+    """Each plan of *modules*, in order, marked when it may update with no version.
+
+    An update of a module that has no version is marked ``unconditional`` when
+    *unconditional* is true, and raises ``VersionRequiredError`` otherwise,
+    before anything is sent. Any other plan (an insert, a ``none`` plan, an
+    update of a module with a version) is returned as it is.
+    """
+    versioned: list[ModulePlan] = []
+    for module_plan in modules:
+        if module_plan.operation != "update" or state.module(module_plan.name).version:
+            versioned.append(module_plan)
+        elif unconditional:
+            versioned.append(replace(module_plan, unconditional=True))
+        else:
+            raise VersionRequiredError(module_plan.name)
+    return tuple(versioned)
 
 
 def _validation_error_to_warning(err: ValidatorError) -> ValidationWarning:

@@ -4,7 +4,9 @@ from typing import cast
 
 import httpx
 import pytest
+from pydantic import MISSING
 from pyvelo.client.enums.configuration import ConfigurationModuleName
+from pyvelo.client.exceptions import VersionRequiredError
 from pyvelo.client.schemas.configuration import (
     EdgeConfiguration,
     EnterpriseConfigurationProfile,
@@ -137,3 +139,36 @@ async def test_mock_client_under_async_with_still_talks_to_its_store() -> None:
     assert [method for method, _ in client.store.requests] == [
         "configuration/updateConfigurationModule"
     ]
+
+
+@pytest.mark.parametrize("dry_run", [True, False])
+async def test_save_refuses_a_module_with_no_version_before_it_sends(
+    dry_run: bool,  # noqa: FBT001 (a parameter of the test)
+) -> None:
+    state = _make_state()
+    assert state.edge_config is not None
+    module = state.edge_config.firewall
+    module.version = None
+    client = MockVcoClient.for_state(state)
+    module.data.firewall_enabled.set_local(False)
+
+    with pytest.raises(VersionRequiredError, match='"unconditional": true'):
+        _ = await ConfigPipeline(client).save(state, dry_run=dry_run)
+
+    assert client.update_requests == []
+    assert [p.name for p in state.plan().changed] == ["firewall"]
+
+
+async def test_save_writes_a_module_with_no_version_when_asked_to() -> None:
+    state = _make_state()
+    assert state.edge_config is not None
+    module = state.edge_config.firewall
+    module.version = None
+    client = MockVcoClient.for_state(state)
+    module.data.firewall_enabled.set_local(False)
+
+    result = await ConfigPipeline(client).save(state, unconditional=True)
+
+    assert [str(name) for name in result.modules_updated] == ["firewall"]
+    assert client.update_requests[0].version is MISSING
+    assert client.update_requests[0].update.data["firewall_enabled"] is False

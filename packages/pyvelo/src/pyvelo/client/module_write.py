@@ -94,6 +94,7 @@ from pyvelo.client.exceptions import (
     LossyFieldError,
     RefsNotLoadedError,
     SegmentSetError,
+    VersionRequiredError,
 )
 from pyvelo.client.hub_services import (
     HubServiceTable,
@@ -324,6 +325,13 @@ class ModulePlan:
     mapping. It is the one object the plan used: do not change it. A plan made
     from this one (a rebase, the hub rows) keeps it.
     """
+    unconditional: bool = False
+    """Send the update of a module that has no version, which the VCO then writes
+    whatever is stored.
+
+    ``update_request`` refuses such an update without it. It changes nothing for
+    a module with a version, or for an insert.
+    """
 
     @override
     def __repr__(self) -> str:
@@ -512,8 +520,12 @@ def update_request(
 ) -> UpdateConfigurationModule:
     """The request that writes *plan* to *module*, at the version it was read.
 
-    With *return_data* it asks for the module row as stored.
+    A module with no version is refused (``VersionRequiredError``) unless the
+    plan is ``unconditional``, and is then sent with no ``version``. With
+    *return_data* it asks for the module row as stored.
     """
+    if not module.version and not plan.unconditional:
+        raise VersionRequiredError(plan.name)
     return UpdateConfigurationModule(
         configuration_module_id=module.id_,
         enterprise_id=enterprise_id if enterprise_id is not None else MISSING,

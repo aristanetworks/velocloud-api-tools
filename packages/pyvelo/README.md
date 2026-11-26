@@ -317,7 +317,8 @@ reads the configuration with its modules and checks the module there against the
 plan: it returns that module as the write when it already holds the changes (a
 retry whose first copy was stored), and otherwise raises `ConfigConflictError`
 with nothing sent. The read narrows the race and does not close it, and a
-module with no `version` is written unconditionally. A write that sends no refs
+module with no `version` is not written: `VersionRequiredError`, unless the plan
+is `unconditional` (`save(..., unconditional=True)`). A write that sends no refs
 makes no extra request.
 
 `check_module_version(module, plan)` makes that read on its own, for a caller

@@ -5,6 +5,7 @@ deeply-nested configuration data models. ``update_module`` runs over a
 ``ModuleStore``, which answers its writes as a VCO does.
 """
 
+import dataclasses
 import inspect
 from typing import TYPE_CHECKING, cast, overload
 from unittest.mock import AsyncMock
@@ -14,13 +15,13 @@ import pytest
 from pydantic import MISSING
 from pyvelo.client import VcoClient
 from pyvelo.client.enums.configuration import ConfigurationModuleName
-from pyvelo.client.exceptions import VcoOperationError
+from pyvelo.client.exceptions import VcoOperationError, VersionRequiredError
 from pyvelo.client.models.configuration.device_settings.segment import (
     DnsPrimaryProvider,
     SegmentDns,
 )
 from pyvelo.client.module_check import ModuleWrite
-from pyvelo.client.module_write import ModulePlan
+from pyvelo.client.module_write import ModulePlan, plan_module
 from pyvelo.client.schemas.configuration import (
     ConfigurationModuleBase,
     EdgeConfiguration,
@@ -245,14 +246,18 @@ class TestUpdateModule:
         _ = await client.update_module(module, module.mutable_data())
         assert store.requests == []
 
-    async def test_null_version_and_enterprise_are_omitted(
+    async def test_null_version_is_refused_and_omitted_when_asked_for(
         self, mock_vco_client: MockVcoClientFactory
     ) -> None:
         module = self._fw({"segments": []}, layer=Edge, version=None)
         client, store = await self._make_client(mock_vco_client, module)
         data = module.mutable_data()
         data.firewall_enabled.set_local(False)
-        _ = await client.update_module(module, data)
+        with pytest.raises(VersionRequiredError):
+            _ = await client.update_module(module, data)
+        assert self._updates(store) == []
+        asked = dataclasses.replace(plan_module(module, data), unconditional=True)
+        _ = await client.write_module(module, asked)
         (req,) = self._updates(store)
         assert req.version is MISSING
         assert req.enterprise_id is MISSING

@@ -97,6 +97,14 @@ Validators are registered explicitly: pass a `ValidatorRegistry` as
 `validator_registry=` to `ConfigPipeline` or `build_default_pipeline`, or
 register on `pipeline.validators`.
 
+`save(state, unconditional=True)` writes a module that has no `version`. A
+module has none when it was built by hand, or read through a request that left
+`version` out; every module the VCO stores has one (`"0"` is one). Without the
+option such a save raises `VersionRequiredError` before it sends anything, also
+for a dry run. With it, the update is sent with no `version`, and the VCO writes
+it whatever it holds then: a change another writer stored since the read is
+overwritten, and nothing says so.
+
 Application, address-group and service-group names need more resolvers. For
 application names, register `ApplicationResolver(client)` (from
 `pyvelo.config.resolvers.application`) with `pipeline.resolvers.register(...)`
@@ -1624,7 +1632,7 @@ Known limits:
   refs; the save then reports your data changes, if any, as not stored. The
   save reads the module's version before it sends refs, which narrows this to
   a change between that read and the write; a module with no `version` is
-  written without the read.
+  written only when the save is `unconditional`, and then without the read.
 - A keyed list read with an item that cannot be told apart is compared as a
   whole when one of those items was changed or removed: an item with no key
   and no ID (a WAN link without an `internalId`), or two items of one name

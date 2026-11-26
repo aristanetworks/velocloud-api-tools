@@ -8,6 +8,7 @@ module there already holds the write's changes.
 """
 
 import copy
+import dataclasses
 import pickle
 import uuid
 from collections.abc import Callable
@@ -15,16 +16,23 @@ from typing import Any
 
 import httpx
 import pytest
+from pydantic import MISSING
 from pyvelo.client.enums.configuration import ConfigurationModuleName
-from pyvelo.client.exceptions import ConfigConflictError, VcoOperationError
+from pyvelo.client.exceptions import (
+    ConfigConflictError,
+    VcoOperationError,
+    VersionRequiredError,
+)
 from pyvelo.client.models.configuration.qos.segment import QosSegment
-from pyvelo.client.module_write import ModulePlan, plan_module
+from pyvelo.client.module_write import ModulePlan, plan_module, update_request
 from pyvelo.client.schemas.configuration import (
     ConfigurationModuleVersion,
     DeviceSettingsConfigurationModule,
+    FirewallConfigurationModule,
     QosConfigurationModule,
     new_edge_module,
 )
+from pyvelo.core import ConfigContext
 from pyvelo.core.identity import NetworkServiceIdentity
 from pyvelo.core.layers import Edge
 from pyvelo.testing import (
@@ -286,16 +294,37 @@ async def test_an_insert_has_no_version_read(
     assert VERSION not in methods(store)
 
 
-async def test_a_module_with_no_version_stays_unconditional(
-    mock_vco_client: MockVcoClientFactory,
-) -> None:
-    module, plan = await provider_set()
-    module = module.model_copy(update={"version": None})
-    assert plan.refs is not None
-    store = a_store_holding(module)
-    client = await mock_vco_client(store)
-    _ = await client.write_module(module, plan)
-    assert VERSION not in methods(store)
+FW_RAW = {"segments": [], "syslog_forwarding": False}
+
+
+def firewall(version: str | None) -> FirewallConfigurationModule[Edge]:
+    row = make_module_json("firewall", copy.deepcopy(FW_RAW), version=version)
+    return FirewallConfigurationModule[Edge].model_validate(row)
+
+
+def test_an_update_of_a_module_with_no_version_is_refused_unless_asked_for() -> None:
+    module = firewall(None)
+    plan = plan_module(
+        module, {**FW_RAW, "syslog_forwarding": True}, level=ConfigContext.EDGE
+    )
+    assert (plan.operation, plan.unconditional) == ("update", False)
+
+    with pytest.raises(VersionRequiredError, match="unconditional=True") as exc:
+        _ = update_request(module, plan, None)
+
+    assert exc.value.module_name == "firewall"
+    assert '"unconditional": true' in str(exc.value)
+    asked = dataclasses.replace(plan, unconditional=True)
+    assert update_request(module, asked, None).version is MISSING
+
+
+def test_version_zero_is_a_version() -> None:
+    """A guard: the version of a row nothing has written yet is sent as it is."""
+    module = firewall("0")
+    plan = plan_module(
+        module, {**FW_RAW, "syslog_forwarding": True}, level=ConfigContext.EDGE
+    )
+    assert update_request(module, plan, None).version == "0"
 
 
 async def test_a_module_that_is_gone_is_a_conflict_with_no_module(

@@ -739,6 +739,35 @@ class RefsNotLoadedError(VcoError):
         super().__init__(message)
 
 
+class VersionRequiredError(VcoError):
+    """Raised for an update of a module that has no version.
+
+    It is raised when nothing asked for an unchecked write (``unconditional``).
+    ``module_name`` is the module.
+    """
+
+    module_name: str
+
+    def __init__(self, module_name: str) -> None:
+        """The error for *module_name*.
+
+        The message says how to read the module with a version, and how to ask
+        for the unchecked write.
+        """
+        self.module_name = module_name
+        super().__init__(
+            f"{module_name}: this module has no version, so the VCO cannot check "
+            "that it still holds what was read: an update would overwrite whatever "
+            "another writer stored since, and that change would be lost without a "
+            "word. Nothing was sent. Every module the VCO stores has a version, so "
+            "read the module again (load the state again) and redo the edit. To "
+            "send the update with no check, pass unconditional=True to the save (a "
+            'JSON caller sends "unconditional": true with it); with write_module, '
+            "send dataclasses.replace(plan, unconditional=True). update_module has "
+            "no such option: plan with plan_module and write with write_module"
+        )
+
+
 type WriteAnswer = Literal["row", "counted", "refused", "stale"]
 """What the VCO said of a module write.
 

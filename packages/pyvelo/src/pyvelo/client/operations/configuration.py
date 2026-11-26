@@ -871,7 +871,9 @@ class ConfigurationMixin(Protocol):
         with a row count of zero.
 
         Sends nothing when the plan's operation is ``none``, and returns
-        *module* itself.
+        *module* itself. An update of a module with no ``version`` raises
+        ``VersionRequiredError`` before anything is sent, unless the plan is
+        ``unconditional``.
 
         An update whose plan carries refs (``plan.refs`` is not None; a
         module with a ``version`` and a ``configuration_id``) first reads the

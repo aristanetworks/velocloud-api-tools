@@ -40,6 +40,7 @@ from pyvelo.client.exceptions import (
     VcoWebSocketError,
     VcoWebSocketTimeoutError,
     VcoWebSocketValidationError,
+    VersionRequiredError,
     WriteNotAppliedError,
     WriteOutcomeUnknownError,
 )
@@ -343,6 +344,7 @@ def test_every_error_of_the_module_round_trips() -> None:
         ComposedModuleError("no data", module="firewall"),
         DetachedObjectError("changed", (path,)),
         RefsNotLoadedError("deviceSettings", (path,)),
+        VersionRequiredError("firewall"),
         FixedListError("QOS", [(path, "the list is gone")]),
         SegmentSetError(
             "no",
