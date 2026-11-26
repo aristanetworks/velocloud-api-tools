@@ -114,11 +114,11 @@ class GatewayListItem(VcoModel):
 class HandoffGatewayRow(VcoModel):
     """An item of a handoff section's ``gateways`` list: a row the VCO writes itself.
 
-    Its ID is stored as a plain UUID, where ``gatewayList`` stores the ``gateway``
-    prefix.
+    Its ID is kept as stored, as text. A VCO stores a plain UUID in most rows and
+    another text form in some, where ``gatewayList`` stores the ``gateway`` prefix.
     """
 
-    logical_id: uuid.UUID
+    logical_id: str
 
 
 class SegmentHandoffGateways(VcoModel):

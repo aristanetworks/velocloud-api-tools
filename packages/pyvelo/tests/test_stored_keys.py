@@ -249,7 +249,7 @@ def test_a_segment_s_handoff_gateways_are_read(
         assert isinstance(handoff, SegmentHandoffGateways)
         assert handoff.auto_select is False
         assert [g.logical_id for g in handoff.gateway_list] == [GATEWAY]
-        assert [g.logical_id for g in handoff.gateways] == [WRAPPER]
+        assert [g.logical_id for g in handoff.gateways] == [str(WRAPPER)]
         assert_untouched(module, raw, level)
 
 
@@ -291,6 +291,50 @@ def test_a_row_the_vco_made_keeps_its_stored_form_when_the_list_is_written() -> 
     assert sent["gateways"][0] == stored_row
     assert sent["gateways"][1] == {"logicalId": u(0x99)}
     assert sent["gatewayList"] == HANDOFF["gatewayList"]
+
+
+PREFIXED_ROW: dict[str, Any] = {
+    "logicalId": f"gateway{u(0x55)}",
+    "ipAddress": "10.0.0.9",
+    "ipV6Address": "2001:db8::9",
+}
+
+
+def controllers_with(row: dict[str, Any]) -> dict[str, Any]:
+    raw = copy.deepcopy(PROFILE_DS)
+    raw["segments"][0]["handOffControllers"]["gateways"] = [copy.deepcopy(row)]
+    return raw
+
+
+def test_a_controllers_row_with_a_prefixed_id_loads_and_is_sent_as_read() -> None:
+    raw = controllers_with(PREFIXED_ROW)
+    for module in both_ways(DeviceSettingsConfigurationModule, "deviceSettings", raw):
+        controllers = module.data.segments[0].handoff_controllers
+        assert isinstance(controllers, SegmentHandoffGateways)
+        assert [g.logical_id for g in controllers.gateways] == [
+            PREFIXED_ROW["logicalId"]
+        ]
+        assert_untouched(module, raw, PROFILE)
+
+
+def test_a_row_appended_beside_a_prefixed_row_leaves_the_stored_row_as_read() -> None:
+    module = device_settings(controllers_with(PREFIXED_ROW))
+    controllers = module.data.segments[0].handoff_controllers
+    assert isinstance(controllers, SegmentHandoffGateways)
+    row_class = type(controllers.gateways[0])
+    controllers.gateways.append(row_class.model_validate({"logicalId": u(0x99)}))
+    data = plan_module(module, level=PROFILE).data
+    sent = data["segments"][0]["handOffControllers"]["gateways"]
+    assert sent == [PREFIXED_ROW, {"logicalId": u(0x99)}]
+
+
+@pytest.mark.parametrize("stored", [None, 5])
+def test_a_gateways_row_whose_id_is_not_text_is_a_validation_error(
+    stored: object,
+) -> None:
+    raw = controllers_with({**PREFIXED_ROW, "logicalId": stored})
+    with pytest.raises(ValidationError, match="logicalId"):
+        _ = device_settings(raw)
 
 
 def test_the_gateway_list_is_unchanged_by_no_edit_and_by_an_append() -> None:
