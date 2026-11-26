@@ -476,3 +476,24 @@ async def test_on_an_edge_no_patch_takes_the_only_hub_out_of_a_rule() -> None:
     assert [m.kind for m in error.value.mending] == ["add_member"]
     assert error.value.only_hubs == error.value.references
     assert error.value.on_edge
+
+
+async def test_a_default_rule_with_two_hubless_route_actions_is_named_once() -> None:
+    state = await guest_backhaul_state()
+    await edit(state, QOS, to_default(NO_HUB))
+    data_center = {"action": {"edge2DataCenterRouteAction": NO_HUB}}
+    await edit(
+        state, QOS, {"segments": {"Guest": {"defaults": {DEFAULT: data_center}}}}
+    )
+    await edit(
+        state,
+        QOS,
+        {"segments": {"Guest": {"rules": {"+": add(hub_backhaul_rule("Web"))}}}},
+    )
+
+    error = refused(state)
+
+    assert [p.rule_name for p in error.places] == ["Web", DEFAULT, DEFAULT]
+    assert (
+        "which cannot be deleted: rule 'Default-Any-UDP' of segment 'Guest'; give"
+    ) in str(error)

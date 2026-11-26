@@ -483,8 +483,9 @@ class DanglingReferenceError(VcoError):
     be left with no hub if each were taken out of it: each is the only hub its
     rule names, or one of all the hubs it names. No ``remove_reference`` patch
     is offered then (for any reference), and the message says to make the hub
-    a backhaul hub again, or first to give the rule another hub, change its
-    ``routePolicy`` or delete the rule.
+    a backhaul hub again; or first to give the rule another hub or change its
+    ``routePolicy``, after which the next ``plan()`` offers the removal patch;
+    or to delete the rule.
     """
 
     references: tuple[Reference, ...]
@@ -633,7 +634,8 @@ def _others_text(
         fixed = [p for p in others if not p.deletable]
         if not fixed:
             return " The other rules are mended the same way."
-        names = ", ".join(_rule_text(p) for p in fixed)
+        # A rule with two route actions left with no hub is named once.
+        names = ", ".join(dict.fromkeys(_rule_text(p) for p in fixed))
         return (
             " The other rules are mended the same way, but these are default "
             f"rules of their segment, which cannot be deleted: {names}; give "

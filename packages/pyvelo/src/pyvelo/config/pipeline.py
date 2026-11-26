@@ -803,7 +803,7 @@ class ConfigPipeline:
 
         **What apply does not check.** The rules that span modules are checked
         by ``ConfigState.plan()``, not here: the segments of a profile's three
-        modules (``SegmentSetError``), a segment's hub lists (``HubListError``)
+        modules (``SegmentSetError``), a segment's hub lists (``HubListError``),
         the references (``DanglingReferenceError``: a value that names a
         segment or a backhaul hub the configuration lacks), and a QoS rule that
         backhauls through hubs and names none (``BackhaulWithoutHubError``).

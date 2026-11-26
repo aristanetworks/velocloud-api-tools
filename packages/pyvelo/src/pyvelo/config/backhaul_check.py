@@ -177,7 +177,7 @@ def check_backhaul_hubs(
     raises ``BackhaulWithoutHubError``, which names them all.
 
     The path names the segment and the rule by their keys (a rule by its
-    name, else its logical ID), so a rule that is renamed is a new rule, and
+    name), so a rule that is renamed is a new rule, and
     one that takes the name of a rule removed is that rule.
     """
     refused: list[HublessBackhaul] = []

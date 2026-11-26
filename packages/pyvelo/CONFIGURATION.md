@@ -664,8 +664,10 @@ firewall: update
   backhaul hub again with the `add_member` patch; or first give the rule
   another hub or change its `routePolicy`, and the next `plan()` offers the
   `remove_reference` patch again, which mends the reference; or delete the
-  rule, which takes the reference with it. A rule that does not backhaul
-  through hubs keeps its removal patch.
+  rule, which takes the reference with it. Emptying a rule that does not
+  backhaul through hubs withholds nothing: the removal patches are withheld,
+  all of them, only when one of them would leave a rule that backhauls through
+  hubs with no hub.
   `module`, `patch`, `segment` and `path` are `apply`'s arguments
   (`await pipeline.apply(state, module=m.module, patch=m.patch,
   segment=m.segment, path=m.path)`), `target_type` says which configuration
@@ -712,10 +714,10 @@ firewall: update
   (`"auto"`, `"direct"` or `"gateway"`); or delete the rule with
   `{"segments": {"Guest": {"rules": {"Web": {"_op": "delete"}}}}}`. A rule of
   the segment's `defaults` cannot be deleted: when the first rule listed is one,
-  the message gives the first two ways only, and says why; when a later rule
-  listed is one, the message names it as a default rule that takes the first
-  two ways only (and when the first is a default rule, it says that a later
-  rule that is not can be deleted too). Or take the
+  the message gives the first two ways only, and says why (and that a later
+  rule that is not a default rule can be deleted too); when the first rule
+  listed can be deleted, the default rules listed after it are named as rules
+  that cannot be deleted and take the first two ways only. Or take the
   module's edits back with `pipeline.revert(state, module="QOS")`. A route
   action that had no hub as read, at the same path (the same route action of
   the same rule of the same segment), is left as it is: a
