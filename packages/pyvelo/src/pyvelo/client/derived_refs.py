@@ -274,8 +274,8 @@ def _what_fits(wanted: str, resolvers: IdentityLookup | None) -> tuple[list[str]
     fitting = _services_of(wanted, resolvers)
     shown = fitting[:_MAX_SERVICES_SHOWN]
     if not shown:
-        return shown, "The enterprise has no service of that type."
-    heading = "Of that type the enterprise has"
+        return shown, f"The enterprise has no service of type {wanted!r}."
+    heading = f"Of type {wanted!r} the enterprise has"
     if len(fitting) > len(shown):
         heading += f" ({len(fitting)} total, showing first {len(shown)})"
     return shown, f"{heading}: {', '.join(shown)}."

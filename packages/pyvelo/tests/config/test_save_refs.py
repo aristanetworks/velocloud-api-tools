@@ -274,7 +274,7 @@ async def test_a_service_of_the_wrong_type_is_refused_with_what_fits() -> None:
     error = wrong.value
     assert (error.wanted, error.candidates) == ("dns", ["dns-a", "dns-b"])
     assert error.path == OWNER
-    assert str(error).endswith("Of that type the enterprise has: dns-a, dns-b.")
+    assert str(error).endswith("Of type 'dns' the enterprise has: dns-a, dns-b.")
 
 
 async def test_a_save_after_setting_a_provider_by_uuid_loads_the_services_once() -> (

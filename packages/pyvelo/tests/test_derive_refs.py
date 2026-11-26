@@ -707,7 +707,7 @@ async def test_an_unknown_provider_id_lists_the_services_of_the_type_it_takes() 
     with pytest.raises(ResolutionError) as caught:
         _ = derive(module, current, await table_registry(*loaded))
     error = caught.value
-    assert str(error).endswith("Of that type the enterprise has: dns-a, dns-b.")
+    assert str(error).endswith("Of type 'dns' the enterprise has: dns-a, dns-b.")
     assert error.candidates == ["dns-a", "dns-b"]
     assert error.wanted == "dns"
     assert str(error.path) == PRIMARY_PATH
@@ -720,7 +720,7 @@ async def test_an_unknown_provider_id_with_no_service_of_its_type_says_so() -> N
     with pytest.raises(ResolutionError) as caught:
         _ = derive(module, current, await table_registry(SEG0_IDENTITY, AUTH_IDENTITY))
     error = caught.value
-    assert str(error).endswith("The enterprise has no service of that type.")
+    assert str(error).endswith("The enterprise has no service of type 'dns'.")
     assert error.candidates == []
     assert error.wanted == "dns"
     assert str(error.path) == PRIMARY_PATH
@@ -738,7 +738,7 @@ async def test_an_unknown_provider_id_says_when_it_shows_only_some_services() ->
         _ = derive(module, current, await table_registry(SEG0_IDENTITY, *many))
     shown = [f"dns-{i:02}" for i in range(20)]
     assert str(caught.value).endswith(
-        "Of that type the enterprise has (21 total, showing first 20): "
+        "Of type 'dns' the enterprise has (21 total, showing first 20): "
         f"{', '.join(shown)}."
     )
     assert caught.value.candidates == shown
