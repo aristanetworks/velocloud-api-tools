@@ -125,7 +125,9 @@ shorthand for nesting: `segment="Global Segment", path="outbound", patch=P` is
 `patch={"segments": {"Global Segment": {"outbound": P}}}`. `path` is field
 names joined by dots, each a field that holds one sub-model, except the last,
 which may be any field; it does not step into list items, which the patch
-names. `segment` names a segment like any other selector of the `segments`
+names. A path goes through a field that holds one of several kinds of object
+(the cloud security configuration's GRE and IPsec forms) to a field any of
+them has. `segment` names a segment like any other selector of the `segments`
 list: by name, in any case, or by `segmentId`. Without an address, `patch`
 must be a `dict`.
 
