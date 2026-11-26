@@ -668,6 +668,33 @@ yaml.SafeDumper.add_representer(AddedItem, yaml.SafeDumper.represent_dict)
 yaml.Dumper.add_representer(AddedItem, yaml.Dumper.represent_dict)
 
 
+class UnreadDefault(str):
+    """A default the parse made for a key the document lacks (a generated ID)."""
+
+    __slots__: ClassVar[tuple[str, ...]] = ()
+
+
+def without_unread_defaults(document: object) -> object:
+    """*document* without each key whose value is an ``UnreadDefault``, at any depth.
+
+    A new document: objects and lists are rebuilt, other values shared. An
+    ``AddedItem`` is rebuilt as an ``AddedItem``, so the change list still
+    reads it as new.
+    """
+    if is_dict(document):
+        kept = {
+            key: without_unread_defaults(value)
+            for key, value in document.items()
+            if not isinstance(value, UnreadDefault)
+        }
+        if isinstance(document, AddedItem):
+            return AddedItem({str(key): value for key, value in kept.items()})
+        return kept
+    if is_list(document):
+        return [without_unread_defaults(item) for item in document]
+    return document
+
+
 def _holds_added(value: object) -> bool:
     """Whether *value* is or holds an ``AddedItem``, at any depth."""
     if isinstance(value, AddedItem):
@@ -1565,7 +1592,7 @@ def _lossy_in_list(walk: _LossyWalk, path: Path, held: _Held, node: Node) -> Non
 def carry_unset_defaults(
     baseline: VcoModel,
     current: VcoModel,
-    before: Mapping[str, object],
+    before: dict[str, object],
     after: dict[str, object],
 ) -> None:
     """Make *after* agree with *before* on every scalar that neither model has set.
@@ -1573,12 +1600,18 @@ def carry_unset_defaults(
     Some defaults are made anew on each parse (``default_factory=uuid.uuid4``),
     so *baseline* and *current* differ in them although nobody assigned them.
     In the dumps that reads as a change by the caller, and ``rebase`` would write
-    it. Here *after* is edited, in place, so it does not: such a field takes the
-    value it has in *before*. The models are left as they are.
+    it. Here both dumps are edited, in place, so it does not: such a field takes
+    the value it has in *before*. When the two dumps differ in such a text, the
+    parse made it up for a key the document does not have: both dumps get it as
+    an ``UnreadDefault``, so they agree and items pair by it as before, and
+    ``plan_module`` leaves every key that holds one out of what is sent
+    (``without_unread_defaults``). The models are left as they are.
 
     The walk pairs *baseline* and *current* as ``find_lossy_assignments`` does,
-    except that a list that cannot be paired by key is paired by position
-    whether or not its dump changed. Only a pair has a *before* value to carry.
+    except that a list that cannot be paired by key is paired by position over
+    the shorter length, whether or not its dump changed, leaving out an item an
+    ``add`` built. Only a pair has a *before* value to carry; an item with no
+    partner keeps the value its model made.
     An alt key made anew on each parse (``QosRule.rule_logical_id`` read from a
     rule without one) differs between the dumps, so such items pair by key;
     once carried, the dumps agree on it and ``rebase`` pairs them by it. The
@@ -1621,7 +1654,11 @@ def _carry_in_model(
         if dump_key not in before or dump_key not in after:
             continue
         if _is_unset_scalar(baseline, current, name):
-            after[dump_key] = before[dump_key]
+            carried = before[dump_key]
+            if isinstance(carried, str) and not same_json(carried, after[dump_key]):
+                carried = UnreadDefault(carried)
+                before[dump_key] = carried
+            after[dump_key] = carried
             continue
         _carry_in_value(
             unwrap(_field_value(baseline, name)),
@@ -1646,10 +1683,12 @@ def _carry_in_list(
     keyed = _keyed_pairs(baseline, before, after, node)
     if keyed is not None:
         pairs = [(base, cur) for _, base, cur in keyed]
-    elif len(baseline) == len(current):
-        pairs = [(i, i) for i in range(len(baseline))]
     else:
-        return
+        pairs = [
+            (i, i)
+            for i in range(min(len(baseline), len(current)))
+            if not _is_added_model(current[i])
+        ]
     for base_index, cur_index in pairs:
         _carry_in_value(
             baseline[base_index],
@@ -1658,3 +1697,8 @@ def _carry_in_list(
             after[cur_index],
             None,
         )
+
+
+def _is_added_model(item: object) -> bool:
+    """Whether *item* is a model an ``add`` built (``VcoModel.is_added``)."""
+    return isinstance(item, VcoModel) and item.is_added

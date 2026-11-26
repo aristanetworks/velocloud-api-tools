@@ -150,6 +150,7 @@ from pyvelo.core.rebase import (
     mark_added_items,
     raw_changes,
     rebase,
+    without_unread_defaults,
 )
 from pyvelo.core.response_check import (
     PlannedChange,
@@ -1102,11 +1103,13 @@ def _planned_payload(
         payload = cast(
             "dict[str, Any]",
             copy.deepcopy(
-                rebase(
-                    planned_from,
-                    before,
-                    _with_reconciled_segments(after, before, extra),
-                    model_type,
+                without_unread_defaults(
+                    rebase(
+                        planned_from,
+                        before,
+                        _with_reconciled_segments(after, before, extra),
+                        model_type,
+                    )
                 )
             ),
         )

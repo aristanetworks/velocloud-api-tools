@@ -855,9 +855,13 @@ firewall: update
   no other item is equal to one of them, an edit to another item of the list
   writes that item alone. Keys the models do not know are dropped from every
   item of a list written whole, and the models' defaults are written into
-  them. A keyed list inside an interface that is not a plain
-  port (a LAG's `slaveInterfaces`) is written item by item as well: each item
-  of a list that holds several kinds of interface is read as the kind it is.
+  them, except an ID the library made up for an item read without one (a WAN
+  class of service's `id`): that is never sent. An item you add is sent with
+  the UUID its model made, the same in every plan. In a list without a key an
+  item is the one read at its position. A keyed list inside an interface that
+  is not a plain port (a LAG's `slaveInterfaces`) is written item by item as
+  well: each item of a list that holds several kinds of interface is read as
+  the kind it is.
 - A patch that moves items (a `move`) plans each item's change at the item, and
   one more change at the list: its order entry, which names the items that
   move, each with its new place. An item added to a keyed list has its place in
