@@ -97,6 +97,44 @@ async def rule_uses_hub() -> ConfigState:
     )
 
 
+async def rules_use_hub_two_ways() -> ConfigState:
+    """Guest's rules ``Web`` and ``Mail`` backhaul to Hub-A, as read.
+
+    ``Web``'s entry names it by name, ``Mail``'s by logical ID only. Guest has
+    Hub-A as hub and backhaul hub.
+    """
+    refs = profile_hub_rows(
+        segment_row(GLOBAL[0], GLOBAL[3], GLOBAL[2]),
+        segment_row(GUEST[0], GUEST[3], GUEST[2]),
+        hub_row(
+            HUB_A,
+            service_id=SERVICE_ID,
+            service_logical_id=SERVICE,
+            segment=GUEST,
+            roles=("hub", "backhaul"),
+        ),
+    )
+    backhaul = backhaul_row(
+        HUB_A,
+        service_id=SERVICE_ID,
+        service_logical_id=SERVICE,
+        segment=GUEST,
+        module_id=QOS_ID,
+    )
+    named = backhaul_entry(HUB_A, SERVICE)
+    unnamed = {key: value for key, value in named.items() if key != "name"}
+    mail = backhaul_rule("Mail", unnamed)
+    mail["ruleLogicalId"] = "e7e7e7e7-e7e7-4e7e-8e7e-e7e7e7e7e7e7"
+    rules = [backhaul_rule("Web", named), mail]
+    return await hub_profile_state(
+        [ds_entry(GLOBAL), ds_with_vpn(GUEST, hubs=(HUB_A,), backhaul=(HUB_A,))],
+        [qos_entry(GLOBAL), qos_entry(GUEST, rules=rules)],
+        [firewall_entry(GLOBAL), firewall_entry(GUEST)],
+        ds_refs=refs,
+        qos_refs={BACKHAUL_REF: backhaul},
+    )
+
+
 async def edit(state: ConfigState, module: str, patch: dict[str, Any]) -> None:
     _ = await ConfigPipeline(client=None).apply(state, module=module, patch=patch)
 
@@ -174,3 +212,23 @@ async def test_taking_the_removal_back_mends_too() -> None:
     _ = await ConfigPipeline(client=None).revert(state, module=DS)
 
     assert state.plan().changed == ()
+
+
+@pytest.mark.parametrize("kind", ["remove_reference", "add_member"])
+async def test_two_rules_that_name_the_hub_two_ways_are_mended_by_either_kind(
+    kind: str,
+) -> None:
+    state = await rules_use_hub_two_ways()
+    await edit(state, DS, FROM_BOTH_LISTS)
+    error = refused(state)
+    assert [m.kind for m in error.mending] == [
+        "remove_reference",
+        "remove_reference",
+        "add_member",
+    ]
+
+    for mending in error.mending:
+        if mending.kind == kind:
+            await send(state, mending)
+
+    _ = state.plan()  # no longer refused

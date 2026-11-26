@@ -103,17 +103,19 @@ def hub_reference_mending(
     target and an ``add_member`` patch for the profile; the
     ``remove_reference`` patches come first. The patches of one kind together
     mend every hub reference, so a kind that cannot be built for one of them
-    is left out whole. An ``add_member`` patch that is already listed (two
-    rules of a segment that name one hub) is not listed again. A reference to
-    a segment gets no patch.
+    is left out whole. A hub of a segment has one ``add_member`` patch, which
+    names it as the first of its references does: two rules of a segment that
+    name one hub, by name or by logical ID, need it once (a second add of the
+    hub would be refused as a duplicate). A reference to a segment gets no
+    patch.
     """
     hubs = [r for r in dangling if r.set_name == "backhaul_hub"]
     removals = [_removal(r, edited, target_type) for r in hubs]
-    members: list[MendingPatch | None] = []
+    # One hub of one segment needs one patch, however each entry names it.
+    first: dict[tuple[int | None, object], Reference] = {}
     for reference in hubs:
-        member = _member(reference, hub_lists)
-        if member is None or member not in members:
-            members.append(member)
+        _ = first.setdefault((reference.segment_id, reference.value), reference)
+    members = [_member(r, hub_lists) for r in first.values()]
     return (*_whole(removals), *_whole(members))
 
 

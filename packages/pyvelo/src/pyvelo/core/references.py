@@ -369,7 +369,8 @@ def removal_patch(data: VcoModel, reference: Reference) -> dict[str, object] | N
     names it by (``item_selector``), and ends on ``{"_op": "delete"}``: for a
     backhaul entry of a QoS rule, the patch that takes the hub out of the rule.
     ``None`` when the field's holder is no list item, or a step to it is not
-    found in *data* or has no selector that names it alone.
+    found in *data* or has no selector that names it alone. The selectors hold
+    for *data* as it is when the patch is built.
     """
     found = _patch_keys(data, reference.path.parts[:-1])
     if found is None:

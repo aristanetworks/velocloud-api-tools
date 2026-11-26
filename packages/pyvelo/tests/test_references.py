@@ -514,6 +514,24 @@ def test_two_rules_of_one_segment_need_one_member_patch() -> None:
     ]
 
 
+def test_two_rules_that_name_one_hub_two_ways_need_one_member_patch() -> None:
+    named = backhaul_entry(HUB_B, SERVICE)
+    unnamed = {key: value for key, value in named.items() if key != "name"}
+    data = qos_data(
+        (GUEST, [backhaul_rule("Web", named), backhaul_rule("Mail", unnamed)])
+    )
+    dangling = _check(data, None, NOW_HUBS, NOW_HUBS, "QOS").dangling
+
+    mending = _mending(data, dangling)
+
+    assert [m.kind for m in mending] == [
+        "remove_reference",
+        "remove_reference",
+        "add_member",
+    ]
+    assert mending[2] == backhaul_hub_mending(GUEST[1], HUB_B.name)
+
+
 def test_the_same_rule_in_two_segments_needs_a_member_patch_for_each() -> None:
     data, dangling = _dangling_hub(segments=(GLOBAL, GUEST))
 
