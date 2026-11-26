@@ -36,7 +36,7 @@ pyvelo = { git = "https://github.com/aristanetworks/velocloud-api-tools.git", su
 | `pyvelo.config.resolver` | `Resolver` Protocol (one type parameter, the identity), `BaseResolver`, `ResolverRegistry` (`lookup`, `lookup_by`, `resolve`), `ResolverContext`, `ResolutionError` |
 | `pyvelo.config.resolvers.*` | Concrete resolvers: edge, segment, profile, address_group, application, service_group, license, link, network_service, hub |
 | `pyvelo.config.validation` | `Validator` Protocol, `ValidatorRegistry`, `@validator` decorator, `ConfigStateLike` Protocol, `ValidationError`, `ValidationResult` |
-| `pyvelo.testing` | Test fixtures: `FakeEdge`, `FakeSegment`, `mock_vco_client_factory`, `make_jsonrpc_response`, `make_transport`; `ModuleStore`, a fake VCO that holds configuration module rows and serves their reads and writes (`store_of`, `as_stored`) |
+| `pyvelo.testing` | Test fixtures: `FakeEdge`, `FakeSegment`, `mock_vco_client_factory`, `make_jsonrpc_response`, `make_transport`; `ModuleStore`, a fake VCO that holds configuration module rows and serves their reads and writes (`store_of`, `as_stored`); `network_segment_wire`, one item of a `getEnterpriseNetworkSegments` answer in wire keys, to parse with `NetworkSegment.model_validate` and hand a segment resolver as the VCO gives it (`make_segment_resolver` builds one) |
 
 `VcoClient(host, token)` strips the whitespace around the token. A token that
 is empty, or has a line break, a tab, another control character or a non-ASCII

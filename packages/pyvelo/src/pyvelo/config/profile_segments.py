@@ -249,7 +249,11 @@ def added_segment_name(op: ItemOp) -> str | None:
 
     That is the key path of every ``segments`` list, and neither ``segment``
     nor ``name`` has an alias or a camelCase form of its own, so these are
-    the only keys ``merge_patch`` reads the name under.
+    the only keys ``merge_patch`` reads the *name* under. It also finds the
+    segment, and fills the name, from a ``segmentId`` or ``segmentLogicalId``
+    the body gives alone: ``None`` here does not mean the body names no
+    segment. The edge side (``_added_segment_key``) reads those too; the
+    profile side refuses an add without the name (``_assigning_add``).
     """
     descriptor = op.body.get("segment")
     name = descriptor.get("name") if is_dict(descriptor) else None

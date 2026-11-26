@@ -165,9 +165,9 @@ def test_a_segment_row_of_each_type_loads_and_dumps_as_read(segment_type: str) -
     row = {**ROW_A, "type": segment_type}
     module = _module({SEGMENT_REF_NAME: row})
     assert isinstance(module.refs, DeviceSettingsRefs)
-    assert (
-        module.refs.model_dump(by_alias=True)[SEGMENT_REF_NAME]["type"] == segment_type
-    )
+    dumped_type = module.refs.model_dump(by_alias=True)[SEGMENT_REF_NAME]["type"]
+    assert dumped_type == segment_type
+    assert type(dumped_type) is str  # the wire string, not a StrEnum member
 
 
 def test_assigning_module_refs_raises_for_device_settings() -> None:

@@ -4,9 +4,10 @@ The workflow is load → apply → save.
 """
 
 import json
-from collections.abc import Collection, Mapping, Sequence
+import uuid
+from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import Any, Literal, Protocol, TypeIs, cast, runtime_checkable
+from typing import Any, Final, Literal, Protocol, TypeIs, cast, runtime_checkable
 
 from pydantic import MISSING
 
@@ -100,7 +101,7 @@ from pyvelo.config.validation import ValidationError as ValidatorError
 from pyvelo.config.validation import ValidationResult, ValidatorRegistry
 from pyvelo.config.validation_warning import ValidationWarning
 from pyvelo.core import PatchError, effective_dump
-from pyvelo.core.base import IdentityLookup, IdentityResolver, VcoModel
+from pyvelo.core.base import IdentityLookup, IdentityResolver, VcoModel, is_dict
 from pyvelo.core.identity import (
     EdgeName,
     HubIdentity,
@@ -1792,7 +1793,7 @@ def _prepare_segment(
     """
     data = scope.data
     _refuse_place_by_inherited(data, op, where, scope.resolvers, scope.inherited)
-    looked = _segment_lookup(selector, op)
+    looked = _segment_lookup(selector, op, scope.resolvers)
     if looked is None:
         return selector, None
     new, lookup = looked
@@ -1809,20 +1810,78 @@ def _prepare_segment(
     return _prepare_profile_segment(scope, profile, new=new, op=op, where=where)
 
 
-def _segment_lookup(selector: object, op: ItemOp) -> tuple[bool, object] | None:
+def _segment_lookup(
+    selector: object, op: ItemOp, resolvers: IdentityResolver | None
+) -> tuple[bool, object] | None:
     """Whether *selector* is ``"+"``, and what to look the segment up by.
 
-    That is the selector, or for ``"+"`` the segment name an ``add`` gives in
-    its body. None for ``"+"`` where *op* gives none: the entry names no
-    segment yet.
+    That is the selector, or for ``"+"`` what an ``add`` gives in its body
+    (``_added_segment_key``). None for ``"+"`` where *op* gives none: the
+    entry names no segment yet.
     """
     new = is_new(selector)
     if not new:
         return new, selector
-    given = added_segment_name(op) if op.kind == "add" else None
+    given = _added_segment_key(op, resolvers) if op.kind == "add" else None
     if given is None:
         return None
     return new, given
+
+
+_SEGMENT_ID_KEYS: Final = ("segmentId", "segment_id")
+_SEGMENT_LOGICAL_ID_KEYS: Final = ("segmentLogicalId", "segment_logical_id")
+
+
+def _added_segment_key(op: ItemOp, resolvers: IdentityResolver | None) -> str | None:
+    """What the body of an ``add`` under ``"+"`` names its segment by, or None.
+
+    ``merge_patch`` takes the segment from the body's ``segment.name``, or,
+    where the body gives an ID and not the name, from the segment the
+    resolver finds by that ID. So the name, else the resolver's name for the
+    ``segmentId`` or the ``segmentLogicalId``, so the segment rules apply
+    to an add that gives one of them alone. With no resolver (or none that
+    knows the ID) a ``segmentId`` stands for itself in string form, which the
+    profile's segments are also matched by; a ``segmentLogicalId`` names
+    nothing then and is left to ``merge_patch``.
+    """
+    name = added_segment_name(op)
+    if name is not None:
+        return name
+    descriptor = op.body.get("segment")
+    if not is_dict(descriptor):
+        return None
+    segment_id = _given(descriptor, _SEGMENT_ID_KEYS)
+    if isinstance(segment_id, int) and not isinstance(segment_id, bool):
+        return _resolved_segment_name(
+            resolvers, lambda i: i.segment_id, segment_id
+        ) or str(segment_id)
+    logical_id = _given(descriptor, _SEGMENT_LOGICAL_ID_KEYS)
+    if logical_id is None:
+        return None
+    try:
+        value = uuid.UUID(str(logical_id))
+    except ValueError:
+        return None
+    return _resolved_segment_name(resolvers, lambda i: i.logical_id, value)
+
+
+def _given(descriptor: Mapping[object, object], keys: Sequence[str]) -> object | None:
+    """The first value *descriptor* gives under one of *keys*, or None."""
+    return next((descriptor[k] for k in keys if descriptor.get(k) is not None), None)
+
+
+def _resolved_segment_name(
+    resolvers: IdentityResolver | None,
+    accessor: Callable[[SegmentIdentity], object],
+    value: object,
+) -> str | None:
+    """The name of the loaded segment whose *accessor* gives *value*, or None."""
+    if resolvers is None:
+        return None
+    try:
+        return resolvers.lookup_by(SegmentIdentity, accessor, value).name
+    except ResolutionError:  # includes a resolver that is not loaded
+        return None
 
 
 def _name_in_layer(
@@ -1851,15 +1910,16 @@ def _prepare_unknown_segment(
     *name* is what the segment was looked up by. An ``add`` of it raises
     ``PatchError``: an edge uses only its profile's segments, so an entry
     saved for one the profile lacks would never be used. Any other operation
-    is left to ``merge_patch``, which raises for a change.
+    is left to ``merge_patch``: it raises for a change and for a ``delete``,
+    as the layer has no entry for the segment.
     """
     if op.kind == "add":
-        quoted = json.dumps(str(name))
+        patch = json.dumps({"segments": {str(name): {"_op": "add"}}})
         raise PatchError(
-            f"the edge's profile has no segment {quoted}, and an edge uses only "
-            "its profile's segments: an entry for it here would be saved and "
-            "never used. Assign the segment to the profile first, with "
-            f'{{"segments": {{{quoted}: {{"_op": "add"}}}}}} (add()) on the '
+            f"the edge's profile has no segment {json.dumps(str(name))}, and an "
+            "edge uses only its profile's segments: an entry for it here would "
+            "be saved and never used. Assign the segment to the profile first, "
+            f"with {patch} (add()) on the "
             "profile's device settings, QoS or firewall, or with "
             "ConfigPipeline.assign_segment; then change it on the edge",
             where,
@@ -2015,8 +2075,10 @@ def _layer_segment(
 ) -> _SegmentEntry | None:
     """The entry of the layer's ``segments`` that *selector* names, or None.
 
-    A name a resolver does not know names no entry here: ``merge_patch``
-    raises for it, if the profile does not have it either.
+    A name a resolver does not know names no entry here, so None. The caller
+    goes on to the profile's segments, and an ``add`` or a change of a
+    segment neither layer has is refused there (``_prepare_unknown_segment``)
+    or by ``merge_patch``.
     """
     if not isinstance(data, VcoModel):  # _prepare_segments is given module data
         raise TypeError(f"the segment layer is a {type(data).__name__}, not a model")

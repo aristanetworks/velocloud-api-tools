@@ -51,6 +51,7 @@ from pyvelo.core.identity import (
     ProfileIdentity,
     ResolutionError,
     SegmentId,
+    SegmentIdentity,
     SegmentLogicalId,
     SegmentObjectId,
     ServiceGroupId,
@@ -467,6 +468,14 @@ async def test_a_segment_parsed_from_the_wire_has_its_type_as_the_enum() -> None
     identity = resolver.lookup("Guest")
     assert identity.type_ is NetworkSegmentType.PRIVATE
     assert descriptor_of(identity)["type"] == "PRIVATE"
+
+
+def test_descriptor_of_an_identity_holding_the_wire_string() -> None:
+    held = cast("NetworkSegmentType", cast("object", "CDE"))
+    identity = SegmentIdentity("Guest", 2, 2, uuid.UUID(int=2), held)
+    dumped_type = descriptor_of(identity)["type"]
+    assert dumped_type == "CDE"
+    assert type(dumped_type) is str
 
 
 async def _edges() -> BaseResolver[object]:
