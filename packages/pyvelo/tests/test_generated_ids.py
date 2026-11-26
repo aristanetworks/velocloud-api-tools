@@ -3,6 +3,7 @@ import uuid
 from typing import Any, cast
 
 from pydantic import MISSING
+from pyvelo.client.models.configuration.qos import QosRule
 from pyvelo.client.models.configuration.wan.link import WanLinkCosEntry
 from pyvelo.client.module_write import ModulePlan, plan_module
 from pyvelo.client.schemas.configuration import (
@@ -155,4 +156,54 @@ def test_rules_read_around_rules_added_in_the_middle_are_sent_without_ids() -> N
         ("new", model_id(mod, "new")),
         ("r3", None),
         ("last", model_id(mod, "last")),
+    ]
+
+
+# --- a rule read with an ID among rules read without one ----------------------
+
+
+def qos_read(*rules: tuple[str, str | None]) -> QosConfigurationModule[Edge]:
+    """A QoS module of rules ``(name, ruleLogicalId or None)``.
+
+    Each rule holds a key only the VCO knows.
+    """
+    raw_rules: list[dict[str, Any]] = []
+    for position, (name, rule_id) in enumerate(rules):
+        raw: dict[str, Any] = {"name": name, "match": {}, "action": ACTION}
+        raw["vcoOnly"] = position
+        if rule_id is not None:
+            raw["ruleLogicalId"] = rule_id
+        raw_rules.append(raw)
+    document = {"segments": [{"segment": SEGMENT, "rules": raw_rules}]}
+    return QosConfigurationModule[Edge].model_validate(
+        make_module_json("QOS", copy.deepcopy(document))
+    )
+
+
+def test_a_deletion_that_shifts_a_rule_onto_one_read_with_an_id_plans_it_alone() -> (
+    None
+):
+    """The rule after the deleted one is untouched: no ID is made up for it."""
+    mod = qos_read(("x", None), ("x", READ_ID), ("y", None))
+    del mod.data.segments[0].rules[1]
+    plan = plan_module(mod, level=ConfigContext.EDGE)
+    assert [str(change.path) for change in plan.changes] == [
+        'segments["Global Segment"].rules[#1]'
+    ]
+    assert rule_ids(mod) == [("x", None), ("y", None)]
+    # Written item by item: the rules left keep what only the VCO knows.
+    assert [rule["vcoOnly"] for rule in plan.data["segments"][0]["rules"]] == [0, 2]
+
+
+def test_a_rule_inserted_as_a_model_keeps_its_uuid_and_the_rules_read_none() -> None:
+    """A model put in the list without ``add`` shifts the rules after it."""
+    mod = qos_read(("x", None), ("x", None), ("w", READ_ID), ("y", None))
+    new = QosRule.model_validate({"name": "z", "match": {}, "action": ACTION})
+    mod.data.segments[0].rules.insert(2, new)
+    assert rule_ids(mod) == [
+        ("x", None),
+        ("x", None),
+        ("z", str(new.rule_logical_id)),
+        ("w", READ_ID),
+        ("y", None),
     ]

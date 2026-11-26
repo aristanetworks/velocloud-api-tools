@@ -859,15 +859,20 @@ firewall: update
   item of a list written whole, and the models' defaults are written into
   them, except an ID the library made up for an item read without one (a WAN
   class of service's `id`, a QoS rule's `ruleLogicalId`): that is not sent.
-  In such a list an item is the one read at its position, counting only the
-  items not added with `add`. So an item read without an ID that now sits
-  where an item read with one was (the list was shortened before it, or
-  reordered) is sent with an ID the library made up. An item added with `add`
-  is always sent with the UUID its model made, the same in every plan. An item
-  appended as a model (`model_validate`) is the item that was read at its
-  position, if there was one (an item before it was deleted): when that item
-  was read without an ID, it is sent without one. At a position past the items
-  read, it keeps its model's UUID.
+  In a list whose items cannot all be told apart (a positional list, or a
+  keyed list as above), an item is the one read at its position, counting only
+  the items not added with `add`. So in such a list written whole, an item
+  read without an ID that now sits where an item read with one was, or past
+  the items read (the list was shortened before it, or reordered), is sent
+  with an ID the library made up. In a list written item by item, an item read
+  without an ID is sent without one, wherever it now sits. An item added with
+  `add` is always sent with the UUID its model made, the same in every plan.
+  An item put in such a list as a model (`model_validate`) is the item that
+  was read at the position it now has, if there was one (it was put before the
+  end, an item before it was deleted, or the list was reordered): when that
+  item was read without an ID, it is sent without one. At a position past the
+  items read, or in a list whose items can all be told apart, it keeps its
+  model's UUID.
   A keyed list inside an interface that is not a plain port (a LAG's
   `slaveInterfaces`) is written item by item as well: each item of a list that
   holds several kinds of interface is read as the kind it is.

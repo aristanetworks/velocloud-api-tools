@@ -1612,7 +1612,11 @@ def carry_unset_defaults(
     whether or not its dump changed: the n-th item of *baseline* with the n-th
     item of *current* that an ``add`` did not build, over the shorter of the
     two. Only a pair has a *before* value to carry; an item with no partner (an
-    item an ``add`` built among them) keeps the value its model made.
+    item an ``add`` built among them) keeps the value its model made. When
+    that carry makes the list pair by key (the dumps of an item of a repeated
+    key now agree), the walk carries again over those pairs, which are the
+    ones ``rebase`` uses: an item moved onto the position of an item read with
+    its ID still takes the value its own partner has.
     An alt key made anew on each parse (``QosRule.rule_logical_id`` read from a
     rule without one) differs between the dumps, so such items pair by key;
     once carried, the dumps agree on it and ``rebase`` pairs them by it. The
@@ -1682,12 +1686,26 @@ def _carry_in_list(
     if len(before) != len(baseline) or len(after) != len(current):
         return  # the dump's positions are not the model's
     keyed = _keyed_pairs(baseline, before, after, node)
-    if keyed is not None:
-        pairs = [(base, cur) for _, base, cur in keyed]
-    else:
+    if keyed is None:
         # By position, passing over the items an add built: they are new.
         kept = [j for j, item in enumerate(current) if not _is_added_model(item)]
-        pairs = list(enumerate(kept[: len(baseline)]))
+        _carry_pairs(baseline, current, before, after, enumerate(kept[: len(baseline)]))
+        # That can make the two dumps of an item of a repeated key agree, so the
+        # list now pairs by key, as ``rebase`` will pair it, and not always by
+        # position: carry again over those pairs.
+        keyed = _keyed_pairs(baseline, before, after, node)
+    pairs = [(base, cur) for _, base, cur in keyed or ()]
+    _carry_pairs(baseline, current, before, after, pairs)
+
+
+def _carry_pairs(
+    baseline: list[object],
+    current: list[object],
+    before: list[object],
+    after: list[object],
+    pairs: Iterable[tuple[int, int]],
+) -> None:
+    """Carry each pair (index in *baseline*, index in *current*) of a list."""
     for base_index, cur_index in pairs:
         _carry_in_value(
             baseline[base_index],
