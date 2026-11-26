@@ -1608,10 +1608,11 @@ def carry_unset_defaults(
     (``without_unread_defaults``). The models are left as they are.
 
     The walk pairs *baseline* and *current* as ``find_lossy_assignments`` does,
-    except that a list that cannot be paired by key is paired by position over
-    the shorter length, whether or not its dump changed, leaving out an item an
-    ``add`` built. Only a pair has a *before* value to carry; an item with no
-    partner keeps the value its model made.
+    except that a list that cannot be paired by key is paired by position,
+    whether or not its dump changed: the n-th item of *baseline* with the n-th
+    item of *current* that an ``add`` did not build, over the shorter of the
+    two. Only a pair has a *before* value to carry; an item with no partner (an
+    item an ``add`` built among them) keeps the value its model made.
     An alt key made anew on each parse (``QosRule.rule_logical_id`` read from a
     rule without one) differs between the dumps, so such items pair by key;
     once carried, the dumps agree on it and ``rebase`` pairs them by it. The
@@ -1684,11 +1685,9 @@ def _carry_in_list(
     if keyed is not None:
         pairs = [(base, cur) for _, base, cur in keyed]
     else:
-        pairs = [
-            (i, i)
-            for i in range(min(len(baseline), len(current)))
-            if not _is_added_model(current[i])
-        ]
+        # By position, passing over the items an add built: they are new.
+        kept = [j for j, item in enumerate(current) if not _is_added_model(item)]
+        pairs = list(enumerate(kept[: len(baseline)]))
     for base_index, cur_index in pairs:
         _carry_in_value(
             baseline[base_index],
