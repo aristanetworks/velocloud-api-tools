@@ -631,6 +631,52 @@ def _unique(keys: list[KeyForm | None]) -> set[KeyForm]:
     return {key for key, count in counts.items() if count == 1}
 
 
+class AddedItem(dict[str, object]):
+    """The dump of an item an ``add`` built.
+
+    ``pair_items`` pairs it with no item as read. It is equal to its ``dict``
+    and is JSON as it is.
+    """
+
+
+def mark_added_items(model: VcoModel, dump: object) -> None:
+    """Make the dump of each item an ``add`` built an ``AddedItem``, in place.
+
+    The items are those of *model*, and *dump* is its wire dump. Model and
+    dump are walked together: a field's value is at its dump key, a list only
+    when the dump's list has the model's length, a map by key. Every item is
+    walked, marked or not.
+    """
+    _mark_in_value(model, dump)
+
+
+def _mark_in_value(value: object, dump: object) -> None:
+    if isinstance(value, VcoModel):
+        if not is_dict(dump):
+            return
+        for name, field_info in type(value).model_fields.items():
+            dump_key = _field_alias(field_info, name)
+            if dump_key in dump:
+                _mark_in_value(unwrap(_field_value(value, name)), dump[dump_key])
+    elif is_list(value):
+        if is_list(dump) and len(dump) == len(value):
+            _mark_in_list(value, dump)
+    elif is_dict(value) and is_dict(dump):
+        for key, item in value.items():
+            # A JSON-mode dump writes every map key as a string.
+            name = str(key)
+            if name in dump:
+                _mark_in_value(item, dump[name])
+
+
+def _mark_in_list(items: list[object], dump: list[object]) -> None:
+    for j, item in enumerate(items):
+        _mark_in_value(item, dump[j])
+        dumped = dump[j]
+        if isinstance(item, VcoModel) and item.is_added and is_dict(dumped):
+            dump[j] = AddedItem({str(key): value for key, value in dumped.items()})
+
+
 @dataclass(frozen=True, slots=True)
 class Pairing:
     """How the items of a keyed list *old* became the items of *new*.
@@ -683,6 +729,9 @@ def pair_items(
     among them. Keys and alt keys are compared in string form, part by part
     for a composite key, so ``24`` as dumped and ``"24"`` as read are one.
     Items of *new* left over are added, and items of *old* left over removed.
+    An item of *new* that an ``add`` built (an ``AddedItem``) is new whatever
+    its key: it is in neither pass and is added, so the item of *old* with
+    that key, if any, is removed.
     An item of *old* left over is removed when it can be identified: by a key
     no other item of *old* has, or by an alt key that was read and that no
     other item of *old* has. When one cannot, what became of it cannot be
@@ -695,7 +744,8 @@ def pair_items(
     """
     old_keys, new_keys = key_forms(old, node), key_forms(new, node)
     pairs: dict[int, int] = {}  # index in new -> index in old
-    old_left, new_left = list(range(len(old))), list(range(len(new)))
+    old_left = list(range(len(old)))
+    new_left = [j for j, item in enumerate(new) if not isinstance(item, AddedItem)]
     alt = node.spec.alt
     old_alts: list[KeyForm | None] = [None] * len(old)
     if alt is not None:
@@ -726,7 +776,7 @@ def pair_items(
         return None
     return Pairing(
         pairs=tuple((pairs[j], j) for j in sorted(pairs)),
-        added=tuple(j for j in new_left if j not in pairs),
+        added=tuple(j for j in range(len(new)) if j not in pairs),
         removed=removed,
     )
 
@@ -954,13 +1004,16 @@ def item_names(
 
     An item that *old* has is named by its part there, also when it is renamed
     or moved; an added item by its part in *new*. None when an added item would
-    be named as an item of *old*.
+    be named as an item of *old* that is paired. An added item may take the
+    name of a removed one: the removal names an item of *old*, the addition an
+    item of *new*.
     """
     old_parts = item_parts(old, node)
     new_parts = item_parts(new, node)
     names: dict[int, ItemPart] = {j: old_parts[i] for i, j in pairing.pairs}
+    paired_names = set(names.values())
     names.update({j: new_parts[j] for j in pairing.added})
-    if any(names[j] in old_parts for j in pairing.added):
+    if any(names[j] in paired_names for j in pairing.added):
         return None
     return names
 

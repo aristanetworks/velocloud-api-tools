@@ -3070,6 +3070,8 @@ def _new_list_item(
                     entry.path,
                     "exists",
                 )
+    if spec.kind == "keyed" and isinstance(new, VcoModel):
+        new.mark_added()
     return new
 
 

@@ -442,6 +442,13 @@ def _models_inside(value: object, place: _Place) -> Iterator[tuple[_Place, BaseM
             yield from _models_inside(item, (*place, text))
 
 
+_ADDED = "__pyvelo_added__"
+"""The ``__dict__`` entry of a model an ``add`` built (``VcoModel.mark_added``).
+
+No field or alias is named so.
+"""
+
+
 def _raise_detached(model: VcoModel, name: str) -> Never:
     """Raise ``DetachedObjectError`` for an edit of *name* through *model*."""
     from pyvelo.client.exceptions import DetachedObjectError  # noqa: PLC0415 (it imports pyvelo.core)
@@ -718,6 +725,24 @@ class VcoModel(BaseModel):
             if isinstance(model, VcoModel):
                 model._detached = True
         return marked
+
+    def mark_added(self) -> None:
+        """Record that an ``add`` built this item.
+
+        A save then treats it as new and pairs it with no item as read of the
+        same key. The mark stays through a deep copy and a later change; it
+        ends when a save puts the stored module in the state. It is kept in the
+        instance ``__dict__`` under a name no field has, not as a private
+        attribute, because it records how the item came to be, not what it
+        holds, so it is kept out of what equality, ``model_dump`` and ``repr``
+        read.
+        """
+        object.__setattr__(self, _ADDED, True)
+
+    @property
+    def is_added(self) -> bool:
+        """Whether an ``add`` built this item (``mark_added``)."""
+        return vars(self).get(_ADDED) is True
 
     @override
     @classmethod
@@ -1006,7 +1031,14 @@ class VcoModel(BaseModel):
           is the value and ``add`` takes no body; in a map it is the new key.
           Neither takes ``"+"``, and a map takes no ``"#n"``. A positional
           list of models takes ``add`` under ``"+"`` only, one of values none
-          (give a list value), and ``at(n)`` never takes one.
+          (give a list value), and ``at(n)`` never takes one. An item an
+          ``add`` builds is a new item: deleting a rule and then adding one
+          under the same name plans a removal and an addition, and nothing of
+          the old rule is kept, neither its logical ID (the VCO issues a new
+          one for a firewall rule) nor keys of it that pyvelo does not model.
+          To change a rule and keep it the same rule, change it:
+          ``{"a": {...}}``. One patch cannot delete an item and add one under
+          its key; send the delete, then the add.
         - ``delete()``, which is ``{"_op": "delete"}``: the item is removed.
           It carries nothing else.
         - ``move(**place)``, which is ``{"_position": P}``: the item moves.

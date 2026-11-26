@@ -144,6 +144,7 @@ from pyvelo.core.rebase import (
     carry_unset_defaults,
     find_lossy_assignments,
     is_override_flag,
+    mark_added_items,
     raw_changes,
     rebase,
 )
@@ -183,12 +184,18 @@ def _legacy_model(
 
 
 def wire_dump(model: VcoModel, level: ConfigContext | None) -> dict[str, Any]:
-    """The JSON a model is written as, at config level *level*."""
-    return model.model_dump(
+    """The JSON a model is written as, at config level *level*.
+
+    The dump of an item an ``add`` built is an ``AddedItem`` (``mark_added_items``),
+    so a save pairs it with no item as read.
+    """
+    dump = model.model_dump(
         mode="json",
         by_alias=True,
         context={"config_level": level} if level else None,
     )
+    mark_added_items(model, dump)
+    return dump
 
 
 def _described(entries: Sequence[object]) -> list[object]:

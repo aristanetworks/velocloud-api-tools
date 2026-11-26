@@ -281,7 +281,12 @@ kept unique the same way: an `add` or a change that gives an item an alt key
 another item has (a rule's logical ID, a segment's `segmentId`) raises, and so
 does a list value that repeats one. Every selector is resolved against the
 list as it was, then changes, deletes, and adds and moves (in the order
-written) are applied.
+written) are applied. An item an `add` builds is a new item. Deleting a rule
+and then adding one under the same name plans a removal and an addition:
+nothing of the old rule is kept, neither its logical ID (the VCO issues a new
+one for a firewall rule) nor keys of it that pyvelo does not model. To change a
+rule and keep it the same rule, change it: `{"a": {...}}`. One patch cannot
+delete an item and add one under its key; send the delete, then the add.
 
 `list_kind` (`pyvelo.core`) reports a sixth value, `"undeclared"`, for a list
 of models that declares neither `KeyField` nor `Positional()`. A patch treats

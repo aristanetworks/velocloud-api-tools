@@ -1,7 +1,9 @@
 """Keys in a patch: alt keys, duplicate keys, composite keys, labels and ``KeySpec``."""
 
+import copy
+import pickle
 import uuid
-from typing import Annotated
+from typing import Annotated, Any
 
 import pytest
 from pydantic import MISSING, Field
@@ -23,7 +25,17 @@ from pyvelo.core import (
 from pyvelo.core.base import list_item_type
 from pyvelo.core.fields import get_key_spec
 from pyvelo.core.merge import select_items
-from pyvelo.core.rebase import Key, Path, item_key, key_text, python_path
+from pyvelo.core.rebase import (
+    AddedItem,
+    Key,
+    KeyedList,
+    Path,
+    item_key,
+    key_text,
+    node_child,
+    pair_items,
+    python_path,
+)
 
 from .patch_models import Link, Root, Route, Rule
 
@@ -711,3 +723,70 @@ def test_python_path_goes_through_a_union_item_to_a_field_of_its_variant() -> No
     assert str(python_path(path, DeviceSettingsData)) == (
         "models.edge510.routed_interfaces[LAG1].slave_interfaces[GE5].port_priority"
     )
+
+
+def test_pair_items_never_pairs_an_added_item() -> None:
+    node = node_child(Root, "rules")
+    assert isinstance(node, KeyedList)
+    old: list[object] = [{"name": "a", "ruleId": "la"}, {"name": "b"}]
+    new: list[object] = [AddedItem({"name": "a"}), {"name": "b"}]
+
+    pairing = pair_items(old, new, node)
+    assert pairing is not None
+    assert (pairing.pairs, pairing.added, pairing.removed) == (((1, 1),), (0,), (0,))
+
+    plain = pair_items(old, [{"name": "a"}, {"name": "b"}], node)
+    assert plain is not None
+    assert plain.pairs == ((0, 0), (1, 1))
+    # An item as read that cannot be told from another: the list is written whole.
+    twins: list[object] = [{"name": "a"}, {"name": "a"}, {"name": "b"}]
+    assert pair_items(twins, new, node) is None
+
+
+def _added_rule() -> Rule:
+    root = Root(rules=[])
+    _ = root.merge_patch({"rules": {"z": add({"priority": 3})}})
+    item = root.rules[0]
+    assert item.is_added
+    return item
+
+
+def test_an_added_item_equals_the_same_item_however_built() -> None:
+    item = _added_rule()
+    assert item == Rule(name="z", priority=3)
+    assert item == Rule.model_validate({"name": "z", "priority": 3})
+    assert not Rule(name="z", priority=3).is_added
+
+
+@pytest.mark.parametrize(
+    "dump",
+    [{}, {"mode": "json"}, {"by_alias": True}, {"exclude_unset": True}],
+)
+def test_an_added_item_dumps_as_an_item_not_added(dump: dict[str, Any]) -> None:
+    item, plain = _added_rule(), Rule(name="z", priority=3)
+    assert item.model_dump(**dump) == plain.model_dump(**dump)
+    assert repr(item) == repr(plain)
+
+
+@pytest.mark.parametrize(
+    "copied",
+    [
+        copy.deepcopy,
+        lambda item: item.model_copy(deep=True),
+        lambda item: item.model_copy(),
+        copy.copy,
+        lambda item: pickle.loads(pickle.dumps(item)),
+    ],
+    ids=["deepcopy", "model_copy_deep", "model_copy", "copy", "pickle"],
+)
+def test_an_added_item_is_added_in_every_copy(copied: Any) -> None:
+    item = _added_rule()
+    copy_of_item: Rule = copied(item)
+    assert copy_of_item is not item
+    assert copy_of_item.is_added
+
+
+def test_validate_keeps_the_added_item_and_construct_builds_one_not_added() -> None:
+    item = _added_rule()
+    assert Rule.model_validate(item) is item
+    assert not Rule.model_construct(**item.model_dump()).is_added

@@ -17,6 +17,7 @@ from pyvelo.client.module_write import (
     ModulePlan,
     missing_segments,
     plan_module,
+    wire_dump,
     with_hub_rows,
 )
 from pyvelo.client.schemas.configuration import (
@@ -35,7 +36,7 @@ from pyvelo.core.identity import (
     SegmentIdentity,
 )
 from pyvelo.core.layers import Edge, Profile, layer_for
-from pyvelo.core.rebase import Key
+from pyvelo.core.rebase import AddedItem, Key
 from pyvelo.testing import make_module_json
 from refs_helpers import (
     DNS_A,
@@ -1935,3 +1936,65 @@ async def test_with_hub_rows_refuses_a_row_to_remove_that_the_refs_lack_and_a_pl
     bare = await plan_with_refs(None)
     with pytest.raises(ValueError, match="hub rows go with an update that sends refs"):
         _ = with_hub_rows(bare, added=[hub_ref_row(601)], removed=[])
+
+
+def _stored_rule(name: str, **extra: object) -> dict[str, Any]:
+    return {"name": name, "match": {}, "action": {"allow_or_deny": "allow"}, **extra}
+
+
+def _outbound(ops: dict[str, object]) -> dict[str, object]:
+    return {"segments": {"Global Segment": {"outbound": ops}}}
+
+
+RULE_A = _stored_rule("a", ruleLogicalId="la", futureKey=1)
+RULE_B = _stored_rule("b", ruleLogicalId="lb", futureKey=2)
+TWO_RULES: dict[str, Any] = {
+    "segments": [{"segment": desc(0, "Global Segment"), "outbound": [RULE_A, RULE_B]}]
+}
+DENY = {"action": {"allow_or_deny": "deny"}, "match": {}}
+AT_A = 'segments["Global Segment"].outbound[a]'
+
+
+@pytest.mark.parametrize("then", ["nothing", "change", "copy"])
+def test_a_rule_deleted_and_added_again_under_its_name_is_a_new_rule(then: str) -> None:
+    mod = fw(TWO_RULES, layer=Edge)
+    _ = mod.data.merge_patch(_outbound({"a": delete()}))
+    _ = mod.data.merge_patch(_outbound({"a": add(DENY, first=True)}))
+    if then == "change":
+        _ = mod.data.merge_patch(_outbound({"a": {"logging_enabled": True}}))
+    data = copy.deepcopy(mod.data) if then == "copy" else mod.data
+    assert data.segments[0].outbound[0].is_added
+    assert not data.segments[0].outbound[1].is_added
+
+    plan = plan_module(mod, data, level=EDGE)
+
+    assert [
+        (str(c.path), c.before is MISSING, c.after is MISSING) for c in plan.changes
+    ] == [(AT_A, False, True), (AT_A, True, False)]
+    assert plan.changes[0].before == RULE_A
+    sent_a, sent_b = plan.data["segments"][0]["outbound"]
+    assert sent_b == RULE_B
+    assert (sent_a["name"], sent_a["action"]["allow_or_deny"]) == ("a", "deny")
+    assert "futureKey" not in sent_a
+    assert "ruleLogicalId" not in sent_a
+    assert json.loads(json.dumps(plan.data)) == plan.data
+
+
+def test_a_rule_changed_in_place_is_still_the_rule_as_read() -> None:
+    mod = fw(TWO_RULES, layer=Edge)
+    _ = mod.data.merge_patch(_outbound({"a": DENY}))
+    plan = plan_module(mod, level=EDGE)
+    assert [str(c.path) for c in plan.changes] == [f"{AT_A}.action.allow_or_deny"]
+    assert plan.data["segments"][0]["outbound"][0] == {
+        **RULE_A,
+        "action": {"allow_or_deny": "deny"},
+    }
+
+
+def test_wire_dump_marks_only_the_items_an_add_built() -> None:
+    mod = fw(TWO_RULES, layer=Edge)
+    _ = mod.data.merge_patch(_outbound({"c": add(DENY)}))
+    dumped = wire_dump(mod.data, EDGE)["segments"][0]["outbound"]
+    assert [type(item) is AddedItem for item in dumped] == [False, False, True]
+    assert json.dumps(dumped[2]) == json.dumps(dict(dumped[2]))  # JSON as its dict
+    assert type(wire_dump(mod.data, EDGE)["segments"][0]) is dict
