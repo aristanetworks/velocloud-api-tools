@@ -685,3 +685,48 @@ def test_an_item_no_selector_names_has_no_stored_part() -> None:
         'rules["#1"]': Key("#1"),
         "rules[#2]": 2,
     }
+
+
+class Lid(VcoModel):
+    name: str
+    lid: str | None = None
+    port: int = 0
+
+
+class Lids(VcoModel):
+    rules: Annotated[list[Lid], KeyField("name", alt="lid")] = Field(
+        default_factory=list
+    )
+
+
+def x(lid: str, port: int) -> dict[str, object]:
+    return {"name": "x", "lid": lid, "port": port}
+
+
+READ_TWO_X = {"rules": [x("a", 1), x("b", 2)]}
+
+
+def test_an_added_item_the_vco_dropped_does_not_unpair_the_items_after_it() -> None:
+    """The VCO revised both IDs and dropped the new item between the two x."""
+    payload = {"rules": [x("a", 1), {"name": "n", "port": 7}, x("b", 3)]}
+    stored = {"rules": [x("A2", 1), x("B2", 3)]}
+    check = check_response(READ_TWO_X, payload, stored, Lids)
+    assert paths(check.not_applied) == ["rules[n]"]
+    assert "rules[#1].port" in paths(check.applied)
+
+
+def test_another_writers_item_does_not_unpair_the_items_after_it() -> None:
+    payload = {"rules": [x("a", 1), x("b", 3)]}
+    stored = {"rules": [x("A2", 1), {"name": "w", "lid": "W", "port": 9}, x("B2", 3)]}
+    check = check_response(READ_TWO_X, payload, stored, Lids)
+    assert check.not_applied == ()
+    assert paths(check.applied) == ["rules[#1].port"]
+    assert "rules[w]" in paths(check.server_changes)
+
+
+def test_another_writers_item_of_the_same_name_cannot_be_told_apart() -> None:
+    """A guard: items of one name pair in order, so the edit meets the other item."""
+    payload = {"rules": [x("a", 1), x("b", 3)]}
+    stored = {"rules": [x("A2", 1), x("W", 9), x("B2", 3)]}
+    check = check_response(READ_TWO_X, payload, stored, Lids)
+    assert paths(check.not_applied) == ["rules[#1].port"]
