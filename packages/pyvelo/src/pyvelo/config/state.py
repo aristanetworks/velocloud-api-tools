@@ -53,7 +53,7 @@ from pyvelo.client.schemas.configuration import (
     WanConfigurationModule,
     new_edge_module,
 )
-from pyvelo.config.backhaul_check import check_backhaul_hubs
+from pyvelo.config.backhaul_check import check_backhaul_hubs, left_without_hub
 from pyvelo.config.errors import LayerNotSavedError, SaveValidationError
 from pyvelo.config.hub_steps import (
     HubStep,
@@ -1239,6 +1239,7 @@ class ConfigState:
                     hub_list_members(hub_lists),
                     target_type=self.target_type,
                 ),
+                only_hubs=left_without_hub(findings.dangling, edited_by_name),
             )
         return tuple(
             ValidationWarning(

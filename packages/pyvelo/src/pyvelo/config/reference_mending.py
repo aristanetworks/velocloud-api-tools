@@ -6,13 +6,16 @@ stops using the hub (a ``remove_reference`` patch, to the module that holds the
 rule), or the hub becomes a backhaul hub of the segment (an ``add_member``
 patch, to the profile's device settings). ``hub_reference_mending`` builds both
 for every hub reference ``ConfigState.plan()`` refuses, and
-``DanglingReferenceError.mending`` carries them.
+``DanglingReferenceError.mending`` carries them. No patch takes the last hub out
+of a rule that backhauls through hubs: a rule that backhauls nowhere mends
+nothing.
 """
 
 from collections.abc import Collection, Mapping, Sequence
 from typing import Literal
 
 from pyvelo.client.models.configuration.device_settings.root import DeviceSettingsData
+from pyvelo.config.backhaul_check import left_without_hub
 from pyvelo.core import VcoModel, unwrap
 from pyvelo.core.mending import MendingPatch, backhaul_hub_mending
 from pyvelo.core.references import Reference, removal_patch
@@ -103,14 +106,24 @@ def hub_reference_mending(
     target and an ``add_member`` patch for the profile; the
     ``remove_reference`` patches come first. The patches of one kind together
     mend every hub reference, so a kind that cannot be built for one of them
-    is left out whole. A hub of a segment has one ``add_member`` patch, which
-    names it as the first of its references does: two rules of a segment that
-    name one hub, by name or by logical ID, need it once (a second add of the
-    hub would be refused as a duplicate). A reference to a segment gets no
-    patch.
+    is left out whole. No ``remove_reference`` patch is offered when those
+    patches together would leave a rule that backhauls through hubs with no
+    hub (each entry of its ``backhaul_edges`` is one of the references:
+    ``left_without_hub``), since the rule would backhaul nowhere; the
+    ``add_member`` patches are offered then too. A rule that does not backhaul
+    through hubs keeps its ``remove_reference`` patch. A hub of a segment has
+    one ``add_member`` patch, which names it as the first of its references
+    does: two rules of a segment that name one hub, by name or by logical ID,
+    need it once (a second add of the hub would be refused as a duplicate). A
+    reference to a segment gets no patch.
     """
     hubs = [r for r in dangling if r.set_name == "backhaul_hub"]
-    removals = [_removal(r, edited, target_type) for r in hubs]
+    # A hub backhaul left with no hub would backhaul nowhere: no removal then.
+    removals = (
+        []
+        if left_without_hub(hubs, edited)
+        else [_removal(r, edited, target_type) for r in hubs]
+    )
     # One hub of one segment needs one patch, however each entry names it.
     first: dict[tuple[int | None, object], Reference] = {}
     for reference in hubs:

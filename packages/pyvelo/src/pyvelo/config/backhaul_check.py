@@ -23,12 +23,13 @@ from pyvelo.client.models.configuration.qos.rule import (
     QosRule,
     QosRuleAction,
     RouteAction,
+    RouteConfig,
 )
 from pyvelo.client.schemas.configuration import AnyStoredModule
 from pyvelo.config.validation_warning import ValidationWarning
 from pyvelo.core import VcoModel, unwrap
-from pyvelo.core.base import field_models
-from pyvelo.core.references import patch_keys
+from pyvelo.core.base import field_models, is_list
+from pyvelo.core.references import Reference, patch_keys
 from pyvelo.core.walk import walk_fields
 
 ROUTE_ACTIONS: Final = (
@@ -59,16 +60,16 @@ def names_no_hub(route_action: RouteAction) -> bool:
 
 
 @functools.cache
-def _can_hold_rule(model_cls: type[VcoModel]) -> bool:
-    """Whether a model of *model_cls* is a ``QosRule`` or can hold one, at any depth.
+def _can_hold(model_cls: type[VcoModel], target: type[VcoModel]) -> bool:
+    """Whether a model of *model_cls* is a *target* or can hold one, at any depth.
 
-    Computed once per class.
+    Computed once per pair of classes.
     """
     seen: set[type[VcoModel]] = set()
     pending = [model_cls]
     while pending:
         current = pending.pop()
-        if current is QosRule:
+        if current is target:
             return True
         if current in seen:
             continue
@@ -94,7 +95,7 @@ def hubless_backhauls(module: str, data: VcoModel) -> tuple[HublessBackhaul, ...
     found: list[HublessBackhaul] = []
     for site in walk_fields(
         data,
-        holds=_can_hold_rule,
+        holds=lambda model_cls: _can_hold(model_cls, QosRule),
         fields=lambda field_info: QosRuleAction in field_models(field_info),
     ):
         rule = site.model
@@ -114,6 +115,40 @@ def hubless_backhauls(module: str, data: VcoModel) -> tuple[HublessBackhaul, ...
                     )
                 )
     return tuple(found)
+
+
+def left_without_hub(
+    references: Sequence[Reference], edited: Mapping[str, VcoModel]
+) -> tuple[Reference, ...]:
+    """The hub references among *references* whose hub backhaul would be left with none.
+
+    A reference to a hub is an entry of a route action's
+    ``route_cfg.backhaul_edges``. Taking out every entry that holds one of
+    *references* leaves a rule that backhauls through hubs (``is_hub_backhaul``)
+    with no hub when each entry of its list holds one; those references are
+    returned, in order. A route action that does not backhaul through hubs
+    counts for none. *edited* is the module data the references were found in,
+    by module name.
+    """
+    hubs = [r for r in references if r.set_name == "backhaul_hub"]
+    holders = {id(r.holder) for r in hubs if r.holder is not None}
+    emptied: set[int] = set()
+    for module in dict.fromkeys(r.module for r in hubs):
+        data = edited.get(module)
+        if data is None:
+            continue
+        for site in walk_fields(
+            data,
+            holds=lambda model_cls: _can_hold(model_cls, RouteAction),
+            fields=lambda field_info: RouteConfig in field_models(field_info),
+        ):
+            if not is_hub_backhaul(site.model):
+                continue
+            held: object = site.model.route_cfg.backhaul_edges
+            entries = unwrap(held)
+            if is_list(entries) and all(id(e) in holders for e in entries):
+                emptied.update(id(e) for e in entries)
+    return tuple(r for r in hubs if id(r.holder) in emptied)
 
 
 def check_backhaul_hubs(

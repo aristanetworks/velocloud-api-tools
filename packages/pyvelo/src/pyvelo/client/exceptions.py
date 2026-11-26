@@ -436,6 +436,25 @@ def _mending_text(mending: Sequence[MendingPatch], *, on_edge: bool) -> str:
     return text + " Or take back every edit to a module with `revert`."
 
 
+def _only_hubs_text(
+    only_hubs: Sequence[Reference], mending: Sequence[MendingPatch]
+) -> str:
+    """The sentence of a ``DanglingReferenceError`` for its *only_hubs*."""
+    again = (
+        "with the patch above"
+        if any(m.kind == "add_member" for m in mending)
+        else "(one of the segment's `vpn.backHaulEdges`)"
+    )
+    return (
+        " No patch takes a hub out of the rule that names it: for "
+        f"{len(only_hubs)} of these references (`only_hubs` holds them) the hub "
+        "is the only hub of a rule that backhauls through hubs, or one of all "
+        "the hubs it names, and the rule would backhaul nowhere. Make the hub a "
+        f"backhaul hub again {again}, or first "
+        "give the rule another hub, change its `routePolicy` or delete the rule."
+    )
+
+
 class DanglingReferenceError(VcoError):
     """Raised when a save would leave a value that names nothing the configuration has.
 
@@ -457,11 +476,20 @@ class DanglingReferenceError(VcoError):
     together mend every hub reference of the error; a kind that cannot be
     built for every one is left out whole. A reference to a segment gets no
     patch.
+
+    ``only_hubs`` are the hub references whose rule, one that backhauls through
+    hubs (``routePolicy`` ``"backhaul"``, ``routeCfg.type`` ``"edge"``), would
+    be left with no hub if each were taken out of it: each is the only hub its
+    rule names, or one of all the hubs it names. No ``remove_reference`` patch
+    is offered then (for any reference), and the message says to make the hub
+    a backhaul hub again, or first to give the rule another hub, change its
+    ``routePolicy`` or delete the rule.
     """
 
     references: tuple[Reference, ...]
     on_edge: bool
     mending: tuple[MendingPatch, ...]
+    only_hubs: tuple[Reference, ...]
 
     def __init__(
         self,
@@ -469,15 +497,18 @@ class DanglingReferenceError(VcoError):
         *,
         on_edge: bool = False,
         mending: Sequence[MendingPatch] = (),
+        only_hubs: Sequence[Reference] = (),
     ) -> None:
         """The error for *references*, with a message that lists each and what to do.
 
         The message says where a segment or a backhaul hub comes from and gives
-        each patch of *mending*, with the module it goes to.
+        each patch of *mending*, with the module it goes to, and what to do for
+        the references of *only_hubs*.
         """
         self.references = tuple(references)
         self.on_edge = on_edge
         self.mending = tuple(mending)
+        self.only_hubs = tuple(only_hubs)
         lines = "\n".join(f"  {reference_text(r)}" for r in self.references)
         names = {r.set_name for r in self.references}
         sources: list[str] = []
@@ -504,6 +535,8 @@ class DanglingReferenceError(VcoError):
             message += f" Where each comes from: {'; '.join(sources)}."
         if self.mending:
             message += _mending_text(self.mending, on_edge=on_edge)
+        if self.only_hubs:
+            message += _only_hubs_text(self.only_hubs, self.mending)
         super().__init__(message)
 
 

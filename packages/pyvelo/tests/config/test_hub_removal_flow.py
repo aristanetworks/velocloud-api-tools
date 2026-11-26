@@ -14,13 +14,20 @@ import pytest
 from hub_helpers import (
     HUB_A,
     HUB_B,
+    Hub,
     backhaul_entry,
     backhaul_row,
     backhaul_rule,
     ds_with_vpn,
     hub_row,
 )
-from hub_state import hub_pipeline, hub_profile_state, profile_hub_rows
+from hub_state import (
+    guest_backhaul_state,
+    hub_backhaul_rule,
+    hub_pipeline,
+    hub_profile_state,
+    profile_hub_rows,
+)
 from pyvelo.client.exceptions import VcoError, WriteNotAppliedError
 from pyvelo.client.hub_services import BACKHAUL_REF
 from pyvelo.config import (
@@ -492,3 +499,95 @@ async def test_a_segment_assigned_in_a_removal_save_is_stored_in_qos_first(
     assert [w.name for w in result.written] == [DS]
     assert "Voice" in segments_stored(store)[DS]
     assert state.plan().changed == ()
+
+
+# -- a removal that would leave a hub backhaul with no hub ---------------------------
+
+ONLY_HUB = "the only hub of a rule that backhauls through hubs, or one of all the hubs"
+
+
+def out_of_guest_backhaul(*hubs: Hub) -> dict[str, Any]:
+    """The device settings patch that takes *hubs* out of Guest's backhaul hubs."""
+    gone = {hub.name: delete() for hub in hubs}
+    return {"segments": {"Guest": {"vpn": {"backHaulEdges": gone}}}}
+
+
+async def rules_backhaul_to(*rules: tuple[str, tuple[Hub, ...]]) -> ConfigState:
+    """Guest's rules, each by name with the hubs its Edge to cloud route backhauls to.
+
+    Guest has Hub-A and Hub-B as hubs and backhaul hubs.
+    """
+    return await guest_backhaul_state(
+        *(hub_backhaul_rule(name, *hubs) for name, hubs in rules)
+    )
+
+
+def kinds(error: DanglingReferenceError) -> list[str]:
+    return [m.kind for m in error.mending]
+
+
+async def test_no_patch_takes_the_only_hub_out_of_a_rule() -> None:
+    state = await rules_backhaul_to(("Web", (HUB_A,)))
+    await edit(state, DS, out_of_guest_backhaul(HUB_A))
+
+    error = refused(state)
+
+    assert kinds(error) == ["add_member"]
+    assert error.only_hubs == error.references
+    text = str(error)
+    assert ONLY_HUB in text
+    assert "give the rule another hub, change its `routePolicy` or delete the" in text
+    (member,) = error.mending
+    await send(state, member)
+    _ = state.plan()  # the hub is a backhaul hub again
+
+
+async def test_no_patch_takes_all_the_hubs_out_of_a_rule() -> None:
+    state = await rules_backhaul_to(("Web", (HUB_A, HUB_B)))
+    await edit(state, DS, out_of_guest_backhaul(HUB_A, HUB_B))
+
+    error = refused(state)
+
+    assert kinds(error) == ["add_member", "add_member"]
+    assert len(error.only_hubs) == 2
+    assert error.only_hubs == error.references
+    assert ONLY_HUB in str(error)
+
+
+async def test_a_patch_takes_one_hub_of_two_out_of_a_rule() -> None:
+    state = await rules_backhaul_to(("Web", (HUB_A, HUB_B)))
+    await edit(state, DS, out_of_guest_backhaul(HUB_A))
+
+    error = refused(state)
+
+    assert kinds(error) == ["remove_reference", "add_member"]
+    assert error.only_hubs == ()
+    assert ONLY_HUB not in str(error)
+    remove, _ = error.mending
+    await send(state, remove)
+    _ = state.plan()  # Web backhauls to Hub-B alone
+
+
+async def test_a_rule_that_would_be_left_with_no_hub_withholds_every_removal() -> None:
+    state = await rules_backhaul_to(("Web", (HUB_A,)), ("Mail", (HUB_A, HUB_B)))
+    await edit(state, DS, out_of_guest_backhaul(HUB_A))
+
+    error = refused(state)
+
+    assert kinds(error) == ["add_member"]  # the removal for Mail is left out too
+    (only,) = error.only_hubs
+    assert "rules[Web]" in str(only.path)
+    assert len(error.references) == 2
+
+
+async def test_a_rule_that_does_not_backhaul_keeps_its_removal_patch() -> None:
+    rule = hub_backhaul_rule("Web", HUB_A)
+    rule["action"]["edge2CloudRouteAction"]["routePolicy"] = "gateway"
+    state = await guest_backhaul_state(rule)
+    await edit(state, DS, out_of_guest_backhaul(HUB_A))
+
+    error = refused(state)
+
+    assert kinds(error) == ["remove_reference", "add_member"]
+    assert error.only_hubs == ()
+    assert ONLY_HUB not in str(error)

@@ -656,6 +656,16 @@ firewall: update
   names it; an `add_member` patch makes it a backhaul hub of the rule's
   segment. The `remove_reference` patches come first, and the patches of one
   kind together mend every hub reference of the error: send those of one kind.
+  No `remove_reference` patch is offered, for any reference of the error, when
+  those patches together would leave a rule that backhauls through hubs
+  (`routePolicy` `"backhaul"`, `routeCfg.type` `"edge"`) with no hub (each hub
+  the rule names is one of the references): such a rule backhauls nowhere (see
+  `BackhaulWithoutHubError` below). A rule that does not backhaul through hubs
+  keeps its removal patch. `error.only_hubs` then holds those
+  references, as `Reference` objects, and the message says so: make the hub a
+  backhaul hub again with the `add_member` patch, or first give the rule
+  another hub, change its `routePolicy` or delete the rule, and then take the
+  hub out of the lists.
   `module`, `patch`, `segment` and `path` are `apply`'s arguments
   (`await pipeline.apply(state, module=m.module, patch=m.patch,
   segment=m.segment, path=m.path)`), `target_type` says which configuration
@@ -1223,7 +1233,9 @@ edit needs, then writes the module.
   `DanglingReferenceError` (see "What a save writes"). Taking a hub that a rule
   of the profile still names out of `backHaulEdges`, and out of the rule, are
   two edits that go in either order: `plan()` refuses the state until both
-  are made, and the error's `mending` holds the patch for each way to mend it.
+  are made, and the error's `mending` holds the patch for each way to mend it
+  (no patch takes the last hub out of a rule that backhauls through hubs:
+  `error.only_hubs`).
   A rule that backhauls to hubs must keep one: deleting its last hub is a
   `BackhaulWithoutHubError` (see "What a save writes").
 - **Not supported.** Creating a hub, an Edge or a cluster, or a cluster's
