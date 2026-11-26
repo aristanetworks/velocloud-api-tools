@@ -363,14 +363,12 @@ class ResolverRegistry:
         )
 
 
-def resolve_name[T](  # noqa: PLR0913 (existing: split it when it next changes)
+def resolve_name[T](
     name: str,
     by_name: dict[str, T],
     entity_label: str,
     *,
     fuzzy: bool = False,
-    n: int = 5,
-    cutoff: float = 0.6,
 ) -> tuple[str, T]:
     """Resolve a name on an exact or case-insensitive match.
 
@@ -396,14 +394,14 @@ def resolve_name[T](  # noqa: PLR0913 (existing: split it when it next changes)
     # 3. Opt-in fuzzy match: accept only a single close candidate
     if fuzzy:
         suggestions = difflib.get_close_matches(
-            name.lower(), lower_map.keys(), n=n, cutoff=cutoff
+            name.lower(), lower_map.keys(), n=5, cutoff=0.6
         )
         if len(suggestions) == 1:
             matched = lower_map[suggestions[0]]
             return matched, by_name[matched]
 
     # No match, or a near miss that was not opted into: raise with candidates
-    raise resolution_error(entity_label, name, by_name.keys(), n=n, cutoff=cutoff)
+    raise resolution_error(entity_label, name, by_name.keys())
 
 
 _MAX_AVAILABLE_SHOWN = 20
