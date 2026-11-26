@@ -17,6 +17,8 @@ This package is split into these submodules:
 - references: the values that name a member of a set the configuration provides, and the
   check of them
 - secrets: hide_secrets, which shows a value without its secrets
+- mending: the patches that mend an error, as data, and the one that makes a hub a
+  backhaul hub
 
 This package exports the public names of those submodules; ``__all__`` lists them.
 """
@@ -168,6 +170,7 @@ from .layers import (
     layer_for,
     unwrap,
 )
+from .mending import MendingKind, MendingPatch, backhaul_hub_mending
 from .merge import item_selector, nest_patch, select_items
 from .owned import (
     ByFlag,
@@ -282,6 +285,8 @@ __all__ = [
     "LinkName",
     "ListKind",
     "MemberOf",
+    "MendingKind",
+    "MendingPatch",
     "NameOf",
     "NetworkServiceIdentity",
     "NetworkServiceLogicalId",
@@ -336,6 +341,7 @@ __all__ = [
     "VcoTimestamp",
     "add",
     "at",
+    "backhaul_hub_mending",
     "bind_layers",
     "check_references",
     "check_time_is_never",

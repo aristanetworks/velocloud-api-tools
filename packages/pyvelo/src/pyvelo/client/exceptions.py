@@ -20,6 +20,7 @@ from pydantic import MISSING
 
 from pyvelo.core.base import VcoModel, field_models, is_list, wire_name
 from pyvelo.core.changes import patch_of
+from pyvelo.core.mending import backhaul_hub_mending
 from pyvelo.core.patch import selector_of
 from pyvelo.core.rebase import (
     ItemMove,
@@ -413,23 +414,13 @@ def _hub_advice(reference: Reference, *, on_edge: bool) -> str:
     what a segment with hubs needs.
     """
     name: object = getattr(reference.holder, "edge_name", None)
-    hub = (
-        {"_op": "add", "name": name}
-        if isinstance(name, str) and name
-        else {"_op": "add", "logicalId": str(reference.value)}
-    )
     segment = reference.segment_name or "<segment name>"
-    patch = {
-        "segments": {
-            segment: {
-                "vpn": {
-                    "enabled": True,
-                    "edgeToEdgeHub": {"enabled": True, "vpnHubs": {"+": hub}},
-                    "backHaulEdges": {"+": hub},
-                }
-            }
-        }
-    }
+    mending = (
+        backhaul_hub_mending(segment, name)
+        if isinstance(name, str) and name
+        else backhaul_hub_mending(segment, str(reference.value), by_logical_id=True)
+    )
+    patch = mending.patch
     text = (
         f" To make the hub a backhaul hub of the segment {segment!r}, send "
         f"{json.dumps(patch)} to the device settings (`pipeline.apply(state, "

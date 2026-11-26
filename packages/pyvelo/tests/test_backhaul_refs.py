@@ -492,8 +492,9 @@ def test_a_hub_with_no_service_in_that_segment_raises() -> None:
     assert "has no service for this profile in the segment 'Guest'" in message
     assert "save the hub first and the rule after" in message
     assert (
-        '{"segments": {"Guest": {"vpn": {"edgeToEdgeHub": {"vpnHubs": '
-        '{"+": {"_op": "add", "name": "Hub-A"}}}}}}}'
+        '{"segments": {"Guest": {"vpn": {"enabled": true, "edgeToEdgeHub": '
+        '{"enabled": true, "vpnHubs": {"+": {"_op": "add", "name": "Hub-A"}}}, '
+        '"backHaulEdges": {"+": {"_op": "add", "name": "Hub-A"}}}}}}'
     ) in message
 
 

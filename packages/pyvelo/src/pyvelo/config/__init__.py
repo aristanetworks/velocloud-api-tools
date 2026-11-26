@@ -26,7 +26,7 @@ from pyvelo.client.exceptions import (
 )
 from pyvelo.client.module_check import ModuleWrite
 from pyvelo.client.module_write import ModulePlan
-from pyvelo.core import PatchError, PatchErrorKind, add, at, delete, move
+from pyvelo.core import MendingPatch, PatchError, PatchErrorKind, add, at, delete, move
 from pyvelo.core.identity import (
     HubIdentity,
     HubServiceNotFoundError,
@@ -107,6 +107,7 @@ __all__ = [
     "IntentError",
     "LayerNotSavedError",
     "LossyFieldError",
+    "MendingPatch",
     "Modified",
     "ModulePlan",
     "ModuleWrite",
