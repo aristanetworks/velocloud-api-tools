@@ -290,6 +290,13 @@ class _Sending:
     """Each module's ``ref_only_values`` as planned: a provider is no part of a dump."""
     done: list[ModuleWrite[Any]]
     """The writes stored so far."""
+    device_settings_at: int
+    """The position of the device settings plan in *changed*.
+
+    ``len(changed)`` when the save does not write them. The modules before it
+    are written before the role steps, and it and the modules after it after
+    them.
+    """
     failed: str | None = None
     """The name of the module being written, until its write is stored."""
     device_settings_stored: bool = False
@@ -297,8 +304,6 @@ class _Sending:
 
     That write can change the modules after it.
     """
-    device_settings_at: int = -1
-    """The position of the device settings in *changed* for a save with steps."""
     stored_already: ModuleWrite[Any] | None = None
     """The device settings write the version read found stored (its answer was lost)."""
     run: _StepRun | None = None
@@ -1275,8 +1280,7 @@ class ConfigPipeline:
         """
         state = sending.state
         module = _profile_device_settings(state)
-        at = next(i for i, p in enumerate(sending.changed) if p.name == module.name)
-        sending.device_settings_at = at
+        at = sending.device_settings_at
         try:
             sending.stored_already = await self.client.check_module_version(
                 module,
@@ -1455,6 +1459,14 @@ class ConfigPipeline:
             dumps=[_dump(mod) for mod in modules],
             providers=[ref_only_values(mod.data) for mod in modules],
             done=[],
+            device_settings_at=next(
+                (
+                    i
+                    for i, p in enumerate(changed)
+                    if p.name == ConfigurationModuleName.DEVICE_SETTINGS
+                ),
+                len(changed),
+            ),
         )
         if not plan.steps:
             await self._write_modules(sending, range(len(changed)))
