@@ -3,7 +3,7 @@
 import asyncio
 import uuid
 from dataclasses import dataclass
-from typing import assert_type, cast, override
+from typing import Any, ClassVar, assert_type, cast, override
 
 import pytest
 from pyvelo.client.protocol import VcoClientProtocol
@@ -13,8 +13,16 @@ from pyvelo.config.resolver import (
     ResolverContext,
     ResolverRegistry,
 )
+from pyvelo.config.resolvers.address_group import AddressGroupResolver
+from pyvelo.config.resolvers.application import ApplicationResolver
+from pyvelo.config.resolvers.edge import EdgeResolver
 from pyvelo.config.resolvers.hub import HubResolver
+from pyvelo.config.resolvers.license import LicenseResolver
+from pyvelo.config.resolvers.link import LinkResolver
+from pyvelo.config.resolvers.network_service import NetworkServiceResolver
+from pyvelo.config.resolvers.profile import ProfileResolver
 from pyvelo.config.resolvers.segment import SegmentResolver
+from pyvelo.config.resolvers.service_group import ServiceGroupResolver
 from pyvelo.core.identity import (
     HubIdentity,
     HubName,
@@ -101,7 +109,7 @@ class MockFooResolver(BaseResolver[FooIdentity]):
                 raise TypeError(f"Unsupported key type: {type(key).__name__}")
 
     @override
-    async def load(self, context: ResolverContext) -> None:
+    async def _load(self, context: ResolverContext) -> None:
         _ = context
         self.load_count += 1
         self._data = {
@@ -132,7 +140,7 @@ class MockBarResolver(BaseResolver[BarIdentity]):
                 raise TypeError(f"Unsupported key type: {type(key).__name__}")
 
     @override
-    async def load(self, context: ResolverContext) -> None:
+    async def _load(self, context: ResolverContext) -> None:
         _ = context
         self._data = {
             "first": BarIdentity(name="first", id=10),
@@ -144,6 +152,8 @@ class NoCopyResolver:
     """A resolver written against the protocol alone: it has no ``unloaded()``."""
 
     identity_type: type[BarIdentity] = BarIdentity
+    requires_load: ClassVar[bool] = False
+    loaded: bool = True
 
     def lookup(self, name: str) -> BarIdentity:
         return BarIdentity(name=name, id=1)
@@ -174,8 +184,26 @@ class WrongIdentityResolver(BaseResolver[FooIdentity]):
     identity_type = BarIdentity  # pyright: ignore[reportAssignmentType, reportUnannotatedClassAttribute]
 
     @override
-    async def load(self, context: ResolverContext) -> None:
+    async def _load(self, context: ResolverContext) -> None:
         _ = context
+
+
+class CountingResolver(BaseResolver[FooIdentity]):
+    """Registers ``alpha`` on each load, or fails when told to."""
+
+    identity_type: type[FooIdentity] = FooIdentity
+
+    def __init__(self) -> None:
+        super().__init__(_no_client())
+        self.fail: bool = False
+
+    @override
+    async def _load(self, context: ResolverContext) -> None:
+        _ = context
+        if self.fail:
+            raise RuntimeError("the VCO did not answer")
+        self._clear()
+        self._register("alpha", FooIdentity("alpha", 1, uuid.UUID(int=1)), id=1)
 
 
 class OnlyLookupsResolver(BaseResolver[FooIdentity]):
@@ -328,7 +356,7 @@ class TestResolverRegistry:
                 super()._clear()
 
             @override
-            async def load(self, context: ResolverContext) -> None:
+            async def _load(self, context: ResolverContext) -> None:
                 _ = context
                 self._register(
                     "alpha",
@@ -465,3 +493,47 @@ def test_a_resolver_that_defines_only_the_lookups_resolves() -> None:
     resolver = OnlyLookupsResolver()
     assert asyncio.run(resolver.resolve("foo")) == FOO
     assert asyncio.run(resolver.resolve_key(FooName("foo"))) == FOO
+
+
+async def test_a_load_sets_loaded_and_a_failed_load_leaves_it() -> None:
+    resolver = CountingResolver()
+    assert not resolver.loaded
+
+    await resolver.load(ResolverContext())
+
+    assert resolver.loaded
+    assert not resolver.unloaded().loaded
+    resolver.fail = True
+    with pytest.raises(RuntimeError):
+        await resolver.load(ResolverContext())
+    assert resolver.loaded  # the tables of the load before are still there
+    assert [i.name for i in resolver.identities()] == ["alpha"]
+
+
+async def test_a_cleared_resolver_is_not_loaded() -> None:
+    resolver = CountingResolver()
+    registry = ResolverRegistry()
+    registry.register(resolver)
+    await resolver.load(ResolverContext())
+
+    with registry.context(ResolverContext(enterprise_id=2)):
+        assert not resolver.loaded
+        assert list(resolver.identities()) == []
+
+
+def test_no_stock_resolver_overrides_load() -> None:
+    stock: list[type[BaseResolver[Any]]] = [
+        AddressGroupResolver,
+        ApplicationResolver,
+        EdgeResolver,
+        HubResolver,
+        LicenseResolver,
+        LinkResolver,
+        NetworkServiceResolver,
+        ProfileResolver,
+        SegmentResolver,
+        ServiceGroupResolver,
+    ]
+    for resolver in stock:
+        assert "load" not in vars(resolver), resolver.__name__
+        assert "_load" in vars(resolver), resolver.__name__

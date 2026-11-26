@@ -47,6 +47,13 @@ class Resolver[IdentityT](Protocol):
     """
 
     identity_type: type[IdentityT]
+    requires_load: ClassVar[bool]
+    """A resolver whose answers would be wrong before a load sets ``requires_load``."""
+
+    @property
+    def loaded(self) -> bool:
+        """Whether ``load()`` has filled the tables."""
+        ...
 
     def lookup(self, name: str) -> IdentityT:
         """Name -> typed identity object with all ID fields, from the loaded tables."""
@@ -83,17 +90,21 @@ class BaseResolver[IdentityT]:
     - Set ``identity_type`` as a class attribute.
     - Implement ``lookup_key()`` to dispatch on key type, answering an ID key
       with ``_by_key()``.
-    - Implement ``load()`` to fetch entities and call ``_register()``.
+    - Implement ``_load()`` to fetch entities and call ``_register()``.
 
-    ``resolve()`` and ``resolve_key()`` are final: they return what ``lookup()``
-    and ``lookup_key()`` return, so a subclass overrides the lookups and the
-    awaitable forms cannot disagree with them.
+    ``resolve()``, ``resolve_key()`` and ``load()`` are final. The first two
+    return what ``lookup()`` and ``lookup_key()`` return, so a subclass
+    overrides the lookups and the awaitable forms cannot disagree with them.
+    ``load()`` awaits ``_load()`` and then sets ``loaded``, so every resolver
+    says whether it is loaded; a ``_load()`` that raises leaves ``loaded`` as
+    it was.
 
     A resolver whose answers would be wrong before a load (it holds every
     identity of an enterprise, not those a name asks for) sets
-    ``requires_load``: until its ``load()`` sets ``loaded``, ``lookup``,
+    ``requires_load``: until a ``load()`` has finished, ``lookup``,
     ``lookup_key`` and ``resolve`` raise ``ResolverNotLoadedError``.
-    ``unloaded()`` and ``_clear()`` set ``loaded`` back to ``False``.
+    ``loaded`` is read-only; ``unloaded()`` and ``_clear()`` set it back to
+    ``False``.
     """
 
     identity_type: type[IdentityT]  # pyright: ignore[reportUninitializedInstanceVariable]
@@ -102,7 +113,7 @@ class BaseResolver[IdentityT]:
     def __init__(self, client: VcoClientProtocol) -> None:
         """An empty resolver that loads its tables through *client*."""
         self._client: VcoClientProtocol = client
-        self.loaded: bool = False
+        self._loaded: bool = False
         self._by_name: dict[str, IdentityT] = {}
         self._reverse: dict[str, dict[int | str | uuid.UUID, str]] = {}
 
@@ -127,7 +138,21 @@ class BaseResolver[IdentityT]:
         """The awaitable form of ``lookup_key``."""
         return self.lookup_key(key)
 
+    @property
+    def loaded(self) -> bool:
+        """Whether ``load()`` has filled the tables."""
+        return self._loaded
+
+    @final
     async def load(self, context: ResolverContext) -> None:
+        """Run ``_load`` for *context*, then set ``loaded``.
+
+        A ``_load`` that raises leaves ``loaded`` as it was.
+        """
+        await self._load(context)
+        self._loaded = True
+
+    async def _load(self, context: ResolverContext) -> None:
         """Fetch the entities of *context* and register them; a subclass does this."""
         del context
         raise NotImplementedError
@@ -146,7 +171,7 @@ class BaseResolver[IdentityT]:
         twin = copy.copy(self)
         twin._by_name = {}
         twin._reverse = {}
-        twin.loaded = False
+        twin._loaded = False
         return twin
 
     def _register(
@@ -178,7 +203,7 @@ class BaseResolver[IdentityT]:
         """Clear all lookup tables before a reload."""
         self._by_name.clear()
         self._reverse.clear()
-        self.loaded = False
+        self._loaded = False
 
     def _require_loaded(self) -> None:
         """Raise ``ResolverNotLoadedError`` if this resolver is not loaded.
@@ -350,10 +375,7 @@ class ResolverRegistry:
         the value.
         """
         resolver = self.resolver_for(identity_type)
-        if resolver is None or (
-            getattr(resolver, "requires_load", False)
-            and not getattr(resolver, "loaded", False)
-        ):
+        if resolver is None or (resolver.requires_load and not resolver.loaded):
             raise ResolverNotLoadedError(identity_type)
         for identity in resolver.identities():
             if accessor(identity) == value:

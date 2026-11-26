@@ -51,8 +51,10 @@ that type. After `await resolver.load(context)` (the pipeline does it for a
 state), `registry.lookup(SegmentId(2))` and
 `registry.lookup(SegmentIdentity, "Guest")` answer from the loaded tables,
 without an event loop; `await registry.resolve(...)` answers the same. A resolver
-subclass of `BaseResolver[SegmentIdentity]` overrides `lookup_key` and `load`;
-`lookup` is optional (`BaseResolver`'s serves name lookups), and its `resolve` and
+subclass of `BaseResolver[SegmentIdentity]` overrides `lookup_key` and `_load`;
+`load` is final: it runs `_load` and then sets `loaded`, which every resolver has
+(the `Resolver` protocol declares `loaded` and `requires_load`). `lookup` is
+optional (`BaseResolver`'s serves name lookups), and its `resolve` and
 `resolve_key` are final and return what the lookups return.
 
 `registry.lookup_by(SegmentIdentity, lambda s: s.object_id, 7)` finds the first

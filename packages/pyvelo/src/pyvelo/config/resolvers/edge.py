@@ -44,7 +44,7 @@ class EdgeResolver(BaseResolver[EdgeIdentity]):
                 raise TypeError(f"Unsupported key type: {type(key).__name__}")
 
     @override
-    async def load(self, context: ResolverContext) -> None:
+    async def _load(self, context: ResolverContext) -> None:
         """Fetch all edges for the enterprise and populate lookup tables."""
         request = GetEnterpriseEdges()
         if context.enterprise_id is not None:

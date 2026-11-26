@@ -1806,7 +1806,9 @@ class ConfigPipeline:
         """Run all write-time validators without saving (dry-run validation)."""
         return self._validators.run(state, phase="write")
 
-    async def load_resolvers(self, state: ConfigState, *identities: type) -> None:
+    async def load_resolvers(
+        self, state: ConfigState, *identities: type, again: bool = False
+    ) -> None:
         """Give *state* its own resolvers, or load those it has for some identity types.
 
         With no *identities*, as ``load`` and ``load_profile`` do it for the
@@ -1815,12 +1817,14 @@ class ConfigPipeline:
         loaded for ``state.resolver_context``. This replaces the state's whole
         registry, so a resolver registered on ``state.resolvers`` is dropped.
         The network-service and hub resolvers in that copy are not loaded: the
-        tables are read when a plan or a patch first needs them.
+        tables are read when a plan or a patch first needs them. This form does
+        not consult *again*.
 
         With *identities* (``NetworkServiceIdentity``, ``SegmentIdentity``,
         ...), it sets ``state.resolver_context`` on the state's registry and
-        loads the resolver of each type in it, whether it was loaded before or
-        not. A state that has none for a type gets one first: an unloaded copy
+        loads the resolver of each type in it that is not loaded; ``again=True``
+        loads each whether it is loaded or not, to read a table that changed on
+        the VCO. A state that has none for a type gets one first: an unloaded copy
         of the pipeline's, or, for ``NetworkServiceIdentity``, a new
         ``NetworkServiceResolver`` and, for ``HubIdentity``, a new
         ``HubResolver``, on the pipeline's client. This is what
@@ -1837,7 +1841,8 @@ class ConfigPipeline:
         state.resolvers.set_context(state.resolver_context)
         for identity in identities:
             resolver = self._state_resolver(state, identity)
-            await resolver.load(state.resolver_context)
+            if again or not resolver.loaded:
+                await resolver.load(state.resolver_context)
 
     def _state_resolver(self, state: ConfigState, identity: type) -> Resolver[Any]:
         """The resolver of *state* for *identity*.

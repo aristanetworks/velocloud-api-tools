@@ -137,7 +137,7 @@ class HubResolver(BaseResolver[HubIdentity]):
                 raise TypeError(f"Unsupported key type: {type(key).__name__}")
 
     @override
-    async def load(self, context: ResolverContext) -> None:
+    async def _load(self, context: ResolverContext) -> None:
         """Read the hubs of the enterprise, and populate the lookup tables.
 
         It reads the Edges, the clusters and their members.
@@ -210,7 +210,6 @@ class HubResolver(BaseResolver[HubIdentity]):
                     cluster_logical_id=cluster.logical_id,
                 )
             )
-        self.loaded: bool = True
 
     @override
     def identities(self) -> list[HubIdentity]:

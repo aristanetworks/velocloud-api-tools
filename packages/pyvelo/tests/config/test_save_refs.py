@@ -320,8 +320,13 @@ async def test_a_second_not_loaded_error_for_the_same_type_propagates() -> None:
     class NeverLoads(NetworkServiceResolver):
         loads: ClassVar[int] = 0
 
+        @property
         @override
-        async def load(self, context: ResolverContext) -> None:
+        def loaded(self) -> bool:
+            return False
+
+        @override
+        async def _load(self, context: ResolverContext) -> None:
             del context
             type(self).loads += 1
 

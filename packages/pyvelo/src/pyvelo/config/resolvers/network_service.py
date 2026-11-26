@@ -80,7 +80,7 @@ class NetworkServiceResolver(BaseResolver[NetworkServiceIdentity]):
                 raise TypeError(f"Unsupported key type: {type(key).__name__}")
 
     @override
-    async def load(self, context: ResolverContext) -> None:
+    async def _load(self, context: ResolverContext) -> None:
         """Fetch every service of the enterprise and populate the lookup tables."""
         request = GetEnterpriseServices()
         if context.enterprise_id is not None:
@@ -103,7 +103,6 @@ class NetworkServiceResolver(BaseResolver[NetworkServiceIdentity]):
                 logical_id=summary.logical_id,
                 object_id=summary.id_,
             )
-        self.loaded: bool = True
 
     @override
     def identities(self) -> list[NetworkServiceIdentity]:

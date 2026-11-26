@@ -863,11 +863,6 @@ class _SegmentsLoadedOnDemand(SegmentResolver):
 
     requires_load: ClassVar[bool] = True
 
-    @override
-    async def load(self, context: ResolverContext) -> None:
-        await super().load(context)
-        self.loaded = True
-
 
 class _ClientWithLab(MockVcoClient):
     """A mock whose enterprise also has Guest (2) and Lab (7)."""

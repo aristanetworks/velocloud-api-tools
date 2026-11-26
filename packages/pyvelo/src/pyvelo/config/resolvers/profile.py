@@ -32,7 +32,7 @@ class ProfileResolver(BaseResolver[ProfileIdentity]):
                 raise TypeError(f"Unsupported key type: {type(key).__name__}")
 
     @override
-    async def load(self, context: ResolverContext) -> None:
+    async def _load(self, context: ResolverContext) -> None:
         request = GetEnterpriseConfigurations()
         if context.enterprise_id is not None:
             request.enterprise_id = context.enterprise_id
