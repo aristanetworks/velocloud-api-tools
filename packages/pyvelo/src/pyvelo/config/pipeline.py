@@ -3,8 +3,9 @@
 The workflow is load → apply → save, and revert.
 """
 
+import contextlib
 import json
-from collections.abc import Collection, Mapping, Sequence
+from collections.abc import Collection, Generator, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Final, Literal, Protocol, TypeIs, cast, runtime_checkable
 
@@ -57,6 +58,7 @@ from pyvelo.config.effective import (
 from pyvelo.config.errors import SaveStepError, SaveValidationError
 from pyvelo.config.hub_calls import (
     HubServices,
+    PreparedStep,
     hub_rows,
     hubs_in_use,
     prepare_steps,
@@ -138,6 +140,35 @@ class _StepRun:
     """
     calling: bool = False
     """Whether a call was made, which may have reached the VCO."""
+    services: HubServices | None = None
+    """The hub services as read before the first step; None until then."""
+    prepared: tuple[PreparedStep, ...] = ()
+    """Every step with its decision (``prepare_steps``), made before any is sent."""
+
+    @contextlib.contextmanager
+    def guard(self) -> Generator[None]:
+        """Raise an error of the steps with what they did so far.
+
+        A ``SaveStepError`` propagates as it is. Any other ``Exception`` once
+        a step was sent is a ``SaveStepError``; before that, it and any other
+        error, a cancellation included, propagate as they are, with a
+        ``SaveProgress`` attached once a call was made or a write was found
+        stored.
+        """
+        try:
+            yield
+        except SaveStepError:
+            raise
+        except Exception as error:
+            if self.sent:
+                raise self.error(error) from error
+            if self.calling or self.done:
+                self.progress().attach(error)
+            raise
+        except BaseException as error:
+            if self.calling or self.done:
+                self.progress().attach(error)
+            raise
 
     def progress(self) -> SaveProgress:
         """The progress of a save that stopped in its steps.
@@ -238,6 +269,140 @@ _WRITABLE_MODULES = (
     WanConfigurationModule,
     FirewallConfigurationModule,
 )
+
+
+@dataclass
+class _Sending:
+    """The state of one save that sends: what it writes and what it stored so far."""
+
+    state: ConfigState
+    result: SaveResult
+    changed: list[ModulePlan]
+    """The plan of each changed module, in the order they are written."""
+    modules: list[_WritableModule]
+    """The module of each plan in *changed*.
+
+    Each write replaces only its own module, so these stay the state's.
+    """
+    dumps: list[object]
+    """What each module holds as planned, to find an edit made while a write was out."""
+    providers: list[dict[Path, object]]
+    """Each module's ``ref_only_values`` as planned: a provider is no part of a dump."""
+    done: list[ModuleWrite[Any]]
+    """The writes stored so far."""
+    failed: str | None = None
+    """The name of the module being written, until its write is stored."""
+    device_settings_stored: bool = False
+    """Whether a profile's device settings write is stored.
+
+    That write can change the modules after it.
+    """
+    device_settings_at: int = -1
+    """The position of the device settings in *changed* for a save with steps."""
+    stored_already: ModuleWrite[Any] | None = None
+    """The device settings write the version read found stored (its answer was lost)."""
+    run: _StepRun | None = None
+    """What the role steps did, once they are decided; None for a save without."""
+
+    def is_device_settings(self, mod: _WritableModule) -> bool:
+        """Whether *mod* is a profile's device settings module."""
+        return (
+            self.state.target_type == "profile"
+            and mod.name == ConfigurationModuleName.DEVICE_SETTINGS
+        )
+
+    def progress_of(self, error: BaseException) -> SaveProgress:
+        """The progress of this save, attached to *error*.
+
+        The writes stored, the module being written and the modules after it.
+        """
+        stored = {write.name for write in self.done}
+        progress = SaveProgress(
+            completed=tuple(self.done),
+            failed=self.failed,
+            pending=tuple(
+                m.name
+                for m in self.modules
+                if m.name not in stored and m.name != self.failed
+            ),
+        )
+        progress.attach(error)
+        return progress
+
+    def store_write(self, at: int, write: ModuleWrite[Any]) -> None:
+        """Count *write* of the module at *at* as stored.
+
+        Also put the module as stored in the state.
+
+        Raises ``DetachedObjectError`` for an edit made while it was written.
+        """
+        mod = self.modules[at]
+        insert = self.changed[at].operation == "insert"
+        # Stored: it counts as written even if the state cannot take it back.
+        self.done.append(write)
+        self.failed = None
+        if self.is_device_settings(mod):
+            self.device_settings_stored = True
+        paths = list(
+            dict.fromkeys(
+                change.path
+                for change in raw_changes(self.dumps[at], _dump(mod), type(mod))
+            )
+        )
+        # A provider is no part of a dump: compare it by itself.
+        paths.extend(
+            Path(("data", *path.parts))
+            for path in ref_only_changes(self.providers[at], ref_only_values(mod.data))
+        )
+        try:
+            self.state.replace_module(mod, write.module)
+        except BaseException:
+            # The insert is stored but the state still plans it: the
+            # next save reads before it inserts again.
+            if insert:
+                self.state.unconfirmed_inserts.add(mod.name)
+            raise
+        name = ConfigurationModuleName(write.name)
+        self.result.server_changes[name] = write.server_changes
+        self.result.left_out[name] = write.left_out
+        self.result.written = tuple(self.done)
+        if paths:
+            error = DetachedObjectError(
+                f"{mod.name}: the module was edited while this save was writing "
+                f"it, at: {', '.join(paths)}. The write is stored without those "
+                "edits and the state holds the module as stored; take the objects "
+                "from the state again and redo them. A path that is a placeholder "
+                "a lookup added (segment(name), for a segment the edge only "
+                "inherits) is no edit and needs no redo. To edit a state from "
+                "another task while a save may run, use apply, or hold state.lock "
+                "around the edit",
+                paths,
+            )
+            note = _written_note(self.done)
+            if later := self.modules[at + 1 :]:
+                note += (
+                    "; the save stopped here, so these are not written: "
+                    + ", ".join(m.name for m in later)
+                    + ". The next save writes them"
+                )
+            error.add_note(note)
+            raise error
+
+    def put_stored(self, mod: _WritableModule, error: ModuleWriteError) -> bool:
+        """Put the module *error* carries in the state in place of *mod*.
+
+        Say whether it did.
+
+        The module is of the class of *mod* (``write_module`` checks it), or
+        None when it could not be read: then the state keeps *mod*. It is
+        also kept when the state no longer holds *mod*, so that the write
+        error is not hidden behind the ValueError of ``replace_module``.
+        """
+        stored = error.module
+        if isinstance(stored, type(mod)) and self.state.find_module(mod.name) is mod:
+            self.state.replace_module(mod, cast("AnyStoredModule", stored))
+            return True
+        return False
 
 
 @dataclass(frozen=True)
@@ -821,7 +986,7 @@ class ConfigPipeline:
             except ResolverNotLoadedError as error:
                 await self.load_resolvers(state, _to_load(error, loaded))
 
-    async def save(  # noqa: C901 (existing: split it when it next changes)
+    async def save(
         self,
         state: ConfigState,
         *,
@@ -974,12 +1139,7 @@ class ConfigPipeline:
         that block, for another task that calls ``apply`` or ``save``,
         which would wait for the lock without end.
         """
-        if on_hub_in_use not in ("warn", "refuse"):
-            raise ValueError(  # pyright: ignore[reportUnreachable]  # a caller may pass any string
-                f"on_hub_in_use is {on_hub_in_use!r}; give 'warn' to remove a "
-                "hub that edge QoS rules use and say so in the result's "
-                "warnings, or 'refuse' to stop before any step"
-            )
+        _check_on_hub_in_use(on_hub_in_use)
         async with state.lock:
             plan = await self._plan_loading(state, repair_defaults=repair_defaults)
             result = SaveResult(
@@ -989,51 +1149,75 @@ class ConfigPipeline:
             if not plan.changed and not plan.steps:
                 return result
 
-            for module_plan in plan.changed:
-                _ = _require_writable(state.module(module_plan.name))
-
-            for module_plan in plan.changed:
-                name = ConfigurationModuleName(module_plan.name)
-                if module_plan.operation == "insert":
-                    result.modules_inserted.append(name)
-                else:
-                    result.modules_updated.append(name)
-
-            # Run write-time validators
-            if validate:
-                validation = self._validators.run(
-                    state,
-                    phase="write",
-                    modules=[ConfigurationModuleName(m.name) for m in plan.changed],
-                )
-                if not validation.is_valid:
-                    if not dry_run:
-                        raise SaveValidationError(validation.errors)
-                    result.validation_errors = validation.errors
-                    return result
-                for warn in validation.warnings:
-                    result.warnings.append(_validation_error_to_warning(warn))
-
-            if dry_run:
-                result.warnings.extend(
-                    ValidationWarning(
-                        path=module_plan.name,
-                        message=(
-                            "an earlier insert of this module may have reached the "
-                            "VCO; the save reads the configuration first, and takes a "
-                            "module of this name it finds there as the insert's answer"
-                        ),
-                        code="insert_unconfirmed",
-                    )
-                    for module_plan in plan.changed
-                    if module_plan.name in state.unconfirmed_inserts
-                )
-                if plan.steps:
-                    result.steps = await self._dry_steps(
-                        state, plan, result.warnings, on_hub_in_use
-                    )
+            _list_writes(state, plan, result)
+            if validate and not self._validate_writes(
+                state, plan, result, dry_run=dry_run
+            ):
                 return result
+            if dry_run:
+                return await self._dry_result(state, plan, result, on_hub_in_use)
             return await self._send(state, plan, result, on_hub_in_use)
+
+    def _validate_writes(
+        self,
+        state: ConfigState,
+        plan: ConfigPlan,
+        result: SaveResult,
+        *,
+        dry_run: bool,
+    ) -> bool:
+        """Run the write-time validators on the modules *plan* changes.
+
+        Say whether the save goes on.
+
+        Their warnings are added to *result*. An error raises
+        ``SaveValidationError``, or, for *dry_run*, is put in
+        ``result.validation_errors``, and the save stops there.
+        """
+        validation = self._validators.run(
+            state,
+            phase="write",
+            modules=[ConfigurationModuleName(m.name) for m in plan.changed],
+        )
+        if not validation.is_valid:
+            if not dry_run:
+                raise SaveValidationError(validation.errors)
+            result.validation_errors = validation.errors
+            return False
+        for warn in validation.warnings:
+            result.warnings.append(_validation_error_to_warning(warn))
+        return True
+
+    async def _dry_result(
+        self,
+        state: ConfigState,
+        plan: ConfigPlan,
+        result: SaveResult,
+        on_hub_in_use: Literal["warn", "refuse"],
+    ) -> SaveResult:
+        """*result* of a dry run, which sends nothing.
+
+        It warns of each insert that may have reached the VCO, and says what
+        the save would do with each step (:meth:`_dry_steps`).
+        """
+        result.warnings.extend(
+            ValidationWarning(
+                path=module_plan.name,
+                message=(
+                    "an earlier insert of this module may have reached the "
+                    "VCO; the save reads the configuration first, and takes a "
+                    "module of this name it finds there as the insert's answer"
+                ),
+                code="insert_unconfirmed",
+            )
+            for module_plan in plan.changed
+            if module_plan.name in state.unconfirmed_inserts
+        )
+        if plan.steps:
+            result.steps = await self._dry_steps(
+                state, plan, result.warnings, on_hub_in_use
+            )
+        return result
 
     async def _dry_steps(
         self,
@@ -1070,52 +1254,102 @@ class ConfigPipeline:
             )
         )
 
-    async def _run_steps(  # noqa: C901, PLR0913 (existing: split it when it next changes)
+    async def _check_steps_version(self, sending: _Sending) -> None:
+        """Read the version of the device settings, before any step is sent.
+
+        Another writer's change stops the save here: the ``ModuleWriteError``
+        propagates as it is, with the module as stored put in the state, as
+        a write refused for a stale version does. A write found stored (one
+        whose answer was lost) is done before the steps
+        (``sending.stored_already``); an error of storing it gets the save's
+        progress.
+        """
+        state = sending.state
+        module = _profile_device_settings(state)
+        at = next(i for i, p in enumerate(sending.changed) if p.name == module.name)
+        sending.device_settings_at = at
+        try:
+            sending.stored_already = await self.client.check_module_version(
+                module,
+                sending.changed[at],
+                enterprise_id=state.resolver_context.enterprise_id,
+            )
+        except ModuleWriteError as error:
+            # As a write refused for a stale version does: the state holds
+            # the module as stored, so that a second save does not meet
+            # the same conflict. No step was sent, so it propagates as it is.
+            _ = sending.put_stored(sending.modules[at], error)
+            raise
+        if sending.stored_already is not None:
+            # A write whose answer was lost: it is done, before the steps.
+            try:
+                sending.store_write(at, sending.stored_already)
+            except BaseException as error:
+                _ = sending.progress_of(error)
+                raise
+
+    async def _decide_steps(
         self,
-        state: ConfigState,
+        sending: _Sending,
         plan: ConfigPlan,
-        changed: list[ModulePlan],
-        done: list[ModuleWrite[Any]],
-        *,
-        device_settings_stored: bool,
         on_hub_in_use: Literal["warn", "refuse"],
     ) -> _StepRun:
-        """Send the role steps of *plan*.
-
-        Then have the device settings plan in *changed* carry the rows they made.
+        """Decide every role step of *plan*; sends nothing.
 
         Reads the hub services, adds the ``hub_in_use`` warnings to the run
-        (``HubListError`` with *on_hub_in_use* ``"refuse"``, before any step),
-        decides every step with ``prepare_steps`` (a refusal comes before the
-        first call), sends each step not in place, in order, reads the services
-        again and puts the hub rows the steps made in the device settings plan
-        (``with_hub_rows``), at its place in *changed*, unless
-        *device_settings_stored* (its write was found stored and is in *done*:
-        it is not written again). Returns what the steps did. An ``Exception``
-        once a step was sent, or in the call of one, is a ``SaveStepError``;
-        any other error, a cancellation included, propagates as it is. A
-        ``SaveProgress`` is attached to the error once a call was made or a
-        write was found stored; an error before either has none.
+        (``HubListError`` with *on_hub_in_use* ``"refuse"``) and decides every
+        step with ``prepare_steps``, so that a refusal comes before the first
+        call. Returns the run, with the services and the decisions, for
+        :meth:`_send_steps`. An error has a ``SaveProgress`` attached once a
+        write was found stored (``_StepRun.guard``).
         """
-        enterprise_id = state.resolver_context.enterprise_id
-        module = _profile_device_settings(state)
+        module = _profile_device_settings(sending.state)
         configuration_id = _configuration_id(module)
-        position = next(i for i, p in enumerate(changed) if p.name == module.name)
-        run = _StepRun(tuple(p.name for p in changed), done)
-        try:
+        run = _StepRun(tuple(p.name for p in sending.changed), sending.done)
+        with run.guard():
             services = await read_services(
-                self.client, enterprise_id, qos_usage=_leaves_a_hub_list(plan.steps)
+                self.client,
+                sending.state.resolver_context.enterprise_id,
+                qos_usage=_leaves_a_hub_list(plan.steps),
             )
+            run.services = services
             run.warnings = _hubs_in_use_warnings(
                 plan.steps, services, module, on_hub_in_use
             )
             # Decided, with each call's ID, before the first call is sent.
-            for prepared in prepare_steps(
+            run.prepared = prepare_steps(
                 plan.steps,
                 services,
                 configuration_id=configuration_id,
                 module_id=module.id_,
-            ):
+            )
+        return run
+
+    async def _send_steps(self, sending: _Sending, plan: ConfigPlan) -> None:
+        """Send each role step of *plan* not in place, as decided.
+
+        Then have the device settings plan in ``sending.changed`` carry the
+        rows they made.
+
+        Sends the steps in order, reads the services again and puts the hub
+        rows the steps made in the device settings plan (``with_hub_rows``),
+        at its place in ``sending.changed``, unless its write was found stored
+        (``sending.stored_already``: it is not written again). An
+        ``Exception`` once a step was sent, or in the call of one, is a
+        ``SaveStepError``; any other error, a cancellation included,
+        propagates as it is. A ``SaveProgress`` is attached to the error once
+        a call was made or a write was found stored (``_StepRun.guard``).
+        """
+        run = sending.run
+        services = None if run is None else run.services
+        if run is None or services is None:
+            raise RuntimeError("the steps of a save are sent once they are decided")
+        enterprise_id = sending.state.resolver_context.enterprise_id
+        module = _profile_device_settings(sending.state)
+        configuration_id = _configuration_id(module)
+        position = sending.device_settings_at
+        with run.guard():
+            for prepared in run.prepared:
                 step = prepared.step
                 if prepared.in_place:
                     run.in_place.append(step)
@@ -1137,7 +1371,7 @@ class ConfigPipeline:
                 run.sent.append(step)
                 run.outcomes.append(StepOutcome(step, "sent"))
             services = await read_services(self.client, enterprise_id, qos_usage=False)
-            if not device_settings_stored:
+            if sending.stored_already is None:
                 added, removed = hub_rows(
                     module.raw_refs,
                     plan.steps,
@@ -1147,27 +1381,14 @@ class ConfigPipeline:
                     now=module.data,
                 )
                 if added or removed:
-                    changed[position] = with_hub_rows(
-                        changed[position],
+                    sending.changed[position] = with_hub_rows(
+                        sending.changed[position],
                         added=added,
                         removed=removed,
                         segments={s.segment_object_id: s.segment for s in plan.steps},
                     )
-        except SaveStepError:
-            raise
-        except Exception as error:
-            if run.sent:
-                raise run.error(error) from error
-            if run.calling or run.done:
-                run.progress().attach(error)
-            raise
-        except BaseException as error:
-            if run.calling or run.done:
-                run.progress().attach(error)
-            raise
-        return run
 
-    async def _send(  # noqa: C901, PLR0915 (existing: split it when it next changes)
+    async def _send(
         self,
         state: ConfigState,
         plan: ConfigPlan,
@@ -1194,190 +1415,87 @@ class ConfigPipeline:
         with a ``DetachedObjectError`` whose note also names the modules not
         written.
 
-        The steps come first (:meth:`_run_steps`), and the device settings
-        write that follows carries the rows they made and reads no version
-        (``version_checked``). Once a step was sent, an ``Exception`` of a
-        module write is raised as a ``SaveStepError``, from that error, and
-        its ``SaveProgress`` is that of the write.
+        The steps come first (:meth:`_check_steps_version`, :meth:`_decide_steps`
+        and :meth:`_send_steps`), and the device settings write that follows
+        carries the rows they made and reads no version (``version_checked``).
+        Once a step was sent, an ``Exception`` of a module write is raised as a
+        ``SaveStepError``, from that error, and its ``SaveProgress`` is that of
+        the write.
         """
-        enterprise_id = state.resolver_context.enterprise_id
         changed = list(plan.changed)
-        # Each write replaces only its own module, so these stay the state's.
         modules = [_require_writable(state.module(p.name)) for p in changed]
-        # What each module holds as planned, to find an edit made while a write was out.
-        dumps = [_dump(mod) for mod in modules]
-        providers = [ref_only_values(mod.data) for mod in modules]
-        done: list[ModuleWrite[Any]] = []
-        failed: str | None = None
-        position = 0
-        # A profile's device settings write can change the modules after it.
-        device_settings_stored = False
-
-        def is_device_settings(mod: _WritableModule) -> bool:
-            return (
-                state.target_type == "profile"
-                and mod.name == ConfigurationModuleName.DEVICE_SETTINGS
-            )
-
-        def progress_of(error: BaseException) -> SaveProgress:
-            """The progress of this save, attached to *error*.
-
-            The writes stored, the module being written and the modules after it.
-            """
-            stored = {write.name for write in done}
-            progress = SaveProgress(
-                completed=tuple(done),
-                failed=failed,
-                pending=tuple(
-                    m.name for m in modules if m.name not in stored and m.name != failed
-                ),
-            )
-            progress.attach(error)
-            return progress
-
-        def store_write(at: int, write: ModuleWrite[Any]) -> None:
-            """Count *write* of the module at *at* as stored.
-
-            Also put the module as stored in the state.
-
-            Raises ``DetachedObjectError`` for an edit made while it was written.
-            """
-            nonlocal failed, device_settings_stored
-            mod = modules[at]
-            insert = changed[at].operation == "insert"
-            # Stored: it counts as written even if the state cannot take it back.
-            done.append(write)
-            failed = None
-            if is_device_settings(mod):
-                device_settings_stored = True
-            paths = list(
-                dict.fromkeys(
-                    change.path
-                    for change in raw_changes(dumps[at], _dump(mod), type(mod))
-                )
-            )
-            # A provider is no part of a dump: compare it by itself.
-            paths.extend(
-                Path(("data", *path.parts))
-                for path in ref_only_changes(providers[at], ref_only_values(mod.data))
-            )
-            try:
-                state.replace_module(mod, write.module)
-            except BaseException:
-                # The insert is stored but the state still plans it: the
-                # next save reads before it inserts again.
-                if insert:
-                    state.unconfirmed_inserts.add(mod.name)
-                raise
-            name = ConfigurationModuleName(write.name)
-            result.server_changes[name] = write.server_changes
-            result.left_out[name] = write.left_out
-            result.written = tuple(done)
-            if paths:
-                error = DetachedObjectError(
-                    f"{mod.name}: the module was edited while this save was writing "
-                    f"it, at: {', '.join(paths)}. The write is stored without those "
-                    "edits and the state holds the module as stored; take the objects "
-                    "from the state again and redo them. A path that is a placeholder "
-                    "a lookup added (segment(name), for a segment the edge only "
-                    "inherits) is no edit and needs no redo. To edit a state from "
-                    "another task while a save may run, use apply, or hold state.lock "
-                    "around the edit",
-                    paths,
-                )
-                note = _written_note(done)
-                if later := modules[at + 1 :]:
-                    note += (
-                        "; the save stopped here, so these are not written: "
-                        + ", ".join(m.name for m in later)
-                        + ". The next save writes them"
-                    )
-                error.add_note(note)
-                raise error
-
-        def put_stored(mod: _WritableModule, error: ModuleWriteError) -> bool:
-            """Put the module *error* carries in the state in place of *mod*.
-
-            Say whether it did.
-
-            The module is of the class of *mod* (``write_module`` checks it), or
-            None when it could not be read: then the state keeps *mod*. It is
-            also kept when the state no longer holds *mod*, so that the write
-            error is not hidden behind the ValueError of ``replace_module``.
-            """
-            stored = error.module
-            if isinstance(stored, type(mod)) and state.find_module(mod.name) is mod:
-                state.replace_module(mod, cast("AnyStoredModule", stored))
-                return True
-            return False
-
-        run: _StepRun | None = None
-        stored_already: ModuleWrite[Any] | None = None
-        device_settings_at = -1
+        sending = _Sending(
+            state=state,
+            result=result,
+            changed=changed,
+            modules=modules,
+            dumps=[_dump(mod) for mod in modules],
+            providers=[ref_only_values(mod.data) for mod in modules],
+            done=[],
+        )
         if plan.steps:
-            module = _profile_device_settings(state)
-            device_settings_at = next(
-                i for i, p in enumerate(changed) if p.name == module.name
-            )
-            # Before anything is sent: another writer's change stops the save here.
-            try:
-                stored_already = await self.client.check_module_version(
-                    module, changed[device_settings_at], enterprise_id=enterprise_id
-                )
-            except ModuleWriteError as error:
-                # As a write refused for a stale version does: the state holds
-                # the module as stored, so that a second save does not meet
-                # the same conflict. No step was sent, so it propagates as it is.
-                _ = put_stored(modules[device_settings_at], error)
-                raise
-            if stored_already is not None:
-                # A write whose answer was lost: it is done, before the steps.
-                try:
-                    store_write(device_settings_at, stored_already)
-                except BaseException as error:
-                    _ = progress_of(error)
-                    raise
-            run = await self._run_steps(
-                state,
-                plan,
-                changed,
-                done,
-                device_settings_stored=stored_already is not None,
-                on_hub_in_use=on_hub_in_use,
-            )
+            await self._check_steps_version(sending)
+            run = await self._decide_steps(sending, plan, on_hub_in_use)
+            sending.run = run
+            await self._send_steps(sending, plan)
             result.steps = tuple(run.outcomes)
             result.warnings.extend(run.warnings)
+        await self._write_modules(sending, range(len(changed)))
+        return result
+
+    async def _write_modules(self, sending: _Sending, positions: range) -> None:
+        """Write the changed modules at *positions*, in order.
+
+        Each module as stored is put in the state (``_Sending.store_write``).
+        A device settings write the version read found stored is not written
+        again.
+
+        A ``ModuleWriteError`` puts the module as stored in the state, when it
+        carries one, and gets the writes before it as ``completed``. An insert
+        that fails in any way but with the module as stored is recorded in
+        ``state.unconfirmed_inserts``. Every error gets the save's
+        ``SaveProgress``; once a step was sent, an ``Exception`` is raised as
+        a ``SaveStepError``, from that error, with the same progress.
+        """
+        state = sending.state
+        run = sending.run
+        position = positions.start
         try:
-            for position, (module_plan, mod) in enumerate(
-                zip(changed, modules, strict=True)
-            ):
-                if position == device_settings_at and stored_already is not None:
+            for position in positions:
+                if (
+                    position == sending.device_settings_at
+                    and sending.stored_already is not None
+                ):
                     continue
-                failed = mod.name
+                mod = sending.modules[position]
+                module_plan = sending.changed[position]
+                sending.failed = mod.name
                 insert = module_plan.operation == "insert"
                 try:
                     write = await _write_module(
                         self.client,
                         mod,
                         module_plan,
-                        enterprise_id=enterprise_id,
+                        enterprise_id=state.resolver_context.enterprise_id,
                         if_absent=insert and mod.name in state.unconfirmed_inserts,
-                        rebase=device_settings_stored,
+                        rebase=sending.device_settings_stored,
                         # The steps' read of the version holds for this write.
-                        version_checked=run is not None and is_device_settings(mod),
+                        version_checked=(
+                            run is not None and sending.is_device_settings(mod)
+                        ),
                         resolvers=state.resolvers,
                         # The module the state holds now: after the device
                         # settings write, the one stored.
                         profile_device_settings=(
                             _profile_device_settings(state)
-                            if device_settings_stored
+                            if sending.device_settings_stored
                             else None
                         ),
                     )
                 except ModuleWriteError as error:
-                    if not put_stored(mod, error) and insert:
+                    if not sending.put_stored(mod, error) and insert:
                         state.unconfirmed_inserts.add(mod.name)
-                    error.completed = tuple(done)
+                    error.completed = tuple(sending.done)
                     raise
                 except BaseException:
                     # An insert may have reached the VCO: a transport error, a
@@ -1386,22 +1504,21 @@ class ConfigPipeline:
                     if insert:
                         state.unconfirmed_inserts.add(mod.name)
                     raise
-                store_write(position, write)
+                sending.store_write(position, write)
         except BaseException as error:
-            progress = progress_of(error)
+            progress = sending.progress_of(error)
             if isinstance(error, Exception) and run is not None and run.sent:
                 # A step was sent and nothing undoes it: say what was done.
                 step_error = SaveStepError(
                     f"{type(error).__name__}: {error}",
-                    module_name=modules[position].name,
+                    module_name=sending.modules[position].name,
                     steps_done=run.sent,
                     steps_in_place=run.in_place,
-                    written=[write.name for write in done],
+                    written=[write.name for write in sending.done],
                 )
                 progress.attach(step_error)
                 raise step_error from error
             raise
-        return result
 
     async def compare_effective(  # noqa: C901 (existing: split it when it next changes)
         self, state: ConfigState, *, modules: Sequence[str] | None = None
@@ -2436,6 +2553,32 @@ def _require_writable(mod: AnyStoredModule) -> _WritableModule:
             "load the state again; nothing was sent"
         )
     return mod
+
+
+def _check_on_hub_in_use(on_hub_in_use: Literal["warn", "refuse"]) -> None:
+    """``ValueError`` for an *on_hub_in_use* not ``"warn"`` or ``"refuse"``."""
+    if on_hub_in_use not in ("warn", "refuse"):
+        raise ValueError(  # pyright: ignore[reportUnreachable]  # a caller may pass any string
+            f"on_hub_in_use is {on_hub_in_use!r}; give 'warn' to remove a "
+            "hub that edge QoS rules use and say so in the result's "
+            "warnings, or 'refuse' to stop before any step"
+        )
+
+
+def _list_writes(state: ConfigState, plan: ConfigPlan, result: SaveResult) -> None:
+    """Put the modules *plan* writes in *result*, as updated or inserted.
+
+    Raises ``TypeError`` first if a changed module is not one a save writes.
+    """
+    for module_plan in plan.changed:
+        _ = _require_writable(state.module(module_plan.name))
+
+    for module_plan in plan.changed:
+        name = ConfigurationModuleName(module_plan.name)
+        if module_plan.operation == "insert":
+            result.modules_inserted.append(name)
+        else:
+            result.modules_updated.append(name)
 
 
 def _validation_error_to_warning(err: ValidatorError) -> ValidationWarning:
