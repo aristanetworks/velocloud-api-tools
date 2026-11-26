@@ -342,7 +342,10 @@ The `segments` lists have rules of their own:
 - On an edge, a segment the edge inherits from its profile counts as there. A
   change of one the edge layer lacks first adds its placeholder entry (an
   empty object adds none); `add` of an inherited segment raises (write a plain
-  object), and so does `delete` of one the edge layer has no entry for. A
+  object), and so does `delete` of one the edge layer has no entry for. An
+  `add` of a segment the profile does not have raises too: an edge uses only
+  its profile's segments, so the entry would be saved and never used. Assign
+  the segment on the profile first, then change it on the edge. A
   place (`move(...)`, or `"_position"` on a change) is for the edge's own
   segments, the ones its module had when it was read. A save writes the
   segments the edge only inherits after those, in the profile's order, so

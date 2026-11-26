@@ -3,6 +3,7 @@
 The workflow is load → apply → save.
 """
 
+import json
 from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Literal, Protocol, TypeIs, cast, runtime_checkable
@@ -517,8 +518,10 @@ class ConfigPipeline:
              ``PatchError``: the layer has no entry to delete;
            - an edge entry the profile knows under another name (the same
              ``segmentId``) is that segment;
-           - a segment neither layer has is left to ``merge_patch``; naming
-             one segment twice raises ``PatchError``.
+           - an ``add`` of a segment neither layer has raises ``PatchError``
+             (assign it on the profile first); any other entry for one is left
+             to ``merge_patch``, as is any entry on data not bound to a
+             profile; naming one segment twice raises ``PatchError``.
         4. Plan the patched copy as a save would (:meth:`ConfigState.plan_module`).
            A patch that a save could not write raises ``LossyFieldError``: a
            field set to its default where the module as read has no key for it
@@ -1725,8 +1728,11 @@ def _prepare_segments(
       adds none: the entry is left out of the patch returned, and the segment
       still counts as named); an ``add`` or a ``delete`` raises
       ``PatchError``, and adds nothing;
-    - one that names a segment neither layer has, or any on data that is not
-      bound to a profile, is left to ``merge_patch``.
+    - one that names a segment neither layer has: an ``add`` of it raises
+      ``PatchError`` (``segment_rule``) when the data is bound to a profile,
+      because an edge uses only its profile's segments; anything else, and
+      any entry on data that is not bound to a profile, is left to
+      ``merge_patch``.
 
     *inherited* holds the ``segmentId`` (in string form) of each segment the
     edge module did not have when it was read
@@ -1798,7 +1804,7 @@ def _prepare_segment(
     except UnboundError:
         return selector, None
     if name is None:
-        return _prepare_unknown_segment(selector)
+        return _prepare_unknown_segment(selector, lookup, op, where)
     profile = _ProfileSegment(name, data.profile_segment_id(lookup))
     return _prepare_profile_segment(scope, profile, new=new, op=op, where=where)
 
@@ -1837,11 +1843,28 @@ def _name_in_layer(
     return None if new else found.segment.name
 
 
-def _prepare_unknown_segment(selector: object) -> tuple[object, None]:
-    """The entry for a segment the layer lacks and its profile lacks too.
+def _prepare_unknown_segment(
+    selector: object, name: object, op: ItemOp, where: Path
+) -> tuple[object, None]:
+    """The entry for a segment the layer lacks and its (bound) profile lacks too.
 
-    It is left to ``merge_patch``, which adds it or raises, by the operation.
+    *name* is what the segment was looked up by. An ``add`` of it raises
+    ``PatchError``: an edge uses only its profile's segments, so an entry
+    saved for one the profile lacks would never be used. Any other operation
+    is left to ``merge_patch``, which raises for a change.
     """
+    if op.kind == "add":
+        quoted = json.dumps(str(name))
+        raise PatchError(
+            f"the edge's profile has no segment {quoted}, and an edge uses only "
+            "its profile's segments: an entry for it here would be saved and "
+            "never used. Assign the segment to the profile first, with "
+            f'{{"segments": {{{quoted}: {{"_op": "add"}}}}}} (add()) on the '
+            "profile's device settings, QoS or firewall, or with "
+            "ConfigPipeline.assign_segment; then change it on the edge",
+            where,
+            "segment_rule",
+        )
     return selector, None
 
 

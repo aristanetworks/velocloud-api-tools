@@ -37,7 +37,10 @@ from pyvelo.client.schemas.configuration import (
     QosConfigurationModule,
 )
 from pyvelo.config import PatchError, add, delete, move
-from pyvelo.config.pipeline import ConfigPipeline
+from pyvelo.config.pipeline import (
+    ConfigPipeline,
+    _prepare_segments,  # pyright: ignore[reportPrivateUsage]
+)
 from pyvelo.config.resolver import ResolverContext, ResolverRegistry
 from pyvelo.config.state import ConfigState
 from pyvelo.core.identity import ResolutionError
@@ -663,6 +666,58 @@ async def test_plus_add_of_an_inherited_segment_raises() -> None:
     assert exc.value.path == Path(("segments", Key("+")))
     assert exc.value.kind == "segment_rule"
     assert _edge_segment_names(state) == ["Global Segment"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("module", ["deviceSettings", "QOS", "firewall"])
+async def test_add_of_a_segment_the_profile_lacks_raises(module: str) -> None:
+    # An edge has no empty device settings module to create, so all three exist.
+    state = _make_state(include_device_settings=True, include_qos=True)
+    before = state.plan()
+    with pytest.raises(PatchError, match="the edge's profile has no segment") as exc:
+        _ = await ConfigPipeline(client=None).apply(
+            state, module=module, patch={"segments": {"Lab": add({})}}
+        )
+    assert exc.value.path == Path.parse("segments[Lab]")
+    assert exc.value.kind == "segment_rule"
+    assert '{"segments": {"Lab": {"_op": "add"}}}' in exc.value.message
+    assert state.plan() == before
+    assert _edge_segment_names(state) == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("module", ["QOS", "firewall"])
+async def test_refused_add_of_a_segment_the_profile_lacks_creates_no_module(
+    module: str,
+) -> None:
+    state = make_raw_state(edge_modules=[])
+    before = state.plan()
+    with pytest.raises(PatchError, match="the edge's profile has no segment"):
+        _ = await ConfigPipeline(client=None).apply(
+            state, module=module, patch={"segments": {"Lab": add({})}}
+        )
+    assert state.plan() == before
+    assert state.plan().modules == ()
+
+
+@pytest.mark.asyncio
+async def test_plus_add_of_a_segment_the_profile_lacks_raises() -> None:
+    state = make_raw_state()
+    patch: dict[str, object] = {"segments": {"+": add({"segment": {"name": "Lab"}})}}
+    with pytest.raises(PatchError, match="the edge's profile has no segment") as exc:
+        _ = await ConfigPipeline(client=None).apply(
+            state, module="firewall", patch=patch
+        )
+    assert exc.value.path == Path(("segments", Key("+")))
+    assert exc.value.kind == "segment_rule"
+    assert _edge_segment_names(state) == ["Global Segment"]
+
+
+def test_add_on_edge_data_bound_to_no_profile_is_left_to_merge_patch() -> None:
+    data = make_firewall_module(mod_id=1, config_id=10).data
+    patch: dict[str, object] = {"segments": {"Lab": add({})}}
+    prepared = _prepare_segments(data, patch, None, frozenset())
+    assert prepared == patch
 
 
 @pytest.mark.asyncio
