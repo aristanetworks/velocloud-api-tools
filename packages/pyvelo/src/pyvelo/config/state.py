@@ -547,11 +547,12 @@ class StateLock(asyncio.Lock):
 
     A task that holds the lock and asks for it again would wait for itself
     without end. Here ``acquire`` raises ``RuntimeError`` at once instead, so
-    ``ConfigPipeline.apply`` and ``save``, which take the lock themselves, fail
-    loudly when called inside an ``async with state.lock:`` block.
+    ``ConfigPipeline.apply``, ``assign_segment``, ``revert`` and ``save``, which
+    take the lock themselves, fail loudly when called inside an
+    ``async with state.lock:`` block.
 
     The check sees only the calling task. A task that holds the lock and waits,
-    inside the block, for another task that calls ``apply`` or ``save`` still
+    inside the block, for another task that calls one of them still
     deadlocks: that task waits for the lock, and nothing here can tell.
     """
 
@@ -624,12 +625,12 @@ class ConfigState:
     lock: StateLock = field(
         default_factory=StateLock, init=False, repr=False, compare=False
     )
-    """Held by ``ConfigPipeline.apply`` and ``save`` for the whole call, so that
-    they run one after the other. Code that edits the state by assignment from
-    another task may hold it around the edit (``async with state.lock:``).
-    ``apply`` and ``save`` called by the task that holds it raise
-    ``RuntimeError``. Do not wait, inside the block, for another task that calls
-    them: that task waits for the lock."""
+    """Held by ``ConfigPipeline.apply``, ``assign_segment``, ``revert`` and ``save``
+    for the whole call, so that they run one after the other. Code that edits
+    the state by assignment from another task may hold it around the edit
+    (``async with state.lock:``). Those four called by the task that holds it
+    raise ``RuntimeError``. Do not wait, inside the block, for another task that
+    calls them: that task waits for the lock."""
     unconfirmed_inserts: set[str] = field(
         default_factory=set, init=False, repr=False, compare=False
     )
@@ -821,6 +822,14 @@ class ConfigState:
                     snapshot.modules[at] = stored
         self._made_into_unset = [e for e in self._made_into_unset if e[0] is not old]
         # Last: the steps above work on *old* as a live module.
+        self._detach(old)
+
+    def _detach(self, old: AnyStoredModule) -> None:
+        """Mark *old*, a module the state no longer holds, and its objects detached.
+
+        It is recorded so that the next :meth:`plan` finds an in-place change
+        of a list or dict they hold.
+        """
         data = old.data
         refs = ref_only_values(data) if isinstance(data, VcoModel) else {}
         nodes = old.mark_detached()
@@ -849,8 +858,8 @@ class ConfigState:
         is gone. A module this state created is removed (:meth:`drop_module`),
         and a name the target config has no module of changes nothing. No
         other module is touched. The module taken out is replaced as
-        :meth:`replace_module` replaces it, so objects taken from it before are
-        detached. An intent-level name works.
+        :meth:`replace_module` replaces it, or removed, and either way objects
+        taken from it before are detached. An intent-level name works.
 
         Raises ``ValueError`` for an unknown *name*, for a new module whose
         insert may have reached the VCO (its name is in
@@ -870,6 +879,7 @@ class ConfigState:
                     "the configuration before it inserts, or load the state again"
                 )
             self.drop_module(module)
+            self._detach(module)
             return
         snapshot = cast("_AnyConfiguration | None", self.snapshot_for_target())
         found = None if snapshot is None else _find_module(snapshot, module.name)

@@ -61,6 +61,19 @@ async def test_revert_removes_a_module_this_state_created() -> None:
     assert state.plan().changed == ()
 
 
+async def test_revert_of_a_module_this_state_created_detaches_what_was_taken() -> None:
+    state = make_state(edge_modules=[])
+    _ = await PIPELINE.apply(state, module="firewall", patch=LOGGING)
+    held = state.edge.firewall
+
+    _ = await PIPELINE.revert(state, module="firewall")
+
+    assert held.is_detached
+    with pytest.raises(DetachedObjectError, match="a write or a revert"):
+        held.syslog_forwarding.set_local(False)
+    assert state.plan().changed == ()
+
+
 async def test_revert_of_a_module_whose_insert_may_be_stored_is_refused() -> None:
     state = make_state(edge_modules=[])
     _ = await PIPELINE.apply(state, module="firewall", patch=LOGGING)

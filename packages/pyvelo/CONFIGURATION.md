@@ -1402,7 +1402,8 @@ Until then every save of that value raises.
 
 Objects taken from the state before a save or a `revert`
 (`seg = state.edge.firewall.segment("Global Segment")`) belong to the modules
-the save or the `revert` replaced, and are detached. Reading one is fine. An assignment to one
+the save or the `revert` replaced (or, for a module the state created, the
+`revert` removed), and are detached. Reading one is fine. An assignment to one
 raises `DetachedObjectError`, and an in-place edit to a list or dict it holds
 (`seg.outbound.insert(0, rule)`) is reported, once, by the next `plan()` or
 save. A device settings segment's `vrrp` is not one of the library's models
@@ -1413,7 +1414,9 @@ item, put a deep copy of it in the state (`copy.deepcopy(rule)`): the copy is
 not detached. A detached object put back as it is makes its module refuse
 every patch (`merge_patch`, `apply`, `assign_segment`) with
 `DetachedObjectError`, which names where it sits (`paths`) and changes
-nothing, also for a patch that would not reach it.
+nothing, also for a patch that would not reach it: put a deep copy there, take
+the object from the state again, or take the module's edits back with
+`pipeline.revert(state, module=...)`.
 
 A write whose answer never arrived (a transport error after the request was
 sent, a cancelled save) may or may not be stored, and so may one that raised
@@ -1484,8 +1487,9 @@ Known limits:
 - A failed `apply` changes nothing. Patches and saves run one after another,
   though: a failure leaves earlier patches, and the remote writes of a save
   that stopped part way, applied; there is no transaction or rollback.
-- One state may be used from several tasks of one event loop. `apply` and
-  `save` hold `state.lock` for the whole call, so they run one after the other:
+- One state may be used from several tasks of one event loop. `apply`,
+  `assign_segment`, `revert` and `save` hold `state.lock` for the whole call,
+  so they run one after the other:
   an `apply` made while a save is writing waits and is then applied to the
   state as stored, and a second `save` writes only what still differs. An edit
   made by assigning to the models while a save is writing is not waited for.
@@ -1495,11 +1499,10 @@ Known limits:
   segment the edge only inherits) is no edit and needs no redo. The save stops
   at that module: the error's note names the modules written, and the next
   save writes the rest. To make such an edit safely, hold the lock around it
-  (`async with state.lock:`). `apply` and `save` take the lock themselves:
-  called inside that block by the same task they raise `RuntimeError`, so call
-  them after it. A task that holds the lock and waits, inside the block, for a
-  child task that calls `apply` or `save` waits without end: nothing detects
-  it.
+  (`async with state.lock:`). Those four take the lock themselves: called
+  inside that block by the same task they raise `RuntimeError`, so call them
+  after it. A task that holds the lock and waits, inside the block, for a child
+  task that calls one of them waits without end: nothing detects it.
 - The `override_consistency` validator is a traversal placeholder and currently
   reports no violations. Other registered validators cover specific structural
   or domain checks; they do not guarantee that every patch is valid for a live VCO.

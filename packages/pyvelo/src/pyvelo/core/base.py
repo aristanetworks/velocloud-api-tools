@@ -679,8 +679,9 @@ class VcoModel(BaseModel):
                 "no longer holds) that was put back here as it is, so an edit "
                 "that reached it would stop half-way, with the changes before "
                 "it applied. Nothing was changed. Put a deep copy of it there "
-                "instead (copy.deepcopy), or take the object again from the "
-                "module the state holds",
+                "instead (copy.deepcopy), take the object again from the "
+                "module the state holds, or take the module's edits back with "
+                'revert (pipeline.revert(state, module="<module>"))',
                 [where],
             )
 

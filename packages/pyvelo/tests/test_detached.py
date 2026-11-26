@@ -180,6 +180,7 @@ def test_merge_patch_on_a_model_that_holds_a_detached_model_changes_nothing() ->
         exc.value
     )
     assert "copy.deepcopy" in str(exc.value)
+    assert "or take the module's edits back with revert" in str(exc.value)
     # A patch that would not reach the object is refused too, until it is mended.
     with pytest.raises(DetachedObjectError):
         _ = data.merge_patch({"firewall_enabled": False})
