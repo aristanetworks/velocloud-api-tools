@@ -8,8 +8,9 @@ segment has, a hub's logical ID that a segment's backhaul list has). A value
 that no item has names nothing: the VCO would store it, and what it stands
 for would not work. This module finds those values (``references``), the sets
 they are looked up in (``provided``), and checks the first against the second
-(``check_references``). It does no I/O and knows no module but by name: the
-caller says which module the data is, and what the sets are.
+(``check_references``), and gives the patch that takes a reference's item out
+of its list (``removal_patch``). It does no I/O and knows no module but by
+name: the caller says which module the data is, and what the sets are.
 
 A set is held under ``(name, None)``, or under ``(name, segment_id)`` when it
 is a ``per_segment`` one: the set of the segment the marked list sits in.
@@ -19,14 +20,16 @@ import functools
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from collections.abc import Set as AbstractSet
 from dataclasses import dataclass, field
+from typing import cast
 
 from pydantic import MISSING
 from pydantic.fields import FieldInfo
 
-from .base import VcoModel, field_models, is_dict, is_list
-from .fields import get_provides, get_refers_to
+from .base import VcoModel, field_models, is_dict, is_list, wire_name
+from .fields import get_key_spec, get_provides, get_refers_to
+from .merge import item_selector
 from .owned import unwrap
-from .rebase import Path
+from .rebase import Key, Path, PathPart, item_key
 from .walk import walk_fields
 
 type SetKey = tuple[str, int | None]
@@ -292,3 +295,89 @@ def reference_text(reference: Reference) -> str:
     if reference.segment_id is not None:
         text += f" of segment {reference.segment_id}"
     return text
+
+
+def _item_position(model: VcoModel, name: str, part: Key | int) -> int | None:
+    """The position of the item of list field *name* of *model* that *part* names.
+
+    An item is named as ``walk_fields`` names it: by its ``Key`` when the field
+    has a key spec and the item a key, else by its position. ``None`` when no
+    item is so named.
+    """
+    held: object = getattr(model, name)
+    items = unwrap(held)
+    if not is_list(items):
+        return None
+    spec = get_key_spec(type(model).model_fields[name])
+    for position, item in enumerate(items):
+        if not isinstance(item, VcoModel):
+            continue
+        key = item_key(item, spec.paths) if spec is not None else None
+        named: PathPart = Key(key) if key is not None else position
+        if named == part:
+            return position
+    return None
+
+
+def _patch_keys(
+    data: VcoModel, parts: Sequence[PathPart]
+) -> tuple[list[str], object, bool] | None:
+    """The patch keys that lead along *parts* from *data*.
+
+    Also returns what they lead to, and whether the last key is an item
+    selector. ``None`` when a part names nothing of the data, or an item has no
+    selector that names it alone.
+    """
+    keys: list[str] = []
+    current: object = data
+    on_item = False
+    index = 0
+    while index < len(parts):
+        part = parts[index]
+        if not (
+            isinstance(part, str)
+            and isinstance(current, VcoModel)
+            and part in type(current).model_fields
+        ):
+            return None
+        keys.append(wire_name(type(current), part))
+        held: object = getattr(current, part)
+        following = parts[index + 1] if index + 1 < len(parts) else None
+        if not isinstance(following, (Key, int)):
+            current = unwrap(held)
+            on_item = False
+            index += 1
+            continue
+        position = _item_position(current, part, following)
+        selector = (
+            item_selector(current, part, position) if position is not None else None
+        )
+        if position is None or selector is None:
+            return None
+        keys.append(selector)
+        current = cast("list[object]", unwrap(held))[position]
+        on_item = True
+        index += 2
+    return keys, current, on_item
+
+
+def removal_patch(data: VcoModel, reference: Reference) -> dict[str, object] | None:
+    """The patch to *data* that deletes the list item holding *reference*'s field.
+
+    *data* is the data the reference was found in, of its module. The patch
+    gives each step by its wire name and each item by the selector a patch
+    names it by (``item_selector``), and ends on ``{"_op": "delete"}``: for a
+    backhaul entry of a QoS rule, the patch that takes the hub out of the rule.
+    ``None`` when the field's holder is no list item, or a step to it is not
+    found in *data* or has no selector that names it alone.
+    """
+    found = _patch_keys(data, reference.path.parts[:-1])
+    if found is None:
+        return None
+    keys, holder, on_item = found
+    if not on_item or holder is not reference.holder:
+        return None
+    patch: dict[str, object] = {"_op": "delete"}
+    for key in reversed(keys):
+        patch = {key: patch}
+    return patch

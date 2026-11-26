@@ -52,6 +52,7 @@ from pyvelo.core.identity import (
     SegmentIdentity,
 )
 from pyvelo.core.layers import Edge
+from pyvelo.core.mending import backhaul_hub_mending
 from pyvelo.core.patch import PatchError
 from pyvelo.core.rebase import Key, Path
 from pyvelo.core.references import Reference
@@ -490,6 +491,15 @@ def test_a_dangling_reference_error_for_an_edge_keeps_that_through_copies() -> N
     error = DanglingReferenceError([reference], on_edge=True)
     for copied in copies(error):
         assert copied.on_edge is True
+        assert str(copied) == str(error)
+
+
+def test_a_dangling_reference_error_keeps_its_mending_through_copies() -> None:
+    reference = Reference("QOS", Path(("x",)), uuid.UUID(int=5), "backhaul_hub", 2)
+    mending = [backhaul_hub_mending("Guest", "Hub-A")]
+    error = DanglingReferenceError([reference], mending=mending)
+    for copied in copies(error):
+        assert copied.mending == tuple(mending)
         assert str(copied) == str(error)
 
 

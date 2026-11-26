@@ -62,6 +62,7 @@ from pyvelo.config.hub_steps import (
     role_disagreements,
 )
 from pyvelo.config.module_names import resolve_module_name
+from pyvelo.config.reference_mending import hub_list_members, hub_reference_mending
 from pyvelo.config.resolver import ResolverContext, ResolverRegistry
 from pyvelo.config.resolvers.hub import HubResolver
 from pyvelo.config.validation import ValidationError
@@ -1144,8 +1145,11 @@ class ConfigState:
         the values are looked up in are those of the target's modules as edited and, for
         an edge, the profile's modules as read that can provide a set (parsed here); the
         sets as read are those of the modules as read. Raises ``DanglingReferenceError``
-        for a value that is new, or was a member and no longer is; returns a
-        ``reference_kept`` warning for one that named nothing as read and does still.
+        for a value that is new, or was a member and no longer is, with the patches that
+        mend a hub reference (``hub_reference_mending``; the hub lists are those of the
+        target's device settings as edited, or for an edge of the profile's as read);
+        returns a ``reference_kept`` warning for one that named nothing as read and does
+        still.
         """
         level = self._level()
         profile_models = self._profile_as_read() if level is ConfigContext.EDGE else []
@@ -1165,8 +1169,24 @@ class ConfigState:
         )
         findings = check_references(targets, sets_now, sets_as_read)
         if findings.dangling:
+            edited_by_name = {name: edited for name, edited, _ in targets}
+            hub_lists = (
+                next(
+                    (m for m in profile_models if isinstance(m, DeviceSettingsData)),
+                    None,
+                )
+                if level is ConfigContext.EDGE
+                else edited_by_name.get(ConfigurationModuleName.DEVICE_SETTINGS)
+            )
             raise DanglingReferenceError(
-                findings.dangling, on_edge=level is ConfigContext.EDGE
+                findings.dangling,
+                on_edge=level is ConfigContext.EDGE,
+                mending=hub_reference_mending(
+                    findings.dangling,
+                    edited_by_name,
+                    hub_list_members(hub_lists),
+                    target_type=self.target_type,
+                ),
             )
         return tuple(
             ValidationWarning(

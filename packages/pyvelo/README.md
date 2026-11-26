@@ -168,7 +168,8 @@ set is, so that the pipeline needs no list of paths of its own:
   field that holds one of them: a LAN network's or an interface's `segmentId`,
   and a QoS rule's backhaul entry. A value that names nothing is a dangling
   reference, which the pipeline's `plan()` refuses (`DanglingReferenceError`,
-  in `pyvelo.client.exceptions`).
+  in `pyvelo.client.exceptions`, with the patches that mend a hub reference in
+  `mending`).
 - `HubResolver` (`pyvelo.config.resolvers.hub`) finds an Edge or a hub cluster
   by `HubName` or `HubLogicalId` and gives a `HubIdentity`: its kind (`edge` or
   `cluster`), the `type` of a list entry that goes with it (`edgeHub` or

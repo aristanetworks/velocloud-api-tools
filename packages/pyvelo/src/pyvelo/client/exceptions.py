@@ -20,7 +20,6 @@ from pydantic import MISSING
 
 from pyvelo.core.base import VcoModel, field_models, is_list, wire_name
 from pyvelo.core.changes import patch_of
-from pyvelo.core.mending import backhaul_hub_mending
 from pyvelo.core.patch import selector_of
 from pyvelo.core.rebase import (
     ItemMove,
@@ -41,6 +40,7 @@ if TYPE_CHECKING:
     from pyvelo.client.module_check import ModuleWrite
     from pyvelo.client.module_write import ModulePlan
     from pyvelo.client.schemas.configuration import ConfigurationModuleBase
+    from pyvelo.core.mending import MendingKind, MendingPatch
     from pyvelo.core.response_check import PlannedChange, ServerChange
 
 
@@ -401,43 +401,37 @@ class HubListError(VcoError):
         super().__init__(message)
 
 
-def _hub_advice(reference: Reference, *, on_edge: bool) -> str:
-    """What to do about the backhaul entry *reference*.
+def _sends(mending: Sequence[MendingPatch], kind: MendingKind) -> str:
+    """The patches of *mending* of *kind*, each as ``send <json> to <module>``."""
+    return "; ".join(
+        f"send {json.dumps(m.patch)} to {m.module}" for m in mending if m.kind == kind
+    )
 
-    Its hub is one the segment does not list. The answer is the patch that
-    makes it a hub of its segment, as the segment's own sentence.
 
-    The patch is for the segment of the reference and names the hub as its
-    entry does (its name, else its logical ID). It adds the hub to the
-    Branch-to-Hub list as well as to the backhaul list, because the UI's
-    rules refuse a backhaul hub that is no hub of the segment, and turns on
-    what a segment with hubs needs.
+def _mending_text(mending: Sequence[MendingPatch], *, on_edge: bool) -> str:
+    """The sentences of a ``DanglingReferenceError`` that give its *mending* patches.
+
+    A kind with no patch has no sentence. On an Edge, the hub lists are its
+    profile's, so the ``add_member`` patches go to the profile.
     """
-    name: object = getattr(reference.holder, "edge_name", None)
-    segment = reference.segment_name or "<segment name>"
-    mending = (
-        backhaul_hub_mending(segment, name)
-        if isinstance(name, str) and name
-        else backhaul_hub_mending(segment, str(reference.value), by_logical_id=True)
-    )
-    patch = mending.patch
     text = (
-        f" To make the hub a backhaul hub of the segment {segment!r}, send "
-        f"{json.dumps(patch)} to the device settings (`pipeline.apply(state, "
-        'module="deviceSettings", patch=...)`; in Python, the `add` helper '
-        "builds each entry). A backhaul hub is a hub of the segment too, so "
-        "the patch adds it to the Branch-to-Hub list and turns on what a "
-        "segment with hubs needs; leave out `edgeToEdgeHub` when the hub is "
-        "in that list already."
+        " The patches below mend the hub references, and `mending` holds them as "
+        "data: send those of one kind."
     )
-    if on_edge:
-        text += (
-            " This is an Edge, and the hub lists are its profile's: send the "
-            "patch to the profile's device settings (load the profile with "
-            "`pipeline.load_profile`, apply it there and save the profile), "
-            "not to the Edge's, and save the Edge after."
-        )
-    return text
+    removals = _sends(mending, "remove_reference")
+    if removals:
+        text += f" To take each hub out of the rule that names it: {removals}."
+    members = _sends(mending, "add_member")
+    if members:
+        text += f" To make each hub a backhaul hub of its segment: {members}."
+        if on_edge:
+            text += (
+                " This is an Edge, and the hub lists are its profile's: send that "
+                "patch to the profile's device settings (load the profile, apply "
+                "it there and save the profile), not to the Edge's, and save the "
+                "Edge after."
+            )
+    return text + " Or take back every edit to a module with `revert`."
 
 
 class DanglingReferenceError(VcoError):
@@ -451,22 +445,37 @@ class DanglingReferenceError(VcoError):
     references found, each with its module, path and value. A reference the
     configuration already held as it was read is not one of them.
     ``on_edge`` is whether the target is an Edge: the hub lists are its
-    profile's, and the advice says so.
+    profile's, and the message says so.
+
+    ``mending`` holds the patches that mend the references to a backhaul hub,
+    as data: for each, a ``remove_reference`` patch (the rule stops using the
+    hub) and an ``add_member`` patch (the hub becomes a backhaul hub of the
+    segment, in the profile's device settings). All ``remove_reference``
+    patches come first, then the ``add_member`` ones. The patches of one kind
+    together mend every hub reference of the error; a kind that cannot be
+    built for every one is left out whole. A reference to a segment gets no
+    patch.
     """
 
     references: tuple[Reference, ...]
     on_edge: bool
+    mending: tuple[MendingPatch, ...]
 
     def __init__(
-        self, references: Sequence[Reference], *, on_edge: bool = False
+        self,
+        references: Sequence[Reference],
+        *,
+        on_edge: bool = False,
+        mending: Sequence[MendingPatch] = (),
     ) -> None:
         """The error for *references*, with a message that lists each and what to do.
 
-        The message says where a segment or a backhaul hub comes from and, for a hub,
-        gives the patch that makes it a hub of its segment.
+        The message says where a segment or a backhaul hub comes from and gives
+        each patch of *mending*, with the module it goes to.
         """
         self.references = tuple(references)
         self.on_edge = on_edge
+        self.mending = tuple(mending)
         lines = "\n".join(f"  {reference_text(r)}" for r in self.references)
         names = {r.set_name for r in self.references}
         sources: list[str] = []
@@ -491,11 +500,8 @@ class DanglingReferenceError(VcoError):
         )
         if sources:
             message += f" Where each comes from: {'; '.join(sources)}."
-        first_hub = next(
-            (r for r in self.references if r.set_name == "backhaul_hub"), None
-        )
-        if first_hub is not None:
-            message += _hub_advice(first_hub, on_edge=on_edge)
+        if self.mending:
+            message += _mending_text(self.mending, on_edge=on_edge)
         super().__init__(message)
 
 

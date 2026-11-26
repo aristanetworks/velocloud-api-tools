@@ -14,8 +14,8 @@ This package is split into these submodules:
 - effective: Origin and Resolved, a value of the effective view, and effective_view and
   effective_dump, which compute and write the view
 - walk: walk_fields, the walk over the fields of a model and the models below it
-- references: the values that name a member of a set the configuration provides, and the
-  check of them
+- references: the values that name a member of a set the configuration provides, the
+  check of them, and the patch that takes one out of its list
 - secrets: hide_secrets, which shows a value without its secrets
 - mending: the patches that mend an error, as data, and the one that makes a hub a
   backhaul hub
@@ -202,6 +202,7 @@ from .references import (
     provided,
     reference_text,
     references,
+    removal_patch,
     union,
 )
 from .secrets import hide_secrets
@@ -381,6 +382,7 @@ __all__ = [
     "python_name",
     "reference_text",
     "references",
+    "removal_patch",
     "select_items",
     "selector_of",
     "union",

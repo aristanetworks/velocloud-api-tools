@@ -620,6 +620,18 @@ class ConfigPipeline:
         models had already made the module unwritable; its paths name that
         field.
 
+        **What apply does not check.** The rules that span modules are checked
+        by ``ConfigState.plan()``, not here: the segments of a profile's three
+        modules (``SegmentSetError``), a segment's hub lists (``HubListError``)
+        and the references (``DanglingReferenceError``: a value that names a
+        segment or a backhaul hub the configuration lacks). An edit that leaves
+        one of them broken is accepted, so that two patches that are only right
+        together go in either order: a hub out of a segment's lists, and out of
+        the rule that uses it. ``plan()``, ``save`` and a dry run refuse the
+        state until it is mended, by another patch
+        (``DanglingReferenceError.mending`` holds them as data) or by taking
+        the module's edits back (:meth:`revert`).
+
         MISSING fields on the patch target are preserved as MISSING so callers
         downstream (reconciler, YAML export) can distinguish "unset" from
         "explicitly set".

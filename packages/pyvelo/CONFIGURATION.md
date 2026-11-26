@@ -610,11 +610,28 @@ firewall: update
   `DanglingReferenceError` (from `pyvelo.config`), naming each value, its
   module and its path, for a value the edit adds, or one whose segment or hub
   the edit removes. An edge's values are checked against its profile's device
-  settings as read as well as its own. A value that named nothing as read, at
-  the same path, is left as it is: a `reference_kept` warning in
-  `ConfigPlan.check_warnings` (also in `ConfigPlan.warnings` and
-  `SaveResult.warnings`), and a `warning: <message>` line in `render()`.
-  `client.update_module` writes one module and does not run the check.
+  settings as read as well as its own. `apply` accepts an edit that leaves such
+  a value, so that two edits that are only right together go in either order;
+  `plan()`, `save` and a dry run refuse the state until it is mended. For a
+  hub, `error.mending` holds the patches that mend it, as `MendingPatch`
+  objects (from `pyvelo.config`) with seven fields: `kind`, `does` (one line
+  that says what the patch does), `target_type`, `module`, `patch`, `segment`
+  and `path`. A `remove_reference` patch takes the hub out of the rule that
+  names it; an `add_member` patch makes it a backhaul hub of the rule's
+  segment. The `remove_reference` patches come first, and the patches of one
+  kind together mend every hub reference of the error: send those of one kind.
+  `module`, `patch`, `segment` and `path` are `apply`'s arguments
+  (`await pipeline.apply(state, module=m.module, patch=m.patch,
+  segment=m.segment, path=m.path)`), `target_type` says which configuration
+  the patch is for (`"edge"` or `"profile"`), and `dataclasses.asdict(m)` is a
+  JSON object; the message gives each patch as `send <JSON> to <module>`. On
+  an edge, the `add_member` patch is for the profile's device settings. Or
+  take the edits back with `pipeline.revert(state, module=...)`. A value that
+  named nothing as read, at the same path, is left as it is: a
+  `reference_kept` warning in `ConfigPlan.check_warnings` (also in
+  `ConfigPlan.warnings` and `SaveResult.warnings`), and a
+  `warning: <message>` line in `render()`. `client.update_module` writes one
+  module and does not run the check.
 - A hub added to or removed from a profile segment's hub, bridge or backhaul
   list has role steps (`ConfigPlan.steps`), which `render()` shows first and a
   save sends before it writes the modules, and a hub row that the device
@@ -1079,9 +1096,10 @@ edit needs, then writes the module.
   adds it to both lists. An entry built by assignment without its `logicalId` raises the same
   error at `plan()`. The rule's hub must be in the segment's `backHaulEdges`,
   and a value that names a segment or a hub the configuration does not have is a
-  `DanglingReferenceError` (see "What a save writes"), so a hub that a rule of
-  the profile still names cannot be taken out of `backHaulEdges`: remove the
-  rule's use in the same edit, or before.
+  `DanglingReferenceError` (see "What a save writes"). Taking a hub that a rule
+  of the profile still names out of `backHaulEdges`, and out of the rule, are
+  two edits that go in either order: `plan()` refuses the state until both
+  are made, and the error's `mending` holds the patch for each way to mend it.
 - **Not supported.** Creating a hub, an Edge or a cluster, or a cluster's
   members; and role calls from an edge (an edge state has no steps: its QoS
   rules name the hubs of its profile).
