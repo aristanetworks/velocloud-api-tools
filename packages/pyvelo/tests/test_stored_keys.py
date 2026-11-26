@@ -187,6 +187,7 @@ DESC: dict[str, Any] = {
 }
 GATEWAY = uuid.UUID(u(0x77))
 WRAPPER = uuid.UUID(u(0x88))
+CONTROLLER = uuid.UUID(u(0x66))
 # A profile's entry: the gateways chosen (gatewayList, by the Gateway's logical
 # ID) and the rows the VCO made for them (gateways, by each row's logical ID).
 HANDOFF: dict[str, Any] = {
@@ -218,7 +219,10 @@ PROFILE_DS: dict[str, Any] = {
         {
             "segment": DESC,
             "handOffGateways": HANDOFF,
-            "handOffControllers": {"autoSelect": False, "gatewayList": []},
+            "handOffControllers": {
+                "autoSelect": True,
+                "gatewayList": [{"logicalId": f"gateway{CONTROLLER}"}],
+            },
         }
     ],
     "snmp": SNMP,
@@ -253,7 +257,9 @@ def test_a_segment_s_handoff_controllers_are_read() -> None:
     module = device_settings(PROFILE_DS)
     controllers = module.data.segments[0].handoff_controllers
     assert isinstance(controllers, SegmentHandoffGateways)
-    assert (controllers.auto_select, controllers.gateway_list) == (False, [])
+    assert controllers.auto_select is True
+    assert [g.logical_id for g in controllers.gateway_list] == [CONTROLLER]
+    assert_untouched(module, PROFILE_DS, PROFILE)
 
 
 def test_an_edit_beside_the_handoff_lists_leaves_them_as_read() -> None:
