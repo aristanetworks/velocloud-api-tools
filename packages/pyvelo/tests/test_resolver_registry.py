@@ -644,7 +644,7 @@ def test_the_registry_lists_the_loaded_identities_of_a_type(
     assert list(hubs.identities(HubIdentity)) == []  # not loaded
 
 
-async def test_find_is_none_for_a_resolver_that_needs_no_load_until_it_is_loaded(
+async def test_find_raises_for_a_resolver_that_is_not_loaded_whatever_the_resolver(
     make_segment_resolver: SegmentResolverFactory,
 ) -> None:
     resolver = (
@@ -652,20 +652,55 @@ async def test_find_is_none_for_a_resolver_that_needs_no_load_until_it_is_loaded
     ).unloaded()
     registry = ResolverRegistry()
     registry.register(resolver)
-    hubs = ResolverRegistry()
-    hubs.register(HubResolver(_no_client()))
 
     assert not resolver.requires_load
     assert not resolver.loaded
-    assert (
-        registry.find(SegmentIdentity, "Guest") is None
-    )  # not loaded, so nothing held
-    with pytest.raises(ResolverNotLoadedError):  # a resolver that must be loaded first
-        _ = hubs.find(HubIdentity, "Guest")
+    with pytest.raises(ResolverNotLoadedError) as by_type:
+        _ = registry.find(SegmentIdentity, "Guest")  # a name the VCO would know
+    assert by_type.value.identity_type is SegmentIdentity
+    with pytest.raises(ResolverNotLoadedError):
+        _ = registry.find(SegmentIdentity, "nope")
+    with pytest.raises(ResolverNotLoadedError) as by_key:
+        _ = registry.find(SegmentName("Guest"))
+    assert by_key.value.identity_type is SegmentIdentity
+    with pytest.raises(ResolverNotLoadedError):
+        _ = registry.find(SegmentId(1))
+
+
+async def test_find_answers_from_a_resolver_once_it_is_loaded(
+    make_segment_resolver: SegmentResolverFactory,
+) -> None:
+    resolver = (
+        await make_segment_resolver([{"name": "Guest", "segment_id": 1}])
+    ).unloaded()
+    registry = ResolverRegistry()
+    registry.register(resolver)
+
     await resolver.load(ResolverContext())  # the same client answers
+
     found = registry.find(SegmentIdentity, "Guest")
     assert found is not None
     assert found.segment_id == 1
+    assert registry.find(SegmentName("Guest")) == found
+    assert registry.find(SegmentId(1)) == found
+    assert registry.find(SegmentIdentity, "nope") is None
+    assert registry.find(SegmentId(999)) is None
+
+
+async def test_find_raises_again_for_a_resolver_set_back_to_not_loaded(
+    segment_registry: ResolverRegistry,
+) -> None:
+    resolver = segment_registry.resolver_for(SegmentIdentity)
+    assert resolver is not None
+    assert resolver.loaded
+    assert segment_registry.find(SegmentIdentity, "Guest") is not None
+
+    unloaded = segment_registry.unloaded()
+
+    with pytest.raises(ResolverNotLoadedError):
+        _ = unloaded.find(SegmentIdentity, "Guest")
+    with pytest.raises(ResolverNotLoadedError):
+        _ = unloaded.find(SegmentId(1))
 
 
 async def test_lookup_by_prints_an_unknown_uuid_as_its_text() -> None:

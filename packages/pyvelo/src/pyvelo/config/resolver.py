@@ -455,27 +455,29 @@ class ResolverRegistry:
           find(SegmentIdentity, "Global Segment")  # identity type + name
 
         ``None`` says that no loaded identity has the name or the ID, never
-        that several identities share the name: ``LookupError`` (no
-        resolver), ``ResolverNotLoadedError`` and the ``ResolutionError`` for
-        a name some loaded identity has are raised as ``lookup`` raises them.
-        ``ResolverNotLoadedError`` comes only from a resolver that must be
-        loaded before it answers (``requires_load``). Any other resolver whose
-        table was not loaded holds nothing, so ``None`` there can also mean
-        "not loaded": check the resolver's ``loaded``, or load it with
-        ``load_resolvers``. The name for an ID is the ``name`` of
-        ``registry.find(NetworkServiceLogicalId(u))``, when it is not ``None``.
+        that several identities share the name, and never that the lookups are
+        not loaded: a resolver that is not loaded raises
+        ``ResolverNotLoadedError`` before any lookup, whether or not it sets
+        ``requires_load``; load it with ``load_resolvers``. ``LookupError`` (no
+        resolver) and the ``ResolutionError`` for a name some loaded identity
+        has are raised as ``lookup`` raises them. The name for an ID is the
+        ``name`` of ``registry.find(NetworkServiceLogicalId(u))``, when it is not
+        ``None``.
         """
+        identity_type = self._identity_type_of(key)
+        resolver = self._resolvers.get(identity_type)
+        if resolver is None:
+            raise LookupError(f"No resolver registered for {identity_type.__name__}")
+        if not resolver.loaded:
+            raise ResolverNotLoadedError(identity_type)
         try:
             return self.lookup(key) if name is None else self.lookup(key, name)
         except ResolverNotLoadedError:
             raise
         except ResolutionError:
-            if isinstance(key, type):
-                identity_type: type = key
-                text: object = name
-            else:
-                identity_type = type(key).identity_type
-                text = getattr(key, "value", None)
+            text: object = (
+                name if isinstance(key, type) else getattr(key, "value", None)
+            )
             if isinstance(text, str) and self._has_name(identity_type, text):
                 raise
             return None
@@ -490,6 +492,11 @@ class ResolverRegistry:
         if resolver is None or (resolver.requires_load and not resolver.loaded):
             return ()
         return resolver.identities()
+
+    @staticmethod
+    def _identity_type_of(key: Any) -> type:
+        """The identity type a ``find`` key names: the key itself, or its key type's."""
+        return key if isinstance(key, type) else type(key).identity_type
 
     def _has_name(self, identity_type: type, name: str) -> bool:
         """Whether a loaded identity of *identity_type* has *name*, ignoring case."""

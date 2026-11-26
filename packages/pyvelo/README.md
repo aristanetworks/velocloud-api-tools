@@ -70,10 +70,8 @@ resolver is not loaded, and `ResolutionError` when no identity has the value
 identity has the name or the ID, so the name for an ID is
 `found.name if (found := registry.find(NetworkServiceLogicalId(u))) else None`; it
 still raises for a name several identities share. It raises `ResolverNotLoadedError`
-only for a resolver that must be loaded before it answers (`requires_load`: hubs and
-network services); any other resolver whose table was not loaded holds nothing, so
-`None` there can also mean "not loaded" (check the resolver's `loaded`, or load it with
-`load_resolvers`).
+for any resolver that is not loaded (load it with `load_resolvers`), so `None` always
+means that no loaded identity has the name or the ID.
 `registry.identities(SegmentIdentity)` lists the loaded identities of a type.
 
 A model field that takes a name where it holds an ID declares it with
