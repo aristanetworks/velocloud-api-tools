@@ -38,7 +38,7 @@ from .base import (
     _field_names_by_key,  # pyright: ignore[reportPrivateUsage]
     _field_value,  # pyright: ignore[reportPrivateUsage]
     _held_type,  # pyright: ignore[reportPrivateUsage]
-    _holds_empty_text,  # pyright: ignore[reportPrivateUsage]
+    _holds_empty_text,  # pyright: ignore[reportPrivateUsage]  # the core engines share it
     _id_adapter,  # pyright: ignore[reportPrivateUsage]
     _id_type,  # pyright: ignore[reportPrivateUsage]
     _is_vco_model_type,  # pyright: ignore[reportPrivateUsage]

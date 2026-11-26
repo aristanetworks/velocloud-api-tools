@@ -52,6 +52,7 @@ from pyvelo.core.identity import (
     ResolutionError,
     ResolverNotLoadedError,
     SegmentIdentity,
+    resolution_error,
 )
 from pyvelo.core.layers import Edge
 from pyvelo.core.mending import backhaul_hub_mending
@@ -497,6 +498,24 @@ def test_a_located_resolution_error_keeps_its_path_through_copies() -> None:
         assert type(copied) is ResolutionError
         assert (copied.path, copied.wanted) == (full, None)
         assert str(copied) == str(error) == f"{full}: Unknown segment: 'Gest'."
+
+
+def test_a_resolution_error_of_a_service_type_keeps_it_and_its_candidates() -> None:
+    error = resolution_error(
+        NetworkServiceIdentity, "dns-x", ["dns-a", "dns-b"], wanted="dns"
+    )
+    error.locate(Path(("dns", "primary_provider", "service")))
+    assert sorted(error.candidates) == ["dns-a", "dns-b"]
+    for copied in copies(error):
+        assert type(copied) is ResolutionError
+        assert (copied.wanted, copied.candidates, copied.path) == (
+            "dns",
+            error.candidates,
+            error.path,
+        )
+        assert str(copied) == str(error)
+        assert copied.identity_type is NetworkServiceIdentity
+    assert copy.deepcopy(error).candidates is not error.candidates
 
 
 def test_a_patch_error_keeps_its_path_kind_and_notes_through_copies() -> None:

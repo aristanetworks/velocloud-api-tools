@@ -1483,7 +1483,8 @@ it) is redone by setting the field again, in the segment as the stored list
 names it: `{"segments": {"Global Segment": {"dns": {"primaryProvider":
 {"service": "<logical ID>"}}}}}`, or `null` for a provider you cleared.
 A lost CSS provider is redone the same way, by its logical ID, or by `""` for
-one you cleared.
+one you cleared; its ref row is still listed in `not_redone()`, although the
+patch sets the provider that makes the row.
 `error.not_redone()` lists the lost edits the patch leaves out: the clashes, a
 lost ref row of any other kind (a patch changes data, not refs), a provider
 whose segment is no longer stored or cannot be told from another by its

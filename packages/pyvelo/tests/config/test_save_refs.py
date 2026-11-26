@@ -578,6 +578,32 @@ async def test_the_redo_of_a_lost_css_provider_edit_applies() -> None:
     assert one_row(stored_refs(client.store), CSS_PROVIDER)["enterpriseObjectId"] == 710
 
 
+async def test_the_redo_of_a_lost_css_provider_clear_applies() -> None:
+    pipeline, client, state = await loaded_with_css()
+    state = await set_css(pipeline, state, "css-west")
+    _ = await pipeline.save(state)
+    state = await set_css(pipeline, state, "")
+    client.store.other_writer(DS_ID, other_writer_edit)
+
+    with pytest.raises(ConfigConflictError) as lost:
+        _ = await pipeline.save(state)
+
+    patch = lost.value.redo_patch()
+    assert patch == {
+        "segments": {"Global Segment": {"css": {"provider": {"logical_id": ""}}}}
+    }
+    # The row is listed, although the patch redoes the clear that removes it.
+    (listed,) = lost.value.not_redone()
+    assert (listed.part, str(listed.path).startswith(f'"{CSS_PROVIDER}"')) == (
+        "refs",
+        True,
+    )
+    state = await pipeline.apply(state, module=lost.value.module_name, patch=patch)
+    assert css_provider(state).logical_id == ""
+    _ = await pipeline.save(state)
+    assert not stored_refs(client.store).get(CSS_PROVIDER)
+
+
 async def test_an_unknown_css_name_lists_the_services_the_field_takes() -> None:
     pipeline, client, state = await loaded_with_css()
     client.add_service(
