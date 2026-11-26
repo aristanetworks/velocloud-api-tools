@@ -849,16 +849,20 @@ def test_ref_owners_read_through_an_owned() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_a_shallow_copy_that_is_validated_does_not_take_the_owned_values() -> None:
+def test_a_shallow_copy_that_is_validated_leaves_the_original_its_owned_values() -> (
+    None
+):
     # merge_patch checks a shallow copy of each model it merges into, by
-    # validating it; the Owned values it holds are the original's, and stay so.
+    # validating it; the copy has its own Owned values, and the original's stay.
     edge = _edge(enabled=True)
     clone = edge.model_copy()
     _ = Mod[Edge].model_validate(clone)
-    assert clone.enabled is edge.enabled
+    assert clone.enabled is not edge.enabled
+    edge.enabled.set_local(False)
+    assert (edge.enabled.stored, clone.enabled.stored) == (False, True)
     _ = edge.mark_detached()
     with pytest.raises(DetachedObjectError, match="take it again"):
-        edge.enabled.set_local(False)
+        edge.enabled.set_local(True)
 
 
 def test_an_inheritable_patched_through_a_sub_model_check_keeps_its_owner() -> None:

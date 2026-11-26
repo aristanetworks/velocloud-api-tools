@@ -642,9 +642,26 @@ def test_a_deep_copy_of_a_segment_keeps_its_binding() -> None:
     assert e.segments[0].mapping.stored is MISSING
 
 
-def test_a_shallow_copy_shares_the_owned_values() -> None:
-    e, _ = _bound(profile={"level": 5})
-    assert e.model_copy().level is e.level
+@pytest.mark.parametrize("how", ["model_copy", "copy", "update"])
+def test_a_shallow_copy_has_its_own_owned_values(how: str) -> None:
+    e, _ = _bound(edge={"settings": {"a": 2}}, profile={"level": 5})
+    if how == "model_copy":
+        copied = e.model_copy()
+    elif how == "copy":
+        copied = copy.copy(e)
+    else:
+        copied = e.model_copy(update={"segments": []})
+
+    assert copied.level is not e.level
+    assert (
+        copied.settings.stored is e.settings.stored
+    )  # shallow: one value, two holders
+    copied.enabled.set_local(False)
+    copied.pair.localize()
+    assert (copied.enabled.stored, copied.pair.is_local) == (False, True)
+    assert (e.enabled.stored, e.pair.is_local) == (MISSING, False)
+    e.level.set_local(3)
+    assert copied.level.stored is MISSING
 
 
 def test_model_construct_attaches_and_fills_the_owned_values() -> None:

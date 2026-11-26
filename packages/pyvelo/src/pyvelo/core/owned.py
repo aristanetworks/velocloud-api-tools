@@ -134,13 +134,13 @@ class Owned[T]:
     profile; *local* is *stored* then, and ``MISSING`` otherwise.
 
     A model of the edge layer attaches the ``Owned`` it holds to itself when it
-    is validated, constructed or deep-copied, which is what gives *is_local* the
+    is validated, constructed or copied, which is what gives *is_local* the
     field's encoding and the intents the field to work on. The first model to
-    attach it keeps it: a shallow copy holds the same ``Owned`` values as its
-    original, which stay the original's. An ``Owned`` that
-    belongs to no model (one built by hand, or a deep copy of one taken from a
-    model) reads *is_local* by presence, and its intents store what they are
-    given without checking it.
+    attach it keeps it: a shallow copy of a model gets its own ``Owned`` values,
+    which hold the same stored objects. An ``Owned`` that belongs to no model
+    (one built by hand, or a deep copy of one taken from a model) reads
+    *is_local* by presence, and its intents store what they are given without
+    checking it.
 
     An ``Owned`` given as input to a model is copied, *stored* too, so the
     model does not hold the caller's object.
@@ -162,9 +162,9 @@ class Owned[T]:
         self, owner: Layered[Edge], field: str, encoding: Encoding | None
     ) -> None:
         if self._owner is not None:
-            # The model that held it first keeps it: a shallow copy of a model
-            # (the merge validates one) holds the same Owned values, and
-            # validating it must not make them the copy's.
+            # The model that held it first keeps it: an Owned given to a second
+            # model (by model_construct, or validated as an instance) stays the
+            # first model's.
             return
         self._owner = owner
         self._field = field

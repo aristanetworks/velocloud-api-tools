@@ -272,6 +272,7 @@ def test_model_machinery_still_works() -> None:
     updated = data.model_copy(update={"segments": []})
     updated.syslog_forwarding.set_local(True)
     assert (updated.segments, updated.syslog_forwarding.local) == ([], True)
+    assert updated.syslog_forwarding is not data.syslog_forwarding
 
     loaded = cast("FirewallData[Edge]", pickle.loads(pickle.dumps(data)))
     loaded.firewall_enabled.set_local(False)

@@ -876,6 +876,21 @@ class Layered(VcoModel, Generic[L]):  # noqa: UP046 (one shared constrained L, a
         return model
 
     @override
+    def __copy__(self) -> Self:
+        # model_copy() (with or without update=) and copy.copy come here. The
+        # copy gets an Owned of its own for each field, holding the same stored
+        # object, so an intent on the copy leaves the original as it was. Written
+        # past __setattr__: an assignment would be refused on a detached copy,
+        # and pydantic's would validate. The binding is private, so it is copied.
+        copied = super().__copy__()
+        for name in type(self)._owned_encodings():
+            owned: object = copied.__dict__.get(name)
+            if isinstance(owned, Owned):
+                object.__setattr__(copied, name, Owned(owned.stored))
+        copied._attach_owned()
+        return copied
+
+    @override
     def __deepcopy__(self, memo: dict[int, Any] | None = None) -> Self:
         # The copy's Owned values are copies without an owner (the binding is
         # shared, not copied); the copy attaches them to itself.
