@@ -838,14 +838,17 @@ async def test_plus_add_by_a_segment_id_nothing_has_needs_a_name_with_no_resolve
     assert state.plan() == before
 
 
+@pytest.mark.parametrize("segment_id", [2, "2", 2.0])
 @pytest.mark.asyncio
-async def test_plus_add_by_segment_id_of_an_inherited_segment_with_no_resolver() -> (
-    None
-):
+async def test_plus_add_by_segment_id_of_an_inherited_segment_with_no_resolver(
+    segment_id: object,
+) -> None:
     # The profile's Guest has segmentId 2, which names it with no resolver too.
     state = make_raw_state()
     before = state.plan()
-    patch: dict[str, object] = {"segments": {"+": add({"segment": {"segmentId": 2}})}}
+    patch: dict[str, object] = {
+        "segments": {"+": add({"segment": {"segmentId": segment_id}})}
+    }
     with pytest.raises(PatchError, match="by inheritance") as exc:
         _ = await ConfigPipeline(client=None).apply(
             state, module="firewall", patch=patch

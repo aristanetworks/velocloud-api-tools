@@ -517,10 +517,11 @@ class ConfigPipeline:
            - an ``add`` of a segment the edge inherits raises ``PatchError``
              (write a plain object to change it), and so does an ``add``
              under ``"+"`` whose body names one: by ``segment.name``, or by
-             an ID that names a segment (one a segment resolver has, which
-             is loaded first if it is not; with no resolver, a
-             ``segmentId`` of a segment of the edge layer or the profile).
-             An ID that names none is left to ``merge_patch``;
+             an ID that names a segment (one the registered segment
+             resolver has loaded, where a resolver that must be loaded
+             first is loaded; with no resolver, a ``segmentId`` of a
+             segment of the edge layer or the profile). An ID that names
+             none is left to ``merge_patch``;
            - a ``delete`` of a segment the edge only inherits raises
              ``PatchError``: the layer has no entry to delete;
            - an edge entry the profile knows under another name (the same
@@ -1837,6 +1838,9 @@ def _segment_lookup(
     return new, given
 
 
+# Mirrors the ID fields merge_patch finds for SegmentMetadata
+# (_identity_of_given_id: its Resolvable fields that are not a value set, under
+# their _input_keys); written out, as that derivation is private to core.merge.
 _SEGMENT_IDS: Final = (
     ("segment_id", ("segmentId", "segment_id")),
     ("segment_logical_id", ("segmentLogicalId", "segment_logical_id")),
@@ -1891,9 +1895,11 @@ def _segment_named_by_id(
     With a segment resolver registered, the name of the loaded segment that
     has the ID, as ``merge_patch`` finds it, and None for an ID no loaded
     segment has: ``merge_patch`` raises its ``ResolutionError`` for that. A
-    resolver that is not loaded raises ``ResolverNotLoadedError``, so that
-    ``apply`` loads it and tries again. With none, a ``segmentId`` in string
-    form where the layer or the profile has a segment it names
+    resolver that must be loaded first (``requires_load``) and is not raises
+    ``ResolverNotLoadedError``, so that ``apply`` loads it and tries again;
+    the stock ``SegmentResolver`` needs no load, and unloaded it has no
+    segment, so every ID is None. With none, a ``segmentId`` in string form
+    where the layer or the profile has a segment it names
     (``_names_a_segment``), as a selector does; any other ID names nothing
     the patch can be checked against, and ``merge_patch`` refuses the add
     for its lack of a name.
