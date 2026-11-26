@@ -31,7 +31,7 @@ from bisect import bisect_left
 from collections import Counter
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import ClassVar, Self, get_args, get_origin, override
+from typing import ClassVar, Self, cast, get_args, get_origin, override
 
 import yaml
 from pydantic import MISSING
@@ -1174,7 +1174,12 @@ def find_lossy_assignments(
     and paired items whose key in *before* is not unique, are ``rules[#0]``.
     """
     out: list[Path] = []
-    _lossy_in_value(out, Path(()), baseline, current, before, after, None, level)
+    _lossy_in_value(
+        _LossyWalk(out, level),
+        Path(()),
+        _Held(baseline, current, before, after),
+        None,
+    )
     return out
 
 
@@ -1229,39 +1234,45 @@ def _dump_get(dump: object, key: str) -> object:
     return dump[key] if _is_mapping(dump) and key in dump else MISSING
 
 
-def _lossy_in_value(  # noqa: PLR0913, PLR0917 (existing: split it when it next changes)
-    out: list[Path],
-    path: Path,
-    baseline: object,
-    current: object,
-    before: object,
-    after: object,
-    node: Node,
-    level: ConfigContext | None,
-) -> None:
+@dataclass(frozen=True, slots=True)
+class _LossyWalk:
+    """One walk for lossy assignments: where the paths found go, and the level."""
+
+    out: list[Path]
+    level: ConfigContext | None
+
+
+@dataclass(frozen=True, slots=True)
+class _Held:
+    """One place of that walk: the value as read and now, and the dump of each."""
+
+    baseline: object
+    current: object
+    before: object
+    after: object
+
+
+def _lossy_in_value(walk: _LossyWalk, path: Path, held: _Held, node: Node) -> None:
+    baseline, current = held.baseline, held.current
     if isinstance(baseline, VcoModel):
         if isinstance(current, VcoModel) and type(current) is type(baseline):
-            _lossy_in_model(out, path, baseline, current, before, after, level)
+            _lossy_in_model(walk, path, held)
     elif is_list(baseline) and is_list(current):
-        _lossy_in_list(out, path, baseline, current, before, after, node, level)
+        _lossy_in_list(walk, path, held, node)
     elif is_dict(baseline) and is_dict(current):
         for key, value in current.items():
             if key not in baseline:
                 continue  # an entry only *current* has is written whole
             # A JSON-mode dump writes every map key as a string.
-            before_value = _dump_get(before, str(key))
-            after_value = _dump_get(after, str(key))
+            before_value = _dump_get(held.before, str(key))
+            after_value = _dump_get(held.after, str(key))
             if before_value is MISSING or after_value is MISSING:
                 continue
             _lossy_in_value(
-                out,
+                walk,
                 path.child(str(key)),
-                baseline[key],
-                value,
-                before_value,
-                after_value,
+                _Held(baseline[key], value, before_value, after_value),
                 None,
-                level,
             )
 
 
@@ -1309,43 +1320,34 @@ def _same_value(a: object, b: object) -> bool:
     return a == b
 
 
-def _lossy_in_model(  # noqa: PLR0913, PLR0917 (existing: split it when it next changes)
-    out: list[Path],
-    path: Path,
-    baseline: VcoModel,
-    current: VcoModel,
-    before: object,
-    after: object,
-    level: ConfigContext | None,
-) -> None:
-    field_level = level if level is not None else current.config_context
+def _lossy_in_model(walk: _LossyWalk, path: Path, held: _Held) -> None:
+    baseline, current = held.baseline, held.current
+    if not (isinstance(baseline, VcoModel) and isinstance(current, VcoModel)):
+        return
+    field_level = walk.level if walk.level is not None else current.config_context
     ref_only = ref_only_fields(type(current))
     for name, field_info in type(current).model_fields.items():
         if name in ref_only:
             continue  # an edit of it is planned in the refs, not in the data
         dump_key = _field_alias(field_info, name)
-        before_value = _dump_get(before, dump_key)
-        after_value = _dump_get(after, dump_key)
+        before_value = _dump_get(held.before, dump_key)
+        after_value = _dump_get(held.after, dump_key)
         value = unwrap(_field_value(current, name))
-        held = unwrap(_field_value(baseline, name))
+        held_value = unwrap(_field_value(baseline, name))
         field_path = path.child(name)
         if _context_default_entry(field_info, field_level) is MISSING:
-            if not has_override_flag(field_info) and not _same_value(held, value):
-                out.append(field_path)  # the dump omits it, so the change is lost
+            if not has_override_flag(field_info) and not _same_value(held_value, value):
+                walk.out.append(field_path)  # the dump omits it, so the change is lost
             continue
         if field_kind(field_info).kind is Kind.INHERITABLE:
             # It can always express "not stored" (the edge stores nothing, the
             # profile leaves out a display default), so assigning it is never a
             # loss; what it holds is walked as any value is.
             _lossy_in_value(
-                out,
+                walk,
                 field_path,
-                held,
-                value,
-                before_value,
-                after_value,
+                _Held(held_value, value, before_value, after_value),
                 node_child(type(current), dump_key),
-                level,
             )
             continue
         if name not in baseline.model_fields_set:
@@ -1356,17 +1358,13 @@ def _lossy_in_model(  # noqa: PLR0913, PLR0917 (existing: split it when it next 
                 and value is not MISSING
                 and value is not None
             ):
-                out.append(field_path)
+                walk.out.append(field_path)
                 continue
         _lossy_in_value(
-            out,
+            walk,
             field_path,
-            held,
-            value,
-            before_value,
-            after_value,
+            _Held(held_value, value, before_value, after_value),
             node_child(type(current), dump_key),
-            level,
         )
 
 
@@ -1403,16 +1401,10 @@ def _keyed_pairs(
     return [(parts[i], i, j) for i, j in pairing.pairs]
 
 
-def _lossy_in_list(  # noqa: PLR0913, PLR0917 (existing: split it when it next changes)
-    out: list[Path],
-    path: Path,
-    baseline: list[object],
-    current: list[object],
-    before: object,
-    after: object,
-    node: Node,
-    level: ConfigContext | None,
-) -> None:
+def _lossy_in_list(walk: _LossyWalk, path: Path, held: _Held, node: Node) -> None:
+    baseline = cast("list[object]", held.baseline)
+    current = cast("list[object]", held.current)
+    before, after = held.before, held.after
     if not (is_list(before) and is_list(after)):
         return
     if len(before) != len(baseline) or len(after) != len(current):
@@ -1429,14 +1421,15 @@ def _lossy_in_list(  # noqa: PLR0913, PLR0917 (existing: split it when it next c
         pairs = [(path.child(i), i, i) for i in range(len(baseline))]
     for item_path, base_index, cur_index in pairs:
         _lossy_in_value(
-            out,
+            walk,
             item_path,
-            baseline[base_index],
-            current[cur_index],
-            before[base_index],
-            after[cur_index],
+            _Held(
+                baseline[base_index],
+                current[cur_index],
+                before[base_index],
+                after[cur_index],
+            ),
             None,
-            level,
         )
 
 
