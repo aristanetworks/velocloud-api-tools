@@ -563,6 +563,11 @@ class HublessBackhaul:
     Each step by its wire name and each item by the selector that names it
     alone. ``None`` when an item on the way has no such selector.
     """
+    deletable: bool = field(default=True, compare=False)
+    """Whether a patch can delete the rule.
+
+    False for one of a segment's default rules, a fixed list.
+    """
 
 
 def _nested(keys: Sequence[str], leaf: object) -> dict[str, object]:
@@ -584,21 +589,28 @@ def _backhaul_ways(places: Sequence[HublessBackhaul]) -> str:
         text = (
             " To mend a rule, give it a hub (a backhaul hub of its segment), set "
             'the route action\'s `routePolicy` to "auto", "direct" or "gateway", '
-            "or delete the rule."
+            "or delete the rule (a rule that is not one of the segment's default "
+            "rules)."
         )
     else:
         keys = first.keys
         added = {"_op": "add", "name": "<hub name>"}
         hub = _nested(keys, {"routeCfg": {"backhaulEdges": {"+": added}}})
         policy = _nested(keys, {"routePolicy": "<auto, direct or gateway>"})
-        rule = _nested(keys[:-2], {"_op": "delete"})
         text = (
             f" To mend the rule, send one of these patches to {first.module}: to "
             "give the rule a hub (a backhaul hub of its segment: one of the "
             "segment's `vpn.backHaulEdges` in the profile's device settings), "
-            f"{json.dumps(hub)}; to route it another way, {json.dumps(policy)}; "
-            f"to delete the rule, {json.dumps(rule)}."
+            f"{json.dumps(hub)}; to route it another way, {json.dumps(policy)}"
         )
+        if first.deletable:
+            rule = _nested(keys[:-2], {"_op": "delete"})
+            text += f"; to delete the rule, {json.dumps(rule)}."
+        else:
+            text += (
+                ". The rule is one of the segment's default rules, which cannot "
+                "be deleted."
+            )
     if len(places) > 1:
         text += " The other rules are mended the same way."
     return text + " Or take back every edit to a module with `revert`."

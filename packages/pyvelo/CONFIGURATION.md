@@ -710,7 +710,9 @@ firewall: update
   route it another way with `{"segments": {"Guest": {"rules": {"Web":
   {"action": {"edge2CloudRouteAction": {"routePolicy": "gateway"}}}}}}}`
   (`"auto"`, `"direct"` or `"gateway"`); or delete the rule with
-  `{"segments": {"Guest": {"rules": {"Web": {"_op": "delete"}}}}}`. Or take the
+  `{"segments": {"Guest": {"rules": {"Web": {"_op": "delete"}}}}}`. A rule of
+  the segment's `defaults` cannot be deleted, so for one of those the message
+  gives the first two ways only, and says why. Or take the
   module's edits back with `pipeline.revert(state, module="QOS")`. A route
   action that had no hub as read, at the same path (the same route action of
   the same rule of the same segment), is left as it is: a

@@ -54,11 +54,16 @@ def refused(state: ConfigState) -> BackhaulWithoutHubError:
     return error.value
 
 
-def shapes(error: BackhaulWithoutHubError) -> dict[str, Any]:
-    """The patches the message shows, by what each does, as JSON."""
+WAYS = ("give the rule a hub", "route it another way", "delete the rule")
+
+
+def shapes(
+    error: BackhaulWithoutHubError, ways: tuple[str, ...] = WAYS
+) -> dict[str, Any]:
+    """The patches the message shows for *ways*, by what each does, as JSON."""
     text = str(error)
     found: dict[str, Any] = {}
-    for way in ("give the rule a hub", "route it another way", "delete the rule"):
+    for way in ways:
         start = text.index("{", text.index(way))
         found[way], _ = json.JSONDecoder().raw_decode(text, start)
     return found
@@ -267,3 +272,71 @@ async def test_two_rules_left_with_no_hub_are_both_listed() -> None:
     assert "rules[Mail]" in text
     assert "mended the same way" in text
     assert '"Mail": {"_op": "delete"}' not in text  # the shapes are the first's
+
+
+# -- a default rule ------------------------------------------------------------------
+
+DEFAULT = "Default-Any-UDP"
+NO_HUB = {"routePolicy": "backhaul", "routeCfg": {"type": "edge"}}
+
+
+def to_default(action: dict[str, Any], segment: str = "Guest") -> Any:
+    """The QoS patch that sends *action* to the Edge to cloud route of ``DEFAULT``."""
+    rule = {"action": {CLOUD: action}}
+    return {"segments": {segment: {"defaults": {DEFAULT: rule}}}}
+
+
+def fill(shape: Any, value: str) -> Any:
+    shown = json.dumps(shape)
+    shown = shown.replace("<hub name>", value)
+    return json.loads(shown.replace("<auto, direct or gateway>", value))
+
+
+async def test_a_default_rule_left_with_no_hub_is_refused_with_no_delete() -> None:
+    state = await guest_backhaul_state()
+    await edit(state, QOS, to_default(NO_HUB))
+
+    error = refused(state)
+
+    (place,) = error.places
+    assert str(place.path).startswith("segments[Guest].defaults[Default-Any-UDP]")
+    assert place.rule_name == DEFAULT
+    text = str(error)
+    assert "delete the rule" not in text
+    assert '"_op": "delete"' not in text
+    assert "one of the segment's default rules, which cannot be deleted" in text
+
+
+@pytest.mark.parametrize(
+    ("way", "value"),
+    [("give the rule a hub", HUB_B.name), ("route it another way", "gateway")],
+)
+async def test_each_way_shown_for_a_default_rule_mends_it(way: str, value: str) -> None:
+    state = await guest_backhaul_state()
+    await edit(state, QOS, to_default(NO_HUB))
+    shown = shapes(refused(state), WAYS[:2])[way]
+
+    await edit(state, QOS, fill(shown, value))
+
+    assert [w.code for w in state.plan().warnings] == []
+
+
+async def test_the_ways_shown_are_those_of_the_first_place() -> None:
+    state = await guest_backhaul_state()
+    await edit(state, QOS, to_default(NO_HUB, segment="Global Segment"))
+    await edit(
+        state,
+        QOS,
+        {"segments": {"Guest": {"rules": {"+": add(hub_backhaul_rule("Web"))}}}},
+    )
+
+    error = refused(state)
+
+    assert [p.rule_name for p in error.places] == [DEFAULT, "Web"]
+    text = str(error)
+    assert '"_op": "delete"' not in text
+    assert "mended the same way" in text
+    policy = shapes(error, WAYS[1:2])["route it another way"]
+    await edit(state, QOS, fill(policy, "gateway"))
+    (place,) = refused(state).places  # the default rule is mended
+    assert place.rule_name == "Web"

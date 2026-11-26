@@ -29,6 +29,8 @@ from pyvelo.client.schemas.configuration import AnyStoredModule
 from pyvelo.config.validation_warning import ValidationWarning
 from pyvelo.core import VcoModel, unwrap
 from pyvelo.core.base import field_models, is_list
+from pyvelo.core.fields import get_fixed_list
+from pyvelo.core.rebase import Path
 from pyvelo.core.references import Reference, patch_keys
 from pyvelo.core.walk import walk_fields
 
@@ -86,6 +88,20 @@ def _segment_name(segment: VcoModel | None) -> str | None:
     return name if isinstance(name, str) else None
 
 
+def _deletable(segment: VcoModel | None, action_path: Path) -> bool:
+    """Whether a patch can delete the rule whose ``action`` is at *action_path*.
+
+    The rule is an item of a list field of *segment* (``rules`` or
+    ``defaults``); a ``FixedList`` one (the segment's default rules) takes no
+    delete.
+    """
+    list_name = next(iter(action_path.parts[-3:-2]), None)
+    if segment is None or not isinstance(list_name, str):
+        return True
+    field_info = type(segment).model_fields.get(list_name)
+    return field_info is None or get_fixed_list(field_info) is None
+
+
 def hubless_backhauls(module: str, data: VcoModel) -> tuple[HublessBackhaul, ...]:
     """Each route action of a rule in *data* that backhauls to hubs and names none.
 
@@ -112,6 +128,7 @@ def hubless_backhauls(module: str, data: VcoModel) -> tuple[HublessBackhaul, ...
                         site.path.child(name),
                         _segment_name(site.segment),
                         rule.name,
+                        deletable=_deletable(site.segment, site.path),
                     )
                 )
     return tuple(found)
