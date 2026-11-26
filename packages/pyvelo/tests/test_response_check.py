@@ -730,3 +730,72 @@ def test_another_writers_item_of_the_same_name_cannot_be_told_apart() -> None:
     stored = {"rules": [x("A2", 1), x("W", 9), x("B2", 3)]}
     check = check_response(READ_TWO_X, payload, stored, Lids)
     assert paths(check.not_applied) == ["rules[#1].port"]
+
+
+class OptLid(VcoModel):
+    name: str | None = None
+    lid: str | None = None
+    port: int = 0
+
+
+class OptLids(VcoModel):
+    rules: Annotated[list[OptLid], KeyField("name", alt="lid")] = Field(
+        default_factory=list
+    )
+
+
+def test_a_dropped_item_without_a_key_does_not_take_a_later_items_partner() -> None:
+    """The VCO dropped ``k`` and the item without a name; both x are stored."""
+    payload = {"rules": [x("a", 1), {"name": "k"}, {"port": 3}, x("b", 3)]}
+    stored = {"rules": [x("A2", 1), x("B2", 3)]}
+    check = check_response(READ_TWO_X, payload, stored, OptLids)
+    assert_paths(
+        check,
+        applied=["rules[#1].port"],
+        not_applied=["rules[k]", "rules[#2]"],
+        server_changes=["rules[#0].lid", "rules[#1].lid"],
+    )
+
+
+def test_an_item_without_a_key_after_another_writers_item_stays_unpaired() -> None:
+    """The VCO dropped ``k`` and the item without a name; ``w`` is another's."""
+    payload = {"rules": [x("a", 1), {"name": "k"}, {"port": 3}, x("b", 3)]}
+    w = {"name": "w", "lid": "W", "port": 9}
+    stored = {"rules": [x("A2", 1), w, x("B2", 3)]}
+    check = check_response(READ_TWO_X, payload, stored, OptLids)
+    assert_paths(
+        check,
+        applied=["rules[#1].port"],
+        not_applied=["rules[k]", "rules[#2]"],
+        server_changes=["rules[#0].lid", "rules[#1].lid", "rules[w]"],
+    )
+
+
+def test_an_item_without_a_key_does_not_take_the_partner_of_the_next() -> None:
+    """The item without a name was dropped; ``y`` and the two x are stored.
+
+    ``y`` is read first, so the new item at ``#0`` has no name as read.
+    """
+    y = {"name": "y", "port": 5}
+    read = {"rules": [y, x("a", 1), x("b", 2)]}
+    payload = {"rules": [{"port": 3}, y, x("a", 1), x("b", 3)]}
+    stored = {"rules": [y, x("A2", 1), x("B2", 3)]}
+    check = check_response(read, payload, stored, OptLids)
+    assert_paths(
+        check,
+        applied=["rules[#2].port"],
+        not_applied=["rules[#0]"],
+        server_changes=["rules[#1].lid", "rules[#2].lid"],
+    )
+
+
+def test_another_writers_item_without_a_key_is_skipped() -> None:
+    """A guard: a stored item with no name pairs with none of the payload."""
+    payload = {"rules": [x("a", 1), x("b", 3)]}
+    stored = {"rules": [x("A2", 1), {"lid": "W", "port": 9}, x("B2", 3)]}
+    check = check_response(READ_TWO_X, payload, stored, OptLids)
+    assert_paths(
+        check,
+        applied=["rules[#1].port"],
+        server_changes=["rules[#0].lid", "rules[#1].lid", "rules[#1]"],
+    )

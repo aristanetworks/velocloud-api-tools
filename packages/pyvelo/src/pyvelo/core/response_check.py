@@ -697,7 +697,9 @@ def _pair_stored(
     4. the items of *p* and *d* pair in order, first with first, while the two
        keys are equal or the item of *p* has no key. This pairs items whose
        key repeats and whose alt key the VCO revised, and an item sent without
-       a key that the VCO issued one for. When the two keys differ, an item of
+       a key that the VCO issued one for. An item of *p* with no key is
+       skipped when a later item of *p* has the key of the item of *d* it
+       meets. When the two keys differ, an item of
        *d* whose key no item of *p* left has is skipped (another writer's
        item, or one with no key); else an item of *p* whose key no item of *d*
        left has is skipped (the VCO dropped it); else the pass ends.
@@ -754,15 +756,18 @@ def _pair_in_order(
     """Pass 4 of ``_pair_stored``: pair the items left of *p* and *d* in order.
 
     Each pair is written into *d_of*, index in *p* to index in *d*. An item
-    that cannot pair is skipped, so it does not take the place of one that
-    can: an item of *d* whose key no item of *p* from here on has, then an
-    item of *p* whose key no item of *d* from here on has. When neither is so,
-    the pass ends.
+    of *p* with no key does not take an item of *d* whose key a later item of
+    *p* has: it is skipped. An item that cannot pair is skipped, so it does
+    not take the place of one that can: an item of *d* whose key no item of
+    *p* from here on has, then an item of *p* whose key no item of *d* from
+    here on has. When neither is so, the pass ends.
     """
     j = k = 0
     while j < len(p_left) and k < len(d_left):
         p_key, d_key = p_keys[p_left[j]], d_keys[d_left[k]]
-        if p_key is None or p_key == d_key:
+        if p_key is None and _first_with(d_key, p_keys, p_left[j + 1 :]) is not None:
+            j += 1
+        elif p_key is None or p_key == d_key:
             d_of[p_left[j]] = d_left[k]
             j += 1
             k += 1
