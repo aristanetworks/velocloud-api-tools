@@ -16,6 +16,7 @@ from pyvelo.client.enums.configuration import ConfigurationModuleName
 from pyvelo.client.enums.profiles import GetConfigurationWith
 from pyvelo.client.exceptions import (
     ComposedModuleError,
+    ConfigConflictError,
     DetachedObjectError,
     FixedListError,
     LossyFieldError,
@@ -367,11 +368,7 @@ class _Sending:
         self.failed = None
         if self.is_device_settings(mod):
             self.device_settings_stored = True
-            # The write can change these on the VCO: the next write of each,
-            # in this save or a later one, is rebased.
-            for name in _CHANGED_BY_DEVICE_SETTINGS:
-                if (other := self.state.find_module(name)) is not None:
-                    self.state.rebase_on_write.add(other.name)
+            self.mark_changed_by_device_settings()
         paths = list(
             dict.fromkeys(
                 change.path
@@ -417,6 +414,16 @@ class _Sending:
                 )
             error.add_note(note)
             raise error
+
+    def mark_changed_by_device_settings(self) -> None:
+        """Name the modules a stored device settings write can change on the VCO.
+
+        The next write of each, in this save or a later one, is rebased
+        (``state.rebase_on_write``).
+        """
+        for name in _CHANGED_BY_DEVICE_SETTINGS:
+            if (other := self.state.find_module(name)) is not None:
+                self.state.rebase_on_write.add(other.name)
 
     def put_stored(self, mod: _WritableModule, error: ModuleWriteError) -> bool:
         """Put the module *error* carries in the state in place of *mod*.
@@ -1627,7 +1634,10 @@ class ConfigPipeline:
         again.
 
         A ``ModuleWriteError`` puts the module as stored in the state, when it
-        carries one, and gets the writes before it as ``completed``. An insert
+        carries one, and gets the writes before it as ``completed``. When it is
+        of a profile's device settings write that may be stored (any but a
+        version conflict or a refusal), the modules that write can change are
+        named in ``state.rebase_on_write``, as for a stored one. An insert
         that fails in any way but with the module as stored is recorded in
         ``state.unconfirmed_inserts``. Every error gets the save's
         ``SaveProgress``; once a step was sent, an ``Exception`` is raised as
@@ -1671,6 +1681,8 @@ class ConfigPipeline:
                         ),
                     )
                 except ModuleWriteError as error:
+                    if sending.is_device_settings(mod) and _may_be_stored(error):
+                        sending.mark_changed_by_device_settings()
                     if not sending.put_stored(mod, error) and insert:
                         state.unconfirmed_inserts.add(mod.name)
                     error.completed = tuple(sending.done)
@@ -2699,6 +2711,19 @@ def _qos_rules_json(
                 )
             seen.add(rule[key])
     return dumped
+
+
+def _may_be_stored(error: ModuleWriteError) -> bool:
+    """Whether the write that raised *error* may be stored, in part or otherwise.
+
+    Nothing is stored of a write refused as a version conflict, nor of one
+    whose module could not be read after the VCO said it refused the version.
+    """
+    if isinstance(error, ConfigConflictError):
+        return False
+    return not (
+        isinstance(error, WriteOutcomeUnknownError) and error.answer == "refused"
+    )
 
 
 def _written_note(done: Sequence[ModuleWrite[Any]]) -> str:

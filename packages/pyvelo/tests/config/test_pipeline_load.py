@@ -2,12 +2,15 @@
 
 import copy
 import uuid
-from typing import Any, ClassVar
+from typing import Any, ClassVar, override
 
 import pytest
-from pydantic import BaseModel, ConfigDict
+from pydantic import MISSING, BaseModel, ConfigDict
 from pyvelo.client.enums.configuration import ConfigurationModuleName
-from pyvelo.client.operations.edge import GetEdgeConfigurationStackResult
+from pyvelo.client.operations.edge import (
+    GetEdgeConfigurationStackResult,
+    GetEdgeConfigurationStackResultModel,
+)
 from pyvelo.client.schemas.configuration import (
     EdgeConfiguration,
     EnterpriseConfigurationProfile,
@@ -23,6 +26,7 @@ from pyvelo.config.pipeline import ConfigPipeline
 from pyvelo.config.resolver import ResolutionError, ResolverRegistry
 from pyvelo.config.resolvers.edge import EdgeResolver
 from pyvelo.config.state import ConfigState
+from pyvelo.core import ConfigContext
 from pyvelo.core.layers import Profile
 from pyvelo.testing import MockVcoClient, make_firewall_module, make_module_json
 
@@ -330,3 +334,80 @@ async def test_the_mock_client_holds_the_segment_it_answers_as_an_object() -> No
     assert (held["name"], held["type"]) == (segment.name, "REGULAR")
     # A segment is not a service: the services listing leaves it out.
     assert await listed_services(client) == []
+
+
+# --- the config level of each module of an edge stack -------------------------
+
+_EDGE_CONFIG_ID, _PROFILE_CONFIG_ID = 10, 20
+_LEVELED: dict[str, dict[str, Any]] = {
+    "deviceSettings": {"lan": {"networks": [], "interfaces": []}, "segments": []},
+    "WAN": {"links": []},
+    "firewall": {"segments": []},
+    "QOS": {"segments": []},
+}
+
+
+def _stack_rows() -> list[dict[str, object]]:
+    """An edge configuration and its profile, each with the four modules above."""
+
+    def config(config_id: int, first: int) -> dict[str, object]:
+        modules = [
+            make_module_json(
+                name,
+                copy.deepcopy(data),
+                module_id=first + i,
+                configuration_id=config_id,
+            )
+            for i, (name, data) in enumerate(_LEVELED.items())
+        ]
+        return {"id": config_id, "name": f"c{config_id}", "modules": modules}
+
+    return [config(_EDGE_CONFIG_ID, 1), config(_PROFILE_CONFIG_ID, 11)]
+
+
+def _levels(
+    config: EdgeConfiguration | EnterpriseConfigurationProfile,
+) -> list[tuple[str, ConfigContext | None]]:
+    assert config.modules is not MISSING
+    return [(str(m.name), m.config_context) for m in config.modules]
+
+
+def _all_at(level: ConfigContext) -> list[tuple[str, ConfigContext | None]]:
+    return [(name, level) for name in _LEVELED]
+
+
+class _AnswersTheStackAsParsed(MockVcoClient):
+    """A client that answers the stack itself, parsed with no config level set."""
+
+    @override
+    async def get_edge_configuration_stack(
+        self, request: GetEdgeConfigurationStack
+    ) -> GetEdgeConfigurationStackResult:
+        del request
+        return GetEdgeConfigurationStackResultModel.model_validate(_stack_rows()).root
+
+
+@pytest.mark.asyncio
+async def test_every_module_of_a_loaded_edge_has_its_layers_level() -> None:
+    state = await ConfigPipeline(_AnswersTheStackAsParsed()).load(42)
+
+    assert state.edge_config is not None
+    assert _levels(state.edge_config) == _all_at(ConfigContext.EDGE)
+    assert _levels(state.profile_config) == _all_at(ConfigContext.PROFILE)
+
+
+@pytest.mark.asyncio
+async def test_every_module_of_the_stack_the_client_reads_has_its_layers_level() -> (
+    None
+):
+    client = MockVcoClient()
+    for row in _stack_rows():
+        client.store.add_configuration(row)
+    client.store.add_stack(_EDGE_CONFIG_ID, _PROFILE_CONFIG_ID)
+
+    edge, profile = await client.get_edge_configuration_stack(
+        GetEdgeConfigurationStack(edge_id=42)
+    )
+
+    assert _levels(edge) == _all_at(ConfigContext.EDGE)
+    assert _levels(profile) == _all_at(ConfigContext.PROFILE)

@@ -1427,7 +1427,10 @@ version changed.
 
 A later save rebases them too: a profile's QoS and firewall that a device
 settings write may have changed are written with a rebase the next time they
-are saved, however many saves later (`state.rebase_on_write` names them). So a
+are saved, however many saves later (`state.rebase_on_write` names them). That
+holds also after a device settings write that raised but may be stored:
+`WriteNotAppliedError`, or `WriteOutcomeUnknownError` unless the VCO said it
+refused the version; a `ConfigConflictError` stored nothing and names none. So a
 change another writer made to one of them in the meantime is put together with
 your edits and listed in `SaveResult.server_changes`, instead of raising
 `ConfigConflictError`; only a change at a path you edited is still a conflict.
