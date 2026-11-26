@@ -11,12 +11,14 @@ import uuid
 from typing import Any
 
 import pytest
+from pydantic import ValidationError
 from pyvelo.client.models.configuration.device_settings.root import EdgeSnmpV2c
 from pyvelo.client.models.configuration.device_settings.routed_interface import (
     RoutedInterfaceCell,
     RoutedInterfaceCellular,
 )
 from pyvelo.client.models.configuration.device_settings.segment import (
+    GatewayListItem,
     SegmentHandoffGateways,
 )
 from pyvelo.client.models.enterprise.service_data import LoadSharingMethod
@@ -301,6 +303,12 @@ def test_the_gateway_list_is_unchanged_by_no_edit_and_by_an_append() -> None:
         {"logicalId": f"gateway{u(0x98)}", "ipsecDetail": {}},
     ]
     assert sent["gateways"] == HANDOFF["gateways"]
+
+
+@pytest.mark.parametrize("stored", [None, 5, [], {}])
+def test_a_gateway_id_that_is_not_text_is_a_validation_error(stored: object) -> None:
+    with pytest.raises(ValidationError, match="a gateway's logical ID is text"):
+        _ = GatewayListItem.model_validate({"logicalId": stored})
 
 
 def cellular_of(module: DeviceSettingsConfigurationModule) -> RoutedInterfaceCellular:

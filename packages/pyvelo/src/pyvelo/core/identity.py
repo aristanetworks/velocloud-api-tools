@@ -327,9 +327,10 @@ _GATEWAY_PREFIX = "gateway"
 def _parse_gateway_logical_id(v: Any) -> uuid.UUID:
     if isinstance(v, uuid.UUID):
         return v
-    if isinstance(v, str) and v.startswith(_GATEWAY_PREFIX):
-        return uuid.UUID(v[len(_GATEWAY_PREFIX) :])
-    return uuid.UUID(v)
+    if isinstance(v, str):
+        return uuid.UUID(v.removeprefix(_GATEWAY_PREFIX))
+    message = "a gateway's logical ID is text: 'gateway' followed by a UUID, or a UUID"
+    raise ValueError(message)
 
 
 type GatewayLogicalId = Annotated[
