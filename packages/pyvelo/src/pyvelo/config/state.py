@@ -637,8 +637,8 @@ class ConfigState:
     """The new modules an insert was sent for whose answer was not read: the VCO
     may hold them. The next save reads the configuration before it inserts one
     of them. ``ConfigPipeline.revert`` of one reads the configuration too, and
-    deletes the module it finds there when it is the one this state holds
-    (``revert_module`` refuses it: it sends nothing)."""
+    deletes the module it finds there when it holds exactly what this state's
+    module holds (``revert_module`` refuses it: it sends nothing)."""
     _made_into_unset: list[tuple[AnyStoredModule, bool]] = field(
         default_factory=list, repr=False
     )

@@ -17,7 +17,10 @@ from pyvelo.client.enums.profiles import GetConfigurationWith
 from pyvelo.client.exceptions import (
     ComposedModuleError,
     DetachedObjectError,
+    FixedListError,
+    LossyFieldError,
     ModuleWriteError,
+    RefsNotLoadedError,
     UnboundError,
     VcoOperationError,
     WriteOutcomeUnknownError,
@@ -26,7 +29,7 @@ from pyvelo.client.hub_services import missing_services
 from pyvelo.client.models.configuration.common import SegmentMetadata
 from pyvelo.client.models.configuration.qos.rule import QosRule
 from pyvelo.client.models.configuration.ref_owners import ref_only_values
-from pyvelo.client.module_check import ModuleWrite
+from pyvelo.client.module_check import ModuleWrite, is_vco_assigned
 from pyvelo.client.module_write import ModulePlan, with_hub_rows
 from pyvelo.client.operations.configuration import (
     check_found_insert,
@@ -35,6 +38,7 @@ from pyvelo.client.operations.configuration import (
 from pyvelo.client.protocol import VcoClientProtocol
 from pyvelo.client.schemas.configuration import (
     AnyStoredModule,
+    ConfigurationModuleBase,
     DeleteConfigurationModule,
     DeviceSettingsConfigurationModule,
     EdgeConfiguration,
@@ -950,7 +954,10 @@ class ConfigPipeline:
             return state
 
     async def revert(self, state: ConfigState, *, module: str) -> ConfigState:
-        """Take back every edit to *module* of *state*, in memory.
+        """Take back every edit to *module* of *state*.
+
+        This is done in memory. The one exception is a new module whose insert
+        may be stored, which is deleted on the VCO when it is this state's.
 
         The module is put back as the VCO last gave it: as loaded, or, after a
         save or a write error that left the module as stored, that one. Every
@@ -966,17 +973,33 @@ class ConfigPipeline:
         taken from the state before belong to the module taken out and are
         detached, as after a save. Nothing is sent, except for a new module
         whose insert may have reached the VCO (``state.unconfirmed_inserts``):
-        the configuration is read for a module of its name, as the repeated
-        insert of a save reads it. With none there, the module is removed and
-        nothing else is sent. One that is this state's module, checked as a
-        save checks an insert's answer, is deleted
-        (``configuration/deleteConfigurationModule``), and then the module is
-        removed; either way its name leaves ``state.unconfirmed_inserts``. One
-        that is not (another writer's, or the module was edited after the
-        insert was sent) is not deleted: ``ValueError``, with nothing changed;
-        save again or load the state again then. An error of the read or the
-        delete, or an answer that says no row was deleted
-        (``VcoOperationError``), leaves the state as it was, and ``revert`` can
+        the module is planned, and the configuration is read for a module of
+        its name, as the repeated insert of a save reads it. Of several rows of
+        the name, only the last inserted (the highest ID) is looked at and
+        deleted; an older one stays on the VCO. With none there, the module is
+        removed and nothing else is sent. A stored module is deleted
+        (``configuration/deleteConfigurationModule``) only when it holds
+        exactly what this state's new module holds: nothing the plan inserts
+        is missing or different, and nothing more, apart from the values the
+        VCO itself assigns (such as a firewall rule's logical ID). The module
+        is then removed. Either way its name leaves
+        ``state.unconfirmed_inserts``.
+
+        Anything else is refused with ``ValueError``, with nothing deleted and
+        nothing changed. That covers another writer's module, a module this
+        state edited after the insert was sent, and a stored module holding
+        values the state's lacks, so a VCO that adds values of its own to a
+        module as it inserts it, at keys the library does not mark as the
+        VCO's, makes ``revert`` refuse. The way on is to save
+        again or to load the state again. It also refuses a new module that
+        plans nothing when a module of the name is stored, since there is no
+        change to tell the two apart by; load the state again then. A module
+        that cannot be planned (``LossyFieldError`` and the like, as the cause)
+        is refused before anything is read; load the state again. A read that
+        does not parse (``WriteOutcomeUnknownError``), any other error of the
+        read or the delete, and a delete answered with an error or a row
+        count of 0 (``VcoOperationError``; an answer with no count is taken as
+        done) all propagate and leave the state as it was, so ``revert`` can
         be called again. The layer a state does not save is not reverted.
 
         It takes back edits, not what a save already did on the VCO: a role
@@ -1010,15 +1033,17 @@ class ConfigPipeline:
     ) -> None:
         """Delete new *module* on the VCO, where an insert of it may be stored.
 
-        The configuration is read for a module of its name as the repeated
-        insert of a save reads it (``find_named_module``). With none there,
-        nothing else is sent. One that is *module* as this state plans it
-        (``check_found_insert``) is deleted. The state is not changed.
+        The module is planned first (``_plan_to_compare``). Then the
+        configuration is read for a module of its name as the repeated insert
+        of a save reads it (``find_named_module``). With none there, nothing
+        else is sent. One that holds exactly what *module* holds
+        (``_require_the_states``) is deleted. The state is not changed.
 
-        Raises ``ValueError`` for a pipeline with no client, and, with only the
-        read sent, for a module found that is not this state's; an error of the
-        read or of the delete propagates, and so does ``VcoOperationError`` for
-        an answer that says no row was deleted (``_check_deleted``).
+        Raises ``ValueError`` for a pipeline with no client, for a module that
+        cannot be planned (nothing sent), and, with only the read sent, for a
+        module found that is not this state's; an error of the read or of the
+        delete propagates, and so does ``VcoOperationError`` for an answer that
+        says the delete failed (``_check_deleted``).
         """
         client = self._client
         if client is None:
@@ -1032,25 +1057,14 @@ class ConfigPipeline:
                 "deletes the module it finds there; or save again, which reads the "
                 "configuration before it inserts; or load the state again"
             )
-        plan = state.plan_module(module)
+        plan = _plan_to_compare(state, module)
         enterprise_id = state.resolver_context.enterprise_id
         found = await find_named_module(
             client, module, plan, enterprise_id=enterprise_id
         )
         if found is None:
             return
-        try:
-            _ = check_found_insert(module, plan, found)
-        except ModuleWriteError as error:
-            raise ValueError(
-                f"{module.name}: the VCO holds a module of this name (module "
-                f"{found.id_}) that is not the one this state holds "
-                f"({_how_it_differs(error)}), so it was not deleted: deleting it "
-                "could remove another writer's module. To go on, save again, which "
-                "reads the configuration before it inserts and goes on from the "
-                "module it finds there, or load the state again, which then holds "
-                "that module as stored"
-            ) from error
+        _require_the_states(module, plan, found)
         answer = await client.delete_configuration_module(
             DeleteConfigurationModule(
                 id_=found.id_,
@@ -2763,35 +2777,110 @@ async def _write_module(  # noqa: PLR0913 (existing: split it when it next chang
 _SHOWN_PATHS: Final = 3
 """How many paths a refusal of a module found by name names."""
 
+_PLAN_ERRORS: Final = (
+    LossyFieldError,
+    FixedListError,
+    RefsNotLoadedError,
+    ResolutionError,
+)
+"""What ``ConfigState.plan_module`` raises for the module's own content."""
+
+
+def _plan_to_compare(state: ConfigState, module: AnyStoredModule) -> ModulePlan:
+    """The plan of *module*, to compare a module the VCO holds with.
+
+    Raises ``ValueError``, from the plan's error, when the module's own content
+    cannot be planned; ``ResolverNotLoadedError`` (a resolver the state has not
+    loaded) and any other error propagate.
+    """
+    try:
+        return state.plan_module(module)
+    except _PLAN_ERRORS as error:
+        if isinstance(error, ResolverNotLoadedError):
+            raise
+        raise ValueError(
+            f"{module.name}: an insert of this module may have reached the VCO, "
+            f"and this state's module cannot be planned ({error}), so it cannot "
+            "be compared with a module the VCO may hold. Nothing was read or "
+            "deleted. To go on, load the state again, which then holds the "
+            "module as the VCO stores it, or none"
+        ) from error
+
+
+def _require_the_states(
+    module: AnyStoredModule, plan: ModulePlan, found: ConfigurationModuleBase
+) -> None:
+    """Raise ``ValueError`` unless *found* holds exactly what *module* holds.
+
+    That is, *plan* is an insert, nothing it inserts is missing or different
+    in *found*, and the check reports no server change but values the VCO
+    assigns itself (``is_vco_assigned``, such as a firewall rule's logical
+    ID): nothing more.
+    """
+    if plan.operation != "insert":
+        raise ValueError(
+            f"{module.name}: the VCO holds a module of this name (module "
+            f"{found.id_}), and this state's module holds nothing a save would "
+            "insert, so it cannot be told whether the stored module is the one "
+            "this state sent, and it was not deleted. To go on, load the state "
+            "again, which then holds that module as stored"
+        )
+    try:
+        write = check_found_insert(module, plan, found)
+    except ModuleWriteError as error:
+        raise ValueError(
+            _not_this_states(module.name, found.id_, _how_it_differs(error))
+        ) from error
+    more = [c for c in write.server_changes if not is_vco_assigned(module, plan, c)]
+    if more:
+        paths = [str(change.path) for change in more]
+        raise ValueError(
+            _not_this_states(
+                module.name, found.id_, f"it also holds {_some_paths(paths)}"
+            )
+        )
+
+
+def _not_this_states(name: str, module_id: int, what: str) -> str:
+    """The refusal to delete module *module_id*, which is not this state's."""
+    return (
+        f"{name}: the VCO holds a module of this name (module {module_id}) that "
+        f"is not the one this state holds ({what}), so it was not deleted: "
+        "deleting it could remove another writer's module. To go on, save again, "
+        "which reads the configuration before it inserts and goes on from the "
+        "module it finds there, or load the state again, which then holds that "
+        "module as stored"
+    )
+
+
+def _some_paths(paths: Sequence[str]) -> str:
+    """The first few of *paths*, each once, and how many more there are."""
+    distinct = list(dict.fromkeys(paths))
+    more = len(distinct) - _SHOWN_PATHS
+    tail = f" and {more} more" if more > 0 else ""
+    return f"{', '.join(distinct[:_SHOWN_PATHS])}{tail}"
+
 
 def _how_it_differs(error: ModuleWriteError) -> str:
     """In a few words, why the module *error* was raised for is not this state's."""
     if isinstance(error, WriteOutcomeUnknownError):
         return error.detail
-    paths = list(dict.fromkeys(str(change.path) for change in error.lost_edits))
+    paths = [str(change.path) for change in error.lost_edits]
     if not paths:
         return "it does not hold what this state's module holds"
-    more = len(paths) - _SHOWN_PATHS
-    tail = f" and {more} more" if more > 0 else ""
-    return f"it differs at {', '.join(paths[:_SHOWN_PATHS])}{tail}"
+    return f"it differs at {_some_paths(paths)}"
 
 
 def _check_deleted(answer: RowsModifiedConfirmation, module_id: int) -> None:
-    """Raise ``VcoOperationError`` unless *answer* says module *module_id* was deleted.
+    """Raise ``VcoOperationError`` when *answer* says the delete of *module_id* failed.
 
-    The read before the delete found the module, so an answer of no row is an
-    error, as is one with no row count. Calling ``revert`` again reads the
-    configuration again and goes on from what it holds.
+    It failed when the answer carries an error, or gives a row count of 0: the
+    read before the delete found the module. An answer with no row count is
+    taken as the delete done. Calling ``revert`` again reads the configuration
+    again and goes on from what it holds.
     """
     if answer.error:
         raise VcoOperationError("delete configuration module", answer.error)
-    if answer.rows is None:
-        raise VcoOperationError(
-            "delete configuration module",
-            f"the answer holds no row count, so it is not known whether module "
-            f"{module_id} was deleted; revert again, which reads the "
-            "configuration first",
-        )
     if answer.rows == 0:
         raise VcoOperationError(
             "delete configuration module",

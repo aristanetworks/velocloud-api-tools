@@ -66,6 +66,7 @@ from pyvelo.core.response_check import (
     Rewrites,
     ServerChange,
     check_response,
+    is_owned_path,
     matches,
 )
 
@@ -318,6 +319,22 @@ def data_model(module: ConfigurationModuleBase) -> type[VcoModel] | None:
     """The class of the module's data, when it is a model."""
     data: object = getattr(module, "data", None)
     return type(data) if isinstance(data, VcoModel) else None
+
+
+def is_vco_assigned(
+    module: ConfigurationModuleBase, plan: ModulePlan, change: ServerChange
+) -> bool:
+    """Whether *change*, a server change of a write of *plan*, is a value the VCO owns.
+
+    That is a value the VCO assigns itself, such as a firewall rule's logical
+    ID: a key of the module's data the check does not compare
+    (``is_owned_path``, with the module's ``MODULE_REWRITES``). A change in
+    the refs is not one.
+    """
+    if change.part != "data":
+        return False
+    rewrites = MODULE_REWRITES.get(plan.name, Rewrites())
+    return is_owned_path(change.path, data_model(module), rewrites)
 
 
 def has_checkable_change(module: ConfigurationModuleBase, plan: ModulePlan) -> bool:

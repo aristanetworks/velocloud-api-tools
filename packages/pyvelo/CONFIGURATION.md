@@ -144,17 +144,30 @@ from the state before are detached, as after a save, and nothing is sent,
 except for a new module whose insert may have reached the VCO after a failed
 save (`state.unconfirmed_inserts`). For that one `revert` reads the
 configuration for a module of its name, as the next save would before it
-inserts: with none there, the module is removed and nothing else is sent; one
-that is the module this state holds (checked as a save checks an insert's
-answer) is deleted with `configuration/deleteConfigurationModule`, and then the
-module is removed. One that is not (another writer's, or this state's module
-was edited after the insert was sent) is not deleted, since that could remove
-another writer's module: `revert` raises `ValueError` and changes nothing, and
-you save again (which goes on from the module it finds) or load the state
-again (which then holds that module as stored). A failed read or delete, or a
-delete answered with no row deleted (`VcoOperationError`), leaves the state as
-it was, and `revert` can be called again. `state.revert_module(name)` sends
-nothing, so it refuses such a module and names `pipeline.revert`.
+inserts. Of several rows of the name, only the last inserted (the highest ID)
+is looked at and deleted; an older one stays on the VCO. With none there, the
+module is removed and nothing else is sent. A stored module is deleted with
+`configuration/deleteConfigurationModule`, and then removed from the state,
+only when it holds exactly what this state's new module holds: nothing missing,
+nothing more, apart from the values the VCO itself assigns (such as a firewall
+rule's logical ID). Any other module of the name is not deleted, since that could
+remove another writer's module: `revert` raises `ValueError` and changes
+nothing. Such a module may be another writer's, one this state edited after
+the insert was sent, or one with values this state's lacks, so a VCO that adds
+values of its own to a module as it inserts it, at keys the library does not
+mark as the VCO's, makes `revert` refuse. You then
+save again (which goes on from the module it finds) or load the state again
+(which then holds that module as stored).
+A new module that plans nothing (its edits were taken out again) gives no
+change to tell the stored module by, so with a module of the name stored
+`revert` refuses too: load the state again, which then holds that module as
+stored. A module that cannot be planned (`LossyFieldError` and the like) is
+refused before anything is read: load the state again. A failed read (also one
+that does not parse, `WriteOutcomeUnknownError`) or delete, or a delete
+answered with an error or a row count of 0 (`VcoOperationError`), leaves the
+state as it was, and `revert` can be called again; an answer with no row count
+is taken as the delete done. `state.revert_module(name)` sends nothing, so it
+refuses such a module and names `pipeline.revert`.
 `revert` takes back edits, not what a save already did: a role step a save
 sent before it stopped (see "Hubs", "When a step fails") stays on the VCO, and
 a state whose device settings edits are taken back plans nothing that mends
@@ -1473,8 +1486,8 @@ against the plan like any write, and nothing is inserted again; with none
 there, the save inserts. A `dry_run` does not read: it plans the insert and
 adds a warning with the code `insert_unconfirmed`. To give up the module
 instead, `pipeline.revert(state, module=...)` reads the configuration in the
-same way and deletes the module it finds there when it is the one this state
-holds (see `revert` above).
+same way and deletes the module it finds there when it holds exactly what this
+state's module holds (see `revert` above).
 
 Known limits:
 
