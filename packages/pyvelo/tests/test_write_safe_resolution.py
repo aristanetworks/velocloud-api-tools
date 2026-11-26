@@ -55,7 +55,7 @@ class Fake:
     def lookup[T](self, key: type[T], name: str, /) -> T:
         if key not in self.tables:
             raise LookupError(f"No resolver registered for {key.__name__}")
-        return cast("T", resolve_name(name, dict(self.tables[key]), key.__name__)[1])
+        return cast("T", resolve_name(name, dict(self.tables[key]), key)[1])
 
     def resolver_for(self, identity_type: type[object], /) -> object | None:
         return self if identity_type in self.tables else None

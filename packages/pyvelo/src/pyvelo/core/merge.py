@@ -65,7 +65,7 @@ from .fields import (
     has_override_flag,
     is_edge_local,
 )
-from .identity import ResolutionError
+from .identity import ResolutionError, ResolverNotLoadedError
 from .layers import Edge, Kind, Layered, field_kind, inner_adapter
 from .owned import ByFlag, Owned, group_of, unwrap
 from .patch import (
@@ -922,7 +922,8 @@ def _resolve_name(
     3. An exact or case-insensitive name match gives what the field's accessor
        reads off the identity.
     4. If the ID type is ``str`` and *name* equals a known ID, *name* is the ID.
-    5. Otherwise the ``ResolutionError`` propagates.
+    5. Otherwise the ``ResolutionError`` propagates, its message after *path*;
+       a ``ResolverNotLoadedError`` propagates as it was raised.
 
     With no resolver registered for the identity type, *name* is returned when
     the ID type is ``str`` or cannot be told (any text may be the ID, and
@@ -940,7 +941,9 @@ def _resolve_name(
             pass
     try:
         identity = resolvers.lookup(resolvable.identity_type, name)
-    except ResolutionError:
+    except ResolverNotLoadedError:
+        raise
+    except ResolutionError as error:
         if id_type is str and _is_known_id(
             resolvers,
             resolvable.identity_type,
@@ -948,6 +951,7 @@ def _resolve_name(
             name,
         ):
             return name
+        error.locate(path)
         raise
     except LookupError as err:
         if id_type is None or id_type is str:

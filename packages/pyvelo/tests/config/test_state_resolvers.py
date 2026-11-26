@@ -167,6 +167,26 @@ async def test_a_name_resolves_in_the_enterprise_of_its_state() -> None:
     assert stored["segmentId"] == 1
 
 
+async def test_an_unknown_segment_name_says_where_it_is_and_wants_no_type() -> None:
+    pipeline = ConfigPipeline(TwoEnterprises())
+    state = await pipeline.load(101, enterprise_id=1)
+
+    with pytest.raises(ResolutionError) as unknown:
+        _ = await pipeline.apply(
+            state,
+            module="device_settings",
+            path="lan.networks",
+            patch={"100": {"segment_id": "Gest"}},
+        )
+
+    error = unknown.value
+    assert error.identity_type is SegmentIdentity
+    assert error.candidates == ["Guest"]
+    assert str(error.path).endswith("segment_id")
+    assert str(error).startswith(f"{error.path}: Unknown segment: 'Gest'.")
+    assert error.wanted is None
+
+
 async def test_states_loaded_at_once_each_resolve_in_their_own_enterprise() -> None:
     pipeline = ConfigPipeline(TwoEnterprises())
 

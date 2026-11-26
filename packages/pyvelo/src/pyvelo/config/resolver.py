@@ -4,7 +4,7 @@ import contextlib
 import copy
 import difflib
 import uuid
-from collections.abc import Callable, Collection, Generator, Iterable
+from collections.abc import Callable, Collection, Generator
 from dataclasses import dataclass, fields, is_dataclass
 from typing import (
     Any,
@@ -18,7 +18,12 @@ from typing import (
 )
 
 from pyvelo.client.protocol import VcoClientProtocol
-from pyvelo.core.identity import IdentityKey, ResolverNotLoadedError, entity_label
+from pyvelo.core.identity import (
+    IdentityKey,
+    ResolverNotLoadedError,
+    entity_label,
+    resolution_error,
+)
 
 # ResolutionError lives in pyvelo.core.identity; re-exported so this import path keeps
 # working.
@@ -120,7 +125,7 @@ class BaseResolver[IdentityT]:
     def lookup(self, name: str) -> IdentityT:
         """The identity loaded under *name*, matched exactly or ignoring case."""
         self._require_loaded()
-        _, identity = resolve_name(name, self._by_name, self._entity_label)
+        _, identity = resolve_name(name, self._by_name, self.identity_type)
         return identity
 
     def lookup_key(self, key: IdentityKey[IdentityT]) -> IdentityT:
@@ -471,11 +476,11 @@ class ResolverRegistry:
 def resolve_name[T](
     name: str,
     by_name: dict[str, T],
-    entity_label: str,
+    identity_type: type,
     *,
     fuzzy: bool = False,
 ) -> tuple[str, T]:
-    """Resolve a name on an exact or case-insensitive match.
+    """Resolve a name of an *identity_type* on an exact or case-insensitive match.
 
     Returns ``(canonical_name, value)`` on success.
 
@@ -483,8 +488,8 @@ def resolve_name[T](
     1. Exact match
     2. Case-insensitive match
     3. Anything else raises ``ResolutionError`` whose ``candidates`` hold the
-       close matches. With ``fuzzy=True`` a single close match is accepted
-       instead of raising.
+       close matches, else the names of *by_name* its message lists. With
+       ``fuzzy=True`` a single close match is accepted instead of raising.
     """
     # 1. Exact match
     if name in by_name:
@@ -506,51 +511,4 @@ def resolve_name[T](
             return matched, by_name[matched]
 
     # No match, or a near miss that was not opted into: raise with candidates
-    raise resolution_error(entity_label, name, by_name.keys())
-
-
-_MAX_AVAILABLE_SHOWN = 20
-"""How many of the available names an unknown-name error lists, at most."""
-
-
-def resolution_error(
-    entity_label: str,
-    name: str,
-    available: Iterable[str],
-    *,
-    n: int = 5,
-    cutoff: float = 0.6,
-) -> ResolutionError:
-    """Build a ResolutionError with fuzzy 'did you mean?' suggestions.
-
-    Uses case-insensitive similarity matching via ``difflib.get_close_matches``
-    to suggest the most likely intended names. Returns a ``ResolutionError``
-    (subclass of ``KeyError`` for backwards compatibility).
-    """
-    available_list = sorted(available)
-
-    # Case-insensitive matching: build lowercase -> original map
-    lower_map = {k.lower(): k for k in available_list}
-    suggestions = difflib.get_close_matches(
-        name.lower(), lower_map.keys(), n=n, cutoff=cutoff
-    )
-    original_suggestions = [lower_map[s] for s in suggestions]
-
-    parts = [f"Unknown {entity_label}: {name!r}."]
-    if original_suggestions:
-        formatted = "\n".join(f"  - {s}" for s in original_suggestions)
-        parts.append(f"Did you mean:\n{formatted}")
-    elif len(available_list) > _MAX_AVAILABLE_SHOWN:
-        shown = ", ".join(available_list[:_MAX_AVAILABLE_SHOWN])
-        parts.append(
-            f"Available ({len(available_list)} total, "
-            f"showing first {_MAX_AVAILABLE_SHOWN}): {shown}"
-        )
-    else:
-        parts.append(f"Available: {', '.join(available_list)}")
-    return ResolutionError(
-        name=name,
-        identity_type=entity_label,
-        candidates=original_suggestions,
-        message="\n".join(parts),
-    )
+    raise resolution_error(identity_type, name, by_name.keys())

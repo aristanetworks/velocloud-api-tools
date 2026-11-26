@@ -2681,7 +2681,7 @@ def _to_load(error: ResolverNotLoadedError, loaded: set[type]) -> type:
     did not give the plan what it needs.
     """
     kind = error.identity_type
-    if not isinstance(kind, type) or kind in loaded:
+    if kind in loaded:
         raise error
     loaded.add(kind)
     return kind

@@ -316,20 +316,22 @@ def test_a_direct_plan_lets_the_not_loaded_error_through() -> None:
     assert error.value.identity_type is NetworkServiceIdentity
 
 
+class NeverLoads(NetworkServiceResolver):
+    loads: ClassVar[int] = 0
+
+    @property
+    @override
+    def loaded(self) -> bool:
+        return False
+
+    @override
+    async def _load(self, context: ResolverContext) -> None:
+        del context
+        type(self).loads += 1
+
+
 async def test_a_second_not_loaded_error_for_the_same_type_propagates() -> None:
-    class NeverLoads(NetworkServiceResolver):
-        loads: ClassVar[int] = 0
-
-        @property
-        @override
-        def loaded(self) -> bool:
-            return False
-
-        @override
-        async def _load(self, context: ResolverContext) -> None:
-            del context
-            type(self).loads += 1
-
+    NeverLoads.loads = 0
     pipeline, client, state = await loaded_profile()
     state.resolvers.register(NeverLoads(client))
     primary_provider(state).service = uuid.UUID(DNS_A)
@@ -349,6 +351,40 @@ async def test_a_second_not_loaded_error_for_the_same_type_propagates() -> None:
     assert NeverLoads.loads == 3  # one load per call, never two
     assert client.update_requests == []
     assert primary_provider(state).service == uuid.UUID(DNS_A)
+
+
+async def test_an_unknown_provider_name_says_where_it_is() -> None:
+    pipeline, _, state = await loaded_profile()
+
+    with pytest.raises(ResolutionError) as unknown:
+        _ = await pipeline.apply(
+            state,
+            module="deviceSettings",
+            segment="Global Segment",
+            patch=provider_patch("dns-x"),
+        )
+
+    error = unknown.value
+    assert error.identity_type is NetworkServiceIdentity
+    assert str(error.path) == str(OWNER)
+    assert str(error).startswith(f"{OWNER}: Unknown network service")
+
+
+async def test_a_not_loaded_error_reaches_apply_as_it_was_raised() -> None:
+    pipeline, client, state = await loaded_profile()
+    state.resolvers.register(NeverLoads(client))
+
+    with pytest.raises(ResolverNotLoadedError) as not_loaded:
+        _ = await pipeline.apply(
+            state,
+            module="deviceSettings",
+            segment="Global Segment",
+            patch=provider_patch("dns-a"),
+        )
+
+    assert type(not_loaded.value) is ResolverNotLoadedError
+    assert not_loaded.value.path is None
+    assert str(not_loaded.value).startswith("The NetworkServiceIdentity lookups")
 
 
 async def test_plan_warnings_reach_the_plan_and_the_save_result() -> None:

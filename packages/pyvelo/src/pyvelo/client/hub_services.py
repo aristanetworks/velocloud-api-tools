@@ -340,7 +340,7 @@ def fill_services(
         )
         if service is None:
             raise HubServiceNotFoundError(
-                hub=hub_name(entry), segment=_segment_name(segment), path=str(path)
+                hub=hub_name(entry), segment=_segment_name(segment), path=path
             )
         found.append((entry, service.logical_id))
     for entry, logical_id in found:
@@ -373,7 +373,7 @@ def missing_service_error(
         return HubServiceNotFoundError(
             hub=hub,
             segment=name if isinstance(name, str) else "",
-            path=str(path),
+            path=path,
             message=(
                 f"{path} names the hub {hub!r} and no service for it: the row "
                 "that goes with the rule points at the hub's service for this "

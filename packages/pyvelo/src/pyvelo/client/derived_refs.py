@@ -278,6 +278,7 @@ def _unknown_identity(owner: RefOwner, caught: ResolutionError) -> ResolutionErr
             f"{owner.path} names the {label} {owner.value}, which the VCO does "
             f"not have, so the row it goes with cannot be added. {advice}"
         ),
+        path=owner.path,
     )
 
 
@@ -316,6 +317,7 @@ def _wrong_service_type(
             "cannot use. Give the name or the logical ID of a service of type "
             f"{wanted!r}: {patch_text(owner.path)} sets it."
         ),
+        path=owner.path,
     )
 
 
@@ -349,6 +351,7 @@ def _segment_object_id(
                 "the row cannot be added. Add the segment to the profile "
                 "first, or use one that exists."
             ),
+            path=owner.path,
         ) from caught
 
 
@@ -359,14 +362,14 @@ def _no_service(
     error = HubServiceNotFoundError(
         hub=hub_name(owner.holder),
         segment=owner.segment_name or str(owner.segment_id),
-        path=str(owner.path),
+        path=owner.path,
     )
     if hub_services is not None:
         return error
     return HubServiceNotFoundError(
         hub=error.hub,
         segment=error.segment,
-        path=error.path,
+        path=owner.path,
         message=(
             f"{error} No device settings of the profile were given to look "
             "in: pass the profile's device settings module as "

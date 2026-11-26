@@ -91,7 +91,11 @@ the identity registered under that ID, also when another identity of the same na
 registered after it. For `lookup` and `resolve`, a type with no registered resolver
 raises `LookupError`, which is not a `ResolutionError`; `lookup_by` raises
 `ResolverNotLoadedError` for it. A lookup that needs a load not yet done raises
-`ResolverNotLoadedError`.
+`ResolverNotLoadedError`. A `ResolutionError` has `name`, `identity_type` (always the
+identity class), `candidates` (the names its message lists), `path` (the field, when
+the lookup was for a field of a patch or a plan; else `None`) and `wanted` (the type of
+service a provider field takes; else `None`). One raised while a patch is merged starts
+with the field's path, as a `PatchError` does.
 
 ## Writing a configuration module
 

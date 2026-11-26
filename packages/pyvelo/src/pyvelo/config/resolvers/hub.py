@@ -16,13 +16,14 @@ from pyvelo.client.schemas.enterprise import (
     GetEnterpriseEdgeList,
     GetEnterpriseServices,
 )
-from pyvelo.config.resolver import BaseResolver, ResolverContext, resolution_error
+from pyvelo.config.resolver import BaseResolver, ResolverContext
 from pyvelo.core.identity import (
     HubIdentity,
     HubLogicalId,
     HubName,
     IdentityKey,
     ResolutionError,
+    resolution_error,
 )
 
 
@@ -95,7 +96,7 @@ class HubResolver(BaseResolver[HubIdentity]):
                         "the cluster instead."
                     ),
                 )
-            raise resolution_error(self._entity_label, name, self._by_name.keys())
+            raise resolution_error(HubIdentity, name, self._by_name.keys())
         listed = ", ".join(f"a {_kind_label(h)} ({h.logical_id})" for h in named)
         raise ResolutionError(
             name=name,

@@ -4,7 +4,7 @@ from typing import ClassVar, Self, override
 
 from pyvelo.client.protocol import VcoClientProtocol
 from pyvelo.client.schemas.enterprise import GetEnterpriseServices
-from pyvelo.config.resolver import BaseResolver, ResolverContext, resolution_error
+from pyvelo.config.resolver import BaseResolver, ResolverContext
 from pyvelo.core.identity import (
     IdentityKey,
     NetworkServiceIdentity,
@@ -12,6 +12,7 @@ from pyvelo.core.identity import (
     NetworkServiceName,
     NetworkServiceObjectId,
     ResolutionError,
+    resolution_error,
 )
 
 
@@ -50,7 +51,7 @@ class NetworkServiceResolver(BaseResolver[NetworkServiceIdentity]):
         if len(named) == 1:
             return named[0]
         if not named:
-            raise resolution_error(self._entity_label, name, self._by_name.keys())
+            raise resolution_error(NetworkServiceIdentity, name, self._by_name.keys())
         listed = ", ".join(
             f"a service of type {s.type_!r} ({s.logical_id})" for s in named
         )
