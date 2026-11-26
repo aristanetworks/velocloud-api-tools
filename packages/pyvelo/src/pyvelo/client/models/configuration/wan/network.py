@@ -34,6 +34,7 @@ class WanNetwork(VcoModel):
     # Cellular/Wireless specific fields
     apn: str | None | MISSING = MISSING
     dial_number: str | None | MISSING = MISSING
-    isp_key: str | None | MISSING = MISSING
+    # No VCO was seen to store a value here; marked in case one holds a credential.
+    isp_key: Annotated[str | None | MISSING, Secret()] = MISSING
     username: str | None | MISSING = MISSING
     password: Annotated[str | None | MISSING, Secret()] = MISSING

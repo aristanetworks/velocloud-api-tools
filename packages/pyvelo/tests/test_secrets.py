@@ -27,6 +27,7 @@ from pyvelo.client.schemas.configuration import (
     DeviceSettingsConfigurationModule,
     FirewallConfigurationModule,
     GetConfiguration,
+    WanConfigurationModule,
 )
 from pyvelo.core import (
     DefaultingModel,
@@ -354,6 +355,7 @@ SECRET_FIELDS = frozenset(
         "RoutedInterfaceCellular.sim_pin",
         "RoutedInterfaceOspf.authentication_passphrase",
         "SnmpV3User.passphrase",
+        "WanNetwork.isp_key",
         "WanNetwork.password",
     }
 )
@@ -363,7 +365,6 @@ NOT_SECRET = frozenset(
         "CssIpsecSiteData.psk_type",
         "Md5AuthKey.key_number",
         "SegmentBgp.uplink_community",
-        "WanNetwork.isp_key",
     }
 )
 LOOKS_SECRET = re.compile(
@@ -720,3 +721,31 @@ def test_hide_secrets_walks_a_tuple_as_it_walks_a_list() -> None:
     assert hide_secrets(
         DeviceSettingsData, Path(("snmp", "snmpv2c")), {"communityList": ("a", "b")}
     ) == {"communityList": "***"}
+
+
+NETWORK_ID = "00000000-0000-0000-0000-0000000000b1"
+
+
+def test_a_wan_network_s_isp_key_is_hidden_in_a_plan() -> None:
+    network = {
+        "internalId": NETWORK_ID,
+        "logicalId": "00:00:00:00:00:02:0000",
+        "name": "LTE",
+        "interface": "CELL1",
+        "type": "WIRELESS",
+        "addressingVersion": "IPv4",
+        "ispKey": OLD,
+    }
+    raw = {"links": [], "networks": [network]}
+    module = WanConfigurationModule.model_validate(make_module_json("WAN", raw))
+    assert plan_module(module).operation == "none"
+    require_present(module.data.networks)[0].isp_key = NEW
+    plan = plan_module(module)
+    (change,) = plan.changes
+    assert (change.before, change.after) == (OLD, NEW)
+    text = plan.render()
+    assert OLD not in text
+    assert NEW not in text
+    assert f'networks[{NETWORK_ID},IPv4].ispKey: "***" -> "***"' in text
+    path = Path(("networks", Key(f"{NETWORK_ID},IPv4"), "ispKey"))
+    assert hide_secrets(WanData, path, OLD) == "***"
