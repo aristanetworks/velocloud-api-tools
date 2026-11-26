@@ -636,7 +636,9 @@ class ConfigState:
     )
     """The new modules an insert was sent for whose answer was not read: the VCO
     may hold them. The next save reads the configuration before it inserts one
-    of them."""
+    of them. ``ConfigPipeline.revert`` of one reads the configuration too, and
+    deletes the module it finds there when it is the one this state holds
+    (``revert_module`` refuses it: it sends nothing)."""
     _made_into_unset: list[tuple[AnyStoredModule, bool]] = field(
         default_factory=list, repr=False
     )
@@ -861,10 +863,12 @@ class ConfigState:
         :meth:`replace_module` replaces it, or removed, and either way objects
         taken from it before are detached. An intent-level name works.
 
-        Raises ``ValueError`` for an unknown *name*, for a new module whose
+        It sends nothing, so it raises ``ValueError`` for a new module whose
         insert may have reached the VCO (its name is in
-        ``unconfirmed_inserts``), and for a state with no snapshot of the
-        module (``take_snapshot`` was not called).
+        ``unconfirmed_inserts``): ``ConfigPipeline.revert`` reads the
+        configuration for it and deletes it on the VCO. It also raises
+        ``ValueError`` for an unknown *name* and for a state with no snapshot
+        of the module (``take_snapshot`` was not called).
         """
         module = self.find_module(name)
         if module is None:
@@ -874,9 +878,13 @@ class ConfigState:
                 raise ValueError(
                     f"{module.name}: an insert of this module may have reached the "
                     "VCO (a save failed after it was sent), so its edits are not "
-                    "taken back: the state would forget the module, and a later "
-                    "save could insert it a second time. Save again, which reads "
-                    "the configuration before it inserts, or load the state again"
+                    "taken back here, which sends nothing: the state would forget "
+                    "the module, and a later save could insert it a second time. "
+                    'Revert it with `await pipeline.revert(state, module="'
+                    f'{module.name}")`, which reads the configuration and deletes '
+                    "the module on the VCO when it is the one this state holds; or "
+                    "save again, which reads the configuration before it inserts; "
+                    "or load the state again"
                 )
             self.drop_module(module)
             self._detach(module)

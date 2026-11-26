@@ -140,14 +140,29 @@ not the last patch alone, however it was made, and a module the state created
 is removed. No other module is touched and nothing is cascaded: the next
 `plan()` judges what is left, so an edit elsewhere that relied on this module
 is refused there (`SegmentSetError`, `DanglingReferenceError`). Objects taken
-from the state before are detached, as after a save, and nothing is sent.
+from the state before are detached, as after a save, and nothing is sent,
+except for a new module whose insert may have reached the VCO after a failed
+save (`state.unconfirmed_inserts`). For that one `revert` reads the
+configuration for a module of its name, as the next save would before it
+inserts: with none there, the module is removed and nothing else is sent; one
+that is the module this state holds (checked as a save checks an insert's
+answer) is deleted with `configuration/deleteConfigurationModule`, and then the
+module is removed. One that is not (another writer's, or this state's module
+was edited after the insert was sent) is not deleted, since that could remove
+another writer's module: `revert` raises `ValueError` and changes nothing, and
+you save again (which goes on from the module it finds) or load the state
+again (which then holds that module as stored). A failed read or delete, or a
+delete answered with no row deleted (`VcoOperationError`), leaves the state as
+it was, and `revert` can be called again. `state.revert_module(name)` sends
+nothing, so it refuses such a module and names `pipeline.revert`.
 `revert` takes back edits, not what a save already did: a role step a save
 sent before it stopped (see "Hubs", "When a step fails") stays on the VCO, and
 a state whose device settings edits are taken back plans nothing that mends
 it, so after a `SaveStepError` save again instead.
-`revert` raises `ValueError` for a new module whose insert may have reached the
-VCO after a failed save (save again instead) and for a state built without
-`take_snapshot()`.
+`revert` also raises `ValueError` for a state built without `take_snapshot()`,
+and, for a new module whose insert may have reached the VCO, on a pipeline
+with no client (`ConfigPipeline(client=None)`): it needs one to read and
+delete.
 
 A patch is strict and all or nothing:
 
@@ -1456,7 +1471,10 @@ insert carries no version, so the state remembers it
 A module of that name found there is taken as the insert's answer and checked
 against the plan like any write, and nothing is inserted again; with none
 there, the save inserts. A `dry_run` does not read: it plans the insert and
-adds a warning with the code `insert_unconfirmed`.
+adds a warning with the code `insert_unconfirmed`. To give up the module
+instead, `pipeline.revert(state, module=...)` reads the configuration in the
+same way and deletes the module it finds there when it is the one this state
+holds (see `revert` above).
 
 Known limits:
 

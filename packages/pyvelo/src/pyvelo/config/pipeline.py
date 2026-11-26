@@ -19,6 +19,8 @@ from pyvelo.client.exceptions import (
     DetachedObjectError,
     ModuleWriteError,
     UnboundError,
+    VcoOperationError,
+    WriteOutcomeUnknownError,
 )
 from pyvelo.client.hub_services import missing_services
 from pyvelo.client.models.configuration.common import SegmentMetadata
@@ -26,9 +28,14 @@ from pyvelo.client.models.configuration.qos.rule import QosRule
 from pyvelo.client.models.configuration.ref_owners import ref_only_values
 from pyvelo.client.module_check import ModuleWrite
 from pyvelo.client.module_write import ModulePlan, with_hub_rows
+from pyvelo.client.operations.configuration import (
+    check_found_insert,
+    find_named_module,
+)
 from pyvelo.client.protocol import VcoClientProtocol
 from pyvelo.client.schemas.configuration import (
     AnyStoredModule,
+    DeleteConfigurationModule,
     DeviceSettingsConfigurationModule,
     EdgeConfiguration,
     EnterpriseConfigurationProfile,
@@ -103,7 +110,7 @@ from pyvelo.config.state import (
 from pyvelo.config.validation import ValidationError as ValidatorError
 from pyvelo.config.validation import ValidationResult, ValidatorRegistry
 from pyvelo.config.validation_warning import ValidationWarning
-from pyvelo.core import PatchError, effective_dump
+from pyvelo.core import PatchError, RowsModifiedConfirmation, effective_dump
 from pyvelo.core.base import IdentityLookup, IdentityResolver, VcoModel, is_dict
 from pyvelo.core.fields import get_resolvable
 from pyvelo.core.identity import (
@@ -957,8 +964,20 @@ class ConfigPipeline:
         ``SegmentSetError`` for a segment now in two modules of three,
         ``DanglingReferenceError`` for a rule whose hub is gone again. Objects
         taken from the state before belong to the module taken out and are
-        detached, as after a save. Nothing is sent. The layer a state does not
-        save is not reverted.
+        detached, as after a save. Nothing is sent, except for a new module
+        whose insert may have reached the VCO (``state.unconfirmed_inserts``):
+        the configuration is read for a module of its name, as the repeated
+        insert of a save reads it. With none there, the module is removed and
+        nothing else is sent. One that is this state's module, checked as a
+        save checks an insert's answer, is deleted
+        (``configuration/deleteConfigurationModule``), and then the module is
+        removed; either way its name leaves ``state.unconfirmed_inserts``. One
+        that is not (another writer's, or the module was edited after the
+        insert was sent) is not deleted: ``ValueError``, with nothing changed;
+        save again or load the state again then. An error of the read or the
+        delete, or an answer that says no row was deleted
+        (``VcoOperationError``), leaves the state as it was, and ``revert`` can
+        be called again. The layer a state does not save is not reverted.
 
         It takes back edits, not what a save already did on the VCO: a role
         step a save sent before it stopped (``SaveStepError``) stays, and a
@@ -966,15 +985,79 @@ class ConfigPipeline:
         mends it. After a ``SaveStepError``, save again instead.
 
         Returns *state*, changed in place. Holds ``state.lock`` for the whole
-        call, as :meth:`apply` does, and raises ``RuntimeError`` when the
-        calling task holds it already. Raises ``ValueError`` for an unknown
-        *module*, for a new module whose insert may have reached the VCO
-        (``state.unconfirmed_inserts``), and for a state with no snapshot
-        (``take_snapshot`` was not called).
+        call, the read and the delete too, as :meth:`apply` does, and raises
+        ``RuntimeError`` when the calling task holds it already. Raises
+        ``ValueError`` for an unknown *module*, for a state with no snapshot
+        (``take_snapshot`` was not called), and for a new module whose insert
+        may have reached the VCO when this pipeline has no client to read and
+        delete with.
         """
         async with state.lock:
-            state.revert_module(_resolve_module_name(module))
+            name = _resolve_module_name(module)
+            held = state.find_module(name)
+            if (
+                held is not None
+                and held.is_new
+                and held.name in state.unconfirmed_inserts
+            ):
+                await self._delete_inserted(state, held)
+                state.unconfirmed_inserts.discard(held.name)
+            state.revert_module(name)
             return state
+
+    async def _delete_inserted(
+        self, state: ConfigState, module: AnyStoredModule
+    ) -> None:
+        """Delete new *module* on the VCO, where an insert of it may be stored.
+
+        The configuration is read for a module of its name as the repeated
+        insert of a save reads it (``find_named_module``). With none there,
+        nothing else is sent. One that is *module* as this state plans it
+        (``check_found_insert``) is deleted. The state is not changed.
+
+        Raises ``ValueError`` for a pipeline with no client, and, with only the
+        read sent, for a module found that is not this state's; an error of the
+        read or of the delete propagates, and so does ``VcoOperationError`` for
+        an answer that says no row was deleted (``_check_deleted``).
+        """
+        client = self._client
+        if client is None:
+            raise ValueError(
+                f"{module.name}: an insert of this module may have reached the VCO "
+                "(a save failed after it was sent), and this pipeline has no "
+                "client to read the configuration and delete the module with, so "
+                "its edits are not taken back: the state would forget the module, "
+                "and a later save could insert it a second time. Revert it through "
+                "a pipeline with a client, which reads the configuration and "
+                "deletes the module it finds there; or save again, which reads the "
+                "configuration before it inserts; or load the state again"
+            )
+        plan = state.plan_module(module)
+        enterprise_id = state.resolver_context.enterprise_id
+        found = await find_named_module(
+            client, module, plan, enterprise_id=enterprise_id
+        )
+        if found is None:
+            return
+        try:
+            _ = check_found_insert(module, plan, found)
+        except ModuleWriteError as error:
+            raise ValueError(
+                f"{module.name}: the VCO holds a module of this name (module "
+                f"{found.id_}) that is not the one this state holds "
+                f"({_how_it_differs(error)}), so it was not deleted: deleting it "
+                "could remove another writer's module. To go on, save again, which "
+                "reads the configuration before it inserts and goes on from the "
+                "module it finds there, or load the state again, which then holds "
+                "that module as stored"
+            ) from error
+        answer = await client.delete_configuration_module(
+            DeleteConfigurationModule(
+                id_=found.id_,
+                enterprise_id=MISSING if enterprise_id is None else enterprise_id,
+            )
+        )
+        _check_deleted(answer, found.id_)
 
     async def _resolve_segment(
         self, state: ConfigState, name: str, loaded: set[type]
@@ -2675,3 +2758,44 @@ async def _write_module(  # noqa: PLR0913 (existing: split it when it next chang
         resolvers=resolvers,
         profile_device_settings=profile_device_settings,
     )
+
+
+_SHOWN_PATHS: Final = 3
+"""How many paths a refusal of a module found by name names."""
+
+
+def _how_it_differs(error: ModuleWriteError) -> str:
+    """In a few words, why the module *error* was raised for is not this state's."""
+    if isinstance(error, WriteOutcomeUnknownError):
+        return error.detail
+    paths = list(dict.fromkeys(str(change.path) for change in error.lost_edits))
+    if not paths:
+        return "it does not hold what this state's module holds"
+    more = len(paths) - _SHOWN_PATHS
+    tail = f" and {more} more" if more > 0 else ""
+    return f"it differs at {', '.join(paths[:_SHOWN_PATHS])}{tail}"
+
+
+def _check_deleted(answer: RowsModifiedConfirmation, module_id: int) -> None:
+    """Raise ``VcoOperationError`` unless *answer* says module *module_id* was deleted.
+
+    The read before the delete found the module, so an answer of no row is an
+    error, as is one with no row count. Calling ``revert`` again reads the
+    configuration again and goes on from what it holds.
+    """
+    if answer.error:
+        raise VcoOperationError("delete configuration module", answer.error)
+    if answer.rows is None:
+        raise VcoOperationError(
+            "delete configuration module",
+            f"the answer holds no row count, so it is not known whether module "
+            f"{module_id} was deleted; revert again, which reads the "
+            "configuration first",
+        )
+    if answer.rows == 0:
+        raise VcoOperationError(
+            "delete configuration module",
+            f"no row was deleted, though the configuration held module "
+            f"{module_id} when it was read just before; revert again, which "
+            "reads the configuration first",
+        )

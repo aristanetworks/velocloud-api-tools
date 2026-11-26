@@ -515,6 +515,45 @@ def _require_this_module[M: ConfigurationModuleBase](
     return cast("M", stored)  # _not_this_module found it of the class of module
 
 
+async def find_named_module(
+    client: VcoClientBaseProtocol,
+    module: ConfigurationModuleBase,
+    plan: ModulePlan,
+    *,
+    enterprise_id: int | None = None,
+) -> ConfigurationModuleBase | None:
+    """The module of the plan's name the configuration of *module* holds, or None.
+
+    It is read as ``write_module`` with ``if_absent`` reads it before it sends
+    an insert again: one read of the configuration with its modules; of
+    several rows of the name, the one with the highest ID, parsed at the
+    config level of *module*. None when *module* has no ``configuration_id``
+    or the configuration holds no row of the name. Raises
+    ``WriteOutcomeUnknownError`` when the configuration read, or the row
+    found, does not parse; an error of the read request itself propagates.
+    :func:`check_found_insert` says whether the module found is *module*.
+    """
+    return await _read_named(client, module, plan, enterprise_id)
+
+
+def check_found_insert[M: ConfigurationModuleBase](
+    module: M, plan: ModulePlan, found: ConfigurationModuleBase
+) -> ModuleWrite[M]:
+    """*found* as the insert of *plan* for *module*, checked as an insert's answer is.
+
+    It is the check ``write_module`` with ``if_absent`` makes of the module
+    it finds (:func:`find_named_module`): the module's class and
+    configuration, then whether everything the plan inserts is stored, the
+    VCO's own changes aside (``check_module_write``). Returns the write when
+    it is. Raises ``WriteOutcomeUnknownError`` for a module of another class
+    or configuration, and the ``ModuleWriteError`` of ``check_module_write``
+    (``WriteNotAppliedError``, ``RefsDroppedError``) when something the plan
+    inserts is missing or different.
+    """
+    stored = _require_this_module(module, plan, found, answer="row")
+    return check_module_write(module, plan, stored, answer="row")
+
+
 class ConfigurationMixin(Protocol):
     """Operations for configuration/ API endpoints."""
 
