@@ -586,6 +586,8 @@ def test_the_message_says_that_on_an_edge_the_profile_is_edited() -> None:
 
     assert "This is an Edge" in on_edge
     assert "profile's device settings" in on_edge
+    # The Edge state holds the profile as loaded, so the Edge is loaded again.
+    assert "then load the Edge again and redo its edit" in on_edge
     assert "This is an Edge" not in on_profile
     assert "send that patch to the profile's device settings" not in on_profile
     assert "send {" not in unmended

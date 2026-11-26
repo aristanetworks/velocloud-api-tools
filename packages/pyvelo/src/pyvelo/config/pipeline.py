@@ -960,6 +960,11 @@ class ConfigPipeline:
         detached, as after a save. Nothing is sent. The layer a state does not
         save is not reverted.
 
+        It takes back edits, not what a save already did on the VCO: a role
+        step a save sent before it stopped (``SaveStepError``) stays, and a
+        state whose device settings edits are taken back plans nothing that
+        mends it. After a ``SaveStepError``, save again instead.
+
         Returns *state*, changed in place. Holds ``state.lock`` for the whole
         call, as :meth:`apply` does, and raises ``RuntimeError`` when the
         calling task holds it already. Raises ``ValueError`` for an unknown

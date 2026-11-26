@@ -8,6 +8,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, cast, override
 
+from pyvelo.client.enums.configuration import ConfigurationModuleName
+
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
@@ -128,7 +130,9 @@ class SaveStepError(IntentError):
     the names of the modules stored, in order. The error is raised ``from``
     the error of the VCO, and ``save_progress(error)`` gives the modules not
     written. The state keeps its edits: a second ``save`` plans the steps
-    again, skips those in place and sends the rest.
+    again, skips those in place and sends the rest. ``revert`` of the device
+    settings is no way back: it does not undo a step a save sent, and the
+    reverted state plans nothing that mends the role change.
     """
 
     def __init__(  # noqa: PLR0913 (existing: split it when it next changes)
@@ -161,9 +165,15 @@ class SaveStepError(IntentError):
                 f"which failed ({reason})"
             )
         else:
+            # A device settings write the version read found stored is done.
+            before = (
+                ""
+                if ConfigurationModuleName.DEVICE_SETTINGS in self.written
+                else ", before it wrote the device settings"
+            )
             what = (
-                "the save stopped after its steps, before it wrote the device "
-                f"settings, at a request that failed ({reason})"
+                f"the save stopped after its steps{before}, at a request that "
+                f"failed ({reason})"
             )
         sent = (
             "steps sent: " + "; ".join(step.render() for step in self.steps_done)
@@ -187,5 +197,8 @@ class SaveStepError(IntentError):
             "role for a list that the device settings do not hold yet. The "
             "state keeps your edits. Save again with the same state: the next "
             "save plans the steps again, skips those already in place, sends "
-            "the rest, and then writes the modules that are left."
+            "the rest, and then writes the modules that are left. Do not take "
+            "the device settings' edits back with `revert`: it does not "
+            "undo a step a save sent, so the role change stays on the VCO and "
+            "a reverted state plans nothing that mends it."
         )

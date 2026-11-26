@@ -428,8 +428,9 @@ def _mending_text(mending: Sequence[MendingPatch], *, on_edge: bool) -> str:
             text += (
                 " This is an Edge, and the hub lists are its profile's: send that "
                 "patch to the profile's device settings (load the profile, apply "
-                "it there and save the profile), not to the Edge's, and save the "
-                "Edge after."
+                "it there and save the profile), not to the Edge's; then load the "
+                "Edge again and redo its edit, since this Edge state holds the "
+                "profile as it was loaded."
             )
     return text + " Or take back every edit to a module with `revert`."
 

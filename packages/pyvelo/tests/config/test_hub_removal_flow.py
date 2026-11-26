@@ -13,6 +13,7 @@ from typing import Any
 import pytest
 from hub_helpers import (
     HUB_A,
+    HUB_B,
     backhaul_entry,
     backhaul_row,
     backhaul_rule,
@@ -20,7 +21,7 @@ from hub_helpers import (
     hub_row,
 )
 from hub_state import hub_pipeline, hub_profile_state, profile_hub_rows
-from pyvelo.client.exceptions import VcoError
+from pyvelo.client.exceptions import VcoError, WriteNotAppliedError
 from pyvelo.client.hub_services import BACKHAUL_REF
 from pyvelo.config import (
     ConfigPipeline,
@@ -30,7 +31,7 @@ from pyvelo.config import (
     SaveStepError,
     save_progress,
 )
-from pyvelo.core import backhaul_hub_mending, delete
+from pyvelo.core import add, backhaul_hub_mending, delete
 from pyvelo.testing import ModuleStore
 from refs_helpers import CONFIG, DS_ID, QOS_ID, segment_row
 from segment_helpers import GLOBAL, GUEST, ds_entry, firewall_entry, qos_entry
@@ -39,6 +40,9 @@ DS = "deviceSettings"
 QOS = "QOS"
 UPDATE = "configuration/updateConfigurationModule"
 DISABLE_HUB = "edge/disableEdgeForEdgeHub"
+ENABLE_BACKHAUL = "edge/enableEdgeForBackhaul"
+SERVICE_B = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
+SERVICE_B_ID = 602
 SERVICE = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
 SERVICE_ID = 601
 GONE = {HUB_A.name: delete()}
@@ -326,9 +330,165 @@ async def test_a_second_save_finishes_after_a_failed_last_write() -> None:
     assert [s.render() for s in error.steps_done] == [
         "disable hub for Hub-A on segment Guest"
     ]
+    # revert would plan nothing while the VCO has the role change: save again.
+    assert "Do not take the device settings' edits back with `revert`" in str(error)
     assert [m.name for m in state.plan().changed] == [DS]
     store.requests.clear()
     result = await pipeline.save(state)
     assert [o.status for o in result.steps] == ["in_place"]
     assert sent(store) == [(UPDATE, DS_ID)]
+    assert state.plan().changed == ()
+
+
+async def test_a_step_that_fails_after_the_rule_write_is_a_save_step_error() -> None:
+    pipeline, store, state = await removal_and_its_rule()
+    store.fail_calls.add(DISABLE_HUB)
+
+    with pytest.raises(SaveStepError) as failed:
+        _ = await pipeline.save(state)
+
+    error = failed.value
+    assert error.step is not None
+    assert error.step.render() == "disable hub for Hub-A on segment Guest"
+    assert (error.module_name, error.written) == (None, (QOS,))
+    assert sent(store) == [(UPDATE, QOS_ID), (DISABLE_HUB, HUB_A.id)]
+    assert [m.name for m in state.plan().changed] == [DS]
+    result = await pipeline.save(state)
+    assert [o.status for o in result.steps] == ["sent"]
+    assert [w.name for w in result.written] == [DS]
+    assert state.plan().changed == ()
+
+
+async def hub_swap() -> tuple[ConfigPipeline, ModuleStore, ConfigState]:
+    """Guest's rule ``Web`` moves from Hub-A to Hub-B, and Hub-A leaves both lists.
+
+    Hub-B is a hub of Guest as read and becomes its backhaul hub in the same save.
+    """
+    refs = profile_hub_rows(
+        segment_row(GLOBAL[0], GLOBAL[3], GLOBAL[2]),
+        segment_row(GUEST[0], GUEST[3], GUEST[2]),
+        hub_row(
+            HUB_A,
+            service_id=SERVICE_ID,
+            service_logical_id=SERVICE,
+            segment=GUEST,
+            roles=("hub", "backhaul"),
+        ),
+        hub_row(
+            HUB_B,
+            service_id=SERVICE_B_ID,
+            service_logical_id=SERVICE_B,
+            segment=GUEST,
+        ),
+    )
+    backhaul = backhaul_row(
+        HUB_A,
+        service_id=SERVICE_ID,
+        service_logical_id=SERVICE,
+        segment=GUEST,
+        module_id=QOS_ID,
+    )
+    state = await hub_profile_state(
+        [
+            ds_entry(GLOBAL),
+            ds_with_vpn(GUEST, hubs=(HUB_A, HUB_B), backhaul=(HUB_A,)),
+        ],
+        [
+            qos_entry(GLOBAL),
+            qos_entry(
+                GUEST, rules=[backhaul_rule("Web", backhaul_entry(HUB_A, SERVICE))]
+            ),
+        ],
+        [firewall_entry(GLOBAL), firewall_entry(GUEST)],
+        ds_refs=refs,
+        qos_refs={BACKHAUL_REF: backhaul},
+    )
+    lists = {
+        "backHaulEdges": {HUB_A.name: delete(), "+": add({"name": HUB_B.name})},
+        "edgeToEdgeHub": {"vpnHubs": GONE},
+    }
+    await edit(state, DS, {"segments": {"Guest": {"vpn": lists}}})
+    entries = {HUB_A.name: delete(), "+": add({"name": HUB_B.name})}
+    route = {"edge2EdgeRouteAction": {"routeCfg": {"backhaulEdges": entries}}}
+    rule = {"Web": {"action": route}}
+    await edit(state, QOS, {"segments": {"Guest": {"rules": rule}}})
+    pipeline, store = hub_pipeline(state, vpn_check=True)
+    return pipeline, store, state
+
+
+async def test_a_hub_swap_that_stops_after_the_rule_write_leaves_it_ahead() -> None:
+    pipeline, store, state = await hub_swap()
+    assert [s.render() for s in state.plan().steps] == [
+        "disable hub for Hub-A on segment Guest",
+        "enable backhaul for Hub-B on segment Guest",
+    ]
+    store.fail_calls.add(DISABLE_HUB)
+
+    with pytest.raises(SaveStepError):
+        _ = await pipeline.save(state)
+
+    stored = await pipeline.load_profile(CONFIG)
+    rule = stored.profile.qos.segments[1].rules[0]
+    route = rule.action.edge_to_edge_route_action.route_cfg
+    assert isinstance(route.backhaul_edges, list)
+    assert [e.edge_name for e in route.backhaul_edges] == [HUB_B.name]
+    guest = stored.profile.device_settings.segments[1].vpn
+    assert [h.name for h in guest.backhaul_edges] == [HUB_A.name]
+    result = await pipeline.save(state)
+    assert [o.status for o in result.steps] == ["sent", "sent"]
+    assert state.plan().changed == ()
+    again = await pipeline.load_profile(CONFIG)
+    guest = again.profile.device_settings.segments[1].vpn
+    assert [h.name for h in guest.backhaul_edges] == [HUB_B.name]
+    assert again.plan().changed == ()
+
+
+def segments_stored(store: ModuleStore) -> dict[str, list[str]]:
+    """The segment names of each module the store holds, by module name."""
+    return {
+        row["name"]: [entry["segment"]["name"] for entry in row["data"]["segments"]]
+        for row in store.rows.values()
+    }
+
+
+@pytest.mark.parametrize("how", ["request", "lost"])
+async def test_a_segment_assigned_in_a_removal_save_is_stored_in_qos_first(
+    how: str,
+) -> None:
+    pipeline, store, state = await removal_and_its_rule()
+    _ = await pipeline.assign_segment(state, "Voice")
+    if how == "request":
+        store.fail_writes.add(3)  # the device settings write, the last
+    else:
+        read = pipeline.client.get_enterprise_services
+        reads = 0
+
+        async def another_writer_after_the_step(request: Any) -> Any:
+            nonlocal reads
+            reads += 1
+            if reads == 3:  # the services read after the step
+                store.other_writer(DS_ID, lambda row: row["data"].update(future=2))
+            return await read(request)
+
+        pipeline.client.get_enterprise_services = another_writer_after_the_step
+
+    with pytest.raises(SaveStepError) as failed:
+        _ = await pipeline.save(state)
+
+    assert (failed.value.module_name, failed.value.written) == (DS, (QOS, "firewall"))
+    stored = segments_stored(store)
+    assert "Voice" not in stored[DS]
+    assert "Voice" in stored[QOS]
+    assert "Voice" in stored["firewall"]
+    plan = state.plan()  # no SegmentSetError either way
+    if how == "lost":
+        cause = failed.value.__cause__
+        assert isinstance(cause, WriteNotAppliedError)
+        assert plan.changed == ()
+        assert [w.code for w in plan.warnings] == ["segments_disagree"]
+        _ = await pipeline.apply(state, module=DS, patch=cause.redo_patch())
+    assert [m.name for m in state.plan().changed] == [DS]
+    result = await pipeline.save(state)
+    assert [w.name for w in result.written] == [DS]
+    assert "Voice" in segments_stored(store)[DS]
     assert state.plan().changed == ()
