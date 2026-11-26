@@ -80,10 +80,12 @@ it reads, so it must read one field of the identity and return it; anything else
 string form) raises `TypeError` with the accessor to write. At class creation
 the field's type is checked against the field the accessor reads: every type the
 identity's field allows apart from `None` must be one the field allows apart from
-`None` and `MISSING` (a `Literal` attribute fits a `Literal` field that holds all
-its values), so a `uuid.UUID` field over `SegmentIdentity.segment_id` is refused with
-the accessors that would fit, instead of failing the first time a name is merged
-into it.
+`None` and `MISSING` (a type fits a field that holds it or a class it subclasses, so
+a `StrEnum` fits `str`; a `Literal` value fits a `Literal` field that holds it or a
+field of its class, so `Literal["edgeHub"]` fits `str`; a `NewType` counts as its
+supertype; a field typed `Any` or `object` is not checked), so a `uuid.UUID` field
+over `SegmentIdentity.segment_id` is refused with the accessors that would fit,
+instead of failing the first time a name is merged into it.
 
 An ID the loaded tables do not hold raises `ResolutionError` (a `KeyError`), as an unknown
 name does, with a message such as `No segment has segment_id 99.`. An ID key returns

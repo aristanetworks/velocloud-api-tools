@@ -29,6 +29,7 @@ from typing import (
     Any,
     ClassVar,
     Literal,
+    NewType,
     Self,
     TypeAliasType,
     Union,  # pyright: ignore[reportDeprecated]  # get_origin(Optional[X]) is typing.Union
@@ -1017,11 +1018,11 @@ class _LiteralValue:
 def _type_atoms(tp: object) -> frozenset[object]:
     """The types *tp* allows, apart from ``None`` and ``MISSING``.
 
-    ``Annotated``, ``type`` aliases and unions are taken apart, and each ``Literal``
-    value is an atom.
+    ``Annotated``, ``type`` aliases and unions are taken apart, a ``NewType`` counts
+    as its supertype, and each ``Literal`` value is an atom.
     """
-    while get_origin(tp) is Annotated:
-        tp = get_args(tp)[0]
+    while isinstance(tp, NewType) or get_origin(tp) is Annotated:
+        tp = tp.__supertype__ if isinstance(tp, NewType) else get_args(tp)[0]
     if isinstance(tp, TypeAliasType):
         return _type_atoms(tp.__value__)
     if get_origin(tp) is Literal:
@@ -1059,6 +1060,20 @@ def _atoms_text(atoms: frozenset[object]) -> str:
     return " | ".join([*named, *([f"Literal[{', '.join(values)}]"] if values else [])])
 
 
+def _fits(wanted: object, held: frozenset[object]) -> bool:
+    """Whether a field that holds the atoms *held* can hold the atom *wanted*.
+
+    It can when *wanted* is one of them, is a class that subclasses one of them, or is a
+    ``Literal`` value that is an instance of one of them.
+    """
+    if wanted in held:
+        return True
+    classes = tuple(h for h in held if isinstance(h, type))
+    if isinstance(wanted, _LiteralValue):
+        return isinstance(wanted.value, classes)
+    return isinstance(wanted, type) and issubclass(wanted, classes)
+
+
 def _check_resolvable(
     cls: type[BaseModel],
     field_name: str,
@@ -1067,14 +1082,16 @@ def _check_resolvable(
 ) -> None:
     """Refuse a field that cannot hold what its ``Resolvable`` accessor returns.
 
-    Every type the identity's attribute allows apart from ``None`` must be one
-    the field's ID type allows apart from ``None`` and ``MISSING`` (the type held
-    inside a field kind, ``Annotated`` and ``type`` aliases taken apart); a
-    ``Literal`` attribute fits a ``Literal`` field that holds all its values.
-    An attribute that allows ``None`` needs a field that allows it too (a field
-    that holds only ``MISSING`` besides its type does not). A
-    field that cannot is refused here because it would otherwise fail only
-    when a name resolved to a value it refuses.
+    Each type the identity's attribute allows apart from ``None`` must fit the
+    field's ID type apart from ``None`` and ``MISSING`` (the type held inside a
+    field kind, ``Annotated`` and ``type`` aliases taken apart): it fits when it is
+    one of the field's types, or is a class that subclasses one, or is a
+    ``Literal`` value that is an instance of one. A ``NewType`` counts as its
+    supertype on both sides. A field that holds ``Any`` or ``object`` is not
+    checked at all. An attribute that allows ``None`` needs a field that allows it
+    too (a field that holds only ``MISSING`` besides its type does not). A field
+    that cannot hold the attribute is refused here because it would otherwise fail
+    only when a name resolved to a value it refuses.
     """
     from .layers import field_kind  # noqa: PLC0415 (layers imports this module)
 
@@ -1082,16 +1099,18 @@ def _check_resolvable(
     hints = get_type_hints(identity)
     wanted = _type_atoms(hints[marker.attribute])
     held = _type_atoms(field_kind(fi).inner_type)
+    if Any in held or object in held:
+        return
     gives_none = _allows_none(hints[marker.attribute])
     holds_none = _allows_none(field_kind(fi).inner_type)
-    if wanted <= held and (holds_none or not gives_none):
+    if all(_fits(w, held) for w in wanted) and (holds_none or not gives_none):
         return
     fitting = [
         name
         for name in _identity_field_names(identity)
         if name in hints
         and (atoms := _type_atoms(hints[name]))
-        and atoms <= held
+        and all(_fits(a, held) for a in atoms)
         and (holds_none or not _allows_none(hints[name]))
     ]
     advice = (
