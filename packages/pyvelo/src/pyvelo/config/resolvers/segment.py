@@ -2,6 +2,7 @@
 
 from typing import override
 
+from pyvelo.client.enums.enterprise import NetworkSegmentType
 from pyvelo.client.schemas.enterprise import GetEnterpriseNetworkSegments
 from pyvelo.config.resolver import BaseResolver, ResolverContext
 from pyvelo.core.identity import (
@@ -65,7 +66,7 @@ class SegmentResolver(BaseResolver[SegmentIdentity]):
                 segment_id=seg_id,
                 object_id=obj_id,
                 logical_id=logical_id,
-                type_=seg.type_,
+                type_=NetworkSegmentType(seg.type_),
             )
             self._register(
                 name,

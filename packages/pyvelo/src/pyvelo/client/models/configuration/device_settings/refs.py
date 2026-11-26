@@ -10,6 +10,7 @@ from pydantic import MISSING, ConfigDict
 
 from pyvelo.client.models.configuration.ref import ConfigurationRef
 from pyvelo.core import Alias, VcoModel
+from pyvelo.core.enums import NetworkSegmentType
 
 DeviceSettingsRefName = Literal[
     "deviceSettings:authentication",
@@ -144,7 +145,7 @@ class DeviceSettingsSecurityVnfLicenseRef(ConfigurationRef):
 class DeviceSettingsSegmentRef(ConfigurationRef):
     ref: Literal["deviceSettings:segment"] | MISSING = MISSING
     object_: Annotated[Literal["NETWORK_SEGMENT"] | MISSING, Alias("object")] = MISSING
-    type_: Annotated[Literal["REGULAR"] | MISSING, Alias("type")] = MISSING
+    type_: Annotated[NetworkSegmentType | MISSING, Alias("type")] = MISSING
     data: dict[str, Any] | MISSING = MISSING
 
 

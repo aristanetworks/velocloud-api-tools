@@ -26,6 +26,7 @@ from typing import Any, Final
 from pydantic import MISSING
 
 from pyvelo.core.base import VcoModel, is_dict, is_list
+from pyvelo.core.enums import NetworkSegmentType
 from pyvelo.core.identity import SegmentIdentity
 
 from .common import segment_id_of
@@ -123,7 +124,7 @@ def descriptor_of(identity: SegmentIdentity) -> dict[str, object]:
     return {
         "segmentId": identity.segment_id,
         "name": identity.name,
-        "type": identity.type_.value,
+        "type": NetworkSegmentType(identity.type_).value,
         "segmentLogicalId": str(identity.logical_id),
     }
 

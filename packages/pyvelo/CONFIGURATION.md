@@ -342,7 +342,23 @@ The `segments` lists have rules of their own:
 - On an edge, a segment the edge inherits from its profile counts as there. A
   change of one the edge layer lacks first adds its placeholder entry (an
   empty object adds none); `add` of an inherited segment raises (write a plain
-  object), and so does `delete` of one the edge layer has no entry for. A
+  object), and so does `delete` of one the edge layer has no entry for. An
+  `add` of a segment the profile does not have raises too: an edge uses only
+  its profile's segments, so the entry would be saved and never used. Assign
+  the segment on the profile first, then change it on the edge. These rules
+  hold for an `add` under `"+"` that gives only an ID, where the ID names a
+  segment, as for one that gives `segment.name`. The ID is read as
+  `merge_patch` reads it (`"7"` and `7.0` are the `segmentId` 7). With a
+  segment resolver registered, the ID names the segment the resolver has
+  loaded under it, and an ID none of its loaded segments has raises
+  `ResolutionError`. A state from `load` has its segment resolver loaded; a
+  resolver that must be loaded first (`requires_load`) is loaded by `apply`,
+  but the stock `SegmentResolver` is not one, and unloaded it knows no
+  segment. With no segment resolver, the `segmentId` of a segment the edge
+  only inherits gets the inherited-segment refusal; the `segmentId` of one
+  of the edge layer's own segments meets the place rules, and the add then
+  raises `PatchError` (`invalid_value`) for the missing `segment.name`, as
+  does any other add with no name. A
   place (`move(...)`, or `"_position"` on a change) is for the edge's own
   segments, the ones its module had when it was read. A save writes the
   segments the edge only inherits after those, in the profile's order, so

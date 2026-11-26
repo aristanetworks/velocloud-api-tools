@@ -213,15 +213,16 @@ async def test_new_segment_by_name_takes_the_profiles_descriptor(
     assert [r["name"] for r in segments[1]["outbound"]] == ["x"]
 
 
-async def test_segment_the_profile_lacks_is_refused_without_a_resolver() -> None:
+async def test_an_edge_add_of_a_segment_its_profile_lacks_is_refused_early() -> None:
     client, state = MockVcoClient(), make_state()
     pipeline = ConfigPipeline(client)
-    with pytest.raises(LookupError, match="Nowhere"):
+    with pytest.raises(PatchError, match="Nowhere") as exc:
         await pipeline.apply(
             state,
             module="firewall",
             patch={"segments": {"Nowhere": add({"outbound": {"x": add(rule("x"))}})}},
         )
+    assert exc.value.kind == "segment_rule"
     assert client.calls == []
 
 

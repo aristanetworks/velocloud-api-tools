@@ -1,7 +1,9 @@
 """Tests for ConfigPipeline.apply()."""
 
+import uuid
+from collections.abc import Sequence
 from datetime import UTC, datetime
-from typing import Any, overload
+from typing import Any, ClassVar, final, overload, override
 
 import pytest
 from pydantic import MISSING
@@ -36,9 +38,17 @@ from pyvelo.client.schemas.configuration import (
     EnterpriseConfigurationProfile,
     QosConfigurationModule,
 )
+from pyvelo.client.schemas.enterprise import (
+    GetEnterpriseNetworkSegments,
+    NetworkSegment,
+)
 from pyvelo.config import PatchError, add, delete, move
-from pyvelo.config.pipeline import ConfigPipeline
+from pyvelo.config.pipeline import (
+    ConfigPipeline,
+    _prepare_segments,  # pyright: ignore[reportPrivateUsage]
+)
 from pyvelo.config.resolver import ResolverContext, ResolverRegistry
+from pyvelo.config.resolvers.segment import SegmentResolver
 from pyvelo.config.state import ConfigState
 from pyvelo.core.identity import ResolutionError
 from pyvelo.core.layers import Edge, Profile
@@ -49,6 +59,7 @@ from pyvelo.testing import (
     make_firewall_segment,
     make_module_json,
     make_segment_resolver,
+    network_segment_wire,
 )
 from test_state_plan import (  # pyright: ignore[reportImplicitRelativeImport]
     desc,
@@ -468,6 +479,20 @@ async def _segment_resolvers() -> ResolverRegistry:
     return registry
 
 
+async def _resolvers_with_lab() -> ResolverRegistry:
+    """Global Segment, Guest and Lab, each with a logical ID of its own."""
+    registry = ResolverRegistry()
+    registry.register(
+        await make_segment_resolver(
+            [
+                {"name": name, "segment_id": n, "segment_logical_id": uuid.UUID(int=n)}
+                for name, n in (("Global Segment", 0), ("Guest", 2), ("Lab", 7))
+            ]
+        )
+    )
+    return registry
+
+
 @pytest.mark.asyncio
 async def test_change_of_an_inherited_segment_adds_the_placeholder() -> None:
     state = make_raw_state()
@@ -663,6 +688,256 @@ async def test_plus_add_of_an_inherited_segment_raises() -> None:
     assert exc.value.path == Path(("segments", Key("+")))
     assert exc.value.kind == "segment_rule"
     assert _edge_segment_names(state) == ["Global Segment"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("module", ["deviceSettings", "QOS", "firewall"])
+async def test_add_of_a_segment_the_profile_lacks_raises(module: str) -> None:
+    # An edge has no empty device settings module to create, so all three exist.
+    state = _make_state(include_device_settings=True, include_qos=True)
+    before = state.plan()
+    with pytest.raises(PatchError, match="the edge's profile has no segment") as exc:
+        _ = await ConfigPipeline(client=None).apply(
+            state, module=module, patch={"segments": {"Lab": add({})}}
+        )
+    assert exc.value.path == Path.parse("segments[Lab]")
+    assert exc.value.kind == "segment_rule"
+    assert '{"segments": {"Lab": {"_op": "add"}}}' in exc.value.message
+    assert state.plan() == before
+    assert _edge_segment_names(state) == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("module", ["QOS", "firewall"])
+async def test_refused_add_of_a_segment_the_profile_lacks_creates_no_module(
+    module: str,
+) -> None:
+    state = make_raw_state(edge_modules=[])
+    before = state.plan()
+    with pytest.raises(PatchError, match="the edge's profile has no segment"):
+        _ = await ConfigPipeline(client=None).apply(
+            state, module=module, patch={"segments": {"Lab": add({})}}
+        )
+    assert state.plan() == before
+    assert state.plan().modules == ()
+
+
+@pytest.mark.asyncio
+async def test_plus_add_of_a_segment_the_profile_lacks_raises() -> None:
+    state = make_raw_state()
+    patch: dict[str, object] = {"segments": {"+": add({"segment": {"name": "Lab"}})}}
+    with pytest.raises(PatchError, match="the edge's profile has no segment") as exc:
+        _ = await ConfigPipeline(client=None).apply(
+            state, module="firewall", patch=patch
+        )
+    assert exc.value.path == Path(("segments", Key("+")))
+    assert exc.value.kind == "segment_rule"
+    assert _edge_segment_names(state) == ["Global Segment"]
+
+
+@pytest.mark.asyncio
+async def test_add_of_a_segment_the_profile_lacks_raises_with_resolvers_loaded() -> (
+    None
+):
+    # With a resolver that knows Lab, merge_patch would fill its IDs and save it.
+    state = make_raw_state()
+    state.resolvers = await _resolvers_with_lab()
+    before = state.plan()
+    with pytest.raises(PatchError, match="the edge's profile has no segment") as exc:
+        _ = await ConfigPipeline(client=None).apply(
+            state, module="firewall", patch={"segments": {"Lab": add({})}}
+        )
+    assert exc.value.kind == "segment_rule"
+    assert state.plan() == before
+    assert _edge_segment_names(state) == ["Global Segment"]
+
+
+@pytest.mark.asyncio
+async def test_plus_add_by_segment_id_of_a_segment_the_profile_lacks_raises() -> None:
+    state = make_raw_state()
+    state.resolvers = await _resolvers_with_lab()
+    before = state.plan()
+    patch: dict[str, object] = {"segments": {"+": add({"segment": {"segmentId": 7}})}}
+    with pytest.raises(PatchError, match="the edge's profile has no segment") as exc:
+        _ = await ConfigPipeline(client=None).apply(
+            state, module="firewall", patch=patch
+        )
+    assert exc.value.path == Path(("segments", Key("+")))
+    assert exc.value.kind == "segment_rule"
+    assert '{"segments": {"Lab": {"_op": "add"}}}' in exc.value.message
+    assert state.plan() == before
+    assert _edge_segment_names(state) == ["Global Segment"]
+
+
+@pytest.mark.parametrize("segment_id", ["7", 7.0])
+@pytest.mark.asyncio
+async def test_plus_add_by_a_segment_id_merge_patch_reads_as_an_int_raises(
+    segment_id: object,
+) -> None:
+    # merge_patch reads "7" and 7.0 as 7, and the resolver would fill in Lab.
+    state = make_raw_state()
+    state.resolvers = await _resolvers_with_lab()
+    before = state.plan()
+    patch: dict[str, object] = {
+        "segments": {"+": add({"segment": {"segmentId": segment_id}})}
+    }
+    with pytest.raises(PatchError, match="the edge's profile has no segment") as exc:
+        _ = await ConfigPipeline(client=None).apply(
+            state, module="firewall", patch=patch
+        )
+    assert exc.value.kind == "segment_rule"
+    assert '{"segments": {"Lab": {"_op": "add"}}}' in exc.value.message
+    assert state.plan() == before
+    assert _edge_segment_names(state) == ["Global Segment"]
+
+
+@pytest.mark.asyncio
+async def test_plus_add_by_a_segment_id_string_of_an_inherited_segment_raises() -> None:
+    state = make_raw_state()
+    state.resolvers = await _resolvers_with_lab()
+    before = state.plan()
+    patch: dict[str, object] = {"segments": {"+": add({"segment": {"segmentId": "2"}})}}
+    with pytest.raises(PatchError, match="by inheritance") as exc:
+        _ = await ConfigPipeline(client=None).apply(
+            state, module="firewall", patch=patch
+        )
+    assert exc.value.kind == "segment_rule"
+    assert state.plan() == before
+    assert _edge_segment_names(state) == ["Global Segment"]
+
+
+@pytest.mark.asyncio
+async def test_plus_add_by_a_segment_id_no_segment_has_is_left_to_merge_patch() -> None:
+    # The ID names no segment, so there is no profile patch to advise.
+    state = make_raw_state()
+    state.resolvers = await _resolvers_with_lab()
+    before = state.plan()
+    patch: dict[str, object] = {"segments": {"+": add({"segment": {"segmentId": 99}})}}
+    with pytest.raises(ResolutionError, match="Unknown SegmentIdentity: '99'") as exc:
+        _ = await ConfigPipeline(client=None).apply(
+            state, module="firewall", patch=patch
+        )
+    assert not isinstance(exc.value, PatchError)
+    assert state.plan() == before
+    assert _edge_segment_names(state) == ["Global Segment"]
+
+
+@pytest.mark.asyncio
+async def test_plus_add_by_a_segment_id_nothing_has_needs_a_name_with_no_resolver() -> (
+    None
+):
+    # With nothing to read the ID by, merge_patch asks for the name.
+    state = make_raw_state()
+    before = state.plan()
+    patch: dict[str, object] = {"segments": {"+": add({"segment": {"segmentId": 7}})}}
+    with pytest.raises(PatchError, match=r"segment\.name: Field required") as exc:
+        _ = await ConfigPipeline(client=None).apply(
+            state, module="firewall", patch=patch
+        )
+    assert exc.value.kind == "invalid_value"
+    assert state.plan() == before
+
+
+@pytest.mark.parametrize("segment_id", [2, "2", 2.0])
+@pytest.mark.asyncio
+async def test_plus_add_by_segment_id_of_an_inherited_segment_with_no_resolver(
+    segment_id: object,
+) -> None:
+    # The profile's Guest has segmentId 2, which names it with no resolver too.
+    state = make_raw_state()
+    before = state.plan()
+    patch: dict[str, object] = {
+        "segments": {"+": add({"segment": {"segmentId": segment_id}})}
+    }
+    with pytest.raises(PatchError, match="by inheritance") as exc:
+        _ = await ConfigPipeline(client=None).apply(
+            state, module="firewall", patch=patch
+        )
+    assert exc.value.kind == "segment_rule"
+    assert state.plan() == before
+
+
+@final
+class _SegmentsLoadedOnDemand(SegmentResolver):
+    """A segment resolver that, like the services one, answers once loaded."""
+
+    requires_load: ClassVar[bool] = True
+
+    @override
+    async def load(self, context: ResolverContext) -> None:
+        await super().load(context)
+        self.loaded = True
+
+
+class _ClientWithLab(MockVcoClient):
+    """A mock whose enterprise also has Guest (2) and Lab (7)."""
+
+    @override
+    async def get_enterprise_network_segments(
+        self, request: GetEnterpriseNetworkSegments
+    ) -> Sequence[NetworkSegment]:
+        answered = await super().get_enterprise_network_segments(request)
+        return [
+            *answered,
+            *(
+                NetworkSegment.model_validate(network_segment_wire(name, n))
+                for name, n in (("Guest", 2), ("Lab", 7))
+            ),
+        ]
+
+
+@pytest.mark.asyncio
+async def test_plus_add_by_segment_id_loads_the_segment_resolver_it_needs() -> None:
+    client = _ClientWithLab()
+    state = make_raw_state()
+    state.resolvers.register(_SegmentsLoadedOnDemand(client))
+    before = state.plan()
+    patch: dict[str, object] = {"segments": {"+": add({"segment": {"segmentId": 7}})}}
+    with pytest.raises(PatchError, match="the edge's profile has no segment") as exc:
+        _ = await ConfigPipeline(client).apply(state, module="firewall", patch=patch)
+    assert exc.value.kind == "segment_rule"
+    assert '{"segments": {"Lab": {"_op": "add"}}}' in exc.value.message
+    assert [c for c, _ in client.calls] == ["get_enterprise_network_segments"]
+    assert state.plan() == before
+
+
+@pytest.mark.asyncio
+async def test_plus_add_by_segment_id_of_an_inherited_segment_raises() -> None:
+    state = make_raw_state()
+    state.resolvers = await _resolvers_with_lab()
+    before = state.plan()
+    patch: dict[str, object] = {"segments": {"+": add({"segment": {"segmentId": 2}})}}
+    with pytest.raises(PatchError, match="plain object") as exc:
+        _ = await ConfigPipeline(client=None).apply(
+            state, module="firewall", patch=patch
+        )
+    assert exc.value.path == Path(("segments", Key("+")))
+    assert exc.value.kind == "segment_rule"
+    assert state.plan() == before
+    assert _edge_segment_names(state) == ["Global Segment"]
+
+
+@pytest.mark.asyncio
+async def test_plus_add_by_logical_id_of_a_segment_the_profile_lacks() -> None:
+    state = make_raw_state()
+    state.resolvers = await _resolvers_with_lab()
+    before = state.plan()
+    patch: dict[str, object] = {
+        "segments": {"+": add({"segment": {"segmentLogicalId": str(uuid.UUID(int=7))}})}
+    }
+    with pytest.raises(PatchError, match="the edge's profile has no segment") as exc:
+        _ = await ConfigPipeline(client=None).apply(
+            state, module="firewall", patch=patch
+        )
+    assert exc.value.kind == "segment_rule"
+    assert state.plan() == before
+
+
+def test_add_on_edge_data_bound_to_no_profile_is_left_to_merge_patch() -> None:
+    data = make_firewall_module(mod_id=1, config_id=10).data
+    patch: dict[str, object] = {"segments": {"Lab": add({})}}
+    prepared = _prepare_segments(data, patch, None, frozenset())
+    assert prepared == patch
 
 
 @pytest.mark.asyncio

@@ -1331,17 +1331,33 @@ def _identity_of_given_id(
         given = resolved[key]
         if given is None or given is MISSING:
             continue
-        adapter = _id_adapter(id_type)
         try:
-            value = (
-                adapter.validate_strings(given)
-                if isinstance(given, str)
-                else adapter.validate_python(given)
-            )
+            value = read_given_id(target_fi, given)
         except ValidationError:
             continue
         return resolvers.lookup_by(identity_type, resolvable.accessor, value)
     return None
+
+
+def read_given_id(field_info: FieldInfo, given: object) -> object:
+    """*given* as a value of the ID type of the ``Resolvable`` field *field_info*.
+
+    This is how ``merge_patch`` reads an ID that a patch gives in place of a
+    name (``_identity_of_given_id``): a ``str`` as text, so ``"7"`` is 7 for
+    an ``int`` field, and anything else in pydantic's lax mode, so ``7.0`` is
+    7 too. Raises pydantic's ``ValidationError`` (a ``ValueError``) for a
+    value that is not one of the type, and ``TypeError`` for a field whose ID
+    type is not one type.
+    """
+    id_type = _id_type(field_info)
+    if id_type is None:
+        raise TypeError("the field has no single ID type to read an ID as")
+    adapter = _id_adapter(id_type)
+    return (
+        adapter.validate_strings(given)
+        if isinstance(given, str)
+        else adapter.validate_python(given)
+    )
 
 
 def _is_value_set(tp: object) -> bool:

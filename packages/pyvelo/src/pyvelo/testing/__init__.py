@@ -7,6 +7,10 @@ fakes (``FakeSegment``, ``FakeEdge``), a JSON-RPC envelope builder, a
 their reads and writes to a client built over it. For the configuration
 pipeline there is ``MockVcoClient``, a client that holds such a store, and the
 firewall builders ``make_firewall_module`` and ``make_firewall_segment``.
+``network_segment_wire`` builds one item of a ``getEnterpriseNetworkSegments``
+answer in wire keys, which a test parses with ``NetworkSegment.model_validate``
+so that its fake gives a segment as the VCO's answer does;
+``make_segment_resolver`` builds a loaded segment resolver that way.
 """
 
 from pyvelo.testing.fixtures import (
@@ -19,6 +23,7 @@ from pyvelo.testing.fixtures import (
     make_segment_resolver,
     make_transport,
     mock_vco_client_factory,
+    network_segment_wire,
 )
 from pyvelo.testing.mock_client import (
     MockVcoClient,
@@ -54,5 +59,6 @@ __all__ = [
     "make_transport",
     "mock_vco_client_factory",
     "module_row",
+    "network_segment_wire",
     "store_of",
 ]

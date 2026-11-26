@@ -16,7 +16,6 @@ from pyvelo.client.enums.enterprise import NetworkSegmentType
 from pyvelo.client.models.configuration.common import SegmentMetadata
 from pyvelo.client.models.configuration.firewall.root import FirewallData
 from pyvelo.client.models.configuration.firewall.segment import FirewallSegment
-from pyvelo.client.models.enterprise.network_segment import NetworkSegmentData
 from pyvelo.client.schemas.configuration import (
     AnyStoredModule,
     EdgeConfiguration,
@@ -35,7 +34,7 @@ from pyvelo.client.schemas.enterprise import (
 )
 from pyvelo.client.vco_client import VcoClient
 from pyvelo.core.layers import Edge, Profile
-from pyvelo.testing.fixtures import make_transport
+from pyvelo.testing.fixtures import make_transport, network_segment_wire
 from pyvelo.testing.module_store import ModuleStore, configuration_row, module_row
 
 if TYPE_CHECKING:
@@ -301,12 +300,13 @@ class MockVcoClient(VcoClient):
     ) -> Sequence[NetworkSegment]:
         self.calls.append(("get_enterprise_network_segments", request))
         return [
-            NetworkSegment.model_construct(
-                id_=_GLOBAL_SEGMENT_OBJECT_ID,
-                name="Global Segment",
-                logical_id=_GLOBAL_SEGMENT_LOGICAL_ID,
-                type_=NetworkSegmentType.REGULAR,
-                data=NetworkSegmentData.model_construct(segment_id=0),
+            NetworkSegment.model_validate(
+                network_segment_wire(
+                    "Global Segment",
+                    0,
+                    object_id=_GLOBAL_SEGMENT_OBJECT_ID,
+                    logical_id=_GLOBAL_SEGMENT_LOGICAL_ID,
+                )
             )
         ]
 
