@@ -236,6 +236,64 @@ def test_no_edit_does_not_write_just_to_reconcile() -> None:
     )
 
 
+def _global_entry(**descriptor: object) -> dict[str, Any]:
+    """The edge's Global Segment entry, its descriptor changed by *descriptor*."""
+    segment = {**desc(0, "Global Segment"), **descriptor}
+    if segment["segmentId"] is None:
+        del segment["segmentId"]
+    return {"segment": segment, "outbound": [], "futureKey": 1}
+
+
+@pytest.mark.parametrize(
+    ("segment_id", "reconciled"),
+    [("0", ("Guest",)), (None, ()), (0.0, ("Guest",))],
+)
+def test_no_edit_writes_nothing_whatever_form_the_segment_id_has(
+    segment_id: object, reconciled: tuple[str, ...]
+) -> None:
+    raw = {**EDGE_RAW, "segments": [_global_entry(segmentId=segment_id)]}
+    plan = plan_module(
+        fw(raw, layer=Edge),
+        level=EDGE,
+        profile=fw(PROFILE_RAW, module_id=2, layer=Profile),
+    )
+    assert (plan.operation, plan.data, plan.changes, plan.reconciled_segments) == (
+        "none",
+        raw,
+        (),
+        reconciled,
+    )
+
+
+def test_an_edit_keeps_an_entry_whose_segment_id_is_text_as_read() -> None:
+    entry = _global_entry(segmentId="0")
+    mod = fw({**EDGE_RAW, "segments": [entry]}, layer=Edge)
+    _ = mod.data.merge_patch({"syslog_forwarding": True})
+    plan = plan_module(
+        mod, level=EDGE, profile=fw(PROFILE_RAW, module_id=2, layer=Profile)
+    )
+    assert [str(c.path) for c in plan.changes] == ["syslog_forwarding"]
+    assert plan.data["segments"] == [
+        entry,
+        {"segment": desc(2, "Guest", vendorKey="x"), "outbound": []},
+    ]
+
+
+def test_missing_segments_reads_an_id_as_the_model_does() -> None:
+    prof = {
+        "segments": [
+            {"segment": desc(0, "Global Segment")},
+            {"segment": desc(2, "Guest")},
+        ]
+    }
+    text = {"segments": [{"segment": {**desc(0, "Global Segment"), "segmentId": "0"}}]}
+    assert missing_segments(text, prof, "firewall") == [
+        {"segment": desc(2, "Guest"), "outbound": []}
+    ]
+    no_id = {"segments": [{"segment": {"name": "Global Segment"}}]}
+    assert missing_segments(no_id, prof, "firewall") == []
+
+
 def test_edge_only_segment_is_kept_and_profile_level_never_reconciles() -> None:
     raw = copy.deepcopy(EDGE_RAW)
     raw["segments"].append({"segment": desc(9, "EdgeOnly"), "outbound": []})

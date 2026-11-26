@@ -191,6 +191,15 @@ def wire_dump(model: VcoModel, level: ConfigContext | None) -> dict[str, Any]:
     )
 
 
+def _described(entries: Sequence[object]) -> list[object]:
+    """The segment ID of each entry that has a ``segment`` descriptor object."""
+    return [
+        segment_id_of(entry)
+        for entry in entries
+        if is_dict(entry) and is_dict(entry.get("segment"))
+    ]
+
+
 def missing_segments(
     edge_data: object, profile_data: object, module_name: str
 ) -> list[dict[str, Any]]:
@@ -199,8 +208,9 @@ def missing_segments(
     Segments are matched by ``segmentId``, in profile order. Nothing for a module
     that has no segment lists, for data that is not an object, or for a
     ``segments`` that is not a list (an absent or null one on the edge side is an
-    empty list). An entry without a ``segmentId`` is skipped on the profile side
-    and ignored on the edge side.
+    empty list). An entry without a ``segmentId`` is skipped on the profile side;
+    one on the edge side (a descriptor whose ID is not a number) means the
+    edge's segments cannot be matched with the profile's, so nothing is added.
     """
     if module_name not in SEGMENT_LISTS:
         return []
@@ -213,6 +223,8 @@ def missing_segments(
     if not (is_list(profile_segments) and is_list(edge_segments)):
         return []
     seen = [segment_id_of(entry) for entry in edge_segments]
+    if any(type(segment_id) is not int for segment_id in _described(edge_segments)):
+        return []
     missing: list[dict[str, Any]] = []
     for entry in profile_segments:
         segment_id = segment_id_of(entry)

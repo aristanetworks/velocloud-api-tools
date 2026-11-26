@@ -7,6 +7,7 @@ inherits from (``bind_profile_layers``).
 """
 
 import copy
+import re
 import uuid
 from collections.abc import Mapping, Sequence
 from typing import Annotated, Any, Final, Literal, Protocol, cast
@@ -77,14 +78,30 @@ it ("static route is missing"), and accepts it empty.
 """
 
 
+_WHOLE_NUMBER: Final = re.compile(r"-?[0-9]+")
+
+
 def segment_id_of(raw_segment: object) -> object | None:
-    """``raw_segment["segment"]["segmentId"]``, or None if any step is missing."""
+    """The segment ID of a raw segment entry as the model reads it, or None.
+
+    A whole number comes back as an ``int`` whatever form the VCO stored it in
+    (a number, a whole-number float, or a text of digits), so a raw entry is
+    matched with the parsed one. A ``bool`` and anything else come back as they
+    are; None means a step to the ID is missing.
+    """
     if not is_dict(raw_segment):
         return None
     descriptor = raw_segment.get("segment")
     if not is_dict(descriptor):
         return None
-    return descriptor.get("segmentId")
+    value = descriptor.get("segmentId")
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, float) and value.is_integer():
+        return int(value)
+    if isinstance(value, str) and _WHOLE_NUMBER.fullmatch(value):
+        return int(value)
+    return value
 
 
 def placeholder_segment(

@@ -760,6 +760,9 @@ firewall: update
   refuses a `move` of such a segment (see "The patch format"). An edit made by
   assignment that moves such an entry, such as reordering the model's
   `segments` list in place, changes its place in the state only.
+  Segments are matched by `segmentId` as a number, whatever form it was stored
+  in; an edge module with an entry that has no `segmentId` gets no
+  placeholders, and its entries are written as read.
 - Deleting an edge segment that the profile also has leaves an empty entry for
   it in the write, as for a segment the edge never had.
 - A missing edge firewall or QoS module starts empty. It is inserted once it
