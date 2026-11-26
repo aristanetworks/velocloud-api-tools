@@ -627,6 +627,27 @@ def test_wan_internal_id_changed_and_stored_otherwise_passes() -> None:
     assert change.stored == U3
 
 
+def test_an_untouched_link_without_an_id_is_not_stored_otherwise() -> None:
+    # The keyed link's internalId changes (a removal and an addition) and the
+    # VCO stores a third ID: the addition is lost. The link without an
+    # internalId is untouched and stored as sent: it is in no list of the error.
+    first = {
+        "internalId": U1,
+        "name": "l1",
+        "type": "WIRED",
+        "addressingVersion": "IPv4",
+    }
+    keyless = {"name": "l2", "type": "WIRED", "addressingVersion": "IPv4"}
+    module = wan({"links": [first, keyless]})
+    plan = plan_module(module, {"links": [{**first, "internalId": U2}, keyless]})
+    stored = {"links": [{**first, "internalId": U3}, keyless]}
+    with pytest.raises(WriteNotAppliedError) as exc:
+        _ = check_module_write(module, plan, as_stored(module, stored))
+    error = exc.value
+    assert paths(error.server_changes) == [f"links[{U3},IPv4]"]
+    assert "links[#1]" not in paths([*error.lost_edits, *error.applied])
+
+
 def test_ipv6_in_another_form_passes_in_device_settings() -> None:
     module = ds(DS_RAW)
     plan = plan_module(module, {**DS_RAW, "note6": "2001:DB8::1"})

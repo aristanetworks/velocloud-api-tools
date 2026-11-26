@@ -96,6 +96,7 @@ from .rebase import (
     node_child,
     node_field,
     pair_items,
+    pair_same,
     pair_unique,
     place_of,
     python_path,
@@ -683,7 +684,7 @@ def _pair_stored(
     """Pair the items of *p*, and the items of *r* the plan removed, with those of *d*.
 
     Returns index in *p* to index in *d*, and index in *r* to index in *d*,
-    for the indexes *removed*. Four passes, each over the items still left:
+    for the indexes *removed*. Five passes, each over the items still left:
 
     1. by alt key, and
     2. by key, each for a value that occurs once on each side, as
@@ -692,9 +693,13 @@ def _pair_stored(
        key. Failing that, it takes the first item of *d* that has its key, but
        only while *d* has more items left with that key than *p* has: the
        others are the partners of items the plan added under that key, which
-       pass 4 pairs. An item so taken says the removal was not applied; it is
+       pass 5 pairs. An item so taken says the removal was not applied; it is
        not another writer's item;
-    4. the items of *p* and *d* pair in order, first with first, while the two
+    4. an item of *p* takes the item of *d* left that is the same JSON value,
+       when neither side has another item left that is the same
+       (``pair_same``): it was stored as sent, whatever comes before it, also
+       when it has no key;
+    5. the items of *p* and *d* pair in order, first with first, while the two
        keys are equal or the item of *p* has no key. This pairs items whose
        key repeats and whose alt key the VCO revised, and an item sent without
        a key that the VCO issued one for. An item of *p* with no key is
@@ -742,6 +747,10 @@ def _pair_stored(
             d_of_removed[i] = taken
             d_left.remove(taken)
 
+    pair_same(d, p, d_left, p_left, d_of)
+    paired = set(d_of.values())
+    p_left = [j for j in p_left if j not in d_of]
+    d_left = [k for k in d_left if k not in paired]
     _pair_in_order(p_keys, d_keys, p_left, d_left, d_of)
     return d_of, d_of_removed
 
@@ -753,7 +762,7 @@ def _pair_in_order(
     d_left: list[int],
     d_of: dict[int, int],
 ) -> None:
-    """Pass 4 of ``_pair_stored``: pair the items left of *p* and *d* in order.
+    """Pass 5 of ``_pair_stored``: pair the items left of *p* and *d* in order.
 
     Each pair is written into *d_of*, index in *p* to index in *d*. An item
     of *p* with no key does not take an item of *d* whose key a later item of
