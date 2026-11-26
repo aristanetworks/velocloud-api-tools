@@ -62,6 +62,18 @@ GetEdgeConfigurationStackResult = tuple[
 GetEdgeConfigurationStackResultModel = RootModel[GetEdgeConfigurationStackResult]
 
 
+def stack_with_levels(
+    stack: GetEdgeConfigurationStackResult,
+) -> GetEdgeConfigurationStackResult:
+    """Give every module of an edge's stack the config level of its layer.
+
+    The edge's own configuration and every model inside it get the edge level,
+    the profile's the profile level, as a configuration read with
+    ``get_configuration`` has. The two are changed in place and returned.
+    """
+    return (stack[0].for_edge(), stack[1].for_profile())
+
+
 class EdgeMixin(Protocol):
     """Operations for edge/ API endpoints."""
 
@@ -93,14 +105,16 @@ class EdgeMixin(Protocol):
 
         Returns:
             Array of configuration profiles in stack order (edge-specific, enterprise
-            profile), each containing their associated configuration modules
+            profile), each containing their associated configuration modules. Every
+            module has the config level of its layer, as one read with
+            ``get_configuration`` has.
         """
         result = await self.portal(
             "edge/getEdgeConfigurationStack",
             request,
             GetEdgeConfigurationStackResultModel,
         )
-        return result.root
+        return stack_with_levels(result.root)
 
     @domain_tag(EDGE, PM_QOE)
     async def get_edge_sdwan_peers(

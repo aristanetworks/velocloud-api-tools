@@ -35,6 +35,7 @@ from pyvelo.client.operations.configuration import (
     check_found_insert,
     find_named_module,
 )
+from pyvelo.client.operations.edge import stack_with_levels
 from pyvelo.client.protocol import VcoClientProtocol
 from pyvelo.client.schemas.configuration import (
     AnyStoredModule,
@@ -515,7 +516,9 @@ class ConfigPipeline:
         """Fetch edge config + profile config (template).
 
         If edge is a string, resolves by name via EdgeResolver.
-        Takes a snapshot of the loaded state for diff-on-save.
+        Takes a snapshot of the loaded state for diff-on-save. Every module has the
+        config level of its layer, as one read with ``get_configuration`` has, also
+        from a client that answers the stack itself.
         """
         edge_id: int
         resolvers = self._resolvers.unloaded()
@@ -544,7 +547,9 @@ class ConfigPipeline:
         if enterprise_id is not None:
             request.enterprise_id = enterprise_id
 
-        stack = await self.client.get_edge_configuration_stack(request)
+        stack = stack_with_levels(
+            await self.client.get_edge_configuration_stack(request)
+        )
         edge_config: EdgeConfiguration = stack[0]
         profile_config: EnterpriseConfigurationProfile = stack[1]
 
