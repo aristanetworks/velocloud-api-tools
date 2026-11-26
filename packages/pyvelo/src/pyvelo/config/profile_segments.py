@@ -34,16 +34,18 @@ from pyvelo.client.models.configuration.profile_segments import (
     repaired_entry,
     with_additions,
 )
+from pyvelo.client.models.configuration.ref_owners import ref_only_values
 from pyvelo.client.schemas.configuration import AnyStoredModule
 from pyvelo.config.state import ConfigState
 from pyvelo.core import ConfigContext, PatchError
-from pyvelo.core.base import VcoModel, field_models, is_dict, is_list
+from pyvelo.core.base import VcoModel, field_models, is_dict, is_list, wire_name
 from pyvelo.core.identity import (
     ResolutionError,
     ResolverNotLoadedError,
     SegmentIdentity,
 )
 from pyvelo.core.merge import select_items
+from pyvelo.core.owned import unwrap
 from pyvelo.core.patch import ItemOp, is_new, parse_item_op, position_of
 from pyvelo.core.rebase import Key, Path
 
@@ -596,7 +598,11 @@ class _SegmentReader:
     ) -> dict[str, Any]:
         """*body* merged into the entry *template*, dumped as the wire has it.
 
-        It is merged as the module's ``segments`` item class parses it.
+        It is merged as the module's ``segments`` item class parses it. A
+        ``RefOnly`` value the merge set (a DNS or authentication provider) is
+        no part of a dump, so it is written back under its wire key: the list
+        value's item gives it, and the provider's ref row is planned as for an
+        ``add`` of the segment.
         """
         if not isinstance(self.data, VcoModel):
             raise TypeError(
@@ -621,7 +627,36 @@ class _SegmentReader:
         except ResolutionError as error:
             _ = error.under(where)
             raise
-        return item.model_dump(mode="json", by_alias=True, exclude_unset=True)
+        dumped = item.model_dump(mode="json", by_alias=True, exclude_unset=True)
+        return _with_ref_only(item, dumped)
+
+
+def _with_ref_only(item: VcoModel, dumped: dict[str, Any]) -> dict[str, Any]:
+    """*dumped*, the dump of *item*, with each ``RefOnly`` value *item* holds.
+
+    Each is written under its wire key, a UUID as its text; a field that is
+    ``MISSING`` is left out, as the dump leaves it.
+    """
+    for path, value in ref_only_values(item).items():
+        if value is MISSING:
+            continue
+        *parents, name = path.parts
+        model: object = item
+        node: dict[str, Any] = dumped
+        for part in parents:
+            if not isinstance(part, str) or not isinstance(model, VcoModel):
+                raise TypeError(
+                    f"the RefOnly field at {path} of a segment entry is not under "
+                    "fields alone, so it cannot be carried in the entry's dump"
+                )
+            node = node.setdefault(wire_name(type(model), part), {})
+            model = unwrap(getattr(model, part))
+        if not isinstance(name, str) or not isinstance(model, VcoModel):
+            raise TypeError(f"the RefOnly field at {path} is not a model's field")
+        node[wire_name(type(model), name)] = (
+            str(value) if isinstance(value, uuid.UUID) else value
+        )
+    return dumped
 
 
 def _without_rule_id(item: object) -> object:
