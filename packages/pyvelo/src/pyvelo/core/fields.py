@@ -653,7 +653,7 @@ class _ProbeAnswer:
         raise TypeError("the value read was tested for truth")
 
 
-def _probe_accessor(identity_type: type, accessor: object) -> str:  # noqa: C901 (existing: split it when it next changes)
+def _probe_accessor(identity_type: type, accessor: object) -> str:
     """The name of the one field of *identity_type* that *accessor* reads and returns.
 
     Any other accessor raises ``TypeError``.
@@ -665,8 +665,22 @@ def _probe_accessor(identity_type: type, accessor: object) -> str:  # noqa: C901
     answer cannot be tested for truth: an accessor that falls back to another
     value for a falsy ID (the Global Segment's ``segment_id`` is 0) is refused.
     """
-    names = _identity_field_names(identity_type)
+    read, problem = _probe_problem(identity_type, accessor)
+    if problem is None:
+        return read[0]
+    raise TypeError(_probe_refusal(identity_type, accessor, read, problem))
+
+
+def _probe_problem(
+    identity_type: type, accessor: object
+) -> tuple[list[str], str | None]:
+    """The names *accessor* read on the stand-in, and what is wrong with it.
+
+    The problem is None when it read one field of *identity_type* and returned it.
+    """
     read: list[str] = []
+    if not callable(accessor):
+        return read, f"{accessor!r} is not a function."
     answer = _ProbeAnswer()
 
     class Probe:
@@ -674,32 +688,38 @@ def _probe_accessor(identity_type: type, accessor: object) -> str:  # noqa: C901
             read.append(name)
             return answer
 
-    problem: str
-    if not callable(accessor):
-        problem = f"{accessor!r} is not a function."
-    else:
-        try:
-            returned = cast("Callable[[object], object]", accessor)(Probe())
-        except Exception as err:  # noqa: BLE001 - whatever it raises, it is not a plain read
-            returned = err
-        if not read and isinstance(returned, Exception):
-            problem = (
-                f"It raised {type(returned).__name__}: {returned} before reading any "
-                "field of the identity."
-            )
-        elif not read:
-            problem = "It read no field of the identity."
-        elif len(read) > 1:
-            problem = f"It read several fields ({', '.join(read)}); it must read one."
-        elif read[0] not in names:
-            problem = (
-                f"It read '{read[0]}', which is not a field of "
-                f"{identity_type.__name__}."
-            )
-        elif returned is not answer:
-            problem = f"It did more than return '{read[0]}'."
-        else:
-            return read[0]
+    try:
+        returned = cast("Callable[[object], object]", accessor)(Probe())
+    except Exception as err:  # noqa: BLE001 - whatever it raises, it is not a plain read
+        returned = err
+    problem: str | None = None
+    if not read and isinstance(returned, Exception):
+        problem = (
+            f"It raised {type(returned).__name__}: {returned} before reading any "
+            "field of the identity."
+        )
+    elif not read:
+        problem = "It read no field of the identity."
+    elif len(read) > 1:
+        problem = f"It read several fields ({', '.join(read)}); it must read one."
+    elif read[0] not in _identity_field_names(identity_type):
+        problem = (
+            f"It read '{read[0]}', which is not a field of {identity_type.__name__}."
+        )
+    elif returned is not answer:
+        problem = f"It did more than return '{read[0]}'."
+    return read, problem
+
+
+def _probe_refusal(
+    identity_type: type, accessor: object, read: list[str], problem: str
+) -> str:
+    """The refusal of an accessor that *problem* says is wrong, with one to write.
+
+    The suggested accessor reads the field it read, or the field closest to it, or
+    the first field of *identity_type*.
+    """
+    names = _identity_field_names(identity_type)
     target = read[0] if read else accessor if isinstance(accessor, str) else None
     if target in names:
         suggested = target
@@ -708,7 +728,7 @@ def _probe_accessor(identity_type: type, accessor: object) -> str:  # noqa: C901
     else:
         suggested = names[0] if names else "<field>"
     name = identity_type.__name__
-    raise TypeError(
+    return (
         f"Resolvable({name}, accessor) needs an accessor that reads one field of "
         f"{name} and returns it. {problem} An accessor that does anything else cannot "
         "be checked against the type of the field it goes on, so a name resolved "
@@ -1059,7 +1079,93 @@ def _check_resolvable(
     )
 
 
-def apply_vco_markers(cls: type[BaseModel]) -> None:  # noqa: C901, PLR0912 (existing: split it when it next changes)
+def _process_level_marker(fi: FieldInfo, m: object, already: set[type]) -> bool:
+    """Process *m* when it is ``EdgeOnly``, ``ProfileOnly``, a normalizer or a default.
+
+    The normalizer is a ``Normalizer`` and the default a ``ContextDefault``.
+    Whether *m* was processed: one of them is not when a marker of its kind was
+    processed before it (the first marker of a kind wins).
+    """
+    if (
+        m is EdgeOnly or (isinstance(m, type) and issubclass(m, EdgeOnly))
+    ) and _ProcessedCtxDefaults not in already:
+        fi.metadata.append(_ProcessedCtxDefaults(ContextDefaults(profile=MISSING)))
+        already.add(_ProcessedCtxDefaults)
+        return True
+    if (
+        m is ProfileOnly or (isinstance(m, type) and issubclass(m, ProfileOnly))
+    ) and _ProcessedCtxDefaults not in already:
+        fi.metadata.append(_ProcessedCtxDefaults(ContextDefaults(edge=MISSING)))
+        already.add(_ProcessedCtxDefaults)
+        return True
+    if isinstance(m, Normalizer) and _ProcessedNorm not in already:
+        fi.metadata.append(_ProcessedNorm(_wrap_normalizer(m.fn)))
+        already.add(_ProcessedNorm)
+        return True
+    if isinstance(m, ContextDefault) and _ProcessedCtxDefaults not in already:
+        fi.metadata.append(
+            _ProcessedCtxDefaults(ContextDefaults(edge=m.edge, profile=m.profile))
+        )
+        already.add(_ProcessedCtxDefaults)
+        return True
+    return False
+
+
+def _process_flag_marker(fi: FieldInfo, m: object, already: set[type]) -> bool:
+    """Process *m* when it is a ``KeyField``, an ``OverrideFlag`` or ``EdgeLocal``.
+
+    Whether *m* was processed: one of them is not when a marker of its kind was
+    processed before it (the first marker of a kind wins).
+    """
+    if isinstance(m, KeyField) and KeySpec not in already:
+        fi.metadata.append(KeySpec(m.key_paths, alt=m.alt, label=m.label))
+        already.add(KeySpec)
+        return True
+    if (
+        isinstance(m, OverrideFlag)
+        or (isinstance(m, type) and issubclass(m, OverrideFlag))
+    ) and _ProcessedOverrideFlag not in already:
+        fi.metadata.append(_ProcessedOverrideFlag())
+        already.add(_ProcessedOverrideFlag)
+        if _ProcessedCtxDefaults not in already:
+            fi.metadata.append(_ProcessedCtxDefaults(ContextDefaults(profile=MISSING)))
+            already.add(_ProcessedCtxDefaults)
+        fi.metadata.append(Lenient(_none_to_false))
+        return True
+    if (
+        isinstance(m, EdgeLocal) or (isinstance(m, type) and issubclass(m, EdgeLocal))
+    ) and _ProcessedEdgeLocal not in already:
+        fi.metadata.append(_ProcessedEdgeLocal())
+        already.add(_ProcessedEdgeLocal)
+        return True
+    return False
+
+
+def _process_identity_marker(
+    cls: type[BaseModel],
+    field_name: str,
+    fi: FieldInfo,
+    marker: object,
+    already: set[type],
+) -> None:
+    """Check and process *marker* when it is the field's first ``Resolvable``.
+
+    It does nothing for any other marker.
+    """
+    if isinstance(marker, Resolvable) and _ProcessedResolvable not in already:
+        resolvable = cast("Resolvable[Any]", marker)
+        _check_resolvable(cls, field_name, fi, resolvable)
+        fi.metadata.append(
+            _ProcessedResolvable(
+                identity_type=resolvable.identity_type,
+                accessor=resolvable.accessor,
+                attribute=resolvable.attribute,
+            )
+        )
+        already.add(_ProcessedResolvable)
+
+
+def apply_vco_markers(cls: type[BaseModel]) -> None:
     """Scan FieldInfo.metadata for VCO markers.
 
     The processed results are stored back in metadata.
@@ -1090,59 +1196,10 @@ def apply_vco_markers(cls: type[BaseModel]) -> None:  # noqa: C901, PLR0912 (exi
                 fi.validation_alias = m.key
                 fi.serialization_alias = m.key
                 needs_rebuild = True
-            elif (
-                m is EdgeOnly or (isinstance(m, type) and issubclass(m, EdgeOnly))
-            ) and _ProcessedCtxDefaults not in already:
-                fi.metadata.append(
-                    _ProcessedCtxDefaults(ContextDefaults(profile=MISSING))
-                )
-                already.add(_ProcessedCtxDefaults)
-            elif (
-                m is ProfileOnly or (isinstance(m, type) and issubclass(m, ProfileOnly))
-            ) and _ProcessedCtxDefaults not in already:
-                fi.metadata.append(_ProcessedCtxDefaults(ContextDefaults(edge=MISSING)))
-                already.add(_ProcessedCtxDefaults)
-            elif isinstance(m, Normalizer) and _ProcessedNorm not in already:
-                fi.metadata.append(_ProcessedNorm(_wrap_normalizer(m.fn)))
-                already.add(_ProcessedNorm)
-            elif isinstance(m, ContextDefault) and _ProcessedCtxDefaults not in already:
-                fi.metadata.append(
-                    _ProcessedCtxDefaults(
-                        ContextDefaults(edge=m.edge, profile=m.profile)
-                    )
-                )
-                already.add(_ProcessedCtxDefaults)
-            elif isinstance(m, KeyField) and KeySpec not in already:
-                fi.metadata.append(KeySpec(m.key_paths, alt=m.alt, label=m.label))
-                already.add(KeySpec)
-            elif (
-                isinstance(m, OverrideFlag)
-                or (isinstance(m, type) and issubclass(m, OverrideFlag))
-            ) and _ProcessedOverrideFlag not in already:
-                fi.metadata.append(_ProcessedOverrideFlag())
-                already.add(_ProcessedOverrideFlag)
-                if _ProcessedCtxDefaults not in already:
-                    fi.metadata.append(
-                        _ProcessedCtxDefaults(ContextDefaults(profile=MISSING))
-                    )
-                    already.add(_ProcessedCtxDefaults)
-                fi.metadata.append(Lenient(_none_to_false))
-            elif (
-                isinstance(m, EdgeLocal)
-                or (isinstance(m, type) and issubclass(m, EdgeLocal))
-            ) and _ProcessedEdgeLocal not in already:
-                fi.metadata.append(_ProcessedEdgeLocal())
-                already.add(_ProcessedEdgeLocal)
-            elif isinstance(m, Resolvable) and _ProcessedResolvable not in already:
-                marker = cast("Resolvable[Any]", m)
-                _check_resolvable(cls, field_name, fi, marker)
-                fi.metadata.append(
-                    _ProcessedResolvable(
-                        identity_type=marker.identity_type,
-                        accessor=marker.accessor,
-                        attribute=marker.attribute,
-                    )
-                )
-                already.add(_ProcessedResolvable)
+            elif not (
+                _process_level_marker(fi, m, already)
+                or _process_flag_marker(fi, m, already)
+            ):
+                _process_identity_marker(cls, field_name, fi, m, already)
     if needs_rebuild:
         cls.model_rebuild(force=True)
