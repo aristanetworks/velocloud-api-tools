@@ -15,6 +15,7 @@ from pydantic import MISSING, ValidationError
 from pyvelo.client.models.configuration.device_settings.refs import (
     DeviceSettingsClientConnectorConfigRef,
     DeviceSettingsRefs,
+    DeviceSettingsZscalerSubLocationRef,
 )
 from pyvelo.client.module_write import plan_module
 from pyvelo.client.operations.edge import GetEdgeConfigurationStackResultModel
@@ -204,3 +205,39 @@ def test_a_module_holding_frozen_refs_is_marked_detached_and_copies_and_pickles(
     assert pickle.loads(pickle.dumps(module)).raw_refs == module.raw_refs
     assert copy.deepcopy(module).raw_refs == module.raw_refs
     assert not copy.deepcopy(module).is_detached
+
+
+SUB_LOCATION_REF_NAME = "deviceSettings:zscaler:subLocation"
+SUB_LOCATION_ROW: dict[str, Any] = {
+    "id": 31,
+    "enterpriseObjectId": 32,
+    "configurationId": 10,
+    "moduleId": 1,
+    "segmentObjectId": None,
+    "ref": SUB_LOCATION_REF_NAME,
+    "object": "ZSCALER_SUBLOCATION",
+    "type": "zscaler",
+    "name": "sub-location",
+    "logicalId": "00000000-0000-0000-0000-00000000005b",
+    "parentGroupId": 30,
+    "data": {"internalId": "00000000-0000-0000-0000-00000000005c"},
+}
+
+
+@pytest.mark.parametrize("held", [SUB_LOCATION_ROW, [SUB_LOCATION_ROW]])
+def test_a_zscaler_sub_location_row_loads_and_is_kept_as_read(held: Any) -> None:
+    module = _module({SUB_LOCATION_REF_NAME: copy.deepcopy(held)})
+    assert isinstance(module.refs, DeviceSettingsRefs)
+    rows = module.refs.zscaler_sub_location
+    row = rows[0] if isinstance(rows, tuple) else rows
+    assert isinstance(row, DeviceSettingsZscalerSubLocationRef)
+    assert row.object_ == "ZSCALER_SUBLOCATION"
+    assert module.raw_refs == {SUB_LOCATION_REF_NAME: held}
+    plan = plan_module(module, level=ConfigContext.EDGE)
+    assert (plan.operation, plan.refs) == ("none", None)
+
+
+def test_a_sub_location_row_is_not_a_network_service() -> None:
+    row = {**SUB_LOCATION_ROW, "object": "NETWORK_SERVICE"}
+    with pytest.raises(ValidationError, match="ZSCALER_SUBLOCATION"):
+        _ = DeviceSettingsZscalerSubLocationRef.model_validate(row)
