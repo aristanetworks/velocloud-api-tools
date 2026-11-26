@@ -1607,10 +1607,13 @@ the save or the `revert` replaced (or, for a module the state created, the
 `revert` removed), and are detached. Reading one is fine. An assignment to one
 raises `DetachedObjectError`, and an in-place edit to a list or dict it holds
 (`seg.outbound.insert(0, rule)`) is reported, once, by the next `plan()` or
-save. A device settings segment's `vrrp` is not one of the library's models
-and has no such guard: an assignment to `vrrp.root` does not raise, and is
-reported by the next `plan()` or save like an in-place edit. Take the object
-from the state again and redo the edit. To reuse a detached object as a new
+save. That holds while you still hold the object the list belongs to. A list or
+dict you kept on its own (`rules = seg.outbound`, with `seg` dropped) is not
+checked: an edit to it is neither reported nor saved (see the known limits). A
+text caller never holds one. A device settings segment's `vrrp` is not one of
+the library's models and has no such guard: an assignment to `vrrp.root` does
+not raise, and is reported by the next `plan()` or save like an in-place edit.
+Take the object from the state again and redo the edit. To reuse a detached object as a new
 item, put a deep copy of it in the state (`copy.deepcopy(rule)`): the copy is
 not detached. A detached object put back as it is makes its module refuse
 every patch (`merge_patch`, `apply`, `assign_segment`) with
