@@ -350,7 +350,7 @@ async def test_an_added_hub_needs_the_resolver() -> None:
     assert result.plan.steps == (step("enable", "hub", HUB_A),)
 
 
-async def test_render_shows_the_steps_first() -> None:
+async def test_render_shows_the_steps_before_the_device_settings() -> None:
     ds = ds_with_vpn(GLOBAL, hubs=(HUB_B,))
     state = await profile_of([ds, ds_entry(GUEST)], service_row(HUB_B, 1, "hub"))
     await edit(state, "hub", remove_hub(HUB_B.name))
@@ -358,12 +358,24 @@ async def test_render_shows_the_steps_first() -> None:
 
     lines = state.plan().render().splitlines()
 
-    assert lines[1:4] == [
+    assert lines[1:6] == [
+        "QOS: none",
+        "firewall: none",
         "steps:",
         "  disable hub for Hub-B on segment Global Segment",
         "  enable hub for Hub-A on segment Global Segment",
     ]
-    assert lines[4].startswith(f"{DS}: update")
+    assert lines[6].startswith(f"{DS}: update")
+
+
+async def test_a_plan_that_only_adds_hubs_lists_the_device_settings_first() -> None:
+    state = await profile_of([ds_entry(GLOBAL), ds_entry(GUEST)])
+    await edit(state, "hub", add_hub(HUB_A.name), hub_list=True, vpn=True)
+
+    plan = state.plan()
+
+    assert plan.modules[0].name == DS
+    assert plan.render().splitlines()[1] == "steps:"
 
 
 async def test_a_plan_without_steps_renders_no_steps_block() -> None:

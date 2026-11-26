@@ -114,17 +114,21 @@ class SaveStepError(IntentError):
     """A save that sends role steps failed after it may have sent one.
 
     The save of a profile whose edit adds or removes hubs sends the role calls
-    (``ConfigPlan.steps``) before it writes the modules, and nothing it sent
-    is undone when a later request fails. ``step`` is the step whose call
-    failed (it may have reached the VCO), or None when a module write failed
-    after at least one step was sent, and ``module_name`` then names that
-    module. ``steps_done`` are the steps sent before the failure and
-    ``steps_in_place`` those found already in place and not sent, in the order
-    of the plan; ``written`` are the names of the modules stored, in order.
-    The error is raised ``from`` the error of the VCO, and
-    ``save_progress(error)`` gives the modules not written. The state keeps
-    its edits: a second ``save`` plans the steps again, skips those in place
-    and sends the rest.
+    (``ConfigPlan.steps``) right before it writes the device settings, and
+    nothing it sent is undone when a later request fails. The device settings
+    are written first, and the role steps right before them; in a save that
+    removes a hub from a list (a plan with a ``disable`` step) they are written
+    last, after the other modules, so that a rule stops using a hub before the
+    hub loses its role. A write before the steps that fails raises its own
+    error, not this one. ``step`` is the step whose call failed (it may have
+    reached the VCO), or None when a module write failed after at least one
+    step was sent, and ``module_name`` then names that module. ``steps_done``
+    are the steps sent before the failure and ``steps_in_place`` those found
+    already in place and not sent, in the order of the plan; ``written`` are
+    the names of the modules stored, in order. The error is raised ``from``
+    the error of the VCO, and ``save_progress(error)`` gives the modules not
+    written. The state keeps its edits: a second ``save`` plans the steps
+    again, skips those in place and sends the rest.
     """
 
     def __init__(  # noqa: PLR0913 (existing: split it when it next changes)
@@ -158,8 +162,8 @@ class SaveStepError(IntentError):
             )
         else:
             what = (
-                "the save stopped after its steps, before it wrote any module, "
-                f"at a request that failed ({reason})"
+                "the save stopped after its steps, before it wrote the device "
+                f"settings, at a request that failed ({reason})"
             )
         sent = (
             "steps sent: " + "; ".join(step.render() for step in self.steps_done)
@@ -183,5 +187,5 @@ class SaveStepError(IntentError):
             "role for a list that the device settings do not hold yet. The "
             "state keeps your edits. Save again with the same state: the next "
             "save plans the steps again, skips those already in place, sends "
-            "the rest, and then writes the modules."
+            "the rest, and then writes the modules that are left."
         )

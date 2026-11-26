@@ -884,11 +884,11 @@ class ConfigPipeline:
         segment (``new_segment_entry``), and a QoS entry the profile already
         has that lacks some of the template's four ``defaults`` gets those. A
         segment that one or two of the modules have already is completed. The
-        next ``save`` writes the modules, device settings first, with the
-        ``deviceSettings:segment`` row the segment needs; ``plan()`` and
-        ``dry_run`` show it. An entry nobody edits afterwards is no change from
-        the template, and one that is edited (``apply``, or assignment to the
-        models) is.
+        next ``save`` writes the modules, device settings first unless the same
+        save removes a hub, with the ``deviceSettings:segment`` row the segment
+        needs; ``plan()`` and ``dry_run`` show it. An entry nobody edits
+        afterwards is no change from the template, and one that is edited
+        (``apply``, or assignment to the models) is.
 
         *name* is resolved strictly by the state's segment resolver: any case
         of the enterprise's name, and ``ResolutionError``, with suggestions,
@@ -999,13 +999,16 @@ class ConfigPipeline:
 
         1. Plan the write of every module (:meth:`ConfigState.plan`), and
            raise ``TypeError`` if a changed module is not one a save writes
-           (device settings, QoS, WAN, firewall), also for ``dry_run``. A
-           profile's device settings module is planned, and written, first.
-           A profile's three modules (device settings, QoS and firewall) hold
-           the same segments, so the plan raises ``SegmentSetError`` for an
-           edit that removes a segment from one, or adds it to some and not
-           all, and carries a ``segments_disagree`` warning for a profile
-           whose modules disagree as read.
+           (device settings, QoS, WAN, firewall), also for ``dry_run``. The
+           plan is in the write order: the device settings are written first,
+           and the role steps right before them; in a save that removes a hub
+           from a list (a plan with a ``disable`` step) they are written last,
+           after the other modules, so that a rule stops using a hub before
+           the hub loses its role. A profile's three modules (device settings,
+           QoS and firewall) hold the same segments, so the plan raises
+           ``SegmentSetError`` for an edit that removes a segment from one, or
+           adds it to some and not all, and carries a ``segments_disagree``
+           warning for a profile whose modules disagree as read.
            *repair_defaults* is false to leave the template ``defaults`` a
            profile QoS segment lacks out of the write; the plan warns of them
            either way (``defaults_repaired``).
@@ -1021,9 +1024,11 @@ class ConfigPipeline:
            after a profile's device settings is rebased
            (``write_module(..., rebase=True)``): the device settings write can change it
            too, so its version is read first, and a changed one makes the save read the
-           module and apply your edits to it. Only a path you edited that the other
-           change also reached raises ``ConfigConflictError``; what changed beside your
-           edits is in ``SaveResult.server_changes``, each with ``merged`` true. Per
+           module and apply your edits to it; one written before them (QoS and
+           firewall, in a save that removes a hub) is not. Only a path you
+           edited that the other change also reached raises
+           ``ConfigConflictError``; what changed beside your edits is in
+           ``SaveResult.server_changes``, each with ``merged`` true. Per
            module, ``SaveResult.left_out`` holds the planned changes the VCO stores its
            own way (a field it owns, a default it adds back where the plan removed it):
            neither applied nor lost, each with the value read, the value sent and the
@@ -1038,17 +1043,20 @@ class ConfigPipeline:
 
         A profile whose edit adds a hub to a segment's hub, bridge or backhaul
         list, or removes one, has role steps (``ConfigPlan.steps``), which a
-        write of the modules cannot do. The save sends them before step 3, in
-        the UI's order: it reads the device settings module's version (a module
-        another writer changed stops the save here, with nothing sent, and the
-        state holds the module as stored, as after a refused write), reads the
-        hub services, decides every step (in place or not, and the ID its call
+        write of the modules cannot do. The save sends them in step 3, right
+        before the device settings write, in the UI's order. Before its first
+        write it reads the device settings module's version (a module another
+        writer changed stops the save here, with nothing sent, and the state
+        holds the module as stored, as after a refused write), reads the hub
+        services and decides every step (in place or not, and the ID its call
         takes), so that a refusal such as a hub whose service the VCO holds
-        twice comes before the first call, sends each step not already in
+        twice, or ``hub_in_use`` with ``"refuse"``, comes before the first
+        request that changes anything. Then it writes the modules the plan
+        lists before the device settings, sends each step not already in
         place, reads the services again, and writes the device settings with
         the hub rows the steps made (a hub added to a Branch-to-Hub list has
         its row, one removed from it loses its row), without a second version
-        read.
+        read, and then the modules after them.
 
         An Edge hub removed from a Branch-to-Hub list that edge QoS rules use
         (a ``deviceSettings:backHaulEdge`` row of an Edge's QoS module) loses
@@ -1062,12 +1070,13 @@ class ConfigPipeline:
         same way.
 
         ``SaveResult.steps`` has an outcome per step: ``"sent"`` or
-        ``"in_place"``. An error before any step was sent propagates as it is.
-        Once one was, or when the call of one fails, an ``Exception`` (also
-        that of a module write) is raised as ``SaveStepError``, from the VCO's
-        error: nothing is undone, the state keeps its edits, and a second
-        ``save`` plans the steps again, skips those now in place and sends the
-        rest. A cancellation propagates as it is.
+        ``"in_place"``. An error before any step was sent propagates as it is,
+        also that of a module written before the steps. Once one was, or when
+        the call of one fails, an ``Exception`` (also that of a module write)
+        is raised as ``SaveStepError``, from the VCO's error: nothing is
+        undone, the state keeps its edits, and a second ``save`` plans the
+        steps again, skips those now in place and sends the rest. A
+        cancellation propagates as it is.
 
         A provider you set (a DNS or authentication provider) goes with a ref
         row, which needs the enterprise's network services: the first plan
@@ -1339,6 +1348,12 @@ class ConfigPipeline:
         ``SaveStepError``; any other error, a cancellation included,
         propagates as it is. A ``SaveProgress`` is attached to the error once
         a call was made or a write was found stored (``_StepRun.guard``).
+
+        The decisions in ``sending.run`` were made against the device settings
+        module and the configuration ID it looks up again here, so nothing
+        between deciding and sending the steps may replace the device settings
+        module. The writes made in between (the modules the plan lists before
+        the device settings) each replace only their own module.
         """
         run = sending.run
         services = None if run is None else run.services
@@ -1395,10 +1410,14 @@ class ConfigPipeline:
         result: SaveResult,
         on_hub_in_use: Literal["warn", "refuse"],
     ) -> SaveResult:
-        """Send the role steps of *plan*, then write each changed module.
+        """Write each changed module of *plan* in order, with its role steps.
 
-        The steps are sent if it has any. The modules are written in order, and each
-        module as stored is put in *state*.
+        The modules are written in the plan's order, and each module as stored
+        is put in *state*. The device settings are written first, and the role
+        steps right before them; in a save that removes a hub from a list (a
+        plan with a ``disable`` step) they are written last, after the other
+        modules, so that a rule stops using a hub before the hub loses its
+        role.
 
         Raises ``TypeError`` before the first request when a changed module is
         not one a save writes. A ``ModuleWriteError`` puts the module as
@@ -1415,12 +1434,16 @@ class ConfigPipeline:
         with a ``DetachedObjectError`` whose note also names the modules not
         written.
 
-        The steps come first (:meth:`_check_steps_version`, :meth:`_decide_steps`
-        and :meth:`_send_steps`), and the device settings write that follows
-        carries the rows they made and reads no version (``version_checked``).
-        Once a step was sent, an ``Exception`` of a module write is raised as a
-        ``SaveStepError``, from that error, and its ``SaveProgress`` is that of
-        the write.
+        Every check comes before the first write: the version read of the
+        device settings (:meth:`_check_steps_version`), and the services read,
+        the ``hub_in_use`` refusal and the decision of every step
+        (:meth:`_decide_steps`). Then the modules the plan lists before the
+        device settings are written, the steps are sent (:meth:`_send_steps`),
+        and the device settings write that follows carries the rows they made
+        and reads no version (``version_checked``). An error of a write before
+        the steps propagates as it is. Once a step was sent, an ``Exception``
+        of a module write is raised as a ``SaveStepError``, from that error,
+        and its ``SaveProgress`` is that of the write.
         """
         changed = list(plan.changed)
         modules = [_require_writable(state.module(p.name)) for p in changed]
@@ -1433,14 +1456,19 @@ class ConfigPipeline:
             providers=[ref_only_values(mod.data) for mod in modules],
             done=[],
         )
-        if plan.steps:
-            await self._check_steps_version(sending)
-            run = await self._decide_steps(sending, plan, on_hub_in_use)
-            sending.run = run
-            await self._send_steps(sending, plan)
-            result.steps = tuple(run.outcomes)
-            result.warnings.extend(run.warnings)
-        await self._write_modules(sending, range(len(changed)))
+        if not plan.steps:
+            await self._write_modules(sending, range(len(changed)))
+            return result
+        # Every check comes before the first write.
+        await self._check_steps_version(sending)
+        run = await self._decide_steps(sending, plan, on_hub_in_use)
+        sending.run = run
+        result.warnings.extend(run.warnings)
+        at = sending.device_settings_at
+        await self._write_modules(sending, range(at))
+        await self._send_steps(sending, plan)
+        result.steps = tuple(run.outcomes)
+        await self._write_modules(sending, range(at, len(changed)))
         return result
 
     async def _write_modules(self, sending: _Sending, positions: range) -> None:

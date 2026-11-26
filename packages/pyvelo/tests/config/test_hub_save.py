@@ -629,6 +629,33 @@ async def test_a_qos_write_after_a_step_and_the_device_settings_fails_as_a_save_
     assert state.plan().steps == ()
 
 
+async def test_a_save_that_removes_one_hub_and_adds_another_writes_qos_first() -> None:
+    ds = ds_with_vpn(GLOBAL, hubs=(HUB_B,))
+    state = await profile_of([ds, ds_entry(GUEST)], service_row(HUB_B, "hub"))
+    await edit(state, "hub", remove_hub(HUB_B.name))
+    await edit(state, "hub", add_hub(HUB_A.name))
+    rule = {"rules": {"+": {"_op": "add", **backhaul_rule("Web")}}}
+    _ = await ConfigPipeline(client=None).apply(
+        state, module="QOS", patch={"segments": {GLOBAL[1]: rule}}
+    )
+    pipeline, store = hub_pipeline(state, vpn_check=True)
+
+    result = await pipeline.save(state)
+
+    wanted = (
+        UPDATE,
+        call_name("disable", "hub", HUB_B),
+        call_name("enable", "hub", HUB_A),
+    )
+    assert [m for m in methods(store) if m in wanted] == [
+        UPDATE,
+        call_name("disable", "hub", HUB_B),
+        call_name("enable", "hub", HUB_A),
+        UPDATE,
+    ]
+    assert [w.name for w in result.written] == ["QOS", DS]
+
+
 async def test_a_conflict_of_the_module_write_after_a_step_is_the_cause() -> None:
     state = await two_lists_state()
     pipeline, store = hub_pipeline(state, vpn_check=True)

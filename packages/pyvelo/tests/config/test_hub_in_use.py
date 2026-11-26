@@ -14,7 +14,7 @@ import uuid
 from typing import Any, Literal
 
 import pytest
-from hub_helpers import HUB_A, HUB_B, Hub, ds_with_vpn, hub_row
+from hub_helpers import HUB_A, HUB_B, Hub, backhaul_rule, ds_with_vpn, hub_row
 from hub_state import (
     hub_pipeline,
     hub_profile_state,
@@ -225,6 +225,20 @@ async def test_with_refuse_a_hub_an_edge_uses_raises_before_any_step() -> None:
     # Nothing was lost: the same save with the default goes on.
     result = await pipeline.save(state)
     assert [o.status for o in result.steps] == ["sent"]
+
+
+async def test_with_refuse_nothing_is_written_before_the_refusal() -> None:
+    pipeline, store, state = await used_hub_save()
+    rule = {"rules": {"+": {"_op": "add", **backhaul_rule("Web")}}}
+    _ = await ConfigPipeline(client=None).apply(
+        state, module="QOS", patch={"segments": {GLOBAL[1]: rule}}
+    )
+
+    with pytest.raises(HubListError):
+        _ = await pipeline.save(state, on_hub_in_use="refuse")
+
+    assert (role_calls(store), writes(store)) == ([], [])
+    assert sorted(m.name for m in state.plan().changed) == ["QOS", DS]
 
 
 async def test_a_hub_no_edge_uses_gives_no_warning_and_is_not_refused() -> None:

@@ -585,9 +585,12 @@ firewall: update
   count. A value is shown as JSON, cut to 80 characters, and the two values of
   a `~` line are cut where they first differ. `SaveResult.plan` is the same
   plan, and `dry_run=True` reports it without writing.
-- The plan lists `deviceSettings` first, then the other modules in the order the
-  configuration lists them, for an edge as for a profile, and a save writes
-  them in that order.
+- The plan lists the modules in the order a save writes them. The device
+  settings are written first, and the role steps right before them; in a save
+  that removes a hub from a list (a plan with a `disable` step) they are written
+  last, after the other modules, so that a rule stops using a hub before the hub
+  loses its role. The other modules are in the order the configuration lists
+  them, for an edge as for a profile (an edge has no steps).
 - A profile's device settings, QoS and firewall modules hold the same
   segments, so `plan()` compares the three by `segmentId`. An edit that removes
   a segment from one raises `SegmentSetError` (from `pyvelo.config`), except
@@ -633,9 +636,11 @@ firewall: update
   `warning: <message>` line in `render()`. `client.update_module` writes one
   module and does not run the check.
 - A hub added to or removed from a profile segment's hub, bridge or backhaul
-  list has role steps (`ConfigPlan.steps`), which `render()` shows first and a
-  save sends before it writes the modules, and a hub row that the device
-  settings write carries. "Hubs", below, has all of it.
+  list has role steps (`ConfigPlan.steps`), which `render()` shows right before
+  the device settings block and a save sends right before it writes the device
+  settings, and a hub row that the device settings write carries. A save that
+  removes a hub writes the device settings, and so the steps, after the other
+  modules. "Hubs", below, has all of it.
 - A segment added to a profile module has an `added segments: Guest` line, and
   `get_field_changes()` lists it as one change at `segments["Guest"]`, from
   `MISSING` to the entry as written. A QoS segment that lacks template
@@ -852,8 +857,8 @@ a divergence you have understood, which gets an entry with its reason.
 A profile holds each of its segments in three modules: device settings, QoS and
 firewall. `pipeline.assign_segment(state, "Guest")` adds the entry the
 Orchestrator UI makes for a new segment to each of them that lacks it, in
-memory, and the next save writes them, device settings first, with its
-`deviceSettings:segment` row:
+memory, and the next save writes them, device settings first unless the same
+save removes a hub, with its `deviceSettings:segment` row:
 
 ```python
 state = await pipeline.load_profile("Branch profile", enterprise_id=1)
@@ -915,10 +920,11 @@ result = await pipeline.save(state)
 - All or nothing: the assignment is first planned on copies of the modules, and
   an error leaves the state and `plan()` as they were. The call holds
   `state.lock`, as `apply` does.
-- The save writes the three modules, one request each, device settings first,
-  with the new `deviceSettings:segment` row and every other row as read, then
-  QoS, then firewall. Writing device settings can change the other two, so each
-  is read for its version and rebased when it changed (see "After a save"): your
+- The save writes the three modules, one request each, device settings first
+  unless the same save removes a hub (see "Hubs"), with the new
+  `deviceSettings:segment` row and every other row as read, then QoS, then
+  firewall. Writing device settings can change the other two, so each is read
+  for its version and rebased when it changed (see "After a save"): your
   edits go onto the module as it is then, together with the entry of the
   assignment and the template `defaults` the write repairs, with the IDs they
   were planned with. A module that holds a segment this save adds by then
@@ -1002,10 +1008,17 @@ edit needs, then writes the module.
   backhaul, enable bridge; within one kind, the segments in the order of the
   module's `segments`, then the hubs in the order of their list. A hub removed
   from a segment's hub list gets no backhaul or bridge disable there: disabling
-  the hub clears its roles. `render()` shows them first, after the target line:
+  the hub clears its roles. `render()` shows them right before the device
+  settings block, where the save sends them. The device settings are written
+  first, and the role steps right before them; in a save that removes a hub
+  from a list (a plan with a `disable` step) they are written last, after the
+  other modules, so that a rule stops using a hub before the hub loses its
+  role. This plan removes Hub-A, so the device settings come last:
 
   ```text
   profile "Branch profile", configuration 100
+  QOS: none
+  firewall: none
   steps:
     disable hub for Hub-A on segment Global Segment
     enable hub for Hub-B on segment Global Segment
@@ -1051,12 +1064,17 @@ edit needs, then writes the module.
   write whose answer was lost, counts as written). It reads the hub services
   (two requests) and decides every step from them, which steps are in place and
   the ID each call takes, so that a refusal (a hub whose service the VCO holds
-  twice is a `HubListError`) comes before the first call. It sends each step
-  the VCO does not already have in place, reads the services again, and writes
-  the device settings with the hub rows the steps made, without reading the
-  version a second time. The write is the module as read with your edits and
-  `deviceSettings:vpn:edgeHub` (`edgeHubCluster` for a cluster) rows: a hub
-  added to the Branch-to-Hub list gets one, whose object is its service
+  twice is a `HubListError`, and so is a hub in use with
+  `on_hub_in_use="refuse"`, below) comes before the first write. Then it writes
+  the modules the plan lists before the device settings (in a save that removes
+  a hub, QoS and firewall: a rule that stops using the hub is stored before the
+  hub loses its role), sends each step the VCO does not already have in place,
+  reads the services again, writes the device settings with the hub rows the
+  steps made, without reading the version a second time, and then writes the
+  modules the plan lists after them. The device settings write is the module as
+  read with your edits and `deviceSettings:vpn:edgeHub` (`edgeHubCluster` for a
+  cluster) rows: a hub added to the Branch-to-Hub list gets one, whose object
+  is its service
   (`+ refs deviceSettings:vpn:edgeHub (Global Segment): <service ID>` in
   `ModuleWrite.plan`), and a hub removed from it loses its row. A row of a hub
   that stays is never removed, and a hub the VCO has no service for after its
@@ -1070,14 +1088,26 @@ edit needs, then writes the module.
   (`module_name` names it), `steps_done` and `steps_in_place` list the others,
   and `written` the modules stored; `save_progress(error)` gives the modules
   not written. A failure before any step was sent (the version read, the
-  services read, a write when every step was in place) propagates as it is, and
-  so does a cancellation. Nothing a step did is undone and the state keeps its
-  edits: a second `save(state)` plans the steps again, finds the ones sent in
-  place, sends the rest and writes the modules.
+  services read, a write of a module before the steps, a write when every step
+  was in place) propagates as it is, and so does a cancellation. Nothing a step
+  did is undone and the state keeps its edits: a second `save(state)` plans the
+  same order again, finds the steps sent in place, sends the rest and writes the
+  modules that are left.
 - **The removal window.** Once a hub's disable has run, its service, its row
-  and the refs that point at it are gone, so if the module write then fails the
-  stored profile still lists the hub while the VCO drops it for every Edge,
-  until a second `save` finishes. The Orchestrator UI has the same window.
+  and the refs that point at it are gone. The profile's own rules are written
+  before the disable, so a rule of the profile that stops using the hub is
+  stored without it first, and the window holds no rule of the profile that
+  backhauls through a hub with no service. If the device settings write then
+  fails, the stored profile still lists the hub while the VCO drops it for
+  every Edge, until a second `save` finishes. The Orchestrator UI has the same
+  window.
+- **A removal and an edit that needs the device settings first.** In a save
+  that removes a hub, QoS and firewall are written before the device settings.
+  A QoS or firewall edit that the VCO takes only after a device settings change
+  of the same save (a rule that turns conditional backhaul on, in the save that
+  turns it on for the segment) has that write refused by the VCO, first and
+  with nothing else written: save the device settings change on its own first,
+  then the rest.
 - **A hub that rules use.** An Edge hub removed from a Branch-to-Hub list that
   edge QoS rules use loses its service to the role call, and with it the
   backhaul refs of those rules, which keep the hub in their data. The services
@@ -1172,10 +1202,10 @@ the state continues from that module. Otherwise the save raises
 nothing was sent: `error.module` is the module as it is now, with your edits in
 `lost_edits` to redo on it. A module its configuration no longer holds raises it
 too, with `error.module` None: read the configuration again.
-A save with role steps makes this read before its first step instead
-(`client.check_module_version`), so that a module another writer changed stops
-it with nothing sent, and the device settings write that follows does not read
-again.
+A save with role steps makes this read of the device settings before its first
+write or step instead (`client.check_module_version`), so that a module another
+writer changed stops it with nothing sent, and the device settings write that
+follows the steps does not read again.
 
 A save of a profile that writes its device settings rebases the modules it
 writes after them. Writing device settings can change the profile's other
@@ -1193,10 +1223,13 @@ the module already holds every one of your changes, nothing is sent for it. A
 ref row your edit adds or removes (a QoS rule's backhaul hub) is derived again
 against the refs read, so a row already there is not added twice, and the hub's
 service is found in the device settings as that save stored them. The
-modules written before the device settings, and every module of an edge save,
-are not rebased: a changed version raises as above. The cost is one version
-read per module written after the device settings, and one full read of the
-module when its version changed.
+modules written before the device settings (QoS and firewall, in a save that
+removes a hub: see "Hubs"), and every module of an edge save, are not rebased:
+a changed version raises as above. A device settings write that changes such a
+module on the VCO after it was stored leaves the state with the module as it
+was stored, so the next write of it meets the changed version. The cost is one
+version read per module written after the device settings, and one full read of
+the module when its version changed.
 
 Which of the two a stale write raises depends on the VCO's conditional check
 of the version. With it on, the VCO refuses the write, and the save raises

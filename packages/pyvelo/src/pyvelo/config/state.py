@@ -178,17 +178,23 @@ class ConfigPlan:
       (``check_warnings``).
 
     A profile whose edit adds a hub to a segment's hub, bridge or backhaul
-    list, or removes one, has the role calls the save makes before it writes
-    the device settings (``steps``). ``render()`` shows them first, after the target
-    line, as a ``steps:`` line and a line for each, in the order they are
-    made:
+    list, or removes one, has the role calls the save makes right before it
+    writes the device settings (``steps``). ``render()`` shows them right
+    before the device settings block, as a ``steps:`` line and a line for
+    each, in the order they are made:
 
+        QOS: none
+        firewall: none
         steps:
           disable backhaul for Hub-B on segment Global Segment
           enable hub for Hub-A on segment Global Segment
+        deviceSettings: update
 
-    A profile's device settings module is written first, then the others in
-    the order the configuration lists them, and ``modules`` is in that order.
+    ``modules`` is in the write order. The device settings are written first,
+    and the role steps right before them; in a save that removes a hub from a
+    list (a plan with a ``disable`` step) they are written last, after the
+    other modules, so that a rule stops using a hub before the hub loses its
+    role. The other modules are in the order the configuration lists them.
 
     Paths are in the names the VCO uses. A value is JSON, cut to 80 characters;
     the two values of a "~" line are cut where they first differ. A secret
@@ -251,7 +257,15 @@ class ConfigPlan:
         """The plan as text to show before a save, in the format above."""
         lines = [m.render() for m in self.modules]
         if self.steps:
-            lines = ["steps:", *(f"  {step.render()}" for step in self.steps), *lines]
+            at = next(
+                (
+                    i
+                    for i, m in enumerate(self.modules)
+                    if m.name == ConfigurationModuleName.DEVICE_SETTINGS
+                ),
+                0,
+            )
+            lines[at:at] = ["steps:", *(f"  {step.render()}" for step in self.steps)]
         lines.extend(
             f"warning: {w.message}"
             for w in (*self.segment_warnings, *self.check_warnings)
@@ -970,12 +984,16 @@ class ConfigState:
     def plan(self, *, repair_defaults: bool = True) -> ConfigPlan:
         """Plan the write of every module of the target config, in order.
 
-        The order is the write order: ``deviceSettings`` first, for every
-        target, then the other modules in the order the configuration lists
-        them. Each module is planned relative to the raw data it was read
-        from. An edge module also reconciles its segments with the profile's
-        module of the same name. Raises ``LossyFieldError`` if an edit cannot
-        be written.
+        The order is the write order. The device settings are written first,
+        and the role steps right before them; in a save that removes a hub
+        from a list (a plan with a ``disable`` step) they are written last,
+        after the other modules, so that a rule stops using a hub before the
+        hub loses its role. The other modules are in the order the
+        configuration lists them, for every target (an edge has no steps).
+        The checks below run before that order is made. Each module is
+        planned relative to the raw data it was read from. An edge module
+        also reconciles its segments with the profile's module of the same
+        name. Raises ``LossyFieldError`` if an edit cannot be written.
 
         First, raises ``DetachedObjectError`` naming the paths if objects of a
         module :meth:`replace_module` replaced were changed in place; once for
@@ -1038,6 +1056,14 @@ class ConfigState:
         as_read = {p.name: p.as_read for p in plans}
         steps, hub_warnings = self._hub_steps(ordered, as_read)
         check_warnings = self._check_references(ordered, as_read)
+        if any(step.action == "disable" for step in steps):
+            # A rule stops using a hub before the hub loses its role.
+            plans = tuple(
+                sorted(
+                    plans,
+                    key=lambda p: p.name == ConfigurationModuleName.DEVICE_SETTINGS,
+                )
+            )
         return ConfigPlan(
             modules=plans,
             target=target,
