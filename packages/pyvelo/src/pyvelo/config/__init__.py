@@ -9,6 +9,7 @@ errors a patch or a save raises.
 
 from pyvelo.client.enums.configuration import ConfigurationModuleName
 from pyvelo.client.exceptions import (
+    BackhaulWithoutHubError,
     ComposedModuleError,
     ConfigConflictError,
     DanglingReferenceError,
@@ -82,6 +83,7 @@ from .validation_warning import ValidationWarning
 
 __all__ = [
     "Added",
+    "BackhaulWithoutHubError",
     "Change",
     "ComposedModuleError",
     "ConfigConflictError",

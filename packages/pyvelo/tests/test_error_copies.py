@@ -10,12 +10,14 @@ from typing import Any
 
 import pytest
 from pyvelo.client.exceptions import (
+    BackhaulWithoutHubError,
     ComposedModuleError,
     ConfigConflictError,
     DanglingReferenceError,
     DetachedObjectError,
     FixedListError,
     GroupOwnershipError,
+    HublessBackhaul,
     HubListError,
     LayerUnknownError,
     LossyFieldError,
@@ -158,6 +160,21 @@ def test_a_dangling_reference_error_keeps_its_references_and_message_through_cop
     for copied in copies(error):
         assert type(copied) is DanglingReferenceError
         assert copied.references == references
+        assert str(copied) == str(error)
+
+
+def test_a_backhaul_without_hub_error_keeps_its_places_and_message_through_copies() -> (
+    None
+):
+    path = Path(("segments", Key("Guest"), "rules", Key("Web"), "action"))
+    places = (
+        HublessBackhaul("QOS", path, "Guest", "Web", ("segments", "Guest")),
+        HublessBackhaul("QOS", path, None, "Mail"),
+    )
+    error = BackhaulWithoutHubError(places)
+    for copied in copies(error):
+        assert type(copied) is BackhaulWithoutHubError
+        assert copied.places == places
         assert str(copied) == str(error)
 
 
@@ -340,6 +357,9 @@ def test_every_error_of_the_module_round_trips() -> None:
             edges=((31, "Hub-A"),),
         ),
         DanglingReferenceError([Reference("deviceSettings", path, 7, "segment", None)]),
+        BackhaulWithoutHubError(
+            [HublessBackhaul("QOS", path, "Guest", "Web", ("segments", "Guest"))]
+        ),
         RefsDroppedError(
             1,
             "v1",

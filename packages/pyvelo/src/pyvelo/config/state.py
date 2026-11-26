@@ -53,6 +53,7 @@ from pyvelo.client.schemas.configuration import (
     WanConfigurationModule,
     new_edge_module,
 )
+from pyvelo.config.backhaul_check import check_backhaul_hubs
 from pyvelo.config.errors import LayerNotSavedError, SaveValidationError
 from pyvelo.config.hub_steps import (
     HubStep,
@@ -1050,6 +1051,12 @@ class ConfigState:
         checks of the hub lists come after the segment-set rule and before
         the reference check.
 
+        Right after the reference check, a QoS rule that backhauls to hubs and
+        names none raises ``BackhaulWithoutHubError``
+        (:func:`~pyvelo.config.backhaul_check.check_backhaul_hubs`), and
+        ``check_warnings`` has a ``backhaul_without_hub_kept`` warning for one
+        that named none as read.
+
         Raises ``ResolverNotLoadedError`` when a provider was set and the
         state's network services are not loaded (:meth:`plan_module`), or a
         hub was added and the state's hubs are not. A save, a dry run and
@@ -1074,6 +1081,7 @@ class ConfigState:
         as_read = {p.name: p.as_read for p in plans}
         steps, hub_warnings = self._hub_steps(ordered, as_read)
         check_warnings = self._check_references(ordered, as_read)
+        check_warnings += check_backhaul_hubs(ordered, as_read)
         if any(step.action == "disable" for step in steps):
             # A rule stops using a hub before the hub loses its role.
             plans = tuple(

@@ -139,7 +139,8 @@ or as the last save or write error left it): every edit to it since is gone,
 not the last patch alone, however it was made, and a module the state created
 is removed. No other module is touched and nothing is cascaded: the next
 `plan()` judges what is left, so an edit elsewhere that relied on this module
-is refused there (`SegmentSetError`, `DanglingReferenceError`). Objects taken
+is refused there (`SegmentSetError`, `DanglingReferenceError`,
+`BackhaulWithoutHubError`). Objects taken
 from the state before are detached, as after a save, and nothing is sent,
 except for a new module whose insert may have reached the VCO after a failed
 save (`state.unconfirmed_inserts`). For that one `revert` reads the
@@ -668,6 +669,44 @@ firewall: update
   `ConfigPlan.warnings` and `SaveResult.warnings`), and a
   `warning: <message>` line in `render()`. `client.update_module` writes one
   module and does not run the check.
+- A QoS rule's route action (`edge2EdgeRouteAction`,
+  `edge2DataCenterRouteAction` or `edge2CloudRouteAction`, whatever the rule's
+  `routeType` says) whose `routePolicy` is `"backhaul"` and whose
+  `routeCfg.type` is `"edge"` sends its traffic to the hubs of its
+  `routeCfg.backhaulEdges`, and must name one: `backhaulEdgesAutoSelection`
+  does not stand in for it. With none, the VCO would store a rule that
+  backhauls nowhere. `plan()` checks every module of the target, right after
+  the references, and raises `BackhaulWithoutHubError` (from `pyvelo.config`)
+  for a route action the edits leave with no hub: a patch that deletes its
+  last hub, a rule added with none, a rule set to backhaul with none.
+  `error.places` names each route action, with its `module`, `path`,
+  `segment_name` and `rule_name`; the message gives the patches that mend the
+  first, with the module they go to, and says that the others are mended the
+  same way. `apply` accepts the edit, as for a reference. After
+  `{"segments": {"Guest": {"rules": {"Web": {"action": {"edge2CloudRouteAction":
+  {"routeCfg": {"backhaulEdges": {"Hub-A": {"_op": "delete"}}}}}}}}}}` takes the
+  only hub out of the rule `Web`, the error begins:
+
+  ```text
+  1 backhaul rule(s) name no hub:
+    QOS segments[Guest].rules[Web].action.edge_to_cloud_route_action: rule 'Web' of segment 'Guest'
+  ```
+
+  Any one of these, sent to `QOS`, mends it: give the rule a hub that is a
+  backhaul hub of its segment (one of the segment's `vpn.backHaulEdges`), by
+  name or `edgeLogicalId`, with
+  `{"segments": {"Guest": {"rules": {"Web": {"action": {"edge2CloudRouteAction":
+  {"routeCfg": {"backhaulEdges": {"+": {"_op": "add", "name": "Hub-B"}}}}}}}}}}`;
+  route it another way with `{"segments": {"Guest": {"rules": {"Web":
+  {"action": {"edge2CloudRouteAction": {"routePolicy": "gateway"}}}}}}}`
+  (`"auto"`, `"direct"` or `"gateway"`); or delete the rule with
+  `{"segments": {"Guest": {"rules": {"Web": {"_op": "delete"}}}}}`. Or take the
+  module's edits back with `pipeline.revert(state, module="QOS")`. A route
+  action that had no hub as read, at the same path (the same route action of
+  the same rule of the same segment), is left as it is: a
+  `backhaul_without_hub_kept` warning in `ConfigPlan.check_warnings` (also in
+  `ConfigPlan.warnings` and `SaveResult.warnings`), and a `warning: <message>`
+  line in `render()`.
 - A hub added to or removed from a profile segment's hub, bridge or backhaul
   list has role steps (`ConfigPlan.steps`), which `render()` shows right before
   the device settings block and a save sends right before it writes the device
@@ -1093,7 +1132,9 @@ edit needs, then writes the module.
   lines in `render()`): `hub_list_as_read` for a rule that is broken the same
   way as read (the save leaves it), `hub_roles_disagree` for a hub whose roles
   as read do not match the lists it is in, `reference_kept` for a value that
-  names nothing as read and still does not, and `hub_in_use` (below). One module
+  names nothing as read and still does not, `backhaul_without_hub_kept` for a
+  rule that backhauls to hubs and named none as read, and `hub_in_use`
+  (below). One module
   alone cannot change these lists: `client.update_module` and `plan_module`
   raise `HubListError` for a payload that does.
 - **The save.** A save with steps does this, in order. It reads the version of
@@ -1183,6 +1224,8 @@ edit needs, then writes the module.
   of the profile still names out of `backHaulEdges`, and out of the rule, are
   two edits that go in either order: `plan()` refuses the state until both
   are made, and the error's `mending` holds the patch for each way to mend it.
+  A rule that backhauls to hubs must keep one: deleting its last hub is a
+  `BackhaulWithoutHubError` (see "What a save writes").
 - **Not supported.** Creating a hub, an Edge or a cluster, or a cluster's
   members; and role calls from an edge (an edge state has no steps: its QoS
   rules name the hubs of its profile).

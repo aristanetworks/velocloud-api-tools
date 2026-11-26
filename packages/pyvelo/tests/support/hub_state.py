@@ -13,13 +13,25 @@ import uuid
 from collections.abc import Sequence
 from typing import Any, Final, cast
 
-from hub_helpers import CLUSTER, HUB_A, HUB_B, MEMBER, NOT_A_HUB, Hub
+from hub_helpers import (
+    CLUSTER,
+    HUB_A,
+    HUB_B,
+    MEMBER,
+    NOT_A_HUB,
+    Hub,
+    backhaul_entry,
+    backhaul_row,
+    ds_with_vpn,
+    hub_row,
+)
 from profile_state import (
     module_store_pipeline,
     profile_state,
 )
 from pydantic import MISSING
-from pyvelo.client.hub_services import CLUSTER_HUB_REF, EDGE_HUB_REF
+from pyvelo.client.hub_services import BACKHAUL_REF, CLUSTER_HUB_REF, EDGE_HUB_REF
+from pyvelo.client.models.configuration.profile_segments import segment_template
 from pyvelo.client.schemas.configuration import EdgeConfiguration
 from pyvelo.config.pipeline import ConfigPipeline
 from pyvelo.config.resolver import ResolverContext
@@ -28,7 +40,15 @@ from pyvelo.core.base import is_dict, is_list
 from pyvelo.core.identity import HubIdentity
 from pyvelo.testing import ModuleStore, make_module_json
 from pyvelo.testing.fixtures import make_hub_resolver
-from segment_helpers import GLOBAL, GUEST, VOICE
+from refs_helpers import QOS_ID, segment_row
+from segment_helpers import (
+    GLOBAL,
+    GUEST,
+    VOICE,
+    ds_entry,
+    firewall_entry,
+    qos_entry,
+)
 
 ALL_HUBS: Final = (HUB_A, HUB_B, CLUSTER, MEMBER, NOT_A_HUB)
 """The hubs of a state and a store unless a test gives others: ``MEMBER`` is a member of
@@ -271,3 +291,87 @@ def profile_hub_rows(*rows: dict[str, Any]) -> dict[str, Any]:
     for row in rows:
         refs.setdefault(row["ref"], []).append(copy.deepcopy(row))
     return {name: held[0] if len(held) == 1 else held for name, held in refs.items()}
+
+
+GUEST_SERVICES: Final = {
+    HUB_A: (601, "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"),
+    HUB_B: (602, "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"),
+}
+"""The service in the Guest segment of each hub of ``guest_backhaul_state``.
+
+Its ID and its logical ID.
+"""
+
+
+def hub_backhaul_rule(
+    name: str, *hubs: Hub, route_action: str = "edge2CloudRouteAction"
+) -> dict[str, Any]:
+    """A QoS rule named *name* whose *route_action* backhauls to *hubs*.
+
+    Its ``routePolicy`` is ``"backhaul"`` and its ``routeCfg.type`` ``"edge"``.
+    """
+    rule = segment_template("QOS")["rules"][0]
+    rule["name"] = name
+    rule["ruleLogicalId"] = str(uuid.uuid5(uuid.NAMESPACE_URL, name))
+    action = rule["action"][route_action]
+    action["routePolicy"] = "backhaul"
+    action["routeCfg"] = {
+        "type": "edge",
+        "backhaulEdges": [backhaul_entry(h, GUEST_SERVICES[h][1]) for h in hubs],
+    }
+    return rule
+
+
+def named_hubs(rules: list[dict[str, Any]]) -> list[Hub]:
+    """The hubs the rules' route actions name, each once."""
+    names = {
+        entry["name"]
+        for rule in rules
+        for action in rule["action"].values()
+        if isinstance(action, dict)
+        for entry in action.get("routeCfg", {}).get("backhaulEdges", [])
+    }
+    return [hub for hub in GUEST_SERVICES if hub.name in names]
+
+
+async def guest_backhaul_state(*rules: dict[str, Any]) -> ConfigState:
+    """A profile whose Guest segment has Hub-A and Hub-B as hubs and backhaul hubs.
+
+    Guest's QoS rules are *rules*.
+    """
+    refs = profile_hub_rows(
+        segment_row(GLOBAL[0], GLOBAL[3], GLOBAL[2]),
+        segment_row(GUEST[0], GUEST[3], GUEST[2]),
+        *(
+            hub_row(
+                hub,
+                service_id=service_id,
+                service_logical_id=service,
+                segment=GUEST,
+                roles=("hub", "backhaul"),
+            )
+            for hub, (service_id, service) in GUEST_SERVICES.items()
+        ),
+    )
+    rows = [
+        backhaul_row(
+            hub,
+            service_id=GUEST_SERVICES[hub][0],
+            service_logical_id=GUEST_SERVICES[hub][1],
+            segment=GUEST,
+            module_id=QOS_ID,
+        )
+        for hub in named_hubs(list(rules))
+    ]
+    return await hub_profile_state(
+        [
+            ds_entry(GLOBAL),
+            ds_with_vpn(GUEST, hubs=(HUB_A, HUB_B), backhaul=(HUB_A, HUB_B)),
+        ],
+        [qos_entry(GLOBAL), qos_entry(GUEST, rules=list(rules))],
+        [firewall_entry(GLOBAL), firewall_entry(GUEST)],
+        ds_refs=refs,
+        qos_refs=(
+            {BACKHAUL_REF: rows[0] if len(rows) == 1 else rows} if rows else MISSING
+        ),
+    )

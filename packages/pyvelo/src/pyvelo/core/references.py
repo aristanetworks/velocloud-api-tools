@@ -382,3 +382,14 @@ def removal_patch(data: VcoModel, reference: Reference) -> dict[str, object] | N
     for key in reversed(keys):
         patch = {key: patch}
     return patch
+
+
+def patch_keys(data: VcoModel, path: Path) -> tuple[str, ...] | None:
+    """The keys a patch to *data* gives to reach what *path* names.
+
+    Each step by its wire name and each item by the selector a patch names it
+    by (``item_selector``), as ``removal_patch`` gives them. ``None`` when a
+    step is not found in *data* or an item has no selector that names it alone.
+    """
+    found = _patch_keys(data, path.parts)
+    return None if found is None else tuple(found[0])
