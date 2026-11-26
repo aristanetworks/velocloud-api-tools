@@ -221,7 +221,7 @@ def test_field_changes_address_a_composite_key() -> None:
         destination="10.0.0.0",
         netmask="255.255.255.0",
         gateway="192.168.1.1",
-        cidr_prefix=24,
+        cidr_prefix="24",
         wan_interface="GE3",
     )
     module = DeviceSettingsConfigurationModule(
@@ -266,7 +266,7 @@ def test_field_changes_address_a_composite_key() -> None:
         (
             (
                 'segments["Global Segment"].routes.static'
-                '["10.0.0.0",24,"192.168.1.1",GE3].cost'
+                '["10.0.0.0","24","192.168.1.1",GE3].cost'
             ),
             0,
             5,

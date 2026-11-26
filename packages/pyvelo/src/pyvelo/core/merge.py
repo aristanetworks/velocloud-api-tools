@@ -11,7 +11,6 @@ import difflib
 import enum
 import functools
 import json
-import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal, LiteralString, cast, get_args, get_origin
 
@@ -1741,33 +1740,6 @@ class _Selection:
     """
 
 
-_CANONICAL_WHOLE_NUMBER = re.compile(r"0|-?[1-9][0-9]{0,17}")
-"""A whole number as ``str(int)`` writes it, of at most 18 digits.
-
-No leading zero, no ``+``, no ``-0``: ``str(int(text)) == text`` for each, so
-the number stands for the same key as the text. The bound keeps ``int`` far
-from Python's limit on the digits it converts.
-"""
-
-
-def _typed_part(spec: _ListSpec, key_path: str, text: str) -> KeyScalar:
-    """*text*, one part of a composite key split at the commas, as its field reads it.
-
-    The ``int`` when *key_path* is one field of the items whose type holds both
-    ``str`` and ``int`` and *text* is a whole number written as ``str(int)``
-    writes it, of at most 18 digits; else *text*. A text caller cannot write
-    the type, so the field's type decides, as it does for a field that holds
-    only ``int``. Any other text (``024``, ``-0``, ``+5``) is kept, so it
-    selects and adds as the text it is.
-    """
-    fields = {} if spec.item_type is None else spec.item_type.fields
-    field_info = fields.get(key_path)
-    if field_info is None or _CANONICAL_WHOLE_NUMBER.fullmatch(text) is None:
-        return text
-    members = _members_of(_held_type(field_info))
-    return int(text) if str in members and int in members else text
-
-
 def _selector_keys(spec: _ListSpec, selector: object) -> list[KeyValue]:
     """The keys *selector* may stand for in a keyed list, in the order tried.
 
@@ -1775,10 +1747,9 @@ def _selector_keys(spec: _ListSpec, selector: object) -> list[KeyValue]:
     commas. For a key of n parts: first what it gives as written, a tuple or
     list of n parts, each as ``key_part`` gives it (a ``UUID`` in string form,
     as an item's part is), or a string that ``parse_key_text`` reads as n
-    parts; then, for a string, its n parts split at every comma (unless that
-    is the same key in string form), each part text except a whole number on
-    a field that holds ``str`` and ``int``, which is the number
-    (``_typed_part``). Empty when the selector has n parts in no reading.
+    parts; then, for a string, its n parts split at every comma, each part
+    text (unless that is the same key in string form). Empty when the
+    selector has n parts in no reading.
     """
     if len(spec.key_paths) == 1:
         return [str(selector)]
@@ -1794,12 +1765,7 @@ def _selector_keys(spec: _ListSpec, selector: object) -> list[KeyValue]:
                 keys.append(written)
         split = tuple(selector.split(","))
         if len(split) == n and (not keys or key_form(split) != key_form(keys[0])):
-            keys.append(
-                tuple(
-                    _typed_part(spec, path, part)
-                    for path, part in zip(spec.key_paths, split, strict=True)
-                )
-            )
+            keys.append(split)
     elif isinstance(selector, (tuple, list)):
         values = cast("tuple[object, ...] | list[object]", selector)
         if len(values) == n:

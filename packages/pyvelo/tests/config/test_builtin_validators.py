@@ -194,7 +194,7 @@ def _static_route(gateway: str) -> StaticRoute:
         destination="10.0.0.0",
         netmask="255.255.255.0",
         gateway=gateway,
-        cidr_prefix=24,
+        cidr_prefix="24",
         wan_interface="GE3",
     )
 
@@ -223,7 +223,7 @@ def test_key_uniqueness_reads_composite_keys() -> None:
     assert [(e.path, e.code) for e in result.errors] == [
         ("deviceSettings.segments[0].routes.static[1]", "key_uniqueness")
     ]
-    assert '"10.0.0.0",24,"192.168.1.1",GE3' in result.errors[0].message
+    assert '"10.0.0.0","24","192.168.1.1",GE3' in result.errors[0].message
 
     result = key_uniqueness.validate(
         _routes_state(_static_route("192.168.1.1"), _static_route("192.168.1.2"))
