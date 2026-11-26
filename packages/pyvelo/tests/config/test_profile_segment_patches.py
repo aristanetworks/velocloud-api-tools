@@ -32,8 +32,9 @@ from pyvelo.config.pipeline import ConfigPipeline
 from pyvelo.config.resolver import ResolverRegistry
 from pyvelo.config.state import ConfigState
 from pyvelo.core import PatchError, Profile, add, delete
-from pyvelo.core.identity import ResolutionError
+from pyvelo.core.identity import NetworkServiceIdentity, ResolutionError
 from pyvelo.core.rebase import Key, Path
+from pyvelo.testing import make_network_service_resolver
 from segment_helpers import (
     GLOBAL,
     GUEST,
@@ -543,6 +544,45 @@ async def test_a_list_value_with_a_new_segment_of_another_descriptor_raises() ->
         )
 
     assert raised.value.kind == "segment_rule"
+    assert dumps(state) == before
+
+
+UNKNOWN_SERVICE = {"dns": {"primaryProvider": {"service": "dns-x"}}}
+
+
+@pytest.mark.parametrize(
+    ("form", "entry_at"),
+    [("list value", Path(("segments", 1))), ("add", GUEST_AT)],
+)
+async def test_an_unknown_service_in_a_new_segment_entry_names_the_whole_path(
+    form: str, entry_at: Path
+) -> None:
+    state = await global_only()
+    state.resolvers.register(
+        await make_network_service_resolver(
+            [NetworkServiceIdentity("dns-a", uuid.UUID(int=1), 701, "dns")]
+        )
+    )
+    segments: object = (
+        [kept(state, DS), {"segment": {"name": "Guest"}, **UNKNOWN_SERVICE}]
+        if form == "list value"
+        else {"Guest": add(UNKNOWN_SERVICE)}
+    )
+    before = dumps(state)
+
+    with pytest.raises(ResolutionError) as raised:
+        _ = await patch(state, DS, segments)
+
+    error = raised.value
+    full = Path((*entry_at.parts, "dns", "primary_provider", "service"))
+    assert error.path == full
+    assert str(error).startswith(f"{full}: Unknown network service: 'dns-x'.")
+    assert str(error).count("primary_provider") == 1
+    assert (error.name, error.identity_type, error.candidates) == (
+        "dns-x",
+        NetworkServiceIdentity,
+        ["dns-a"],
+    )
     assert dumps(state) == before
 
 

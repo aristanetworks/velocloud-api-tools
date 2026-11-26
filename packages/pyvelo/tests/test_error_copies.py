@@ -488,6 +488,17 @@ def test_a_resolution_error_given_its_own_message_keeps_it() -> None:
         assert copied.identity_type is SegmentIdentity
 
 
+def test_a_located_resolution_error_keeps_its_path_through_copies() -> None:
+    error = ResolutionError(name="Gest", identity_type=SegmentIdentity, candidates=[])
+    error.locate(Path(("lan", "segment_id")))
+    _ = error.under(Path(("segments", Key("Guest"))))
+    full = Path(("segments", Key("Guest"), "lan", "segment_id"))
+    for copied in copies(error):
+        assert type(copied) is ResolutionError
+        assert (copied.path, copied.wanted) == (full, None)
+        assert str(copied) == str(error) == f"{full}: Unknown segment: 'Gest'."
+
+
 def test_a_patch_error_keeps_its_path_kind_and_notes_through_copies() -> None:
     error = PatchError("no such field", Path(("segments", 0, "name")), "unknown_field")
     error.add_note("in the second patch")

@@ -23,6 +23,7 @@ from typing import (
     ClassVar,
     Literal,
     NewType,
+    Self,
     cast,
     override,
 )
@@ -79,6 +80,24 @@ class ResolutionError(KeyError):
             return
         self.path = path
         self.args: tuple[Any, ...] = (f"{path}: {self.args[0]}", *self.args[1:])
+
+    def under(self, parent: "Path") -> Self:
+        """Put *parent* before the path of an error that has one, and return it.
+
+        The path becomes *parent* joined with the path it had, and a message that
+        starts with the old path starts with the full one instead. An error with
+        no path is left as it is: it was not raised for a field.
+        """
+        if self.path is None:
+            return self
+        old = self.path
+        full = type(old)((*parent.parts, *old.parts))
+        self.path = full
+        message = str(self.args[0])
+        if message.startswith(old):
+            message = f"{full}{message.removeprefix(old)}"
+        self.args = (message, *self.args[1:])
+        return self
 
     @override
     def __reduce__(self) -> tuple[Any, ...]:

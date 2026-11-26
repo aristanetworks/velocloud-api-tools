@@ -11,10 +11,11 @@ from pyvelo.core.identity import (
     HubIdentity,
     NetworkServiceIdentity,
     ResolutionError,
+    ResolverNotLoadedError,
     SegmentIdentity,
     resolution_error,
 )
-from pyvelo.core.rebase import Path
+from pyvelo.core.rebase import Key, Path
 
 
 def test_identity_type_is_a_class_and_the_candidates_are_the_names_listed() -> None:
@@ -48,6 +49,52 @@ def test_locate_sets_the_path_once_and_puts_it_before_the_message() -> None:
     assert str(error) == f"{place}: Unknown segment: 'Gest'.\nDid you mean:\n  - Guest"
     for copied in (copy.copy(error), pickle.loads(pickle.dumps(error))):
         assert (copied.path, copied.wanted, str(copied)) == (place, None, str(error))
+
+
+def test_under_puts_a_parent_before_the_path_of_a_located_error() -> None:
+    error = resolution_error(SegmentIdentity, "Gest", ["Guest"])
+    error.locate(Path(("lan", "segment_id")))
+    full = Path(("segments", Key("Guest"), "lan", "segment_id"))
+
+    under = error.under(Path(("segments", Key("Guest"))))
+
+    assert under is error
+    assert error.path == full
+    assert str(error) == f"{full}: Unknown segment: 'Gest'.\nDid you mean:\n  - Guest"
+    assert (error.name, error.identity_type, error.candidates) == (
+        "Gest",
+        SegmentIdentity,
+        ["Guest"],
+    )
+
+
+def test_under_replaces_the_path_a_message_starts_with() -> None:
+    place = Path(("dns", "primary_provider", "service"))
+    error = ResolutionError(
+        name="dns-x",
+        identity_type=NetworkServiceIdentity,
+        candidates=[],
+        message=f"{place} names the network service dns-x, which the VCO lacks.",
+        path=place,
+    )
+
+    _ = error.under(Path(("segments", Key("Guest"))))
+
+    full = Path(("segments", Key("Guest"), *place.parts))
+    assert error.path == full
+    assert str(error) == f"{full} names the network service dns-x, which the VCO lacks."
+
+
+def test_under_leaves_an_error_with_no_path_as_it_is() -> None:
+    error = resolution_error(SegmentIdentity, "Gest", ["Guest"])
+    not_loaded = ResolverNotLoadedError(NetworkServiceIdentity)
+    texts = (str(error), str(not_loaded))
+
+    _ = error.under(Path(("segments", Key("Guest"))))
+    _ = not_loaded.under(Path(("segments", Key("Guest"))))
+
+    assert (error.path, not_loaded.path) == (None, None)
+    assert (str(error), str(not_loaded)) == texts
 
 
 def test_an_error_built_with_its_place_and_type_keeps_them() -> None:

@@ -94,8 +94,10 @@ raises `LookupError`, which is not a `ResolutionError`; `lookup_by` raises
 `ResolverNotLoadedError`. A `ResolutionError` has `name`, `identity_type` (always the
 identity class), `candidates` (the names its message lists), `path` (the field, when
 the lookup was for a field of a patch or a plan; else `None`) and `wanted` (the type of
-service a provider field takes; else `None`). One raised while a patch is merged starts
-with the field's path, as a `PatchError` does.
+service a provider field takes; else `None`). When a patch gives a name for a field that
+takes an identity's ID through its resolver, the error starts with the field's path, as a
+`PatchError` does; a name for a field that mirrors an identity's name, and a name used as
+a list key, raise one without a path.
 
 ## Writing a configuration module
 

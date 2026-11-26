@@ -616,6 +616,11 @@ class _SegmentReader:
             raise PatchError(
                 error.message, Path((*where.parts, *error.path.parts)), error.kind
             ) from error
+        except ResolverNotLoadedError:
+            raise
+        except ResolutionError as error:
+            _ = error.under(where)
+            raise
         return item.model_dump(mode="json", by_alias=True, exclude_unset=True)
 
 
