@@ -191,7 +191,7 @@ class EdgeSnmpV2c(VcoModel):
     community_list: Annotated[list[str], Positional(), Secret()] = Field(
         default_factory=list
     )
-    allowed_ips: list[str] = Field(default_factory=list)
+    allowed_ips: Annotated[list[str], Alias("allowedIp")] = Field(default_factory=list)
 
 
 def _none_to_md5(v: Any) -> Any:

@@ -1560,7 +1560,7 @@ async def test_apply_refuses_an_edit_to_a_section_the_edge_layer_does_not_write(
         "lan": {"networks": [], "interfaces": []},
         "segments": [{"segment": desc(0, "Global Segment")}],
         "ntp": {"override": True, "enabled": False, "servers": []},
-        "snmp": {"port": 161, "snmpv2c": {"enabled": True, "allowedIps": ["10.0.0.9"]}},
+        "snmp": {"port": 161, "snmpv2c": {"enabled": True, "allowedIp": ["10.0.0.9"]}},
     }
     row = make_module_json(
         "deviceSettings", raw, module_id=7, configuration_id=10, version="d1"

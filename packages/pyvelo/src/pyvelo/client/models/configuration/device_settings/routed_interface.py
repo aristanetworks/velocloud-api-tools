@@ -191,7 +191,7 @@ class RoutedInterfaceCellular(VcoModel):
     apn: str
     username: str
     password: Annotated[str | int, Secret()]
-    ip_type: CellularIpType | MISSING = MISSING
+    ip_type: Annotated[CellularIpType | MISSING, Alias("iptype")] = MISSING
 
 
 SfpType = Literal["dsl", "gpon", "standard"]

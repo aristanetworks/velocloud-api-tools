@@ -435,7 +435,7 @@ def test_the_credentials_of_enterprise_services_are_marked() -> None:
                     "snmpv2c": {
                         "community": "c",
                         "communityList": ["a"],
-                        "allowedIps": ["10.0.0.1"],
+                        "allowedIp": ["10.0.0.1"],
                     }
                 },
                 "unknown": {"password": "kept"},
@@ -445,7 +445,7 @@ def test_the_credentials_of_enterprise_services_are_marked() -> None:
                     "snmpv2c": {
                         "community": "***",
                         "communityList": "***",
-                        "allowedIps": ["10.0.0.1"],
+                        "allowedIp": ["10.0.0.1"],
                     }
                 },
                 "unknown": {"password": "kept"},

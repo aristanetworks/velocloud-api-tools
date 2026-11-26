@@ -7,11 +7,22 @@ is written at the stored key.
 
 import copy
 import json
+import uuid
 from typing import Any
 
+import pytest
+from pyvelo.client.models.configuration.device_settings.root import EdgeSnmpV2c
+from pyvelo.client.models.configuration.device_settings.routed_interface import (
+    RoutedInterfaceCell,
+    RoutedInterfaceCellular,
+)
+from pyvelo.client.models.configuration.device_settings.segment import (
+    SegmentHandoffGateways,
+)
 from pyvelo.client.module_write import plan_module
 from pyvelo.client.schemas.configuration import (
     ConfigurationModuleBase,
+    DeviceSettingsConfigurationModule,
     WanConfigurationModule,
 )
 from pyvelo.core import ConfigContext
@@ -158,3 +169,147 @@ def test_a_link_that_also_stores_the_key_this_library_wrote_keeps_it_as_read() -
     expected = copy.deepcopy(raw)
     expected["links"][0]["description"] = "uplink"
     assert plan_module(module, level=EDGE).data == expected
+
+
+# --- device settings ---------------------------------------------------------
+
+DESC: dict[str, Any] = {
+    "segmentId": 0,
+    "name": "Global Segment",
+    "type": "REGULAR",
+    "segmentLogicalId": u(0),
+}
+GATEWAY = uuid.UUID(u(0x77))
+WRAPPER = uuid.UUID(u(0x88))
+# A profile's entry: the gateways chosen (gatewayList, by the Gateway's logical
+# ID) and the rows the VCO made for them (gateways, by each row's logical ID).
+HANDOFF: dict[str, Any] = {
+    "autoSelect": False,
+    "gatewayList": [{"logicalId": f"gateway{GATEWAY}", "ipsecDetail": {}}],
+    "gateways": [{"logicalId": str(WRAPPER)}],
+}
+CELLULAR: dict[str, Any] = {
+    "simPin": "",
+    "network": "",
+    "apn": "",
+    "username": "",
+    "password": "",
+    "iptype": "IPv4v6",
+}
+SNMP: dict[str, Any] = {
+    "port": 161,
+    "snmpv2c": {
+        "enabled": True,
+        "community": "",
+        "communityList": [],
+        "allowedIp": ["10.0.0.9"],
+    },
+    "snmpv3": {"enabled": False, "users": []},
+}
+PROFILE_DS: dict[str, Any] = {
+    "lan": {"networks": [], "interfaces": []},
+    "segments": [
+        {
+            "segment": DESC,
+            "handOffGateways": HANDOFF,
+            "handOffControllers": {"autoSelect": False, "gatewayList": []},
+        }
+    ],
+    "snmp": SNMP,
+}
+EDGE_DS: dict[str, Any] = {
+    "lan": {"networks": [], "interfaces": []},
+    "segments": [{"segment": DESC, "handOffGateways": {**HANDOFF, "override": True}}],
+    "routedInterfaces": [{"name": "CELL1", "cellular": CELLULAR}],
+}
+
+
+def device_settings(raw: dict[str, Any]) -> DeviceSettingsConfigurationModule:
+    return both_ways(DeviceSettingsConfigurationModule, "deviceSettings", raw)[0]
+
+
+@pytest.mark.parametrize(
+    ("raw", "level"), [(PROFILE_DS, PROFILE), (EDGE_DS, EDGE)], ids=["profile", "edge"]
+)
+def test_a_segment_s_handoff_gateways_are_read(
+    raw: dict[str, Any], level: ConfigContext
+) -> None:
+    for module in both_ways(DeviceSettingsConfigurationModule, "deviceSettings", raw):
+        handoff = module.data.segments[0].handoff_gateways
+        assert isinstance(handoff, SegmentHandoffGateways)
+        assert handoff.auto_select is False
+        assert [g.logical_id for g in handoff.gateway_list] == [GATEWAY]
+        assert [g.logical_id for g in handoff.gateways] == [WRAPPER]
+        assert_untouched(module, raw, level)
+
+
+def test_a_segment_s_handoff_controllers_are_read() -> None:
+    module = device_settings(PROFILE_DS)
+    controllers = module.data.segments[0].handoff_controllers
+    assert isinstance(controllers, SegmentHandoffGateways)
+    assert (controllers.auto_select, controllers.gateway_list) == (False, [])
+
+
+def test_an_edit_beside_the_handoff_lists_leaves_them_as_read() -> None:
+    module = device_settings(PROFILE_DS)
+    handoff = module.data.segments[0].handoff_gateways
+    assert isinstance(handoff, SegmentHandoffGateways)
+    handoff.auto_select = True
+    plan = plan_module(module, level=PROFILE)
+    expected = copy.deepcopy(PROFILE_DS)
+    expected["segments"][0]["handOffGateways"]["autoSelect"] = True
+    assert plan.data == expected
+    assert [str(c.path) for c in plan.changes] == [
+        'segments["Global Segment"].handOffGateways.autoSelect'
+    ]
+
+
+def cellular_of(module: DeviceSettingsConfigurationModule) -> RoutedInterfaceCellular:
+    interfaces = module.data.routed_interfaces
+    assert interfaces is not None
+    interface = interfaces[0]
+    assert isinstance(interface, RoutedInterfaceCell)
+    cellular = interface.cellular
+    assert isinstance(cellular, RoutedInterfaceCellular)
+    return cellular
+
+
+def test_a_cellular_interface_s_ip_type_is_read_and_written_at_iptype() -> None:
+    for module in both_ways(
+        DeviceSettingsConfigurationModule, "deviceSettings", EDGE_DS
+    ):
+        assert cellular_of(module).ip_type == "IPv4v6"
+    module = device_settings(EDGE_DS)
+    cellular_of(module).ip_type = "IPv4"
+    sent = plan_module(module, level=EDGE).data["routedInterfaces"][0]["cellular"]
+    assert sent == {**CELLULAR, "iptype": "IPv4"}
+
+
+def v2c_of(module: DeviceSettingsConfigurationModule) -> EdgeSnmpV2c:
+    return require_present(module.data.snmp).v2c
+
+
+def test_the_snmp_allowed_addresses_are_read_and_written_at_allowed_ip() -> None:
+    for module in both_ways(
+        DeviceSettingsConfigurationModule, "deviceSettings", PROFILE_DS
+    ):
+        assert v2c_of(module).allowed_ips == ["10.0.0.9"]
+    module = device_settings(PROFILE_DS)
+    v2c_of(module).allowed_ips.append("10.0.0.1")
+    plan = plan_module(module, level=PROFILE)
+    expected = copy.deepcopy(PROFILE_DS)
+    expected["snmp"]["snmpv2c"]["allowedIp"] = ["10.0.0.9", "10.0.0.1"]
+    assert plan.data == expected
+
+
+def test_a_profile_that_stores_the_key_this_library_wrote_keeps_it_as_read() -> None:
+    raw = copy.deepcopy(PROFILE_DS)
+    raw["snmp"]["snmpv2c"]["allowedIps"] = []  # beside the stored key
+    for module in both_ways(DeviceSettingsConfigurationModule, "deviceSettings", raw):
+        assert v2c_of(module).allowed_ips == ["10.0.0.9"]
+        assert_untouched(module, raw, PROFILE)
+    module = device_settings(raw)
+    require_present(module.data.snmp).port = 162
+    expected = copy.deepcopy(raw)
+    expected["snmp"]["port"] = 162
+    assert plan_module(module, level=PROFILE).data == expected

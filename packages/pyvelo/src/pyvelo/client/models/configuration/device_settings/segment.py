@@ -911,8 +911,12 @@ class DeviceSegment(VcoModel):
     bfd: SegmentBfd | MISSING = MISSING
     edge_direct: SegmentEdgeDirect | MISSING = MISSING
     hub_interconnect: SegmentHubInterconnect | MISSING = MISSING
-    handoff_controllers: SegmentHandoffGateways | MISSING = MISSING
-    handoff_gateways: SegmentHandoffGateways | MISSING = MISSING
+    handoff_controllers: Annotated[
+        SegmentHandoffGateways | MISSING, Alias("handOffControllers")
+    ] = MISSING
+    handoff_gateways: Annotated[
+        SegmentHandoffGateways | MISSING, Alias("handOffGateways")
+    ] = MISSING
     segment: Annotated[
         SegmentMetadata,
         OwnsRef(
