@@ -29,7 +29,7 @@ import json
 import re
 from bisect import bisect_left
 from collections import Counter
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Hashable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import ClassVar, Self, cast, get_args, get_origin, override
 
@@ -744,13 +744,79 @@ def pair_same(
     Each item of *new_left* is paired with the one item of *old_left* that is
     the same as it, when no other item of *new_left* is the same as that item
     of *old*. The pairs go into *pairs*, as index in new to index in old.
+
+    Only items of one bucket (``_json_bucket``) are compared, so items that
+    differ from one another cost about one comparison each. When an item holds
+    a value whose bucket cannot be told, every item is compared with every
+    other.
     """
+    if not old_left or not new_left:
+        return
+    old_buckets = [_json_bucket(old[i]) for i in old_left]
+    new_buckets = [_json_bucket(new[j]) for j in new_left]
+    if None in old_buckets or None in new_buckets:
+        _pair_same_among(old, new, old_left, new_left, pairs)
+        return
+    groups: dict[Hashable, tuple[list[int], list[int]]] = {}
+    for i, bucket in zip(old_left, old_buckets, strict=True):
+        groups.setdefault(bucket, ([], []))[0].append(i)
+    for j, bucket in zip(new_left, new_buckets, strict=True):
+        groups.setdefault(bucket, ([], []))[1].append(j)
+    for old_group, new_group in groups.values():
+        _pair_same_among(old, new, old_group, new_group, pairs)
+
+
+def _pair_same_among(
+    old: list[object],
+    new: list[object],
+    old_left: list[int],
+    new_left: list[int],
+    pairs: dict[int, int],
+) -> None:
+    """``pair_same``, comparing each item of *old_left* with each of *new_left*."""
     for j in new_left:
         same = [i for i in old_left if same_json(old[i], new[j])]
         if len(same) == 1 and (
             sum(same_json(old[same[0]], new[k]) for k in new_left) == 1
         ):
             pairs[j] = same[0]
+
+
+def _json_bucket(value: object) -> Hashable | None:
+    """A summary of *value* such that ``same_json(a, b)`` implies one bucket.
+
+    Two values of one bucket may still differ: a bucket only rules a pair out.
+    The bucket of a boolean or null is the value; a number's is Python's hash
+    of it, which is one for equal numbers of either type (``1`` and ``1.0``,
+    any size) and, for a nan, that of the object, which is the same only as
+    itself; a string's is its hash. A list's is its items' buckets in order, an object's
+    its keys with the bucket of each value, in any order (any ``dict`` is an
+    object). None is a bucket that cannot be told: a value that is not JSON,
+    or a subclass of a string or number with its own equality, which
+    ``same_json`` compares by ``==``, whatever that may hold equal to.
+    """
+    if is_list(value):
+        items = [_json_bucket(item) for item in value]
+        return None if None in items else ("list", tuple(items))
+    if is_dict(value):
+        entries = [(key, _json_bucket(value[key])) for key in value]
+        unknown = any(bucket is None for _, bucket in entries)
+        return None if unknown else ("object", frozenset(entries))
+    return _scalar_bucket(value)
+
+
+def _scalar_bucket(value: object) -> Hashable | None:
+    """The bucket of a value that is not a list or a dict (``_json_bucket``)."""
+    if value is None or isinstance(value, bool):
+        return ("value", value)
+    equal = type(value).__eq__
+    if isinstance(value, str) and equal is str.__eq__:
+        return ("str", str.__hash__(value))
+    if isinstance(value, float) and equal is float.__eq__:
+        return ("number", float.__hash__(value))
+    if isinstance(value, int) and equal is int.__eq__:
+        return ("number", int.__hash__(value))
+    return None
 
 
 def pair_items(

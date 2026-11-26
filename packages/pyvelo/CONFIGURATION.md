@@ -844,11 +844,13 @@ firewall: update
   other list is written whole from the models when something in it changes: a
   positional or untyped list, and a keyed list that holds an item with no key
   and no ID (a WAN link read without an `internalId`) or two items of one name
-  read without IDs, when one of those items was changed or removed. While they
-  are as read and each differs from every other such item, an edit to another
-  item of the list writes that item alone. Keys the models do not know are
-  dropped from every item of a list written whole, and the models' defaults
-  are written into them. A keyed list inside an interface that is not a plain
+  read without IDs, when one of those items was changed or removed, or when
+  another item of the list, as read or as written, is equal to one of them (an
+  item an `add` built is new and does not count). While they are as read and
+  no other item is equal to one of them, an edit to another item of the list
+  writes that item alone. Keys the models do not know are dropped from every
+  item of a list written whole, and the models' defaults are written into
+  them. A keyed list inside an interface that is not a plain
   port (a LAG's `slaveInterfaces`) is written item by item as well: each item
   of a list that holds several kinds of interface is read as the kind it is.
 - A patch that moves items (a `move`) plans each item's change at the item, and
@@ -1634,9 +1636,10 @@ Known limits:
   a change between that read and the write; a module with no `version` is
   written only when the save is `unconditional`, and then without the read.
 - A keyed list read with an item that cannot be told apart is compared as a
-  whole when one of those items was changed or removed: an item with no key
-  and no ID (a WAN link without an `internalId`), or two items of one name
-  read without IDs. A change in it to a field the VCO owns is then part of
+  whole when one of those items was changed or removed, or when another item
+  of the list, as sent or as stored, is equal to one of them (an item an `add`
+  built counts here): an item with no key and no ID (a WAN link without an
+  `internalId`), or two items of one name read without IDs. A change in it to a field the VCO owns is then part of
   the list's change, not in `left_out`, and a value stored there otherwise
   than sent is a server change with no value read (`as_read` is `MISSING`),
   even when it is the value read. A key you removed from an
