@@ -231,15 +231,24 @@ def test_key_uniqueness_reads_composite_keys() -> None:
     assert result.is_valid
 
 
-def test_key_uniqueness_compares_key_parts_in_string_form() -> None:
-    as_text = _static_route("192.168.1.1")
-    as_text.cidr_prefix = "24"
-    result = key_uniqueness.validate(
-        _routes_state(_static_route("192.168.1.1"), as_text)
+class _PrefixRoute(VcoModel):
+    dest: str
+    prefix: int | str
+
+
+class _PrefixRoutes(VcoModel):
+    routes: Annotated[list[_PrefixRoute], KeyField("dest", "prefix")] = Field(
+        default_factory=list
     )
-    assert [e.path for e in result.errors] == [
-        "deviceSettings.segments[0].routes.static[1]"
-    ]
+
+
+def test_key_uniqueness_compares_key_parts_in_string_form() -> None:
+    as_number = _PrefixRoute(dest="10.0.0.0", prefix=24)
+    as_text = _PrefixRoute(dest="10.0.0.0", prefix="24")
+    assert (type(as_number.prefix), type(as_text.prefix)) == (int, str)
+    data = _PrefixRoutes(routes=[as_number, as_text])
+    result = key_uniqueness.validate(_layered_state(data, "profile"))
+    assert [e.path for e in result.errors] == ["held.routes[1]"]
 
 
 class TestOverrideConsistency:

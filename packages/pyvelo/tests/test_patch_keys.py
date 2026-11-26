@@ -12,6 +12,7 @@ from pyvelo.client.models.configuration import DeviceSettingsData
 from pyvelo.client.models.configuration.device_settings.root import ModelInterfaces
 from pyvelo.client.models.configuration.device_settings.segment import (
     SegmentRoutes,
+    SegmentSyslog,
     StaticRoute,
 )
 from pyvelo.client.models.configuration.wan.link import WanLink
@@ -471,6 +472,43 @@ def test_a_static_route_added_under_a_tuple_or_the_quoted_form_sends_its_prefix_
     sent = sent_static(held)[1]
     expected = static_route("10.9.0.0", "24")
     assert {name: sent[name] for name in expected} == expected
+
+
+def test_a_number_given_in_the_body_for_a_static_routes_prefix_is_stored_as_text() -> (
+    None
+):
+    held = SegmentRoutes.model_validate({"static": [static_route("10.1.0.0", "16")]})
+    _ = held.merge_patch(
+        {
+            "static": {
+                "10.9.0.0,24,192.168.1.1,GE3": add(
+                    {"netmask": "255.255.255.0", "cidr_prefix": 24}
+                ),
+                "10.1.0.0,16,192.168.1.1,GE3": {"cidr_prefix": 24},
+            }
+        }
+    )
+    assert [route.cidr_prefix for route in held.static] == ["24", "24"]
+    assert [route["cidrPrefix"] for route in sent_static(held)] == ["24", "24"]
+
+
+def test_an_add_under_the_comma_form_reads_a_number_part_as_its_field_does() -> None:
+    def collector(host: str, port: int) -> dict[str, object]:
+        return {"host": host, "protocol": "UDP", "port": port}
+
+    held = SegmentSyslog.model_validate({"collectors": [collector("10.0.0.1", 514)]})
+    _ = held.merge_patch(
+        {
+            "collectors": {
+                "10.0.0.9,UDP,514": add(),
+                "10.0.0.1,UDP,514": {"tag": "edited"},
+            }
+        }
+    )
+    added = held.collectors[1]
+    assert (added.host, added.protocol, added.port) == ("10.0.0.9", "UDP", 514)
+    assert type(added.port) is int
+    assert held.collectors[0].tag == "edited"
 
 
 STATIC_SELECTORS = [

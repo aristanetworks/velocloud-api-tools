@@ -304,9 +304,11 @@ A list whose key has several parts, such as the static routes, names an item
 by the parts joined by commas: `10.0.0.0,24,192.168.1.1,GE3`. A part that
 holds a comma or a double quote is written as a JSON string instead
 (`"a,b",24,"192.168.1.1",GE3`), and in Python a tuple of the parts works too.
-An `add` under the comma form stores each part as text. The quoted form and a
-tuple store what they say, and so does a value the body gives for the field,
-each as the field reads it. A static route's prefix (`cidr_prefix`) is text, as
+An `add` under the comma form gives each part as text, and its field reads it:
+a text field keeps it, and a number field, such as a syslog collector's `port`,
+reads `10.0.0.9,UDP,514` as the port `514`. The quoted form and a tuple give
+what they say, and so does a value the body gives for the field, each read by
+its field the same way. A static route's prefix (`cidr_prefix`) is text, as
 the VCO stores it and as it accepts it: a whole number given for it is stored as
 its text, so `10.2.0.0,24,192.168.1.1,GE3`, `"10.2.0.0",24,"192.168.1.1",GE3`
 and the tuple `("10.2.0.0", 24, "192.168.1.1", "GE3")` each add a route whose

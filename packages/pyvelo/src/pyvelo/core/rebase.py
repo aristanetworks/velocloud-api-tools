@@ -167,7 +167,7 @@ def item_key_text(item: object, paths: tuple[str, ...]) -> str | None:
     """The key of a model item (``item_key``) as text; None when it has none.
 
     A one-part key in string form (``Global Segment``); a composite key as
-    ``key_text`` writes it (``"10.0.0.0",24,"192.168.1.1",GE3``). This is for
+    ``key_text`` writes it (``"10.0.0.0","24","192.168.1.1",GE3``). This is for
     showing a key; keys are compared with ``key_form`` (``24`` and ``"24"``
     are one part, though their texts differ).
     """
@@ -292,8 +292,8 @@ class Path(str):
 
     ``.parts`` is the structure. Names are bare when they are identifiers and
     JSON strings otherwise, joined with ``.``; keyed items are ``[key]`` (the
-    key as ``key_text`` writes it, so a composite key is
-    ``["10.0.0.0",24,"192.168.1.1",GE3]``) and list positions ``[#0]``:
+    key as ``key_text`` writes it, so a static route's key is
+    ``["10.0.0.0","24","192.168.1.1",GE3]``) and list positions ``[#0]``:
     ``segments["Corp.Guest v2"].rules[r1].port``.
     """
 
