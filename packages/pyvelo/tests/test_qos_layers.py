@@ -23,6 +23,7 @@ from pyvelo.core import (
     Default,
     Edge,
     Kind,
+    PatchError,
     Profile,
     field_kind,
     wire_name,
@@ -53,13 +54,6 @@ KIND_TABLE: list[tuple[type[VcoModel], str, Kind, type | None, str]] = [
     (QosData, "segments", Kind.STRUCTURAL, None, "segments"),
     (QosData, "service_rate_limit", Kind.INHERITABLE, ByPresence, "serviceRateLimit"),
     (QosData, "qoe", Kind.INHERITABLE, ByPresence, "qoe"),
-    (
-        QosData,
-        "qos_client_connector",
-        Kind.INHERITABLE,
-        ByPresence,
-        "qosClientConnector",
-    ),
     (QosSegment, "segment", Kind.STRUCTURAL, None, "segment"),
     (QosSegment, "rules", Kind.ADDITIVE, None, "rules"),
     (QosSegment, "defaults", Kind.PROFILE_ONLY, None, "defaults"),
@@ -106,7 +100,6 @@ def test_profile_qos_reads_the_template_display_defaults() -> None:
     assert (qoe.voice.latency.yellow, qoe.voice.latency.red) == (25, 65)
     assert (qoe.video.latency.yellow, qoe.video.latency.red) == (25, 65)
     assert (qoe.transactional.latency.yellow, qoe.transactional.latency.red) == (50, 80)
-    assert profile.qos_client_connector is None
     assert profile.model_fields_set == {"segments"}
     assert profile.model_dump(mode="json", by_alias=True) == {"segments": []}
 
@@ -137,7 +130,6 @@ def test_edge_qos_values_are_owned() -> None:
     edge = QosData[Edge].model_validate(raw)
     assert edge.service_rate_limit.is_local  # a disabled limit is local
     assert edge.qoe.is_local is False
-    assert edge.qos_client_connector.is_local is False
     assert edge.model_dump(mode="json", by_alias=True) == raw
 
 
@@ -197,42 +189,47 @@ def _rule() -> QosRule:
     return QosRule.model_validate(RULE)
 
 
-def test_a_stored_null_client_connector_is_kept_and_not_local() -> None:
-    edge = qos_mod({"segments": [], "qosClientConnector": None}, layer=Edge)
-    profile = qos_mod({"segments": []}, layer=Profile, module_id=2)
-    owned = edge.data.qos_client_connector
-    assert owned.stored is None
-    assert owned.is_local is False
-    view = effective_view(edge.data, profile.data, QosData[Effective])
-    assert view.qos_client_connector.origin is Origin.FACTORY
-    assert plan_module(edge, level=EDGE).operation == "none"
-    edge.data.service_rate_limit.set_local(
-        ServiceRateLimit(enabled=True, input_type="rate", value=3)
-    )
-    data = plan_module(edge, level=EDGE).data
-    assert data["qosClientConnector"] is None
-    assert "serviceRateLimit" in data
+CONNECTORS: list[object] = [None, {"enabled": True, "x": 1}]
 
 
-def test_an_edge_s_stored_null_client_connector_shows_the_profile_s_block() -> None:
-    # ByPresence: a null is not local, so the profile's block is what the view shows.
-    block = {"data": {"a": 1}}
-    edge = qos_mod({"segments": [], "qosClientConnector": None}, layer=Edge)
-    profile = qos_mod(
-        {"segments": [], "qosClientConnector": block}, layer=Profile, module_id=2
-    )
-    view = effective_view(edge.data, profile.data, QosData[Effective])
-    connector = view.qos_client_connector
-    assert connector.origin is Origin.PROFILE
-    assert connector.value is not None
-    assert connector.value.model_dump(mode="json", by_alias=True) == block
-
-
-def test_a_stored_client_connector_is_local() -> None:
-    raw: dict[str, Any] = {"segments": [], "qosClientConnector": {"data": {"a": 1}}}
+@pytest.mark.parametrize("stored", CONNECTORS)
+def test_an_edge_s_stored_client_connector_is_kept_as_read(stored: object) -> None:
+    raw: dict[str, Any] = {"segments": [], "qosClientConnector": stored}
     edge = qos_mod(raw, layer=Edge)
-    assert edge.data.qos_client_connector.is_local
-    assert edge.data.model_dump(mode="json", by_alias=True) == raw
+    assert "qos_client_connector" not in QosData[Edge].model_fields
+    plan = plan_module(edge, level=EDGE)
+    assert (plan.operation, plan.data) == ("none", raw)
+    limit = ServiceRateLimit(enabled=True, input_type="rate", value=3)
+    edge.data.service_rate_limit.set_local(limit)
+    plan = plan_module(edge, level=EDGE)
+    assert plan.data == {
+        **raw,
+        "serviceRateLimit": {"enabled": True, "inputType": "rate", "value": 3},
+    }
+    assert [str(c.path) for c in plan.changes] == ["serviceRateLimit"]
+
+
+@pytest.mark.parametrize("stored", CONNECTORS)
+def test_a_profile_s_stored_client_connector_is_kept_as_read(stored: object) -> None:
+    raw: dict[str, Any] = {"segments": [], "qosClientConnector": stored}
+    profile = qos_mod(raw, layer=Profile)
+    plan = plan_module(profile, level=PROFILE)
+    assert (plan.operation, plan.data) == ("none", raw)
+    profile.data.service_rate_limit = ServiceRateLimit(
+        enabled=True, input_type="rate", value=3
+    )
+    plan = plan_module(profile, level=PROFILE)
+    assert plan.data["qosClientConnector"] == stored
+    assert "serviceRateLimit" in plan.data
+
+
+def test_a_patch_cannot_name_the_client_connector() -> None:
+    raw: dict[str, Any] = {"segments": [], "qosClientConnector": {"enabled": True}}
+    edge = qos_mod(raw, layer=Edge)
+    with pytest.raises(PatchError, match="has no field 'qosClientConnector'") as exc:
+        _ = edge.data.merge_patch({"qosClientConnector": None})
+    assert exc.value.kind == "unknown_field"
+    assert plan_module(edge, level=EDGE).operation == "none"
 
 
 def test_a_profile_segment_without_defaults_stays_without_them() -> None:

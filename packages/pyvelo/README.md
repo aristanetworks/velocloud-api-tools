@@ -535,18 +535,19 @@ not set, whatever it displays.
 The module-level values of QoS are `Inheritable` and stored by presence, as the
 firewall's are, with the template's display defaults
 (`module_template_value("QOS", key)`); none of them is in a group. Their wire
-keys are `serviceRateLimit`, `qoe` and `qosClientConnector`.
+keys are `serviceRateLimit` and `qoe`.
 
 | Field | Display default |
 |---|---|
 | `service_rate_limit` | the template's: disabled, `percent`, `1`. A disabled limit the edge stores is local |
 | `qoe` | the template's latency thresholds |
-| `qos_client_connector` | `None` (nothing stored); a stored `null` is kept and is not local |
 
-An edge that stores `"qosClientConnector": null` over a profile that stores a
-block shows the profile's block (`Origin.PROFILE`): the library reads a `null`
-as not local. That is the library's reading; the backend composer's answer for
-it has not been seen live.
+`qosClientConnector` (an edge's Client Connector settings) is not modeled. No
+field reads it and a patch that names it is refused as an unknown field. A
+stored one is kept as read by every write, like any key the models do not know,
+and `compare_effective` reports one the VCO composed as `unconverted`. To
+change or remove it, write the module's data as a mapping with
+`VcoClient.update_module(module, data)`.
 
 A segment's fields are these kinds:
 
@@ -579,7 +580,6 @@ default, `CosMapping()`) in with `override: true`; on a segment
 |---|---|
 | `segment.cos_mapping.set_local(CosMapping(...))` | `{"segments": {"Global Segment": {"cosMapping": {...}}}}`, when `{...}` is the whole object: a partial patch merges into the object `localize()` gives (the profile's mapping, or the object the edge stores with its flag off), so it keeps every key it does not name |
 | `segment.cos_mapping.inherit()` | `{"segments": {"Global Segment": {"cosMapping": null}}}` |
-| `data.qos_client_connector.inherit()` | `{"qosClientConnector": null}`: the key is removed, whatever it held |
 | `data.service_rate_limit.localize()` | `{"serviceRateLimit": {"value": 50}}`: the profile's limit, or the display default when the profile stores none, is copied in whole and then edited |
 
 A value made local from a display default is written whole: the edge stores

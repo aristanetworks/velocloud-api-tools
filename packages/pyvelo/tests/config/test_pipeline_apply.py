@@ -187,7 +187,7 @@ class TestResolveModuleName:
         state = await pipeline.apply(
             state,
             module="QOS",
-            patch={"qos_client_connector": {"data": {"enabled": True}}},
+            patch={"service_rate_limit": {"value": 50}},
         )
         assert ConfigurationModuleName.QOS in state.get_changed_modules()
 

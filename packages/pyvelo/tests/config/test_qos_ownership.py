@@ -137,8 +137,6 @@ async def test_the_effective_qos_view_gives_each_value_its_origin() -> None:
     assert view.qoe.origin is Origin.EDGE
     assert view.service_rate_limit.origin is Origin.PROFILE
     assert view.service_rate_limit.value.value == 40
-    assert view.qos_client_connector.origin is Origin.FACTORY
-    assert view.qos_client_connector.value is None
     # Computed on each access: an edit shows in the next view.
     state.edge.qos.qoe.inherit()
     assert state.effective.qos.qoe.origin is Origin.FACTORY
