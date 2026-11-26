@@ -5,6 +5,7 @@ from typing import Annotated
 
 import pytest
 from pydantic import MISSING, Field
+from pyvelo.client.models.configuration.device_settings.segment import SegmentRoutes
 from pyvelo.client.models.configuration.wan.link import WanLink
 from pyvelo.client.models.configuration.wan.root import WanData
 from pyvelo.core import (
@@ -342,17 +343,59 @@ def test_a_composite_key_is_selected_by_its_parts_joined_with_commas() -> None:
     assert [route.dest for route in root.routes] == ["10.1.0.0"]
 
 
-def test_an_add_under_the_comma_form_writes_the_parts_as_text() -> None:
+def test_an_add_under_the_comma_form_types_each_part_by_its_field() -> None:
     root = routes()
     _ = root.merge_patch({"routes": {"10.2.0.0,24,192.168.1.1,GE4": add({"cost": 1})}})
     new = root.routes[2]
     assert (new.dest, new.prefix, new.gw, new.intf) == (
         "10.2.0.0",
-        "24",
+        24,
         "192.168.1.1",
         "GE4",
     )
+
+    # A part that is no number stays text, on the same field.
+    root = routes()
+    _ = root.merge_patch({"routes": {"10.2.0.0,24a,192.168.1.1,GE4": add()}})
+    assert root.routes[2].prefix == "24a"
+
+    # The quoted form and a tuple say the type themselves.
+    quoted = '"10.2.0.0","24","192.168.1.1",GE4'
+    for selector in (quoted, ("10.2.0.0", "24", "192.168.1.1", "GE4")):
+        root = routes()
+        _ = root.merge_patch({"routes": {selector: add()}})
+        assert root.routes[2].prefix == "24"
+
+    # So does the body.
+    root = routes()
+    _ = root.merge_patch(
+        {"routes": {"10.2.0.0,24,192.168.1.1,GE4": add({"prefix": "24"})}}
+    )
+    assert root.routes[2].prefix == "24"
     assert "already in the list" in message_of(routes(), {"routes": {R1_TEXT: add()}})
+
+
+def test_a_static_route_added_under_the_comma_form_sends_its_prefix_as_a_number() -> (
+    None
+):
+    stored = {
+        "destination": "10.1.0.0",
+        "netmask": "255.255.0.0",
+        "cidrPrefix": 16,
+        "gateway": "10.0.0.1",
+        "wanInterface": "GE3",
+    }
+    held = SegmentRoutes.model_validate({"static": [stored]})
+    _ = held.merge_patch(
+        {"static": {"10.9.0.0,24,192.168.1.1,GE3": add({"netmask": "255.255.255.0"})}}
+    )
+    sent = held.model_dump(mode="json", by_alias=True)["static"][1]
+    assert (sent["destination"], sent["cidrPrefix"], sent["gateway"]) == (
+        "10.9.0.0",
+        24,
+        "192.168.1.1",
+    )
+    assert sent["wanInterface"] == "GE3"
 
 
 def test_a_part_that_holds_a_comma_needs_the_quoted_form() -> None:
