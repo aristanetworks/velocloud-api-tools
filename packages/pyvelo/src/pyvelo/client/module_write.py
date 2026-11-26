@@ -1490,7 +1490,9 @@ def plan_module(  # noqa: PLR0913 (a public call: each option is a keyword its c
     )
 
 
-_REBASE_CHANGED = "the module changed on the VCO after this save wrote device settings"
+_REBASE_CHANGED = (
+    "the module changed on the VCO after a device settings write of this profile"
+)
 _REBASE_CLASH = f"{_REBASE_CHANGED}, at a path this save also changes; nothing was sent"
 _REBASE_LIST = (
     f"{_REBASE_CHANGED}, in a list this save also changes, so its edits cannot be "

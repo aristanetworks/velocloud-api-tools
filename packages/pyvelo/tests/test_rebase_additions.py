@@ -100,8 +100,9 @@ def test_a_fresh_module_that_holds_an_added_segment_is_a_conflict() -> None:
     assert (error.stated, error.sent) == (False, False)
     assert error.module is fresh
     assert error.detail == (
-        "the module changed on the VCO after this save wrote device settings: it "
-        "now holds segment 'Guest', which this save adds; nothing was sent"
+        "the module changed on the VCO after a device settings write of this "
+        "profile: it now holds segment 'Guest', which this save adds; nothing "
+        "was sent"
     )
     (clash,) = error.lost_edits
     assert str(clash.path) == "segments[Guest]"
@@ -146,9 +147,9 @@ def test_a_fresh_module_that_lacks_the_segment_added_defaults_go_into_is_a_confl
     assert (error.stated, error.sent) == (False, False)
     assert error.module is fresh
     assert error.detail == (
-        "the module changed on the VCO after this save wrote device settings: it "
-        "no longer holds segment 'Global Segment', which this save adds defaults "
-        "to; nothing was sent"
+        "the module changed on the VCO after a device settings write of this "
+        "profile: it no longer holds segment 'Global Segment', which this save "
+        "adds defaults to; nothing was sent"
     )
 
 

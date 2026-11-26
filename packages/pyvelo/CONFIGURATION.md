@@ -1420,11 +1420,14 @@ after the device settings, in that save or, for a profile's QoS and firewall, at
 their next write in a later save, and one full read of the module when its
 version changed.
 
-The same holds for a later save: a profile's QoS and firewall that a device
+A later save rebases them too: a profile's QoS and firewall that a device
 settings write may have changed are written with a rebase the next time they
-are saved, however many saves later (`state.rebase_on_write` names them). Until
-then the state shows them as they were read: load the profile again to see what
-the device settings write changed.
+are saved, however many saves later (`state.rebase_on_write` names them). So a
+change another writer made to one of them in the meantime is put together with
+your edits and listed in `SaveResult.server_changes`, instead of raising
+`ConfigConflictError`; only a change at a path you edited is still a conflict.
+Until then the state shows them as they were read or last stored: load the
+profile again to see what the device settings write changed.
 
 Which of the two a stale write raises depends on the VCO's conditional check
 of the version. With it on, the VCO refuses the write, and the save raises

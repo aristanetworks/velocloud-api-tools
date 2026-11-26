@@ -888,6 +888,8 @@ async def test_a_later_qos_save_is_rebased_onto_what_the_device_settings_write_l
     assert [str(n) for n in first.modules_updated] == ["deviceSettings"]
     assert "QOS" in state.rebase_on_write
     assert "deviceSettings" not in state.rebase_on_write
+    _ = await pipeline.revert(state, module="qos")
+    assert "QOS" in state.rebase_on_write
     client.store.requests.clear()
     rate_limit(state.profile.qos).value = 5
 
@@ -901,6 +903,43 @@ async def test_a_later_qos_save_is_rebased_onto_what_the_device_settings_write_l
     assert (rate.enabled, rate.value) == (True, 5)
     assert state.rebase_on_write == set()
     assert state.plan().changed == ()
+
+
+async def test_a_later_qos_conflict_names_the_device_settings_write_not_this_save() -> (
+    None
+):
+    state = profile_with_qos()
+    client = served(state)
+    pipeline = ConfigPipeline(client)
+
+    def raise_rate(row: dict[str, Any]) -> None:
+        row["data"]["serviceRateLimit"]["value"] = 7
+
+    def hook(new: dict[str, Any], old: dict[str, Any] | None) -> None:
+        del old
+        if new["name"] == "deviceSettings":
+            client.store.other_writer(QOS_ID, raise_rate)
+
+    client.store.on_store.append(hook)
+    state = await pipeline.load_profile(CONFIG)
+    device_settings(state).lan.networks[0].name = "renamed"
+    _ = await pipeline.save(state)
+    client.store.requests.clear()
+    rate_limit(state.profile.qos).value = 5
+
+    with pytest.raises(ConfigConflictError) as caught:
+        _ = await pipeline.save(state)
+
+    error = caught.value
+    assert methods(client.store) == [VERSION_READ, CONFIGURATION_READ]
+    assert (error.stated, error.sent) == (False, False)
+    assert [str(c.path) for c in error.lost_edits] == ["serviceRateLimit.value"]
+    assert client.store.rows[QOS_ID]["data"]["serviceRateLimit"]["value"] == 7
+    assert "this save wrote device settings" not in str(error)
+    assert error.detail == (
+        "the module changed on the VCO after a device settings write of this "
+        "profile, at a path this save also changes; nothing was sent"
+    )
 
 
 async def test_a_profile_save_raises_a_conflict_where_the_propagation_reached_an_edit() -> (  # noqa: E501 (a test's name)
@@ -928,7 +967,7 @@ async def test_a_profile_save_raises_a_conflict_where_the_propagation_reached_an
 
     error = caught.value
     assert (error.stated, error.sent) == (False, False)
-    assert "after this save wrote device settings" in error.detail
+    assert "after a device settings write of this profile" in error.detail
     assert error.module is not None
     assert [str(c.path) for c in error.lost_edits] == ["serviceRateLimit.value"]
     assert client.store.rows[QOS_ID]["data"]["serviceRateLimit"]["value"] == 7
@@ -988,4 +1027,4 @@ async def test_an_edge_save_does_not_rebase() -> None:
         CONFIGURATION_READ,
     ]
     assert (caught.value.stated, caught.value.sent) == (False, False)
-    assert "after this save wrote device settings" not in caught.value.detail
+    assert "after a device settings write of this profile" not in caught.value.detail
