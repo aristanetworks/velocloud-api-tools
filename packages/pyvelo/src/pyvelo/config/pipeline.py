@@ -1682,6 +1682,25 @@ def _is_object(value: object) -> TypeIs[dict[object, object]]:
 _LEFT_OUT = object()
 
 
+@dataclass(frozen=True)
+class _SegmentScope:
+    """What ``_prepare_segment`` reads of the target, the same for each entry."""
+
+    data: _SegmentLayer
+    """The edge layer whose ``segments`` the patch changes."""
+    resolvers: IdentityResolver | None
+    inherited: frozenset[str]
+    """The ``segmentId`` (in string form) of each segment the edge only inherits."""
+
+
+@dataclass(frozen=True)
+class _ProfileSegment:
+    """A segment the profile has, as ``_prepare_segment`` reads it."""
+
+    name: str
+    segment_id: object | None
+
+
 def _prepare_segments(
     data: VcoModel,
     patch: Mapping[str, object],
@@ -1726,6 +1745,7 @@ def _prepare_segments(
     segments = patch.get("segments")
     if not isinstance(data, _SegmentLayer) or not _is_object(segments):
         return dict(patch)
+    scope = _SegmentScope(data, resolvers, inherited)
     prepared: dict[object, object] = {}
     named: dict[str, Path] = {}
     for selector, value in segments.items():
@@ -1733,9 +1753,7 @@ def _prepare_segments(
         if _is_object(value):
             where = entry_path(SEGMENTS, selector)
             op = parse_item_op(value, where)
-            key, name = _prepare_segment(
-                data, selector, op, where, resolvers, inherited
-            )
+            key, name = _prepare_segment(scope, selector, op, where)
             if name is not None:
                 if name in named:
                     raise PatchError(
@@ -1751,13 +1769,8 @@ def _prepare_segments(
     return {**patch, "segments": prepared}
 
 
-def _prepare_segment(  # noqa: C901, PLR0911, PLR0913, PLR0917 (existing: split it when it next changes)
-    data: _SegmentLayer,
-    selector: object,
-    op: ItemOp,
-    where: Path,
-    resolvers: IdentityResolver | None,
-    inherited: frozenset[str],
+def _prepare_segment(
+    scope: _SegmentScope, selector: object, op: ItemOp, where: Path
 ) -> tuple[object, str | None]:
     """The selector to merge one segment entry under, and the segment it names.
 
@@ -1768,40 +1781,94 @@ def _prepare_segment(  # noqa: C901, PLR0911, PLR0913, PLR0917 (existing: split 
     object that names a segment the edge only inherits: it changes nothing, so
     no placeholder is added and the entry is not merged. Raises
     ``PatchError`` for a place the edge cannot store: one for a segment in
-    *inherited*, or one given ``before`` or ``after`` such a segment. This
-    comes before a placeholder is added.
+    ``scope.inherited``, or one given ``before`` or ``after`` such a segment.
+    This comes before a placeholder is added.
     """
-    _refuse_place_by_inherited(data, op, where, resolvers, inherited)
-    new = is_new(selector)
-    lookup: object = selector
-    if new:
-        given = added_segment_name(op) if op.kind == "add" else None
-        if given is None:
-            return selector, None
-        lookup = given
-    found = _layer_segment(data, lookup, resolvers)
+    data = scope.data
+    _refuse_place_by_inherited(data, op, where, scope.resolvers, scope.inherited)
+    looked = _segment_lookup(selector, op)
+    if looked is None:
+        return selector, None
+    new, lookup = looked
+    found = _layer_segment(data, lookup, scope.resolvers)
     if found is not None:
-        _refuse_place_for(
-            op, found.segment.name, found.segment.segment_id, where, inherited
-        )
-        return selector, None if new else found.segment.name
+        return selector, _name_in_layer(scope, found, new=new, op=op, where=where)
     try:
         name = data.profile_segment_name(lookup)
     except UnboundError:
         return selector, None
     if name is None:
-        return selector, None
-    segment_id = data.profile_segment_id(lookup)
-    own = _layer_segment(data, name, None)
-    if own is None and segment_id is not None:
-        # The layer may have the profile's segment under another name.
-        own = _layer_segment(data, str(segment_id), None)
+        return _prepare_unknown_segment(selector)
+    profile = _ProfileSegment(name, data.profile_segment_id(lookup))
+    return _prepare_profile_segment(scope, profile, new=new, op=op, where=where)
+
+
+def _segment_lookup(selector: object, op: ItemOp) -> tuple[bool, object] | None:
+    """Whether *selector* is ``"+"``, and what to look the segment up by.
+
+    That is the selector, or for ``"+"`` the segment name an ``add`` gives in
+    its body. None for ``"+"`` where *op* gives none: the entry names no
+    segment yet.
+    """
+    new = is_new(selector)
+    if not new:
+        return new, selector
+    given = added_segment_name(op) if op.kind == "add" else None
+    if given is None:
+        return None
+    return new, given
+
+
+def _name_in_layer(
+    scope: _SegmentScope,
+    found: _SegmentEntry,
+    *,
+    new: bool,
+    op: ItemOp,
+    where: Path,
+) -> str | None:
+    """The name of the segment *found* in the layer, or None for ``"+"``.
+
+    Raises ``PatchError`` for a place the edge cannot store for it.
+    """
+    _refuse_place_for(
+        op, found.segment.name, found.segment.segment_id, where, scope.inherited
+    )
+    return None if new else found.segment.name
+
+
+def _prepare_unknown_segment(selector: object) -> tuple[object, None]:
+    """The entry for a segment the layer lacks and its profile lacks too.
+
+    It is left to ``merge_patch``, which adds it or raises, by the operation.
+    """
+    return selector, None
+
+
+def _prepare_profile_segment(
+    scope: _SegmentScope,
+    profile: _ProfileSegment,
+    *,
+    new: bool,
+    op: ItemOp,
+    where: Path,
+) -> tuple[object, str | None]:
+    """The selector and segment for one only the profile has, or has under another name.
+
+    The layer may have the profile's segment under another name (another
+    case, or a name of its own): the patch is for that entry. Otherwise a
+    change or a ``move`` adds the placeholder entry, and an ``add`` or a
+    ``delete`` raises ``PatchError``. An empty change adds none, and its
+    selector is ``_LEFT_OUT``.
+    """
+    name = profile.name
+    own = _own_entry(scope.data, profile)
     if own is not None:
         # The layer has it, under a name the selector does not give (another
         # case, or a name of its own): the patch is for that entry.
         entry = own.segment.name
         if not new:
-            _refuse_place_for(op, name, own.segment.segment_id, where, inherited)
+            _refuse_place_for(op, name, own.segment.segment_id, where, scope.inherited)
             return entry, entry
         raise PatchError(
             f"segment {name!r} is already in the edge layer, as {entry!r}: change "
@@ -1809,6 +1876,28 @@ def _prepare_segment(  # noqa: C901, PLR0911, PLR0913, PLR0917 (existing: split 
             where,
             "exists",
         )
+    _refuse_add_or_delete(op, name, where)
+    _refuse_place_for(op, name, profile.segment_id, where, scope.inherited)
+    if op.kind == "change" and not op.body:
+        return _LEFT_OUT, name
+    _ = scope.data.segment(name)
+    return name, name
+
+
+def _own_entry(data: _SegmentLayer, profile: _ProfileSegment) -> _SegmentEntry | None:
+    """The entry of the layer for *profile*, under its name or its ``segmentId``."""
+    own = _layer_segment(data, profile.name, None)
+    if own is None and profile.segment_id is not None:
+        # The layer may have the profile's segment under another name.
+        own = _layer_segment(data, str(profile.segment_id), None)
+    return own
+
+
+def _refuse_add_or_delete(op: ItemOp, name: str, where: Path) -> None:
+    """Refuse an ``add`` or a ``delete`` of segment *name*, which the edge inherits.
+
+    Raises ``PatchError`` at *where*: the layer has no entry for it.
+    """
     if op.kind == "add":
         raise PatchError(
             f"the edge has segment {name!r} by inheritance from its profile: "
@@ -1824,11 +1913,6 @@ def _prepare_segment(  # noqa: C901, PLR0911, PLR0913, PLR0917 (existing: split 
             where,
             "segment_rule",
         )
-    _refuse_place_for(op, name, segment_id, where, inherited)
-    if op.kind == "change" and not op.body:
-        return _LEFT_OUT, name
-    _ = data.segment(name)
-    return name, name
 
 
 def _refuse_place_for(
