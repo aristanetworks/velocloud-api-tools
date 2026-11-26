@@ -610,9 +610,12 @@ class ConfigPipeline:
 
         All or nothing: a patch that raises (``PatchError``, including one for
         a module a save does not write, ``LossyFieldError`` for a patch that a
-        save could not write, or a resolver's ``ResolutionError`` or
-        ``LookupError``) leaves the state, and ``plan()``, as they were: no
-        placeholder entries, and a module this call created is removed.
+        save could not write, a resolver's ``ResolutionError`` or
+        ``LookupError``, or ``DetachedObjectError`` for a module that holds an
+        object a write replaced, put back as it is, which is refused whole
+        before the patch is read, naming where the object sits) leaves the
+        state, and ``plan()``, as they were: no placeholder entries, and a
+        module this call created is removed.
         ``LossyFieldError`` is raised also when an earlier assignment to the
         models had already made the module unwritable; its paths name that
         field.
@@ -633,6 +636,7 @@ class ConfigPipeline:
         async with state.lock:
             mod, created = _patched_module(state, module, patch, segment, path)
             try:
+                mod.data.check_nothing_detached("apply")
                 edit = _edit_of(state, mod, patch, segment, path)
                 prepared = await self._trial(edit)
             except BaseException:

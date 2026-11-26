@@ -159,6 +159,34 @@ def test_merge_patch_on_a_detached_object_raises() -> None:
     assert dump(data) == before
 
 
+def test_merge_patch_on_a_model_that_holds_a_detached_model_changes_nothing() -> None:
+    old, held, _ = firewall()
+    _ = old.mark_detached()
+    data, _, _ = firewall()
+    data.segments[0] = held  # the object itself, not a deep copy
+    before, fields = dump(data), set(data.model_fields_set)
+    patch = {
+        "firewall_enabled": False,
+        "segments": {"Global Segment": {"firewall_logging_enabled": True}},
+    }
+
+    with pytest.raises(DetachedObjectError) as exc:
+        _ = data.merge_patch(patch)
+
+    assert (dump(data), set(data.model_fields_set)) == (before, fields)
+    assert exc.value.paths == [Path(("segments", 0))]
+    assert "FirewallData[Edge].merge_patch: the FirewallSegment[Edge] at " in str(
+        exc.value
+    )
+    assert "copy.deepcopy" in str(exc.value)
+    # A patch that would not reach the object is refused too, until it is mended.
+    with pytest.raises(DetachedObjectError):
+        _ = data.merge_patch({"firewall_enabled": False})
+    data.segments[0] = copy.deepcopy(held)
+    _ = data.merge_patch(patch)
+    assert data.firewall_enabled.stored is False
+
+
 def test_mark_detached_lists_every_model_with_its_place() -> None:
     data, segment, rule = firewall()
     then = dump(data)

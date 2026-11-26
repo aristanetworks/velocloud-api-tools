@@ -1347,7 +1347,10 @@ and has no such guard: an assignment to `vrrp.root` does not raise, and is
 reported by the next `plan()` or save like an in-place edit. Take the object
 from the state again and redo the edit. To reuse a detached object as a new
 item, put a deep copy of it in the state (`copy.deepcopy(rule)`): the copy is
-not detached.
+not detached. A detached object put back as it is makes its module refuse
+every patch (`merge_patch`, `apply`, `assign_segment`) with
+`DetachedObjectError`, which names where it sits (`paths`) and changes
+nothing, also for a patch that would not reach it.
 
 A write whose answer never arrived (a transport error after the request was
 sent, a cancelled save) may or may not be stored, and so may one that raised

@@ -652,6 +652,38 @@ class VcoModel(BaseModel):
         if self.is_detached:
             _raise_detached(self, name)
 
+    def check_nothing_detached(self, name: str) -> None:
+        """Raise ``DetachedObjectError`` naming *name* if this holds a detached model.
+
+        This object itself is refused as ``check_not_detached`` refuses it. A
+        ``VcoModel`` inside it that a write replaced (one put back as it is,
+        not as a deep copy) is refused too, at the first place it sits, in
+        ``mark_detached`` order: the error's ``paths`` are that place. An
+        edit that reached such an object would stop half-way, with the
+        changes before it applied, so an edit checks this before it changes
+        anything, also when it would not reach the object.
+        """
+        from pyvelo.client.exceptions import DetachedObjectError  # noqa: PLC0415 (it imports pyvelo.core)
+
+        from .rebase import Path  # noqa: PLC0415 (rebase imports this module)
+
+        for place, model in _models_inside(self, ()):
+            if not isinstance(model, VcoModel) or not model.is_detached:
+                continue
+            if not place:
+                _raise_detached(self, name)
+            where = Path(place)
+            raise DetachedObjectError(
+                f"{type(self).__name__}.{name}: the {type(model).__name__} at "
+                f"{where} is a detached object (it belongs to a module the state "
+                "no longer holds) that was put back here as it is, so an edit "
+                "that reached it would stop half-way, with the changes before "
+                "it applied. Nothing was changed. Put a deep copy of it there "
+                "instead (copy.deepcopy), or take the object again from the "
+                "module the state holds",
+                [where],
+            )
+
     def mark_detached(self) -> list[tuple[tuple[str | int, ...], BaseModel]]:
         """Mark this model and every VcoModel inside it as replaced by a write.
 
@@ -668,7 +700,9 @@ class VcoModel(BaseModel):
         are found by comparing dumps, at the places returned. A deep copy of a
         marked model is not marked: it shares nothing with the module that was
         replaced. A shallow copy is, because it holds the same lists and nested
-        models.
+        models. A marked model put back as it is into a model that is not
+        marked makes that model refuse ``merge_patch`` the same way, whole,
+        before anything changes (``check_nothing_detached``).
         """
         marked = list(_models_inside(self, ()))
         for _, model in marked:
@@ -988,10 +1022,12 @@ class VcoModel(BaseModel):
         raises, ``PatchError``, ``ResolutionError`` or ``LookupError``, leaves
         self as it was, the same dump and the same ``model_fields_set``. On an
         object a write replaced (``is_detached``: a save or ``update_module``
-        did it) it raises ``DetachedObjectError`` before anything else.
+        did it) it raises ``DetachedObjectError`` before anything else, and so
+        it does on a model that holds such an object anywhere inside (one put
+        back as it is, not as a deep copy), naming where it sits, also for a
+        patch that would not reach it (``check_nothing_detached``).
         """
-        if self.is_detached:
-            _raise_detached(self, "merge_patch")
+        self.check_nothing_detached("merge_patch")
         from .merge import apply_patch  # noqa: PLC0415 (merge imports this module)
 
         _ = apply_patch(self, patch, resolvers)
