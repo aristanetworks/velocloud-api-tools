@@ -51,7 +51,7 @@ from pyvelo.core.identity import (
 from pyvelo.core.show import patch_text
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import Callable, Mapping
 
     from pyvelo.client.schemas.configuration import ConfigurationModuleBase
     from pyvelo.core.rebase import Path
@@ -184,10 +184,12 @@ def _match_field(owner: RefOwner) -> str:
     return marker.row if isinstance(marker, OwnsRef) else "logicalId"
 
 
-def _by(owner: RefOwner) -> str:
-    """The attribute of the owner's identity type that its value is."""
+def _accessor(owner: RefOwner) -> Callable[[Any], object]:
+    """What reads, off the owner's identity type, the value the owner holds."""
     marker = owner.marker
-    return marker.by if isinstance(marker, OwnsRef) else "logical_id"
+    return (
+        marker.by if isinstance(marker, OwnsRef) else operator.attrgetter("logical_id")
+    )
 
 
 def _json_value(value: object) -> object:
@@ -319,14 +321,20 @@ def _unknown_identity(
 
 
 def _identity(
-    identity_type: type, by: str, value: object, resolvers: IdentityLookup | None
+    identity_type: type,
+    accessor: Callable[[Any], object],
+    value: object,
+    resolvers: IdentityLookup | None,
 ) -> object:
-    """The identity of *identity_type* whose *by* is *value*."""
+    """The identity of *identity_type* of which *accessor* reads *value*."""
     if resolvers is None:
         raise ResolverNotLoadedError(identity_type)
-    return resolvers.lookup_by(
-        cast("type[object]", identity_type), operator.attrgetter(by), value
-    )
+    return resolvers.lookup_by(cast("type[object]", identity_type), accessor, value)
+
+
+def _segment_id_of(segment: SegmentIdentity) -> int:
+    """The ``segment_id`` of *segment*: what a segment ref row's owner holds."""
+    return segment.segment_id
 
 
 def _object_id(identity: object) -> int:
@@ -380,7 +388,7 @@ def _segment_object_id(
         return found
     try:
         return _object_id(
-            _identity(SegmentIdentity, "segment_id", owner.segment_id, resolvers)
+            _identity(SegmentIdentity, _segment_id_of, owner.segment_id, resolvers)
         )
     except ResolverNotLoadedError:
         raise
@@ -449,7 +457,7 @@ def _new_row(
     else:
         try:
             identity = _identity(
-                owner.identity_type, _by(owner), owner.value, resolvers
+                owner.identity_type, _accessor(owner), owner.value, resolvers
             )
         except ResolverNotLoadedError:
             raise

@@ -799,7 +799,7 @@ class CssProviderRef(VcoModel):
         OwnsRef(
             "deviceSettings:css:provider",
             NetworkServiceIdentity,
-            by="logical_id",
+            by=lambda i: i.logical_id,
             row="logicalId",
             per_segment=True,
         ),
@@ -932,7 +932,7 @@ class DeviceSegment(VcoModel):
         OwnsRef(
             "deviceSettings:segment",
             SegmentIdentity,
-            by="segment_id",
+            by=lambda i: i.segment_id,
             value="segment_id",
             row="data.segmentId",
             level=ConfigContext.PROFILE,

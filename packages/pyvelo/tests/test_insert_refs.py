@@ -54,7 +54,7 @@ class ProbeSegment(QosSegment[Edge]):
         OwnsRef(
             SEGMENT_PROBE,
             NetworkServiceIdentity,
-            by="logical_id",
+            by=lambda i: i.logical_id,
             row="logicalId",
             per_segment=True,
         ),
@@ -64,7 +64,9 @@ class ProbeSegment(QosSegment[Edge]):
 class ProbeData(QosData[Edge]):
     probe: Annotated[
         uuid.UUID | Literal[""],
-        OwnsRef(PROBE, NetworkServiceIdentity, by="logical_id", row="logicalId"),
+        OwnsRef(
+            PROBE, NetworkServiceIdentity, by=lambda i: i.logical_id, row="logicalId"
+        ),
     ] = ""
     # Redeclared with the subclassed item, so that the owner in it is found.
     segments: Annotated[  # pyright: ignore[reportIncompatibleVariableOverride]

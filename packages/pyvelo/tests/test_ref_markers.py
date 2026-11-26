@@ -6,7 +6,8 @@ The markers of the data fields that a ref row goes with.
 import copy
 import json
 import uuid
-from typing import Annotated, ClassVar, Literal
+from collections.abc import Callable
+from typing import Annotated, Any, ClassVar, Literal, cast
 from uuid import UUID
 
 import pytest
@@ -19,6 +20,7 @@ from pyvelo.client.models.configuration.device_settings.segment import (
     DnsPrimaryProvider,
     SegmentAuthentication,
 )
+from pyvelo.client.models.configuration.qos.rule import BackhaulEdge
 from pyvelo.core import (
     ConfigContext,
     NetworkServiceIdentity,
@@ -341,7 +343,7 @@ class WithOwnsRef(VcoModel):
         OwnsRef(
             "deviceSettings:css:provider",
             NetworkServiceIdentity,
-            by="logical_id",
+            by=lambda i: i.logical_id,
             row="logicalId",
             per_segment=True,
         ),
@@ -353,7 +355,7 @@ def test_owns_ref_keeps_its_declaration() -> None:
     assert owns == OwnsRef(
         "deviceSettings:css:provider",
         NetworkServiceIdentity,
-        by="logical_id",
+        by=lambda i: i.logical_id,
         row="logicalId",
         per_segment=True,
     )
@@ -373,7 +375,7 @@ def test_owns_ref_takes_a_path_and_a_level() -> None:
     owns = OwnsRef(
         "deviceSettings:segment",
         SegmentIdentity,
-        by="segment_id",
+        by=lambda i: i.segment_id,
         value="segment_id",
         row="data.segmentId",
         level=ConfigContext.PROFILE,
@@ -383,18 +385,84 @@ def test_owns_ref_takes_a_path_and_a_level() -> None:
     assert owns.per_segment is False
 
 
-def test_owns_ref_checks_by_against_the_identity() -> None:
-    with pytest.raises(TypeError, match="no field 'nope'"):
-        OwnsRef("x", SegmentIdentity, by="nope", row="logicalId")
+def test_owns_ref_reads_its_identity_through_an_accessor() -> None:
+    owns = OwnsRef(
+        "x", SegmentIdentity, by=lambda i: i.segment_id, row="data.segmentId"
+    )
+
+    assert owns.attribute == "segment_id"
+    assert owns == OwnsRef(
+        "x", SegmentIdentity, by=lambda i: i.segment_id, row="data.segmentId"
+    )
+    assert owns != OwnsRef(
+        "x", SegmentIdentity, by=lambda i: i.object_id, row="data.segmentId"
+    )
 
 
-def test_owns_ref_by_is_checked_when_the_class_is_created() -> None:
-    with pytest.raises(TypeError, match="no field 'nope'"):
+@pytest.mark.parametrize(
+    "by",
+    ["segment_id", lambda i: i.nope, lambda i: i.segment_id + 1, lambda i: i.name or 0],  # pyright: ignore[reportUnknownLambdaType, reportUnknownMemberType]  # what a wrong accessor looks like
+)
+def test_owns_ref_refuses_an_accessor_that_is_not_one_plain_read(by: object) -> None:
+    with pytest.raises(TypeError) as refused:
+        _ = OwnsRef("x", SegmentIdentity, by=cast("Any", by), row="logicalId")
 
-        class Bad(VcoModel):  # pyright: ignore[reportUnusedClass]
-            value: Annotated[
-                int, OwnsRef("x", SegmentIdentity, by="nope", row="logicalId")
-            ] = 0
+    assert str(refused.value).startswith(
+        "OwnsRef(..., SegmentIdentity, by=accessor, ...) needs an accessor that "
+        "reads one field of SegmentIdentity and returns it."
+    )
+    assert "by=lambda i: i." in str(refused.value)
+
+
+def test_an_owns_ref_the_field_cannot_hold_is_refused_at_class_creation() -> None:
+    with pytest.raises(
+        TypeError, match=r"its OwnsRef reads SegmentIdentity\.logical_id"
+    ):
+
+        class Wrong(VcoModel):  # pyright: ignore[reportUnusedClass]
+            segment_id: Annotated[
+                int,
+                OwnsRef(
+                    "x", SegmentIdentity, by=lambda i: i.logical_id, row="logicalId"
+                ),
+            ]
+
+
+def test_an_owns_ref_on_an_object_is_checked_at_the_field_its_value_names() -> None:
+    class Inner(VcoModel):
+        segment_id: int = 0
+
+    def marked(by: Callable[[SegmentIdentity], object], value: str) -> type[VcoModel]:
+        class Outer(VcoModel):
+            inner: Annotated[
+                Inner,
+                OwnsRef("x", SegmentIdentity, by=by, value=value, row="data.segmentId"),
+            ]
+
+        return Outer
+
+    with pytest.raises(
+        TypeError, match=r"its OwnsRef reads SegmentIdentity\.logical_id"
+    ):
+        _ = marked(lambda i: i.logical_id, "segment_id")
+    with pytest.raises(TypeError, match="is no path to a field"):
+        _ = marked(lambda i: i.segment_id, "nope")
+    right = marked(lambda i: i.segment_id, "segment_id")
+    owns = get_owns_ref(right.model_fields["inner"])
+    assert owns is not None
+    assert owns.attribute == "segment_id"
+
+
+def test_the_owns_ref_sites_of_pyvelo_read_these_fields() -> None:
+    sites: list[tuple[type[VcoModel], str, str]] = [
+        (CssProviderRef, "logical_id", "logical_id"),
+        (DeviceSegment, "segment", "segment_id"),
+        (BackhaulEdge, "logical_id", "logical_id"),
+    ]
+    for model, name, attribute in sites:
+        owns = get_owns_ref(model.model_fields[name])
+        assert owns is not None, (model.__name__, name)
+        assert owns.attribute == attribute
 
 
 def test_a_ref_only_assignment_is_not_lossy() -> None:

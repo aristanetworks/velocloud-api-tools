@@ -356,7 +356,7 @@ def test_the_declarations_are_the_specs() -> None:
     assert get_owns_ref(DeviceSegment.model_fields["segment"]) == OwnsRef(
         "deviceSettings:segment",
         SegmentIdentity,
-        by="segment_id",
+        by=lambda i: i.segment_id,
         value="segment_id",
         row="data.segmentId",
         level=ConfigContext.PROFILE,
@@ -364,7 +364,7 @@ def test_the_declarations_are_the_specs() -> None:
     assert get_owns_ref(CssProviderRef.model_fields["logical_id"]) == OwnsRef(
         CSS_PROVIDER,
         NetworkServiceIdentity,
-        by="logical_id",
+        by=lambda i: i.logical_id,
         row="logicalId",
         per_segment=True,
     )

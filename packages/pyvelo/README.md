@@ -394,6 +394,10 @@ name for the segment the provider sits in (`deviceSettings:authentication`,
 the stub has none). It is never part of `data` on the wire, and a `service` key
 in the data is not read. A provider given as a list owns no row.
 
+A field of the first kind is declared with `OwnsRef(name, Identity, by=lambda i:
+i.logical_id, row=...)`: `by` is an accessor, probed and checked against the
+field's type as `Resolvable`'s is.
+
 A row for a new provider is added only for a service of the type its ref
 names. `SERVICE_TYPES` in `pyvelo.core.identity` gives it: `dns` for
 `deviceSettings:dns:primaryProvider` and `deviceSettings:dns:backupProvider`,

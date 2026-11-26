@@ -135,7 +135,7 @@ class BackhaulEdge(VcoModel):
         OwnsRef(
             "deviceSettings:backHaulEdge",
             HubService,
-            by="logical_id",
+            by=lambda i: i.logical_id,
             row="logicalId",
             per_segment=True,
         ),
