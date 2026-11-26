@@ -1212,7 +1212,7 @@ def _check_owns_ref(
     its dotted parts are followed from the one model class the field holds, through
     each model's fields. A part that is no field, or a step with no model class to
     follow, raises ``TypeError``. The field found is then checked as
-    ``_check_holds`` says.
+    ``_check_holds`` says, and the refusal names it by the path.
     """
     from .layers import field_kind  # noqa: PLC0415 (layers imports this module)
 
@@ -1232,6 +1232,8 @@ def _check_owns_ref(
                 'names, as in value="segment_id".'
             )
         held_type = field_kind(models[0].model_fields[part]).inner_type
+    if marker.value is not None:
+        owner = f"{owner}.{marker.value}"
     _check_holds(owner, held_type, marker.identity, marker.attribute, _OWNS_REF_WORDS)
 
 

@@ -394,6 +394,9 @@ def test_owns_ref_reads_its_identity_through_an_accessor() -> None:
     assert owns == OwnsRef(
         "x", SegmentIdentity, by=lambda i: i.segment_id, row="data.segmentId"
     )
+    assert hash(owns) == hash(
+        OwnsRef("x", SegmentIdentity, by=lambda i: i.segment_id, row="data.segmentId")
+    )
     assert owns != OwnsRef(
         "x", SegmentIdentity, by=lambda i: i.object_id, row="data.segmentId"
     )
@@ -419,7 +422,7 @@ def test_an_owns_ref_the_field_cannot_hold_is_refused_at_class_creation() -> Non
         TypeError, match=r"its OwnsRef reads SegmentIdentity\.logical_id"
     ):
 
-        class Wrong(VcoModel):  # pyright: ignore[reportUnusedClass]
+        class Wrong(VcoModel):  # pyright: ignore[reportUnusedClass]  # a class made only to be refused at creation
             segment_id: Annotated[
                 int,
                 OwnsRef(
@@ -442,7 +445,11 @@ def test_an_owns_ref_on_an_object_is_checked_at_the_field_its_value_names() -> N
         return Outer
 
     with pytest.raises(
-        TypeError, match=r"its OwnsRef reads SegmentIdentity\.logical_id"
+        TypeError,
+        match=(
+            r"^Outer\.inner\.segment_id holds int, but its OwnsRef reads "
+            r"SegmentIdentity\.logical_id"
+        ),
     ):
         _ = marked(lambda i: i.logical_id, "segment_id")
     with pytest.raises(TypeError, match="is no path to a field"):
@@ -451,6 +458,40 @@ def test_an_owns_ref_on_an_object_is_checked_at_the_field_its_value_names() -> N
     owns = get_owns_ref(right.model_fields["inner"])
     assert owns is not None
     assert owns.attribute == "segment_id"
+
+
+def test_an_owns_ref_value_path_follows_an_optional_model_but_not_a_list() -> None:
+    class Inner(VcoModel):
+        segment_id: int = 0
+
+    class Optional(VcoModel):
+        inner: Annotated[
+            Inner | None,
+            OwnsRef(
+                "x",
+                SegmentIdentity,
+                by=lambda i: i.segment_id,
+                value="segment_id",
+                row="data.segmentId",
+            ),
+        ] = None
+
+    owns = get_owns_ref(Optional.model_fields["inner"])
+    assert owns is not None
+    assert owns.attribute == "segment_id"
+    with pytest.raises(TypeError, match="is no path to a field"):
+
+        class Listed(VcoModel):  # pyright: ignore[reportUnusedClass]  # a class made only to be refused at creation
+            inners: Annotated[
+                list[Inner],
+                OwnsRef(
+                    "x",
+                    SegmentIdentity,
+                    by=lambda i: i.segment_id,
+                    value="segment_id",
+                    row="data.segmentId",
+                ),
+            ]
 
 
 def test_the_owns_ref_sites_of_pyvelo_read_these_fields() -> None:
