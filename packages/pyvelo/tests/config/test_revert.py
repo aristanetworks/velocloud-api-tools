@@ -7,12 +7,14 @@ the other modules keep their edits, and the next ``plan()`` judges them.
 import pytest
 from profile_state import profile_state
 from pyvelo.client.exceptions import (
+    ConfigConflictError,
     DetachedObjectError,
     LossyFieldError,
     SegmentSetError,
 )
 from pyvelo.config.pipeline import ConfigPipeline
 from pyvelo.config.state import ConfigState
+from pyvelo.testing import MockVcoClient
 from segment_helpers import GLOBAL, ds_entry, firewall_entry, qos_entry
 from test_state_plan import make_state  # pyright: ignore[reportImplicitRelativeImport]
 
@@ -160,3 +162,62 @@ async def test_revert_of_one_of_two_edited_modules_keeps_the_other() -> None:
     _ = await PIPELINE.revert(state, module="qos")
 
     assert [m.name for m in state.plan().changed] == ["firewall"]
+
+
+async def test_revert_after_a_save_puts_the_module_back_as_saved() -> None:
+    state = make_state()
+    client = MockVcoClient.for_state(state)
+    pipeline = ConfigPipeline(client)
+    _ = await pipeline.apply(
+        state, module="firewall", patch={"syslog_forwarding": True}
+    )
+    _ = await pipeline.save(state)
+    saved = state.module("firewall").version
+    assert saved != "e1"
+    _ = await pipeline.apply(
+        state, module="firewall", patch={"syslog_forwarding": False}
+    )
+
+    _ = await pipeline.revert(state, module="firewall")
+
+    assert state.module("firewall").version == saved
+    assert state.edge.firewall.syslog_forwarding.stored is True
+    assert state.plan().changed == ()
+    client.store.requests.clear()
+    result = await pipeline.save(state)
+    assert (result.written, client.store.requests) == ((), [])
+
+
+async def test_revert_after_a_conflict_gives_the_module_as_stored() -> None:
+    state = make_state()
+    client = MockVcoClient.for_state(state)
+    pipeline = ConfigPipeline(client)
+    client.store.other_writer(1, lambda row: row["data"].update(futureKey=2))
+    _ = await pipeline.apply(
+        state, module="firewall", patch={"syslog_forwarding": True}
+    )
+    with pytest.raises(ConfigConflictError) as failed:
+        _ = await pipeline.save(state)
+    stored = failed.value.module
+    assert stored is not None
+    assert state.module("firewall") is stored
+    _ = await pipeline.apply(state, module="firewall", patch=failed.value.redo_patch())
+
+    _ = await pipeline.revert(state, module="firewall")
+
+    assert state.module("firewall").version == stored.version != "e1"
+    assert state.plan().changed == ()
+
+
+async def test_revert_keeps_an_edge_module_bound_to_its_profile() -> None:
+    expected = make_state().edge.firewall.segment("Guest")
+    state = make_state()
+    _ = await PIPELINE.apply(
+        state, module="firewall", patch={"syslog_forwarding": True}
+    )
+
+    _ = await PIPELINE.revert(state, module="firewall")
+
+    guest = state.edge.firewall.segment("Guest")  # copied from the profile
+    assert guest.segment.name == "Guest"
+    assert guest.model_dump() == expected.model_dump()
