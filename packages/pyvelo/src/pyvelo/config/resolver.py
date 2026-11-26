@@ -5,7 +5,7 @@ import copy
 import difflib
 import uuid
 from collections.abc import Callable, Collection, Generator, Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, fields, is_dataclass
 from typing import (
     Any,
     ClassVar,
@@ -115,7 +115,7 @@ class BaseResolver[IdentityT]:
         self._client: VcoClientProtocol = client
         self._loaded: bool = False
         self._by_name: dict[str, IdentityT] = {}
-        self._reverse: dict[str, dict[int | str | uuid.UUID, str]] = {}
+        self._reverse: dict[str, dict[int | str | uuid.UUID, IdentityT]] = {}
 
     def lookup(self, name: str) -> IdentityT:
         """The identity loaded under *name*, matched exactly or ignoring case."""
@@ -177,27 +177,53 @@ class BaseResolver[IdentityT]:
     def _register(
         self, name: str, identity: IdentityT, **reverse_keys: int | str | uuid.UUID
     ) -> None:
-        """Register an identity with forward and reverse indexes."""
+        """Register *identity* under *name* and under each of *reverse_keys*.
+
+        Each reverse key is a field of the identity type; the identity is kept
+        under its value, so an ID finds it also when a later identity of the
+        same name took its place under *name*.
+        """
+        for attr in reverse_keys:
+            self._check_field(attr)
         self._by_name[name] = identity
         for attr, value in reverse_keys.items():
-            self._reverse.setdefault(attr, {})[value] = name
+            self._reverse.setdefault(attr, {})[value] = identity
 
     def _by_key(self, attribute: str, value: object) -> IdentityT:
         """The identity registered under ``attribute=value``.
 
         Raises ``ResolutionError`` when no loaded identity has the value, so an
-        ID that is not there is told from a name that is not.
+        ID that is not there is told from a name that is not, and
+        ``TypeError`` when *attribute* is no field of the identity type.
         """
+        self._check_field(attribute)
         self._require_loaded()
-        name = self._reverse.get(attribute, {}).get(cast("Any", value))
-        if name is None:
+        identity = self._reverse.get(attribute, {}).get(cast("Any", value))
+        if identity is None:
             raise ResolutionError(
                 name=str(value),
                 identity_type=self.identity_type,
                 candidates=[],
                 message=f"No {self._entity_label} has {attribute} {value}.",
             )
-        return self._by_name[name]
+        return identity
+
+    def _check_field(self, attribute: str) -> None:
+        """Raise ``TypeError`` when *attribute* is no field of the identity type.
+
+        Only a dataclass identity type is checked.
+        """
+        if not is_dataclass(self.identity_type):
+            return
+        names = [field.name for field in fields(self.identity_type)]
+        if attribute in names:
+            return
+        raise TypeError(
+            f"{type(self).__name__}: {self.identity_type.__name__} has no field "
+            f"{attribute!r} (it has {', '.join(names)}). This is a mistake in the "
+            "resolver, not an unknown ID: register and look up identities under "
+            "the names of the identity's fields."
+        )
 
     def _clear(self) -> None:
         """Clear all lookup tables before a reload."""
@@ -381,7 +407,64 @@ class ResolverRegistry:
             if accessor(identity) == value:
                 return identity
         raise ResolutionError(
-            name=str(value), identity_type=identity_type, candidates=[]
+            name=str(value),
+            identity_type=identity_type,
+            candidates=[],
+            message=f"No {entity_label(identity_type)} has the value {value!r}.",
+        )
+
+    @overload
+    def find[T](self, key: IdentityKey[T]) -> T | None: ...
+    @overload
+    def find[T](self, key: type[T], name: str) -> T | None: ...
+
+    def find(self, key: Any, name: str | None = None) -> Any:
+        """The identity ``lookup`` returns, or ``None`` where none has the name or ID.
+
+        Supports the two calling conventions of ``lookup``:
+          find(SegmentName("Global Segment"))   # key-based dispatch
+          find(SegmentIdentity, "Global Segment")  # identity type + name
+
+        ``None`` says that no loaded identity has the name or the ID, never
+        that the table is not loaded or that several identities share the
+        name: ``LookupError`` (no resolver), ``ResolverNotLoadedError`` and
+        the ``ResolutionError`` for a name some loaded identity has are raised
+        as ``lookup`` raises them. The name for an ID is the ``name`` of
+        ``registry.find(NetworkServiceLogicalId(u))``, when it is not ``None``.
+        """
+        try:
+            return self.lookup(key) if name is None else self.lookup(key, name)
+        except ResolverNotLoadedError:
+            raise
+        except ResolutionError:
+            if isinstance(key, type):
+                identity_type: type = key
+                text: object = name
+            else:
+                identity_type = type(key).identity_type
+                text = getattr(key, "value", None)
+            if isinstance(text, str) and self._has_name(identity_type, text):
+                raise
+            return None
+
+    def identities[T](self, identity_type: type[T]) -> Collection[T]:
+        """The loaded identities of *identity_type*.
+
+        Empty when no resolver is registered for the type, or its resolver
+        requires a load and has none. It never raises.
+        """
+        resolver = self.resolver_for(identity_type)
+        if resolver is None or (resolver.requires_load and not resolver.loaded):
+            return ()
+        return resolver.identities()
+
+    def _has_name(self, identity_type: type, name: str) -> bool:
+        """Whether a loaded identity of *identity_type* has *name*, ignoring case."""
+        lowered = name.lower()
+        return any(
+            isinstance(found := getattr(identity, "name", None), str)
+            and found.lower() == lowered
+            for identity in self.identities(identity_type)
         )
 
 

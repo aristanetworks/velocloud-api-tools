@@ -537,3 +537,106 @@ def test_no_stock_resolver_overrides_load() -> None:
     for resolver in stock:
         assert "load" not in vars(resolver), resolver.__name__
         assert "_load" in vars(resolver), resolver.__name__
+
+
+class DupResolver(BaseResolver[FooIdentity]):
+    """Two identities share the name ``dup``; the base keeps one per name."""
+
+    identity_type: type[FooIdentity] = FooIdentity
+
+    def __init__(self) -> None:
+        super().__init__(_no_client())
+
+    @override
+    def lookup_key(self, key: IdentityKey[FooIdentity]) -> FooIdentity:
+        match key:
+            case FooName(value=name):
+                return self.lookup(name)
+            case FooId(value=value):
+                return self._by_key("id", value)
+            case _:
+                raise TypeError(f"Unsupported key type: {type(key).__name__}")
+
+    @override
+    async def _load(self, context: ResolverContext) -> None:
+        _ = context
+        self._clear()
+        for number in (1, 2):
+            identity = FooIdentity("dup", number, uuid.UUID(int=number))
+            self._register(identity.name, identity, id=identity.id)
+
+    def typo(self) -> FooIdentity:
+        return self._by_key("idd", 1)
+
+    def typo_at_registration(self) -> None:
+        self._register("x", FOO, idd=1)
+
+
+async def dup_registry() -> tuple[ResolverRegistry, DupResolver]:
+    resolver = DupResolver()
+    await resolver.load(ResolverContext())
+    registry = ResolverRegistry()
+    registry.register(resolver)
+    return registry, resolver
+
+
+async def test_an_id_key_returns_the_identity_registered_under_that_id() -> None:
+    registry, _ = await dup_registry()
+
+    assert registry.lookup(FooId(1)).id == 1
+    assert registry.lookup(FooId(2)).id == 2
+    with pytest.raises(ResolutionError, match=r"No foo has id 3\."):
+        _ = registry.lookup(FooId(3))
+
+
+async def test_an_attribute_that_is_no_field_of_the_identity_is_a_type_error() -> None:
+    _, resolver = await dup_registry()
+
+    with pytest.raises(TypeError, match="FooIdentity has no field 'idd'"):
+        _ = resolver.typo()
+    with pytest.raises(TypeError, match="FooIdentity has no field 'idd'"):
+        resolver.typo_at_registration()
+
+
+def test_lookup_by_names_the_label_and_the_value_it_did_not_find(
+    segment_registry: ResolverRegistry,
+) -> None:
+    with pytest.raises(ResolutionError) as unknown:
+        _ = segment_registry.lookup_by(SegmentIdentity, lambda s: s.object_id, 999)
+
+    assert str(unknown.value) == "No segment has the value 999."
+    assert unknown.value.name == "999"
+
+
+def test_find_returns_none_where_no_identity_has_the_name_or_the_id(
+    segment_registry: ResolverRegistry,
+) -> None:
+    guest = segment_registry.lookup(SegmentIdentity, "Guest")
+
+    assert segment_registry.find(SegmentIdentity, "guest") == guest
+    by_id = segment_registry.find(SegmentId(guest.segment_id))
+    _ = assert_type(by_id, SegmentIdentity | None)
+    assert by_id == guest
+    assert segment_registry.find(SegmentIdentity, "nope") is None
+    assert segment_registry.find(SegmentId(999)) is None
+
+
+def test_find_raises_what_lookup_raises_for_anything_but_a_miss() -> None:
+    with pytest.raises(LookupError):
+        _ = ResolverRegistry().find(SegmentName("x"))
+    hubs = ResolverRegistry()
+    hubs.register(HubResolver(_no_client()))
+    with pytest.raises(ResolverNotLoadedError):
+        _ = hubs.find(HubName("x"))
+
+
+def test_the_registry_lists_the_loaded_identities_of_a_type(
+    segment_registry: ResolverRegistry,
+) -> None:
+    names = sorted(i.name for i in segment_registry.identities(SegmentIdentity))
+
+    assert "Guest" in names
+    assert list(segment_registry.identities(HubIdentity)) == []  # no resolver
+    hubs = ResolverRegistry()
+    hubs.register(HubResolver(_no_client()))
+    assert list(hubs.identities(HubIdentity)) == []  # not loaded

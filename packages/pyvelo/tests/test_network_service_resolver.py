@@ -218,6 +218,9 @@ async def test_a_shared_name_asks_for_the_logical_id(
         711,
         712,
     ]
+    with pytest.raises(ResolutionError, match="Several network services are named"):
+        _ = registry.find(NetworkServiceIdentity, "dup")
+    assert registry.find(NetworkServiceLogicalId(uuid.UUID(int=987654321))) is None
 
 
 async def test_an_unloaded_copy_must_be_loaded_again(

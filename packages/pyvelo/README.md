@@ -62,7 +62,14 @@ loaded identity for which the accessor returns the value, whatever the field: on
 that has no key type, or that an identity of the same name hides from the name
 lookups (an Edge and a hub cluster that share a name). It scans every loaded
 identity, raises `ResolverNotLoadedError` when the type has no resolver or its
-resolver is not loaded, and `ResolutionError` when no identity has the value.
+resolver is not loaded, and `ResolutionError` when no identity has the value
+(`No segment has the value 7.`).
+
+`registry.find(...)` takes what `lookup` takes and returns `None` where no loaded
+identity has the name or the ID, so the name for an ID is
+`found.name if (found := registry.find(NetworkServiceLogicalId(u))) else None`; it
+still raises for a table that is not loaded and for a name several identities share.
+`registry.identities(SegmentIdentity)` lists the loaded identities of a type.
 
 A model field that takes a name where it holds an ID declares it with
 `Resolvable(SegmentIdentity, lambda i: i.segment_id)`: the identity type and an
@@ -79,10 +86,12 @@ the accessors that would fit, instead of failing the first time a name is merged
 into it.
 
 An ID the loaded tables do not hold raises `ResolutionError` (a `KeyError`), as an unknown
-name does, with a message such as `No segment has segment_id 99.`. For `lookup` and
-`resolve`, a type with no registered resolver raises `LookupError`, which is not a
-`ResolutionError`; `lookup_by` raises `ResolverNotLoadedError` for it. A lookup
-that needs a load not yet done raises `ResolverNotLoadedError`.
+name does, with a message such as `No segment has segment_id 99.`. An ID key returns
+the identity registered under that ID, also when another identity of the same name was
+registered after it. For `lookup` and `resolve`, a type with no registered resolver
+raises `LookupError`, which is not a `ResolutionError`; `lookup_by` raises
+`ResolverNotLoadedError` for it. A lookup that needs a load not yet done raises
+`ResolverNotLoadedError`.
 
 ## Writing a configuration module
 

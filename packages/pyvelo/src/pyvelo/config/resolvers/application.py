@@ -63,4 +63,3 @@ class ApplicationResolver(BaseResolver[ApplicationIdentity]):
             app_id = app.id_
             identity = ApplicationIdentity(name=display, id=app_id)
             self._register(display, identity, id=app_id)
-            self._reverse.setdefault("name", {})[display] = display
