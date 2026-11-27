@@ -1417,10 +1417,14 @@ firewall
   part, quoted (`services."x.y"`). A path the two documents hold in more than
   one way, which only such a key can cause, is not named at all: it is the
   comparison's own text as one quoted part, and its values are as the VCO
-  writes them.
+  writes them. In a module whose models mark a secret, each of those values is
+  `***` whole instead: nothing says which model reads the value, so nothing
+  says which of its keys is the secret.
 - The two values are JSON. An object has the keys its model declares by
   attribute name (`{"allow_selected_ip": []}`), at every depth; a key no model
-  declares, and a scalar, stay as the VCO writes them.
+  declares, and a scalar, stay as the VCO writes them. A secret is `***`, at
+  any depth: an object or a list that one side has and the other lacks is
+  shown whole, with each secret in it masked.
 
 These paths say where the view and the VCO differ. The view is not a layer, so
 none of them is promised to be a path `apply` takes.
@@ -1462,7 +1466,10 @@ message name the module by its python name), not a finding.
 
 The call does not ask the VCO for encrypted keys (`encryptKeys`), which a VCO
 may refuse. A secret is never compared: a path that holds one is `ignored` with
-that reason, and its value is shown as `***`.
+that reason, and its value is shown as `***`. A secret inside a value of
+another entry is shown as `***` too, by the same marks as `named_dump()`
+(see "Dumps"). The firewall and QoS, the two modules compared today, mark
+none.
 
 When a rule of the view names a security service group
 (`securityServiceGroup`), the composer adds three keys to it that neither layer
@@ -2354,7 +2361,9 @@ Known limits:
   `error.errors()` still has it. A model's `named_dump()` shows the same mask
   by the same marks (see "Dumps"), and so do the values pyvelo shows of a
   change: the field changes (`get_field_changes`), `ModulePlan.shown_change`
-  and the entries of a write error's `not_redone()`. Nothing else is hidden. A secret is printed
+  and the entries of a write error's `not_redone()`. So do the two values of
+  each entry of `compare_effective` (see "The effective view"). Nothing else
+  is hidden. A secret is printed
   as it is in two places: under a key the models do not know, which includes
   everything inside a field typed `dict[str, Any]` (`EdgeZscaler.deployment`,
   a WAN link's `private_network`), and in the data of a module whose data is

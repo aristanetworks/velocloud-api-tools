@@ -15,7 +15,8 @@ A difference ``compare_module`` returns is shown as every other output is
 attribute name, a segment by its name, and the keys of its two values by
 attribute name. An item of a list below a segment is shown by its position,
 ``rules[#0]``, and not by its name: the view holds those items wrapped, and
-the comparison matched them by position.
+the comparison matched them by position. A secret is ``***`` in both values,
+at any depth of an object or a list one side has and the other lacks.
 
 How each part of a module is matched:
 
@@ -54,13 +55,14 @@ from pyvelo.config.composed_security import (
     expected_rule_keys,
     rules_naming_a_group,
 )
-from pyvelo.core import Origin, Resolved, effective_dump
+from pyvelo.core import HIDDEN, Origin, Resolved, effective_dump, shown_value
 from pyvelo.core.base import JsonObject, VcoModel, is_dict, is_list, wire_name
 from pyvelo.core.fields import get_key_spec, is_secret
 from pyvelo.core.layers import Effective, Kind, Layered, field_kind
-from pyvelo.core.names import item_part, named_path, named_value
+from pyvelo.core.names import item_part, named_path
 from pyvelo.core.patch import PatchError
 from pyvelo.core.rebase import Key, KeyValue, Path, PathPart, key_text
+from pyvelo.core.secrets import declares_secret
 
 __all__ = [
     "CONVERTED_MODULES",
@@ -86,7 +88,6 @@ UNMODELED_KEY = "the library does not know this key yet, so the view has no valu
 FACTORY_ABSENT = "the view gives the display default and the server has no value"
 FACTORY_SAME = "the view gives the display default and the server has the same value"
 
-_HIDDEN = "***"
 _LONGEST_VALUE = 80
 
 
@@ -207,10 +208,15 @@ class EffectiveDifference[P: str = Path]:
 
     *client* and *server* are the two values as JSON, ``MISSING`` where a side
     has none; an object has the keys its model declares by attribute name, a
-    scalar is as the VCO writes it, and a secret is shown as ``***``. *origin*
-    and *source* are the view's, and ``None`` where the view's value is not a
-    single resolved one. *source* is where the value sits in the layer it came
-    from (the edge's data for ``Origin.EDGE``, the profile's for
+    scalar is as the VCO writes it, and a secret is shown as ``***``, at any
+    depth of a value. Where *path* is one quoted part because the documents do
+    not hold it in exactly one way, a value is as the VCO writes it when no
+    class of the module declares a secret, and ``***`` whole when one does:
+    nothing says which of its keys is the secret.
+
+    *origin* and *source* are the view's, and ``None`` where the view's value
+    is not a single resolved one. *source* is where the value sits in the
+    layer it came from (the edge's data for ``Origin.EDGE``, the profile's for
     ``Origin.PROFILE``), with fields by attribute name and every item by its
     position in that layer's own list, the segment too:
     ``segments[#1].rules[#0]`` is the first rule of that layer's second
@@ -526,8 +532,8 @@ class _Comparison:
         self.emit(
             path,
             EffectiveCategory.IGNORED,
-            MISSING if client is MISSING else _HIDDEN,
-            MISSING if server is MISSING else _HIDDEN,
+            MISSING if client is MISSING else HIDDEN,
+            MISSING if server is MISSING else HIDDEN,
             cover=cover,
             reason=SECRET_NOT_COMPARED,
         )
@@ -914,23 +920,46 @@ def shown_effective_path(
 def _shown(
     entry: EffectiveDifference[str], view: VcoModel, client: object, server: object
 ) -> EffectiveDifference:
-    """*entry* of the comparison of *view* as it is shown: in names.
+    """*entry* of the comparison of *view* as it is shown: in names, with no secret.
 
-    Its two values are named where its path is read, and kept as stored where
-    it is not.
+    Where its path is read, its two values are named and every secret in
+    them is hidden (``shown_value``). Where it is not, they are kept as stored
+    or hidden whole (``_unread_value``).
     """
     read = _read(view, entry.path, client, server)
-    model = None if read is None else type(view)
+    model = type(view)
+    if read is None:
+        path = Path((entry.path,))
+        mine = _unread_value(entry.client, model)
+        theirs = _unread_value(entry.server, model)
+    else:
+        path = named_path(read, model)
+        mine = shown_value(entry.client, model, read)
+        theirs = shown_value(entry.server, model, read)
     return EffectiveDifference(
         python_module_name(entry.module),
-        Path((entry.path,)) if read is None else named_path(read, model),
-        named_value(entry.client, model, read),
-        named_value(entry.server, model, read),
+        path,
+        mine,
+        theirs,
         entry.origin,
         None if entry.source is None else _shown_source(view, entry.source),
         entry.category,
         entry.reason,
     )
+
+
+def _unread_value(value: object, model: type[VcoModel]) -> object:
+    """*value* of an entry of the comparison of a *model* whose path is not read.
+
+    Nothing says where in the classes of *model* such a value is, so nothing
+    says which of its keys is a secret: where a class declares one
+    (``declares_secret``), the whole value is ``HIDDEN``. Where none does, the
+    value is a copy as stored. ``MISSING`` stays, so that a side with no value
+    still reads as one.
+    """
+    if value is not MISSING and declares_secret(model):
+        return HIDDEN
+    return shown_value(value, None)
 
 
 def _shown_source(view: VcoModel, source: str) -> Path:

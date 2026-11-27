@@ -1034,6 +1034,97 @@ def test_a_secret_is_ignored_with_its_reason() -> None:
     assert "iv" not in EffectiveComparison(tuple(entries)).render().replace(SECRET, "")
 
 
+SECRETS = ("s3cret-a", "s3cret-b", "s3cret-c", "server-s3cret")
+
+
+def secret_view() -> SecretData[Effective]:
+    profile = SecretData[Profile].model_validate(
+        {
+            "login": {"user": "u", "password": "s3cret-a"},
+            "logins": [
+                {"user": "v", "password": "s3cret-b"},
+                {"user": "w", "password": "s3cret-c"},
+            ],
+        }
+    )
+    return effective_view(None, profile, SecretData[Effective])
+
+
+@pytest.mark.parametrize(
+    "server",
+    [
+        {"logins": [{"user": "v", "password": "x"}]},
+        {"login": "oops", "logins": "oops"},
+        {
+            "login": {"user": "u", "password": "p"},
+            "logins": [
+                {"user": "v", "password": "x"},
+                {"user": "w", "password": "y"},
+                {"user": "z", "password": "server-s3cret"},
+            ],
+        },
+        {"login": [{"password": "server-s3cret"}], "logins": []},
+    ],
+    ids=["no object", "a scalar", "an item more", "a list for an object"],
+)
+def test_no_value_of_a_difference_holds_a_secret(server: dict[str, object]) -> None:
+    entries = compare_module("secret", secret_view(), server, ignores=())
+    text = EffectiveComparison(tuple(entries)).render()
+    assert entries
+    assert not any(secret in text or secret in repr(entries) for secret in SECRETS)
+
+
+def test_a_whole_object_one_side_lacks_is_shown_with_its_secret_masked() -> None:
+    server: dict[str, object] = {"logins": [{"user": "v", "password": "x"}]}
+    entries = compare_module("secret", secret_view(), server, ignores=())
+    found = {str(entry.path): entry for entry in entries}
+    assert found["login"].client == {"user": "u", "password": "***"}
+    assert found["login"].render() == (
+        'client_only login: client {"password": "***", "user": "u"}, '
+        "server (none) [profile login]"
+    )
+
+
+UNREADABLE_SERVER: dict[str, object] = {
+    "login": {"user": "u", "password": "p"},
+    "logins": [{"user": "v", "password": "x"}, {"user": "w", "password": "y"}],
+    # A key of the module, and a key of ``login``: both are written
+    # ``login.user``, so nothing says which class the value is read by.
+    "login.user": {"password": "server-s3cret"},
+}
+
+
+def test_a_value_at_a_path_that_cannot_be_read_is_hidden_whole() -> None:
+    entries = compare_module("secret", secret_view(), UNREADABLE_SERVER, ignores=())
+    (unread,) = [
+        entry
+        for entry in entries
+        if len(entry.path.parts) == 1 and "." in str(entry.path.parts[0])
+    ]
+    assert unread.server == "***"
+    # A side with no value still has none, so the category reads right.
+    assert unread.client is MISSING
+    assert unread.render() == 'server_only "login.user": client (none), server "***"'
+    assert "server-s3cret" not in repr(entries)
+
+
+def test_each_side_of_a_path_that_cannot_be_read_is_hidden() -> None:
+    server = {**UNREADABLE_SERVER, "login": {"user": "other", "password": "p"}}
+    entries = compare_module("secret", secret_view(), server, ignores=())
+    unread = [
+        (entry.category, entry.client, entry.server)
+        for entry in entries
+        if entry.path.parts == ("login.user",)
+    ]
+    # The user that differs and the key beside ``login`` are both written
+    # ``login.user``. The first is no secret, and is hidden all the same: an
+    # entry that cannot be read does not say which of the two it is.
+    assert sorted(unread, key=lambda found: found[0].value) == [
+        (EffectiveCategory.DIFFERS, "***", "***"),
+        (EffectiveCategory.SERVER_ONLY, MISSING, "***"),
+    ]
+
+
 # --- how items are matched --------------------------------------------------
 
 
@@ -1744,6 +1835,28 @@ def test_an_entry_of_a_map_is_shown_by_its_key_as_stored() -> None:
         round_trips(entry.path)
     # A module pyvelo has no other name for keeps the one it was given.
     assert {e.module for e in entries} == {"m"}
+
+
+def test_a_value_at_a_path_that_cannot_be_read_is_kept_where_no_class_has_a_secret() -> (  # noqa: E501 (a test's name)
+    None
+):
+    profile = MapData[Profile].model_validate(
+        {"plain": {"k": {"logicalId": "q"}}, "hubs": {}}
+    )
+    view = effective_view(None, profile, MapData[Effective])
+    # A key of the module, and an entry of ``plain``: both are written
+    # ``plain.k``.
+    server: Json = {
+        "plain": {"k": {"logicalId": "z"}},
+        "hubs": {},
+        "plain.k": {"logicalId": "y"},
+    }
+    entries = compare_module("m", view, server, ignores=())
+
+    assert {e.path.parts: (e.client, e.server) for e in entries} == {
+        ("plain.k.logicalId",): ("q", "z"),
+        ("plain.k",): (MISSING, {"logicalId": "y"}),
+    }
 
 
 async def test_an_ignore_is_written_in_the_vcos_keys_and_shown_in_names() -> None:
