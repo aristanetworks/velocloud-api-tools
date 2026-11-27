@@ -886,8 +886,10 @@ async def test_an_insert_returns_its_row(
         )
         state = await pipeline.load(layout.edge_id, enterprise_id=lab.enterprise_id)
         # A disabled service rate limit: new content that limits nothing.
-        state.edge.qos.service_rate_limit = ServiceRateLimit.model_validate(
-            {"enabled": False, "inputType": "percent", "value": 1}
+        state.edge.qos.service_rate_limit.set_local(
+            ServiceRateLimit.model_validate(
+                {"enabled": False, "inputType": "percent", "value": 1}
+            )
         )
         plan = _planned(state, Name.QOS)
         check(plan.operation == "insert", f"planned {plan.operation}, expected insert")
@@ -939,7 +941,9 @@ async def test_an_insert_returns_its_row(
         writes.inserts.clear()
         writes.updates.clear()
         limit = expect(
-            state.edge.qos.service_rate_limit, ServiceRateLimit, "the rate limit"
+            state.edge.qos.service_rate_limit.local,
+            ServiceRateLimit,
+            "the edge's own rate limit",
         )
         limit.value += 1  # the limit stays disabled: it limits nothing
         plan = _planned(state, Name.QOS)
@@ -1803,8 +1807,10 @@ async def test_an_insert_answered_with_an_id_is_read_back(
         answers = record_answers(lab.client, monkeypatch)
         state = await pipeline.load(layout.edge_id, enterprise_id=lab.enterprise_id)
         # A disabled service rate limit: new content that limits nothing.
-        state.edge.qos.service_rate_limit = ServiceRateLimit.model_validate(
-            {"enabled": False, "inputType": "percent", "value": 1}
+        state.edge.qos.service_rate_limit.set_local(
+            ServiceRateLimit.model_validate(
+                {"enabled": False, "inputType": "percent", "value": 1}
+            )
         )
         plan = _planned(state, Name.QOS)
         check(plan.operation == "insert", f"planned {plan.operation}, expected insert")
