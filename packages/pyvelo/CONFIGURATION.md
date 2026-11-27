@@ -702,9 +702,14 @@ Beside its `data`, a device settings or QoS module has `refs`: the rows that
 tie the module to the enterprise objects it uses (segments, address groups,
 services). The library derives them from the data, so you edit the data and
 never the refs. Setting a provider adds the row it goes with and clearing it
-removes the row; `state.plan().render()` lists each as `+ refs <name>
-(<segment>): <value>` or `- refs <name> (<segment>): <value>`, without the
-segment for a row of the module, and a module that sends its refs with no row
+removes the row; `state.plan().render()` lists each by the provider's field, as
+`+ refs <path>: <value>` or `- refs <path>: <value>`
+(`+ refs segments[Guest].dns.primary_provider.service: <service's logical ID>`),
+where the path is the one `get_field_changes()` gives for the provider. A row
+that goes with a value the data holds (a QoS rule's backhaul hub, a segment) is
+listed by its ref name, as `+ refs <name> (<segment>): <value>` or `- refs
+<name> (<segment>): <value>`, without the segment for a row of the module. A
+module that sends its refs with no row
 changed says `refs: sent as read`. A device settings or QoS write with segments
 always carries its refs, because the VCO's processors run on every such write.
 The row of a hub added to or removed from a Branch-to-Hub list is the one
@@ -713,16 +718,23 @@ steps have run, so the plan shows `refs: sent as read` and the save adds or
 removes the row for the write that follows the steps (see "Hubs").
 What disagrees in the refs as read is a `warning: <message>` line, and the
 write leaves it as it is. `ConfigPlan.warnings` holds the same warnings as
-data, each with its module's name before its path, and `save` and `dry_run`
-copy them to `SaveResult.warnings`.
+data, and `save` and `dry_run` copy them to `SaveResult.warnings`. Each has its
+module's python name in `module` and, in `path`, a place within that module's
+data as every path is shown, with no module before it. A provider that has no
+row, or several, is at the provider's field
+(`segments[Guest].dns.primary_provider.service`). A row that nothing in the
+data names has no field: it is at its ref name under `refs`
+(`refs."deviceSettings:css:provider"`), and `segment` holds the name of the
+segment the row is of.
 An edge module that stores an object the VCO uses although its flag says it
-inherits (a segment's `cosMapping` with `override` false: the composer takes a
+inherits (a segment's `cos_mapping` with `override` false: the composer takes a
 present edge object whatever its flag) has a `flag_off_in_use` warning, at the
-object's path, in the same list and in `render()`, also when nothing else in
+object's path (`segments[Voice].cos_mapping`), in the same list and in
+`render()`, also when nothing else in
 the module changes; its message gives the patch that inherits
-(`{"segments": {"Voice": {"cosMapping": null}}}`) and the one that keeps the
+(`{"segments": {"Voice": {"cos_mapping": null}}}`) and the one that keeps the
 object as stored with its flag turned on (`{"segments": {"Voice":
-{"cosMapping": {}}}}`; `localize()` in Python). A patch that names values
+{"cos_mapping": {}}}}`; `localize()` in Python). A patch that names values
 inside such an object changes only those values and turns the flag on, so
 the edge keeps running with the object `state.effective` showed as the edge's.
 

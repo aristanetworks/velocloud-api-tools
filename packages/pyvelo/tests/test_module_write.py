@@ -48,7 +48,7 @@ from pyvelo.core.identity import (
     SegmentIdentity,
 )
 from pyvelo.core.layers import Edge, Profile, layer_for
-from pyvelo.core.rebase import AddedItem, Key
+from pyvelo.core.rebase import AddedItem, Key, Path
 from pyvelo.testing import make_module_json
 from refs_helpers import (
     DNS_A,
@@ -69,6 +69,7 @@ from refs_helpers import (
     table_registry,
     unset_provider_module,
 )
+from shown_paths import reached
 
 EDGE = ConfigContext.EDGE
 
@@ -1693,7 +1694,7 @@ def test_a_provider_cleared_plans_an_update_that_removes_its_row() -> None:
     assert change.row == primary_provider_row()
     assert plan.refs == {SEGMENT: segment_row(0, SEG0_OBJECT, SEG0)}
     lines = plan.render().splitlines()
-    assert f"  - refs {PRIMARY} (Global Segment): {DNS_A}" in lines
+    assert f"  - refs {PRIMARY_PATH}: {DNS_A}" in lines
 
 
 def test_a_data_edit_of_device_settings_with_segments_sends_its_refs_as_read() -> None:
@@ -1834,7 +1835,7 @@ def test_render_lists_ref_rows_and_warnings() -> None:
     lines = plan.render().splitlines()
     assert lines[:2] == [
         "device_settings: update",
-        f"  - refs {PRIMARY} (Global Segment): {DNS_A}",
+        f"  - refs {PRIMARY_PATH}: {DNS_A}",
     ]
     (warning,) = plan.warnings
     assert warning.code == "ref_without_owner"
@@ -1851,7 +1852,33 @@ async def test_render_lists_an_added_row_with_its_value() -> None:
     plan = plan_module(module, current, resolvers=await table_registry(DNS_A_IDENTITY))
     assert plan.render().splitlines() == [
         "device_settings: update",
-        f"  + refs {PRIMARY} (Global Segment): {DNS_A}",
+        f"  + refs {PRIMARY_PATH}: {DNS_A}",
+    ]
+
+
+async def test_a_providers_ref_line_names_its_field() -> None:
+    module = unset_provider_module()
+    current = copy_of_data(module)
+    set_primary_provider(current, uuid.UUID(DNS_A))
+    plan = plan_module(module, current, resolvers=await table_registry(DNS_A_IDENTITY))
+    (change,) = plan.ref_changes
+    assert change.owner is not None
+    (line,) = plan.ref_lines()
+    assert line.startswith("  + refs segments[")
+    assert line == f"  + refs {PRIMARY_PATH}: {DNS_A}"
+    shown = Path.parse(line.removeprefix("  + refs ").removesuffix(f": {DNS_A}"))
+    assert shown == plan.named(change.owner)
+    assert reached(current, shown) == uuid.UUID(DNS_A)
+
+
+async def test_a_changed_provider_has_both_its_ref_lines_at_its_field() -> None:
+    module = primary_provider_module()
+    current = copy_of_data(module)
+    set_primary_provider(current, uuid.UUID(DNS_B))
+    plan = plan_module(module, current, resolvers=await table_registry(DNS_B_IDENTITY))
+    assert plan.ref_lines() == [
+        f"  - refs {PRIMARY_PATH}: {DNS_A}",
+        f"  + refs {PRIMARY_PATH}: {DNS_B}",
     ]
 
 

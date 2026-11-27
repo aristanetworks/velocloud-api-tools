@@ -141,6 +141,7 @@ from pyvelo.core.base import (
 )
 from pyvelo.core.fixed_list import fixed_list_violations
 from pyvelo.core.layers import Edge, Layered, Profile
+from pyvelo.core.merge import nested_under
 from pyvelo.core.names import ChangeNames, named_path, named_value
 from pyvelo.core.owned import UnflaggedInUse, unflagged_in_use_at
 from pyvelo.core.rebase import (
@@ -150,6 +151,7 @@ from pyvelo.core.rebase import (
     Key,
     PairedList,
     Path,
+    PathPart,
     RawChange,
     carry_unset_defaults,
     find_lossy_assignments,
@@ -537,9 +539,11 @@ class ModulePlan:
 
         A ref row the edit adds or removes is ``+ refs <name> (<segment>):
         <value>`` or ``- refs <name> (<segment>): <value>``, without the
-        segment for a row of the module; ``refs: sent as read`` says an update
-        or insert sends refs with no row changed, and ``warning: <message>``
-        is something about the refs as read that the plan leaves as it is.
+        segment for a row of the module; the row of a provider is named by
+        the provider's field, ``+ refs <path>: <value>`` (``ref_lines``).
+        ``refs: sent as read`` says an update or insert sends refs with no
+        row changed, and ``warning: <message>`` is something about the refs
+        as read that the plan leaves as it is.
         ``added segments: A, B`` names the segments the pipeline added to a
         profile module, which are no change from it. ``repaired defaults:
         Guest: A, B`` names, for a segment, the ``defaults`` entries the
@@ -573,16 +577,38 @@ class ModulePlan:
         lines.extend(f"  warning: {warning.message}" for warning in self.warnings)
         return "\n".join(lines)
 
+    def named_owner(self, owner: Path) -> Path:
+        """*owner*, a provider's field (``RefChange.owner``), as ``named`` shows it.
+
+        The field is named in the data as planned where this plan adds a row
+        for it (it is set, or changed to another provider), and in the data as
+        read where the plan only removes its row. A ref line and the
+        provider's field change both show it by this, so they show one path.
+        """
+        added = any(
+            change.added and change.owner == owner for change in self.ref_changes
+        )
+        return self.named(owner, removed=not added)
+
     def ref_lines(self) -> list[str]:
         """The lines of ``render`` about the refs sent.
 
-        A line for each row added or removed.
+        A line for each row added or removed. The row of a provider (a row
+        whose ``RefChange.owner`` is set) is named by the provider's field,
+        as ``named_owner`` shows it: ``+ refs
+        segments[Guest].dns.primary_provider.service: <value>``. Any other
+        row is named by its ref name, with its segment where it is of one:
+        ``- refs deviceSettings:backHaulEdge (Guest): <value>``.
         """
         lines: list[str] = []
         for change in self.ref_changes:
             sign = "+" if change.added else "-"
-            place = f" ({change.segment})" if change.segment is not None else ""
-            lines.append(f"  {sign} refs {change.name}{place}: {change.value}")
+            if change.owner is not None:
+                row = str(self.named_owner(change.owner))
+            else:
+                place = f" ({change.segment})" if change.segment is not None else ""
+                row = f"{change.name}{place}"
+            lines.append(f"  {sign} refs {row}: {change.value}")
         if self.refs is not None and not self.ref_changes:
             lines.append("  refs: sent as read")
         return lines
@@ -1139,27 +1165,45 @@ def _check_hub_lists(module_name: str, as_read: object, payload: object) -> None
         raise _hub_list_error(module_name, changes)
 
 
-def _defaults_path(name: str) -> str:
-    return f"segments[{json.dumps(name)}].defaults"
+def _defaults_path(name: str) -> Path:
+    """The path of the ``defaults`` of the segment *name*, as a warning shows it."""
+    return Path(("segments", Key(name), "defaults"))
 
 
-def _flag_off_warning(found: UnflaggedInUse) -> PlanWarning:
-    """The warning for an edge object the backend uses although its flag is off."""
+def _flag_off_warning(found: UnflaggedInUse, model: type[VcoModel]) -> PlanWarning:
+    """The warning for an edge object the backend uses although its flag is off.
+
+    *found* names the object by the keys the VCO uses; *model* is the class of
+    the module's data, which gives each field its attribute name. The path,
+    the field, the flag and the two patches of the message are written in
+    attribute names, and each item by the key *found* has for it: a patch is
+    built under the parts of the path as shown, so what the message shows is
+    what ``apply`` takes.
+    """
+    parts: list[PathPart] = []
+    for key, item in found.steps:
+        parts.append(key)
+        if item is not None:
+            parts.append(Key(item))
+    path = named_path(Path(parts), model)
+    flag = named_path(Path((*parts, found.flag)), model).parts[-1]
     segments = [(key, item) for key, item in found.steps if item is not None]
     where = (
         f" of segment {segments[0][1]!r}"
         if len(segments) == 1 and segments[0][0] == "segments"
-        else f" at {found.path}"
+        else f" at {path}"
     )
+    inherit = json.dumps(nested_under(path, None))
+    keep = json.dumps(nested_under(path, {}))
     return PlanWarning(
         "flag_off_in_use",
-        found.path,
-        f"The edge stores {found.field}{where} with {found.flag} false or absent. "
+        path,
+        f"The edge stores {path.parts[-1]}{where} with {flag} false or absent. "
         "The VCO uses an edge object that is present whatever its flag, so this "
         "edge runs with it and not with the profile's, though is_local reads "
-        f"False. To inherit the profile's, send {json.dumps(found.inherit_patch())} "
+        f"False. To inherit the profile's, send {inherit} "
         "(inherit()). To keep it, turn its flag on and change no value: "
-        f"localize() does that, or send {json.dumps(found.keep_patch())}.",
+        f"localize() does that, or send {keep}.",
     )
 
 
@@ -1582,7 +1626,8 @@ def _flag_off_warnings(
     ):
         held = payload if changed else cast("Mapping[str, object]", module.raw_data)
         flag_off = [
-            _flag_off_warning(found) for found in unflagged_in_use_at(layered, held)
+            _flag_off_warning(found, layered)
+            for found in unflagged_in_use_at(layered, held)
         ]
     return flag_off
 

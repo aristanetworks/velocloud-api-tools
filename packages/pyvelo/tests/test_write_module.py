@@ -49,7 +49,6 @@ from pyvelo.testing import (
 from refs_helpers import (
     CONFIG,
     DNS_A,
-    PRIMARY,
     changing_after_the_version_read,
     copy_of_data,
     primary_provider_module,
@@ -808,7 +807,7 @@ async def test_an_unknown_outcome_names_the_refs_it_sent(
     assert exc.value.plan is plan
     assert str(exc.value).splitlines()[2:4] == [
         "planned, not checked:",
-        f"  - refs {PRIMARY} (Global Segment): {DNS_A}",
+        f'  - refs segments["Global Segment"].dns.primary_provider.service: {DNS_A}',
     ]
 
 

@@ -172,8 +172,9 @@ class ConfigPlan:
       change order: the items that move, each with its new place.
     - "+ refs name (segment): value" and "- refs name (segment): value" are
       a ref row the edit adds or removes, with no segment for a row of the
-      module; "refs: sent as read" says the module's refs are sent with no
-      row changed.
+      module. The row of a provider you set or clear is named by the
+      provider's field: "+ refs path: value". "refs: sent as read" says the
+      module's refs are sent with no row changed.
     - "warning: text" is something about the module's refs as read that the
       plan leaves as it is. ``warnings`` holds them all as data; ``render()``
       shows each once, in its module's block.
@@ -228,9 +229,14 @@ class ConfigPlan:
         modules: The plan of each module of the target.
         target: What the plan is for (the first line of ``render()``), or "".
         warnings: What each module's plan warns of, one entry per warning,
-            with the module's name before the warning's path
-            (``"deviceSettings: refs deviceSettings:dns:primaryProvider"``),
-            then ``segment_warnings``, then ``check_warnings``.
+            then ``segment_warnings``, then ``check_warnings``. A module's
+            warning holds the module's python name in ``module`` and, in
+            ``path``, the place within that module's data as every path is
+            shown, with no module before it: the field it is about
+            (``segments[Guest].cos_mapping``), or for a ref row that nothing
+            in the data names the row's ref name under ``refs``
+            (``refs."deviceSettings:css:provider"``), with the name of the
+            row's segment in ``segment``.
         segment_warnings: The segments of a profile that its three modules
             disagree about as read, which the edit does not settle: code
             ``segments_disagree``, with the segment's name in ``segment`` and
@@ -270,14 +276,18 @@ class ConfigPlan:
     def warnings(self) -> tuple[ValidationWarning, ...]:
         """The warnings of every module's plan, then the segment and check warnings.
 
-        They are data; ``render()`` shows them in their blocks.
+        They are data; ``render()`` shows them in their blocks. A module's
+        warning has the module's python name, the warning's path as it is (a
+        ``Path``) and its segment.
         """
         return (
             *(
                 ValidationWarning(
-                    path=f"{module.name}: {warning.path}",
+                    path=warning.path,
                     message=warning.message,
                     code=warning.code,
+                    module=python_module_name(module.name),
+                    segment=warning.segment,
                 )
                 for module in self.modules
                 for warning in module.warnings
@@ -1738,7 +1748,7 @@ def _provider_changes(module: ModulePlan) -> list[ConfigFieldChange]:
     return [
         ConfigFieldChange(
             module=python_module_name(module.name),
-            path=module.named(owner, removed=owner not in after),
+            path=module.named_owner(owner),
             before=before.get(owner),
             after=after.get(owner),
         )
@@ -1857,6 +1867,13 @@ class SaveResult:
 
     A dry run says ``"would_send"`` or ``"in_place"``, and sends none."""
     warnings: list[ValidationWarning] = field(default_factory=list)
+    """The warnings of the plan (``ConfigPlan.warnings``) and those of the save.
+
+    Each holds in ``path`` a ``Path`` with no module before it, and the
+    python name of the module it is about in ``module``; a write-time
+    validator's warning is the exception, and keeps the path the validator
+    wrote, as text.
+    """
     validation_errors: list[ValidationError] = field(default_factory=list)
     # Optional count for downstream integrations managing enterprise objects.
     # ConfigPipeline leaves this at zero.

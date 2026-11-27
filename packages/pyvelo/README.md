@@ -444,9 +444,14 @@ identity, with their ref name, segment and path.
 The refs of a write are derived from these fields, never given: `plan_module`
 and `update_module` take no `refs`. An edit that sets or changes one of them
 adds the row it goes with, and one that clears it removes the row; every other
-row is sent as read, and `plan.ref_changes` lists the rows added and removed
-(`plan.render()` shows them as `+ refs <name> (<segment>): <value>` and `- refs
-...`). A new row needs the object's ID, which the `resolvers=` argument finds
+row is sent as read, and `plan.ref_changes` lists the rows added and removed.
+`plan.render()` shows the row of a provider by the provider's field, as `+ refs
+segments[Guest].dns.primary_provider.service: <value>` and `- refs ...`, and
+any other row by its ref name, as `+ refs <name> (<segment>): <value>`. What
+disagrees in the refs as read is in `plan.warnings`: each `PlanWarning` has a
+`path` that is a `Path`, the provider's or the identity's field, or
+`refs."<ref name>"` for a row that nothing in the data names, whose segment is
+in `segment`. A new row needs the object's ID, which the `resolvers=` argument finds
 (`ResolverNotLoadedError` when it is missing). A QoS rule's new backhaul hub
 adds a `deviceSettings:backHaulEdge` row that points at the hub's service for
 the profile and segment, which the profile's device settings module holds: give
@@ -643,13 +648,13 @@ refused), and `inherit()` removes the object. An edge object stored with
 `override: false` is kept as read and is not local, yet the VCO's composer takes
 a present edge object without reading its flag, so the effective view shows it
 as the edge's (`Origin.EDGE`). `plan_module` on an edge module warns of each
-one (code `flag_off_in_use`, at `segments["Global Segment"].cosMapping`),
+one (code `flag_off_in_use`, at `segments["Global Segment"].cos_mapping`),
 whether or not the write changes anything, so nobody reads `is_local == False`
 and believes the edge inherits. Remove it with `inherit()` for the profile's
 mapping to apply. To keep it, `localize()` turns its flag on and changes no
 value: it returns the stored object, not the profile's, and a patch into it
 changes only what the patch names. `{"segments": {"Global Segment":
-{"cosMapping": {}}}}` does the same from text. When the edge stores nothing at
+{"cos_mapping": {}}}}` does the same from text. When the edge stores nothing at
 the key, `localize()` copies the profile segment's mapping (or the display
 default, `CosMapping()`) in with `override: true`; on a segment
 `data.segment(name)` added it copies from the profile's segment of that name.

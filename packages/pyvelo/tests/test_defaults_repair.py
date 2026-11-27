@@ -24,6 +24,7 @@ from pyvelo.client.models.configuration.profile_segments import (
 from pyvelo.client.module_write import MissingDefaults, plan_module
 from pyvelo.client.schemas.configuration import QosConfigurationModule
 from pyvelo.core import ConfigContext, Edge, Profile
+from pyvelo.core.rebase import Key, Path
 from pyvelo.testing import make_module_json, store_of
 from refs_helpers import QOS_ID
 from segment_helpers import GLOBAL, GUEST, ds_entry, identity, profile_rows, qos_entry
@@ -36,7 +37,7 @@ if TYPE_CHECKING:
 TEMPLATE = {rule["name"]: rule for rule in default_rules()}
 INTERNET_UDP, INTERNET_OTHER, ANY_UDP, ANY_OTHER = DEFAULT_NAMES
 GUEST_ID = GUEST[0]
-GUEST_DEFAULTS = 'segments["Guest"].defaults'
+GUEST_DEFAULTS = Path(("segments", Key("Guest"), "defaults"))
 
 
 def present(*names: str) -> list[dict[str, Any]]:
@@ -141,7 +142,9 @@ def check_repaired(plan: Any, names: list[str], *, written_as: list[str]) -> Non
     assert names_of(guest_defaults_of(plan.data)) == written_as
     (warning,) = plan.warnings
     assert warning.code == "defaults_repaired"
-    assert warning.path == GUEST_DEFAULTS
+    assert isinstance(warning.path, Path)
+    assert warning.path.parts == GUEST_DEFAULTS.parts
+    assert str(warning.path) == "segments[Guest].defaults"
     assert "Guest" in warning.message
     assert all(name in warning.message for name in names)
     assert plan.missing_defaults == (
@@ -226,7 +229,10 @@ def test_an_unknown_item_leaves_the_list_alone() -> None:
     plan = plan_module(module)
     assert guest_defaults_of(plan.data) == kept
     (warning,) = plan.warnings
-    assert (warning.code, warning.path) == ("defaults_not_template", GUEST_DEFAULTS)
+    assert (warning.code, warning.path.parts) == (
+        "defaults_not_template",
+        GUEST_DEFAULTS.parts,
+    )
     assert "Guest" in warning.message
     assert "Custom" in warning.message
     assert plan.missing_defaults == ()
@@ -242,7 +248,10 @@ def test_a_repair_that_would_repeat_a_name_leaves_the_list_alone() -> None:
     plan = plan_module(module)
     assert guest_defaults_of(plan.data) == [odd]
     (warning,) = plan.warnings
-    assert (warning.code, warning.path) == ("defaults_not_template", GUEST_DEFAULTS)
+    assert (warning.code, warning.path.parts) == (
+        "defaults_not_template",
+        GUEST_DEFAULTS.parts,
+    )
     assert ANY_OTHER in warning.message
     assert plan.missing_defaults == ()
 
@@ -253,7 +262,10 @@ def test_a_module_with_nothing_else_to_write_is_not_written() -> None:
     assert plan.operation == "none"
     assert plan.data == module.raw_data
     (warning,) = plan.warnings
-    assert (warning.code, warning.path) == ("defaults_repaired", GUEST_DEFAULTS)
+    assert (warning.code, warning.path.parts) == (
+        "defaults_repaired",
+        GUEST_DEFAULTS.parts,
+    )
     assert "later write" in warning.message
     assert plan.missing_defaults == (
         MissingDefaults("Guest", GUEST_ID, DEFAULT_NAMES, repaired=False),

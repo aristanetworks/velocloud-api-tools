@@ -316,7 +316,7 @@ async def test_a_dry_run_loads_the_services_too() -> None:
     assert result.plan is not None
     (change,) = result.plan.changed[0].ref_changes
     assert (change.added, change.name) == (True, PRIMARY)
-    assert f"+ refs {PRIMARY}" in result.plan.render()
+    assert f"+ refs {OWNER}: {DNS_A}" in result.plan.render()
 
 
 async def test_load_costs_no_service_read() -> None:
@@ -416,9 +416,19 @@ async def test_plan_warnings_reach_the_plan_and_the_save_result() -> None:
     (module_plan,) = plan.modules
     (warning,) = module_plan.warnings
     assert warning.code == "ref_without_owner"
-    assert [(w.code, w.path, w.message) for w in plan.warnings] == [
-        (warning.code, f"deviceSettings: {warning.path}", warning.message)
+    assert [
+        (w.code, w.module, w.path, w.segment, w.message) for w in plan.warnings
+    ] == [
+        (
+            warning.code,
+            "device_settings",
+            warning.path,
+            "Global Segment",
+            warning.message,
+        )
     ]
+    assert isinstance(plan.warnings[0].path, Path)
+    assert warning.path.parts == ("refs", CSS_PROVIDER)
     assert plan.render().count(warning.message) == 1  # the module's block prints it
 
     # A save that writes nothing, a dry run and a save that write something.
@@ -429,6 +439,21 @@ async def test_plan_warnings_reach_the_plan_and_the_save_result() -> None:
     assert dry.warnings == list(plan.warnings)
     saved = await pipeline.save(state)
     assert saved.warnings == list(plan.warnings)
+
+
+async def test_a_row_nothing_names_reaches_the_plan_with_its_module_and_segment() -> (
+    None
+):
+    _, _, state = await loaded_profile(css=True)
+    (warning,) = state.plan().warnings
+    assert isinstance(warning.path, Path)
+    assert (warning.code, warning.module, warning.path.parts, warning.segment) == (
+        "ref_without_owner",
+        "device_settings",
+        ("refs", CSS_PROVIDER),
+        "Global Segment",
+    )
+    assert str(warning.path) == 'refs."deviceSettings:css:provider"'
 
 
 async def test_a_data_edit_of_device_settings_keeps_every_row_through_a_processor() -> (
@@ -465,6 +490,33 @@ async def test_field_changes_list_a_provider_change_at_its_path() -> None:
 
     primary_provider(state).service = uuid.UUID(DNS_A)
     assert state.get_field_changes() == []
+
+
+async def test_a_providers_ref_line_and_its_field_change_show_one_path() -> None:
+    _, _, state = await loaded_profile()
+    state.resolvers = await table_registry(DNS_A_SERVICE)
+    primary_provider(state).service = uuid.UUID(DNS_A)
+    provider = state.get_field_changes()[-1]
+    assert (provider.path, provider.before, provider.after) == (OWNER, None, DNS_A)
+    (module_plan,) = state.plan().changed
+    assert module_plan.ref_lines() == [f"  + refs {provider.path}: {DNS_A}"]
+
+    _, _, state = await loaded_profile(DNS_A)
+    state.resolvers = await table_registry(DNS_A_SERVICE, DNS_B_SERVICE)
+
+    primary_provider(state).service = uuid.UUID(DNS_B)
+    (swap,) = state.get_field_changes()
+    (module_plan,) = state.plan().changed
+    assert module_plan.ref_lines() == [
+        f"  - refs {swap.path}: {DNS_A}",
+        f"  + refs {swap.path}: {DNS_B}",
+    ]
+
+    primary_provider(state).service = None
+    (cleared,) = state.get_field_changes()
+    (module_plan,) = state.plan().changed
+    assert module_plan.ref_lines() == [f"  - refs {cleared.path}: {DNS_A}"]
+    assert cleared.path == OWNER
 
 
 async def test_a_new_provider_on_a_stub_with_no_ref_lists_the_ref_it_writes() -> None:

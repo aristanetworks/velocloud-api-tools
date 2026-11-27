@@ -51,6 +51,7 @@ from pyvelo.core.identity import (
     SegmentIdentity,
 )
 from pyvelo.core.layers import Edge
+from pyvelo.core.rebase import Key, Path
 from pyvelo.testing import make_module_json
 from pyvelo.testing.fixtures import make_network_service_resolver
 from refs_helpers import (
@@ -71,6 +72,7 @@ from refs_helpers import (
     service_row,
     table_registry,
 )
+from shown_paths import reached, round_trips
 
 PRIMARY = "deviceSettings:dns:primaryProvider"
 BACKUP = "deviceSettings:dns:backupProvider"
@@ -424,9 +426,14 @@ def test_rows_that_disagree_as_read_warn_and_are_left_alone() -> None:
     assert refs_of(derived) == module.raw_refs
     by_code = {w.code: w for w in derived.warnings}
     assert set(by_code) == {"ref_without_owner", "owner_without_ref"}
-    assert by_code["ref_without_owner"].path == f"refs {PRIMARY}"
-    assert by_code["owner_without_ref"].path == (
-        f"refs {CSS_PROVIDER} (Global Segment)"
+    assert by_code["ref_without_owner"].path.parts == ("refs", PRIMARY)
+    assert by_code["ref_without_owner"].segment is None
+    assert by_code["owner_without_ref"].path.parts == (
+        "segments",
+        Key("Global Segment"),
+        "css",
+        "provider",
+        "logical_id",
     )
     for warning in derived.warnings:
         assert isinstance(warning, PlanWarning)
@@ -443,7 +450,83 @@ def test_a_row_with_no_owner_in_a_segment_the_data_has_names_the_segment() -> No
     derived = derive(module, edited(module))
     (warning,) = derived.warnings
     assert warning.code == "ref_without_owner"
-    assert warning.path == f"refs {CSS_PROVIDER} (Global Segment)"
+    assert (warning.path.parts, warning.segment) == (
+        ("refs", CSS_PROVIDER),
+        "Global Segment",
+    )
+
+
+def css_set_and_a_stray_dns_row() -> DeviceSettingsConfigurationModule:
+    """A module that disagrees as read, twice.
+
+    Its Global Segment names a CSS provider that has no row, and it has a
+    primary DNS row of a segment the data does not have.
+    """
+    return ds_module(
+        [
+            segment_entry(
+                0, "Global Segment", SEG0, css={"provider": {"logicalId": CSS}}
+            )
+        ],
+        global_refs(**{PRIMARY: service_row(PRIMARY, DNS_A, 701, SEG1_OBJECT, SEG1)}),
+    )
+
+
+def test_a_row_nothing_names_is_at_its_key_under_refs() -> None:
+    module = css_set_and_a_stray_dns_row()
+    by_code = {w.code: w for w in derive(module, edited(module)).warnings}
+    warning = by_code["ref_without_owner"]
+    assert isinstance(warning.path, Path)
+    assert warning.path.parts == ("refs", PRIMARY)
+    assert str(warning.path) == 'refs."deviceSettings:dns:primaryProvider"'
+    round_trips(warning.path)
+    assert warning.segment is None  # the row is of a segment the data lacks
+
+
+def test_a_row_nothing_names_has_its_segment_beside_its_path() -> None:
+    module = ds_module(
+        [segment_entry(0, "Global Segment", SEG0, dns=dns(), css={})],
+        global_refs(
+            **{CSS_PROVIDER: service_row(CSS_PROVIDER, CSS, 704, SEG0_OBJECT, SEG0)}
+        ),
+    )
+    (warning,) = derive(module, edited(module)).warnings
+    assert isinstance(warning.path, Path)
+    assert warning.path.parts == ("refs", CSS_PROVIDER)
+    assert warning.segment == "Global Segment"
+
+
+def test_a_warning_with_an_owner_is_at_the_owners_field() -> None:
+    module = css_set_and_a_stray_dns_row()
+    by_code = {w.code: w for w in derive(module, edited(module)).warnings}
+    warning = by_code["owner_without_ref"]
+    assert isinstance(warning.path, Path)
+    assert warning.path.parts[0] == "segments"
+    assert str(warning.path) == 'segments["Global Segment"].css.provider.logical_id'
+    round_trips(warning.path)
+    assert reached(module.data, warning.path) == UUID(CSS)
+    assert warning.segment is None  # the path names the segment
+    assert f"at {warning.path}, but" in warning.message
+
+
+def test_several_rows_of_a_provider_warn_at_the_providers_field() -> None:
+    module = ds_module(
+        [segment_entry(1, "Guest", SEG1, dns=dns(primary=True))],
+        {
+            SEGMENT: segment_row(1, SEG1_OBJECT, SEG1),
+            PRIMARY: [
+                primary_row(DNS_A, 701, SEG1_OBJECT, SEG1),
+                primary_row(DNS_B, 702, SEG1_OBJECT, SEG1),
+            ],
+        },
+    )
+    (warning,) = derive(module, edited(module)).warnings
+    assert warning.code == "several_refs"
+    assert isinstance(warning.path, Path)
+    assert str(warning.path) == "segments[Guest].dns.primary_provider.service"
+    assert reached(module.data, warning.path) == UUID(DNS_A)
+    assert warning.segment is None
+    assert f"and {warning.path} shows the first" in warning.message
 
 
 def test_no_warnings_when_the_refs_were_not_read() -> None:
@@ -474,7 +557,7 @@ def test_two_rows_for_one_provider_warn_and_the_other_row_stays() -> None:
     assert change.row == primary_row()  # the one the field showed
     assert refs_of(derived)[PRIMARY] == [other]
     assert [w.code for w in derived.warnings] == ["several_refs"]
-    assert derived.warnings[0].path == f"refs {PRIMARY} (Global Segment)"
+    assert derived.warnings[0].path.parts == Path.parse(PRIMARY_PATH).parts
 
 
 def test_a_removed_row_is_found_by_the_segment_object_id() -> None:

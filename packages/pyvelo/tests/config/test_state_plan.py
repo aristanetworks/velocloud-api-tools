@@ -32,6 +32,7 @@ from pyvelo.config.resolver import ResolutionError, ResolverContext
 from pyvelo.config.state import ConfigFieldChange, ConfigPlan, ConfigState
 from pyvelo.core import PatchError
 from pyvelo.core.patch import PatchErrorKind
+from pyvelo.core.rebase import Key, Path
 from pyvelo.core.response_check import PlannedChange, ServerChange
 from pyvelo.testing import MockVcoClient, make_module_json
 
@@ -142,9 +143,13 @@ def test_the_flag_off_warning_reaches_config_plan_warnings() -> None:
     qos = next(m for m in plan.modules if m.name == "QOS")
     assert qos.operation == "none"
     flagged = [w for w in plan.warnings if w.code == "flag_off_in_use"]
-    assert [w.path for w in flagged] == ['QOS: segments["Global Segment"].cosMapping']
+    assert [(w.module, w.path, w.segment) for w in flagged] == [
+        ("business_policy", 'segments["Global Segment"].cos_mapping', None)
+    ]
+    assert isinstance(flagged[0].path, Path)
+    assert flagged[0].path.parts == ("segments", Key("Global Segment"), "cos_mapping")
     assert (
-        '{"segments": {"Global Segment": {"cosMapping": null}}}' in flagged[0].message
+        '{"segments": {"Global Segment": {"cos_mapping": null}}}' in flagged[0].message
     )
     assert f"warning: {flagged[0].message}" in plan.render()
 
