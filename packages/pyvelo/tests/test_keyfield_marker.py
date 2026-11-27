@@ -11,8 +11,18 @@ from pyvelo.client.models.configuration.device_settings.segment import (
     SegmentNetflow,
     SegmentOspf,
 )
-from pyvelo.core import VcoModel, item_selector, select_items
+from pyvelo.core import (
+    Key,
+    Path,
+    VcoModel,
+    item_part,
+    item_selector,
+    named_path,
+    select_items,
+    selector_of,
+)
 from pyvelo.core.fields import KeyField, get_key_spec
+from pyvelo.core.rebase import item_key
 
 
 class SegmentMeta(VcoModel):
@@ -155,3 +165,19 @@ def test_an_ospf_area_read_without_a_name_is_selected_by_the_empty_text() -> Non
     )
     assert holder.areas[1].name == ""
     assert select_items(holder, "areas", "") == [1]
+
+
+def test_an_ospf_area_read_without_a_name_is_shown_by_its_key() -> None:
+    holder = SegmentOspf.model_validate(
+        {"areas": [{"id": 1, "name": "Corp"}, {"id": 2}]}
+    )
+    key = item_key(holder.areas[1], ("id_",))
+    assert key is not None
+    assert item_selector(holder, "areas", 1) == ""
+    assert item_part(holder, "areas", 1) == Key(key)
+    assert item_part(holder, "areas", 0) == Key("Corp")
+    shown = named_path(Path.parse("areas[#1].name"), holder)
+    assert shown == "areas[2].name"
+    assert shown.parts == ("areas", Key(key), "name")
+    assert select_items(holder, "areas", selector_of(Key(key))) == [1]
+    assert named_path(Path.parse('areas[""].name'), holder) == shown
