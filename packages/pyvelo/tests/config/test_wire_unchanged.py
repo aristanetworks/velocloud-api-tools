@@ -20,9 +20,11 @@ from typing import Any, Final
 import pytest
 from hub_state import (
     DS,
+    FROM_BOTH_LISTS,
+    OUT_OF_THE_RULE,
+    QOS,
     edit,
     hub_pipeline,
-    removal_and_its_rule,
     rule_uses_hub,
 )
 from pyvelo.config import add, delete
@@ -37,8 +39,8 @@ from test_state_plan import (  # pyright: ignore[reportImplicitRelativeImport]
 
 GOLDEN: Final = pathlib.Path(__file__).parent / "golden" / "wire.json"
 
-type Loaded = tuple[ConfigState, ConfigPipeline, ModuleStore]
-"""A state as loaded, and the pipeline and store a save of it goes through."""
+type Edit = Callable[[ConfigState], Awaitable[tuple[ConfigPipeline, ModuleStore]]]
+"""A scenario's edit of its state; it gives the pipeline and store of the save."""
 
 
 def _dumps(name: str, state: ConfigState) -> dict[str, object]:
@@ -65,28 +67,34 @@ def _written(store: ModuleStore, since: int) -> list[object]:
     ]
 
 
-async def _hub_removal() -> Loaded:
-    """Hub-A out of Guest's hub lists and out of the rule that backhauls to it."""
-    pipeline, store, state = await removal_and_its_rule()
-    return state, pipeline, store
+async def _hub_removal(state: ConfigState) -> tuple[ConfigPipeline, ModuleStore]:
+    """Hub-A out of Guest's hub lists and out of the rule that backhauls to it.
+
+    As ``removal_and_its_rule`` does it, on the state given.
+    """
+    await edit(state, DS, FROM_BOTH_LISTS)
+    await edit(state, QOS, OUT_OF_THE_RULE)
+    return hub_pipeline(state, vpn_check=True)
 
 
-async def _profile_firewall_edit() -> Loaded:
-    state = await rule_uses_hub()
+async def _profile_firewall_edit(
+    state: ConfigState,
+) -> tuple[ConfigPipeline, ModuleStore]:
     pipeline, store = hub_pipeline(state)
     rule = {"name": "block", "action": {"allow_or_deny": "deny"}, "match": {}}
     await edit(
         state, "firewall", {"segments": {"Guest": {"outbound": {"block": add(rule)}}}}
     )
-    return state, pipeline, store
+    return pipeline, store
 
 
-async def _profile_device_settings_edit() -> Loaded:
-    state = await rule_uses_hub()
+async def _profile_device_settings_edit(
+    state: ConfigState,
+) -> tuple[ConfigPipeline, ModuleStore]:
     pipeline, store = hub_pipeline(state)
     syslog = {"enabled": True, "facilityCode": "local3"}
     await edit(state, DS, {"segments": {"Global Segment": {"syslog": syslog}}})
-    return state, pipeline, store
+    return pipeline, store
 
 
 def _rule(name: str, **extra: object) -> dict[str, Any]:
@@ -109,8 +117,9 @@ async def _edge_with_rules() -> ConfigState:
     return make_state(edge_modules=[row])
 
 
-async def _edge_rules_reordered() -> Loaded:
-    state = await _edge_with_rules()
+async def _edge_rule_added_first_and_one_deleted(
+    state: ConfigState,
+) -> tuple[ConfigPipeline, ModuleStore]:
     client = MockVcoClient.for_state(state)
     pipeline = ConfigPipeline(client)
     deny = {"action": {"allow_or_deny": "deny"}, "match": {}}
@@ -118,7 +127,7 @@ async def _edge_rules_reordered() -> Loaded:
     await edit(
         state, "firewall", {"segments": {"Global Segment": {"outbound": outbound}}}
     )
-    return state, pipeline, client.store
+    return pipeline, client.store
 
 
 async def _edge_without_modules() -> ConfigState:
@@ -126,8 +135,9 @@ async def _edge_without_modules() -> ConfigState:
     return make_state(edge_modules=[])
 
 
-async def _edge_module_inserted() -> Loaded:
-    state = await _edge_without_modules()
+async def _edge_module_inserted(
+    state: ConfigState,
+) -> tuple[ConfigPipeline, ModuleStore]:
     client = MockVcoClient.for_state(state)
     pipeline = ConfigPipeline(client)
     deny = {"action": {"allow_or_deny": "deny"}, "match": {}}
@@ -135,25 +145,24 @@ async def _edge_module_inserted() -> Loaded:
     await edit(
         state, "firewall", {"segments": {"Global Segment": {"outbound": outbound}}}
     )
-    return state, pipeline, client.store
+    return pipeline, client.store
 
 
-SCENARIOS: Final[
-    dict[
-        str,
-        tuple[Callable[[], Awaitable[ConfigState]], Callable[[], Awaitable[Loaded]]],
-    ]
-] = {
+SCENARIOS: Final[dict[str, tuple[Callable[[], Awaitable[ConfigState]], Edit]]] = {
     "hub removal and its rule": (rule_uses_hub, _hub_removal),
     "profile firewall edit": (rule_uses_hub, _profile_firewall_edit),
     "profile device settings edit": (rule_uses_hub, _profile_device_settings_edit),
-    "edge firewall rules added, deleted and moved": (
+    "edge firewall rule added first and another deleted": (
         _edge_with_rules,
-        _edge_rules_reordered,
+        _edge_rule_added_first_and_one_deleted,
     ),
     "edge firewall module inserted": (_edge_without_modules, _edge_module_inserted),
 }
-"""Each scenario: the state it loads, as read, and that state edited for its save."""
+"""Each scenario: the state it loads, and the edit its save sends.
+
+The edit is made on the state that was loaded and dumped, so a value read (a rule's
+ID) is the same token in the dump and in the save.
+"""
 
 
 def _numbered_rule_ids(document: object, seen: dict[object, str]) -> object:
@@ -186,9 +195,10 @@ async def wire_now() -> dict[str, object]:
     """
     saves: dict[str, object] = {}
     dumps: dict[str, object] = {}
-    for name, (loaded, edited) in SCENARIOS.items():
-        dumps |= _dumps(name, await loaded())
-        state, pipeline, store = await edited()
+    for name, (load, edit_for_save) in SCENARIOS.items():
+        state = await load()
+        dumps |= _dumps(name, state)
+        pipeline, store = await edit_for_save(state)
         since = len(store.requests)
         _ = await pipeline.save(state)
         saves[name] = _written(store, since)
@@ -197,18 +207,45 @@ async def wire_now() -> dict[str, object]:
     return numbered
 
 
+def _text(document: object) -> str:
+    """*document* as JSON text, so ``true`` and ``1``, or ``1`` and ``1.0``, differ."""
+    return json.dumps(document, indent=1, sort_keys=True)
+
+
 @pytest.fixture(autouse=True)
 async def _write_golden() -> None:
     """Write the golden file from ``wire_now()`` when ``PYVELO_WRITE_GOLDEN=1``."""
     if os.environ.get("PYVELO_WRITE_GOLDEN") == "1":
-        text = json.dumps(await wire_now(), indent=1, sort_keys=True)
+        text = _text(await wire_now())
         GOLDEN.parent.mkdir(exist_ok=True)
         _ = GOLDEN.write_text(text + "\n")
 
 
 async def test_the_requests_of_a_set_of_saves_are_unchanged() -> None:
-    assert json.loads(GOLDEN.read_text())["saves"] == (await wire_now())["saves"]
+    golden = json.loads(GOLDEN.read_text())["saves"]
+    assert _text(golden) == _text((await wire_now())["saves"])
 
 
 async def test_every_fixture_dumps_the_same_wire_json() -> None:
-    assert json.loads(GOLDEN.read_text())["dumps"] == (await wire_now())["dumps"]
+    golden = json.loads(GOLDEN.read_text())["dumps"]
+    assert _text(golden) == _text((await wire_now())["dumps"])
+
+
+def _firewall_rule_ids(data: Any) -> dict[tuple[str, str], object]:
+    """The ``ruleLogicalId`` of each outbound rule of firewall *data*, by place."""
+    return {
+        (entry["segment"]["name"], rule["name"]): rule.get("ruleLogicalId")
+        for entry in data["segments"]
+        for rule in entry.get("outbound", [])
+    }
+
+
+async def test_a_rule_the_save_sends_unchanged_keeps_the_id_it_was_read_with() -> None:
+    document: Any = await wire_now()
+    scenario = "profile firewall edit"
+    read = _firewall_rule_ids(document["dumps"][f"{scenario}/profile/firewall"])
+    ((_, params),) = document["saves"][scenario]
+    sent = _firewall_rule_ids(params["_update"]["data"])
+
+    assert len(set(read.values())) == len(read) == 2
+    assert {place: sent[place] for place in read} == read

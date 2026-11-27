@@ -74,7 +74,7 @@
     }
    ]
   },
-  "edge firewall rules added, deleted and moved/edge/firewall": {
+  "edge firewall rule added first and another deleted/edge/firewall": {
    "inbound": [],
    "inboundV6": [],
    "segments": [
@@ -159,7 +159,7 @@
     }
    ]
   },
-  "edge firewall rules added, deleted and moved/profile/QOS": {
+  "edge firewall rule added first and another deleted/profile/QOS": {
    "segments": [
     {
      "rules": [],
@@ -172,7 +172,7 @@
     }
    ]
   },
-  "edge firewall rules added, deleted and moved/profile/firewall": {
+  "edge firewall rule added first and another deleted/profile/firewall": {
    "inbound": [],
    "inboundV6": [],
    "segments": [
@@ -5213,7 +5213,7 @@
     }
    ]
   ],
-  "edge firewall rules added, deleted and moved": [
+  "edge firewall rule added first and another deleted": [
    [
     "configuration/updateConfigurationModule",
     {
@@ -6558,7 +6558,7 @@
             "svlan": -1
            },
            "name": "AllowAny",
-           "ruleLogicalId": "<rule-12>",
+           "ruleLogicalId": "<rule-10>",
            "syslogForwardingEnabled": false
           }
          ],
@@ -6599,7 +6599,7 @@
             "svlan": -1
            },
            "name": "AllowAny",
-           "ruleLogicalId": "<rule-13>",
+           "ruleLogicalId": "<rule-11>",
            "syslogForwardingEnabled": false
           },
           {
