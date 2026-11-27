@@ -748,7 +748,7 @@ async def test_the_redo_of_a_lost_css_provider_edit_applies() -> None:
     assert patch == {
         "segments": {
             "Global Segment": {
-                "css": {"provider": {"logicalId": CSS_WEST, "ref": CSS_PROVIDER}}
+                "css": {"provider": {"logical_id": CSS_WEST, "ref": CSS_PROVIDER}}
             }
         }
     }

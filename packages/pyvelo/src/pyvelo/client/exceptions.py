@@ -13,7 +13,7 @@ the layer errors.
 from __future__ import annotations
 
 import json
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Final, Literal, cast, override
 
@@ -31,6 +31,7 @@ from pyvelo.core.rebase import (
     Key,
     KeyedList,
     Path,
+    PathPart,
     RawChange,
     item_parts,
     item_text,
@@ -895,6 +896,71 @@ def _dropped(server_changes: Sequence[ServerChange]) -> frozenset[tuple[Path, st
     )
 
 
+def _named_change(change: RawChange, model: type[VcoModel]) -> RawChange:
+    """*change* with the keys of its new value by attribute name.
+
+    The value is complete, a secret too: a patch to send back holds the values
+    it writes.
+    """
+    return RawChange(
+        change.path,
+        change.before,
+        named_value(change.after, model, change.path),
+        place=change.place,
+        moves=change.moves,
+    )
+
+
+def _item_name(data: VcoModel, stored: Path) -> ItemPart:
+    """The part that names, as pyvelo shows it, the item *stored* names in *data*.
+
+    *stored* ends at an item and names each item as the stored list does: by
+    its key there, or its position. The part is ``item_part`` of the item, so
+    its selector selects that item and no other. It is the last part of
+    *stored*, as written, where that names no item of *data*, or several.
+    """
+    part = cast("ItemPart", stored.parts[-1])
+    shown = named_path(stored, data).parts[-1]
+    return part if isinstance(shown, str) else shown
+
+
+@dataclass(frozen=True, eq=False)
+class _StoredNames(Mapping[Path, ItemPart]):
+    """``parts`` with each part as ``_item_name`` gives it in ``data``.
+
+    ``parts`` maps the path of an item, in the names the changes use, to the
+    part that names it in the stored list. A part is converted when it is
+    read: ``patch_of`` reads those of the items its changes name, and naming
+    every item of a long list would read the list once for each.
+    """
+
+    data: VcoModel
+    parts: Mapping[Path, ItemPart]
+
+    @override
+    def __getitem__(self, path: Path) -> ItemPart:
+        part = self.parts[path]  # KeyError: the stored list lacks the item
+        stored: list[PathPart] = []
+        for depth, step in enumerate(path.parts, 1):
+            found = (
+                step
+                if isinstance(step, str)
+                else self.parts.get(Path(path.parts[:depth]))
+            )
+            if found is None:
+                return part
+            stored.append(found)
+        return _item_name(self.data, Path(stored))
+
+    @override
+    def __iter__(self) -> Iterator[Path]:
+        return iter(self.parts)
+
+    @override
+    def __len__(self) -> int:
+        return len(self.parts)
+
+
 @dataclass(frozen=True)
 class _Redo:
     """What the redo of a write error's lost edits is built from.
@@ -902,7 +968,8 @@ class _Redo:
     The module as stored, its data, the plan that was written, and the part
     that names each stored item by its path. ``stored_parts`` is the error's,
     copied: the redo adds the items of a segment of which nothing is stored,
-    named as the plan names them.
+    named as the plan names them. Its parts are the check's, a key of the
+    stored list or a position; the patch has each as ``_StoredNames`` gives it.
     """
 
     data: VcoModel
@@ -931,7 +998,9 @@ class ModuleWriteError(VcoError):
     by the key the VCO uses and an item by its key, and its values are as
     stored. The text shows each as the plan's text does (``ModulePlan.render``):
     the module by its python name, a field by its attribute, an item by what
-    names it, and an object with its keys by attribute name.
+    names it, and an object with its keys by attribute name. ``redo_patch()``
+    is written in attribute names too, with each stored item by what names it
+    in ``module``, and ``not_redone()`` gives each entry as its line shows it.
     """
 
     module_id: int
@@ -1255,16 +1324,28 @@ class ModuleWriteError(VcoError):
         state. Each lost edit is redone from what is stored to what was meant:
         an added item goes back in its place, a lost order is made again by the
         moves from the stored order, and each item is named as the stored list
-        names it, so an edit to "the second rule" still reaches that rule when
+        shows it, so an edit to "the second rule" still reaches that rule when
         another writer put one in front of it. An item the plan added is added
         again, never set on the item another writer has under its name or at
         its place: where that name is taken, ``apply`` refuses.
+
+        The patch is written in the names a caller reads. Every field is under
+        its attribute name, in a path and in the body of an added item or of an
+        object set whole. Every stored item is under the name pyvelo shows it
+        by in the stored list (``item_part``: its label, else its key, else its
+        alt key, else its position), so a hub is ``Hub-A`` and a network its
+        name; the names are those of ``module`` as it is when the patch is
+        built. Two kinds of item stay under the plan's key for them: an item
+        the patch itself adds, which no stored item names (a network added
+        with the VLAN ID 40 is ``"40"``), and the items in a segment of which
+        nothing is stored. The values are complete, a secret too: a patch holds
+        the values it writes.
 
         A clash is an edit whose value was also changed on the VCO, and
         redoing it overwrites that change: it is left out unless
         *include_clashes*. A ref row of a ``RefOnly`` field (a DNS or
         authentication provider) is redone by setting the field again, in the
-        segment as the stored list names it: to the service's logical ID for a
+        segment as the stored list shows it: to the service's logical ID for a
         row added, to ``null`` for a row removed, and to the row added when one
         is removed and another added at the field. Any other ref row is left
         out (a patch changes data, not refs), and so is an edit no patch can
@@ -1293,12 +1374,20 @@ class ModuleWriteError(VcoError):
         return self._redo(include_clashes=include_clashes)[0]
 
     def not_redone(self, *, include_clashes: bool = False) -> tuple[PlannedChange, ...]:
-        """The lost edits that ``redo_patch`` leaves out.
+        """The lost edits ``redo_patch`` leaves out, each as the error's text shows it.
 
         That is ``redo_patch(include_clashes=include_clashes)``, and they come
-        in the order of ``lost_edits``.
+        in the order of ``lost_edits``. Each is a copy of its lost edit as its
+        line of ``render()`` has it: the path in the names the plan shows,
+        which is a path ``apply`` takes, and the values named, with a secret
+        hidden. Read the values, and ``clash``, from ``lost_edits``, which
+        keeps each entry as the check made it: the ``clash`` of a copy compares
+        its values as shown, and two secrets that differ are shown alike. A
+        refs entry is the lost edit itself, and so is every entry of an error
+        that has no plan.
         """
-        return self._redo(include_clashes=include_clashes)[1]
+        left_out = self._redo(include_clashes=include_clashes)[1]
+        return tuple(self._shown(edit) for edit in left_out)
 
     def _redo(
         self, *, include_clashes: bool
@@ -1313,7 +1402,9 @@ class ModuleWriteError(VcoError):
             redo, include_clashes=include_clashes
         )
         patch, unwritten = patch_of(
-            changes, type(redo.data), stored_parts=redo.stored_parts
+            changes,
+            type(redo.data),
+            stored_parts=_StoredNames(redo.data, redo.stored_parts),
         )
         left_out.update(id(owner[id(change)]) for change in unwritten)
         for selector in added:
@@ -1339,9 +1430,11 @@ class ModuleWriteError(VcoError):
         segments to add again; the ``id`` of each lost edit left out so far;
         and the lost refs entries of each ``RefOnly`` field, by its owner.
         The items of a segment of which nothing is stored are added to
-        ``redo.stored_parts``, named as the plan names them.
+        ``redo.stored_parts``, named as the plan names them. An object a
+        change writes has its keys by attribute name (``_named_change``).
         """
         plan, stored_parts = redo.plan, redo.stored_parts
+        model = type(redo.data)
         changes: list[RawChange] = []
         owner: dict[int, PlannedChange] = {}
         added: list[str] = []  # the selectors of the segments to add again
@@ -1363,20 +1456,24 @@ class ModuleWriteError(VcoError):
                 if is_added:
                     added.append(selector_of(cast("Key", edit.path.parts[1])))
                 for change in _unstored_segment_changes(plan, edit.path, stored_parts):
-                    owner[id(change)] = edit
-                    changes.append(change)
+                    named = _named_change(change, model)
+                    owner[id(named)] = edit
+                    changes.append(named)
             else:
                 # An item the plan added is added again, never set: the item
                 # stored under its name, or at its place, is another writer's.
-                change = RawChange(
-                    edit.path,
-                    MISSING if edit.as_read is MISSING else edit.stored,
-                    edit.intended,
-                    place=edit.place,
-                    moves=edit.moves,
+                named = _named_change(
+                    RawChange(
+                        edit.path,
+                        MISSING if edit.as_read is MISSING else edit.stored,
+                        edit.intended,
+                        place=edit.place,
+                        moves=edit.moves,
+                    ),
+                    model,
                 )
-                owner[id(change)] = edit
-                changes.append(change)
+                owner[id(named)] = edit
+                changes.append(named)
         return changes, owner, added, left_out, provider_edits
 
     def _redo_providers(
@@ -1641,14 +1738,18 @@ def _set_provider(
 ) -> bool:
     """Set the ``RefOnly`` field the refs entries *edits* go with to *value* in *patch*.
 
-    The field is set in the segment as the stored module names it. False when
-    the patch has no place for it.
+    The field is set in the segment the edits were made to, under the name
+    the stored list shows it by (``_item_name``), which is the name a data
+    entry of the patch in that segment is under. False when the patch has no
+    place for it.
 
     The owner is ``segments[<segment>].<fields>`` in python names, and a
     ``RefOnly`` field is not in a raw dump, so the path is built from its parts.
-    Each field is written by its wire name, unless the patch already has the
-    object under its python name: ``merge_patch`` refuses both for one field.
-    The segment's object is the one a data entry of the patch has, if any.
+    Each field is written by its python name, as ``patch_of`` writes those of
+    a data entry, unless the patch already has the field under its wire name
+    (an object set whole keeps a key as stored where two of its keys name one
+    field): ``merge_patch`` refuses both for one field. The segment's object
+    is the one a data entry of the patch has, if any.
     """
     owner = cast("Path", edits[0].owner)
     object_ids = [
@@ -1668,8 +1769,9 @@ def _set_provider(
     part = _stored_segment(redo, segment, object_ids)
     if fields is None or part is None:
         return False
+    named = _item_name(redo.data, Path(("segments", part)))
     node = _child(patch, ("segments",))
-    for spellings in ((selector_of(part),), *fields[:-1]):
+    for spellings in ((selector_of(named),), *fields[:-1]):
         if node is None or node.get("_op") == "delete":
             return False
         node = _child(node, spellings)
@@ -1682,9 +1784,9 @@ def _set_provider(
 def _spelled(node: dict[str, object], spellings: tuple[str, ...]) -> str:
     """The key *node* already has for a field, by one of its *spellings*.
 
-    Else the last spelling.
+    Else the first spelling, the python name.
     """
-    return next((key for key in spellings if key in node), spellings[-1])
+    return next((key for key in spellings if key in node), spellings[0])
 
 
 def _child(

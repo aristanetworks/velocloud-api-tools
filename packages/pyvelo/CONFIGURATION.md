@@ -1834,8 +1834,8 @@ is any difference in the rows of the refs the VCO's own processors manage.
 | `stated` | on `ConfigConflictError`: whether the VCO said it refused the version, or the save inferred it |
 | `sent` | on `ConfigConflictError`: False when nothing was sent, because the version read before a write found the module changed (or gone): a write that carries refs, or one after a profile's device settings, where a path you edited was also changed |
 | `completed` | the writes of the same save before this one, which are stored |
-| `redo_patch(include_clashes=False)` | the patch that redoes the lost edits on `module`, for `apply(state, module=error.module_name, patch=...)` |
-| `not_redone(include_clashes=False)` | the lost edits that patch leaves out |
+| `redo_patch(include_clashes=False)` | the patch that redoes the lost edits on `module`, for `apply(state, module=error.module_name, patch=...)`: every field by its attribute name, every stored item by the name the stored list shows it by, the values complete |
+| `not_redone(include_clashes=False)` | the lost edits that patch leaves out, each as the message shows it |
 
 A planned change counts as stored when the VCO holds the value you meant,
 whoever put it there: an edit that another writer made identically is under
@@ -1844,7 +1844,8 @@ whoever put it there: an edit that another writer made identically is under
 The entries are `PlannedChange` and `ServerChange`, which `pyvelo.config`
 exports (they are defined in `pyvelo.core.response_check`). An entry is as the
 check made it: its `path` names a field by the VCO's key and an item by its
-key, and its values are as stored. For a lost or stored edit,
+key, and its values are as stored. The entries of `not_redone()` alone are as
+the message shows them (below). For a lost or stored edit,
 `error.plan.named(change.path, removed=change.intended is MISSING)` is the path
 the message shows; `change.python_path(type(data))`, with `data` the module's
 data (`state.module("firewall").data`), renames the fields only, and keeps each
@@ -1918,7 +1919,17 @@ except (ConfigConflictError, WriteNotAppliedError) as error:
 ```
 
 The patch puts an added item back in its place, as an `add`, and makes a lost
-order again, and it names each item as the stored list names it. An item you
+order again. It is written in the names the message uses: every field is under
+its attribute name, in a path and in the body of an added item or of an object
+set whole, and every stored item is under the name the stored list shows it by
+(its label, else its key, else its alt key, else its position), so a hub is
+`Hub-A`, a network its name, and a firewall rule that shares its name with
+another its logical ID. The names are those of `error.module` as it is when you call
+`redo_patch()`. Two kinds of item are under the plan's key for them instead: an
+item the patch itself adds, which no stored item names (a network added with
+the VLAN ID 40 is `"40"`, though the plan's text shows it by its name), and the
+items in a segment of which nothing is stored. The values are complete, a
+secret too, since the patch is what you send back. An item you
 added is added again, never set on an item another writer put in its place.
 The exception is an item you deleted and added again under its key, while the
 module as stored still holds the item: `redo_patch()` does not carry that edit
@@ -1931,7 +1942,7 @@ patch leaves out a clash, because redoing one overwrites what another writer
 stored there; `error.redo_patch(include_clashes=True)` redoes those too.
 A lost DNS or authentication provider (a ref row of a field that stands for
 it) is redone by setting the field again, in the segment as the stored list
-names it: `{"segments": {"Global Segment": {"dns": {"primaryProvider":
+shows it: `{"segments": {"Global Segment": {"dns": {"primary_provider":
 {"service": "<logical ID>"}}}}}`, or `null` for a provider you cleared.
 A lost CSS provider is redone the same way, by its logical ID, or by `""` for
 one you cleared; its ref row is still listed in `not_redone()`, although the
@@ -1942,7 +1953,11 @@ whose segment is no longer stored or cannot be told from another by its
 identity (the segment is found by its ID, never by its name), and an edit that
 no patch can make or whose item is no longer stored or cannot be named. An edit
 at a key the VCO does not know, which a write drops, is neither redone nor
-listed. Check it before you save. In a rule list the first match decides, so check the order with
+listed. Each entry is a copy of its lost edit as the message shows it, in the
+order of `lost_edits`: its path is the one of its line, which `apply` takes,
+and an object among its values has its keys by attribute name. For the values
+as stored, and for `clash`, read the entry of `lost_edits`. A ref row is the
+entry of `lost_edits` itself. Check the list before you save. In a rule list the first match decides, so check the order with
 `state.plan().render()` too. `apply` can still refuse the patch, changing
 nothing, where the stored data no longer takes it (a rename to a name another
 writer gave an item, for example), and where the lost edit was made by assigning

@@ -1498,7 +1498,9 @@ def a_service_set(value: str | None) -> dict[str, object]:
     ``None`` clears it.
     """
     return {
-        "segments": {"Global Segment": {"dns": {"primaryProvider": {"service": value}}}}
+        "segments": {
+            "Global Segment": {"dns": {"primary_provider": {"service": value}}}
+        }
     }
 
 
@@ -1679,7 +1681,7 @@ async def test_a_data_and_a_refs_edit_under_one_segment_are_one_object() -> None
             "Global Segment": {
                 "dns": {
                     "source_interface": "GE1",
-                    "primaryProvider": {"service": DNS_A},
+                    "primary_provider": {"service": DNS_A},
                 }
             }
         }
@@ -1698,7 +1700,7 @@ async def test_a_provider_is_set_in_the_segment_as_the_stored_list_names_it() ->
             "Voice": {
                 "dns": {
                     "source_interface": "GE1",
-                    "primaryProvider": {"service": DNS_A},
+                    "primary_provider": {"service": DNS_A},
                 }
             }
         }
@@ -1768,7 +1770,7 @@ async def test_a_provider_is_not_set_on_another_segment_that_took_the_name() -> 
         ]
     )
     assert error.redo_patch() == {
-        "segments": {"Voice": {"dns": {"primaryProvider": {"service": DNS_A}}}}
+        "segments": {"Voice": {"dns": {"primary_provider": {"service": DNS_A}}}}
     }
     assert error.not_redone() == ()
 
@@ -1791,7 +1793,7 @@ async def test_a_segment_with_no_stored_row_is_found_by_its_logical_id() -> None
     no_rows: dict[str, Any] = {}
     error = await lost_provider_beside_ntp(segments, refs=no_rows)
     assert error.redo_patch() == {
-        "segments": {"Voice": {"dns": {"primaryProvider": {"service": DNS_A}}}}
+        "segments": {"Voice": {"dns": {"primary_provider": {"service": DNS_A}}}}
     }
     nothing_alike = [segment_entry(77, "Global Segment", OTHER_SEGMENT)]
     error = await lost_provider_beside_ntp(nothing_alike, refs=no_rows)

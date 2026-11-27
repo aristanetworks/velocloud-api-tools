@@ -8,28 +8,57 @@ write shows it; the lists of the error (``lost_edits``, ``applied``,
 from __future__ import annotations
 
 import copy
-from dataclasses import replace
+import json
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 from hub_state import OUT_OF_THE_RULE, edit, guest_backhaul_state, rule_uses_hub
+from profile_state import module_store_pipeline
 from pydantic import MISSING
 from pyvelo.client.exceptions import (
     ConfigConflictError,
     ModuleWriteError,
+    RefsDroppedError,
     WriteNotAppliedError,
     WriteOutcomeUnknownError,
 )
 from pyvelo.client.module_check import ModuleWrite, check_module_write
 from pyvelo.client.module_write import ModulePlan, plan_module
+from pyvelo.config import add, at, move
 from pyvelo.config.errors import SaveStepError
 from pyvelo.config.pipeline import (
     ConfigPipeline,
     _how_it_differs,  # pyright: ignore[reportPrivateUsage]  # the refusal's text is built here
 )
-from pyvelo.core.rebase import Key, Path
+from pyvelo.core.changes import patch_of
+from pyvelo.core.rebase import Key, Path, RawChange
 from pyvelo.core.response_check import PlannedChange, ServerChange
-from pyvelo.testing import as_stored
+from pyvelo.testing import MockVcoClient, as_stored
+from refs_helpers import DNS_A, DS_ID
+from test_patch_real_models import (  # pyright: ignore[reportImplicitRelativeImport]
+    SEGMENT,
+    firewall,
+    fw_rule,
+    make_state,
+)
+from test_profile_segment_save import (  # pyright: ignore[reportImplicitRelativeImport]
+    global_only,
+    guest_stripped,
+)
+from test_profile_segment_save import (  # pyright: ignore[reportImplicitRelativeImport]
+    rule as template_rule,
+)
+from test_save_refs import (  # pyright: ignore[reportImplicitRelativeImport]
+    loaded_profile,
+    loaded_with_css,
+    provider_patch,
+    set_css,
+)
+from test_shown_paths_round_trip import (  # pyright: ignore[reportImplicitRelativeImport]
+    forbidden_names,
+    vco_names,
+)
 from test_shown_plan import (  # pyright: ignore[reportImplicitRelativeImport]
     LAN,
     SECRET,
@@ -39,12 +68,19 @@ from test_shown_plan import (  # pyright: ignore[reportImplicitRelativeImport]
     net,
     rule_with_id,
 )
+from test_write_back_real_models import (  # pyright: ignore[reportImplicitRelativeImport]
+    DENY,
+    MODULE,
+    OUTBOUND,
+    other_writer_edit,
+)
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Awaitable, Callable, Sequence
 
     from pyvelo.client.derived_refs import RefChange
     from pyvelo.client.schemas.configuration import (
+        AnyStoredModule,
         ConfigurationModuleBase,
         DeviceSettingsConfigurationModule,
     )
@@ -104,8 +140,11 @@ def lan_error(state: ConfigState, stored: object) -> ModuleWriteError:
     return failed(state.module("deviceSettings"), lan_plan(state), stored)
 
 
-async def test_a_lost_edit_reads_as_the_plan_s_line_for_it() -> None:
-    """Two ports and a hub of a rule's backhaul list; the VCO stored one port."""
+async def ports_and_a_hub_lost() -> tuple[ModuleWriteError, ModulePlan]:
+    """Two ports and a hub of a rule's backhaul list; the VCO stored one port.
+
+    The error of that write, and its plan.
+    """
     state = await rule_uses_hub()
     await edit(state, "QOS", PORTS)
     await edit(state, "QOS", OUT_OF_THE_RULE)
@@ -114,8 +153,11 @@ async def test_a_lost_edit_reads_as_the_plan_s_line_for_it() -> None:
     stored = raw_copy(module)
     (guest,) = [s for s in stored["segments"] if s["segment"]["name"] == "Guest"]
     guest["rules"][0]["match"].update({"dport_high": 443, "serverAdded": "x"})
+    return failed(module, plan, stored), plan
 
-    error = failed(module, plan, stored)
+
+async def test_a_lost_edit_reads_as_the_plan_s_line_for_it() -> None:
+    error, plan = await ports_and_a_hub_lost()
 
     assert isinstance(error, WriteNotAppliedError)
     assert error.module_name == "business_policy"
@@ -175,7 +217,8 @@ async def test_a_lost_edit_reads_as_the_plan_s_line_for_it() -> None:
     assert again.render().splitlines()[1:2] == [
         "  ~ segments[Guest].rules[Web].match.destination_port_low: -1 -> 443"
     ]
-    # The lists keep the paths of the check, and the redo patch is as it was.
+    # The lists keep the paths of the check; the redo patch names the hub as
+    # the stored list shows it.
     assert [str(change.path) for change in error.lost_edits] == [
         "segments[Guest].rules[Web].match.dport_low",
         (
@@ -193,7 +236,7 @@ async def test_a_lost_edit_reads_as_the_plan_s_line_for_it() -> None:
                         "action": {
                             "edge_to_edge_route_action": {
                                 "route_cfg": {
-                                    "backhaul_edges": {HUB: {"_op": "delete"}}
+                                    "backhaul_edges": {"Hub-A": {"_op": "delete"}}
                                 }
                             }
                         },
@@ -743,3 +786,337 @@ def test_a_text_that_is_no_item_name_is_printed_as_it_is(text: str) -> None:
     assert lines_of(error, "stored otherwise than sent:") == [
         f'  lan.networks: read ["Users", "{text}"], stored ["{text}", "Users"]'
     ]
+
+
+# ---------------------------------------------------------------------------
+# The redo patch, and what it leaves out
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class Lost:
+    """A write that lost edits: its error, and the state to redo them on.
+
+    The state holds the module as stored, which is the error's ``module``.
+    """
+
+    error: ModuleWriteError
+    state: ConfigState
+
+
+async def firewall_conflict(
+    raw: dict[str, Any],
+    patch: dict[str, Any],
+    other: Callable[[dict[str, Any]], None],
+    *,
+    segment: str = SEGMENT,
+    profile: dict[str, Any] | None = None,
+) -> Lost:
+    """A save of *patch* to the outbound rules of *raw*, after *other* wrote the row."""
+    state = make_state({"firewall": raw}, {"firewall": profile or firewall()})
+    client = MockVcoClient.for_state(state, conditional_check=True)
+    pipeline = ConfigPipeline(client)
+    _ = await pipeline.apply(
+        state, module="firewall", segment=segment, path="outbound", patch=patch
+    )
+    client.store.other_writer(MODULE, other)
+    with pytest.raises(ConfigConflictError) as caught:
+        _ = await pipeline.save(state)
+    return Lost(caught.value, state)
+
+
+def stored_outbound(row: dict[str, Any]) -> list[dict[str, Any]]:
+    """The outbound rules of the first segment of a firewall *row* of the store."""
+    return row["data"]["segments"][0]["outbound"]
+
+
+async def a_place_and_a_move() -> Lost:
+    """A rule added first, an edit and a move; another writer's key is stored."""
+    raw = firewall(
+        fw_rule("block-ssh", ruleLogicalId="l1"),
+        fw_rule("allow-branch-erp", ruleLogicalId="l2"),
+    )
+    patch = {
+        "block-rdp": add(DENY, first=True),
+        "block-ssh": {"logging_enabled": True},
+        "allow-branch-erp": move(first=True),
+    }
+    return await firewall_conflict(raw, patch, other_writer_edit)
+
+
+async def a_clash() -> Lost:
+    """A rule added, and a port set that another writer set too."""
+    raw = firewall(fw_rule("allow-web", ruleLogicalId="l1", match={"dport_high": 443}))
+    patch = {
+        "block-ssh": add(DENY, before="allow-web"),
+        "allow-web": {"match": {"dport_high": 8080}},
+    }
+
+    def same_port(row: dict[str, Any]) -> None:
+        stored_outbound(row)[0]["match"]["dport_high"] = 8443
+
+    return await firewall_conflict(raw, patch, same_port)
+
+
+async def a_twin_behind_a_new_rule() -> Lost:
+    """An edit to the second of two rules that share a name; a rule is stored first."""
+    raw = firewall(
+        fw_rule("d", ruleLogicalId="l1"),
+        fw_rule("d", ruleLogicalId="l2"),
+        fw_rule("x", ruleLogicalId="l3"),
+    )
+
+    def theirs_first(row: dict[str, Any]) -> None:
+        stored_outbound(row).insert(0, fw_rule("theirs", ruleLogicalId="l9"))
+
+    return await firewall_conflict(
+        raw, {at(1): {"logging_enabled": True}}, theirs_first
+    )
+
+
+async def a_place_that_is_gone() -> Lost:
+    """A rule added after one another writer removed, and an edit."""
+    raw = firewall(
+        fw_rule("block-ssh", ruleLogicalId="l1"),
+        fw_rule("allow-branch-erp", ruleLogicalId="l2"),
+    )
+    patch = {
+        "block-rdp": add(DENY, after="block-ssh"),
+        "allow-branch-erp": {"logging_enabled": True},
+    }
+
+    def remove_block_ssh(row: dict[str, Any]) -> None:
+        del stored_outbound(row)[0]
+
+    return await firewall_conflict(raw, patch, remove_block_ssh)
+
+
+async def a_reconciled_segment() -> Lost:
+    """A rule added in a segment the edge had no entry for."""
+    raw = firewall(fw_rule("a", ruleLogicalId="l1"))
+    return await firewall_conflict(
+        raw,
+        {"r": add(DENY)},
+        other_writer_edit,
+        segment="Guest",
+        profile=firewall(guest=True),
+    )
+
+
+async def a_hub_out_of_a_rule() -> Lost:
+    """``ports_and_a_hub_lost``, and a state that holds the QoS module as stored."""
+    error, _ = await ports_and_a_hub_lost()
+    state = await rule_uses_hub()
+    state.replace_module(state.module("QOS"), cast("AnyStoredModule", error.module))
+    return Lost(error, state)
+
+
+async def a_network_renamed_and_one_added() -> Lost:
+    """``Users`` renamed with a new prefix, and VLAN 40 added; nothing is stored."""
+    state = await three_networks()
+    networks = state.profile.device_settings.lan.networks
+    networks[0].name = "Staff"
+    networks[0].cidr_prefix = 25
+    networks.append(type(networks[0]).model_validate(net(40, "Lab")))
+    error = lan_error(state, as_read(state))
+    fresh = await three_networks()
+    fresh.replace_module(
+        fresh.module("deviceSettings"), cast("AnyStoredModule", error.module)
+    )
+    return Lost(error, fresh)
+
+
+async def an_added_segment() -> Lost:
+    """Guest added to a profile's QoS with two rules; the VCO stored none of it."""
+    state = await global_only()
+    pipeline, store = module_store_pipeline(state)
+    rules = [template_rule("Box"), template_rule("Video")]
+    _ = await pipeline.apply(
+        state,
+        module="business_policy",
+        patch={"segments": {"Guest": add({"rules": rules})}},
+    )
+    store.on_store.append(guest_stripped)
+    with pytest.raises(ModuleWriteError) as caught:
+        _ = await pipeline.save(state)
+    return Lost(caught.value, state)
+
+
+async def a_provider_row() -> Lost:
+    """A DNS provider set in the Global Segment; the VCO dropped its row."""
+    pipeline, client, state = await loaded_profile()
+    state = await pipeline.apply(
+        state,
+        module="deviceSettings",
+        segment="Global Segment",
+        patch=provider_patch("dns-a"),
+    )
+    client.store.skipped_objects.add(701)
+    with pytest.raises(RefsDroppedError) as caught:
+        _ = await pipeline.save(state)
+    return Lost(caught.value, state)
+
+
+async def a_css_provider() -> Lost:
+    """A CSS provider set in the Global Segment; another writer's key is stored."""
+    pipeline, client, state = await loaded_with_css()
+    state = await set_css(pipeline, state, "css-west")
+    client.store.other_writer(DS_ID, other_writer_edit)
+    with pytest.raises(ConfigConflictError) as caught:
+        _ = await pipeline.save(state)
+    return Lost(caught.value, state)
+
+
+RENAMED_LOSSES = [
+    a_place_and_a_move,
+    a_clash,
+    a_twin_behind_a_new_rule,
+    a_hub_out_of_a_rule,
+    a_network_renamed_and_one_added,
+    a_css_provider,
+]
+"""The writes whose redo patch has a name the VCO's form of it lacks, and whose
+lost edits are each redone as it is: an edit of the data, in a segment that is
+stored."""
+EVERY_LOSS = [
+    *RENAMED_LOSSES,
+    a_place_that_is_gone,
+    a_reconciled_segment,
+    an_added_segment,
+    a_provider_row,
+]
+
+
+def build_name(build: Callable[[], Awaitable[Lost]]) -> str:
+    return getattr(build, "__name__", "")
+
+
+async def redone(lost: Lost, patch: dict[str, object]) -> list[tuple[object, ...]]:
+    """What the state of *lost* plans once *patch* is applied to it."""
+    _ = await ConfigPipeline(client=None).apply(
+        lost.state, module=lost.error.module_name, patch=patch
+    )
+    return [
+        (module.name, module.changes, module.ref_changes, module.render())
+        for module in lost.state.plan().changed
+    ]
+
+
+@pytest.mark.parametrize("build", EVERY_LOSS, ids=build_name)
+async def test_the_redo_patch_names_every_field_and_item_as_the_plan_does(
+    build: Callable[[], Awaitable[Lost]],
+) -> None:
+    lost = await build()
+    patch = lost.error.redo_patch()
+    assert patch
+    assert vco_names(json.dumps(patch), forbidden_names()) == [], patch
+    assert await redone(lost, patch)
+
+
+def in_the_vcos_form(error: ModuleWriteError) -> dict[str, object]:
+    """The lost data edits of *error* as a patch in the VCO's keys.
+
+    Each body is as the plan holds it, and each item is under the part the
+    check found for it in the stored list (``stored_parts``): its key there,
+    or its position. A clash is left out, as ``redo_patch()`` leaves it.
+    """
+    assert error.plan is not None
+    assert error.plan.model is not None
+    changes = [
+        RawChange(
+            lost.path,
+            MISSING if lost.as_read is MISSING else lost.stored,
+            lost.intended,
+            place=lost.place,
+            moves=lost.moves,
+        )
+        for lost in error.lost_edits
+        if lost.part == "data" and not lost.clash
+    ]
+    patch, _ = patch_of(changes, error.plan.model, stored_parts=error.stored_parts)
+    return patch
+
+
+@pytest.mark.parametrize("build", RENAMED_LOSSES, ids=build_name)
+async def test_the_names_of_the_redo_patch_change_nothing_it_does(
+    build: Callable[[], Awaitable[Lost]],
+) -> None:
+    """Each write is made twice, and one state takes the patch in the VCO's form."""
+    named, in_keys = await build(), await build()
+    patch, in_vco_form = named.error.redo_patch(), in_the_vcos_form(in_keys.error)
+    assert patch != in_vco_form
+    planned = await redone(named, patch)
+    assert planned
+    assert planned == await redone(in_keys, in_vco_form)
+
+
+async def test_a_provider_is_redone_under_its_attribute() -> None:
+    lost = await a_provider_row()
+    assert lost.error.plan is not None
+
+    patch = lost.error.redo_patch()
+
+    assert patch == {
+        "segments": {
+            "Global Segment": {"dns": {"primary_provider": {"service": DNS_A}}}
+        }
+    }
+    # The row the VCO dropped is planned again.
+    ((_, _, rows, _),) = await redone(lost, patch)
+    assert rows == lost.error.plan.ref_changes
+
+
+@pytest.mark.parametrize("build", [a_place_that_is_gone, a_clash], ids=build_name)
+async def test_what_is_not_redone_reads_as_the_errors_lines_do(
+    build: Callable[[], Awaitable[Lost]],
+) -> None:
+    error = (await build()).error
+    (left,) = error.not_redone()
+    assert str(left.path) in error.render()
+    assert vco_names(str(left.path), forbidden_names()) == []
+
+
+async def test_the_lost_edits_keep_the_vcos_form_of_what_is_not_redone() -> None:
+    error = (await a_clash()).error
+    (left,) = error.not_redone()
+    (clash,) = [lost for lost in error.lost_edits if lost.clash]
+    assert (str(clash.path), str(left.path)) == (
+        f"{OUTBOUND}[allow-web].match.dport_high",
+        f"{OUTBOUND}[allow-web].match.destination_port_high",
+    )
+    assert (clash.as_read, clash.intended, clash.stored) == (443, 8080, 8443)
+
+
+def test_a_secret_in_the_redo_patch_is_complete() -> None:
+    """A mask in a patch would be written to the VCO as the secret."""
+    module, plan = ntp_and_a_vlan()
+    error = failed(module, plan, raw_copy(module))
+    assert SECRET not in error.render()
+
+    server = cast("dict[str, Any]", error.redo_patch()["ntp_server"])
+
+    assert server["keys"] == [{"key_number": 1, "key": SECRET}]
+
+
+async def test_the_redo_patch_names_a_stored_item_as_the_stored_list_shows_it() -> None:
+    """A network is under its name as stored: not its VLAN ID, nor its new name."""
+    error = (await a_network_renamed_and_one_added()).error
+    assert [str(lost.path) for lost in error.lost_edits] == [
+        "lan.networks[10].name",
+        "lan.networks[10].cidrPrefix",
+        "lan.networks[40]",
+    ]
+
+    lan = cast("dict[str, dict[str, dict[str, Any]]]", error.redo_patch()["lan"])
+    ops = lan["networks"]
+    assert ops["Users"] == {"name": "Staff", "cidr_prefix": 25}
+    # An added item has no stored item to be named by: it is under the plan's
+    # key for it, and the item it goes after is under its name.
+    assert sorted(ops) == ["40", "Users"]
+    lab = ops["40"]
+    assert (lab["_op"], lab["name"], lab["cidr_ip"], lab["_position"]) == (
+        "add",
+        "Lab",
+        "10.40.0.0",
+        {"after": "Guests"},
+    )
