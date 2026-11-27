@@ -401,6 +401,19 @@ async def test_a_refused_position_says_how_to_reach_each_item() -> None:
         'rules["#1"]'
     )
 
+    # The way to the refused position is named as pyvelo shows it.
+    with pytest.raises(PatchError) as error:
+        _ = await apply(
+            state,
+            module="business_policy",
+            path=f"segments[#{GUEST}].rules[#1].match",
+            patch={"destination_port_low": 443},
+        )
+    assert (error.value.kind, error.value.path) == (
+        "address",
+        "segments[Guest].rules[#1]",
+    )
+
     state = await _twins("#9")
     with pytest.raises(PatchError) as error:
         _ = await apply(
@@ -423,7 +436,9 @@ async def test_a_refused_position_is_at_its_path_with_fields_by_attribute() -> N
             path="segments[#1].dns.localDNS[#0].ipv4Address[#1]",
             patch={"_op": "delete"},
         )
-    assert error.value.path == "segments[#1].dns.local_dns[#0].ipv4_address[#1]"
+    assert error.value.path == (
+        'segments[Guest].dns.local_dns["a.example"].ipv4_address[#1]'
+    )
 
 
 async def test_a_position_no_other_item_has_as_its_text_reaches_that_position() -> None:
@@ -559,7 +574,7 @@ async def test_an_item_of_a_list_value_is_not_named_by_the_item_read_there(
     assert str(error.value).startswith(shown)
 
 
-# --- reached:the walk the round trips of the shown paths are checked with ---
+# --- reached: the walk the round trips of the shown paths are checked with ---
 
 
 class _Item(VcoModel):

@@ -245,11 +245,15 @@ A patch is strict and all or nothing:
   entry of a map is its key after a dot. An item the data lacks keeps the
   selector as written (`rules[Nope]`), and so does an item of a list the
   patch gives whole, which is the list value's item and not the data's
-  (`rules[#0]` is the first item of the value). Resolver errors keep their types (`ResolutionError` for an unknown
-  name). A patch that applies but that a
-  save could not write raises `LossyFieldError` (see "What a save writes"),
-  and a patch to a module a save does not write (control plane) raises
-  `PatchError`. In every case the state, and `plan()`, are as they were.
+  (`rules[#0]` is the first item of the value). An error of kind `duplicate`
+  keeps its last part as the patch wrote it, since that is the second
+  selector the message is about: `{"rules": {"Web": {}, "#0": {}}}` fails at
+  `rules[#0]`, with the message that `rules[Web]` names this item too.
+  Resolver errors keep their types (`ResolutionError` for an unknown name).
+  A patch that applies but that a save could not write raises
+  `LossyFieldError` (see "What a save writes"), and a patch to a module a
+  save does not write (control plane) raises `PatchError`. In every case the
+  state, and `plan()`, are as they were.
 
 | `kind` | The patch... |
 |---|---|

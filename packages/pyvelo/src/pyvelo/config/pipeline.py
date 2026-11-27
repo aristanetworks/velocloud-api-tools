@@ -146,7 +146,7 @@ from pyvelo.core.merge import (
     read_given_id,
     select_items,
 )
-from pyvelo.core.names import named_error
+from pyvelo.core.names import named_error, named_path
 from pyvelo.core.owned import unwrap
 from pyvelo.core.patch import ItemOp, at, is_new, parse_item_op, patch_key
 from pyvelo.core.rebase import Key, Path, PathPart, raw_changes
@@ -2700,7 +2700,7 @@ def _nested_patch(
 
     A ``PatchError`` is raised with each item *data* has named as pyvelo shows
     it (``named_error``), outside the handler: the error is one, with the
-    cause and the traceback of the error it names.
+    cause and the frames of the error it names.
     """
     try:
         return nest_patch(type(data), patch, segment=segment, path=path)
@@ -2708,8 +2708,13 @@ def _nested_patch(
         named = named_error(
             error, data, resolvers, patch=_addressed(segment, path, patch)
         )
-        traceback = error.__traceback__
-    raise named.with_traceback(traceback)
+        # The frames below this one: the raise adds this one again.
+        below = None if error.__traceback__ is None else error.__traceback__.tb_next
+    # The locals go, so this frame, which the traceback holds, holds no error.
+    try:
+        raise named.with_traceback(below)
+    finally:
+        del named, below
 
 
 def _addressed(segment: str | None, path: str | Path | None, patch: object) -> object:
@@ -2737,7 +2742,8 @@ def _refuse_misread_positions(
     So where another item of the list has the text ``#n`` as its key or its
     value, the patch would change that item and not the one at position ``n``,
     and say nothing. Such a position is refused, at its path, with the ways
-    to reach either item.
+    to reach either item. The parts before it are shown as pyvelo shows them
+    (``named_path``); the position is kept, since the refusal is about it.
 
     *address* is followed over *data* for as long as the data has what it
     names: a field by any name a patch accepts, an item as a patch selects it
@@ -2752,8 +2758,13 @@ def _refuse_misread_positions(
     items: tuple[VcoModel, str] | None = None
     for part in address.parts:
         if items is not None:
+            # Only a position is refused, at a path whose parts before it are
+            # shown as pyvelo shows them: a segment given by its ID is its name.
+            where = walked.child(part)
+            if isinstance(part, int):
+                where = named_path(walked, data, resolvers=resolvers).child(part)
             walked = walked.child(part)
-            here = _addressed_item(items[0], items[1], part, walked, resolvers)
+            here = _addressed_item(items[0], items[1], part, where, resolvers)
             items = None
         elif isinstance(here, VcoModel) and isinstance(part, str):
             name = python_name(type(here), part)

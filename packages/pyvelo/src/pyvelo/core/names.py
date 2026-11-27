@@ -311,19 +311,22 @@ def _field(place: _Place, key: object) -> tuple[str, _Place] | None:
     return name, below
 
 
-def _selector(part: PathPart) -> str:
-    """The selector a patch would name the item *part* names by.
+def _selectors(part: PathPart) -> tuple[str, ...]:
+    """The texts the item part *part* may be read as, as a selector.
 
-    A composite key is the text ``Path`` writes inside its brackets
-    (``key_text``), which is what a reader of the path sees. Where a patch
-    reads that text as two keys of different items, it names no one item and
-    the part is kept: ``routes[a,24,true,GE3]``, whose third part is the
-    boolean ``true``, names both the route whose part is the text ``true``
-    and the one whose part is ``True``, as the patch that wrote it did.
+    Its patch key (``patch_key``), which ``nest_patch`` nests a path under,
+    and for a composite key also the text ``Path`` writes inside its brackets
+    (``key_text``), which is what a reader sees. They differ where a part is
+    a boolean: ``Path.parse`` reads a bare ``true`` as one, and its patch key
+    writes it ``True``. An item is named only where every reading takes the
+    part to it.
     """
+    key = patch_key(part)
     if isinstance(part, Key) and isinstance(part.value, tuple):
-        return key_text(part.value)
-    return patch_key(part)
+        text = key_text(part.value)
+        if text != key:
+            return (key, text)
+    return (key,)
 
 
 def _position(
@@ -334,17 +337,24 @@ def _position(
     None where it names none or several. A position names the item there,
     whatever the keys of the others (as a selector, ``#1`` would first be read
     as a key or a value that is that text). A key and a bare name are read as
-    a patch's selector is; in a map, as the key of an entry in string form.
+    a patch's selector is, in each of their readings (``_selectors``), and
+    name an item only where the readings agree; in a map, as the key of an
+    entry in string form.
     """
     entries: object = getattr(owner, place.field)
     if isinstance(part, int):
         return part if is_list(entries) and part < len(entries) else None
-    text = _selector(part)
     if place.is_map:
+        text = patch_key(part)
         keys: list[object] = list(entries) if is_dict(entries) else []
         found = [index for index, key in enumerate(keys) if str(key) == text]
-    else:
-        found = select_items(owner, place.field, text, resolvers)
+        return found[0] if len(found) == 1 else None
+    readings = [
+        select_items(owner, place.field, text, resolvers) for text in _selectors(part)
+    ]
+    found = readings[0]
+    if any(other != found for other in readings[1:]):
+        return None
     return found[0] if len(found) == 1 else None
 
 
@@ -369,7 +379,7 @@ def _item(
         entries: object = getattr(owner, place.field)
         if is_dict(entries):
             entry = list(entries.values())[position]
-            return _selector(part), _holding(entry, place.classes)
+            return patch_key(part), _holding(entry, place.classes)
         named = item_part(owner, place.field, position)
     except (PatchError, ResolverNotLoadedError, LookupError):
         # A path is shown whatever the data holds, so a lookup that fails keeps
@@ -603,87 +613,79 @@ def named_error(
     data: VcoModel,
     resolvers: IdentityResolver | None = None,
     *,
-    patch: object = None,
-) -> PatchError:
-    """*error* at its path as pyvelo shows it in *data* (``named_path``).
-
-    *data* is the model the patch was applied to, as it was: a selector the
-    patch wrote (``#0``, a key, an alt key, an ID) names an item of it, and
-    that item is shown as pyvelo shows it. An item *data* lacks keeps the
-    selector as written.
-
-    *patch* is the patch that raised it, where the caller has it. An item of
-    a list the patch gives whole, as a list value, is one of the value's
-    items, not of *data*, whatever *data* holds at that position or key: it
-    and every item below it keep the part as written, and the fields below
-    it are named by their classes. Without *patch* every item part is read
-    as a selector of *data*.
-
-    The message, the kind and the cause are the error's (``PatchError.at``);
-    *error* is not changed.
-    """
-    parts = error.path.parts
-    by_data = named_path(error.path, data, resolvers=resolvers).parts
-    reach = len(parts) if patch is None else _selected(patch, parts, data, resolvers)
-    if reach < len(parts):
-        by_class = named_path(error.path, type(data)).parts
-        by_data = (*by_data[:reach], *by_class[reach:])
-    return error.at(Path(by_data))
-
-
-def _selected(
     patch: object,
-    parts: tuple[PathPart, ...],
+) -> PatchError:
+    """*error*, a refusal of *patch*, at its path as pyvelo shows it in *data*.
+
+    *data* is the model *patch* was applied to, as it was: a selector the
+    patch wrote (``#0``, a key, an alt key, an ID) names an item of it, and
+    that item is shown as pyvelo shows it (``named_path``). An item *data*
+    lacks keeps the selector as written.
+
+    *patch* is needed because a path alone does not say whose item a part
+    is: in a list the patch gives whole, as a list value, ``rules[#0]`` is
+    the value's first item, not the one *data* holds there. So the path is
+    walked over *patch* beside *data*: a field part is the one key of the
+    patch's object that names that field, and an item part is the one entry
+    of its object of item operations whose selector names the item. Where
+    the patch has a list value there, or the walk cannot follow it (no one
+    key or entry for the part), each item from there on keeps the part as
+    raised, and the fields below are named by their classes.
+
+    A ``duplicate`` error keeps its last part as raised: it is the selector,
+    the add or the field the patch gives a second time, which the message
+    sets beside the first, and the place to find in the patch.
+
+    Nothing is raised: where the naming fails, *error* itself is returned, at
+    its path as raised. The message, the kind and the cause are the error's
+    (``PatchError.at``); *error* is not changed.
+    """
+    try:
+        path = _error_path(error, data, resolvers, patch)
+    except Exception:  # noqa: BLE001 (naming an error must never hide the refusal it carries)
+        return error
+    return error.at(path)
+
+
+def _error_path(
+    error: PatchError,
     data: VcoModel,
     resolvers: IdentityResolver | None,
-) -> int:
-    """How many leading *parts* name places of *data* that *patch* selects.
+    patch: object,
+) -> Path:
+    """The path of *error* as ``named_error`` shows it: ``named_path``'s walk.
 
-    The parts are walked over *patch* and *data* together: a field part is
-    the key of the object of *patch* that names that field, and the part
-    after a list or a map is an item. Where *patch* gives that list as a list
-    value, the item is one of the value's, and the count ends before it.
-    Where *patch* holds an object of item operations there, the walk goes on
-    in the entry whose selector names the item the part names
-    (``_entry``); where no one entry does, the count ends after the part.
-    Where *data* or *patch* ends first, every part is counted: nothing below
-    is an item of a list value.
+    Beside each place of *data*, the walk holds what *patch* has there, as a
+    one-tuple, and None from where it lost the patch; from there each list
+    is walked as one the data does not reach, so its items keep their parts.
     """
-    model, given = data, patch
-    index = 0
-    while index < len(parts):
-        step = _field_step(model, parts[index], given)
-        if step is None:
+    place: _Place = _holding(data, ())
+    given: tuple[object] | None = (patch,)
+    parts = error.path.parts
+    shown: list[PathPart] = []
+    for index, part in enumerate(parts):
+        if error.kind == "duplicate" and index == len(parts) - 1:
+            shown.append(part)
             break
-        value, given = step
-        index += 1
-        if isinstance(value, VcoModel):
-            model = value
-            continue
-        if index == len(parts) or not (is_list(value) or is_dict(value)):
-            break
-        if is_list(given):
-            return index
-        found = _entry(model, parts[index - 1], parts[index], given, resolvers)
-        index += 1
-        if found is None:
-            return index
-        item, given = found
-        if not isinstance(item, VcoModel):
-            break
-        model = item
-    return len(parts)
+        if isinstance(place, _Items) and place.owner is not None:
+            given = None if given is None else _entry(place, part, given[0], resolvers)
+            if given is None:
+                place = _Items(None, place.field, place.classes, is_map=place.is_map)
+        elif isinstance(place, _Model) and place.held is not None and given:
+            given = _given_field(place.held, part, given[0])
+        part_shown, place = _step(place, part, resolvers)
+        shown.append(part_shown)
+    return Path(shown)
 
 
-def _field_step(
+def _given_field(
     model: VcoModel, part: PathPart, given: object
-) -> tuple[object, object] | None:
-    """What the field *part* of *model* holds, and what *given* has for it.
+) -> tuple[object] | None:
+    """What *given*, a patch for *model*, has for the field *part*, as a one-tuple.
 
-    *given* is the part of a patch for *model*; the field is the one key of
-    it that names the field *part* names, by any name a patch accepts. None
-    where *part* is not a field of *model*, *given* is not an object, or it
-    has no one key for the field.
+    The value of the one key of *given* that names that field, by any name a
+    patch accepts. None where *part* is not a field of *model*, *given* is
+    not an object, or it has no one key for the field.
     """
     name = python_name(type(model), part) if isinstance(part, str) else None
     if name is None or not is_dict(given):
@@ -693,55 +695,42 @@ def _field_step(
         for key in given
         if isinstance(key, str) and python_name(type(model), key) == name
     ]
-    if len(keys) != 1:
-        return None
-    return unwrap(getattr(model, name)), given[keys[0]]
+    return (given[keys[0]],) if len(keys) == 1 else None
 
 
 def _entry(
-    owner: VcoModel,
-    part: PathPart,
-    item: PathPart,
-    given: object,
-    resolvers: IdentityResolver | None,
-) -> tuple[object, object] | None:
-    """The item *item* names in the list or map *part* of *owner*, and its entry.
+    place: _Items, part: PathPart, given: object, resolvers: IdentityResolver | None
+) -> tuple[object] | None:
+    """What *given* has for the item *part* names in the list at *place*.
 
-    *given* is the patch's object of item operations for that list or map;
-    the entry is the one whose selector names that item. None where the data
-    has no one such item, *given* is not an object, or no one entry selects
-    the item.
+    *given* is what a patch has for that list or map: the entry of its object
+    of item operations whose selector names that item, as a one-tuple. None
+    where *given* is no such object (a list value, a scalar), the data has no
+    one item for *part*, or no entry or several select it.
     """
-    name = python_name(type(owner), part) if isinstance(part, str) else None
-    if name is None or not is_dict(given):
+    owner = place.owner
+    if owner is None or not is_dict(given):
         return None
-    entries = unwrap(getattr(owner, name))
-    place = _Items(owner, name, (), is_map=is_dict(entries))
     try:
-        position = _position(place, owner, item, resolvers)
+        position = _position(place, owner, part, resolvers)
     except (PatchError, LookupError):
         return None
     if position is None:
         return None
-    keys = [key for key in given if _selects(owner, name, key, position, resolvers)]
-    if len(keys) != 1:
-        return None
-    held = list(entries.values()) if is_dict(entries) else entries
-    if not is_list(held) or position >= len(held):
-        return None
-    return held[position], given[keys[0]]
+    keys = [key for key in given if _selects(place, owner, key, position, resolvers)]
+    return (given[keys[0]],) if len(keys) == 1 else None
 
 
 def _selects(
+    place: _Items,
     owner: VcoModel,
-    name: str,
     selector: object,
     position: int,
     resolvers: IdentityResolver | None,
 ) -> bool:
-    """Whether *selector* names the item at *position* of *name* of *owner* alone."""
+    """Whether *selector* names the item at *position* of the list at *place* alone."""
     try:
-        return select_items(owner, name, selector, resolvers) == [position]
+        return select_items(owner, place.field, selector, resolvers) == [position]
     except (PatchError, LookupError):
         return False
 

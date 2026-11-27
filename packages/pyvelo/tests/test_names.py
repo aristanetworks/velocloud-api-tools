@@ -5,6 +5,7 @@ alone; what the data does not hold keeps the part as it was written.
 """
 
 import itertools
+import traceback
 from collections.abc import Callable, Collection, Iterator
 from typing import Annotated, Literal, cast
 
@@ -46,7 +47,8 @@ from pyvelo.core import (
     selector_of,
 )
 from pyvelo.core.layers import L
-from pyvelo.core.names import named_change_path
+from pyvelo.core.merge import nest_patch, nested_under
+from pyvelo.core.names import named_change_path, named_error
 from pyvelo.core.rebase import item_key
 
 
@@ -1006,3 +1008,138 @@ def test_a_patch_error_with_no_cause_has_none_at_another_path() -> None:
     moved = error.at(Path(("b",)))
     assert moved.__cause__ is None
     assert moved.__suppress_context__ is False
+
+
+# ---------------------------------------------------------------------------
+# named_error
+# ---------------------------------------------------------------------------
+
+
+NAN = float("nan")
+
+
+class Box(VcoModel):
+    name: str
+    extra: dict[str, object] = Field(default_factory=dict)
+    hubs: Annotated[list[Hub], KeyField("logical_id", label="name")] = Field(
+        default_factory=list
+    )
+
+
+class Store(VcoModel):
+    extra: dict[str, object] = Field(default_factory=dict)
+    boxes: Annotated[list[Box], KeyField("name")] = Field(default_factory=list)
+    by_name: dict[str, Box] = Field(default_factory=dict)
+    my_rules: Annotated[list[Rule], KeyField("name")] = Field(default_factory=list)
+
+
+def store() -> Store:
+    box: dict[str, object] = {"extra": {"k": 1}, "hubs": [A]}
+    return Store.model_validate(
+        {
+            "extra": {"k": 1},
+            "boxes": [{"name": "a", **box}],
+            "byName": {"x": {"name": "x", **box}},
+            "myRules": [{"name": "Web"}],
+        }
+    )
+
+
+def refusal(model: VcoModel, patch: dict[str, object]) -> PatchError:
+    with pytest.raises(PatchError) as error:
+        _ = model.merge_patch(patch)
+    return error.value
+
+
+@pytest.mark.parametrize(
+    ("patch", "path"),
+    [
+        ({"extra": {"k": NAN}}, "extra.k"),
+        ({"boxes": {"#0": {"extra": {"k": NAN}}}}, "boxes[a].extra.k"),
+        ({"by_name": {"x": {"extra": {"k": NAN}}}}, "by_name.x.extra.k"),
+        (
+            {"by_name": {"x": {"hubs": {"#0": {"name": NAN}}}}},
+            "by_name.x.hubs[Hub-A].name",
+        ),
+        (
+            {"boxes": {"#0": {"hubs": [{"logicalId": NAN}]}}},
+            "boxes[a].hubs[#0].logical_id",
+        ),
+    ],
+    ids=["dict", "dict-in-item", "dict-in-entry", "item-in-entry", "value-in-item"],
+)
+def test_a_value_that_is_not_json_is_refused_where_it_sits(
+    patch: dict[str, object], path: str
+) -> None:
+    error = refusal(store(), patch)
+    assert (error.kind, str(error.path)) == ("not_json", path)
+
+
+def test_an_address_into_a_plain_dict_is_refused_where_the_value_sits() -> None:
+    data = store()
+    with pytest.raises(PatchError) as raised:
+        _ = nest_patch(Store, {"k": NAN}, path="extra")
+    error = named_error(
+        raised.value, data, patch=nested_under(Path.parse("extra"), {"k": NAN})
+    )
+    assert (error.kind, str(error.path)) == ("not_json", "extra.k")
+
+
+def test_an_item_of_a_list_value_keeps_its_position_below_a_selected_item() -> None:
+    error = refusal(doc(A, B), {"rules": {"Web": {"hubs": [{"bogus": 1}]}}})
+    assert str(error.path) == "rules[Web].hubs[#0].bogus"
+    error = refusal(doc(A, B), {"rules": {"#0": {"hubs": {"#0": {"bogus": 1}}}}})
+    assert str(error.path) == "rules[Web].hubs[Hub-A].bogus"
+
+
+def test_a_patch_the_walk_cannot_follow_keeps_the_parts_as_raised() -> None:
+    patch: dict[str, object] = {"my_rules": [{"rule_logical_id": NAN}], "myRules": {}}
+    error = refusal(store(), patch)
+    assert (error.kind, str(error.path)) == ("not_json", "my_rules[#0].rule_logical_id")
+
+
+def test_an_error_of_a_sub_model_is_named_in_that_model() -> None:
+    rule = doc(A, B).rules[0]
+    error = refusal(rule, {"hubs": {"#0": {"bogus": 1}}})
+    assert str(error) == "hubs[Hub-A].bogus: Hub has no field 'bogus'"
+
+
+def test_an_entry_of_a_map_is_named_after_a_dot() -> None:
+    error = refusal(shelf(), {"hubs": {"top": {"bogus": 1}}})
+    assert str(error) == "hubs.top.bogus: Hub has no field 'bogus'"
+
+
+def test_a_selector_given_twice_is_the_one_the_path_keeps() -> None:
+    error = refusal(doc(A, B), {"rules": {"Web": {}, "#0": {}}})
+    assert (
+        str(error) == "rules[#0]: rules[Web] names this item too: one selector per item"
+    )
+    error = refusal(doc(A, B), {"rules": {"#0": {"hubs": {"h1": {}, "#0": {}}}}})
+    assert error.kind == "duplicate"
+    assert str(error.path) == "rules[Web].hubs[#0]"
+
+
+def test_a_naming_that_fails_gives_back_the_error_as_raised(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fails(*_: object) -> Path:
+        raise TypeError
+
+    monkeypatch.setattr("pyvelo.core.names._error_path", fails)
+    error = PatchError("no", Path.parse("rules[#0].bogus"), "unknown_field")
+    assert named_error(error, doc(A, B), patch={}) is error
+    assert refusal(doc(A, B), {"rules": {"#0": {"bogus": 1}}}).path == "rules[#0].bogus"
+
+
+def test_the_refusal_is_one_error_whose_frames_name_merge_patch_once() -> None:
+    error = refusal(doc(A, B), {"rules": {"#0": {"bogus": 1}}})
+    assert error.__context__ is None
+    frames = [frame.name for frame in traceback.extract_tb(error.__traceback__)]
+    assert frames.count("merge_patch") == 1
+    assert frames[-1] != "merge_patch"
+
+
+def test_a_key_whose_readings_name_different_items_keeps_the_part_written() -> None:
+    data = Links.model_validate({"links": [{"internalId": "x", "family": "true"}]})
+    path = Path(("links", Key(("x", True)), "nope"))
+    assert str(named_path(path, data)) == "links[x,true].nope"

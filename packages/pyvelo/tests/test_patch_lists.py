@@ -489,7 +489,7 @@ def test_an_empty_object_on_an_item_changes_nothing() -> None:
     ("patch", "path"),
     [
         ({"rules": {"zz": {}}}, "rules[zz]"),
-        ({"rules": {"a": {}, at(0): {}}}, "rules[a]"),
+        ({"rules": {"a": {}, at(0): {}}}, "rules[#0]"),
         ({"names": {"a": {}}}, "names[a]"),
         ({"by_name": {"zz": {}}}, "by_name[zz]"),
         ({"rules": {"z": add({"tags": {"t": {}}})}}, "rules[z].tags[t]"),

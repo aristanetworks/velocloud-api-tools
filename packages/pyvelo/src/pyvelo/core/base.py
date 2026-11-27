@@ -1087,8 +1087,9 @@ class VcoModel(BaseModel):
         each item self has named as pyvelo shows it whatever selector the
         patch used (``names.named_error``: ``rules[#0].bogus`` is
         ``rules[Web].bogus`` where the first rule is ``Web``; an item of a
-        list value keeps its part), and whose ``kind`` says which sort of
-        refusal it is (``patch.PatchErrorKind``); a pydantic
+        list value keeps its part, and so does the selector a ``duplicate``
+        gives a second time), and whose ``kind`` says which sort of refusal
+        it is (``patch.PatchErrorKind``); a pydantic
         ``ValidationError`` behind it is its ``__cause__``. Resolver errors
         keep their types. A name on a field whose resolver is not registered
         raises ``PatchError`` at the field, unless the text can be the ID.
@@ -1111,12 +1112,17 @@ class VcoModel(BaseModel):
         except PatchError as error:
             # Self is as it was, so the selectors the patch wrote name its items.
             named = named_error(error, self, resolvers, patch=patch)
-            traceback = error.__traceback__
+            # The frames below this one: the raise adds this one again.
+            below = None if error.__traceback__ is None else error.__traceback__.tb_next
         else:
             return self
         # Raised outside the handler: the error is one, with the cause and the
-        # traceback of the error it names, and nothing else as its context.
-        raise named.with_traceback(traceback)
+        # frames of the error it names, and nothing else as its context. The
+        # locals go, so this frame, which the traceback holds, holds no error.
+        try:
+            raise named.with_traceback(below)
+        finally:
+            del named, below
 
 
 # ---------------------------------------------------------------------------
