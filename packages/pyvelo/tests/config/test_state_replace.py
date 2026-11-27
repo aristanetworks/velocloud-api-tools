@@ -445,3 +445,47 @@ def test_a_held_model_that_is_not_a_vco_model_is_compared() -> None:
         Path(("data", "segments", Key("Global Segment"), "vrrp", "enabled"))
     ]
     assert state.plan().changed == ()
+
+
+# --- a text that names a module names it by its python name -------------------------
+
+
+def test_the_refusals_of_drop_and_replace_name_the_module_by_its_python_name() -> None:
+    state = make_state(
+        [
+            fw_row(),
+            make_module_json(
+                "QOS", copy.deepcopy(EDGE_QOS), module_id=4, configuration_id=10
+            ),
+        ]
+    )
+    qos = state.module("QOS")
+    twin = copy.deepcopy(qos)
+
+    with pytest.raises(ValueError, match="only a new one is dropped") as dropped:
+        state.drop_module(qos)
+    with pytest.raises(ValueError, match="is not in the target config") as replaced:
+        state.replace_module(twin, twin)
+
+    assert str(dropped.value).startswith(
+        "module 'business_policy' was read from the VCO"
+    )
+    assert str(replaced.value) == (
+        "module 'business_policy' is not in the target config"
+    )
+
+
+def test_a_module_that_cannot_be_created_is_named_by_its_python_name() -> None:
+    edge = EdgeConfiguration.model_validate({"name": "Edge Specific Profile"})
+    profile = EnterpriseConfigurationProfile.model_validate({"name": "P", "id": 20})
+    state = ConfigState(
+        edge_config=edge,
+        profile_config=profile,
+        target_type="edge",
+        resolver_context=ResolverContext(),
+    )
+
+    with pytest.raises(ValueError, match="configuration has no ID") as exc:
+        _ = state.module("QOS", create=True)
+
+    assert str(exc.value).startswith("Cannot create module 'business_policy'")

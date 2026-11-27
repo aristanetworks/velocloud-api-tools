@@ -382,7 +382,7 @@ async def test_apply_to_a_segment_the_profile_lacks_changes_nothing() -> None:
         )
     assert exc.value.path == Path.parse("segments")
     assert exc.value.kind == "segment_rule"
-    assert "no deviceSettings module" in exc.value.message
+    assert "no device_settings module" in exc.value.message
     assert [s.segment.name for s in state.profile.firewall.segments] == [
         "Global Segment"
     ]
@@ -1672,7 +1672,7 @@ def _control_plane_state() -> ConfigState:
 @pytest.mark.asyncio
 async def test_apply_refuses_a_module_a_save_does_not_write() -> None:
     state = _control_plane_state()
-    with pytest.raises(PatchError, match="controlPlane: a save does not write") as exc:
+    with pytest.raises(PatchError, match="control_plane: a save does not write") as exc:
         _ = await ConfigPipeline(client=None).apply(
             state,
             module="control_plane",
@@ -1698,7 +1698,7 @@ async def test_dry_run_refuses_what_the_save_refuses() -> None:
     for dry_run in (True, False):
         with pytest.raises(TypeError, match="ControlPlaneConfigurationModule") as exc:
             _ = await pipeline.save(state, dry_run=dry_run)
-        assert str(exc.value).startswith("controlPlane: this state has an edit to a")
+        assert str(exc.value).startswith("control_plane: this state has an edit to a")
     assert client.store.requests == []
 
 
@@ -1726,3 +1726,35 @@ async def test_delete_of_an_inherited_segment_says_what_to_do() -> None:
             state, module="firewall", patch={"segments": {"Guest": delete()}}
         )
     assert "leave" in exc.value.message
+
+
+# --- a text that names a module names it by its python name -------------------------
+
+
+@pytest.mark.asyncio
+async def test_a_patch_to_a_module_a_save_does_not_write_names_it_by_its_python_name() -> (  # noqa: E501 (a test's name)
+    None
+):
+    state = _control_plane_state()
+
+    with pytest.raises(PatchError) as exc:
+        _ = await ConfigPipeline(client=None).apply(
+            state, module="controlPlane", patch={"gateway_selection": {"mode": "x"}}
+        )
+
+    assert exc.value.kind == "address"
+    assert exc.value.message.startswith(
+        "control_plane: a save does not write this module"
+    )
+
+
+@pytest.mark.asyncio
+async def test_an_edit_a_save_does_not_write_names_the_module_to_revert() -> None:
+    state = _control_plane_state()
+    state.profile_config.control_plane.data.gateway_selection.mode = "static"
+
+    with pytest.raises(TypeError) as exc:
+        _ = await ConfigPipeline(MockVcoClient.for_state(state)).save(state)
+
+    assert str(exc.value).startswith("control_plane: this state has an edit to a")
+    assert "Take the edit back with revert (module control_plane)" in str(exc.value)

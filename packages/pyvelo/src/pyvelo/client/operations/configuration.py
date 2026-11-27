@@ -22,7 +22,10 @@ from pydantic import (
     ValidationError,
 )
 
-from pyvelo.client.enums.configuration import ConfigurationModuleName
+from pyvelo.client.enums.configuration import (
+    ConfigurationModuleName,
+    python_module_name,
+)
 from pyvelo.client.enums.profiles import GetConfigurationWith
 from pyvelo.client.exceptions import (
     ConfigConflictError,
@@ -539,7 +542,8 @@ def check_found_insert[M: ConfigurationModuleBase](
     """
     if plan.operation != "insert":
         raise ValueError(
-            f"the plan of {plan.name} is {plan.operation!r}, not an insert, so "
+            f"the plan of {python_module_name(plan.name)} is {plan.operation!r}, "
+            "not an insert, so "
             "there is nothing to check a module found by name against"
         )
     stored = _require_this_module(module, plan, found, answer="row")
@@ -826,7 +830,10 @@ class ConfigurationMixin(Protocol):
         """
         module_name = str(getattr(module, "name", MISSING))
         if plan.name != module_name:
-            raise ValueError(f"the plan is for {plan.name}, not {module_name}")
+            raise ValueError(
+                f"the plan is for {python_module_name(plan.name)}, not "
+                f"{python_module_name(module_name)}"
+            )
         if (
             plan.operation != "update"
             or plan.refs is None

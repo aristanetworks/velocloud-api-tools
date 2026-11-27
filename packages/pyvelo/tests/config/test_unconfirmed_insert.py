@@ -202,8 +202,8 @@ async def test_a_dry_run_after_a_lost_answer_reads_nothing_and_warns() -> None:
 
     assert methods(client.store) == ["insertConfigurationModule"]
     assert result.modules_inserted == [QOS]
-    assert [(w.path, w.code) for w in result.warnings] == [
-        ("QOS", "insert_unconfirmed")
+    assert [(w.module, w.path, w.code) for w in result.warnings] == [
+        ("business_policy", "", "insert_unconfirmed")
     ]
     assert state.unconfirmed_inserts == {"QOS"}
 

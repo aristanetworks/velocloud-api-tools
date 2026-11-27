@@ -376,6 +376,20 @@ async def test_check_found_insert_refuses_a_plan_that_inserts_nothing() -> None:
         _ = check_found_insert(module, plan, module)
 
 
+async def test_check_found_insert_names_the_module_by_its_python_name() -> None:
+    state = make_state()
+    module = state.module("QOS", create=True)
+    plan = state.plan_module(module)
+    assert (plan.name, plan.operation) == ("QOS", "none")
+
+    with pytest.raises(ValueError, match="not an insert") as refused:
+        _ = check_found_insert(module, plan, module)
+
+    assert str(refused.value).startswith(
+        "the plan of business_policy is 'none', not an insert"
+    )
+
+
 async def test_revert_of_a_new_module_that_plans_nothing_and_was_not_stored() -> None:
     state = make_state()
     client = MockVcoClient.for_state(state)

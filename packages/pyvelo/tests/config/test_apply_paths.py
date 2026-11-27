@@ -199,6 +199,7 @@ async def test_segment_ops_by_path_to_a_missing_module_are_refused(
         )
     assert (error.value.kind, error.value.path) == ("segment_rule", "segments")
     assert error.value.message.startswith("the profile has no")
+    assert error.value.message.startswith("the profile has no business_policy module")
     assert state.find_module("QOS") is None
 
 

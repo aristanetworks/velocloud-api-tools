@@ -614,7 +614,8 @@ def with_hub_rows(
     """
     if plan.operation != "update" or plan.refs is None:
         raise ValueError(
-            f"{plan.name}: hub rows go with an update that sends refs, and this "
+            f"{python_module_name(plan.name)}: hub rows go with an update that "
+            "sends refs, and this "
             f"plan is {
                 'an update with no refs'
                 if plan.operation == 'update'
@@ -663,7 +664,8 @@ def with_hub_rows(
         )
         if index is None:
             raise ValueError(
-                f"{plan.name}: the refs hold no {name} row for object "
+                f"{python_module_name(plan.name)}: the refs hold no {name} row "
+                "for object "
                 f"{row.get('enterpriseObjectId')} in segment object "
                 f"{row.get('segmentObjectId')}, so there is none to remove"
             )

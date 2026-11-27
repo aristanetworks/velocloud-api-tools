@@ -430,7 +430,7 @@ class _Sending:
             if later := self.modules[at + 1 :]:
                 note += (
                     "; the save stopped here, so these are not written: "
-                    + ", ".join(m.name for m in later)
+                    + ", ".join(python_module_name(m.name) for m in later)
                     + ". The next save writes them"
                 )
             error.add_note(note)
@@ -1412,13 +1412,14 @@ class ConfigPipeline:
         """
         result.warnings.extend(
             ValidationWarning(
-                path=module_plan.name,
+                path=Path(()),
                 message=(
                     "an earlier insert of this module may have reached the "
                     "VCO; the save reads the configuration first, and takes a "
                     "module of this name it finds there as the insert's answer"
                 ),
                 code="insert_unconfirmed",
+                module=python_module_name(module_plan.name),
             )
             for module_plan in plan.changed
             if module_plan.name in state.unconfirmed_inserts
@@ -2569,7 +2570,8 @@ def _refuse_segment_ops_to_a_missing_module(
         cast("dict[str, object]", nested)
     ):
         raise PatchError(
-            f"the profile has no {module_name} module, and a patch that adds, "
+            f"the profile has no {python_module_name(module_name)} module, and a "
+            "patch that adds, "
             "removes or replaces a segment works on all three of device "
             "settings, QoS and firewall together. Inserting a module into a "
             "profile is not supported: add it in the VCO",
@@ -2641,7 +2643,8 @@ def _patched_module(
         if existing is None:
             state.drop_module(mod)
         raise PatchError(
-            f"{mod.name}: a save does not write this module (it writes "
+            f"{python_module_name(mod.name)}: a save does not write this module "
+            "(it writes "
             "device settings, QoS, WAN and firewall modules), so a "
             "patch to it is not applied. Make the change in the VCO",
             Path(()),
@@ -2945,9 +2948,12 @@ def _may_be_stored(error: ModuleWriteError) -> bool:
 
 
 def _written_note(done: Sequence[ModuleWrite[Any]]) -> str:
-    """The note of an error that stops a save: the modules it wrote before."""
+    """The note of an error that stops a save: the modules it wrote before.
+
+    Each by its python name.
+    """
     return "written before this failure: " + ", ".join(
-        f"{w.name} ({w.operation})" for w in done
+        f"{python_module_name(w.name)} ({w.operation})" for w in done
     )
 
 
@@ -2986,10 +2992,11 @@ def _shown_edit(path: Path, mod: AnyStoredModule) -> Path:
 def _require_writable(mod: AnyStoredModule) -> _WritableModule:
     """*mod*, if it is a module a save writes; else ``TypeError``."""
     if not isinstance(mod, _WRITABLE_MODULES):
+        named = python_module_name(mod.name)
         raise TypeError(
-            f"{mod.name}: this state has an edit to a {type(mod).__name__}, which a "
+            f"{named}: this state has an edit to a {type(mod).__name__}, which a "
             "save does not write (it writes device settings, QoS, WAN and firewall "
-            f"modules). Take the edit back with revert (module {mod.name}), or "
+            f"modules). Take the edit back with revert (module {named}), or "
             "load the state again; nothing was sent"
         )
     return mod

@@ -795,7 +795,7 @@ class ConfigState:
         """
         if not module.is_new:
             raise ValueError(
-                f"module {module.name!r} was read from the VCO; "
+                f"module {python_module_name(module.name)!r} was read from the VCO; "
                 "only a new one is dropped"
             )
         self.unconfirmed_inserts.discard(module.name)
@@ -842,7 +842,9 @@ class ConfigState:
         modules = [] if config.modules is MISSING else config.modules
         index = next((i for i, m in enumerate(modules) if m is old), None)
         if index is None:
-            raise ValueError(f"module {old.name!r} is not in the target config")
+            raise ValueError(
+                f"module {python_module_name(old.name)!r} is not in the target config"
+            )
         modules[index] = new
         self.unconfirmed_inserts.discard(old.name)
         if config is self.edge_config:
@@ -1922,7 +1924,7 @@ def _wrong_module(module: object, expected: type) -> TypeError:
     Its class is not the one its name has.
     """
     return TypeError(
-        f"the {getattr(module, 'name', '?')} module is a "
+        f"the {python_module_name(str(getattr(module, 'name', '?')))} module is a "
         f"{type(module).__name__}, not a {expected.__name__}"
     )
 
@@ -1943,7 +1945,10 @@ def _module_of(
         return existing
     if create and isinstance(config, EdgeConfiguration):
         if config.id_ is MISSING or config.id_ is None:
-            raise ValueError(f"Cannot create module '{name}': configuration has no ID")
+            raise ValueError(
+                f"Cannot create module '{python_module_name(name)}': "
+                "configuration has no ID"
+            )
         new = new_edge_module(name, config.id_).for_edge()
         if profile is not None:
             _bind_to_profile(new, profile)

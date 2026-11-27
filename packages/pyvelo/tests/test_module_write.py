@@ -1943,11 +1943,18 @@ async def test_with_hub_rows_refuses_a_row_to_remove_that_the_refs_lack_and_a_pl
     None
 ):
     plan = await plan_with_refs({HUB_ROW_REF: hub_ref_row(601)})
-    with pytest.raises(ValueError, match="there is none to remove"):
+    with pytest.raises(ValueError, match="there is none to remove") as lacking:
         _ = with_hub_rows(plan, added=[], removed=[hub_ref_row(699)])
     bare = await plan_with_refs(None)
-    with pytest.raises(ValueError, match="hub rows go with an update that sends refs"):
+    with pytest.raises(
+        ValueError, match="hub rows go with an update that sends refs"
+    ) as no_refs:
         _ = with_hub_rows(bare, added=[hub_ref_row(601)], removed=[])
+    # The module by its python name; the row by its ref name, which is data.
+    assert str(lacking.value).startswith(
+        f"device_settings: the refs hold no {HUB_ROW_REF} row for object 699"
+    )
+    assert str(no_refs.value).startswith("device_settings: hub rows go with")
 
 
 def _stored_rule(name: str, **extra: object) -> dict[str, Any]:

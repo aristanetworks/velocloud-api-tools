@@ -26,6 +26,7 @@ from typing import Any, Final, cast
 
 from pydantic import MISSING
 
+from pyvelo.client.enums.configuration import python_module_name
 from pyvelo.client.models.configuration.common import SegmentMetadata, segment_id_of
 from pyvelo.client.models.configuration.profile_segments import (
     descriptor_of,
@@ -75,14 +76,16 @@ def segment_modules(state: ConfigState) -> dict[str, AnyStoredModule]:
         module = state.find_module(name)
         if module is None:
             raise ValueError(
-                f"The profile has no {name} module, and a segment is assigned to "
+                f"The profile has no {python_module_name(name)} module, and a "
+                "segment is assigned to "
                 "a profile that has all three of device settings, QoS and "
                 "firewall. Inserting a module into a profile is not supported: "
                 "add it in the VCO."
             )
         if module.config_context is not ConfigContext.PROFILE:
             raise ValueError(
-                f"The {name} module is not at the profile level, so a segment "
+                f"The {python_module_name(name)} module is not at the profile "
+                "level, so a segment "
                 "cannot be added to it. Load the profile with "
                 "pipeline.load_profile(...), or call .for_profile() on a "
                 "profile you built."
@@ -509,7 +512,8 @@ class _SegmentReader:
         identity = await self._identity(name, where)
         if identity.segment_id in self.as_read:
             raise PatchError(
-                f"{identity.name} is already in {self.module_name}; change it "
+                f"{identity.name} is already in "
+                f"{python_module_name(self.module_name)}; change it "
                 "with a plain object, such as "
                 f'{{"segments": {{"{identity.name}": {{...}}}}}}, not an add',
                 where,
@@ -606,7 +610,8 @@ class _SegmentReader:
         """
         if not isinstance(self.data, VcoModel):
             raise TypeError(
-                f"the {self.module_name} module's data is not a model to merge "
+                f"the {python_module_name(self.module_name)} module's data is not "
+                "a model to merge "
                 "a segment entry into"
             )
         (item_type,) = field_models(type(self.data).model_fields["segments"])

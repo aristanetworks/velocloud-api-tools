@@ -1885,7 +1885,9 @@ insert carries no version, so the state remembers it
 A module of that name found there is taken as the insert's answer and checked
 against the plan like any write, and nothing is inserted again; with none
 there, the save inserts. A `dry_run` does not read: it plans the insert and
-adds a warning with the code `insert_unconfirmed`. To give up the module
+adds a warning with the code `insert_unconfirmed`, whose `module` is the
+module's python name and whose `path` is empty (it is about the whole
+module). To give up the module
 instead, `pipeline.revert(state, module=...)` reads the configuration in the
 same way and deletes the module it finds there when it holds exactly what this
 state's module holds (see `revert` above).
@@ -1945,7 +1947,10 @@ Known limits:
   on save. Control plane modules can be read. A save does not write them:
   `apply` refuses a patch to one (`PatchError`), and a state whose control
   plane module was edited by assignment cannot be saved or dry-run
-  (`TypeError`, before anything is sent) until it is loaded again.
+  (`TypeError`, before anything is sent) until it is loaded again. Both name
+  the module by its python name (`control_plane: a save does not write this
+  module ...`), as every text that names a module does: the refusals of
+  `apply`, `assign_segment`, `revert`, a save and a write.
 - A profile's segment is assigned with `assign_segment` or an `add`, but not
   removed: an edit that removes a segment the device settings module has
   raises `SegmentSetError` (a patch: `PatchError`), and only an orphan, a QoS
@@ -1967,7 +1972,9 @@ Known limits:
   from the module's row, a field by its attribute and an item by its name): redo
   them. A path that is a placeholder a lookup added (`segment(name)`, for a
   segment the edge only inherits) is no edit and needs no redo. The save stops
-  at that module: the error's note names the modules written, and the next
+  at that module: the error's note names the modules written and those left
+  (`written before this failure: firewall (update), business_policy (update);
+  ... these are not written: wan`), and the next
   save writes the rest. To make such an edit safely, hold the lock around it
   (`async with state.lock:`). Those four take the lock themselves: called
   inside that block by the same task they raise `RuntimeError`, so call them

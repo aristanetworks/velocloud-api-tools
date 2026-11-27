@@ -254,16 +254,12 @@ async def test_a_plus_add_without_a_name_raises() -> None:
 async def test_an_add_of_a_segment_the_module_had_as_read_raises_exists() -> None:
     state = await guest_everywhere()
 
-    for module, wire in (
-        ("business_policy", QOS),
-        ("firewall", FIREWALL),
-        ("device_settings", DS),
-    ):
+    for module in ("business_policy", "firewall", "device_settings"):
         with pytest.raises(PatchError) as raised:
             _ = await patch(state, module, {"Guest": add({})})
         assert raised.value.kind == "exists"
         assert raised.value.path == GUEST_AT
-        assert f"Guest is already in {wire}; change it with a plain object" in str(
+        assert f"Guest is already in {module}; change it with a plain object" in str(
             raised.value
         )
     assert state.plan().changed == ()
@@ -437,7 +433,7 @@ async def test_a_profile_without_qos_refuses_an_add() -> None:
 
     assert raised.value.kind == "segment_rule"
     assert raised.value.path == Path(("segments",))
-    assert "QOS" in raised.value.message
+    assert "business_policy" in raised.value.message
     assert state.plan().render() == before
 
 
@@ -474,7 +470,7 @@ async def test_an_add_to_a_module_the_profile_lacks_raises_patch_error(
 
     assert raised.value.kind == "segment_rule"
     assert raised.value.path == Path(("segments",))
-    assert "no QOS module" in raised.value.message
+    assert "no business_policy module" in raised.value.message
     assert "not supported" in raised.value.message
     assert state.find_module(QOS) is None
     assert state.plan().render() == before

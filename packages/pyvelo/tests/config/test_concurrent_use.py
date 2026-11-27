@@ -244,8 +244,8 @@ async def test_the_error_names_the_modules_written_and_those_left() -> None:
         _ = await saving
 
     (note,) = exc.value.__notes__
-    assert "firewall (update), QOS (update)" in note
-    assert "not written: WAN" in note
+    assert "firewall (update), business_policy (update)" in note
+    assert "not written: wan" in note
     assert methods(client.store) == [
         "updateConfigurationModule",
         "getConfigurationModules",  # QoS has a segment: its version is read first
