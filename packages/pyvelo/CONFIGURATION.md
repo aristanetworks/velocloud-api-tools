@@ -965,8 +965,8 @@ firewall: update
   that mend the first, each field by its attribute (it calls the fields above
   `route_policy`, `route_cfg.type_` and `route_cfg.backhaul_edges`), with the
   module they go to, and says that the others are mended the same way. `apply` accepts the edit, as for a reference. After
-  `{"segments": {"Guest": {"rules": {"Web": {"action": {"edge2CloudRouteAction":
-  {"routeCfg": {"backhaulEdges": {"Hub-A": {"_op": "delete"}}}}}}}}}}` takes the
+  `{"segments": {"Guest": {"rules": {"Web": {"action": {"edge_to_cloud_route_action":
+  {"route_cfg": {"backhaul_edges": {"Hub-A": {"_op": "delete"}}}}}}}}}}` takes the
   only hub out of the rule `Web`, the error begins:
 
   ```text
@@ -1601,14 +1601,14 @@ edit needs, then writes the module.
   warning per hub and segment to `SaveResult.warnings`, naming the Edges, and
   goes on; with `on_hub_in_use="refuse"` it raises `HubListError` (`edges` holds
   their IDs and names) before any step is sent. A dry run does the same.
-- **A hub in a QoS rule.** A rule's `edge2EdgeRouteAction.routeCfg.backhaulEdges`
-  names its hubs, by name or `edgeLogicalId`, on a profile and on an edge. `apply`
-  gives the entry its `logicalId`, the hub's service for the profile and the
+- **A hub in a QoS rule.** A rule's `edge_to_edge_route_action.route_cfg.backhaul_edges`
+  names its hubs, by name or `edge_logical_id`, on a profile and on an edge. `apply`
+  gives the entry its `logical_id`, the hub's service for the profile and the
   rule's segment, and the save adds the `deviceSettings:backHaulEdge` row that
   points at it. A hub that is not saved there has no service: it is saved first
   and the rule after, in two saves, and `apply` raises `HubServiceNotFoundError`
   for a hub added to the lists in the same unsaved edit, with the patch that
-  adds it to both lists. An entry built by assignment without its `logicalId` raises the same
+  adds it to both lists. An entry built by assignment without its `logical_id` raises the same
   error at `plan()`. The rule's hub must be in the segment's `backhaul_edges`,
   and a value that names a segment or a hub the configuration does not have is a
   `DanglingReferenceError` (see "What a save writes"). Taking a hub that a rule
