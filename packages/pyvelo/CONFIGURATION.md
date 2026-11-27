@@ -240,9 +240,9 @@ A patch is strict and all or nothing:
   directives: `_op` and `_position`, on a list item only.
 - A hub is added to a `vpn` list (`hub_edges.vpn_hubs`,
   `edge_to_edge_detail.vpn_hubs`, `backhaul_edges`) or to a QoS rule's
-  `backhaulEdges` by its name, `{"+": add({"name": "Hub-A"})}`, or by its
-  logical ID, `{"+": add({"logicalId": "<logical ID>"})}` (in a rule,
-  `edgeLogicalId`): the other fields of the entry come from the Edge or the hub
+  `backhaul_edges` by its name, `{"+": add({"name": "Hub-A"})}`, or by its
+  logical ID, `{"+": add({"logical_id": "<logical ID>"})}` (in a rule,
+  `edge_logical_id`): the other fields of the entry come from the Edge or the hub
   cluster. A hub added to a rule must be saved first: see "Hubs".
 - A patch that cannot be applied raises `PatchError` (a `ValueError`). Its
   `path` is where in the patch it failed, its `message` the reason, and its
@@ -1442,7 +1442,7 @@ edit needs, then writes the module.
                           "enabled": True,
                           "vpn_hubs": {"+": add({"name": "Hub-A"})},
                       },
-                      "backhaul_edges": {"+": add({"logicalId": "<logical ID>"})},
+                      "backhaul_edges": {"+": add({"logical_id": "<logical ID>"})},
                   }
               }
           }

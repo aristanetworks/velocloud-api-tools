@@ -2637,9 +2637,26 @@ def _fixed_model_dump(spec: _ListSpec, item: object) -> JsonObject:
     return dumped
 
 
-def _fixed_differences(before: JsonObject, after: JsonObject) -> str:
-    """The names of the fields in which two ``_fixed_dump`` s differ, for a message."""
-    return ", ".join(n for n in {**before, **after} if before.get(n) != after.get(n))
+def _model_class(item: object) -> type[VcoModel]:
+    """The class of *item*, a model of a ``FixedList``."""
+    if not isinstance(item, VcoModel):
+        raise TypeError("the item is not a model of a FixedList")
+    return type(item)
+
+
+def _fixed_differences(
+    before: JsonObject, after: JsonObject, model: type[VcoModel]
+) -> str:
+    """The names of the fields in which two ``_fixed_dump`` s differ, for a message.
+
+    Each is the attribute name of *model*'s field for the key, the key itself
+    where *model* has no field for it.
+    """
+    return ", ".join(
+        python_name(model, k) or k
+        for k in {**before, **after}
+        if before.get(k) != after.get(k)
+    )
 
 
 def _fixed_field(path: Path) -> str:
@@ -2737,7 +2754,8 @@ def _check_fixed_change(
     key = item_key(item, spec.key_paths)
     raise PatchError(
         f"{_fixed_rule(spec, path)}: this patch changes "
-        f"{_fixed_differences(before, after)} of {_show_item(spec, item, 0)}. "
+        f"{_fixed_differences(before, after, _model_class(item))} of "
+        f"{_show_item(spec, item, 0)}. "
         "To edit the entry, send the editable fields only, "
         + _fixed_form(spec, "<key>" if key is None else key, path),
         where,
@@ -2797,7 +2815,7 @@ def _check_fixed_value(
             key = item_key(old, spec.key_paths)
             raise PatchError(
                 f"{rule}: the list value changes "
-                f"{_fixed_differences(before, after)} of "
+                f"{_fixed_differences(before, after, _model_class(old))} of "
                 f"{_show_item(spec, old, index)}. "
                 + _alt_key_advice(spec, old, new)
                 + "Give each entry as it is, "

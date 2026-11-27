@@ -359,14 +359,14 @@ def with_additions(raw: object, additions: Sequence[SegmentAddition]) -> object:
         if isinstance(addition, AddedSegment):
             if held:
                 raise ValueError(
-                    f"Segment {addition.name!r} (segmentId {addition.segment_id}) is "
+                    f"Segment {addition.name!r} (segment_id {addition.segment_id}) is "
                     "already in the module's data, so it cannot be added again."
                 )
             segments.append(copy.deepcopy(dict(addition.entry)))
             continue
         if not held:
             raise ValueError(
-                f"The module's data has no segment {addition.name!r} (segmentId "
+                f"The module's data has no segment {addition.name!r} (segment_id "
                 f"{addition.segment_id}) to add defaults to."
             )
         (entry, *_) = held

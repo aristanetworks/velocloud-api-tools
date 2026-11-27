@@ -758,10 +758,10 @@ class ConfigState:
     ) -> AnyStoredModule:
         """The target config's module called *name* (an intent-level name works).
 
-        With ``create=True``, an edge target that has no ``firewall`` or ``QOS``
-        module gets an empty one, which saves as an insert. Nothing is copied
-        from the profile. Raises ``ValueError`` if there is no such module and
-        none can be created.
+        With ``create=True``, an edge target that has no ``firewall`` or
+        ``business_policy`` module gets an empty one, which saves as an insert.
+        Nothing is copied from the profile. Raises ``ValueError`` if there is
+        no such module and none can be created.
         """
         config = self.target_config
         unset = config.modules is MISSING

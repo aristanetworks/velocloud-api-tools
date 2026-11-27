@@ -443,3 +443,15 @@ def test_with_additions_refuses_a_segment_that_is_there_and_defaults_that_have_n
         _ = with_additions(raw, [AddedSegment(0, "Global Segment", qos_entry(GLOBAL))])
     with pytest.raises(ValueError, match="no segment"):
         _ = with_additions(raw, [AddedDefaults(2, "Guest", ())])
+
+
+def test_a_segment_added_twice_is_refused_by_its_segment_id() -> None:
+    raw = {"segments": [{"segment": {"segmentId": 2, "name": "Guest"}}]}
+    entry = {"segment": {"segmentId": 2, "name": "Guest"}}
+    with pytest.raises(ValueError, match=r"'Guest' \(segment_id 2\) is already"):
+        _ = with_additions(raw, (AddedSegment(2, "Guest", entry),))
+
+
+def test_defaults_for_a_segment_the_data_lacks_are_refused_by_its_segment_id() -> None:
+    with pytest.raises(ValueError, match=r"'Guest' \(segment_id 2\) to add defaults"):
+        _ = with_additions({"segments": []}, (AddedDefaults(2, "Guest", ()),))
