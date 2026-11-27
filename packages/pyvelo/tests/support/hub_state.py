@@ -448,6 +448,23 @@ async def edit(state: ConfigState, module: str, patch: dict[str, Any]) -> None:
     _ = await ConfigPipeline(client=None).apply(state, module=module, patch=patch)
 
 
+PORT = {"segments": {"Guest": {"rules": {"Web": {"match": {"dport_low": 443}}}}}}
+
+
+async def edited() -> ConfigState:
+    """``rule_uses_hub`` with an edit in each of its three modules.
+
+    Hub-A is out of Guest's hub lists and out of the rule ``Web``, whose
+    destination port is 443, and the firewall logs.
+    """
+    state = await rule_uses_hub()
+    await edit(state, "deviceSettings", FROM_BOTH_LISTS)
+    await edit(state, "QOS", OUT_OF_THE_RULE)
+    await edit(state, "firewall", {"firewall_logging_enabled": True})
+    await edit(state, "QOS", PORT)
+    return state
+
+
 async def removal_and_its_rule() -> tuple[ConfigPipeline, ModuleStore, ConfigState]:
     state = await rule_uses_hub()
     await edit(state, DS, FROM_BOTH_LISTS)

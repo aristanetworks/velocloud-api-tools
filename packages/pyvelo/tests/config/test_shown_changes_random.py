@@ -23,7 +23,7 @@ from pydantic import MISSING
 from pyvelo.client.exceptions import VcoError
 from pyvelo.client.module_write import ModulePlan
 from pyvelo.config import ConfigFieldChange, ConfigPipeline, add, move
-from pyvelo.config.state import ConfigState
+from pyvelo.config.state import ConfigPlan, ConfigState
 from pyvelo.core import VcoModel, delete, item_part
 from pyvelo.core.base import is_dict
 from pyvelo.core.rebase import (
@@ -303,10 +303,10 @@ def line(change: ConfigFieldChange) -> str:
     return f"  ~ {change.path}: "
 
 
-def check(case: Case) -> int:
-    """Check every change of the list in the plan; the number checked."""
+def check(case: Case, planned: ConfigPlan) -> int:
+    """Check every change of the list in *planned*, the plan; the number checked."""
     state = case.state
-    plans = [m for m in state.plan().modules if m.name == case.module]
+    plans = [m for m in planned.modules if m.name == case.module]
     config = state.target_config
     as_read: object = getattr(config, _ATTRIBUTE[case.module]).raw_data
     checked = 0
@@ -357,11 +357,13 @@ async def run(kind: str, seed: int) -> int:
         else:
             modelled(rng, case)
     try:
-        return check(case)
-    except AssertionError as failed:
-        raise AssertionError(f"{kind} {seed}: {failed}\nedits: {case.log}") from failed
+        planned = case.state.plan()
     except (VcoError, ValueError):
         return 0  # the edits make a module no plan is made of
+    try:
+        return check(case, planned)
+    except AssertionError as failed:
+        raise AssertionError(f"{kind} {seed}: {failed}\nedits: {case.log}") from failed
 
 
 @pytest.mark.parametrize("kind", ["firewall", "deviceSettings"])

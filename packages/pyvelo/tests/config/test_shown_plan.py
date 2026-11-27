@@ -15,9 +15,10 @@ from typing import Any
 import pytest
 from hub_helpers import HUB_A, HUB_B
 from hub_state import (
-    FROM_BOTH_LISTS,
     OUT_OF_THE_RULE,
+    PORT,
     edit,
+    edited,
     guest_backhaul_state,
     hub_backhaul_rule,
     rule_uses_hub,
@@ -70,18 +71,8 @@ device_settings: update
   - segments[Guest].vpn.hub_edges.vpn_hubs[Hub-A]
   - segments[Guest].vpn.backhaul_edges[Hub-A]
   refs: sent as read"""
-PORT = {"segments": {"Guest": {"rules": {"Web": {"match": {"dport_low": 443}}}}}}
 RENAMED = {"segments": {"Guest": {"rules": {"Web": {"name": "Web2"}}}}}
 SECRET = "NTP-key-made-up"
-
-
-async def edited() -> ConfigState:
-    state = await rule_uses_hub()
-    await edit(state, "deviceSettings", FROM_BOTH_LISTS)
-    await edit(state, "QOS", OUT_OF_THE_RULE)
-    await edit(state, "firewall", {"firewall_logging_enabled": True})
-    await edit(state, "QOS", PORT)
-    return state
 
 
 def module_lines(state: ConfigState, name: str) -> list[str]:

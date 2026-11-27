@@ -46,7 +46,7 @@ from pyvelo.core.merge import (
     _validate_field,  # pyright: ignore[reportPrivateUsage]
 )
 from pyvelo.core.names import named_value
-from pyvelo.core.response_check import PlannedChange
+from pyvelo.core.response_check import PlannedChange, ServerChange
 from pyvelo.core.show import shown, shown_together
 from pyvelo.testing import ModuleStore, as_stored, make_module_json, store_of
 
@@ -625,6 +625,30 @@ def test_a_write_error_hides_a_secret_under_a_key_it_shows_by_attribute() -> Non
     hidden = hide_secrets(DeviceSettingsData, lost.path, named)
     assert isinstance(hidden, dict)
     assert hidden["md5_password"] == "***"
+
+
+def test_a_write_error_hides_a_secret_in_an_object_its_line_shows_whole() -> None:
+    """An object of one key, the password: short enough that the line is not cut.
+
+    The lines of the test above are cut before the password, so their text
+    alone would read the same with nothing hidden.
+    """
+    change = ServerChange(NEIGHBOR, {"md5Password": OLD}, {"md5Password": OTHER})
+    error = ModuleWriteError(
+        10,
+        "v1",
+        module_name="deviceSettings",
+        plan=plan_module(rotated()),
+        server_changes=[change],
+    )
+    assert error.render().splitlines()[-1] == (
+        '  segments["Global Segment"].bgp.neighbors["192.0.2.1"]: '
+        'read {"md5_password": "***"}, stored {"md5_password": "***"}'
+    )
+    assert (change.as_read, change.stored) == (
+        {"md5Password": OLD},
+        {"md5Password": OTHER},
+    )
 
 
 def test_a_write_error_hides_what_another_writer_stored() -> None:
