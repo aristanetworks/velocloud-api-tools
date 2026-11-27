@@ -52,9 +52,8 @@ def test_qos_is_not_a_module_name() -> None:
 
 def test_the_python_name_is_importable_beside_the_enum() -> None:
     from pyvelo.config import (  # noqa: PLC0415 (the import is what this test checks)
-        ConfigurationModuleName as Exported,
         python_module_name as exported,
     )
 
-    assert exported(Exported.QOS) == "business_policy"
-    assert type(exported(Exported.DEVICE_SETTINGS)) is str
+    assert exported(ConfigurationModuleName.QOS) == "business_policy"
+    assert type(exported(ConfigurationModuleName.DEVICE_SETTINGS)) is str
