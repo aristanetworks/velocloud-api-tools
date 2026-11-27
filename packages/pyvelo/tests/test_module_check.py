@@ -315,7 +315,7 @@ def test_long_values_are_cut_where_they_differ() -> None:
 def inbound_rows(*names: str) -> list[dict[str, Any]]:
     """Inbound rules as the VCO returns them, each with a ``ruleLogicalId``."""
     return [
-        inbound(name, ruleLogicalId=f"l-{name}").model_dump(mode="json")
+        inbound(name, ruleLogicalId=f"l-{name}").model_dump(mode="json", by_alias=True)
         for name in names
     ]
 
@@ -545,7 +545,7 @@ def test_firewall_rule_id_revised_passes() -> None:
 
 
 def test_a_write_whose_only_changes_are_left_out_passes() -> None:
-    rule = inbound("a", ruleLogicalId="x").model_dump(mode="json")
+    rule = inbound("a", ruleLogicalId="x").model_dump(mode="json", by_alias=True)
     module = fw({**RAW, "inbound": [rule]}, layer=Edge)
     module.data.inbound[0].rule_logical_id = "x2"
     plan = plan_module(module)
@@ -558,7 +558,7 @@ def test_a_write_whose_only_changes_are_left_out_passes() -> None:
 
 
 def test_write_error_lists_what_is_left_out() -> None:
-    rule = inbound("a", ruleLogicalId="x").model_dump(mode="json")
+    rule = inbound("a", ruleLogicalId="x").model_dump(mode="json", by_alias=True)
     module = fw({**RAW, "inbound": [rule]}, layer=Edge)
     plan = plan_module(
         module,
@@ -702,7 +702,7 @@ def owned_id_changed() -> tuple[ConfigurationModuleBase, ModulePlan]:
 
     The VCO owns it.
     """
-    rule = inbound("a", ruleLogicalId="x").model_dump(mode="json")
+    rule = inbound("a", ruleLogicalId="x").model_dump(mode="json", by_alias=True)
     module = fw({**RAW, "inbound": [rule]}, layer=Edge)
     return module, plan_module(
         module, {**RAW, "inbound": [{**rule, "ruleLogicalId": "x2"}]}
@@ -815,7 +815,7 @@ def test_refused_with_a_left_out_change_stored_otherwise_is_a_conflict_too() -> 
 
 
 def test_refused_with_a_change_stored_and_one_left_out_as_read_is_a_conflict() -> None:
-    rule = inbound("a", ruleLogicalId="x").model_dump(mode="json")
+    rule = inbound("a", ruleLogicalId="x").model_dump(mode="json", by_alias=True)
     module = fw({**RAW, "inbound": [rule]}, layer=Edge)
     plan = plan_module(
         module,
@@ -836,7 +836,7 @@ def test_refused_with_a_change_stored_and_one_left_out_as_read_is_a_conflict() -
 def test_a_row_with_nothing_stored_makes_a_left_out_change_as_read_a_lost_edit() -> (
     None
 ):
-    rule = inbound("a", ruleLogicalId="x").model_dump(mode="json")
+    rule = inbound("a", ruleLogicalId="x").model_dump(mode="json", by_alias=True)
     module = fw({**RAW, "inbound": [rule]}, layer=Edge)
     plan = plan_module(
         module, {**RAW, "inbound": [{**rule, "ruleLogicalId": "x2"}], "future": 2}

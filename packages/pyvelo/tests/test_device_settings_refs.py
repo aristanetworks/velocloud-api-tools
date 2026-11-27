@@ -191,7 +191,7 @@ def test_assigning_module_refs_raises_for_qos() -> None:
 @pytest.mark.parametrize("held", [ROW_A, [ROW_A, ROW_B], [ROW_A]])
 def test_a_frozen_refs_dump_is_the_json_read(held: Any) -> None:
     refs = DeviceSettingsRefs.model_validate({SEGMENT_REF_NAME: copy.deepcopy(held)})
-    dumped = refs.model_dump(mode="json", exclude_unset=True)
+    dumped = refs.model_dump(mode="json", by_alias=True, exclude_unset=True)
     assert dumped == {SEGMENT_REF_NAME: held}
     assert isinstance(dumped[SEGMENT_REF_NAME], list) == isinstance(held, list)
 

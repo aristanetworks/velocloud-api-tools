@@ -3,10 +3,10 @@
 import uuid
 from typing import Annotated, Any
 
-from pyvelo.core import Alias, VcoModel, VcoTimestamp
+from pyvelo.core import Alias, ConfigModel, VcoTimestamp
 
 
-class ServiceConfiguration(VcoModel):
+class ServiceConfiguration(ConfigModel):
     bastion_state: str | None = None
     configuration_type: str | None = None
     created: VcoTimestamp | None = None
@@ -22,7 +22,7 @@ class ServiceConfiguration(VcoModel):
     version: str | None = None
 
 
-class ServiceQosUsage(VcoModel):
+class ServiceQosUsage(ConfigModel):
     segment_object_id: int | None = None
     edge_id: int | None = None
     edge_specific_id: int | None = None
@@ -32,7 +32,7 @@ class ServiceQosUsage(VcoModel):
     ref: str | dict[str, Any] | None = None
 
 
-class ServiceEdgeUsage(VcoModel):
+class ServiceEdgeUsage(ConfigModel):
     configuration_id: int | None = None
     edge_specific_id: int | None = None
     name: str | None = None
@@ -42,13 +42,13 @@ class ServiceEdgeUsage(VcoModel):
     vnf_status: dict[str, Any] | None = None
 
 
-class SymantecWssProfileUsage(VcoModel):
+class SymantecWssProfileUsage(ConfigModel):
     id_: Annotated[int | None, Alias("id")] = None
     name: str | None = None
     segment_object_id: int | None = None
 
 
-class SymantecWssLocationUsage(VcoModel):
+class SymantecWssLocationUsage(ConfigModel):
     profiles: list[SymantecWssProfileUsage] | None = None
     location_count: int | None = None
     location_job_count_by_status: dict[str, int] | None = None

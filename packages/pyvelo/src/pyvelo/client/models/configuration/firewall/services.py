@@ -8,10 +8,10 @@ from typing import Annotated
 
 from pydantic import MISSING
 
-from pyvelo.core import Alias, ServerOwned, VcoModel
+from pyvelo.core import Alias, ConfigModel, ServerOwned
 
 
-class SshService(VcoModel):
+class SshService(ConfigModel):
     """SSH access to the Edge, limited to the addresses in one allow list.
 
     The one list, ``allow_selected_ip``, holds IPv4 and IPv6 addresses alike.
@@ -23,14 +23,14 @@ class SshService(VcoModel):
     rule_logical_id: Annotated[str | None | MISSING, ServerOwned()] = MISSING
 
 
-class FirewallServicesGroup(VcoModel):
+class FirewallServicesGroup(ConfigModel):
     enabled: bool
     allow_selected_ip: list[str] | MISSING = MISSING
     allow_selected_ip_v6: list[str] | MISSING = MISSING
     rule_logical_id: Annotated[str | None | MISSING, ServerOwned()] = MISSING
 
 
-class LocalUiService(VcoModel):
+class LocalUiService(ConfigModel):
     enabled: bool
     allow_selected_ip: list[str] | MISSING = MISSING
     allow_selected_ip_v6: list[str] | MISSING = MISSING
@@ -38,12 +38,12 @@ class LocalUiService(VcoModel):
     rule_logical_id: Annotated[str | None | MISSING, ServerOwned()] = MISSING
 
 
-class ConsoleService(VcoModel):
+class ConsoleService(ConfigModel):
     enabled: bool
     rule_logical_id: Annotated[str | None | MISSING, ServerOwned()] = MISSING
 
 
-class FirewallServices(VcoModel):
+class FirewallServices(ConfigModel):
     logging_enabled: bool | MISSING = MISSING
     ssh: SshService | MISSING = MISSING
     snmp: FirewallServicesGroup | MISSING = MISSING

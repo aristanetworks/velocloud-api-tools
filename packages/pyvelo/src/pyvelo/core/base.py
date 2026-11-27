@@ -2,6 +2,7 @@
 
 Provides:
 - VcoModel base class with compact and context-aware serialization
+- ConfigModel: the base of the models that dump by attribute name
 - ``VcoModel.merge_patch``: recursive merge of a partial dict into a model
 - ``VcoModel.mark_detached``: a model a write replaced refuses edits
 - ContextView / ContextFieldInfo for field metadata introspection
@@ -432,7 +433,7 @@ def _propagate_context(value: object, level: ConfigContext) -> None:
 
 
 type _Place = tuple[str | int, ...]
-"""Where a model is from another: dump keys (``str``) and list positions (``int``)."""
+"""Where a model is from another: wire keys (``str``) and list positions (``int``)."""
 
 
 def _models_inside(value: object, place: _Place) -> Iterator[tuple[_Place, BaseModel]]:
@@ -442,7 +443,7 @@ def _models_inside(value: object, place: _Place) -> Iterator[tuple[_Place, BaseM
 
     Walks as ``_propagate_context`` does: fields, extra values, lists and
     dicts. A model comes before the models inside it. A field is named by its
-    dump key (its alias), a dict entry by its key as text, as in a JSON dump.
+    wire key (its alias), a dict entry by its key as text, as in a JSON dump.
     A pydantic model that is not a ``VcoModel`` is yielded and not entered.
     """
     if isinstance(value, BaseModel) and not isinstance(value, VcoModel):
@@ -614,10 +615,23 @@ def _register_parametrization(cls: type[BaseModel]) -> None:
         _ = module.__dict__.setdefault(cls.__qualname__, cls)
 
 
+def _dumps_by_alias(model_cls: type[VcoModel], given: object) -> bool:
+    """Whether a full dump of a *model_cls* names its fields by alias.
+
+    *given* is the caller's ``by_alias``, which is None when the caller did
+    not pass it: the class's own ``serialize_by_alias`` then decides, as it
+    does for the keys pydantic writes.
+    """
+    if given is None:
+        return model_cls.model_config.get("serialize_by_alias") is True
+    return given is True
+
+
 class VcoModel(BaseModel):
     """The base of every VCO model: python field names, camelCase on the wire.
 
-    A model validates by either name and dumps by alias. A dump leaves out the
+    A model validates by either name and dumps by alias (a ``ConfigModel`` by
+    attribute name, unless ``by_alias=True`` is passed). A dump leaves out the
     fields absent at the config level (the pydantic context's ``config_level``, or
     the model's own from ``for_context``), and a compact dump
     (``context={"compact": True}``) leaves out MISSING and default values too.
@@ -729,7 +743,7 @@ class VcoModel(BaseModel):
     def mark_detached(self) -> list[tuple[tuple[str | int, ...], BaseModel]]:
         """Mark this model and every VcoModel inside it as replaced by a write.
 
-        Returns each of them with where it is from here: the dump key of each
+        Returns each of them with where it is from here: the wire key of each
         field on the way, and the position of each list item. It also returns
         each pydantic model inside that is not a ``VcoModel`` (a segment's
         ``vrrp``), without marking it: it has no guard, so an assignment to it
@@ -836,9 +850,9 @@ class VcoModel(BaseModel):
         # models don't inherit this model's level; pydantic serializes them
         # with the same context, and each one falls back to its own level.
         level = context_level if context_level is not None else self.config_context
-        # Full dumps follow model_config (serialize_by_alias=True) unless
-        # by_alias=False is passed.
-        by_alias = info.by_alias is not False
+        # The keys the handler wrote: the caller's by_alias, else what this
+        # class's config says (pydantic reads each model's own config then).
+        by_alias = _dumps_by_alias(type(self), info.by_alias)
         dumped = self._finish_dump(dumped, by_alias=by_alias, compact_value=None)
         if level is None:
             return dumped
@@ -1125,6 +1139,22 @@ class VcoModel(BaseModel):
             raise named.with_traceback(below)
         finally:
             del named, below
+
+
+class ConfigModel(VcoModel):
+    """The base of a model a configuration caller reads: it dumps by attribute name.
+
+    ``model_dump()`` writes each field under its python name, and
+    ``model_dump(by_alias=True)`` under the key the VCO stores: every send to
+    the VCO, and every comparison with what it stores, asks for that itself.
+    A model a field of a ``ConfigModel`` can hold is a ``ConfigModel`` too, so
+    that one dump has one form all the way down.
+
+    A class with a second model base names this one last: pydantic merges the
+    config of the bases in the order written, and the last one wins.
+    """
+
+    model_config: ClassVar[ConfigDict] = ConfigDict(serialize_by_alias=False)
 
 
 # ---------------------------------------------------------------------------

@@ -12,7 +12,7 @@ from pyvelo.client.models.configuration.common import (
     profile_segment_name,
 )
 from pyvelo.client.models.configuration.profile_segments import template_default
-from pyvelo.core import ByPresence, Default, Inheritable, Layered, VcoModel
+from pyvelo.core import ByPresence, ConfigModel, Default, Inheritable, Layered
 from pyvelo.core.fields import KeyField
 from pyvelo.core.layers import L, Profile
 
@@ -21,13 +21,13 @@ from .qoe import QoeSettings
 from .segment import QosSegment
 
 
-class ServiceRateLimit(VcoModel):
+class ServiceRateLimit(ConfigModel):
     enabled: bool = False
     input_type: ServiceRateLimitInputType
     value: int = 1
 
 
-class QosData(Layered[L]):
+class QosData(Layered[L], ConfigModel):
     """The QoS module's data.
 
     The two module-level values are ``Inheritable`` and stored by presence:

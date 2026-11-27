@@ -9,7 +9,7 @@ from typing import Annotated, Any, ClassVar, Literal
 from pydantic import MISSING, ConfigDict
 
 from pyvelo.client.models.configuration.ref import ConfigurationRef
-from pyvelo.core import Alias, VcoModel
+from pyvelo.core import Alias, ConfigModel
 from pyvelo.core.enums import NetworkSegmentType
 
 DeviceSettingsRefName = Literal[
@@ -221,7 +221,7 @@ class DeviceSettingsZscalerSubLocationRef(ConfigurationRef):
 
 
 # Container class for all DeviceSettings refs
-class DeviceSettingsRefs(VcoModel):
+class DeviceSettingsRefs(ConfigModel):
     model_config: ClassVar[ConfigDict] = ConfigDict(frozen=True)
 
     # Authentication

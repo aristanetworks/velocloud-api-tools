@@ -2,16 +2,16 @@
 
 from typing import Literal
 
-from pyvelo.core import VcoModel
+from pyvelo.core import ConfigModel
 
 GatewayMode = Literal["dynamic", "static"]
 
 
-class GatewaySelection(VcoModel):
+class GatewaySelection(ConfigModel):
     primary: str
     secondary: str
     mode: GatewayMode
 
 
-class ControlPlaneData(VcoModel):
+class ControlPlaneData(ConfigModel):
     gateway_selection: GatewaySelection

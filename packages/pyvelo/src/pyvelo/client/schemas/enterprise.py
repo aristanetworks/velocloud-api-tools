@@ -73,6 +73,7 @@ from pyvelo.client.schemas.edge_filters import EdgeGroupFilters
 from pyvelo.client.schemas.enterprise_proxy import EnterpriseProxyResult
 from pyvelo.core import (
     Alias,
+    ConfigModel,
     NoneIsMissing,
     PaginatedVcoModel,
     Tinyint,
@@ -190,7 +191,7 @@ class DeleteEnterpriseService(VcoModel):
     enterprise_id: int | MISSING = MISSING
 
 
-class EnterpriseServiceBase(VcoModel):
+class EnterpriseServiceBase(ConfigModel):
     id_: Annotated[int, Alias("id")]
     enterprise_id: int | MISSING = MISSING
     logical_id: uuid.UUID
@@ -504,7 +505,7 @@ class DeleteObjectGroup(VcoModel):
     enterprise_id: int | MISSING = MISSING
 
 
-class ObjectGroupBase(VcoModel):
+class ObjectGroupBase(ConfigModel):
     id_: Annotated[int, Alias("id")]
     created: VcoTimestamp
     enterprise_id: int | MISSING = MISSING
@@ -546,7 +547,7 @@ class PortObjectGroup(ObjectGroupBase):
     data: list[PortGroupEntry]
 
 
-class IdpsConfiguration(VcoModel):
+class IdpsConfiguration(ConfigModel):
     ids_enabled: bool
     ips_enabled: bool
     log_enabled: bool
@@ -557,7 +558,7 @@ class IdpsObjectGroup(ObjectGroupBase):
     data: IdpsConfiguration
 
 
-class UrlCategoryFilteringConfiguration(VcoModel):
+class UrlCategoryFilteringConfiguration(ConfigModel):
     allow_and_log_categories: list[int]
     blocked_categories: list[int]
     unknown_category_action: Literal["allow", "block"]
@@ -570,7 +571,7 @@ class UrlCategoryFilteringObjectGroup(ObjectGroupBase):
     data: UrlCategoryFilteringConfiguration
 
 
-class UrlReputationFilteringConfiguration(VcoModel):
+class UrlReputationFilteringConfiguration(ConfigModel):
     min_reputation_score: int
     allow_and_log_reputations: list[int]
     unknown_reputation_action: Literal["allow", "block"]
@@ -583,7 +584,7 @@ class UrlReputationFilteringObjectGroup(ObjectGroupBase):
     data: UrlReputationFilteringConfiguration
 
 
-class MaliciousIpFilteringConfiguration(VcoModel):
+class MaliciousIpFilteringConfiguration(ConfigModel):
     action: Literal["allowAndLog", "block"]
 
 
@@ -594,12 +595,12 @@ class MaliciousIpFilteringObjectGroup(ObjectGroupBase):
     data: MaliciousIpFilteringConfiguration
 
 
-class SecurityServiceGroupRef(VcoModel):
+class SecurityServiceGroupRef(ConfigModel):
     id: int
     logical_id: uuid.UUID | MISSING = MISSING
 
 
-class SecurityServiceGroupConfiguration(VcoModel):
+class SecurityServiceGroupConfiguration(ConfigModel):
     idps: SecurityServiceGroupRef | MISSING = MISSING
     url_category_filtering: SecurityServiceGroupRef | MISSING = MISSING
     url_reputation_filtering: SecurityServiceGroupRef | MISSING = MISSING
@@ -655,7 +656,7 @@ class DeleteEnterpriseNetworkSegment(VcoModel):
     enterprise_id: int | MISSING = MISSING
 
 
-class NetworkSegment(VcoModel):
+class NetworkSegment(ConfigModel):
     id_: Annotated[int, Alias("id")]
     created: VcoTimestamp
     enterprise_id: int | MISSING = MISSING

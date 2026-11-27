@@ -6,17 +6,17 @@ from typing import Annotated
 
 from pydantic import MISSING, Field
 
-from pyvelo.core import VcoModel
+from pyvelo.core import ConfigModel
 
 
-class ImageUpdateScheduledTime(VcoModel):
+class ImageUpdateScheduledTime(ConfigModel):
     day_of_week: int
     specified: bool
     time_of_day_mins: int
     use_edge_time_zone: bool
 
 
-class FirmwareImageUpdateData(VcoModel):
+class FirmwareImageUpdateData(ConfigModel):
     build_number: str
     profile_device_family: str
     profile_version: str
@@ -28,7 +28,7 @@ class FirmwareImageUpdateData(VcoModel):
     devicefamily: Annotated[list[str], Field(alias="devicefamily")]
 
 
-class ImageUpdateData(VcoModel):
+class ImageUpdateData(ConfigModel):
     build_number: str
     profile_device_family: str
     profile_version: str

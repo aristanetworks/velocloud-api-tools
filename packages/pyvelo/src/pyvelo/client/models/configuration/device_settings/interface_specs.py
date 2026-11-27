@@ -6,16 +6,16 @@ each of its interfaces, which ``synthesis`` builds a model's interfaces from.
 
 from typing import Annotated, Literal
 
-from pyvelo.core import Alias, VcoModel
+from pyvelo.core import Alias, ConfigModel
 
 
 # Interface Specification Models for Validation
-class InterfaceRate(VcoModel):
+class InterfaceRate(ConfigModel):
     rate: str
     duplex: list[Literal["HALF", "FULL"]]
 
 
-class InterfaceSpec(VcoModel):
+class InterfaceSpec(ConfigModel):
     type_: Annotated[Literal["wired", "usb", "sfp", "cell"], Alias("type")]
     mode: Literal["ROUTED", "SWITCHED"]
     mode_options: list[Literal["ROUTED", "SWITCHED"]]

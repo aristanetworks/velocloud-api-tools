@@ -4,7 +4,7 @@ from typing import Annotated, Any, Literal
 
 from pydantic import Discriminator, Field, Tag
 
-from pyvelo.core import Alias, VcoModel
+from pyvelo.core import Alias, ConfigModel
 
 
 def _address_entry_discriminator(v: Any) -> str:
@@ -19,7 +19,7 @@ def _address_entry_discriminator(v: Any) -> str:
     return "ip"
 
 
-class IpAddressEntry(VcoModel):
+class IpAddressEntry(ConfigModel):
     entry_type: Literal["ip"] = Field(default="ip", exclude=True)
     ip: str
     rule_type: Annotated[
@@ -28,7 +28,7 @@ class IpAddressEntry(VcoModel):
     mask: str
 
 
-class DomainAddressEntry(VcoModel):
+class DomainAddressEntry(ConfigModel):
     entry_type: Literal["domain"] = Field(default="domain", exclude=True)
     domain: str
 
@@ -52,14 +52,14 @@ def _port_entry_discriminator(v: Any) -> str:
     return "icmp"
 
 
-class TcpUdpPortEntry(VcoModel):
+class TcpUdpPortEntry(ConfigModel):
     entry_type: Literal["port"] = Field(default="port", exclude=True)
     proto: Literal[6, 17] = 6
     port_low: Annotated[int, Alias("port_low")]
     port_high: Annotated[int, Alias("port_high")]
 
 
-class IcmpPortEntry(VcoModel):
+class IcmpPortEntry(ConfigModel):
     entry_type: Literal["icmp"] = Field(default="icmp", exclude=True)
     proto: Literal[1, 58] = 1
     type_: Annotated[int | None, Alias("type")] = None

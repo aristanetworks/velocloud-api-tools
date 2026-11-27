@@ -4,22 +4,22 @@ from typing import Annotated
 
 from pydantic import MISSING
 
-from pyvelo.core import Alias, VcoModel
+from pyvelo.core import Alias, ConfigModel
 
 from .common import FirewallInboundRuleActionType, FirewallRuleAction
 
 
-class OutboundRuleAction(VcoModel):
+class OutboundRuleAction(ConfigModel):
     allow_or_deny: Annotated[FirewallRuleAction, Alias("allow_or_deny")]
 
 
-class InboundNatSettings(VcoModel):
+class InboundNatSettings(ConfigModel):
     lan_ip: Annotated[str, Alias("lan_ip")]
     lan_port: Annotated[int | None, Alias("lan_port")] = None
     outbound: bool | MISSING = MISSING
 
 
-class InboundRuleAction(VcoModel):
+class InboundRuleAction(ConfigModel):
     type_: Annotated[FirewallInboundRuleActionType, Alias("type")]
     nat: InboundNatSettings | MISSING = MISSING
     interface: str | MISSING = MISSING

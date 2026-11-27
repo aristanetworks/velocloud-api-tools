@@ -147,7 +147,9 @@ def diff_intents(
     """Compare two lists of intent models by key field.
 
     Returns a DiffResult with Added, Removed, Modified, and Unchanged entries.
-    Uses model_dump(mode="json") for symmetric field-level comparison.
+    Uses model_dump(mode="json") for symmetric field-level comparison: a field
+    that differs is named by the key its model dumps it under, which is the
+    attribute name for a configuration model.
     Raises ``ValueError`` when two items of one side share a key.
     """
     current_by_key = _index_by_key(current, key_field, "current")

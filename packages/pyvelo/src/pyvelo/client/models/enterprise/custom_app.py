@@ -4,10 +4,10 @@ from typing import Annotated
 
 from pydantic import Field
 
-from pyvelo.core import Alias, Tinyint, VcoModel
+from pyvelo.core import Alias, ConfigModel, Tinyint
 
 
-class PortMapping(VcoModel):
+class PortMapping(ConfigModel):
     tcp_ports: list[int | tuple[int, int]] = Field(default_factory=list)
     udp_ports: list[int | tuple[int, int]] = Field(default_factory=list)
 
@@ -16,11 +16,11 @@ class KnownIpPortMapping(PortMapping):
     subnets: list[str] = Field(default_factory=list)
 
 
-class FqdnMapping(VcoModel):
+class FqdnMapping(ConfigModel):
     fqdn_list: Annotated[list[str], Alias("FQDNList")] = Field(default_factory=list)
 
 
-class CustomAppData(VcoModel):
+class CustomAppData(ConfigModel):
     name: str
     display_name: str
     class_: Annotated[int, Alias("class")]

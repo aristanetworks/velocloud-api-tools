@@ -8,12 +8,12 @@ from pyvelo.client.models.configuration.common import SegmentMetadata
 from pyvelo.core import (
     Additive,
     ByFlag,
+    ConfigModel,
     Default,
     Inheritable,
     Layered,
     ProfileOnly,
     Unconverted,
-    VcoModel,
     kind_default,
 )
 from pyvelo.core.fields import FixedList, KeyField
@@ -25,18 +25,18 @@ from .rule import QosRule
 # CoS Mapping Models (Profile only)
 
 
-class CosMappingValue(VcoModel):
+class CosMappingValue(ConfigModel):
     value: int
     ratelimit: bool = False
 
 
-class CosMappingType(VcoModel):
+class CosMappingType(ConfigModel):
     high: CosMappingValue
     normal: CosMappingValue
     low: CosMappingValue
 
 
-class CosMapping(VcoModel):
+class CosMapping(ConfigModel):
     transactional: CosMappingType = Field(
         default_factory=lambda: CosMappingType(
             high=CosMappingValue(value=20),
@@ -62,11 +62,11 @@ class CosMapping(VcoModel):
     override: bool = False
 
 
-class WebProxy(VcoModel):
+class WebProxy(ConfigModel):
     providers: list[Any] = Field(default_factory=list)
 
 
-class QosSegment(Layered[L]):
+class QosSegment(Layered[L], ConfigModel):
     """A segment of the QoS module.
 
     ``rules`` are the edge's own, with the profile's after them in the effective

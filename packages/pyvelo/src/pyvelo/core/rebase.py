@@ -539,7 +539,7 @@ def node_child(node: Node, key: object) -> Node:
 
 
 def wire_keys(model: type[VcoModel], name: str) -> list[str]:
-    """Every JSON key that field *name* of *model* is read from, its dump key first."""
+    """Every JSON key that field *name* of *model* is read from, its wire key first."""
     field_info = model.model_fields.get(name)
     if field_info is None:
         return [name]

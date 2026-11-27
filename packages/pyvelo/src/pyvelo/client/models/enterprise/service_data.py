@@ -11,37 +11,37 @@ from typing import Annotated, Any, ClassVar, Literal
 
 from pydantic import MISSING, ConfigDict, Discriminator, Field
 
-from pyvelo.core import Alias, Secret, VcoModel
+from pyvelo.core import Alias, ConfigModel, Secret
 
 from .common import ProviderCategory, RoutingPolicy, TunnelingProtocol, TunnelMode
 
 
-class RadiusServer(VcoModel):
+class RadiusServer(ConfigModel):
     port: int
     secret: Annotated[str | MISSING, Secret()] = MISSING
     server: str | MISSING = MISSING
     accounting_port: int | Literal[""] | MISSING = MISSING
 
 
-class RadiusAttributeModel(VcoModel):
+class RadiusAttributeModel(ConfigModel):
     id_: Annotated[int, Alias("id")]
     type_: Annotated[str, Alias("type")]
     value: str | int
 
 
-class RadiusServiceData(VcoModel):
+class RadiusServiceData(ConfigModel):
     type_: Annotated[Literal["Radius"], Alias("type")] = "Radius"
     primary: RadiusServer
     secondary: RadiusServer | MISSING = MISSING
     radius_attributes: list[RadiusAttributeModel] | MISSING = MISSING
 
 
-class TacacsServer(VcoModel):
+class TacacsServer(ConfigModel):
     port: int
     server: str
 
 
-class TacacsServiceData(VcoModel):
+class TacacsServiceData(ConfigModel):
     type_: Annotated[Literal["Tacacs"], Alias("type")] = "Tacacs"
     shared_secret: Annotated[str, Secret()]
     servers: list[TacacsServer]
@@ -53,30 +53,30 @@ AuthenticationServiceData = Annotated[
 ]
 
 
-class DnsDomain(VcoModel):
+class DnsDomain(ConfigModel):
     rule: str
     description: str
 
 
-class DnsServiceData(VcoModel):
+class DnsServiceData(ConfigModel):
     is_private: bool | MISSING = MISSING
     domains: list[DnsDomain] | MISSING = MISSING
     ipv4_servers: list[str] | MISSING = MISSING
     ipv6_servers: list[str] | MISSING = MISSING
 
 
-class DataCenterSubnet(VcoModel):
+class DataCenterSubnet(ConfigModel):
     cidr_ip: str | MISSING = MISSING
     cidr_prefix: int | MISSING = MISSING
 
 
-class DataCenterPrimary(VcoModel):
+class DataCenterPrimary(ConfigModel):
     gateway_ip: str | MISSING = MISSING
     provider_gateway_logical_id: uuid.UUID | MISSING = MISSING
     provider_gateway_name: str | MISSING = MISSING
 
 
-class LoadSharingHashParams(VcoModel):
+class LoadSharingHashParams(ConfigModel):
     dest_ip: bool | MISSING = MISSING
     dest_port: bool | MISSING = MISSING
     protocol: bool | MISSING = MISSING
@@ -84,21 +84,21 @@ class LoadSharingHashParams(VcoModel):
     source_port: Annotated[bool | MISSING, Alias("srcPort")] = MISSING
 
 
-class LoadSharingMethod(VcoModel):
+class LoadSharingMethod(ConfigModel):
     algo: Literal["FLOW_BASED", "HASH_BASED", ""] | MISSING = MISSING
     hash_params: LoadSharingHashParams | MISSING = MISSING
 
 
-class DataCenterAuthentication(VcoModel):
+class DataCenterAuthentication(ConfigModel):
     type_: Annotated[Literal["FQDN", "IPv4", "USER_FQDN"], Alias("type")]
     key: str
 
 
-class BgpFilter(VcoModel):
+class BgpFilter(ConfigModel):
     ids: list[str]
 
 
-class BgpNeighbor(VcoModel):
+class BgpNeighbor(ConfigModel):
     id_: Annotated[str, Alias("id")]
     neighbor_as: Annotated[str, Alias("neighborAS")]
     neighbor_ip: str
@@ -109,13 +109,13 @@ class BgpNeighbor(VcoModel):
     outbound_filter: BgpFilter
 
 
-class DataCenterBgpConfig(VcoModel):
+class DataCenterBgpConfig(ConfigModel):
     disabled: bool
     neighbors: list[BgpNeighbor]
     redundant_neighbors: list[BgpNeighbor]
 
 
-class BfdNeighbor(VcoModel):
+class BfdNeighbor(ConfigModel):
     detect_multiplier: int
     local_address: str
     multi_hop: bool
@@ -125,13 +125,13 @@ class BfdNeighbor(VcoModel):
     data_center_public_ip: str
 
 
-class DataCenterBfdConfig(VcoModel):
+class DataCenterBfdConfig(ConfigModel):
     disabled: bool
     neighbors: list[BfdNeighbor]
     redundant_neighbors: list[BfdNeighbor]
 
 
-class DataCenterServiceData(VcoModel):
+class DataCenterServiceData(ConfigModel):
     type_: Annotated[str | MISSING, Alias("type")] = MISSING
     type_alias: str | MISSING = MISSING
     tunnel_mode: str | MISSING = MISSING
@@ -155,24 +155,24 @@ class DataCenterServiceData(VcoModel):
     l7_health_check: dict[str, Any] | MISSING = MISSING
 
 
-class IaasSubscription(VcoModel):
+class IaasSubscription(ConfigModel):
     id_: Annotated[str | MISSING, Alias("id")] = MISSING
     name: str | MISSING = MISSING
 
 
-class AzureVendorSpecificData(VcoModel):
+class AzureVendorSpecificData(ConfigModel):
     client_id: str
     client_secret: Annotated[str, Secret()]
     tenant_id: str
     subscription: IaasSubscription
 
 
-class AzureSubscriptionData(VcoModel):
+class AzureSubscriptionData(ConfigModel):
     vendor: Literal["MicrosoftAzure"] = "MicrosoftAzure"
     vendor_specific_data: AzureVendorSpecificData
 
 
-class ZscalerVendorSpecificData(VcoModel):
+class ZscalerVendorSpecificData(ConfigModel):
     api_host: str
     api_path: str
     api_token: Annotated[str, Secret()]
@@ -181,24 +181,24 @@ class ZscalerVendorSpecificData(VcoModel):
     username: str
 
 
-class ZscalerSubscriptionData(VcoModel):
+class ZscalerSubscriptionData(ConfigModel):
     validated: bool | MISSING = MISSING
     vendor: Literal["Zscaler"] = "Zscaler"
     vendor_specific_data: ZscalerVendorSpecificData
 
 
-class AwsVendorSpecificData(VcoModel):
+class AwsVendorSpecificData(ConfigModel):
     access_key: Annotated[str, Secret()]
     secret_key: Annotated[str, Secret()]
     session_token: Annotated[str | MISSING, Secret()] = MISSING
 
 
-class AwsSubscriptionData(VcoModel):
+class AwsSubscriptionData(ConfigModel):
     vendor: Literal["AWS"] = "AWS"
     vendor_specific_data: AwsVendorSpecificData
 
 
-class SseVendorSpecificData(VcoModel):
+class SseVendorSpecificData(ConfigModel):
     username: str
     password: Annotated[str, Secret()]
     cloud_type: str | MISSING = MISSING
@@ -207,7 +207,7 @@ class SseVendorSpecificData(VcoModel):
     expiry_date: str | MISSING = MISSING
 
 
-class SseSubscriptionData(VcoModel):
+class SseSubscriptionData(ConfigModel):
     validated: bool | MISSING = MISSING
     type_alias: str | MISSING = MISSING
     vendor: Literal["sse"] = "sse"
@@ -223,13 +223,13 @@ IaasSubscriptionData = Annotated[
 ]
 
 
-class NetflowCollectorData(VcoModel):
+class NetflowCollectorData(ConfigModel):
     address: str
     name: str
     port: str | int
 
 
-class NetflowFilterMatch(VcoModel):
+class NetflowFilterMatch(ConfigModel):
     appid: int = -1
     classid: int = -1
     dip: str = "any"
@@ -250,23 +250,23 @@ class NetflowFilterMatch(VcoModel):
     ip_version: Literal["IPv4", "IPv6"] | MISSING = "IPv4"
 
 
-class NetflowFilterAction(VcoModel):
+class NetflowFilterAction(ConfigModel):
     allow_or_deny: Annotated[Literal["allow", "deny"], Alias("allow_or_deny")]
 
 
-class NetflowFilterData(VcoModel):
+class NetflowFilterData(ConfigModel):
     name: str
     match: NetflowFilterMatch
     action: NetflowFilterAction
 
 
-class LocalUiCredentialsData(VcoModel):
+class LocalUiCredentialsData(ConfigModel):
     configuration_id: int | MISSING = MISSING
     password: Annotated[str, Secret()]
     username: str
 
 
-class EdgeRoles(VcoModel):
+class EdgeRoles(ConfigModel):
     edge_hub: bool = Field(..., description="Hub acts as a basic hub")
     edge_to_edge_bridge: bool = Field(
         ..., description="Hub acts as a branch-to-branch VPN hub"
@@ -277,20 +277,20 @@ class EdgeRoles(VcoModel):
     )
 
 
-class EdgeHubServiceData(VcoModel):
+class EdgeHubServiceData(ConfigModel):
     logical_id: uuid.UUID
     roles: EdgeRoles
 
 
-class EdgeHubClusterMemberServiceData(VcoModel):
+class EdgeHubClusterMemberServiceData(ConfigModel):
     logical_id: uuid.UUID
 
 
-class EdgeClusterConfig(VcoModel):
+class EdgeClusterConfig(ConfigModel):
     roles: EdgeRoles
 
 
-class EdgeHubClusterServiceData(VcoModel):
+class EdgeHubClusterServiceData(ConfigModel):
     model_config: ClassVar[ConfigDict] = ConfigDict(extra="allow")
 
     auto_rebalance: bool | MISSING = MISSING
@@ -313,7 +313,7 @@ class EdgeHubClusterServiceData(VcoModel):
 # Cloud Security Service Models (provider-specific discriminated unions)
 
 
-class BaseCloudSecurityCredentials(VcoModel):
+class BaseCloudSecurityCredentials(ConfigModel):
     username: str
     password: Annotated[str, Secret()]
     validated: bool
@@ -329,7 +329,7 @@ class ZscalerCloudSecurityCredentials(BaseCloudSecurityCredentials):
     api_token: Annotated[str | MISSING, Secret()] = MISSING
 
 
-class L7HealthCheck(VcoModel):
+class L7HealthCheck(ConfigModel):
     enabled: bool | MISSING = MISSING
     cloud: str | None | MISSING = MISSING
     num_of_retries: int | MISSING = MISSING
@@ -337,7 +337,7 @@ class L7HealthCheck(VcoModel):
     rtt_threshold_ms: int | MISSING = MISSING
 
 
-class BaseCloudSecurityConfig(VcoModel):
+class BaseCloudSecurityConfig(ConfigModel):
     enable_tunnels: bool
     primary_server: str
     secondary_server: str | None
@@ -364,7 +364,7 @@ class ZscalerCloudSecurityConfig(BaseCloudSecurityConfig):
     tunneling_protocol: TunnelingProtocol | MISSING = MISSING
 
 
-class GenericCloudSecurityServiceData(VcoModel):
+class GenericCloudSecurityServiceData(ConfigModel):
     provider: Literal["genericCloudSecurityService"] = "genericCloudSecurityService"
     type_: Annotated[Literal["cloudSecurityService"], Alias("type")] = (
         "cloudSecurityService"
@@ -372,7 +372,7 @@ class GenericCloudSecurityServiceData(VcoModel):
     config: GenericCloudSecurityConfig
 
 
-class SymantecCloudSecurityServiceData(VcoModel):
+class SymantecCloudSecurityServiceData(ConfigModel):
     provider: Literal["symantecCloudSecurityService"] = "symantecCloudSecurityService"
     type_: Annotated[Literal["cloudSecurityService"], Alias("type")] = (
         "cloudSecurityService"
@@ -380,7 +380,7 @@ class SymantecCloudSecurityServiceData(VcoModel):
     config: SymantecCloudSecurityConfig
 
 
-class ZscalerCloudSecurityServiceData(VcoModel):
+class ZscalerCloudSecurityServiceData(ConfigModel):
     provider: Literal["zscalerWebSecurityService"] = "zscalerWebSecurityService"
     type_: Annotated[Literal["cloudSecurityService"], Alias("type")] = (
         "cloudSecurityService"
@@ -399,12 +399,12 @@ CloudSecurityServiceData = Annotated[
 # NVS Via Edge Service Models (Network Virtual Service - IPSec/GRE tunnels)
 
 
-class PeerIkeId(VcoModel):
+class PeerIkeId(ConfigModel):
     ike_id: str | MISSING = MISSING
     ike_id_type: Literal["FQDN", "IP"] | MISSING = MISSING
 
 
-class IkeProperties(VcoModel):
+class IkeProperties(ConfigModel):
     dh_group: Annotated[int | MISSING, Alias("DHGroup")] = MISSING
     pfs: Annotated[int | MISSING, Alias("PFS")] = MISSING
     authentication_algorithm: str
@@ -418,7 +418,7 @@ class IkeProperties(VcoModel):
     peer_ike_id: PeerIkeId | MISSING = MISSING
 
 
-class IpsecProperties(VcoModel):
+class IpsecProperties(ConfigModel):
     authentication_algorithm: str
     encryption_algorithm: str
     ipsec_tunnel_type: str
@@ -426,7 +426,7 @@ class IpsecProperties(VcoModel):
     protocol: str
 
 
-class NvsSubnet(VcoModel):
+class NvsSubnet(ConfigModel):
     cidr_ip: str | MISSING = MISSING
     cidr_prefix: str | int | MISSING = MISSING
     net_mask: str | MISSING = MISSING
@@ -435,37 +435,37 @@ class NvsSubnet(VcoModel):
     metric: int | MISSING = MISSING
 
 
-class SubnetList(VcoModel):
+class SubnetList(ConfigModel):
     subnets: list[NvsSubnet]
     always_reachable: bool | MISSING = MISSING
     version: str | MISSING = MISSING
 
 
-class BgpConfig(VcoModel):
+class BgpConfig(ConfigModel):
     enabled: bool
 
 
-class AwsTransitGatewayVendorData(VcoModel):
+class AwsTransitGatewayVendorData(ConfigModel):
     region_id: str
     transit_gateway_id: str
     transit_vpc_id: str
     vcp_attachment_id: str
 
 
-class IaasProvider(VcoModel):
+class IaasProvider(ConfigModel):
     vendor: Literal["aws"] = "aws"
     subscription_object_logical_id: uuid.UUID
     vendor_specific_data: AwsTransitGatewayVendorData
 
 
-class Keepalive(VcoModel):
+class Keepalive(ConfigModel):
     type_: Annotated[Literal["GRE", "IPSEC"], Alias("type")]
     enabled: bool
     interval_secs: int
     retries: int
 
 
-class IkeNvsServer(VcoModel):
+class IkeNvsServer(ConfigModel):
     nvs_public_ip: str
     local_link_ip: str
     peer_link_ip: str
@@ -478,7 +478,7 @@ class IkeNvsBackupServer(IkeNvsServer):
     same_tunnel_settings_as_primary: bool | MISSING = MISSING
 
 
-class AwsNvsServer(VcoModel):
+class AwsNvsServer(ConfigModel):
     nvs_public_ip: str
     address_family: Literal["IPv4", "IPv6"]
 
@@ -492,7 +492,7 @@ class AwsNvsBackupServer(AwsNvsServer):
     ] = MISSING
 
 
-class AwsTransitGatewayServiceData(VcoModel):
+class AwsTransitGatewayServiceData(ConfigModel):
     provider: Literal["AWSTransitGateway"] = "AWSTransitGateway"
     type_: Annotated[Literal["AWSTransitGateway"], Alias("type")] = "AWSTransitGateway"
     automate_deployment: bool
@@ -516,7 +516,7 @@ class AwsTransitGatewayServiceData(VcoModel):
     keepalive: Keepalive
 
 
-class GenericIkev1RouterServiceData(VcoModel):
+class GenericIkev1RouterServiceData(ConfigModel):
     provider: Literal["genericIKEv1Router"] = "genericIKEv1Router"
     type_: Annotated[Literal["genericIKEv1Router"], Alias("type")] = (
         "genericIKEv1Router"
@@ -540,7 +540,7 @@ class GenericIkev1RouterServiceData(VcoModel):
     backup_server: IkeNvsBackupServer
 
 
-class GenericIkev2RouterServiceData(VcoModel):
+class GenericIkev2RouterServiceData(ConfigModel):
     provider: Literal["genericIKEv2Router"] = "genericIKEv2Router"
     type_: Annotated[Literal["genericIKEv2Router"], Alias("type")] = (
         "genericIKEv2Router"
@@ -564,7 +564,7 @@ class GenericIkev2RouterServiceData(VcoModel):
     backup_server: IkeNvsBackupServer
 
 
-class GenericNvsViaEdgeServiceData(VcoModel):
+class GenericNvsViaEdgeServiceData(ConfigModel):
     model_config: ClassVar[ConfigDict] = ConfigDict(extra="allow")
 
     provider: Literal["symantecSase", "microsoftAzureVirtualWan"]
@@ -582,17 +582,17 @@ NvsViaEdgeServiceData = Annotated[
 # Prefix Tag Service Models
 
 
-class PrefixTagData(VcoModel):
+class PrefixTagData(ConfigModel):
     pass
 
 
-class WssIaasProvider(VcoModel):
+class WssIaasProvider(ConfigModel):
     subscription_object_name: str
     subscription_object_logical_id: uuid.UUID
     vendor: Literal["sse"] = "sse"
 
 
-class WssIntegrationData(VcoModel):
+class WssIntegrationData(ConfigModel):
     type_: Annotated[Literal["sse"], Alias("type")] = "sse"
     type_alias: Literal["symantecSase"] = "symantecSase"
     provider: Literal["symantecSase"] = "symantecSase"

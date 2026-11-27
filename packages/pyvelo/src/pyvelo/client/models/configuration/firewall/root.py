@@ -19,12 +19,12 @@ from pyvelo.core import (
     Alias,
     Authority,
     ByPresence,
+    ConfigModel,
     Default,
     Inheritable,
     Layered,
     MemberOf,
     Unconverted,
-    VcoModel,
     kind_default,
 )
 from pyvelo.core.fields import DefaultingScalar, KeyField
@@ -46,7 +46,7 @@ def profile_false_wins(profile_value: object) -> bool:
     return profile_value is False
 
 
-class StatefulLocal(VcoModel):
+class StatefulLocal(ConfigModel):
     """What the group ``stateful`` stores when it is local.
 
     Every member, all required.
@@ -57,7 +57,7 @@ class StatefulLocal(VcoModel):
     stateful_firewall_enabled: bool
 
 
-class NetworkProtectionLocal(VcoModel):
+class NetworkProtectionLocal(ConfigModel):
     """What the group ``network_protection`` stores when it is local.
 
     Every member, all required.
@@ -67,14 +67,14 @@ class NetworkProtectionLocal(VcoModel):
     network_protection_settings_v6: NetworkProtectionSettings
 
 
-class AtpLocal(VcoModel):
+class AtpLocal(ConfigModel):
     """What the group ``atp`` stores when it is local: every member, all required."""
 
     atp_enabled: bool
     security_features: SecurityFeatureSettings
 
 
-class FirewallData(Layered[L]):
+class FirewallData(Layered[L], ConfigModel):
     """The firewall module's data.
 
     The module-level values are ``Inheritable``: the edge may store its own, in

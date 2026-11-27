@@ -12,7 +12,7 @@ from pyvelo.client.models.configuration.common import (
     ServiceGroupRef,
     VlanType,
 )
-from pyvelo.core import Alias, VcoModel
+from pyvelo.core import Alias, ConfigModel
 from pyvelo.core.fields import Normalizer, Resolvable
 from pyvelo.core.identity import (
     AddressGroupIdentity,
@@ -35,7 +35,7 @@ OutboundServiceGroupRef = Annotated[
 ]
 
 
-class OutboundRuleMatch(VcoModel):
+class OutboundRuleMatch(ConfigModel):
     # IP addressing
     ip_version: AddressType = "IPv4"
     source_ip: Annotated[str | MISSING, Alias("sip")] = "any"
@@ -114,7 +114,7 @@ class OutboundRuleMatch(VcoModel):
     vlan_type: Annotated[VlanType, Alias("vlan_type")] = "end-to-end"
 
 
-class InboundRuleMatch(VcoModel):
+class InboundRuleMatch(ConfigModel):
     # IP addressing
     ip_version: AddressType = "IPv4"
     source_ip: Annotated[str, Alias("sip")] = "any"
@@ -151,7 +151,7 @@ class InboundRuleMatch(VcoModel):
     destination_port_group: Annotated[ServiceGroupRef, Alias("d_port_group")] = MISSING
 
 
-class InboundRuleMatchV6(VcoModel):
+class InboundRuleMatchV6(ConfigModel):
     # IP addressing
     ip_version: AddressType = "IPv6"
     destination_ip_v6: Annotated[str, Alias("dipV6")] = "any"

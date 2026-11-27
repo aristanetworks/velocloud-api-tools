@@ -3,10 +3,10 @@
 import uuid
 from typing import Annotated
 
-from pyvelo.core import Alias, Tinyint, VcoModel, VcoTimestamp
+from pyvelo.core import Alias, ConfigModel, Tinyint, VcoTimestamp
 
 
-class Gateway(VcoModel):
+class Gateway(ConfigModel):
     id_: Annotated[int | None, Alias("id")] = None
     created: VcoTimestamp | None = None
     name: str | None = None

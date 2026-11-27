@@ -4,12 +4,12 @@ from typing import Annotated
 
 from pydantic import Field
 
-from pyvelo.core import Alias, VcoModel
+from pyvelo.core import Alias, ConfigModel
 
 from .common import FlowPriority, ServiceClass
 
 
-class QosScheduler(VcoModel):
+class QosScheduler(ConfigModel):
     bandwidth: int = -1
     bandwidth_cap_percent: Annotated[int, Alias("bandwidthCapPct")] = -1
     queue_length: Annotated[int, Alias("queueLen")] = -1
@@ -18,7 +18,7 @@ class QosScheduler(VcoModel):
     priority: FlowPriority = "normal"
 
 
-class QosSettings(VcoModel):
+class QosSettings(ConfigModel):
     type_: Annotated[ServiceClass, Alias("type")] = "transactional"
     rx_scheduler: QosScheduler = Field(default_factory=QosScheduler)
     tx_scheduler: QosScheduler = Field(default_factory=QosScheduler)

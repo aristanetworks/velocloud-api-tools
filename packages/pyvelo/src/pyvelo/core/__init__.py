@@ -1,7 +1,8 @@
 """VcoModel base class, field declaration toolkit, and API types.
 
 This package is split into these submodules:
-- base: VcoModel base class, serialization, and API types
+- base: VcoModel base class, ConfigModel (the models that dump by attribute name),
+  serialization, and API types
 - fields: Field declaration markers, validators, and helpers
 - identity: NewType ID aliases and identity dataclasses
 - patch: the patch helpers (add, delete, move, at) and PatchError
@@ -34,6 +35,7 @@ from .base import (
     ApiFiltersOr,
     ApiGroupFilters,
     ApiInterval,
+    ConfigModel,
     ContextFieldInfo,
     ContextView,
     IdentityLookup,
@@ -236,6 +238,7 @@ __all__ = [
     "CoerceInt",
     "Composed",
     "ConfigContext",
+    "ConfigModel",
     "ContextDefault",
     "ContextDefaults",
     "ContextFieldInfo",

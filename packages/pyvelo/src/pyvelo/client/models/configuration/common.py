@@ -16,7 +16,7 @@ from pydantic import MISSING
 
 from pyvelo.client.enums.enterprise import NetworkSegmentType
 from pyvelo.client.exceptions import UnboundError
-from pyvelo.core import Alias, ConfigContext, VcoModel
+from pyvelo.core import Alias, ConfigContext, ConfigModel
 from pyvelo.core.base import (
     is_dict,
     is_list,
@@ -49,7 +49,7 @@ ServiceGroupRef = Annotated[
 ]
 
 
-class SegmentMetadata(VcoModel):
+class SegmentMetadata(ConfigModel):
     segment_id: Annotated[int, Resolvable(SegmentIdentity, lambda i: i.segment_id)] = 0
     name: Annotated[str, NameOf(SegmentIdentity)]
     type_: Annotated[
