@@ -1,9 +1,17 @@
 """Tests for the KeyField Annotated marker."""
 
+from collections.abc import Callable
 from typing import Annotated
 
+import pytest
 from pydantic import Field
-from pyvelo.core import VcoModel
+from pyvelo.client.models.configuration.device_settings.lan import LanSettings
+from pyvelo.client.models.configuration.device_settings.segment import (
+    NetflowCollector,
+    SegmentNetflow,
+    SegmentOspf,
+)
+from pyvelo.core import VcoModel, item_selector, select_items
 from pyvelo.core.fields import KeyField, get_key_spec
 
 
@@ -75,3 +83,75 @@ class TestKeyFieldMarker:
             {"segments": [{"name": "Global", "segmentId": 0}]}
         )
         assert m.segments[0].name == "Global"
+
+
+_FIRST_ID = "11111111-1111-4111-8111-111111111111"
+_SECOND_ID = "22222222-2222-4222-8222-222222222222"
+_THIRD_ID = "33333333-3333-4333-8333-333333333333"
+_IDS = (_FIRST_ID, _SECOND_ID, _THIRD_ID)
+_NAMES = ("Corp", "Lab", "Lab")
+
+
+def _lan() -> VcoModel:
+    networks = [
+        {"vlanId": vlan, "name": name}
+        for vlan, name in zip((10, 20, 30), _NAMES, strict=True)
+    ]
+    return LanSettings.model_validate({"networks": networks})
+
+
+def _ospf() -> VcoModel:
+    areas = [
+        {"id": area, "name": name} for area, name in zip((1, 2, 3), _NAMES, strict=True)
+    ]
+    return SegmentOspf.model_validate({"areas": areas})
+
+
+def _netflow_filters() -> VcoModel:
+    filters = [
+        {"logicalId": logical_id, "name": name, "type": "IPFIX"}
+        for logical_id, name in zip(_IDS, _NAMES, strict=True)
+    ]
+    return NetflowCollector.model_validate(
+        {
+            "logicalId": _FIRST_ID,
+            "name": "Collector",
+            "type": "IPFIX",
+            "filterList": filters,
+        }
+    )
+
+
+def _netflow_collectors() -> VcoModel:
+    collectors = [
+        {"logicalId": logical_id, "name": name, "type": "IPFIX"}
+        for logical_id, name in zip(_IDS, _NAMES, strict=True)
+    ]
+    return SegmentNetflow.model_validate({"enabled": False, "collectors": collectors})
+
+
+@pytest.mark.parametrize(
+    ("build", "field", "second_key"),
+    [
+        (_lan, "networks", "20"),
+        (_ospf, "areas", "2"),
+        (_netflow_filters, "filter_list", _SECOND_ID),
+        (_netflow_collectors, "collectors", _SECOND_ID),
+    ],
+    ids=["lan-networks", "ospf-areas", "netflow-filters", "netflow-collectors"],
+)
+def test_an_item_with_a_name_is_named_by_it(
+    build: Callable[[], VcoModel], field: str, second_key: str
+) -> None:
+    holder = build()
+    assert item_selector(holder, field, 0) == "Corp"
+    assert select_items(holder, field, "Corp") == [0]
+    assert item_selector(holder, field, 1) == second_key
+
+
+def test_an_ospf_area_read_without_a_name_is_selected_by_the_empty_text() -> None:
+    holder = SegmentOspf.model_validate(
+        {"areas": [{"id": 1, "name": "Corp"}, {"id": 2}]}
+    )
+    assert holder.areas[1].name == ""
+    assert select_items(holder, "areas", "") == [1]

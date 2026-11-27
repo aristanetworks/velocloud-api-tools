@@ -256,7 +256,7 @@ class SegmentOspfArea(VcoModel):
 class SegmentOspfBase(VcoModel):
     aggregation: list[OspfAggregation] = Field(default_factory=list)
     enabled: bool = False
-    areas: Annotated[list[SegmentOspfArea], KeyField("id_")] = Field(
+    areas: Annotated[list[SegmentOspfArea], KeyField("id_", label="name")] = Field(
         default_factory=list
     )
     default_routes: AdvertiseDefaultRoutes = "NONE"
@@ -661,9 +661,9 @@ class NetflowCollectorFilter(VcoModel):
 
 class NetflowCollector(VcoModel):
     allow_all_segment: bool = False
-    filter_list: Annotated[list[NetflowCollectorFilter], KeyField("logical_id")] = (
-        Field(default_factory=list)
-    )
+    filter_list: Annotated[
+        list[NetflowCollectorFilter], KeyField("logical_id", label="name")
+    ] = Field(default_factory=list)
     logical_id: uuid.UUID
     name: str
     source_interface: str = ""
@@ -687,9 +687,9 @@ class SegmentNetflow(VcoModel):
     enabled: bool
     override: Annotated[bool, OverrideFlag] = True
     version: int = 10
-    collectors: Annotated[list[NetflowCollector], KeyField("logical_id")] = Field(
-        default_factory=list
-    )
+    collectors: Annotated[
+        list[NetflowCollector], KeyField("logical_id", label="name")
+    ] = Field(default_factory=list)
     intervals: SegmentNetflowIntervals = Field(default_factory=SegmentNetflowIntervals)
 
     @model_validator(mode="after")
