@@ -22,7 +22,7 @@ from pydantic import MISSING
 from pyvelo.client.enums.configuration import python_module_name
 from pyvelo.core.base import VcoModel, field_models, is_list, wire_name
 from pyvelo.core.changes import patch_of
-from pyvelo.core.names import named_path, named_value
+from pyvelo.core.names import named_path, named_value, shown_value
 from pyvelo.core.patch import selector_of
 from pyvelo.core.rebase import (
     ItemMove,
@@ -1180,7 +1180,8 @@ class ModuleWriteError(VcoError):
         by what names it in the data as planned, and an item the plan removes
         in the data as read. So a lost edit has the path of the plan's line
         for that change, and the path is one ``apply`` takes. An object among
-        the values has its keys by attribute name.
+        the values has its keys by attribute name, and a secret is ``"***"``
+        at any depth (``shown_value``): ``lost_edits`` keeps the values.
 
         A refs entry is returned as it is: its keys are data, and its line
         names a row the plan adds or removes as the plan's line does
@@ -1202,7 +1203,7 @@ class ModuleWriteError(VcoError):
         stored = (
             plan.shown_names(change.path, change.stored)
             if change.moves is not None
-            else named_value(change.stored, plan.model, change.path)
+            else shown_value(change.stored, plan.model, change.path)
         )
         return replace(
             change,
@@ -1249,7 +1250,8 @@ class ModuleWriteError(VcoError):
         it; so is one whose sent item the stored module lacks (*dropped*): a
         position there may be written as that item's was. A text that is no
         item's name is kept too. An object among the values has its keys by
-        attribute name.
+        attribute name, and a secret is ``"***"`` at any depth
+        (``shown_value``): ``server_changes`` keeps the values.
 
         A refs entry is returned as it is: no server change is a row of the
         plan, so its line keeps its path (``_where``). So is every change of
@@ -1280,7 +1282,7 @@ class ModuleWriteError(VcoError):
                     ],
                 ]
         as_read, stored = (
-            named_value(value, plan.model, change.path) for value in values
+            shown_value(value, plan.model, change.path) for value in values
         )
         return replace(change, path=path, as_read=as_read, stored=stored)
 

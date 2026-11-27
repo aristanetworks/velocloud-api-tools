@@ -142,7 +142,7 @@ from pyvelo.core.base import (
 from pyvelo.core.fixed_list import fixed_list_violations
 from pyvelo.core.layers import Edge, Layered, Profile
 from pyvelo.core.merge import nested_under
-from pyvelo.core.names import ChangeNames, named_path, named_value
+from pyvelo.core.names import ChangeNames, named_path, shown_value
 from pyvelo.core.owned import UnflaggedInUse, unflagged_in_use_at
 from pyvelo.core.rebase import (
     ItemMove,
@@ -476,8 +476,9 @@ class ModulePlan:
         of a move and the values of an order entry (the item names in the
         order read and in the new order) are items of the list as planned,
         each shown by the part ``named`` shows that item by
-        (``_shown_items``). A value is written by ``named_value``, with its
-        keys by attribute name. ``render`` writes each line from it but an
+        (``_shown_items``). A value is written by ``shown_value``, with its
+        keys by attribute name and every secret in it as ``"***"``; the change
+        given keeps the values. ``render`` writes each line from it but an
         order line, which names only the moves it prints, by the same
         ``_shown_items``; ``ConfigState.get_field_changes`` is made of them.
         """
@@ -496,8 +497,8 @@ class ModulePlan:
             place = self._named_place(place, self._shown_items(items))
         return RawChange(
             path,
-            named_value(change.before, self.model, change.path),
-            named_value(change.after, self.model, change.path),
+            shown_value(change.before, self.model, change.path),
+            shown_value(change.after, self.model, change.path),
             place=place,
         )
 

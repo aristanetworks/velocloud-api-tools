@@ -274,11 +274,22 @@ async def test_the_state_with_a_password_plans_nothing_and_takes_a_new_one() -> 
     assert change.path == (
         f'segments["Global Segment"].bgp.neighbors["{NEIGHBOR_IP}"].md5_password'
     )
-    assert (change.before, change.after) == (OLD, NEW)
+    assert (change.before, change.after) == ("***", "***")
     _ = await pipeline.save(state)
     sent = json.dumps(store.requests)
     assert NEW in sent
     assert OLD not in sent
+
+
+async def test_a_field_change_shows_no_secret() -> None:
+    state = await state_with_a_bgp_password(OLD)
+    _ = await ConfigPipeline(client=None).apply(
+        state, module="device_settings", patch=NEW_PASSWORD_PATCH
+    )
+    changes = state.get_field_changes()
+    assert changes
+    assert not any(secret in repr(changes) for secret in (OLD, NEW))
+    assert ("***", "***") in [(change.before, change.after) for change in changes]
 
 
 # --- The pair on a configuration: the laws, and what a document may hold -----

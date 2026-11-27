@@ -1052,7 +1052,8 @@ firewall: update
   and from how its changes paired the items of each list
   (`ModulePlan.paired_lists`), so a plan you keep while you edit further
   still names each item as it was then. `ModulePlan.shown_change(change)` is
-  one of those changes as `render()` shows it. `ModulePlan.ref_row_name(change)`
+  one of those changes as `render()` shows it, with every secret in its values
+  as `"***"`; the change itself keeps them. `ModulePlan.ref_row_name(change)`
   names a row of `ModulePlan.ref_changes` as its `refs` line does;
   `ModulePlan.ref_change_of(entry)` is the row of `ref_changes` that a refs
   entry of a write error is (None for a row the VCO added or dropped, and for
@@ -1061,7 +1062,8 @@ firewall: update
   lists the same changes in the same names, through the same naming, so a
   line and its field change never differ: a `ConfigFieldChange` has the
   module's Python name as `module`, the line's path as `path`, `before` and
-  `after` with their keys by attribute name, and the items of a move, a place
+  `after` with their keys by attribute name and every secret as `"***"`, as
+  the line has them, and the items of a move, a place
   and an order entry's `before` and `after` named as the line names them.
 - The plan lists the modules in the order a save writes them. The device
   settings are written first, and the role steps right before them; in a save
@@ -2023,7 +2025,7 @@ is any difference in the rows of the refs the VCO's own processors manage.
 | `sent` | on `ConfigConflictError`: False when nothing was sent, because the version read before a write found the module changed (or gone): a write that carries refs, or one after a profile's device settings, where a path you edited was also changed |
 | `completed` | the writes of the same save before this one, which are stored |
 | `redo_patch(include_clashes=False)` | the patch that redoes the lost edits on `module`, for `apply(state, module=error.module_name, patch=...)`: every field by its attribute name, every stored item by the name the stored list shows it by, the values complete |
-| `not_redone(include_clashes=False)` | the lost edits that patch leaves out, each as the message shows it |
+| `not_redone(include_clashes=False)` | the lost edits that patch leaves out, each as the message shows it, a secret as `"***"` |
 
 A planned change counts as stored when the VCO holds the value you meant,
 whoever put it there: an edit that another writer made identically is under
@@ -2033,7 +2035,9 @@ The entries are `PlannedChange` and `ServerChange`, which `pyvelo.config`
 exports (they are defined in `pyvelo.core.response_check`). An entry is as the
 check made it: its `path` names a field by the VCO's key and an item by its
 key, and its values are as stored. The entries of `not_redone()` alone are as
-the message shows them (below). For a lost or stored edit,
+the message shows them (below), and a secret among their values is `"***"`, as
+in the message: `lost_edits` holds the secret, and `redo_patch()` writes it in
+full. For a lost or stored edit,
 `error.plan.named(change.path, removed=change.intended is MISSING)` is the path
 the message shows; `change.python_path(type(data))`, with `data` the module's
 data (`state.module("firewall").data`), renames the fields only, and keeps each
@@ -2331,9 +2335,9 @@ Known limits:
   A validator reports on the whole state, so an error in a module the save does
   not write blocks the save too; the error names the module (`module`) and
   the place (`path`).
-- `ConfigState`, the module objects, field changes (`get_field_changes`),
-  validation messages, and the change objects of a plan, of a `SaveResult` and
-  of a write error (`before`, `after`, `as_read`, `intended`, `stored`) hold
+- `ConfigState`, the module objects, validation messages, and the change
+  objects of a plan (`ModulePlan.changes`), of a `SaveResult` and of a write
+  error's lists (`before`, `after`, `as_read`, `intended`, `stored`) hold
   complete configuration values, including addresses and configuration
   secrets. So does a patch from `redo_patch()`. Redact them before logging,
   sharing, or committing exports. This library does not persist configuration
@@ -2348,7 +2352,9 @@ Known limits:
   (it still holds the validators' messages). A response that fails to parse
   raises pydantic's `ValidationError` without the input in its text;
   `error.errors()` still has it. A model's `named_dump()` shows the same mask
-  by the same marks (see "Dumps"). Nothing else is hidden. A secret is printed
+  by the same marks (see "Dumps"), and so do the values pyvelo shows of a
+  change: the field changes (`get_field_changes`), `ModulePlan.shown_change`
+  and the entries of a write error's `not_redone()`. Nothing else is hidden. A secret is printed
   as it is in two places: under a key the models do not know, which includes
   everything inside a field typed `dict[str, Any]` (`EdgeZscaler.deployment`,
   a WAN link's `private_network`), and in the data of a module whose data is

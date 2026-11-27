@@ -6,7 +6,7 @@ import json
 import re
 import traceback
 import types
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from typing import Annotated, Any, Literal, cast, get_args
 
 import pytest
@@ -43,12 +43,14 @@ from pyvelo.core import (
     Positional,
     Secret,
     VcoModel,
+    add,
     hide_secrets,
     is_secret,
     list_kind,
     restore_secrets,
     shown_value,
 )
+from pyvelo.core.base import is_dict
 from pyvelo.core.layers import Edge, field_kind
 from pyvelo.core.merge import (
     _list_spec,  # pyright: ignore[reportPrivateUsage]
@@ -580,6 +582,71 @@ def test_a_plan_made_from_a_dict_hides_secrets_too() -> None:
     assert 'snmp.v2c.community: "***" -> "***"' in text
 
 
+def test_a_shown_change_hides_the_secret_and_the_change_keeps_it() -> None:
+    plan = plan_module(rotated())
+    (change,) = plan.changes
+    seen = plan.shown_change(change)
+    assert (change.before, change.after) == (OLD, NEW)
+    assert (seen.before, seen.after) == ("***", "***")
+
+
+def neighbor_added() -> DeviceSettingsConfigurationModule:
+    """Device settings with a BGP neighbour added, its password ``NEW``."""
+    module = ds(settings(neighbor(OLD)))
+    bgp = require_present(module.data.segments[0].bgp)
+    _ = bgp.merge_patch(
+        {
+            "neighbors": {
+                "+": add(
+                    {
+                        "neighbor_ip": "192.0.2.9",
+                        "neighbor_as": "65002",
+                        "md5_password": NEW,
+                    }
+                )
+            }
+        }
+    )
+    return module
+
+
+def test_a_shown_change_hides_a_secret_inside_an_added_item() -> None:
+    plan = plan_module(neighbor_added())
+    shown = [plan.shown_change(change) for change in plan.changes]
+    assert NEW in json.dumps([change.after for change in plan.changes], default=str)
+    assert NEW not in json.dumps([seen.after for seen in shown], default=str)
+    assert any(
+        is_dict(seen.after) and seen.after.get("md5_password") == "***"
+        for seen in shown
+    )
+
+
+@pytest.mark.parametrize("module", [rotated, neighbor_added])
+def test_a_shown_change_holds_what_the_plan_line_prints(
+    module: Callable[[], DeviceSettingsConfigurationModule],
+) -> None:
+    """Printed with no model to find a secret by, a shown change is its line.
+
+    The line hides the secrets of the shown values by the model and the path
+    (a line of an added item is cut before its password): in a shown change
+    there is none left to hide.
+    """
+    plan = plan_module(module())
+    lines: list[str] = []
+    for change in plan.changes:
+        seen = plan.shown_change(change)
+        for value in (seen.before, seen.after):
+            assert hide_secrets(plan.model, change.path, value) == value
+        if seen.before is MISSING:
+            place = "" if seen.place is None else f" ({seen.place})"
+            lines.append(f"  + {seen.path}{place}: {shown(seen.after)}")
+        else:
+            old, new = shown_together(seen.before, seen.after)
+            lines.append(f"  ~ {seen.path}: {old} -> {new}")
+    printed = plan.render().splitlines()
+    assert [line for line in printed if line.startswith(("  + ", "  ~ "))] == lines
+
+
 def test_the_repr_of_a_plan_and_of_a_write_hold_no_data() -> None:
     module = rotated()
     plan = plan_module(module)
@@ -605,6 +672,24 @@ def test_a_write_error_shows_no_secret_and_keeps_it_on_the_change() -> None:
     assert not any(secret in text for secret in (OLD, NEW, OTHER))
     assert f"{NEIGHBOR}.md5_password" in text
     assert text.count("***") == 3
+
+
+def test_a_lost_secret_the_redo_leaves_out_is_shown_hidden_and_kept_in_full() -> None:
+    """A clash on a neighbour's password: another writer stored ``OTHER``."""
+    module = rotated()
+    stored = as_stored(module, settings(neighbor(OTHER)))
+    with pytest.raises(ModuleWriteError) as exc:
+        _ = check_module_write(module, plan_module(module), stored)
+    error = exc.value
+    (lost,) = error.lost_edits
+    assert (lost.as_read, lost.intended, lost.stored) == (OLD, NEW, OTHER)
+    (left_out,) = error.not_redone()
+    assert str(left_out.path) == f"{NEIGHBOR}.md5_password"
+    assert (left_out.as_read, left_out.intended, left_out.stored) == ("***",) * 3
+    patch = error.redo_patch(include_clashes=True)
+    assert NEW in json.dumps(patch)
+    assert "***" not in json.dumps(patch)
+    assert error.not_redone(include_clashes=True) == ()
 
 
 def test_a_write_error_hides_a_secret_under_a_key_it_shows_by_attribute() -> None:
